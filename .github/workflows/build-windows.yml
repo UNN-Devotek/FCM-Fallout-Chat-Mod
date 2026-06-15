@@ -1,0 +1,117 @@
+name: Build Windows (NSIS)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g. 1.3.84)'
+        required: true
+        type: string
+      publish:
+        description: 'Upload artifact to backend release registry'
+        required: false
+        type: boolean
+        default: false
+
+# Least privilege: the build reads the repo and publishes via SSH/HTTP to the
+# backend registry (not via GITHUB_TOKEN), so read is sufficient.
+permissions:
+  contents: read
+
+jobs:
+  # Owner-only gate: workflow_dispatch is runnable by anyone with write access,
+  # so restrict release builds to the repo owner. Every build job needs this.
+  authorize:
+    name: Authorize (owner-only)
+    runs-on: [self-hosted, linux, unn]
+    steps:
+      - name: Verify actor is the owner
+        env:
+          ACTOR: ${{ github.actor }}
+        run: |
+          if [ "$ACTOR" != "UNN-Devotek" ]; then
+            echo "::error::$ACTOR is not authorized to trigger release builds (owner-only)."
+            exit 1
+          fi
+          echo "Authorized: $ACTOR"
+
+  build-windows:
+    name: Build Windows NSIS installer
+    needs: authorize
+    runs-on: [self-hosted, windows, unn]
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+
+      - name: Bump version in package.json
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          $pkg = Get-Content cross-platform-overlay\package.json -Raw | ConvertFrom-Json
+          $pkg.version = $env:VERSION
+          $utf8NoBOM = [System.Text.UTF8Encoding]::new($false)
+          $path = (Resolve-Path cross-platform-overlay\package.json).Path
+          [System.IO.File]::WriteAllText($path, ($pkg | ConvertTo-Json -Depth 100), $utf8NoBOM)
+
+      - name: Install admin-dashboard dependencies
+        run: |
+          cd admin-dashboard
+          npm ci
+
+      - name: Install overlay dependencies
+        run: |
+          cd cross-platform-overlay
+          npm ci
+
+      - name: Build renderer
+        run: |
+          cd cross-platform-overlay
+          npm run build:renderer
+
+      - name: Build Windows NSIS + portable packages
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          cd cross-platform-overlay
+          .\node_modules\.bin\electron-builder --win nsis portable --publish never
+
+      - name: Compute SHA-512 (base64) of NSIS installer
+        id: sha512
+        run: |
+          $exe = Get-ChildItem cross-platform-overlay\dist-electron\*.exe |
+            Where-Object { $_.Name -notlike '*blockmap*' -and $_.Name -like '*Setup*' } |
+            Select-Object -First 1
+          if (-not $exe) {
+            $exe = Get-ChildItem cross-platform-overlay\dist-electron\*.exe |
+              Where-Object { $_.Name -notlike '*blockmap*' } |
+              Select-Object -First 1
+          }
+          Write-Host "Installer: $($exe.FullName)"
+          $hash = Get-FileHash $exe.FullName -Algorithm SHA512
+          $hex = $hash.Hash
+          $hashBytes = New-Object byte[] ($hex.Length / 2)
+          for ($i = 0; $i -lt $hex.Length; $i += 2) { $hashBytes[$i/2] = [Convert]::ToByte($hex.Substring($i, 2), 16) }
+          $b64 = [System.Convert]::ToBase64String($hashBytes)
+          Write-Host "SHA-512 (base64): $b64"
+          "sha512=$b64" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "exe=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fallout-chat-mod-${{ inputs.version }}-win-x64
+          # Include latest.yml + the .blockmap so the artifact is publish-complete:
+          # the auto-updater feed needs latest.yml, and the .blockmap powers
+          # differential downloads.
+          path: |
+            cross-platform-overlay/dist-electron/*.exe
+            cross-platform-overlay/dist-electron/*.exe.blockmap
+            cross-platform-overlay/dist-electron/latest.yml
+          retention-days: 90

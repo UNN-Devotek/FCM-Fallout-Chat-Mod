@@ -1,0 +1,1 @@
+ALTER TABLE "parties" ADD COLUMN IF NOT EXISTS "category" TEXT NOT NULL DEFAULT 'General';

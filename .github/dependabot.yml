@@ -1,0 +1,98 @@
+version: 2
+
+# Dependabot version updates. Opening a PR here does NOT auto-run CI: this repo
+# label-gates self-hosted CI (see .github/workflows/ci.yml `authorize`), and
+# Dependabot PRs are treated as untrusted, so a maintainer must add the
+# `ci-approved` label to run the pipeline on a bot PR. Security *alerts* (the
+# continuous CVE feed) are separate and enabled under repo
+# Settings -> Security -> Dependabot alerts.
+#
+# One npm entry per package dir — this repo is NOT an npm workspace, so each
+# lockfile is updated independently. Minor + patch bumps are grouped into a
+# single PR per ecosystem to cut review noise; majors stay individual.
+#
+# target-branch: dev — version-update PRs open against `dev` (the integration
+# branch), NOT `prod` (prod). CAVEAT: `target-branch` governs VERSION updates
+# only. Dependabot SECURITY updates can only target the default branch
+# (`prod`) and are unaffected by this setting — they will still open against
+# prod. Triage/merge those into prod directly (or cherry-pick to dev).
+
+updates:
+  # ── npm packages ───────────────────────────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /backend
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /admin-dashboard
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /cross-platform-overlay
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /mcp
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: npm
+    directory: /marketing/promo
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+
+  # ── GitHub Actions (keeps SHA-pinned actions in ci.yml etc. current) ─────────
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: dev
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      actions:
+        update-types: [minor, patch]

@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fallout Chat Mod — Web Overlay QA Report</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0f0d04;
+    color: #c8a840;
+    font-family: 'Courier New', Courier, monospace;
+    padding: 32px 24px;
+    line-height: 1.6;
+  }
+  h1 {
+    font-size: 20px;
+    letter-spacing: 4px;
+    text-shadow: 0 0 12px rgba(200,168,64,0.6);
+    margin-bottom: 6px;
+  }
+  .subtitle {
+    font-size: 11px;
+    letter-spacing: 3px;
+    color: rgba(200,168,64,0.45);
+    margin-bottom: 32px;
+    border-bottom: 1px solid rgba(200,168,64,0.2);
+    padding-bottom: 16px;
+  }
+  .section {
+    margin-bottom: 48px;
+  }
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 16px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(200,168,64,0.3);
+  }
+  .section-title {
+    font-size: 14px;
+    font-weight: bold;
+    letter-spacing: 2px;
+  }
+  .status {
+    font-size: 10px;
+    letter-spacing: 1px;
+    padding: 2px 8px;
+    border: 1px solid;
+  }
+  .status.pass { color: #18ff62; border-color: #18ff62; }
+  .status.fail { color: #ff4444; border-color: #ff4444; }
+  .status.info { color: rgba(200,168,64,0.6); border-color: rgba(200,168,64,0.3); }
+  .notes {
+    font-size: 12px;
+    color: rgba(200,168,64,0.7);
+    margin-bottom: 20px;
+    padding: 12px 16px;
+    border: 1px solid rgba(200,168,64,0.2);
+    background: rgba(200,168,64,0.04);
+    line-height: 1.8;
+  }
+  .notes ul { padding-left: 20px; margin-top: 6px; }
+  .notes li { margin-bottom: 4px; }
+  .gallery {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+  }
+  .screenshot-card {
+    border: 1px solid rgba(200,168,64,0.3);
+    background: rgba(200,168,64,0.03);
+    max-width: 640px;
+    width: 100%;
+  }
+  .screenshot-card .caption {
+    padding: 8px 12px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    color: rgba(200,168,64,0.6);
+    border-top: 1px solid rgba(200,168,64,0.2);
+  }
+  .screenshot-card img {
+    width: 100%;
+    display: block;
+  }
+  .finding {
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    color: rgba(200,168,64,0.55);
+    padding: 4px 12px;
+    border-left: 2px solid rgba(200,168,64,0.3);
+    margin-bottom: 4px;
+  }
+  .finding.good { border-left-color: #18ff62; color: rgba(24,255,98,0.75); }
+  .finding.bad  { border-left-color: #ff4444; color: rgba(255,68,68,0.75); }
+  .finding.warn { border-left-color: #ffb000; color: rgba(255,176,0,0.75); }
+  .findings { margin-top: 16px; margin-bottom: 20px; }
+  .meta-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    margin-bottom: 32px;
+  }
+  .meta-table td {
+    padding: 6px 12px;
+    border: 1px solid rgba(200,168,64,0.15);
+    vertical-align: top;
+  }
+  .meta-table td:first-child {
+    color: rgba(200,168,64,0.5);
+    letter-spacing: 1px;
+    white-space: nowrap;
+    width: 160px;
+  }
+  hr { border: none; border-top: 1px solid rgba(200,168,64,0.15); margin: 32px 0; }
+  .env-note {
+    font-size: 11px;
+    color: rgba(200,168,64,0.45);
+    padding: 10px 14px;
+    border: 1px solid rgba(200,168,64,0.15);
+    margin-bottom: 24px;
+    line-height: 1.7;
+  }
+  .context-menu-items {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-top: 12px;
+  }
+  .menu-item {
+    font-size: 11px;
+    padding: 4px 10px;
+    border: 1px solid rgba(200,168,64,0.2);
+    color: rgba(200,168,64,0.7);
+    letter-spacing: 1px;
+  }
+</style>
+</head>
+<body>
+
+<h1>FALLOUT CHAT MOD</h1>
+<div class="subtitle">WEB OVERLAY QA REPORT — 2026-04-21 — LOCAL DEV (localhost:7075)</div>
+
+<div class="env-note">
+  <strong>Test Environment:</strong> Local Vite dev server (localhost:7075) with API mocking (Playwright route intercepts + WebSocket constructor mock via addInitScript).<br>
+  <strong>Auth method:</strong> /auth/me intercepted to return mock "System User" (role: user) session. Production site (falloutchatmod.com) not used — dev-login route is gated to non-production environments only.<br>
+  <strong>Messages:</strong> Injected via MockWebSocket responding to chat:history requests with synthetic messages.<br>
+  <strong>Tests run:</strong> 9 total — 9 passed, 0 failed.
+</div>
+
+<table class="meta-table">
+  <tr><td>DATE</td><td>2026-04-21</td></tr>
+  <tr><td>TARGET</td><td>http://localhost:7075/chat (ChatOverlay.tsx, web parity with desktop WinForms overlay)</td></tr>
+  <tr><td>BROWSER</td><td>Chromium (Playwright headless, 1280x720)</td></tr>
+  <tr><td>AUTH</td><td>Mocked — role:user persona "System User"</td></tr>
+  <tr><td>BACKEND</td><td>API routes mocked; WebSocket mocked via constructor replacement</td></tr>
+  <tr><td>TEST FILES</td><td>admin-dashboard/tests/qa-overlay-targeted.spec.js, qa-context-menu.spec.js</td></tr>
+</table>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-title">TASK 1 — SETTINGS PANEL</span>
+    <span class="status pass">PASS</span>
+  </div>
+
+  <div class="notes">
+    The settings gear icon is a 12×12 SVG <code>&lt;span&gt;</code> in the top-right of the chat overlay title bar,
+    identified by a <code>&lt;circle r="4.2"&gt;</code> element inside an SVG. It has no aria-label, title attribute,
+    or data-testid. Clicking it opens a portal-rendered settings modal with APPEARANCE and AUDIO sections.
+    The CLOSE button inside the modal successfully dismisses it.
+  </div>
+
+  <div class="findings">
+    <div class="finding good">Gear icon located and clicked via SVG circle selector (span > svg circle[r="4.2"])</div>
+    <div class="finding good">Settings modal opens with: Theme selector, Chrome Opacity, Text Opacity, Text Size, Show footer hints checkbox, Audio enable/volume controls</div>
+    <div class="finding good">CLOSE button dismisses modal correctly — overlay returns to base state</div>
+    <div class="finding warn">No aria-label, title, or data-testid on the cog span — not accessible to screen readers or easy test selectors</div>
+    <div class="finding warn">Modal rendered via createPortal (appends to body) — not inside the overlay's DOM subtree; affects CSS scoping tests</div>
+  </div>
+
+  <div class="gallery">
+    <div class="screenshot-card">
+      <img src="T1b_before_settings.png" alt="Overlay base state">
+      <div class="caption">BASE STATE — Overlay loaded, empty message area ("No Radio Signals Detected..."), gear icon visible top-right at coordinates approx (1228, 188)</div>
+    </div>
+    <div class="screenshot-card">
+      <img src="T1c_settings_modal_open.png" alt="Settings modal open">
+      <div class="caption">SETTINGS OPEN — Modal shows APPEARANCE (Theme: Fallout 76, Chrome Opacity 90%, Text Opacity 100%, Text Size 14px, Show footer hints checked) and AUDIO (disabled, Volume 50%) sections with CLOSE button</div>
+    </div>
+    <div class="screenshot-card">
+      <img src="T1c_settings_modal_closed.png" alt="Settings modal closed">
+      <div class="caption">SETTINGS CLOSED — Modal dismissed via CLOSE button, overlay returns to base state with empty message area</div>
+    </div>
+  </div>
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-title">TASK 2 — ONBOARDING / SETUP STATE</span>
+    <span class="status info">NO ONBOARDING FOUND</span>
+  </div>
+
+  <div class="notes">
+    There is no dedicated onboarding or setup screen in the web overlay. No <code>/setup</code> or <code>/onboarding</code>
+    routes exist — both redirect to <code>/chat</code>. The chat page loads normally regardless of whether the mock user
+    has a null <code>installToken</code>. No install-token banner, registration prompt, or "get started" flow was found in the UI.
+    <br><br>
+    This is expected per the architecture: the web overlay is a read-only chat view for authenticated Discord users.
+    The install token is tied to the desktop client (ChatOverlay.exe) — the web overlay has no concept of device registration.
+    Onboarding for the desktop client happens in the WinForms app, not this web UI.
+  </div>
+
+  <div class="findings">
+    <div class="finding good">/setup redirects to /chat — no 404, clean redirect</div>
+    <div class="finding good">/onboarding redirects to /chat — consistent behavior</div>
+    <div class="finding good">No broken route or error page for unknown paths</div>
+    <div class="finding good">Null installToken on user object causes no visible UI change — correct (web-only UX)</div>
+    <div class="finding">No onboarding keywords found in page text: install, setup, token, link, register, get started, connect</div>
+  </div>
+
+  <div class="gallery">
+    <div class="screenshot-card">
+      <img src="T2a_setup_route.png" alt="/setup route result">
+      <div class="caption">/setup ROUTE — Redirects to /chat and renders normal overlay. No onboarding UI present. "No Radio Signals Detected..." empty state shown.</div>
+    </div>
+    <div class="screenshot-card">
+      <img src="T2b_no_install_token.png" alt="Null install token state">
+      <div class="caption">NULL installToken STATE — User with no install token sees the same standard overlay. No banner, prompt, or special UI triggered.</div>
+    </div>
+  </div>
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-title">TASK 3 — CONTEXT MENU ON MESSAGES</span>
+    <span class="status pass">PASS</span>
+  </div>
+
+  <div class="notes">
+    Chat messages have an <code>onContextMenu</code> handler attached to each message row.
+    Right-clicking any message triggers a custom fixed-position context menu (not the browser's native menu —
+    <code>e.preventDefault()</code> is called). The menu contains three items for a <code>role:user</code> session.
+    Admin/mod sessions would add moderation actions (ban, mute, etc.) per the source.
+    <br><br>
+    Messages are tagged with their sub-channel name in brackets (e.g. <code>[Trade]</code>) when viewed in the
+    combined General feed. Each message's username is rendered in the theme's primary color (Fallout 76 gold by default).
+  </div>
+
+  <div class="findings">
+    <div class="finding good">onContextMenu handler fires on right-click — browser default context menu suppressed</div>
+    <div class="finding good">3 menu items rendered for role:user: "Copy Message", "Copy Username", "Report WastelandWanderer"</div>
+    <div class="finding good">Report item is user-specific — shows the message author's username</div>
+    <div class="finding good">Messages display [Trade] channel tag prefix in combined General feed view</div>
+    <div class="finding good">Message author names render in primary theme color (gold #C8A840 / green #18FF62)</div>
+    <div class="finding warn">Context menu has no keyboard navigation or ARIA role="menu" — not accessible</div>
+    <div class="finding warn">Menu positioned at clientX/Y with no viewport-edge collision detection — could overflow off-screen on small windows</div>
+  </div>
+
+  <div class="gallery">
+    <div class="screenshot-card">
+      <img src="CTX_01_overlay_with_messages.png" alt="Overlay with messages">
+      <div class="caption">OVERLAY WITH MESSAGES — 3 messages loaded in Trading sub-channel via WebSocket mock. [Trade] tag prefix, gold usernames, Fallout 76 theme active. Input box visible at bottom.</div>
+    </div>
+    <div class="screenshot-card">
+      <img src="CTX_02_context_menu.png" alt="Context menu open">
+      <div class="caption">CONTEXT MENU — Right-click on "WastelandWanderer" message row. Custom 3-item menu: "Copy Message", "Copy Username", "Report WastelandWanderer". No native browser context menu.</div>
+    </div>
+  </div>
+
+  <div style="margin-top: 16px;">
+    <div style="font-size: 11px; letter-spacing: 1px; color: rgba(200,168,64,0.5); margin-bottom: 8px;">CONTEXT MENU ITEMS (role:user)</div>
+    <div class="context-menu-items">
+      <div class="menu-item">Copy Message</div>
+      <div class="menu-item">Copy Username</div>
+      <div class="menu-item">Report WastelandWanderer</div>
+    </div>
+  </div>
+</div>
+
+<hr>
+
+<!-- ═══════════════════════════════════════════════════════════════════ -->
+<div class="section">
+  <div class="section-header">
+    <span class="section-title">ADDITIONAL FINDINGS</span>
+    <span class="status info">OBSERVATIONS</span>
+  </div>
+
+  <div class="findings">
+    <div class="finding warn">Production auth: /auth/dev-login/:persona is gated to NODE_ENV !== 'production' — cannot use dev shortcuts on falloutchatmod.com. Discord OAuth is the only production auth path.</div>
+    <div class="finding warn">Docker Desktop port forwarding (7676) is not accessible from WSL2 loopback — Vite proxy returns 500 when targeting localhost:7676. Local dev requires the dashboard nginx container or direct container networking.</div>
+    <div class="finding good">Role-based nav is enforced: role:user sees CHAT and SYSTEM tabs only — MODERATION, FEED, CHANNELS, USERS are hidden.</div>
+    <div class="finding good">VER — shown in footer (version not populated without real WS connection — expected).</div>
+    <div class="finding good">LEVEL USER badge visible in footer — confirms role display works.</div>
+    <div class="finding good">Status dot (amber/orange) shown in title bar when WS is not OPEN — correct disconnected indicator.</div>
+    <div class="finding">DEV switcher tab visible on right edge (VITE_DEV_PERSONAS=true in .env.local) — correctly hidden on production builds.</div>
+    <div class="finding warn">No keyboard shortcut to open settings — only mouse click on the small (12x12px) gear icon. Touch/keyboard users cannot access settings.</div>
+  </div>
+</div>
+
+<hr>
+
+<div style="font-size: 10px; letter-spacing: 2px; color: rgba(200,168,64,0.3); text-align: center; margin-top: 24px;">
+  FALLOUT CHAT MOD QA REPORT · GENERATED 2026-04-21 · PLAYWRIGHT + CLAUDE CODE
+</div>
+
+</body>
+</html>

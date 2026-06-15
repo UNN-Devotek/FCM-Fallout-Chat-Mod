@@ -1,0 +1,90 @@
+name: Build Linux (AppImage + deb)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build (e.g. 1.3.88)'
+        required: true
+        type: string
+      publish:
+        description: 'Upload artifact to backend release registry'
+        required: false
+        type: boolean
+        default: false
+
+# Least privilege: the build reads the repo and publishes via SSH/HTTP to the
+# backend registry (not via GITHUB_TOKEN), so read is sufficient.
+permissions:
+  contents: read
+
+jobs:
+  # Owner-only gate: workflow_dispatch is runnable by anyone with write access,
+  # so restrict release builds to the repo owner. Every build job needs this.
+  authorize:
+    name: Authorize (owner-only)
+    runs-on: [self-hosted, linux, unn]
+    steps:
+      - name: Verify actor is the owner
+        env:
+          ACTOR: ${{ github.actor }}
+        run: |
+          if [ "$ACTOR" != "UNN-Devotek" ]; then
+            echo "::error::$ACTOR is not authorized to trigger release builds (owner-only)."
+            exit 1
+          fi
+          echo "Authorized: $ACTOR"
+
+  build-linux:
+    name: Build Linux AppImage + deb
+    needs: authorize
+    runs-on: [self-hosted, linux, unn]
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+
+      - name: Bump version in package.json
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          node -e "const f='cross-platform-overlay/package.json';const p=require('./'+f);p.version=process.env.VERSION;require('fs').writeFileSync(f, JSON.stringify(p, null, 2) + '\n');"
+
+      # The overlay's vite `@dashboard` alias resolves to ../admin-dashboard/src and
+      # dedupes react / react-dom / react-router-dom / @tanstack/react-query, so BOTH
+      # node_modules trees must exist, installed for Linux.
+      - name: Install admin-dashboard dependencies
+        run: npm ci
+        working-directory: admin-dashboard
+
+      - name: Install overlay dependencies
+        run: npm ci
+        working-directory: cross-platform-overlay
+
+      - name: Build renderer
+        run: npm run build:renderer
+        working-directory: cross-platform-overlay
+
+      - name: Build Linux AppImage + deb packages
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # Avoid the FUSE requirement when packaging the AppImage on the runner.
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: ./node_modules/.bin/electron-builder --linux AppImage deb --publish never
+        working-directory: cross-platform-overlay
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fallout-chat-mod-${{ inputs.version }}-linux-x64
+          path: |
+            cross-platform-overlay/dist-electron/*.AppImage
+            cross-platform-overlay/dist-electron/*.deb
+            cross-platform-overlay/dist-electron/latest-linux.yml
+          retention-days: 90

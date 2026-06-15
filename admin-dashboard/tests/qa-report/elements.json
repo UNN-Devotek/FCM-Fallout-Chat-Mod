@@ -1,0 +1,65 @@
+[
+  {
+    "tag": "button",
+    "text": "☰",
+    "ariaLabel": "Open navigation menu",
+    "role": null,
+    "href": null,
+    "type": null,
+    "class": "hamburger-btn"
+  },
+  {
+    "tag": "button",
+    "text": "LOGOUT",
+    "ariaLabel": "Log out",
+    "role": null,
+    "href": null,
+    "type": null,
+    "class": ""
+  },
+  {
+    "tag": "button",
+    "text": "▸ OVERLAY",
+    "ariaLabel": "Navigate to OVERLAY",
+    "role": null,
+    "href": null,
+    "type": null,
+    "class": ""
+  },
+  {
+    "tag": "button",
+    "text": "HELP",
+    "ariaLabel": "Navigate to HELP",
+    "role": null,
+    "href": null,
+    "type": null,
+    "class": ""
+  },
+  {
+    "tag": "button",
+    "text": "LOGOUT",
+    "ariaLabel": "Log out",
+    "role": null,
+    "href": null,
+    "type": null,
+    "class": ""
+  },
+  {
+    "tag": "a",
+    "text": "OVERLAY",
+    "ariaLabel": "Navigate to OVERLAY",
+    "role": null,
+    "href": "/chat",
+    "type": null,
+    "class": "active"
+  },
+  {
+    "tag": "button",
+    "text": "DEV",
+    "ariaLabel": null,
+    "role": null,
+    "href": null,
+    "type": null,
+    "class": ""
+  }
+]

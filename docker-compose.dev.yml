@@ -1,0 +1,95 @@
+# Local development overrides — run with:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Backend: volume-mounted source with tsx watch hot reload
+# Dashboard: volume-mounted source with vite dev server hot reload
+
+services:
+  postgres:
+    ports:
+      - "${DB_PORT:-7077}:5432"
+
+  redis:
+    ports:
+      - "${REDIS_PORT:-7078}:6379"
+
+  # Publish MinIO to the host so a HOST-run backend/sync (npm run dev / devIngest)
+  # can mirror images. Host 9000 → container 9700 (MinIO's API port), matching
+  # MINIO_ENDPOINT=http://localhost:9000. Console on 9001. (When the backend runs
+  # INSIDE the dev stack it uses minio:9700 internally and ignores this mapping.)
+  minio:
+    ports:
+      - "9000:9700"
+      - "9001:9701"
+
+  backend:
+    build: !reset null
+    image: node:20-alpine
+    working_dir: /app
+    # Reset the production hardening inherited from docker-compose.yml so the dev
+    # container runs locally: (1) no external dokploy-network (that only exists on
+    # the prod VPS), (2) writable rootfs + full caps so `npm install` / `tsx` /
+    # `prisma generate` can write.
+    networks: !reset ["default"]
+    read_only: false
+    cap_drop: !reset []
+    volumes:
+      - ./backend:/app
+      - backend_node_modules:/app/node_modules
+    command: >
+      sh -c "apk add --no-cache openssl &&
+             npm install &&
+             npx prisma generate &&
+             npx prisma db push --accept-data-loss &&
+             npx tsx watch src/server.ts"
+    environment:
+      NODE_ENV: development
+      # Never connect the live Discord bot from a local/dev backend. env_file (.env)
+      # carries the real DISCORD_TOKEN; blank it here (environment overrides env_file)
+      # so the dev container can't relay messages or stomp the prod "Watching N
+      # dwellers" presence to 0. discordService.start() no-ops on an empty token.
+      DISCORD_TOKEN: ""
+      # Local origins for CORS (CLIENT_ORIGINS) + the WS handshake allow-list
+      # (ALLOWED_ORIGINS). Without localhost here the overlay/dashboard get a
+      # 403 "origin not in allow-list" on /ws and chat silently never connects.
+      # Covers: overlay page (7076), dashboard (3200), overlay vite HMR (5180).
+      CLIENT_ORIGINS: "http://localhost:7076,http://localhost:3200,http://localhost:5180,http://localhost:3000"
+      ALLOWED_ORIGINS: "http://localhost:7076,http://localhost:3200,http://localhost:5180,http://localhost:3000"
+      DB_HOST: postgres
+      DB_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      PORT: 7076
+      DATABASE_URL: postgresql://${DB_USER:-fo76_user}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-fo76_chat}
+    ports:
+      # Fixed dev host port. Do NOT use ${PORT} here — that var is the app's
+      # listen port (7676 in prod) and would leak onto the host mapping, so the
+      # local backend would land on the wrong port and the dashboard/overlay
+      # (which target localhost:7076) couldn't reach it.
+      - "7076:7076"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7076/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  dashboard:
+    build: !reset null
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./admin-dashboard:/app
+      - dashboard_node_modules:/app/node_modules
+    command: >
+      sh -c "npm install &&
+             npx vite --host 0.0.0.0 --port 3000"
+    environment:
+      VITE_API_URL: http://backend:7076
+      VITE_DEV_PERSONAS: "true"   # show the no-Discord dev-login UI in the dashboard
+    ports:
+      - "3200:3000"
+
+volumes:
+  backend_node_modules:
+  dashboard_node_modules:

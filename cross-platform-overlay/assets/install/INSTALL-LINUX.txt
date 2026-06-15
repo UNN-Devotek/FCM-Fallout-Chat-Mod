@@ -1,0 +1,62 @@
+Fallout Chat Mod — Linux install
+==================================
+
+1. Extract this zip. You'll have:
+     Fallout Chat Mod-<version>.AppImage   (the app)
+     INSTALL-LINUX.txt                      (this file)
+     fallout-chatmod-keepabove.kwinrule     (KDE-only, see below)
+2. Make the AppImage executable:
+     chmod +x "Fallout Chat Mod-<version>.AppImage"
+   (Or: right-click -> Properties -> Permissions -> "Allow executing as
+   program".)
+3. Run it:
+     ./"Fallout Chat Mod-<version>.AppImage"
+4. Sign in with Discord and finish onboarding (enter your Fallout 76 name).
+
+Requirements
+------------
+- A desktop environment with an X11 or XWayland session.
+- FUSE (most distros have it). If the AppImage won't mount, run with:
+     ./"Fallout Chat Mod-<version>.AppImage" --appimage-extract-and-run
+
+Using the overlay
+-----------------
+- The overlay shows automatically while Fallout 76 is running (detected under
+  Proton). With the game closed it stays hidden by design.
+- It auto-updates itself.
+
+KDE Plasma (Wayland) — automatic, just run Borderless
+-----------------------------------------------------
+On KDE+Wayland the overlay sets itself up on first launch — there is normally
+NOTHING to do. It forces the XWayland backend and installs two KWin window rules
+so it stays above Fallout 76 even while the game is focused:
+
+  - "keep above games"            -> keeps the overlay window on top.
+  - "demote game from fullscreen" -> stops KWin promoting FO76 to the active-
+                                     fullscreen layer (which would cover the overlay).
+
+Just run Fallout 76 in BORDERLESS WINDOWED (in-game: Settings -> Display ->
+Window Mode = Borderless). The game still fills the screen — only its KWin
+stacking layer changes. Loading screens and the in-game (Scaleform) UI work
+normally with these rules.
+
+If the overlay ever ends up BEHIND the game (e.g. the automatic setup couldn't
+run), import the bundled rule by hand, or use the app's tray menu ->
+"KDE: keep overlay above game":
+
+  1. System Settings -> Window Management -> Window Rules -> Import...
+  2. Select fallout-chatmod-keepabove.kwinrule (next to this file)
+  3. Apply, then: qdbus org.kde.KWin /KWin reconfigure   (or log out / in)
+
+Uninstalling removes these KWin rules and restores FO76's fullscreen stacking.
+
+Do NOT run the game inside gamescope for overlay purposes — its nested
+compositor isolates the game and no external overlay can draw over it. In
+particular, the launch flags "-f" (fullscreen) and "--force-grab-cursor" make
+gamescope grab the keyboard/mouse at the evdev level (below X11), so the
+overlay's global hotkeys (Insert/Delete/Home/PgUp/PgDn) AND window dragging stop
+working the moment you are in-game. If you must use gamescope, remove
+"--force-grab-cursor" and run borderless/windowed instead of "-f". The overlay
+log will print an "[input-grab] gamescope ... detected" line when this is the cause.
+
+Support: https://falloutchatmod.com

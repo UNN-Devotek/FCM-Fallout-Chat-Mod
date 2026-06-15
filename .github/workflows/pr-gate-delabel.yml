@@ -1,0 +1,49 @@
+name: PR gate — de-label on push
+
+# TOCTOU guard for the fork-PR CI gate (see ci.yml `authorize` job).
+#
+# A maintainer reviews a PR diff and applies the `ci-approved` label to let CI
+# run. Without this workflow, the contributor could then push a malicious commit
+# and CI would run it under the still-present label. This workflow removes the
+# label on every new push (`synchronize`), so any new commit DISARMS CI and
+# forces the maintainer to re-review and re-apply the label.
+#
+# Runs in the trusted base-repo context (`pull_request_target`) so it has the
+# permission to edit labels, but it NEVER checks out or executes PR code — it
+# only calls the labels API. Minimal permissions; no secrets exposed to PR code.
+
+on:
+  pull_request_target:
+    types: [synchronize]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+concurrency:
+  group: delabel-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  remove-ci-approved:
+    name: Remove ci-approved on new push
+    runs-on: [self-hosted, linux, unn]
+    steps:
+      - name: Strip the ci-approved label
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issue_number = context.payload.pull_request.number;
+            try {
+              await github.rest.issues.removeLabel({
+                owner, repo, issue_number, name: 'ci-approved',
+              });
+              core.info(`Removed ci-approved from #${issue_number} (new commit pushed — re-review required).`);
+            } catch (err) {
+              if (err.status === 404) {
+                core.info('ci-approved was not present — nothing to remove.');
+              } else {
+                throw err;
+              }
+            }

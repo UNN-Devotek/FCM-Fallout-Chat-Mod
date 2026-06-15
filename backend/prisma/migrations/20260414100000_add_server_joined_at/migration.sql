@@ -1,0 +1,1 @@
+ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "server_joined_at" TIMESTAMPTZ(6);

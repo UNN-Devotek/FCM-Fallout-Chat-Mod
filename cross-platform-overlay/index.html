@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fallout Chat Mod Overlay</title>
+    <link rel="icon" href="assets/fcm.ico" />
+    <style>
+      /* The Electron window is transparent; let only the overlay panel paint.
+         Full width/height + zero margin/padding so no dark window background
+         shows as a band at the top or bottom. */
+      /* `background: transparent !important` — the dashboard's global CSS
+         (@dashboard/index.css, imported by main.tsx) sets `body { background:#000 }`,
+         which is injected AFTER this block and would otherwise make the body an
+         OPAQUE BLACK plate behind the chat. That defeated the transparent window:
+         at low Background Opacity the see-through chat revealed black body, not
+         the game. !important keeps the body transparent so the window's
+         transparency actually reaches through. */
+      html, body, #root { margin: 0; padding: 0; height: 100%; width: 100%; background: transparent !important; overflow: hidden; }
+      *, *::before, *::after { box-sizing: border-box; }
+      /* Non-rendered elements must NEVER paint as visible text. In this overlay
+         (Vite dev injects <style> tags + the react-refresh/@vite-client <script>
+         into the document; Tailwind/global resets can clobber the UA default),
+         <style>/<script>/<head>/etc. were leaking as a wall of raw CSS+JS text —
+         most visible after a window resize. Force them hidden. CSS in a
+         display:none <style> still applies and display:none <script> still
+         executes, so this is purely cosmetic + safe. */
+      head, title, meta, link, base, style, script, noscript, template { display: none !important; }
+      /* The real ChatOverlay has NO window chrome of its own (it's embedded in a
+         page on the website). For the frameless Electron window we stack a slim
+         shell-provided control strip on top of it, and let the overlay fill the
+         rest. #root is a flex column so the strip + overlay share the height and
+         the channel-tab bar (top of the overlay) is never pushed off-screen. */
+      /* #root (z-index 1) sits below the background-dim layer (#shell-bg-dim,
+         z-index 2). The dim veils the entire overlay panel. pointer-events:none
+         on #shell-bg-dim ensures it never blocks clicks or keyboard input. */
+      #root { display: flex; flex-direction: column; position: relative; z-index: 1; }
+      /* The component's own root is `flex: 1` and needs a flex-column parent to
+         get height — #shell-overlay-host provides exactly that. */
+      #shell-overlay-host { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+      /* Pre-auth control strip (✕ close · − minimize · drag region). Transparent
+         so no dark band shows; only used before the overlay (with its own
+         in-header controls) has mounted. */
+      #shell-bar {
+        -webkit-app-region: drag;
+        flex-shrink: 0;
+        height: 22px; width: 100%;
+        display: flex; align-items: center; justify-content: flex-end;
+        gap: 2px;
+        padding: 0 4px;
+        background: transparent;
+        user-select: none;
+        font-family: "Courier New", monospace;
+      }
+      #shell-bar .shell-btn {
+        -webkit-app-region: no-drag;
+        width: 18px; height: 16px;
+        display: flex; align-items: center; justify-content: center;
+        cursor: pointer;
+        /* Theme-driven (set on :root by applyShellChromeTheme). Green fallback. */
+        color: var(--shell-primary, #18FF62); opacity: 0.7;
+        font-size: 12px; line-height: 1;
+        border-radius: 2px;
+      }
+      #shell-bar .shell-btn:hover { opacity: 1; background: var(--shell-primary-dim, rgba(24,255,98,0.18)); }
+      #shell-bar .shell-btn.close:hover { color: #FF6644; background: rgba(255,102,68,0.18); }
+      #shell-bar .shell-drag { -webkit-app-region: drag; flex: 1; height: 100%; }
+      /* After the overlay mounts, its header carries the real window controls AND
+         the two tab rows are themselves window-drag handles, so the pre-auth
+         strip collapses to ZERO height — the overlay panel then fills the window
+         edge-to-edge with no leftover band at the top. */
+      #shell-bar.mounted { height: 0; background: transparent; padding: 0; overflow: hidden; }
+      #shell-bar.mounted .shell-btn { display: none; }
+      #shell-bar .shell-title {
+        -webkit-app-region: drag;
+        flex: 1; min-width: 0;
+        color: var(--shell-primary, #18FF62); opacity: 0.55;
+        font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        padding-left: 4px; pointer-events: none;
+      }
+
+      /* Idle auto-collapse (parity with the desktop overlay's _idleFaded). The
+         WINDOW height is shrunk by the main process to just the shell strip +
+         the overlay's MAIN-TAB row (top anchored, growing back downward on
+         expand). Here we only need to clip whatever falls below that height so
+         the sub-tab row + body don't peek out during the resize. No leftover
+         box: the window itself is now header-tall, and the area below is the
+         transparent desktop. */
+      #root.collapsed #shell-overlay-host { overflow: hidden; }
+      /* The overlay container is a flex column; clipping the host is enough since
+         the window is sized to the header. Keep the message/input from showing a
+         scrollbar mid-collapse. */
+      #root.collapsed #shell-overlay-host * { scrollbar-width: none; }
+      /* The Electron window can't shrink below ~64px (a hard Chromium/Windows
+         minimum). The two tab rows are right around that size, so any leftover
+         strip below the sub-tabs must read as see-through, not a dark box: make
+         the overlay container transparent (no fill, no border) when collapsed.
+         The tab rows keep their OWN backgrounds, so they still render normally. */
+      #root.collapsed #shell-overlay-host > div > div {
+        background: transparent !important;
+        border-color: transparent !important;
+      }
+      /* Collapsed visual parity: the main-tab row is inherently transparent (tab
+         buttons have no fill, only outlines), so in collapsed state it reads as
+         "see-through" while the sub-tab row keeps its dark chromeRgba background —
+         an inconsistent split. Fix: give the main-tab row the same computed chrome
+         background (--fcm-chrome-bg, set by ChatOverlay when chromeRgba changes)
+         so both rows form a unified dark header strip. Falls back to a plain dark
+         colour if the variable hasn't been set yet. */
+      #root.collapsed [data-fcm-main-tab-row] {
+        background: var(--fcm-chrome-bg, rgba(12, 10, 8, 0.92)) !important;
+      }
+      /* Collapse keeps the MAIN-TAB row AND the SUB-TAB row, hiding only the
+         message body / input / footer beneath the sub-tabs. shell.ts tags those
+         elements with .fcm-collapsed-hidden by walking the sub-tab row's
+         following siblings (structure-independent — the old nth-child(n+3) rule
+         was brittle and could hide the sub-tab row itself). The window is sized
+         to the sub-tab row's BOTTOM edge, so the collapsed overlay = exactly the
+         two tab rows. We do NOT re-layout the tab rows (no height/padding/align
+         overrides) so they don't visibly resize on collapse.
+         NOTE: class alone (no #root.collapsed parent selector) so the class
+         keeps hiding content during the 240ms expand animation — shell.ts removes
+         #root.collapsed first (to start the layout reflow) then delays class
+         removal until the window has fully expanded. */
+      .fcm-collapsed-hidden {
+        display: none !important;
+      }
+
+      /* Prototype-managed visual layers the web component doesn't expose as
+         settings: an adjustable scanline overlay (above the settings modal so it
+         updates the ENTIRE UI live) and a background-dim layer (below #root, see
+         #shell-bg-dim). pointer-events:none so they never block interaction. */
+      #shell-scanline {
+        /* z-index 0 (behind #root's z-index 1) so the scanlines sit BEHIND all
+           text/chrome — they read through the semi-transparent chat background as
+           a screen effect but never overlay the glyphs (which kept the text dim
+           and made letters look like they bulged as the lines drifted across). */
+        position: fixed; inset: 0; pointer-events: none; z-index: 0;
+      }
+      /* Background dim is the BACKMOST layer — a black plate BEHIND #root
+         (z-index 0 vs #root's 1), pointer-events:none. It is the "background"
+         behind the chat: at opacity 0 the game shows through; at opacity 1 it's
+         solid black. It must NOT sit in front of the content (that would veil
+         the text/chrome). The overlay's own panel/message backgrounds are
+         semi-transparent, so this plate reads through as the background. */
+      #shell-bg-dim   { position: fixed; inset: 0; pointer-events: none; z-index: 0; background: #000; opacity: 0; }
+      #shell-scanline {
+        /* Thin CRT scanlines — a 1px dark line every 3px (only ~1/3 of the area
+           is darkened), at a modest alpha. This keeps the lines clearly VISIBLE
+           as intensity goes up without heavily DARKENING the whole overlay (the
+           old 2px-of-3px @ 0.45 made high intensity dim everything). The slider
+           scales the layer opacity 0..1 on top of this. */
+        background: repeating-linear-gradient(0deg, transparent 0, transparent 2px, rgba(0,0,0,0.3) 2px, rgba(0,0,0,0.3) 3px);
+        opacity: 0;
+        /* Static lines — no drift. The rolling animation made glyph edges appear
+           to wave/bulge as the dark bands crossed them; straight, fixed lines read
+           as a clean CRT screen without distorting the text. */
+        background-size: 100% 3px;
+      }
+
+      /* Prototype settings panel — mirrors the desktop SettingsForm.cs: header
+         strip, nav bar (IDENTITY/KEYBINDS/APPEARANCE), one scrollable section,
+         footer (RESET/CLOSE). Always fits inside the window (maxHeight + scroll). */
+      #shell-settings-backdrop {
+        position: fixed; inset: 0; z-index: 9000;
+        /* Light backdrop so the live overlay preview (chrome opacity / background
+           dim / scanline / scale) is clearly visible behind the panel while the
+           user drags the appearance sliders. */
+        background: rgba(0,0,0,0.1);
+        display: none; align-items: center; justify-content: center;
+        -webkit-app-region: no-drag;
+      }
+      #shell-settings-backdrop.open { display: flex; }
+      /* ── Shell-settings theme vars (set on :root by applyShellChromeTheme).
+         --shell-primary  = accent (borders, active states, range thumb)
+         --shell-text     = readable body / label text
+         These fall back to Fallout 76 amber so the panel always has a colour
+         even before applyShellChromeTheme() fires. ── */
+      #shell-settings {
+        width: 520px; max-width: 96vw; max-height: 90vh;
+        display: flex; flex-direction: column;
+        background: rgba(8,12,8,0.985);
+        border: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 45%, transparent);
+        color: var(--shell-primary, #C8A840); font-family: "Courier New", "Consolas", monospace;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.75);
+      }
+      /* Header strip */
+      #shell-settings .ss-head {
+        display: flex; align-items: baseline; gap: 10px;
+        padding: 12px 16px 10px; flex-shrink: 0;
+        background: rgba(14,22,14,0.9);
+      }
+      #shell-settings .ss-title { font-size: 13px; font-weight: bold; letter-spacing: 0.16em; color: var(--shell-text, #E8DFC0); }
+      #shell-settings .ss-ver { font-size: 10px; opacity: 0.5; }
+      /* Non-affiliation disclaimer under the Settings title. */
+      #shell-settings .ss-disclaimer {
+        padding: 8px 16px 10px; flex-shrink: 0;
+        font-size: 9px; line-height: 1.5; letter-spacing: 0.02em;
+        color: color-mix(in srgb, var(--shell-text, #E8DFC0) 50%, transparent);
+        background: rgba(14,22,14,0.9);
+        border-bottom: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 15%, transparent);
+      }
+      /* Nav bar (3 tabs + close) */
+      #shell-settings .ss-nav {
+        display: flex; flex-shrink: 0; height: 32px;
+        background: rgba(14,22,14,0.9);
+        border-bottom: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 25%, transparent);
+      }
+      #shell-settings .ss-navbtn {
+        flex: 1; display: flex; align-items: center; justify-content: center;
+        font-size: 10px; letter-spacing: 0.12em; cursor: pointer;
+        color: color-mix(in srgb, var(--shell-primary, #C8A840) 60%, transparent); user-select: none;
+        border-bottom: 2px solid transparent;
+      }
+      #shell-settings .ss-navbtn:hover { color: var(--shell-primary, #C8A840); }
+      #shell-settings .ss-navbtn.active { color: var(--shell-text, #E8DFC0); border-bottom-color: var(--shell-primary, #C8A840); }
+      #shell-settings .ss-navx {
+        width: 40px; display: flex; align-items: center; justify-content: center;
+        cursor: pointer; opacity: 0.7; font-size: 13px;
+      }
+      #shell-settings .ss-navx:hover { opacity: 1; color: #FF6644; }
+      /* Body + sections. NOTE: Text Opacity must NOT fade the settings panel —
+         it applies opacity to the panel BODY (every control) which dimmed
+         "everything". Text dimming affects the CHAT TEXT only (ChatOverlay's
+         textRgba, live via the --fcm-text-opacity observer). Panel stays opaque. */
+      #shell-settings .ss-body { padding: 14px 16px; overflow-y: auto; }
+      #shell-settings .ss-section { }
+      #shell-settings .ss-sec {
+        /* display:block + clear:both are explicit so section headings ALWAYS start
+           their own full-width row — the preceding opt-in toggle is inline-flex, and
+           without this a heading could ride up beside it on the same line. */
+        display: block; width: 100%; clear: both;
+        font-size: 10px; letter-spacing: 0.16em; color: var(--shell-text, #E8DFC0);
+        border-bottom: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 20%, transparent);
+        padding-bottom: 4px; margin: 16px 0 10px; font-weight: bold;
+      }
+      #shell-settings .ss-section > .ss-sec:first-child { margin-top: 0; }
+      #shell-settings .ss-row { display: block; width: 100%; clear: both; margin-bottom: 12px; }
+      #shell-settings label.ss-lbl { display: block; font-size: 11px; opacity: 0.85; margin-bottom: 4px; letter-spacing: 0.04em; }
+      #shell-settings .ss-line { display: flex; align-items: center; gap: 10px; }
+      #shell-settings .ss-val { min-width: 44px; text-align: right; font-weight: bold; font-size: 12px; color: var(--shell-text, #E8DFC0); }
+      /* Custom dropdown (Theme picker) — replaces a native <select>, whose popup
+         doesn't render in this frameless/transparent always-on-top window. */
+      #shell-settings .ss-select { position: relative; width: 100%; }
+      #shell-settings .ss-select-btn {
+        width: 100%; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between;
+        background: rgba(20,32,20,0.9); border: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 30%, transparent);
+        color: var(--shell-text, #E8DFC0); font-family: inherit; font-size: 12px; padding: 4px 8px; line-height: 1.2; cursor: pointer; text-align: left;
+      }
+      #shell-settings .ss-select-btn:hover { border-color: color-mix(in srgb, var(--shell-primary, #C8A840) 60%, transparent); }
+      #shell-settings .ss-select-caret { opacity: 0.7; font-size: 10px; margin-left: 8px; flex-shrink: 0; }
+      #shell-settings .ss-select-pop {
+        display: none; position: absolute; left: 0; right: 0; top: calc(100% + 2px); z-index: 50;
+        background: rgba(8,12,8,0.99);
+        border: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 55%, transparent);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.8); max-height: 220px; overflow-y: auto;
+      }
+      #shell-settings .ss-select-pop.open { display: block; }
+      #shell-settings .ss-select-item { padding: 4px 10px; font-size: 12px; color: var(--shell-text, #E8DFC0); cursor: pointer; white-space: nowrap; }
+      #shell-settings .ss-select-item:hover { background: color-mix(in srgb, var(--shell-primary, #C8A840) 18%, transparent); }
+      #shell-settings .ss-select-item.active { color: var(--shell-primary, #C8A840); font-weight: bold; }
+      #shell-settings select, #shell-settings input[type="text"], #shell-settings textarea {
+        width: 100%; box-sizing: border-box;
+        background: rgba(20,32,20,0.9); border: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 30%, transparent);
+        color: var(--shell-text, #E8DFC0); font-family: inherit; font-size: 12px; padding: 6px 8px; outline: none;
+      }
+      #shell-settings textarea { resize: vertical; min-height: 48px; }
+      /* Range sliders — FULLY CUSTOM visual. The native <input type=range>
+         rendering was unreliable in this Electron build (the dashboard global
+         input style boxed it; the track gradient dropped; the thumb didn't
+         reposition). So we draw a track + fill + thumb with our own divs and lay
+         a TRANSPARENT range input on top purely as the pointer surface. The
+         filled width + thumb position read --fcm-range-fill (set by shell.ts on
+         the wrapper as the value changes), so the marker always tracks the value
+         and moves smoothly while dragging. */
+      #shell-settings .ss-range-wrap {
+        position: relative; flex: 1; height: 18px; display: flex; align-items: center;
+        --fcm-range-fill: 0%;
+      }
+      #shell-settings .ss-range-track {
+        position: absolute; left: 0; right: 0; top: 50%; transform: translateY(-50%);
+        height: 6px; background: rgba(255,255,255,0.14);
+        border: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 45%, transparent);
+        box-sizing: border-box;
+      }
+      #shell-settings .ss-range-fill {
+        position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+        height: 6px; width: var(--fcm-range-fill, 0%);
+        background: var(--shell-primary, #C8A840); pointer-events: none;
+      }
+      #shell-settings .ss-range-thumb {
+        position: absolute; top: 50%; left: var(--fcm-range-fill, 0%);
+        transform: translate(-50%, -50%);
+        width: 14px; height: 14px; background: var(--shell-primary, #C8A840);
+        border: 1px solid rgba(0,0,0,0.5);
+        box-shadow: 0 0 5px var(--shell-primary, #C8A840); pointer-events: none;
+      }
+      /* The real input sits on top, invisible, capturing pointer events. */
+      #shell-settings .ss-range-wrap input[type="range"] {
+        position: absolute; inset: 0; width: 100%; height: 100%;
+        margin: 0; padding: 0; background: transparent; border: none; outline: none;
+        opacity: 0; cursor: pointer;
+        -webkit-appearance: none; appearance: none;
+      }
+      #shell-settings .ss-toggle {
+        display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+        font-size: 12px; user-select: none; color: var(--shell-text, #E8DFC0);
+      }
+      #shell-settings .ss-check {
+        width: 16px; height: 16px; border: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 50%, transparent);
+        display: inline-flex; align-items: center; justify-content: center; font-size: 11px; color: var(--shell-primary, #C8A840);
+      }
+      /* Keybind rows (click-to-rebind) */
+      #shell-settings .ss-kbrow { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; align-items: center; margin-bottom: 3px; }
+      #shell-settings .ss-kb-lbl { font-size: 11px; opacity: 0.85; }
+      #shell-settings .ss-kbbtn {
+        min-width: 110px; padding: 1px 8px; line-height: 1.25; cursor: pointer;
+        background: rgba(20,32,20,0.9); border: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 30%, transparent);
+        color: var(--shell-text, #E8DFC0); font-family: "Courier New", monospace; font-size: 11px; text-align: center;
+      }
+      #shell-settings .ss-kbbtn:hover { border-color: color-mix(in srgb, var(--shell-primary, #C8A840) 60%, transparent); }
+      #shell-settings .ss-kbbtn.listening { background: rgba(51,34,0,0.9); color: var(--shell-primary, #C8A840); }
+      #shell-settings .ss-note { font-size: 10px; opacity: 0.5; margin-top: 6px; line-height: 1.5; }
+      /* Footer */
+      #shell-settings .ss-footer {
+        display: flex; align-items: center; gap: 10px;
+        padding: 10px 16px; flex-shrink: 0;
+        background: rgba(14,22,14,0.9); border-top: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 25%, transparent);
+      }
+      #shell-settings .ss-fspacer { flex: 1; }
+      #shell-settings .ss-fbtn {
+        padding: 3px 12px; cursor: pointer; line-height: 1.2; align-self: center;
+        min-height: 0; height: auto;
+        background: rgba(20,32,20,0.9); border: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 35%, transparent);
+        color: var(--shell-text, #E8DFC0); font-family: "Courier New", monospace; font-size: 11px; letter-spacing: 0.06em;
+      }
+      #shell-settings .ss-fbtn:hover { border-color: color-mix(in srgb, var(--shell-primary, #C8A840) 70%, transparent); color: #fff; }
+
+      /* ── Autocomplete chip fields (blocked users / hidden channels) ── */
+      #shell-settings .ss-chips {
+        display: flex; flex-wrap: wrap; align-items: center; gap: 5px;
+        background: rgba(20,32,20,0.9); border: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 30%, transparent);
+        padding: 5px 6px; min-height: 34px;
+      }
+      #shell-settings .ss-chip {
+        display: inline-flex; align-items: center; gap: 6px;
+        background: color-mix(in srgb, var(--shell-primary, #C8A840) 16%, transparent);
+        border: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 45%, transparent);
+        color: var(--shell-text, #E8DFC0); font-size: 11px; padding: 2px 6px; white-space: nowrap;
+      }
+      #shell-settings .ss-chip-x { cursor: pointer; opacity: 0.7; font-size: 10px; }
+      #shell-settings .ss-chip-x:hover { opacity: 1; color: #FF6644; }
+      #shell-settings .ss-chipinput {
+        flex: 1; min-width: 120px;
+        background: transparent !important; border: none !important; padding: 2px !important;
+        color: var(--shell-text, #E8DFC0); font-family: inherit; font-size: 12px; outline: none;
+      }
+      /* Autocomplete popover — appended to <body>, fixed-positioned, ABOVE the
+         modal + dim/scanline layers so it's always visible and never clipped. */
+      .ss-ac {
+        position: fixed; z-index: 12000; display: none;
+        background: rgba(8,12,8,0.99); border: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 55%, transparent);
+        box-shadow: 0 8px 24px rgba(0,0,0,0.8); overflow-y: auto;
+        font-family: "Courier New", monospace;
+      }
+      .ss-ac.open { display: block; }
+      .ss-ac-item {
+        padding: 6px 10px; font-size: 12px; color: var(--shell-primary, #C8A840); cursor: pointer; white-space: nowrap;
+      }
+      .ss-ac-item.active, .ss-ac-item:hover { background: color-mix(in srgb, var(--shell-primary, #C8A840) 18%, transparent); color: var(--shell-text, #E8DFC0); }
+
+      /* ── Position preset rows ── */
+      #shell-settings .ss-preset {
+        display: grid; grid-template-columns: 70px 1fr auto auto; gap: 8px;
+        align-items: center; margin-bottom: 7px;
+      }
+      #shell-settings .ss-preset-lbl { font-size: 11px; opacity: 0.85; }
+      #shell-settings .ss-preset-kb { min-width: 0; }
+      #shell-settings .ss-preset-set { padding: 6px 10px; }
+      #shell-settings .ss-preset-status { font-size: 10px; color: var(--shell-primary, #C8A840); opacity: 0.9; white-space: nowrap; }
+      #shell-settings .ss-preset-status.unset { opacity: 0.45; font-style: italic; }
+
+      /* ── Profile block (IDENTITY section) ── */
+      #shell-settings .ss-profile-block {
+        display: flex; align-items: flex-start; gap: 14px;
+        background: rgba(20,32,20,0.55);
+        border: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 20%, transparent);
+        padding: 12px; margin-bottom: 14px;
+      }
+      #shell-settings .ss-profile-avatar-wrap {
+        flex-shrink: 0; width: 54px; height: 54px; position: relative;
+      }
+      #shell-settings .ss-profile-avatar {
+        width: 54px; height: 54px; border-radius: 50%;
+        border: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 40%, transparent);
+        object-fit: cover; display: block;
+      }
+      #shell-settings .ss-profile-avatar-placeholder {
+        width: 54px; height: 54px; border-radius: 50%;
+        border: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 40%, transparent);
+        background: rgba(20,32,20,0.9);
+        display: flex; align-items: center; justify-content: center;
+        font-size: 22px; font-weight: bold; color: var(--shell-primary, #C8A840);
+      }
+      #shell-settings .ss-profile-fields {
+        flex: 1; min-width: 0; display: flex; flex-direction: row; flex-wrap: wrap;
+        align-items: flex-start; gap: 8px 20px;
+      }
+      #shell-settings .ss-profile-field {
+        display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+        font-size: 11px; min-width: 0;
+      }
+      #shell-settings .ss-profile-label {
+        flex-shrink: 0; opacity: 0.55; font-size: 10px; letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+      #shell-settings .ss-profile-value {
+        max-width: 160px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        color: var(--shell-text, #E8DFC0); font-size: 11px;
+      }
+      #shell-settings .ss-profile-linked {
+        display: flex; align-items: center; gap: 6px;
+        font-size: 10px; color: #886633; margin-top: 4px;
+        letter-spacing: 0.04em; text-transform: uppercase;
+      }
+      #shell-settings .ss-profile-linked .ss-dot {
+        width: 7px; height: 7px; border-radius: 50%;
+        background: #886633; box-shadow: 0 0 5px rgba(136,102,51,0.7); flex-shrink: 0;
+      }
+      #shell-settings .ss-profile-linked.linked { color: #18FF62; }
+      #shell-settings .ss-profile-linked.linked .ss-dot { background: #18FF62; box-shadow: 0 0 5px rgba(24,255,98,0.7); }
+
+      /* ── Name row with inline SAVE NAME button ── */
+      /* align-items: stretch + the button matching the input's box makes the
+         SAVE NAME button EXACTLY the same height as the name input. */
+      #shell-settings .ss-name-row {
+        display: flex; align-items: stretch; gap: 8px;
+      }
+      #shell-settings .ss-name-row input[type="text"] {
+        flex: 1; padding: 4px 8px;
+      }
+      #shell-settings .ss-save-name-btn {
+        flex-shrink: 0; white-space: nowrap; align-self: stretch;
+        padding-top: 0; padding-bottom: 0; display: inline-flex; align-items: center;
+      }
+      #shell-settings .ss-save-name-feedback {
+        flex-shrink: 0; font-size: 11px; min-width: 64px; text-align: right;
+        color: var(--shell-primary, #C8A840); white-space: nowrap;
+      }
+
+      /* ── Discord account ── */
+      #shell-settings .ss-discord-status {
+        display: flex; align-items: center; gap: 8px;
+        font-size: 12px; color: var(--shell-text, #E8DFC0); margin-bottom: 10px;
+      }
+      #shell-settings .ss-discord-status .ss-dot {
+        width: 9px; height: 9px; border-radius: 50%;
+        background: #886633; box-shadow: 0 0 6px rgba(136,102,51,0.8);
+      }
+      #shell-settings .ss-discord-status.linked .ss-dot { background: #18FF62; box-shadow: 0 0 6px rgba(24,255,98,0.8); }
+      #shell-settings .ss-discord-btns { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+      #shell-settings .ss-discord-link { background: rgba(88,101,242,0.22); border-color: rgba(88,101,242,0.6); }
+      #shell-settings .ss-discord-link:hover { background: rgba(88,101,242,0.35); border-color: rgba(88,101,242,0.9); }
+      #shell-settings .ss-discord-unlink:hover { border-color: rgba(255,102,68,0.7); color: #FF6644; }
+
+      /* ── First-run onboarding overlay ─────────────────────────────────────── */
+      /* Matches the settings panel's Pip-Boy amber aesthetic. */
+      #shell-onboarding-backdrop {
+        position: fixed; inset: 0; z-index: 9100;
+        /* Heavier dim so the surrounding overlay is clearly de-emphasized. */
+        background: rgba(0,0,0,0.88);
+        display: none; align-items: center; justify-content: center;
+        -webkit-app-region: no-drag;
+      }
+      #shell-onboarding-backdrop.open { display: flex; }
+      #shell-onboarding {
+        width: 460px; max-width: 96vw; max-height: 92vh;
+        box-sizing: border-box;
+        display: flex; flex-direction: column;
+        /* FULLY OPAQUE Pip-Boy panel — nothing behind it bleeds through. */
+        background: #0a0f0a;
+        /* Theme-driven (set by applyPanelTheme): --ob-text = readable copy color
+           (cream/near-white for FO76 default), --ob-accent = amber/primary for
+           borders + selected/active states. Fallbacks match the FO76 theme. */
+        --ob-text: #E8DFC0;
+        --ob-accent: #C8A840;
+        border: 1px solid rgba(200,168,64,0.55);
+        /* Body copy reads in the theme TEXT color (legible), not the amber primary. */
+        color: var(--ob-text); font-family: "Courier New", "Consolas", monospace;
+        box-shadow: 0 12px 48px rgba(0,0,0,0.9);
+      }
+      /* All onboarding children honor the panel's width — a flex/grid child with
+         intrinsic min-content wider than the track would otherwise stretch the
+         panel past its declared width and break the backdrop centering.
+         Interactive controls are no-drag so clicks work even though the header
+         is a window-drag handle (see .ob-head). */
+      #shell-onboarding * { box-sizing: border-box; min-width: 0; }
+      #shell-onboarding button,
+      #shell-onboarding input,
+      #shell-onboarding select,
+      #shell-onboarding textarea,
+      #shell-onboarding .ob-toggle,
+      #shell-onboarding .ob-check,
+      #shell-onboarding .ob-theme-card,
+      #shell-onboarding .ob-body { -webkit-app-region: no-drag; }
+      /* Header. NO flex-wrap: a wrapping header row can report a min-content
+         width equal to the WIDEST single item, which (combined with the wide
+         letter-spaced title) was forcing the panel wider than 460px and pushing
+         it off-center. Single non-wrapping row with an overflow-hidden subtitle
+         keeps the header exactly panel-width.
+         The header doubles as the WINDOW DRAG HANDLE (frameless window) — grab
+         the title area to move the whole window mid-onboarding, mirroring the
+         main overlay's draggable tab bar. */
+      #shell-onboarding .ob-head {
+        display: flex; align-items: baseline; gap: 10px;
+        padding: 14px 18px 10px; flex-shrink: 0;
+        background: #0e160e;
+        border-bottom: 1px solid rgba(200,168,64,0.2);
+        overflow: hidden;
+        -webkit-app-region: drag;
+        cursor: move;
+      }
+      #shell-onboarding .ob-title {
+        font-size: 14px; font-weight: bold; letter-spacing: 0.14em; color: var(--ob-text);
+        white-space: nowrap; flex-shrink: 0;
+      }
+      #shell-onboarding .ob-subtitle {
+        font-size: 10px; opacity: 0.55; flex: 1; min-width: 0;
+        white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      #shell-onboarding .ob-step {
+        font-size: 10px; opacity: 0.5; white-space: nowrap; flex-shrink: 0;
+      }
+      /* Progress bar */
+      #shell-onboarding .ob-progress {
+        height: 2px; background: rgba(200,168,64,0.12); flex-shrink: 0;
+      }
+      #shell-onboarding .ob-progress-fill {
+        height: 100%; background: var(--ob-accent);
+        transition: width 0.35s ease;
+      }
+      /* Body */
+      #shell-onboarding .ob-body {
+        flex: 1; overflow-y: auto; padding: 18px 20px 8px;
+        min-height: 0;
+      }
+      #shell-onboarding .ob-step-wrap { display: flex; flex-direction: column; gap: 0; }
+      #shell-onboarding .ob-sec {
+        font-size: 10px; letter-spacing: 0.18em; color: var(--ob-text); font-weight: bold;
+        border-bottom: 1px solid rgba(200,168,64,0.22);
+        padding-bottom: 5px; margin-bottom: 12px;
+      }
+      #shell-onboarding .ob-row { margin-bottom: 14px; }
+      #shell-onboarding .ob-toggle-row { margin-bottom: 10px; }
+      #shell-onboarding .ob-lbl {
+        display: block; font-size: 11px; opacity: 0.85; margin-bottom: 5px; letter-spacing: 0.04em;
+      }
+      #shell-onboarding .ob-note {
+        font-size: 10px; opacity: 0.5; line-height: 1.55; margin-bottom: 14px;
+      }
+      #shell-onboarding .ob-note-discord { margin-top: 10px; margin-bottom: 0; }
+      /* Server-membership requirement notice — prominent, not dimmed. */
+      #shell-onboarding .ob-note-warn {
+        font-size: 11px; opacity: 1; line-height: 1.5; margin-bottom: 12px;
+        color: var(--ob-accent); font-weight: bold;
+      }
+      /* Join-server CTA — accent-filled so it reads as the primary first action. */
+      #shell-onboarding .ob-discord-join {
+        background: var(--ob-accent);
+        color: #0a0f0a; border-color: var(--ob-accent); font-weight: bold;
+      }
+      #shell-onboarding .ob-discord-join:hover { filter: brightness(1.12); }
+      #shell-onboarding .ob-name-section { margin-bottom: 6px; }
+      #shell-onboarding .ob-input {
+        width: 100%; box-sizing: border-box;
+        background: rgba(20,32,20,0.9); border: 1px solid rgba(200,168,64,0.35);
+        color: var(--ob-text); font-family: inherit; font-size: 13px;
+        padding: 8px 10px; outline: none; margin-bottom: 6px;
+      }
+      #shell-onboarding .ob-input:focus { border-color: var(--ob-accent); }
+      #shell-onboarding .ob-toggle {
+        display: inline-flex; align-items: center; gap: 9px; cursor: pointer;
+        font-size: 13px; user-select: none; color: var(--ob-text);
+      }
+      #shell-onboarding .ob-check {
+        width: 17px; height: 17px; border: 1px solid rgba(200,168,64,0.55);
+        display: inline-flex; align-items: center; justify-content: center;
+        font-size: 12px; color: var(--ob-accent); flex-shrink: 0;
+      }
+      /* Theme grid */
+      #shell-onboarding .ob-theme-grid {
+        display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px;
+      }
+      #shell-onboarding .ob-theme-card {
+        cursor: pointer; padding: 0;
+        border: 2px solid rgba(200,168,64,0.18);
+        transition: border-color 0.15s;
+      }
+      #shell-onboarding .ob-theme-card:hover { border-color: rgba(200,168,64,0.5); }
+      #shell-onboarding .ob-theme-card.selected {
+        border-color: var(--ob-accent);
+        box-shadow: 0 0 8px rgba(200,168,64,0.35);
+      }
+      #shell-onboarding .ob-theme-preview {
+        height: 70px; display: flex; flex-direction: column;
+        border-bottom: 1px solid rgba(200,168,64,0.1);
+        overflow: hidden;
+      }
+      #shell-onboarding .ob-theme-tab {
+        font-size: 8px; letter-spacing: 0.12em; font-weight: bold;
+        padding: 4px 7px; border-bottom: 1px solid transparent;
+        flex-shrink: 0; font-family: "Courier New", monospace;
+      }
+      #shell-onboarding .ob-theme-msg {
+        font-size: 9px; padding: 5px 7px; flex: 1;
+        font-family: "Courier New", monospace; white-space: nowrap; overflow: hidden;
+      }
+      #shell-onboarding .ob-theme-input {
+        font-size: 9px; padding: 4px 7px; border-top: 1px solid transparent;
+        flex-shrink: 0; font-family: "Courier New", monospace; font-style: italic;
+      }
+      #shell-onboarding .ob-theme-name {
+        font-size: 10px; padding: 5px 8px; color: var(--ob-text); letter-spacing: 0.04em;
+        background: rgba(14,22,14,0.8);
+      }
+      /* Discord step */
+      #shell-onboarding .ob-discord-status {
+        display: flex; align-items: center; gap: 9px;
+        font-size: 12px; color: var(--ob-text); margin-bottom: 12px;
+      }
+      #shell-onboarding .ob-dot {
+        width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0;
+        background: #886633; box-shadow: 0 0 6px rgba(136,102,51,0.8);
+      }
+      #shell-onboarding .ob-discord-status.linked .ob-dot {
+        background: #18FF62; box-shadow: 0 0 6px rgba(24,255,98,0.8);
+      }
+      #shell-onboarding .ob-discord-btns { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+      /* Footer */
+      #shell-onboarding .ob-footer {
+        display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+        padding: 10px 18px; flex-shrink: 0;
+        background: #0e160e;
+        border-top: 1px solid rgba(200,168,64,0.22);
+      }
+      #shell-onboarding .ob-fbtn {
+        padding: 8px 16px; cursor: pointer;
+        background: rgba(20,32,20,0.9); border: 1px solid rgba(200,168,64,0.35);
+        color: var(--ob-text); font-family: "Courier New", monospace;
+        font-size: 11px; letter-spacing: 0.06em; white-space: nowrap;
+      }
+      #shell-onboarding .ob-fbtn:hover { border-color: rgba(200,168,64,0.75); color: #fff; }
+      #shell-onboarding .ob-back { margin-right: 4px; }
+      #shell-onboarding .ob-foot-note {
+        flex: 1; min-width: 0; font-size: 10px; line-height: 1.4;
+        color: var(--ob-text); opacity: 0.8; padding: 0 4px;
+      }
+      #shell-onboarding .ob-foot-note.warn { color: #FFA53C; opacity: 1; }
+      #shell-onboarding .ob-skip { opacity: 0.55; font-size: 10px; }
+      #shell-onboarding .ob-skip:hover { opacity: 1; }
+      #shell-onboarding .ob-next { margin-left: auto; }
+      #shell-onboarding .ob-discord-link {
+        background: rgba(88,101,242,0.22); border-color: rgba(88,101,242,0.6);
+      }
+      #shell-onboarding .ob-discord-link:hover {
+        background: rgba(88,101,242,0.38); border-color: rgba(88,101,242,0.9);
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

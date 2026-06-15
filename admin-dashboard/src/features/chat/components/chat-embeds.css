@@ -1,0 +1,198 @@
+/*
+ * chat-embeds.css — the ONE place chat embeds break the inline-style convention.
+ * True responsiveness (single-line → vertical wrap) needs CSS container queries,
+ * which can't be expressed inline. The React component only sets content + the
+ * --fcm-accent / font-size custom properties; all layout + reflow lives here.
+ *
+ * Standard for every chat embed card (wiki_share, party_invite, nuke_codes,
+ * server_status, and anything added later).
+ */
+
+.fcm-embed {
+  container-type: inline-size;
+  border-left: 3px solid var(--fcm-accent);
+  background: color-mix(in srgb, var(--fcm-accent) 7%, transparent);
+  padding: 5px 10px;
+  box-sizing: border-box;
+  min-width: 0;
+  font-family: var(--fcm-ff);
+}
+
+/* ── Header: one line when it fits, wraps as a last resort ────────────────── */
+.fcm-embed__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 7px;
+  min-width: 0;
+}
+
+/* Leading glyph icon — larger than the tag text for visual hierarchy */
+.fcm-embed__icon {
+  flex: 0 0 auto;
+  font-size: 1.4em;
+  line-height: 1;
+  vertical-align: middle;
+  color: color-mix(in srgb, var(--fcm-accent) 80%, transparent);
+}
+
+.fcm-embed__tag {
+  flex: 0 0 auto;
+  font-size: var(--fcm-fs-sm);
+  font-weight: bold;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--fcm-accent) 80%, transparent);
+}
+
+.fcm-embed__title {
+  /* Size to content so badges sit immediately to its right (left-aligned),
+     but keep a readable min-width so trailing items WRAP as the card narrows
+     instead of the title collapsing to an ellipsis. Matches the tag's size +
+     letter-spacing so the header line reads as one unit (e.g. "NUKE CODES
+     Active Silo Codes"). */
+  flex: 0 1 auto;
+  min-width: 88px;
+  font-size: var(--fcm-fs-sm);
+  font-weight: bold;
+  letter-spacing: 0.06em;
+  /* Match the tag's color (80% accent) so the title reads as the same style as
+     the tag — fonts/size/weight already match; this aligns the brightness too. */
+  color: color-mix(in srgb, var(--fcm-accent) 80%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-transform: uppercase;
+}
+.fcm-embed__title--link { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.fcm-embed__title--link:focus-visible { outline: 2px solid var(--fcm-accent); outline-offset: 2px; }
+.fcm-embed__title--glow { text-shadow: 0 0 7px color-mix(in srgb, var(--fcm-accent) 80%, transparent); }
+
+.fcm-embed__badge {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  font-size: var(--fcm-fs-sm);
+  border: 1px solid var(--fcm-accent);
+  color: var(--fcm-accent);
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  line-height: 1.45;
+}
+
+/* Inline meta (e.g. "provided by Fallout Wiki ↗") — sits in the header flow when
+   wide, wraps to its own line as the card narrows. Stays intact (no mid-truncate). */
+.fcm-embed__meta {
+  flex: 0 0 auto;
+  margin-left: auto;          /* keep meta on the right; badge hugs the title */
+  font-size: var(--fcm-fs-sm);
+  white-space: nowrap;
+  color: var(--fcm-dim, color-mix(in srgb, var(--fcm-accent) 55%, transparent));
+}
+
+.fcm-embed__actions {
+  flex: 0 0 auto;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ── Body: fields auto-fit into 1–2 columns, each field is label→value ────── */
+.fcm-embed__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  column-gap: 16px;
+  row-gap: 1px;
+  margin-top: 3px;
+  min-width: 0;
+}
+
+.fcm-embed__field {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.fcm-embed__label {
+  flex: 0 0 auto;
+  min-width: 54px;
+  font-size: var(--fcm-fs-sm);
+  font-weight: bold;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  color: var(--fcm-label, color-mix(in srgb, var(--fcm-accent) 60%, transparent));
+}
+
+.fcm-embed__value {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--fcm-fs-sm);
+  color: var(--fcm-accent);
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.fcm-embed__footer {
+  margin-top: 3px;
+  min-width: 0;
+  font-size: var(--fcm-fs-sm);
+}
+
+/* ── Share-to-chat row — pinned bottom-right, subtle accent tone ─────────── */
+.fcm-embed__share {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.fcm-embed__share-btn {
+  all: unset;
+  cursor: pointer;
+  font-size: var(--fcm-fs-sm);
+  color: var(--fcm-accent);
+  opacity: 0.7;
+  letter-spacing: 0.04em;
+  padding: 0 2px;
+  line-height: 1.6;
+  border-bottom: 1px solid color-mix(in srgb, var(--fcm-accent) 40%, transparent);
+  transition: opacity 0.12s;
+}
+.fcm-embed__share-btn:hover,
+.fcm-embed__share-btn:focus-visible { opacity: 1; }
+.fcm-embed__share-btn:focus-visible { outline: 2px solid var(--fcm-accent); outline-offset: 2px; }
+
+/* ── Narrow container: action drops to its own row; fields go single-column ── */
+@container (max-width: 252px) {
+  .fcm-embed__actions { flex-basis: 100%; margin-left: 0; justify-content: flex-end; }
+  .fcm-embed__grid { grid-template-columns: 1fr; }
+}
+
+/* ════════════════════════════════════════════════════════════════════════════
+   INLINE EMBED — for STATIC, broadcast-to-everyone messages (wiki shares, party
+   invites). Renders as message CONTENT (no box) so it reads like a normal post.
+   (Ephemeral/sender-only responses use the boxed .fcm-embed card above instead.)
+   ════════════════════════════════════════════════════════════════════════════ */
+.fcm-inline { font-family: var(--fcm-ff); }
+.fcm-inline__icon { margin-right: 3px; color: color-mix(in srgb, var(--fcm-accent) 65%, transparent); }
+.fcm-inline__title { font-weight: bold; color: var(--fcm-accent); }
+.fcm-inline__title--link { cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
+.fcm-inline__title--link:focus-visible { outline: 2px solid var(--fcm-accent); outline-offset: 1px; }
+.fcm-inline__title--glow { text-shadow: 0 0 6px color-mix(in srgb, var(--fcm-accent) 70%, transparent); }
+.fcm-inline__badge {
+  margin-left: 5px;
+  padding: 0 4px;
+  font-size: var(--fcm-fs-sm);
+  border: 1px solid var(--fcm-accent);
+  color: var(--fcm-accent);
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+.fcm-inline__sep { margin: 0 5px; color: var(--fcm-dim, color-mix(in srgb, var(--fcm-accent) 50%, transparent)); }
+.fcm-inline__meta {
+  font-size: var(--fcm-fs-sm);
+  color: color-mix(in srgb, var(--fcm-accent) 80%, transparent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.fcm-inline__action { margin-left: 6px; }
