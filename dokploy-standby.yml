@@ -1,0 +1,85 @@
+# ── Standby stack — deploy as a SEPARATE Dokploy compose service ──────────
+# This stack is NOT rebuilt on every push. Deploy it once manually.
+# It monitors the primary backend and activates when it goes down,
+# including the Discord bot. When primary recovers, it deactivates.
+#
+# Connects to the main stack's postgres and redis over Dokploy's
+# shared network. Set MAIN_NETWORK to the main compose's Docker network
+# name (visible in Dokploy's container details or `docker network ls`).
+
+services:
+  backend-standby:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    networks:
+      - default
+      - main
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "=== Standby backend started ==="
+        echo "Monitoring primary at $PRIMARY_URL ..."
+        ACTIVE=0
+        SERVER_PID=""
+        while true; do
+          if wget -qO- "$PRIMARY_URL/api/health" >/dev/null 2>&1; then
+            if [ "$ACTIVE" = "1" ]; then
+              echo "Primary RECOVERED — deactivating standby"
+              kill $SERVER_PID 2>/dev/null
+              wait $SERVER_PID 2>/dev/null
+              ACTIVE=0
+              SERVER_PID=""
+            fi
+            sleep 10
+          else
+            if [ "$ACTIVE" = "0" ]; then
+              echo "Primary DOWN — activating standby (port $PORT)"
+              ./baseline-migrations.sh 2>/dev/null || true
+              node dist/server.js &
+              SERVER_PID=$!
+              ACTIVE=1
+            fi
+            sleep 5
+          fi
+        done
+    environment:
+      PRIMARY_URL: ${PRIMARY_URL:-http://backend:7676}
+      NODE_ENV: production
+      PORT: ${STANDBY_PORT:-7677}
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      CLIENT_ORIGINS: ${CLIENT_ORIGINS}
+      SESSION_SECRET: ${SESSION_SECRET}
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_CHANNEL_ID: ${DISCORD_CHANNEL_ID}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET}
+      DISCORD_SERVER_ID: ${DISCORD_SERVER_ID}
+      DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI}
+      OWNER_ROLE_ID: ${OWNER_ROLE_ID}
+      ADMIN_ROLE_ID: ${ADMIN_ROLE_ID}
+      MODERATOR_ROLE_ID: ${MODERATOR_ROLE_ID}
+      APP_CLIENT_KEY: ${APP_CLIENT_KEY}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      MESSAGE_RETENTION_DAYS: ${MESSAGE_RETENTION_DAYS:-0}
+      ADMIN_API_KEY: ${ADMIN_API_KEY}
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST:-postgres}:${DB_PORT:-5432}/${DB_NAME}
+    # No published host port: the standby is reachable only on the internal
+    # Docker network (and, when active, through the same Cloudflare Tunnel as the
+    # primary). Publishing to host 0.0.0.0 would re-open the direct-origin path
+    # the primary deliberately closed (bypassing the Cloudflare edge/WAF).
+    expose:
+      - "${STANDBY_PORT:-7677}"
+
+networks:
+  default:
+  main:
+    external: true
+    name: ${MAIN_NETWORK}

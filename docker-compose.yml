@@ -1,0 +1,139 @@
+services:
+  postgres:
+    image: timescale/timescaledb:latest-pg15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-fo76_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-fo76_chat}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-fo76_user} -d ${DB_NAME:-fo76_chat}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server --appendonly yes --appendfsync everysec
+      --maxmemory 256mb --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+    volumes:
+      - redis_data:/data
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --address ":9700" --console-address ":9701"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD}
+    volumes:
+      - minio_data:/data
+    # No ports: published — backend reaches it internally at http://minio:9700
+    security_opt: ["no-new-privileges:true"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9700/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # Unique alias: the bare service name `minio` collides on the shared external
+    # dokploy-network (other Dokploy projects also define a `minio` service), so
+    # the backend must target an unambiguous name. See backend MINIO_ENDPOINT.
+    networks:
+      default:
+        aliases:
+          - fcm-minio
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      PORT: 7676
+      DATABASE_URL: postgresql://${DB_USER:-fo76_user}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-fo76_chat}
+      TRUST_PROXY: "true"
+      ALLOWED_ORIGINS: https://falloutchatmod.com
+      # Reach THIS project's MinIO unambiguously (see the minio service alias).
+      # The default http://minio:9700 resolves to OTHER projects' MinIO on the
+      # shared dokploy-network -> ECONNREFUSED -> silent image-upload failures
+      # (avatars, camp, wiki). fcm-minio is unique to this project.
+      MINIO_ENDPOINT: http://fcm-minio:9700
+    # No host ports — backend is reached only by cloudflared (Cloudflare Tunnel)
+    # over dokploy-network. Public edge = Cloudflare; origin is not directly served.
+    volumes:
+      - releases_downloads:/app/downloads
+    security_opt: ["no-new-privileges:true"]
+    # Hardening: drop all Linux capabilities. NOTE: the rootfs is intentionally
+    # NOT read-only and the container runs as root — the app overwrites
+    # /app/releases.json on publish and seeds/uploads into the root-owned
+    # /app/downloads volume on boot, both of which a read-only FS or non-root
+    # user would break. no-new-privileges still blocks setuid escalation.
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7676/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    labels:
+      # Fronted by Cloudflare Tunnel (cloudflared). The tunnel ingress is
+      # registered (falloutchatmod.com -> backend:7676) and the apex DNS points
+      # at the tunnel CNAME — verified serving via the CF edge. Traefik no longer
+      # routes falloutchatmod.com, which closes the direct-IP+Host origin bypass.
+      # Rollback if ever needed: flip the apex DNS back to A->origin (instant, no
+      # redeploy) and set traefik.enable=true + an explicit Host router.
+      - traefik.enable=false
+    networks:
+      - dokploy-network
+      - default
+
+  # The standalone `dashboard` service was removed: the backend already serves
+  # the admin SPA same-origin at falloutchatmod.com (admin-dashboard/dist is
+  # baked into the backend image via the Dockerfile dashboard-builder stage, and
+  # server.ts does express.static + SPA fallback). It was a redundant second copy
+  # with no route in prod. For local dashboard dev, run `npm run dev` in
+  # admin-dashboard/ directly.
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  releases_downloads:
+
+networks:
+  dokploy-network:
+    external: true

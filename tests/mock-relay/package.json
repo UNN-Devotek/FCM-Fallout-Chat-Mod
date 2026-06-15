@@ -1,0 +1,11 @@
+{
+  "name": "fcm-mock-relay",
+  "version": "1.0.0",
+  "description": "Hermetic mock relay + auto-update E2E harness for Fallout Chat Mod overlay",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node auto-update.e2e.mjs",
+    "server": "node server.mjs"
+  }
+}

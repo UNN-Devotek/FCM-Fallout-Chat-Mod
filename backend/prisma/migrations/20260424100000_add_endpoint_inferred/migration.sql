@@ -1,0 +1,2 @@
+ALTER TABLE "users"
+  ADD COLUMN IF NOT EXISTS "endpoint_inferred" BOOLEAN NOT NULL DEFAULT false;

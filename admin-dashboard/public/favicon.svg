@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <text x="256" y="256"
+        font-family="Courier New, Courier, monospace"
+        font-weight="bold"
+        font-size="210"
+        text-anchor="middle"
+        dominant-baseline="central"
+        fill="#C8A840"
+        filter="url(#glow)">FCM</text>
+</svg>

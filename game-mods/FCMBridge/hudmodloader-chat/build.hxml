@@ -1,0 +1,11 @@
+## FCMChatWidget build file
+## Matches FCMBridge.hx build setup exactly.
+## Run from the hudmodloader-chat/ directory (or adjust paths).
+##
+## Prerequisites: Haxe 4.3+
+## Build: haxe build.hxml
+## Then patch version byte (see BUILD.md).
+
+--main FCMChatWidget
+--swf FCMChatWidget.swf
+--swf-version 32

@@ -1,0 +1,86 @@
+{
+  "name": "fo76-chat-backend",
+  "version": "1.0.1",
+  "description": "Fallout Chat Mod Backend Server",
+  "license": "MIT",
+  "main": "dist/server.js",
+  "scripts": {
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc",
+    "test": "jest --runInBand --forceExit",
+    "test:unit": "node --import tsx src/testRunner.ts",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage --runInBand --forceExit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1030.0",
+    "@prisma/client": "^5.22.0",
+    "@types/tar-stream": "^3.1.4",
+    "bull": "^4.16.5",
+    "connect-redis": "^7.1.1",
+    "cors": "^2.8.5",
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "express-session": "^1.18.1",
+    "file-type": "^21.3.4",
+    "helmet": "^8.0.0",
+    "joi": "^18.1.2",
+    "multer": "^1.4.5-lts.1",
+    "node-cron": "^4.2.1",
+    "node-emoji": "^1.11.0",
+    "pg": "^8.13.3",
+    "pino": "^10.3.1",
+    "rate-limit-redis": "^4.3.1",
+    "redis": "^4.7.0",
+    "tar-stream": "^3.2.0",
+    "uuid": "^11.1.1",
+    "ws": "^8.18.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/bull": "^3.15.9",
+    "@types/connect-redis": "^0.0.23",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^4.17.25",
+    "@types/express-session": "^1.18.2",
+    "@types/multer": "^2.1.0",
+    "@types/node": "^25.5.2",
+    "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.20.0",
+    "@types/pino": "^7.0.4",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.18.1",
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.9",
+    "prisma": "^5.22.0",
+    "supertest": "^7.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2"
+  },
+  "overrides": {
+    "uuid": "^11.1.1"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ],
+    "transform": {
+      "\\.[jt]sx?$": [
+        "<rootDir>/tests/setup/ts-transform.js",
+        {}
+      ]
+    },
+    "moduleNameMapper": {
+      "^file-type$": "<rootDir>/tests/setup/file-type-stub.js",
+      "^connect-redis$": "<rootDir>/tests/setup/connect-redis-stub.js"
+    },
+    "coverageDirectory": "coverage",
+    "collectCoverageFrom": [
+      "src/**/*.js"
+    ]
+  }
+}

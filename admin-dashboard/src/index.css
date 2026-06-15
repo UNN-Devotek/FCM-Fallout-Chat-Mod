@@ -1,0 +1,378 @@
+@import "tailwindcss";
+
+@theme {
+  --color-phosphor: var(--phosphor-color);
+  --color-phosphor-dim: var(--phosphor-dim);
+  --color-bg-panel: var(--bg-panel);
+  --color-bg-dark: var(--bg-dark);
+  --color-bg-card: var(--bg-card);
+  --color-border: var(--border-color);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --font-mono: var(--font-mono);
+}
+
+/* === Fallout Chat Mod — Admin Dashboard (FO76 Wasteland theme) === */
+:root {
+  /* FO76 amber/gold palette — mirrors ChatTheme.cs BuiltIn.Fallout76 */
+  --phosphor-color: #d4b040;      /* gold primary — brighter */
+  --phosphor-dim: #b08838;        /* dim gold — lifted */
+  --bg-dark: #1e1908;             /* warm dark — 2× brighter */
+  --bg-panel: #28200e;            /* FO76 background — 2× brighter */
+  --bg-card: #322814;             /* slightly lighter panel */
+  --border-color: #564418;        /* dark amber border — visible */
+  --text-primary: #f0e8cc;        /* cream/tan body text — brighter */
+  --text-secondary: #c0a870;      /* medium tan — lifted */
+  --text-muted: #7a6438;          /* dark muted — lifted */
+  --danger: #ff5555;
+  --warning: #ffbb22;
+  --info: #70b0ff;
+  --font-mono: "Courier New", Courier, monospace;
+  --glow-sm: 0 0 8px rgba(212, 176, 64, 0.6);
+  --glow-md: 0 0 14px rgba(212, 176, 64, 0.5), 0 0 28px rgba(212, 176, 64, 0.2);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: #000;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+/* Dark scrollbar — removes white Windows scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: #0f0d04; }
+::-webkit-scrollbar-thumb { background: rgba(200,168,64,0.4); border-radius: 0; }
+::-webkit-scrollbar-thumb:hover { background: rgba(200,168,64,0.6); }
+html { scrollbar-color: rgba(200,168,64,0.4) #0f0d04; scrollbar-width: thin; }
+
+/* Global scanline overlay on admin pages */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0px,
+    transparent 3px,
+    rgba(0, 0, 0, 0.06) 3px,
+    rgba(0, 0, 0, 0.06) 4px
+  );
+  pointer-events: none;
+  z-index: 9999;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 50%,
+    rgba(0, 0, 0, 0.4) 100%
+  );
+  pointer-events: none;
+  z-index: 9998;
+}
+
+/* Page headings get phosphor glow */
+h1 {
+  text-shadow: var(--glow-sm);
+  letter-spacing: 2px;
+  /* Flex layout centres the ◈ rhombus glyph with the adjacent text on every
+     heading — the glyph's optical centre sits above the Latin cap baseline in
+     Courier New, so without flex the ◈ appears to float too high. All h1
+     content in this codebase is inline-only, so flex is safe here. */
+  display: flex;
+  align-items: center;
+}
+
+a {
+  color: var(--phosphor-color);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+button {
+  font-family: var(--font-mono);
+  cursor: pointer;
+  border: 1px solid var(--phosphor-color);
+  background: transparent;
+  color: var(--phosphor-color);
+  padding: 8px 16px;
+  font-size: 13px;
+  min-height: 44px; /* touch target */
+  transition: background 0.15s;
+}
+button:hover {
+  background: rgba(200, 168, 64, 0.1);
+}
+button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+button.danger:hover {
+  background: rgba(255, 68, 68, 0.1);
+}
+button.warning {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+input,
+select,
+textarea {
+  font-family: var(--font-mono);
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 8px 12px;
+  font-size: 13px;
+  width: 100%;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: 1px solid var(--phosphor-color);
+  border-color: var(--phosphor-color);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th,
+td {
+  padding: 8px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-color);
+  font-size: 13px;
+}
+th {
+  color: var(--text-secondary);
+  font-weight: normal;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: 11px;
+  border: 1px solid currentColor;
+}
+.badge.open {
+  color: var(--warning);
+}
+.badge.resolved {
+  color: var(--phosphor-color);
+}
+.badge.dismissed {
+  color: var(--text-muted);
+}
+.badge.banned {
+  color: var(--danger);
+}
+.badge.muted {
+  color: var(--warning);
+}
+
+.error-message {
+  color: var(--danger);
+  font-size: 13px;
+}
+.loading {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 16px;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-dark);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+}
+
+.table-responsive {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.table-responsive table {
+  min-width: 600px;
+}
+
+/* Username link hover — replaces onMouseOver/onMouseOut JS */
+.username-link:hover,
+.username-link:focus-visible {
+  text-decoration: underline !important;
+}
+
+/* ── Mobile Navigation Drawer ── */
+.nav-drawer {
+  display: none; /* hidden on desktop */
+}
+
+.drawer-backdrop {
+  display: none; /* hidden on desktop */
+}
+
+/* ── Focus Styles ── */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--phosphor-color);
+  outline-offset: 2px;
+}
+
+/* Live feed — hover-to-show moderation actions (desktop) */
+.feed-msg-row .msg-actions {
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.feed-msg-row:hover .msg-actions {
+  opacity: 1;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  /* Always show moderation actions on mobile (no hover) */
+  .feed-msg-row .msg-actions {
+    opacity: 1;
+  }
+  button {
+    min-height: 44px;
+    padding: 10px 14px;
+  }
+  th,
+  td {
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+
+  /* Show hamburger button */
+  .hamburger-btn {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* Hide desktop tab navigation */
+  .desktop-tabs,
+  .desktop-subtabs {
+    display: none !important;
+  }
+
+  /* Hide username label on mobile (shown in drawer instead) */
+  .user-label-desktop {
+    display: none;
+  }
+
+  /* Drawer backdrop */
+  .drawer-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    z-index: 999;
+  }
+
+  /* Slide-out drawer */
+  .nav-drawer {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 280px;
+    height: 100vh;
+    background: var(--bg-dark);
+    border-right: 1px solid var(--phosphor-color);
+    box-shadow: 4px 0 24px rgba(200, 168, 64, 0.1);
+    z-index: 1000;
+    overflow-y: auto;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease-out;
+  }
+
+  .nav-drawer--open {
+    transform: translateX(0);
+  }
+
+  /* Reduce main padding on mobile */
+  main {
+    padding: 12px !important;
+  }
+
+  /* Admin layout — fill the full screen with no outer padding on mobile */
+  html, body {
+    overflow: hidden;
+    height: 100%;
+  }
+  .admin-layout-root {
+    padding: max(0px, env(safe-area-inset-top)) 0 max(0px, env(safe-area-inset-bottom)) !important;
+    align-items: stretch !important;
+    min-height: unset !important;
+    height: 100dvh !important;
+    overflow: hidden !important;
+  }
+  .admin-layout-frame {
+    height: 100% !important;
+    border-left: none !important;
+    border-right: none !important;
+    max-width: 100% !important;
+  }
+
+  /* Modal / detail view padding — tighten on narrow screens */
+  .modal-inner-pad {
+    padding: 16px !important;
+  }
+}
+
+/* ── Username chip (shared hover state) ───────────────────────────────────
+   Any <Link>/<span> that navigates to a user profile. Used in the Users
+   admin table, chat message authors, and the top-right profile badge. */
+.username-chip {
+  position: relative;
+  transition: color 120ms ease, text-shadow 120ms ease, background 120ms ease;
+  border-radius: 2px;
+  text-decoration: none;
+}
+.username-chip:hover,
+.username-chip:focus-visible {
+  color: var(--phosphor-color) !important;
+  text-shadow: 0 0 6px rgba(212, 176, 64, 0.45);
+  background: rgba(212, 176, 64, 0.08);
+  outline: none;
+}
+.username-chip:focus-visible {
+  box-shadow: 0 0 0 1px var(--phosphor-color);
+}

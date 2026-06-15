@@ -1,0 +1,13 @@
+node_modules/
+overlay-state.json
+dist/
+dist-renderer/
+out/
+overlay-debug.log
+overlay-shot.png
+*.png
+dist-electron/
+*.log
+.playwright-cli/
+# Written by tests/mock-relay/auto-update.e2e.mjs — never commit
+dev-app-update.yml

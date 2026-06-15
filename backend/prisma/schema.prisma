@@ -1,0 +1,872 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "windows"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// Users
+// =============================================================================
+model User {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  username           String    @unique
+  steamId            String?   @map("steam_id")
+  installToken       String    @unique @map("install_token")
+  discordId          String?   @unique @map("discord_id_link")
+  discordUsername    String?   @map("discord_username")
+  discordDisplayName String?   @map("discord_display_name")
+  discordAvatar      String?   @map("discord_avatar")
+  discordAuthedAt    DateTime? @map("discord_authed_at") @db.Timestamptz(6) // last Discord OAuth; gate requires re-auth after 30d
+  isBanned           Boolean   @default(false) @map("is_banned")
+  isMuted            Boolean   @default(false) @map("is_muted")
+  muteExpiresAt      DateTime? @map("mute_expires_at") @db.Timestamptz(6)
+  banReason          String?   @map("ban_reason")
+  // Mod-action audit fields (issued/expiry/category — `is_banned`/`is_muted`
+  // remain the current-state flags; full history lives in the `bans` table)
+  bannedUntil        DateTime? @map("banned_until") @db.Timestamptz(6) // null on isBanned=true → permanent
+  bannedById         String?   @map("banned_by_id") @db.Uuid
+  bannedAt           DateTime? @map("banned_at") @db.Timestamptz(6)
+  banCategory        String?   @map("ban_category")
+  kickedUntil        DateTime? @map("kicked_until") @db.Timestamptz(6) // 5-min cooldown after a kick
+  mutedById          String?   @map("muted_by_id") @db.Uuid
+  muteReason         String?   @map("mute_reason")
+  muteCategory       String?   @map("mute_category")
+  // Discord role IDs we stripped at ban time, restored on unban. JSON array.
+  savedDiscordRoles  Json?     @map("saved_discord_roles")
+  // M7 two-way in-game chat identity fields.
+  // identityHash = HMAC-SHA256(HUD_IDENTITY_SECRET, fo76AccountName) hex — stable key for moderation.
+  // fo76AccountName = raw Bethesda account name (source of identityHash, stored for reconciliation).
+  // fo76CharacterName = in-game character display name (reconciled on every HELLO).
+  identityHash       String?   @unique @map("identity_hash")
+  fo76AccountName    String?   @map("fo76_account_name")
+  fo76CharacterName  String?   @map("fo76_character_name")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  sessions             Session[]
+  messages             Message[]
+  playerReports        PlayerReport[]
+  staffApplications    StaffApplication[]
+  reportsSent          Report[]           @relation("reporterUser")
+  reportsReceived      Report[]           @relation("targetUser")
+  auditLogsActor       AuditLog[]         @relation("auditActor")
+  resolutions          Report[]           @relation("resolvedBy")
+  bansReceived         Ban[]              @relation("BanTarget")
+  bansIssued           Ban[]              @relation("BanIssuer")
+  bansReversed         Ban[]              @relation("BanReverser")
+  aliases              UserAlias[]
+  partiesOwned         Party[]            @relation("PartyOwner")
+  partyMemberships     PartyMember[]      @relation("PartyMemberships")
+  partyInvitesReceived PartyInvite[]      @relation("PartyInvitesReceived")
+  partyInvitesSent     PartyInvite[]      @relation("PartyInvitesSent")
+  partyMessages        PartyMessage[]     @relation("PartyMessages")
+  blocksMade           Block[]            @relation("BlocksMade")
+  blocksAgainst        Block[]            @relation("BlocksAgainst")
+  mcpApiKeys           McpApiKey[]        @relation("McpApiKeyOwner")
+
+  @@index([installToken])
+  @@index([steamId])
+  @@index([isBanned])
+  @@index([username])
+  @@map("users")
+}
+
+// =============================================================================
+// Sessions (tracked in Redis; DB copy for audit)
+// =============================================================================
+model Session {
+  token     String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// =============================================================================
+// Channels
+// =============================================================================
+model Channel {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String
+  color            String   @default("#18FF62")
+  parentId         String?  @map("parent_id") @db.Uuid
+  sortOrder        Int      @default(0) @map("sort_order")
+  discordRelay     Boolean  @default(false) @map("discord_relay")
+  discordChannelId String?  @map("discord_channel_id")
+  allowGifs        Boolean  @default(false) @map("allow_gifs")
+  allowEmojis      Boolean  @default(true) @map("allow_emojis")
+  isArchived       Boolean  @default(false) @map("is_archived")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  parent        Channel?              @relation("ChannelHierarchy", fields: [parentId], references: [id])
+  children      Channel[]             @relation("ChannelHierarchy")
+  messages      Message[]
+  relayMappings DiscordRelayMapping[]
+
+  @@map("channels")
+}
+
+// =============================================================================
+// Messages (TimescaleDB hypertable candidate)
+// =============================================================================
+model Message {
+  id              String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  content         String
+  userId          String   @map("user_id") @db.Uuid
+  channelId       String   @map("channel_id") @db.Uuid
+  parentChannelId String?  @map("parent_channel_id") @db.Uuid
+  source          String   @default("game") // 'game' | 'discord' | 'hud'
+  isDeleted       Boolean  @default(false) @map("is_deleted")
+  metadata        Json?    // optional structured payload (e.g. party_invite embed)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  user    User    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  channel Channel @relation(fields: [channelId], references: [id], onDelete: Restrict)
+
+  @@id([id, createdAt])
+  @@index([channelId, createdAt(sort: Desc)])
+  @@index([parentChannelId, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([isDeleted, channelId, createdAt(sort: Desc)])
+  @@map("messages")
+}
+
+// =============================================================================
+// Reports
+// =============================================================================
+enum ReportStatus {
+  open
+  resolved
+  dismissed
+  escalated
+
+  @@map("report_status")
+}
+
+model Report {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reporterUserId String       @map("reporter_user_id") @db.Uuid
+  targetUserId   String       @map("target_user_id") @db.Uuid
+  messageId      String?      @map("message_id") @db.Uuid
+  reason         String
+  notes          String?
+  status         ReportStatus @default(open)
+  resolvedBy     String?      @map("resolved_by") @db.Uuid
+  resolvedAt     DateTime?    @map("resolved_at") @db.Timestamptz(6)
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  reporterUser User  @relation("reporterUser", fields: [reporterUserId], references: [id], onDelete: Cascade)
+  targetUser   User  @relation("targetUser", fields: [targetUserId], references: [id], onDelete: Cascade)
+  // Note: Message has composite PK (id, createdAt) but reports only reference by id.
+  // Prisma cannot model this FK directly; use raw queries for report-message lookups.
+  // message relation removed due to composite PK constraint.
+  resolver     User? @relation("resolvedBy", fields: [resolvedBy], references: [id])
+
+  @@index([status])
+  @@index([targetUserId])
+  @@map("reports")
+}
+
+// =============================================================================
+// Audit Logs (TimescaleDB hypertable candidate)
+// =============================================================================
+model AuditLog {
+  id         String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorId    String?  @map("actor_id") @db.Uuid
+  action     String
+  targetId   String?  @map("target_id") @db.Uuid
+  targetType String?  @map("target_type")
+  reason     String?
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  actor  User? @relation("auditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  // NOTE: target_id is POLYMORPHIC (users, parties, messages, …) — it deliberately
+  // has NO FK relation. A FK to users(id) here broke party/message audit logs
+  // (P2003) since their target_id isn't a user. See migration 20260601_drop_audit_target_fkey.
+
+  @@id([id, createdAt])
+  @@index([actorId, createdAt(sort: Desc)])
+  @@index([action, createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+// =============================================================================
+// Word Filter Configuration
+// =============================================================================
+model WordFilter {
+  id        Int      @id @default(autoincrement())
+  phrase    String   @unique
+  isRegex   Boolean  @default(false) @map("is_regex")
+  testMode  Boolean  @default(false) @map("test_mode")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("word_filter")
+}
+
+// =============================================================================
+// Discord Relay Channel Mappings
+// =============================================================================
+model DiscordRelayMapping {
+  id               Int      @id @default(autoincrement())
+  inGameChannelId  String   @map("in_game_channel_id") @db.Uuid
+  discordChannelId String   @map("discord_channel_id")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  channel Channel @relation(fields: [inGameChannelId], references: [id], onDelete: Cascade)
+
+  @@unique([inGameChannelId, discordChannelId])
+  @@map("discord_relay_mappings")
+}
+
+// =============================================================================
+// Admin Users (persistent Discord-authenticated admin/moderator records)
+// =============================================================================
+model AdminUser {
+  id        Int      @id @default(autoincrement())
+  discordId String   @unique @map("discord_id")
+  username  String
+  role      String   @default("moderator") // owner, admin, moderator
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("admin_users")
+}
+
+// =============================================================================
+// Moderation Settings (key-value store for admin-configurable thresholds)
+// =============================================================================
+model ModerationSetting {
+  id        Int      @id @default(autoincrement())
+  key       String   @unique
+  value     String
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("moderation_settings")
+}
+
+// =============================================================================
+// Discord embed templates — built in the dashboard, posted to a channel by the bot
+// =============================================================================
+model DiscordEmbed {
+  id        Int      @id @default(autoincrement())
+  name      String
+  data      Json // serialized embed (title/description/color/fields/footer/etc.)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("discord_embeds")
+}
+
+// =============================================================================
+// Reaction-role panels — a posted message whose reactions grant/remove roles.
+// mappings = [{ emoji, matchKey, reactValue, roleId, roleName? }]
+// =============================================================================
+model ReactionRolePanel {
+  messageId String   @id @map("message_id")
+  channelId String   @map("channel_id")
+  guildId   String   @map("guild_id")
+  mappings  Json
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("reaction_role_panels")
+}
+
+// =============================================================================
+// "Join-to-Create" voice channels — ownership persisted for restart sweeps
+// =============================================================================
+model VoiceChannel {
+  discordChannelId String   @id @map("discord_channel_id")
+  guildId          String   @map("guild_id")
+  ownerId          String   @map("owner_id")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("voice_channels")
+}
+
+// =============================================================================
+// Player Reports (submitted via /report in-game)
+// =============================================================================
+model PlayerReport {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String   @map("user_id") @db.Uuid
+  content         String
+  reportType      String   @default("player") @map("report_type") // player | bug
+  involvedPlayers String?  @map("involved_players")
+  imageUrls       String?  @map("image_urls") // JSON: string[] of MinIO URLs
+  status          String   @default("open") // open | reviewed | closed
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt(sort: Desc)])
+  @@map("player_reports")
+}
+
+// =============================================================================
+// Staff Applications (submitted via public /apply page)
+// =============================================================================
+model StaffApplication {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Nullable: legacy rows + public (logged-out → Discord) submissions may have
+  // no resolved game user. Set when a known user submits so they can review
+  // their own application from the dashboard self-service view.
+  userId       String?  @map("user_id") @db.Uuid
+  inGameName   String   @map("in_game_name")
+  discordTag   String   @map("discord_tag")
+  age          String
+  timezone     String
+  experience   String
+  motivation   String
+  availability String
+  status       String   @default("pending") // pending | approved | rejected
+  adminNotes   String?  @map("admin_notes")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("staff_applications")
+}
+
+// =============================================================================
+// Chat Commands
+// =============================================================================
+model ChatCommand {
+  id               Int      @id @default(autoincrement())
+  trigger          String   @unique
+  description      String
+  response         String   @default("")
+  actionType       String   @default("message") @map("action_type")
+  targetChannelId  String?  @map("target_channel_id") @db.Uuid
+  allowedChannelId String?  @map("allowed_channel_id") @db.Uuid
+  cooldownSec      Int      @default(0) @map("cooldown_sec")
+  enabled          Boolean  @default(true)
+  requiresArgs     Boolean  @default(false) @map("requires_args")
+  responseColor    String?  @map("response_color") // null=default, 'channel'=channel tag color, 'user'=theme primary, '#RRGGBB'=custom hex
+  formFields       String?  @map("form_fields") // JSON: FormField[] — only used when actionType = 'form'
+  alias            String?  @unique @map("alias")
+  relayToDiscord   Boolean  @default(false) @map("relay_to_discord")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("chat_commands")
+}
+
+// =============================================================================
+// Telemetry Settings — remote per-user and global toggle for world-trace telemetry.
+// scope = 'global' | 'user:<uuid>'
+// Default seed row: global=true (dev-mode ON).
+// =============================================================================
+model TelemetrySetting {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scope     String   @unique
+  enabled   Boolean
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
+  updatedBy String?  @map("updated_by")
+
+  @@map("telemetry_settings")
+}
+
+// =============================================================================
+// Releases — persisted across Dokploy redeploys so published notes survive
+// (prior implementation wrote to a JSON file inside the container).
+// =============================================================================
+model Release {
+  id            Int      @id @default(autoincrement())
+  version       String   @unique
+  downloadUrl   String   @map("download_url")
+  releaseNotes  String   @map("release_notes")
+  publishedAt   DateTime @default(now()) @map("published_at") @db.Timestamptz(6)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  downloadCount Int      @default(0) @map("download_count")
+
+  @@index([publishedAt(sort: Desc)])
+  @@map("releases")
+}
+
+// =============================================================================
+// Name blacklist (v1.1.73)
+// =============================================================================
+// Patterns that must never be accepted as a user's FO76 in-game name. The
+// memory-reader service can latch onto random heap strings (item names,
+// menu labels) when the character-name region shifts; this blacklist lets
+// the backend reject those at the register/refresh boundary and signal the
+// desktop to re-scan. Admin-managed via /api/admin/name-blacklist + dashboard.
+model NameBlacklistEntry {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pattern   String   @unique
+  // exact | contains | regex — how `pattern` is matched against an incoming
+  // username candidate (all case-insensitive).
+  matchType String   @default("exact") @map("match_type")
+  enabled   Boolean  @default(true)
+  note      String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdBy String?  @map("created_by")
+
+  @@index([enabled])
+  @@map("name_blacklist")
+}
+
+// =============================================================================
+// Bans — full audit history (the `users.is_banned` flag is the CURRENT state;
+// this table is one row per ban event, including reversed ones).
+// =============================================================================
+model Ban {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  bannedById     String    @map("banned_by_id") @db.Uuid
+  reasonCategory String    @map("reason_category") // Harassment | HateSpeech | Spam | Cheating | NSFW | Threats | Doxxing | Other
+  reasonText     String    @map("reason_text")
+  bannedUntil    DateTime? @map("banned_until") @db.Timestamptz(6) // null = permanent
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  reversedAt     DateTime? @map("reversed_at") @db.Timestamptz(6)
+  reversedById   String?   @map("reversed_by_id") @db.Uuid
+  reverseReason  String?   @map("reverse_reason")
+
+  user       User          @relation("BanTarget", fields: [userId], references: [id], onDelete: Cascade)
+  bannedBy   User          @relation("BanIssuer", fields: [bannedById], references: [id], onDelete: Restrict)
+  reversedBy User?         @relation("BanReverser", fields: [reversedById], references: [id], onDelete: SetNull)
+  evidence   BanEvidence[]
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([reversedAt])
+  @@index([createdAt(sort: Desc)])
+  @@map("bans")
+}
+
+// One ban can have many evidence rows. Text content stored inline; images
+// stored in MinIO under `object_key`, served via a backend-proxied route.
+model BanEvidence {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  banId       String   @map("ban_id") @db.Uuid
+  type        String // 'text' | 'image'
+  textContent String?  @map("text_content")
+  objectKey   String?  @map("object_key")
+  mime        String?
+  sizeBytes   Int?     @map("size_bytes")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  ban Ban @relation(fields: [banId], references: [id], onDelete: Cascade)
+
+  @@index([banId])
+  @@map("ban_evidence")
+}
+
+// Self-reported performance telemetry from the desktop clients (overlay + monitor).
+// install_token is a loose reference — no FK constraint so history survives user deletion.
+model ClientMetric {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  installToken String   @map("install_token")
+  source       String // 'overlay' | 'monitor'
+  sampledAt    DateTime @default(now()) @map("sampled_at") @db.Timestamptz(6)
+  appVersion   String   @map("app_version")
+  workingSetMb Int      @map("working_set_mb")
+  gcHeapMb     Int      @map("gc_heap_mb")
+  cpuPct       Float    @map("cpu_pct")
+  gifCacheMb   Int?     @map("gif_cache_mb") // overlay only
+  fps          Float? // overlay only
+
+  @@index([sampledAt(sort: Desc)])
+  @@index([installToken, sampledAt(sort: Desc)])
+  @@index([source, sampledAt(sort: Desc)])
+  @@map("client_metrics")
+}
+
+// =============================================================================
+// Devices — per-install ECDSA P-256 public keys for request signing.
+// Replaces the shared X-App-Client-Key with per-install keypair auth.
+// One active key per install (re-enroll replaces). revokedAt is the admin
+// kill-switch (also auto-set on permanent ban). See docs/device-keypair-auth-plan.md.
+// =============================================================================
+model Device {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  installToken String    @unique @map("install_token") // lookup handle (matches users.install_token)
+  publicKey    String    @map("public_key") // SPKI DER, base64
+  enrolledAt   DateTime  @default(now()) @map("enrolled_at") @db.Timestamptz(6)
+  lastSeenAt   DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  @@index([revokedAt])
+  @@map("devices")
+}
+
+// =============================================================================
+// User Alias History — records previous FO76 in-game names on rename
+// =============================================================================
+model UserAlias {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  alias     String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, alias])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("user_aliases")
+}
+
+// =============================================================================
+// AutoMod Rules — admin-configured auto-moderation rules (mirrors Discord's
+// Auto-Moderation surface with overlay-specific extensions).
+// triggerType: 'KEYWORD' | 'SPAM' | 'KEYWORD_PRESET' | 'MENTION_SPAM' | 'LINK'
+// triggerMetadata: { keyword_filter, regex_patterns, allow_list, mention_total_limit, presets }
+// actions: [{ type: 'BLOCK'|'ALERT'|'TIMEOUT'|'MUTE_OVERLAY', metadata: {...} }]
+// =============================================================================
+model AutoModRule {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String
+  enabled          Boolean  @default(true)
+  triggerType      String   @map("trigger_type") // 'KEYWORD' | 'SPAM' | 'KEYWORD_PRESET' | 'MENTION_SPAM' | 'LINK'
+  triggerMetadata  Json     @map("trigger_metadata") // { keyword_filter[], regex_patterns[], allow_list[], mention_total_limit, presets }
+  actions          Json // [{ type: 'BLOCK'|'ALERT'|'TIMEOUT'|'MUTE_OVERLAY', metadata: {...} }]
+  exemptChannelIds String[] @default([]) @map("exempt_channel_ids") // overlay channel UUIDs
+  exemptRoles      String[] @default([]) @map("exempt_roles") // Discord role IDs
+  createdById      String?  @map("created_by_id") @db.Uuid
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  violations AutoModViolation[]
+
+  @@index([enabled])
+  @@map("automod_rules")
+}
+
+// =============================================================================
+// AutoMod Violations — one row per triggered rule event (regardless of action).
+// actionsTaken: [{ type, success, detail }]
+// =============================================================================
+model AutoModViolation {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ruleId         String   @map("rule_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  channelId      String?  @map("channel_id") @db.Uuid
+  messageContent String   @map("message_content")
+  matchedKeyword String?  @map("matched_keyword")
+  matchedSubstr  String?  @map("matched_substr")
+  actionsTaken   Json     @map("actions_taken") // [{ type, success, detail }]
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  rule AutoModRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([ruleId, createdAt(sort: Desc)])
+  @@map("automod_violations")
+}
+
+// =============================================================================
+// Party System — user-created community chat rooms
+// =============================================================================
+
+enum PartyReapPolicy {
+  persistent
+  ephemeral
+
+  @@map("party_reap_policy")
+}
+
+enum PartyRole {
+  owner
+  comod
+  member
+
+  @@map("party_role")
+}
+
+model Party {
+  id             String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String
+  color          String          @default("#18FF62")
+  isPrivate      Boolean         @default(false) @map("is_private")
+  reapPolicy     PartyReapPolicy @default(persistent) @map("reap_policy")
+  ownerId        String          @map("owner_id") @db.Uuid
+  maxMembers     Int?            @map("max_members")
+  category       String          @default("General")
+  description    String?         @map("description")
+  lastMessageAt  DateTime?       @map("last_message_at") @db.Timestamptz(6)
+  recentMsgCount Int             @default(0) @map("recent_msg_count")
+  isDeleted      Boolean         @default(false) @map("is_deleted")
+  createdAt      DateTime        @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  // Relations
+  owner    User           @relation("PartyOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  members  PartyMember[]
+  invites  PartyInvite[]
+  messages PartyMessage[]
+
+  @@index([isPrivate, isDeleted])
+  @@index([lastMessageAt(sort: Desc)])
+  @@map("parties")
+}
+
+model PartyMember {
+  id       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  partyId  String    @map("party_id") @db.Uuid
+  userId   String    @map("user_id") @db.Uuid
+  role     PartyRole @default(member)
+  joinedAt DateTime  @default(now()) @map("joined_at") @db.Timestamptz(6)
+
+  // Relations
+  party Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  user  User  @relation("PartyMemberships", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([partyId, userId])
+  @@index([userId])
+  @@index([partyId, role])
+  @@map("party_members")
+}
+
+model PartyInvite {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  partyId     String    @map("party_id") @db.Uuid
+  inviteeId   String    @map("invitee_id") @db.Uuid
+  inviterId   String    @map("inviter_id") @db.Uuid
+  status      String    @default("pending") // pending | accepted | declined | expired
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  respondedAt DateTime? @map("responded_at") @db.Timestamptz(6)
+
+  // Relations
+  party   Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  invitee User  @relation("PartyInvitesReceived", fields: [inviteeId], references: [id], onDelete: Cascade)
+  inviter User  @relation("PartyInvitesSent", fields: [inviterId], references: [id], onDelete: Cascade)
+
+  @@unique([partyId, inviteeId])
+  @@index([inviteeId, status])
+  @@map("party_invites")
+}
+
+model PartyMessage {
+  id        String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  partyId   String   @map("party_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  username  String
+  content   String
+  source    String   @default("party")
+  isDeleted Boolean  @default(false) @map("is_deleted")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Relations
+  user  User  @relation("PartyMessages", fields: [userId], references: [id], onDelete: Restrict)
+  Party Party @relation(fields: [partyId], references: [id])
+
+  @@id([id, createdAt])
+  @@index([partyId, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("party_messages")
+}
+
+// =============================================================================
+// Block — user-level block list. A blocker sees nothing from a blocked user:
+// messages, commands, party presence, etc. Enforcement (broadcast / history /
+// member-list filtering) is applied in a subsequent pass; this model is the
+// data foundation only.
+// =============================================================================
+model Block {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  blockerId String   @map("blocker_id") @db.Uuid
+  blockedId String   @map("blocked_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  blocker User @relation("BlocksMade",    fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked User @relation("BlocksAgainst", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+  @@index([blockedId])
+  @@map("blocks")
+}
+
+// =============================================================================
+// Online Snapshots — periodic samples of the live WebSocket client count.
+// Sampled every 5 minutes by the onlineSnapshotJob cron.
+// Purged after 7 days (fold into cleanupJob).
+// =============================================================================
+model OnlineSnapshot {
+  id          BigInt   @id @default(autoincrement())
+  capturedAt  DateTime @default(now()) @map("captured_at") @db.Timestamptz(6)
+  onlineCount Int      @map("online_count")
+
+  @@index([capturedAt])
+  @@map("online_snapshots")
+}
+
+// =============================================================================
+// Wiki Catalog — local mirror of Fallout 76 wiki entries for the in-overlay
+// wiki lookup feature. Ingested from Fandom via the wikiIngestionService cron.
+// Fuzzy search via pg_trgm on name + aliases. Images mirrored to MinIO.
+// embedding column is reserved for P4 pgvector — kept in SQL comment only.
+// =============================================================================
+model WikiEntry {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  wikiTitle      String    @map("wiki_title")
+  pageId         Int       @map("page_id")            // Fandom numeric id; stable across renames → UPSERT KEY
+  name           String                               // normalized display name ("(Fallout 76)" stripped)
+  kind           String?                              // weapon|armor|power_armor|creature|item|location|perk|character|other
+  infobox        Json      @default("{}") @map("infobox")
+  imageUrl       String?   @map("image_url")          // our MinIO-proxied URL
+  imageMime      String?   @map("image_mime")         // 'image/webp' (CDN serves WebP even for .png)
+  imageWidth     Int?      @map("image_width")
+  imageHeight    Int?      @map("image_height")
+  imageAspect    String?   @map("image_aspect")       // 'ultrawide'|'portrait'|'square'|'unknown' (UI layout)
+  imageSourceUrl String?   @map("image_source_url")   // Fandom CDN fallback
+  contentHash    String?   @map("content_hash") @db.Char(64)  // sha256(raw wikitext) → change detection
+  revId          Int?      @map("rev_id")                     // Fandom revision id — fast-skip when unchanged
+  isStale        Boolean   @default(false) @map("is_stale")
+  ingestedAt     DateTime  @default(now()) @map("ingested_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  locations      Json      @default("[]") @map("locations")  // jsonb array of spawn/find location strings
+
+  aliases WikiAlias[]
+  images  WikiImage[]
+
+  @@unique([pageId])
+  @@index([kind])
+  @@map("wiki_entries")
+}
+
+// One image row per asset associated with a wiki entry.
+// position=0 → primary (carousel first). is_map=true → map/spawn overlay.
+// imageUrl on WikiEntry = images[0].url kept for back-compat.
+model WikiImage {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  wikiEntryId  String    @map("wiki_entry_id") @db.Uuid
+  url          String
+  sourceUrl    String?   @map("source_url")
+  mime         String?
+  width        Int?
+  height       Int?
+  aspect       String?
+  position     Int       @default(0)
+  isMap        Boolean   @default(false) @map("is_map")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  wikiEntry WikiEntry @relation(fields: [wikiEntryId], references: [id], onDelete: Cascade)
+
+  @@index([wikiEntryId, position])
+  @@map("wiki_images")
+}
+
+// Aliases for wiki entries (auto-generated on ingest or curated by admins).
+// source: 'auto' (derived — strip suffix, plural/singular) | 'curated' (human)
+model WikiAlias {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  alias       String
+  wikiEntryId String   @map("wiki_entry_id") @db.Uuid
+  source      String   @default("auto")  // 'auto' | 'curated'
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  wikiEntry WikiEntry @relation(fields: [wikiEntryId], references: [id], onDelete: Cascade)
+
+  @@unique([alias, wikiEntryId])
+  @@index([wikiEntryId])
+  @@map("wiki_aliases")
+}
+
+// =============================================================================
+// CAMP Items — ingested from 76-CAMPDatabase (mrsblobby.github.io)
+// =============================================================================
+model CampItem {
+  id          String   @id @default(dbgenerated("gen_random_uuid()::text"))
+  name        String
+  category    String
+  subCategory String   @map("sub_category")
+  budgetCost  Float?   @map("budget_cost")
+  plan        String?                        // required plan name; null = no plan required
+  formId      String?  @map("form_id")
+  imageKey    String?  @map("image_key")    // MinIO object key: camp-images/<formid>.webp
+  sourceType     String?   @map("source_type")      // e.g. 'atomic_shop', 'bullion', 'daily_ops', …
+  sourceLabel    String?   @map("source_label")     // human-readable label shown in UI
+  atomPrice      Int?      @map("atom_price")        // last known Atomic Shop price in Atoms (null = not sold / unknown)
+  atomBundle     String?   @map("atom_bundle")       // bundle name when sold as part of a bundle (null = standalone)
+  atomCheckedAt  DateTime? @map("atom_checked_at") @db.Timestamptz(6) // when atom_price was last fetched from the wiki
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt    @map("updated_at")  @db.Timestamptz(6)
+
+  @@unique([name, formId])
+  @@index([category])
+  @@map("camp_items")
+}
+
+// =============================================================================
+// HUD Identity Blocks — M7 two-way chat moderation.
+// Mute/ban records keyed on identityHash (HMAC of FO76 accountName).
+// Survives character renames and client reinstalls without storage reset.
+// type 'ban'  → destroy socket at HELLO.
+// type 'mute' → drop SEND silently (ingestMessage returns early).
+// =============================================================================
+model HudIdentityBlock {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  identityHash String    @map("identity_hash")
+  type         String    // 'mute' | 'ban'
+  reason       String?
+  createdBy    String?   @map("created_by")   // userId of mod who issued this
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt    DateTime? @map("expires_at") @db.Timestamptz(6) // null = permanent
+
+  @@index([identityHash])
+  @@index([type])
+  @@map("hud_identity_blocks")
+}
+
+// Per-entity error log for the wiki ingestion job.
+// Never aborts the whole run — failed entities land here for targeted retry.
+model WikiIngestError {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  pageId      Int      @map("page_id")
+  error       String
+  attemptedAt DateTime @default(now()) @map("attempted_at") @db.Timestamptz(6)
+
+  @@index([pageId])
+  @@index([attemptedAt(sort: Desc)])
+  @@map("wiki_ingest_errors")
+}
+
+// =============================================================================
+// MCP API Keys — user-bound, self-service personal access tokens for MCP auth.
+// Plaintext never stored — only SHA-256 hash. env 'dev'|'prod' enforces the
+// environment firewall (dev tokens rejected by prod backend and vice versa).
+// =============================================================================
+model McpApiKey {
+  id         String    @id @default(uuid())
+  keyHash    String    @unique @map("key_hash")
+  label      String?
+  ownerId    String    @map("owner_id") @db.Uuid
+  env        String    // 'dev' | 'prod'
+  createdAt  DateTime  @default(now()) @map("created_at")
+  lastUsedAt DateTime? @map("last_used_at")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+
+  owner      User      @relation("McpApiKeyOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId])
+  @@index([keyHash])
+  @@map("mcp_api_keys")
+}

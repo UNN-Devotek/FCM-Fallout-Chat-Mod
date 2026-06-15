@@ -1,0 +1,149 @@
+# TLS certificates — private key material (README is intentionally NOT ignored)
+backend/certs/dev/*.crt
+backend/certs/dev/*.key
+# Test fixture certs are committed (self-signed, no private data); keep them tracked.
+
+# Environment
+.env
+.env.local
+.env.*.local
+.env.bak
+*.env.bak
+backend/prisma/.env
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+publish/
+build/
+dist/
+*/dist/
+dist-electron/
+dist-renderer/
+*/dist-electron/
+*/dist-renderer/
+*.js.map
+
+# MSIX packaging
+Packaging/staging/
+
+# Installer publish staging — regenerated every build, never commit
+Packaging/publish-svc/
+Packaging/publish-test/
+
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+*.pubxml
+*.pubxml.user
+
+# Playwright
+playwright-report/
+test-results/
+playwright/.cache/
+playwright/test-results/
+
+# Logs
+logs/
+*.log
+serilog-*.txt
+
+# Docker
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Agent / AI tooling (local only — not part of the public repo)
+.claude/
+.agent/
+.agents/
+.mcp.json
+
+# Database
+*.sql.bak
+
+# Certificates
+*.pfx
+*.p12
+*.pem
+*.key
+*.crt
+
+# Private ops runbook — never publish
+DEPLOY.md
+
+# Code-signing setup docs — contain identity/account details; keep local only
+docs/AZURE-CODE-SIGNING-SETUP.md
+docs/CODE-SIGNING.md
+
+# Local scratch / dev tools
+.playwright-cli/
+.playwright-mcp/
+measure.js
+*.png
+_arcwright-output/replay/
+
+# Script working dirs
+scripts/node_modules/
+
+# Runtime logs
+backend/dev-server.local.log
+cross-platform-overlay/overlay-debug.log
+
+# Runtime download artifacts (installers, feed yml, CLI scripts seeded from Packaging/ at boot)
+backend/downloads/*
+!backend/downloads/.gitkeep
+
+# Local DB backups + ad-hoc migration SQL (contains user data — never commit)
+.db-backups/
+Packaging/.release-notes-*.txt
+
+# Never commit transient/secret env files
+.env.tmp
+*.env.tmp
+backend/.env.tmp
+docs/DEV-ROLE-AND-SECRET-SCRUB-PLAN.md
+
+# Local dev-persona flag — copy from .env.development.example
+admin-dashboard/.env.development
+
+# FO76 HUDMenu build workspace (Bethesda IP base SWF + build artifacts -- never commit)
+game-mods/FCMBridge/hudmenu-chat/.build/
+
+# HUD mod loader build artifacts -- never commit
+game-mods/FCMBridge/hudmodloader-chat/.build/
+
+# Hosted dev stack real env (secrets) — never commit
+deploy/dev/.env.dev
+
+# Vite build output (was partially tracked by mistake)
+admin-dashboard/dist/
+
+# Codex CLI local config (may contain API tokens — never commit)
+.codex/
+
+# Local backup snapshots — never commit
+game-mods/FCMBridge/.backups/
+
+# Rendered promo media (regeneratable Remotion outputs; landing page renders the
+# compositions live, so these need not be tracked). PNG stills already covered above.
+admin-dashboard/public/promo/*.gif
+
+# Local dev launcher (machine-specific) — never commit
+cross-platform-overlay/dev-overlay-launch.cmd

@@ -1,0 +1,245 @@
+# =============================================================================
+# Fallout Chat Mod — ISOLATED hosted-dev stack  (Dokploy project: "fcm-dev")
+# =============================================================================
+# This is a SEPARATE Dokploy project from production. It mirrors prod's service
+# shapes and hardening but is deliberately ISOLATED so a full compromise of the
+# dev stack leaks nothing about prod and cannot reach prod containers.
+#
+# Spec: docs/deployment/hosted-dev-environment.md
+#   - Architecture + "Isolation boundaries" table
+#   - "Secure remote access" (no public DB/MinIO ports; tunnel + Access tokens)
+#   - Security hardening requirements SR-001..SR-006
+#
+# ISOLATION GUARANTEES (see comments inline):
+#   1. Private `fcm-dev-network` only. NOT joined to prod's external
+#      `dokploy-network` — network membership is not transitive, so dev
+#      containers have no route to prod containers.
+#   2. Own named volumes (postgres_dev_data / redis_dev_data / minio_dev_data).
+#      Prod volumes are NEVER referenced here.
+#   3. Resource limits on every service so a runaway dev container can't starve
+#      the shared host / prod.
+#   4. Zero secret overlap with prod — every secret is sourced from the Dokploy
+#      project env (${VAR}); no real values live in this file.
+#   5. No published host ports for backend/postgres/minio/redis — they are
+#      reachable ONLY through `cloudflared-dev` (Cloudflare Tunnel + Access).
+#
+# All secrets come from the Dokploy "fcm-dev" project env. Template + full var
+# list: deploy/dev/.env.dev.example.
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # postgres-dev — dev-only TimescaleDB. Own role + own DB + own volume.
+  # No host port: reached internally over fcm-dev-network, and remotely ONLY via
+  # the dev-db TCP route on cloudflared-dev (Access service token gated).
+  # ---------------------------------------------------------------------------
+  postgres-dev:
+    image: timescale/timescaledb:latest-pg15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-fo76_dev_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD (dev-only, never prod)}
+      POSTGRES_DB: ${DB_NAME:-fo76_chat_dev}
+    volumes:
+      # Dedicated dev volume — NEVER reuse prod's postgres_data.
+      - postgres_dev_data:/var/lib/postgresql/data
+    security_opt: ["no-new-privileges:true"]
+    # Resource caps: a runaway/abusive dev query can't starve the host.
+    mem_limit: 1g
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-fo76_dev_user} -d ${DB_NAME:-fo76_chat_dev}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fcm-dev-network
+
+  # ---------------------------------------------------------------------------
+  # redis-dev — dev-only Redis with its own password + own volume.
+  # No host port; internal-only on fcm-dev-network.
+  # ---------------------------------------------------------------------------
+  redis-dev:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: >
+      redis-server --appendonly yes --appendfsync everysec
+      --maxmemory 256mb --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD:?set REDIS_PASSWORD (dev-only, never prod)}
+    volumes:
+      - redis_dev_data:/data
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 384m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fcm-dev-network
+
+  # ---------------------------------------------------------------------------
+  # minio-dev — dev-only object store. Own creds + own volume.
+  # Alias `fcm-dev-minio` so the backend targets an unambiguous name (matches
+  # MINIO_ENDPOINT below). No host port; remote access only via the dev-s3 TCP
+  # route on cloudflared-dev (Access service token gated).
+  # ---------------------------------------------------------------------------
+  minio-dev:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --address ":9700" --console-address ":9701"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?set MINIO_ROOT_USER (dev-only, never prod)}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?set MINIO_ROOT_PASSWORD (dev-only, never prod)}
+    volumes:
+      - minio_dev_data:/data
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 512m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9700/minio/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      fcm-dev-network:
+        aliases:
+          - fcm-dev-minio
+
+  # ---------------------------------------------------------------------------
+  # backend-dev — the dev API, built from the SAME backend Dockerfile as prod.
+  #   - NODE_ENV=development
+  #   - ENABLE_DEV_LOGIN=false  → no credential-less persona login on the HOSTED
+  #     instance. Access is gated by the dual Discord role check (SR + plan).
+  #     The prod boot guard already forbids dev-login under NODE_ENV=production;
+  #     here we keep it OFF explicitly even in development.
+  #   - All secrets from ${VAR} (Dokploy fcm-dev project env), never prod's.
+  #   - No host port — reached only via cloudflared-dev (dev.falloutchatmod.com).
+  # ---------------------------------------------------------------------------
+  backend-dev:
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+      redis-dev:
+        condition: service_healthy
+      minio-dev:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      # HARD: hosted dev must NOT expose persona login. Dual-role gate handles access.
+      ENABLE_DEV_LOGIN: "false"
+      PORT: 7676
+
+      # --- Data stores (all internal on fcm-dev-network) ---
+      DB_HOST: postgres-dev
+      DB_PORT: 5432
+      # The backend pg Pool (config/database.ts) reads these individually — they
+      # must be in the container env, not only in DATABASE_URL (prod gets them via
+      # env_file, which this service does not use).
+      DB_USER: ${DB_USER:-fo76_dev_user}
+      DB_PASSWORD: ${DB_PASSWORD:?set DB_PASSWORD (dev-only, never prod)}
+      DB_NAME: ${DB_NAME:-fo76_chat_dev}
+      DATABASE_URL: postgresql://${DB_USER:-fo76_dev_user}:${DB_PASSWORD}@postgres-dev:5432/${DB_NAME:-fo76_chat_dev}
+      REDIS_HOST: redis-dev
+      REDIS_PORT: 6379
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD}
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis-dev:6379
+      # Unambiguous alias for THIS project's MinIO (see minio-dev alias).
+      MINIO_ENDPOINT: http://fcm-dev-minio:9700
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      MINIO_BUCKET: ${MINIO_BUCKET:-fcm-dev-avatars}
+
+      # --- Edge / proxy ---
+      TRUST_PROXY: "true"
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-https://dev.falloutchatmod.com}
+      CLIENT_ORIGINS: ${CLIENT_ORIGINS:-https://dev.falloutchatmod.com}
+
+      # --- Dev Discord application (separate app/token from prod) ---
+      DISCORD_TOKEN: ${DISCORD_TOKEN}
+      DISCORD_CHANNEL_ID: ${DISCORD_CHANNEL_ID}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET}
+      DISCORD_SERVER_ID: ${DISCORD_SERVER_ID}
+      DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI:-https://dev.falloutchatmod.com/auth/discord/callback}
+      # Dev-guild role IDs (cloned dev server has BRAND-NEW IDs — see plan).
+      OWNER_ROLE_ID: ${OWNER_ROLE_ID}
+      ADMIN_ROLE_ID: ${ADMIN_ROLE_ID}
+      MODERATOR_ROLE_ID: ${MODERATOR_ROLE_ID}
+
+      # --- Dual Discord role gate (dev login authority) ---
+      # Dev-guild check is local (dev bot is in the dev guild). Prod-guild check
+      # goes through the prod-bot verify endpoint (dev bot is NOT in prod guild).
+      PROD_GUILD_ID: ${PROD_GUILD_ID}
+      PROD_DEVELOPER_ROLE_ID: ${PROD_DEVELOPER_ROLE_ID}
+      DEV_GUILD_ID: ${DEV_GUILD_ID}
+      DEV_DEVELOPER_ROLE_ID: ${DEV_DEVELOPER_ROLE_ID}
+      PROD_VERIFY_URL: ${PROD_VERIFY_URL}
+      PROD_VERIFY_TOKEN: ${PROD_VERIFY_TOKEN}
+
+      # --- Dev-only admin / session secrets (SR-001: never prod's) ---
+      ADMIN_API_KEY: ${ADMIN_API_KEY:?set ADMIN_API_KEY (dev-only, never prod)}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET (dev-only, never prod)}
+    volumes:
+      - releases_dev_downloads:/app/downloads
+    security_opt: ["no-new-privileges:true"]
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7676/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    # No `dokploy-network` here — backend-dev is reachable only through the
+    # dedicated dev tunnel, fully isolated from prod's shared network.
+    networks:
+      - fcm-dev-network
+
+  # ---------------------------------------------------------------------------
+  # cloudflared-dev — DEDICATED Cloudflare Tunnel for the dev stack only.
+  # Attached ONLY to fcm-dev-network. Publishes (configured in the Cloudflare
+  # Zero Trust dashboard for this tunnel):
+  #   dev.falloutchatmod.com    -> backend-dev:7676  (HTTP, Access = SSO)
+  #   dev-db.falloutchatmod.com -> postgres-dev:5432 (TCP,  Access = svc token)
+  #   dev-s3.falloutchatmod.com -> minio-dev:9700    (TCP,  Access = svc token)
+  # This is the ONLY ingress; there are no published host ports anywhere.
+  # ---------------------------------------------------------------------------
+  cloudflared-dev:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?set CLOUDFLARE_TUNNEL_TOKEN (dev tunnel)}
+    depends_on:
+      backend-dev:
+        condition: service_started
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    cpus: 0.25
+    networks:
+      - fcm-dev-network
+
+# Dedicated dev volumes — distinct names from prod so they can never collide
+# with or reuse production data.
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
+  minio_dev_data:
+  releases_dev_downloads:
+
+# Private, project-local network. NOT external, NOT dokploy-network. Dev
+# containers therefore have no route to prod containers (membership is not
+# transitive). This is the primary isolation boundary protecting production.
+networks:
+  fcm-dev-network:
+    driver: bridge

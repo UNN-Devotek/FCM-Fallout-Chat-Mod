@@ -1,0 +1,9 @@
+# Code owners — every change requires review from the project owner (Devotek).
+#
+# This pins @UNN-Devotek as the mandatory reviewer on every pull request. It takes
+# effect once branch protection's "Require review from Code Owners" is enabled.
+# That enforcement is currently BLOCKED: GitHub gates branch protection / rulesets
+# behind Pro for private repos — it becomes available for free once this repo is
+# public (the open-source goal) or on a paid plan. See docs/testing/ci-cd-pipeline.md.
+
+* @UNN-Devotek

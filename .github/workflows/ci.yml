@@ -1,0 +1,483 @@
+name: CI
+
+# ── Rollout state: PHASE 3 (Windows E2E now active for PRs on self-hosted runner) ──
+# The single required branch-protection check is the `CI Summary` job below.
+# It gates: unit-vitest (overlay + dashboard matrix), overlay-e2e-linux (launch
+# smoke + auto-update), lint-typecheck, backend-jest, and Windows NSIS E2E — all
+# blocking for PRs. (The disabled Playwright placeholder was removed in the CI
+# consolidation; re-add a job here when a mock-relay-targeted suite exists.)
+#
+# PHASE 3 (active): `overlay-autoupdate-e2e-windows` now runs on the self-hosted
+# Linux build server using the win-electron-builder Docker image (Wine +
+# NSIS + Xvfb). It builds the NSIS installer inside the container via docker cp
+# strategy and smoke-tests the .exe via Wine. Auto-update E2E via Wine requires
+# WINE_CMD support in auto-update.e2e.mjs — tracked separately.
+#
+# ── OVERLAY RELEASE GATES (MANDATORY, fail-closed) — see docs/deployment/releasing-the-overlay.md ──
+# A shipped overlay build MUST be tested before it goes ANYWHERE. v1.3.82 shipped a
+# build whose main process crashed on launch (`Cannot find module './overlay-core'`,
+# missing from electron-builder build.files) — it could not even self-update, so every
+# updated user was bricked. To prevent recurrence:
+#   - CI guard (runs here, in the Overlay Vitest job): __tests__/build-files.test.js
+#     asserts every main-process require('./x') is included in package.json build.files.
+#   - Release-time gates (run on the build machine BEFORE any publish — feed manifests,
+#     POST /admin/releases, Nexus): Packaging/smoke-test.ps1 (clean launch, no crash) and
+#     Packaging/vt-gate.ps1 (VirusTotal scan must complete and PASS). If either fails, the
+#     build is published NOWHERE. Also verify the build actually auto-updates end-to-end.
+# ──────────────────────────────────────────────────────────────────────────────
+
+on:
+  # PRs are LABEL-TRIGGERED, not open-triggered: CI fires only when a maintainer
+  # applies the `ci-approved` label (the `labeled` event), never on PR open or on
+  # a contributor's push. This keeps untrusted fork code from touching the
+  # self-hosted runners until the diff has been reviewed. The `authorize` job
+  # additionally verifies the label is specifically `ci-approved`, and
+  # .github/workflows/pr-gate-delabel.yml strips the label on every new push so a
+  # post-approval commit cannot ride a stale label (TOCTOU guard) — re-label to
+  # re-run. Same-repo work can still be tested by pushing to `dev`/`prod`.
+  pull_request:
+    types: [labeled]
+  push:
+    branches: [prod, dev]
+
+# Default to the least privilege the GITHUB_TOKEN needs. CI only reads the repo;
+# any job needing more must opt in explicitly. (pr-gate-delabel.yml overrides
+# this with pull-requests: write because it edits labels.)
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Node 22 (LTS): Electron 41 requires Node >=22.12 (EBADENGINE on 20). Bumped
+  # from 20 alongside the overlay's electron 31→41 security bump.
+  NODE_VERSION: "22"
+  # Force public npm registry — self-hosted runners have a private .npmrc that
+  # causes E401 on cache misses. All packages in this repo are on public npm.
+  npm_config_registry: https://registry.npmjs.org
+
+jobs:
+  # ── PR authorization gate ───────────────────────────────────────────────────
+  # No PR (fork OR same-repo) executes on the self-hosted runners until a
+  # maintainer reviews the diff and applies the `ci-approved` label. Every other
+  # job `needs: authorize`, so if this is skipped, nothing downstream runs.
+  #   - push to prod/dev → authorized automatically (already merged/trusted)
+  #   - any pull_request   → authorized ONLY when the `ci-approved` label present
+  # Applying a label requires write/triage access, which fork authors do not have,
+  # so only maintainers can trigger a run. A new push strips the label (see
+  # pr-gate-delabel.yml), forcing re-review before CI can run again.
+  authorize:
+    name: Authorize CI run
+    runs-on: [self-hosted, linux, unn]
+    if: >-
+      github.event_name == 'push' ||
+      contains(github.event.pull_request.labels.*.name, 'ci-approved')
+    steps:
+      - run: echo "Authorized (${{ github.event_name }})."
+
+  # ── Required gate members (Phase 2: lint + backend now blocking) ─────────────
+  lint-typecheck:
+    name: Lint + Typecheck (${{ matrix.workspace }})
+    needs: authorize
+    runs-on: [self-hosted, linux, unn]
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [backend, admin-dashboard, cross-platform-overlay]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ${{ matrix.workspace }}/package-lock.json
+      - name: Install
+        working-directory: ${{ matrix.workspace }}
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci
+      # The overlay shares admin-dashboard's ChatOverlay (and its deps: react,
+      # @tanstack/react-query, etc.). tsc follows those cross-imports, so the
+      # overlay typecheck needs admin-dashboard's node_modules present too.
+      - name: Install admin-dashboard deps (overlay cross-imports)
+        if: matrix.workspace == 'cross-platform-overlay'
+        working-directory: admin-dashboard
+        run: npm ci
+      - name: Typecheck
+        working-directory: ${{ matrix.workspace }}
+        run: npx tsc --noEmit -p ./tsconfig.json
+
+  backend-jest:
+    name: Backend (Jest + TS units)
+    needs: authorize
+    runs-on: [self-hosted, linux, unn]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: fcm
+          POSTGRES_PASSWORD: fcm
+          POSTGRES_DB: fcm_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U fcm"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+      redis:
+        image: redis:7
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      # DinD: service containers port-bind on the DinD sidecar's interface,
+      # not on the runner container's loopback — use the 'docker' hostname.
+      DATABASE_URL: postgresql://fcm:fcm@docker:5432/fcm_test
+      REDIS_URL: redis://docker:6379
+      NODE_ENV: test
+      # express-session requires a secret at boot; integration tests boot the app.
+      SESSION_SECRET: ci-test-session-secret
+      # Role-gated endpoint tests send x-api-key = ADMIN_API_KEY (fallback
+      # 'test-admin-key'); auth.ts only honours it when env.ADMIN_API_KEY matches.
+      ADMIN_API_KEY: test-admin-key
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install
+        working-directory: backend
+        run: npm ci
+      - name: Prisma generate + schema push
+        working-directory: backend
+        run: |
+          npx prisma generate
+          npx prisma db push --skip-generate
+      - name: Build (jest tests target compiled .js)
+        working-directory: backend
+        run: npm run build
+      - name: Jest (supertest integration)
+        working-directory: backend
+        run: npm test
+      - name: TS unit suites (node:test via testRunner)
+        working-directory: backend
+        run: npm run test:unit
+
+  # ── OSV dependency vulnerability scan (NON-BLOCKING pilot) ───────────────────
+  # Scans every lockfile in the tree against the OSV database (osv.dev) on each
+  # ci-approved PR and on push to prod/dev. Deliberately a job in THIS workflow
+  # (not a standalone osv-scan.yml triggering on bare `pull_request`) so it stays
+  # behind the `authorize`/`ci-approved` label gate — a standalone PR-triggered
+  # workflow would run untrusted fork code on the self-hosted runner without the
+  # gate. `continue-on-error: true` + absence from ci-summary.needs => results are
+  # advisory (job log, PR step summary, artifact) and never block the merge gate.
+  # To PROMOTE to a hard gate once findings are triaged: remove continue-on-error
+  # and add `osv-scan` to the ci-summary `needs:` list (see docs/testing/ci-cd-pipeline.md).
+  osv-scan:
+    name: OSV vulnerability scan
+    needs: authorize
+    runs-on: [self-hosted, linux, unn]
+    continue-on-error: true
+    env:
+      OSV_VERSION: v2.3.8
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - name: Install osv-scanner
+        run: |
+          set -euo pipefail
+          BIN="$RUNNER_TEMP/osv-scanner"
+          curl -sSfL \
+            "https://github.com/google/osv-scanner/releases/download/${OSV_VERSION}/osv-scanner_linux_amd64" \
+            -o "$BIN"
+          chmod +x "$BIN"
+          "$BIN" --version
+      - name: Scan dependencies
+        id: scan
+        run: |
+          set -uo pipefail
+          BIN="$RUNNER_TEMP/osv-scanner"
+          echo "## OSV vulnerability scan" >> "$GITHUB_STEP_SUMMARY"
+          set +e
+          "$BIN" scan source -r . --format markdown > osv-report.md 2>osv-err.txt
+          code=$?
+          set -e
+          if [ "$code" -eq 0 ]; then
+            echo "No known vulnerabilities found." >> "$GITHUB_STEP_SUMMARY"
+            echo "osv_result=clean" >> "$GITHUB_OUTPUT"
+          elif [ "$code" -eq 1 ]; then
+            echo "Known vulnerabilities found (non-blocking pilot):" >> "$GITHUB_STEP_SUMMARY"
+            cat osv-report.md >> "$GITHUB_STEP_SUMMARY"
+            echo "osv_result=vulnerable" >> "$GITHUB_OUTPUT"
+          else
+            echo "Scanner error (exit $code):" >> "$GITHUB_STEP_SUMMARY"
+            cat osv-err.txt >> "$GITHUB_STEP_SUMMARY"
+            echo "osv_result=error" >> "$GITHUB_OUTPUT"
+          fi
+          cat osv-report.md osv-err.txt 2>/dev/null || true
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: osv-report
+          path: |
+            osv-report.md
+            osv-err.txt
+          if-no-files-found: ignore
+
+  # ── Required gate member: unit (Vitest + RTL) — overlay + dashboard ──────────
+  # Consolidated from the former overlay-unit-component + dashboard-unit-component
+  # jobs into one matrix. ELECTRON_SKIP_BINARY_DOWNLOAD is harmless for the
+  # dashboard (no electron dep) so the install step is uniform across legs.
+  unit-vitest:
+    name: Unit (Vitest + RTL — ${{ matrix.workspace }})
+    needs: authorize
+    runs-on: [self-hosted, linux, unn]
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace: [cross-platform-overlay, admin-dashboard]
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ${{ matrix.workspace }}/package-lock.json
+      - name: Install
+        working-directory: ${{ matrix.workspace }}
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci
+      - name: Vitest (NOT the playwright `test` script)
+        working-directory: ${{ matrix.workspace }}
+        run: npm run test:unit --if-present
+
+  # ── Overlay E2E (Linux) — packaged-launch smoke + auto-update — REQUIRED gate ─
+  # Consolidated from the former overlay-launch-smoke + overlay-autoupdate-e2e
+  # jobs. They shared the same setup (install admin-dashboard + overlay, build
+  # renderer, Xvfb libs) and each rebuilt it; merging runs that ONCE, then:
+  #   1. launch smoke — builds the packaged overlay and asserts a clean startup.
+  #      Catches crash-on-launch (e.g. v1.3.82's missing './overlay-core' in the
+  #      asar, which bricked users). Proven to FAIL on that exact regression.
+  #   2. auto-update E2E — tests/mock-relay/ serves a fake electron-updater feed;
+  #      the overlay must detect + download N+1 against the mock (never prod).
+  # A shared-setup failure blocks both checks at once (accepted tradeoff). In
+  # ci-summary.needs => blocking.
+  overlay-e2e-linux:
+    name: Overlay E2E (Linux — launch smoke + auto-update)
+    needs: authorize
+    runs-on: [self-hosted, linux, unn]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: cross-platform-overlay/package-lock.json
+      - name: Cache Electron binary
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ hashFiles('cross-platform-overlay/package-lock.json') }}
+      # admin-dashboard must install first — the renderer cross-imports it (@dashboard).
+      - name: Install admin-dashboard deps
+        working-directory: admin-dashboard
+        run: npm ci
+      - name: Install overlay deps
+        working-directory: cross-platform-overlay
+        run: npm ci
+      - name: Build renderer
+        working-directory: cross-platform-overlay
+        run: npm run build:renderer
+      - name: Install Xvfb + Electron system libs
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends xvfb libgtk-3-0 libnotify4 libnss3 libxss1 libxtst6 xdg-utils libatspi2.0-0 libuuid1 libsecret-1-0 libgbm1
+          # libasound2 was renamed libasound2t64 in Ubuntu 24.04 (the t64 ABI transition);
+          # try the new name first, fall back to the classic name on older runners.
+          sudo apt-get install -y --no-install-recommends libasound2t64 || sudo apt-get install -y --no-install-recommends libasound2
+      # ── 1. Packaged-launch smoke ──
+      - name: Build Linux package
+        working-directory: cross-platform-overlay
+        run: npx electron-builder --linux dir
+      - name: Smoke-test packaged overlay (headless launch, ~15s)
+        run: |
+          BIN="cross-platform-overlay/dist-electron/linux-unpacked/fallout-chat-mod"
+          xvfb-run -a node cross-platform-overlay/scripts/ci-launch-smoke.mjs "$BIN"
+      # ── 2. Auto-update E2E (hermetic mock relay) ──
+      - name: Run auto-update E2E
+        working-directory: tests/mock-relay
+        timeout-minutes: 5
+        env:
+          ELECTRON_NO_SANDBOX: '1'
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          ELECTRON_DISABLE_SECURITY_WARNINGS: '1'
+          NODE_OPTIONS: '--max-old-space-size=1024'
+        run: node auto-update.e2e.mjs
+
+  # ── Auto-update E2E (Windows / NSIS path) — build + artifact verification ────
+  # Builds the NSIS installer inside win-electron-builder (Wine + NSIS + Xvfb)
+  # using the docker cp strategy (no container: directive — DinD volume mounts
+  # don't work against the runner FS).
+  #
+  # Why no Wine execution: running a packaged Electron 31+ exe under Wine is not
+  # a supported pattern — electron-builder's own test suite runs Windows tests on
+  # real Windows runners and documents that Wine "is not capable of installing or
+  # running Windows executables."  The overlay-autoupdate-e2e job (Linux/AppImage)
+  # already exercises the electron-updater code path end-to-end.  This job covers
+  # Windows-specific build correctness: the right files are present, the right
+  # prod URL is in app-update.yml, and latest.yml has all required feed fields.
+  # If a Windows runner becomes available, add a second execution step alongside.
+  overlay-autoupdate-e2e-windows:
+    name: Overlay auto-update E2E (Windows/NSIS)
+    needs: authorize
+    runs-on: [self-hosted, linux, unn]
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/dev'))
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: cross-platform-overlay/package-lock.json
+
+      - name: Cache Electron binary
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ~/.cache/electron
+          key: electron-${{ hashFiles('cross-platform-overlay/package-lock.json') }}
+
+      - name: Pull win-electron-builder image
+        env:
+          DOCKER_HOST: tcp://docker:2376
+          DOCKER_TLS_VERIFY: "1"
+          DOCKER_CERT_PATH: /certs/client
+        run: |
+          docker logout ghcr.io || true
+          docker pull ghcr.io/unn-corp/win-electron-builder:latest
+
+      - name: Build Windows NSIS package (docker cp strategy)
+        env:
+          DOCKER_HOST: tcp://docker:2376
+          DOCKER_TLS_VERIFY: "1"
+          DOCKER_CERT_PATH: /certs/client
+        run: |
+          cat > /tmp/win-build-inner.sh << 'INNERSCRIPT'
+          set -e
+
+          # wine32, p7zip, winCodeSign+rcedit-ia32 shim, and WOW64 Wine prefix are
+          # all pre-baked into the image — no runtime installs needed.
+          rm -f /tmp/.X99-lock
+          Xvfb :99 -screen 0 1024x768x24 &
+          export DISPLAY=:99
+          sleep 1
+
+          cd /workspace/admin-dashboard && npm ci
+          cd /workspace/cross-platform-overlay && npm install --ignore-scripts
+          cd /workspace/cross-platform-overlay && CSC_IDENTITY_AUTO_DISCOVERY=false ./node_modules/.bin/electron-builder --win nsis --publish=never
+          INNERSCRIPT
+
+          CID=$(docker run -d ghcr.io/unn-corp/win-electron-builder:latest sleep infinity)
+          trap "docker rm -f \"$CID\" 2>/dev/null || true" EXIT
+
+          docker cp "${GITHUB_WORKSPACE}/." "$CID:/workspace/"
+          docker cp /tmp/win-build-inner.sh "$CID:/tmp/win-build-inner.sh"
+          docker exec "$CID" bash /tmp/win-build-inner.sh
+          docker cp "$CID:/workspace/cross-platform-overlay/dist-electron/." "${GITHUB_WORKSPACE}/cross-platform-overlay/dist-electron/"
+
+      - name: Windows build artifact verification
+        run: node tests/mock-relay/win-artifacts-check.mjs
+
+  # ── Auto-update E2E (Windows — native exe on local PC) ───────────────────────
+  # Runs the packaged .exe directly on a self-hosted Windows runner — no Wine,
+  # no Docker, no fake process.  The mock relay binds to localhost so the exe
+  # talks to it just like a real update server.
+  #
+  # Runner label: [self-hosted, windows, local]
+  # Register your PC: repo Settings → Actions → Runners → New self-hosted runner
+  # → Windows → copy + run the three commands it shows.
+  #
+  # This job is NOT in the CI Summary required list — it only runs when the
+  # Windows runner is online.  It's bonus coverage on top of the artifact check.
+  overlay-autoupdate-e2e-windows-exec:
+    name: Overlay auto-update E2E (Windows native exe)
+    needs: authorize
+    runs-on: [self-hosted, windows, unn]
+    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/prod')
+    continue-on-error: true
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # Two steps with working-directory — Windows PowerShell 5.1 has no '&&'.
+      - name: Install admin-dashboard deps
+        run: npm ci
+        working-directory: admin-dashboard
+        shell: powershell
+
+      - name: Install overlay deps
+        run: npm ci
+        working-directory: cross-platform-overlay
+        shell: powershell
+
+      # electron-builder is invoked directly (not via the dist:win script), so the
+      # Vite renderer must be built first — otherwise dist-renderer/ is missing from
+      # the asar and the packaged app has no UI.
+      - name: Build renderer
+        run: npm run build:renderer
+        working-directory: cross-platform-overlay
+        shell: powershell
+
+      - name: Build Windows NSIS package (native)
+        run: npx electron-builder --win nsis --publish=never
+        working-directory: cross-platform-overlay
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        shell: powershell
+
+      - name: Windows auto-update E2E (native exe)
+        run: node tests/mock-relay/auto-update.e2e.mjs
+        env:
+          FCM_UPDATER_INITIAL_DELAY_MS: '2000'
+        shell: powershell
+
+  # ── The single required status check ────────────────────────────────────────
+  ci-summary:
+    name: CI Summary
+    runs-on: [self-hosted, linux, unn]
+    if: always()
+    needs:
+      - authorize                      # PR gate — skipped (unlabeled) ⇒ this summary fails, no false green
+      - unit-vitest                    # consolidated overlay + dashboard Vitest (matrix)
+      - overlay-e2e-linux              # consolidated launch-smoke + auto-update E2E (Linux)
+      - overlay-autoupdate-e2e-windows # NSIS path: updater must detect + download N+1 (Windows)
+      - lint-typecheck                 # Phase 2: now a required blocking gate
+      - backend-jest                   # Phase 2: now a required blocking gate
+    steps:
+      # Require every listed job to have SUCCEEDED. A skipped job (e.g. an
+      # unlabeled fork PR where `authorize` did not run) must NOT pass the gate,
+      # so we check for the absence of success rather than just the absence of
+      # failure — otherwise skipped required jobs would false-green the merge.
+      - name: Require all gate jobs to have succeeded
+        run: |
+          if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ] || \
+             [ "${{ contains(needs.*.result, 'cancelled') }}" = "true" ] || \
+             [ "${{ contains(needs.*.result, 'skipped') }}" = "true" ]; then
+            echo "A required job failed, was cancelled, or was skipped (fork PR not yet ci-approved?)."
+            exit 1
+          fi
+          echo "All required jobs passed."
+
+  # fcm-dev deploys via a native Dokploy webhook registered in the GitHub repo
+  # (push events) — Dokploy matches the `dev` branch and redeploys. Not CI-gated
+  # by design (chosen 2026-06-12). The prior CI-gated deploy job was removed.

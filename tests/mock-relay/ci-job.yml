@@ -1,0 +1,95 @@
+# GitHub Actions job definition for the overlay auto-update E2E test.
+#
+# Paste this job block into .github/workflows/ci.yml under `jobs:` when you
+# want to enable it in CI.  It is kept separate here so it doesn't auto-land
+# in the required CI Summary gate until it has proven green in the repo.
+#
+# What it verifies:
+#   ✓ The mock relay boots and serves a valid electron-updater generic feed
+#   ✓ The overlay (unpackaged Electron) detects version N+1 from the hermetic mock
+#   ✓ No network traffic reaches falloutchatmod.com (all URLs rewritten)
+#   ✓ electron-updater emits "update available" or "update downloaded" in stdout
+#
+# What it does NOT verify (aspirational / TODOs):
+#   - apply + relaunch (quitAndInstall): requires code-signing + full installer flow
+#   - Windows/macOS: this job is Linux-only (AppImage feed)
+#   - differential/blockmap updates: served artifact has no blockmap; full download only
+
+name: overlay-autoupdate-e2e
+
+on:
+  push:
+    paths:
+      - 'cross-platform-overlay/**'
+      - 'tests/mock-relay/**'
+  pull_request:
+    paths:
+      - 'cross-platform-overlay/**'
+      - 'tests/mock-relay/**'
+  workflow_dispatch: {}
+
+jobs:
+  overlay-autoupdate-e2e:
+    name: Overlay auto-update E2E (Linux/mock)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: cross-platform-overlay/package-lock.json
+
+      - name: Install overlay dependencies
+        working-directory: cross-platform-overlay
+        run: npm ci
+
+      - name: Build renderer
+        working-directory: cross-platform-overlay
+        run: npm run build:renderer
+
+      - name: Install Xvfb and Electron dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            xvfb \
+            libgtk-3-0 \
+            libnotify4 \
+            libnss3 \
+            libxss1 \
+            libxtst6 \
+            xdg-utils \
+            libatspi2.0-0 \
+            libuuid1 \
+            libsecret-1-0 \
+            libgbm1 \
+            libasound2
+
+      - name: Run auto-update E2E test
+        working-directory: tests/mock-relay
+        timeout-minutes: 5
+        env:
+          # Electron sandbox requires a kernel flag on GitHub runners — disable it
+          ELECTRON_NO_SANDBOX: '1'
+          # Force software rendering (no GPU in CI)
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          # Suppress Electron security warnings
+          ELECTRON_DISABLE_SECURITY_WARNINGS: '1'
+          # Optional: increase Node.js heap for large Electron process
+          NODE_OPTIONS: '--max-old-space-size=1024'
+        run: node auto-update.e2e.mjs
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: overlay-autoupdate-e2e-logs
+          path: |
+            cross-platform-overlay/dist-electron/
+            ~/.config/Fallout Chat Mod/logs/
+          retention-days: 7

@@ -1,0 +1,31 @@
+{
+  "name": "fcm-promo",
+  "version": "1.0.0",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render:all": "npm run render:header && npm run render:wiki-page && npm run render:autocomplete && npm run render:chat-feed && npm run render:wiki-flow && npm run render:commands && npm run render:party",
+    "render:header": "remotion render src/index.ts Header out/header.png --props='{}'",
+    "render:wiki-page": "remotion render src/index.ts WikiPageStill out/wiki-page.png --props='{}'",
+    "render:autocomplete": "remotion render src/index.ts AutocompleteStill out/autocomplete.png --props='{}'",
+    "render:chat-feed": "remotion render src/index.ts ChatFeedStill out/chat-feed.png --props='{}'",
+    "render:wiki-flow": "remotion render src/index.ts WikiFlowVideo out/wiki-flow.mp4",
+    "render:commands": "remotion render src/index.ts CommandsGif out/commands.gif",
+    "render:party": "remotion render src/index.ts PartyGif out/party.gif"
+  },
+  "dependencies": {
+    "@remotion/cli": "^4.0.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "remotion": "^4.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "typescript": "^5.4.0"
+  },
+  "overrides": {
+    "esbuild": "0.28.1"
+  }
+}

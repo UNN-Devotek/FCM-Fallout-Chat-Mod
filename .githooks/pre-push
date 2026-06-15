@@ -1,0 +1,50 @@
+#!/bin/sh
+# v1.3.18 P3: enforce that the backend TypeScript compiles strictly before
+# every push to prod. The Dockerfile uses `npx tsc` (NOT --noEmit), and
+# from 2026-05-12 to 2026-05-23 it silently failed to deploy because of
+# three pre-existing TS errors that local `--noEmit` ran without flagging.
+# A 2-line hook would have caught it. This is that hook.
+#
+# Install once with:
+#   git config core.hooksPath .githooks
+#
+# To bypass intentionally (rare):
+#   git push --no-verify
+set -e
+
+# Only enforce on pushes to prod.
+target_ref="$2"
+if [ -z "$target_ref" ]; then
+    target_ref="$(git symbolic-ref --short HEAD 2>/dev/null || echo '')"
+fi
+case "$target_ref" in
+    refs/heads/prod|prod) ;;
+    *) exit 0 ;;
+esac
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT/backend"
+
+# Use the same flags the Dockerfile uses — strict tsc, NOT --noEmit.
+if [ -x "node_modules/.bin/tsc" ]; then
+    tsc_bin="node_modules/.bin/tsc"
+elif command -v npx >/dev/null 2>&1; then
+    tsc_bin="npx tsc"
+else
+    echo "pre-push: tsc not available; install deps with 'cd backend && npm install'" >&2
+    exit 1
+fi
+
+echo "pre-push: backend tsc (strict, matches Dockerfile) ..."
+if ! $tsc_bin 2>&1 | tail -25; then
+    echo "" >&2
+    echo "pre-push: backend tsc FAILED — push blocked." >&2
+    echo "         This is the SAME compile that runs in the Dockerfile." >&2
+    echo "         If you push anyway, Dokploy will fail to deploy and the" >&2
+    echo "         backend will silently stop receiving your changes." >&2
+    echo "" >&2
+    echo "         Bypass with --no-verify only if you know exactly why." >&2
+    exit 1
+fi
+echo "pre-push: backend tsc OK"
+exit 0
