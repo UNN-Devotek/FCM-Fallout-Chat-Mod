@@ -1,119 +1,112 @@
-# Auto-Update
+# Update Notification
 
-The Electron overlay uses **electron-updater** for fully automatic, silent updates. The implementation is in `updater.js` and bootstrapped from `main.js`.
+The Electron overlay **does not auto-update**. `electron-updater`, the `latest*.yml` /
+`app-update.yml` feed, and the `build.publish` config were removed for Nexus Mods ToS
+compliance (the Nexus File Submission Guidelines prohibit executables that connect to the
+internet to download or send information for update purposes).
 
----
-
-## Feed configuration
-
-The updater uses electron-builder's `generic` provider. The feed is:
-
-```
-https://falloutchatmod.com/downloads/electron/
-```
-
-electron-builder bakes an `app-update.yml` into the packaged app at build time pointing to this URL. At runtime, electron-updater reads `latest.yml` (Windows) or `latest-linux.yml` (Linux) from that base URL to discover the current version.
-
-This feed is **separate from the WinForms 1.3.x release channel**. The Electron app manages its own version independently.
+Instead, the overlay shows a **passive OS notification** at boot/WS-connect when a newer
+version is available. It downloads and installs nothing; clicking the notification opens the
+Nexus Mods page for a manual download.
 
 ---
 
-## Update triggers
+## How it works
 
-There are three triggers that cause the updater to call `checkForUpdates()` (`updater.js:96`):
+### Version delivery (server → client)
 
-| Trigger | Timing |
+The latest published version travels over the **existing chat WebSocket** — no dedicated
+update network call is made. On every WS connection handshake (alongside `presence:state`)
+the server sends:
+
+```json
+{
+  "type": "app:update-available",
+  "payload": { "latestVersion": "1.3.90" }
+}
+```
+
+The server maintains an in-memory `latestVersion` cache, initialized at boot from the DB
+(`prisma.release.findFirst({ orderBy: { publishedAt: 'desc' } })`) and refreshed by
+`POST /admin/releases`. See `docs/realtime/websocket-protocol.md` for the full message spec.
+
+### Version compare + notification (client)
+
+The main process handler (`main.js`, repurposed from the old `release:published` intercept):
+
+1. Receives `app:update-available` with `latestVersion`.
+2. Compares against `APP_VERSION` using a `cmpVersions` helper (numeric-aware semver
+   comparison in `overlay-core.js`).
+3. If `latestVersion > APP_VERSION`, calls `showUpdateNotification(version)`.
+4. A **once-per-app-session guard** (`updateNotifiedThisSession` flag) suppresses duplicate
+   toasts on reconnects within the same launch — the user sees at most one toast per boot.
+
+### OS notification
+
+`showUpdateNotification` reuses the existing `showSystemNotification` pattern (Electron
+`Notification`, the app icon). On click: `shell.openExternal(NEXUS_MOD_URL)` —
+`https://www.nexusmods.com/fallout76/mods/4082`.
+
+Platform support:
+- **Windows** — native toast (AUMID `com.falloutchatmod.overlay`, already set at
+  `main.js:3272`).
+- **Linux** — libnotify (already listed in `.deb` dependencies).
+- **macOS** — native macOS notification (no extra setup).
+
+Notification copy: **title** `Update!  v{version}` · **body** `A new version of Fallout Chat Mod
+is available. Click to get it on Nexus Mods.`
+
+---
+
+## What was removed
+
+| Removed item | Why |
 |---|---|
-| App startup | 30 seconds after launch (avoids slowing cold start) |
-| Periodic poll | Every 4 hours (`CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000`, `updater.js:48`) |
-| `release:published` WebSocket broadcast | Immediately when the backend broadcasts a new release |
-
-The `release:published` path means every currently-connected client checks for an update at publish time, without waiting for the 4-hour poll. The WS message is intercepted in the proxy (`main.js:993`) and calls `updater.onRelasePublished()`.
-
----
-
-## Download and install behavior
-
-```js
-autoUpdater.autoDownload = true;         // download begins the moment a newer version is found
-autoUpdater.autoInstallOnAppQuit = true; // backstop: installed on next quit if restart was skipped
-```
-
-On `update-downloaded`, the updater:
-
-1. Notifies the renderer (`updater:status`, phase `'restart'`) so a banner appears
-2. Waits **5 seconds** (`RESTART_DELAY_MS = 5000`, `updater.js:51`) to let the user see the banner
-3. Calls `autoUpdater.quitAndInstall(true, true)` — `isSilent=true` (no UAC prompt for per-user installers), `isForceRunAfter=true` (relaunches after install)
-
-The user never has to click anything. The banner is purely informational.
+| `cross-platform-overlay/updater.js` (the `Updater`/`electron-updater` engine) | Nexus ToS: no auto-download/install |
+| `build.publish` block in `package.json` | Feed manifests (`latest*.yml`, `app-update.yml`) are no longer generated |
+| IPC channels `updater:check`, `updater:get-last-result`, `updater:install`, `updater:result`, `updater:status` | Removed with the updater engine |
+| Renderer `src/updater-ui.ts` (in-overlay banner machine) | OS notification replaces the in-overlay banner |
+| `release:published` WS broadcast | Replaced by `app:update-available` (connect-time only; no live mid-session broadcast) |
+| `/api/version` overlay fetch | The overlay no longer polls this endpoint; version label is sourced from the build (`APP_VERSION`) |
 
 ---
 
-## Fast-forward design
+## Nexus ToS compliance rationale
 
-`latest.yml` / `latest-linux.yml` always point to the **newest version**. A client many versions behind jumps straight to the latest; there is no per-version stepping. Every release **overwrites** `latest*.yml` — never point the feed at an intermediate version.
+Nexus's guideline prohibits files that "connect to the internet to download or send
+information" for updates. After this change:
 
-This design is intentional: it keeps the feed simple and ensures all users reach the current version in one update cycle.
+- The binary **auto-updates nothing** and fetches **no update feed**.
+- The latest version number arrives on the chat WebSocket — the connection already justified
+  as crucial to the mod's function.
+- Clicking the notification routes the user **to Nexus** to download manually.
+- No dedicated update connection is added.
 
----
-
-## State persistence across updates
-
-All client state is stored in a **single `overlay-state.json`** in Electron's `userData` directory:
-
-- **Windows**: `%APPDATA%\Fallout Chat Mod\overlay-state.json`
-- **Linux**: `~/.config/Fallout Chat Mod/overlay-state.json`
-
-Contents include: `installToken`, `username`, `discordLinked`, `displayName`, `userRole`, `bounds`, `settings` (keybinds, theme, opacity, etc.), `autoLaunch`.
-
-Because `userData` is outside the app package directory, it survives updates automatically. No migration is needed in the typical case.
+This position was disclosed proactively to Nexus Mods support. If they request removal of
+the notification entirely, it is a small isolated revert (this notification system only);
+the rest of the compliance work stands regardless.
 
 ---
 
-## `productName` spacing caveat
+## State persistence across updates (unchanged)
 
-The `productName` in `package.json` is **`"Fallout Chat Mod"`** (with spaces). Electron derives the `userData` directory from this name.
-
-In v1.3.62 the name was changed from `"Fallout ChatMod"` (no space). This moved the `userData` directory, orphaning existing users' state. `migrateLegacyUserData()` (`main.js:721`) handles this one-time migration on startup:
-
-1. Checks whether `%APPDATA%\Fallout ChatMod\overlay-state.json` exists and contains real user data
-2. If the current state is missing or a pristine auto-generated default, copies the legacy file over
-3. Never overwrites a current state that has real user data (`stateHasRealData`, `main.js:713`)
-
-**Build and filename rule**: electron-builder output filenames, `latest*.yml` `url` fields, and any download link must use the exact spaced name `"Fallout Chat Mod"`. A mismatch produces a 404 silently saved as `.exe`, which users see as "file corrupted."
+Because users update manually (download + reinstall), the `userData` directory is outside
+the app package and survives reinstalls automatically. `migrateLegacyUserData()` still
+handles the one-time migration from `"Fallout ChatMod"` → `"Fallout Chat Mod"` userData
+path (v1.3.62 rename).
 
 ---
 
-## Dev/unpackaged guard
+## `productName` spacing caveat (unchanged)
 
-electron-updater throws `"Dev mode: skip checking for updates"` when the app is not packaged (`app.isPackaged === false`). `_safeCheck()` (`updater.js:188`) catches this pattern and silently no-ops, so the development workflow is unaffected.
-
----
-
-## IPC surface
-
-| IPC channel | Direction | Purpose |
-|---|---|---|
-| `updater:check` (invoke) | Renderer → main | Manual check (settings panel "Check for updates") |
-| `updater:get-last-result` (invoke) | Renderer → main | Fetch last known check result for settings panel |
-| `updater:install` | Renderer → main | Fallback: open download URL in browser (used if auto-install path fails) |
-| `updater:result` | Main → renderer | `{ available, version, releaseNotes }` |
-| `updater:status` | Main → renderer | `{ phase: 'downloading' | 'progress' | 'restart', version, percent?, delayMs? }` |
-
----
-
-## Diagnostic log
-
-All update events are logged to the always-on diagnostic file:
-
-- **Windows**: `%APPDATA%\Fallout Chat Mod\logs\main.log`
-- **Linux**: `~/.config/Fallout Chat Mod/logs/main.log`
-
-electron-updater's own logger is disabled (`autoUpdater.logger = null`) to avoid duplicate output; the `Updater` class logs through the same `diag()` function as the rest of `main.js`.
+`productName` in `package.json` is `"Fallout Chat Mod"` (with spaces). Electron derives the
+`userData` directory from this name. All download link filenames must use the exact spaced
+name — a mismatch produces a 404.
 
 ---
 
 ## Cross-links
 
-- Full release pipeline (packaging, upload, `POST /admin/releases`): `../deployment/`
+- WS message spec: `../realtime/websocket-protocol.md` (`app:update-available`)
+- Full release pipeline: `../deployment/`
 - Overview: `README.md`

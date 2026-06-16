@@ -155,11 +155,9 @@ if (KDE_WAYLAND) {
 }
 
 // Disable QUIC / HTTP-3. Our origin is behind Cloudflare, which advertises HTTP/3;
-// Electron's QUIC stack intermittently fails the auto-updater's download request
-// with net::ERR_QUIC_PROTOCOL_ERROR, which surfaced as an UNCAUGHT exception in the
-// main process ("A JavaScript error occurred…") and aborted the update for most
-// users. Forcing HTTP/1.1·2 over TCP makes updater/fetch requests reliable. WSS is
-// TCP-based and unaffected. Must run before app 'ready'.
+// Electron's QUIC stack intermittently fails relay/fetch requests with
+// net::ERR_QUIC_PROTOCOL_ERROR. Forcing HTTP/1.1·2 over TCP makes those requests
+// reliable. WSS is TCP-based and unaffected. Must run before app 'ready'.
 try { app.commandLine.appendSwitch('disable-quic'); } catch { /* ignore */ }
 
 // Dev-only: expose the Chrome DevTools Protocol on :9222 so the live renderer can
@@ -172,10 +170,9 @@ if (!app.isPackaged) {
 }
 
 // Safety net: a transient main-process error — especially a network blip from the
-// auto-updater's net layer (ERR_QUIC_PROTOCOL_ERROR / ECONNRESET / ETIMEDOUT via
-// Cloudflare), which can escape autoUpdater.on('error') as it's emitted on the raw
-// SimpleURLLoaderWrapper — must NOT crash the app with Electron's default error
-// dialog. Log and continue; the updater + relay retry on their own schedules.
+// relay's net layer (ERR_QUIC_PROTOCOL_ERROR / ECONNRESET / ETIMEDOUT via
+// Cloudflare) — must NOT crash the app with Electron's default error dialog. Log
+// and continue; the relay retries on its own schedule.
 // NOTE: do NOT call app.setName() here. The app name feeds app.getPath('userData')
 // (→ ~/.config/Fallout Chat Mod), so renaming it would orphan every existing
 // user's session/settings/keybinds on all platforms. KWin matches the overlay by
@@ -359,7 +356,6 @@ function httpModule(urlOrString) {
   return proto ? https : http;
 }
 const WebSocket = require('ws');
-const { Updater } = require('./updater');
 // Pure main-process helpers (side-effect-free, no electron). Single source of
 // truth — see overlay-core.js. main.js adapts these to its module state / the
 // electron `screen` API at the call sites below.
@@ -370,6 +366,10 @@ const overlayCore = require('./overlay-core');
 // source .csproj isn't present (e.g. a packaged build). Keeps the main process,
 // the renderer (__APP_VERSION__ via vite.config), and the desktop client aligned.
 const APP_VERSION = overlayCore.resolveAppVersion(fs, __dirname, path);
+
+// Nexus Mods page for Fallout Chat Mod — opened when the user clicks the update
+// notification toast. Users download new versions manually from here.
+const NEXUS_MOD_URL = 'https://www.nexusmods.com/fallout76/mods/4082';
 
 // ─── Configuration ──────────────────────────────────────────────────────────
 // Relay URL is env-driven: set RELAY_HTTP / RELAY_WS to point at any backend.
@@ -529,7 +529,9 @@ function setMouseIgnore(ignore, forward) {
 let modalInteractive = false;
 let sessionToken = null;
 let isQuitting = false;
-let updater = null;
+// Once-per-session guard: prevents the update toast from re-firing on WS reconnects
+// within the same app launch. Reset to false on each app start.
+let updateNotifiedThisSession = false;
 // Track whether the chat input was focused before a reload so we can re-focus it.
 let inputWasFocused = false;
 // User role from register response (null = regular user). Used to show the
@@ -1244,12 +1246,19 @@ function openRelaySocket(id) {
   });
   sock.on('message', (raw) => {
     const data = raw.toString();
-    // Intercept release:published so the updater re-checks immediately.
-    // The message is still forwarded to the renderer as normal.
+    // Intercept app:update-available (sent by the backend on WS connect) to show a
+    // passive OS notification when a newer version exists. The message is still
+    // forwarded to the renderer as normal.
     try {
       const msg = JSON.parse(data);
-      if (msg && msg.type === 'release:published' && updater) updater.onRelasePublished();
-    } catch { /* not JSON or not a release event — ignore */ }
+      if (msg && msg.type === 'app:update-available' && msg.payload && typeof msg.payload.latestVersion === 'string') {
+        const latestVersion = msg.payload.latestVersion;
+        if (!updateNotifiedThisSession && overlayCore.cmpVersions(latestVersion, APP_VERSION) > 0) {
+          updateNotifiedThisSession = true;
+          showUpdateNotification(latestVersion);
+        }
+      }
+    } catch { /* not JSON or not an update event — ignore */ }
     sendToRenderer('proxy:ws:message', { id, data });
   });
   sock.on('close', (code, reason) => {
@@ -1969,6 +1978,26 @@ function showSystemNotification(title, body) {
   }
 }
 
+// Show a passive OS notification when the backend reports a newer version on WS
+// connect. Clicking the toast opens the Nexus mod page so the user can download
+// the update manually. Downloads and installs nothing.
+function showUpdateNotification(version) {
+  try {
+    if (!Notification || !Notification.isSupported || !Notification.isSupported()) {
+      diag('[notify] not supported — skipping update notification v' + version);
+      return;
+    }
+    const title = `Update!  v${version}`;
+    const body = 'A new version of Fallout Chat Mod is available. Click to get it on Nexus Mods.';
+    const n = new Notification({ title, body, icon: appIcon() || undefined, silent: false });
+    n.on('click', () => { try { shell.openExternal(NEXUS_MOD_URL); } catch { /* non-fatal */ } });
+    n.show();
+    diag('[notify] update available: v' + version + ' → opened Nexus on click');
+  } catch (e) {
+    diag('[notify] update notification failed: ' + String(e && e.message || e));
+  }
+}
+
 // Onboarding just completed. Engage the game gate (chatActive=true), then guide
 // the user with a system notification:
 //   • FO76 already running → overlay stays up; tell them it's active.
@@ -1998,26 +2027,6 @@ ipcMain.on('overlay:save-settings', (_evt, settings) => {
   if (!settings || typeof settings !== 'object') return;
   saveState({ settings });
   if (settings.keybinds) registerHotkeys(settings.keybinds, settings.presets);
-});
-
-// ─── Updater IPC ──────────────────────────────────────────────────────────────
-// Renderer requests a manual update check (settings panel "Check for updates").
-ipcMain.handle('updater:check', async () => {
-  if (!updater) return { available: false };
-  return updater.check();
-});
-// Renderer requests the last known result (e.g. on settings panel open).
-ipcMain.handle('updater:get-last-result', () => {
-  if (!updater) return null;
-  return updater.getLastResult();
-});
-// Renderer user clicked "Download & Install" — open the download URL in browser.
-// (Full local-download + silent launch is the production target; for now we use
-// shell.openExternal as the safe prototype path until packaging is set up.)
-ipcMain.on('updater:install', (_evt, downloadUrl) => {
-  if (typeof downloadUrl === 'string' && /^https?:\/\//i.test(downloadUrl)) {
-    try { shell.openExternal(downloadUrl); } catch { /* ignore */ }
-  }
 });
 
 // ─── Bootstrap: resolve key → register → tell renderer it can connect ─────────
@@ -3011,8 +3020,6 @@ function rebuildTrayMenu() {
       { label: 'KDE: keep overlay above game', click: () => setupKdeKeepAbove({ interactive: true }) },
     ] : []),
     { type: 'separator' },
-    { label: 'Check for updates', click: () => { if (updater) updater.check(); } },
-    { type: 'separator' },
     { label: 'Quit', click: () => quitApp() },
   ];
   const menu = Menu.buildFromTemplate(template);
@@ -3382,27 +3389,6 @@ app.whenReady().then(() => {
   // session instead of requiring a manual open. Existing users pick this up the
   // first time they run a build that includes it.
   applyAutoLaunch(isAutoLaunchEnabled());
-
-  // ── Updater ─────────────────────────────────────────────────────────────────
-  updater = new Updater({
-    appVersion: APP_VERSION,
-    relayHttp: RELAY_HTTP,
-    sendToRenderer,
-    openExternal: (url) => { try { shell.openExternal(url); } catch { /* ignore */ } },
-  });
-  updater.start();
-
-  // DEV: ?fakeupdate=1 in RENDERER_URL triggers a fake newer release so the
-  // update prompt UI can be exercised without a real release feed.
-  if (RENDERER_URL && RENDERER_URL.includes('fakeupdate=1')) {
-    setTimeout(() => {
-      updater.notifyFakeUpdate({
-        version: '99.0.0',
-        downloadUrl: 'https://falloutchatmod.com/downloads/FalloutChatMod_Overlay_Setup_v99.0.0.exe',
-        releaseNotes: '[DEV] Fake update — testing the update prompt UI.',
-      });
-    }, 3000); // delay so the window is ready to receive the IPC message
-  }
 
   // ── Global hotkeys ──────────────────────────────────────────────────────────
   // ⚠️ These register fine but are NOT delivered under WSLg (the Windows desktop

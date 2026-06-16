@@ -462,14 +462,28 @@ Sent when the admin updates the slash-command list.
 }
 ```
 
-### `release:published` (S→C broadcast)
-Sent by `POST /admin/releases`. Triggers the Electron auto-updater to check for a new version.
+### `app:update-available` (S→C, sent on WS connect)
+Sent by the backend to each client immediately after the WS connection handshake (alongside
+`presence:state`). The payload carries the latest published version from the server's
+in-memory cache, initialized at boot and refreshed by `POST /admin/releases`.
+
+The client compares `latestVersion` against its own build version (`APP_VERSION`). If the
+server version is newer, the overlay shows a **passive OS notification** (Windows toast /
+Linux libnotify / macOS) with a click handler that opens the Nexus Mods page for a manual
+download. The overlay **downloads and installs nothing**.
+
+This is a connect-time handshake message, not a broadcast. A once-per-app-session guard in
+the client suppresses duplicate toasts on reconnects within the same session.
+
 ```json
 {
-  "type": "release:published",
-  "payload": { "version": "1.3.82", "downloadUrl": "https://...", "releaseNotes": "..." }
+  "type": "app:update-available",
+  "payload": { "latestVersion": "1.3.90" }
 }
 ```
+
+**Nexus ToS compliance note:** the latest version rides over the existing chat WebSocket
+(the crucial connection). No dedicated update network call is made by the binary.
 
 ### `mod:report` (S→C broadcast)
 Broadcast when a report is filed (mirrors `report:new` for legacy admin panel consumers).

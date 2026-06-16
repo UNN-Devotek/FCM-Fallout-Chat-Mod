@@ -22,7 +22,7 @@ All scripts live in `Packaging/`. They are called in sequence during the release
    - `Fallout Chat Mod-X.Y.Z.AppImage (Linux).zip`
 5. Both ZIPs land in `cross-platform-overlay/dist-electron/` alongside the raw files
 
-**Critical:** The script prints a reminder at the end: `latest.yml` and `latest-linux.yml` must continue to reference the raw `.exe`/`.AppImage`, not the ZIPs. The ZIPs are for website/Nexus human downloads only.
+**Note:** The ZIPs are for website/Nexus human downloads only. There are no `latest*.yml` feed files — `build.publish` was removed for Nexus Mods ToS compliance.
 
 **Parameters:**
 - `-Version` (required) — e.g. `1.3.73`
@@ -96,7 +96,7 @@ The patch preserves the original byte length by trimming excess whitespace insid
 
 | File | Purpose |
 |------|---------|
-| `install.ps1` | CLI one-liner installer: `irm https://falloutchatmod.com/install.ps1 \| iex`. Reads `latest.yml` from the feed, downloads the raw `.exe`, and runs it silently (per-user, no UAC). Displayed in the Windows file description on Nexus. |
+| `install.ps1` | CLI one-liner installer: `irm https://falloutchatmod.com/install.ps1 \| iex`. Queries `GET /api/releases` to discover the current version, downloads the raw `.exe`, and runs it silently (per-user, no UAC). Displayed in the Windows file description on Nexus. |
 
 ---
 
@@ -104,7 +104,7 @@ The patch preserves the original byte length by trimming excess whitespace insid
 
 | File | Purpose |
 |------|---------|
-| `install.sh` | CLI one-liner installer: `curl -fsSL https://falloutchatmod.com/install.sh \| bash`. Reads `latest-linux.yml`, downloads the `.AppImage`, makes it executable, and adds an app-menu launcher. |
+| `install.sh` | CLI one-liner installer: `curl -fsSL https://falloutchatmod.com/install.sh \| bash`. Queries `GET /api/releases` to discover the current version, downloads the `.AppImage`, makes it executable, and adds an app-menu launcher. |
 | `uninstall.sh` | Removes the installed AppImage and desktop launcher entry. |
 
 ---

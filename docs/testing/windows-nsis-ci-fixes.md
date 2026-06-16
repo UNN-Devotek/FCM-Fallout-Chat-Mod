@@ -1,8 +1,8 @@
 # Windows NSIS CI Build — Fix History
 
 This document records every failure and fix applied to get the
-`overlay-autoupdate-e2e-windows` CI job passing. It exists as context
-for future AI sessions or humans debugging the same job.
+`overlay-build-windows-nsis` CI job passing (formerly `overlay-autoupdate-e2e-windows`).
+It exists as context for future AI sessions or humans debugging the same job.
 
 ## Setup overview
 
@@ -165,11 +165,12 @@ runners and explicitly documents that Wine "is not capable of installing or runn
 Windows executables." There is no known Wine configuration that makes this work for
 Electron 31+.
 
-**Resolution:** The Wine execution step was removed. The `overlay-autoupdate-e2e-windows`
-job now ends with a static artifact verification step (`tests/mock-relay/win-artifacts-check.mjs`)
-that checks build correctness without running the exe. The Linux E2E job (`overlay-e2e-linux`) already exercises the `electron-updater` code path
-end-to-end. If a Windows runner is available, `overlay-autoupdate-e2e-windows-exec` covers
-real native execution as bonus coverage (`continue-on-error: true`).
+**Resolution:** The Wine execution step was removed. The `overlay-build-windows-nsis` job
+(renamed from `overlay-autoupdate-e2e-windows`) now ends with a static artifact verification step
+(`.github/scripts/win-artifacts-check.mjs`) that checks build correctness without running the exe
+— including asserting that `app-update.yml` and `latest*.yml` are absent (since auto-update was
+retired for Nexus ToS compliance). The native-Windows execution job (`overlay-autoupdate-e2e-windows-exec`)
+was removed with auto-update; a Windows VM can still be used for manual `.exe` testing if needed.
 
 ---
 
@@ -192,4 +193,4 @@ real native execution as bonus coverage (`continue-on-error: true`).
 
 The build step traps `docker rm -f $CID` on EXIT (cleanup on build failure), then
 `docker cp`s `dist-electron/` back to the runner workspace. The next step runs
-`tests/mock-relay/win-artifacts-check.mjs` on the runner host to verify the artifacts.
+`.github/scripts/win-artifacts-check.mjs` on the runner host to verify the artifacts.

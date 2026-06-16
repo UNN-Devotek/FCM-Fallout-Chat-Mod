@@ -11,17 +11,10 @@
     These ZIPs are the artifacts linked from the website download buttons and uploaded
     to Nexus Mods. They are ADDITIONAL to (not replacing) the raw installer files.
 
-    CRITICAL -- electron-updater feed must NOT point at ZIPs:
-      latest.yml (Windows) and latest-linux.yml (Linux) MUST keep pointing at the RAW
-      .exe / .AppImage files produced by electron-builder. The ZIPs are for humans
-      (website/Nexus). Changing the feed to reference a ZIP would break auto-updates
-      for every installed client, because electron-updater can't install a zip.
-
     Role in the release pipeline:
       Run AFTER electron-builder produces the raw artifacts and BEFORE uploading to
       the VPS. Outputs land in the same dist-electron dir alongside the raw files.
-      Upload order to /app/downloads/electron/: raw .exe + .AppImage, then the ZIPs,
-      then latest*.yml (overwrite last so the feed is only live once sizes are verified).
+      Upload order to /app/downloads/electron/: raw .exe + .AppImage, then the ZIPs.
 
 .PARAMETER Version
     Version string, e.g. 1.3.68.
@@ -111,4 +104,4 @@ Remove-Item $stagingRoot -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host "[package-downloads] Done. Two download ZIPs ready in $DistDir"
 Write-Host "  $winZipName  ($([math]::Round($winSize/1MB,1)) MB)"
 Write-Host "  $linuxZipName  ($([math]::Round($linuxSize/1MB,1)) MB)"
-Write-Host "NOTE: latest.yml and latest-linux.yml still reference the raw .exe/.AppImage -- do NOT update them to point at ZIPs."
+Write-Host "NOTE: Upload the raw .exe/.AppImage alongside the ZIPs. The ZIPs are for human download (website/Nexus) -- not for the download URL in POST /admin/releases."

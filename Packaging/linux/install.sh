@@ -4,10 +4,13 @@
 #
 #   curl -fsSL https://falloutchatmod.com/install.sh | bash
 #
-# Downloads the latest AppImage from the release feed, installs it under
+# Downloads the latest AppImage from the release API, installs it under
 # ~/.local/share, registers a desktop launcher + icon, and prints KDE setup
-# notes. After this one-time install the app AUTO-UPDATES itself (electron-
-# updater), so you never need to re-run this for new versions.
+# notes.
+#
+# New versions are NOT installed automatically. Download new versions from
+# Nexus Mods (https://www.nexusmods.com/fallout76/mods/4082) or
+# falloutchatmod.com.
 #
 # Re-running is safe (idempotent): it just refreshes to the current build.
 # Uninstall:  curl -fsSL https://falloutchatmod.com/uninstall.sh | bash
@@ -15,12 +18,12 @@
 set -euo pipefail
 
 BASE="https://falloutchatmod.com/downloads/electron"
-FEED="$BASE/latest-linux.yml"
+API_URL="https://falloutchatmod.com/api/releases"
 
 DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
 CONFIG_HOME="${XDG_CONFIG_HOME:-$HOME/.config}"
 APP_DIR="$DATA_HOME/FalloutChatMod"
-APP_PATH="$APP_DIR/Fallout Chat Mod.AppImage"           # stable name (auto-update rewrites in place)
+APP_PATH="$APP_DIR/Fallout Chat Mod.AppImage"           # stable install path
 DESKTOP_DIR="$DATA_HOME/applications"
 DESKTOP_FILE="$DESKTOP_DIR/fallout-chat-mod.desktop"
 ICON_DIR="$DATA_HOME/icons/hicolor/512x512/apps"
@@ -32,15 +35,21 @@ die()  { printf '\033[1;31mxx \033[0m %s\n' "$*" >&2; exit 1; }
 
 command -v curl >/dev/null 2>&1 || die "curl is required."
 
-# --- Resolve the latest AppImage filename from the update feed ----------------
-# latest-linux.yml has a `path: Fallout Chat Mod-<ver>.AppImage` line (the name
-# can contain spaces). We read it verbatim, then URL-encode for the download.
-say "Looking up the latest version…"
-YML="$(curl -fsSL "$FEED")" || die "Could not reach the release feed ($FEED)."
-VERSION="$(printf '%s\n' "$YML" | sed -n 's/^version:[[:space:]]*//p' | head -n1 | tr -d '\r')"
-APPIMAGE_NAME="$(printf '%s\n' "$YML" | sed -n 's/^path:[[:space:]]*//p' | head -n1 | tr -d '\r')"
-[ -n "$APPIMAGE_NAME" ] || die "Could not parse the AppImage name from the feed."
-say "Latest version: ${VERSION:-unknown}"
+# --- Resolve the latest AppImage filename from the release API ----------------
+# GET /api/releases returns { "data": [...] } newest-first.  data[0].version is
+# the latest release version. We reconstruct the raw AppImage filename from it
+# using the same convention as the release pipeline: productName "Fallout Chat
+# Mod" WITH spaces, then URL-encode for the download URL.
+say "Looking up the latest version..."
+API_JSON="$(curl -fsSL "$API_URL")" || die "Could not reach the release API ($API_URL)."
+# Extract the first version value from the JSON without requiring jq/python.
+# The JSON has the form: {"data":[{"version":"1.2.3",...},...]}
+VERSION="$(printf '%s\n' "$API_JSON" | grep -o '"version":"[^"]*"' | head -n1 | sed 's/"version":"//;s/"//')"
+[ -n "$VERSION" ] || die "Could not parse the version from the release API response."
+say "Latest version: $VERSION"
+
+# Build the raw AppImage filename using the release pipeline convention.
+APPIMAGE_NAME="Fallout Chat Mod-${VERSION}.AppImage"
 
 # URL-encode the filename (spaces -> %20, etc.) without depending on jq/python.
 urlencode() {
@@ -151,7 +160,7 @@ Using the overlay
 - Run Fallout 76 in BORDERLESS WINDOWED (not exclusive fullscreen).
 - The overlay shows automatically while Fallout 76 is running (detected under
   Proton). With the game closed it stays hidden by design.
-- The app auto-updates itself — no need to re-run the installer.
+- Download new versions from Nexus Mods (https://www.nexusmods.com/fallout76/mods/4082) or falloutchatmod.com.
 
 KDE Plasma (Wayland) — automatic
 - On first launch the overlay forces XWayland and installs two KWin rules so it
@@ -191,5 +200,6 @@ fi
 
 echo
 say "Done. Launch \"Fallout Chat Mod\" from your application menu, then sign in"
-say "with Discord. The app keeps itself up to date automatically."
+say "with Discord."
+say "Download new versions from Nexus Mods (https://www.nexusmods.com/fallout76/mods/4082) or falloutchatmod.com."
 say "Uninstall any time:  curl -fsSL https://falloutchatmod.com/uninstall.sh | bash"

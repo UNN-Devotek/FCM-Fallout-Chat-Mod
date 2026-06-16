@@ -439,6 +439,16 @@ function planOzoneRelaunch({ kdeWayland, argv = [], appImagePath = null } = {}) 
   return opts;
 }
 
+// Compare two semver-like version strings. Returns a positive number when `a` is
+// newer than `b`, negative when `a` is older, and 0 when they are equal.
+// Uses locale-aware numeric comparison so '1.3.10' > '1.3.9' (not string-ordered).
+// Malformed / non-string inputs are treated as '0.0.0' — they will never appear
+// newer than any real version.
+function cmpVersions(a, b) {
+  const normalize = (v) => (typeof v === 'string' && v.trim() ? v.trim() : '0.0.0');
+  return normalize(a).localeCompare(normalize(b), undefined, { numeric: true, sensitivity: 'base' });
+}
+
 module.exports = {
   DEFAULT_APP_CLIENT_KEY,
   DEFAULT_WIDTH,
@@ -469,4 +479,5 @@ module.exports = {
   buildKwinKeepAboveScript,
   buildKwinRemoveRulesScript,
   planOzoneRelaunch,
+  cmpVersions,
 };

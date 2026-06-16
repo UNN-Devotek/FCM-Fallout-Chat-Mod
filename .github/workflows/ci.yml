@@ -1,29 +1,29 @@
 name: CI
 
-# ── Rollout state: PHASE 3 (Windows E2E now active for PRs on self-hosted runner) ──
+# ── Rollout state: Windows NSIS build verification active for PRs on self-hosted runner ──
 # The single required branch-protection check is the `CI Summary` job below.
-# It gates: unit-vitest (overlay + dashboard matrix), overlay-e2e-linux (launch
-# smoke + auto-update), lint-typecheck, backend-jest, and Windows NSIS E2E — all
-# blocking for PRs. (The disabled Playwright placeholder was removed in the CI
-# consolidation; re-add a job here when a mock-relay-targeted suite exists.)
+# It gates: unit-vitest (overlay + dashboard matrix), overlay-launch-smoke-linux
+# (packaged-launch smoke), overlay-build-windows-nsis (NSIS build verification),
+# lint-typecheck, and backend-jest — all blocking for PRs.
 #
-# PHASE 3 (active): `overlay-autoupdate-e2e-windows` now runs on the self-hosted
-# Linux build server using the win-electron-builder Docker image (Wine +
-# NSIS + Xvfb). It builds the NSIS installer inside the container via docker cp
-# strategy and smoke-tests the .exe via Wine. Auto-update E2E via Wine requires
-# WINE_CMD support in auto-update.e2e.mjs — tracked separately.
+# overlay-build-windows-nsis runs on the self-hosted Linux build server using the
+# win-electron-builder Docker image (Wine + NSIS + Xvfb). It builds the NSIS
+# installer inside the container via the docker cp strategy and statically verifies
+# the artifacts (installer + exe present; NO auto-update feed files emitted — the
+# overlay no longer auto-updates). Wine can BUILD an Electron 31+ exe but not RUN
+# it, so there is no Wine execution step.
 #
 # ── OVERLAY RELEASE GATES (MANDATORY, fail-closed) — see docs/deployment/releasing-the-overlay.md ──
 # A shipped overlay build MUST be tested before it goes ANYWHERE. v1.3.82 shipped a
 # build whose main process crashed on launch (`Cannot find module './overlay-core'`,
-# missing from electron-builder build.files) — it could not even self-update, so every
-# updated user was bricked. To prevent recurrence:
+# missing from electron-builder build.files) — every user who installed it was bricked.
+# With auto-update now removed, a bad build means a manual re-download for everyone, so
+# the launch gate matters as much as ever. To prevent recurrence:
 #   - CI guard (runs here, in the Overlay Vitest job): __tests__/build-files.test.js
 #     asserts every main-process require('./x') is included in package.json build.files.
-#   - Release-time gates (run on the build machine BEFORE any publish — feed manifests,
-#     POST /admin/releases, Nexus): Packaging/smoke-test.ps1 (clean launch, no crash) and
-#     Packaging/vt-gate.ps1 (VirusTotal scan must complete and PASS). If either fails, the
-#     build is published NOWHERE. Also verify the build actually auto-updates end-to-end.
+#   - Release-time gates (run on the build machine BEFORE any publish — POST /admin/releases,
+#     Nexus): Packaging/smoke-test.ps1 (clean launch, no crash) and Packaging/vt-gate.ps1
+#     (VirusTotal scan must complete and PASS). If either fails, the build is published NOWHERE.
 # ──────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -255,19 +255,14 @@ jobs:
         working-directory: ${{ matrix.workspace }}
         run: npm run test:unit --if-present
 
-  # ── Overlay E2E (Linux) — packaged-launch smoke + auto-update — REQUIRED gate ─
-  # Consolidated from the former overlay-launch-smoke + overlay-autoupdate-e2e
-  # jobs. They shared the same setup (install admin-dashboard + overlay, build
-  # renderer, Xvfb libs) and each rebuilt it; merging runs that ONCE, then:
-  #   1. launch smoke — builds the packaged overlay and asserts a clean startup.
-  #      Catches crash-on-launch (e.g. v1.3.82's missing './overlay-core' in the
-  #      asar, which bricked users). Proven to FAIL on that exact regression.
-  #   2. auto-update E2E — tests/mock-relay/ serves a fake electron-updater feed;
-  #      the overlay must detect + download N+1 against the mock (never prod).
-  # A shared-setup failure blocks both checks at once (accepted tradeoff). In
-  # ci-summary.needs => blocking.
-  overlay-e2e-linux:
-    name: Overlay E2E (Linux — launch smoke + auto-update)
+  # ── Overlay launch smoke (Linux) — REQUIRED gate ─────────────────────────────
+  # Builds the packaged overlay and asserts a clean startup. Catches crash-on-launch
+  # (e.g. v1.3.82's missing './overlay-core' in the asar, which bricked users).
+  # Proven to FAIL on that exact regression. In ci-summary.needs => blocking.
+  # (The former auto-update E2E was removed — the overlay no longer auto-updates;
+  # it shows a passive OS notification instead. See docs/overlay/auto-update.md.)
+  overlay-launch-smoke-linux:
+    name: Overlay launch smoke (Linux)
     needs: authorize
     runs-on: [self-hosted, linux, unn]
     timeout-minutes: 20
@@ -300,7 +295,7 @@ jobs:
           # libasound2 was renamed libasound2t64 in Ubuntu 24.04 (the t64 ABI transition);
           # try the new name first, fall back to the classic name on older runners.
           sudo apt-get install -y --no-install-recommends libasound2t64 || sudo apt-get install -y --no-install-recommends libasound2
-      # ── 1. Packaged-launch smoke ──
+      # ── Packaged-launch smoke ──
       - name: Build Linux package
         working-directory: cross-platform-overlay
         run: npx electron-builder --linux dir
@@ -308,32 +303,19 @@ jobs:
         run: |
           BIN="cross-platform-overlay/dist-electron/linux-unpacked/fallout-chat-mod"
           xvfb-run -a node cross-platform-overlay/scripts/ci-launch-smoke.mjs "$BIN"
-      # ── 2. Auto-update E2E (hermetic mock relay) ──
-      - name: Run auto-update E2E
-        working-directory: tests/mock-relay
-        timeout-minutes: 5
-        env:
-          ELECTRON_NO_SANDBOX: '1'
-          LIBGL_ALWAYS_SOFTWARE: '1'
-          ELECTRON_DISABLE_SECURITY_WARNINGS: '1'
-          NODE_OPTIONS: '--max-old-space-size=1024'
-        run: node auto-update.e2e.mjs
 
-  # ── Auto-update E2E (Windows / NSIS path) — build + artifact verification ────
+  # ── Windows NSIS build verification — REQUIRED gate ──────────────────────────
   # Builds the NSIS installer inside win-electron-builder (Wine + NSIS + Xvfb)
   # using the docker cp strategy (no container: directive — DinD volume mounts
-  # don't work against the runner FS).
+  # don't work against the runner FS). Wine can BUILD an Electron 31+ installer
+  # but not RUN it, so this job is build-correctness only.
   #
-  # Why no Wine execution: running a packaged Electron 31+ exe under Wine is not
-  # a supported pattern — electron-builder's own test suite runs Windows tests on
-  # real Windows runners and documents that Wine "is not capable of installing or
-  # running Windows executables."  The overlay-autoupdate-e2e job (Linux/AppImage)
-  # already exercises the electron-updater code path end-to-end.  This job covers
-  # Windows-specific build correctness: the right files are present, the right
-  # prod URL is in app-update.yml, and latest.yml has all required feed fields.
-  # If a Windows runner becomes available, add a second execution step alongside.
-  overlay-autoupdate-e2e-windows:
-    name: Overlay auto-update E2E (Windows/NSIS)
+  # It asserts Windows-specific build correctness: the installer + exe are present
+  # and non-trivial, and NO auto-update feed files (app-update.yml / latest*.yml)
+  # are emitted — the overlay no longer auto-updates (it shows a passive OS
+  # notification instead; see docs/overlay/auto-update.md).
+  overlay-build-windows-nsis:
+    name: Overlay Windows NSIS build verification
     needs: authorize
     runs-on: [self-hosted, linux, unn]
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/dev'))
@@ -392,64 +374,7 @@ jobs:
           docker cp "$CID:/workspace/cross-platform-overlay/dist-electron/." "${GITHUB_WORKSPACE}/cross-platform-overlay/dist-electron/"
 
       - name: Windows build artifact verification
-        run: node tests/mock-relay/win-artifacts-check.mjs
-
-  # ── Auto-update E2E (Windows — native exe on local PC) ───────────────────────
-  # Runs the packaged .exe directly on a self-hosted Windows runner — no Wine,
-  # no Docker, no fake process.  The mock relay binds to localhost so the exe
-  # talks to it just like a real update server.
-  #
-  # Runner label: [self-hosted, windows, local]
-  # Register your PC: repo Settings → Actions → Runners → New self-hosted runner
-  # → Windows → copy + run the three commands it shows.
-  #
-  # This job is NOT in the CI Summary required list — it only runs when the
-  # Windows runner is online.  It's bonus coverage on top of the artifact check.
-  overlay-autoupdate-e2e-windows-exec:
-    name: Overlay auto-update E2E (Windows native exe)
-    needs: authorize
-    runs-on: [self-hosted, windows, unn]
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/prod')
-    continue-on-error: true
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      # Two steps with working-directory — Windows PowerShell 5.1 has no '&&'.
-      - name: Install admin-dashboard deps
-        run: npm ci
-        working-directory: admin-dashboard
-        shell: powershell
-
-      - name: Install overlay deps
-        run: npm ci
-        working-directory: cross-platform-overlay
-        shell: powershell
-
-      # electron-builder is invoked directly (not via the dist:win script), so the
-      # Vite renderer must be built first — otherwise dist-renderer/ is missing from
-      # the asar and the packaged app has no UI.
-      - name: Build renderer
-        run: npm run build:renderer
-        working-directory: cross-platform-overlay
-        shell: powershell
-
-      - name: Build Windows NSIS package (native)
-        run: npx electron-builder --win nsis --publish=never
-        working-directory: cross-platform-overlay
-        env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        shell: powershell
-
-      - name: Windows auto-update E2E (native exe)
-        run: node tests/mock-relay/auto-update.e2e.mjs
-        env:
-          FCM_UPDATER_INITIAL_DELAY_MS: '2000'
-        shell: powershell
+        run: node .github/scripts/win-artifacts-check.mjs
 
   # ── The single required status check ────────────────────────────────────────
   ci-summary:
@@ -459,8 +384,8 @@ jobs:
     needs:
       - authorize                      # PR gate — skipped (unlabeled) ⇒ this summary fails, no false green
       - unit-vitest                    # consolidated overlay + dashboard Vitest (matrix)
-      - overlay-e2e-linux              # consolidated launch-smoke + auto-update E2E (Linux)
-      - overlay-autoupdate-e2e-windows # NSIS path: updater must detect + download N+1 (Windows)
+      - overlay-launch-smoke-linux     # packaged-launch smoke (Linux)
+      - overlay-build-windows-nsis     # NSIS build verification + no-feed-files assertion (Windows)
       - lint-typecheck                 # Phase 2: now a required blocking gate
       - backend-jest                   # Phase 2: now a required blocking gate
     steps:

@@ -3,9 +3,12 @@
 
     irm https://falloutchatmod.com/install.ps1 | iex
 
-  Downloads the latest installer from the release feed and runs it (per-user,
-  no admin prompt). After this one-time install the app AUTO-UPDATES itself, so
-  you never need to re-run this. Re-running just refreshes to the current build.
+  Downloads the latest installer from the release API and runs it (per-user,
+  no admin prompt). Re-running is safe and refreshes to the current build.
+
+  New versions are NOT installed automatically. Download new versions from
+  Nexus Mods (https://www.nexusmods.com/fallout76/mods/4082) or
+  falloutchatmod.com.
 
   About SmartScreen / antivirus: the installer is not code-signed yet, so
   Windows may show "unknown publisher" and some AV tools may flag it. This is a
@@ -16,24 +19,23 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
-$base = 'https://falloutchatmod.com/downloads/electron'
-$feed = "$base/latest.yml"
+$base    = 'https://falloutchatmod.com/downloads/electron'
+$apiUrl  = 'https://falloutchatmod.com/api/releases'
 
 function Say([string]$m) { Write-Host "==> $m" -ForegroundColor Green }
 
 Say 'Looking up the latest version...'
-$yml = (Invoke-WebRequest -UseBasicParsing -Uri $feed).Content
-# latest.yml has a `path: Fallout Chat Mod Setup <ver>.exe` line.
-$pathLine = ($yml -split "`n" | Where-Object { $_ -match '^\s*path:\s*' } | Select-Object -First 1)
-$verLine  = ($yml -split "`n" | Where-Object { $_ -match '^\s*version:\s*' } | Select-Object -First 1)
-if (-not $pathLine) { throw 'Could not parse the installer name from the release feed.' }
-$exeName = ($pathLine -replace '^\s*path:\s*', '').Trim().Trim('"')
-$version = if ($verLine) { ($verLine -replace '^\s*version:\s*', '').Trim() } else { 'unknown' }
+$relJson = (Invoke-WebRequest -UseBasicParsing -Uri $apiUrl).Content | ConvertFrom-Json
+if (-not $relJson.data -or $relJson.data.Count -eq 0) { throw 'No releases found from the release API.' }
+$version = $relJson.data[0].version
+if (-not $version) { throw 'Could not read version from the release API response.' }
 Say "Latest version: $version"
 
-# URL-encode the filename (it contains spaces). EscapeDataString encodes spaces
-# as %20 (UrlPathEncode leaves them literal, which 404s). The name has no slashes.
-$dlUrl = "$base/" + [Uri]::EscapeDataString($exeName)
+# Build the raw installer filename using the same convention as the release pipeline:
+# productName "Fallout Chat Mod" WITH spaces. URL-encode with EscapeDataString
+# (spaces -> %20).
+$exeName = "Fallout Chat Mod Setup $version.exe"
+$dlUrl   = "$base/" + [Uri]::EscapeDataString($exeName)
 
 # Recover a broken/locked prior install: stop any running overlay so its files
 # (app.asar, exe) are not locked and the NSIS installer can fully overwrite the
@@ -56,5 +58,5 @@ Start-Process -FilePath $dest -ArgumentList '/S','/CURRENTUSER' -Wait
 Remove-Item $dest -Force -ErrorAction SilentlyContinue
 
 Say 'Installed. Launch "Fallout Chat Mod" from the Start Menu, then sign in with Discord.'
-Say 'The app keeps itself up to date automatically.'
+Say 'Download new versions from Nexus Mods (https://www.nexusmods.com/fallout76/mods/4082) or falloutchatmod.com.'
 Say 'Run Fallout 76 in Borderless Windowed (not exclusive fullscreen) so the overlay can draw over it.'

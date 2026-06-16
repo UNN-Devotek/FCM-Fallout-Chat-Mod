@@ -1,6 +1,6 @@
 # Releasing the Electron Overlay
 
-This document covers the full release pipeline for the Electron overlay (`cross-platform-overlay/`). Related: `../overlay/auto-update.md` (auto-updater architecture and feed mechanics).
+This document covers the full release pipeline for the Electron overlay (`cross-platform-overlay/`). Related: `../overlay/auto-update.md` (update notification system — passive OS toast, no auto-download).
 
 ---
 
@@ -10,42 +10,40 @@ This document covers the full release pipeline for the Electron overlay (`cross-
 
 ### 1. `productName` is "Fallout Chat Mod" — WITH spaces
 
-`electron-builder` names its output after `productName` in `cross-platform-overlay/package.json`. The value is `"Fallout Chat Mod"` (three words, two spaces). Every filename produced by the build, every `url:` entry in `latest.yml` / `latest-linux.yml`, and every download link must use this exact spaced name.
+`electron-builder` names its output after `productName` in `cross-platform-overlay/package.json`. The value is `"Fallout Chat Mod"` (three words, two spaces). Every filename produced by the build and every download link must use this exact spaced name.
 
-A mismatch (e.g. `FalloutChatMod`) means the auto-updater downloads a file that does not exist on the server → 404 saved as `.exe` → "file corrupted" error in users' installs.
+A mismatch (e.g. `FalloutChatMod`) means users download a file that does not exist on the server → 404.
 
 ### 2. Publish BOTH platforms every release
 
-Every release must ship both the Windows `.exe` and the Linux `.AppImage`. The `latest.yml` (Windows) and `latest-linux.yml` (Linux) feed files are both overwritten on each release.
+Every release must ship both the Windows `.exe` and the Linux `.AppImage`.
 
-### 3. The electron-updater feed must point at RAW files only — never ZIPs
+Note: `latest.yml` / `latest-linux.yml` / `app-update.yml` are **no longer generated** — `build.publish` was removed for Nexus Mods ToS compliance. The overlay does not auto-update; there is no feed to maintain.
 
-`latest.yml` and `latest-linux.yml` must reference the raw `.exe` / `.AppImage` produced by `electron-builder`. The ZIPs created by `Packaging/package-downloads.ps1` are for human download (website, Nexus Mods) only. Pointing the feed at a ZIP breaks auto-update for every installed client (`electron-updater` cannot install a zip).
+### 3. Verify served file size matches local build artifact before publishing
 
-### 4. Verify served file size equals `latest*.yml` `size` before publishing
+After uploading artifacts to the VPS, check that the bytes served by the backend match the local build artifact size. Use `(Get-Item $artifact).Length` (PowerShell) or `stat --printf '%s' $artifact` (Linux) for the reference value; compare against `curl -sI <url> | grep -i content-length`.
 
-After uploading artifacts to the VPS, check that the bytes served by the backend match the `size` field in each `latest*.yml`. A mismatch means a corrupt download or partial upload.
-
-### 5. PowerShell scripts in `Packaging/` must remain ASCII-only
+### 4. PowerShell scripts in `Packaging/` must remain ASCII-only
 
 Windows PowerShell 5.1 run via the `-File` flag mis-tokenizes non-ASCII characters (e.g. em-dashes `—`, U+2014) inside double-quoted strings and throws a misleading `Unexpected token '}'` error pointing at an unrelated closing brace. Use plain ASCII hyphens (`-`), never Unicode dashes.
 
-### 6. NEVER publish an untested build — smoke-test + VirusTotal gates are MANDATORY and FAIL-CLOSED
+### 5. NEVER publish an untested build — smoke-test + VirusTotal gates are MANDATORY and FAIL-CLOSED
 
-A build MUST pass BOTH gates before **anything** is published (feed manifests, `POST /admin/releases`, Nexus). If either gate fails, the build does **not** get uploaded, registered, or posted **anywhere**.
+A build MUST pass BOTH gates before **anything** is published (`POST /admin/releases`, Nexus). If either gate fails, the build does **not** get uploaded, registered, or posted **anywhere**.
 
-1. **Smoke test** — `Packaging/smoke-test.ps1 -Version X.Y.Z` launches the packaged app and asserts a clean startup (no `Cannot find module`, no `[uncaught]`, relay registers). This catches crash-on-launch bugs. *(This is exactly what bricked v1.3.82: `overlay-core.js` was missing from `build.files`, so the main process threw `Cannot find module './overlay-core'` before `app.whenReady()` — the app couldn't even self-update, so every updated user was bricked until a manual reinstall.)* The Vitest `__tests__/build-files.test.js` also guards this class of bug at CI time.
-2. **VirusTotal gate** — `Packaging/vt-gate.ps1 -Version X.Y.Z` uploads the installer, **waits for the scan to complete**, and exits non-zero (blocking the release) if detections exceed the threshold. `publish-nexus-release.ps1` runs this gate first and aborts before Nexus on failure; the operator must also run it before the feed upload + register.
+1. **Smoke test** — `Packaging/smoke-test.ps1 -Version X.Y.Z` launches the packaged app and asserts a clean startup (no `Cannot find module`, no `[uncaught]`, relay registers). This catches crash-on-launch bugs. *(v1.3.82: `overlay-core.js` was missing from `build.files`, so the main process threw `Cannot find module './overlay-core'` before `app.whenReady()`. Since auto-update is gone, every user affected by such a bug would need a manual reinstall — gate #5 is non-negotiable.)* The Vitest `__tests__/build-files.test.js` also guards this class of bug at CI time.
+2. **VirusTotal gate** — `Packaging/vt-gate.ps1 -Version X.Y.Z` uploads the installer, **waits for the scan to complete**, and exits non-zero (blocking the release) if detections exceed the threshold. `publish-nexus-release.ps1` runs this gate first and aborts before Nexus on failure; the operator must also run it before the upload + register.
 
-### 7. Verify auto-update end-to-end before a wide release
+### 6. Confirm the build launches cleanly before a wide release
 
-The point of a release is that installed clients auto-update to it. Before/just after publishing, confirm the packaged build launches cleanly (smoke test) and, ideally, that a prior install updates forward to it. A build that crashes before `app.whenReady()` cannot run its updater — those users are bricked and need a manual reinstall (`irm https://falloutchatmod.com/install.ps1 | iex`), which is why gate #6 is non-negotiable.
+Before/just after publishing, confirm the packaged build launches cleanly via the smoke test. A crash before `app.whenReady()` bricks users who cannot reinstall themselves — they would need a manual reinstall (`irm https://falloutchatmod.com/install.ps1 | iex`), which is why gate #5 is non-negotiable.
 
 ---
 
 ## Release Pipeline (in order)
 
-**FAIL-CLOSED ORDER:** build -> **smoke-test (gate)** -> **VirusTotal (gate, must pass)** -> build ZIPs -> upload artifacts -> verify served sizes -> `POST /admin/releases` -> Nexus. If a gate fails, STOP -- publish nothing.
+**FAIL-CLOSED ORDER:** build -> **smoke-test (gate)** -> **VirusTotal (gate, must pass)** -> build ZIPs -> upload artifacts -> verify served sizes -> `POST /admin/releases` -> Nexus. If a gate fails, STOP — publish nothing.
 
 **Preferred: use the orchestrator** -- `Packaging/release.ps1` enforces the full sequence automatically and cannot skip gates:
 
@@ -99,7 +97,7 @@ OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows
 > | Platform | Workflow | Runner | Outputs (artifact) |
 > | -------- | -------- | ------ | ------------------ |
 > | Windows  | `.github/workflows/build-windows.yml` | `[self-hosted, windows, unn]` | `*.exe` (NSIS + portable) |
-> | Linux    | `.github/workflows/build-linux.yml`   | `[self-hosted, linux, unn]`   | `*.AppImage`, `*.deb`, `latest-linux.yml` |
+> | Linux    | `.github/workflows/build-linux.yml`   | `[self-hosted, linux, unn]`   | `*.AppImage`, `*.deb` |
 >
 > Trigger both for the same version (CLI shown; or use the Actions tab → Run workflow):
 >
@@ -150,9 +148,8 @@ cd ~/fcm-lxbuild/cross-platform-overlay  && npm install --registry https://regis
 npm run build:renderer
 APPIMAGE_EXTRACT_AND_RUN=1 npx electron-builder --linux   # -> dist-electron/Fallout Chat Mod-X.Y.Z.AppImage
 
-# 4. Copy the AppImage + latest-linux.yml back to the repo's dist-electron for upload.
+# 4. Copy the AppImage back to the repo's dist-electron for upload.
 cp "dist-electron/Fallout Chat Mod-X.Y.Z.AppImage" "/mnt/d/.../cross-platform-overlay/dist-electron/"
-cp  dist-electron/latest-linux.yml                  "/mnt/d/.../cross-platform-overlay/dist-electron/"
 ```
 
 The Windows `.exe` builds fine in place via Windows PowerShell (`npx electron-builder --win`, elevate with `gsudo` only if a symlink/permission step fails).
@@ -162,7 +159,8 @@ Output directory: `cross-platform-overlay/dist-electron/`
 Expected files:
 - `Fallout Chat Mod Setup X.Y.Z.exe` (Windows installer, ~80 MB)
 - `Fallout Chat Mod-X.Y.Z.AppImage` (Linux AppImage)
-- `latest.yml` and `latest-linux.yml` (feed manifests, generated by electron-builder)
+
+Note: `latest.yml`, `latest-linux.yml`, and `app-update.yml` are not generated (`build.publish` removed).
 
 ### Step 2 — Build download ZIPs
 
@@ -189,7 +187,7 @@ Requires env vars: `VT_API_KEY`, `PROD_ADMIN_RELEASE_TOKEN`.
 
 ### Step 4 — Upload to VPS
 
-Upload raw artifacts + ZIPs + feed manifests via `scp` into the backend container's downloads directory. Upload order matters: raw files and ZIPs first, feed manifests (`latest*.yml`) last — the feed goes live only once file sizes are verified.
+Upload raw artifacts + ZIPs via `scp` into the backend container's downloads directory.
 
 ```bash
 # Upload raw .exe and .AppImage (prod-server = your SSH alias for the production host)
@@ -205,25 +203,28 @@ ssh prod-server "docker cp /tmp/'Fallout Chat Mod Setup X.Y.Z.exe' \
     <backend-container>:/app/downloads/electron/ && \
     rm /tmp/'Fallout Chat Mod Setup X.Y.Z.exe'"
 
-# Repeat for ZIPs; upload latest*.yml last
+# Repeat for ZIPs
 ```
 
 The backend container serves the feed from `/app/downloads/electron/` via the `releases_downloads` Docker volume.
 
 ### Step 5 — Verify served file sizes
 
-Before registering the release, confirm that the bytes served by the VPS match the `size` field in each `latest*.yml`. The `size` value is in bytes (not kilobytes).
+Before registering the release, confirm that the bytes served by the VPS match the local build artifact size.
 
 ```bash
+# Local artifact size (reference)
+stat --printf '%s' "dist-electron/Fallout Chat Mod Setup X.Y.Z.exe"   # Linux/macOS
+# (Get-Item "dist-electron\Fallout Chat Mod Setup X.Y.Z.exe").Length   # PowerShell
+
+# Served size (must match)
 curl -sI "https://falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod%20Setup%20X.Y.Z.exe" \
   | grep -i content-length
 ```
 
-Compare against the `size:` line in `latest.yml`.
-
 ### Step 6 — Register the release
 
-Confirm version and release notes with the user first, then call the admin endpoint. This triggers the `release:published` WebSocket broadcast, which causes all connected clients to check for updates immediately.
+Confirm version and release notes with the user first, then call the admin endpoint. This updates the server's in-memory `latestVersion` cache — newly connecting overlay clients will receive `{ type: 'app:update-available', payload: { latestVersion } }` over the chat WebSocket and show a passive OS notification if the version is newer than their build.
 
 ```bash
 curl -X POST https://falloutchatmod.com/admin/releases \
@@ -232,7 +233,7 @@ curl -X POST https://falloutchatmod.com/admin/releases \
   -d '{"version":"X.Y.Z","downloadUrl":"https://falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod%20Setup%20X.Y.Z%20(Windows).zip","releaseNotes":"..."}'
 ```
 
-`downloadUrl` is the Windows ZIP URL (the website download button uses this). The auto-updater uses `latest.yml` directly, not this URL.
+`downloadUrl` is the Windows ZIP URL (the website download button uses this).
 
 ### Step 7 — Nexus publish
 
@@ -254,26 +255,36 @@ Required env vars (set as Windows USER env vars):
 
 ---
 
-## Auto-Updater Feed Mechanics
+## Update Notification
 
-The auto-updater uses a `generic` electron-builder provider at `https://falloutchatmod.com/downloads/electron/`. At runtime:
-- Windows clients read `latest.yml`
-- Linux clients read `latest-linux.yml`
+There is no auto-update feed. The overlay no longer auto-updates (`electron-updater`, `build.publish`,
+and `latest*.yml` are removed — Nexus Mods ToS compliance).
 
-`latest*.yml` always points at the newest version — no per-version stepping. A client many versions behind jumps directly to latest (fast-forward by design). Overwrite `latest*.yml` last in the upload sequence.
+Instead, after `POST /admin/releases` updates the server's `latestVersion` cache, every overlay client
+that (re)connects to the chat WebSocket receives:
 
-For the full auto-updater architecture, see `../overlay/auto-update.md`.
+```json
+{ "type": "app:update-available", "payload": { "latestVersion": "X.Y.Z" } }
+```
+
+If `latestVersion` is newer than the client's build version, the overlay shows a passive OS notification
+(Windows toast / Linux libnotify / macOS) that opens the Nexus Mods page on click. The client downloads
+and installs nothing.
+
+For the full notification architecture, see `../overlay/auto-update.md`.
 
 ---
 
 ## CLI Installers
 
-End users can also install via one-liners that read from the same feed:
+End users can also install via one-liners that query `GET /api/releases`:
 
 - **Windows:** `irm https://falloutchatmod.com/install.ps1 | iex` (`Packaging/windows/install.ps1`)
 - **Linux:** `curl -fsSL https://falloutchatmod.com/install.sh | bash` (`Packaging/linux/install.sh`)
 
-Both parse `latest*.yml` to discover the current version filename, download the raw artifact, and run it. They are served by the backend from the same `/app/downloads/` volume.
+Both call `/api/releases` to discover the current version, reconstruct the raw artifact URL from the
+version string, download the raw artifact, and run it. They are served by the backend from the same
+`/app/downloads/` volume. The installer output does **not** claim auto-update capability.
 
 ---
 
