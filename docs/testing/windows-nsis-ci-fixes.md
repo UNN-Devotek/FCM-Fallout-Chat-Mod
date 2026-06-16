@@ -193,3 +193,32 @@ real native execution as bonus coverage (`continue-on-error: true`).
 The build step traps `docker rm -f $CID` on EXIT (cleanup on build failure), then
 `docker cp`s `dist-electron/` back to the runner workspace. The next step runs
 `tests/mock-relay/win-artifacts-check.mjs` on the runner host to verify the artifacts.
+
+---
+
+## Migration to native `windows-latest` (GitHub-hosted runner migration)
+
+The entire Wine/DinD/docker-cp strategy described above was **superseded** when the CI pipeline
+migrated to GitHub-hosted runners as the default.
+
+The `overlay-autoupdate-e2e-windows` CI job now builds the NSIS installer **natively on
+`windows-latest`** (GitHub Actions hosted runner). There is no longer any Wine, Docker, or
+`ghcr.io/unn-corp/win-electron-builder` image involvement in CI.
+
+The private GHCR image (`ghcr.io/unn-corp/win-electron-builder`) has no current CI role.
+The seven Wine/DinD fixes documented above are retained here for historical context — they explain
+why the migration away from Wine was necessary and what was attempted before giving up on the
+Wine execution path.
+
+**Why native windows-latest supersedes the prior strategy:**
+- No Wine `STATUS_BREAKPOINT` crash — builds and runs real Windows PE binaries natively.
+- No Docker-in-Docker complexity (DinD service, `DOCKER_HOST`, `DOCKER_CERT_PATH`, `docker cp`).
+- No GHCR image pull (private registry, credentials, image maintenance burden).
+- Simpler job definition; timeout reduced from 15 min to 30 min (worst-case; typical is faster).
+
+**Runner toggle:** the job uses `vars.CI_RUNNER_WINDOWS && fromJSON(vars.CI_RUNNER_WINDOWS) || 'windows-latest'`,
+so setting the `CI_RUNNER_WINDOWS` repo variable to `["self-hosted","windows","unn"]` reverts to
+a self-hosted Windows runner without any job changes.
+
+**Release workflows** (`build-windows.yml`) continue to use the self-hosted
+`[self-hosted, windows, unn]` runner by design — they are NOT affected by the CI runner migration.

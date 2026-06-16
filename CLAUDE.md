@@ -32,24 +32,29 @@ Full architecture and how the pieces connect: **[docs/README.md](docs/README.md)
 `ci.yml` triggers on `pull_request: types: [labeled]` (+ push to `prod`/`dev`), **not** on PR
 open. An `authorize` gate job runs first and every job `needs: authorize`; it passes for
 pushes and for any PR **only when the `ci-approved` label is present**. Applying a label needs
-write/triage access, so **only maintainers can run CI on a PR** — this keeps untrusted fork code
-off the build server until the diff is reviewed. `pr-gate-delabel.yml` strips the label on
+write/triage access, so **only maintainers can run CI on a PR** — the `ci-approved` label gate
+is the security boundary, not the runner type. `pr-gate-delabel.yml` strips the label on
 every new push (TOCTOU guard), so re-review is forced. To run a PR's CI: review it, then add
 `ci-approved`. Jobs were consolidated to 8 (matrix `unit-vitest`, merged `overlay-e2e-linux`), plus a
 non-blocking `osv-scan` (OSV dependency vuln scan) = 9; Dependabot version+security updates
 are configured in `.github/dependabot.yml`;
-actions are SHA-pinned with a `permissions: contents: read` default. Full detail:
+actions are SHA-pinned with a `permissions: contents: read` default.
+
+CI defaults to **GitHub-hosted runners** (`ubuntu-latest` / `windows-latest`). Self-hosted runners
+are a documented fallback via repo variables `CI_RUNNER` and `CI_RUNNER_WINDOWS` (JSON runner
+label strings). Toggle: `gh variable set CI_RUNNER '["self-hosted","linux","unn"]'` to use
+self-hosted; `gh variable delete CI_RUNNER` to revert to GitHub-hosted. Full detail:
 [docs/testing/ci-cd-pipeline.md](docs/testing/ci-cd-pipeline.md).
 
 ### Windows Build
 Windows builds run on a **native Windows runner** — no Docker/Wine. The old Wine-based
-`win-electron-builder` Docker image was retired because Electron 31+ Chromium/Crashpad triggers a
+`win-electron-builder` Docker image has no current CI role; Electron 31+ Chromium/Crashpad triggers a
 `STATUS_BREAKPOINT` crash under Wine64 that cannot be worked around.
 
-- **Manual release build:** `.github/workflows/build-windows.yml` — `workflow_dispatch` with `version` + `publish` inputs; runs on the native Windows runner
-- **CI gate (build):** `overlay-autoupdate-e2e-windows` in `ci.yml` — still builds the NSIS installer via the Linux runner + docker-cp strategy (the Wine issue only affects *running* the exe, not building it); runs on every PR and `prod` push
-- **CI gate (execution):** `overlay-autoupdate-e2e-windows-exec` in `ci.yml` — smoke-tests the built `.exe` on the native Windows runner; `continue-on-error` so it never blocks the run
-- **Full failure history and fix rationale:** [`docs/testing/windows-nsis-ci-fixes.md`](docs/testing/windows-nsis-ci-fixes.md) — six Wine/Docker failures documented in order, plus the native-runner migration fixes (PS5.1 for-loop-in-cast syntax, hex-to-bytes without Convert.FromHexString, UTF-8 BOM in package.json). Read this before debugging any future Windows CI failure.
+- **Manual release build:** `.github/workflows/build-windows.yml` — `workflow_dispatch` with `version` + `publish` inputs; runs on the **self-hosted** `[self-hosted, windows, unn]` runner by design. Release workflows (`build-windows.yml`, `build-linux.yml`) are NOT affected by the CI runner migration — they continue to use the self-hosted runners for consistent release toolchains.
+- **CI gate (build):** `overlay-autoupdate-e2e-windows` in `ci.yml` — builds the NSIS installer **natively on `windows-latest`** (no Wine, no Docker, no docker-cp); defaults to GitHub-hosted `windows-latest`, switchable to self-hosted via `CI_RUNNER_WINDOWS`; runs on every PR and `prod`/`dev` push
+- **CI gate (execution):** `overlay-autoupdate-e2e-windows-exec` in `ci.yml` — smoke-tests the built `.exe` natively on `windows-latest`; `continue-on-error` so it never blocks the run
+- **Full failure history and fix rationale:** [`docs/testing/windows-nsis-ci-fixes.md`](docs/testing/windows-nsis-ci-fixes.md) — seven Wine/Docker failures documented in order, then the migration to native `windows-latest` (which superseded Wine/DinD entirely for CI). Read this before debugging any future Windows CI failure.
 
 ## Hosted Dev Environment
 
