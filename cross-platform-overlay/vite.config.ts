@@ -78,9 +78,10 @@ export default defineConfig({
   optimizeDeps: {
     esbuildOptions: { target: 'esnext' },
   },
-  // Source-file transforms in dev also use esbuild; keep them on esnext for the
-  // same reason (no down-leveling needed for the Electron renderer).
-  esbuild: { target: 'esnext' },
+  // Source-file transforms in dev also use esbuild. Vite 8 removed `target` from
+  // the top-level `esbuild` options (it's managed via build.target / optimizeDeps
+  // above); esbuild's source transform doesn't down-level without an explicit
+  // lower target, so the renderer stays on modern (esnext) syntax regardless.
   server: {
     port: 5290,
     strictPort: true, // fail immediately if 5290 is taken — never drift to 5291+
