@@ -40,9 +40,11 @@ function startDrain(): void {
 /**
  * Strip Discord mention patterns from content to prevent mention abuse via relay.
  * Replaces @everyone, @here, <@userId>, <@!userId>, <@&roleId>, <#channelId>.
+ * NFC-normalizes first so homoglyphs and combining diacritics (e.g. @éveryone)
+ * don't bypass the literal @everyone / @here check.
  */
 function stripMentions(text: string): string {
-  return text
+  return text.normalize('NFC')
     .replace(/@(everyone|here)/g, '$1')
     .replace(/<@!?\d+>/g, '[user]')
     .replace(/<@&\d+>/g, '[role]')

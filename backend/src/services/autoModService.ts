@@ -144,9 +144,12 @@ async function getWordFilter(): Promise<CompiledFilter[]> {
  * Filters with test_mode = true log the match but do NOT block the message.
  */
 async function filterContent(content: string, userId?: string): Promise<{ blocked: boolean; reason: string | null }> {
+  // NFC-normalize so homoglyphs, combining diacritics, and zero-width characters
+  // can't bypass keyword / regex filters by splitting codepoints.
+  const normalized = content.normalize('NFC');
   // Always check baseline denylist first — independent of DB state.
   for (const entry of BASELINE_DENYLIST) {
-    if (entry.compiled.test(content)) {
+    if (entry.compiled.test(normalized)) {
       return { blocked: true, reason: 'Matched prohibited phrase' };
     }
   }
@@ -154,7 +157,7 @@ async function filterContent(content: string, userId?: string): Promise<{ blocke
   const filters = await getWordFilter();
 
   for (const filter of filters) {
-    if (filter.compiled && filter.compiled.test(content)) {
+    if (filter.compiled && filter.compiled.test(normalized)) {
       if (filter.test_mode) {
         // Test mode: log the match but allow the message through
         logger.info({ userId, phrase: filter.phrase, testMode: true }, 'Auto-mod test match (not blocking)');
