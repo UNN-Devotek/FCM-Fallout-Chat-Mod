@@ -23,6 +23,11 @@ export default defineConfig(({ mode }) => {
         '@promo': resolve(__dirname, '../marketing/promo/src'),
         // Promo files live outside admin-dashboard/ so Rollup's node_modules walk
         // never reaches our node_modules. Pin these packages explicitly.
+        // (react/react-dom needed since Vite 8's Rolldown — unlike Vite 6's esbuild —
+        // won't resolve them for the @promo sources in the Docker build, where only
+        // marketing/promo/src is copied without its node_modules.)
+        react: resolve(__dirname, 'node_modules/react'),
+        'react-dom': resolve(__dirname, 'node_modules/react-dom'),
         remotion: resolve(__dirname, 'node_modules/remotion'),
         '@remotion/player': resolve(__dirname, 'node_modules/@remotion/player'),
       },
