@@ -1081,7 +1081,20 @@ const isCfChallenge = overlayCore.isCfChallenge;
 
 function registerForToken(state, clientKey) {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({ username: state.username, installToken: state.installToken });
+    const _isDev = !app.isPackaged;
+    const _regBody = { username: state.username, installToken: state.installToken };
+    // DEV-ONLY (local backend only): the backend's POST /api/users enforces a
+    // Discord-link gate that can't be satisfied without Discord OAuth, which isn't
+    // configured for local dev. When unpackaged AND the relay is localhost, attach
+    // a synthetic, deterministic discordId (derived from the installToken) so a
+    // local dev overlay can register without Discord. NEVER sent to a non-local
+    // relay (prod / dev.falloutchatmod.com) — isLocalRelay() gates on loopback.
+    if (_isDev && overlayCore.isLocalRelay(RELAY_HTTP)) {
+      _regBody.discordId = overlayCore.syntheticDevDiscordId(state.installToken);
+      _regBody.discordUsername = 'LocalDev';
+      try { diag('[relay] LOCAL dev backend — synthetic discordId sent to bypass the Discord-link gate'); } catch { /* ignore */ }
+    }
+    const body = JSON.stringify(_regBody);
     const url = new URL(RELAY_HTTP + '/api/users');
     // Dev-mode rate-limit bypass — AUTOMATIC. When the overlay runs unpackaged
     // (app.isPackaged === false, i.e. `electron .` / `npm start`), it's a dev/test
@@ -1089,7 +1102,6 @@ function registerForToken(state, clientKey) {
     // limiter ("Too many registrations"). We flag it with X-Overlay-Dev so the
     // backend skips rate limiting. Installed/packaged builds (real users) are
     // packaged → never send this → stay rate-limited. No tokens or env needed.
-    const _isDev = !app.isPackaged;
     const _regHeaders = {
       'Content-Type': 'application/json',
       'Content-Length': Buffer.byteLength(body),
