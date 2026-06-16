@@ -15,6 +15,7 @@ const {
   clampToWorkArea,
   buildKeybindMap,
   classifyInputGrab,
+  filterProxyHeaders,
   DEFAULT_APP_CLIENT_KEY,
   DEFAULT_WIDTH,
   DEFAULT_HEIGHT,
@@ -508,5 +509,64 @@ describe('classifyInputGrab', () => {
     expect(classifyInputGrab('')).toBe(null);
     expect(classifyInputGrab(null)).toBe(null);
     expect(classifyInputGrab(undefined)).toBe(null);
+  });
+});
+
+describe('filterProxyHeaders', () => {
+  it('passes through allowlisted headers', () => {
+    const result = filterProxyHeaders({
+      'content-type': 'application/json',
+      'accept': 'application/json',
+      'accept-language': 'en-US',
+    });
+    expect(result['content-type']).toBe('application/json');
+    expect(result['accept']).toBe('application/json');
+    expect(result['accept-language']).toBe('en-US');
+  });
+
+  it('strips X-Auth-Token so the renderer cannot override the session token', () => {
+    const result = filterProxyHeaders({ 'X-Auth-Token': 'attacker-token', 'content-type': 'application/json' });
+    expect(result['x-auth-token']).toBeUndefined();
+    expect(result['X-Auth-Token']).toBeUndefined();
+  });
+
+  it('strips Host to prevent request smuggling', () => {
+    const result = filterProxyHeaders({ 'Host': 'attacker.com', 'content-type': 'application/json' });
+    expect(result['host']).toBeUndefined();
+    expect(result['Host']).toBeUndefined();
+  });
+
+  it('strips cookie', () => {
+    const result = filterProxyHeaders({ 'cookie': 'session=abc', 'content-type': 'application/json' });
+    expect(result['cookie']).toBeUndefined();
+  });
+
+  it('strips Transfer-Encoding and Content-Length', () => {
+    const result = filterProxyHeaders({ 'transfer-encoding': 'chunked', 'content-length': '999' });
+    expect(result['transfer-encoding']).toBeUndefined();
+    expect(result['content-length']).toBeUndefined();
+  });
+
+  it('strips CRLF sequences from header values', () => {
+    const result = filterProxyHeaders({ 'content-type': 'text/plain\r\nX-Injected: evil' });
+    expect(result['content-type']).toBe('text/plainX-Injected: evil');
+    expect(result['x-injected']).toBeUndefined();
+  });
+
+  it('normalises header names to lowercase', () => {
+    const result = filterProxyHeaders({ 'Content-Type': 'application/json' });
+    expect(result['content-type']).toBe('application/json');
+    expect(result['Content-Type']).toBeUndefined();
+  });
+
+  it('returns empty object for null/undefined/non-object input', () => {
+    expect(filterProxyHeaders(null)).toEqual({});
+    expect(filterProxyHeaders(undefined)).toEqual({});
+    expect(filterProxyHeaders('string')).toEqual({});
+  });
+
+  it('drops headers with empty values after CRLF strip', () => {
+    const result = filterProxyHeaders({ 'content-type': '\r\n' });
+    expect(result['content-type']).toBeUndefined();
   });
 });

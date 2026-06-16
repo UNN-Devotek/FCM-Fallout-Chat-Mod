@@ -430,6 +430,35 @@ function buildKwinRemoveRulesScript({ file = 'kwinrulesrc' } = {}) {
 //   • else → { args: argv.slice(1) + flag, execPath: appImagePath when set }
 // appImagePath is process.env.APPIMAGE — on AppImage builds process.execPath is the
 // transient /tmp/.mount_* path (gone after exit), so relaunch must target $APPIMAGE.
+// ─── HTTP proxy header filter ─────────────────────────────────────────────────
+// The renderer's shimmed fetch supplies headers that the main process forwards to
+// the relay. We must NOT blindly spread them: the renderer could override
+// X-Auth-Token (session hijack), inject Host / Transfer-Encoding / Content-Length
+// (request smuggling), or embed CRLF sequences (header injection). Instead we
+// whitelist the small set of headers the ChatOverlay component legitimately sends
+// and strip everything else. The caller then overlays the auth/UA/Origin headers
+// on top of the filtered result, so those are always main-process-controlled.
+const PROXY_HEADER_ALLOWLIST = new Set([
+  'content-type',
+  'accept',
+  'accept-language',
+  'cache-control',
+  'x-requested-with',
+]);
+
+function filterProxyHeaders(rendererHeaders) {
+  if (!rendererHeaders || typeof rendererHeaders !== 'object') return {};
+  const out = {};
+  for (const [k, v] of Object.entries(rendererHeaders)) {
+    const lower = k.toLowerCase();
+    if (!PROXY_HEADER_ALLOWLIST.has(lower)) continue;
+    // Strip CRLF sequences that would allow header injection.
+    const safe = String(v).replace(/[\r\n]/g, '');
+    if (safe) out[lower] = safe;
+  }
+  return out;
+}
+
 function planOzoneRelaunch({ kdeWayland, argv = [], appImagePath = null } = {}) {
   const FLAG = '--ozone-platform=x11';
   if (!kdeWayland) return null;
@@ -469,4 +498,5 @@ module.exports = {
   buildKwinKeepAboveScript,
   buildKwinRemoveRulesScript,
   planOzoneRelaunch,
+  filterProxyHeaders,
 };

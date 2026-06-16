@@ -1185,10 +1185,12 @@ ipcMain.handle('proxy:http', async (_evt, reqDesc) => {
 
   return new Promise((resolve) => {
     const url = new URL(RELAY_HTTP + reqPath);
-    const outHeaders = { ...(headers || {}) };
+    const outHeaders = overlayCore.filterProxyHeaders(headers);
     if (sessionToken) outHeaders['X-Auth-Token'] = sessionToken;
     outHeaders['User-Agent'] = APP_UA;
     outHeaders['Origin'] = RELAY_HTTP;
+    // cookie is never in the allowlist, but delete defensively in case the
+    // allowlist is widened in future without re-auditing this call site.
     delete outHeaders['cookie'];
     const payload = body != null ? Buffer.from(body) : null;
     if (payload) outHeaders['Content-Length'] = payload.length;
