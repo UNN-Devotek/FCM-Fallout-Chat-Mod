@@ -130,9 +130,9 @@ updates** — one npm entry per package dir (`/`, `/backend`, `/admin-dashboard`
 `/mcp`, `/marketing/promo`) since this repo is not an npm workspace, plus a `github-actions` entry that
 keeps the SHA-pinned actions current. Minor + patch bumps are grouped per ecosystem to reduce PR churn;
 majors open individually. **Version-update PRs target `dev`** (`target-branch: dev`), the integration
-branch — not `prod`. Caveat: `target-branch` governs version updates only; Dependabot **security**
-updates can only target the default branch (`prod`) and will open there regardless — triage those into
-prod (or cherry-pick to dev). Dependabot **security alerts** (the continuous CVE feed, independent of PRs) are
+branch. Dependabot **security** updates always target the repo's **default branch** — which is now
+**`dev`** (the default was switched from `prod` to `dev`), so both version and security PRs land on
+`dev` and reach `prod` only through the normal promotion PR. Dependabot **security alerts** (the continuous CVE feed, independent of PRs) are
 enabled separately under repo **Settings → Security → Dependabot alerts** — turn that on to get alerts as
 new advisories land. Note: a Dependabot PR does **not** auto-run CI — like a fork PR it needs a maintainer
 to apply the `ci-approved` label.
