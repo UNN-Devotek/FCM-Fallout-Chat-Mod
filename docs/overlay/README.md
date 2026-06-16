@@ -35,7 +35,7 @@ The Electron shell provides everything the web `ChatOverlay.tsx` component does 
 - **Global hotkeys** — navigation-cluster keys (Insert, Delete, End, PageUp/Down, Home, `\`, `/`) intercepted before the game receives them
 - **Click-through** — `setIgnoreMouseEvents` so clicks pass through to the game behind
 - **Auto-updater** — electron-updater checking `https://falloutchatmod.com/downloads/electron/`
-- **HTTP + WebSocket proxy** — shimmed `fetch`/`WebSocket` in the renderer route through IPC so the main process can inject `X-Auth-Token` (browsers cannot set WS headers)
+- **HTTP + WebSocket proxy** — shimmed `fetch`/`WebSocket` in the renderer route through IPC so the main process can inject `X-Auth-Token` (browsers cannot set WS headers). Renderer-supplied HTTP headers are **allowlisted** before forwarding (`filterProxyHeaders` in `overlay-core.js`: only `content-type`, `accept`, `accept-language`, `cache-control`, `x-requested-with`, with CRLF stripped); the main process then sets `X-Auth-Token`/`User-Agent`/`Origin` *after* filtering, so a compromised renderer cannot override the auth headers or inject others. The renderer-supplied request **path** is likewise resolved strictly against the relay origin (`resolveRelayProxyUrl`) and refused if it points anywhere else, so it cannot redirect the request — and the attached `X-Auth-Token` — to another host.
 
 **No game-memory reading, no game-file modification, no code injection, no network/port scanning.** The only game interaction is a process-name check (`Fallout76.exe`) to drive show/hide.
 
