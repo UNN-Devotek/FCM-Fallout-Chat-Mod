@@ -192,6 +192,7 @@ if (-not $SshKey) {
 # Artifact filenames (productName is 'Fallout Chat Mod' WITH spaces).
 $winExe       = Join-Path $distDir "Fallout Chat Mod Setup $Version.exe"
 $linuxApp     = Join-Path $distDir "Fallout Chat Mod-$Version.AppImage"
+$linuxDeb     = Join-Path $distDir "Fallout Chat Mod-$Version.deb"
 $winZipName   = "Fallout Chat Mod Setup $Version (Windows).zip"
 $linuxZipName = "Fallout Chat Mod-$Version.AppImage (Linux).zip"
 $winZip       = Join-Path $distDir $winZipName
@@ -205,6 +206,7 @@ $winExeName      = "Fallout%20Chat%20Mod%20Setup%20$($Version)%20(Windows).zip"
 $linuxAppName    = "Fallout%20Chat%20Mod-$($Version).AppImage%20(Linux).zip"
 $winExeRawName   = "Fallout%20Chat%20Mod%20Setup%20$Version.exe"
 $linuxRawName    = "Fallout%20Chat%20Mod-$Version.AppImage"
+$linuxDebRawName = "Fallout%20Chat%20Mod-$Version.deb"
 $baseUrl         = "https://falloutchatmod.com/downloads/electron"
 
 # ---- STEP 1: Build -----------------------------------------------------------
@@ -254,6 +256,19 @@ Both platforms MUST ship every release.
 "@
 }
 Pass "step 1 (Linux artifact present)"
+
+# Linux .deb ships in the Linux download ZIP (apt-managed install option).
+Write-Host "[step 1] Verifying Linux .deb (electron-builder deb target)..."
+if (-not (Test-Path $linuxDeb)) {
+    Fail "step 1 (Linux .deb check)" @"
+Linux .deb not found in dist-electron: $linuxDeb
+electron-builder's Linux build produces both the AppImage and the .deb. Build the
+Linux artifacts on a native Linux filesystem and copy the .deb into:
+  $distDir
+then re-run with -SkipBuild. The .deb is bundled into the Linux download ZIP.
+"@
+}
+Pass "step 1 (Linux .deb present)"
 
 # ---- STEP 2: Smoke test gate -------------------------------------------------
 
@@ -337,6 +352,7 @@ function Upload-Artifact($localPath, $remoteName) {
 # Upload raw artifacts + ZIPs.
 Upload-Artifact $winExe
 Upload-Artifact $linuxApp
+Upload-Artifact $linuxDeb
 Upload-Artifact $winZip
 Upload-Artifact $linuxZip
 
@@ -369,6 +385,17 @@ if ($null -eq $linuxServedSize) {
 Write-Host "[step 5] Linux AppImage served size: $linuxServedSize bytes"
 if ($linuxServedSize -ne $linuxLocalSize) {
     Fail "step 5 (size mismatch -- linux)" "Linux AppImage: served=$linuxServedSize bytes vs local=$linuxLocalSize bytes. Upload may be corrupt or incomplete."
+}
+
+$debLocalSize  = (Get-Item $linuxDeb).Length
+Write-Host "[step 5] Local Linux .deb size: $debLocalSize bytes"
+$debServedSize = Get-ServedSize "$baseUrl/$linuxDebRawName" $SshKey $SshTarget
+if ($null -eq $debServedSize) {
+    Fail "step 5 (size verify -- deb)" "Could not retrieve Content-Length for Linux .deb from VPS. Check upload and container path."
+}
+Write-Host "[step 5] Linux .deb served size: $debServedSize bytes"
+if ($debServedSize -ne $debLocalSize) {
+    Fail "step 5 (size mismatch -- deb)" "Linux .deb: served=$debServedSize bytes vs local=$debLocalSize bytes. Upload may be corrupt or incomplete."
 }
 Pass "step 5 (artifacts uploaded + sizes verified)"
 

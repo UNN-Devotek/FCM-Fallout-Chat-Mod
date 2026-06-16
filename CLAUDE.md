@@ -130,6 +130,17 @@ These are non-negotiable. Each links to the doc with the full context.
   **No auto-update.** Update awareness is a passive OS notification; the latest version arrives over
   the chat WebSocket (`app:update-available`); no dedicated update network call — Nexus Mods ToS
   compliance. `electron-updater`, `build.publish`, `latest*.yml`, and `app-update.yml` are removed.
+  **Re-running the installer is now the update/patch path** — and it is a full, idempotent
+  fast-forward: a user many versions behind (e.g. 5 releases old) lands on latest in one run.
+  Installers always fetch the newest version (CLI → `GET /api/releases`, ZIPs → bundled artifact);
+  there is **no minimum-version / forced-upgrade gate** (old clients always patch forward); Windows
+  NSIS overwrites in place (`installer.nsh` taskkills the running app) and Linux writes to a stable
+  version-agnostic path; the userData-rename + keybind-reset startup migrations are any-to-any
+  idempotent; `userData` is outside the package so settings survive. The CLI installers detect the
+  installed version and **prompt reinstall-or-cancel when already current** (Windows reads the exe's
+  `ProductVersion`; Linux reads the `$XDG_DATA_HOME/FalloutChatMod/.fcm-version` marker). The Linux
+  ZIP now also ships a `.deb` (apt-managed alternative to the AppImage). See
+  [docs/overlay/auto-update.md](docs/overlay/auto-update.md) → "Updating / patching from an old version".
 - **Overlay releases are FAIL-CLOSED — never ship an untested or unscanned build (HARD RULE).** Before
   ANY publishing (`POST /admin/releases`, Nexus), the build MUST pass BOTH gates, in order:
   (1) **smoke test** — `Packaging/smoke-test.ps1 -Version X.Y.Z` launches the packaged app and asserts

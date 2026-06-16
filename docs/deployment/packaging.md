@@ -14,13 +14,15 @@ All scripts live in `Packaging/`. They are called in sequence during the release
 ```
 
 **What it does:**
-1. Locates `Fallout Chat Mod Setup X.Y.Z.exe` and `Fallout Chat Mod-X.Y.Z.AppImage` in `cross-platform-overlay/dist-electron/`
+1. Locates `Fallout Chat Mod Setup X.Y.Z.exe`, `Fallout Chat Mod-X.Y.Z.AppImage`, and `Fallout Chat Mod-X.Y.Z.deb` in `cross-platform-overlay/dist-electron/` (the `.deb` is required — a missing `.deb` fails the build)
 2. Reads instruction files from `cross-platform-overlay/assets/install/`: `INSTALL-WINDOWS.txt`, `INSTALL-LINUX.txt`, and `fallout-chatmod-keepabove.kwinrule`
 3. Stages each artifact + its instruction file(s) in a temp directory on the same drive as the dist dir (avoids cross-drive copies on dev machines where C: may be full)
 4. Compresses the staging contents (files at root, not nested in a subfolder) into:
-   - `Fallout Chat Mod Setup X.Y.Z (Windows).zip`
-   - `Fallout Chat Mod-X.Y.Z.AppImage (Linux).zip`
+   - `Fallout Chat Mod Setup X.Y.Z (Windows).zip` — installer + `INSTALL-WINDOWS.txt`
+   - `Fallout Chat Mod-X.Y.Z.AppImage (Linux).zip` — AppImage + **`.deb`** + `INSTALL-LINUX.txt` + `.kwinrule`
 5. Both ZIPs land in `cross-platform-overlay/dist-electron/` alongside the raw files
+
+The `.deb` ships inside the Linux ZIP so apt users can `sudo apt install ./'Fallout Chat Mod-X.Y.Z.deb'` (or `dpkg -i`) — an in-place, apt-managed alternative to the AppImage. `Packaging/release.ps1` also verifies + uploads the raw `.deb` alongside the AppImage.
 
 **Note:** The ZIPs are for website/Nexus human downloads only. There are no `latest*.yml` feed files — `build.publish` was removed for Nexus Mods ToS compliance.
 
@@ -96,7 +98,7 @@ The patch preserves the original byte length by trimming excess whitespace insid
 
 | File | Purpose |
 |------|---------|
-| `install.ps1` | CLI one-liner installer: `irm https://falloutchatmod.com/install.ps1 \| iex`. Queries `GET /api/releases` to discover the current version, downloads the raw `.exe`, and runs it silently (per-user, no UAC). Displayed in the Windows file description on Nexus. |
+| `install.ps1` | CLI one-liner installer: `irm https://falloutchatmod.com/install.ps1 \| iex`. Queries `GET /api/releases` to discover the current version, downloads the raw `.exe`, and runs it silently (per-user, no UAC). Doubles as the **update/patch path**: reads the installed exe's `VersionInfo.ProductVersion`, fast-forwards from any older version, and when already on the latest **prompts reinstall-or-cancel** (`Read-Host`); checks the NSIS exit code and only reports success on `0`. Displayed in the Windows file description on Nexus. |
 
 ---
 
@@ -104,8 +106,8 @@ The patch preserves the original byte length by trimming excess whitespace insid
 
 | File | Purpose |
 |------|---------|
-| `install.sh` | CLI one-liner installer: `curl -fsSL https://falloutchatmod.com/install.sh \| bash`. Queries `GET /api/releases` to discover the current version, downloads the `.AppImage`, makes it executable, and adds an app-menu launcher. |
-| `uninstall.sh` | Removes the installed AppImage and desktop launcher entry. |
+| `install.sh` | CLI one-liner installer: `curl -fsSL https://falloutchatmod.com/install.sh \| bash`. Queries `GET /api/releases` to discover the current version, downloads the `.AppImage` to a stable version-agnostic path (`$XDG_DATA_HOME/FalloutChatMod/Fallout Chat Mod.AppImage`), makes it executable, rewrites the `.desktop` launcher, and writes a `.fcm-version` marker. Doubles as the **update/patch path**: overwrites in place (fast-forwards from any older version) and when the `.fcm-version` marker shows the latest is already installed **prompts reinstall-or-cancel** from `/dev/tty` (piped/non-interactive → defaults to Cancel). |
+| `uninstall.sh` | Removes the installed AppImage, `.fcm-version` marker, and desktop launcher entry. |
 
 ---
 

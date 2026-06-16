@@ -12,7 +12,9 @@
 # Nexus Mods (https://www.nexusmods.com/fallout76/mods/4082) or
 # falloutchatmod.com.
 #
-# Re-running is safe (idempotent): it just refreshes to the current build.
+# Re-running UPGRADES an existing install and fast-forwards from ANY older
+# version (no per-version stepping). If you are already on the latest, it asks
+# whether to reinstall or cancel.
 # Uninstall:  curl -fsSL https://falloutchatmod.com/uninstall.sh | bash
 #
 set -euo pipefail
@@ -47,6 +49,36 @@ API_JSON="$(curl -fsSL "$API_URL")" || die "Could not reach the release API ($AP
 VERSION="$(printf '%s\n' "$API_JSON" | grep -o '"version":"[^"]*"' | head -n1 | sed 's/"version":"//;s/"//')"
 [ -n "$VERSION" ] || die "Could not parse the version from the release API response."
 say "Latest version: $VERSION"
+
+# --- Already installed? Compare and (if already current) prompt ---------------
+# We record the installed version in $APP_DIR/.fcm-version on every install.
+#   not installed / installed < latest -> upgrade (fast-forwards from any version)
+#   installed >= latest (already current) -> ask: reinstall or cancel
+VERSION_MARKER="$APP_DIR/.fcm-version"
+INSTALLED=""
+if [ -f "$VERSION_MARKER" ] && [ -f "$APP_PATH" ]; then
+  INSTALLED="$(tr -d '[:space:]' < "$VERSION_MARKER" 2>/dev/null || true)"
+fi
+if [ -n "$INSTALLED" ]; then
+  # "higher of the two" via version sort; if it equals INSTALLED, installed >= latest.
+  HIGHER="$(printf '%s\n%s\n' "$INSTALLED" "$VERSION" | sort -V | tail -n1)"
+  if [ "$INSTALLED" = "$VERSION" ] || [ "$HIGHER" = "$INSTALLED" ]; then
+    say "You are already on the latest version (v$INSTALLED)."
+    ans="c"
+    if [ -r /dev/tty ]; then
+      printf '\033[1;33m?? \033[0m Reinstall (uninstall + reinstall) or cancel? [r/C] ' > /dev/tty
+      read -r ans < /dev/tty || ans="c"
+    else
+      warn "Non-interactive (piped) — cancelling. Re-run in a terminal to force a reinstall."
+    fi
+    case "$ans" in
+      r|R|y|Y) say "Reinstalling v$VERSION…" ;;
+      *) say "Cancelled — nothing changed."; exit 0 ;;
+    esac
+  else
+    say "Installed v$INSTALLED → updating to v$VERSION."
+  fi
+fi
 
 # Build the raw AppImage filename using the release pipeline convention.
 APPIMAGE_NAME="Fallout Chat Mod-${VERSION}.AppImage"
@@ -86,7 +118,9 @@ SIZE="$(stat -c%s "$TMP" 2>/dev/null || stat -f%z "$TMP")"
 [ "${SIZE:-0}" -gt 1000000 ] || { rm -f "$TMP"; die "Downloaded file is only ${SIZE} bytes — feed/CDN problem."; }
 chmod +x "$TMP"
 mv -f "$TMP" "$APP_PATH"
-say "Installed to: $APP_PATH"
+# Record the installed version so a later re-run can detect "already current".
+printf '%s\n' "$VERSION" > "$VERSION_MARKER" 2>/dev/null || true
+say "Installed v$VERSION to: $APP_PATH"
 
 # --- Icon (best-effort: extract the AppImage's own icon) ----------------------
 if "$APP_PATH" --appimage-extract '*.png' >/dev/null 2>&1 && [ -d squashfs-root ]; then

@@ -164,6 +164,7 @@ Output directory: `cross-platform-overlay/dist-electron/`
 Expected files:
 - `Fallout Chat Mod Setup X.Y.Z.exe` (Windows installer, ~80 MB)
 - `Fallout Chat Mod-X.Y.Z.AppImage` (Linux AppImage)
+- `Fallout Chat Mod-X.Y.Z.deb` (Linux Debian/Ubuntu package — apt-managed alternative to the AppImage)
 
 Note: `latest.yml`, `latest-linux.yml`, and `app-update.yml` are not generated (`build.publish` removed).
 
@@ -177,7 +178,8 @@ Note: `latest.yml`, `latest-linux.yml`, and `app-update.yml` are not generated (
 
 Produces (in `cross-platform-overlay/dist-electron/`):
 - `Fallout Chat Mod Setup X.Y.Z (Windows).zip`
-- `Fallout Chat Mod-X.Y.Z.AppImage (Linux).zip`
+- `Fallout Chat Mod-X.Y.Z.AppImage (Linux).zip` — now bundles **both** the AppImage and the `.deb`
+  (plus `INSTALL-LINUX.txt` + `.kwinrule`), so apt users can `dpkg -i`/`apt install` the package.
 
 These ZIPs go to the website and Nexus Mods. They are additional to the raw files — do not replace the raw files with them.
 
@@ -210,6 +212,10 @@ ssh prod-server "docker cp /tmp/'Fallout Chat Mod Setup X.Y.Z.exe' \
 
 # Repeat for ZIPs
 ```
+
+Upload the raw `.deb` (`Fallout Chat Mod-X.Y.Z.deb`) the same way so apt users can fetch it directly.
+`Packaging/release.ps1` automates this whole step — it uploads the `.exe`, `.AppImage`, **`.deb`**, and
+both ZIPs, then verifies served sizes (step 5) for each.
 
 The backend container serves the feed from `/app/downloads/electron/` via the `releases_downloads` Docker volume.
 
@@ -290,6 +296,23 @@ End users can also install via one-liners that query `GET /api/releases`:
 Both call `/api/releases` to discover the current version, reconstruct the raw artifact URL from the
 version string, download the raw artifact, and run it. They are served by the backend from the same
 `/app/downloads/` volume. The installer output does **not** claim auto-update capability.
+
+**Re-running an installer is the update/patch path** (auto-update was removed). It is a full,
+idempotent fast-forward — a user many versions behind lands on latest in one run (installers always
+fetch the newest version; there is no minimum-version gate; Windows NSIS overwrites in place via
+`installer.nsh`'s taskkill, Linux overwrites a stable version-agnostic path; the startup migrations are
+any-to-any idempotent; `userData` is outside the package so settings survive). Each CLI installer
+detects the installed version and, **when the machine is already on the latest**, prompts
+reinstall-or-cancel instead of silently reinstalling:
+
+- **Windows** reads the installed exe's `VersionInfo.ProductVersion`, compares with `[version]`, and
+  asks via `Read-Host`. It also checks the NSIS exit code and only reports success on `0`.
+- **Linux** reads the `$XDG_DATA_HOME/FalloutChatMod/.fcm-version` marker (written at install time),
+  compares with `sort -V`, and prompts from `/dev/tty` (piped/non-interactive → defaults to Cancel).
+
+The four installer copies (`Packaging/windows/install.ps1`, `Packaging/linux/install.sh`, and the
+served `backend/downloads/install.{ps1,sh}` re-seeded from `Packaging/` at boot) must stay in sync.
+See `../overlay/auto-update.md` → "Updating / patching from an old version".
 
 ---
 

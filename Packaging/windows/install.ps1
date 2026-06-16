@@ -4,7 +4,9 @@
     irm https://falloutchatmod.com/install.ps1 | iex
 
   Downloads the latest installer from the release API and runs it (per-user,
-  no admin prompt). Re-running is safe and refreshes to the current build.
+  no admin prompt). Re-running UPGRADES an existing install and fast-forwards
+  from ANY older version; if you are already on the latest it asks whether to
+  reinstall or cancel.
 
   New versions are NOT installed automatically. Download new versions from
   Nexus Mods (https://www.nexusmods.com/fallout76/mods/4082) or
@@ -31,6 +33,27 @@ $version = $relJson.data[0].version
 if (-not $version) { throw 'Could not read version from the release API response.' }
 Say "Latest version: $version"
 
+# --- Already installed? Compare and (if already current) prompt --------------
+# Read the installed exe's product version. not installed / installed < latest
+# -> upgrade (fast-forwards from any older version); installed >= latest -> ask.
+$installedExe = Join-Path $env:LOCALAPPDATA 'Programs\Fallout Chat Mod\Fallout Chat Mod.exe'
+$installed = $null
+if (Test-Path $installedExe) {
+  try { $installed = ([string](Get-Item $installedExe).VersionInfo.ProductVersion).Trim() } catch { $installed = $null }
+}
+if ($installed) {
+  $isCurrent = $false
+  try { $isCurrent = ([version]$installed) -ge ([version]$version) } catch { $isCurrent = ($installed -eq $version) }
+  if ($isCurrent) {
+    Say "You are already on the latest version (v$installed)."
+    $ans = Read-Host 'Reinstall (uninstall + reinstall) or cancel? [r/C]'
+    if ($ans -notmatch '^[rRyY]') { Say 'Cancelled - nothing changed.'; return }
+    Say "Reinstalling v$version..."
+  } else {
+    Say "Installed v$installed -> updating to v$version."
+  }
+}
+
 # Build the raw installer filename using the same convention as the release pipeline:
 # productName "Fallout Chat Mod" WITH spaces. URL-encode with EscapeDataString
 # (spaces -> %20).
@@ -54,8 +77,9 @@ Say 'Running the installer (per-user, no admin prompt)...'
 # electron-builder NSIS (oneClick:false). /S = silent; /CURRENTUSER forces the
 # per-user scope so it never prompts for machine-vs-user. Matches the repo's
 # documented silent-install flow.
-Start-Process -FilePath $dest -ArgumentList '/S','/CURRENTUSER' -Wait
+$proc = Start-Process -FilePath $dest -ArgumentList '/S','/CURRENTUSER' -PassThru -Wait
 Remove-Item $dest -Force -ErrorAction SilentlyContinue
+if ($proc.ExitCode -ne 0) { throw "Installer exited with code $($proc.ExitCode) - install may have failed (cancelled or blocked)." }
 
 Say 'Installed. Launch "Fallout Chat Mod" from the Start Menu, then sign in with Discord.'
 Say 'Download new versions from Nexus Mods (https://www.nexusmods.com/fallout76/mods/4082) or falloutchatmod.com.'

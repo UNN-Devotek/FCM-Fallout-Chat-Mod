@@ -6,7 +6,7 @@
 .DESCRIPTION
     Produces:
       - "Fallout Chat Mod Setup V (Windows).zip"  (Windows installer + INSTALL-WINDOWS.txt)
-      - "Fallout Chat Mod-V.AppImage (Linux).zip" (Linux AppImage + INSTALL-LINUX.txt + .kwinrule)
+      - "Fallout Chat Mod-V.AppImage (Linux).zip" (Linux AppImage + .deb + INSTALL-LINUX.txt + .kwinrule)
 
     These ZIPs are the artifacts linked from the website download buttons and uploaded
     to Nexus Mods. They are ADDITIONAL to (not replacing) the raw installer files.
@@ -47,9 +47,11 @@ function Fail($msg) { Write-Error "[package-downloads] $msg"; exit 1 }
 # --- Validate raw artifact existence -----------------------------------------
 $winExe   = Join-Path $DistDir "Fallout Chat Mod Setup $Version.exe"
 $linuxApp = Join-Path $DistDir "Fallout Chat Mod-$Version.AppImage"
+$linuxDeb = Join-Path $DistDir "Fallout Chat Mod-$Version.deb"
 
 if (-not (Test-Path $winExe))   { Fail "Windows installer not found: $winExe" }
 if (-not (Test-Path $linuxApp)) { Fail "Linux AppImage not found: $linuxApp" }
+if (-not (Test-Path $linuxDeb)) { Fail "Linux .deb not found: $linuxDeb (electron-builder deb target)" }
 
 # --- Instruction files -------------------------------------------------------
 $installWin   = Join-Path $AssetsDir "install\INSTALL-WINDOWS.txt"
@@ -91,6 +93,7 @@ $linuxStaging = Join-Path $stagingRoot "linux"
 if (Test-Path $linuxStaging) { Remove-Item $linuxStaging -Recurse -Force }
 New-Item -ItemType Directory -Path $linuxStaging -Force | Out-Null
 Copy-Item $linuxApp   -Destination $linuxStaging
+Copy-Item $linuxDeb   -Destination $linuxStaging
 Copy-Item $installLinux -Destination $linuxStaging
 Copy-Item $kwinRule     -Destination $linuxStaging
 # Compress CONTENTS of the staging folder (files at root, not nested in a folder)
