@@ -1,17 +1,27 @@
 name: CI
 
-# ── Rollout state: Windows NSIS build verification active for PRs on self-hosted runner ──
+# ── Runner model: GitHub-hosted (default) with self-hosted fallback ──────────────
+# CI now defaults to GitHub-hosted runners (`ubuntu-latest` / `windows-latest`).
+# Self-hosted runners remain available as a fallback via repo variables:
+#   CI_RUNNER         — JSON runner label for Linux jobs, e.g. '["self-hosted","linux","unn"]'
+#   CI_RUNNER_WINDOWS — JSON runner label for Windows jobs, e.g. '["self-hosted","windows","unn"]'
+# Toggle to self-hosted: gh variable set CI_RUNNER '["self-hosted","linux","unn"]'
+# Toggle back to hosted: gh variable delete CI_RUNNER
+# (Same pattern for CI_RUNNER_WINDOWS.)
+#
+# The security boundary is the `ci-approved` label gate (see `authorize` job), NOT the runner.
+# Untrusted fork code is blocked regardless of which runner is in use.
+#
 # The single required branch-protection check is the `CI Summary` job below.
 # It gates: unit-vitest (overlay + dashboard matrix), overlay-launch-smoke-linux
 # (packaged-launch smoke), overlay-build-windows-nsis (NSIS build verification),
 # lint-typecheck, and backend-jest — all blocking for PRs.
 #
-# overlay-build-windows-nsis runs on the self-hosted Linux build server using the
-# win-electron-builder Docker image (Wine + NSIS + Xvfb). It builds the NSIS
-# installer inside the container via the docker cp strategy and statically verifies
-# the artifacts (installer + exe present; NO auto-update feed files emitted — the
-# overlay no longer auto-updates). Wine can BUILD an Electron 31+ exe but not RUN
-# it, so there is no Wine execution step.
+# The `overlay-build-windows-nsis` job builds the NSIS installer NATIVELY on
+# `windows-latest` (no Wine, no Docker, no GHCR image — the self-hosted Wine/DinD
+# strategy was superseded by the runner migration). It statically verifies the
+# artifacts (installer + exe present) and that NO auto-update feed files
+# (app-update.yml / latest*.yml) are emitted — the overlay no longer auto-updates.
 #
 # ── OVERLAY RELEASE GATES (MANDATORY, fail-closed) — see docs/deployment/releasing-the-overlay.md ──
 # A shipped overlay build MUST be tested before it goes ANYWHERE. v1.3.82 shipped a
@@ -70,7 +80,7 @@ jobs:
   # pr-gate-delabel.yml), forcing re-review before CI can run again.
   authorize:
     name: Authorize CI run
-    runs-on: [self-hosted, linux, unn]
+    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     if: >-
       github.event_name == 'push' ||
       contains(github.event.pull_request.labels.*.name, 'ci-approved')
@@ -81,7 +91,7 @@ jobs:
   lint-typecheck:
     name: Lint + Typecheck (${{ matrix.workspace }})
     needs: authorize
-    runs-on: [self-hosted, linux, unn]
+    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -112,7 +122,7 @@ jobs:
   backend-jest:
     name: Backend (Jest + TS units)
     needs: authorize
-    runs-on: [self-hosted, linux, unn]
+    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     services:
       postgres:
         image: postgres:16
@@ -131,10 +141,11 @@ jobs:
           --health-cmd "redis-cli ping"
           --health-interval 10s --health-timeout 5s --health-retries 5
     env:
-      # DinD: service containers port-bind on the DinD sidecar's interface,
-      # not on the runner container's loopback — use the 'docker' hostname.
-      DATABASE_URL: postgresql://fcm:fcm@docker:5432/fcm_test
-      REDIS_URL: redis://docker:6379
+      # Service-container host: GitHub-hosted runners expose service containers on
+      # localhost; the self-hosted DinD setup exposes them on the 'docker' sidecar.
+      # CI_RUNNER set (self-hosted) => 'docker'; unset (hosted default) => 'localhost'.
+      DATABASE_URL: postgresql://fcm:fcm@${{ vars.CI_RUNNER && 'docker' || 'localhost' }}:5432/fcm_test
+      REDIS_URL: redis://${{ vars.CI_RUNNER && 'docker' || 'localhost' }}:6379
       NODE_ENV: test
       # express-session requires a secret at boot; integration tests boot the app.
       SESSION_SECRET: ci-test-session-secret
@@ -179,7 +190,7 @@ jobs:
   osv-scan:
     name: OSV vulnerability scan
     needs: authorize
-    runs-on: [self-hosted, linux, unn]
+    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     continue-on-error: true
     env:
       OSV_VERSION: v2.3.8
@@ -234,7 +245,7 @@ jobs:
   unit-vitest:
     name: Unit (Vitest + RTL — ${{ matrix.workspace }})
     needs: authorize
-    runs-on: [self-hosted, linux, unn]
+    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     strategy:
       fail-fast: false
       matrix:
@@ -264,7 +275,7 @@ jobs:
   overlay-launch-smoke-linux:
     name: Overlay launch smoke (Linux)
     needs: authorize
-    runs-on: [self-hosted, linux, unn]
+    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -305,81 +316,51 @@ jobs:
           xvfb-run -a node cross-platform-overlay/scripts/ci-launch-smoke.mjs "$BIN"
 
   # ── Windows NSIS build verification — REQUIRED gate ──────────────────────────
-  # Builds the NSIS installer inside win-electron-builder (Wine + NSIS + Xvfb)
-  # using the docker cp strategy (no container: directive — DinD volume mounts
-  # don't work against the runner FS). Wine can BUILD an Electron 31+ installer
-  # but not RUN it, so this job is build-correctness only.
-  #
-  # It asserts Windows-specific build correctness: the installer + exe are present
-  # and non-trivial, and NO auto-update feed files (app-update.yml / latest*.yml)
-  # are emitted — the overlay no longer auto-updates (it shows a passive OS
-  # notification instead; see docs/overlay/auto-update.md).
+  # Builds the NSIS installer NATIVELY on windows-latest (no Wine, no Docker, no
+  # GHCR image — the self-hosted Wine/DinD/docker-cp strategy was superseded by the
+  # GitHub-hosted runner migration; switchable back to self-hosted via
+  # CI_RUNNER_WINDOWS). Build-correctness only: asserts the installer + exe are
+  # present and non-trivial, and that NO auto-update feed files (app-update.yml /
+  # latest*.yml) are emitted — the overlay no longer auto-updates (it shows a
+  # passive OS notification instead; see docs/overlay/auto-update.md).
   overlay-build-windows-nsis:
     name: Overlay Windows NSIS build verification
     needs: authorize
-    runs-on: [self-hosted, linux, unn]
+    runs-on: ${{ vars.CI_RUNNER_WINDOWS && fromJSON(vars.CI_RUNNER_WINDOWS) || 'windows-latest' }}
     if: github.event_name == 'pull_request' || (github.event_name == 'push' && (github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/dev'))
-    timeout-minutes: 15
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: powershell
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: cross-platform-overlay/package-lock.json
-
-      - name: Cache Electron binary
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
-        with:
-          path: ~/.cache/electron
-          key: electron-${{ hashFiles('cross-platform-overlay/package-lock.json') }}
-
-      - name: Pull win-electron-builder image
+      # admin-dashboard installs first — the renderer cross-imports it (@dashboard).
+      - name: Install admin-dashboard deps
+        run: npm ci
+        working-directory: admin-dashboard
+      - name: Install overlay deps
+        run: npm ci
+        working-directory: cross-platform-overlay
+      - name: Build renderer
+        run: npm run build:renderer
+        working-directory: cross-platform-overlay
+      - name: Build Windows NSIS package (native)
+        run: npx electron-builder --win nsis --publish=never
+        working-directory: cross-platform-overlay
         env:
-          DOCKER_HOST: tcp://docker:2376
-          DOCKER_TLS_VERIFY: "1"
-          DOCKER_CERT_PATH: /certs/client
-        run: |
-          docker logout ghcr.io || true
-          docker pull ghcr.io/unn-corp/win-electron-builder:latest
-
-      - name: Build Windows NSIS package (docker cp strategy)
-        env:
-          DOCKER_HOST: tcp://docker:2376
-          DOCKER_TLS_VERIFY: "1"
-          DOCKER_CERT_PATH: /certs/client
-        run: |
-          cat > /tmp/win-build-inner.sh << 'INNERSCRIPT'
-          set -e
-
-          # wine32, p7zip, winCodeSign+rcedit-ia32 shim, and WOW64 Wine prefix are
-          # all pre-baked into the image — no runtime installs needed.
-          rm -f /tmp/.X99-lock
-          Xvfb :99 -screen 0 1024x768x24 &
-          export DISPLAY=:99
-          sleep 1
-
-          cd /workspace/admin-dashboard && npm ci
-          cd /workspace/cross-platform-overlay && npm install --ignore-scripts
-          cd /workspace/cross-platform-overlay && CSC_IDENTITY_AUTO_DISCOVERY=false ./node_modules/.bin/electron-builder --win nsis --publish=never
-          INNERSCRIPT
-
-          CID=$(docker run -d ghcr.io/unn-corp/win-electron-builder:latest sleep infinity)
-          trap "docker rm -f \"$CID\" 2>/dev/null || true" EXIT
-
-          docker cp "${GITHUB_WORKSPACE}/." "$CID:/workspace/"
-          docker cp /tmp/win-build-inner.sh "$CID:/tmp/win-build-inner.sh"
-          docker exec "$CID" bash /tmp/win-build-inner.sh
-          docker cp "$CID:/workspace/cross-platform-overlay/dist-electron/." "${GITHUB_WORKSPACE}/cross-platform-overlay/dist-electron/"
-
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
       - name: Windows build artifact verification
         run: node .github/scripts/win-artifacts-check.mjs
 
   # ── The single required status check ────────────────────────────────────────
   ci-summary:
     name: CI Summary
-    runs-on: [self-hosted, linux, unn]
+    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     if: always()
     needs:
       - authorize                      # PR gate — skipped (unlabeled) ⇒ this summary fails, no false green

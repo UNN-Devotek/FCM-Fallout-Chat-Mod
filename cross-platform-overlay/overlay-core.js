@@ -430,6 +430,55 @@ function buildKwinRemoveRulesScript({ file = 'kwinrulesrc' } = {}) {
 //   • else → { args: argv.slice(1) + flag, execPath: appImagePath when set }
 // appImagePath is process.env.APPIMAGE — on AppImage builds process.execPath is the
 // transient /tmp/.mount_* path (gone after exit), so relaunch must target $APPIMAGE.
+// ─── HTTP proxy header filter ─────────────────────────────────────────────────
+// The renderer's shimmed fetch supplies headers that the main process forwards to
+// the relay. We must NOT blindly spread them: the renderer could override
+// X-Auth-Token (session hijack), inject Host / Transfer-Encoding / Content-Length
+// (request smuggling), or embed CRLF sequences (header injection). Instead we
+// whitelist the small set of headers the ChatOverlay component legitimately sends
+// and strip everything else. The caller then overlays the auth/UA/Origin headers
+// on top of the filtered result, so those are always main-process-controlled.
+const PROXY_HEADER_ALLOWLIST = new Set([
+  'content-type',
+  'accept',
+  'accept-language',
+  'cache-control',
+  'x-requested-with',
+]);
+
+function filterProxyHeaders(rendererHeaders) {
+  if (!rendererHeaders || typeof rendererHeaders !== 'object') return {};
+  const out = {};
+  for (const [k, v] of Object.entries(rendererHeaders)) {
+    const lower = k.toLowerCase();
+    if (!PROXY_HEADER_ALLOWLIST.has(lower)) continue;
+    // Strip CR/LF (header injection) plus any other control chars Node's HTTP
+    // layer rejects (\0, \v, \f, DEL, …) — keep tab + printable/high bytes only.
+    // Sanitising rather than only stripping CRLF avoids a renderer-triggered
+    // ERR_INVALID_CHAR throw on the outbound request.
+    const safe = String(v).replace(/[^\t\x20-\x7e\x80-\xff]/g, '');
+    if (safe) out[lower] = safe;
+  }
+  return out;
+}
+
+// ─── HTTP proxy URL guard (SSRF) ──────────────────────────────────────────────
+// The renderer also controls the request *path*. Building the outbound URL by
+// string concatenation (`relayHttp + reqPath`) let a hostile renderer redirect
+// the request to another host — e.g. `@evil.com/api` or `//evil.com/api` parse
+// into a different authority — and since the main process attaches X-Auth-Token,
+// that leaks the session token to the attacker. Resolve reqPath strictly against
+// the relay base and reject anything that lands on a different origin. Returns a
+// URL pinned to the relay, or null to refuse the request.
+function resolveRelayProxyUrl(reqPath, relayHttp) {
+  let base;
+  try { base = new URL(relayHttp); } catch { return null; }
+  let url;
+  try { url = new URL(reqPath, base); } catch { return null; }
+  if (url.origin !== base.origin) return null;
+  return url;
+}
+
 function planOzoneRelaunch({ kdeWayland, argv = [], appImagePath = null } = {}) {
   const FLAG = '--ozone-platform=x11';
   if (!kdeWayland) return null;
@@ -510,4 +559,6 @@ module.exports = {
   cmpVersions,
   isLocalRelay,
   syntheticDevDiscordId,
+  filterProxyHeaders,
+  resolveRelayProxyUrl,
 };

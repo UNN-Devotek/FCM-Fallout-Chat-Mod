@@ -99,6 +99,11 @@ OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows
 > | Windows  | `.github/workflows/build-windows.yml` | `[self-hosted, windows, unn]` | `*.exe` (NSIS + portable) |
 > | Linux    | `.github/workflows/build-linux.yml`   | `[self-hosted, linux, unn]`   | `*.AppImage`, `*.deb` |
 >
+> **Note:** these release workflows (`build-*.yml`) always use the self-hosted runners by design
+> and are NOT affected by the CI runner migration. Only the CI jobs in `ci.yml` defaulted to
+> GitHub-hosted runners (`ubuntu-latest` / `windows-latest`). The `CI_RUNNER` /
+> `CI_RUNNER_WINDOWS` repo variables have no effect on release workflows.
+>
 > Trigger both for the same version (CLI shown; or use the Actions tab → Run workflow):
 >
 > ```bash

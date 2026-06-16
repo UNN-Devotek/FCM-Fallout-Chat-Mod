@@ -2,7 +2,33 @@
 
 The live pipeline is in `.github/workflows/ci.yml` (push to `prod`/`dev`, and label-triggered
 PRs — see below). A companion workflow, `.github/workflows/pr-gate-delabel.yml`, handles the TOCTOU
-guard. Both run on self-hosted runners (`[self-hosted, linux, unn]`).
+guard.
+
+CI defaults to **GitHub-hosted runners** (`ubuntu-latest` / `windows-latest`). Self-hosted runners
+are available as a documented fallback via repo variables:
+
+| Variable | Default (unset) | Self-hosted value |
+| -------- | --------------- | ----------------- |
+| `CI_RUNNER` | `ubuntu-latest` (GitHub-hosted) | `["self-hosted","linux","unn"]` |
+| `CI_RUNNER_WINDOWS` | `windows-latest` (GitHub-hosted) | `["self-hosted","windows","unn"]` |
+
+Toggle commands:
+```bash
+# Switch Linux jobs to self-hosted
+gh variable set CI_RUNNER '["self-hosted","linux","unn"]'
+# Switch back to GitHub-hosted (delete the variable)
+gh variable delete CI_RUNNER
+
+# Same for Windows jobs
+gh variable set CI_RUNNER_WINDOWS '["self-hosted","windows","unn"]'
+gh variable delete CI_RUNNER_WINDOWS
+```
+
+The **security boundary is the `ci-approved` label gate** (see `authorize` job below), NOT the
+runner type. Untrusted fork code is blocked from CI regardless of which runners are in use.
+
+`pr-gate-delabel.yml` runs on `ubuntu-latest` directly (plain — no toggle needed; it only calls
+the labels API).
 
 Source of truth for the test-tooling decisions cited here is the five-agent subsystem mapping.
 Key constraints it surfaced:
@@ -26,8 +52,9 @@ on:
 
 **PRs are label-triggered.** CI does not fire when a PR is opened or when a contributor pushes.
 It fires only when a maintainer applies the **`ci-approved`** label. Applying a label requires
-write/triage access, so fork authors cannot self-approve. This protects the self-hosted runners
-from untrusted code.
+write/triage access, so fork authors cannot self-approve. This is the primary security boundary —
+it protects CI from untrusted code regardless of whether GitHub-hosted or self-hosted runners are
+in use.
 
 Every job has `needs: authorize`. The `authorize` job itself has this condition:
 
@@ -73,27 +100,27 @@ push / ci-approved label
    ▼    ▼         ▼           ▼           ▼
 lint  backend  unit-vitest  overlay-launch  overlay-build
 check  -jest   (matrix)     -smoke-linux    -windows-nsis
-                                              │
-                                    (bonus, continue-on-error)
-                                    overlay-autoupdate-e2e-
-                                    windows-exec
         │
         ▼ (all of the above)
    [ci-summary]   ← the single required branch-protection check
 ```
 
-## Job list (9 jobs total)
+## Job list (8 jobs total)
 
-| Job | Runner | Required? | Notes |
-| --- | ------ | --------- | ----- |
-| `authorize` | linux/unn | **Gate** | Skipped for unlabeled PRs → fails `ci-summary` |
-| `osv-scan` | linux/unn | **Not required** (`continue-on-error: true`) | OSV (osv.dev) vulnerability scan of every lockfile (`osv-scanner scan source -r .`); advisory only — results in the job log, PR step summary, and an `osv-report` artifact. NON-BLOCKING pilot; see [Dependency scanning](#dependency-scanning-osv--dependabot) |
-| `lint-typecheck` | linux/unn | **Required** | `tsc --noEmit` matrix over backend, admin-dashboard, cross-platform-overlay |
-| `backend-jest` | linux/unn (DinD) | **Required** | `postgres:16` + `redis:7` service containers; `prisma generate` + `db push`; `npm run build` then `npm test` + `npm run test:unit` |
-| `unit-vitest` | linux/unn | **Required** | **Consolidated matrix** (`cross-platform-overlay`, `admin-dashboard`); replaced the former `overlay-unit-component` + `dashboard-unit-component` jobs |
-| `overlay-launch-smoke-linux` | linux/unn | **Required** | Builds once, runs packaged-launch smoke (`ci-launch-smoke.mjs`); the former auto-update E2E step was removed when auto-update was retired; replaced former `overlay-e2e-linux` |
-| `overlay-build-windows-nsis` | linux/unn (Docker `win-electron-builder`) | **Required** (prod+PRs) | Builds the NSIS installer via docker-cp strategy inside the Wine image; runs `.github/scripts/win-artifacts-check.mjs` artifact verification — including checks that `app-update.yml` and `latest*.yml` are **absent** from the build output; no Wine execution (see below); renamed from `overlay-autoupdate-e2e-windows` |
-| `ci-summary` | linux/unn | **The single required gate** | `if: always()`; fails if any listed job is `failure`, `cancelled`, or `skipped` |
+| Job | Runner (default) | Required? | Notes |
+| --- | ---------------- | --------- | ----- |
+| `authorize` | `ubuntu-latest` | **Gate** | Skipped for unlabeled PRs → fails `ci-summary` |
+| `osv-scan` | `ubuntu-latest` | **Not required** (`continue-on-error: true`) | OSV (osv.dev) vulnerability scan of every lockfile (`osv-scanner scan source -r .`); advisory only — results in the job log, PR step summary, and an `osv-report` artifact. NON-BLOCKING pilot; see [Dependency scanning](#dependency-scanning-osv--dependabot) |
+| `lint-typecheck` | `ubuntu-latest` | **Required** | `tsc --noEmit` matrix over backend, admin-dashboard, cross-platform-overlay |
+| `backend-jest` | `ubuntu-latest` | **Required** | `postgres:16` + `redis:7` service containers; service containers on `localhost` (hosted) or `docker` hostname (self-hosted DinD); `prisma generate` + `db push`; `npm run build` then `npm test` + `npm run test:unit` |
+| `unit-vitest` | `ubuntu-latest` | **Required** | **Consolidated matrix** (`cross-platform-overlay`, `admin-dashboard`); replaced the former `overlay-unit-component` + `dashboard-unit-component` jobs |
+| `overlay-launch-smoke-linux` | `ubuntu-latest` | **Required** | Builds once, runs packaged-launch smoke (`ci-launch-smoke.mjs`); the former auto-update E2E step was removed when auto-update was retired; replaced former `overlay-e2e-linux` |
+| `overlay-build-windows-nsis` | `windows-latest` | **Required** (prod+PRs) | Builds the NSIS installer **natively** on `windows-latest` (no Wine/Docker/GHCR); runs `.github/scripts/win-artifacts-check.mjs` — asserts the installer + exe are present and that `app-update.yml` / `latest*.yml` are **absent** (the overlay no longer auto-updates); renamed from `overlay-autoupdate-e2e-windows` |
+| `ci-summary` | `ubuntu-latest` | **The single required gate** | `if: always()`; fails if any listed job is `failure`, `cancelled`, or `skipped` |
+
+All runner values above are defaults (no `CI_RUNNER` / `CI_RUNNER_WINDOWS` variable set). See
+the [runner toggle](#runner-toggle-github-hosted-default--self-hosted-fallback) section above for
+how to switch to self-hosted runners.
 
 **Job consolidation vs. the old design:** the pipeline previously had 11 jobs. The two Vitest jobs
 (`overlay-unit-component`, `dashboard-unit-component`) merged into a single matrix job `unit-vitest`;
@@ -169,17 +196,23 @@ The former auto-update E2E step (`tests/mock-relay/auto-update.e2e.mjs`) was rem
 
 ## Windows NSIS CI (`overlay-build-windows-nsis`)
 
-Builds the NSIS installer inside the `ghcr.io/unn-corp/win-electron-builder` Docker image using
-the **docker-cp strategy** (no `container:` directive — DinD volume mounts don't work against the
-runner FS). Verification is artifact-based: `.github/scripts/win-artifacts-check.mjs` asserts:
+Builds the NSIS installer **natively on `windows-latest`** (no Wine, no Docker, no
+`ghcr.io/unn-corp/win-electron-builder` image). The prior Wine/DinD/docker-cp strategy was
+superseded by the GitHub-hosted runner migration — native Windows is simpler and avoids the
+`STATUS_BREAKPOINT` crash that plagued Wine execution of Electron 31+.
+
+Build steps: install admin-dashboard deps (renderer cross-imports require it), install overlay
+deps, build renderer, run `electron-builder --win nsis --publish=never` natively. Verification
+is artifact-based: `.github/scripts/win-artifacts-check.mjs` asserts:
 - the installer `*.exe` (NSIS Setup) and the `win-unpacked` exe are present and non-trivial in size
 - `app-update.yml` and `latest*.yml` are **absent** (inverted check — these must not be generated,
   since the overlay no longer auto-updates)
 
-**Why no Wine execution:** running a packaged Electron 31+ exe under Wine is unsupported — see
-[windows-nsis-ci-fixes.md](windows-nsis-ci-fixes.md) for the full failure history. Wine can BUILD the
-installer but not RUN it, so this job is build-correctness only. (Renamed from
-`overlay-autoupdate-e2e-windows`; the former native-Windows execution job was removed with auto-update.)
+The former native-exe smoke job (`overlay-autoupdate-e2e-windows-exec`) and the `tests/mock-relay/`
+auto-update fixture were removed when auto-update was retired.
+
+See [windows-nsis-ci-fixes.md](windows-nsis-ci-fixes.md) for the full Wine/DinD failure history
+that motivated the migration to native windows-latest.
 
 ## Overlay CI never touches prod
 
@@ -191,12 +224,17 @@ clean startup (via `scripts/ci-launch-smoke.mjs`) without requiring a relay; it 
 
 ## Runner details
 
-- All jobs run on self-hosted Linux runners (the build server). Two ephemeral repo-scoped runners
-  are registered there via a docker-compose override.
-- `backend-jest` uses DinD service containers (the `DATABASE_URL` uses hostname `docker`, not
-  `localhost`, because DinD service containers bind on the DinD sidecar interface).
-- `overlay-build-windows-nsis` also runs on the Linux build server inside Docker (Wine build only,
-  no execution).
+- Linux jobs default to **GitHub-hosted `ubuntu-latest`**. Set the `CI_RUNNER` repo variable
+  to switch to self-hosted (see toggle commands above).
+- The Windows job (`overlay-build-windows-nsis`) defaults to **GitHub-hosted `windows-latest`**.
+  Set `CI_RUNNER_WINDOWS` to switch to self-hosted.
+- `backend-jest` service containers (`postgres:16`, `redis:7`) are reachable on **`localhost`**
+  on GitHub-hosted runners. On self-hosted DinD runners the hostname is **`docker`** (the DinD
+  sidecar interface). The workflow uses `vars.CI_RUNNER && 'docker' || 'localhost'` to select
+  the correct host automatically.
+- `overlay-build-windows-nsis` builds the NSIS installer natively on `windows-latest` — no
+  Wine, no Docker, no GHCR image; asserts no auto-update feed files are emitted.
+- `pr-gate-delabel.yml` always runs on `ubuntu-latest` (no toggle — it only calls the labels API).
 
 ## Branch strategy
 
@@ -291,9 +329,11 @@ Notes:
 
 ## Rollout status
 
-**Phase 3 (active).** All required jobs are wired and blocking. The `overlay-build-windows-nsis`
-(Docker/NSIS build + artifact check, verifies no `latest*.yml`) job is active on prod pushes and
-labeled PRs.
+**GitHub-hosted runner migration (active).** All CI jobs now default to GitHub-hosted runners
+(`ubuntu-latest` / `windows-latest`). Self-hosted runners remain available via `CI_RUNNER` /
+`CI_RUNNER_WINDOWS` repo variables. All 8 jobs are wired and blocking. The
+`overlay-build-windows-nsis` job builds the NSIS installer natively on `windows-latest`
+(no Wine/Docker) and asserts no auto-update feed files are emitted (auto-update was retired).
 
 The `dashboard-playwright` browser E2E placeholder was removed from the pipeline; it will be
 re-added as a proper job once a Playwright suite exists.
