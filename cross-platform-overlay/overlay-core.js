@@ -452,11 +452,31 @@ function filterProxyHeaders(rendererHeaders) {
   for (const [k, v] of Object.entries(rendererHeaders)) {
     const lower = k.toLowerCase();
     if (!PROXY_HEADER_ALLOWLIST.has(lower)) continue;
-    // Strip CRLF sequences that would allow header injection.
-    const safe = String(v).replace(/[\r\n]/g, '');
+    // Strip CR/LF (header injection) plus any other control chars Node's HTTP
+    // layer rejects (\0, \v, \f, DEL, …) — keep tab + printable/high bytes only.
+    // Sanitising rather than only stripping CRLF avoids a renderer-triggered
+    // ERR_INVALID_CHAR throw on the outbound request.
+    const safe = String(v).replace(/[^\t\x20-\x7e\x80-\xff]/g, '');
     if (safe) out[lower] = safe;
   }
   return out;
+}
+
+// ─── HTTP proxy URL guard (SSRF) ──────────────────────────────────────────────
+// The renderer also controls the request *path*. Building the outbound URL by
+// string concatenation (`relayHttp + reqPath`) let a hostile renderer redirect
+// the request to another host — e.g. `@evil.com/api` or `//evil.com/api` parse
+// into a different authority — and since the main process attaches X-Auth-Token,
+// that leaks the session token to the attacker. Resolve reqPath strictly against
+// the relay base and reject anything that lands on a different origin. Returns a
+// URL pinned to the relay, or null to refuse the request.
+function resolveRelayProxyUrl(reqPath, relayHttp) {
+  let base;
+  try { base = new URL(relayHttp); } catch { return null; }
+  let url;
+  try { url = new URL(reqPath, base); } catch { return null; }
+  if (url.origin !== base.origin) return null;
+  return url;
 }
 
 function planOzoneRelaunch({ kdeWayland, argv = [], appImagePath = null } = {}) {
@@ -499,4 +519,5 @@ module.exports = {
   buildKwinRemoveRulesScript,
   planOzoneRelaunch,
   filterProxyHeaders,
+  resolveRelayProxyUrl,
 };

@@ -1183,8 +1183,16 @@ ipcMain.handle('proxy:http', async (_evt, reqDesc) => {
     return { status: 200, body: JSON.stringify({ data: { ticket: 'proxy' } }) };
   }
 
+  // SSRF guard: reqPath is renderer-controlled. Resolve it strictly against the
+  // relay origin and refuse anything pointing at a different host — otherwise a
+  // hostile renderer could redirect the request (and the X-Auth-Token attached
+  // below) to an attacker server via e.g. `@evil.com/api` or `//evil.com/api`.
+  const url = overlayCore.resolveRelayProxyUrl(reqPath, RELAY_HTTP);
+  if (!url) {
+    return { status: 400, body: JSON.stringify({ detail: 'Refusing to proxy to a non-relay origin' }) };
+  }
+
   return new Promise((resolve) => {
-    const url = new URL(RELAY_HTTP + reqPath);
     const outHeaders = overlayCore.filterProxyHeaders(headers);
     if (sessionToken) outHeaders['X-Auth-Token'] = sessionToken;
     outHeaders['User-Agent'] = APP_UA;

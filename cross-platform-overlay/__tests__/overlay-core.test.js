@@ -16,6 +16,7 @@ const {
   buildKeybindMap,
   classifyInputGrab,
   filterProxyHeaders,
+  resolveRelayProxyUrl,
   DEFAULT_APP_CLIENT_KEY,
   DEFAULT_WIDTH,
   DEFAULT_HEIGHT,
@@ -568,5 +569,49 @@ describe('filterProxyHeaders', () => {
   it('drops headers with empty values after CRLF strip', () => {
     const result = filterProxyHeaders({ 'content-type': '\r\n' });
     expect(result['content-type']).toBeUndefined();
+  });
+
+  it('strips non-CRLF control chars Node would reject (NUL/VT/FF/DEL)', () => {
+    const dirty = 'a' + String.fromCharCode(0, 11, 12, 127) + 'bcde';
+    expect(filterProxyHeaders({ 'content-type': dirty })['content-type']).toBe('abcde');
+  });
+
+});
+
+describe('resolveRelayProxyUrl', () => {
+  const RELAY = 'https://falloutchatmod.com';
+
+  it('resolves a normal path on the relay origin', () => {
+    const url = resolveRelayProxyUrl('/api/messages', RELAY);
+    expect(url).not.toBeNull();
+    expect(url.origin).toBe(RELAY);
+    expect(url.pathname).toBe('/api/messages');
+  });
+
+  it('preserves the query string', () => {
+    const url = resolveRelayProxyUrl('/api/x?y=1&z=2', RELAY);
+    expect(url.pathname + url.search).toBe('/api/x?y=1&z=2');
+  });
+
+  it('refuses a protocol-relative host override (//evil.com)', () => {
+    expect(resolveRelayProxyUrl('//evil.com/api', RELAY)).toBeNull();
+  });
+
+  it('refuses an absolute URL to another origin', () => {
+    expect(resolveRelayProxyUrl('https://evil.com/api', RELAY)).toBeNull();
+    expect(resolveRelayProxyUrl('http://falloutchatmod.com/api', RELAY)).toBeNull(); // scheme downgrade
+  });
+
+  it('does NOT let `@evil.com` or `.evil.com` change the host (the old concat bug)', () => {
+    // With strict base-relative resolution these become relay paths, not hosts.
+    for (const p of ['@evil.com/api', '.evil.com/api']) {
+      const url = resolveRelayProxyUrl(p, RELAY);
+      expect(url).not.toBeNull();
+      expect(url.origin).toBe(RELAY);
+    }
+  });
+
+  it('returns null for a malformed relay base', () => {
+    expect(resolveRelayProxyUrl('/api', 'not a url')).toBeNull();
   });
 });
