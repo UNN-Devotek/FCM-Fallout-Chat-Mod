@@ -240,7 +240,7 @@ Mounted at both paths. Auth is handled inside `releasesController` using `ADMIN_
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/admin/releases` or `/api/releases` | Bearer `ADMIN_RELEASE_TOKEN` | Publish a new release; broadcasts `release:published` WS event |
+| POST | `/admin/releases` or `/api/releases` | Bearer `ADMIN_RELEASE_TOKEN` | Publish a new release; updates the server's in-memory `latestVersion` cache (new WS connects receive `app:update-available`) |
 | GET | `/admin/releases` or `/api/releases` | public | List releases (current version + notes) |
 | DELETE | `/admin/releases/:version` | Bearer `ADMIN_RELEASE_TOKEN` | Remove release entry |
 

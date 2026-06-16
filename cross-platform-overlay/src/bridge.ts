@@ -11,15 +11,6 @@
  * component needs zero changes.
  */
 
-export type UpdaterResult =
-  | { available: false }
-  | { available: true; version: string; downloadUrl?: string; releaseNotes?: string };
-
-export type UpdaterStatus =
-  | { phase: 'downloading'; version: string }
-  | { phase: 'progress'; percent: number }
-  | { phase: 'restart'; version: string; delayMs: number };
-
 interface RelayBridge {
   getInfo(): Promise<{ clickThrough: boolean; toggleShortcut: string; platform: string; relayHost: string; appVersion?: string; keybinds?: Record<string, string>; isDev?: boolean }>;
   getRelayHostSync?(): string;
@@ -84,17 +75,6 @@ interface RelayBridge {
   // Discord link status refresh: asks main to poll the backend and fires onDiscordStatus.
   refreshDiscordStatus?(): void;
   onDiscordStatus?(cb: (status: { linked: boolean; discordName: string }) => void): void;
-  // Updater: main pushes check results; renderer can also trigger a manual check.
-  onUpdaterResult?(cb: (result: UpdaterResult) => void): void;
-  /** Phase transitions from the auto-updater (packaged builds only).
-   *  phase 'downloading' → update found, downloading now.
-   *  phase 'progress'    → download percent update.
-   *  phase 'restart'     → update downloaded; app will restart in delayMs. */
-  onUpdaterStatus?(cb: (status: UpdaterStatus) => void): void;
-  checkForUpdates?(): Promise<UpdaterResult>;
-  getUpdaterLastResult?(): Promise<UpdaterResult | null>;
-  /** Fallback for dev/unpackaged: open the download URL in the browser. */
-  installUpdate?(downloadUrl: string): void;
   /** Show the OS right-click context menu on the chat input (cut/copy/paste/select-all). */
   showInputContextMenu?(x?: number, y?: number): void;
   /** Return focus to Fallout 76 after sending a message. Blurs the overlay window. */

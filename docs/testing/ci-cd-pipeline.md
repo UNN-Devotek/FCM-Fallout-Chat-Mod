@@ -98,18 +98,14 @@ push / ci-approved label
         │
    ┌────┼─────────────────────────────────┐
    ▼    ▼         ▼           ▼           ▼
-lint  backend  unit-vitest  overlay-e2e  overlay-autoupdate
-check  -jest   (matrix)     -linux       -e2e-windows
-                                              │
-                                    (bonus, continue-on-error)
-                                    overlay-autoupdate-e2e-
-                                    windows-exec
+lint  backend  unit-vitest  overlay-launch  overlay-build
+check  -jest   (matrix)     -smoke-linux    -windows-nsis
         │
         ▼ (all of the above)
    [ci-summary]   ← the single required branch-protection check
 ```
 
-## Job list (9 jobs total)
+## Job list (8 jobs total)
 
 | Job | Runner (default) | Required? | Notes |
 | --- | ---------------- | --------- | ----- |
@@ -118,9 +114,8 @@ check  -jest   (matrix)     -linux       -e2e-windows
 | `lint-typecheck` | `ubuntu-latest` | **Required** | `tsc --noEmit` matrix over backend, admin-dashboard, cross-platform-overlay |
 | `backend-jest` | `ubuntu-latest` | **Required** | `postgres:16` + `redis:7` service containers; service containers on `localhost` (hosted) or `docker` hostname (self-hosted DinD); `prisma generate` + `db push`; `npm run build` then `npm test` + `npm run test:unit` |
 | `unit-vitest` | `ubuntu-latest` | **Required** | **Consolidated matrix** (`cross-platform-overlay`, `admin-dashboard`); replaced the former `overlay-unit-component` + `dashboard-unit-component` jobs |
-| `overlay-e2e-linux` | `ubuntu-latest` | **Required** | **Consolidated**: builds once, runs (1) packaged-launch smoke (`ci-launch-smoke.mjs`) then (2) auto-update E2E (`tests/mock-relay/auto-update.e2e.mjs`); replaced former `overlay-launch-smoke` + `overlay-autoupdate-e2e` |
-| `overlay-autoupdate-e2e-windows` | `windows-latest` | **Required** (prod+PRs) | Builds the NSIS installer **natively** on `windows-latest` (no Wine/Docker/GHCR); runs `win-artifacts-check.mjs` artifact verification |
-| `overlay-autoupdate-e2e-windows-exec` | `windows-latest` | **Not required** (`continue-on-error: true`) | Runs the built `.exe` natively; bonus coverage |
+| `overlay-launch-smoke-linux` | `ubuntu-latest` | **Required** | Builds once, runs packaged-launch smoke (`ci-launch-smoke.mjs`); the former auto-update E2E step was removed when auto-update was retired; replaced former `overlay-e2e-linux` |
+| `overlay-build-windows-nsis` | `windows-latest` | **Required** (prod+PRs) | Builds the NSIS installer **natively** on `windows-latest` (no Wine/Docker/GHCR); runs `.github/scripts/win-artifacts-check.mjs` — asserts the installer + exe are present and that `app-update.yml` / `latest*.yml` are **absent** (the overlay no longer auto-updates); renamed from `overlay-autoupdate-e2e-windows` |
 | `ci-summary` | `ubuntu-latest` | **The single required gate** | `if: always()`; fails if any listed job is `failure`, `cancelled`, or `skipped` |
 
 All runner values above are defaults (no `CI_RUNNER` / `CI_RUNNER_WINDOWS` variable set). See
@@ -128,10 +123,13 @@ the [runner toggle](#runner-toggle-github-hosted-default--self-hosted-fallback) 
 how to switch to self-hosted runners.
 
 **Job consolidation vs. the old design:** the pipeline previously had 11 jobs. The two Vitest jobs
-(`overlay-unit-component`, `dashboard-unit-component`) merged into a single matrix job
-`unit-vitest`; the two Linux overlay jobs (`overlay-launch-smoke`, `overlay-autoupdate-e2e`) merged
-into `overlay-e2e-linux` (one shared setup, two sequential steps); the placeholder
-`dashboard-playwright` job was removed; the `osv-scan` job was later added (non-blocking). Result: 9 jobs.
+(`overlay-unit-component`, `dashboard-unit-component`) merged into a single matrix job `unit-vitest`;
+the two Linux overlay jobs (`overlay-launch-smoke`, `overlay-autoupdate-e2e`) merged into
+`overlay-e2e-linux` and was later renamed `overlay-launch-smoke-linux` when the auto-update E2E step
+was retired; the placeholder `dashboard-playwright` job was removed; the `osv-scan` job was later added
+(non-blocking); `overlay-autoupdate-e2e-windows` was renamed `overlay-build-windows-nsis`; and the
+native-Windows `overlay-autoupdate-e2e-windows-exec` job was removed when auto-update was retired.
+Result: 8 jobs.
 
 ## Dependency scanning (OSV + Dependabot)
 
@@ -184,19 +182,19 @@ to apply the `ci-approved` label.
 The `skipped` check is critical: an unlabeled PR causes `authorize` to be skipped, which cascades
 to all downstream jobs being skipped, which would otherwise produce a misleading green gate.
 
-## Linux overlay E2E details (`overlay-e2e-linux`)
+## Linux overlay smoke details (`overlay-launch-smoke-linux`)
 
-Shared setup (one build, two checks):
+Single build + launch-smoke check:
 
 1. **Packaged-launch smoke** — `npx electron-builder --linux dir` then
    `xvfb-run -a node scripts/ci-launch-smoke.mjs`. Catches crash-on-launch regressions (e.g.
-   v1.3.82's `Cannot find module './overlay-core'` which bricked users and could not self-update).
-2. **Auto-update E2E** — `tests/mock-relay/auto-update.e2e.mjs` drives the overlay against a
-   hermetic mock relay. The overlay must detect and download N+1 against the mock (never prod).
+   v1.3.82's `Cannot find module './overlay-core'` which bricked users; since auto-update is removed,
+   such a crash requires a manual reinstall — gate is non-negotiable).
 
-A shared-setup failure blocks both checks at once (accepted tradeoff vs. separate job overhead).
+The former auto-update E2E step (`tests/mock-relay/auto-update.e2e.mjs`) was removed when
+`electron-updater` was retired for Nexus Mods ToS compliance.
 
-## Windows NSIS CI (`overlay-autoupdate-e2e-windows`)
+## Windows NSIS CI (`overlay-build-windows-nsis`)
 
 Builds the NSIS installer **natively on `windows-latest`** (no Wine, no Docker, no
 `ghcr.io/unn-corp/win-electron-builder` image). The prior Wine/DinD/docker-cp strategy was
@@ -205,37 +203,37 @@ superseded by the GitHub-hosted runner migration — native Windows is simpler a
 
 Build steps: install admin-dashboard deps (renderer cross-imports require it), install overlay
 deps, build renderer, run `electron-builder --win nsis --publish=never` natively. Verification
-is artifact-based: `tests/mock-relay/win-artifacts-check.mjs` asserts the right files are
-present, the correct prod URL is in `app-update.yml`, and `latest.yml` has all required feed
-fields.
+is artifact-based: `.github/scripts/win-artifacts-check.mjs` asserts:
+- the installer `*.exe` (NSIS Setup) and the `win-unpacked` exe are present and non-trivial in size
+- `app-update.yml` and `latest*.yml` are **absent** (inverted check — these must not be generated,
+  since the overlay no longer auto-updates)
 
-The Linux `overlay-e2e-linux` job already exercises the `electron-updater` code path end-to-end.
-`overlay-autoupdate-e2e-windows-exec` covers native exe execution as bonus coverage
-(`continue-on-error: true`).
+The former native-exe smoke job (`overlay-autoupdate-e2e-windows-exec`) and the `tests/mock-relay/`
+auto-update fixture were removed when auto-update was retired.
 
 See [windows-nsis-ci-fixes.md](windows-nsis-ci-fixes.md) for the full Wine/DinD failure history
 that motivated the migration to native windows-latest.
 
-## Hermetic mock relay (no prod traffic — mandatory)
+## Overlay CI never touches prod
 
-The `tests/mock-relay/` fixture is a hermetic Express + `ws` server injected via the overlay's
-existing `RELAY_HTTP` / `RELAY_WS` env vars. All CI overlay tests talk to this mock; they never
-touch `https://falloutchatmod.com`. Any direct prod access must go through an explicit, manual
+The `tests/mock-relay/` hermetic fixture was removed together with the auto-update E2E it served.
+The remaining `overlay-launch-smoke-linux` job builds and launches the packaged overlay and asserts a
+clean startup (via `scripts/ci-launch-smoke.mjs`) without requiring a relay; it does not hit
+`https://falloutchatmod.com`. Any direct prod access must go through an explicit, manual
 `workflow_dispatch` "prod-smoke" run only.
 
 ## Runner details
 
 - Linux jobs default to **GitHub-hosted `ubuntu-latest`**. Set the `CI_RUNNER` repo variable
   to switch to self-hosted (see toggle commands above).
-- Windows jobs (`overlay-autoupdate-e2e-windows`, `overlay-autoupdate-e2e-windows-exec`) default
-  to **GitHub-hosted `windows-latest`**. Set `CI_RUNNER_WINDOWS` to switch to self-hosted.
+- The Windows job (`overlay-build-windows-nsis`) defaults to **GitHub-hosted `windows-latest`**.
+  Set `CI_RUNNER_WINDOWS` to switch to self-hosted.
 - `backend-jest` service containers (`postgres:16`, `redis:7`) are reachable on **`localhost`**
   on GitHub-hosted runners. On self-hosted DinD runners the hostname is **`docker`** (the DinD
   sidecar interface). The workflow uses `vars.CI_RUNNER && 'docker' || 'localhost'` to select
   the correct host automatically.
-- `overlay-autoupdate-e2e-windows` builds the NSIS installer natively on `windows-latest` — no
-  Wine, no Docker, no GHCR image.
-- `overlay-autoupdate-e2e-windows-exec` runs the built `.exe` natively; `continue-on-error: true`.
+- `overlay-build-windows-nsis` builds the NSIS installer natively on `windows-latest` — no
+  Wine, no Docker, no GHCR image; asserts no auto-update feed files are emitted.
 - `pr-gate-delabel.yml` always runs on `ubuntu-latest` (no toggle — it only calls the labels API).
 
 ## Branch strategy
@@ -334,12 +332,11 @@ Notes:
 **GitHub-hosted runner migration (active).** All CI jobs now default to GitHub-hosted runners
 (`ubuntu-latest` / `windows-latest`). Self-hosted runners remain available via `CI_RUNNER` /
 `CI_RUNNER_WINDOWS` repo variables. All 8 jobs are wired and blocking. The
-`overlay-autoupdate-e2e-windows` job builds the NSIS installer natively on `windows-latest`
-(no Wine/Docker). The `overlay-autoupdate-e2e-windows-exec` (native Windows execution) is wired
-but `continue-on-error` — bonus coverage only.
+`overlay-build-windows-nsis` job builds the NSIS installer natively on `windows-latest`
+(no Wine/Docker) and asserts no auto-update feed files are emitted (auto-update was retired).
 
 The `dashboard-playwright` browser E2E placeholder was removed from the pipeline; it will be
-re-added as a proper job once a mock-relay-targeted Playwright suite exists.
+re-added as a proper job once a Playwright suite exists.
 
 Phase 2 (enforce coverage thresholds + promote E2E to required) triggers after ~20 stable green
 runs of the relevant jobs.
