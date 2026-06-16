@@ -1990,6 +1990,13 @@ function showSystemNotification(title, body) {
   }
 }
 
+// Module-level reference so the Notification object survives garbage collection
+// until the user clicks/closes it. On Linux the click (default action) arrives
+// asynchronously over D-Bus, often well after showUpdateNotification() returns —
+// if the local object had been GC'd, the click handler would silently never fire
+// (which is exactly why an earlier build's toast "did nothing" when clicked).
+let _activeUpdateNotification = null;
+
 // Show a passive OS notification when the backend reports a newer version on WS
 // connect. Clicking the toast opens the Nexus mod page so the user can download
 // the update manually. Downloads and installs nothing.
@@ -2002,9 +2009,17 @@ function showUpdateNotification(version) {
     const title = `Update!  v${version}`;
     const body = 'A new version of Fallout Chat Mod is available. Click to get it on Nexus Mods.';
     const n = new Notification({ title, body, icon: appIcon() || undefined, silent: false });
-    n.on('click', () => { try { shell.openExternal(NEXUS_MOD_URL); } catch { /* non-fatal */ } });
+    _activeUpdateNotification = n; // keep alive until clicked/closed (see note above)
+    const openNexus = (src) => {
+      diag('[notify] ' + src + ' → opening Nexus: ' + NEXUS_MOD_URL);
+      try { shell.openExternal(NEXUS_MOD_URL); }
+      catch (e) { diag('[notify] shell.openExternal failed: ' + String(e && e.message || e)); }
+    };
+    n.on('click', () => openNexus('click'));
+    n.on('action', () => openNexus('action')); // macOS action button (no-op elsewhere)
+    n.on('close', () => { if (_activeUpdateNotification === n) _activeUpdateNotification = null; });
     n.show();
-    diag('[notify] update available: v' + version + ' → opened Nexus on click');
+    diag('[notify] update available: v' + version + ' — shown (click opens Nexus)');
   } catch (e) {
     diag('[notify] update notification failed: ' + String(e && e.message || e));
   }
