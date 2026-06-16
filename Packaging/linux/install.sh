@@ -44,9 +44,17 @@ command -v curl >/dev/null 2>&1 || die "curl is required."
 # Mod" WITH spaces, then URL-encode for the download URL.
 say "Looking up the latest version..."
 API_JSON="$(curl -fsSL "$API_URL")" || die "Could not reach the release API ($API_URL)."
-# Extract the first version value from the JSON without requiring jq/python.
-# The JSON has the form: {"data":[{"version":"1.2.3",...},...]}
-VERSION="$(printf '%s\n' "$API_JSON" | grep -o '"version":"[^"]*"' | head -n1 | sed 's/"version":"//;s/"//')"
+# Extract the first (latest) version value from the JSON without requiring jq/python.
+# The JSON has the form: {"data":[{"version":"1.2.3",...},...]}.
+# IMPORTANT: grep reads the WHOLE response and we pick the first match with pure-bash
+# parameter expansion. Do NOT pipe grep into `head` (or `sed …;q`): the /api/releases
+# payload is large (100s of matches), so the early pipe close sends grep SIGPIPE and,
+# under `set -o pipefail` + `set -e`, intermittently aborts the installer at version
+# lookup (flaky 141 exit) — i.e. the installer would fail to patch for many users.
+VERSION_MATCHES="$(printf '%s\n' "$API_JSON" | grep -o '"version":"[^"]*"')" || true
+VERSION="${VERSION_MATCHES%%$'\n'*}"   # first line = latest release
+VERSION="${VERSION#\"version\":\"}"      # strip the leading "version":" prefix
+VERSION="${VERSION%\"}"                   # strip the trailing quote
 [ -n "$VERSION" ] || die "Could not parse the version from the release API response."
 say "Latest version: $VERSION"
 
@@ -65,7 +73,12 @@ if [ -n "$INSTALLED" ]; then
   if [ "$INSTALLED" = "$VERSION" ] || [ "$HIGHER" = "$INSTALLED" ]; then
     say "You are already on the latest version (v$INSTALLED)."
     ans="c"
-    if [ -r /dev/tty ]; then
+    # Detect a USABLE controlling terminal by actually opening /dev/tty. `[ -r /dev/tty ]`
+    # is not enough: the device node passes the readability test even with no controlling
+    # terminal (e.g. `curl | bash </dev/null`, CI, systemd), and the subsequent open then
+    # fails with ENXIO ("No such device or address"), aborting under `set -e`. With a real
+    # `curl | bash` from a terminal the controlling tty exists, so the prompt still works.
+    if { : >/dev/tty; } 2>/dev/null; then
       printf '\033[1;33m?? \033[0m Reinstall (uninstall + reinstall) or cancel? [r/C] ' > /dev/tty
       read -r ans < /dev/tty || ans="c"
     else

@@ -72,3 +72,24 @@ describe('CLI installers — patch path is present', () => {
     expect(sh).toContain('/dev/tty');
   });
 });
+
+describe('install.sh hardening — regression guards for e2e-found bugs', () => {
+  const sh = readRepo('Packaging/linux/install.sh');
+
+  // Bug 1: `grep -o '"version":"…"' | head -n1 | sed …` SIGPIPEs grep on the now-large
+  // /api/releases payload and, under `set -e -o pipefail`, intermittently aborts the
+  // installer at version lookup (flaky 141). It must read all matches then pick the first
+  // in pure bash (no early pipe close).
+  it('parses the version without a SIGPIPE-prone `grep | head`', () => {
+    expect(sh).not.toContain(`grep -o '"version":"[^"]*"' | head`);
+    expect(sh).toContain('VERSION_MATCHES=');
+  });
+
+  // Bug 2: `[ -r /dev/tty ]` passes even with no controlling terminal, then the open
+  // fails with ENXIO and aborts under `set -e`. Must probe by actually opening /dev/tty.
+  it('detects a usable controlling terminal by opening /dev/tty (not a bare -r test)', () => {
+    expect(sh).toContain('if { : >/dev/tty; } 2>/dev/null; then');
+    // the buggy condition must not be used (the explanatory comment may still name it)
+    expect(sh).not.toContain('if [ -r /dev/tty ]');
+  });
+});
