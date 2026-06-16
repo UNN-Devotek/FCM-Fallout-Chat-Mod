@@ -444,14 +444,23 @@ export async function createBan(
 }
 
 export async function reverseBan(banId: string, actorId: string, reverseReason: string): Promise<void> {
-  const ban = await prisma.ban.findUnique({ where: { id: banId }, select: { userId: true, reversedAt: true } });
-  if (!ban) throw new Error('Ban not found');
-  if (ban.reversedAt) throw new Error('Ban already reversed');
-
-  await prisma.ban.update({
-    where: { id: banId },
+  // Atomic guard: updateMany with where:{id, reversedAt:null} acts as a
+  // compare-and-swap — it only writes if the ban hasn't been reversed yet.
+  // This eliminates the TOCTOU window that existed between the old findUnique
+  // check and the subsequent update, where two concurrent callers could both
+  // pass the "already reversed?" guard and both clear the user's ban state and
+  // trigger Discord role-restore.
+  const { count } = await prisma.ban.updateMany({
+    where: { id: banId, reversedAt: null },
     data: { reversedAt: new Date(), reversedById: actorId, reverseReason: reverseReason.slice(0, 500) },
   });
+  if (count === 0) {
+    // Either the ban doesn't exist or it was already reversed — check which.
+    const existing = await prisma.ban.findUnique({ where: { id: banId }, select: { reversedAt: true } });
+    if (!existing) throw new Error('Ban not found');
+    throw new Error('Ban already reversed');
+  }
+  const ban = await prisma.ban.findUniqueOrThrow({ where: { id: banId }, select: { userId: true } });
 
   // Only clear the User's current-state flags if THIS ban is the active one
   // (the user has a row for ban.userId where isBanned=true matching this ban).
