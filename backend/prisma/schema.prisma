@@ -870,3 +870,23 @@ model McpApiKey {
   @@index([keyHash])
   @@map("mcp_api_keys")
 }
+
+// Maps a GitHub issue to its Discord support thread (both sync directions).
+// Created by the ticketing feature (Bug / Suggestion / Support). See
+// docs/discord/github-tickets.md.
+model GithubIssueThread {
+  id              String   @id @default(uuid())
+  issueNumber     Int      @unique @map("issue_number")
+  issueNodeId     String   @map("issue_node_id")
+  issueUrl        String   @map("issue_url")
+  type            String // 'bug' | 'suggestion' | 'support'
+  discordThreadId String   @unique @map("discord_thread_id")
+  discordChannelId String  @map("discord_channel_id")
+  reporterId      String   @map("reporter_id")
+  isPrivate       Boolean  @default(false) @map("is_private")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@index([discordThreadId])
+  @@map("github_issue_threads")
+}

@@ -6,6 +6,7 @@ import messageQueue from '../queues/messagePersist';
 import logger from '../config/logger';
 import voiceService from './voiceService';
 import reactionRoleService from './reactionRoleService';
+import ticketService from './ticketService';
 import { getEntry, bestMatch } from './wikiCatalogService';
 
 let discordClient: Client | null = null;
@@ -319,6 +320,7 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
   // ready/voiceStateUpdate/interactionCreate/messageReaction* handlers register here.
   voiceService.register(discordClient);
   reactionRoleService.register(discordClient);
+  ticketService.register(discordClient);
 
   // Invalidate the emoji cache whenever the guild's emoji set changes.
   // Lazy-require to avoid circular deps (discordEmojisController imports us too).
