@@ -59,7 +59,6 @@ describe('githubService', () => {
       default: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() },
     }));
     svc = require('../src/services/githubService');
-    svc._resetCaches();
     global.fetch = jest.fn();
   });
 
@@ -89,41 +88,6 @@ describe('githubService', () => {
   it('createIssue throws on a non-2xx response', async () => {
     global.fetch.mockResolvedValueOnce(restResponse(422, { message: 'Validation failed' }));
     await expect(svc.createIssue({ title: 't', body: 'b' })).rejects.toThrow(/422.*Validation failed/);
-  });
-
-  it('addIssueToProject resolves the project node id then mutates', async () => {
-    global.fetch
-      .mockResolvedValueOnce(gqlResponse({ data: { user: { projectV2: { id: 'PROJ2' } } } }))
-      .mockResolvedValueOnce(gqlResponse({ data: { addProjectV2ItemById: { item: { id: 'ITEM1' } } } }));
-
-    const itemId = await svc.addIssueToProject(2, 'NODE17');
-
-    expect(itemId).toBe('ITEM1');
-    expect(global.fetch).toHaveBeenCalledTimes(2);
-    const firstVars = JSON.parse(global.fetch.mock.calls[0][1].body).variables;
-    expect(firstVars).toEqual({ login: 'UNN-Devotek', number: 2 });
-    const secondVars = JSON.parse(global.fetch.mock.calls[1][1].body).variables;
-    expect(secondVars).toEqual({ projectId: 'PROJ2', contentId: 'NODE17' });
-  });
-
-  it('caches the project node id across calls', async () => {
-    global.fetch
-      .mockResolvedValueOnce(gqlResponse({ data: { user: { projectV2: { id: 'PROJ2' } } } }))
-      .mockResolvedValueOnce(gqlResponse({ data: { addProjectV2ItemById: { item: { id: 'A' } } } }))
-      .mockResolvedValueOnce(gqlResponse({ data: { addProjectV2ItemById: { item: { id: 'B' } } } }));
-
-    await svc.addIssueToProject(2, 'N1');
-    await svc.addIssueToProject(2, 'N2');
-
-    // 1 project lookup + 2 mutations = 3 (not 4) — lookup was cached.
-    expect(global.fetch).toHaveBeenCalledTimes(3);
-  });
-
-  it('addIssueToProject surfaces GraphQL errors', async () => {
-    global.fetch.mockResolvedValueOnce(
-      gqlResponse({ errors: [{ message: 'Resource not accessible by personal access token' }] }),
-    );
-    await expect(svc.addIssueToProject(2, 'N1')).rejects.toThrow(/not accessible/);
   });
 
   it('addLabels is a no-op for an empty list', async () => {

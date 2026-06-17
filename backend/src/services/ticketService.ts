@@ -282,10 +282,8 @@ async function handleModalSubmit(interaction: any, type: TicketType): Promise<vo
     });
 
     // Boards are populated by GitHub's built-in "Auto-add to project" workflow,
-    // keyed off the issue's labels (`bug` / `suggestion`) — fine-grained PATs
-    // cannot write user-owned Projects v2. The direct add is best-effort and only
-    // succeeds if a classic `project`-scope token is configured; failures expected.
-    void githubService.addIssueToProject(env.GITHUB_PROJECT_BUGS_NUMBER, issue.nodeId).catch(() => {});
+    // keyed off the issue's labels — the bot does not write Projects v2 directly
+    // (fine-grained PATs cannot write user-owned projects).
 
     // All threads are private by default (reporter + staff via Manage Threads).
     const thread = await (channel as TextChannel).threads.create({
@@ -333,10 +331,8 @@ async function handleRoadmapButton(interaction: any, issueNumberRaw: string): Pr
   try {
     const map = await prisma.githubIssueThread.findUnique({ where: { issueNumber } });
     if (!map) return ephem(interaction, `No tracked ticket found for #${issueNumber}.`);
-    // The `roadmap` label is the primary mechanism — GitHub's Auto-add workflow on
-    // the Roadmap board picks it up. Direct project add is best-effort (classic token).
+    // The `roadmap` label drives GitHub's Auto-add workflow on the Roadmap board.
     await githubService.addLabels(issueNumber, ['roadmap']);
-    void githubService.addIssueToProject(env.GITHUB_PROJECT_ROADMAP_NUMBER, map.issueNodeId).catch(() => {});
     logger.info({ issueNumber, by: interaction.user.id }, 'ticket: roadmap label applied');
     return ephem(interaction, `🗺️ Tagged **#${issueNumber}** with \`roadmap\` — it'll appear on the Roadmap board.`);
   } catch (err) {

@@ -82,10 +82,10 @@ Enable, in each project → **⋯ → Workflows → Auto-add to project**:
 - **Board #2 (Bug & Suggestion):** filter `is:issue is:open label:bug,suggestion`.
 - **Board #3 (Roadmap):** filter `is:issue label:roadmap`.
 
-The bot still attempts a direct `addProjectV2ItemById` as best-effort (silently
-ignored on failure); it only succeeds if `GITHUB_PAT` is a **classic** token with
-the `project` scope (classic tokens *can* write user-owned Projects v2) or the
-projects are org-owned.
+The bot does **not** call the project API at all — board placement is entirely the
+Auto-add workflows above. (To add items directly instead, you'd need a **classic**
+token with the `project` scope, or org-owned projects, plus re-introducing an
+`addProjectV2ItemById` call in `githubService`.)
 
 ## Bot permissions
 

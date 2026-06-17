@@ -3,12 +3,13 @@
  *
  * Uses native fetch (Node 18+) — no Octokit dependency. Recent Octokit is
  * ESM-only and fights this CommonJS/Jest codebase; the slice of GitHub we need
- * (create issue, comment, label via REST; add-to-Project-v2 via GraphQL) is a
+ * (issues, comments, labels, milestones via REST; issue delete via GraphQL) is a
  * handful of HTTP calls, so a tiny hand-rolled client keeps deps at zero and
  * mocks cleanly in tests (jest can stub global.fetch).
  *
- * Auth: GITHUB_PAT (fine-grained PAT owned by UNN-Devotek). Projects v2 is
- * GraphQL-only and requires the token's "Projects: read & write" permission.
+ * Auth: GITHUB_PAT. Boards are populated by GitHub's Auto-add workflows keyed off
+ * labels (fine-grained PATs cannot write user-owned Projects v2), so this client
+ * has no project-write methods.
  */
 import env from '../config/environment';
 import logger from '../config/logger';
@@ -101,41 +102,6 @@ export async function addLabels(issueNumber: number, labels: string[]): Promise<
   await rest('POST', `/repos/${env.GITHUB_OWNER}/${env.GITHUB_REPO}/issues/${issueNumber}/labels`, { labels });
 }
 
-// --- Projects v2 (GraphQL) -------------------------------------------------
-
-const projectIdCache = new Map<number, string>();
-
-/** Resolve (and cache) a user-owned Project v2 node id from its number. */
-export async function getProjectNodeId(projectNumber: number): Promise<string> {
-  const cached = projectIdCache.get(projectNumber);
-  if (cached) return cached;
-  const data = await graphql<{ user: { projectV2: { id: string } | null } }>(
-    `query($login:String!, $number:Int!){ user(login:$login){ projectV2(number:$number){ id } } }`,
-    { login: env.GITHUB_OWNER, number: projectNumber },
-  );
-  const id = data?.user?.projectV2?.id;
-  if (!id) throw new Error(`Project v2 #${projectNumber} not found for ${env.GITHUB_OWNER}`);
-  projectIdCache.set(projectNumber, id);
-  return id;
-}
-
-/**
- * Add an issue (by its GraphQL node id) to a Project v2 board. Returns the
- * project item id. Idempotent: re-adding an existing item returns its id.
- */
-export async function addIssueToProject(projectNumber: number, issueNodeId: string): Promise<string> {
-  const projectId = await getProjectNodeId(projectNumber);
-  const data = await graphql<{ addProjectV2ItemById: { item: { id: string } } }>(
-    `mutation($projectId:ID!, $contentId:ID!){
-       addProjectV2ItemById(input:{ projectId:$projectId, contentId:$contentId }){ item { id } }
-     }`,
-    { projectId, contentId: issueNodeId },
-  );
-  const itemId = data?.addProjectV2ItemById?.item?.id;
-  if (!itemId) throw new Error('addProjectV2ItemById returned no item id');
-  return itemId;
-}
-
 /** List open repo milestones (for the optional ticket milestone picker). */
 export async function listOpenMilestones(): Promise<Array<{ number: number; title: string }>> {
   const data = await rest<any[]>(
@@ -166,34 +132,23 @@ export async function deleteIssue(issueNodeId: string): Promise<void> {
   await graphql(`mutation($id:ID!){ deleteIssue(input:{ issueId:$id }){ clientMutationId } }`, { id: issueNodeId });
 }
 
-/** Test-only: clear the project-id cache between cases. */
-export function _resetCaches(): void {
-  projectIdCache.clear();
-}
-
 export default {
   isConfigured,
   createIssue,
   addIssueComment,
   addLabels,
-  getProjectNodeId,
-  addIssueToProject,
   listOpenMilestones,
   setIssueMilestone,
   closeIssue,
   deleteIssue,
-  _resetCaches,
 };
 module.exports = {
   isConfigured,
   createIssue,
   addIssueComment,
   addLabels,
-  getProjectNodeId,
-  addIssueToProject,
   listOpenMilestones,
   setIssueMilestone,
   closeIssue,
   deleteIssue,
-  _resetCaches,
 };
