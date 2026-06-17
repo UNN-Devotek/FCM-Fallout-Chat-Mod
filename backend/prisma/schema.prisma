@@ -315,12 +315,16 @@ model PlayerReport {
   involvedPlayers String?  @map("involved_players")
   imageUrls       String?  @map("image_urls") // JSON: string[] of MinIO URLs
   status          String   @default("open") // open | reviewed | closed
+  // Discord "lockdown" thread for reports filed from the Discord panel; lets the
+  // bot attach screenshots dropped in the thread to this report. Null for web reports.
+  discordThreadId String?  @map("discord_thread_id")
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([status, createdAt(sort: Desc)])
+  @@index([discordThreadId])
   @@map("player_reports")
 }
 

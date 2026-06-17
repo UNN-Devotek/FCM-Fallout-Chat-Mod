@@ -1,10 +1,10 @@
 # Discord ⇄ GitHub Ticketing
 
-Turns Discord into the front door for our GitHub issue tracker. Members file
-**bug reports** and **suggestions** from a panel of buttons; the bot creates a
-GitHub issue, adds it to the **Bug & Suggestion board** (Project v2 #2), and opens
-a public thread for discussion. Staff can promote a ticket onto the **Roadmap
-board** (Project v2 #3).
+Turns Discord into the front door for our tracker. Members file **bug reports**,
+**suggestions**, and **player reports** from a panel of buttons. Bug/suggestion
+issues land on a single **master Project v2 board** (all issues + features) via
+GitHub's Auto-add workflow; **player reports** go to the **moderation portal**
+(not GitHub). Every report opens a **private thread**.
 
 Implemented in [`backend/src/services/ticketService.ts`](../../backend/src/services/ticketService.ts)
 (Discord wiring), [`githubService.ts`](../../backend/src/services/githubService.ts)
@@ -13,26 +13,26 @@ Implemented in [`backend/src/services/ticketService.ts`](../../backend/src/servi
 (unit-tested). It attaches to the shared discord.js client via `register()` — no
 second login — like voice channels and reaction roles.
 
-> **Status:** Increment 1 (outbound) is live — private-by-default threads, the
-> View on GitHub / Add to Roadmap / Close / Delete buttons, developer-role tagging,
-> and the optional milestone picker. Increment 2 — the inbound GitHub webhook
-> (comment→thread, `roadmap` label→board, close→thread), thread→comment sync, and a
-> `/roadmap` command — is still to come.
+> **Status:** Outbound flow is live — private-by-default threads; View on GitHub /
+> Add to Roadmap / Close / Delete buttons; developer-role tagging; the optional
+> milestone picker; a **Report a Player** button (→ moderation portal); and a single
+> master project board. Still to come: the inbound GitHub webhook (comment→thread,
+> close→thread) and thread→comment sync.
 
 ---
 
 ## Flow (increment 1)
 
 1. A staff member runs **`/ticket-panel`** in a text channel → the bot posts an
-   embed with **🐞 Report a Bug** and **💡 Suggestion** buttons, plus links to the
-   two GitHub boards.
+   embed (brand color `#F1C40F`) with **🐞 Report a Bug**, **🚩 Report a Player**,
+   and **💡 Suggestion** buttons, plus a link to the master project board.
 2. A member clicks a button → a **modal** collects *Title*, *Description* (and
    *Steps to reproduce* for bugs). Discord modals cannot accept files, so the issue
    is **text-only** — screenshots go in the thread.
 3. On submit the bot:
    - creates a GitHub issue, labelled `bug` / `suggestion`;
-   - the label drives GitHub's **Auto-add to project** workflow on board #2 (see
-     Project board setup below) — the bot does not write the project directly;
+   - the label drives GitHub's **Auto-add to project** workflow on the master board
+     (see Project board setup below) — the bot does not write the project directly;
    - opens a **private thread** (all threads are private by default — reporter +
      staff via Manage Threads) named **`#<num> · <title>`** (≤ 100 chars), and
      **@-tags the reporter and the `DEVELOPER_ROLE_ID` role**;
@@ -44,8 +44,8 @@ second login — like voice channels and reaction roles.
      staff may set one);
    - records the issue↔thread mapping in `github_issue_threads`.
 4. Thread buttons (staff only):
-   - **Add to Roadmap** → applies the `roadmap` label; GitHub's Auto-add workflow
-     on board #3 places it on the Roadmap.
+   - **Add to Roadmap** → applies the `roadmap` label (marks planned features within
+     the master board; there is no separate roadmap board).
    - **Close** → **immediately locks** the thread (done first and independently of
      the GitHub call, so a GitHub error can't leave it open) so only members with
      **Manage Threads** — admins/devs/mods — can post and everyone else is
@@ -62,18 +62,38 @@ attachment count on the GitHub side without uploading the files.
 
 ---
 
+## Report a Player
+
+The **🚩 Report a Player** button submits to the **moderation portal**, not GitHub:
+
+1. Any member clicks it → a modal collects *What happened?* + *Player name(s) involved*.
+2. The bot writes a `player_reports` row directly via Prisma (in-process; it upserts
+   the reporter's account, mirroring the website form) and fires the mod-log alert.
+3. It opens a **private "lockdown" thread** (reporter + staff) and **@-pings
+   moderators + overseers** (`MODERATOR_ROLE_ID` + `OWNER_ROLE_ID`).
+4. Screenshots dropped in that thread are uploaded to MinIO and attached to the
+   report (up to 3, matching the web form) — the bot reacts ✅ on success.
+
+It appears in the moderation portal's **Player Reports** view next to web-submitted
+ones. Implemented in
+[`playerReportService.ts`](../../backend/src/services/playerReportService.ts) +
+[`playerReportHelpers.ts`](../../backend/src/services/playerReportHelpers.ts); the
+thread↔report link is `player_reports.discord_thread_id`
+([migration](../../backend/prisma/migrations/20260617120000_player_report_discord_thread/migration.sql)).
+
+---
+
 ## Configuration
 
 Environment variables (see [`backend/.env.example`](../../backend/.env.example)):
 
 | Var | Meaning |
 |-----|---------|
-| `GITHUB_PAT` | Fine-grained PAT (owner `UNN-Devotek`). Needs **Issues: R/W** + **Projects: R/W**. Empty ⇒ feature disabled. |
+| `GITHUB_PAT` | Fine-grained PAT (owner `UNN-Devotek`). Needs **Issues: R/W** (Projects write NOT required — boards are Auto-add/label driven). Empty ⇒ feature disabled. |
 | `GITHUB_OWNER` / `GITHUB_REPO` | Target repo (`UNN-Devotek` / `FCM-Fallout-Chat-Mod`). |
-| `GITHUB_PROJECT_BUGS_NUMBER` | Project v2 number for the bug+suggestion board (`2`). |
-| `GITHUB_PROJECT_ROADMAP_NUMBER` | Project v2 number for the roadmap board (`3`). |
-| `GITHUB_WEBHOOK_SECRET` | HMAC secret for inbound webhooks (increment 2). |
-| `OWNER_ROLE_ID`, `ADMIN_ROLE_ID`, `MODERATOR_ROLE_ID`, `DEVELOPER_ROLE_ID` | Staff roles allowed to promote to the roadmap. |
+| `GITHUB_PROJECT_NUMBER` | The single master Project v2 board number (`5`). |
+| `GITHUB_WEBHOOK_SECRET` | HMAC secret for inbound webhooks (future). |
+| `OWNER_ROLE_ID`, `ADMIN_ROLE_ID`, `MODERATOR_ROLE_ID`, `DEVELOPER_ROLE_ID` | Staff roles. Player reports ping `MODERATOR_ROLE_ID` + `OWNER_ROLE_ID` ("overseers"). |
 
 ### Project board setup (important)
 
@@ -83,9 +103,9 @@ Projects v2 — `addProjectV2ItemById` returns `FORBIDDEN: Resource not accessib
 personal access token` regardless of the token's permissions. So the bot only sets
 **labels** (which it can do), and each project's Auto-add workflow places the item.
 
-Enable, in each project → **⋯ → Workflows → Auto-add to project**:
-- **Board #2 (Bug & Suggestion):** filter `is:issue is:open label:bug,suggestion`.
-- **Board #3 (Roadmap):** filter `is:issue label:roadmap`.
+Enable, in the master project → **⋯ → Workflows → Auto-add to project**:
+- filter `is:issue is:open` to add every issue (or `is:issue is:open label:bug,suggestion`
+  to scope it). The `roadmap` label marks planned features within the board.
 
 The bot does **not** call the project API at all — board placement is entirely the
 Auto-add workflows above. (To add items directly instead, you'd need a **classic**
@@ -114,6 +134,7 @@ maps `issueNumber` ⇄ `discordThreadId` for both sync directions, plus `type`,
 ## Tests
 
 - [`tests/githubTicketHelpers.test.js`](../../backend/tests/githubTicketHelpers.test.js) — custom-id round-trip, thread-name truncation, issue-body shaping, `isStaff` gating, type mappings.
-- [`tests/githubService.test.js`](../../backend/tests/githubService.test.js) — `fetch`-stubbed: issue create, project-id resolution + caching, GraphQL error surfacing, label no-op.
+- [`tests/githubService.test.js`](../../backend/tests/githubService.test.js) — `fetch`-stubbed: issue create/close/delete, milestones, label no-op.
+- [`tests/playerReportHelpers.test.js`](../../backend/tests/playerReportHelpers.test.js) + [`tests/playerReportService.test.js`](../../backend/tests/playerReportService.test.js) — player-report sanitisation, image cap, user upsert, MinIO attach.
 
-Both run under the CI `backend-jest` gate.
+All run under the CI `backend-jest` gate.

@@ -116,8 +116,8 @@ export interface Environment {
   GITHUB_PAT: string;
   GITHUB_OWNER: string;
   GITHUB_REPO: string;
-  GITHUB_PROJECT_BUGS_NUMBER: number;
-  GITHUB_PROJECT_ROADMAP_NUMBER: number;
+  // Single master GitHub Project v2 board (all issues + features). Used for the panel link.
+  GITHUB_PROJECT_NUMBER: number;
   // HMAC secret verifying inbound GitHub webhooks (X-Hub-Signature-256). Increment 2.
   GITHUB_WEBHOOK_SECRET: string;
   // Staff role for ticket gating (developers) — owner/admin/moderator reuse the existing ids.
@@ -240,8 +240,7 @@ const env: Environment = {
   GITHUB_PAT: process.env.GITHUB_PAT || '',
   GITHUB_OWNER: process.env.GITHUB_OWNER || 'UNN-Devotek',
   GITHUB_REPO: process.env.GITHUB_REPO || 'FCM-Fallout-Chat-Mod',
-  GITHUB_PROJECT_BUGS_NUMBER: parseInt(process.env.GITHUB_PROJECT_BUGS_NUMBER || '2', 10),
-  GITHUB_PROJECT_ROADMAP_NUMBER: parseInt(process.env.GITHUB_PROJECT_ROADMAP_NUMBER || '3', 10),
+  GITHUB_PROJECT_NUMBER: parseInt(process.env.GITHUB_PROJECT_NUMBER || '5', 10),
   GITHUB_WEBHOOK_SECRET: process.env.GITHUB_WEBHOOK_SECRET || '',
   DEVELOPER_ROLE_ID: process.env.DEVELOPER_ROLE_ID || '',
 };

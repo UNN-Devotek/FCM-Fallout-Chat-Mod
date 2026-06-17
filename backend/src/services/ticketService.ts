@@ -40,6 +40,8 @@ import env from '../config/environment';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
 import githubService from './githubService';
+import playerReportService from './playerReportService';
+import { buildPlayerReportThreadName } from './playerReportHelpers';
 import {
   buildCustomId,
   parseCustomId,
@@ -101,24 +103,23 @@ async function ephem(interaction: any, content: string, components?: any[]): Pro
 // ---------------------------------------------------------------------------
 function buildPanel() {
   const embed = new EmbedBuilder()
-    .setTitle('🛠️ Report a Bug or Suggest a Feature')
+    .setTitle('🛠️ Report a Bug · Report a Player · Suggest a Feature')
     .setDescription(
-      'Found a problem or have an idea? Open a ticket below.\n\n' +
+      'Use the buttons below — a **private thread** is created for your report (you + the team).\n\n' +
         '🐞 **Report a Bug** — something is broken or behaving wrong.\n' +
+        '🚩 **Report a Player** — report a player to the moderation team.\n' +
         '💡 **Suggestion** — an idea or feature request.\n\n' +
-        'A **private thread** is created for your ticket (you + the team) — drop screenshots ' +
-        'and details there. Each ticket is tracked on our GitHub boards.',
+        'Drop screenshots and details in the thread. Bugs and suggestions are tracked on our project board.',
     )
     .addFields({
-      name: '📋 Boards',
-      value: `[Bug & Suggestion Board](${projectUrl(env.GITHUB_PROJECT_BUGS_NUMBER)}) · [Roadmap](${projectUrl(
-        env.GITHUB_PROJECT_ROADMAP_NUMBER,
-      )})`,
+      name: '📋 Project Board',
+      value: `[View all issues & features](${projectUrl(env.GITHUB_PROJECT_NUMBER)})`,
     })
     .setColor(BRAND_EMBED_COLOR);
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(buildCustomId('open', 'bug')).setLabel('Report a Bug').setEmoji('🐞').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(buildCustomId('player')).setLabel('Report a Player').setEmoji('🚩').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(buildCustomId('open', 'suggestion')).setLabel('Suggestion').setEmoji('💡').setStyle(ButtonStyle.Primary),
   );
   return { embeds: [embed], components: [row] };
@@ -461,6 +462,128 @@ async function handleDeleteConfirm(interaction: any, issueNumberRaw: string): Pr
   }
 }
 
+// ---------------------------------------------------------------------------
+// Report a Player (submits to the moderation portal, not GitHub)
+// ---------------------------------------------------------------------------
+function buildPlayerModal(): ModalBuilder {
+  const modal = new ModalBuilder().setCustomId(buildCustomId('psubmit')).setTitle('Report a Player');
+  const content = new TextInputBuilder()
+    .setCustomId('content')
+    .setLabel('What happened?')
+    .setStyle(TextInputStyle.Paragraph)
+    .setMaxLength(2000)
+    .setRequired(true)
+    .setPlaceholder('Describe the incident — who, what, when, where.');
+  const involved = new TextInputBuilder()
+    .setCustomId('involvedPlayers')
+    .setLabel('Player name(s) involved')
+    .setStyle(TextInputStyle.Short)
+    .setMaxLength(500)
+    .setRequired(false)
+    .setPlaceholder('In-game name(s) / gamertag(s)');
+  modal.addComponents(
+    new ActionRowBuilder<TextInputBuilder>().addComponents(content),
+    new ActionRowBuilder<TextInputBuilder>().addComponents(involved),
+  );
+  return modal;
+}
+
+// Reporting a player is open to any member (same as the website form).
+async function handlePlayerOpen(interaction: any): Promise<void> {
+  await interaction.showModal(buildPlayerModal());
+}
+
+async function handlePlayerSubmit(interaction: any): Promise<void> {
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const channel = interaction.channel;
+  if (!channel || channel.type !== ChannelType.GuildText) {
+    return ephem(interaction, 'Player reports can only be opened from a standard text channel.');
+  }
+  const content = interaction.fields.getTextInputValue('content').trim();
+  const involvedPlayers = interaction.fields.getTextInputValue('involvedPlayers')?.trim() || null;
+  const reporter = interaction.user;
+
+  try {
+    const report = await playerReportService.createPlayerReport({
+      discordId: reporter.id,
+      username: reporter.username,
+      displayName: interaction.member?.displayName || reporter.globalName || reporter.username,
+      avatar: reporter.displayAvatarURL?.() ?? null,
+      content,
+      involvedPlayers,
+    });
+
+    // Private "lockdown" thread — reporter + staff (Manage Threads) only.
+    const thread = await (channel as TextChannel).threads.create({
+      name: buildPlayerReportThreadName(report.reporterName),
+      type: ChannelType.PrivateThread,
+      autoArchiveDuration: 10080,
+      invitable: false,
+      reason: `Player report ${report.id}`,
+    });
+    await thread.members.add(reporter.id).catch(() => {});
+    await deleteThreadSystemMessage(channel as TextChannel, thread.id);
+
+    const mod = env.MODERATOR_ROLE_ID;
+    const overseer = env.OWNER_ROLE_ID; // "overseers" = owner role
+    const pings = [`<@${reporter.id}>`, mod ? `<@&${mod}>` : '', overseer ? `<@&${overseer}>` : '']
+      .filter(Boolean)
+      .join(' ');
+    const embed = new EmbedBuilder()
+      .setTitle('🚩 Player Report')
+      .setColor(BRAND_EMBED_COLOR)
+      .setDescription(
+        `Filed by <@${reporter.id}>. Moderators and overseers have been notified.\n\n` +
+          '📎 **Drop up to 3 screenshots here** as evidence — they attach to the report automatically.',
+      )
+      .addFields(
+        { name: 'What happened', value: content.slice(0, 1024) || '_n/a_' },
+        ...(involvedPlayers ? [{ name: 'Involved', value: involvedPlayers.slice(0, 1024) }] : []),
+      );
+    await thread
+      .send({
+        content: pings,
+        embeds: [embed],
+        allowedMentions: { users: [reporter.id], roles: [mod, overseer].filter(Boolean) as string[] },
+      })
+      .catch((err) => logger.warn({ err, threadId: thread.id }, 'player-report: failed to post thread intro'));
+
+    await playerReportService.setReportThreadId(report.id, thread.id);
+    return ephem(interaction, `✅ Player report filed — the moderation team is on it in <#${thread.id}>.`);
+  } catch (err) {
+    logger.error({ err }, 'player-report: submit failed');
+    return ephem(interaction, '⚠️ Something went wrong filing your report. Please try again or ping a mod.');
+  }
+}
+
+// Attach screenshots dropped in a player-report lockdown thread to the report.
+async function onThreadMessage(message: any): Promise<void> {
+  try {
+    if (message.author?.bot) return;
+    const ch = message.channel;
+    if (!ch?.isThread?.() || !message.attachments || message.attachments.size === 0) return;
+    const report = await playerReportService.findReportByThread(ch.id);
+    if (!report) return;
+    const images = [...message.attachments.values()].filter((a: any) => (a.contentType || '').startsWith('image/'));
+    if (!images.length) return;
+    const buffers: Buffer[] = [];
+    for (const a of images.slice(0, 3)) {
+      try {
+        const res = await fetch(a.url);
+        if (res.ok) buffers.push(Buffer.from(await res.arrayBuffer()));
+      } catch {
+        /* skip a bad attachment */
+      }
+    }
+    if (!buffers.length) return;
+    const r = await playerReportService.attachImagesToReport(report.id, buffers);
+    if (r.accepted > 0) await message.react('✅').catch(() => {});
+    else if (r.full) await message.reply('This report already has the maximum of 3 screenshots.').catch(() => {});
+  } catch (err) {
+    logger.warn({ err }, 'player-report: evidence handler error');
+  }
+}
+
 async function onInteraction(interaction: Interaction): Promise<void> {
   try {
     const anyI = interaction as any;
@@ -475,6 +598,7 @@ async function onInteraction(interaction: Interaction): Promise<void> {
 
     if (anyI.isButton?.()) {
       if (parsed.action === 'open' && isTicketType(parsed.arg)) return handleOpenButton(anyI, parsed.arg);
+      if (parsed.action === 'player') return handlePlayerOpen(anyI);
       if (parsed.action === 'roadmap') return handleRoadmapButton(anyI, parsed.arg);
       if (parsed.action === 'close') return handleCloseButton(anyI, parsed.arg);
       if (parsed.action === 'delete') return handleDeleteButton(anyI, parsed.arg);
@@ -489,6 +613,7 @@ async function onInteraction(interaction: Interaction): Promise<void> {
 
     if (anyI.isModalSubmit?.()) {
       if (parsed.action === 'submit' && isTicketType(parsed.arg)) return handleModalSubmit(anyI, parsed.arg);
+      if (parsed.action === 'psubmit') return handlePlayerSubmit(anyI);
       return;
     }
   } catch (err) {
@@ -524,6 +649,8 @@ async function registerCommands(client: Client): Promise<void> {
 // ---------------------------------------------------------------------------
 export function register(client: Client): void {
   client.on('interactionCreate', onInteraction);
+  // Screenshots dropped in a player-report lockdown thread → attached to the report.
+  client.on('messageCreate', onThreadMessage);
   client.once('ready', () => {
     void registerCommands(client);
   });
