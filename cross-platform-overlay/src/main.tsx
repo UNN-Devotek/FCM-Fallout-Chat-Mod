@@ -579,7 +579,7 @@ function Shell() {
   }
 
   return (
-    <MemoryRouter key={mountKey} initialEntries={['/chat']} future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+    <MemoryRouter key={mountKey} initialEntries={['/chat']}>
       <Routes>
         {/* Mirror App.tsx: ChatOverlay lives under an Outlet that supplies { user }. */}
         <Route element={<Outlet context={{ user }} />}>
