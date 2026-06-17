@@ -65,16 +65,12 @@ export function labelForType(type: TicketType): string {
   }
 }
 
-/** Embed accent color per ticket type (Fallout-green family, distinct hues). */
-export function colorForType(type: TicketType): number {
-  switch (type) {
-    case 'bug':
-      return 0xff5555; // red
-    case 'suggestion':
-      return 0xffd43b; // amber
-    case 'support':
-      return 0x4dabf7; // blue
-  }
+/** Brand embed color — ALL FCM Discord embeds use this (#F1C40F, RGB 241,196,15). */
+export const BRAND_EMBED_COLOR = 0xf1c40f;
+
+/** Embed accent color. Every ticket embed uses the single brand color. */
+export function colorForType(_type: TicketType): number {
+  return BRAND_EMBED_COLOR;
 }
 
 /** Human label for a type, used in embeds/messages. */
@@ -165,6 +161,7 @@ module.exports = {
   buildThreadName,
   labelForType,
   colorForType,
+  BRAND_EMBED_COLOR,
   displayForType,
   buildIssueBody,
   isStaff,

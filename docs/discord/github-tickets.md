@@ -46,7 +46,12 @@ second login — like voice channels and reaction roles.
 4. Thread buttons (staff only):
    - **Add to Roadmap** → applies the `roadmap` label; GitHub's Auto-add workflow
      on board #3 places it on the Roadmap.
-   - **Close** → closes the GitHub issue and **locks + archives** the thread.
+   - **Close** → **immediately locks** the thread (done first and independently of
+     the GitHub call, so a GitHub error can't leave it open) so only members with
+     **Manage Threads** — admins/devs/mods — can post and everyone else is
+     read-only; then closes + archives the GitHub issue. Lock failures surface to
+     the closer (bot needs Manage Threads). For non-staff to be fully read-only,
+     the admin/dev/mod roles must hold Manage Threads in the channel.
    - **Delete** (with a confirm step) → **deletes the GitHub issue** (falls back to
      closing it if the token lacks delete permission), removes the DB mapping, and
      **deletes the thread** — full teardown.

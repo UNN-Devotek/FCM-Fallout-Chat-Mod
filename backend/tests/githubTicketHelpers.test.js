@@ -101,9 +101,11 @@ describe('githubTicketHelpers', () => {
       expect(h.displayForType('support')).toBe('Private Bug');
     });
 
-    it('colorForType returns a number per type', () => {
-      expect(typeof h.colorForType('bug')).toBe('number');
-      expect(h.colorForType('bug')).not.toBe(h.colorForType('suggestion'));
+    it('colorForType returns the single brand embed color for every type', () => {
+      expect(h.colorForType('bug')).toBe(h.BRAND_EMBED_COLOR);
+      expect(h.colorForType('suggestion')).toBe(h.BRAND_EMBED_COLOR);
+      expect(h.colorForType('support')).toBe(h.BRAND_EMBED_COLOR);
+      expect(h.BRAND_EMBED_COLOR).toBe(0xf1c40f);
     });
   });
 

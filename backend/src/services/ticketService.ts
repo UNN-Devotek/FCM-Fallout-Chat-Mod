@@ -47,6 +47,7 @@ import {
   buildIssueBody,
   labelForType,
   colorForType,
+  BRAND_EMBED_COLOR,
   displayForType,
   isStaff,
   isTicketType,
@@ -114,7 +115,7 @@ function buildPanel() {
         env.GITHUB_PROJECT_ROADMAP_NUMBER,
       )})`,
     })
-    .setColor(0x18ff62);
+    .setColor(BRAND_EMBED_COLOR);
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(buildCustomId('open', 'bug')).setLabel('Report a Bug').setEmoji('🐞').setStyle(ButtonStyle.Danger),
@@ -315,7 +316,8 @@ async function handleModalSubmit(interaction: any, type: TicketType): Promise<vo
       .catch((err) => logger.error({ err, issue: issue.number }, 'ticket: failed to persist issue<->thread map'));
 
     logger.info({ issue: issue.number, type, threadId: thread.id }, 'ticket: created');
-    return ephem(interaction, `✅ Created **#${issue.number}** — track it in <#${thread.id}>.\n${issue.htmlUrl}`);
+    // Angle-bracket the URL so Discord does NOT unfurl it into a link-preview embed.
+    return ephem(interaction, `✅ Created **#${issue.number}** — track it in <#${thread.id}>.\n<${issue.htmlUrl}>`);
   } catch (err) {
     logger.error({ err, type }, 'ticket: creation failed');
     return ephem(interaction, '⚠️ Something went wrong creating your ticket. Please try again or ping a mod.');
@@ -372,20 +374,37 @@ async function handleCloseButton(interaction: any, issueNumberRaw: string): Prom
   if (!Number.isFinite(issueNumber)) return ephem(interaction, 'Could not determine the issue number.');
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+  // 1) Lock the thread IMMEDIATELY and independently of the GitHub call — a GitHub
+  // failure must never leave the thread open. Once locked, only members with the
+  // Manage Threads permission (admins/devs/mods) can post; everyone else is
+  // read-only. setLocked is awaited so a failure (e.g. missing bot permission)
+  // surfaces to the closer instead of being silently swallowed.
+  let lockMsg = '🔒 Thread locked';
+  const thread = interaction.channel as any;
+  if (thread?.isThread?.()) {
+    try {
+      await thread.send(`🔒 Ticket closed by <@${interaction.user.id}> — this thread is now locked.`).catch(() => {});
+      await thread.setLocked(true);
+      await thread.setArchived(true).catch(() => {});
+    } catch (err) {
+      logger.warn({ err, issueNumber, threadId: thread.id }, 'ticket: failed to lock thread on close');
+      lockMsg = '⚠️ Could NOT lock the thread — the bot needs the **Manage Threads** permission';
+    }
+  }
+
+  // 2) Close the GitHub issue (independent of the lock above).
+  let ghMsg: string;
   try {
     await githubService.closeIssue(issueNumber);
-    const thread = interaction.channel;
-    if (thread?.isThread?.()) {
-      await thread.send(`✅ Ticket closed by <@${interaction.user.id}>. GitHub issue #${issueNumber} closed.`).catch(() => {});
-      await thread.setLocked(true).catch(() => {});
-      await thread.setArchived(true).catch(() => {});
-    }
-    logger.info({ issueNumber, by: interaction.user.id }, 'ticket: closed');
-    return ephem(interaction, `✅ Closed **#${issueNumber}** and locked the thread.`);
+    ghMsg = `GitHub issue #${issueNumber} closed`;
   } catch (err) {
-    logger.error({ err, issueNumber }, 'ticket: close failed');
-    return ephem(interaction, '⚠️ Failed to close the issue.');
+    logger.error({ err, issueNumber }, 'ticket: close issue failed');
+    ghMsg = `couldn't close GitHub issue #${issueNumber} (thread stays locked anyway)`;
   }
+
+  logger.info({ issueNumber, by: interaction.user.id }, 'ticket: closed');
+  return ephem(interaction, `${lockMsg}. ${ghMsg}.`);
 }
 
 async function handleDeleteButton(interaction: any, issueNumberRaw: string): Promise<void> {
