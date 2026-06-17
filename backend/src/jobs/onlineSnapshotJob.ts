@@ -12,32 +12,32 @@ import cron from 'node-cron';
 import logger from '../config/logger';
 import { query as dbQuery } from '../config/database';
 import { getClientCount } from '../websocket/handlers';
+import { makeJobTracker } from './jobTracker';
 
 export function startOnlineSnapshotJob(): void {
+  const snapshotTracker = makeJobTracker('[onlineSnapshot]');
+  const purgeTracker = makeJobTracker('[onlineSnapshot:purge]');
+
   // Every 5 minutes — sample the current WS client count.
-  cron.schedule('*/5 * * * *', async () => {
+  cron.schedule('*/5 * * * *', () => {
     const onlineCount = getClientCount();
-    try {
+    snapshotTracker(async () => {
       await dbQuery(
         'INSERT INTO online_snapshots (online_count) VALUES ($1)',
         [onlineCount],
       );
-    } catch (err) {
-      logger.warn({ err, onlineCount }, '[onlineSnapshot] insert failed (non-fatal)');
-    }
+    });
   });
 
   // Daily at 04:07 UTC — purge snapshots older than 7 days.
-  cron.schedule('7 4 * * *', async () => {
-    try {
+  cron.schedule('7 4 * * *', () => {
+    purgeTracker(async () => {
       const result = await dbQuery(
         "DELETE FROM online_snapshots WHERE captured_at < now() - interval '7 days'",
         [],
       );
       logger.info({ count: result.rowCount }, '[onlineSnapshot] retention purge complete');
-    } catch (err) {
-      logger.warn({ err }, '[onlineSnapshot] retention purge failed (non-fatal)');
-    }
+    });
   });
 
   logger.info('[onlineSnapshot] snapshot job scheduled (*/5 * * * *); purge job at 04:07 UTC');

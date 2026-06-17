@@ -13,6 +13,7 @@
 
 import { PrismaClient } from '@prisma/client';
 import logger from '../config/logger';
+import { makeJobTracker } from './jobTracker';
 
 export const REAP_INTERVAL_MS = 60_000;
 const INVITE_EXPIRY_DAYS = 7;
@@ -163,10 +164,9 @@ export function startPartyReapJob(deps: PartyReapDeps): () => void {
     logger.warn({ err }, '[partyReap] startup reconcile failed (non-fatal)'),
   );
 
+  const tracked = makeJobTracker('[partyReap]');
   const interval = setInterval(() => {
-    runPartyReap(deps).catch(err =>
-      logger.warn({ err }, '[partyReap] tick failed (non-fatal)'),
-    );
+    tracked(() => runPartyReap(deps).then(() => {}));
   }, REAP_INTERVAL_MS);
 
   // Don't keep the event loop alive on shutdown.

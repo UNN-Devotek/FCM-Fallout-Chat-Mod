@@ -61,6 +61,7 @@ import verifyDevRoleRouter from './routes/verifyDevRole';
 import { publicModerationLog } from './controllers/publicModerationController';
 import publicStatsRouter from './routes/publicStats';
 import { startOnlineSnapshotJob } from './jobs/onlineSnapshotJob';
+import { makeJobTracker } from './jobs/jobTracker';
 import discordEmojisRouter from './routes/discordEmojis';
 import tenorSearchRouter from './routes/tenorSearch';
 import blockRouter from './routes/block';
@@ -1696,15 +1697,14 @@ startPartyReapJob({
 // Moderation sweeps — every 5 min clear expired bans/mutes/kicks. WS guards
 // also auto-expire on access for connected users; this catches offline ones
 // and ensures the public unban/unmute announcement still fires.
-cron.schedule('*/5 * * * *', async () => {
-  try {
+const modSweepTracker = makeJobTracker('[mod-sweep]');
+cron.schedule('*/5 * * * *', () => {
+  modSweepTracker(async () => {
     const r = await sweepModExpired();
     if (r.unbanned || r.unmuted || r.kickCooldownsCleared) {
       logger.info(r, '[mod-sweep] cleared expired ban/mute/kick state');
     }
-  } catch (err) {
-    logger.warn({ err }, '[mod-sweep] failed (non-fatal)');
-  }
+  });
 });
 
 
@@ -1713,8 +1713,9 @@ cron.schedule('*/5 * * * *', async () => {
 // Set MESSAGE_RETENTION_DAYS=0 to keep messages forever.
 if (env.MESSAGE_RETENTION_DAYS > 0) {
   const retentionMs = env.MESSAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-  cron.schedule('0 3 * * *', async () => {
-    try {
+  const retentionTracker = makeJobTracker('[retention-purge]');
+  cron.schedule('0 3 * * *', () => {
+    retentionTracker(async () => {
       const cutoff = new Date(Date.now() - retentionMs);
       const msgResult = await dbQueryFn(
         "DELETE FROM messages WHERE created_at < $1",
@@ -1733,9 +1734,7 @@ if (env.MESSAGE_RETENTION_DAYS > 0) {
         { messagesDeleted: msgResult.rowCount, auditLogsDeleted: auditResult.rowCount, partyMessagesDeleted: partyMsgResult.rowCount, retentionDays: env.MESSAGE_RETENTION_DAYS },
         'Message purge complete'
       );
-    } catch (err) {
-      logger.warn({ err }, 'Message purge failed (non-fatal)');
-    }
+    });
   });
   logger.info({ retentionDays: env.MESSAGE_RETENTION_DAYS }, 'Message retention purge scheduled');
 } else {
