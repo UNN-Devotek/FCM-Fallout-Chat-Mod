@@ -1013,7 +1013,7 @@ export default function LandingPage() {
       mainTab === 'MODERATION' ? moderationSubTab :
       subTab;
     const label = raw.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
-    document.title = `${label} - FCM`;
+    document.title = `${label} - Fallout Chat Mod`;
   }, [mainTab, subTab, moderationSubTab]);
 
   // Auto-cycle: after the typewriter finishes, dwell then advance to the next feature.
