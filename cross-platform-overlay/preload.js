@@ -94,20 +94,6 @@ contextBridge.exposeInMainWorld('relayBridge', {
   // footer help text can show the user's actual bound keys.
   onKeybinds:    (cb) => { const h = (_e, v) => cb(v); ipcRenderer.on('overlay:keybinds',      h); return () => ipcRenderer.removeListener('overlay:keybinds',      h); },
 
-  // ── Updater ────────────────────────────────────────────────────────────────
-  // Main pushes update check results here (startup, timer, release:published).
-  onUpdaterResult: (cb) => { const h = (_e, v) => cb(v); ipcRenderer.on('updater:result', h); return () => ipcRenderer.removeListener('updater:result', h); },
-  // Main pushes updater phase transitions (downloading / progress / restart).
-  // phase: 'downloading' | 'progress' | 'restart'
-  onUpdaterStatus: (cb) => { const h = (_e, v) => cb(v); ipcRenderer.on('updater:status', h); return () => ipcRenderer.removeListener('updater:status', h); },
-  // Renderer-initiated manual check (settings panel "Check for updates").
-  checkForUpdates: () => ipcRenderer.invoke('updater:check'),
-  // Get last known result (may be null before first check).
-  getUpdaterLastResult: () => ipcRenderer.invoke('updater:get-last-result'),
-  // User clicked "Download & Install" — main opens the URL in the browser.
-  // Only used as a fallback when electron-updater is unavailable (dev/unpackaged).
-  installUpdate: (downloadUrl) => ipcRenderer.send('updater:install', downloadUrl),
-
   // Task 3: Right-click context menu on the chat input (cut/copy/paste/select-all).
   // Renderer fires this on contextmenu events in the input area.
   showInputContextMenu: (x, y) => ipcRenderer.send('input:context-menu', { x, y }),

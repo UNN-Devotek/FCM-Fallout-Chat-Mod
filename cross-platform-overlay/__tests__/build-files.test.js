@@ -47,7 +47,7 @@ describe('electron-builder build.files completeness', () => {
 
   // The main-process entry points that ship into app.asar.
   // Add new top-level main-process files here if they are introduced.
-  const mainProcessFiles = ['main.js', 'preload.js', 'updater.js', 'overlay-core.js'];
+  const mainProcessFiles = ['main.js', 'preload.js', 'overlay-core.js'];
 
   it('build.files must be a non-empty array', () => {
     expect(Array.isArray(buildFiles)).toBe(true);
