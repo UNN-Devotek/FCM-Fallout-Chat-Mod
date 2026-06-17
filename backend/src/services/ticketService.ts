@@ -281,9 +281,11 @@ async function handleModalSubmit(interaction: any, type: TicketType): Promise<vo
       labels: [labelForType(type)],
     });
 
-    await githubService
-      .addIssueToProject(env.GITHUB_PROJECT_BUGS_NUMBER, issue.nodeId)
-      .catch((err) => logger.warn({ err, issue: issue.number }, 'ticket: failed to add issue to bug board'));
+    // Boards are populated by GitHub's built-in "Auto-add to project" workflow,
+    // keyed off the issue's labels (`bug` / `suggestion`) — fine-grained PATs
+    // cannot write user-owned Projects v2. The direct add is best-effort and only
+    // succeeds if a classic `project`-scope token is configured; failures expected.
+    void githubService.addIssueToProject(env.GITHUB_PROJECT_BUGS_NUMBER, issue.nodeId).catch(() => {});
 
     // All threads are private by default (reporter + staff via Manage Threads).
     const thread = await (channel as TextChannel).threads.create({
@@ -331,13 +333,15 @@ async function handleRoadmapButton(interaction: any, issueNumberRaw: string): Pr
   try {
     const map = await prisma.githubIssueThread.findUnique({ where: { issueNumber } });
     if (!map) return ephem(interaction, `No tracked ticket found for #${issueNumber}.`);
-    await githubService.addIssueToProject(env.GITHUB_PROJECT_ROADMAP_NUMBER, map.issueNodeId);
-    await githubService.addLabels(issueNumber, ['roadmap']).catch(() => {});
-    logger.info({ issueNumber, by: interaction.user.id }, 'ticket: added to roadmap');
-    return ephem(interaction, `🗺️ Added **#${issueNumber}** to the roadmap.`);
+    // The `roadmap` label is the primary mechanism — GitHub's Auto-add workflow on
+    // the Roadmap board picks it up. Direct project add is best-effort (classic token).
+    await githubService.addLabels(issueNumber, ['roadmap']);
+    void githubService.addIssueToProject(env.GITHUB_PROJECT_ROADMAP_NUMBER, map.issueNodeId).catch(() => {});
+    logger.info({ issueNumber, by: interaction.user.id }, 'ticket: roadmap label applied');
+    return ephem(interaction, `🗺️ Tagged **#${issueNumber}** with \`roadmap\` — it'll appear on the Roadmap board.`);
   } catch (err) {
-    logger.error({ err, issueNumber }, 'ticket: roadmap add failed');
-    return ephem(interaction, '⚠️ Failed to add to the roadmap. Check the GitHub token (needs Projects: write).');
+    logger.error({ err, issueNumber }, 'ticket: roadmap label failed');
+    return ephem(interaction, '⚠️ Failed to apply the roadmap label.');
   }
 }
 

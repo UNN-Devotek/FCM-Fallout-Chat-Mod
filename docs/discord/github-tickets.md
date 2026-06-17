@@ -31,7 +31,8 @@ second login — like voice channels and reaction roles.
    is **text-only** — screenshots go in the thread.
 3. On submit the bot:
    - creates a GitHub issue, labelled `bug` / `suggestion`;
-   - adds it to **Project v2 #2** (`addProjectV2ItemById`, GraphQL);
+   - the label drives GitHub's **Auto-add to project** workflow on board #2 (see
+     Project board setup below) — the bot does not write the project directly;
    - opens a **private thread** (all threads are private by default — reporter +
      staff via Manage Threads) named **`#<num> · <title>`** (≤ 100 chars), and
      **@-tags the reporter and the `DEVELOPER_ROLE_ID` role**;
@@ -43,8 +44,8 @@ second login — like voice channels and reaction roles.
      staff may set one);
    - records the issue↔thread mapping in `github_issue_threads`.
 4. Thread buttons (staff only):
-   - **Add to Roadmap** → adds the issue to **Project v2 #3** + applies the
-     `roadmap` label.
+   - **Add to Roadmap** → applies the `roadmap` label; GitHub's Auto-add workflow
+     on board #3 places it on the Roadmap.
    - **Close** → closes the GitHub issue and **locks + archives** the thread.
    - **Delete** (with a confirm step) → **deletes the GitHub issue** (falls back to
      closing it if the token lacks delete permission), removes the DB mapping, and
@@ -69,12 +70,22 @@ Environment variables (see [`backend/.env.example`](../../backend/.env.example))
 | `GITHUB_WEBHOOK_SECRET` | HMAC secret for inbound webhooks (increment 2). |
 | `OWNER_ROLE_ID`, `ADMIN_ROLE_ID`, `MODERATOR_ROLE_ID`, `DEVELOPER_ROLE_ID` | Staff roles allowed to promote to the roadmap. |
 
-GitHub Projects v2 is **GraphQL-only**, and adding items requires the token's
-**Projects: Read _and write_** permission. A token with Projects: read-only (or
-`repo`/Issues only) can create issues but `addProjectV2ItemById` returns
-`FORBIDDEN: Resource not accessible by personal access token` — board-add and
-roadmap-add then silently fail (logged at `warn`; the issue + thread still get
-created).
+### Project board setup (important)
+
+**Boards are populated by GitHub's built-in "Auto-add to project" workflow, not by
+the bot.** Fine-grained PATs (`github_pat_…`) **cannot** write to *user-owned*
+Projects v2 — `addProjectV2ItemById` returns `FORBIDDEN: Resource not accessible by
+personal access token` regardless of the token's permissions. So the bot only sets
+**labels** (which it can do), and each project's Auto-add workflow places the item.
+
+Enable, in each project → **⋯ → Workflows → Auto-add to project**:
+- **Board #2 (Bug & Suggestion):** filter `is:issue is:open label:bug,suggestion`.
+- **Board #3 (Roadmap):** filter `is:issue label:roadmap`.
+
+The bot still attempts a direct `addProjectV2ItemById` as best-effort (silently
+ignored on failure); it only succeeds if `GITHUB_PAT` is a **classic** token with
+the `project` scope (classic tokens *can* write user-owned Projects v2) or the
+projects are org-owned.
 
 ## Bot permissions
 
