@@ -6,6 +6,7 @@ import messageQueue from '../queues/messagePersist';
 import logger from '../config/logger';
 import voiceService from './voiceService';
 import reactionRoleService from './reactionRoleService';
+import ticketService from './ticketService';
 import { getEntry, bestMatch } from './wikiCatalogService';
 
 let discordClient: Client | null = null;
@@ -319,6 +320,7 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
   // ready/voiceStateUpdate/interactionCreate/messageReaction* handlers register here.
   voiceService.register(discordClient);
   reactionRoleService.register(discordClient);
+  ticketService.register(discordClient);
 
   // Invalidate the emoji cache whenever the guild's emoji set changes.
   // Lazy-require to avoid circular deps (discordEmojisController imports us too).
@@ -935,12 +937,11 @@ async function relayToDiscord(channelId: string, username: string, content: stri
 
 // ── Electron download URL helpers ────────────────────────────────────────────
 // Filenames MUST match the electron-builder output (productName "Fallout Chat
-// Mod", WITH spaces) and the latest*.yml feed entries. A mismatch serves a 404
-// error page → "file corrupted" on install. Exported so the publish pipeline
-// can VERIFY both platform downloads exist before announcing (releasesController).
-// Human-download ZIP URLs for Discord release announcements (website + Nexus).
-// The electron-updater feed reads the raw .exe / .AppImage from latest*.yml —
-// these ZIP helpers are for human-facing links only.
+// Mod", WITH spaces). A mismatch serves a 404 error page → "file corrupted" on
+// install. Exported so the publish pipeline can VERIFY both platform downloads
+// exist before announcing (releasesController).
+// Human-download ZIP URLs for Discord release announcements (website + Nexus);
+// the CLI installers download the raw .exe / .AppImage directly.
 export const ELECTRON_BASE = 'https://falloutchatmod.com/downloads/electron';
 export function electronWindowsUrl(version: string): string {
   return `${ELECTRON_BASE}/${encodeURIComponent(`Fallout Chat Mod Setup ${version} (Windows).zip`)}`;
