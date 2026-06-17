@@ -72,7 +72,11 @@ The **🚩 Report a Player** button submits to the **moderation portal**, not Gi
 3. It opens a **private "lockdown" thread** (reporter + staff) and **@-pings
    moderators + overseers** (`MODERATOR_ROLE_ID` + `OWNER_ROLE_ID`).
 4. Screenshots dropped in that thread are uploaded to MinIO and attached to the
-   report (up to 3, matching the web form) — the bot reacts ✅ on success.
+   report (up to 3, matching the web form) — the bot reacts ✅ on success. Uploads
+   are hardened: only **https Discord-CDN** URLs are fetched (SSRF guard), each must
+   be `image/*` and **≤ 5 MB** (pre- and post-download), the fetch has a 10s timeout,
+   and `uploadReportImages` magic-byte-validates before storage. The 3-image total
+   cap bounds storage abuse.
 
 It appears in the moderation portal's **Player Reports** view next to web-submitted
 ones. Implemented in

@@ -47,6 +47,21 @@ describe('playerReportHelpers', () => {
     });
   });
 
+  describe('isAllowedDiscordAttachmentUrl (SSRF guard)', () => {
+    it('accepts https Discord CDN URLs', () => {
+      expect(h.isAllowedDiscordAttachmentUrl('https://cdn.discordapp.com/attachments/1/2/a.png')).toBe(true);
+      expect(h.isAllowedDiscordAttachmentUrl('https://media.discordapp.net/x.jpg')).toBe(true);
+    });
+    it('rejects non-Discord hosts, http, internal IPs, and junk', () => {
+      expect(h.isAllowedDiscordAttachmentUrl('https://evil.example/x.png')).toBe(false);
+      expect(h.isAllowedDiscordAttachmentUrl('http://cdn.discordapp.com/x.png')).toBe(false);
+      expect(h.isAllowedDiscordAttachmentUrl('http://169.254.169.254/latest/meta-data')).toBe(false);
+      expect(h.isAllowedDiscordAttachmentUrl('file:///etc/passwd')).toBe(false);
+      expect(h.isAllowedDiscordAttachmentUrl('not a url')).toBe(false);
+      expect(h.isAllowedDiscordAttachmentUrl(null)).toBe(false);
+    });
+  });
+
   describe('buildPlayerReportThreadName', () => {
     it('prefixes and stays within 100 chars', () => {
       expect(h.buildPlayerReportThreadName('Dweller')).toBe('🚩 Report · Dweller');

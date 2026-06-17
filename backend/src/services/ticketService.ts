@@ -41,7 +41,11 @@ import prisma from '../config/prisma';
 import logger from '../config/logger';
 import githubService from './githubService';
 import playerReportService from './playerReportService';
-import { buildPlayerReportThreadName } from './playerReportHelpers';
+import {
+  buildPlayerReportThreadName,
+  isAllowedDiscordAttachmentUrl,
+  REPORT_IMAGE_MAX_BYTES,
+} from './playerReportHelpers';
 import {
   buildCustomId,
   parseCustomId,
@@ -564,21 +568,41 @@ async function onThreadMessage(message: any): Promise<void> {
     if (!ch?.isThread?.() || !message.attachments || message.attachments.size === 0) return;
     const report = await playerReportService.findReportByThread(ch.id);
     if (!report) return;
-    const images = [...message.attachments.values()].filter((a: any) => (a.contentType || '').startsWith('image/'));
-    if (!images.length) return;
+    // Accept only real images, from Discord's CDN (SSRF guard), within the size cap.
+    const candidates = [...message.attachments.values()].filter(
+      (a: any) =>
+        (a.contentType || '').startsWith('image/') &&
+        isAllowedDiscordAttachmentUrl(a.url) &&
+        (typeof a.size !== 'number' || a.size <= REPORT_IMAGE_MAX_BYTES),
+    );
+    if (!candidates.length) return;
+
     const buffers: Buffer[] = [];
-    for (const a of images.slice(0, 3)) {
+    for (const a of candidates.slice(0, 3)) {
       try {
-        const res = await fetch(a.url);
-        if (res.ok) buffers.push(Buffer.from(await res.arrayBuffer()));
+        const ac = new AbortController();
+        const timer = setTimeout(() => ac.abort(), 10_000);
+        const res = await fetch(a.url, { signal: ac.signal });
+        clearTimeout(timer);
+        if (!res.ok) continue;
+        const buf = Buffer.from(await res.arrayBuffer());
+        if (buf.length <= REPORT_IMAGE_MAX_BYTES) buffers.push(buf); // post-download size guard
       } catch {
-        /* skip a bad attachment */
+        /* skip a slow/oversized/failed attachment */
       }
     }
     if (!buffers.length) return;
-    const r = await playerReportService.attachImagesToReport(report.id, buffers);
-    if (r.accepted > 0) await message.react('✅').catch(() => {});
-    else if (r.full) await message.reply('This report already has the maximum of 3 screenshots.').catch(() => {});
+
+    // Magic-byte validation + the 3-image total cap happen in attachImagesToReport.
+    try {
+      const r = await playerReportService.attachImagesToReport(report.id, buffers);
+      if (r.accepted > 0) await message.react('✅').catch(() => {});
+      else if (r.full) await message.reply('This report already has the maximum of 3 screenshots.').catch(() => {});
+    } catch {
+      await message
+        .reply('Could not attach those — images only (JPEG/PNG/WebP/GIF), under 5 MB each.')
+        .catch(() => {});
+    }
   } catch (err) {
     logger.warn({ err }, 'player-report: evidence handler error');
   }
