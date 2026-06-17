@@ -47,7 +47,7 @@ This folder is the central documentation hub. Each domain lives in its own subfo
 | **Backend** | [backend/](backend/README.md) | REST API reference, services, auth model, jobs & queues |
 | **Real-time** | [realtime/](realtime/README.md) | WSS relay protocol, presence & sessions, HUD push |
 | **Frontend** | [frontend/](frontend/README.md) | Admin dashboard, the shared ChatOverlay component, theming |
-| **Electron overlay** | [overlay/](overlay/README.md) | Window management, keybinds, auto-update, building |
+| **Electron overlay** | [overlay/](overlay/README.md) | Window management, keybinds, update notification, building |
 | **In-game HUD feed** | [overlay/zfe/](overlay/zfe/README.md) | ZFE/FCMBridge wire format, events, env vars, modder guide |
 | **Discord bot** | [discord/](discord/README.md) | Chat bridge, Join-to-Create voice, embed builder, reaction roles |
 | **Database** | [database/](database/README.md) | Prisma schema, idempotent migrations, Redis usage |
@@ -71,8 +71,9 @@ This folder is the central documentation hub. Each domain lives in its own subfo
   `migrate deploy`, so every migration must use `IF NOT EXISTS` / constraint guards / `ON CONFLICT DO
   NOTHING`. See [database/migrations.md](database/migrations.md).
 - **Release gotchas that cause real breakage.** `productName` is `"Fallout Chat Mod"` **with spaces**;
-  the electron-updater feed points at **raw** `.exe`/`.AppImage` (never the ZIPs); PowerShell release
-  scripts must be **ASCII-only**. See [deployment/releasing-the-overlay.md](deployment/releasing-the-overlay.md).
+  PowerShell release scripts must be **ASCII-only**. No `latest*.yml` feed — the overlay no longer
+  auto-updates (Nexus Mods ToS compliance); update awareness is a passive OS notification delivered
+  over the chat WebSocket (`app:update-available`). See [deployment/releasing-the-overlay.md](deployment/releasing-the-overlay.md).
 
 ## Reconciled code/doc discrepancies
 

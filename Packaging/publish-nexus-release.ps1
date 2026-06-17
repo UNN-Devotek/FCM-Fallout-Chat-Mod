@@ -18,9 +18,9 @@
          alongside INSTALL-*.txt (and .kwinrule for Linux).
       3. VirusTotal: THIS SCRIPT uploads the raw Windows .exe to VT and pushes the
          SHA-256 permalink to /admin/virustotal-url (falloutchatmod.com/virustotal).
-      4. Upload: the raw artifacts, ZIPs, and latest*.yml feed files are scp'd to
+      4. Upload: the raw artifacts and ZIPs are scp'd to
          /app/downloads/electron/ on the VPS (see DEPLOY.md for the exact commands).
-      5. Size verify: confirm the bytes served by the VPS match latest*.yml `size`.
+      5. Size verify: confirm the bytes served by the VPS match the local build artifact size.
       6. Register: POST /admin/releases {version, downloadUrl (Windows ZIP), releaseNotes}.
       7. Nexus: THIS SCRIPT publishes Windows + Linux ZIPs to Nexus Mods as new MAIN
          files (archiving the previous ones) via publish-nexus.ps1.

@@ -430,6 +430,55 @@ function buildKwinRemoveRulesScript({ file = 'kwinrulesrc' } = {}) {
 //   • else → { args: argv.slice(1) + flag, execPath: appImagePath when set }
 // appImagePath is process.env.APPIMAGE — on AppImage builds process.execPath is the
 // transient /tmp/.mount_* path (gone after exit), so relaunch must target $APPIMAGE.
+// ─── HTTP proxy header filter ─────────────────────────────────────────────────
+// The renderer's shimmed fetch supplies headers that the main process forwards to
+// the relay. We must NOT blindly spread them: the renderer could override
+// X-Auth-Token (session hijack), inject Host / Transfer-Encoding / Content-Length
+// (request smuggling), or embed CRLF sequences (header injection). Instead we
+// whitelist the small set of headers the ChatOverlay component legitimately sends
+// and strip everything else. The caller then overlays the auth/UA/Origin headers
+// on top of the filtered result, so those are always main-process-controlled.
+const PROXY_HEADER_ALLOWLIST = new Set([
+  'content-type',
+  'accept',
+  'accept-language',
+  'cache-control',
+  'x-requested-with',
+]);
+
+function filterProxyHeaders(rendererHeaders) {
+  if (!rendererHeaders || typeof rendererHeaders !== 'object') return {};
+  const out = {};
+  for (const [k, v] of Object.entries(rendererHeaders)) {
+    const lower = k.toLowerCase();
+    if (!PROXY_HEADER_ALLOWLIST.has(lower)) continue;
+    // Strip CR/LF (header injection) plus any other control chars Node's HTTP
+    // layer rejects (\0, \v, \f, DEL, …) — keep tab + printable/high bytes only.
+    // Sanitising rather than only stripping CRLF avoids a renderer-triggered
+    // ERR_INVALID_CHAR throw on the outbound request.
+    const safe = String(v).replace(/[^\t\x20-\x7e\x80-\xff]/g, '');
+    if (safe) out[lower] = safe;
+  }
+  return out;
+}
+
+// ─── HTTP proxy URL guard (SSRF) ──────────────────────────────────────────────
+// The renderer also controls the request *path*. Building the outbound URL by
+// string concatenation (`relayHttp + reqPath`) let a hostile renderer redirect
+// the request to another host — e.g. `@evil.com/api` or `//evil.com/api` parse
+// into a different authority — and since the main process attaches X-Auth-Token,
+// that leaks the session token to the attacker. Resolve reqPath strictly against
+// the relay base and reject anything that lands on a different origin. Returns a
+// URL pinned to the relay, or null to refuse the request.
+function resolveRelayProxyUrl(reqPath, relayHttp) {
+  let base;
+  try { base = new URL(relayHttp); } catch { return null; }
+  let url;
+  try { url = new URL(reqPath, base); } catch { return null; }
+  if (url.origin !== base.origin) return null;
+  return url;
+}
+
 function planOzoneRelaunch({ kdeWayland, argv = [], appImagePath = null } = {}) {
   const FLAG = '--ozone-platform=x11';
   if (!kdeWayland) return null;
@@ -437,6 +486,44 @@ function planOzoneRelaunch({ kdeWayland, argv = [], appImagePath = null } = {}) 
   const opts = { args: argv.slice(1).concat(FLAG) };
   if (appImagePath) opts.execPath = appImagePath;
   return opts;
+}
+
+// Compare two semver-like version strings. Returns a positive number when `a` is
+// newer than `b`, negative when `a` is older, and 0 when they are equal.
+// Uses locale-aware numeric comparison so '1.3.10' > '1.3.9' (not string-ordered).
+// Malformed / non-string inputs are treated as '0.0.0' — they will never appear
+// newer than any real version.
+function cmpVersions(a, b) {
+  const normalize = (v) => (typeof v === 'string' && v.trim() ? v.trim() : '0.0.0');
+  return normalize(a).localeCompare(normalize(b), undefined, { numeric: true, sensitivity: 'base' });
+}
+
+// True when the relay URL points at a LOCAL backend (localhost / loopback). Used
+// to gate dev-only behavior so it can NEVER affect a production or hosted-dev
+// build (which target falloutchatmod.com / dev.falloutchatmod.com).
+function isLocalRelay(relayHttp) {
+  try {
+    const h = new URL(String(relayHttp)).hostname.replace(/^\[|\]$/g, '');
+    return h === 'localhost' || h === '127.0.0.1' || h === '::1';
+  } catch {
+    return false;
+  }
+}
+
+// DEV-ONLY: derive a deterministic, per-install synthetic Discord id (18 digits,
+// matches the backend's /^\d{15,22}$/) from the installToken. Lets a local dev
+// overlay satisfy the backend's Discord-link gate on POST /api/users without
+// real Discord OAuth. discordId is @unique in the DB, so deriving it from the
+// (unique) installToken keeps each local install collision-free and stable.
+function syntheticDevDiscordId(installToken) {
+  const hex = String(installToken || '').replace(/[^0-9a-f]/gi, '');
+  let dec;
+  try {
+    dec = hex ? BigInt('0x' + hex).toString() : '0';
+  } catch {
+    dec = '0';
+  }
+  return '9' + dec.slice(-17).padStart(17, '0'); // always an 18-digit string
 }
 
 module.exports = {
@@ -469,4 +556,9 @@ module.exports = {
   buildKwinKeepAboveScript,
   buildKwinRemoveRulesScript,
   planOzoneRelaunch,
+  cmpVersions,
+  isLocalRelay,
+  syntheticDevDiscordId,
+  filterProxyHeaders,
+  resolveRelayProxyUrl,
 };
