@@ -163,10 +163,18 @@ export function startPartyReapJob(deps: PartyReapDeps): () => void {
     logger.warn({ err }, '[partyReap] startup reconcile failed (non-fatal)'),
   );
 
+  // Overlap guard: if a tick is still running when the next interval fires,
+  // skip it rather than running two passes concurrently against the same rows.
+  let running = false;
   const interval = setInterval(() => {
-    runPartyReap(deps).catch(err =>
-      logger.warn({ err }, '[partyReap] tick failed (non-fatal)'),
-    );
+    if (running) {
+      logger.warn('[partyReap] previous tick still running — skipping this tick');
+      return;
+    }
+    running = true;
+    runPartyReap(deps)
+      .catch(err => logger.warn({ err }, '[partyReap] tick failed (non-fatal)'))
+      .finally(() => { running = false; });
   }, REAP_INTERVAL_MS);
 
   // Don't keep the event loop alive on shutdown.

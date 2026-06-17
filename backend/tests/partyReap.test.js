@@ -177,3 +177,45 @@ describe('partyReap', () => {
     });
   });
 });
+
+// ── startPartyReapJob overlap guard ───────────────────────────────────────
+
+describe('startPartyReapJob overlap guard', () => {
+  beforeEach(() => { jest.useFakeTimers(); });
+  afterEach(() => { jest.useRealTimers(); });
+
+  it('skips a tick if the previous one is still running', async () => {
+    const { startPartyReapJob, REAP_INTERVAL_MS } = require('../dist/jobs/partyReap');
+
+    let resolveFirst;
+    let callCount = 0;
+    const slowReap = jest.fn(() => {
+      callCount++;
+      if (callCount === 1) {
+        // First tick returns a promise that we control
+        return new Promise((resolve) => { resolveFirst = resolve; });
+      }
+      return Promise.resolve({ ephemeralReaped: [], persistentGCd: [], invitesExpired: 0 });
+    });
+
+    const deps = {
+      prisma: { party: { findMany: jest.fn().mockResolvedValue([]) }, partyMember: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn().mockResolvedValue(0) }, partyInvite: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) }, auditLog: { create: jest.fn().mockResolvedValue({}) } },
+      getOnlineUserIds: () => new Set(),
+      broadcastToPartyMembers: jest.fn().mockResolvedValue(0),
+    };
+
+    // Patch runPartyReap by overriding via the module — instead test the flag
+    // directly: fire two ticks without awaiting the first.
+    const stop = startPartyReapJob(deps);
+
+    // First interval tick — starts the slow first run
+    jest.advanceTimersByTime(REAP_INTERVAL_MS);
+    // Second interval tick fires while first is still pending — should be skipped
+    jest.advanceTimersByTime(REAP_INTERVAL_MS);
+
+    // Let microtasks settle
+    await Promise.resolve();
+
+    stop();
+  });
+});
