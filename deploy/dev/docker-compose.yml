@@ -171,6 +171,16 @@ services:
       OWNER_ROLE_ID: ${OWNER_ROLE_ID}
       ADMIN_ROLE_ID: ${ADMIN_ROLE_ID}
       MODERATOR_ROLE_ID: ${MODERATOR_ROLE_ID}
+      DEVELOPER_ROLE_ID: ${DEVELOPER_ROLE_ID}
+
+      # --- GitHub ticketing (Discord <-> GitHub Issues/Projects) ---
+      # This service does NOT use env_file, so each var must be listed explicitly.
+      GITHUB_PAT: ${GITHUB_PAT}
+      GITHUB_OWNER: ${GITHUB_OWNER:-UNN-Devotek}
+      GITHUB_REPO: ${GITHUB_REPO:-FCM-Fallout-Chat-Mod}
+      GITHUB_PROJECT_BUGS_NUMBER: ${GITHUB_PROJECT_BUGS_NUMBER:-2}
+      GITHUB_PROJECT_ROADMAP_NUMBER: ${GITHUB_PROJECT_ROADMAP_NUMBER:-3}
+      GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET}
 
       # --- Dual Discord role gate (dev login authority) ---
       # Dev-guild check is local (dev bot is in the dev guild). Prod-guild check
