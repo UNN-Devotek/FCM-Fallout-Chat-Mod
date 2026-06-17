@@ -644,16 +644,20 @@ export async function joinParty(req: Request, res: Response, next: NextFunction)
       return next(createError(409, PARTY_CAP_MESSAGE));
     }
 
-    // Per-party capacity: reject if the party has a member limit and is full.
-    if (party.maxMembers != null) {
-      const currentCount = await prisma.partyMember.count({ where: { partyId } });
-      if (currentCount >= party.maxMembers) {
-        return next(createError(409, PARTY_FULL_MESSAGE));
+    // Per-party capacity and member insert are wrapped in a transaction so the
+    // count check and the create are atomic. Without this, two concurrent joins
+    // can both read the same count (below cap), both pass, and both insert,
+    // leaving the party over its maxMembers limit.
+    await prisma.$transaction(async (tx) => {
+      if (party.maxMembers != null) {
+        const currentCount = await tx.partyMember.count({ where: { partyId } });
+        if (currentCount >= party.maxMembers) {
+          throw createError(409, PARTY_FULL_MESSAGE);
+        }
       }
-    }
-
-    await prisma.partyMember.create({
-      data: { id: uuidv4(), partyId, userId: callerId, role: 'member' },
+      await tx.partyMember.create({
+        data: { id: uuidv4(), partyId, userId: callerId, role: 'member' },
+      });
     });
     await prisma.auditLog.create({
       data: {
