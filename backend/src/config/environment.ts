@@ -110,6 +110,18 @@ export interface Environment {
   // read the prod guild without the dev bot.
   PROD_VERIFY_URL: string;
   PROD_VERIFY_TOKEN: string;
+  // GitHub ticketing (Discord <-> GitHub Issues/Projects). GITHUB_PAT is a
+  // fine-grained PAT (owner UNN-Devotek) needing Issues:R/W + Projects:R/W.
+  // Projects v2 are GraphQL-only; the *_NUMBER values are the /users/<owner>/projects/<N> numbers.
+  GITHUB_PAT: string;
+  GITHUB_OWNER: string;
+  GITHUB_REPO: string;
+  // Single master GitHub Project v2 board (all issues + features). Used for the panel link.
+  GITHUB_PROJECT_NUMBER: number;
+  // HMAC secret verifying inbound GitHub webhooks (X-Hub-Signature-256). Increment 2.
+  GITHUB_WEBHOOK_SECRET: string;
+  // Staff role for ticket gating (developers) — owner/admin/moderator reuse the existing ids.
+  DEVELOPER_ROLE_ID: string;
 }
 
 const env: Environment = {
@@ -223,6 +235,14 @@ const env: Environment = {
   DEV_DEVELOPER_ROLE_ID: process.env.DEV_DEVELOPER_ROLE_ID || '',
   PROD_VERIFY_URL: process.env.PROD_VERIFY_URL || '',
   PROD_VERIFY_TOKEN: process.env.PROD_VERIFY_TOKEN || '',
+
+  // GitHub ticketing
+  GITHUB_PAT: process.env.GITHUB_PAT || '',
+  GITHUB_OWNER: process.env.GITHUB_OWNER || 'UNN-Devotek',
+  GITHUB_REPO: process.env.GITHUB_REPO || 'FCM-Fallout-Chat-Mod',
+  GITHUB_PROJECT_NUMBER: parseInt(process.env.GITHUB_PROJECT_NUMBER || '5', 10),
+  GITHUB_WEBHOOK_SECRET: process.env.GITHUB_WEBHOOK_SECRET || '',
+  DEVELOPER_ROLE_ID: process.env.DEVELOPER_ROLE_ID || '',
 };
 
 // Fail fast on an unrecognized NODE_ENV. Without this, a typo like 'prod' or

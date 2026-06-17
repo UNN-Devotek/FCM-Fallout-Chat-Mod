@@ -103,6 +103,7 @@ import {
 import { requireDiscordRole } from './middleware/auth';
 import { initHudPushTcp } from './services/hudPushTcp';
 import { initHudPushWs } from './services/hudPushWs';
+import { initLatestVersion } from './services/latestReleaseVersion';
 import hudFeedRouter from './routes/hudFeed';
 
 const app = express();
@@ -1895,6 +1896,10 @@ async function start(): Promise<void> {
     } catch (err) {
       logger.warn({ err }, 'Failed to ensure event command defaults (non-fatal)');
     }
+
+    // Initialize the latest release version cache from DB so newly connecting
+    // overlays receive the app:update-available handshake message immediately.
+    await initLatestVersion();
 
     // Load name blacklist into in-memory cache and subscribe to cross-instance refresh broadcasts.
     await loadBlacklist();

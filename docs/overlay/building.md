@@ -1,6 +1,6 @@
 # Building the Overlay
 
-This page covers how to produce distributable packages of the Electron overlay. For the full release pipeline — packaging ZIPs, uploading to the VPS, publishing to Nexus Mods, and triggering the auto-update feed — see `../deployment/`.
+This page covers how to produce distributable packages of the Electron overlay. For the full release pipeline — packaging ZIPs, uploading to the VPS, publishing to Nexus Mods — see `../deployment/`. Note: the overlay no longer auto-updates; there is no feed to trigger. Update awareness is a passive OS notification delivered over the chat WebSocket.
 
 ---
 
@@ -52,7 +52,7 @@ Vite compiles `src/main.tsx` (and all `@dashboard`-aliased dashboard code) into 
 
 Output lands in `dist-electron/`.
 
-electron-builder picks up: `main.js`, `preload.js`, `updater.js`, `dist-renderer/**`, `assets/**`.
+electron-builder picks up: `main.js`, `preload.js`, `dist-renderer/**`, `assets/**`.
 
 ---
 
@@ -114,12 +114,13 @@ Without a code-signing certificate, Windows shows an "Unknown publisher" SmartSc
 
 ```
 electron-builder output:
-  main.js, preload.js, updater.js    — main-process scripts
+  main.js, preload.js                — main-process scripts
   dist-renderer/                     — Vite-compiled renderer (ChatOverlay + all deps baked in)
   assets/                            — Icons, KWin rule
-  node_modules/                      — Runtime deps (electron-updater, ws, etc.)
-  app-update.yml                     — Baked in by electron-builder; points updater at the feed URL
+  node_modules/                      — Runtime deps (ws, etc.)
 ```
+
+Note: `app-update.yml`, `latest.yml`, `latest-linux.yml`, and `.blockmap` files are **not** generated — `build.publish` was removed for Nexus Mods ToS compliance. The overlay does not auto-update.
 
 In production `main.js` loads `dist-renderer/index.html` (no `RENDERER_URL` env). The fallback is:
 
@@ -141,5 +142,5 @@ Version is read from the `.csproj` `<Version>` tag if present (the monorepo tree
 ## Cross-links
 
 - Release pipeline: `../deployment/`
-- Auto-update feed and triggers: `auto-update.md`
+- Update notification (passive OS toast, no feed): `auto-update.md`
 - Overview: `README.md`
