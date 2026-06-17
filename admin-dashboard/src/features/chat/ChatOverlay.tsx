@@ -4085,7 +4085,10 @@ export default function ChatOverlay() {
   // either signal (esp. game-gate flapping) tears down + reconnects the WS even
   // when the connect decision is unchanged, and each reconnect re-fetches
   // chat:history = a visible "chat reload". Web (overlayShell null) is always true.
-  const wsShouldConnect = !overlayShell || overlayVisible || wsGameActive;
+  // isPublicMode is included so that a session expiry (user -> null) immediately
+  // feeds through the gate and triggers teardown rather than leaving the authed
+  // WebSocket open until an unrelated wsGate change causes the effect to re-run.
+  const wsShouldConnect = !isPublicMode && (!overlayShell || overlayVisible || wsGameActive);
 
   // Hysteresis gate: connect immediately, disconnect only after a 500 ms grace
   // (200 ms in dev). Prevents the double-teardown race — see useWsGate above.
