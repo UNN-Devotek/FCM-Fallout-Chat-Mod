@@ -2,7 +2,12 @@
 
 ## Player Reports (`player_reports` table)
 
-Submitted via `/report` in the overlay. Distinct from the `reports` table — these are free-text submissions with optional screenshot attachments.
+Submitted via `/report` in the overlay, the website **Report a Player** form, **or
+the Discord "🚩 Report a Player" button** (see
+[docs/discord/github-tickets.md](../discord/github-tickets.md#report-a-player) — opens
+a private lockdown thread, pings moderators + overseers, and attaches thread
+screenshots to the report). Distinct from the `reports` table — these are free-text
+submissions with optional screenshot attachments.
 
 | Field | Notes |
 |---|---|
@@ -10,6 +15,7 @@ Submitted via `/report` in the overlay. Distinct from the `reports` table — th
 | `content` | Free-text description |
 | `involved_players` | Optional: comma-separated player names |
 | `image_urls` | JSON `string[]` of MinIO public URLs (up to 3 images) |
+| `discord_thread_id` | Set when filed from Discord — the lockdown thread for evidence |
 | `status` | `'open'` \| `'reviewed'` \| `'closed'` |
 
 ### Report Image Upload (`reportImageService.ts`)

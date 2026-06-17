@@ -101,13 +101,13 @@ npm test
 
 ## Submitting Changes
 
-1. **Fork** the repository and create a feature branch from `prod`.
+1. **Fork** the repository and create a feature branch from `dev` (the default and integration branch — never base work on `prod`).
 2. Make your changes. Keep commits focused — one logical change per commit.
 3. Run tests before opening a PR:
    ```bash
    cd backend && npm test
    ```
-4. Open a Pull Request against `prod`. Describe what changed and why, including any EULA-sensitive considerations.
+4. Open a Pull Request against `dev`. Describe what changed and why, including any EULA-sensitive considerations.
 5. A maintainer will review and merge. CI (GitHub Actions) runs lint + tests automatically.
 
 ### What Makes a Good PR

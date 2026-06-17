@@ -93,8 +93,9 @@ context). High-value targets:
 Representative scenarios (full list in [overlay-test-plan.md](overlay-test-plan.md)): cold-start
 onboarding-without-game tray handoff; game-scan hysteresis (no flip until `PRESENCE_FLIP_SCANS`
 consecutive agreeing scans); explicit-hide-then-relaunch `userHidden` semantics; idle
-collapse/expand preserving user width; auto-update `release:published → quitAndInstall`; public-mode
-lockdown (no authed WS handshake reaches the mock relay).
+collapse/expand preserving user width; update notification (`app:update-available` → OS toast,
+once-per-session guard, Nexus link on click); public-mode lockdown (no authed WS handshake reaches
+the mock relay).
 
 ## Tooling decisions
 
@@ -143,11 +144,11 @@ cross-platform-overlay/
 
 tests/                         # repo-root cross-process E2E
   e2e/                         # chat-smoke.spec.ts (REPOINT off prod), overlay-launch.spec.ts
-  mock-relay/                  # NEW: shared hermetic Express + ws fixture (RELAY_HTTP/RELAY_WS)
 ```
 
 Co-locate unit/component tests next to the source they cover (`*.test.ts`/`*.test.tsx`). E2E specs
-live under the repo-root `tests/` tree and share the `tests/mock-relay/` fixture.
+live under the repo-root `tests/` tree. (The `tests/mock-relay/` hermetic fixture was removed when
+the auto-update E2E it served was retired; a future Playwright suite would need a fresh fixture.)
 
 ## Running tests locally
 

@@ -6,22 +6,15 @@
 .DESCRIPTION
     Produces:
       - "Fallout Chat Mod Setup V (Windows).zip"  (Windows installer + INSTALL-WINDOWS.txt)
-      - "Fallout Chat Mod-V.AppImage (Linux).zip" (Linux AppImage + INSTALL-LINUX.txt + .kwinrule)
+      - "Fallout Chat Mod-V.AppImage (Linux).zip" (Linux AppImage + .deb + INSTALL-LINUX.txt + .kwinrule)
 
     These ZIPs are the artifacts linked from the website download buttons and uploaded
     to Nexus Mods. They are ADDITIONAL to (not replacing) the raw installer files.
 
-    CRITICAL -- electron-updater feed must NOT point at ZIPs:
-      latest.yml (Windows) and latest-linux.yml (Linux) MUST keep pointing at the RAW
-      .exe / .AppImage files produced by electron-builder. The ZIPs are for humans
-      (website/Nexus). Changing the feed to reference a ZIP would break auto-updates
-      for every installed client, because electron-updater can't install a zip.
-
     Role in the release pipeline:
       Run AFTER electron-builder produces the raw artifacts and BEFORE uploading to
       the VPS. Outputs land in the same dist-electron dir alongside the raw files.
-      Upload order to /app/downloads/electron/: raw .exe + .AppImage, then the ZIPs,
-      then latest*.yml (overwrite last so the feed is only live once sizes are verified).
+      Upload order to /app/downloads/electron/: raw .exe + .AppImage, then the ZIPs.
 
 .PARAMETER Version
     Version string, e.g. 1.3.68.
@@ -54,9 +47,11 @@ function Fail($msg) { Write-Error "[package-downloads] $msg"; exit 1 }
 # --- Validate raw artifact existence -----------------------------------------
 $winExe   = Join-Path $DistDir "Fallout Chat Mod Setup $Version.exe"
 $linuxApp = Join-Path $DistDir "Fallout Chat Mod-$Version.AppImage"
+$linuxDeb = Join-Path $DistDir "Fallout Chat Mod-$Version.deb"
 
 if (-not (Test-Path $winExe))   { Fail "Windows installer not found: $winExe" }
 if (-not (Test-Path $linuxApp)) { Fail "Linux AppImage not found: $linuxApp" }
+if (-not (Test-Path $linuxDeb)) { Fail "Linux .deb not found: $linuxDeb (electron-builder deb target)" }
 
 # --- Instruction files -------------------------------------------------------
 $installWin   = Join-Path $AssetsDir "install\INSTALL-WINDOWS.txt"
@@ -98,6 +93,7 @@ $linuxStaging = Join-Path $stagingRoot "linux"
 if (Test-Path $linuxStaging) { Remove-Item $linuxStaging -Recurse -Force }
 New-Item -ItemType Directory -Path $linuxStaging -Force | Out-Null
 Copy-Item $linuxApp   -Destination $linuxStaging
+Copy-Item $linuxDeb   -Destination $linuxStaging
 Copy-Item $installLinux -Destination $linuxStaging
 Copy-Item $kwinRule     -Destination $linuxStaging
 # Compress CONTENTS of the staging folder (files at root, not nested in a folder)
@@ -111,4 +107,4 @@ Remove-Item $stagingRoot -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host "[package-downloads] Done. Two download ZIPs ready in $DistDir"
 Write-Host "  $winZipName  ($([math]::Round($winSize/1MB,1)) MB)"
 Write-Host "  $linuxZipName  ($([math]::Round($linuxSize/1MB,1)) MB)"
-Write-Host "NOTE: latest.yml and latest-linux.yml still reference the raw .exe/.AppImage -- do NOT update them to point at ZIPs."
+Write-Host "NOTE: Upload the raw .exe/.AppImage alongside the ZIPs. The ZIPs are for human download (website/Nexus) -- not for the download URL in POST /admin/releases."
