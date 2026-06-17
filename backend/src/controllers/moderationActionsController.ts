@@ -202,6 +202,19 @@ export async function streamBanEvidenceHandler(req: Request, res: Response, next
   try {
     requireUuid(req.params.id, 'id');
     requireUuid(req.params.fileId, 'fileId');
+
+    // Per-ban authorization: owners and admins can access any ban's evidence.
+    // Moderators may only access evidence for bans they personally issued.
+    const callerRole: string = (req as any).adminUser?.role ?? '';
+    if (callerRole === 'moderator') {
+      const actor = await actorUserId(req);
+      const ban = await prisma.ban.findUnique({
+        where: { id: req.params.id },
+        select: { bannedById: true },
+      });
+      if (!ban) return next(createError(404, 'Ban not found'));
+      if (ban.bannedById !== actor) return next(createError(403, 'Access denied'));
+    }
     const ev = await prisma.banEvidence.findFirst({
       where: { id: req.params.fileId, banId: req.params.id, type: 'image' },
       select: { objectKey: true, mime: true },
