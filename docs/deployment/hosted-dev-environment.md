@@ -326,21 +326,18 @@ what is *covered*, only how work is grouped:
 | # | Merge | From → To | Benefit |
 |---|-------|-----------|---------|
 | A | Unit (Vitest) jobs | `overlay-unit-component` + `dashboard-unit-component` → one matrix job `unit-vitest` (matrix: `cross-platform-overlay`, `admin-dashboard`) | 2 jobs → 1 |
-| B | Linux overlay E2E | `overlay-launch-smoke` + `overlay-autoupdate-e2e` → one `overlay-e2e-linux` job running both as sequential steps | 2 jobs → 1, and **removes a duplicate renderer + electron build** (the two jobs build the same artifact today) |
+| B | Linux overlay E2E | `overlay-launch-smoke` + `overlay-autoupdate-e2e` → one `overlay-e2e-linux` job running both as sequential steps (auto-update E2E since removed; job now only runs the launch-smoke step, renamed to `overlay-launch-smoke-linux`) | 2 jobs → 1, and **removes a duplicate renderer + electron build** |
 | C | Dead placeholder | delete `dashboard-playwright` (`if: false`, never runs) | removes noise |
 
 **Tradeoffs (accepted):**
-- Merge B couples the launch-smoke and auto-update checks: a shared-build failure
-  blocks both at once instead of pinpointing one. Acceptable — they already share
-  the build, and both are required gates regardless.
+- Merge B (historical): originally coupled launch-smoke and auto-update checks. The auto-update E2E step was subsequently removed when auto-update was retired; the job now runs only the launch-smoke.
 - Merge A: a matrix job reports one check with two legs; a failure still names the
   failing workspace via the matrix leg.
 
 **Constraints:**
 - Every consolidated job keeps `needs: authorize` (fork-PR gate) and stays in the
   `ci-summary` required list under its new name.
-- `overlay-autoupdate-e2e-windows` / `-windows-exec` are left as-is (distinct
-  platform, distinct runner).
+- `overlay-build-windows-nsis` (renamed from `overlay-autoupdate-e2e-windows`) is the remaining Windows CI job; the native-Windows execution job (`overlay-autoupdate-e2e-windows-exec`) was removed when auto-update was retired.
 - This is the fail-closed release gate — land it as one change and confirm a full
   green run on a same-repo PR before relying on it.
 

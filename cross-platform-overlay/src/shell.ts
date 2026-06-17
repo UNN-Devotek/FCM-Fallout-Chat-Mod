@@ -925,11 +925,8 @@ function buildSettingsPanel() {
   // ── Header ──
   const head = el('div', { className: 'ss-head' });
   head.append(el('span', { className: 'ss-title' }, 'SETTINGS'));
-  // Live app version — the LATEST published release from GET /api/version, not the
-  // build-time __APP_VERSION__ define (which freezes at build time). Fetch via the
-  // relay HTTP base (renderer is served from the app origin, so a relative path
-  // wouldn't resolve). Show the build constant immediately, then swap in the live
-  // value once the fetch resolves; keep the fallback on failure.
+  // Show the build-time version from the Vite define constant. No live fetch —
+  // the displayed version is always the installed build version.
   const verSpan = el('span', { className: 'ss-ver' }, `v${__APP_VERSION__}`);
   head.append(verSpan);
   panel.append(head);
@@ -938,18 +935,6 @@ function buildSettingsPanel() {
   const disclaimer = el('div', { className: 'ss-disclaimer' },
     'Unofficial fan project — not affiliated with, endorsed, or sponsored by Bethesda Softworks or ZeniMax Media. Fallout® is a trademark of ZeniMax Media, Inc.');
   panel.append(disclaimer);
-  {
-    const relayBase = window.__FCM_OVERLAY_SHELL__?.relayBase;
-    const base = relayBase ? relayBase.replace(/\/$/, '') : '';
-    fetch(`${base}/api/version`)
-      .then(r => (r.ok ? r.json() : null))
-      .then(j => {
-        const v = j?.data?.version;
-        // Ignore the "no release yet" placeholder (e.g. "—"); keep the build version.
-        if (typeof v === 'string' && /\d/.test(v)) verSpan.textContent = `v${v}`;
-      })
-      .catch(() => { /* keep build-time fallback */ });
-  }
 
   // ── Nav bar ──
   const nav = el('div', { className: 'ss-nav' });
@@ -1501,11 +1486,6 @@ function buildSettingsPanel() {
   cancelBtn.addEventListener('click', closeSettings);
   footer.append(resetBtn, el('div', { className: 'ss-fspacer' }), cancelBtn);
   panel.append(footer);
-
-  // Lazy import avoids a circular dep; silently no-ops in web contexts.
-  import('./updater-ui').then(({ mountCheckForUpdatesButton }) => {
-    mountCheckForUpdatesButton(footer);
-  }).catch(() => { /* optional feature — ignore load errors */ });
 
   showSection(0);
   document.body.append(backdrop);

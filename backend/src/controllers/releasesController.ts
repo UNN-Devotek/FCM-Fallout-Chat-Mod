@@ -4,13 +4,14 @@ import { createError } from '../middleware/errorHandler';
 import prisma from '../config/prisma';
 import { constantTimeEquals } from '../utils/constantTimeEquals';
 import { postReleaseAnnouncement } from '../services/discordService';
+import { setLatestVersion } from '../services/latestReleaseVersion';
 
 // Download URL helpers — built inline (NOT imported) so the publish-verify gate
 // never depends on another module's export resolving. Must match the
 // electron-builder output: productName "Fallout Chat Mod" (WITH spaces).
 //
 // Human download links (website + Nexus) point at the ZIPs (installer + INSTALL-*.txt).
-// The electron-updater feed (latest.yml / latest-linux.yml) references the RAW
+// Raw installer files (CLI installer / direct download) reference the raw
 // .exe / .AppImage — those are verified separately below.
 const ELECTRON_DOWNLOADS = 'https://falloutchatmod.com/downloads/electron';
 
@@ -19,7 +20,7 @@ function linuxZipUrl(version: string): string {
   return `${ELECTRON_DOWNLOADS}/${encodeURIComponent(`Fallout Chat Mod-${version}.AppImage (Linux).zip`)}`;
 }
 
-// Raw installer files — consumed by the electron-updater feed only.
+// Raw installer files — consumed by the CLI installer / direct download.
 function rawWindowsInstallerUrl(version: string): string {
   return `${ELECTRON_DOWNLOADS}/${encodeURIComponent(`Fallout Chat Mod Setup ${version}.exe`)}`;
 }
@@ -176,15 +177,15 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
     //
     // - downloadUrl         = Windows ZIP (human download — website + Nexus)
     // - linuxZipUrl         = Linux ZIP   (human download — website + Nexus)
-    // - rawWindowsInstallerUrl = raw .exe  (electron-updater feed via latest.yml)
-    // - rawLinuxAppImageUrl    = raw .AppImage (feed via latest-linux.yml)
+    // - rawWindowsInstallerUrl = raw .exe  (CLI installer / direct download)
+    // - rawLinuxAppImageUrl    = raw .AppImage (CLI installer / direct download)
     //
     // The zips are >1 MB; raw installers are also well above the 1 MB floor.
     try {
       await verifyDownload(downloadUrl, 'Windows ZIP');
       await verifyDownload(linuxZipUrl(version), 'Linux ZIP');
-      await verifyDownload(rawWindowsInstallerUrl(version), 'Windows raw installer (updater feed)');
-      await verifyDownload(rawLinuxAppImageUrl(version), 'Linux raw AppImage (updater feed)');
+      await verifyDownload(rawWindowsInstallerUrl(version), 'Windows raw installer (CLI installer / direct download)');
+      await verifyDownload(rawLinuxAppImageUrl(version), 'Linux raw AppImage (CLI installer / direct download)');
     } catch (e: any) {
       return next(createError(
         400,
@@ -212,12 +213,9 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
       create: { version, downloadUrl, releaseNotes, publishedAt },
     });
 
-    // Notify all connected overlays so they can signal GameMonitor to check for updates.
-    const broadcast = (global as any).broadcast as ((envelope: unknown) => void) | undefined;
-    broadcast?.({
-      type: 'release:published',
-      payload: { version, downloadUrl, releaseNotes },
-    });
+    // Refresh the in-memory latest-version cache so newly connecting overlays
+    // receive the updated version in their app:update-available handshake message.
+    setLatestVersion(version);
 
     res.json({ data: { message: `Release v${version} published`, ...toEntry(saved) } });
   } catch (err) {

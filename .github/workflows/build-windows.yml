@@ -107,11 +107,8 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: fallout-chat-mod-${{ inputs.version }}-win-x64
-          # Include latest.yml + the .blockmap so the artifact is publish-complete:
-          # the auto-updater feed needs latest.yml, and the .blockmap powers
-          # differential downloads.
+          # Only the installer .exe — the overlay no longer auto-updates, so no
+          # latest.yml feed manifest or .blockmap differential is produced.
           path: |
             cross-platform-overlay/dist-electron/*.exe
-            cross-platform-overlay/dist-electron/*.exe.blockmap
-            cross-platform-overlay/dist-electron/latest.yml
           retention-days: 90

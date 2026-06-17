@@ -145,8 +145,9 @@ vi.mock('../../services/api', () => ({
 
 ## E2E scenarios (Playwright — blocked on mock relay)
 
-Once `tests/mock-relay/` exists (see [overlay-test-plan.md](overlay-test-plan.md)), the priority
-browser E2E scenarios are:
+The hermetic `tests/mock-relay/` fixture was removed when the auto-update E2E it served was
+retired (see [overlay-test-plan.md](overlay-test-plan.md)); a future Playwright E2E suite would
+require a fresh fixture effort. The priority browser E2E scenarios remain:
 
 1. **Public website lockdown** — unauthenticated visitor sees landing page; chat tab shows read-only
    feed; no authed WS handshake reaches the mock relay.
