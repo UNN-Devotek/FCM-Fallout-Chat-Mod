@@ -85,7 +85,7 @@ export function displayForType(type: TicketType): string {
     case 'suggestion':
       return 'Suggestion';
     case 'support':
-      return 'Support Ticket';
+      return 'Private Bug';
   }
 }
 

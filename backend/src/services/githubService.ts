@@ -136,6 +136,22 @@ export async function addIssueToProject(projectNumber: number, issueNodeId: stri
   return itemId;
 }
 
+/** List open repo milestones (for the optional ticket milestone picker). */
+export async function listOpenMilestones(): Promise<Array<{ number: number; title: string }>> {
+  const data = await rest<any[]>(
+    'GET',
+    `/repos/${env.GITHUB_OWNER}/${env.GITHUB_REPO}/milestones?state=open&per_page=25&sort=due_on&direction=asc`,
+  );
+  return Array.isArray(data) ? data.map((m) => ({ number: m.number, title: m.title })) : [];
+}
+
+/** Set (or clear, with null) an issue's milestone. */
+export async function setIssueMilestone(issueNumber: number, milestoneNumber: number | null): Promise<void> {
+  await rest('PATCH', `/repos/${env.GITHUB_OWNER}/${env.GITHUB_REPO}/issues/${issueNumber}`, {
+    milestone: milestoneNumber,
+  });
+}
+
 /** Test-only: clear the project-id cache between cases. */
 export function _resetCaches(): void {
   projectIdCache.clear();
@@ -148,6 +164,8 @@ export default {
   addLabels,
   getProjectNodeId,
   addIssueToProject,
+  listOpenMilestones,
+  setIssueMilestone,
   _resetCaches,
 };
 module.exports = {
@@ -157,5 +175,7 @@ module.exports = {
   addLabels,
   getProjectNodeId,
   addIssueToProject,
+  listOpenMilestones,
+  setIssueMilestone,
   _resetCaches,
 };

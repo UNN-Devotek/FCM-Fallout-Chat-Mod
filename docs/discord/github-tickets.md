@@ -13,27 +13,33 @@ Implemented in [`backend/src/services/ticketService.ts`](../../backend/src/servi
 (unit-tested). It attaches to the shared discord.js client via `register()` — no
 second login — like voice channels and reaction roles.
 
-> **Status:** Increment 1 (outbound) is live. Increment 2 — the inbound GitHub
+> **Status:** Increment 1 (outbound) is live, including the gated Private Bug
+> button and the optional milestone picker. Increment 2 — the inbound GitHub
 > webhook (comment→thread, `roadmap` label→board, close→thread), thread→comment
-> sync, and the hidden staff-only `/ticket` private flow — is in progress.
+> sync, and a `/roadmap` command — is still to come.
 
 ---
 
 ## Flow (increment 1)
 
 1. A staff member runs **`/ticket-panel`** in a text channel → the bot posts an
-   embed with **🐞 Report a Bug** and **💡 Suggestion** buttons. (The command is
-   hidden from non-staff via `Manage Server` default permission.)
+   embed with **🐞 Report a Bug**, **💡 Suggestion**, and **🔒 Private Bug**
+   buttons, plus links to the two GitHub boards. (A button on a shared embed is
+   visible to everyone; **Private Bug is gated on click** — non-staff get a
+   "staff-only" ephemeral reply.)
 2. A member clicks a button → a **modal** collects *Title*, *Description* (and
-   *Steps to reproduce* for bugs). Discord modals cannot accept files, so the
-   issue is **text-only** — screenshots go in the thread.
+   *Steps to reproduce* for bug / private bug). Discord modals cannot accept
+   files, so the issue is **text-only** — screenshots go in the thread.
 3. On submit the bot:
-   - creates a GitHub issue labelled `bug` / `suggestion`;
+   - creates a GitHub issue, labelled `bug` / `suggestion` / `bug`+`private`;
    - adds it to **Project v2 #2** (`addProjectV2ItemById`, GraphQL);
-   - opens a **public thread** named **`#<num> · <title>`** (≤ 100 chars) under
-     the panel channel;
+   - opens a thread named **`#<num> · <title>`** (≤ 100 chars) — **public**, or
+     **private** (reporter + staff) for the private-bug flow;
+   - **deletes Discord's "started a thread" system message** in the parent channel
+     so the panel embed stays at the bottom;
    - posts a summary embed in the thread with a staff-only **🗺️ Add to Roadmap**
-     button and a prompt to drop screenshots;
+     button and an **optional milestone picker** (a select menu of the repo's open
+     milestones — reporter or staff may set one; not required);
    - records the issue↔thread mapping in `github_issue_threads`.
 4. **Add to Roadmap** (staff only) adds the issue to **Project v2 #3** and applies
    the `roadmap` label.
@@ -57,15 +63,20 @@ Environment variables (see [`backend/.env.example`](../../backend/.env.example))
 | `GITHUB_WEBHOOK_SECRET` | HMAC secret for inbound webhooks (increment 2). |
 | `OWNER_ROLE_ID`, `ADMIN_ROLE_ID`, `MODERATOR_ROLE_ID`, `DEVELOPER_ROLE_ID` | Staff roles allowed to promote to the roadmap. |
 
-GitHub Projects v2 is **GraphQL-only**; a token with only `repo`/Issues can
-create issues but **cannot** add them to a board.
+GitHub Projects v2 is **GraphQL-only**, and adding items requires the token's
+**Projects: Read _and write_** permission. A token with Projects: read-only (or
+`repo`/Issues only) can create issues but `addProjectV2ItemById` returns
+`FORBIDDEN: Resource not accessible by personal access token` — board-add and
+roadmap-add then silently fail (logged at `warn`; the issue + thread still get
+created).
 
 ## Bot permissions
 
-The bot needs, in the panel channel: **Create Public Threads**, **Send Messages
-in Threads**, **Manage Threads**, **Embed Links**, **Read Message History**.
-(`/ticket-panel` itself needs the slash command to be registered — done on
-`ready`, guild-scoped, upsert-by-name.)
+The bot needs, in the panel channel: **Create Public Threads**, **Create Private
+Threads**, **Send Messages in Threads**, **Manage Threads**, **Manage Messages**
+(to delete the "started a thread" system message), **Embed Links**, **Read
+Message History**. (`/ticket-panel` itself is registered on `ready`,
+guild-scoped, upsert-by-name.)
 
 ## Persistence
 

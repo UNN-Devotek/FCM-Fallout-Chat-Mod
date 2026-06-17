@@ -98,7 +98,7 @@ describe('githubTicketHelpers', () => {
     it('labelForType / displayForType', () => {
       expect(h.labelForType('bug')).toBe('bug');
       expect(h.labelForType('suggestion')).toBe('suggestion');
-      expect(h.displayForType('support')).toBe('Support Ticket');
+      expect(h.displayForType('support')).toBe('Private Bug');
     });
 
     it('colorForType returns a number per type', () => {

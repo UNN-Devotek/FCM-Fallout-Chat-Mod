@@ -130,4 +130,34 @@ describe('githubService', () => {
     await svc.addLabels(5, []);
     expect(global.fetch).not.toHaveBeenCalled();
   });
+
+  it('listOpenMilestones maps the REST response', async () => {
+    global.fetch.mockResolvedValueOnce(
+      restResponse(200, [
+        { number: 1, title: 'v1.0', extra: 'ignored' },
+        { number: 2, title: 'v1.1' },
+      ]),
+    );
+    const ms = await svc.listOpenMilestones();
+    expect(ms).toEqual([
+      { number: 1, title: 'v1.0' },
+      { number: 2, title: 'v1.1' },
+    ]);
+    expect(global.fetch.mock.calls[0][0]).toContain('/milestones?state=open');
+  });
+
+  it('setIssueMilestone PATCHes the issue with the milestone number', async () => {
+    global.fetch.mockResolvedValueOnce(restResponse(200, { number: 5 }));
+    await svc.setIssueMilestone(5, 2);
+    const [url, opts] = global.fetch.mock.calls[0];
+    expect(url).toBe('https://api.github.com/repos/UNN-Devotek/FCM-Fallout-Chat-Mod/issues/5');
+    expect(opts.method).toBe('PATCH');
+    expect(JSON.parse(opts.body)).toEqual({ milestone: 2 });
+  });
+
+  it('setIssueMilestone clears the milestone with null', async () => {
+    global.fetch.mockResolvedValueOnce(restResponse(200, { number: 5 }));
+    await svc.setIssueMilestone(5, null);
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ milestone: null });
+  });
 });
