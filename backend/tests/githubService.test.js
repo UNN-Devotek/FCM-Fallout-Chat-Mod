@@ -160,4 +160,28 @@ describe('githubService', () => {
     await svc.setIssueMilestone(5, null);
     expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ milestone: null });
   });
+
+  it('closeIssue PATCHes state=closed', async () => {
+    global.fetch.mockResolvedValueOnce(restResponse(200, { number: 9, state: 'closed' }));
+    await svc.closeIssue(9);
+    const [url, opts] = global.fetch.mock.calls[0];
+    expect(url).toBe('https://api.github.com/repos/UNN-Devotek/FCM-Fallout-Chat-Mod/issues/9');
+    expect(opts.method).toBe('PATCH');
+    expect(JSON.parse(opts.body)).toEqual({ state: 'closed' });
+  });
+
+  it('deleteIssue sends the deleteIssue GraphQL mutation', async () => {
+    global.fetch.mockResolvedValueOnce(gqlResponse({ data: { deleteIssue: { clientMutationId: null } } }));
+    await svc.deleteIssue('NODE9');
+    const [url, opts] = global.fetch.mock.calls[0];
+    expect(url).toBe('https://api.github.com/graphql');
+    const body = JSON.parse(opts.body);
+    expect(body.query).toContain('deleteIssue');
+    expect(body.variables).toEqual({ id: 'NODE9' });
+  });
+
+  it('deleteIssue surfaces GraphQL FORBIDDEN (caller falls back to close)', async () => {
+    global.fetch.mockResolvedValueOnce(gqlResponse({ errors: [{ message: 'Must have admin access to delete' }] }));
+    await expect(svc.deleteIssue('NODE9')).rejects.toThrow(/admin access/);
+  });
 });

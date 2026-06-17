@@ -2,20 +2,21 @@
  * Discord <-> GitHub ticketing.
  *
  * Increment 1 (outbound). A staff member posts a panel via /ticket-panel; members
- * click "Report a Bug" / "Suggestion" (public) or staff click "Private Bug"
- * (gated) -> a modal collects text -> the bot creates a GitHub issue, adds it to
- * the Bug & Suggestion board (Project v2 #2), opens a thread named
- * "#<num> · <title>" (public, or private for the private-bug flow), and posts a
- * summary with a staff-only "Add to Roadmap" button and an optional milestone
- * picker. GitHub issues are text-only — attachments live in the Discord thread.
+ * click "Report a Bug" / "Suggestion" -> a modal collects text -> the bot creates
+ * a GitHub issue, adds it to the Bug & Suggestion board (Project v2 #2), and opens
+ * a **private thread** named "#<num> · <title>" (reporter + staff via Manage
+ * Threads). The thread embed carries: a "View on GitHub" link, a staff-only
+ * "Add to Roadmap" button, "Close" and "Delete" (full teardown), and an optional
+ * milestone picker. The developer role is @-tagged when the thread opens. GitHub
+ * issues are text-only — attachments live in the thread.
  *
  * After creating a thread the bot deletes Discord's "started a thread" system
  * message in the parent channel so the panel embed stays at the bottom.
  *
  * Attaches to the shared discord.js client via register() (no second login).
  *
- * Bot guild permissions: Create Public/Private Threads, Send Messages in Threads,
- * Manage Threads, Manage Messages (to delete the system message), Embed Links.
+ * Bot guild permissions: Create Private Threads, Send Messages in Threads,
+ * Manage Threads, Manage Messages, Embed Links, Mention All Roles.
  */
 import {
   Client,
@@ -63,7 +64,6 @@ function staffRoleIds() {
   };
 }
 
-/** Pull role ids off an interaction's member, tolerant of GuildMember vs raw API shapes. */
 function memberRoleIds(interaction: any): string[] {
   const m = interaction.member;
   if (!m) return [];
@@ -104,10 +104,9 @@ function buildPanel() {
     .setDescription(
       'Found a problem or have an idea? Open a ticket below.\n\n' +
         '🐞 **Report a Bug** — something is broken or behaving wrong.\n' +
-        '💡 **Suggestion** — an idea or feature request.\n' +
-        '🔒 **Private Bug** — staff-only; opens a private thread.\n\n' +
-        'A thread is created for your ticket — drop screenshots and details there. ' +
-        'Each ticket is tracked on our GitHub boards.',
+        '💡 **Suggestion** — an idea or feature request.\n\n' +
+        'A **private thread** is created for your ticket (you + the team) — drop screenshots ' +
+        'and details there. Each ticket is tracked on our GitHub boards.',
     )
     .addFields({
       name: '📋 Boards',
@@ -120,18 +119,14 @@ function buildPanel() {
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
     new ButtonBuilder().setCustomId(buildCustomId('open', 'bug')).setLabel('Report a Bug').setEmoji('🐞').setStyle(ButtonStyle.Danger),
     new ButtonBuilder().setCustomId(buildCustomId('open', 'suggestion')).setLabel('Suggestion').setEmoji('💡').setStyle(ButtonStyle.Primary),
-    new ButtonBuilder().setCustomId(buildCustomId('open', 'support')).setLabel('Private Bug').setEmoji('🔒').setStyle(ButtonStyle.Secondary),
   );
   return { embeds: [embed], components: [row] };
 }
 
 function buildModal(type: TicketType): ModalBuilder {
-  const titleByType: Record<TicketType, string> = {
-    bug: 'New Bug Report',
-    suggestion: 'New Suggestion',
-    support: 'New Private Bug Report',
-  };
-  const modal = new ModalBuilder().setCustomId(buildCustomId('submit', type)).setTitle(titleByType[type]);
+  const modal = new ModalBuilder()
+    .setCustomId(buildCustomId('submit', type))
+    .setTitle(type === 'suggestion' ? 'New Suggestion' : 'New Bug Report');
 
   const title = new TextInputBuilder()
     .setCustomId('title')
@@ -153,8 +148,7 @@ function buildModal(type: TicketType): ModalBuilder {
     new ActionRowBuilder<TextInputBuilder>().addComponents(description),
   );
 
-  // Bug + Private Bug capture reproduction steps; Suggestion does not.
-  if (type === 'bug' || type === 'support') {
+  if (type === 'bug') {
     const steps = new TextInputBuilder()
       .setCustomId('steps')
       .setLabel('Steps to reproduce')
@@ -166,20 +160,26 @@ function buildModal(type: TicketType): ModalBuilder {
   return modal;
 }
 
-/** Labels applied per flow. Private bug = bug + private; others = their single label. */
-function labelsForType(type: TicketType): string[] {
-  return type === 'support' ? ['bug', 'private'] : [labelForType(type)];
-}
-
-async function buildThreadComponents(issueNumber: number) {
+async function buildThreadComponents(issueNumber: number, issueUrl: string) {
   const rows: any[] = [];
   rows.push(
     new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setLabel('View on GitHub').setEmoji('🔗').setStyle(ButtonStyle.Link).setURL(issueUrl),
       new ButtonBuilder()
         .setCustomId(buildCustomId('roadmap', String(issueNumber)))
         .setLabel('Add to Roadmap')
         .setEmoji('🗺️')
         .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(buildCustomId('close', String(issueNumber)))
+        .setLabel('Close')
+        .setEmoji('✅')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
+        .setCustomId(buildCustomId('delete', String(issueNumber)))
+        .setLabel('Delete')
+        .setEmoji('🗑️')
+        .setStyle(ButtonStyle.Danger),
     ),
   );
 
@@ -204,28 +204,28 @@ async function buildThreadComponents(issueNumber: number) {
   return rows;
 }
 
-async function buildThreadIntro(opts: {
-  type: TicketType;
-  issue: { number: number; htmlUrl: string };
-  reporterId: string;
-}) {
+async function buildThreadIntro(opts: { type: TicketType; issue: { number: number; htmlUrl: string }; reporterId: string }) {
+  const devRole = env.DEVELOPER_ROLE_ID;
   const embed = new EmbedBuilder()
     .setTitle(`${displayForType(opts.type)} · #${opts.issue.number}`)
     .setURL(opts.issue.htmlUrl)
     .setDescription(
-      `Thanks <@${opts.reporterId}>! Tracked on GitHub as [#${opts.issue.number}](${opts.issue.htmlUrl}).\n\n` +
+      `Thanks <@${opts.reporterId}>! Tracked on GitHub:\n**[Issue #${opts.issue.number} ↗](${opts.issue.htmlUrl})**\n\n` +
         '📎 **Drop any screenshots or files here** so we can see what you mean. ' +
         'Anything posted in this thread is part of the discussion.',
     )
     .setColor(colorForType(opts.type));
 
-  return { content: `<@${opts.reporterId}>`, embeds: [embed], components: await buildThreadComponents(opts.issue.number) };
+  const content = devRole ? `<@${opts.reporterId}> · <@&${devRole}>` : `<@${opts.reporterId}>`;
+  return {
+    content,
+    embeds: [embed],
+    components: await buildThreadComponents(opts.issue.number, opts.issue.htmlUrl),
+    allowedMentions: { users: [opts.reporterId], roles: devRole ? [devRole] : [] },
+  };
 }
 
-/**
- * Delete Discord's "started a thread" system message in the parent channel, so the
- * panel embed stays at the bottom. Best-effort.
- */
+/** Delete Discord's "started a thread" system message so the panel stays at the bottom. */
 async function deleteThreadSystemMessage(channel: TextChannel, threadId: string): Promise<void> {
   try {
     const recent = await channel.messages.fetch({ limit: 8 });
@@ -257,10 +257,6 @@ async function handleOpenButton(interaction: any, type: TicketType): Promise<voi
   if (!githubService.isConfigured()) {
     return ephem(interaction, 'GitHub integration is not configured yet — please tell an admin.');
   }
-  // Private Bug is staff-only.
-  if (type === 'support' && !isStaffInteraction(interaction)) {
-    return ephem(interaction, 'The Private Bug option is staff-only.');
-  }
   await interaction.showModal(buildModal(type));
 }
 
@@ -272,10 +268,9 @@ async function handleModalSubmit(interaction: any, type: TicketType): Promise<vo
     return ephem(interaction, 'Tickets can only be opened from a standard text channel.');
   }
 
-  const isPrivate = type === 'support';
   const title = interaction.fields.getTextInputValue('title').trim();
   const description = interaction.fields.getTextInputValue('description').trim();
-  const steps = type === 'suggestion' ? undefined : interaction.fields.getTextInputValue('steps')?.trim();
+  const steps = type === 'bug' ? interaction.fields.getTextInputValue('steps')?.trim() : undefined;
   const reporterId = interaction.user.id;
   const reporterTag = interaction.user.tag || interaction.user.username;
 
@@ -283,24 +278,22 @@ async function handleModalSubmit(interaction: any, type: TicketType): Promise<vo
     const issue = await githubService.createIssue({
       title,
       body: buildIssueBody({ type, description, steps, reporterTag, reporterId }),
-      labels: labelsForType(type),
+      labels: [labelForType(type)],
     });
 
-    // Both bugs and suggestions (and private bugs) land on the Bug & Suggestion board (#2).
     await githubService
       .addIssueToProject(env.GITHUB_PROJECT_BUGS_NUMBER, issue.nodeId)
       .catch((err) => logger.warn({ err, issue: issue.number }, 'ticket: failed to add issue to bug board'));
 
+    // All threads are private by default (reporter + staff via Manage Threads).
     const thread = await (channel as TextChannel).threads.create({
       name: buildThreadName(issue.number, title),
-      type: isPrivate ? ChannelType.PrivateThread : ChannelType.PublicThread,
+      type: ChannelType.PrivateThread,
       autoArchiveDuration: 10080,
+      invitable: false,
       reason: `Ticket #${issue.number} (${type})`,
     });
-
-    if (isPrivate) {
-      await thread.members.add(reporterId).catch(() => {});
-    }
+    await thread.members.add(reporterId).catch(() => {});
     await deleteThreadSystemMessage(channel as TextChannel, thread.id);
     await thread.send(await buildThreadIntro({ type, issue, reporterId })).catch((err) =>
       logger.warn({ err, threadId: thread.id }, 'ticket: failed to post thread intro'),
@@ -316,7 +309,7 @@ async function handleModalSubmit(interaction: any, type: TicketType): Promise<vo
           discordThreadId: thread.id,
           discordChannelId: channel.id,
           reporterId,
-          isPrivate,
+          isPrivate: true,
         },
       })
       .catch((err) => logger.error({ err, issue: issue.number }, 'ticket: failed to persist issue<->thread map'));
@@ -330,9 +323,7 @@ async function handleModalSubmit(interaction: any, type: TicketType): Promise<vo
 }
 
 async function handleRoadmapButton(interaction: any, issueNumberRaw: string): Promise<void> {
-  if (!isStaffInteraction(interaction)) {
-    return ephem(interaction, 'Only staff can add tickets to the roadmap.');
-  }
+  if (!isStaffInteraction(interaction)) return ephem(interaction, 'Only staff can add tickets to the roadmap.');
   const issueNumber = parseInt(issueNumberRaw, 10);
   if (!Number.isFinite(issueNumber)) return ephem(interaction, 'Could not determine the issue number.');
 
@@ -340,7 +331,6 @@ async function handleRoadmapButton(interaction: any, issueNumberRaw: string): Pr
   try {
     const map = await prisma.githubIssueThread.findUnique({ where: { issueNumber } });
     if (!map) return ephem(interaction, `No tracked ticket found for #${issueNumber}.`);
-
     await githubService.addIssueToProject(env.GITHUB_PROJECT_ROADMAP_NUMBER, map.issueNodeId);
     await githubService.addLabels(issueNumber, ['roadmap']).catch(() => {});
     logger.info({ issueNumber, by: interaction.user.id }, 'ticket: added to roadmap');
@@ -359,11 +349,9 @@ async function handleMilestoneSelect(interaction: any, issueNumberRaw: string): 
   try {
     const map = await prisma.githubIssueThread.findUnique({ where: { issueNumber } });
     if (!map) return ephem(interaction, `No tracked ticket found for #${issueNumber}.`);
-    // The reporter or any staff member may set the milestone.
     if (interaction.user.id !== map.reporterId && !isStaffInteraction(interaction)) {
       return ephem(interaction, 'Only the reporter or staff can set the milestone.');
     }
-
     const value = interaction.values?.[0];
     const milestoneNumber = !value || value === 'none' ? null : parseInt(value, 10);
     await githubService.setIssueMilestone(issueNumber, Number.isFinite(milestoneNumber as number) ? (milestoneNumber as number) : null);
@@ -375,6 +363,82 @@ async function handleMilestoneSelect(interaction: any, issueNumberRaw: string): 
   } catch (err) {
     logger.error({ err, issueNumber }, 'ticket: milestone set failed');
     return ephem(interaction, '⚠️ Failed to set the milestone.');
+  }
+}
+
+async function handleCloseButton(interaction: any, issueNumberRaw: string): Promise<void> {
+  if (!isStaffInteraction(interaction)) return ephem(interaction, 'Only staff can close tickets.');
+  const issueNumber = parseInt(issueNumberRaw, 10);
+  if (!Number.isFinite(issueNumber)) return ephem(interaction, 'Could not determine the issue number.');
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  try {
+    await githubService.closeIssue(issueNumber);
+    const thread = interaction.channel;
+    if (thread?.isThread?.()) {
+      await thread.send(`✅ Ticket closed by <@${interaction.user.id}>. GitHub issue #${issueNumber} closed.`).catch(() => {});
+      await thread.setLocked(true).catch(() => {});
+      await thread.setArchived(true).catch(() => {});
+    }
+    logger.info({ issueNumber, by: interaction.user.id }, 'ticket: closed');
+    return ephem(interaction, `✅ Closed **#${issueNumber}** and locked the thread.`);
+  } catch (err) {
+    logger.error({ err, issueNumber }, 'ticket: close failed');
+    return ephem(interaction, '⚠️ Failed to close the issue.');
+  }
+}
+
+async function handleDeleteButton(interaction: any, issueNumberRaw: string): Promise<void> {
+  if (!isStaffInteraction(interaction)) return ephem(interaction, 'Only staff can delete tickets.');
+  const issueNumber = parseInt(issueNumberRaw, 10);
+  if (!Number.isFinite(issueNumber)) return ephem(interaction, 'Could not determine the issue number.');
+
+  const confirm = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(buildCustomId('delconfirm', String(issueNumber)))
+      .setLabel('Yes, delete everything')
+      .setEmoji('🧨')
+      .setStyle(ButtonStyle.Danger),
+  );
+  return ephem(
+    interaction,
+    `⚠️ This permanently **deletes this thread and GitHub issue #${issueNumber}** (and removes it from the boards). This cannot be undone.`,
+    [confirm],
+  );
+}
+
+async function handleDeleteConfirm(interaction: any, issueNumberRaw: string): Promise<void> {
+  if (!isStaffInteraction(interaction)) return ephem(interaction, 'Only staff can delete tickets.');
+  const issueNumber = parseInt(issueNumberRaw, 10);
+  if (!Number.isFinite(issueNumber)) return ephem(interaction, 'Could not determine the issue number.');
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const map = await prisma.githubIssueThread.findUnique({ where: { issueNumber } }).catch(() => null);
+
+  let ghResult: string;
+  try {
+    if (map) {
+      await githubService.deleteIssue(map.issueNodeId);
+      ghResult = `deleted GitHub issue #${issueNumber}`;
+    } else {
+      ghResult = `no tracked record for #${issueNumber}`;
+    }
+  } catch {
+    try {
+      await githubService.closeIssue(issueNumber);
+      ghResult = `couldn't delete issue #${issueNumber} (token lacks delete perms) — closed it instead`;
+    } catch {
+      ghResult = `couldn't delete or close issue #${issueNumber}`;
+    }
+  }
+
+  await prisma.githubIssueThread.deleteMany({ where: { issueNumber } }).catch(() => {});
+  logger.info({ issueNumber, by: interaction.user.id, ghResult }, 'ticket: deleted');
+  await ephem(interaction, `🧨 Teardown: ${ghResult}. Deleting this thread…`);
+
+  const thread = interaction.channel;
+  if (thread?.isThread?.()) {
+    await thread.delete(`Ticket #${issueNumber} deleted by ${interaction.user.id}`).catch(() => {});
   }
 }
 
@@ -393,6 +457,9 @@ async function onInteraction(interaction: Interaction): Promise<void> {
     if (anyI.isButton?.()) {
       if (parsed.action === 'open' && isTicketType(parsed.arg)) return handleOpenButton(anyI, parsed.arg);
       if (parsed.action === 'roadmap') return handleRoadmapButton(anyI, parsed.arg);
+      if (parsed.action === 'close') return handleCloseButton(anyI, parsed.arg);
+      if (parsed.action === 'delete') return handleDeleteButton(anyI, parsed.arg);
+      if (parsed.action === 'delconfirm') return handleDeleteConfirm(anyI, parsed.arg);
       return;
     }
 

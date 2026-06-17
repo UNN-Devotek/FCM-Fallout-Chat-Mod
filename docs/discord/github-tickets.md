@@ -13,36 +13,42 @@ Implemented in [`backend/src/services/ticketService.ts`](../../backend/src/servi
 (unit-tested). It attaches to the shared discord.js client via `register()` — no
 second login — like voice channels and reaction roles.
 
-> **Status:** Increment 1 (outbound) is live, including the gated Private Bug
-> button and the optional milestone picker. Increment 2 — the inbound GitHub
-> webhook (comment→thread, `roadmap` label→board, close→thread), thread→comment
-> sync, and a `/roadmap` command — is still to come.
+> **Status:** Increment 1 (outbound) is live — private-by-default threads, the
+> View on GitHub / Add to Roadmap / Close / Delete buttons, developer-role tagging,
+> and the optional milestone picker. Increment 2 — the inbound GitHub webhook
+> (comment→thread, `roadmap` label→board, close→thread), thread→comment sync, and a
+> `/roadmap` command — is still to come.
 
 ---
 
 ## Flow (increment 1)
 
 1. A staff member runs **`/ticket-panel`** in a text channel → the bot posts an
-   embed with **🐞 Report a Bug**, **💡 Suggestion**, and **🔒 Private Bug**
-   buttons, plus links to the two GitHub boards. (A button on a shared embed is
-   visible to everyone; **Private Bug is gated on click** — non-staff get a
-   "staff-only" ephemeral reply.)
+   embed with **🐞 Report a Bug** and **💡 Suggestion** buttons, plus links to the
+   two GitHub boards.
 2. A member clicks a button → a **modal** collects *Title*, *Description* (and
-   *Steps to reproduce* for bug / private bug). Discord modals cannot accept
-   files, so the issue is **text-only** — screenshots go in the thread.
+   *Steps to reproduce* for bugs). Discord modals cannot accept files, so the issue
+   is **text-only** — screenshots go in the thread.
 3. On submit the bot:
-   - creates a GitHub issue, labelled `bug` / `suggestion` / `bug`+`private`;
+   - creates a GitHub issue, labelled `bug` / `suggestion`;
    - adds it to **Project v2 #2** (`addProjectV2ItemById`, GraphQL);
-   - opens a thread named **`#<num> · <title>`** (≤ 100 chars) — **public**, or
-     **private** (reporter + staff) for the private-bug flow;
+   - opens a **private thread** (all threads are private by default — reporter +
+     staff via Manage Threads) named **`#<num> · <title>`** (≤ 100 chars), and
+     **@-tags the reporter and the `DEVELOPER_ROLE_ID` role**;
    - **deletes Discord's "started a thread" system message** in the parent channel
      so the panel embed stays at the bottom;
-   - posts a summary embed in the thread with a staff-only **🗺️ Add to Roadmap**
-     button and an **optional milestone picker** (a select menu of the repo's open
-     milestones — reporter or staff may set one; not required);
+   - posts a summary embed carrying a **🔗 View on GitHub** link button, staff-only
+     **🗺️ Add to Roadmap / ✅ Close / 🗑️ Delete** buttons, and an **optional
+     milestone picker** (select menu of the repo's open milestones — reporter or
+     staff may set one);
    - records the issue↔thread mapping in `github_issue_threads`.
-4. **Add to Roadmap** (staff only) adds the issue to **Project v2 #3** and applies
-   the `roadmap` label.
+4. Thread buttons (staff only):
+   - **Add to Roadmap** → adds the issue to **Project v2 #3** + applies the
+     `roadmap` label.
+   - **Close** → closes the GitHub issue and **locks + archives** the thread.
+   - **Delete** (with a confirm step) → **deletes the GitHub issue** (falls back to
+     closing it if the token lacks delete permission), removes the DB mapping, and
+     **deletes the thread** — full teardown.
 
 Attachments dropped in a thread stay in Discord; they are **not** copied to
 GitHub (text-only issues by design). Increment 2's thread→comment sync notes the
@@ -72,11 +78,15 @@ created).
 
 ## Bot permissions
 
-The bot needs, in the panel channel: **Create Public Threads**, **Create Private
-Threads**, **Send Messages in Threads**, **Manage Threads**, **Manage Messages**
-(to delete the "started a thread" system message), **Embed Links**, **Read
-Message History**. (`/ticket-panel` itself is registered on `ready`,
-guild-scoped, upsert-by-name.)
+The bot needs, in the panel channel: **Create Private Threads**, **Send Messages
+in Threads**, **Manage Threads** (so staff/devs see private threads and the bot
+can lock/archive/delete), **Manage Messages** (to delete the "started a thread"
+system message), **Mention @everyone, @here, and All Roles** (to ping the
+developer role), **Embed Links**, **Read Message History**. (`/ticket-panel` is
+registered on `ready`, guild-scoped, upsert-by-name.)
+
+`DEVELOPER_ROLE_ID` must be set for the developer-role @-tag to fire; on the dev
+stack it mirrors `DEV_DEVELOPER_ROLE_ID`.
 
 ## Persistence
 

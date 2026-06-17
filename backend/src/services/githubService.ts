@@ -152,6 +152,20 @@ export async function setIssueMilestone(issueNumber: number, milestoneNumber: nu
   });
 }
 
+/** Close an issue (state=closed). */
+export async function closeIssue(issueNumber: number): Promise<void> {
+  await rest('PATCH', `/repos/${env.GITHUB_OWNER}/${env.GITHUB_REPO}/issues/${issueNumber}`, { state: 'closed' });
+}
+
+/**
+ * Permanently delete an issue via GraphQL. Requires elevated repo permissions
+ * (delete issues) — may throw FORBIDDEN if the token can't delete; callers should
+ * fall back to closeIssue.
+ */
+export async function deleteIssue(issueNodeId: string): Promise<void> {
+  await graphql(`mutation($id:ID!){ deleteIssue(input:{ issueId:$id }){ clientMutationId } }`, { id: issueNodeId });
+}
+
 /** Test-only: clear the project-id cache between cases. */
 export function _resetCaches(): void {
   projectIdCache.clear();
@@ -166,6 +180,8 @@ export default {
   addIssueToProject,
   listOpenMilestones,
   setIssueMilestone,
+  closeIssue,
+  deleteIssue,
   _resetCaches,
 };
 module.exports = {
@@ -177,5 +193,7 @@ module.exports = {
   addIssueToProject,
   listOpenMilestones,
   setIssueMilestone,
+  closeIssue,
+  deleteIssue,
   _resetCaches,
 };
