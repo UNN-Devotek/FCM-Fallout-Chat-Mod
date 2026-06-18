@@ -591,8 +591,17 @@ export function menuBgColor(theme: WebTheme, chromeBgAlpha: number, mult = 1.4):
  * Centralises the openExternal / window.open pattern used throughout the component.
  */
 function openUrl(url: string): void {
+  // Only open http(s) URLs — parse + scheme-check so a chat-provided link can't
+  // smuggle javascript:/data:/etc. into window.open / the relay openExternal
+  // bridge (CodeQL-recognized unvalidated-redirection barrier).
+  let safe: string;
+  try {
+    const u = new URL(url, window.location.origin);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return;
+    safe = u.href;
+  } catch { return; }
   const b = (window as any).relayBridge;
-  if (b?.openExternal) { b.openExternal(url); } else { window.open(url, '_blank', 'noopener,noreferrer'); }
+  if (b?.openExternal) { b.openExternal(safe); } else { window.open(safe, '_blank', 'noopener,noreferrer'); }
 }
 
 /**
