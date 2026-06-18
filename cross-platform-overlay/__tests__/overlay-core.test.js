@@ -15,6 +15,8 @@ const {
   clampToWorkArea,
   buildKeybindMap,
   classifyInputGrab,
+  filterProxyHeaders,
+  resolveRelayProxyUrl,
   DEFAULT_APP_CLIENT_KEY,
   DEFAULT_WIDTH,
   DEFAULT_HEIGHT,
@@ -508,5 +510,108 @@ describe('classifyInputGrab', () => {
     expect(classifyInputGrab('')).toBe(null);
     expect(classifyInputGrab(null)).toBe(null);
     expect(classifyInputGrab(undefined)).toBe(null);
+  });
+});
+
+describe('filterProxyHeaders', () => {
+  it('passes through allowlisted headers', () => {
+    const result = filterProxyHeaders({
+      'content-type': 'application/json',
+      'accept': 'application/json',
+      'accept-language': 'en-US',
+    });
+    expect(result['content-type']).toBe('application/json');
+    expect(result['accept']).toBe('application/json');
+    expect(result['accept-language']).toBe('en-US');
+  });
+
+  it('strips X-Auth-Token so the renderer cannot override the session token', () => {
+    const result = filterProxyHeaders({ 'X-Auth-Token': 'attacker-token', 'content-type': 'application/json' });
+    expect(result['x-auth-token']).toBeUndefined();
+    expect(result['X-Auth-Token']).toBeUndefined();
+  });
+
+  it('strips Host to prevent request smuggling', () => {
+    const result = filterProxyHeaders({ 'Host': 'attacker.com', 'content-type': 'application/json' });
+    expect(result['host']).toBeUndefined();
+    expect(result['Host']).toBeUndefined();
+  });
+
+  it('strips cookie', () => {
+    const result = filterProxyHeaders({ 'cookie': 'session=abc', 'content-type': 'application/json' });
+    expect(result['cookie']).toBeUndefined();
+  });
+
+  it('strips Transfer-Encoding and Content-Length', () => {
+    const result = filterProxyHeaders({ 'transfer-encoding': 'chunked', 'content-length': '999' });
+    expect(result['transfer-encoding']).toBeUndefined();
+    expect(result['content-length']).toBeUndefined();
+  });
+
+  it('strips CRLF sequences from header values', () => {
+    const result = filterProxyHeaders({ 'content-type': 'text/plain\r\nX-Injected: evil' });
+    expect(result['content-type']).toBe('text/plainX-Injected: evil');
+    expect(result['x-injected']).toBeUndefined();
+  });
+
+  it('normalises header names to lowercase', () => {
+    const result = filterProxyHeaders({ 'Content-Type': 'application/json' });
+    expect(result['content-type']).toBe('application/json');
+    expect(result['Content-Type']).toBeUndefined();
+  });
+
+  it('returns empty object for null/undefined/non-object input', () => {
+    expect(filterProxyHeaders(null)).toEqual({});
+    expect(filterProxyHeaders(undefined)).toEqual({});
+    expect(filterProxyHeaders('string')).toEqual({});
+  });
+
+  it('drops headers with empty values after CRLF strip', () => {
+    const result = filterProxyHeaders({ 'content-type': '\r\n' });
+    expect(result['content-type']).toBeUndefined();
+  });
+
+  it('strips non-CRLF control chars Node would reject (NUL/VT/FF/DEL)', () => {
+    const dirty = 'a' + String.fromCharCode(0, 11, 12, 127) + 'bcde';
+    expect(filterProxyHeaders({ 'content-type': dirty })['content-type']).toBe('abcde');
+  });
+
+});
+
+describe('resolveRelayProxyUrl', () => {
+  const RELAY = 'https://falloutchatmod.com';
+
+  it('resolves a normal path on the relay origin', () => {
+    const url = resolveRelayProxyUrl('/api/messages', RELAY);
+    expect(url).not.toBeNull();
+    expect(url.origin).toBe(RELAY);
+    expect(url.pathname).toBe('/api/messages');
+  });
+
+  it('preserves the query string', () => {
+    const url = resolveRelayProxyUrl('/api/x?y=1&z=2', RELAY);
+    expect(url.pathname + url.search).toBe('/api/x?y=1&z=2');
+  });
+
+  it('refuses a protocol-relative host override (//evil.com)', () => {
+    expect(resolveRelayProxyUrl('//evil.com/api', RELAY)).toBeNull();
+  });
+
+  it('refuses an absolute URL to another origin', () => {
+    expect(resolveRelayProxyUrl('https://evil.com/api', RELAY)).toBeNull();
+    expect(resolveRelayProxyUrl('http://falloutchatmod.com/api', RELAY)).toBeNull(); // scheme downgrade
+  });
+
+  it('does NOT let `@evil.com` or `.evil.com` change the host (the old concat bug)', () => {
+    // With strict base-relative resolution these become relay paths, not hosts.
+    for (const p of ['@evil.com/api', '.evil.com/api']) {
+      const url = resolveRelayProxyUrl(p, RELAY);
+      expect(url).not.toBeNull();
+      expect(url.origin).toBe(RELAY);
+    }
+  });
+
+  it('returns null for a malformed relay base', () => {
+    expect(resolveRelayProxyUrl('/api', 'not a url')).toBeNull();
   });
 });

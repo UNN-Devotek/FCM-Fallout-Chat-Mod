@@ -294,5 +294,5 @@ All paths are best-effort and no-op gracefully when the KDE tools are absent. No
 ## Cross-links
 
 - Keybind system: `keybinds.md`
-- Auto-update: `auto-update.md`
+- Update notification: `auto-update.md`
 - Overview: `README.md`

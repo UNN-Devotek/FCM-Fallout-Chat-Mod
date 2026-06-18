@@ -116,3 +116,4 @@ discordClient created (intents + partials)
 - [voice-channels.md](./voice-channels.md) — Join-to-Create temp voice channels
 - [embeds.md](./embeds.md) — Embed builder
 - [reaction-roles.md](./reaction-roles.md) — React-to-get-role
+- [github-tickets.md](./github-tickets.md) — Discord ⇄ GitHub bug/suggestion ticketing
