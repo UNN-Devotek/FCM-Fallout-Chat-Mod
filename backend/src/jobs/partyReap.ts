@@ -45,6 +45,13 @@ export async function runPartyReap(deps: PartyReapDeps): Promise<PartyReapResult
   const persistentGCd: string[] = [];
   let invitesExpired = 0;
 
+  // Collect failures of whole top-level passes (not individual party rows — a
+  // single bad row is logged and skipped). If any top-level pass fails we throw
+  // an aggregate at the end so the job tracker can count consecutive failures
+  // and escalate warn → error once the threshold is hit. Without re-throwing,
+  // the tracker's promise always resolves and the escalation is dead code.
+  const passFailures: { pass: string; err: unknown }[] = [];
+
   try {
     // ── Pass 1: Ephemeral parties with 0 online members ──────────────────────
     const ephemeralParties = await deps.prisma.party.findMany({
@@ -99,6 +106,7 @@ export async function runPartyReap(deps: PartyReapDeps): Promise<PartyReapResult
     }
   } catch (err) {
     logger.warn({ err }, '[partyReap] ephemeral scan failed (non-fatal)');
+    passFailures.push({ pass: 'ephemeral', err });
   }
 
   try {
@@ -135,6 +143,7 @@ export async function runPartyReap(deps: PartyReapDeps): Promise<PartyReapResult
     }
   } catch (err) {
     logger.warn({ err }, '[partyReap] persistent GC scan failed (non-fatal)');
+    passFailures.push({ pass: 'persistent', err });
   }
 
   try {
@@ -150,6 +159,19 @@ export async function runPartyReap(deps: PartyReapDeps): Promise<PartyReapResult
     }
   } catch (err) {
     logger.warn({ err }, '[partyReap] invite expiry scan failed (non-fatal)');
+    passFailures.push({ pass: 'invites', err });
+  }
+
+  // If one or more whole passes failed, surface it to the caller (the job
+  // tracker) so consecutive-failure escalation can fire. We still completed
+  // whatever passes succeeded; the partial results are dropped because the
+  // tick is reported as failed.
+  if (passFailures.length > 0) {
+    const failedPasses = passFailures.map(f => f.pass).join(', ');
+    throw new AggregateError(
+      passFailures.map(f => f.err),
+      `[partyReap] ${passFailures.length} pass(es) failed: ${failedPasses}`,
+    );
   }
 
   return { ephemeralReaped, persistentGCd, invitesExpired };
@@ -165,8 +187,21 @@ export function startPartyReapJob(deps: PartyReapDeps): () => void {
   );
 
   const tracked = makeJobTracker('[partyReap]');
+  let running = false;
   const interval = setInterval(() => {
-    tracked(() => runPartyReap(deps).then(() => {}));
+    // Guard against overlap: if the previous tick is still in flight (a slow
+    // DB pass), skip this one rather than running two reaps concurrently.
+    if (running) {
+      logger.warn('[partyReap] previous tick still running — skipping this tick');
+      return;
+    }
+    running = true;
+    // The tracker swallows the rejection (counting it for escalation), so the
+    // returned promise always resolves; we only need it to clear the running
+    // flag. Errors are observed by the tracker, never floated unhandled.
+    void tracked(() => runPartyReap(deps).then(() => {})).finally(() => {
+      running = false;
+    });
   }, REAP_INTERVAL_MS);
 
   // Don't keep the event loop alive on shutdown.

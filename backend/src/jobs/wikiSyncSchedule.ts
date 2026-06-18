@@ -11,7 +11,8 @@
 
 import logger from '../config/logger';
 import env from '../config/environment';
-import { runIncrementalSync } from '../services/wikiIngestionService';
+import { runIncrementalSync, WIKI_INGEST_LOCK_HELD_MESSAGE } from '../services/wikiIngestionService';
+import { makeJobTracker } from './jobTracker';
 
 export function startWikiSyncSchedule(): void {
   const hours = env.WIKI_SYNC_INTERVAL_HOURS;
@@ -23,14 +24,32 @@ export function startWikiSyncSchedule(): void {
   const intervalMs = hours * 60 * 60 * 1000;
   logger.info({ hours, intervalMs }, '[wikiSyncSchedule] incremental sync scheduled');
 
-  setInterval(async () => {
-    logger.info('[wikiSyncSchedule] incremental sync tick starting');
-    try {
-      const result = await runIncrementalSync();
-      logger.info(result, '[wikiSyncSchedule] incremental sync tick complete');
-    } catch (err) {
-      // "lock already held" from a concurrent full sync is expected — non-fatal
-      logger.warn({ err }, '[wikiSyncSchedule] incremental sync tick failed or was skipped');
+  const tracker = makeJobTracker('[wikiSyncSchedule]');
+  let running = false;
+  setInterval(() => {
+    // Overlap guard: skip if the previous tick is still in flight.
+    if (running) {
+      logger.warn('[wikiSyncSchedule] previous tick still running — skipping this tick');
+      return;
     }
+    running = true;
+    // Tracker swallows the rejection (counting it for escalation) so this
+    // promise always resolves; .finally clears the running flag.
+    void tracker(async () => {
+      logger.info('[wikiSyncSchedule] incremental sync tick starting');
+      try {
+        const result = await runIncrementalSync();
+        logger.info(result, '[wikiSyncSchedule] incremental sync tick complete');
+      } catch (err) {
+        if (err instanceof Error && err.message === WIKI_INGEST_LOCK_HELD_MESSAGE) {
+          // Concurrent full sync holds the lock — expected, non-fatal skip.
+          logger.info('[wikiSyncSchedule] incremental sync tick skipped (lock held by concurrent run)');
+          return;
+        }
+        throw err; // real failure — let the tracker count + escalate it
+      }
+    }).finally(() => {
+      running = false;
+    });
   }, intervalMs);
 }

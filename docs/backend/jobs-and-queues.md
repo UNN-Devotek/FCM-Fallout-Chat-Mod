@@ -2,6 +2,36 @@
 
 ---
 
+## Failure tracking + escalation (`makeJobTracker`)
+
+**Defined in:** `backend/src/jobs/jobTracker.ts`
+
+Every recurring job (cron + setInterval) is wrapped with `makeJobTracker(label, threshold?)`.
+The wrapper counts **consecutive** failures: each failing run logs `logger.warn`, but once
+`FAILURE_THRESHOLD` (default **5**) consecutive failures is reached, the severity escalates to
+`logger.error` so log-watching alerting (e.g. Uptime Kuma log monitors) fires. The counter
+resets to `0` on the first successful run (and logs a one-line recovery `info`). This makes a
+silently-stuck recurring job visible instead of drowning forever at warn level.
+
+Two rules make the tracker actually work, and both are enforced:
+
+1. **The tracked function must throw on real failure.** A job whose body catches everything and
+   only logs `warn` (never re-throwing) makes escalation **dead code** — the tracker's promise
+   always resolves and the error branch never runs. Jobs therefore re-throw genuine failures (an
+   *expected* skip, e.g. a Redis lock held by a concurrent run, is swallowed and is **not** counted
+   as a failure).
+2. **The scheduler callback must return/await the tracker promise.** `cron.schedule('…', () => tracker(fn))`
+   (returning the promise) is what lets node-cron **await** the run: the runner tracks the pending
+   execution, its **overlap detection** sees the tick as still in-flight (emitting `execution:overlap`,
+   and blocking the next fire when `noOverlap` is enabled), and — load-bearing here — the tracker
+   actually **observes the outcome**. A non-returning callback (`() => { tracker(fn); }`) floats the
+   promise: node-cron thinks the tick finished instantly and the tracker's failure count is the only
+   thing that still works, but only if it's awaited. `setInterval` jobs have no built-in overlap
+   detection, so they use an explicit `running` re-entrancy guard that skips a tick while the previous
+   one is pending.
+
+---
+
 ## Scheduled Jobs (node-cron / setInterval)
 
 ### 1. Message + Audit Log Purge (node-cron)
@@ -12,13 +42,13 @@ Runs daily at **03:00 UTC** (approximate — the exact expression is in `server.
 - `messages` rows with `created_at` older than **90 days**.
 - `audit_logs` rows with `created_at` older than **90 days**.
 
-This is a hard delete. The 90-day window is intentional for GDPR-adjacent data hygiene and to keep table sizes bounded.
+This is a hard delete. The 90-day window is intentional for GDPR-adjacent data hygiene and to keep table sizes bounded. The cron callback returns a `makeJobTracker('[retention-purge]')` promise, so repeated consecutive failures (e.g. a DB outage during purge) escalate warn → error, and the tick is properly awaited so overlap is detected.
 
 ### 2. Moderation Actions Sweep (node-cron)
 
 **Defined in:** `backend/src/server.ts` (calls `sweepExpired` from `services/moderationActionsService.ts`)
 
-Runs on a cron schedule to lift expired temporary bans and mutes. Auto-lift also runs inline in `requireAuth` and `requireDiscordRole` on each request that reads user status, so real-time unbanning does not depend solely on the sweep.
+Runs on a cron schedule to lift expired temporary bans and mutes. Auto-lift also runs inline in `requireAuth` and `requireDiscordRole` on each request that reads user status, so real-time unbanning does not depend solely on the sweep. The cron callback returns a `makeJobTracker('[mod-sweep]')` promise so repeated consecutive failures escalate warn → error, and the tick is awaited so overlap is detected.
 
 ### 3. Party Reap Job (setInterval)
 
@@ -36,6 +66,15 @@ Started from `server.ts` via `startPartyReapJob(deps)`. Runs every **60 seconds*
 
 The job is fully DI-injectable for testing (accepts `prisma`, `getOnlineUserIds`, `broadcastToPartyMembers`, optional `now` clock override via `PartyReapDeps`). The interval handle calls `.unref()` so it does not prevent graceful shutdown.
 
+**Failure propagation (escalation):** an error in a **single party row** is logged at warn and the
+row is skipped — one bad party must not abort the tick. But if a **whole top-level pass** fails
+(e.g. the DB is unreachable for the ephemeral scan, the persistent GC scan, or the invite-expiry
+sweep), `runPartyReap` collects the failures and throws an `AggregateError` at the end. That
+rejection is what the `makeJobTracker` wrapper counts toward consecutive-failure escalation —
+without it, the tracker's `logger.error` escalation would never fire for partyReap. The
+`setInterval` callback returns the tracked promise and uses a `running` re-entrancy guard so two
+reaps never overlap.
+
 `startPartyReapJob` returns a stop function (`() => clearInterval(...)`) for clean teardown.
 
 ### 4. Client Metrics Purge Job (node-cron)
@@ -44,7 +83,7 @@ The job is fully DI-injectable for testing (accepts `prisma`, `getOnlineUserIds`
 
 Started from `server.ts` via `startClientMetricsPurgeJob()`. Runs at **03:17 UTC daily** (offset from the message purge to spread DB load).
 
-Calls `purgeOldClientMetrics()` from `services/clientMetricsService.ts`, which deletes `client_metrics` rows older than **30 days**. Logs the deleted row count. Failures are non-fatal (logged as warn, job continues on next tick).
+Calls `purgeOldClientMetrics()` from `services/clientMetricsService.ts`, which deletes `client_metrics` rows older than **30 days**. Logs the deleted row count. Failures are non-fatal (job continues on next tick) but are tracked: the cron callback returns the `makeJobTracker('[clientMetricsPurge]')` promise, so repeated consecutive failures escalate warn → error.
 
 ### 4b. Online Snapshot Job (node-cron)
 
@@ -55,7 +94,7 @@ Started from `server.ts` via `startOnlineSnapshotJob()`. Two schedules:
 - **Sampler — every 5 minutes (`*/5 * * * *`):** inserts the current WebSocket client count (`getClientCount()`) as a row in `online_snapshots`. Backs the `onlineOverTime` series of `GET /api/public/stats`.
 - **Retention purge — daily at 04:07 UTC (`7 4 * * *`):** deletes `online_snapshots` rows older than **7 days** so the table stays small (~2016 rows steady state: 288/day × 7 days). The public stats `onlineOverTime` series only reads the last 7 days, so this retention is sufficient.
 
-Both ticks are non-fatal on error (logged as warn).
+Both schedules are wrapped with `makeJobTracker` (`[onlineSnapshot]` / `[onlineSnapshot:purge]`) and the cron callbacks **return** the tracker promise, so a tick is non-fatal but repeated consecutive failures escalate warn → error, and the tick is properly awaited so overlap is detected.
 
 ### 5. Wiki Catalog Ingest Job (node-cron)
 
@@ -76,7 +115,7 @@ Calls `runWikiIngestion()` from `services/wikiIngestionService.ts`. The service:
 
 Can also be triggered on-demand via `POST /api/admin/wiki/ingest` (owner/admin only, 1h min re-trigger interval for full; no rate-limit for incremental).
 
-Failures are non-fatal (logged as warn). Lock acquisition failure (concurrent run) is an expected non-error path — logged as warn and skipped.
+The cron callback returns a `makeJobTracker('[wikiIngest]')` promise, so genuine failures are tracked and escalate warn → error after repeated consecutive runs, and the tick is awaited so overlap is detected. A **lock-held** skip (a concurrent admin trigger holds the Redis ingest lock — surfaced as the exported `WIKI_INGEST_LOCK_HELD_MESSAGE` error) is an expected non-error path: it is logged at info and **not** counted as a failure, so a normal concurrent run never falsely escalates.
 
 ### 5b. Wiki Incremental Sync Schedule (setInterval)
 
@@ -90,7 +129,7 @@ Calls `runIncrementalSync()` from `services/wikiIngestionService.ts`, which:
 3. Calls `runWikiIngestion(titles)` — a targeted run that change-detects per page but does **not** mark all other entries stale.
 4. Updates `fo76:wiki:ingest:last-run` and invalidates the update-status cache (`fo76:wiki:updates:cache`).
 
-The Redis lock guards against overlap with a full sync. Errors logged as warn; never crashes the server.
+The Redis lock guards against overlap with a full sync; never crashes the server. The tick is wrapped with `makeJobTracker('[wikiSyncSchedule]')` behind a `running` re-entrancy guard, so genuine failures escalate warn → error after repeated consecutive runs, while a **lock-held** skip (`WIKI_INGEST_LOCK_HELD_MESSAGE`, concurrent full sync) is logged at info and **not** counted as a failure.
 
 ### 5c. CAMP Sync Schedule (setInterval)
 
@@ -102,7 +141,7 @@ Started from `server.ts` via `startCampSyncSchedule()`. **Disabled by default** 
 3. Stores a content hash in Redis (`fo76:camp:last-sync-hash`) + sync timestamp (`fo76:camp:last-sync-at`).
 4. Invalidates the update-status cache (`fo76:camp:update-status-cache`).
 
-A Redis distributed lock (`fo76:camp:sync-lock`, 1h TTL) prevents overlapping runs. Errors logged as warn; never crashes the server.
+A Redis distributed lock (`fo76:camp:sync-lock`, 1h TTL) prevents overlapping runs; never crashes the server. The tick is wrapped with `makeJobTracker('[campSyncSchedule]')` behind a `running` re-entrancy guard. A lock-held skip returns normally (not a failure), but an inability to reach Redis to acquire the lock, or a `runCampSync()` error, is re-thrown so consecutive failures escalate warn → error.
 
 | env var | default | notes |
 |---------|---------|-------|

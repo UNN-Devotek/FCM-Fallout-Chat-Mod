@@ -1699,14 +1699,16 @@ startPartyReapJob({
 // also auto-expire on access for connected users; this catches offline ones
 // and ensures the public unban/unmute announcement still fires.
 const modSweepTracker = makeJobTracker('[mod-sweep]');
-cron.schedule('*/5 * * * *', () => {
+// Return the tracker promise so node-cron's overlap detection treats the tick
+// as in-flight while it runs, and the tracker observes failures for escalation.
+cron.schedule('*/5 * * * *', () =>
   modSweepTracker(async () => {
     const r = await sweepModExpired();
     if (r.unbanned || r.unmuted || r.kickCooldownsCleared) {
       logger.info(r, '[mod-sweep] cleared expired ban/mute/kick state');
     }
-  });
-});
+  }),
+);
 
 
 
@@ -1715,7 +1717,8 @@ cron.schedule('*/5 * * * *', () => {
 if (env.MESSAGE_RETENTION_DAYS > 0) {
   const retentionMs = env.MESSAGE_RETENTION_DAYS * 24 * 60 * 60 * 1000;
   const retentionTracker = makeJobTracker('[retention-purge]');
-  cron.schedule('0 3 * * *', () => {
+  // Return the tracker promise so node-cron overlap detection + tracker work.
+  cron.schedule('0 3 * * *', () =>
     retentionTracker(async () => {
       const cutoff = new Date(Date.now() - retentionMs);
       const msgResult = await dbQueryFn(
@@ -1735,8 +1738,8 @@ if (env.MESSAGE_RETENTION_DAYS > 0) {
         { messagesDeleted: msgResult.rowCount, auditLogsDeleted: auditResult.rowCount, partyMessagesDeleted: partyMsgResult.rowCount, retentionDays: env.MESSAGE_RETENTION_DAYS },
         'Message purge complete'
       );
-    });
-  });
+    }),
+  );
   logger.info({ retentionDays: env.MESSAGE_RETENTION_DAYS }, 'Message retention purge scheduled');
 } else {
   logger.info('Message retention disabled (MESSAGE_RETENTION_DAYS=0) — keeping messages forever');
