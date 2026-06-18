@@ -16,8 +16,6 @@ import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { initShell, openSettings } from './shell';
 // First-run onboarding overlay.
 import { showOnboarding } from './onboarding';
-// Updater prompt UI (banner + settings-panel button). Electron-only.
-import { initUpdaterUI } from './updater-ui';
 
 // 3) THE REAL COMPONENT — unmodified, imported straight from the dashboard source.
 import ChatOverlay from '@dashboard/features/chat/ChatOverlay';
@@ -384,9 +382,6 @@ function Shell() {
     // Init the desktop-parity shell once. When settings change, remount the
     // component so theme/opacity/font/hints take effect immediately.
     initShell({ onSettingsChange: () => setMountKey(k => k + 1) });
-    // Wire the updater prompt (banner + IPC listener). Electron-only; no-ops
-    // gracefully when relayBridge.onUpdaterResult is absent (web overlay).
-    initUpdaterUI();
 
     // Auto-refresh Discord link status when the window regains focus (the user
     // may have just returned from the OAuth browser flow). Throttled to once

@@ -73,5 +73,5 @@ If the tunnel goes down:
 ### Related docs
 
 - Overlay internals: `../overlay/README.md`
-- Auto-update runbook: `../overlay/auto-update.md`
+- Update notification runbook: `../overlay/auto-update.md`
 - Code signing detail: `../CODE-SIGNING.md` and `../AZURE-CODE-SIGNING-SETUP.md`

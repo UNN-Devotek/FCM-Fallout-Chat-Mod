@@ -8,6 +8,7 @@ const STAFF_ROLES = ['owner', 'admin', 'moderator'];
 
 interface BugReport {
   id: string;
+  reportNumber: number;
   content: string;
   imageUrls: string | null;
   status: string;
@@ -122,7 +123,7 @@ function BugReportsAdmin() {
           <table>
             <thead>
               <tr>
-                {['', 'REPORTER', 'REPORT', 'IMGS', 'STATUS', 'DATE', 'ACTION'].map(h => (
+                {['', '#', 'REPORTER', 'REPORT', 'IMGS', 'STATUS', 'DATE', 'ACTION'].map(h => (
                   <th key={h} style={{ whiteSpace: 'nowrap' }}>{h}</th>
                 ))}
               </tr>
@@ -146,6 +147,9 @@ function BugReportsAdmin() {
                     >
                       <td style={{ color: dim, fontSize: '11px', width: '16px' }}>
                         {isExpanded ? '▼' : '▶'}
+                      </td>
+                      <td style={{ color: dim, fontWeight: 'bold', whiteSpace: 'nowrap', fontSize: '12px' }}>
+                        #{r.reportNumber}
                       </td>
                       <td style={{ color: 'var(--phosphor-color)', fontWeight: 'bold', whiteSpace: 'nowrap' }}>
                         {displayName}
@@ -188,7 +192,7 @@ function BugReportsAdmin() {
 
                     {isExpanded && (
                       <tr>
-                        <td colSpan={7} style={{ padding: '0' }}>
+                        <td colSpan={8} style={{ padding: '0' }}>
                           <div style={{ padding: '16px 32px 20px', background: 'var(--bg-card)', borderTop: `1px solid ${border}` }}>
                             <div style={{ marginBottom: '16px' }}>
                               <div style={{ fontSize: '11px', color: dim, letterSpacing: '2px', marginBottom: '6px' }}>BUG DESCRIPTION</div>

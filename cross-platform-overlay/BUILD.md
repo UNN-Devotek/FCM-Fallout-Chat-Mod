@@ -184,7 +184,7 @@ npm run build:renderer
        │
        ▼
 electron-builder
-  picks up: main.js, preload.js, updater.js, dist-renderer/**, assets/**
+  picks up: main.js, preload.js, dist-renderer/**, assets/**
   bundles them into a self-contained app package per target OS
        │
        ▼
@@ -195,6 +195,11 @@ electron-builder
     FalloutChatMod-1.3.56-mac.zip     (macOS ZIP)
     FalloutChatMod-1.3.56.AppImage    (Linux)
     fallout-chatmod_1.3.56_amd64.deb  (Linux Debian)
+
+Note: `app-update.yml`, `latest.yml`, `latest-linux.yml`, and `.blockmap` files are NOT
+generated — `build.publish` was removed for Nexus Mods ToS compliance. The overlay does not
+auto-update. macOS `.dmg` and `.zip` targets are unaffected (no `latest-mac.yml` either).
+Update awareness is a passive OS notification delivered over the chat WebSocket.
 ```
 
 In production, `main.js` loads `dist-renderer/index.html` (when `RENDERER_URL`
@@ -240,7 +245,6 @@ try { return require('./package.json').version; } catch { return '0.0.0'; }
 - [ ] Wire Windows Authenticode signing (Azure Trusted Signing recommended)
 - [ ] Wire macOS notarization via `electron-notarize` or electron-builder builtin
 - [ ] Set up GitHub Actions matrix CI (win/mac/linux) to produce release artifacts
-- [ ] Wire the Electron app's own release channel (`UPDATE_CHANNEL` in `updater.js`)
-      once Electron releases are published separately from the WinForms client
+- [x] ~~Wire the Electron app's own release channel~~ — auto-update removed for Nexus ToS compliance; update awareness is a passive OS notification over the chat WebSocket
 - [ ] Consider switching `GlobalHotkey` in ChatOverlay to `RegisterHotKey` API to
       reduce AV false positives (noted in root CLAUDE.md; not an Electron concern)
