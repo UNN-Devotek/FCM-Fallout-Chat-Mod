@@ -231,8 +231,10 @@ router.post('/sim/stream', async (req: Request, res: Response, next: NextFunctio
     const messageQueue = require('../queues/messagePersist');
     const { v4: uuidv4 } = require('uuid');
 
-    const safeCount = clampCount(count, 20, 1, 200);
-    const safeInterval = clampCount(intervalMs, 1500, 100, 30_000);
+    // Inline bounds (in addition to clampCount) so the upper/lower limits are
+    // visible at the loop/timer sink — CodeQL-recognized resource-exhaustion guard.
+    const safeCount = Math.max(1, Math.min(200, clampCount(count, 20, 1, 200)));
+    const safeInterval = Math.max(100, Math.min(30_000, clampCount(intervalMs, 1500, 100, 30_000)));
     const GENERAL_CHANNEL_ID = '00000000-0000-0000-0000-000000000001';
     const safeChannelId = typeof channelId === 'string' && channelId.trim() ? channelId.trim() : GENERAL_CHANNEL_ID;
 
