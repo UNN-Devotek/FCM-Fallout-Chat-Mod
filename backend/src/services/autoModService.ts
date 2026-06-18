@@ -2,6 +2,7 @@ import prisma from '../config/prisma';
 import { getRedisClient } from '../config/redis';
 import logger from '../config/logger';
 import { compileUserRegex } from '../utils/safeRegex';
+import { canon } from '../utils/textCanon';
 
 // ── Baseline hardcoded denylist ──────────────────────────────────────────────
 // These terms are ALWAYS blocked regardless of whether the DB word_filter table
@@ -27,7 +28,10 @@ const BASELINE_DENYLIST: ReadonlyArray<{ phrase: string; compiled: RegExp }> = [
   'shit', 'bastard', 'pedo', 'pedophile', 'rape', 'rapist',
 ].map(phrase => ({
   phrase,
-  compiled: new RegExp(`\\b${phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i'),
+  // Compile against the canonical (diacritic-stripped) form with the 'u' flag so
+  // Unicode word boundaries behave and so a phrase ever stored with an accent
+  // matches the same canon() form the input is reduced to before testing.
+  compiled: new RegExp(`\\b${canon(phrase).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'iu'),
 }));
 
 // Substring variant — used for party names and usernames (identifiers) where slurs
@@ -38,9 +42,12 @@ const BASELINE_DENYLIST: ReadonlyArray<{ phrase: string; compiled: RegExp }> = [
 // enough that substring-embedding is the right default.
 const BASELINE_DENYLIST_NAMES: ReadonlyArray<{ phrase: string; compiled: RegExp }> =
   BASELINE_DENYLIST.map(({ phrase }) => {
-    const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const pattern = phrase.length <= 4 ? `\\b${escaped}\\b` : escaped;
-    return { phrase, compiled: new RegExp(pattern, 'i') };
+    // Match against the canonical (diacritic-stripped) form: identifiers are
+    // canon()-reduced before testing, so the pattern must be canonical too.
+    const canonPhrase = canon(phrase);
+    const escaped = canonPhrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = canonPhrase.length <= 4 ? `\\b${escaped}\\b` : escaped;
+    return { phrase, compiled: new RegExp(pattern, 'iu') };
   });
 
 // Cache the word filter for hot-path performance; refresh every 60 seconds.
@@ -108,8 +115,12 @@ function compileFilter(rows: Array<{ phrase: string; isRegex: boolean; testMode:
         compiled = compileUserRegex(row.phrase, 'wordFilter');
       }
     } else {
-      const escaped = row.phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      compiled = new RegExp(`\\b${escaped}\\b`, 'i');
+      // Literal phrase: compile against the canonical (diacritic-stripped) form
+      // with the 'u' flag, matching how filterContent/findProhibitedPhrase reduce
+      // input via canon() before testing. Without this a phrase like "café" would
+      // never match because the trailing \b can't form after a non-ASCII letter.
+      const escaped = canon(row.phrase).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      compiled = new RegExp(`\\b${escaped}\\b`, 'iu');
     }
     return { phrase: row.phrase, is_regex: row.isRegex, test_mode: row.testMode, compiled };
   });
@@ -144,9 +155,13 @@ async function getWordFilter(): Promise<CompiledFilter[]> {
  * Filters with test_mode = true log the match but do NOT block the message.
  */
 async function filterContent(content: string, userId?: string): Promise<{ blocked: boolean; reason: string | null }> {
+  // Match against the CANONICAL form (NFD + strip combining marks) so combining
+  // diacritics can't bypass the keyword / regex filters. We only MATCH on the
+  // canonical form — the original `content` is what gets stored/logged below.
+  const normalized = canon(content);
   // Always check baseline denylist first — independent of DB state.
   for (const entry of BASELINE_DENYLIST) {
-    if (entry.compiled.test(content)) {
+    if (entry.compiled.test(normalized)) {
       return { blocked: true, reason: 'Matched prohibited phrase' };
     }
   }
@@ -154,7 +169,7 @@ async function filterContent(content: string, userId?: string): Promise<{ blocke
   const filters = await getWordFilter();
 
   for (const filter of filters) {
-    if (filter.compiled && filter.compiled.test(content)) {
+    if (filter.compiled && filter.compiled.test(normalized)) {
       if (filter.test_mode) {
         // Test mode: log the match but allow the message through
         logger.info({ userId, phrase: filter.phrase, testMode: true }, 'Auto-mod test match (not blocking)');
@@ -258,15 +273,19 @@ function resetCache(): void {
  * Returns the matched phrase, or null if the text is clean.
  */
 async function findProhibitedPhrase(content: string): Promise<string | null> {
+  // Match against the CANONICAL form (NFD + strip combining marks) so a slur
+  // padded with combining diacritics (e.g. "ńigger") can't slip past the
+  // username / party-name check. Returns the ORIGINAL stored phrase on a hit.
+  const normalized = canon(content);
   // Always check baseline denylist first — independent of DB state.
   // Uses substring matching (no \b) so slurs embedded in identifiers are caught.
   for (const entry of BASELINE_DENYLIST_NAMES) {
-    if (entry.compiled.test(content)) return entry.phrase;
+    if (entry.compiled.test(normalized)) return entry.phrase;
   }
   // Then check admin-configured DB rules.
   const filters = await getWordFilter();
   for (const filter of filters) {
-    if (filter.compiled && filter.compiled.test(content)) return filter.phrase;
+    if (filter.compiled && filter.compiled.test(normalized)) return filter.phrase;
   }
   return null;
 }
