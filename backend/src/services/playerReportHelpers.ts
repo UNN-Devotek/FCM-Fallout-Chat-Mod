@@ -65,24 +65,23 @@ export function isAllowedDiscordAttachmentUrl(url: unknown): boolean {
 
 /**
  * Discord thread name for a player report:
- * "Player Report · <reporter> · <involved> · #<number>" (no emoji), ≤ Discord's
- * 100-char limit. The "Player Report" prefix and "#<number>" suffix are always
- * preserved; the reporter/involved middle is trimmed to fit.
+ * "Player Report · #<number> · <involved> · <reporter>" (no emoji), ≤ Discord's
+ * 100-char limit. The "Player Report · #<number>" head is always preserved; the
+ * involved/reporter tail is trimmed to fit.
  */
 export function buildPlayerReportThreadName(
   reporterName: string,
   involvedName: string | null | undefined,
   reportNumber: number,
 ): string {
-  const prefix = 'Player Report · ';
-  const suffix = ` · #${reportNumber}`;
+  const head = `Player Report · #${reportNumber}`; // always preserved
   const reporter = (reporterName || 'player').replace(/\s+/g, ' ').trim() || 'player';
   const involved = (involvedName || '').replace(/\s+/g, ' ').trim();
-  let mid = involved ? `${reporter} · ${involved}` : reporter;
-  const room = THREAD_NAME_MAX - prefix.length - suffix.length;
-  if (room <= 1) return `${prefix}#${reportNumber}`.slice(0, THREAD_NAME_MAX);
-  if (mid.length > room) mid = mid.slice(0, room - 1) + '…';
-  return `${prefix}${mid}${suffix}`;
+  const tailParts = [involved, reporter].filter(Boolean); // involved, then reporter
+  let tail = tailParts.length ? ` · ${tailParts.join(' · ')}` : '';
+  const room = THREAD_NAME_MAX - head.length;
+  if (tail.length > room) tail = tail.slice(0, room - 1) + '…';
+  return `${head}${tail}`;
 }
 
 const THREAD_NAME_MAX = 100;
