@@ -18,7 +18,7 @@ Full architecture and how the pieces connect: **[docs/README.md](docs/README.md)
 | Backend API reference, services, auth, jobs/queues | [docs/backend/](docs/backend/README.md) |
 | WebSocket relay protocol, presence, sessions | [docs/realtime/](docs/realtime/README.md) |
 | Dashboard, the shared ChatOverlay component, theming | [docs/frontend/](docs/frontend/README.md) |
-| Electron overlay: window mgmt, keybinds, auto-update, building | [docs/overlay/](docs/overlay/README.md) |
+| Electron overlay: window mgmt, keybinds, update notification, building | [docs/overlay/](docs/overlay/README.md) |
 | In-game HUD feed (ZFE/FCMBridge): wire format, events, env vars | [docs/overlay/zfe/](docs/overlay/zfe/README.md) |
 | Discord bot: bridge, voice, embeds, reaction roles | [docs/discord/](docs/discord/README.md) |
 | Prisma schema, migrations, Redis usage | [docs/database/](docs/database/README.md) |
@@ -32,24 +32,30 @@ Full architecture and how the pieces connect: **[docs/README.md](docs/README.md)
 `ci.yml` triggers on `pull_request: types: [labeled]` (+ push to `prod`/`dev`), **not** on PR
 open. An `authorize` gate job runs first and every job `needs: authorize`; it passes for
 pushes and for any PR **only when the `ci-approved` label is present**. Applying a label needs
-write/triage access, so **only maintainers can run CI on a PR** — this keeps untrusted fork code
-off the build server until the diff is reviewed. `pr-gate-delabel.yml` strips the label on
+write/triage access, so **only maintainers can run CI on a PR** — the `ci-approved` label gate
+is the security boundary, not the runner type. `pr-gate-delabel.yml` strips the label on
 every new push (TOCTOU guard), so re-review is forced. To run a PR's CI: review it, then add
-`ci-approved`. Jobs were consolidated to 8 (matrix `unit-vitest`, merged `overlay-e2e-linux`), plus a
-non-blocking `osv-scan` (OSV dependency vuln scan) = 9; Dependabot version+security updates
+`ci-approved`. Jobs were consolidated (matrix `unit-vitest`; the Linux overlay job is now
+`overlay-launch-smoke-linux` and the Windows job `overlay-build-windows-nsis` after auto-update was
+retired), plus a non-blocking `osv-scan` (OSV dependency vuln scan) = 8 jobs total; Dependabot version+security updates
 are configured in `.github/dependabot.yml`;
-actions are SHA-pinned with a `permissions: contents: read` default. Full detail:
+actions are SHA-pinned with a `permissions: contents: read` default.
+
+CI defaults to **GitHub-hosted runners** (`ubuntu-latest` / `windows-latest`). Self-hosted runners
+are a documented fallback via repo variables `CI_RUNNER` and `CI_RUNNER_WINDOWS` (JSON runner
+label strings). Toggle: `gh variable set CI_RUNNER '["self-hosted","linux","unn"]'` to use
+self-hosted; `gh variable delete CI_RUNNER` to revert to GitHub-hosted. Full detail:
 [docs/testing/ci-cd-pipeline.md](docs/testing/ci-cd-pipeline.md).
 
 ### Windows Build
 Windows builds run on a **native Windows runner** — no Docker/Wine. The old Wine-based
-`win-electron-builder` Docker image was retired because Electron 31+ Chromium/Crashpad triggers a
+`win-electron-builder` Docker image has no current CI role; Electron 31+ Chromium/Crashpad triggers a
 `STATUS_BREAKPOINT` crash under Wine64 that cannot be worked around.
 
-- **Manual release build:** `.github/workflows/build-windows.yml` — `workflow_dispatch` with `version` + `publish` inputs; runs on the native Windows runner
-- **CI gate (build):** `overlay-autoupdate-e2e-windows` in `ci.yml` — still builds the NSIS installer via the Linux runner + docker-cp strategy (the Wine issue only affects *running* the exe, not building it); runs on every PR and `prod` push
-- **CI gate (execution):** `overlay-autoupdate-e2e-windows-exec` in `ci.yml` — smoke-tests the built `.exe` on the native Windows runner; `continue-on-error` so it never blocks the run
-- **Full failure history and fix rationale:** [`docs/testing/windows-nsis-ci-fixes.md`](docs/testing/windows-nsis-ci-fixes.md) — six Wine/Docker failures documented in order, plus the native-runner migration fixes (PS5.1 for-loop-in-cast syntax, hex-to-bytes without Convert.FromHexString, UTF-8 BOM in package.json). Read this before debugging any future Windows CI failure.
+- **Manual release build:** `.github/workflows/build-windows.yml` — `workflow_dispatch` with `version` + `publish` inputs; runs on the **self-hosted** `[self-hosted, windows, unn]` runner by design. Release workflows (`build-windows.yml`, `build-linux.yml`) are NOT affected by the CI runner migration — they keep the self-hosted runners for consistent release toolchains.
+- **CI gate (build):** `overlay-build-windows-nsis` in `ci.yml` — builds the NSIS installer **natively on `windows-latest`** (no Wine, no Docker, no docker-cp; switchable to self-hosted via `CI_RUNNER_WINDOWS`); runs on every PR and `prod`/`dev` push; asserts absence of `app-update.yml`/`latest*.yml` (the overlay no longer auto-updates, so no feed files are generated)
+- **CI gate (execution):** the former native-Windows execution smoke (`overlay-autoupdate-e2e-windows-exec`) was removed when auto-update was retired; the build gate above is the Windows CI coverage (manual `.exe` testing can still be done on the Windows VM)
+- **Full failure history and fix rationale:** [`docs/testing/windows-nsis-ci-fixes.md`](docs/testing/windows-nsis-ci-fixes.md) — the Wine/Docker failures documented in order, then the migration to native `windows-latest` (which superseded Wine/DinD entirely for CI). Read this before debugging any future Windows CI failure.
 
 ## Hosted Dev Environment
 
@@ -116,21 +122,35 @@ These are non-negotiable. Each links to the doc with the full context.
   `ON CONFLICT DO NOTHING` seeds (with all NOT NULL columns). See
   [docs/database/migrations.md](docs/database/migrations.md).
 - **Releasing the overlay — filenames must match.** `productName` is `"Fallout Chat Mod"` **with
-  spaces**; the electron-updater feed points at **raw** `.exe`/`.AppImage` (never the ZIPs); publish
-  **both** platforms every release; verify the served file size equals the `latest*.yml` `size` before
-  `POST /admin/releases`; release `.ps1` scripts must stay **ASCII-only** (PowerShell 5.1 mis-tokenizes
-  Unicode dashes). Always confirm version + notes with the user first. See
+  spaces**; publish **both** platforms every release; verify the served file size matches the local
+  build artifact size (`(Get-Item $artifact).Length`) before `POST /admin/releases`; release `.ps1`
+  scripts must stay **ASCII-only** (PowerShell 5.1 mis-tokenizes Unicode dashes). Always confirm
+  version + notes with the user first. See
   [docs/deployment/releasing-the-overlay.md](docs/deployment/releasing-the-overlay.md).
+  **No auto-update.** Update awareness is a passive OS notification; the latest version arrives over
+  the chat WebSocket (`app:update-available`); no dedicated update network call — Nexus Mods ToS
+  compliance. `electron-updater`, `build.publish`, `latest*.yml`, and `app-update.yml` are removed.
+  **Re-running the installer is now the update/patch path** — and it is a full, idempotent
+  fast-forward: a user many versions behind (e.g. 5 releases old) lands on latest in one run.
+  Installers always fetch the newest version (CLI → `GET /api/releases`, ZIPs → bundled artifact);
+  there is **no minimum-version / forced-upgrade gate** (old clients always patch forward); Windows
+  NSIS overwrites in place (`installer.nsh` taskkills the running app) and Linux writes to a stable
+  version-agnostic path; the userData-rename + keybind-reset startup migrations are any-to-any
+  idempotent; `userData` is outside the package so settings survive. The CLI installers detect the
+  installed version and **prompt reinstall-or-cancel when already current** (Windows reads the exe's
+  `ProductVersion`; Linux reads the `$XDG_DATA_HOME/FalloutChatMod/.fcm-version` marker). The Linux
+  ZIP now also ships a `.deb` (apt-managed alternative to the AppImage). See
+  [docs/overlay/auto-update.md](docs/overlay/auto-update.md) → "Updating / patching from an old version".
 - **Overlay releases are FAIL-CLOSED — never ship an untested or unscanned build (HARD RULE).** Before
-  ANY publishing (feed manifests, `POST /admin/releases`, Nexus), the build MUST pass BOTH gates, in
-  order: (1) **smoke test** — `Packaging/smoke-test.ps1 -Version X.Y.Z` launches the packaged app and
-  asserts a clean startup (no `Cannot find module` / `[uncaught]`, relay registers); (2) **VirusTotal
-  gate** — `Packaging/vt-gate.ps1 -Version X.Y.Z` uploads + **waits for the scan to complete** and
-  blocks the release on detections. If EITHER gate fails, publish **nothing, anywhere**. Also verify the
-  build actually auto-updates (a crash before `app.whenReady()` bricks users — it cannot self-update;
-  this is what v1.3.82 did). The `__tests__/build-files.test.js` Vitest guard (every main-process
-  `require('./x')` must be in `build.files`) backs gate #1 at CI time. See the release doc's Critical
-  Rules 6-7.
+  ANY publishing (`POST /admin/releases`, Nexus), the build MUST pass BOTH gates, in order:
+  (1) **smoke test** — `Packaging/smoke-test.ps1 -Version X.Y.Z` launches the packaged app and asserts
+  a clean startup (no `Cannot find module` / `[uncaught]`, relay registers); (2) **VirusTotal gate** —
+  `Packaging/vt-gate.ps1 -Version X.Y.Z` uploads + **waits for the scan to complete** and blocks the
+  release on detections. If EITHER gate fails, publish **nothing, anywhere**. A crash before
+  `app.whenReady()` bricks users who cannot reinstall themselves (v1.3.82 crashed this way — a missing
+  `overlay-core.js` in `build.files` was the cause; since auto-update is gone, those users would need a
+  manual reinstall). The `__tests__/build-files.test.js` / `__tests__/no-autoupdate.test.js` Vitest
+  guards back gate #1 at CI time. See the release doc's Critical Rules.
 - **Local dev process hygiene (HARD RULE).** When you kill an overlay/front-end you launched via
   `Start-Process powershell -NoExit -File …`, also close the PowerShell window it ran in (match by the
   launcher script — never blanket-kill all `powershell`). Stale `-NoExit` windows conflict on ports.

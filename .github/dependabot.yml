@@ -12,10 +12,9 @@ version: 2
 # single PR per ecosystem to cut review noise; majors stay individual.
 #
 # target-branch: dev — version-update PRs open against `dev` (the integration
-# branch), NOT `prod` (prod). CAVEAT: `target-branch` governs VERSION updates
-# only. Dependabot SECURITY updates can only target the default branch
-# (`prod`) and are unaffected by this setting — they will still open against
-# prod. Triage/merge those into prod directly (or cherry-pick to dev).
+# branch). Dependabot SECURITY updates always open against the repo's DEFAULT
+# branch, which is now `dev` (switched from `prod`), so both version and
+# security PRs land on `dev` and reach `prod` only via the normal promotion PR.
 
 updates:
   # ── npm packages ───────────────────────────────────────────────────────────

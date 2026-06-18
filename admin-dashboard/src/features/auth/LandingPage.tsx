@@ -182,8 +182,8 @@ const FEATURES = [
   },
   {
     id: 5,
-    title: 'AUTO-UPDATING CLIENT · CUSTOMIZABLE OVERLAY',
-    body: 'The overlay updates itself silently in the background via electron-updater — every user is always on the latest version with no manual reinstall or download. It\'s also fully customizable: theme colors, opacity, position, and rebindable hotkeys, all persisted across updates.',
+    title: 'UPDATE NOTIFICATIONS · CUSTOMIZABLE OVERLAY',
+    body: 'When a new version is available, the overlay shows a system notification — click it to open the Nexus Mods page and download the latest release. It\'s also fully customizable: theme colors, opacity, position, and rebindable hotkeys, all persisted across reinstalls.',
   },
 ];
 
@@ -550,7 +550,7 @@ function InstallPanel() {
       <div style={bodyStyle}>
         Grab the installer ZIP, then unzip it and run
         &ldquo;Fallout Chat Mod Setup &hellip;.exe&rdquo;. It&apos;s a per-user install
-        (no admin prompt) and the overlay auto-updates itself after first install.
+        (no admin prompt). When a new version is released, you&apos;ll get a notification — click it to download from Nexus Mods.
       </div>
       <div className="install-dl-row" style={downloadRowStyle}>
         {winUrl ? (
@@ -624,7 +624,7 @@ function InstallPanel() {
       <div style={stepStyle}>STEP 2 (RECOMMENDED) — ONE-LINE INSTALL</div>
       <div style={bodyStyle}>
         The easiest path: paste this into a terminal. It downloads the AppImage, adds an
-        app-menu launcher, and enables auto-updates.
+        app-menu launcher, and registers the overlay as a startup application.
       </div>
       <div className="install-cmd-row" style={cmdCenterRowStyle}>
         <code style={codeStyle}>{LINUX_CLI}</code>
@@ -780,7 +780,7 @@ function InstallPanel() {
       <div style={sectionHeaderStyle}>GENERAL NOTES</div>
       <div style={bulletStyle}>• Run Fallout 76 in <strong style={{ color: '#C8A840' }}>Borderless Windowed</strong> or <strong style={{ color: '#C8A840' }}>Windowed</strong> mode. <strong style={{ color: 'rgba(200,168,64,0.85)' }}>Exclusive Fullscreen</strong> gives the game exclusive GPU output — nothing can draw over it (OS/GPU limitation).</div>
       <div style={bulletStyle}>• The overlay is only visible while Fallout 76 is running. It hides automatically when the game closes.</div>
-      <div style={bulletStyle}>• Auto-updates are applied on the next app launch once a new version is published.</div>
+      <div style={bulletStyle}>• When a new version is published, the overlay shows a system notification on next launch. Click it to open the Nexus Mods download page. The overlay does not download or install updates itself.</div>
 
     </div>
   );

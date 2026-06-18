@@ -1,8 +1,8 @@
 # Windows NSIS CI Build — Fix History
 
 This document records every failure and fix applied to get the
-`overlay-autoupdate-e2e-windows` CI job passing. It exists as context
-for future AI sessions or humans debugging the same job.
+`overlay-build-windows-nsis` CI job passing (formerly `overlay-autoupdate-e2e-windows`).
+It exists as context for future AI sessions or humans debugging the same job.
 
 ## Setup overview
 
@@ -165,11 +165,12 @@ runners and explicitly documents that Wine "is not capable of installing or runn
 Windows executables." There is no known Wine configuration that makes this work for
 Electron 31+.
 
-**Resolution:** The Wine execution step was removed. The `overlay-autoupdate-e2e-windows`
-job now ends with a static artifact verification step (`tests/mock-relay/win-artifacts-check.mjs`)
-that checks build correctness without running the exe. The Linux E2E job (`overlay-e2e-linux`) already exercises the `electron-updater` code path
-end-to-end. If a Windows runner is available, `overlay-autoupdate-e2e-windows-exec` covers
-real native execution as bonus coverage (`continue-on-error: true`).
+**Resolution:** The Wine execution step was removed. The `overlay-build-windows-nsis` job
+(renamed from `overlay-autoupdate-e2e-windows`) now ends with a static artifact verification step
+(`.github/scripts/win-artifacts-check.mjs`) that checks build correctness without running the exe
+— including asserting that `app-update.yml` and `latest*.yml` are absent (since auto-update was
+retired for Nexus ToS compliance). The native-Windows execution job (`overlay-autoupdate-e2e-windows-exec`)
+was removed with auto-update; a Windows VM can still be used for manual `.exe` testing if needed.
 
 ---
 
@@ -192,4 +193,37 @@ real native execution as bonus coverage (`continue-on-error: true`).
 
 The build step traps `docker rm -f $CID` on EXIT (cleanup on build failure), then
 `docker cp`s `dist-electron/` back to the runner workspace. The next step runs
-`tests/mock-relay/win-artifacts-check.mjs` on the runner host to verify the artifacts.
+`.github/scripts/win-artifacts-check.mjs` on the runner host to verify the artifacts.
+
+---
+
+## Migration to native `windows-latest` (GitHub-hosted runner migration)
+
+The entire Wine/DinD/docker-cp strategy described above was **superseded** when the CI pipeline
+migrated to GitHub-hosted runners as the default.
+
+The `overlay-build-windows-nsis` CI job now builds the NSIS installer **natively on
+`windows-latest`** (GitHub Actions hosted runner). There is no longer any Wine, Docker, or
+`ghcr.io/unn-corp/win-electron-builder` image involvement in CI.
+
+The private GHCR image (`ghcr.io/unn-corp/win-electron-builder`) has no current CI role.
+The Wine/DinD fixes documented above are retained here for historical context — they explain
+why the migration away from Wine was necessary and what was attempted before giving up on the
+Wine execution path.
+
+**Why native windows-latest supersedes the prior strategy:**
+- No Wine `STATUS_BREAKPOINT` crash — builds and runs real Windows PE binaries natively.
+- No Docker-in-Docker complexity (DinD service, `DOCKER_HOST`, `DOCKER_CERT_PATH`, `docker cp`).
+- No GHCR image pull (private registry, credentials, image maintenance burden).
+- Simpler job definition; timeout reduced from 15 min to 30 min (worst-case; typical is faster).
+
+**Runner toggle:** the job uses `vars.CI_RUNNER_WINDOWS && fromJSON(vars.CI_RUNNER_WINDOWS) || 'windows-latest'`,
+so setting the `CI_RUNNER_WINDOWS` repo variable to `["self-hosted","windows","unn"]` reverts to
+a self-hosted Windows runner without any job changes.
+
+**Auto-update removed:** the former native-exe smoke job `overlay-autoupdate-e2e-windows-exec` and
+the `tests/mock-relay/` auto-update fixture were deleted when auto-update was retired; the build job
+above (which asserts `app-update.yml` / `latest*.yml` are **absent**) is the Windows CI coverage.
+
+**Release workflows** (`build-windows.yml`) continue to use the self-hosted
+`[self-hosted, windows, unn]` runner by design — they are NOT affected by the CI runner migration.

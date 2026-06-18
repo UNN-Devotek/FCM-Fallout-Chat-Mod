@@ -11,17 +11,16 @@
            cd cross-platform-overlay
            npm run build:renderer
            npx electron-builder --win
-         Then verify Linux .AppImage + latest-linux.yml already exist (must be built
-         separately on native Linux fs -- see docs/deployment/releasing-the-overlay.md).
-         ABORT if either Linux artifact is missing -- both platforms must ship.
+         Then verify Linux .AppImage already exists (must be built separately on
+         native Linux fs -- see docs/deployment/releasing-the-overlay.md).
+         ABORT if the Linux artifact is missing -- both platforms must ship.
       2. GATE: smoke-test.ps1 -Version $Version  (exit non-zero -> ABORT, publish nothing)
       3. GATE: vt-gate.ps1 -Version $Version     (exit non-zero -> ABORT, publish nothing)
       4. package-downloads.ps1 -Version $Version  (build human-download ZIPs)
       5. Upload raw .exe + .AppImage + ZIPs to VPS; verify served sizes against
-         latest*.yml size fields; upload latest*.yml last (feed goes live only after
-         sizes are confirmed correct).
+         LOCAL build artifact sizes (Get-Item .Length); no feed manifest uploads.
       6. POST https://falloutchatmod.com/admin/releases  (register release, triggers
-         real-time release:published broadcast to all connected clients).
+         app:update-available notification to connected clients on next WS connect).
       7. publish-nexus-release.ps1 -Version $Version -ReleaseNotes $ReleaseNotes
 
     Under -DryRun, gates (smoke + VT) are run for real but NOTHING is uploaded,
@@ -135,14 +134,6 @@ function Invoke-SubScript($scriptPath, [string[]]$extraArgs) {
     return $LASTEXITCODE
 }
 
-# Parse the 'size:' field (bytes) from a latest*.yml file.
-function Get-YmlSize($ymlPath) {
-    if (-not (Test-Path $ymlPath)) { return $null }
-    $line = (Get-Content $ymlPath) | Where-Object { $_ -match '^\s*size:\s*(\d+)' } | Select-Object -First 1
-    if ($line -match '^\s*size:\s*(\d+)') { return [long]$matches[1] }
-    return $null
-}
-
 # Retrieve Content-Length of a URL using scp / ssh on the VPS.
 # We use ssh to run curl -sI on the remote host and capture content-length.
 function Get-ServedSize($url, $sshKey, $sshTarget) {
@@ -199,14 +190,13 @@ if (-not $SshKey) {
 }
 
 # Artifact filenames (productName is 'Fallout Chat Mod' WITH spaces).
-$winExe         = Join-Path $distDir "Fallout Chat Mod Setup $Version.exe"
-$linuxApp       = Join-Path $distDir "Fallout Chat Mod-$Version.AppImage"
-$latestYml      = Join-Path $distDir "latest.yml"
-$latestLinuxYml = Join-Path $distDir "latest-linux.yml"
-$winZipName     = "Fallout Chat Mod Setup $Version (Windows).zip"
-$linuxZipName   = "Fallout Chat Mod-$Version.AppImage (Linux).zip"
-$winZip         = Join-Path $distDir $winZipName
-$linuxZip       = Join-Path $distDir $linuxZipName
+$winExe       = Join-Path $distDir "Fallout Chat Mod Setup $Version.exe"
+$linuxApp     = Join-Path $distDir "Fallout Chat Mod-$Version.AppImage"
+$linuxDeb     = Join-Path $distDir "Fallout Chat Mod-$Version.deb"
+$winZipName   = "Fallout Chat Mod Setup $Version (Windows).zip"
+$linuxZipName = "Fallout Chat Mod-$Version.AppImage (Linux).zip"
+$winZip       = Join-Path $distDir $winZipName
+$linuxZip     = Join-Path $distDir $linuxZipName
 
 # Remote download dir (inside the container)
 $remoteDownloads = "/app/downloads/electron"
@@ -216,6 +206,7 @@ $winExeName      = "Fallout%20Chat%20Mod%20Setup%20$($Version)%20(Windows).zip"
 $linuxAppName    = "Fallout%20Chat%20Mod-$($Version).AppImage%20(Linux).zip"
 $winExeRawName   = "Fallout%20Chat%20Mod%20Setup%20$Version.exe"
 $linuxRawName    = "Fallout%20Chat%20Mod-$Version.AppImage"
+$linuxDebRawName = "Fallout%20Chat%20Mod-$Version.deb"
 $baseUrl         = "https://falloutchatmod.com/downloads/electron"
 
 # ---- STEP 1: Build -----------------------------------------------------------
@@ -251,29 +242,33 @@ if ($SkipBuild) {
     Pass "step 1 (Windows build)"
 }
 
-# Always check Linux artifacts -- both platforms must ship every release.
-Write-Host "[step 1] Verifying Linux artifacts (must be built separately on native Linux fs)..."
-$linuxOk = $true
+# Always check Linux artifact -- both platforms must ship every release.
+Write-Host "[step 1] Verifying Linux AppImage (must be built separately on native Linux fs)..."
 if (-not (Test-Path $linuxApp)) {
-    Write-Host "[step 1] MISSING Linux AppImage: $linuxApp"
-    $linuxOk = $false
-}
-if (-not (Test-Path $latestLinuxYml)) {
-    Write-Host "[step 1] MISSING latest-linux.yml: $latestLinuxYml"
-    $linuxOk = $false
-}
-if (-not $linuxOk) {
     Fail "step 1 (Linux artifact check)" @"
-Linux AppImage and/or latest-linux.yml not found in dist-electron.
+Linux AppImage not found in dist-electron: $linuxApp
 The Linux AppImage MUST be built on a native Linux filesystem (not /mnt/d in WSL).
 See docs/deployment/releasing-the-overlay.md for the exact staging/build procedure.
-Copy Fallout Chat Mod-$Version.AppImage and latest-linux.yml into:
+Copy Fallout Chat Mod-$Version.AppImage into:
   $distDir
 then re-run this script with -SkipBuild.
 Both platforms MUST ship every release.
 "@
 }
-Pass "step 1 (Linux artifacts present)"
+Pass "step 1 (Linux artifact present)"
+
+# Linux .deb ships in the Linux download ZIP (apt-managed install option).
+Write-Host "[step 1] Verifying Linux .deb (electron-builder deb target)..."
+if (-not (Test-Path $linuxDeb)) {
+    Fail "step 1 (Linux .deb check)" @"
+Linux .deb not found in dist-electron: $linuxDeb
+electron-builder's Linux build produces both the AppImage and the .deb. Build the
+Linux artifacts on a native Linux filesystem and copy the .deb into:
+  $distDir
+then re-run with -SkipBuild. The .deb is bundled into the Linux download ZIP.
+"@
+}
+Pass "step 1 (Linux .deb present)"
 
 # ---- STEP 2: Smoke test gate -------------------------------------------------
 
@@ -312,8 +307,7 @@ if ($DryRun) {
     Write-Host ""
     Write-Host "  STEP 5: SCP raw .exe + .AppImage + ZIPs to $SshTarget"
     Write-Host "          docker cp into ${ContainerName}:${remoteDownloads}"
-    Write-Host "          Verify served sizes vs latest*.yml size fields"
-    Write-Host "          SCP latest.yml + latest-linux.yml LAST (feed goes live)"
+    Write-Host "          Verify served sizes against local build artifact sizes"
     Write-Host ""
     Write-Host "  STEP 6: POST https://falloutchatmod.com/admin/releases"
     Write-Host "          {version:'$Version', downloadUrl:'...Windows ZIP...', releaseNotes:'...'}"
@@ -355,23 +349,23 @@ function Upload-Artifact($localPath, $remoteName) {
     if ($LASTEXITCODE -ne 0) { Fail "step 5 (docker cp)" "docker cp failed for $fileName (exit $LASTEXITCODE)" }
 }
 
-# Upload raw artifacts + ZIPs FIRST; feed manifests go LAST.
+# Upload raw artifacts + ZIPs.
 Upload-Artifact $winExe
 Upload-Artifact $linuxApp
+Upload-Artifact $linuxDeb
 Upload-Artifact $winZip
 Upload-Artifact $linuxZip
 
-# --- Verify served sizes before manifests go live ---
-Write-Host "[step 5] Verifying served sizes against latest*.yml size fields..."
+# --- Verify served sizes against LOCAL build artifact sizes ---
+# electron-builder no longer generates latest*.yml, so we derive the expected
+# size from the actual files on disk (the source of truth).
+Write-Host "[step 5] Verifying served sizes against local build artifact sizes..."
 
-$winYmlSize   = Get-YmlSize $latestYml
-$linuxYmlSize = Get-YmlSize $latestLinuxYml
+$winLocalSize   = (Get-Item $winExe).Length
+$linuxLocalSize = (Get-Item $linuxApp).Length
 
-if (-not $winYmlSize)   { Fail "step 5 (latest.yml parse)" "Could not read 'size:' from $latestYml" }
-if (-not $linuxYmlSize) { Fail "step 5 (latest-linux.yml parse)" "Could not read 'size:' from $latestLinuxYml" }
-
-Write-Host "[step 5] latest.yml       size field: $winYmlSize bytes"
-Write-Host "[step 5] latest-linux.yml size field: $linuxYmlSize bytes"
+Write-Host "[step 5] Local Windows .exe size:   $winLocalSize bytes"
+Write-Host "[step 5] Local Linux AppImage size: $linuxLocalSize bytes"
 
 # Check Windows .exe size via HEAD request through ssh
 $winServedSize = Get-ServedSize "$baseUrl/$winExeRawName" $SshKey $SshTarget
@@ -379,8 +373,8 @@ if ($null -eq $winServedSize) {
     Fail "step 5 (size verify -- windows)" "Could not retrieve Content-Length for Windows .exe from VPS. Check upload and container path."
 }
 Write-Host "[step 5] Windows .exe served size: $winServedSize bytes"
-if ($winServedSize -ne $winYmlSize) {
-    Fail "step 5 (size mismatch -- windows)" "Windows .exe: served=$winServedSize bytes vs latest.yml size=$winYmlSize bytes. Upload may be corrupt or incomplete."
+if ($winServedSize -ne $winLocalSize) {
+    Fail "step 5 (size mismatch -- windows)" "Windows .exe: served=$winServedSize bytes vs local=$winLocalSize bytes. Upload may be corrupt or incomplete."
 }
 Pass "step 5 (Windows .exe size verified: $winServedSize bytes)"
 
@@ -389,17 +383,21 @@ if ($null -eq $linuxServedSize) {
     Fail "step 5 (size verify -- linux)" "Could not retrieve Content-Length for Linux AppImage from VPS. Check upload and container path."
 }
 Write-Host "[step 5] Linux AppImage served size: $linuxServedSize bytes"
-if ($linuxServedSize -ne $linuxYmlSize) {
-    Fail "step 5 (size mismatch -- linux)" "Linux AppImage: served=$linuxServedSize bytes vs latest-linux.yml size=$linuxYmlSize bytes. Upload may be corrupt or incomplete."
+if ($linuxServedSize -ne $linuxLocalSize) {
+    Fail "step 5 (size mismatch -- linux)" "Linux AppImage: served=$linuxServedSize bytes vs local=$linuxLocalSize bytes. Upload may be corrupt or incomplete."
 }
-Pass "step 5 (Linux AppImage size verified: $linuxServedSize bytes)"
 
-# Sizes verified -- now upload the feed manifests (feed goes live here).
-Write-Host "[step 5] Sizes verified. Uploading feed manifests (latest*.yml) last..."
-Upload-Artifact $latestYml      "latest.yml"
-Upload-Artifact $latestLinuxYml "latest-linux.yml"
-
-Pass "step 5 (artifacts uploaded + sizes verified + manifests live)"
+$debLocalSize  = (Get-Item $linuxDeb).Length
+Write-Host "[step 5] Local Linux .deb size: $debLocalSize bytes"
+$debServedSize = Get-ServedSize "$baseUrl/$linuxDebRawName" $SshKey $SshTarget
+if ($null -eq $debServedSize) {
+    Fail "step 5 (size verify -- deb)" "Could not retrieve Content-Length for Linux .deb from VPS. Check upload and container path."
+}
+Write-Host "[step 5] Linux .deb served size: $debServedSize bytes"
+if ($debServedSize -ne $debLocalSize) {
+    Fail "step 5 (size mismatch -- deb)" "Linux .deb: served=$debServedSize bytes vs local=$debLocalSize bytes. Upload may be corrupt or incomplete."
+}
+Pass "step 5 (artifacts uploaded + sizes verified)"
 
 # ---- STEP 6: Register release ------------------------------------------------
 
@@ -456,7 +454,7 @@ Write-Host "  [PASS] step 5 -- VPS upload + size verification"
 Write-Host "  [PASS] step 6 -- release registered"
 Write-Host "  [PASS] step 7 -- Nexus published"
 Write-Host ""
-Write-Host "  Auto-updater feed is live. Connected clients will receive"
-Write-Host "  the release:published broadcast and check for updates."
+Write-Host "  Release registered. Clients will see an update notification"
+Write-Host "  on next WS connect (app:update-available -> Nexus link)."
 Write-Host "================================================================"
 exit 0

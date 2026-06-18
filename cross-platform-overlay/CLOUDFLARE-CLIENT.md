@@ -47,8 +47,7 @@ two headers above on every request. The register call always carries
 | `GET`  | `/api/*`     | All API calls proxied from the renderer. Bearer-authed with `X-Auth-Token`. |
 | `GET`  | `/auth/ws-ticket` | Answered synthetically by main.js; not actually forwarded to the backend. |
 | `GET`  | `/api/auth/discord-status/:installToken` | Discord link status check. |
-| `WSS`  | `/ws` | WebSocket upgrade. `X-Auth-Token` + `User-Agent` in the handshake headers. |
-| `GET`  | `/downloads/electron/*` | Auto-update feed and installer download (`electron-updater`). |
+| `WSS`  | `/ws` | WebSocket upgrade. `X-Auth-Token` + `User-Agent` in the handshake headers. The server pushes `app:update-available` over this connection when a newer release exists (no separate update request). |
 
 ---
 
@@ -120,6 +119,8 @@ shared NATs.
    identify a legitimate app registration attempt without needing to know the
    secret value in the WAF rule.
 
-4. **Updater requests**: `electron-updater` fetches `/downloads/electron/` with
-   its own UA (electron-builder-based). The download URLs served are standard
-   HTTPS — CF CDN caching is fine for these.
+4. **Update awareness**: the overlay no longer auto-updates, so it makes no
+   `/downloads/electron/` request. A newer-version number is pushed over the
+   existing `/ws` connection (`app:update-available`); manual installers and
+   browser downloads still fetch `/downloads/electron/` over standard HTTPS
+   (CF CDN caching is fine for those).
