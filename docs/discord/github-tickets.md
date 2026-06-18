@@ -47,6 +47,11 @@ second login — like voice channels and reaction roles.
      milestone picker** (select menu of the repo's open milestones — reporter or
      staff may set one);
    - records the issue↔thread mapping in `github_issue_threads`.
+   - **bug** threads also list the overlay **log** (`…\Fallout Chat Mod\logs\main.log`
+     / `~/.config/Fallout Chat Mod/logs/main.log`), **keybinds** (`…keybinds.cfg`),
+     and the in-game/HUD log (`Documents\My Games\Fallout 76\zfe.log`), asking the
+     reporter to attach them for overlay-behavior or in-game/game issues
+     (`BUG_DIAGNOSTICS_FIELD`).
 4. Thread buttons (staff only):
    - **Add to Roadmap** → applies the `roadmap` label (marks planned features within
      the master board; there is no separate roadmap board).

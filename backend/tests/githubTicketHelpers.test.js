@@ -127,4 +127,16 @@ describe('githubTicketHelpers', () => {
       expect(out).toContain('1 attachment shared');
     });
   });
+
+  describe('BUG_DIAGNOSTICS_FIELD', () => {
+    it('lists log, keybind, and game-file locations within Discord limits', () => {
+      const f = h.BUG_DIAGNOSTICS_FIELD;
+      expect(f.name.length).toBeLessThanOrEqual(256);
+      expect(f.value.length).toBeLessThanOrEqual(1024);
+      expect(f.value).toContain('main.log');
+      expect(f.value).toContain('keybinds.cfg');
+      expect(f.value).toContain('zfe.log');
+      expect(f.value).toContain('~/.config/Fallout Chat Mod/logs/main.log');
+    });
+  });
 });

@@ -54,6 +54,7 @@ import {
   labelForType,
   colorForType,
   BRAND_EMBED_COLOR,
+  BUG_DIAGNOSTICS_FIELD,
   displayForType,
   isStaff,
   isTicketType,
@@ -245,6 +246,9 @@ async function buildThreadIntro(opts: { type: TicketType; issue: { number: numbe
         'Anything posted in this thread is part of the discussion.',
     )
     .setColor(colorForType(opts.type));
+
+  // Bug threads list the log / keybind / game-file locations so users can attach them.
+  if (opts.type === 'bug') embed.addFields(BUG_DIAGNOSTICS_FIELD);
 
   const content = supportRole ? `<@${opts.reporterId}> · <@&${supportRole}>` : `<@${opts.reporterId}>`;
   return {
