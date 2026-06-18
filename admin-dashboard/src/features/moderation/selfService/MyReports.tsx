@@ -15,6 +15,7 @@ export type ReportType = 'player' | 'bug';
 
 interface MyReport {
   id: string;
+  reportNumber: number;
   content: string;
   involvedPlayers: string | null;
   imageUrls: string | null; // JSON: string[]
@@ -227,7 +228,7 @@ export default function MyReports({ type }: { type: ReportType }) {
               <table>
                 <thead>
                   <tr>
-                    {[...['REPORT'], ...(type === 'player' ? ['INVOLVED'] : []), 'IMGS', 'STATUS', 'DATE'].map(h => <th key={h} style={{ whiteSpace: 'nowrap' }}>{h}</th>)}
+                    {['#', 'REPORT', ...(type === 'player' ? ['INVOLVED'] : []), 'IMGS', 'STATUS', 'DATE'].map(h => <th key={h} style={{ whiteSpace: 'nowrap' }}>{h}</th>)}
                   </tr>
                 </thead>
                 <tbody>
@@ -239,6 +240,7 @@ export default function MyReports({ type }: { type: ReportType }) {
                           onClick={() => setDetail(r)}
                           onMouseEnter={e => { e.currentTarget.style.background = 'rgba(212,176,64,0.08)'; }}
                           onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}>
+                        <td style={{ color: dim, fontWeight: 'bold', whiteSpace: 'nowrap', fontSize: '12px' }}>#{r.reportNumber}</td>
                         <td style={{ maxWidth: '360px' }}>
                           <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: '12px' }}>{r.content}</span>
                         </td>

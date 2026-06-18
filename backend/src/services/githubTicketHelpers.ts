@@ -85,6 +85,26 @@ export function displayForType(type: TicketType): string {
   }
 }
 
+/**
+ * Diagnostic file locations shown on bug-report threads so users can attach them.
+ * Overlay log + keybinds live in the app's userData; the in-game/HUD log is in the
+ * Fallout 76 game folder. ≤ 1024 chars (Discord embed field-value limit).
+ */
+export const BUG_DIAGNOSTICS_FIELD = {
+  name: '🛠️ Helpful for bug reports — attach if relevant',
+  value:
+    '**Overlay log** (overlay-behavior bugs)\n' +
+    '`C:\\Users\\<you>\\AppData\\Roaming\\Fallout Chat Mod\\logs\\main.log` (Windows)\n' +
+    '`~/.config/Fallout Chat Mod/logs/main.log` (Linux)\n' +
+    '**Keybinds**\n' +
+    '`C:\\Users\\<you>\\AppData\\Roaming\\Fallout Chat Mod\\keybinds.cfg` (Windows)\n' +
+    '`~/.config/Fallout Chat Mod/keybinds.cfg` (Linux)\n' +
+    '**In-game / game issues** (HUD mod)\n' +
+    '`Documents\\My Games\\Fallout 76\\zfe.log` (Windows)\n' +
+    '`~/.steam/steam/steamapps/compatdata/1151340/pfx/drive_c/users/steamuser/Documents/My Games/Fallout 76/zfe.log` (Linux/Proton — Steam library path may vary)\n\n' +
+    "📎 If your bug is about the **overlay's behavior** or an **in-game/game issue**, please attach the relevant file(s) above.",
+};
+
 export interface IssueBodyInput {
   type: TicketType;
   description: string;
@@ -162,6 +182,7 @@ module.exports = {
   labelForType,
   colorForType,
   BRAND_EMBED_COLOR,
+  BUG_DIAGNOSTICS_FIELD,
   displayForType,
   buildIssueBody,
   isStaff,
