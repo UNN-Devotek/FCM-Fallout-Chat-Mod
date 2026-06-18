@@ -48,14 +48,17 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
     <link rel="apple-touch-icon" sizes="256x256" href="/favicon.png" />
-
-    <!-- Fallback for crawlers that do not execute JavaScript -->
-    <noscript>
-      <meta http-equiv="refresh" content="0; url=https://falloutchatmod.com" />
-      <p>Fallout Chat Mod is a free, EULA-safe overlay that adds real-time community chat to Fallout 76. Features include cross-channel chat (General, Trading, Events, Raids), a live Discord bridge, party system, Fallout 76 wiki search, slash commands, infestation alerts, and a browser-based moderation portal. Available on Windows and Linux.</p>
-    </noscript>
   </head>
   <body>
+    <!-- Fallback content for crawlers that do not execute JavaScript.
+         Lives in <body> (flow content like <p> is not valid inside a
+         <noscript> in <head>). No meta-refresh: this page IS served at the
+         apex origin, so a refresh to https://falloutchatmod.com would redirect
+         the page to itself and trap no-JS crawlers in an infinite reload loop.
+         The descriptive text below is the indexable fallback. -->
+    <noscript>
+      <p>Fallout Chat Mod is a free, EULA-safe overlay that adds real-time community chat to Fallout 76. Features include cross-channel chat (General, Trading, Events, Raids), a live Discord bridge, party system, Fallout 76 wiki search, slash commands, infestation alerts, and a browser-based moderation portal. Available on Windows and Linux.</p>
+    </noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
