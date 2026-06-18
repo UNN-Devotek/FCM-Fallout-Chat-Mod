@@ -177,7 +177,13 @@ router.post('/stream', async (req, res, next) => {
     // Inline bounds (in addition to clampCount) so the upper/lower limits are
     // visible at the loop/timer sink — CodeQL-recognized resource-exhaustion guard.
     const count = Math.max(1, Math.min(200, clampCount(req.body?.count, 20, 1, 200)));
-    const intervalMs = Math.max(100, Math.min(30_000, clampCount(req.body?.intervalMs, 1500, 100, 30_000)));
+    // Explicit constant bounds on the timer duration (CodeQL resource-exhaustion
+    // barrier): a non-finite/out-of-range request value falls back to the default
+    // then clamps to [100ms, 30s] before it can reach setInterval.
+    let intervalMs = Math.floor(Number(req.body?.intervalMs));
+    if (!Number.isFinite(intervalMs)) intervalMs = 1500;
+    if (intervalMs < 100) intervalMs = 100;
+    if (intervalMs > 30_000) intervalMs = 30_000;
     const channelId = typeof req.body?.channelId === 'string' && req.body.channelId.trim()
       ? req.body.channelId.trim()
       : GENERAL_CHANNEL_ID;
