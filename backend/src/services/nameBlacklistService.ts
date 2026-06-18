@@ -24,12 +24,19 @@ import prisma from '../config/prisma';
 import logger from '../config/logger';
 import { getRedisClient } from '../config/redis';
 import { compileUserRegex } from '../utils/safeRegex';
+import { canon } from '../utils/textCanon';
 
 interface BlacklistEntry {
   id: string;
   pattern: string;
   matchType: 'exact' | 'contains' | 'regex';
   enabled: boolean;
+  /**
+   * Canonical (NFD + combining-marks stripped) lower-cased form of `pattern`,
+   * used for `exact` / `contains` matching against the canon()ed candidate so a
+   * name padded with combining diacritics can't slip past the blacklist.
+   */
+  canonPattern: string;
   /** Pre-compiled regex for `matchType === 'regex'` entries; null if invalid. */
   regex: RegExp | null;
 }
@@ -50,7 +57,8 @@ export async function loadBlacklist(): Promise<void> {
       pattern: r.pattern,
       matchType: (r.matchType as 'exact' | 'contains' | 'regex'),
       enabled: r.enabled,
-      regex: r.matchType === 'regex' ? tryCompile(r.pattern) : null,
+      canonPattern: canon(r.pattern).toLowerCase(),
+      regex: r.matchType === 'regex' ? tryCompile(canon(r.pattern)) : null,
     }));
     loaded = true;
     logger.info({ count: cache.length }, '[nameBlacklist] cache loaded');
@@ -60,7 +68,10 @@ export async function loadBlacklist(): Promise<void> {
 }
 
 function tryCompile(pattern: string): RegExp | null {
-  return compileUserRegex(pattern, 'nameBlacklist');
+  // 'iu' so Unicode boundaries / property escapes behave when matching the
+  // canon()ed candidate; compileUserRegex falls back to 'i' if the pattern is
+  // invalid only under 'u' (preserving previously-working admin entries).
+  return compileUserRegex(pattern, 'nameBlacklist', 'iu');
 }
 
 /**
@@ -73,15 +84,19 @@ export function isBlacklisted(name: string | null | undefined): boolean {
   if (typeof name !== 'string') return false;
   const trimmed = name.trim();
   if (trimmed.length === 0) return false;
-  const lower = trimmed.toLowerCase();
+  // Match against the CANONICAL (diacritic-stripped) form so combining-mark
+  // padding can't bypass exact / contains / regex blacklist entries. The
+  // original name is unchanged — this is purely a matching transform.
+  const canonName = canon(trimmed);
+  const lower = canonName.toLowerCase();
   for (const entry of cache) {
     if (!entry.enabled) continue;
     if (entry.matchType === 'exact') {
-      if (lower === entry.pattern.toLowerCase()) return true;
+      if (lower === entry.canonPattern) return true;
     } else if (entry.matchType === 'contains') {
-      if (lower.includes(entry.pattern.toLowerCase())) return true;
+      if (lower.includes(entry.canonPattern)) return true;
     } else if (entry.matchType === 'regex' && entry.regex) {
-      if (entry.regex.test(trimmed)) return true;
+      if (entry.regex.test(canonName)) return true;
     }
   }
   return false;
@@ -96,15 +111,17 @@ export function findBlacklistMatch(name: string | null | undefined): BlacklistEn
   if (typeof name !== 'string') return null;
   const trimmed = name.trim();
   if (trimmed.length === 0) return null;
-  const lower = trimmed.toLowerCase();
+  // Same canonical matching as isBlacklisted (combining-mark bypass defense).
+  const canonName = canon(trimmed);
+  const lower = canonName.toLowerCase();
   for (const entry of cache) {
     if (!entry.enabled) continue;
     if (entry.matchType === 'exact') {
-      if (lower === entry.pattern.toLowerCase()) return entry;
+      if (lower === entry.canonPattern) return entry;
     } else if (entry.matchType === 'contains') {
-      if (lower.includes(entry.pattern.toLowerCase())) return entry;
+      if (lower.includes(entry.canonPattern)) return entry;
     } else if (entry.matchType === 'regex' && entry.regex) {
-      if (entry.regex.test(trimmed)) return entry;
+      if (entry.regex.test(canonName)) return entry;
     }
   }
   return null;
