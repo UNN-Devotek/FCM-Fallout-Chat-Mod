@@ -270,6 +270,29 @@ export function shouldForceReconnectOnVisible(opts: {
 }
 
 /**
+ * Raw "should the authed WebSocket be open?" decision, derived from mode +
+ * visibility + game state. Extracted as a pure function so the gating policy is
+ * unit-testable against the real code (not a re-implemented copy).
+ *
+ * - `isPublicMode` is a hard lockdown: public mode never opens the authed WS,
+ *   regardless of visibility or game state. Folding it in here also means a
+ *   session expiry (user -> null flips isPublicMode true) immediately feeds
+ *   through the gate and tears the socket down rather than leaving it open until
+ *   an unrelated change re-runs the effect.
+ * - Web (no overlay shell) always connects when not public.
+ * - In the overlay shell, connect when the overlay is visible OR the game is
+ *   running (so chat history is warm the instant the overlay shows).
+ */
+export function deriveWsShouldConnect(opts: {
+  isPublicMode: boolean;
+  overlayShell: boolean;
+  overlayVisible: boolean;
+  wsGameActive: boolean;
+}): boolean {
+  return !opts.isPublicMode && (!opts.overlayShell || opts.overlayVisible || opts.wsGameActive);
+}
+
+/**
  * Hysteresis gate hook: returns a smoothed version of `wsShouldConnect` that
  * connects immediately (true propagates synchronously) but delays disconnecting
  * by `gracePeriodMs`. If the input flips false→true within the grace window the
@@ -4085,7 +4108,16 @@ export default function ChatOverlay() {
   // either signal (esp. game-gate flapping) tears down + reconnects the WS even
   // when the connect decision is unchanged, and each reconnect re-fetches
   // chat:history = a visible "chat reload". Web (overlayShell null) is always true.
-  const wsShouldConnect = !overlayShell || overlayVisible || wsGameActive;
+  // isPublicMode is included so that a session expiry (user -> null) immediately
+  // feeds through the gate and triggers teardown rather than leaving the authed
+  // WebSocket open until an unrelated wsGate change causes the effect to re-run.
+  // See deriveWsShouldConnect (pure, unit-tested) for the gating policy.
+  const wsShouldConnect = deriveWsShouldConnect({
+    isPublicMode,
+    overlayShell: !!overlayShell,
+    overlayVisible,
+    wsGameActive,
+  });
 
   // Hysteresis gate: connect immediately, disconnect only after a 500 ms grace
   // (200 ms in dev). Prevents the double-teardown race — see useWsGate above.
