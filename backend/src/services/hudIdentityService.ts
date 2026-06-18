@@ -39,9 +39,19 @@ import logger from '../config/logger';
  */
 export const DEV_DEFAULT_IDENTITY_SECRET = 'dev-hud-identity-secret-change-me';
 
+/**
+ * True when the given secret is insecure — empty/unset or still the public dev
+ * default. Pure (takes the value as an argument) so both the lazy listener guard
+ * and the production startup guard (config/environment.ts) can share the exact
+ * same decision without circular imports.
+ */
+export function isInsecureHudSecret(secret: string | undefined | null): boolean {
+  return !secret || secret === DEV_DEFAULT_IDENTITY_SECRET;
+}
+
 /** True when HUD_IDENTITY_SECRET is unset / still the public dev default. */
 export function usingDefaultIdentitySecret(): boolean {
-  return !env.HUD_IDENTITY_SECRET || env.HUD_IDENTITY_SECRET === DEV_DEFAULT_IDENTITY_SECRET;
+  return isInsecureHudSecret(env.HUD_IDENTITY_SECRET);
 }
 
 // ── Hash derivation ───────────────────────────────────────────────────────────
