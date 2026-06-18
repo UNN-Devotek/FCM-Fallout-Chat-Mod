@@ -48,8 +48,21 @@ async function submitOverlayReport(req: Request, res: Response, next: NextFuncti
  */
 async function listOverlayReports(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    let installToken = req.query.installToken as string | undefined;
-    const userId       = req.query.userId       as string | undefined;
+    // req.query values can be string | string[] | ParsedQs (Express delivers an
+    // array for ?installToken=a&installToken=b, or an object for ?userId[x]=y).
+    // Guard for a plain string before use — anything else is rejected as 400 —
+    // so these never reach Redis key building or Prisma's where:{id} as a
+    // non-string (type confusion / query injection).
+    const rawInstallToken = req.query.installToken;
+    const rawUserId       = req.query.userId;
+    if (rawInstallToken !== undefined && typeof rawInstallToken !== 'string') {
+      return next(createError(400, 'installToken must be a string'));
+    }
+    if (rawUserId !== undefined && typeof rawUserId !== 'string') {
+      return next(createError(400, 'userId must be a string'));
+    }
+    let installToken: string | undefined = rawInstallToken;
+    const userId: string | undefined     = rawUserId;
 
     if (!installToken && userId) {
       const user = await prisma.user.findUnique({

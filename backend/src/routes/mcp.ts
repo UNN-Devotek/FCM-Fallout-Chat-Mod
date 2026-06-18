@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
+import { randomInt, randomBytes } from 'crypto';
 import { requireMcpToken, mcpLimiter } from '../middleware/requireMcpToken';
 import { createError } from '../middleware/errorHandler';
 import { ingestMessage } from '../services/ingestMessage';
@@ -6,6 +7,15 @@ import prisma from '../config/prisma';
 import logger from '../config/logger';
 
 const router = express.Router();
+
+// Coerce a request-controlled numeric input to a finite positive integer and
+// clamp it into [min, max] so an unbounded/NaN/Infinity value can never drive a
+// loop or timer. Falls back to `fallback` when the input is non-numeric.
+function clampCount(value: unknown, fallback: number, min: number, max: number): number {
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n) || n <= 0) return Math.min(Math.max(fallback, min), max);
+  return Math.min(Math.max(n, min), max);
+}
 
 // Apply rate limiter and MCP auth to all routes
 router.use(mcpLimiter);
@@ -221,8 +231,8 @@ router.post('/sim/stream', async (req: Request, res: Response, next: NextFunctio
     const messageQueue = require('../queues/messagePersist');
     const { v4: uuidv4 } = require('uuid');
 
-    const safeCount = Math.min(Math.max(Number(count) || 20, 1), 200);
-    const safeInterval = Math.min(Math.max(Number(intervalMs) || 1500, 100), 30_000);
+    const safeCount = clampCount(count, 20, 1, 200);
+    const safeInterval = clampCount(intervalMs, 1500, 100, 30_000);
     const GENERAL_CHANNEL_ID = '00000000-0000-0000-0000-000000000001';
     const safeChannelId = typeof channelId === 'string' && channelId.trim() ? channelId.trim() : GENERAL_CHANNEL_ID;
 
@@ -233,13 +243,13 @@ router.post('/sim/stream', async (req: Request, res: Response, next: NextFunctio
     });
 
     const SIM_NAMES = ['CrusaderBobby', 'NukaColaDrinker', 'TheWastelandKing', 'RaiderQueen76', 'AtomicMaiden'];
-    const pick = <T>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)] as T;
+    const pick = <T>(arr: T[]): T => arr[randomInt(arr.length)] as T;
 
     let sent = 0;
     const timer = setInterval(() => {
       const author = simUsers.length > 0
-        ? simUsers[Math.floor(Math.random() * simUsers.length)]
-        : { id: `sim-ephemeral-${Math.floor(Math.random() * 1e6)}`, username: pick(SIM_NAMES) };
+        ? simUsers[randomInt(simUsers.length)]
+        : { id: `sim-ephemeral-${randomBytes(8).toString('hex')}`, username: pick(SIM_NAMES) };
       const messageId = uuidv4();
       const createdAt = new Date().toISOString();
       broadcast({ type: 'chat:message', payload: { id: messageId, content: `[sim] test message ${sent}`, username: author.username, userId: author.id, channelId: safeChannelId, source: 'game', timestamp: createdAt, isSim: true } });
@@ -265,7 +275,7 @@ router.post('/sim/users', async (req: Request, res: Response, next: NextFunction
   }
   try {
     const { count = 10 } = req.body || {};
-    const safeCount = Math.min(Math.max(Number(count) || 10, 1), 200);
+    const safeCount = clampCount(count, 10, 1, 200);
     const SIM_NAMES = ['CrusaderBobby', 'NukaColaDrinker', 'TheWastelandKing', 'RaiderQueen76', 'AtomicMaiden', 'BottleCapKing', 'VaultTechEngineer', 'GhoulWhisperer', 'SteelRainFalling', 'CranberryBogRunner'];
     const { getRedisClient } = require('../config/redis');
     const redis = await getRedisClient();
