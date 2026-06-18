@@ -262,6 +262,11 @@ describe('party capacity check', () => {
   it('party is full when count equals the limit', () => {
     expect(isFull(5, 5)).toBe(true);
   });
+
+  // NOTE: the real concurrency guard (row lock + transactional count+insert) is
+  // exercised against the ACTUAL controller in tests/partiesCapacityRace.test.js.
+  // The isFull() cases here only document the boundary of the capacity predicate
+  // and are NOT the race-condition test.
   it('party is full when count exceeds the limit (e.g. limit lowered)', () => {
     expect(isFull(3, 5)).toBe(true);
   });
