@@ -19,6 +19,15 @@ async function atPartyCap(userId: string): Promise<boolean> {
   return count >= MAX_PARTIES_PER_USER;
 }
 
+// A user may own at most this many (non-deleted) parties at once; they must
+// delete or transfer ownership of one before creating another.
+const MAX_OWNED_PARTIES_PER_USER = 3;
+const OWNED_PARTY_CAP_MESSAGE = `You can own at most ${MAX_OWNED_PARTIES_PER_USER} parties at once — delete or transfer ownership of one before creating another.`;
+async function atOwnedPartyCap(userId: string): Promise<boolean> {
+  const count = await prisma.party.count({ where: { ownerId: userId, isDeleted: false } });
+  return count >= MAX_OWNED_PARTIES_PER_USER;
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Party category allow-list
@@ -292,6 +301,11 @@ export async function createParty(req: Request, res: Response, next: NextFunctio
   // Creating a party makes you a member, so it counts toward the per-user cap.
   if (await atPartyCap(callerId)) {
     return next(createError(409, PARTY_CAP_MESSAGE));
+  }
+
+  // Separate cap on owned parties to prevent spam/clutter from solo-owned abandoned parties.
+  if (await atOwnedPartyCap(callerId)) {
+    return next(createError(409, OWNED_PARTY_CAP_MESSAGE));
   }
 
   try {
