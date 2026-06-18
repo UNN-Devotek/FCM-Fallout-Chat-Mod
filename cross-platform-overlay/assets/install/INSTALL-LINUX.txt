@@ -2,7 +2,8 @@ Fallout Chat Mod — Linux install
 ==================================
 
 1. Extract this zip. You'll have:
-     Fallout Chat Mod-<version>.AppImage   (the app)
+     Fallout Chat Mod-<version>.AppImage   (the app — portable, runs anywhere)
+     Fallout Chat Mod-<version>.deb         (Debian/Ubuntu apt package — optional)
      INSTALL-LINUX.txt                      (this file)
      fallout-chatmod-keepabove.kwinrule     (KDE-only, see below)
 2. Make the AppImage executable:
@@ -12,6 +13,15 @@ Fallout Chat Mod — Linux install
 3. Run it:
      ./"Fallout Chat Mod-<version>.AppImage"
 4. Sign in with Discord and finish onboarding (enter your Fallout 76 name).
+
+Debian / Ubuntu (.deb) — alternative to the AppImage
+----------------------------------------------------
+Prefer an apt-managed install? Use the bundled .deb instead of the AppImage:
+     sudo apt install "./Fallout Chat Mod-<version>.deb"
+   (or:  sudo dpkg -i "Fallout Chat Mod-<version>.deb")
+Then launch "Fallout Chat Mod" from your application menu.
+To UPDATE later, install the newer release's .deb the same way — dpkg upgrades
+the package in place (works even if you are several versions behind).
 
 Requirements
 ------------
@@ -23,7 +33,12 @@ Using the overlay
 -----------------
 - The overlay shows automatically while Fallout 76 is running (detected under
   Proton). With the game closed it stays hidden by design.
-- It auto-updates itself.
+- Updating: new versions are NOT automatic. When you see the in-app "Update
+  available" notification, download the latest from Nexus Mods
+  (https://www.nexusmods.com/fallout76/mods/4082) or falloutchatmod.com and
+  re-run the installer (CLI one-liner, the AppImage installer, or the .deb).
+  Your settings, keybinds and Discord link are preserved, and it works even if
+  you are several versions behind.
 
 KDE Plasma (Wayland) — automatic, just run Borderless
 -----------------------------------------------------

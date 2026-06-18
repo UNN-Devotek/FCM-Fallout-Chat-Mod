@@ -488,6 +488,44 @@ function planOzoneRelaunch({ kdeWayland, argv = [], appImagePath = null } = {}) 
   return opts;
 }
 
+// Compare two semver-like version strings. Returns a positive number when `a` is
+// newer than `b`, negative when `a` is older, and 0 when they are equal.
+// Uses locale-aware numeric comparison so '1.3.10' > '1.3.9' (not string-ordered).
+// Malformed / non-string inputs are treated as '0.0.0' — they will never appear
+// newer than any real version.
+function cmpVersions(a, b) {
+  const normalize = (v) => (typeof v === 'string' && v.trim() ? v.trim() : '0.0.0');
+  return normalize(a).localeCompare(normalize(b), undefined, { numeric: true, sensitivity: 'base' });
+}
+
+// True when the relay URL points at a LOCAL backend (localhost / loopback). Used
+// to gate dev-only behavior so it can NEVER affect a production or hosted-dev
+// build (which target falloutchatmod.com / dev.falloutchatmod.com).
+function isLocalRelay(relayHttp) {
+  try {
+    const h = new URL(String(relayHttp)).hostname.replace(/^\[|\]$/g, '');
+    return h === 'localhost' || h === '127.0.0.1' || h === '::1';
+  } catch {
+    return false;
+  }
+}
+
+// DEV-ONLY: derive a deterministic, per-install synthetic Discord id (18 digits,
+// matches the backend's /^\d{15,22}$/) from the installToken. Lets a local dev
+// overlay satisfy the backend's Discord-link gate on POST /api/users without
+// real Discord OAuth. discordId is @unique in the DB, so deriving it from the
+// (unique) installToken keeps each local install collision-free and stable.
+function syntheticDevDiscordId(installToken) {
+  const hex = String(installToken || '').replace(/[^0-9a-f]/gi, '');
+  let dec;
+  try {
+    dec = hex ? BigInt('0x' + hex).toString() : '0';
+  } catch {
+    dec = '0';
+  }
+  return '9' + dec.slice(-17).padStart(17, '0'); // always an 18-digit string
+}
+
 module.exports = {
   DEFAULT_APP_CLIENT_KEY,
   DEFAULT_WIDTH,
@@ -518,6 +556,9 @@ module.exports = {
   buildKwinKeepAboveScript,
   buildKwinRemoveRulesScript,
   planOzoneRelaunch,
+  cmpVersions,
+  isLocalRelay,
+  syntheticDevDiscordId,
   filterProxyHeaders,
   resolveRelayProxyUrl,
 };
