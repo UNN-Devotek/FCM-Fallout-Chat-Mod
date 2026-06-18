@@ -12,6 +12,7 @@ submissions with optional screenshot attachments.
 | Field | Notes |
 |---|---|
 | `report_type` | `'player'` (default) or `'bug'` |
+| `report_number` | Sequential case number (Postgres sequence) — assigned to every report (Discord + web); shown in the portal and the Discord thread title |
 | `content` | Free-text description |
 | `involved_players` | Optional: comma-separated player names |
 | `image_urls` | JSON `string[]` of MinIO public URLs (up to 3 images) |

@@ -172,6 +172,7 @@ services:
       ADMIN_ROLE_ID: ${ADMIN_ROLE_ID}
       MODERATOR_ROLE_ID: ${MODERATOR_ROLE_ID}
       DEVELOPER_ROLE_ID: ${DEVELOPER_ROLE_ID}
+      SUPPORT_ROLE_ID: ${SUPPORT_ROLE_ID}
 
       # --- GitHub ticketing (Discord <-> GitHub Issues/Projects) ---
       # This service does NOT use env_file, so each var must be listed explicitly.

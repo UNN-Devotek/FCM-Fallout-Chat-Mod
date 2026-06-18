@@ -63,13 +63,28 @@ export function isAllowedDiscordAttachmentUrl(url: unknown): boolean {
   }
 }
 
-/** Discord thread name for a player report, "🚩 Report · <reporter>", ≤ 100 chars. */
-export function buildPlayerReportThreadName(reporterName: string): string {
-  const prefix = '🚩 Report · ';
-  const name = (reporterName || 'player').replace(/\s+/g, ' ').trim();
-  const room = 100 - prefix.length;
-  return `${prefix}${name.length <= room ? name : name.slice(0, room - 1) + '…'}`;
+/**
+ * Discord thread name for a player report:
+ * "Player Report · #<number> · <involved> · <reporter>" (no emoji), ≤ Discord's
+ * 100-char limit. The "Player Report · #<number>" head is always preserved; the
+ * involved/reporter tail is trimmed to fit.
+ */
+export function buildPlayerReportThreadName(
+  reporterName: string,
+  involvedName: string | null | undefined,
+  reportNumber: number,
+): string {
+  const head = `Player Report · #${reportNumber}`; // always preserved
+  const reporter = (reporterName || 'player').replace(/\s+/g, ' ').trim() || 'player';
+  const involved = (involvedName || '').replace(/\s+/g, ' ').trim();
+  const tailParts = [involved, reporter].filter(Boolean); // involved, then reporter
+  let tail = tailParts.length ? ` · ${tailParts.join(' · ')}` : '';
+  const room = THREAD_NAME_MAX - head.length;
+  if (tail.length > room) tail = tail.slice(0, room - 1) + '…';
+  return `${head}${tail}`;
 }
+
+const THREAD_NAME_MAX = 100;
 
 module.exports = {
   REPORT_CONTENT_MAX,
