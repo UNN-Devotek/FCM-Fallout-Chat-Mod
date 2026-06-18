@@ -43,7 +43,10 @@ async function resolveUserByDiscordId(r: DiscordReporter) {
 
 export interface CreatedPlayerReport {
   id: string;
+  reportNumber: number;
   reporterName: string;
+  reporterDiscordId: string;
+  involvedPlayers: string | null;
 }
 
 /** Create a player report from a Discord submission + fire the mod-log alert. */
@@ -81,8 +84,14 @@ export async function createPlayerReport(input: DiscordReporter & {
     /* discordService not ready — non-fatal */
   }
 
-  logger.info({ reportId: report.id, by: input.discordId }, 'player-report: created from Discord');
-  return { id: report.id, reporterName: String(reporterName) };
+  logger.info({ reportId: report.id, number: report.reportNumber, by: input.discordId }, 'player-report: created');
+  return {
+    id: report.id,
+    reportNumber: report.reportNumber,
+    reporterName: String(reporterName),
+    reporterDiscordId: input.discordId,
+    involvedPlayers: involved,
+  };
 }
 
 /** Link a report to its Discord lockdown thread (so dropped screenshots attach to it). */
@@ -129,5 +138,15 @@ export async function attachImagesToReport(reportId: string, buffers: Buffer[]):
   return { accepted: urls.length, total: merged.length, full: merged.length >= REPORT_IMAGE_MAX };
 }
 
-export default { createPlayerReport, setReportThreadId, findReportByThread, attachImagesToReport };
-module.exports = { createPlayerReport, setReportThreadId, findReportByThread, attachImagesToReport };
+/** Update a report's status (open | reviewed | closed). */
+export async function setReportStatus(reportId: string, status: string): Promise<void> {
+  await prisma.playerReport.update({ where: { id: reportId }, data: { status } });
+}
+
+/** Permanently delete a report row. */
+export async function deleteReport(reportId: string): Promise<void> {
+  await prisma.playerReport.delete({ where: { id: reportId } });
+}
+
+export default { createPlayerReport, setReportThreadId, findReportByThread, attachImagesToReport, setReportStatus, deleteReport };
+module.exports = { createPlayerReport, setReportThreadId, findReportByThread, attachImagesToReport, setReportStatus, deleteReport };

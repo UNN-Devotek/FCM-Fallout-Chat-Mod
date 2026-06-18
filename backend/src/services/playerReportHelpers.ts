@@ -63,13 +63,26 @@ export function isAllowedDiscordAttachmentUrl(url: unknown): boolean {
   }
 }
 
-/** Discord thread name for a player report, "🚩 Report · <reporter>", ≤ 100 chars. */
-export function buildPlayerReportThreadName(reporterName: string): string {
-  const prefix = '🚩 Report · ';
-  const name = (reporterName || 'player').replace(/\s+/g, ' ').trim();
-  const room = 100 - prefix.length;
-  return `${prefix}${name.length <= room ? name : name.slice(0, room - 1) + '…'}`;
+/**
+ * Discord thread name for a player report: "<reporter> · <involved> · #<number>"
+ * (no emoji), ≤ Discord's 100-char limit. The "#<number>" is always preserved;
+ * the reporter/involved head is trimmed to fit.
+ */
+export function buildPlayerReportThreadName(
+  reporterName: string,
+  involvedName: string | null | undefined,
+  reportNumber: number,
+): string {
+  const suffix = ` · #${reportNumber}`;
+  const reporter = (reporterName || 'player').replace(/\s+/g, ' ').trim() || 'player';
+  const involved = (involvedName || '').replace(/\s+/g, ' ').trim();
+  let head = involved ? `${reporter} · ${involved}` : reporter;
+  const room = THREAD_NAME_MAX - suffix.length;
+  if (head.length > room) head = head.slice(0, room - 1) + '…';
+  return `${head}${suffix}`;
 }
+
+const THREAD_NAME_MAX = 100;
 
 module.exports = {
   REPORT_CONTENT_MAX,

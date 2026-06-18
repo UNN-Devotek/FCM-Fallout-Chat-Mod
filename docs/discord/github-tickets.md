@@ -35,7 +35,7 @@ second login — like voice channels and reaction roles.
      (see Project board setup below) — the bot does not write the project directly;
    - opens a **private thread** (all threads are private by default — reporter +
      staff via Manage Threads) named **`#<num> · <title>`** (≤ 100 chars), and
-     **@-tags the reporter and the `DEVELOPER_ROLE_ID` role**;
+     **@-tags the reporter and the `SUPPORT_ROLE_ID` role**;
    - **deletes Discord's "started a thread" system message** in the parent channel
      so the panel embed stays at the bottom;
    - posts a summary embed carrying a **🔗 View on GitHub** link button, staff-only
@@ -64,14 +64,23 @@ attachment count on the GitHub side without uploading the files.
 
 ## Report a Player
 
-The **🚩 Report a Player** button submits to the **moderation portal**, not GitHub:
+The **🚩 Report a Player** button **and the website report form** submit to the
+**moderation portal**, not GitHub. Every report gets a sequential **case number**
+(`player_reports.report_number` — a Postgres sequence; assigned to Discord- **and**
+web-filed reports, shown in the portal's `#` column).
 
 1. Any member clicks it → a modal collects *What happened?* + *Player name(s) involved*.
 2. The bot writes a `player_reports` row directly via Prisma (in-process; it upserts
    the reporter's account, mirroring the website form) and fires the mod-log alert.
-3. It opens a **private "lockdown" thread** (reporter + staff) and **@-pings
-   moderators + overseers** (`MODERATOR_ROLE_ID` + `OWNER_ROLE_ID`).
-4. Screenshots dropped in that thread are uploaded to MinIO and attached to the
+3. It opens a **private "lockdown" thread** titled **`<reporter> · <involved> · #<number>`**
+   (no emoji), **@-pings moderators + overseers** (`MODERATOR_ROLE_ID` +
+   `OWNER_ROLE_ID`), and adds staff-only buttons: **✅ Close** (mark the report
+   closed), **🔒 Lock** (lock the thread), **🗑️ Delete** (delete the report **and**
+   tear down the thread).
+4. **Website-filed reports open the same thread** — created in the channel where
+   `/ticket-panel` was last run (persisted as `tickets.panel_channel_id`), so every
+   report lands in Discord with the same number, title, pings, and buttons.
+5. Screenshots dropped in that thread are uploaded to MinIO and attached to the
    report (up to 3, matching the web form) — the bot reacts ✅ on success. Uploads
    are hardened: only **https Discord-CDN** URLs are fetched (SSRF guard), each must
    be `image/*` and **≤ 5 MB** (pre- and post-download), the fetch has a 10s timeout,
@@ -97,7 +106,8 @@ Environment variables (see [`backend/.env.example`](../../backend/.env.example))
 | `GITHUB_OWNER` / `GITHUB_REPO` | Target repo (`UNN-Devotek` / `FCM-Fallout-Chat-Mod`). |
 | `GITHUB_PROJECT_NUMBER` | The single master Project v2 board number (`5`). |
 | `GITHUB_WEBHOOK_SECRET` | HMAC secret for inbound webhooks (future). |
-| `OWNER_ROLE_ID`, `ADMIN_ROLE_ID`, `MODERATOR_ROLE_ID`, `DEVELOPER_ROLE_ID` | Staff roles. Player reports ping `MODERATOR_ROLE_ID` + `OWNER_ROLE_ID` ("overseers"). |
+| `OWNER_ROLE_ID`, `ADMIN_ROLE_ID`, `MODERATOR_ROLE_ID`, `DEVELOPER_ROLE_ID` | Staff roles (button gating). Player-report threads ping `MODERATOR_ROLE_ID` + `OWNER_ROLE_ID` ("overseers"). |
+| `SUPPORT_ROLE_ID` | Role @-pinged in **bug/suggestion** ticket threads (replaced the old developer-role ping). |
 
 ### Project board setup (important)
 
@@ -125,8 +135,8 @@ system message), **Mention @everyone, @here, and All Roles** (to ping the
 developer role), **Embed Links**, **Read Message History**. (`/ticket-panel` is
 registered on `ready`, guild-scoped, upsert-by-name.)
 
-`DEVELOPER_ROLE_ID` must be set for the developer-role @-tag to fire; on the dev
-stack it mirrors `DEV_DEVELOPER_ROLE_ID`.
+Bug/suggestion threads @-ping `SUPPORT_ROLE_ID`; player-report threads ping
+`MODERATOR_ROLE_ID` + `OWNER_ROLE_ID`. Set those role IDs for the pings to fire.
 
 ## Persistence
 

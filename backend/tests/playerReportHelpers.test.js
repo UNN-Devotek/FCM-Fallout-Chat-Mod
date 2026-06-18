@@ -63,14 +63,20 @@ describe('playerReportHelpers', () => {
   });
 
   describe('buildPlayerReportThreadName', () => {
-    it('prefixes and stays within 100 chars', () => {
-      expect(h.buildPlayerReportThreadName('Dweller')).toBe('🚩 Report · Dweller');
-      const long = h.buildPlayerReportThreadName('z'.repeat(200));
-      expect(long.length).toBeLessThanOrEqual(100);
-      expect(long.startsWith('🚩 Report · ')).toBe(true);
+    it('formats as "<reporter> · <involved> · #<num>" with no emoji', () => {
+      expect(h.buildPlayerReportThreadName('Dweller', 'Griefer123', 42)).toBe('Dweller · Griefer123 · #42');
     });
-    it('falls back when name is empty', () => {
-      expect(h.buildPlayerReportThreadName('')).toBe('🚩 Report · player');
+    it('omits the involved segment when blank', () => {
+      expect(h.buildPlayerReportThreadName('Dweller', '', 7)).toBe('Dweller · #7');
+      expect(h.buildPlayerReportThreadName('Dweller', null, 7)).toBe('Dweller · #7');
+    });
+    it('always keeps the #number and stays within 100 chars', () => {
+      const n = h.buildPlayerReportThreadName('z'.repeat(200), 'y'.repeat(200), 123);
+      expect(n.length).toBeLessThanOrEqual(100);
+      expect(n.endsWith(' · #123')).toBe(true);
+    });
+    it('falls back when reporter is empty', () => {
+      expect(h.buildPlayerReportThreadName('', '', 5)).toBe('player · #5');
     });
   });
 });
