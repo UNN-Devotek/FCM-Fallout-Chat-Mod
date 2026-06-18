@@ -4,6 +4,8 @@ import env from '../config/environment';
 import { getTelemetryAdminView, setTelemetry } from '../services/telemetryService';
 import logger from '../config/logger';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 const router = Router();
 
 // Require owner or admin Discord role (same tier as admin-users management).
@@ -52,6 +54,11 @@ router.post('/', async (req: Request, res: Response, next: NextFunction): Promis
 
     if (scopeStr === 'user' && !userId) {
       res.status(400).json({ error: '`userId` is required when scope is "user"' });
+      return;
+    }
+
+    if (scopeStr === 'user' && !UUID_RE.test(userId!)) {
+      res.status(400).json({ error: '`userId` must be a valid UUID' });
       return;
     }
 
