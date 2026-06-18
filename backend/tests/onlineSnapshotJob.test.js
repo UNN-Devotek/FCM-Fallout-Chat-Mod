@@ -56,6 +56,15 @@ function makeGatedQuery() {
   return { dbQuery, release: () => releaseFirst && releaseFirst() };
 }
 
+// The scheduled callback runs its DB work THROUGH makeJobTracker, which adds a
+// couple of extra microtask hops (await fn → reset counter → resolve) before the
+// guard's `.finally` clears the `running` flag. A fixed number of
+// `await Promise.resolve()` turns is brittle against that depth, so drain a
+// generous number of turns to let a released tick fully settle.
+async function flushMicrotasks(turns = 20) {
+  for (let i = 0; i < turns; i++) await Promise.resolve();
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe('startOnlineSnapshotJob', () => {
@@ -95,10 +104,10 @@ describe('startOnlineSnapshotJob', () => {
         expect.stringContaining('previous insert still running'),
       );
 
-      // Release #1 → flag clears → a later tick can run.
+      // Release #1 → tracker settles → guard's `.finally` clears the flag → a
+      // later tick can run.
       release();
-      await Promise.resolve();
-      await Promise.resolve();
+      await flushMicrotasks();
 
       tick();
       await Promise.resolve();
@@ -141,8 +150,7 @@ describe('startOnlineSnapshotJob', () => {
       );
 
       release();
-      await Promise.resolve();
-      await Promise.resolve();
+      await flushMicrotasks();
 
       purge();
       await Promise.resolve();
