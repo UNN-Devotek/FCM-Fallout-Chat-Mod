@@ -13,6 +13,9 @@ const VALID_REPORT_STATUSES = ['open', 'resolved', 'dismissed', 'escalated'];
 async function submitReport(req: Request, res: Response, next: NextFunction): Promise<void> {
   const { targetUserId, messageId, reason, notes } = req.body;
   try {
+    if (req.user.id === targetUserId) {
+      return next(createError(400, 'You cannot report yourself'));
+    }
     // Use raw transaction for the message lock (FOR SHARE) -- Prisma doesn't support row-level locks
     const report = await prisma.$transaction(async (tx) => {
       if (messageId) {
