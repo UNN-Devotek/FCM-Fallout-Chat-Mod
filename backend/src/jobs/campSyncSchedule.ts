@@ -15,6 +15,7 @@ import logger from '../config/logger';
 import env from '../config/environment';
 import { runCampSync } from '../services/campService';
 import { getRedisClient } from '../config/redis';
+import { makeJobTracker } from './jobTracker';
 
 const LOCK_KEY     = 'fo76:camp:sync-lock';
 const LOCK_TTL_SEC = 60 * 60; // 1 hour — generous ceiling for a full sync
@@ -29,30 +30,46 @@ export function startCampSyncSchedule(): void {
   const intervalMs = hours * 60 * 60 * 1000;
   logger.info({ hours, intervalMs }, '[campSyncSchedule] sync scheduled');
 
-  setInterval(async () => {
-    logger.info('[campSyncSchedule] sync tick starting');
-
-    // Distributed lock: skip if another sync is already in progress
-    let redis;
-    try {
-      redis = await getRedisClient();
-      const acquired = await redis.set(LOCK_KEY, '1', { NX: true, EX: LOCK_TTL_SEC });
-      if (!acquired) {
-        logger.info('[campSyncSchedule] lock held by another instance — skipping tick');
-        return;
-      }
-    } catch (err) {
-      logger.warn({ err }, '[campSyncSchedule] could not acquire lock — skipping tick');
+  const tracker = makeJobTracker('[campSyncSchedule]');
+  let running = false;
+  setInterval(() => {
+    // Overlap guard: skip if the previous tick is still in flight.
+    if (running) {
+      logger.warn('[campSyncSchedule] previous tick still running — skipping this tick');
       return;
     }
+    running = true;
+    // Tracker swallows the rejection (counting it for escalation) so this
+    // promise always resolves; .finally clears the running flag. A lock-held /
+    // lock-acquire skip returns normally (not a failure); only a real
+    // runCampSync() error rethrows so the tracker can escalate it.
+    void tracker(async () => {
+      logger.info('[campSyncSchedule] sync tick starting');
 
-    try {
-      const result = await runCampSync();
-      logger.info(result, '[campSyncSchedule] sync tick complete');
-    } catch (err) {
-      logger.warn({ err }, '[campSyncSchedule] sync tick failed');
-    } finally {
-      try { await redis.del(LOCK_KEY); } catch { /* ignore */ }
-    }
+      // Distributed lock: skip if another sync is already in progress.
+      let redis;
+      try {
+        redis = await getRedisClient();
+        const acquired = await redis.set(LOCK_KEY, '1', { NX: true, EX: LOCK_TTL_SEC });
+        if (!acquired) {
+          logger.info('[campSyncSchedule] lock held by another instance — skipping tick');
+          return; // expected skip — not a failure
+        }
+      } catch (err) {
+        // Could not even reach Redis to acquire the lock — treat as a failure so
+        // a persistently unreachable Redis escalates rather than silently skips.
+        logger.warn({ err }, '[campSyncSchedule] could not acquire lock');
+        throw err;
+      }
+
+      try {
+        const result = await runCampSync();
+        logger.info(result, '[campSyncSchedule] sync tick complete');
+      } finally {
+        try { await redis.del(LOCK_KEY); } catch { /* ignore */ }
+      }
+    }).finally(() => {
+      running = false;
+    });
   }, intervalMs);
 }

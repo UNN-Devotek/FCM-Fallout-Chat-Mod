@@ -171,6 +171,27 @@ export async function createPlayerReportWeb(req: Request, res: Response, next: N
       footerText: `Report ID: ${report.id}`,
     }).catch(() => {});
 
+    // Web-filed PLAYER reports also open a Discord lockdown thread (best-effort;
+    // lazy-require to avoid a static import cycle with the Discord services).
+    if (reportTypeSafe === 'player') {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        const ticketService = require('../services/ticketService');
+        void ticketService
+          .openReportThread({
+            reportId: report.id,
+            reportNumber: report.reportNumber,
+            reporterName: user.discordDisplayName || user.discordUsername || user.username || pub.discordId,
+            reporterDiscordId: user.discordId,
+            involvedPlayers: involvedSafe,
+            content: content.trim(),
+          })
+          .catch(() => {});
+      } catch {
+        /* Discord bridge not ready — the report is still created */
+      }
+    }
+
     res.status(201).json({ data: report });
   } catch (err) { next(err); }
 }

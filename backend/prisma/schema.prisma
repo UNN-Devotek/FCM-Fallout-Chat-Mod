@@ -315,12 +315,19 @@ model PlayerReport {
   involvedPlayers String?  @map("involved_players")
   imageUrls       String?  @map("image_urls") // JSON: string[] of MinIO URLs
   status          String   @default("open") // open | reviewed | closed
+  // Sequential, human-facing case number — assigned to EVERY report (Discord + web)
+  // by a Postgres sequence; shown in the portal and the Discord thread title.
+  reportNumber    Int      @unique @default(autoincrement()) @map("report_number")
+  // Discord "lockdown" thread for reports filed from the Discord panel; lets the
+  // bot attach screenshots dropped in the thread to this report. Null for web reports.
+  discordThreadId String?  @map("discord_thread_id")
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([status, createdAt(sort: Desc)])
+  @@index([discordThreadId])
   @@map("player_reports")
 }
 
@@ -869,4 +876,24 @@ model McpApiKey {
   @@index([ownerId])
   @@index([keyHash])
   @@map("mcp_api_keys")
+}
+
+// Maps a GitHub issue to its Discord support thread (both sync directions).
+// Created by the ticketing feature (Bug / Suggestion / Support). See
+// docs/discord/github-tickets.md.
+model GithubIssueThread {
+  id              String   @id @default(uuid())
+  issueNumber     Int      @unique @map("issue_number")
+  issueNodeId     String   @map("issue_node_id")
+  issueUrl        String   @map("issue_url")
+  type            String // 'bug' | 'suggestion' | 'support'
+  discordThreadId String   @unique @map("discord_thread_id")
+  discordChannelId String  @map("discord_channel_id")
+  reporterId      String   @map("reporter_id")
+  isPrivate       Boolean  @default(false) @map("is_private")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@index([discordThreadId])
+  @@map("github_issue_threads")
 }

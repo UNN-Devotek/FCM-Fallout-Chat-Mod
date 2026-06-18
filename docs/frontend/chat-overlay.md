@@ -89,7 +89,7 @@ Server enforcement is primary; these client-side checks are a backstop.
 | Party join/invite | Disabled; clicking VIEW navigates to party browser |
 | Party right-click | Suppressed (`ChatOverlay.tsx:4168`) |
 | Combined feed party inclusion | Public parties only (`feedPartyIds = publicPartyIdKey.split(',')`, `ChatOverlay.tsx:3464`) |
-| WebSocket | Never opened (`ChatOverlay.tsx:2340`) |
+| WebSocket | Never opened — `isPublicMode` is folded into the connect gate (`deriveWsShouldConnect`), so public mode can never open the authed socket and a **session expiry** (`user` → null flips `isPublicMode` true) immediately tears down an already-open socket via the gate rather than leaving it open. Pure helper unit-tested in `wsGate.test.ts`. |
 | Authenticated REST endpoints | Never called |
 | Tag click navigation | `target = isPublicMode ? null : ...` — tags are not clickable (`ChatOverlay.tsx:4904`) |
 

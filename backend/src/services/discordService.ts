@@ -6,7 +6,9 @@ import messageQueue from '../queues/messagePersist';
 import logger from '../config/logger';
 import voiceService from './voiceService';
 import reactionRoleService from './reactionRoleService';
+import ticketService from './ticketService';
 import { getEntry, bestMatch } from './wikiCatalogService';
+import { canon } from '../utils/textCanon';
 
 let discordClient: Client | null = null;
 let broadcastFn: ((payload: any, excludeWs?: any) => void) | null = null; // Injected from WS handler to avoid circular deps
@@ -40,9 +42,20 @@ function startDrain(): void {
 /**
  * Strip Discord mention patterns from content to prevent mention abuse via relay.
  * Replaces @everyone, @here, <@userId>, <@!userId>, <@&roleId>, <#channelId>.
+ * Detection runs on the canonical (NFD + combining-marks-stripped) form so a
+ * combining-diacritic-padded @everyone / @here can't bypass the literal check.
  */
+const EVERYONE_HERE_RE = /@(everyone|here)/;
+
 function stripMentions(text: string): string {
-  return text
+  // Detect on the CANONICAL form (NFD + stripped combining marks) so a
+  // combining-diacritic-padded @everyone/@here can't slip a live ping through to
+  // Discord. Only canonicalise the whole message when such a token is actually
+  // present in canonical form — keeps innocent accented text byte-faithful. Bare
+  // NFC was ineffective here because it leaves the visible accent in place.
+  const canonText = canon(text);
+  const base = EVERYONE_HERE_RE.test(canonText) ? canonText : text;
+  return base
     .replace(/@(everyone|here)/g, '$1')
     .replace(/<@!?\d+>/g, '[user]')
     .replace(/<@&\d+>/g, '[role]')
@@ -146,8 +159,11 @@ function markdownifyLinks(text: string): string {
       const hasPath = (u.pathname && u.pathname !== '/') || u.search || u.hash;
       let disp = hasPath ? `${host}/…` : host;
       if (disp.length > 32) disp = disp.slice(0, 31) + '…';
-      // Escape ']' in display text so it can't break out of the markdown label.
-      disp = disp.replace(/]/g, '\\]');
+      // Escape every markdown-label metacharacter so nothing can break out of the
+      // `[label]` span. Backslash MUST be escaped first (otherwise the escapes we
+      // add for [ and ] could be neutralised by a pre-existing trailing backslash),
+      // then the bracket pair that delimits the label.
+      disp = disp.replace(/[\\[\]]/g, '\\$&');
       return `[${disp}](${trimmed})${trailing}`;
     } catch {
       return raw;
@@ -319,6 +335,7 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
   // ready/voiceStateUpdate/interactionCreate/messageReaction* handlers register here.
   voiceService.register(discordClient);
   reactionRoleService.register(discordClient);
+  ticketService.register(discordClient);
 
   // Invalidate the emoji cache whenever the guild's emoji set changes.
   // Lazy-require to avoid circular deps (discordEmojisController imports us too).
@@ -1219,6 +1236,6 @@ function invalidateRelayMappingsCache(): void {
   mappingsLastLoaded = 0;
 }
 
-export { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, invalidateRelayMappingsCache, loadRelayMappings, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname };
+export { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, invalidateRelayMappingsCache, loadRelayMappings, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };
 export type { };
-module.exports = { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, invalidateRelayMappingsCache, loadRelayMappings, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname };
+module.exports = { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, invalidateRelayMappingsCache, loadRelayMappings, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };

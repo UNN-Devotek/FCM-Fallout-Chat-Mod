@@ -180,6 +180,7 @@ These are non-negotiable. Each links to the doc with the full context.
 | JSON keys | `camelCase` | all API payloads |
 | Socket events | `domain:action` | `chat:message`, `room:join` |
 | Dates | ISO 8601 UTC strings | always |
+| Discord embeds | brand color **`#F1C40F`** (RGB 241,196,15) | every embed uses `BRAND_EMBED_COLOR` |
 
 Backend layer order is `Controllers → Services → Middleware`; errors use RFC 7807 Problem Details,
 success responses wrap in `{ "data": { … } }`. Details in [docs/backend/README.md](docs/backend/README.md).

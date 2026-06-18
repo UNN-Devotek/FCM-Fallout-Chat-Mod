@@ -2,14 +2,21 @@
 
 ## Player Reports (`player_reports` table)
 
-Submitted via `/report` in the overlay. Distinct from the `reports` table — these are free-text submissions with optional screenshot attachments.
+Submitted via `/report` in the overlay, the website **Report a Player** form, **or
+the Discord "🚩 Report a Player" button** (see
+[docs/discord/github-tickets.md](../discord/github-tickets.md#report-a-player) — opens
+a private lockdown thread, pings moderators + overseers, and attaches thread
+screenshots to the report). Distinct from the `reports` table — these are free-text
+submissions with optional screenshot attachments.
 
 | Field | Notes |
 |---|---|
 | `report_type` | `'player'` (default) or `'bug'` |
+| `report_number` | Sequential case number (Postgres sequence) — assigned to every report (Discord + web); shown in the portal and the Discord thread title |
 | `content` | Free-text description |
 | `involved_players` | Optional: comma-separated player names |
 | `image_urls` | JSON `string[]` of MinIO public URLs (up to 3 images) |
+| `discord_thread_id` | Set when filed from Discord — the lockdown thread for evidence |
 | `status` | `'open'` \| `'reviewed'` \| `'closed'` |
 
 ### Report Image Upload (`reportImageService.ts`)
@@ -51,6 +58,21 @@ Ban creation (`createBan`) requires at least one piece of evidence. Evidence is 
 **Image security:** `uploadEvidence(buf, _clientMime)` in `banEvidenceStorage.ts` ignores the client-declared MIME entirely. It inspects the first 12-16 bytes for magic numbers to detect PNG/JPEG/GIF/WebP and throws if the bytes do not match a whitelisted format. The detected MIME is stored in the `ban_evidence.mime` column as ground truth.
 
 **Image serving:** Evidence images are served via a backend-proxied route (`/api/moderation/bans/:id/evidence/:fileId`). No public URLs, no signed-URL juggling. The route streams the object from MinIO through the backend.
+
+**Evidence access control (per-ban scoping):** The moderation routes are gated by `requireDiscordRole(OWNER, ADMIN, MODERATOR)`, but evidence (`text_content` + image `object_key`) is **further scoped per-ban** so a moderator cannot read the evidence of bans issued by other staff. The rule lives in `assertBanEvidenceAccess()` / `isEvidencePrivileged()` (`moderationActionsController.ts`):
+
+- **Owners and admins** see all evidence for every ban.
+- **Every other persona** (moderator, supporter, developer, and any future non-privileged role admitted to the route) may only see evidence for bans where `ban.banned_by_id` equals their own internal user id — i.e. bans they personally issued. The check is role-set based, not a literal `'moderator'` string match, so a supporter/developer cannot slip through.
+
+This is enforced on all three evidence surfaces:
+
+| Endpoint | Non-owner/admin behaviour |
+|---|---|
+| `GET /api/moderation/bans/:id/evidence/:fileId` (image stream) | Streams only if the caller issued the ban; otherwise **404** (not 403 — avoids a ban-existence oracle) and the object is never read from storage. |
+| `GET /api/moderation/bans/:id` | The ban metadata still returns, but the `evidence` relation is **stripped to `[]`** unless the caller issued the ban. |
+| `GET /api/moderation/evidence` (gallery) | `findMany` is filtered with `where: { ban: { bannedById: <actor> } }`; owners/admins get the full, unfiltered list. |
+
+`GET /api/moderation/bans` (the ban list) intentionally exposes evidence **metadata only** (`id`, `type`, `mime`, `sizeBytes`) to all moderators — never `text_content` or `object_key` — so ban existence is not secret, only the evidence content is.
 
 **Evidence deletion:** When a `bans` row is deleted (cascade), the `ban_evidence` DB rows are deleted, but the corresponding MinIO objects are NOT automatically removed — cleanup must be triggered explicitly via `deleteEvidence(objectKey)`.
 
