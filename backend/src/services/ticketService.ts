@@ -102,6 +102,13 @@ function isStaffInteraction(interaction: any): boolean {
   return isStaff(memberRoleIds(interaction), staffRoleIds());
 }
 
+/** Overseers (owner role) or Discord admins — the only ones who may post the panel. */
+function isOverseer(interaction: any): boolean {
+  if (interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) return true;
+  const owner = env.OWNER_ROLE_ID;
+  return !!owner && memberRoleIds(interaction).includes(owner);
+}
+
 /** GitHub Projects v2 board URL for a user-owned project. */
 function projectUrl(projectNumber: number): string {
   return `https://github.com/users/${env.GITHUB_OWNER}/projects/${projectNumber}`;
@@ -139,9 +146,9 @@ function buildPanel() {
     .setColor(BRAND_EMBED_COLOR);
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(buildCustomId('open', 'bug')).setLabel('Report a Bug').setEmoji('🐞').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(buildCustomId('open', 'bug')).setLabel('Report a Bug').setEmoji('🐞').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(buildCustomId('player')).setLabel('Report a Player').setEmoji('🚩').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(buildCustomId('open', 'suggestion')).setLabel('Suggestion').setEmoji('💡').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(buildCustomId('open', 'suggestion')).setLabel('Suggestion').setEmoji('💡').setStyle(ButtonStyle.Secondary),
   );
   return { embeds: [embed], components: [row] };
 }
@@ -265,8 +272,8 @@ async function deleteThreadSystemMessage(channel: TextChannel, threadId: string)
 // Interaction handlers
 // ---------------------------------------------------------------------------
 async function handlePanelCommand(interaction: any): Promise<void> {
-  if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
-    return ephem(interaction, 'You need the Manage Server permission to post the ticket panel.');
+  if (!isOverseer(interaction)) {
+    return ephem(interaction, 'Only overseers (or server admins) can post the ticket panel.');
   }
   const channel = interaction.channel;
   if (!channel || channel.type !== ChannelType.GuildText) {
@@ -803,8 +810,8 @@ async function registerCommands(client: Client): Promise<void> {
   try {
     const panel = new SlashCommandBuilder()
       .setName(PANEL_COMMAND)
-      .setDescription('Post the bug/suggestion ticket panel in this channel (staff only)')
-      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+      .setDescription('Post the ticket panel in this channel (overseers/admins only)')
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .setDMPermission(false)
       .toJSON();
     await client.application?.commands.create(panel, guildId);

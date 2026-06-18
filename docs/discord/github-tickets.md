@@ -25,9 +25,11 @@ second login — like voice channels and reaction roles.
 
 ## Flow (increment 1)
 
-1. A staff member runs **`/ticket-panel`** in a text channel → the bot posts an
-   embed (brand color `#F1C40F`) with **🐞 Report a Bug**, **🚩 Report a Player**,
-   and **💡 Suggestion** buttons, plus a link to the master project board.
+1. An **overseer or server admin** runs **`/ticket-panel`** in a text channel
+   (the command is locked to **Administrator** by default and the handler also
+   accepts the **owner/overseer role**) → the bot posts an embed (brand color
+   `#F1C40F`) with **🐞 Report a Bug**, **🚩 Report a Player**, and **💡 Suggestion**
+   buttons (all the same Secondary style), plus a link to the master project board.
 2. A member clicks a button → a **modal** collects *Title*, *Description* (and
    *Steps to reproduce* for bugs). Discord modals cannot accept files, so the issue
    is **text-only** — screenshots go in the thread.
