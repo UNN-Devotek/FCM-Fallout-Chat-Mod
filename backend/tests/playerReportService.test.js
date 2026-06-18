@@ -25,7 +25,7 @@ describe('playerReportService', () => {
     it('creates the user if missing, sanitizes input, and creates the report', async () => {
       prisma.user.findFirst.mockResolvedValue(null);
       prisma.user.create.mockResolvedValue({ id: 'u1', username: 'discord:1', discordUsername: 'dev' });
-      prisma.playerReport.create.mockResolvedValue({ id: 'r1' });
+      prisma.playerReport.create.mockResolvedValue({ id: 'r1', reportNumber: 1 });
 
       const out = await svc.createPlayerReport({
         discordId: '1',
@@ -44,7 +44,13 @@ describe('playerReportService', () => {
           status: 'open',
         },
       });
-      expect(out).toEqual({ id: 'r1', reporterName: 'dev' });
+      expect(out).toEqual({
+        id: 'r1',
+        reportNumber: 1,
+        reporterName: 'dev',
+        reporterDiscordId: '1',
+        involvedPlayers: 'bBob/b  Eve',
+      });
     });
 
     it('reuses an existing user', async () => {
