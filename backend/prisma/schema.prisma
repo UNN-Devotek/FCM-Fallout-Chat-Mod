@@ -315,6 +315,9 @@ model PlayerReport {
   involvedPlayers String?  @map("involved_players")
   imageUrls       String?  @map("image_urls") // JSON: string[] of MinIO URLs
   status          String   @default("open") // open | reviewed | closed
+  // Sequential, human-facing case number — assigned to EVERY report (Discord + web)
+  // by a Postgres sequence; shown in the portal and the Discord thread title.
+  reportNumber    Int      @unique @default(autoincrement()) @map("report_number")
   // Discord "lockdown" thread for reports filed from the Discord panel; lets the
   // bot attach screenshots dropped in the thread to this report. Null for web reports.
   discordThreadId String?  @map("discord_thread_id")
