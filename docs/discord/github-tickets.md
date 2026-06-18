@@ -4,7 +4,9 @@ Turns Discord into the front door for our tracker. Members file **bug reports**,
 **suggestions**, and **player reports** from a panel of buttons. Bug/suggestion
 issues land on a single **master Project v2 board** (all issues + features) via
 GitHub's Auto-add workflow; **player reports** go to the **moderation portal**
-(not GitHub). Every report opens a **private thread**.
+(not GitHub). Every report opens a **private thread**. Threads **auto-archive after 24h of
+inactivity** — open (unlocked) threads re-open when someone posts (users can still
+reply); **Closed/Locked** threads stay shut.
 
 Implemented in [`backend/src/services/ticketService.ts`](../../backend/src/services/ticketService.ts)
 (Discord wiring), [`githubService.ts`](../../backend/src/services/githubService.ts)
@@ -14,18 +16,21 @@ Implemented in [`backend/src/services/ticketService.ts`](../../backend/src/servi
 second login — like voice channels and reaction roles.
 
 > **Status:** Outbound flow is live — private-by-default threads; View on GitHub /
-> Add to Roadmap / Close / Delete buttons; developer-role tagging; the optional
-> milestone picker; a **Report a Player** button (→ moderation portal); and a single
-> master project board. Still to come: the inbound GitHub webhook (comment→thread,
+> Project Board / Close / Delete buttons; the submitted Description (and Steps for
+> bugs) echoed in the thread embed; support-role tagging; the optional milestone
+> picker; a **Report a Player** button (→ moderation portal); and a single master
+> project board. Still to come: the inbound GitHub webhook (comment→thread,
 > close→thread) and thread→comment sync.
 
 ---
 
 ## Flow (increment 1)
 
-1. A staff member runs **`/ticket-panel`** in a text channel → the bot posts an
-   embed (brand color `#F1C40F`) with **🐞 Report a Bug**, **🚩 Report a Player**,
-   and **💡 Suggestion** buttons, plus a link to the master project board.
+1. An **overseer or server admin** runs **`/ticket-panel`** in a text channel
+   (the command is locked to **Administrator** by default and the handler also
+   accepts the **owner/overseer role**) → the bot posts an embed (brand color
+   `#F1C40F`) with **🐞 Report a Bug**, **🚩 Report a Player**, and **💡 Suggestion**
+   buttons (all the same Secondary style), plus a link to the master project board.
 2. A member clicks a button → a **modal** collects *Title*, *Description* (and
    *Steps to reproduce* for bugs). Discord modals cannot accept files, so the issue
    is **text-only** — screenshots go in the thread.
@@ -35,24 +40,32 @@ second login — like voice channels and reaction roles.
      (see Project board setup below) — the bot does not write the project directly;
    - opens a **private thread** (all threads are private by default — reporter +
      staff via Manage Threads) named **`#<num> · <title>`** (≤ 100 chars), and
-     **@-tags the reporter and the `DEVELOPER_ROLE_ID` role**;
+     **@-tags the reporter and the `SUPPORT_ROLE_ID` role**;
    - **deletes Discord's "started a thread" system message** in the parent channel
      so the panel embed stays at the bottom;
-   - posts a summary embed carrying a **🔗 View on GitHub** link button, staff-only
-     **🗺️ Add to Roadmap / ✅ Close / 🗑️ Delete** buttons, and an **optional
-     milestone picker** (select menu of the repo's open milestones — reporter or
-     staff may set one);
+   - posts a summary embed that **echoes the submitted Description** (and **Steps to
+     reproduce** for bugs) right under the issue link, carrying **🔗 View on GitHub**
+     and **📋 Project Board** link buttons (open to everyone), staff-only **✅ Close /
+     🗑️ Delete** buttons, and an **optional milestone picker** (select menu of the
+     repo's open milestones — reporter or staff may set one). Description/Steps are
+     clipped to Discord's 1024-char field limit; the full text lives on GitHub;
    - records the issue↔thread mapping in `github_issue_threads`.
-4. Thread buttons (staff only):
-   - **Add to Roadmap** → applies the `roadmap` label (marks planned features within
-     the master board; there is no separate roadmap board).
-   - **Close** → **immediately locks** the thread (done first and independently of
+   - **bug** threads also list the overlay **log** (`…\Fallout Chat Mod\logs\main.log`
+     / `~/.config/Fallout Chat Mod/logs/main.log`), **keybinds** (`…keybinds.cfg`),
+     and the in-game/HUD log (`Documents\My Games\Fallout 76\zfe.log` on Windows, or
+     under the Proton `compatdata/1151340` prefix on Linux) — each with **both
+     Windows and Linux paths** — asking the reporter to attach them for
+     overlay-behavior or in-game/game issues (`BUG_DIAGNOSTICS_FIELD`).
+4. Thread buttons:
+   - **🔗 View on GitHub** / **📋 Project Board** → link buttons (anyone) to the issue
+     and the master project board.
+   - **Close** *(staff only)* → **immediately locks** the thread (done first and independently of
      the GitHub call, so a GitHub error can't leave it open) so only members with
      **Manage Threads** — admins/devs/mods — can post and everyone else is
      read-only; then closes + archives the GitHub issue. Lock failures surface to
      the closer (bot needs Manage Threads). For non-staff to be fully read-only,
      the admin/dev/mod roles must hold Manage Threads in the channel.
-   - **Delete** (with a confirm step) → **deletes the GitHub issue** (falls back to
+   - **Delete** *(staff only,* with a confirm step) → **deletes the GitHub issue** (falls back to
      closing it if the token lacks delete permission), removes the DB mapping, and
      **deletes the thread** — full teardown.
 
@@ -64,14 +77,23 @@ attachment count on the GitHub side without uploading the files.
 
 ## Report a Player
 
-The **🚩 Report a Player** button submits to the **moderation portal**, not GitHub:
+The **🚩 Report a Player** button **and the website report form** submit to the
+**moderation portal**, not GitHub. Every report gets a sequential **case number**
+(`player_reports.report_number` — a Postgres sequence; assigned to Discord- **and**
+web-filed reports, shown in the portal's `#` column).
 
 1. Any member clicks it → a modal collects *What happened?* + *Player name(s) involved*.
 2. The bot writes a `player_reports` row directly via Prisma (in-process; it upserts
    the reporter's account, mirroring the website form) and fires the mod-log alert.
-3. It opens a **private "lockdown" thread** (reporter + staff) and **@-pings
-   moderators + overseers** (`MODERATOR_ROLE_ID` + `OWNER_ROLE_ID`).
-4. Screenshots dropped in that thread are uploaded to MinIO and attached to the
+3. It opens a **private "lockdown" thread** titled **`Player Report · #<number> · <involved> · <reporter>`**
+   (no emoji), **@-pings moderators + overseers** (`MODERATOR_ROLE_ID` +
+   `OWNER_ROLE_ID`), and adds staff-only buttons: **✅ Close** (mark the report
+   closed), **🔒 Lock** (lock the thread), **🗑️ Delete** (delete the report **and**
+   tear down the thread).
+4. **Website-filed reports open the same thread** — created in the channel where
+   `/ticket-panel` was last run (persisted as `tickets.panel_channel_id`), so every
+   report lands in Discord with the same number, title, pings, and buttons.
+5. Screenshots dropped in that thread are uploaded to MinIO and attached to the
    report (up to 3, matching the web form) — the bot reacts ✅ on success. Uploads
    are hardened: only **https Discord-CDN** URLs are fetched (SSRF guard), each must
    be `image/*` and **≤ 5 MB** (pre- and post-download), the fetch has a 10s timeout,
@@ -97,7 +119,8 @@ Environment variables (see [`backend/.env.example`](../../backend/.env.example))
 | `GITHUB_OWNER` / `GITHUB_REPO` | Target repo (`UNN-Devotek` / `FCM-Fallout-Chat-Mod`). |
 | `GITHUB_PROJECT_NUMBER` | The single master Project v2 board number (`5`). |
 | `GITHUB_WEBHOOK_SECRET` | HMAC secret for inbound webhooks (future). |
-| `OWNER_ROLE_ID`, `ADMIN_ROLE_ID`, `MODERATOR_ROLE_ID`, `DEVELOPER_ROLE_ID` | Staff roles. Player reports ping `MODERATOR_ROLE_ID` + `OWNER_ROLE_ID` ("overseers"). |
+| `OWNER_ROLE_ID`, `ADMIN_ROLE_ID`, `MODERATOR_ROLE_ID`, `DEVELOPER_ROLE_ID` | Staff roles (button gating). Player-report threads ping `MODERATOR_ROLE_ID` + `OWNER_ROLE_ID` ("overseers"). |
+| `SUPPORT_ROLE_ID` | Role @-pinged in **bug/suggestion** ticket threads (replaced the old developer-role ping). |
 
 ### Project board setup (important)
 
@@ -105,11 +128,13 @@ Environment variables (see [`backend/.env.example`](../../backend/.env.example))
 the bot.** Fine-grained PATs (`github_pat_…`) **cannot** write to *user-owned*
 Projects v2 — `addProjectV2ItemById` returns `FORBIDDEN: Resource not accessible by
 personal access token` regardless of the token's permissions. So the bot only sets
-**labels** (which it can do), and each project's Auto-add workflow places the item.
+the **type label** (`bug` / `suggestion`, which it can do) at issue-creation time, and
+the project's Auto-add workflow places the item.
 
 Enable, in the master project → **⋯ → Workflows → Auto-add to project**:
 - filter `is:issue is:open` to add every issue (or `is:issue is:open label:bug,suggestion`
-  to scope it). The `roadmap` label marks planned features within the board.
+  to scope it). A `roadmap` label (applied manually in GitHub) can mark planned features
+  within the board — the bot no longer applies it.
 
 The bot does **not** call the project API at all — board placement is entirely the
 Auto-add workflows above. (To add items directly instead, you'd need a **classic**
@@ -125,8 +150,8 @@ system message), **Mention @everyone, @here, and All Roles** (to ping the
 developer role), **Embed Links**, **Read Message History**. (`/ticket-panel` is
 registered on `ready`, guild-scoped, upsert-by-name.)
 
-`DEVELOPER_ROLE_ID` must be set for the developer-role @-tag to fire; on the dev
-stack it mirrors `DEV_DEVELOPER_ROLE_ID`.
+Bug/suggestion threads @-ping `SUPPORT_ROLE_ID`; player-report threads ping
+`MODERATOR_ROLE_ID` + `OWNER_ROLE_ID`. Set those role IDs for the pings to fire.
 
 ## Persistence
 

@@ -10,13 +10,13 @@ describe('githubTicketHelpers', () => {
   describe('buildCustomId / parseCustomId', () => {
     it('builds namespaced ids with and without an arg', () => {
       expect(h.buildCustomId('open', 'bug')).toBe('ght:open:bug');
-      expect(h.buildCustomId('roadmap', '123')).toBe('ght:roadmap:123');
+      expect(h.buildCustomId('milestone', '123')).toBe('ght:milestone:123');
       expect(h.buildCustomId('refresh')).toBe('ght:refresh');
     });
 
     it('round-trips through parseCustomId', () => {
       expect(h.parseCustomId('ght:open:bug')).toEqual({ isOurs: true, action: 'open', arg: 'bug' });
-      expect(h.parseCustomId('ght:roadmap:42')).toEqual({ isOurs: true, action: 'roadmap', arg: '42' });
+      expect(h.parseCustomId('ght:milestone:42')).toEqual({ isOurs: true, action: 'milestone', arg: '42' });
       expect(h.parseCustomId('ght:refresh')).toEqual({ isOurs: true, action: 'refresh', arg: '' });
     });
 
@@ -125,6 +125,21 @@ describe('githubTicketHelpers', () => {
     it('uses singular for one attachment', () => {
       const out = h.formatDiscordMessageForGitHub({ authorName: 'D', content: 'x', attachmentCount: 1 });
       expect(out).toContain('1 attachment shared');
+    });
+  });
+
+  describe('BUG_DIAGNOSTICS_FIELD', () => {
+    it('lists log, keybind, and game-file locations within Discord limits', () => {
+      const f = h.BUG_DIAGNOSTICS_FIELD;
+      expect(f.name.length).toBeLessThanOrEqual(256);
+      expect(f.value.length).toBeLessThanOrEqual(1024);
+      expect(f.value).toContain('main.log');
+      expect(f.value).toContain('keybinds.cfg');
+      expect(f.value).toContain('zfe.log');
+      expect(f.value).toContain('~/.config/Fallout Chat Mod/logs/main.log');
+      // every location has BOTH a Windows and a Linux path
+      expect(f.value).toContain('~/.config/Fallout Chat Mod/keybinds.cfg'); // linux keybinds
+      expect(f.value).toContain('compatdata/1151340'); // linux/Proton zfe.log
     });
   });
 });

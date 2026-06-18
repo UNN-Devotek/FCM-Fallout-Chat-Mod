@@ -54,6 +54,7 @@ import {
   labelForType,
   colorForType,
   BRAND_EMBED_COLOR,
+  BUG_DIAGNOSTICS_FIELD,
   displayForType,
   isStaff,
   isTicketType,
@@ -61,6 +62,23 @@ import {
 } from './githubTicketHelpers';
 
 const PANEL_COMMAND = 'ticket-panel';
+const PANEL_CHANNEL_KEY = 'tickets.panel_channel_id';
+// Auto-archive threads after 24h of inactivity. Open (unlocked) threads re-open on
+// a new message, so users can still reply; only Closed/Locked threads stay shut.
+const THREAD_AUTOARCHIVE_MINUTES = 1440;
+
+let clientRef: Client | null = null;
+
+/** Channel where /ticket-panel was last posted — where web-filed reports open their thread. */
+async function getPanelChannelId(): Promise<string | null> {
+  const row = await prisma.moderationSetting.findUnique({ where: { key: PANEL_CHANNEL_KEY } }).catch(() => null);
+  return row?.value || null;
+}
+async function setPanelChannelId(channelId: string): Promise<void> {
+  await prisma.moderationSetting
+    .upsert({ where: { key: PANEL_CHANNEL_KEY }, update: { value: channelId }, create: { key: PANEL_CHANNEL_KEY, value: channelId } })
+    .catch((err) => logger.warn({ err }, 'ticket: failed to persist panel channel'));
+}
 
 function staffRoleIds() {
   return {
@@ -83,6 +101,13 @@ function memberRoleIds(interaction: any): string[] {
 function isStaffInteraction(interaction: any): boolean {
   if (interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) return true;
   return isStaff(memberRoleIds(interaction), staffRoleIds());
+}
+
+/** Overseers (owner role) or Discord admins — the only ones who may post the panel. */
+function isOverseer(interaction: any): boolean {
+  if (interaction.memberPermissions?.has(PermissionFlagsBits.Administrator)) return true;
+  const owner = env.OWNER_ROLE_ID;
+  return !!owner && memberRoleIds(interaction).includes(owner);
 }
 
 /** GitHub Projects v2 board URL for a user-owned project. */
@@ -122,9 +147,9 @@ function buildPanel() {
     .setColor(BRAND_EMBED_COLOR);
 
   const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-    new ButtonBuilder().setCustomId(buildCustomId('open', 'bug')).setLabel('Report a Bug').setEmoji('🐞').setStyle(ButtonStyle.Danger),
+    new ButtonBuilder().setCustomId(buildCustomId('open', 'bug')).setLabel('Report a Bug').setEmoji('🐞').setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId(buildCustomId('player')).setLabel('Report a Player').setEmoji('🚩').setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId(buildCustomId('open', 'suggestion')).setLabel('Suggestion').setEmoji('💡').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId(buildCustomId('open', 'suggestion')).setLabel('Suggestion').setEmoji('💡').setStyle(ButtonStyle.Secondary),
   );
   return { embeds: [embed], components: [row] };
 }
@@ -172,10 +197,10 @@ async function buildThreadComponents(issueNumber: number, issueUrl: string) {
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setLabel('View on GitHub').setEmoji('🔗').setStyle(ButtonStyle.Link).setURL(issueUrl),
       new ButtonBuilder()
-        .setCustomId(buildCustomId('roadmap', String(issueNumber)))
-        .setLabel('Add to Roadmap')
-        .setEmoji('🗺️')
-        .setStyle(ButtonStyle.Secondary),
+        .setLabel('Project Board')
+        .setEmoji('📋')
+        .setStyle(ButtonStyle.Link)
+        .setURL(projectUrl(env.GITHUB_PROJECT_NUMBER)),
       new ButtonBuilder()
         .setCustomId(buildCustomId('close', String(issueNumber)))
         .setLabel('Close')
@@ -210,24 +235,38 @@ async function buildThreadComponents(issueNumber: number, issueUrl: string) {
   return rows;
 }
 
-async function buildThreadIntro(opts: { type: TicketType; issue: { number: number; htmlUrl: string }; reporterId: string }) {
-  const devRole = env.DEVELOPER_ROLE_ID;
+async function buildThreadIntro(opts: {
+  type: TicketType;
+  issue: { number: number; htmlUrl: string };
+  reporterId: string;
+  description: string;
+  steps?: string;
+}) {
+  const supportRole = env.SUPPORT_ROLE_ID;
+  const clip = (s: string, n = 1024) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
   const embed = new EmbedBuilder()
     .setTitle(`${displayForType(opts.type)} · #${opts.issue.number}`)
     .setURL(opts.issue.htmlUrl)
     .setDescription(
-      `Thanks <@${opts.reporterId}>! Tracked on GitHub:\n**[Issue #${opts.issue.number} ↗](${opts.issue.htmlUrl})**\n\n` +
-        '📎 **Drop any screenshots or files here** so we can see what you mean. ' +
-        'Anything posted in this thread is part of the discussion.',
+      `Thanks <@${opts.reporterId}>! 📎 **Drop screenshots/files here** — they're part of the discussion.\n\n` +
+        `Tracked on GitHub: **[Issue #${opts.issue.number} ↗](${opts.issue.htmlUrl})**`,
     )
     .setColor(colorForType(opts.type));
 
-  const content = devRole ? `<@${opts.reporterId}> · <@&${devRole}>` : `<@${opts.reporterId}>`;
+  // Submitted details, right under the issue link.
+  embed.addFields({ name: 'Description', value: clip((opts.description || '').trim() || '_n/a_') });
+  if (opts.type === 'bug') {
+    embed.addFields({ name: 'Steps to reproduce', value: clip((opts.steps || '').trim() || '_Not provided._') });
+    // Log / keybind / game-file locations so users can attach them.
+    embed.addFields(BUG_DIAGNOSTICS_FIELD);
+  }
+
+  const content = supportRole ? `<@${opts.reporterId}> · <@&${supportRole}>` : `<@${opts.reporterId}>`;
   return {
     content,
     embeds: [embed],
     components: await buildThreadComponents(opts.issue.number, opts.issue.htmlUrl),
-    allowedMentions: { users: [opts.reporterId], roles: devRole ? [devRole] : [] },
+    allowedMentions: { users: [opts.reporterId], roles: supportRole ? [supportRole] : [] },
   };
 }
 
@@ -248,15 +287,16 @@ async function deleteThreadSystemMessage(channel: TextChannel, threadId: string)
 // Interaction handlers
 // ---------------------------------------------------------------------------
 async function handlePanelCommand(interaction: any): Promise<void> {
-  if (!interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild)) {
-    return ephem(interaction, 'You need the Manage Server permission to post the ticket panel.');
+  if (!isOverseer(interaction)) {
+    return ephem(interaction, 'Only overseers (or server admins) can post the ticket panel.');
   }
   const channel = interaction.channel;
   if (!channel || channel.type !== ChannelType.GuildText) {
     return ephem(interaction, 'Run this in a standard text channel.');
   }
   await (channel as TextChannel).send(buildPanel());
-  return ephem(interaction, '✅ Ticket panel posted.');
+  await setPanelChannelId(channel.id);
+  return ephem(interaction, '✅ Ticket panel posted. New reports (Discord + website) open their threads here.');
 }
 
 async function handleOpenButton(interaction: any, type: TicketType): Promise<void> {
@@ -295,13 +335,13 @@ async function handleModalSubmit(interaction: any, type: TicketType): Promise<vo
     const thread = await (channel as TextChannel).threads.create({
       name: buildThreadName(issue.number, title),
       type: ChannelType.PrivateThread,
-      autoArchiveDuration: 10080,
+      autoArchiveDuration: THREAD_AUTOARCHIVE_MINUTES,
       invitable: false,
       reason: `Ticket #${issue.number} (${type})`,
     });
     await thread.members.add(reporterId).catch(() => {});
     await deleteThreadSystemMessage(channel as TextChannel, thread.id);
-    await thread.send(await buildThreadIntro({ type, issue, reporterId })).catch((err) =>
+    await thread.send(await buildThreadIntro({ type, issue, reporterId, description, steps })).catch((err) =>
       logger.warn({ err, threadId: thread.id }, 'ticket: failed to post thread intro'),
     );
 
@@ -326,25 +366,6 @@ async function handleModalSubmit(interaction: any, type: TicketType): Promise<vo
   } catch (err) {
     logger.error({ err, type }, 'ticket: creation failed');
     return ephem(interaction, '⚠️ Something went wrong creating your ticket. Please try again or ping a mod.');
-  }
-}
-
-async function handleRoadmapButton(interaction: any, issueNumberRaw: string): Promise<void> {
-  if (!isStaffInteraction(interaction)) return ephem(interaction, 'Only staff can add tickets to the roadmap.');
-  const issueNumber = parseInt(issueNumberRaw, 10);
-  if (!Number.isFinite(issueNumber)) return ephem(interaction, 'Could not determine the issue number.');
-
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  try {
-    const map = await prisma.githubIssueThread.findUnique({ where: { issueNumber } });
-    if (!map) return ephem(interaction, `No tracked ticket found for #${issueNumber}.`);
-    // The `roadmap` label drives GitHub's Auto-add workflow on the Roadmap board.
-    await githubService.addLabels(issueNumber, ['roadmap']);
-    logger.info({ issueNumber, by: interaction.user.id }, 'ticket: roadmap label applied');
-    return ephem(interaction, `🗺️ Tagged **#${issueNumber}** with \`roadmap\` — it'll appear on the Roadmap board.`);
-  } catch (err) {
-    logger.error({ err, issueNumber }, 'ticket: roadmap label failed');
-    return ephem(interaction, '⚠️ Failed to apply the roadmap label.');
   }
 }
 
@@ -516,48 +537,172 @@ async function handlePlayerSubmit(interaction: any): Promise<void> {
       content,
       involvedPlayers,
     });
-
-    // Private "lockdown" thread — reporter + staff (Manage Threads) only.
-    const thread = await (channel as TextChannel).threads.create({
-      name: buildPlayerReportThreadName(report.reporterName),
-      type: ChannelType.PrivateThread,
-      autoArchiveDuration: 10080,
-      invitable: false,
-      reason: `Player report ${report.id}`,
-    });
-    await thread.members.add(reporter.id).catch(() => {});
-    await deleteThreadSystemMessage(channel as TextChannel, thread.id);
-
-    const mod = env.MODERATOR_ROLE_ID;
-    const overseer = env.OWNER_ROLE_ID; // "overseers" = owner role
-    const pings = [`<@${reporter.id}>`, mod ? `<@&${mod}>` : '', overseer ? `<@&${overseer}>` : '']
-      .filter(Boolean)
-      .join(' ');
-    const embed = new EmbedBuilder()
-      .setTitle('🚩 Player Report')
-      .setColor(BRAND_EMBED_COLOR)
-      .setDescription(
-        `Filed by <@${reporter.id}>. Moderators and overseers have been notified.\n\n` +
-          '📎 **Drop up to 3 screenshots here** as evidence — they attach to the report automatically.',
-      )
-      .addFields(
-        { name: 'What happened', value: content.slice(0, 1024) || '_n/a_' },
-        ...(involvedPlayers ? [{ name: 'Involved', value: involvedPlayers.slice(0, 1024) }] : []),
-      );
-    await thread
-      .send({
-        content: pings,
-        embeds: [embed],
-        allowedMentions: { users: [reporter.id], roles: [mod, overseer].filter(Boolean) as string[] },
-      })
-      .catch((err) => logger.warn({ err, threadId: thread.id }, 'player-report: failed to post thread intro'));
-
-    await playerReportService.setReportThreadId(report.id, thread.id);
-    return ephem(interaction, `✅ Player report filed — the moderation team is on it in <#${thread.id}>.`);
+    const threadId = await openReportThread(
+      {
+        reportId: report.id,
+        reportNumber: report.reportNumber,
+        reporterName: report.reporterName,
+        reporterDiscordId: report.reporterDiscordId,
+        involvedPlayers: report.involvedPlayers,
+        content,
+      },
+      channel as TextChannel,
+    );
+    return ephem(
+      interaction,
+      threadId
+        ? `✅ Player report **#${report.reportNumber}** filed — the moderation team is on it in <#${threadId}>.`
+        : `✅ Player report **#${report.reportNumber}** filed.`,
+    );
   } catch (err) {
     logger.error({ err }, 'player-report: submit failed');
     return ephem(interaction, '⚠️ Something went wrong filing your report. Please try again or ping a mod.');
   }
+}
+
+export interface ReportThreadInfo {
+  reportId: string;
+  reportNumber: number;
+  reporterName: string;
+  reporterDiscordId?: string | null;
+  involvedPlayers?: string | null;
+  content?: string | null;
+}
+
+/** Staff controls under a player-report thread: Close / Lock / Delete. */
+function buildReportThreadComponents() {
+  return [
+    new ActionRowBuilder<ButtonBuilder>().addComponents(
+      new ButtonBuilder().setCustomId(buildCustomId('rclose')).setLabel('Close').setEmoji('✅').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(buildCustomId('rlock')).setLabel('Lock').setEmoji('🔒').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId(buildCustomId('rdelete')).setLabel('Delete').setEmoji('🗑️').setStyle(ButtonStyle.Danger),
+    ),
+  ];
+}
+
+/**
+ * Create the private "lockdown" thread for a player report — used by the Discord
+ * button flow AND web-filed reports (which pass no channel, so it resolves the
+ * persisted /ticket-panel channel). Title: "<reporter> · <involved> · #<num>".
+ * Returns the thread id, or null if no channel/client is available.
+ */
+export async function openReportThread(info: ReportThreadInfo, channel?: TextChannel): Promise<string | null> {
+  let ch: TextChannel | null = channel ?? null;
+  if (!ch) {
+    const chId = await getPanelChannelId();
+    if (!chId || !clientRef) {
+      logger.warn({ reportNumber: info.reportNumber }, 'report-thread: no panel channel configured');
+      return null;
+    }
+    const fetched = await clientRef.channels.fetch(chId).catch(() => null);
+    if (!fetched || (fetched as any).type !== ChannelType.GuildText) {
+      logger.warn('report-thread: panel channel missing or not a text channel');
+      return null;
+    }
+    ch = fetched as TextChannel;
+  }
+
+  try {
+    const thread = await ch.threads.create({
+      name: buildPlayerReportThreadName(info.reporterName, info.involvedPlayers ?? null, info.reportNumber),
+      type: ChannelType.PrivateThread,
+      autoArchiveDuration: THREAD_AUTOARCHIVE_MINUTES,
+      invitable: false,
+      reason: `Player report #${info.reportNumber}`,
+    });
+    if (info.reporterDiscordId) await thread.members.add(info.reporterDiscordId).catch(() => {});
+    await deleteThreadSystemMessage(ch, thread.id);
+
+    const mod = env.MODERATOR_ROLE_ID;
+    const overseer = env.OWNER_ROLE_ID; // "overseers" = owner role
+    const pingUser = info.reporterDiscordId ? `<@${info.reporterDiscordId}>` : '';
+    const pings = [pingUser, mod ? `<@&${mod}>` : '', overseer ? `<@&${overseer}>` : ''].filter(Boolean).join(' ');
+    const embed = new EmbedBuilder()
+      .setTitle(`Player Report #${info.reportNumber}`)
+      .setColor(BRAND_EMBED_COLOR)
+      .setDescription(
+        `${pingUser ? `Filed by ${pingUser}. ` : ''}Moderators and overseers have been notified.\n\n` +
+          '📎 **Drop up to 3 screenshots here** as evidence — they attach to the report automatically.',
+      )
+      .addFields(
+        { name: 'What happened', value: (info.content || '').slice(0, 1024) || '_n/a_' },
+        ...(info.involvedPlayers ? [{ name: 'Involved', value: info.involvedPlayers.slice(0, 1024) }] : []),
+      );
+    await thread
+      .send({
+        content: pings || undefined,
+        embeds: [embed],
+        components: buildReportThreadComponents(),
+        allowedMentions: {
+          users: info.reporterDiscordId ? [info.reporterDiscordId] : [],
+          roles: [mod, overseer].filter(Boolean) as string[],
+        },
+      })
+      .catch((err) => logger.warn({ err, threadId: thread.id }, 'report-thread: failed to post intro'));
+
+    await playerReportService.setReportThreadId(info.reportId, thread.id);
+    return thread.id;
+  } catch (err) {
+    logger.error({ err, reportNumber: info.reportNumber }, 'report-thread: creation failed');
+    return null;
+  }
+}
+
+// --- player-report thread staff controls (Close / Lock / Delete) ---
+async function reportFromThread(interaction: any) {
+  const ch = interaction.channel;
+  if (!ch?.isThread?.()) return null;
+  return playerReportService.findReportByThread(ch.id);
+}
+
+async function handleReportClose(interaction: any): Promise<void> {
+  if (!isStaffInteraction(interaction)) return ephem(interaction, 'Only staff can close reports.');
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const report = await reportFromThread(interaction);
+  if (!report) return ephem(interaction, 'No tracked report for this thread.');
+  await playerReportService.setReportStatus(report.id, 'closed').catch(() => {});
+  await interaction.channel.send(`✅ Report #${report.reportNumber} closed by <@${interaction.user.id}>.`).catch(() => {});
+  logger.info({ reportNumber: report.reportNumber, by: interaction.user.id }, 'report: closed');
+  return ephem(interaction, `✅ Report #${report.reportNumber} marked closed.`);
+}
+
+async function handleReportLock(interaction: any): Promise<void> {
+  if (!isStaffInteraction(interaction)) return ephem(interaction, 'Only staff can lock reports.');
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const thread = interaction.channel as any;
+  if (!thread?.isThread?.()) return ephem(interaction, 'This only works inside a report thread.');
+  try {
+    await thread.send(`🔒 Locked by <@${interaction.user.id}> — only staff can post now.`).catch(() => {});
+    await thread.setLocked(true);
+    await thread.setArchived(true).catch(() => {});
+    return ephem(interaction, '🔒 Thread locked.');
+  } catch (err) {
+    logger.warn({ err }, 'report: lock failed');
+    return ephem(interaction, '⚠️ Could not lock — the bot needs the Manage Threads permission.');
+  }
+}
+
+async function handleReportDelete(interaction: any): Promise<void> {
+  if (!isStaffInteraction(interaction)) return ephem(interaction, 'Only staff can delete reports.');
+  const confirm = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(buildCustomId('rdelconfirm'))
+      .setLabel('Yes, delete report + thread')
+      .setEmoji('🧨')
+      .setStyle(ButtonStyle.Danger),
+  );
+  return ephem(interaction, '⚠️ This permanently **deletes the report and this thread**. This cannot be undone.', [confirm]);
+}
+
+async function handleReportDeleteConfirm(interaction: any): Promise<void> {
+  if (!isStaffInteraction(interaction)) return ephem(interaction, 'Only staff can delete reports.');
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const report = await reportFromThread(interaction);
+  if (report) await playerReportService.deleteReport(report.id).catch((err) => logger.warn({ err }, 'report: delete row failed'));
+  logger.info({ reportNumber: report?.reportNumber, by: interaction.user.id }, 'report: deleted');
+  await ephem(interaction, `🧨 ${report ? `Report #${report.reportNumber} ` : 'Report '}deleted. Removing thread…`);
+  const thread = interaction.channel as any;
+  if (thread?.isThread?.()) await thread.delete(`Report deleted by ${interaction.user.id}`).catch(() => {});
 }
 
 // Attach screenshots dropped in a player-report lockdown thread to the report.
@@ -623,10 +768,13 @@ async function onInteraction(interaction: Interaction): Promise<void> {
     if (anyI.isButton?.()) {
       if (parsed.action === 'open' && isTicketType(parsed.arg)) return handleOpenButton(anyI, parsed.arg);
       if (parsed.action === 'player') return handlePlayerOpen(anyI);
-      if (parsed.action === 'roadmap') return handleRoadmapButton(anyI, parsed.arg);
       if (parsed.action === 'close') return handleCloseButton(anyI, parsed.arg);
       if (parsed.action === 'delete') return handleDeleteButton(anyI, parsed.arg);
       if (parsed.action === 'delconfirm') return handleDeleteConfirm(anyI, parsed.arg);
+      if (parsed.action === 'rclose') return handleReportClose(anyI);
+      if (parsed.action === 'rlock') return handleReportLock(anyI);
+      if (parsed.action === 'rdelete') return handleReportDelete(anyI);
+      if (parsed.action === 'rdelconfirm') return handleReportDeleteConfirm(anyI);
       return;
     }
 
@@ -657,8 +805,8 @@ async function registerCommands(client: Client): Promise<void> {
   try {
     const panel = new SlashCommandBuilder()
       .setName(PANEL_COMMAND)
-      .setDescription('Post the bug/suggestion ticket panel in this channel (staff only)')
-      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+      .setDescription('Post the ticket panel in this channel (overseers/admins only)')
+      .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
       .setDMPermission(false)
       .toJSON();
     await client.application?.commands.create(panel, guildId);
@@ -672,6 +820,7 @@ async function registerCommands(client: Client): Promise<void> {
 // Public API
 // ---------------------------------------------------------------------------
 export function register(client: Client): void {
+  clientRef = client;
   client.on('interactionCreate', onInteraction);
   // Screenshots dropped in a player-report lockdown thread → attached to the report.
   client.on('messageCreate', onThreadMessage);
@@ -681,5 +830,5 @@ export function register(client: Client): void {
   logger.info('ticket: service registered');
 }
 
-export default { register };
-module.exports = { register };
+export default { register, openReportThread };
+module.exports = { register, openReportThread };
