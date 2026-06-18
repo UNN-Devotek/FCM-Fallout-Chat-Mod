@@ -301,6 +301,9 @@ if (env.NODE_ENV === 'production') {
   if (!env.REDIS_PASSWORD && !env.REDIS_URL) missing.push('REDIS_PASSWORD');
   if (!env.MINIO_ROOT_USER || env.MINIO_ROOT_USER === 'fo76minio') missing.push('MINIO_ROOT_USER (must be non-default)');
   if (!env.MINIO_ROOT_PASSWORD || env.MINIO_ROOT_PASSWORD === 'REDACTED') missing.push('MINIO_ROOT_PASSWORD (must be non-default)');
+  if (!env.MINIO_ENDPOINT || env.MINIO_ENDPOINT === 'http://minio:9700') missing.push('MINIO_ENDPOINT (must be set to the public/reachable endpoint, not the Docker default)');
+  if (!env.MINIO_BUCKET || env.MINIO_BUCKET === 'avatars') missing.push('MINIO_BUCKET (must be explicitly set — do not rely on the default)');
+  if (!env.MINIO_PUBLIC_URL) missing.push('MINIO_PUBLIC_URL (must be set — fallback uses MINIO_ENDPOINT which is not browser-reachable in production)');
   if (missing.length > 0) {
     console.error(`FATAL: Missing required env vars in production: ${missing.join(', ')}`);
     process.exit(1);
