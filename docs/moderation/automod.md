@@ -16,11 +16,39 @@ All content moderation on `chat:send` goes through a single entry point: `engine
 
 Any match at step 4 writes an `automod_violations` row and an `audit_logs` row (both fire-and-forget).
 
+## Unicode Canonicalization (bypass defense)
+
+Every filter entry point **matches against a canonical form** of the text, not the raw input, so combining diacritics can't be used to slip a banned phrase past the filter. The canonicalizer lives in `backend/src/utils/textCanon.ts`:
+
+```ts
+canon(s) = s.normalize('NFD').replace(/\p{M}/gu, '')
+```
+
+It decomposes precomposed characters (NFD) and **strips all combining marks** (`\p{M}`), so `café` → `cafe`, `é` → `e`, and a slur padded with a combining acute (`n` + U+0301 + `igger`) collapses back to `nigger`.
+
+> **Why not bare NFC?** Plain `.normalize('NFC')` is largely ineffective here. It leaves the visible accent in place, so ASCII denylist phrases miss diacritic-padded variants, and a word-boundary phrase like `café` compiled as `/\bcafé\b/i` never matches user input because `é` is not an ASCII word character — the trailing `\b` boundary can't form after it. `canon()` reduces the text to plain ASCII letters so `\b` boundaries and ASCII phrases match as intended.
+
+Where this is applied:
+
+| Entry point | File | What is canonicalized |
+|---|---|---|
+| `filterContent()` | `autoModService.ts` | input is `canon()`ed before the baseline-denylist + `word_filter` checks |
+| `findProhibitedPhrase()` | `autoModService.ts` | input (usernames via `usersController`, party names/descriptions via `partiesController`) is `canon()`ed before matching |
+| `engineEvaluate()` | `autoModEngine.ts` | `matchContent = canon(content)` feeds KEYWORD / KEYWORD_PRESET / MENTION_SPAM / LINK |
+| `isBlacklisted()` / `findBlacklistMatch()` | `nameBlacklistService.ts` | candidate **and** stored patterns are `canon()`ed for exact/contains; regex tests run against the canon form |
+| `stripMentions()` | `discordService.ts` | `@everyone` / `@here` detection runs on the canon form so a combining-mark-padded ping is neutralized before reaching Discord |
+
+Baseline-denylist, `word_filter`, and name-blacklist regexes are compiled with the **`u` (Unicode) flag** so `\b` boundaries and `\p{…}` classes behave correctly against the canonical form (`compileUserRegex()` accepts an optional `flags` argument and falls back to `'i'` if a pattern is invalid only under `'u'`).
+
+**Match form vs. stored form.** Canonicalization is used **only for matching**. The original, unmodified message/name is always what gets **stored, broadcast, and shown in violation evidence** — the `automod_violations.messageContent` row, the Discord ALERT embed `Content` field, and the test-mode audit log all reference the original `content`, never the canon form. This keeps moderator-facing evidence faithful to exactly what the user sent.
+
+> **Scope.** `canon()` does **not** collapse homoglyphs (e.g. Cyrillic `е` vs Latin `e`) or strip zero-width characters; those are separate concerns. Stripping combining marks is the high-value, low-risk defense for the documented combining-diacritic bypass.
+
 ## Legacy Word Filter (`autoModService.ts`)
 
 ### Baseline Denylist
 
-A hardcoded array of ~40 slurs and explicit terms compiled at startup as word-boundary regexes (`\bphrase\b`, case-insensitive). This list is checked before any DB query and cannot be disabled by admins. It also has a substring-match variant (`BASELINE_DENYLIST_NAMES`) used for identifiers like party names and usernames where slurs may appear without spaces.
+A hardcoded array of ~40 slurs and explicit terms compiled at startup as word-boundary regexes (`\bphrase\b`, case-insensitive, `u` flag) against the **canonical form** of each phrase (see [Unicode Canonicalization](#unicode-canonicalization-bypass-defense)). This list is checked before any DB query and cannot be disabled by admins. It also has a substring-match variant (`BASELINE_DENYLIST_NAMES`) used for identifiers like party names and usernames where slurs may appear without spaces.
 
 Source: `autoModService.ts:15-57`.
 
@@ -113,7 +141,7 @@ Every triggered rule writes an `automod_violations` row:
   "ruleId": "...",
   "userId": "...",
   "channelId": "...",
-  "messageContent": "... (capped at 4000 chars)",
+  "messageContent": "... the ORIGINAL message (capped at 4000 chars) — never the canon match form",
   "matchedKeyword": "the keyword or regex that matched",
   "matchedSubstr": "the actual matched substring",
   "actionsTaken": [{ "type": "BLOCK", "success": true }]

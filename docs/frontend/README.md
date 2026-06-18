@@ -75,6 +75,29 @@ have a `pages/` sub-folder (e.g. `features/client-performance/pages/`).
 | Role impersonation | `AuthContext` + `sessionStorage` | key `fo76.viewAsRole` |
 | Electron overlay state | `overlay-state.json` in Electron `userData` | managed by the Electron shell, not React |
 
+## SEO and crawler markup
+
+The public landing page (`/`) is served from `admin-dashboard/index.html`, which
+carries the SEO surface:
+
+- **`index.html` `<head>`** — descriptive `<title>` + `<meta name="description">`,
+  `<link rel="canonical" href="https://falloutchatmod.com">`, Open Graph
+  (`og:*`) and Twitter card (`twitter:*`) tags, and a `SoftwareApplication`
+  JSON-LD `<script type="application/ld+json">`.
+- **`admin-dashboard/public/robots.txt`** — allows crawling but disallows
+  `/api/`, `/auth/`, `/admin/`; points at the sitemap.
+- **`admin-dashboard/public/sitemap.xml`** — lists the apex URL.
+- **`<noscript>` fallback** — a descriptive `<p>` block for no-JS crawlers. It
+  lives in `<body>` (flow content like `<p>` is invalid inside a `<noscript>`
+  in `<head>`, which fails HTML validation) and **must not** contain a
+  `<meta http-equiv="refresh">`: the page IS served at the apex origin, so a
+  refresh to `https://falloutchatmod.com` redirects the page to itself and traps
+  no-JS crawlers in an infinite reload loop.
+
+Guarded by `admin-dashboard/src/test/indexHtmlSeo.test.ts` (runs in the
+`unit-vitest` CI job), which asserts the SEO tags are present/valid and that no
+self-redirecting `<noscript>` meta-refresh is reintroduced.
+
 See also:
 - [chat-overlay.md](./chat-overlay.md) — the shared overlay component
 - [theming.md](./theming.md) — CSS variable theming

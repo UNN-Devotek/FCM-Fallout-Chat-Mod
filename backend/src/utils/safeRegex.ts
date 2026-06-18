@@ -24,7 +24,7 @@ const MAX_PATTERN_LENGTH = 200;
 // exponential-backtracking shape: (a+)+ (a*)* (a+)* (.*)+ (\d+|x)* etc.
 const CATASTROPHIC = /(\([^)]*[+*][^)]*\)|\[[^\]]*\][+*]|\.[+*])[+*]/;
 
-export function compileUserRegex(pattern: string, label = 'user-regex'): RegExp | null {
+export function compileUserRegex(pattern: string, label = 'user-regex', flags = 'i'): RegExp | null {
   if (typeof pattern !== 'string' || pattern.length === 0) return null;
   if (pattern.length > MAX_PATTERN_LENGTH) {
     logger.warn({ label, length: pattern.length }, 'regex pattern exceeds max length — skipped');
@@ -35,8 +35,16 @@ export function compileUserRegex(pattern: string, label = 'user-regex'): RegExp 
     return null;
   }
   try {
-    return new RegExp(pattern, 'i');
+    return new RegExp(pattern, flags);
   } catch (err) {
+    // A pattern that is invalid only under the 'u' flag (e.g. a lone backslash
+    // sequence the admin wrote for non-unicode mode) falls back to 'i' so we
+    // never silently drop a previously-working blacklist entry.
+    if (flags !== 'i') {
+      try {
+        return new RegExp(pattern, 'i');
+      } catch { /* fall through to the warn below */ }
+    }
     logger.warn({ label, err }, 'invalid regex pattern — skipped');
     return null;
   }

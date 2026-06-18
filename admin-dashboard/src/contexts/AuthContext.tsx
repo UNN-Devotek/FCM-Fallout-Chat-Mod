@@ -43,11 +43,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
 
   useEffect(() => {
-    fetch('/auth/me', { credentials: 'include' })
+    let cancelled = false;
+    const ctrl = new AbortController();
+    fetch('/auth/me', { credentials: 'include', signal: ctrl.signal })
       .then((r) => r.json())
-      .then(({ data }) => setRealUser(data))
-      .catch(() => setRealUser(null))
-      .finally(() => setLoading(false));
+      .then(({ data }) => { if (!cancelled) setRealUser(data); })
+      .catch(() => { if (!cancelled) setRealUser(null); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; ctrl.abort(); };
   }, []);
 
   const canImpersonate = !!realUser && IMPERSONATOR_ROLES.includes(realUser.role);
