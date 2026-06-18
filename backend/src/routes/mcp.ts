@@ -234,7 +234,13 @@ router.post('/sim/stream', async (req: Request, res: Response, next: NextFunctio
     // Inline bounds (in addition to clampCount) so the upper/lower limits are
     // visible at the loop/timer sink — CodeQL-recognized resource-exhaustion guard.
     const safeCount = Math.max(1, Math.min(200, clampCount(count, 20, 1, 200)));
-    const safeInterval = Math.max(100, Math.min(30_000, clampCount(intervalMs, 1500, 100, 30_000)));
+    // Explicit constant bounds on the timer duration (CodeQL resource-exhaustion
+    // barrier): a non-finite/out-of-range request value falls back to the default
+    // then clamps to [100ms, 30s] before it can reach setInterval.
+    let safeInterval = Math.floor(Number(intervalMs));
+    if (!Number.isFinite(safeInterval)) safeInterval = 1500;
+    if (safeInterval < 100) safeInterval = 100;
+    if (safeInterval > 30_000) safeInterval = 30_000;
     const GENERAL_CHANNEL_ID = '00000000-0000-0000-0000-000000000001';
     const safeChannelId = typeof channelId === 'string' && channelId.trim() ? channelId.trim() : GENERAL_CHANNEL_ID;
 
