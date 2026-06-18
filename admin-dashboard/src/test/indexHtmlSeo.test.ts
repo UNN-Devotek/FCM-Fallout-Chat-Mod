@@ -1,20 +1,18 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
+// Load the shipped document via Vite's ?raw import so the typecheck stays
+// browser-only (no node: fs/url/path, which the admin-dashboard tsconfig
+// doesn't type). admin-dashboard/index.html is what crawlers and browsers get.
+import indexHtml from '../../index.html?raw';
 
-// admin-dashboard/index.html is the document shipped to crawlers and browsers.
 // These tests guard the SEO markup added for search/social previews AND the
 // fix for the self-redirecting <noscript> meta-refresh (which trapped no-JS
 // crawlers in an infinite reload loop because the page IS the apex origin).
-const INDEX_HTML_PATH = resolve(dirname(fileURLToPath(import.meta.url)), '../../index.html');
 const ORIGIN = 'https://falloutchatmod.com';
 
-let html: string;
+const html: string = indexHtml;
 let doc: Document;
 
 beforeAll(() => {
-  html = readFileSync(INDEX_HTML_PATH, 'utf-8');
   doc = new DOMParser().parseFromString(html, 'text/html');
 });
 
