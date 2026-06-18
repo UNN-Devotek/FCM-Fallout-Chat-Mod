@@ -184,7 +184,9 @@ export function parseExpandedPerkInfobox(xml: string): Record<string, string> {
 /** Clean a raw infobox value of wiki markup → display text. */
 export function cleanWikitextValue(raw: string): string {
   let s = raw;
-  s = s.replace(/<!--[\s\S]*?-->/g, '');                    // comments
+  // Remove HTML comments — loop until stable so a nested/overlapping comment
+  // ("<!--<!-- -->-->") can't leave a residual "<!-- -->" after a single pass.
+  { let prev: string; do { prev = s; s = s.replace(/<!--[\s\S]*?-->/g, ''); } while (s !== prev); }
   s = s.replace(/<ref[\s\S]*?<\/ref>/gi, '');               // references
   s = s.replace(/<br\s*\/?>/gi, ' ');                        // line breaks
   s = s.replace(/<small>|<\/small>/gi, '');                 // small tags
