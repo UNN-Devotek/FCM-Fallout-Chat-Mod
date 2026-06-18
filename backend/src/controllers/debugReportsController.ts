@@ -61,8 +61,11 @@ async function listOverlayReports(req: Request, res: Response, next: NextFunctio
     if (rawUserId !== undefined && typeof rawUserId !== 'string') {
       return next(createError(400, 'userId must be a string'));
     }
-    let installToken: string | undefined = rawInstallToken;
-    const userId: string | undefined     = rawUserId;
+    // Inline string-narrowing at the binding so the type guard is local to each
+    // use (CodeQL-recognized barrier against parameter-tampering type confusion
+    // reaching the Redis key / Prisma where:{id}).
+    let installToken: string | undefined = typeof rawInstallToken === 'string' ? rawInstallToken : undefined;
+    const userId: string | undefined     = typeof rawUserId === 'string' ? rawUserId : undefined;
 
     if (!installToken && userId) {
       const user = await prisma.user.findUnique({
