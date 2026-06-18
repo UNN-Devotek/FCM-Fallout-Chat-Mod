@@ -10,13 +10,13 @@ describe('githubTicketHelpers', () => {
   describe('buildCustomId / parseCustomId', () => {
     it('builds namespaced ids with and without an arg', () => {
       expect(h.buildCustomId('open', 'bug')).toBe('ght:open:bug');
-      expect(h.buildCustomId('roadmap', '123')).toBe('ght:roadmap:123');
+      expect(h.buildCustomId('milestone', '123')).toBe('ght:milestone:123');
       expect(h.buildCustomId('refresh')).toBe('ght:refresh');
     });
 
     it('round-trips through parseCustomId', () => {
       expect(h.parseCustomId('ght:open:bug')).toEqual({ isOurs: true, action: 'open', arg: 'bug' });
-      expect(h.parseCustomId('ght:roadmap:42')).toEqual({ isOurs: true, action: 'roadmap', arg: '42' });
+      expect(h.parseCustomId('ght:milestone:42')).toEqual({ isOurs: true, action: 'milestone', arg: '42' });
       expect(h.parseCustomId('ght:refresh')).toEqual({ isOurs: true, action: 'refresh', arg: '' });
     });
 

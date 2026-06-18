@@ -197,10 +197,10 @@ async function buildThreadComponents(issueNumber: number, issueUrl: string) {
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder().setLabel('View on GitHub').setEmoji('🔗').setStyle(ButtonStyle.Link).setURL(issueUrl),
       new ButtonBuilder()
-        .setCustomId(buildCustomId('roadmap', String(issueNumber)))
-        .setLabel('Add to Roadmap')
-        .setEmoji('🗺️')
-        .setStyle(ButtonStyle.Secondary),
+        .setLabel('Project Board')
+        .setEmoji('📋')
+        .setStyle(ButtonStyle.Link)
+        .setURL(projectUrl(env.GITHUB_PROJECT_NUMBER)),
       new ButtonBuilder()
         .setCustomId(buildCustomId('close', String(issueNumber)))
         .setLabel('Close')
@@ -235,20 +235,31 @@ async function buildThreadComponents(issueNumber: number, issueUrl: string) {
   return rows;
 }
 
-async function buildThreadIntro(opts: { type: TicketType; issue: { number: number; htmlUrl: string }; reporterId: string }) {
+async function buildThreadIntro(opts: {
+  type: TicketType;
+  issue: { number: number; htmlUrl: string };
+  reporterId: string;
+  description: string;
+  steps?: string;
+}) {
   const supportRole = env.SUPPORT_ROLE_ID;
+  const clip = (s: string, n = 1024) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
   const embed = new EmbedBuilder()
     .setTitle(`${displayForType(opts.type)} · #${opts.issue.number}`)
     .setURL(opts.issue.htmlUrl)
     .setDescription(
-      `Thanks <@${opts.reporterId}>! Tracked on GitHub:\n**[Issue #${opts.issue.number} ↗](${opts.issue.htmlUrl})**\n\n` +
-        '📎 **Drop any screenshots or files here** so we can see what you mean. ' +
-        'Anything posted in this thread is part of the discussion.',
+      `Thanks <@${opts.reporterId}>! 📎 **Drop screenshots/files here** — they're part of the discussion.\n\n` +
+        `Tracked on GitHub: **[Issue #${opts.issue.number} ↗](${opts.issue.htmlUrl})**`,
     )
     .setColor(colorForType(opts.type));
 
-  // Bug threads list the log / keybind / game-file locations so users can attach them.
-  if (opts.type === 'bug') embed.addFields(BUG_DIAGNOSTICS_FIELD);
+  // Submitted details, right under the issue link.
+  embed.addFields({ name: 'Description', value: clip((opts.description || '').trim() || '_n/a_') });
+  if (opts.type === 'bug') {
+    embed.addFields({ name: 'Steps to reproduce', value: clip((opts.steps || '').trim() || '_Not provided._') });
+    // Log / keybind / game-file locations so users can attach them.
+    embed.addFields(BUG_DIAGNOSTICS_FIELD);
+  }
 
   const content = supportRole ? `<@${opts.reporterId}> · <@&${supportRole}>` : `<@${opts.reporterId}>`;
   return {
@@ -330,7 +341,7 @@ async function handleModalSubmit(interaction: any, type: TicketType): Promise<vo
     });
     await thread.members.add(reporterId).catch(() => {});
     await deleteThreadSystemMessage(channel as TextChannel, thread.id);
-    await thread.send(await buildThreadIntro({ type, issue, reporterId })).catch((err) =>
+    await thread.send(await buildThreadIntro({ type, issue, reporterId, description, steps })).catch((err) =>
       logger.warn({ err, threadId: thread.id }, 'ticket: failed to post thread intro'),
     );
 
@@ -355,25 +366,6 @@ async function handleModalSubmit(interaction: any, type: TicketType): Promise<vo
   } catch (err) {
     logger.error({ err, type }, 'ticket: creation failed');
     return ephem(interaction, '⚠️ Something went wrong creating your ticket. Please try again or ping a mod.');
-  }
-}
-
-async function handleRoadmapButton(interaction: any, issueNumberRaw: string): Promise<void> {
-  if (!isStaffInteraction(interaction)) return ephem(interaction, 'Only staff can add tickets to the roadmap.');
-  const issueNumber = parseInt(issueNumberRaw, 10);
-  if (!Number.isFinite(issueNumber)) return ephem(interaction, 'Could not determine the issue number.');
-
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  try {
-    const map = await prisma.githubIssueThread.findUnique({ where: { issueNumber } });
-    if (!map) return ephem(interaction, `No tracked ticket found for #${issueNumber}.`);
-    // The `roadmap` label drives GitHub's Auto-add workflow on the Roadmap board.
-    await githubService.addLabels(issueNumber, ['roadmap']);
-    logger.info({ issueNumber, by: interaction.user.id }, 'ticket: roadmap label applied');
-    return ephem(interaction, `🗺️ Tagged **#${issueNumber}** with \`roadmap\` — it'll appear on the Roadmap board.`);
-  } catch (err) {
-    logger.error({ err, issueNumber }, 'ticket: roadmap label failed');
-    return ephem(interaction, '⚠️ Failed to apply the roadmap label.');
   }
 }
 
@@ -776,7 +768,6 @@ async function onInteraction(interaction: Interaction): Promise<void> {
     if (anyI.isButton?.()) {
       if (parsed.action === 'open' && isTicketType(parsed.arg)) return handleOpenButton(anyI, parsed.arg);
       if (parsed.action === 'player') return handlePlayerOpen(anyI);
-      if (parsed.action === 'roadmap') return handleRoadmapButton(anyI, parsed.arg);
       if (parsed.action === 'close') return handleCloseButton(anyI, parsed.arg);
       if (parsed.action === 'delete') return handleDeleteButton(anyI, parsed.arg);
       if (parsed.action === 'delconfirm') return handleDeleteConfirm(anyI, parsed.arg);

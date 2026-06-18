@@ -16,9 +16,10 @@ Implemented in [`backend/src/services/ticketService.ts`](../../backend/src/servi
 second login — like voice channels and reaction roles.
 
 > **Status:** Outbound flow is live — private-by-default threads; View on GitHub /
-> Add to Roadmap / Close / Delete buttons; developer-role tagging; the optional
-> milestone picker; a **Report a Player** button (→ moderation portal); and a single
-> master project board. Still to come: the inbound GitHub webhook (comment→thread,
+> Project Board / Close / Delete buttons; the submitted Description (and Steps for
+> bugs) echoed in the thread embed; support-role tagging; the optional milestone
+> picker; a **Report a Player** button (→ moderation portal); and a single master
+> project board. Still to come: the inbound GitHub webhook (comment→thread,
 > close→thread) and thread→comment sync.
 
 ---
@@ -42,10 +43,12 @@ second login — like voice channels and reaction roles.
      **@-tags the reporter and the `SUPPORT_ROLE_ID` role**;
    - **deletes Discord's "started a thread" system message** in the parent channel
      so the panel embed stays at the bottom;
-   - posts a summary embed carrying a **🔗 View on GitHub** link button, staff-only
-     **🗺️ Add to Roadmap / ✅ Close / 🗑️ Delete** buttons, and an **optional
-     milestone picker** (select menu of the repo's open milestones — reporter or
-     staff may set one);
+   - posts a summary embed that **echoes the submitted Description** (and **Steps to
+     reproduce** for bugs) right under the issue link, carrying **🔗 View on GitHub**
+     and **📋 Project Board** link buttons (open to everyone), staff-only **✅ Close /
+     🗑️ Delete** buttons, and an **optional milestone picker** (select menu of the
+     repo's open milestones — reporter or staff may set one). Description/Steps are
+     clipped to Discord's 1024-char field limit; the full text lives on GitHub;
    - records the issue↔thread mapping in `github_issue_threads`.
    - **bug** threads also list the overlay **log** (`…\Fallout Chat Mod\logs\main.log`
      / `~/.config/Fallout Chat Mod/logs/main.log`), **keybinds** (`…keybinds.cfg`),
@@ -53,16 +56,16 @@ second login — like voice channels and reaction roles.
      under the Proton `compatdata/1151340` prefix on Linux) — each with **both
      Windows and Linux paths** — asking the reporter to attach them for
      overlay-behavior or in-game/game issues (`BUG_DIAGNOSTICS_FIELD`).
-4. Thread buttons (staff only):
-   - **Add to Roadmap** → applies the `roadmap` label (marks planned features within
-     the master board; there is no separate roadmap board).
-   - **Close** → **immediately locks** the thread (done first and independently of
+4. Thread buttons:
+   - **🔗 View on GitHub** / **📋 Project Board** → link buttons (anyone) to the issue
+     and the master project board.
+   - **Close** *(staff only)* → **immediately locks** the thread (done first and independently of
      the GitHub call, so a GitHub error can't leave it open) so only members with
      **Manage Threads** — admins/devs/mods — can post and everyone else is
      read-only; then closes + archives the GitHub issue. Lock failures surface to
      the closer (bot needs Manage Threads). For non-staff to be fully read-only,
      the admin/dev/mod roles must hold Manage Threads in the channel.
-   - **Delete** (with a confirm step) → **deletes the GitHub issue** (falls back to
+   - **Delete** *(staff only,* with a confirm step) → **deletes the GitHub issue** (falls back to
      closing it if the token lacks delete permission), removes the DB mapping, and
      **deletes the thread** — full teardown.
 
@@ -125,11 +128,13 @@ Environment variables (see [`backend/.env.example`](../../backend/.env.example))
 the bot.** Fine-grained PATs (`github_pat_…`) **cannot** write to *user-owned*
 Projects v2 — `addProjectV2ItemById` returns `FORBIDDEN: Resource not accessible by
 personal access token` regardless of the token's permissions. So the bot only sets
-**labels** (which it can do), and each project's Auto-add workflow places the item.
+the **type label** (`bug` / `suggestion`, which it can do) at issue-creation time, and
+the project's Auto-add workflow places the item.
 
 Enable, in the master project → **⋯ → Workflows → Auto-add to project**:
 - filter `is:issue is:open` to add every issue (or `is:issue is:open label:bug,suggestion`
-  to scope it). The `roadmap` label marks planned features within the board.
+  to scope it). A `roadmap` label (applied manually in GitHub) can mark planned features
+  within the board — the bot no longer applies it.
 
 The bot does **not** call the project API at all — board placement is entirely the
 Auto-add workflows above. (To add items directly instead, you'd need a **classic**
