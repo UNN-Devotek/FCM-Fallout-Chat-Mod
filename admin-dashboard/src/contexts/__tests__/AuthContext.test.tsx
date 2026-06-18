@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import React from 'react';
-import { AuthProvider, useAuth } from '../../../contexts/AuthContext';
+import { AuthProvider, useAuth } from '../AuthContext';
 
 // Wrapper so renderHook can access the context
 const wrapper = ({ children }: { children: React.ReactNode }) => (
@@ -43,25 +43,39 @@ describe('AuthContext /auth/me fetch', () => {
     expect(result.current.loading).toBe(false);
   });
 
-  it('does not update state after unmount (AbortController cleanup)', async () => {
+  it('aborts the in-flight /auth/me request on unmount', async () => {
+    // Spy on the real AbortController so we observe the exact signal the effect
+    // creates AND the abort() call it makes on cleanup. This fails (no abort
+    // recorded for the right signal) if the AbortController is removed from the
+    // effect — i.e. it genuinely exercises the security fix, not a reimplementation.
+    const abortSpy = vi.spyOn(AbortController.prototype, 'abort');
+
+    // A fetch that never resolves on its own — the request is "in flight" until
+    // the effect's cleanup aborts it.
     let resolveFetch!: (v: unknown) => void;
     const pendingFetch = new Promise((resolve) => { resolveFetch = resolve; });
-
     (globalThis.fetch as ReturnType<typeof vi.fn>).mockReturnValueOnce(pendingFetch);
 
     const { result, unmount } = renderHook(() => useAuth(), { wrapper });
 
-    // Unmount before the fetch resolves
-    unmount();
+    // The effect must have created a request carrying a not-yet-aborted signal.
+    const [, options] = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    const signal = options?.signal as AbortSignal | undefined;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal?.aborted).toBe(false);
+    expect(abortSpy).not.toHaveBeenCalled();
 
-    // Now resolve the fetch — should not trigger a state update
+    // Unmount before the fetch resolves — cleanup must abort the request.
+    unmount();
+    expect(abortSpy).toHaveBeenCalledTimes(1);
+    expect(signal?.aborted).toBe(true);
+
+    // Even if the (now-cancelled) fetch resolves late, no state update happens
+    // because the cancelled guard fired alongside the abort.
     await act(async () => {
       resolveFetch({ ok: true, json: async () => ({ data: { id: 'u1', username: 'Late', role: 'user' } }) });
       await pendingFetch;
     });
-
-    // State should remain at initial values (loading=true, realUser=null)
-    // since the component was already unmounted and the cancelled guard fired.
     expect(result.current.realUser).toBeNull();
   });
 
