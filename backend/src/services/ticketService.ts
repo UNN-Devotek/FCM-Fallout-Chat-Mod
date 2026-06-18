@@ -62,6 +62,9 @@ import {
 
 const PANEL_COMMAND = 'ticket-panel';
 const PANEL_CHANNEL_KEY = 'tickets.panel_channel_id';
+// Auto-archive threads after 24h of inactivity. Open (unlocked) threads re-open on
+// a new message, so users can still reply; only Closed/Locked threads stay shut.
+const THREAD_AUTOARCHIVE_MINUTES = 1440;
 
 let clientRef: Client | null = null;
 
@@ -310,7 +313,7 @@ async function handleModalSubmit(interaction: any, type: TicketType): Promise<vo
     const thread = await (channel as TextChannel).threads.create({
       name: buildThreadName(issue.number, title),
       type: ChannelType.PrivateThread,
-      autoArchiveDuration: 10080,
+      autoArchiveDuration: THREAD_AUTOARCHIVE_MINUTES,
       invitable: false,
       reason: `Ticket #${issue.number} (${type})`,
     });
@@ -600,7 +603,7 @@ export async function openReportThread(info: ReportThreadInfo, channel?: TextCha
     const thread = await ch.threads.create({
       name: buildPlayerReportThreadName(info.reporterName, info.involvedPlayers ?? null, info.reportNumber),
       type: ChannelType.PrivateThread,
-      autoArchiveDuration: 10080,
+      autoArchiveDuration: THREAD_AUTOARCHIVE_MINUTES,
       invitable: false,
       reason: `Player report #${info.reportNumber}`,
     });

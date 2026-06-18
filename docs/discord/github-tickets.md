@@ -4,7 +4,9 @@ Turns Discord into the front door for our tracker. Members file **bug reports**,
 **suggestions**, and **player reports** from a panel of buttons. Bug/suggestion
 issues land on a single **master Project v2 board** (all issues + features) via
 GitHub's Auto-add workflow; **player reports** go to the **moderation portal**
-(not GitHub). Every report opens a **private thread**.
+(not GitHub). Every report opens a **private thread**. Threads **auto-archive after 24h of
+inactivity** — open (unlocked) threads re-open when someone posts (users can still
+reply); **Closed/Locked** threads stay shut.
 
 Implemented in [`backend/src/services/ticketService.ts`](../../backend/src/services/ticketService.ts)
 (Discord wiring), [`githubService.ts`](../../backend/src/services/githubService.ts)
