@@ -159,8 +159,11 @@ function markdownifyLinks(text: string): string {
       const hasPath = (u.pathname && u.pathname !== '/') || u.search || u.hash;
       let disp = hasPath ? `${host}/…` : host;
       if (disp.length > 32) disp = disp.slice(0, 31) + '…';
-      // Escape ']' in display text so it can't break out of the markdown label.
-      disp = disp.replace(/]/g, '\\]');
+      // Escape every markdown-label metacharacter so nothing can break out of the
+      // `[label]` span. Backslash MUST be escaped first (otherwise the escapes we
+      // add for [ and ] could be neutralised by a pre-existing trailing backslash),
+      // then the bracket pair that delimits the label.
+      disp = disp.replace(/[\\[\]]/g, '\\$&');
       return `[${disp}](${trimmed})${trailing}`;
     } catch {
       return raw;

@@ -143,6 +143,11 @@ const { _setChannelResolver }           = require('../src/services/hudPush');
  * Returns the same helper API as the plaintext connect() in hudPushTcp.test.js.
  */
 function tlsConnect(port, host = '127.0.0.1') {
+  // rejectUnauthorized:false is required and safe here: this connects to a
+  // localhost (127.0.0.1) test server using a throwaway self-signed cert that
+  // is generated at runtime (see beforeAll). It also mirrors ZFE's Schannel
+  // client, which intentionally does not validate the cert. NOT production code.
+  // codeql[js/disabling-certificate-validation]
   const socket = tls.connect({ port, host, rejectUnauthorized: false });
   let buf = '';
   const lines = [];

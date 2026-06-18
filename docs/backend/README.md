@@ -75,9 +75,9 @@ return RFC 7807 `429` responses. Defined in `middleware/rateLimiter.ts`.
 
 | Limiter | Route(s) | Cap | Window | Key |
 |---------|---------|-----|--------|-----|
-| `apiLimiter` | `POST /api/*` (most routes) | 100 authed / 500 anon | 15 min | X-Auth-Token or IP |
+| `apiLimiter` | `POST /api/*` (most routes); also the non-`/api/` app routes (`/auth/logout`, `/auth/ws-ticket`, `/auth/me`, `/auth/me/public`, `/avatars/*`, `/party-images/*`, `/virustotal`, `/install.sh`/`/uninstall.sh`/`/install.ps1`, and the `/admin/*` + `/admin/debug/*` endpoints) | 100 authed / 500 anon | 15 min | X-Auth-Token or IP |
 | `channelsLimiter` | `GET /api/channels` | 500 | 15 min | token or IP |
-| `authLimiter` | `POST /api/users` (register) | 20 (500 dev overlay) | 15 min | IP |
+| `authLimiter` | `POST /api/users` (register); Discord OAuth routes (`/auth/discord`, `/auth/discord/callback`, `/auth/discord/link`, `/auth/discord/link/callback`) | 20 (500 dev overlay) | 15 min | IP |
 | `registerLimiter` | `POST /api/users` | 10/install-token (60 dev) | 1 min | installToken → IP fallback |
 | `registerIpFloodLimiter` | `POST /api/users` | 30 | 1 min | IP |
 | `playerListLimiter` | `POST /api/player-list` | 30 | 1 min | token or IP |

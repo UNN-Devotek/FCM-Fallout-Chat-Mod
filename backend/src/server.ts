@@ -22,7 +22,7 @@ import { getRedisClient, client as redisClient } from './config/redis';
 import prisma from './config/prisma';
 import { Prisma } from '@prisma/client';
 import { errorHandler, createError } from './middleware/errorHandler';
-import { apiLimiter, debugReportLimiter, channelsLimiter, partiesListLimiter, hudFeedLimiter } from './middleware/rateLimiter';
+import { apiLimiter, authLimiter, debugReportLimiter, channelsLimiter, partiesListLimiter, hudFeedLimiter } from './middleware/rateLimiter';
 import { requireAdminKey } from './middleware/requireAdminKey';
 import { requireClientAuth } from './middleware/requireClientAuth';
 import { query as dbQueryFn } from './config/database';
@@ -280,7 +280,7 @@ if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
   });
 }
 
-app.get('/auth/discord', async (req: Request, res: Response) => {
+app.get('/auth/discord', authLimiter, async (req: Request, res: Response) => {
   // CSRF protection: store state token in Redis (session cookies unreliable behind reverse proxies)
   const intent = (req.query.intent as string) || 'admin';
   const state = uuidv4();
@@ -302,7 +302,7 @@ app.get('/auth/discord', async (req: Request, res: Response) => {
   res.redirect(`https://discord.com/api/oauth2/authorize?${params}`);
 });
 
-app.get('/auth/discord/callback', async (req: Request, res: Response) => {
+app.get('/auth/discord/callback', authLimiter, async (req: Request, res: Response) => {
   const { code, state } = req.query as { code?: string; state?: string };
   if (!code) { res.status(400).send('Missing code'); return; }
 
@@ -528,7 +528,7 @@ const PIP_BOY_HTML = (title: string, heading: string, body: string) => `<!DOCTYP
  * GET /auth/discord/link
  * Initiates Discord OAuth linking for a desktop game client identified by installToken.
  */
-app.get('/auth/discord/link', async (req: Request, res: Response) => {
+app.get('/auth/discord/link', authLimiter, async (req: Request, res: Response) => {
   const { installToken } = req.query as { installToken?: string };
   if (!installToken) { res.status(400).send('Missing installToken'); return; }
 
@@ -565,7 +565,7 @@ app.get('/auth/discord/link', async (req: Request, res: Response) => {
  * GET /auth/discord/link/callback
  * OAuth callback for desktop game client Discord linking.
  */
-app.get('/auth/discord/link/callback', async (req: Request, res: Response) => {
+app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Response) => {
   const { code, state } = req.query as { code?: string; state?: string };
   if (!code) { res.status(400).send('Missing code'); return; }
 
@@ -841,7 +841,7 @@ app.get('/api/auth/discord-status/:installToken', async (req: Request, res: Resp
   }
 });
 
-app.get('/auth/logout', (req: Request, res: Response) => {
+app.get('/auth/logout', apiLimiter, (req: Request, res: Response) => {
   req.session.destroy(() => res.redirect('/'));
 });
 
@@ -849,7 +849,7 @@ app.get('/auth/logout', (req: Request, res: Response) => {
  * GET /auth/ws-ticket -- issues a 60-second single-use WS ticket for admin observers.
  * Only privileged roles (owner/admin/moderator) may obtain a ticket.
  */
-app.get('/auth/ws-ticket', async (req: Request, res: Response) => {
+app.get('/auth/ws-ticket', apiLimiter, async (req: Request, res: Response) => {
   if (!(req.session as any)?.discordUser) { res.status(401).json({ data: null }); return; }
 
   const discordUser = (req.session as any).discordUser;
@@ -876,7 +876,7 @@ app.get('/auth/ws-ticket', async (req: Request, res: Response) => {
   }
 });
 
-app.get('/auth/me', async (req: Request, res: Response) => {
+app.get('/auth/me', apiLimiter, async (req: Request, res: Response) => {
   const sessionUser = (req.session as any).discordUser;
   if (!sessionUser) { res.status(401).json({ data: null }); return; }
 
@@ -938,7 +938,7 @@ const DEFAULT_AVATAR_SVG =
   '<path d="M24 116c0-22 18-36 40-36s40 14 40 36" fill="#18FF62"/>' +
   '</svg>';
 
-app.get('/avatars/default', (_req: Request, res: Response) => {
+app.get('/avatars/default', apiLimiter, (_req: Request, res: Response) => {
   res.setHeader('Content-Type', 'image/svg+xml');
   res.setHeader('Cache-Control', 'public, max-age=86400');
   res.send(DEFAULT_AVATAR_SVG);
@@ -959,7 +959,7 @@ async function discordCdnAvatarUrl(discordId: string): Promise<string | null> {
   return `https://cdn.discordapp.com/avatars/${discordId}/${user.discordAvatar}.png?size=128`;
 }
 
-app.get('/avatars/:discordId', async (req: Request, res: Response) => {
+app.get('/avatars/:discordId', apiLimiter, async (req: Request, res: Response) => {
   const discordId = String(req.params.discordId || '').replace(/\.png$/i, '');
   if (!/^\d{1,32}$/.test(discordId)) { res.status(404).end(); return; }
   try {
@@ -991,7 +991,7 @@ app.get('/avatars/:discordId', async (req: Request, res: Response) => {
 // Streams party-chat images (MinIO key party-images/<uuid>.<ext>) from our own
 // domain. The imageId path param is <uuid>.<ext> (e.g. abc123.jpg).
 // The id must be <uuid>.<safe-ext> to reject path traversal / arbitrary reads.
-app.get('/party-images/:imageId', async (req: Request, res: Response) => {
+app.get('/party-images/:imageId', apiLimiter, async (req: Request, res: Response) => {
   const raw = String(req.params.imageId || '');
   // Allow UUIDs (with hyphens) followed by a dot and a safe image extension.
   const m = raw.match(/^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.(jpg|jpeg|png|gif|webp|bmp|svg|avif|bin)$/i);
@@ -1105,10 +1105,10 @@ app.get('/api/admin/parties/:id', requirePartiesEnabled, requireDiscordRole('own
 app.get('/api/admin/parties/:id/messages', requirePartiesEnabled, requireDiscordRole('owner', 'admin'), adminListPartyMessages);
 app.delete('/api/admin/parties/:partyId/messages/:messageId', requirePartiesEnabled, requireDiscordRole('owner', 'admin'), adminDeletePartyMessage);
 // X-Admin-API-Key debug mirrors (CLI tooling)
-app.get('/admin/debug/parties', requirePartiesEnabled, requireAdminKey, adminListParties);
-app.get('/admin/debug/parties/:id', requirePartiesEnabled, requireAdminKey, adminGetParty);
-app.get('/admin/debug/parties/:id/messages', requirePartiesEnabled, requireAdminKey, adminListPartyMessages);
-app.delete('/admin/debug/parties/:partyId/messages/:messageId', requirePartiesEnabled, requireAdminKey, adminDeletePartyMessage);
+app.get('/admin/debug/parties', apiLimiter, requirePartiesEnabled, requireAdminKey, adminListParties);
+app.get('/admin/debug/parties/:id', apiLimiter, requirePartiesEnabled, requireAdminKey, adminGetParty);
+app.get('/admin/debug/parties/:id/messages', apiLimiter, requirePartiesEnabled, requireAdminKey, adminListPartyMessages);
+app.delete('/admin/debug/parties/:partyId/messages/:messageId', apiLimiter, requirePartiesEnabled, requireAdminKey, adminDeletePartyMessage);
 
 // Wiki catalog — admin endpoints (owner|admin only)
 // POST /api/admin/wiki/ingest  — trigger ingestion (incremental default or full)
@@ -1128,13 +1128,13 @@ app.use('/api/admin/telemetry', adminTelemetryRouter);
 // Admin-key authenticated mirrors of the telemetry endpoints — used by CLI
 // tooling that can't carry a Discord OAuth session. Same semantics as
 // /api/admin/telemetry but gated by X-Admin-API-Key.
-app.get('/admin/debug/telemetry', requireAdminKey, async (_req, res, next) => {
+app.get('/admin/debug/telemetry', apiLimiter, requireAdminKey, async (_req, res, next) => {
   try {
     const { getTelemetryAdminView } = await import('./services/telemetryService');
     res.json({ data: await getTelemetryAdminView() });
   } catch (err) { next(err); }
 });
-app.post('/admin/debug/telemetry', requireAdminKey, async (req, res, next) => {
+app.post('/admin/debug/telemetry', apiLimiter, requireAdminKey, async (req, res, next) => {
   try {
     const { setTelemetry } = await import('./services/telemetryService');
     const { scope: scopeStr, userId, enabled } = req.body as { scope: string; userId?: string; enabled: boolean };
@@ -1160,22 +1160,22 @@ import {
   listAutoModViolations as debugListAutoModViolations,
   invalidateAutoModCacheHandler,
 } from './controllers/autoModRulesController';
-app.get('/admin/debug/automod-rules', requireAdminKey, debugListAutoModRules);
-app.get('/admin/debug/automod-violations', requireAdminKey, debugListAutoModViolations);
-app.post('/admin/debug/automod-rules/invalidate-cache', requireAdminKey, invalidateAutoModCacheHandler);
+app.get('/admin/debug/automod-rules', apiLimiter, requireAdminKey, debugListAutoModRules);
+app.get('/admin/debug/automod-violations', apiLimiter, requireAdminKey, debugListAutoModViolations);
+app.post('/admin/debug/automod-rules/invalidate-cache', apiLimiter, requireAdminKey, invalidateAutoModCacheHandler);
 
 // Overlay diagnostic reports — GameMonitor POSTs periodic snapshots of the
 // local environment (FO76 process state, memory-scan results, AV detection,
 // etc.) so support can diagnose why scanning isn't firing on a user's machine.
 import { submitOverlayReport, listOverlayReports } from './controllers/debugReportsController';
 app.post('/api/debug/overlay-report', debugReportLimiter, requireClientAuth, submitOverlayReport);
-app.get('/admin/debug/overlay-reports', requireAdminKey, listOverlayReports);
+app.get('/admin/debug/overlay-reports', apiLimiter, requireAdminKey, listOverlayReports);
 
 // Admin: one-shot hard wipe of every user + derived per-user state. Used once
 // during the X-App-Client-Key hard flip. Requires ADMIN_API_KEY plus a
 // confirmation token (?confirm=yes-delete-everything) to avoid accidental fires.
 import { nukeUsers } from './controllers/adminNukeController';
-app.post('/admin/nuke-users', requireAdminKey, nukeUsers);
+app.post('/admin/nuke-users', apiLimiter, requireAdminKey, nukeUsers);
 app.get('/api/public/moderation-log', publicModerationLog);
 // Public aggregate stats — no auth required (world-readable, cached 30s).
 app.use('/api/public/stats', publicStatsRouter);
@@ -1184,14 +1184,14 @@ app.use('/api/public/stats', publicStatsRouter);
 // a user's overlay is actually attached to the backend (WS open, session alive)
 // vs. running but disconnected vs. not running at all.
 // Authed via ADMIN_API_KEY.
-app.get('/admin/debug/ws-clients', requireAdminKey, (_req: Request, res: Response) => {
+app.get('/admin/debug/ws-clients', apiLimiter, requireAdminKey, (_req: Request, res: Response) => {
   res.json({ data: snapshotActiveClients() });
 });
 
 // Redis ring buffer of raw presence:update payloads per user. Lets admins
 // see exactly what the desktop client is sending without container logs.
 //   GET /admin/debug/presence-audit?userId=<uuid>&limit=20
-app.get('/admin/debug/presence-audit', requireAdminKey, async (req: Request, res: Response, next: NextFunction) => {
+app.get('/admin/debug/presence-audit', apiLimiter, requireAdminKey, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const userId = (req.query.userId as string | undefined)?.trim();
     if (!userId) {
@@ -1211,7 +1211,7 @@ app.get('/admin/debug/presence-audit', requireAdminKey, async (req: Request, res
 // 500 req/15min per IP" exhaustion during heavy iteration cycles).
 //   POST /admin/debug/clear-rate-limit            — clears ALL rl_api:* keys
 //   POST /admin/debug/clear-rate-limit?key=<...>  — clears a specific key
-app.post('/admin/debug/clear-rate-limit', requireAdminKey, async (req: Request, res: Response, next: NextFunction) => {
+app.post('/admin/debug/clear-rate-limit', apiLimiter, requireAdminKey, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { getRedisClient } = await import('./config/redis');
     const redis = await getRedisClient();
@@ -1241,7 +1241,7 @@ app.post('/admin/debug/clear-rate-limit', requireAdminKey, async (req: Request, 
 
 
 // GET /admin/debug/users/:userId/aliases — alias history mirror (X-Admin-API-Key)
-app.get('/admin/debug/users/:userId/aliases', requireAdminKey, async (req: Request, res: Response, next: NextFunction) => {
+app.get('/admin/debug/users/:userId/aliases', apiLimiter, requireAdminKey, async (req: Request, res: Response, next: NextFunction) => {
   const UUID_RE_LOCAL = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   if (!UUID_RE_LOCAL.test(req.params.userId)) {
     res.status(400).json({ error: 'Invalid user ID format' });
@@ -1263,7 +1263,7 @@ app.get('/admin/debug/users/:userId/aliases', requireAdminKey, async (req: Reque
 // Admin: directly set a user's username. Used to recover when a bad row must be reset manually.
 // Authed via ADMIN_API_KEY.
 //   POST /admin/debug/set-username  { userId, username }
-app.post('/admin/debug/set-username', requireAdminKey, async (req: Request, res: Response, next: NextFunction) => {
+app.post('/admin/debug/set-username', apiLimiter, requireAdminKey, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { userId, username } = req.body ?? {};
     if (typeof userId !== 'string' || typeof username !== 'string') {
@@ -1310,7 +1310,7 @@ app.post('/admin/debug/set-username', requireAdminKey, async (req: Request, res:
 // Authed via ADMIN_API_KEY.
 //
 //   POST /admin/debug/merge-users  { targetId, sourceId }
-app.post('/admin/debug/merge-users', requireAdminKey, async (req: Request, res: Response, next: NextFunction) => {
+app.post('/admin/debug/merge-users', apiLimiter, requireAdminKey, async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { targetId, sourceId } = req.body ?? {};
     if (typeof targetId !== 'string' || typeof sourceId !== 'string' || targetId === sourceId) {
@@ -1355,7 +1355,7 @@ app.post('/admin/debug/merge-users', requireAdminKey, async (req: Request, res: 
 
 
 // VirusTotal redirect — URL stored in Redis so it updates without a restart
-app.get('/virustotal', async (_req: Request, res: Response) => {
+app.get('/virustotal', apiLimiter, async (_req: Request, res: Response) => {
   try {
     const redis = await getRedisClient();
     const url = (await redis.get('virustotal:url')) || env.VIRUSTOTAL_URL;
@@ -1370,7 +1370,7 @@ app.get('/virustotal', async (_req: Request, res: Response) => {
 });
 
 // Admin: update VirusTotal URL (called by build-installer.ps1 after each release scan)
-app.post('/admin/virustotal-url', (req: Request, res: Response, next: NextFunction) => {
+app.post('/admin/virustotal-url', apiLimiter, (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers['authorization'];
   const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
   const apiKeyHeader = req.headers['x-admin-api-key'] as string | undefined;
@@ -1392,7 +1392,7 @@ app.post('/admin/virustotal-url', (req: Request, res: Response, next: NextFuncti
   res.json({ ok: true, url });
 });
 
-app.get('/auth/me/public', async (req: Request, res: Response) => {
+app.get('/auth/me/public', apiLimiter, async (req: Request, res: Response) => {
   const pub = (req.session as any).publicUser;
   if (!pub) { res.status(401).json({ authenticated: false }); return; }
   // Enrich from DB — handles sessions created before discordDisplayName was added
@@ -1486,9 +1486,9 @@ const serveScript = (name: string) => (_req: Request, res: Response) => {
     if (err && !res.headersSent) res.status(500).type('text/plain').send(`# failed to read ${name}\n`);
   });
 };
-app.get('/install.sh', serveScript('install.sh'));
-app.get('/uninstall.sh', serveScript('uninstall.sh'));
-app.get('/install.ps1', serveScript('install.ps1'));
+app.get('/install.sh', apiLimiter, serveScript('install.sh'));
+app.get('/uninstall.sh', apiLimiter, serveScript('uninstall.sh'));
+app.get('/install.ps1', apiLimiter, serveScript('install.ps1'));
 
 // Strict allowlist for release installer filenames — rejects any path traversal
 // (`..`, `/`, `\`) or variant naming. Fix #11.
@@ -1519,7 +1519,7 @@ const releaseUpload = multer({
   },
 });
 
-app.post('/admin/upload-release', (req: Request, res: Response, next: NextFunction) => {
+app.post('/admin/upload-release', apiLimiter, (req: Request, res: Response, next: NextFunction) => {
   const authHeader = req.headers['authorization'];
   const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
   const apiKeyHeader = req.headers['x-admin-api-key'] as string | undefined;
@@ -1536,16 +1536,23 @@ app.post('/admin/upload-release', (req: Request, res: Response, next: NextFuncti
   // Defence-in-depth: verify the saved path is still within downloadsDir after
   // multer rename. If somehow the filename escaped (shouldn't given the regex),
   // unlink and 400 out rather than return a URL that could leak paths.
+  //
+  // The unlink target is rebuilt from the trusted base dir + path.basename of the
+  // saved name (never the raw req.file.path), so any directory component a hostile
+  // originalname could carry is stripped before it can reach fs.unlinkSync — the
+  // filesystem write can only ever land inside downloadsDir.
   const resolvedDir  = path.resolve(downloadsDir);
-  const resolvedFile = path.resolve(req.file.path);
-  if (!resolvedFile.startsWith(resolvedDir + path.sep)) {
+  const safeBaseName = path.basename(req.file.filename || req.file.path);
+  const resolvedFile = path.resolve(resolvedDir, safeBaseName);
+  const rel = path.relative(resolvedDir, resolvedFile);
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
     try { fs.unlinkSync(resolvedFile); } catch { /* best-effort */ }
     res.status(400).json({ error: 'Invalid upload path' });
     return;
   }
 
-  const url = `${req.protocol}://${req.get('host')}/downloads/${req.file.filename}`;
-  res.json({ data: { filename: req.file.filename, url } });
+  const url = `${req.protocol}://${req.get('host')}/downloads/${safeBaseName}`;
+  res.json({ data: { filename: safeBaseName, url } });
 });
 
 // -- Admin dashboard (SPA) — served from backend when built into the image ----

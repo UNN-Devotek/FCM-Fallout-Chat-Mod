@@ -12,6 +12,16 @@ interface FetchOptions {
 }
 
 async function apiFetch<T = any>(path: string, options: FetchOptions = {}): Promise<T> {
+  // Request-forgery guard: requests may only target this app's own backend.
+  // `path` must be a same-origin relative path (begins with a single "/").
+  // Reject absolute URLs (e.g. "https://evil.com/...") and protocol-relative
+  // paths (e.g. "//evil.com/...") so a path can never redirect the request to
+  // an attacker-controlled host. All call sites pass a literal "/api/..." path;
+  // this enforces that invariant rather than trusting it.
+  if (!path.startsWith('/') || path.startsWith('//')) {
+    throw new Error(`Refusing to fetch non-relative API path: ${path}`);
+  }
+
   const isFormData = options.body instanceof FormData;
   const headers: Record<string, string> = isFormData
     ? { ...options.headers }

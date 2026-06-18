@@ -128,7 +128,11 @@ export async function muteUserHandler(req: Request, res: Response, next: NextFun
 export async function unmuteUserHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     requireUuid(req.params.userId, 'userId');
-    const reason = (req.query.reason as string | undefined) || (req.body?.reason as string | undefined) || '';
+    // reason is optional. req.query.reason / req.body.reason can be string[] or
+    // an object under parameter tampering (?reason=a&reason=b); only accept a
+    // plain string, else fall through to '' — never call .slice on a non-string.
+    const rawReason = req.query.reason ?? req.body?.reason;
+    const reason = typeof rawReason === 'string' ? rawReason : '';
     await unmuteUser(req.params.userId, await actorUserId(req), reason.slice(0, 300));
     res.json({ data: { unmuted: true } });
   } catch (err) { next(err); }

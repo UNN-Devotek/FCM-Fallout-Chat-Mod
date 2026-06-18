@@ -24,7 +24,12 @@ async function publicModerationLog(req: Request, res: Response, next: NextFuncti
   const params: any[] = [PUBLIC_ACTIONS];
 
   if (search) {
-    params.push(`%${search.replace(/[%_]/g, '\\$&')}%`);
+    // Escape the LIKE/ILIKE escape character (\) FIRST, then the wildcards (% _).
+    // Doing % and _ alone leaves a literal user backslash acting as the default
+    // PostgreSQL ESCAPE char, which would consume the next char (defeating the
+    // wildcard escaping). Order matters: backslash before the wildcards.
+    const escaped = search.replace(/[\\%_]/g, '\\$&');
+    params.push(`%${escaped}%`);
     const n = params.length;
     conditions.push(`(actor.username ILIKE $${n} OR target.username ILIKE $${n})`);
   }
