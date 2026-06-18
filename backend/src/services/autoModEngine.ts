@@ -34,6 +34,7 @@ import { filterContent, detectSpam } from './autoModService';
 import { muteUser } from './moderationActionsService';
 import { isProtectedTarget } from './userRoleService';
 import { compileUserRegex, clampRegexInput } from '../utils/safeRegex';
+import { canon } from '../utils/textCanon';
 
 // ── Curated preset word lists ─────────────────────────────────────────────────
 // Kept deliberately short here; the full lists can be updated in code without
@@ -329,11 +330,14 @@ export async function engineEvaluate(
 ): Promise<EngineResult> {
   const result: EngineResult = { block: false, matches: [] };
 
-  // NFC-normalize once at the entry point so all downstream checks (keyword
-  // list, regex patterns, link detection, mention spam) see canonical form.
-  // Homoglyphs (е vs e), combining diacritics, and zero-width characters used
-  // to bypass filters are collapsed to their base codepoints by NFC.
-  const normalizedContent = content.normalize('NFC');
+  // Compute the CANONICAL form once (NFD + strip combining marks) so every
+  // downstream MATCH (keyword list, regex patterns, link detection, mention
+  // spam, the legacy word_filter) sees diacritic-free text and combining-mark
+  // bypass is defeated. This is used ONLY for matching; the ORIGINAL `content`
+  // is what gets persisted (violation rows, audit log) and shown in alerts, so
+  // evidence always reflects exactly what the user sent. Keeping match-form and
+  // evidence-form separate is the fix for the persist/broadcast divergence.
+  const matchContent = canon(content);
 
   // ── 0. Staff exemption ────────────────────────────────────────────────────
   // Moderators, admins, and the owner are exempt from ALL auto-mod (word
@@ -348,9 +352,11 @@ export async function engineEvaluate(
   }
 
   // ── 1. Legacy word_filter ─────────────────────────────────────────────────
-  // filterContent handles the word_filter table + test_mode logging.
+  // filterContent handles the word_filter table + test_mode logging. Pass the
+  // ORIGINAL content — filterContent canon()s internally for matching but logs
+  // the original, so its test-mode audit evidence stays faithful.
   try {
-    const { blocked, reason } = await filterContent(normalizedContent, user.id);
+    const { blocked, reason } = await filterContent(content, user.id);
     if (blocked) {
       result.block = true;
       result.customMessage = 'Message blocked by content filter.';
@@ -398,13 +404,13 @@ export async function engineEvaluate(
 
     switch (rule.triggerType) {
       case 'KEYWORD':
-        matchResult = evalKeyword(normalizedContent, rule.triggerMetadata);
+        matchResult = evalKeyword(matchContent, rule.triggerMetadata);
         break;
       case 'KEYWORD_PRESET':
-        matchResult = evalKeywordPreset(normalizedContent, rule.triggerMetadata);
+        matchResult = evalKeywordPreset(matchContent, rule.triggerMetadata);
         break;
       case 'MENTION_SPAM':
-        matchResult = evalMentionSpam(normalizedContent, rule.triggerMetadata);
+        matchResult = evalMentionSpam(matchContent, rule.triggerMetadata);
         break;
       case 'SPAM':
         // SPAM rules re-use the Redis window already checked above (step 2).
@@ -414,7 +420,7 @@ export async function engineEvaluate(
         // For now we skip to avoid double-firing; the step-2 detectSpam covers it.
         continue;
       case 'LINK':
-        matchResult = evalLink(normalizedContent, rule.triggerMetadata);
+        matchResult = evalLink(matchContent, rule.triggerMetadata);
         break;
       default:
         continue;
@@ -422,9 +428,10 @@ export async function engineEvaluate(
 
     if (!matchResult.matched) continue;
 
-    // Execute actions
+    // Execute actions. Pass the ORIGINAL content so the ALERT embed and any
+    // downstream evidence show exactly what the user sent, not the canon form.
     const actionsTaken = await executeActions(
-      rule, normalizedContent, channelId, user,
+      rule, content, channelId, user,
       matchResult.keyword, matchResult.substr,
     );
 
@@ -444,7 +451,9 @@ export async function engineEvaluate(
         ruleId: rule.id,
         userId: user.id,
         channelId: channelId ?? null,
-        messageContent: normalizedContent.slice(0, 4000),
+        // Persist the ORIGINAL message so violation evidence is faithful — the
+        // canon form is a matching artifact and must never be stored/broadcast.
+        messageContent: content.slice(0, 4000),
         matchedKeyword: matchResult.keyword ?? null,
         matchedSubstr: matchResult.substr ?? null,
         actionsTaken: actionsTaken as any,

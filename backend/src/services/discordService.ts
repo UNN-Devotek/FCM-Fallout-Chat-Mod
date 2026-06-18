@@ -8,6 +8,7 @@ import voiceService from './voiceService';
 import reactionRoleService from './reactionRoleService';
 import ticketService from './ticketService';
 import { getEntry, bestMatch } from './wikiCatalogService';
+import { canon } from '../utils/textCanon';
 
 let discordClient: Client | null = null;
 let broadcastFn: ((payload: any, excludeWs?: any) => void) | null = null; // Injected from WS handler to avoid circular deps
@@ -41,11 +42,20 @@ function startDrain(): void {
 /**
  * Strip Discord mention patterns from content to prevent mention abuse via relay.
  * Replaces @everyone, @here, <@userId>, <@!userId>, <@&roleId>, <#channelId>.
- * NFC-normalizes first so homoglyphs and combining diacritics (e.g. @éveryone)
- * don't bypass the literal @everyone / @here check.
+ * Detection runs on the canonical (NFD + combining-marks-stripped) form so a
+ * combining-diacritic-padded @everyone / @here can't bypass the literal check.
  */
+const EVERYONE_HERE_RE = /@(everyone|here)/;
+
 function stripMentions(text: string): string {
-  return text.normalize('NFC')
+  // Detect on the CANONICAL form (NFD + stripped combining marks) so a
+  // combining-diacritic-padded @everyone/@here can't slip a live ping through to
+  // Discord. Only canonicalise the whole message when such a token is actually
+  // present in canonical form — keeps innocent accented text byte-faithful. Bare
+  // NFC was ineffective here because it leaves the visible accent in place.
+  const canonText = canon(text);
+  const base = EVERYONE_HERE_RE.test(canonText) ? canonText : text;
+  return base
     .replace(/@(everyone|here)/g, '$1')
     .replace(/<@!?\d+>/g, '[user]')
     .replace(/<@&\d+>/g, '[role]')
@@ -1223,6 +1233,6 @@ function invalidateRelayMappingsCache(): void {
   mappingsLastLoaded = 0;
 }
 
-export { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, invalidateRelayMappingsCache, loadRelayMappings, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname };
+export { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, invalidateRelayMappingsCache, loadRelayMappings, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };
 export type { };
-module.exports = { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, invalidateRelayMappingsCache, loadRelayMappings, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname };
+module.exports = { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, invalidateRelayMappingsCache, loadRelayMappings, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };
