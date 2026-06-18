@@ -122,6 +122,8 @@ export interface Environment {
   GITHUB_WEBHOOK_SECRET: string;
   // Staff role for ticket gating (developers) — owner/admin/moderator reuse the existing ids.
   DEVELOPER_ROLE_ID: string;
+  // Role @-pinged in bug/suggestion ticket threads (support team).
+  SUPPORT_ROLE_ID: string;
 }
 
 const env: Environment = {
@@ -243,6 +245,7 @@ const env: Environment = {
   GITHUB_PROJECT_NUMBER: parseInt(process.env.GITHUB_PROJECT_NUMBER || '5', 10),
   GITHUB_WEBHOOK_SECRET: process.env.GITHUB_WEBHOOK_SECRET || '',
   DEVELOPER_ROLE_ID: process.env.DEVELOPER_ROLE_ID || '',
+  SUPPORT_ROLE_ID: process.env.SUPPORT_ROLE_ID || '',
 };
 
 // Fail fast on an unrecognized NODE_ENV. Without this, a typo like 'prod' or
