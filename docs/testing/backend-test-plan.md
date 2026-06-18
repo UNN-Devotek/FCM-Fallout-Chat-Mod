@@ -22,7 +22,8 @@ Redis needed for most suites.
 | `health.test.js` | `GET /api/health` + `GET /api/version` response shapes |
 | `integration.test.js` | Auth middleware contract, rate-limit headers, input validation |
 | `partiesController.test.js` | Party create/join/leave/invite HTTP contracts |
-| `partyReap.test.js` | Ephemeral + persistent party GC logic |
+| `partyReap.test.js` | Ephemeral + persistent party GC logic; `startPartyReapJob` overlap guard (startup reconcile + interval ticks never run concurrently) |
+| `onlineSnapshotJob.test.js` | Snapshot sampler + retention purge overlap guards (skip while previous run pending) and schedule registration |
 | `phase4SameServer.test.js` | Same-server matching (4-phase endpoint overlap) |
 | `presence-flow.test.js` | `presence:update` → endpoint-update flow |
 | `registerNameBlacklist.test.js` | Name blacklist matching (static + DB-backed) |
@@ -124,8 +125,8 @@ snapshots) with no visible error.
 
 | Job | What to test |
 |-----|-------------|
-| `jobs/partyReap.ts` | Already partially covered by `partyReap.test.js` (ephemeral + persistent GC). Add: invite expiry, last-member end-session, audit log entries. |
-| `jobs/onlineSnapshotJob.ts` | `dbQuery` called with correct `online_count`; purge fires at correct interval; non-fatal on DB error. |
+| `jobs/partyReap.ts` | Covered by `partyReap.test.js` (ephemeral + persistent GC, invite expiry, overlap guard). Still TODO: last-member end-session. |
+| `jobs/onlineSnapshotJob.ts` | Overlap guards covered by `onlineSnapshotJob.test.js`. Still TODO: assert `dbQuery` called with correct `online_count` payload; non-fatal on DB error path. |
 | `jobs/clientMetricsPurge.ts` | Purges rows older than TTL; non-fatal on error. |
 | `jobs/wikiSyncSchedule.ts` | Delegates to `runIncrementalSync`; errors swallowed without crashing. |
 | `jobs/campSyncSchedule.ts` | Same pattern as wiki sync. |

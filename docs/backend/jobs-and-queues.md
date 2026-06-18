@@ -66,14 +66,17 @@ Started from `server.ts` via `startPartyReapJob(deps)`. Runs every **60 seconds*
 
 The job is fully DI-injectable for testing (accepts `prisma`, `getOnlineUserIds`, `broadcastToPartyMembers`, optional `now` clock override via `PartyReapDeps`). The interval handle calls `.unref()` so it does not prevent graceful shutdown.
 
+**Overlap guard:** a single `running` flag is shared by **both** the startup reconcile pass and every interval tick, so two passes never execute concurrently against the same rows. The startup reconcile runs through the same guard, so if the first interval fires before that reconcile finishes it is skipped (logged as warn: `previous tick still running`). This prevents the startup pass from racing the first interval tick.
+
 **Failure propagation (escalation):** an error in a **single party row** is logged at warn and the
 row is skipped — one bad party must not abort the tick. But if a **whole top-level pass** fails
 (e.g. the DB is unreachable for the ephemeral scan, the persistent GC scan, or the invite-expiry
 sweep), `runPartyReap` collects the failures and throws an `AggregateError` at the end. That
-rejection is what the `makeJobTracker` wrapper counts toward consecutive-failure escalation —
-without it, the tracker's `logger.error` escalation would never fire for partyReap. The
-`setInterval` callback returns the tracked promise and uses a `running` re-entrancy guard so two
-reaps never overlap.
+rejection is what the `makeJobTracker('[partyReap]')` wrapper counts toward consecutive-failure
+escalation — without it, the tracker's `logger.error` escalation would never fire for partyReap.
+Each guarded tick runs `runPartyReap` **through** the tracker (so failures are observed and escalate
+warn → error) **inside** the shared `running` re-entrancy guard (so two reaps never overlap); the
+tracker swallows the rejection, so the guard's `.finally` reliably clears `running`.
 
 `startPartyReapJob` returns a stop function (`() => clearInterval(...)`) for clean teardown.
 
@@ -94,7 +97,7 @@ Started from `server.ts` via `startOnlineSnapshotJob()`. Two schedules:
 - **Sampler — every 5 minutes (`*/5 * * * *`):** inserts the current WebSocket client count (`getClientCount()`) as a row in `online_snapshots`. Backs the `onlineOverTime` series of `GET /api/public/stats`.
 - **Retention purge — daily at 04:07 UTC (`7 4 * * *`):** deletes `online_snapshots` rows older than **7 days** so the table stays small (~2016 rows steady state: 288/day × 7 days). The public stats `onlineOverTime` series only reads the last 7 days, so this retention is sufficient.
 
-Both schedules are wrapped with `makeJobTracker` (`[onlineSnapshot]` / `[onlineSnapshot:purge]`) and the cron callbacks **return** the tracker promise, so a tick is non-fatal but repeated consecutive failures escalate warn → error, and the tick is properly awaited so overlap is detected.
+**Overlap guard:** `node-cron` does not await async callbacks, so each schedule has its own `running` flag — if a slow DB write/delete is still in flight when the next tick fires, that tick is skipped (logged as warn: `previous insert still running` / `previous purge still running`) rather than queuing a duplicate. Inside that guard each schedule runs its DB work **through** `makeJobTracker` (`[onlineSnapshot]` / `[onlineSnapshot:purge]`) and **returns** the tracker promise, so a single failing tick is non-fatal but repeated consecutive failures escalate warn → error (and node-cron's own overlap detection also sees the tick as in-flight); the guard's `.finally` clears the `running` flag once the tracker settles. `startOnlineSnapshotJob` accepts optional DI deps (`schedule`, `getClientCount`, `dbQuery`) for testing; production calls it with no args so the real `node-cron`/DB/WS deps are used.
 
 ### 5. Wiki Catalog Ingest Job (node-cron)
 

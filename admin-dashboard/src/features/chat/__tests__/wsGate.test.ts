@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
-import { useWsGate, reconnectHistoryChannelIds } from '../ChatOverlay';
+import { useWsGate, reconnectHistoryChannelIds, deriveWsShouldConnect } from '../ChatOverlay';
 
 describe('useWsGate', () => {
   beforeEach(() => { vi.useFakeTimers(); });
@@ -117,6 +117,35 @@ describe('useWsGate', () => {
       act(() => { rerender({ v: true }); });
       expect(result.current).toBe(true);
     }
+  });
+});
+
+describe('deriveWsShouldConnect', () => {
+  // Exercises the REAL production derivation imported from ChatOverlay — if the
+  // isPublicMode lockdown is removed from the formula, these tests fail.
+
+  it('web (no shell): connects when not public mode', () => {
+    expect(deriveWsShouldConnect({ isPublicMode: false, overlayShell: false, overlayVisible: true, wsGameActive: false })).toBe(true);
+  });
+
+  it('public mode: never connects regardless of visibility or game state', () => {
+    expect(deriveWsShouldConnect({ isPublicMode: true, overlayShell: false, overlayVisible: true, wsGameActive: true })).toBe(false);
+    expect(deriveWsShouldConnect({ isPublicMode: true, overlayShell: true, overlayVisible: true, wsGameActive: true })).toBe(false);
+  });
+
+  it('session expiry (user becomes null, isPublicMode becomes true): gate flips false', () => {
+    // Before expiry: authenticated user, overlay visible
+    expect(deriveWsShouldConnect({ isPublicMode: false, overlayShell: false, overlayVisible: true, wsGameActive: false })).toBe(true);
+    // After expiry: user null => isPublicMode true, same visibility
+    expect(deriveWsShouldConnect({ isPublicMode: true, overlayShell: false, overlayVisible: true, wsGameActive: false })).toBe(false);
+  });
+
+  it('overlay shell: connects when game active even if not visible', () => {
+    expect(deriveWsShouldConnect({ isPublicMode: false, overlayShell: true, overlayVisible: false, wsGameActive: true })).toBe(true);
+  });
+
+  it('overlay shell: does not connect when hidden and game not running', () => {
+    expect(deriveWsShouldConnect({ isPublicMode: false, overlayShell: true, overlayVisible: false, wsGameActive: false })).toBe(false);
   });
 });
 
