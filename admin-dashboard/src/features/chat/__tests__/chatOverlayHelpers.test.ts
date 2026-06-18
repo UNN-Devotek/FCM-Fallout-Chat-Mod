@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   findTheme,
   getOverlayShell,
@@ -25,6 +25,8 @@ import {
   mergeHistoryMessages,
   computeMainTabCutout,
   shouldForceReconnectOnVisible,
+  buildRichHtmlImpl,
+  escapeHtmlAttr,
 } from '../ChatOverlay';
 
 // ── findTheme ───────────────────────────────────────────────────────────────
@@ -171,7 +173,20 @@ describe('menuBgColor', () => {
 // ── loadSettings / saveSettings ─────────────────────────────────────────────
 describe('loadSettings / saveSettings', () => {
   beforeEach(() => {
-    localStorage.clear();
+    // jsdom on an opaque origin (about:blank) doesn't expose a working
+    // localStorage, so install a minimal in-memory mock for these tests.
+    const store = new Map<string, string>();
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => (store.has(k) ? store.get(k)! : null),
+      setItem: (k: string, v: string) => { store.set(k, String(v)); },
+      removeItem: (k: string) => { store.delete(k); },
+      clear: () => { store.clear(); },
+      key: (i: number) => Array.from(store.keys())[i] ?? null,
+      get length() { return store.size; },
+    });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('returns defaults when nothing stored', () => {
@@ -718,5 +733,64 @@ describe('shouldForceReconnectOnVisible', () => {
   });
   it('does NOT kick on becoming hidden', () => {
     expect(shouldForceReconnectOnVisible({ isVisible: false, connected: false, wsGameActive: true })).toBe(false);
+  });
+});
+
+// ── escapeHtmlAttr (rich-input attribute sanitizer) ─────────────────────────
+describe('escapeHtmlAttr', () => {
+  it('escapes the five attribute-breaking characters', () => {
+    expect(escapeHtmlAttr(`&<>"'`)).toBe('&amp;&lt;&gt;&quot;&#39;');
+  });
+  it('escapes & first so existing entities are not double-decoded into new ones', () => {
+    expect(escapeHtmlAttr('&lt;')).toBe('&amp;lt;');
+  });
+  it('leaves ordinary text untouched', () => {
+    expect(escapeHtmlAttr('https://cdn.discordapp.com/emojis/123.png')).toBe('https://cdn.discordapp.com/emojis/123.png');
+  });
+});
+
+// ── buildRichHtmlImpl (rich-input HTML builder — XSS sink) ───────────────────
+describe('buildRichHtmlImpl', () => {
+  it('HTML-escapes free text so no tag can be injected', () => {
+    expect(buildRichHtmlImpl('<script>alert(1)</script>')).toBe('&lt;script&gt;alert(1)&lt;/script&gt;');
+  });
+
+  it('escapes an <img onerror> injection attempt to inert text', () => {
+    const out = buildRichHtmlImpl('<img src=x onerror=alert(1)>');
+    // No live tag is produced — the angle brackets are escaped, so the browser
+    // renders it as visible text rather than an element with an event handler.
+    expect(out).not.toContain('<img');
+    expect(out).not.toContain('<');
+    expect(out).toBe('&lt;img src=x onerror=alert(1)&gt;');
+  });
+
+  it('converts newlines to <br>', () => {
+    expect(buildRichHtmlImpl('a\nb')).toBe('a<br>b');
+  });
+
+  it('renders a valid custom emoji token as an <img> from the Discord CDN', () => {
+    const out = buildRichHtmlImpl('<:vault:1234567890123456>');
+    expect(out).toContain('<img src="https://cdn.discordapp.com/emojis/1234567890123456.png"');
+    expect(out).toContain('alt=":vault:"');
+    expect(out).toContain('data-token="&lt;:vault:1234567890123456&gt;"');
+  });
+
+  it('renders an animated custom emoji token with the animated webp URL', () => {
+    const out = buildRichHtmlImpl('<a:wave:1234567890123456>');
+    expect(out).toContain('https://cdn.discordapp.com/emojis/1234567890123456.webp?animated=true');
+  });
+
+  it('does NOT treat a malformed/oversized emoji token as an emoji (stays escaped text)', () => {
+    // id too short → not matched by \d{16,22}; must be rendered as escaped text, not an <img>.
+    const out = buildRichHtmlImpl('<:x:1>');
+    expect(out).not.toContain('<img');
+    expect(out).toBe('&lt;:x:1&gt;');
+  });
+
+  it('escapes surrounding text while still rendering an inline emoji', () => {
+    const out = buildRichHtmlImpl('<b>hi</b> <:vault:1234567890123456> <i>bye</i>');
+    expect(out.startsWith('&lt;b&gt;hi&lt;/b&gt; ')).toBe(true);
+    expect(out).toContain('<img src="https://cdn.discordapp.com/emojis/1234567890123456.png"');
+    expect(out).toContain('&lt;i&gt;bye&lt;/i&gt;');
   });
 });

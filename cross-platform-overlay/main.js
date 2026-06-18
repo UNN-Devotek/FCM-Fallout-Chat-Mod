@@ -808,7 +808,7 @@ function loadState() {
   // absent/unparseable.
   let changed = false;
   if (!state.installToken) { state.installToken = crypto.randomUUID(); changed = true; }
-  if (!state.username) { state.username = 'Overlay' + Math.floor(1000 + Math.random() * 9000); changed = true; }
+  if (!state.username) { state.username = 'Overlay' + crypto.randomInt(1000, 10000); changed = true; }
   if (changed) { try { fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2)); } catch { /* best-effort */ } }
   return state;
 }

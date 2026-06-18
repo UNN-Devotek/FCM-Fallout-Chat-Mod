@@ -1,4 +1,5 @@
 import express from 'express';
+import { randomInt, randomBytes } from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import prisma from '../config/prisma';
 import { getRedisClient } from '../config/redis';
@@ -51,8 +52,17 @@ const SIM_EVENTS = ['Eviction Notice','Radiation Rumble','Scorched Earth','a Que
 const SIM_LOCATIONS = ['Whitespring','the Cranberry Bog','Watoga','Morgantown','the Mire','Foundation','the Forest','Toxic Valley'];
 const SIM_ITEMS = ['a Two Shot Explosive','some Flux','an Ultracite plan','Stimpaks','a Fixer plan','Legendary Cores','some Nuclear Material','a Bloodied set'];
 
+// Coerce a request-controlled numeric input to a finite positive integer and
+// clamp it into [min, max] so an unbounded/NaN/Infinity value can never drive a
+// loop or allocation. Falls back to `fallback` when the input is non-numeric.
+function clampCount(value: unknown, fallback: number, min: number, max: number): number {
+  const n = Math.floor(Number(value));
+  if (!Number.isFinite(n) || n <= 0) return Math.min(Math.max(fallback, min), max);
+  return Math.min(Math.max(n, min), max);
+}
+
 function pick<T>(arr: readonly T[]): T {
-  return arr[Math.floor(Math.random() * arr.length)] as T;
+  return arr[randomInt(arr.length)] as T;
 }
 
 function buildSimLine(): string {
@@ -60,7 +70,7 @@ function buildSimLine(): string {
     .replace('{event}', pick(SIM_EVENTS))
     .replace('{location}', pick(SIM_LOCATIONS))
     .replace('{item}', pick(SIM_ITEMS))
-    .replace('{caps}', String((Math.floor(Math.random() * 40) + 1) * 25));
+    .replace('{caps}', String((randomInt(40) + 1) * 25));
 }
 
 /**
@@ -77,7 +87,7 @@ router.post('/users', async (req, res, next) => {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
-    const count = Math.min(Number(req.body?.count) || 100, 200);
+    const count = clampCount(req.body?.count, 100, 1, 200);
     const redis = await getRedisClient();
 
     // Clear rate-limit keys for the caller's IP so the sim script can re-run
@@ -164,8 +174,8 @@ router.post('/stream', async (req, res, next) => {
       return res.status(403).json({ error: 'Forbidden' });
     }
 
-    const count = Math.min(Math.max(Number(req.body?.count) || 20, 1), 200);
-    const intervalMs = Math.min(Math.max(Number(req.body?.intervalMs) || 1500, 100), 30_000);
+    const count = clampCount(req.body?.count, 20, 1, 200);
+    const intervalMs = clampCount(req.body?.intervalMs, 1500, 100, 30_000);
     const channelId = typeof req.body?.channelId === 'string' && req.body.channelId.trim()
       ? req.body.channelId.trim()
       : GENERAL_CHANNEL_ID;
@@ -181,8 +191,8 @@ router.post('/stream', async (req, res, next) => {
     let sent = 0;
     const timer = setInterval(() => {
       const author = simUsers.length > 0
-        ? simUsers[Math.floor(Math.random() * simUsers.length)]
-        : { id: `sim-ephemeral-${Math.floor(Math.random() * 1e6)}`, username: pick(SIM_NAMES) };
+        ? simUsers[randomInt(simUsers.length)]
+        : { id: `sim-ephemeral-${randomBytes(8).toString('hex')}`, username: pick(SIM_NAMES) };
 
       const messageId = uuidv4Stream();
       const createdAt = new Date().toISOString();
