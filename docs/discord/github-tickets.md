@@ -72,7 +72,7 @@ web-filed reports, shown in the portal's `#` column).
 1. Any member clicks it → a modal collects *What happened?* + *Player name(s) involved*.
 2. The bot writes a `player_reports` row directly via Prisma (in-process; it upserts
    the reporter's account, mirroring the website form) and fires the mod-log alert.
-3. It opens a **private "lockdown" thread** titled **`<reporter> · <involved> · #<number>`**
+3. It opens a **private "lockdown" thread** titled **`Player Report · <reporter> · <involved> · #<number>`**
    (no emoji), **@-pings moderators + overseers** (`MODERATOR_ROLE_ID` +
    `OWNER_ROLE_ID`), and adds staff-only buttons: **✅ Close** (mark the report
    closed), **🔒 Lock** (lock the thread), **🗑️ Delete** (delete the report **and**

@@ -63,20 +63,21 @@ describe('playerReportHelpers', () => {
   });
 
   describe('buildPlayerReportThreadName', () => {
-    it('formats as "<reporter> · <involved> · #<num>" with no emoji', () => {
-      expect(h.buildPlayerReportThreadName('Dweller', 'Griefer123', 42)).toBe('Dweller · Griefer123 · #42');
+    it('formats as "Player Report · <reporter> · <involved> · #<num>" (no emoji)', () => {
+      expect(h.buildPlayerReportThreadName('Dweller', 'Griefer123', 42)).toBe('Player Report · Dweller · Griefer123 · #42');
     });
     it('omits the involved segment when blank', () => {
-      expect(h.buildPlayerReportThreadName('Dweller', '', 7)).toBe('Dweller · #7');
-      expect(h.buildPlayerReportThreadName('Dweller', null, 7)).toBe('Dweller · #7');
+      expect(h.buildPlayerReportThreadName('Dweller', '', 7)).toBe('Player Report · Dweller · #7');
+      expect(h.buildPlayerReportThreadName('Dweller', null, 7)).toBe('Player Report · Dweller · #7');
     });
-    it('always keeps the #number and stays within 100 chars', () => {
+    it('always keeps the prefix + #number and stays within 100 chars', () => {
       const n = h.buildPlayerReportThreadName('z'.repeat(200), 'y'.repeat(200), 123);
       expect(n.length).toBeLessThanOrEqual(100);
+      expect(n.startsWith('Player Report · ')).toBe(true);
       expect(n.endsWith(' · #123')).toBe(true);
     });
     it('falls back when reporter is empty', () => {
-      expect(h.buildPlayerReportThreadName('', '', 5)).toBe('player · #5');
+      expect(h.buildPlayerReportThreadName('', '', 5)).toBe('Player Report · player · #5');
     });
   });
 });
