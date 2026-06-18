@@ -100,7 +100,8 @@ export const BUG_DIAGNOSTICS_FIELD = {
     '`C:\\Users\\<you>\\AppData\\Roaming\\Fallout Chat Mod\\keybinds.cfg` (Windows)\n' +
     '`~/.config/Fallout Chat Mod/keybinds.cfg` (Linux)\n' +
     '**In-game / game issues** (HUD mod)\n' +
-    '`Documents\\My Games\\Fallout 76\\zfe.log`\n\n' +
+    '`Documents\\My Games\\Fallout 76\\zfe.log` (Windows)\n' +
+    '`~/.steam/steam/steamapps/compatdata/1151340/pfx/drive_c/users/steamuser/Documents/My Games/Fallout 76/zfe.log` (Linux/Proton — Steam library path may vary)\n\n' +
     "📎 If your bug is about the **overlay's behavior** or an **in-game/game issue**, please attach the relevant file(s) above.",
 };
 

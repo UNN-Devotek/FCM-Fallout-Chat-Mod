@@ -137,6 +137,9 @@ describe('githubTicketHelpers', () => {
       expect(f.value).toContain('keybinds.cfg');
       expect(f.value).toContain('zfe.log');
       expect(f.value).toContain('~/.config/Fallout Chat Mod/logs/main.log');
+      // every location has BOTH a Windows and a Linux path
+      expect(f.value).toContain('~/.config/Fallout Chat Mod/keybinds.cfg'); // linux keybinds
+      expect(f.value).toContain('compatdata/1151340'); // linux/Proton zfe.log
     });
   });
 });

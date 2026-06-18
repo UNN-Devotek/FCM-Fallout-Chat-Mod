@@ -49,9 +49,10 @@ second login — like voice channels and reaction roles.
    - records the issue↔thread mapping in `github_issue_threads`.
    - **bug** threads also list the overlay **log** (`…\Fallout Chat Mod\logs\main.log`
      / `~/.config/Fallout Chat Mod/logs/main.log`), **keybinds** (`…keybinds.cfg`),
-     and the in-game/HUD log (`Documents\My Games\Fallout 76\zfe.log`), asking the
-     reporter to attach them for overlay-behavior or in-game/game issues
-     (`BUG_DIAGNOSTICS_FIELD`).
+     and the in-game/HUD log (`Documents\My Games\Fallout 76\zfe.log` on Windows, or
+     under the Proton `compatdata/1151340` prefix on Linux) — each with **both
+     Windows and Linux paths** — asking the reporter to attach them for
+     overlay-behavior or in-game/game issues (`BUG_DIAGNOSTICS_FIELD`).
 4. Thread buttons (staff only):
    - **Add to Roadmap** → applies the `roadmap` label (marks planned features within
      the master board; there is no separate roadmap board).
