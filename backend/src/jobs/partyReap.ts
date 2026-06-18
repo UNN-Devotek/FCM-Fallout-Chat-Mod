@@ -156,18 +156,32 @@ export async function runPartyReap(deps: PartyReapDeps): Promise<PartyReapResult
 
 /**
  * Wire the recurring job. Returns a stop function for graceful shutdown.
+ *
+ * Overlap guard: a single `running` flag is shared by BOTH the startup
+ * reconcile pass and every interval tick, so two passes never execute
+ * concurrently against the same rows. The startup reconcile sets the flag, so
+ * if the first interval fires before that reconcile finishes it is skipped.
  */
 export function startPartyReapJob(deps: PartyReapDeps): () => void {
-  // Run once at startup to reconcile any parties that should have been reaped
-  runPartyReap(deps).catch(err =>
-    logger.warn({ err }, '[partyReap] startup reconcile failed (non-fatal)'),
-  );
+  let running = false;
 
-  const interval = setInterval(() => {
-    runPartyReap(deps).catch(err =>
-      logger.warn({ err }, '[partyReap] tick failed (non-fatal)'),
-    );
-  }, REAP_INTERVAL_MS);
+  /** Run one reap pass under the shared overlap guard. */
+  const runGuardedTick = (label: 'startup reconcile' | 'tick'): void => {
+    if (running) {
+      logger.warn(`[partyReap] previous tick still running — skipping this ${label}`);
+      return;
+    }
+    running = true;
+    runPartyReap(deps)
+      .catch(err => logger.warn({ err }, `[partyReap] ${label} failed (non-fatal)`))
+      .finally(() => { running = false; });
+  };
+
+  // Run once at startup to reconcile any parties that should have been reaped.
+  // This goes through the same guard so it cannot overlap the first interval tick.
+  runGuardedTick('startup reconcile');
+
+  const interval = setInterval(() => runGuardedTick('tick'), REAP_INTERVAL_MS);
 
   // Don't keep the event loop alive on shutdown.
   if (typeof (interval as any).unref === 'function') (interval as any).unref();
