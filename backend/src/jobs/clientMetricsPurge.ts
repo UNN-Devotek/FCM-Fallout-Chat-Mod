@@ -6,16 +6,18 @@
 import cron from 'node-cron';
 import logger from '../config/logger';
 import { purgeOldClientMetrics } from '../services/clientMetricsService';
+import { makeJobTracker } from './jobTracker';
 
 export function startClientMetricsPurgeJob(): void {
-  // 03:17 UTC daily
-  cron.schedule('17 3 * * *', async () => {
-    try {
+  const tracker = makeJobTracker('[clientMetricsPurge]');
+  // 03:17 UTC daily. Return the tracker promise so node-cron overlap detection
+  // works AND consecutive failures escalate warn → error (instead of the old
+  // try/catch that swallowed every error as warn forever).
+  cron.schedule('17 3 * * *', () =>
+    tracker(async () => {
       const count = await purgeOldClientMetrics();
       logger.info({ count }, '[clientMetricsPurge] daily purge complete');
-    } catch (err) {
-      logger.warn({ err }, '[clientMetricsPurge] daily purge error (non-fatal)');
-    }
-  });
+    }),
+  );
   logger.info('[clientMetricsPurge] daily purge job scheduled (03:17 UTC)');
 }

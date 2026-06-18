@@ -184,11 +184,22 @@ export function parseExpandedPerkInfobox(xml: string): Record<string, string> {
 /** Clean a raw infobox value of wiki markup → display text. */
 export function cleanWikitextValue(raw: string): string {
   let s = raw;
-  s = s.replace(/<!--[\s\S]*?-->/g, '');                    // comments
+  // Remove HTML comments — loop until stable so a nested/overlapping comment
+  // ("<!--<!-- -->-->") can't leave a residual "<!-- -->" after a single pass.
+  { let prev: string; do { prev = s; s = s.replace(/<!--[\s\S]*?-->/g, ''); } while (s !== prev); }
   s = s.replace(/<ref[\s\S]*?<\/ref>/gi, '');               // references
   s = s.replace(/<br\s*\/?>/gi, ' ');                        // line breaks
   s = s.replace(/<small>|<\/small>/gi, '');                 // small tags
-  s = s.replace(/<[^>]+>/g, '');                             // any other html
+  // Strip any remaining HTML tags. Loop until stable so OVERLAPPING/NESTED angle
+  // brackets (e.g. "<scr<x>ipt>") can't leave a residual usable "<…>" tag after a
+  // single pass — each pass removes one inner "<…>" and re-scans the collapsed
+  // result. Iteration cap (50) guards against adversarial input (ReDoS).
+  let prevTag: string;
+  let tagIter = 0;
+  do { prevTag = s; s = s.replace(/<[^>]+>/g, ''); } while (s !== prevTag && ++tagIter < 50);
+  // Any leftover lone angle brackets (unbalanced "<" or ">") are dropped so no
+  // partial markup can survive to the rendered output.
+  s = s.replace(/[<>]/g, '');
   s = s.replace(/\{\{dot\}\}/gi, ' · ');                     // {{dot}} separator
   s = s.replace(/\{\{icon\|[^}]*\}\}/gi, '');                // {{icon|…}} → drop
   s = s.replace(/\{\{ID\|([^}]*)\}\}/gi, '$1');              // {{ID|0046D2A1}} → 0046D2A1

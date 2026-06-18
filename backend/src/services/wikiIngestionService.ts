@@ -39,6 +39,13 @@ const THROTTLE_MS         = 60;
 const INGEST_CONCURRENCY  = 10;
 const MAX_CATEGORY_DEPTH = 5;
 const LOCK_KEY         = 'fo76:wiki:ingest:lock';
+/**
+ * Message of the Error thrown when a run is skipped because the Redis ingest
+ * lock is already held by a concurrent run. This is an EXPECTED, non-fatal
+ * skip — callers (cron wrappers) match on it so the job tracker does NOT count
+ * a lock-held skip as a failure and falsely escalate to logger.error.
+ */
+export const WIKI_INGEST_LOCK_HELD_MESSAGE = 'Ingestion already running (Redis lock held)';
 const LAST_RUN_KEY     = 'fo76:wiki:ingest:last-run';
 const LOCK_TTL_SEC     = 10_800; // 3h
 const MIN_INTERVAL_SEC = 3_600;  // 1h
@@ -368,7 +375,7 @@ export async function runWikiIngestion(titlesOverride?: string[]): Promise<Inges
   const locked = await redis.set(LOCK_KEY, runId, { NX: true, EX: LOCK_TTL_SEC });
   if (!locked) {
     logger.info('[wikiIngest] another ingestion run is already active (lock held), aborting');
-    throw new Error('Ingestion already running (Redis lock held)');
+    throw new Error(WIKI_INGEST_LOCK_HELD_MESSAGE);
   }
 
   try {
@@ -1053,7 +1060,7 @@ export async function checkIngestAllowed(): Promise<string | null> {
   const redis = await getRedisClient();
 
   const lockHolder = await redis.get(LOCK_KEY);
-  if (lockHolder) return 'Ingestion already running (Redis lock held)';
+  if (lockHolder) return WIKI_INGEST_LOCK_HELD_MESSAGE;
 
   const lastRunStr = await redis.get(LAST_RUN_KEY);
   if (lastRunStr) {

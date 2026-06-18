@@ -13,6 +13,7 @@
 
 import { PrismaClient } from '@prisma/client';
 import logger from '../config/logger';
+import { makeJobTracker } from './jobTracker';
 
 export const REAP_INTERVAL_MS = 60_000;
 const INVITE_EXPIRY_DAYS = 7;
@@ -43,6 +44,13 @@ export async function runPartyReap(deps: PartyReapDeps): Promise<PartyReapResult
   const ephemeralReaped: string[] = [];
   const persistentGCd: string[] = [];
   let invitesExpired = 0;
+
+  // Collect failures of whole top-level passes (not individual party rows — a
+  // single bad row is logged and skipped). If any top-level pass fails we throw
+  // an aggregate at the end so the job tracker can count consecutive failures
+  // and escalate warn → error once the threshold is hit. Without re-throwing,
+  // the tracker's promise always resolves and the escalation is dead code.
+  const passFailures: { pass: string; err: unknown }[] = [];
 
   try {
     // ── Pass 1: Ephemeral parties with 0 online members ──────────────────────
@@ -98,6 +106,7 @@ export async function runPartyReap(deps: PartyReapDeps): Promise<PartyReapResult
     }
   } catch (err) {
     logger.warn({ err }, '[partyReap] ephemeral scan failed (non-fatal)');
+    passFailures.push({ pass: 'ephemeral', err });
   }
 
   try {
@@ -134,6 +143,7 @@ export async function runPartyReap(deps: PartyReapDeps): Promise<PartyReapResult
     }
   } catch (err) {
     logger.warn({ err }, '[partyReap] persistent GC scan failed (non-fatal)');
+    passFailures.push({ pass: 'persistent', err });
   }
 
   try {
@@ -149,6 +159,19 @@ export async function runPartyReap(deps: PartyReapDeps): Promise<PartyReapResult
     }
   } catch (err) {
     logger.warn({ err }, '[partyReap] invite expiry scan failed (non-fatal)');
+    passFailures.push({ pass: 'invites', err });
+  }
+
+  // If one or more whole passes failed, surface it to the caller (the job
+  // tracker) so consecutive-failure escalation can fire. We still completed
+  // whatever passes succeeded; the partial results are dropped because the
+  // tick is reported as failed.
+  if (passFailures.length > 0) {
+    const failedPasses = passFailures.map(f => f.pass).join(', ');
+    throw new AggregateError(
+      passFailures.map(f => f.err),
+      `[partyReap] ${passFailures.length} pass(es) failed: ${failedPasses}`,
+    );
   }
 
   return { ephemeralReaped, persistentGCd, invitesExpired };
@@ -156,18 +179,40 @@ export async function runPartyReap(deps: PartyReapDeps): Promise<PartyReapResult
 
 /**
  * Wire the recurring job. Returns a stop function for graceful shutdown.
+ *
+ * Overlap guard: a single `running` flag is shared by BOTH the startup
+ * reconcile pass and every interval tick, so two passes never execute
+ * concurrently against the same rows. The startup reconcile sets the flag, so
+ * if the first interval fires before that reconcile finishes it is skipped.
  */
 export function startPartyReapJob(deps: PartyReapDeps): () => void {
-  // Run once at startup to reconcile any parties that should have been reaped
-  runPartyReap(deps).catch(err =>
-    logger.warn({ err }, '[partyReap] startup reconcile failed (non-fatal)'),
-  );
+  let running = false;
+  const tracked = makeJobTracker('[partyReap]');
 
-  const interval = setInterval(() => {
-    runPartyReap(deps).catch(err =>
-      logger.warn({ err }, '[partyReap] tick failed (non-fatal)'),
-    );
-  }, REAP_INTERVAL_MS);
+  // Run one reap pass under BOTH the shared overlap guard AND the failure
+  // tracker. The overlap guard (`running`) ensures the startup reconcile and
+  // every interval tick never execute concurrently against the same rows. The
+  // tracker observes each run's outcome: runPartyReap re-throws whole-pass
+  // failures (see its AggregateError), so consecutive failures escalate
+  // warn → error. The tracker swallows the rejection (counting it for
+  // escalation) and always resolves, so `.finally` reliably clears `running`;
+  // errors are never floated unhandled.
+  const runGuardedTick = (label: 'startup reconcile' | 'tick'): void => {
+    if (running) {
+      logger.warn(`[partyReap] previous tick still running — skipping this ${label}`);
+      return;
+    }
+    running = true;
+    void tracked(() => runPartyReap(deps).then(() => {})).finally(() => {
+      running = false;
+    });
+  };
+
+  // Run once at startup to reconcile any parties that should have been reaped.
+  // This goes through the same guard so it cannot overlap the first interval tick.
+  runGuardedTick('startup reconcile');
+
+  const interval = setInterval(() => runGuardedTick('tick'), REAP_INTERVAL_MS);
 
   // Don't keep the event loop alive on shutdown.
   if (typeof (interval as any).unref === 'function') (interval as any).unref();

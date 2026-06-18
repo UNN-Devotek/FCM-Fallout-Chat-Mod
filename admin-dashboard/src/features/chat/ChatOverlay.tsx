@@ -270,6 +270,29 @@ export function shouldForceReconnectOnVisible(opts: {
 }
 
 /**
+ * Raw "should the authed WebSocket be open?" decision, derived from mode +
+ * visibility + game state. Extracted as a pure function so the gating policy is
+ * unit-testable against the real code (not a re-implemented copy).
+ *
+ * - `isPublicMode` is a hard lockdown: public mode never opens the authed WS,
+ *   regardless of visibility or game state. Folding it in here also means a
+ *   session expiry (user -> null flips isPublicMode true) immediately feeds
+ *   through the gate and tears the socket down rather than leaving it open until
+ *   an unrelated change re-runs the effect.
+ * - Web (no overlay shell) always connects when not public.
+ * - In the overlay shell, connect when the overlay is visible OR the game is
+ *   running (so chat history is warm the instant the overlay shows).
+ */
+export function deriveWsShouldConnect(opts: {
+  isPublicMode: boolean;
+  overlayShell: boolean;
+  overlayVisible: boolean;
+  wsGameActive: boolean;
+}): boolean {
+  return !opts.isPublicMode && (!opts.overlayShell || opts.overlayVisible || opts.wsGameActive);
+}
+
+/**
  * Hysteresis gate hook: returns a smoothed version of `wsShouldConnect` that
  * connects immediately (true propagates synchronously) but delays disconnecting
  * by `gracePeriodMs`. If the input flips false→true within the grace window the
@@ -366,6 +389,52 @@ export function resolveMediaUrl(url: string): string {
     return `${relayBase.replace(/\/$/, '')}${url.startsWith('/') ? '' : '/'}${url}`;
   }
   return url;
+}
+
+/** Escape a value for safe interpolation into a double/single-quoted HTML attribute. */
+export function escapeHtmlAttr(v: string): string {
+  return v
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Build the rich (HTML) representation from a plain-text string that may contain
+ * `<:name:id>` / `<a:name:id>` custom-emoji tokens, for assigning to the
+ * contentEditable input's innerHTML. This is the single HTML-producing sink for
+ * the rich input, so all sanitization lives here:
+ *  - Free text is HTML-escaped (`&`, `<`, `>`) — no user text can introduce tags.
+ *  - The only raw markup emitted is the emoji `<img>`, whose attribute values are
+ *    drawn from the regex capture groups (`name` = [A-Za-z0-9_]+, `id` = \d{16,22})
+ *    and additionally run through `escapeHtmlAttr`, so no value can break out of
+ *    the quoted attribute to inject new attributes/tags/handlers.
+ * Unicode emoji glyphs are left as-is (they render natively).
+ */
+export function buildRichHtmlImpl(text: string): string {
+  const CUSTOM_RE = /<(a?):([A-Za-z0-9_]+):(\d{16,22})>/g;
+  let html = '';
+  let last = 0;
+  let m: RegExpExecArray | null;
+  CUSTOM_RE.lastIndex = 0;
+  while ((m = CUSTOM_RE.exec(text)) !== null) {
+    const before = text.slice(last, m.index);
+    if (before) html += before.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+    const animated = m[1] === 'a';
+    const name = m[2];
+    const id = m[3];
+    const src = animated
+      ? `https://cdn.discordapp.com/emojis/${id}.webp?animated=true`
+      : `https://cdn.discordapp.com/emojis/${id}.png`;
+    const token = m[0];
+    html += `<img src="${escapeHtmlAttr(src)}" alt="${escapeHtmlAttr(`:${name}:`)}" title="${escapeHtmlAttr(`:${name}:`)}" data-token="${escapeHtmlAttr(token)}" style="height:20px;vertical-align:middle;margin:0 1px;display:inline">`;
+    last = m.index + m[0].length;
+  }
+  const tail = text.slice(last);
+  if (tail) html += tail.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
+  return html;
 }
 
 /**
@@ -3361,33 +3430,10 @@ export default function ChatOverlay() {
     return walk(el).replace(/\n$/, ''); // strip trailing newline added by browser
   }, []);
 
-  // Build the rich (HTML) representation from a plain-text string that may
-  // contain <:name:id> / <a:name:id> custom emoji tokens. Returns an HTML
-  // string safe to set as innerHTML of the contentEditable div. Unicode
-  // emoji glyphs are left as-is (they render natively).
-  const buildRichHtml = useCallback((text: string): string => {
-    const CUSTOM_RE = /<(a?):([A-Za-z0-9_]+):(\d{16,22})>/g;
-    let html = '';
-    let last = 0;
-    let m: RegExpExecArray | null;
-    CUSTOM_RE.lastIndex = 0;
-    while ((m = CUSTOM_RE.exec(text)) !== null) {
-      const before = text.slice(last, m.index);
-      if (before) html += before.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
-      const animated = m[1] === 'a';
-      const name = m[2];
-      const id = m[3];
-      const src = animated
-        ? `https://cdn.discordapp.com/emojis/${id}.webp?animated=true`
-        : `https://cdn.discordapp.com/emojis/${id}.png`;
-      const token = m[0];
-      html += `<img src="${src}" alt=":${name}:" title=":${name}:" data-token="${token}" style="height:20px;vertical-align:middle;margin:0 1px;display:inline">`;
-      last = m.index + m[0].length;
-    }
-    const tail = text.slice(last);
-    if (tail) html += tail.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
-    return html;
-  }, []);
+  // Stable callback wrapper over the top-level, unit-tested buildRichHtmlImpl
+  // (which owns all HTML escaping/sanitization for the rich input). Kept as a
+  // useCallback so the effect/handler dependency arrays below stay stable.
+  const buildRichHtml = useCallback((text: string): string => buildRichHtmlImpl(text), []);
 
   // Insert a token (unicode char or <:name:id>) at the current caret position
   // in the contentEditable div, then update inputText state.
@@ -4085,7 +4131,16 @@ export default function ChatOverlay() {
   // either signal (esp. game-gate flapping) tears down + reconnects the WS even
   // when the connect decision is unchanged, and each reconnect re-fetches
   // chat:history = a visible "chat reload". Web (overlayShell null) is always true.
-  const wsShouldConnect = !overlayShell || overlayVisible || wsGameActive;
+  // isPublicMode is included so that a session expiry (user -> null) immediately
+  // feeds through the gate and triggers teardown rather than leaving the authed
+  // WebSocket open until an unrelated wsGate change causes the effect to re-run.
+  // See deriveWsShouldConnect (pure, unit-tested) for the gating policy.
+  const wsShouldConnect = deriveWsShouldConnect({
+    isPublicMode,
+    overlayShell: !!overlayShell,
+    overlayVisible,
+    wsGameActive,
+  });
 
   // Hysteresis gate: connect immediately, disconnect only after a 500 ms grace
   // (200 ms in dev). Prevents the double-teardown race — see useWsGate above.

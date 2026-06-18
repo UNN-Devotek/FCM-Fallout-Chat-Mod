@@ -110,6 +110,20 @@ export interface Environment {
   // read the prod guild without the dev bot.
   PROD_VERIFY_URL: string;
   PROD_VERIFY_TOKEN: string;
+  // GitHub ticketing (Discord <-> GitHub Issues/Projects). GITHUB_PAT is a
+  // fine-grained PAT (owner UNN-Devotek) needing Issues:R/W + Projects:R/W.
+  // Projects v2 are GraphQL-only; the *_NUMBER values are the /users/<owner>/projects/<N> numbers.
+  GITHUB_PAT: string;
+  GITHUB_OWNER: string;
+  GITHUB_REPO: string;
+  // Single master GitHub Project v2 board (all issues + features). Used for the panel link.
+  GITHUB_PROJECT_NUMBER: number;
+  // HMAC secret verifying inbound GitHub webhooks (X-Hub-Signature-256). Increment 2.
+  GITHUB_WEBHOOK_SECRET: string;
+  // Staff role for ticket gating (developers) — owner/admin/moderator reuse the existing ids.
+  DEVELOPER_ROLE_ID: string;
+  // Role @-pinged in bug/suggestion ticket threads (support team).
+  SUPPORT_ROLE_ID: string;
 }
 
 const env: Environment = {
@@ -223,7 +237,44 @@ const env: Environment = {
   DEV_DEVELOPER_ROLE_ID: process.env.DEV_DEVELOPER_ROLE_ID || '',
   PROD_VERIFY_URL: process.env.PROD_VERIFY_URL || '',
   PROD_VERIFY_TOKEN: process.env.PROD_VERIFY_TOKEN || '',
+
+  // GitHub ticketing
+  GITHUB_PAT: process.env.GITHUB_PAT || '',
+  GITHUB_OWNER: process.env.GITHUB_OWNER || 'UNN-Devotek',
+  GITHUB_REPO: process.env.GITHUB_REPO || 'FCM-Fallout-Chat-Mod',
+  GITHUB_PROJECT_NUMBER: parseInt(process.env.GITHUB_PROJECT_NUMBER || '5', 10),
+  GITHUB_WEBHOOK_SECRET: process.env.GITHUB_WEBHOOK_SECRET || '',
+  DEVELOPER_ROLE_ID: process.env.DEVELOPER_ROLE_ID || '',
+  SUPPORT_ROLE_ID: process.env.SUPPORT_ROLE_ID || '',
 };
+
+// The dev fallback value for HUD_IDENTITY_SECRET (the HMAC key that derives
+// in-game HUD identityHashes). MUST stay byte-for-byte in sync with both the
+// default assigned to HUD_IDENTITY_SECRET above and the sentinel exported as
+// DEV_DEFAULT_IDENTITY_SECRET in services/hudIdentityService.ts. Defined here
+// (the dependency-free config module) rather than imported from the service to
+// avoid a circular import — the service imports `env` from this file. The
+// startup guard below and hudIdentityService share this same literal, and
+// environmentStartupGuard.test.js asserts the two never drift.
+export const DEV_DEFAULT_HUD_IDENTITY_SECRET = 'dev-hud-identity-secret-change-me';
+
+/**
+ * Pure predicate: would the production startup guard refuse to boot for this
+ * combination? Exported so it can be unit-tested without triggering
+ * process.exit. The HUD identity secret is the HMAC key behind every in-game
+ * HUD identityHash; with the public dev default (or empty) those identities are
+ * forgeable, so production must never boot the inbound HUD chat path with it.
+ * The guard only fires when the inbound TCP path is actually enabled.
+ */
+export function hudIdentitySecretGuardFails(opts: {
+  nodeEnv: string;
+  hudPushTcpEnabled: boolean;
+  hudIdentitySecret: string | undefined | null;
+}): boolean {
+  if (opts.nodeEnv !== 'production') return false;
+  if (!opts.hudPushTcpEnabled) return false;
+  return !opts.hudIdentitySecret || opts.hudIdentitySecret === DEV_DEFAULT_HUD_IDENTITY_SECRET;
+}
 
 // Fail fast on an unrecognized NODE_ENV. Without this, a typo like 'prod' or
 // 'Production' silently falls through to development behavior (dev-login,
@@ -270,6 +321,25 @@ if (env.NODE_ENV === 'production') {
     );
     process.exit(1);
   }
+
+  // HUD identity secret hardening (SR-003): when the inbound HUD chat path
+  // (HUD_PUSH_TCP_ENABLED) is on, HUD_IDENTITY_SECRET is the HMAC key behind
+  // every in-game identityHash. If it is empty or still the public dev default,
+  // identities are forgeable — refuse to boot rather than start the inbound path
+  // with a known key. hudPushTcp already fails the listener closed, but this
+  // fail-closed boot guard catches the misconfiguration earlier and louder.
+  if (hudIdentitySecretGuardFails({
+    nodeEnv: env.NODE_ENV,
+    hudPushTcpEnabled: env.HUD_PUSH_TCP_ENABLED,
+    hudIdentitySecret: env.HUD_IDENTITY_SECRET,
+  })) {
+    console.error(
+      'FATAL: HUD_PUSH_TCP_ENABLED is true but HUD_IDENTITY_SECRET is empty or the ' +
+      'public dev default. In-game HUD identities would be forgeable. Set a strong, ' +
+      'unique HUD_IDENTITY_SECRET (e.g. `node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"`).',
+    );
+    process.exit(1);
+  }
 } else {
   // Dev/test: warn but allow. Helps catch misconfiguration early without
   // blocking local development.
@@ -284,4 +354,9 @@ if (env.NODE_ENV === 'production') {
 }
 
 export default env;
+// `module.exports = env` makes require() return env directly (see consumers /
+// tests). That clobbers esbuild's named CJS exports, so re-attach the guard
+// helper + sentinel onto env so they remain reachable from require('./environment').
+(env as unknown as Record<string, unknown>).hudIdentitySecretGuardFails = hudIdentitySecretGuardFails;
+(env as unknown as Record<string, unknown>).DEV_DEFAULT_HUD_IDENTITY_SECRET = DEV_DEFAULT_HUD_IDENTITY_SECRET;
 module.exports = env;

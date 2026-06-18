@@ -56,6 +56,40 @@ function handleProtected(err: unknown, next: NextFunction): boolean {
   return false;
 }
 
+/**
+ * Ban-evidence access roles. Only owners and admins can see ban evidence for
+ * bans they did not personally issue. EVERY other persona admitted to the
+ * moderation routes (moderator, supporter, developer, and any future
+ * non-privileged role) is scoped to the bans they themselves issued — we must
+ * not special-case the literal 'moderator' string, or a supporter/developer
+ * persona would silently bypass the scope.
+ */
+const EVIDENCE_PRIVILEGED_ROLES = new Set(['owner', 'admin']);
+
+function isEvidencePrivileged(req: Request): boolean {
+  const role: string = (req as any).adminUser?.role ?? '';
+  return EVIDENCE_PRIVILEGED_ROLES.has(role);
+}
+
+/**
+ * Per-ban authorization for evidence access. Owners and admins may access any
+ * ban's evidence; every other persona may only access evidence for bans they
+ * personally issued (`ban.bannedById === actorUserId`).
+ *
+ * On denial (including a non-existent ban) this throws a 404 — NOT a 403 — so
+ * the endpoint does not leak whether a given ban id exists to a moderator who
+ * is not allowed to see it (avoids a ban-existence oracle).
+ */
+async function assertBanEvidenceAccess(req: Request, banId: string): Promise<void> {
+  if (isEvidencePrivileged(req)) return;
+  const actor = await actorUserId(req);
+  const ban = await prisma.ban.findUnique({
+    where: { id: banId },
+    select: { bannedById: true },
+  });
+  if (!ban || ban.bannedById !== actor) throw createError(404, 'Ban not found');
+}
+
 // ── POST /api/moderation/kicks  { userId, reason } ───────────────────────────
 export async function kickUserHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
@@ -94,7 +128,11 @@ export async function muteUserHandler(req: Request, res: Response, next: NextFun
 export async function unmuteUserHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     requireUuid(req.params.userId, 'userId');
-    const reason = (req.query.reason as string | undefined) || (req.body?.reason as string | undefined) || '';
+    // reason is optional. req.query.reason / req.body.reason can be string[] or
+    // an object under parameter tampering (?reason=a&reason=b); only accept a
+    // plain string, else fall through to '' — never call .slice on a non-string.
+    const rawReason = req.query.reason ?? req.body?.reason;
+    const reason = typeof rawReason === 'string' ? rawReason : '';
     await unmuteUser(req.params.userId, await actorUserId(req), reason.slice(0, 300));
     res.json({ data: { unmuted: true } });
   } catch (err) { next(err); }
@@ -182,6 +220,18 @@ export async function getBanHandler(req: Request, res: Response, next: NextFunct
       },
     });
     if (!row) return next(createError(404, 'Ban not found'));
+
+    // Per-ban evidence scoping: owners/admins see the full evidence relation
+    // (textContent + objectKey). For every other persona, strip the evidence
+    // relation unless they personally issued this ban — otherwise the include
+    // would leak evidence content (textContent/objectKey) of any ban to any
+    // moderator. The ban metadata itself is not secret (it's in the ban list),
+    // so we return the row with evidence removed rather than 404.
+    if (!isEvidencePrivileged(req)) {
+      const actor = await actorUserId(req);
+      if ((row as any).bannedById !== actor) (row as any).evidence = [];
+    }
+
     res.json({ data: row });
   } catch (err) { next(err); }
 }
@@ -202,6 +252,12 @@ export async function streamBanEvidenceHandler(req: Request, res: Response, next
   try {
     requireUuid(req.params.id, 'id');
     requireUuid(req.params.fileId, 'fileId');
+
+    // Per-ban authorization: owners/admins can access any ban's evidence; every
+    // other persona may only access evidence for bans they personally issued.
+    // Denial (or a non-existent ban) throws 404 to avoid a ban-existence oracle.
+    await assertBanEvidenceAccess(req, req.params.id);
+
     const ev = await prisma.banEvidence.findFirst({
       where: { id: req.params.fileId, banId: req.params.id, type: 'image' },
       select: { objectKey: true, mime: true },
@@ -226,9 +282,17 @@ export async function streamBanEvidenceHandler(req: Request, res: Response, next
 }
 
 // ── GET /api/moderation/evidence — gallery list (all evidence, paginated) ────
-export async function listEvidenceHandler(_req: Request, res: Response, next: NextFunction): Promise<void> {
+export async function listEvidenceHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
+    // Owners/admins see the full evidence gallery. Every other persona is
+    // scoped to evidence attached to bans they personally issued — otherwise
+    // this unfiltered findMany would leak every ban's textContent/objectKey to
+    // any moderator.
+    const where = isEvidencePrivileged(req)
+      ? undefined
+      : { ban: { bannedById: await actorUserId(req) } };
     const rows = await prisma.banEvidence.findMany({
+      where,
       orderBy: { createdAt: 'desc' },
       take: 200,
       include: { ban: { select: { id: true, userId: true, reasonCategory: true, reasonText: true, createdAt: true, reversedAt: true, user: { select: { username: true, discordDisplayName: true, discordUsername: true } } } } },

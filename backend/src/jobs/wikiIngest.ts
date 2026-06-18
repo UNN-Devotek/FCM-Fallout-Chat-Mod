@@ -8,20 +8,31 @@
 
 import cron from 'node-cron';
 import logger from '../config/logger';
-import { runWikiIngestion } from '../services/wikiIngestionService';
+import { runWikiIngestion, WIKI_INGEST_LOCK_HELD_MESSAGE } from '../services/wikiIngestionService';
+import { makeJobTracker } from './jobTracker';
 
 export function startWikiIngestJob(): void {
-  // Weekly — Sunday 03:00 UTC
-  cron.schedule('0 3 * * 0', async () => {
-    logger.info('[wikiIngest] scheduled weekly run starting');
-    try {
-      const result = await runWikiIngestion();
-      logger.info(result, '[wikiIngest] scheduled run complete');
-    } catch (err) {
-      // Includes "lock already held" from a concurrent admin trigger — expected, non-fatal
-      logger.warn({ err }, '[wikiIngest] scheduled run failed or was skipped');
-    }
-  });
+  const tracker = makeJobTracker('[wikiIngest]');
+  // Weekly — Sunday 03:00 UTC. Return the tracker promise so node-cron overlap
+  // detection works AND consecutive REAL failures escalate warn → error. A
+  // lock-held skip (a concurrent admin trigger) is expected and NOT counted as
+  // a failure — we swallow it inside the tracked fn so the counter stays 0.
+  cron.schedule('0 3 * * 0', () =>
+    tracker(async () => {
+      logger.info('[wikiIngest] scheduled weekly run starting');
+      try {
+        const result = await runWikiIngestion();
+        logger.info(result, '[wikiIngest] scheduled run complete');
+      } catch (err) {
+        if (err instanceof Error && err.message === WIKI_INGEST_LOCK_HELD_MESSAGE) {
+          // Concurrent run holds the lock — expected, non-fatal, not a failure.
+          logger.info('[wikiIngest] scheduled run skipped (lock held by concurrent run)');
+          return;
+        }
+        throw err; // real failure — let the tracker count + escalate it
+      }
+    }),
+  );
 
   logger.info('[wikiIngest] weekly ingestion job scheduled (Sundays 03:00 UTC)');
 }

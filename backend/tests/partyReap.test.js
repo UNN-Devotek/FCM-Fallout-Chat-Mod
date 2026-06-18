@@ -176,4 +176,249 @@ describe('partyReap', () => {
       expect(Math.abs(cutoffDate.getTime() - sevenDaysAgo)).toBeLessThan(5000);
     });
   });
+
+  // ── Failure propagation (security fix) ─────────────────────────────────────
+  // A top-level pass failure MUST reject the returned promise so the job
+  // tracker can count consecutive failures and escalate warn -> error. Before
+  // the fix, runPartyReap swallowed every pass failure as logger.warn and
+  // always resolved, making the tracker's escalation dead code. If any of these
+  // assertions is reverted to the old swallow-everything behaviour, these tests
+  // fail (the promise resolves instead of rejecting).
+  describe('failure propagation to the job tracker', () => {
+    it('rejects when the ephemeral scan (pass 1) fails at the top level', async () => {
+      const { deps } = makeDeps({});
+      deps.prisma.party.findMany = jest.fn(async ({ where } = {}) => {
+        if (where.reapPolicy === 'ephemeral') throw new Error('db down: ephemeral scan');
+        return [];
+      });
+
+      await expect(runPartyReap(deps)).rejects.toThrow(/pass\(es\) failed.*ephemeral/);
+    });
+
+    it('rejects when the persistent GC scan (pass 2) fails at the top level', async () => {
+      const { deps } = makeDeps({});
+      deps.prisma.party.findMany = jest.fn(async ({ where } = {}) => {
+        if (where.reapPolicy === 'persistent') throw new Error('db down: persistent scan');
+        return [];
+      });
+
+      await expect(runPartyReap(deps)).rejects.toThrow(/pass\(es\) failed.*persistent/);
+    });
+
+    it('rejects when the invite-expiry scan (pass 3) fails at the top level', async () => {
+      const { deps } = makeDeps({});
+      deps.prisma.partyInvite.updateMany = jest.fn(async () => {
+        throw new Error('db down: invite expiry');
+      });
+
+      await expect(runPartyReap(deps)).rejects.toThrow(/pass\(es\) failed.*invites/);
+    });
+
+    it('aggregates ALL failing passes into a single AggregateError', async () => {
+      const { deps } = makeDeps({});
+      deps.prisma.party.findMany = jest.fn(async () => { throw new Error('db down'); });
+      deps.prisma.partyInvite.updateMany = jest.fn(async () => { throw new Error('db down'); });
+
+      let thrown;
+      try {
+        await runPartyReap(deps);
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(AggregateError);
+      // pass 1 (ephemeral) + pass 2 (persistent) + pass 3 (invites) all failed.
+      expect(thrown.errors).toHaveLength(3);
+      expect(thrown.message).toMatch(/ephemeral/);
+      expect(thrown.message).toMatch(/persistent/);
+      expect(thrown.message).toMatch(/invites/);
+    });
+
+    it('does NOT reject when all passes succeed (clean tick resolves)', async () => {
+      const { deps } = makeDeps({
+        parties: [makeParty('p1', 'ephemeral')],
+        membersByParty: { p1: ['u1'] },
+        onlineUserIds: new Set(),
+        inviteUpdateResult: { count: 0 },
+      });
+
+      const result = await runPartyReap(deps);
+      expect(result.ephemeralReaped).toContain('p1');
+    });
+
+    it('does NOT reject when only an individual party row fails (inner catch stays warn)', async () => {
+      // A single bad party row is logged and skipped — it must NOT fail the
+      // whole tick. Only WHOLE-pass failures propagate. Here pass-1's per-row
+      // update throws, but the outer pass completes, so the promise resolves.
+      const { deps } = makeDeps({
+        parties: [makeParty('good', 'ephemeral'), makeParty('bad', 'ephemeral')],
+        membersByParty: { good: [], bad: [] },
+        onlineUserIds: new Set(),
+      });
+      deps.prisma.party.update = jest.fn(async ({ where }) => {
+        if (where.id === 'bad') throw new Error('row-level failure');
+        return { id: where.id };
+      });
+
+      const result = await runPartyReap(deps);
+      // The good party was still reaped; the bad one was skipped, no throw.
+      expect(result.ephemeralReaped).toContain('good');
+      expect(result.ephemeralReaped).not.toContain('bad');
+    });
+  });
+});
+
+// ── startPartyReapJob overlap guard ───────────────────────────────────────
+//
+// This suite genuinely exercises the production overlap guard in
+// startPartyReapJob: it injects a prisma.party.findMany whose FIRST call hangs
+// on a controlled pending promise, holding the whole reap pass open. While that
+// pass is pending we fire another interval tick and assert the guard skips it
+// (the reap entry runs exactly once and logger.warn reports the previous tick
+// still running). Then we resolve the held promise and confirm a subsequent
+// tick runs. Removing the `running` guard from startPartyReapJob makes this fail.
+
+const logger = require('../dist/config/logger').default;
+
+// runPartyReap awaits several sequential prisma calls per pass, so a single
+// microtask turn is not enough to drain a pass (and clear the `running` flag).
+// Flush a generous number of turns to let a completed pass settle.
+async function flushMicrotasks(turns = 20) {
+  for (let i = 0; i < turns; i++) await Promise.resolve();
+}
+
+describe('startPartyReapJob overlap guard', () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+    logger.warn.mockClear();
+    logger.info.mockClear();
+  });
+  afterEach(() => {
+    jest.clearAllTimers();
+    jest.useRealTimers();
+  });
+
+  /**
+   * Builds DI deps whose party.findMany blocks on the FIRST call until the
+   * returned `release()` is invoked. Subsequent calls resolve immediately.
+   * `entryCalls` counts how many times the reap pass actually began (entered
+   * the very first prisma query), which is the observable proof of how many
+   * passes ran.
+   */
+  function makeGatedDeps() {
+    let releaseFirst;
+    let firstPassSeen = false;
+    // Each runPartyReap invocation opens with an ephemeral party.findMany; we
+    // count those to observe exactly how many reap PASSES started (party.findMany
+    // is also called a second time per pass for the persistent scan, so we must
+    // discriminate on the ephemeral filter, not on total findMany calls).
+    const passStarts = { count: 0 };
+
+    const partyFindMany = jest.fn(({ where } = {}) => {
+      if (where && where.reapPolicy === 'ephemeral') {
+        passStarts.count++;
+        if (!firstPassSeen) {
+          firstPassSeen = true;
+          // First pass: hang here until released, holding the whole tick open.
+          return new Promise((resolve) => {
+            releaseFirst = () => resolve([]);
+          });
+        }
+      }
+      // Persistent scan and any later ephemeral scan resolve immediately.
+      return Promise.resolve([]);
+    });
+
+    const deps = {
+      prisma: {
+        party: { findMany: partyFindMany, update: jest.fn().mockResolvedValue({}) },
+        partyMember: {
+          findMany: jest.fn().mockResolvedValue([]),
+          count: jest.fn().mockResolvedValue(0),
+        },
+        partyInvite: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        auditLog: { create: jest.fn().mockResolvedValue({}) },
+      },
+      getOnlineUserIds: () => new Set(),
+      broadcastToPartyMembers: jest.fn().mockResolvedValue(0),
+    };
+
+    return { deps, partyFindMany, passStarts, release: () => releaseFirst && releaseFirst() };
+  }
+
+  it('starts only one reap pass while the first is still pending and warns on the skipped tick', async () => {
+    const { startPartyReapJob, REAP_INTERVAL_MS } = require('../dist/jobs/partyReap');
+    const { deps, passStarts, release } = makeGatedDeps();
+
+    // startPartyReapJob runs a startup reconcile immediately, under the guard.
+    const stop = startPartyReapJob(deps);
+    await Promise.resolve(); // let the startup pass enter findMany
+
+    // The startup reconcile started exactly one reap pass and is now blocked on
+    // the gated findMany (running === true).
+    expect(passStarts.count).toBe(1);
+
+    // Fire an interval tick while the first pass is still pending → must be
+    // skipped by the running guard, NOT start a second concurrent pass.
+    jest.advanceTimersByTime(REAP_INTERVAL_MS);
+    await Promise.resolve();
+
+    expect(passStarts.count).toBe(1); // still exactly one pass started
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining('previous tick still running'),
+    );
+
+    // Release the first pass and let it fully drain (clears the running flag).
+    release();
+    await flushMicrotasks();
+
+    // A subsequent interval tick now runs because the guard is clear.
+    jest.advanceTimersByTime(REAP_INTERVAL_MS);
+    await flushMicrotasks();
+
+    expect(passStarts.count).toBe(2);
+
+    stop();
+  });
+
+  it('runs back-to-back ticks when each completes before the next interval', async () => {
+    const { startPartyReapJob, REAP_INTERVAL_MS } = require('../dist/jobs/partyReap');
+
+    // Count ephemeral-scan calls = number of reap passes that started
+    // (party.findMany is also called for the persistent scan, so total calls
+    // would be 2× the pass count).
+    let passStarts = 0;
+    const partyFindMany = jest.fn(({ where } = {}) => {
+      if (where && where.reapPolicy === 'ephemeral') passStarts++;
+      return Promise.resolve([]);
+    });
+    const deps = {
+      prisma: {
+        party: { findMany: partyFindMany, update: jest.fn().mockResolvedValue({}) },
+        partyMember: {
+          findMany: jest.fn().mockResolvedValue([]),
+          count: jest.fn().mockResolvedValue(0),
+        },
+        partyInvite: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+        auditLog: { create: jest.fn().mockResolvedValue({}) },
+      },
+      getOnlineUserIds: () => new Set(),
+      broadcastToPartyMembers: jest.fn().mockResolvedValue(0),
+    };
+
+    const stop = startPartyReapJob(deps);
+    await flushMicrotasks(); // startup reconcile completes (non-blocking)
+
+    jest.advanceTimersByTime(REAP_INTERVAL_MS);
+    await flushMicrotasks();
+    jest.advanceTimersByTime(REAP_INTERVAL_MS);
+    await flushMicrotasks();
+
+    // startup + 2 ticks, none overlapping → 3 passes, no skip warning.
+    expect(passStarts).toBe(3);
+    expect(logger.warn).not.toHaveBeenCalledWith(
+      expect.stringContaining('previous tick still running'),
+    );
+
+    stop();
+  });
 });
