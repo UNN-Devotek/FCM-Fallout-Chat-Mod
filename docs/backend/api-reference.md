@@ -150,6 +150,16 @@ Admin party endpoints (see server.ts lines 1042–1050):
 
 Debug mirrors under `/admin/debug/parties/*` use `requireAdminKey` with the same handlers.
 
+**Per-party capacity guard.** When a party sets `maxMembers`, both `POST /api/parties/:id/join`
+and `POST /api/parties/invites/:id/accept` enforce the limit and return **`409 "Party is full"`**
+when it is reached. The check is race-safe: each path runs the capacity count and the member
+insert inside a single `prisma.$transaction` that first takes a row lock on the party
+(`SELECT id FROM parties WHERE id = … FOR UPDATE`). Concurrent joins/accepts for the same party
+serialize on that lock, so they cannot both read a stale count below the cap and both insert —
+membership never exceeds `maxMembers`. (A bare transaction without the row lock would NOT be
+safe under READ COMMITTED, since `count()` takes no lock and cannot see another transaction's
+uncommitted insert.) Idempotent re-accept of an existing membership is exempt from the cap.
+
 ---
 
 ## Block (`/api/block`)

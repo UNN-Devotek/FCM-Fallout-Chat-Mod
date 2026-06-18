@@ -40,6 +40,50 @@ const MAX_MEMBERS_MESSAGE = 'maxMembers must be 2–50';
 const PARTY_FULL_MESSAGE = 'Party is full';
 
 /**
+ * Atomically add `userId` to `partyId`, enforcing the per-party capacity limit
+ * against concurrent joins.
+ *
+ * The naive "count then insert" pattern has a TOCTOU race: under READ COMMITTED
+ * (Postgres default) `count()` takes no lock and cannot see another in-flight
+ * transaction's uncommitted insert, so two concurrent joins can both observe a
+ * count below the cap and both insert — leaving the party over `maxMembers`.
+ * Simply wrapping count+insert in a transaction does NOT fix this (READ
+ * COMMITTED still gives each tx its own snapshot for the count).
+ *
+ * The fix: serialize concurrent joins for the SAME party on the party row.
+ * Inside the transaction we first take `SELECT id FROM parties WHERE id = ?
+ * FOR UPDATE`, which blocks any other transaction that has locked (or tries to
+ * lock) the same party row. Only after acquiring the lock do we count and
+ * insert — so the second caller waits for the first to commit, then re-counts
+ * and sees the now-full party and is rejected with 409 PARTY_FULL.
+ *
+ * Both joinParty and acceptInvite route through this helper so they share the
+ * guarded pattern. Throws a 409 createError when the party is full.
+ */
+async function joinPartyWithCapacityGuard(
+  partyId: string,
+  userId: string,
+  maxMembers: number | null,
+): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    // Row-lock the party so concurrent joins for this party serialize. The
+    // tagged-template form parameterizes partyId (no SQL injection). The lock
+    // is held until the surrounding transaction commits/rolls back.
+    await tx.$queryRaw`SELECT id FROM parties WHERE id = ${partyId}::uuid FOR UPDATE`;
+
+    if (maxMembers != null) {
+      const currentCount = await tx.partyMember.count({ where: { partyId } });
+      if (currentCount >= maxMembers) {
+        throw createError(409, PARTY_FULL_MESSAGE);
+      }
+    }
+    await tx.partyMember.create({
+      data: { id: uuidv4(), partyId, userId, role: 'member' },
+    });
+  });
+}
+
+/**
  * Validate an optional maxMembers value from a request body.
  * Returns { ok:true, value } where value is the normalized number|null,
  * or { ok:false } when the value is present but invalid (caller rejects 400).
@@ -459,26 +503,35 @@ export async function acceptInvite(req: Request, res: Response, next: NextFuncti
       return next(createError(409, PARTY_CAP_MESSAGE));
     }
 
-    // Per-party capacity: reject if the party has a member limit and is full
-    // (only for a genuinely new join — idempotent re-accept of an existing
-    // membership doesn't grow the party, so it's exempt).
-    if (!alreadyIn && invite.party.maxMembers != null) {
-      const currentCount = await prisma.partyMember.count({ where: { partyId: invite.partyId } });
-      if (currentCount >= invite.party.maxMembers) {
-        return next(createError(409, PARTY_FULL_MESSAGE));
-      }
-    }
-
+    // Per-party capacity is enforced INSIDE the transaction, guarded by a row
+    // lock on the party (FOR UPDATE), so concurrent accepts cannot both pass a
+    // stale count and overfill the party — the same TOCTOU fix used by
+    // joinParty (see joinPartyWithCapacityGuard). A pre-transaction count would
+    // race exactly like the old joinParty did. The idempotent re-accept of an
+    // existing membership is exempt from the cap (it doesn't grow the party).
     const party = await prisma.$transaction(async (tx) => {
+      // Row-lock the party so concurrent accepts for this party serialize.
+      await tx.$queryRaw`SELECT id FROM parties WHERE id = ${invite.partyId}::uuid FOR UPDATE`;
+
       await tx.partyInvite.update({
         where: { id: inviteId },
         data: { status: 'accepted', respondedAt: new Date() },
       });
-      // Upsert membership (idempotent)
+      // Upsert membership (idempotent). Re-check membership inside the tx — the
+      // earlier pre-tx `alreadyIn` read is only a fast path; the authoritative
+      // check happens here under the row lock.
       const existing = await tx.partyMember.findFirst({
         where: { partyId: invite.partyId, userId: callerId },
       });
       if (!existing) {
+        // Genuinely new join: enforce the per-party capacity now that we hold
+        // the row lock and a snapshot that reflects committed members.
+        if (invite.party.maxMembers != null) {
+          const currentCount = await tx.partyMember.count({ where: { partyId: invite.partyId } });
+          if (currentCount >= invite.party.maxMembers) {
+            throw createError(409, PARTY_FULL_MESSAGE);
+          }
+        }
         await tx.partyMember.create({
           data: { id: uuidv4(), partyId: invite.partyId, userId: callerId, role: 'member' },
         });
@@ -644,21 +697,15 @@ export async function joinParty(req: Request, res: Response, next: NextFunction)
       return next(createError(409, PARTY_CAP_MESSAGE));
     }
 
-    // Per-party capacity and member insert are wrapped in a transaction so the
-    // count check and the create are atomic. Without this, two concurrent joins
-    // can both read the same count (below cap), both pass, and both insert,
-    // leaving the party over its maxMembers limit.
-    await prisma.$transaction(async (tx) => {
-      if (party.maxMembers != null) {
-        const currentCount = await tx.partyMember.count({ where: { partyId } });
-        if (currentCount >= party.maxMembers) {
-          throw createError(409, PARTY_FULL_MESSAGE);
-        }
-      }
-      await tx.partyMember.create({
-        data: { id: uuidv4(), partyId, userId: callerId, role: 'member' },
-      });
-    });
+    // Per-party capacity and member insert are wrapped in a transaction AND
+    // serialized on the party row. Under READ COMMITTED (Postgres default),
+    // partyMember.count() takes no lock and cannot see another transaction's
+    // uncommitted insert, so two concurrent joins could both read a count below
+    // the cap and both insert — overfilling the party. We first take a row lock
+    // on the party (SELECT ... FOR UPDATE) so concurrent joins for the SAME
+    // party serialize: the second waits until the first commits, then re-counts
+    // and sees the new member. The count + create then run inside the same tx.
+    await joinPartyWithCapacityGuard(partyId, callerId, party.maxMembers);
     await prisma.auditLog.create({
       data: {
         actorId: callerId,

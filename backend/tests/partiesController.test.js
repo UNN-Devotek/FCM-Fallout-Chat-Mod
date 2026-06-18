@@ -263,34 +263,10 @@ describe('party capacity check', () => {
     expect(isFull(5, 5)).toBe(true);
   });
 
-  it('capacity check and insert are in the same transaction (atomic guard)', () => {
-    // Verifies the race-condition fix: the count check and create must both
-    // happen inside prisma.$transaction so concurrent joins cannot both pass
-    // the capacity check before either insert commits.
-    //
-    // This test confirms the decision logic that lives inside the transaction:
-    // if count >= maxMembers at the moment of the transactional read, reject.
-    // Two concurrent calls cannot both read count < maxMembers because
-    // Postgres serialises the read+write within the transaction.
-    const simulateTransactionalJoin = (maxMembers, countAtTxTime) => {
-      if (maxMembers != null && countAtTxTime >= maxMembers) {
-        throw new Error('Party is full');
-      }
-      return 'joined';
-    };
-
-    // Slot available — succeeds
-    expect(simulateTransactionalJoin(5, 4)).toBe('joined');
-
-    // Exactly full at read time — throws
-    expect(() => simulateTransactionalJoin(5, 5)).toThrow('Party is full');
-
-    // Second concurrent join sees the slot now taken (count=5) — throws
-    expect(() => simulateTransactionalJoin(5, 5)).toThrow('Party is full');
-
-    // No limit — always succeeds regardless of count
-    expect(simulateTransactionalJoin(null, 9999)).toBe('joined');
-  });
+  // NOTE: the real concurrency guard (row lock + transactional count+insert) is
+  // exercised against the ACTUAL controller in tests/partiesCapacityRace.test.js.
+  // The isFull() cases here only document the boundary of the capacity predicate
+  // and are NOT the race-condition test.
   it('party is full when count exceeds the limit (e.g. limit lowered)', () => {
     expect(isFull(3, 5)).toBe(true);
   });
