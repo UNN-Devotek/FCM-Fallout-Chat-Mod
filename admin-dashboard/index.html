@@ -3,12 +3,62 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <title>Fallout Chat Mod - Real-Time Community Chat for Fallout 76</title>
+    <meta name="description" content="Fallout Chat Mod is a free, EULA-safe overlay that adds real-time community chat to Fallout 76. Cross-channel chat, Discord bridge, party system, wiki search, slash commands, and a browser-based moderation portal. Available on Windows and Linux." />
+
+    <!-- Canonical -->
+    <link rel="canonical" href="https://falloutchatmod.com" />
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Fallout Chat Mod" />
+    <meta property="og:url" content="https://falloutchatmod.com" />
+    <meta property="og:title" content="Fallout Chat Mod - Real-Time Community Chat for Fallout 76" />
+    <meta property="og:description" content="Free, EULA-safe transparent overlay that adds real-time community chat, a Discord bridge, party system, wiki search, and slash commands to Fallout 76. Windows and Linux." />
+    <meta property="og:image" content="https://falloutchatmod.com/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Fallout Chat Mod - Real-Time Community Chat for Fallout 76" />
+    <meta name="twitter:description" content="Free, EULA-safe overlay adding community chat, Discord bridge, party system, and wiki search to Fallout 76." />
+    <meta name="twitter:image" content="https://falloutchatmod.com/og-image.png" />
+
+    <!-- Structured data -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Fallout Chat Mod",
+      "url": "https://falloutchatmod.com",
+      "description": "Real-time community chat overlay for Fallout 76. Features cross-channel chat, Discord bridge, party system, Fallout 76 wiki search, slash commands, infestation alerts, and a browser-based moderation portal.",
+      "applicationCategory": "GameApplication",
+      "operatingSystem": "Windows, Linux",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      }
+    }
+    </script>
+
+    <!-- Favicons -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon.png" />
     <link rel="apple-touch-icon" sizes="256x256" href="/favicon.png" />
-    <title>FCM</title>
   </head>
   <body>
+    <!-- Fallback content for crawlers that do not execute JavaScript.
+         Lives in <body> (flow content like <p> is not valid inside a
+         <noscript> in <head>). No meta-refresh: this page IS served at the
+         apex origin, so a refresh to https://falloutchatmod.com would redirect
+         the page to itself and trap no-JS crawlers in an infinite reload loop.
+         The descriptive text below is the indexable fallback. -->
+    <noscript>
+      <p>Fallout Chat Mod is a free, EULA-safe overlay that adds real-time community chat to Fallout 76. Features include cross-channel chat (General, Trading, Events, Raids), a live Discord bridge, party system, Fallout 76 wiki search, slash commands, infestation alerts, and a browser-based moderation portal. Available on Windows and Linux.</p>
+    </noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
