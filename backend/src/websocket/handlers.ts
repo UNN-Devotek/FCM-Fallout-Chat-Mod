@@ -9,6 +9,7 @@ import { getEffectiveTelemetryFor } from '../services/telemetryService';
 import { buildAvatarUrl } from '../services/avatarService';
 import { hudPushNotify } from '../services/hudPush';
 import { isSocketSuperseded } from './socketSupersession';
+import { getLatestVersion } from '../services/latestReleaseVersion';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -1389,6 +1390,19 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
   }).catch((err) => {
     logger.warn({ err, userId: user.id }, '[telemetry] connect-time push failed (non-fatal)');
   });
+
+  // Deliver the latest published version to the newly connected client so it can
+  // show a passive OS notification when a newer version is available (Nexus ToS
+  // compliance: version rides the existing chat WS — no dedicated update call).
+  // Only sent when a version is known (cache populated at boot / after publish).
+  try {
+    const latestVersion = getLatestVersion();
+    if (latestVersion && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'app:update-available', payload: { latestVersion } }));
+    }
+  } catch (err) {
+    logger.warn({ err, userId: user.id }, '[app:update-available] connect-time send failed (non-fatal)');
+  }
 
   // Broadcast room:join (user connected)
   broadcast({ type: 'room:join', payload: { username: displayName, timestamp: new Date().toISOString() } }, ws);

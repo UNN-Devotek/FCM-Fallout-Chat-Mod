@@ -20,7 +20,7 @@ Chat is organised into community channels (General / Trading / Events / Raids) w
 |  - React renderer (Vite)   |        |  + Discord.js             |
 |  - main.js (Electron main) |        |                           |
 |  - preload.js (IPC bridge) |<-------|  REST  /  WebSocket       |
-|  - Auto-updater            |        +--------+------------------+
+|  - Update notification     |        +--------+------------------+
 |  - Onboarding flow         |                 |
 +---------------------------+            Postgres 16
                                           Redis 7
@@ -37,7 +37,7 @@ Chat is organised into community channels (General / Trading / Events / Raids) w
 +---------------------------+          discordService.ts)
 ```
 
-The **Electron overlay** ships a React renderer bundled by Vite. The Electron main process (`main.js`) manages the transparent always-on-top window, forwards IPC to the renderer via `preload.js`, watches for the Fallout 76 process, and drives `electron-updater` for silent auto-updates. The **backend** handles authentication, real-time message sync via raw WebSocket, Redis pub/sub broadcast, Bull queue for async Postgres persistence, and the bidirectional Discord bridge. The **admin dashboard** is authenticated via Discord OAuth2 with per-request role re-verification.
+The **Electron overlay** ships a React renderer bundled by Vite. The Electron main process (`main.js`) manages the transparent always-on-top window, forwards IPC to the renderer via `preload.js`, watches for the Fallout 76 process, and shows a passive OS notification when a newer version is available (no auto-download; see `docs/overlay/auto-update.md`). The **backend** handles authentication, real-time message sync via raw WebSocket, Redis pub/sub broadcast, Bull queue for async Postgres persistence, and the bidirectional Discord bridge. The **admin dashboard** is authenticated via Discord OAuth2 with per-request role re-verification.
 
 ---
 
@@ -59,7 +59,6 @@ The **Electron overlay** ships a React renderer bundled by Vite. The Electron ma
 ├── cross-platform-overlay/   Electron + React + Vite
 │   ├── main.js               Electron main process
 │   ├── preload.js            Context bridge
-│   ├── updater.js            electron-updater wiring
 │   ├── src/                  React renderer + bridge + shell + onboarding
 │   └── assets/               App icons, KWin rule, platform plists
 ├── shared/                   Shared TypeScript types and Zod schemas
@@ -77,7 +76,7 @@ The **Electron overlay** ships a React renderer bundled by Vite. The Electron ma
 
 | Layer              | Technology                                                    |
 |--------------------|---------------------------------------------------------------|
-| Overlay (desktop)  | Electron 31, React 18, Vite 6, Tailwind v4, electron-updater |
+| Overlay (desktop)  | Electron 31, React 18, Vite 6, Tailwind v4 |
 | Admin Dashboard    | React 18, Vite 6, Tailwind v4, TanStack Query, React Router v6 |
 | Backend            | Node.js, Express, `ws` (raw WebSocket), Discord.js v14, Pino |
 | ORM / migrations   | Prisma 5 (Postgres 16)                                        |

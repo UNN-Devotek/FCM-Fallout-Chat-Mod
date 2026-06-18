@@ -201,11 +201,12 @@ const WIKI_SECTIONS: WikiSection[] = [
             auto-mod filters, and role-based access (owner / admin / moderator).
           </P>
 
-          <H3 t={t}>AUTO-UPDATING CLIENT</H3>
+          <H3 t={t}>UPDATE NOTIFICATIONS</H3>
           <P t={t}>
-            The overlay updates itself silently in the background via electron-updater.
-            Every user is always on the latest version — no manual reinstall or download
-            required after the first install.
+            When a new version is available, the overlay shows a system notification
+            (Windows toast / Linux libnotify / macOS). Click it to open the Nexus Mods
+            page and download the latest release. The overlay does not download or
+            install updates itself.
           </P>
 
           <H3 t={t}>CUSTOMIZABLE OVERLAY</H3>
@@ -368,7 +369,7 @@ const WIKI_SECTIONS: WikiSection[] = [
         },
         {
           q: 'How do I update the overlay?',
-          a: 'Automatically. electron-updater downloads and installs the latest version in the background. You get a notification on next launch.',
+          a: 'Manually from Nexus Mods. When a new version is released, the overlay shows a system notification — click it to open the Nexus Mods download page. Download the installer and run it. The overlay does not update itself automatically.',
         },
         {
           q: 'Can I use this on Linux?',

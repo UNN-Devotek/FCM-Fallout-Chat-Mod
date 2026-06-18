@@ -5,8 +5,9 @@
 > Phase 1 P1 stateful/IPC, Phase 2 component/layout, and Phase 3 E2E remain on backlog.
 > See the table below for per-unit status.
 >
-> **What's done:** overlay-core.js extraction (Group 1 pure helpers), all ChatOverlay.tsx P0 pure
-> helpers, public-mode lockdown RTL, bridge+onboarding core logic, shell-core helpers, updater wiring.
+> **What's done:** overlay-core.js extraction (Group 1 pure helpers + `cmpVersions`), update-notification
+> trigger + once-per-session guard, `no-autoupdate` absence guard, all ChatOverlay.tsx P0 pure helpers,
+> public-mode lockdown RTL, bridge+onboarding core logic, shell-core helpers.
 > **What's next:** P1 main-process IPC handlers (register/relay/discord/keybinds/visibility),
 > stateful shell helpers (applyScale, tickIdle, navChannel), and E2E once the mock relay exists.
 
@@ -14,8 +15,8 @@ This plan covers the four overlay-related modules:
 
 | Group | Source | Lines | Testability today |
 | ----- | ------ | ----- | ----------------- |
-| **main-process** | `cross-platform-overlay/main.js`, `preload.js`, `updater.js` | ~2807 | LOW — exports nothing; eager `require('electron')` + side effects at import |
-| **renderer-shell** | `cross-platform-overlay/src/shell.ts`, `main.tsx`, `updater-ui.ts` | ~2204 | MIXED — DOM/IPC-coupled; a few pure helpers locked in closures |
+| **main-process** | `cross-platform-overlay/main.js`, `preload.js` | ~2807 | LOW — exports nothing; eager `require('electron')` + side effects at import |
+| **renderer-shell** | `cross-platform-overlay/src/shell.ts`, `main.tsx` | ~2204 | MIXED — DOM/IPC-coupled; a few pure helpers locked in closures |
 | **onboarding-bridge** | `cross-platform-overlay/src/onboarding.ts`, `src/bridge.ts` | — | ~30% as-is / ~80% after refactor; global `fetch`/`WebSocket` patched at import |
 | **chatoverlay-ui** | `admin-dashboard/src/features/chat/ChatOverlay.tsx` | 8399 | Pure helpers trivially testable once exported; component needs RTL harness |
 
@@ -25,9 +26,9 @@ This plan covers the four overlay-related modules:
 |------|--------|-------------|
 | **Phase 0 — tooling** | ✅ Done | `vitest.config.ts` in both packages |
 | Group 1 — `overlay-core.js` pure helpers | ✅ Done | `__tests__/overlay-core.test.js`, `overlay-core-visibility.test.js` |
-| Group 1 — `updater.js` event→IPC | ✅ Done | `__tests__/updater.test.js` |
+| Group 1 — `no-autoupdate.test.js` (absence guard) | ✅ Done | `__tests__/no-autoupdate.test.js` |
 | Group 2 — `shell-core.ts` helpers | ✅ Done | `src/__tests__/shell-core.test.ts` |
-| Group 2 — `updater-ui.ts` banner machine | ✅ Done | `src/__tests__/updater-ui.test.ts` |
+| Group 1 — `cmpVersions` + `showUpdateNotification` | ✅ Done | `__tests__/overlay-core.test.js` (cmpVersions), `__tests__/update-notification.test.js` (trigger/guard) |
 | Group 3 — `bridge-core.ts` fetch/WS shim | ✅ Done | `src/__tests__/bridge.test.ts` |
 | Group 3 — `onboarding-core.ts` state machine | ✅ Done | `src/__tests__/onboarding-core.test.ts` |
 | Group 4 — `ChatOverlay.tsx` P0 pure helpers | ✅ Done | `src/features/chat/__tests__/chatOverlayHelpers.test.ts` |
@@ -88,8 +89,7 @@ pipeline with zero extra config). Backend keeps Jest. Electron + browser E2E use
 | `registerForToken` response handling | main.js:836 | electron-coupled | Mock http/https req via injectable httpModule; 429→cfTransient, 403 discord_auth_required before CF, success field mapping, 15s timeout | P1 |
 | `startRelay` retry/backoff classification | main.js:1677 | electron-coupled | Stub registerForToken rejecting tagged errors; fake timers; assert relay:status payloads + backoff per error shape | P1 |
 | `proxy:http` IPC handler | main.js:932 | ipc | Capture handler via mocked ipcMain; ws-ticket short-circuit, header forwarding, cf mapping, req error→599 | P1 |
-| `proxy:ws:*` lifecycle + release:published intercept | main.js:976 | ipc | Mock `ws` EventEmitter; 4001 without token, forward open/msg/close/error, intercept release:published→updater while forwarding | P1 |
-| Updater event→IPC mapping | updater.js:125 | stateful | **Best-isolated.** `vi.mock('electron-updater')` fake autoUpdater; assert each event payload, quitAndInstall after RESTART_DELAY_MS, require-failure no-op path | P1 |
+| `proxy:ws:*` lifecycle + `app:update-available` intercept | main.js:976 | ipc | Mock `ws` EventEmitter; 4001 without token, forward open/msg/close/error, intercept `app:update-available`→`showUpdateNotification` (only when latestVersion > APP_VERSION, once-per-session guard) | P1 |
 | `identity:set-name` handler | main.js:1538 | ipc | Capture handler; empty/no-key/no-token reasons, 409→taken soft-fail, success re-register+rebuildTray | P1 |
 | `refreshDiscordStatus` retry + post-link re-register | main.js:1429 | ipc | Mock http + fake timers; backoff up to MAX_STATUS_ATTEMPTS=4, linked adopts fo76 identity + re-register, recovery via startRelay | P1 |
 
@@ -129,8 +129,8 @@ pipeline with zero extra config). Backend keeps Jest. Electron + browser E2E use
 | `navChannel`/activeTabIndex cycling | shell.ts:755 | stateful | jsdom fixture spans; active by fontWeight bold, next/prev wrap, no-op when zero | P1 |
 | Shell auth state machine (onStatus) | main.tsx:185 | ui-component | RTL render `<Shell>`; capture onStatus cb; authenticated/discord_required/error(429)/authStuck-25s; remount only on identity change | P1 |
 | `wireShellInputBehaviour` /hide intercept | main.tsx:146 | stateful | **Export.** mock relayBridge; Enter on editable '/hide'→preventDefault+hideViaSlash; focus-input prefers contenteditable | P1 |
-| `updater-ui` banner state machine | updater-ui.ts:33,180 | stateful | jsdom + fake timers; one banner updates in place, dev download button, downloading/progress/restart phases, restart auto-remove | P1 |
-| `mountCheckForUpdatesButton`/`showCheckResult` | updater-ui.ts:98 | electron-coupled | jsdom .ss-footer; mock checkForUpdates resolve/reject; idempotent mount, checking state, up-to-date/available/error | P1 |
+| `cmpVersions` helper | overlay-core.js | pure | newer/older/equal semver, multi-digit (`1.3.9` vs `1.3.10`), malformed input → P0 |
+| `showUpdateNotification` trigger logic | main.js | stateful | fires when latestVersion > APP_VERSION; not when equal/older; once-per-session guard (`updateNotifiedThisSession`) suppresses reconnect toasts; click calls `shell.openExternal(NEXUS_MOD_URL)` | P1 |
 
 ### P2 — DOM/layout (E2E preferred)
 
@@ -292,7 +292,7 @@ start **non-required** in branch protection; promote once green-stable (~20 runs
 3. **Explicit hide then game relaunch** — Delete (userHidden=true) → stays hidden though game running, until not-running→running clears userHidden and restores.
 4. **Keybind focus-gating** — overlay focused: '/' and '\\' NOT registered (typeable); game foreground + overlay blurred: registered; other app foreground: all unregistered.
 5. **Discord OAuth link flow** — `discord:link` → callback nav → window closes + `discord:refresh-status` → poll linked=true → re-register → authenticated relay:status with new role; load failure falls back to `shell.openExternal`.
-6. **Auto-update happy path** — relay WS `{type:'release:published'}` → `onRelasePublished` → checkForUpdates → update-downloaded → restart banner → `quitAndInstall(true,true)` after delay.
+6. **Update notification happy path** — relay WS `{type:'app:update-available', payload:{latestVersion:'X.Y.Z'}}` with latestVersion > APP_VERSION → OS notification fires (title `Update! vX.Y.Z`, click opens Nexus URL); equal/older version → no notification; second `app:update-available` in same session → once-per-session guard suppresses duplicate toast.
 7. **productName migration** — legacy `Fallout ChatMod/overlay-state.json` (discordLinked, current pristine) → migrate copies; current real never overwritten.
 8. **Relay register resilience** — CF 503→cfTransient + retry 5s; 429→10s; ECONNREFUSED→exp backoff to 8 tries; discord_auth_required 403→login wall, no retry.
 9. **Idle collapse/expand preserving width** — narrow window, idle-collapse to header, hover-expand → restores height only, keeps narrower width.
@@ -313,7 +313,7 @@ start **non-required** in branch protection; promote once green-stable (~20 runs
 21. **Reconnect resilience** — kill WS → retries with growing (≤16s) jittered backoff, resubscribes party chat without dup (ID dedup).
 22. **Block flow** — Settings → block via search → messages disappear; unblock → reappear after refresh.
 23. **Auth state machine via mocked IPC** — authenticated/discord_required/error(429)/stuck-25s → correct screen; second authenticated same identity does NOT remount, changed identity DOES.
-24. **Updater banner lifecycle** — `updater:result(available)` then downloading→progress→restart → single banner updates in place + auto-removes; dev fallback Open-download → `installUpdate`.
+24. **No auto-update artifacts** — packaged build contains no `updater.js`, no `updater-ui.ts`, no `electron-updater` dep, no `app-update.yml`, no `latest*.yml` (asserted by `no-autoupdate.test.js`).
 25. **chat-smoke repointed to mock** — `/api/health` 200, `/api/channels`→`{data:[]}`, `/api/users` requires `X-App-Client-Key` (403), unknown discord token→`linked:false`.
 
 ---
@@ -326,9 +326,15 @@ explicit `workflow_dispatch` "prod-smoke").
 
 ### Shape
 
-A tiny in-process fixture under **`tests/mock-relay/`**, already used by `overlay-e2e-linux` (the
-auto-update E2E step) and `overlay-autoupdate-e2e-windows` (artifact check); to be extended for
-future Playwright `_electron` and `dashboard-playwright` suites:
+> **Removed.** The `tests/mock-relay/` directory was deleted when the auto-update E2E it served
+> was retired. `overlay-launch-smoke-linux` runs `scripts/ci-launch-smoke.mjs` with no relay
+> fixture; the Windows artifact check moved to `.github/scripts/win-artifacts-check.mjs`. The
+> design below is preserved as historical context — a future Playwright `_electron` or
+> `dashboard-playwright` suite would need a fresh fixture rather than restoring this one.
+
+A tiny in-process fixture under **`tests/mock-relay/`** (historical), intended for `overlay-launch-smoke-linux` and
+`overlay-build-windows-nsis` (artifact check); to be extended for future Playwright `_electron` and
+`dashboard-playwright` suites:
 
 - **REST (Express)** stubs:
   - `GET /api/health` → 200 `{ status:'ok' }`
@@ -342,7 +348,7 @@ future Playwright `_electron` and `dashboard-playwright` suites:
 - **WebSocket (`ws` server on an ephemeral port)**:
   - accepts the authed handshake (asserts `X-Auth-Token`); a connection **without** a token is the
     public-mode regression signal (assert it never arrives)
-  - emits `chat:message`, `presence:update`, and `{type:'release:published'}` on command
+  - emits `chat:message`, `presence:update`, and `{type:'app:update-available', payload:{latestVersion}}` on command
   - **records** received frames (presence heartbeats, subscribes) so tests assert client behavior
 - **Injection:** via the overlay's already-parameterized `RELAY_HTTP` / `RELAY_WS` env vars (and
   `TEST_URL` for the smoke spec). Dashboard: `vite preview --port 7075` wired to the same mock.
@@ -366,9 +372,9 @@ Estimates are rough engineer-days assuming the listed refactors land alongside t
 ### Phase 0 — tooling foundation (~2–3 days)
 
 - Add Vitest + jsdom + RTL to `cross-platform-overlay` and `admin-dashboard` (separate `test:unit`
-  scripts; exclude playwright dir). Shared electron-mock fixture for main.js. Build `tests/mock-relay/`.
+  scripts; exclude playwright dir). Shared electron-mock fixture for main.js.
 - **CI:** ✅ Done — `authorize`, `lint-typecheck`, `backend-jest`, `unit-vitest` (matrix),
-  `overlay-e2e-linux`, `overlay-autoupdate-e2e-windows` all wired into `ci-summary`; label-triggered
+  `overlay-launch-smoke-linux`, `overlay-build-windows-nsis` all wired into `ci-summary`; label-triggered
   PRs + push to prod/dev.
 
 ### Phase 1 — P0 pure helpers (~3–4 days) — **highest ROI, start here**
@@ -386,9 +392,9 @@ Estimates are rough engineer-days assuming the listed refactors land alongside t
 ### Phase 2 — P1 stateful + IPC + public-mode lockdown (~5–7 days)
 
 - main.js: register/relay/discord/identity HTTP+IPC handlers (injected http + fake timers),
-  reevaluateVisibility, emitVisibility, registerHotkeys/refreshShortcuts, updater.js event wiring.
+  reevaluateVisibility, emitVisibility, registerHotkeys/refreshShortcuts, `app:update-available` handler.
 - shell.ts/main.tsx: applyScale/applyWindowVisual/persistLocal, tickIdle/markMessageActivity, navChannel,
-  auth state machine reducer, updater-ui banner, /hide intercept.
+  auth state machine reducer, /hide intercept.
 - onboarding/bridge: finish() tree, ProxiedWebSocket, fetch shim, discord status/prefill/buttons.
 - ChatOverlay public-mode lockdown RTL (input, WS/party, mod-actions) + computePickerAnchor — the
   **hard lockdown** rule, security-critical.
@@ -397,10 +403,11 @@ Estimates are rough engineer-days assuming the listed refactors land alongside t
 
 - RTL component tests (feed tag render/filter, tab bar, Avatar, BlockManagerBody, SettingsModal),
   chipField, accountBlockField, slider math, tray menu, collapse/expand, drag/resize.
-- Stand up a proper `overlay-e2e-linux` Playwright `_electron` test suite + a `dashboard-playwright`
-  browser E2E job against the mock relay; repoint chat-smoke off prod. Both non-required until ~20
-  stable runs. (`overlay-e2e-linux` already exists and is required for the packaged-launch smoke +
-  auto-update E2E; the Playwright `_electron` test suite is the next addition to that job.)
+- Stand up a proper Playwright `_electron` test suite (extending `overlay-launch-smoke-linux`) + a
+  `dashboard-playwright` browser E2E job with a fresh relay fixture; repoint chat-smoke off prod.
+  Both non-required until ~20 stable runs. (`overlay-launch-smoke-linux` — renamed from the former
+  `overlay-e2e-linux` — already exists and is required for the packaged-launch smoke; the Playwright
+  `_electron` test suite is the next addition to that job.)
 - Flip coverage thresholds to enforced (~2 weeks after baselines settle): backend 60% lines,
   ChatOverlay-critical 50%, overlay shell/main 40%. Promote E2E jobs to required when stable.
 

@@ -20,7 +20,13 @@ Using the overlay
 - Run Fallout 76 in BORDERLESS WINDOWED mode (not exclusive fullscreen) — no
   overlay can draw above exclusive fullscreen.
 - The overlay shows automatically while Fallout 76 is running.
-- It auto-updates itself; you do not need to reinstall for new versions.
+- Updating: new versions are NOT automatic. When you see the in-app "Update
+  available" notification, download the latest from Nexus Mods
+  (https://www.nexusmods.com/fallout76/mods/4082) or falloutchatmod.com and run
+  the installer again, or use the CLI one-liner in PowerShell:
+     irm https://falloutchatmod.com/install.ps1 | iex
+  Your settings, keybinds and Discord link are preserved, and it works even if
+  you are several versions behind.
 
 Uninstall
 ---------
