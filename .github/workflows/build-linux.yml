@@ -38,7 +38,7 @@ jobs:
   build-linux:
     name: Build Linux AppImage + deb
     needs: authorize
-    runs-on: [self-hosted, linux, unn]
+    runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
