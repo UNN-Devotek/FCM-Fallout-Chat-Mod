@@ -137,8 +137,8 @@ Multi-instance fan-out uses Redis pub/sub on the `chat:broadcast` channel (`PUBS
 
 Discord-OAuth-only admin endpoints are not reachable from CLI tooling. Every such endpoint has a mirror at `/admin/debug/*` gated by `X-Admin-API-Key` (`requireAdminKey` middleware). Both paths use identical request/response shapes. Example:
 
-- `/api/admin/telemetry` — requires Discord OAuth admin session
-- `/admin/debug/telemetry` — requires `X-Admin-API-Key` header
+- `/api/admin/community-stats` — requires Discord OAuth admin session
+- `/admin/debug/community-stats` — requires `X-Admin-API-Key` header
 
 ---
 

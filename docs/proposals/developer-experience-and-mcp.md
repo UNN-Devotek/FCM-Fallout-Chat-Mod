@@ -218,7 +218,7 @@ covers ~34 groups: Auth/Session, Health, Users, Devices, Channels, Messages,
 Reports, Moderation (filters/settings/embeds/automod), Moderation actions
 (kick/mute/ban/evidence), Audit log, Admin users, Releases, Name blacklist,
 Presence, Commands, Parties, Block list, Wiki, Camp, HUD feed, Player reports,
-Applications, Player list, Telemetry, Client metrics, Community stats,
+Applications, Player list, Community stats,
 Verify-dev-role, Emojis/Tenor, Public endpoints, Debug/admin, Sim (dev-only),
 Game bridge (dev-only), Migration — plus the full client→server / server→client
 WS message set. **Never-in-MCP:** `/admin/nuke-users`, `/admin/migration/*`,

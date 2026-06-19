@@ -301,17 +301,6 @@ Documented in [../moderation/](../moderation/). Covers:
 
 ---
 
-## Telemetry (`/api/admin/telemetry`)
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/api/admin/telemetry` | requireDiscordRole(admin) | View global + per-user telemetry settings |
-| POST | `/api/admin/telemetry` | requireDiscordRole(admin) | Set global or per-user telemetry (`{ scope, userId?, enabled }`) |
-
-Debug mirror: `GET /admin/debug/telemetry`, `POST /admin/debug/telemetry` — `requireAdminKey`.
-
----
-
 ## Community Stats (`/api/admin/community-stats`)
 
 | Method | Path | Auth | Description |
@@ -319,17 +308,6 @@ Debug mirror: `GET /admin/debug/telemetry`, `POST /admin/debug/telemetry` — `r
 | GET | `/api/admin/community-stats` | requireDiscordRole(admin) | Signup/message/version/download metrics (`?range=90d`) |
 
 Debug mirror: `GET /admin/debug/community-stats` — `requireAdminKey`.
-
----
-
-## Client Metrics (`/api/client-metrics`, `/api/admin/client-metrics`)
-
-| Method | Path | Auth | Rate | Description |
-|--------|------|------|------|-------------|
-| POST | `/api/client-metrics` | requireClientAuth | 1/5min per install-token | Submit performance snapshot (memory, CPU, FPS) |
-| GET | `/api/admin/client-metrics` | requireDiscordRole(admin) | — | Aggregate view (`?window=24h&source=overlay`) |
-
-Debug mirror: `GET /admin/debug/client-metrics` — `requireAdminKey`.
 
 ---
 
@@ -673,7 +651,7 @@ upgrade requests untouched so the two servers do not race.
 
 **M7 identity env var:** `HUD_IDENTITY_SECRET` — HMAC-SHA256 key for deriving `identityHash` from FO76 `accountName`. Dev default in `.env.example`; must be a strong random secret before production use.
 
-**M7 ingestion service:** `backend/src/services/ingestMessage.ts` — `ingestMessage({ userId, channelId, rawContent, source, identityHash? })` runs the canonical governance pipeline (mute → rate-limit → content validation → emoji expansion → channel validity → automod → broadcast → persist → Discord relay). Both the WS `chat:send` handler and the HUD TCP `SEND` handler call it. `source: 'hud' | 'ws'` is stored on the message for telemetry; it does NOT skip any governance step.
+**M7 ingestion service:** `backend/src/services/ingestMessage.ts` — `ingestMessage({ userId, channelId, rawContent, source, identityHash? })` runs the canonical governance pipeline (mute → rate-limit → content validation → emoji expansion → channel validity → automod → broadcast → persist → Discord relay). Both the WS `chat:send` handler and the HUD TCP `SEND` handler call it. `source: 'hud' | 'ws'` is stored on the message row for auditing; it does NOT skip any governance step.
 
 **M7 identity service:** `backend/src/services/hudIdentityService.ts` — `resolveHudIdentity`, `getActiveBlock`, `blockHash`, `unblockHash`. `HudIdentityBlock` DB table stores mute/ban records keyed on `identityHash`.
 
@@ -715,8 +693,6 @@ Public endpoints — no auth required. Mounted **before** `requireClientAuth`. S
 ---
 
 Key debug mirrors:
-- `/admin/debug/telemetry` ↔ `/api/admin/telemetry`
-- `/admin/debug/client-metrics` ↔ `/api/admin/client-metrics`
 - `/admin/debug/community-stats` ↔ `/api/admin/community-stats`
 - `/admin/debug/parties/*` ↔ `/api/admin/parties/*`
 - `/admin/debug/automod-rules` ↔ `/api/moderation/automod-rules`

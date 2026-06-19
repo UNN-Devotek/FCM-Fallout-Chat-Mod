@@ -39,6 +39,12 @@ The Electron shell provides everything the web `ChatOverlay.tsx` component does 
 
 ---
 
+## Privacy — no telemetry
+
+Fallout Chat Mod does not collect telemetry or performance data from the app or its users. The desktop overlay only checks whether the `Fallout76` process is running (to show/hide the overlay); it does not read game state and reports nothing about your device or usage.
+
+---
+
 ## The single shared component
 
 `src/main.tsx` imports the chat overlay directly from the dashboard tree:

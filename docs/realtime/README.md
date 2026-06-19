@@ -52,7 +52,7 @@ sequenceDiagram
     B-->>C: WS OPEN
     B-->>C: presence:state  (DB snapshot)
     B-->>C: user:muted  (if muted)
-    B-->>C: telemetry:set  (feature flag)
+    B-->>C: telemetry:set  (deprecated kill-switch, always false)
     B->>all: room:join broadcast
 ```
 
@@ -153,6 +153,6 @@ Immediately after a game-client connection is established the backend pushes thr
 
 1. `presence:state` — current DB-backed endpoint + role snapshot
 2. `user:muted` — only if the user is currently muted
-3. `telemetry:set` — current telemetry feature-flag value
+3. `telemetry:set` — deprecated kill-switch; always `{ enabled: false }` (telemetry was removed)
 
 `handlers.ts:1649–1696`

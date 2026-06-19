@@ -8,6 +8,8 @@ Chat is organised into community channels (General / Trading / Events / Raids) w
 
 > **Disclaimer:** Fallout Chat Mod is an unofficial fan project. It is not affiliated with, endorsed, or sponsored by Bethesda Softworks or ZeniMax Media. Fallout® is a trademark of ZeniMax Media, Inc.
 
+> **Privacy — no telemetry.** Fallout Chat Mod does not collect telemetry or performance data from the app or its users. The desktop overlay only checks whether the `Fallout76` process is running (to show/hide the overlay); it does not read game state and reports nothing about your device or usage.
+
 ---
 
 ## Architecture

@@ -80,15 +80,7 @@ tracker swallows the rejection, so the guard's `.finally` reliably clears `runni
 
 `startPartyReapJob` returns a stop function (`() => clearInterval(...)`) for clean teardown.
 
-### 4. Client Metrics Purge Job (node-cron)
-
-**Defined in:** `backend/src/jobs/clientMetricsPurge.ts`
-
-Started from `server.ts` via `startClientMetricsPurgeJob()`. Runs at **03:17 UTC daily** (offset from the message purge to spread DB load).
-
-Calls `purgeOldClientMetrics()` from `services/clientMetricsService.ts`, which deletes `client_metrics` rows older than **30 days**. Logs the deleted row count. Failures are non-fatal (job continues on next tick) but are tracked: the cron callback returns the `makeJobTracker('[clientMetricsPurge]')` promise, so repeated consecutive failures escalate warn → error.
-
-### 4b. Online Snapshot Job (node-cron)
+### 4. Online Snapshot Job (node-cron)
 
 **Defined in:** `backend/src/jobs/onlineSnapshotJob.ts`
 
@@ -188,7 +180,6 @@ Failed jobs are logged at error level with `jobId`.
 | Message + audit purge | node-cron | Daily 03:00 UTC | Hard-delete rows > 90 days |
 | Moderation sweep | node-cron | Scheduled | Lift expired bans/mutes |
 | Party reap | setInterval | Every 60s + startup | Soft-delete empty parties, expire invites |
-| Client metrics purge | node-cron | Daily 03:17 UTC | Delete client_metrics rows > 30 days |
 | Online snapshot sampler | node-cron | Every 5 min | Insert current WS client count into online_snapshots |
 | Online snapshot purge | node-cron | Daily 04:07 UTC | Delete online_snapshots rows > 7 days |
 | Wiki full ingest | node-cron + on-demand | Weekly Sun 03:00 UTC | Walk Fandom categories, upsert wiki_entries, mirror images |

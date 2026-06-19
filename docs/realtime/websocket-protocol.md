@@ -416,14 +416,14 @@ Broadcast to all instances when a user's display name changes (e.g. after regist
 
 ---
 
-## Admin / Telemetry
+## Admin / Kill-Switch
 
-### `telemetry:set` (S→C)
-Pushed on connect and when an admin toggles the telemetry flag.
+### `telemetry:set` (S→C) — deprecated kill-switch
+Emitted once on connect. Telemetry was removed; this event is a permanent kill-switch and is never toggled. The payload is always `{ "enabled": false }`.
 ```json
 {
   "type": "telemetry:set",
-  "payload": { "enabled": true }
+  "payload": { "enabled": false }
 }
 ```
 `handlers.ts:1690–1696`
