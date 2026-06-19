@@ -167,6 +167,11 @@ services:
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET}
       DISCORD_SERVER_ID: ${DISCORD_SERVER_ID}
       DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI:-https://dev.falloutchatmod.com/auth/discord/callback}
+      # Release announcement target. Code defaults DISCORD_UPDATES_CHANNEL_ID to a
+      # PROD channel the dev bot can't see (Missing Access → publishRelease 502s),
+      # so point it at the dev guild's #updates. DOWNLOAD_PAGE_URL is the embed link.
+      DISCORD_UPDATES_CHANNEL_ID: ${DISCORD_UPDATES_CHANNEL_ID:-1514511518434201697}
+      DOWNLOAD_PAGE_URL: ${DOWNLOAD_PAGE_URL:-https://dev.falloutchatmod.com}
       # Dev-guild role IDs (cloned dev server has BRAND-NEW IDs — see plan).
       OWNER_ROLE_ID: ${OWNER_ROLE_ID}
       ADMIN_ROLE_ID: ${ADMIN_ROLE_ID}
