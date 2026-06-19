@@ -644,7 +644,11 @@ model PartyMessage {
 
   // Relations
   user  User  @relation("PartyMessages", fields: [userId], references: [id], onDelete: Cascade)
-  Party Party @relation(fields: [partyId], references: [id])
+  // Cascade on party delete so removing a Party (e.g. via the owner-delete cascade)
+  // also removes its messages. Without this the relation defaults to Restrict, and
+  // deleting the owner of a party that holds ANY member's messages throws an FK
+  // violation — the exact bug this migration set out to fix (issue #80).
+  Party Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
 
   @@id([id, createdAt])
   @@index([partyId, createdAt(sort: Desc)])

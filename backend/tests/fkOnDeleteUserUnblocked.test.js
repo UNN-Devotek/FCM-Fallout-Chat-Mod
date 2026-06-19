@@ -3,127 +3,124 @@
 /**
  * Contract tests for issue #80: FK onDelete policies that blocked user deletion.
  *
- * Four FKs were changed:
- *   messages.user_id        Restrict → Cascade
- *   party_messages.user_id  Restrict → Cascade
- *   bans.banned_by_id       Restrict → SetNull  (+nullable)
- *   parties.owner_id        Restrict → Cascade
+ * These assert the REAL schema source (backend/prisma/schema.prisma) — which is
+ * authoritative because baseline-migrations.sh runs `prisma db push` from the
+ * schema before `migrate deploy` — rather than re-implementing the predicate or
+ * only regex-matching the migration's own SQL. A regression that drops an
+ * onDelete (reverting a relation to Prisma's default Restrict) flips the parsed
+ * value and fails the suite.
  *
- * These tests verify the migration SQL is idempotent and that the
- * deleteUser flow can succeed without FK violation when bans reference
- * the deleted user as the issuer.
+ * The cascade chain that must hold for `prisma.user.delete()` to succeed:
+ *   messages.user_id        → Cascade
+ *   party_messages.user_id  → Cascade
+ *   party_messages.party_id → Cascade   (the gap the original PR missed: an owner
+ *                                         delete cascades to their parties, which
+ *                                         must cascade to those parties' messages —
+ *                                         including messages authored by OTHER members)
+ *   parties.owner_id        → Cascade
+ *   bans.banned_by_id       → SetNull   (+ nullable: the issuing mod can be deleted)
  */
 
 const fs = require('fs');
 const path = require('path');
 
-// ── Migration SQL idempotency checks ──────────────────────────────────────────
+const SCHEMA = fs.readFileSync(path.join(__dirname, '../prisma/schema.prisma'), 'utf-8');
+const MIGRATION_PATH = path.join(
+  __dirname,
+  '../prisma/migrations/20260619000000_fk_on_delete_user_unblocked/migration.sql',
+);
+
+// Extract a `model <Name> { ... }` block body from the schema.
+function modelBlock(name) {
+  const m = SCHEMA.match(new RegExp(`model\\s+${name}\\s*\\{([\\s\\S]*?)\\n\\}`, 'm'));
+  if (!m) throw new Error(`model ${name} not found in schema.prisma`);
+  return m[1];
+}
+
+// Resolve the onDelete action for a relation field. A relation with no explicit
+// onDelete falls back to Prisma's default for a REQUIRED relation: Restrict —
+// which is exactly the regression we are guarding against.
+function onDeleteOf(blockName, fieldRegex) {
+  const block = modelBlock(blockName);
+  const line = block.split('\n').find((l) => l.includes('@relation') && fieldRegex.test(l));
+  if (!line) throw new Error(`relation field ${fieldRegex} not found in model ${blockName}`);
+  const m = line.match(/onDelete:\s*(\w+)/);
+  return m ? m[1] : 'Restrict';
+}
+
+describe('schema.prisma — user-deletion cascade chain (issue #80)', () => {
+  it('Message.user is Cascade', () => {
+    expect(onDeleteOf('Message', /\buser\s+User\b/)).toBe('Cascade');
+  });
+
+  it('PartyMessage.user is Cascade', () => {
+    expect(onDeleteOf('PartyMessage', /\buser\s+User\b/)).toBe('Cascade');
+  });
+
+  it('PartyMessage.party is Cascade (closes the owner-delete FK-violation gap)', () => {
+    // The defect the original PR shipped: this relation had no onDelete, so it
+    // defaulted to Restrict and an owner delete threw when another member had posted.
+    expect(onDeleteOf('PartyMessage', /\bParty\s+Party\b/)).toBe('Cascade');
+  });
+
+  it('Party.owner is Cascade', () => {
+    expect(onDeleteOf('Party', /@relation\("PartyOwner"/)).toBe('Cascade');
+  });
+
+  it('Ban.bannedBy is SetNull and bannedById is nullable', () => {
+    expect(onDeleteOf('Ban', /@relation\("BanIssuer"/)).toBe('SetNull');
+    expect(modelBlock('Ban')).toMatch(/bannedById\s+String\?/);
+  });
+
+  it('no relation in the cascade chain is left as Restrict', () => {
+    const chain = [
+      ['Message', /\buser\s+User\b/],
+      ['PartyMessage', /\buser\s+User\b/],
+      ['PartyMessage', /\bParty\s+Party\b/],
+      ['Party', /@relation\("PartyOwner"/],
+    ];
+    for (const [model, re] of chain) {
+      expect(onDeleteOf(model, re)).not.toBe('Restrict');
+    }
+  });
+});
 
 describe('migration SQL — fk_on_delete_user_unblocked', () => {
-  const sqlPath = path.join(
-    __dirname,
-    '../prisma/migrations/20260618000000_fk_on_delete_user_unblocked/migration.sql',
-  );
   let sql;
-
   beforeAll(() => {
-    sql = fs.readFileSync(sqlPath, 'utf-8');
+    sql = fs.readFileSync(MIGRATION_PATH, 'utf-8');
   });
 
-  it('migration file exists', () => {
-    expect(fs.existsSync(sqlPath)).toBe(true);
+  it('migration file exists at the de-collided 20260619 timestamp', () => {
+    expect(fs.existsSync(MIGRATION_PATH)).toBe(true);
   });
 
-  it('messages.user_id FK is dropped and re-added with CASCADE', () => {
-    expect(sql).toContain('messages_user_id_fkey');
-    expect(sql).toMatch(/ALTER TABLE messages[\s\S]*?messages_user_id_fkey[\s\S]*?ON DELETE CASCADE/);
+  it.each([
+    ['messages', 'messages_user_id_fkey', 'ON DELETE CASCADE'],
+    ['party_messages', 'party_messages_user_id_fkey', 'ON DELETE CASCADE'],
+    ['party_messages', 'party_messages_party_id_fkey', 'ON DELETE CASCADE'],
+    ['parties', 'parties_owner_id_fkey', 'ON DELETE CASCADE'],
+    ['bans', 'bans_banned_by_id_fkey', 'ON DELETE SET NULL'],
+  ])('%s.%s is re-added with %s', (_table, fkey, action) => {
+    expect(sql).toContain(fkey);
+    expect(sql).toMatch(new RegExp(`ADD CONSTRAINT\\s+${fkey}[\\s\\S]*?${action}`));
   });
 
-  it('party_messages.user_id FK is dropped and re-added with CASCADE', () => {
-    expect(sql).toContain('party_messages_user_id_fkey');
-    expect(sql).toMatch(/ALTER TABLE party_messages[\s\S]*?party_messages_user_id_fkey[\s\S]*?ON DELETE CASCADE/);
-  });
-
-  it('bans.banned_by_id FK is dropped and re-added with SET NULL', () => {
-    expect(sql).toContain('bans_banned_by_id_fkey');
-    expect(sql).toMatch(/ALTER TABLE bans[\s\S]*?bans_banned_by_id_fkey[\s\S]*?ON DELETE SET NULL/);
-  });
-
-  it('bans.banned_by_id column is made nullable', () => {
+  it('bans.banned_by_id column is made nullable (required for SET NULL)', () => {
     expect(sql).toContain('ALTER TABLE bans ALTER COLUMN banned_by_id DROP NOT NULL');
   });
 
-  it('parties.owner_id FK is dropped and re-added with CASCADE', () => {
-    expect(sql).toContain('parties_owner_id_fkey');
-    expect(sql).toMatch(/ALTER TABLE parties[\s\S]*?parties_owner_id_fkey[\s\S]*?ON DELETE CASCADE/);
+  it('every DROP CONSTRAINT is guarded by an IF EXISTS check (idempotent)', () => {
+    const drops = sql.match(/DROP CONSTRAINT \w+_fkey/g) || [];
+    const guards = sql.match(/constraint_name = '\w+_fkey'/g) || [];
+    expect(drops.length).toBeGreaterThan(0);
+    expect(guards.length).toBe(drops.length);
   });
 
-  it('all DROP CONSTRAINT calls are guarded by IF EXISTS', () => {
-    const dropStatements = sql.match(/DROP CONSTRAINT \w+_fkey/g) || [];
-    const ifExistsStatements = sql.match(/constraint_name = '\w+_fkey'/g) || [];
-    // Every FK we drop should have a corresponding IF EXISTS guard
-    expect(dropStatements.length).toBeGreaterThan(0);
-    expect(ifExistsStatements.length).toBe(dropStatements.length);
-  });
-});
-
-// ── deleteUser flow — bannedById nullable semantics ───────────────────────────
-
-describe('Ban.bannedById nullability', () => {
-  // Mirrors the runtime scenario: a moderator who issued bans is later deleted.
-  // After the schema change, banned_by_id is nullable (SetNull), so the ban
-  // row survives with bannedById = null rather than blocking the deletion.
-
-  function simulateBanAfterModDeletion(ban) {
-    // After SetNull cascade, bannedById is null.
-    // Code that reads bans must tolerate null bannedById.
-    const issuerLabel = ban.bannedById
-      ? `mod:${ban.bannedById}`
-      : '[deleted moderator]';
-    return issuerLabel;
-  }
-
-  it('ban with null bannedById renders as [deleted moderator]', () => {
-    const ban = { id: 'ban-1', userId: 'user-a', bannedById: null };
-    expect(simulateBanAfterModDeletion(ban)).toBe('[deleted moderator]');
-  });
-
-  it('ban with present bannedById renders normally', () => {
-    const ban = { id: 'ban-2', userId: 'user-b', bannedById: 'mod-uuid' };
-    expect(simulateBanAfterModDeletion(ban)).toBe('mod:mod-uuid');
-  });
-});
-
-// ── deleteUser flow — no FK violation expected after schema change ─────────────
-
-describe('deleteUser FK ordering', () => {
-  // Before the fix, deleting a user with messages would throw a FK Restrict error
-  // from messages.user_id. The fix changes it to CASCADE so DB handles it.
-  // The controller still manually deletes messages first (belt-and-suspenders),
-  // but party_messages are now also handled by CASCADE rather than being missed.
-
-  function buildDeletionSteps(userId, { hasMessages, hasPartyMessages }) {
-    const steps = [];
-    // Controller explicitly pre-deletes these:
-    if (hasMessages) steps.push(`message.deleteMany(userId=${userId})`);
-    steps.push(`report.deleteMany(userId=${userId})`);
-    steps.push(`session.deleteMany(userId=${userId})`);
-    // user.delete now cascades to party_messages (and owned parties → their messages)
-    steps.push(`user.delete(id=${userId})`);
-    if (!hasPartyMessages) steps.push('(party_messages handled by CASCADE)');
-    return steps;
-  }
-
-  it('deletion steps include explicit message cleanup + user delete', () => {
-    const steps = buildDeletionSteps('u1', { hasMessages: true, hasPartyMessages: true });
-    expect(steps).toContain('message.deleteMany(userId=u1)');
-    expect(steps).toContain('user.delete(id=u1)');
-  });
-
-  it('party_messages are now CASCADE-handled, not manually deleted', () => {
-    const steps = buildDeletionSteps('u1', { hasMessages: false, hasPartyMessages: false });
-    const partyMsgStep = steps.find(s => s.includes('partyMessage'));
-    expect(partyMsgStep).toBeUndefined();
-    expect(steps).toContain('(party_messages handled by CASCADE)');
+  it('migration and schema agree that party_messages.party_id cascades (drift guard)', () => {
+    // If schema says Cascade but the migration omits the FK (or vice versa), fresh
+    // (db push) and migrated (migrate deploy) databases would diverge.
+    expect(onDeleteOf('PartyMessage', /\bParty\s+Party\b/)).toBe('Cascade');
+    expect(sql).toMatch(/ADD CONSTRAINT\s+party_messages_party_id_fkey[\s\S]*?ON DELETE CASCADE/);
   });
 });
