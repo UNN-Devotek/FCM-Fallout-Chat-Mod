@@ -1261,8 +1261,8 @@ const BUILTIN_RELAYS: { cmd: SlashCommand; channelId: string | null; fallbackCol
   { cmd: { trigger: '/e',    description: 'Send to Events',              requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000003', fallbackColor: '#50C878' },
   { cmd: { trigger: '/r',    description: 'Send to Raids',               requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000004', fallbackColor: '#FF6644' },
   { cmd: { trigger: '/i',    description: 'Send to Infests',             requiresArgs: true, actionType: 'relay' }, channelId: '983995c1-f9ab-44c0-9b78-8b4cbf497273', fallbackColor: '#CC44FF' },
-  // /s omitted — server chat is disabled. A typed "/s ..." falls through to the
-  // backend, which returns a disabled notice.
+  // /s omitted — server chat is pending re-enable (tracked in the server-scoped-chat
+  // epic). A typed "/s ..." falls through to the backend, which returns a disabled notice.
 ];
 
 // Hardcoded form/utility commands — mirrors the desktop overlay's _acCommands list exactly.

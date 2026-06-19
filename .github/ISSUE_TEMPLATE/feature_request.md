@@ -21,7 +21,9 @@ Which part of the project does this touch? <!-- overlay / dashboard / backend / 
 
 Does this involve the game in any way? Confirm it stays within EULA §4(F): no
 game-memory reading, no code injection, no network/port scanning. (In-game `.ba2`
-HUD mods only swap UI assets and remain an opt-in install.)
+HUD mods swap UI assets and may read the game's own UI-layer data the HUD already
+renders (e.g. `worldId` / nearby-player roster via ZFE's sanctioned channel) — never
+game-memory reading, injection, or network/port scanning — and remain an opt-in install.)
 
 ## Alternatives considered
 

@@ -255,9 +255,12 @@ export async function tryHandleCommand(
     };
   }
 
-  // Built-in /s — DISABLED. Server chat is not available (same-world detection
-  // retired per EULA §4(F)). The command stays handled so it returns a clear
-  // notice instead of being relayed as a normal message.
+  // Built-in /s — DISABLED pending re-enable. Server-scoped chat (same-world detection
+  // via `worldId` read from the game's own UI layer / BSUIDataManager through ZFE's
+  // sanctioned outbound channel) is EULA §4(F)-safe — no game-memory reading, no code
+  // injection, no network/port scanning — but the feature is not yet built. Tracked in
+  // the server-scoped-chat epic. The command stays handled so it returns a clear notice
+  // instead of being relayed as a normal message.
   if (trigger === '/s') {
     return {
       handled: true,
