@@ -384,21 +384,6 @@ model ChatCommand {
 }
 
 // =============================================================================
-// Telemetry Settings — remote per-user and global toggle for world-trace telemetry.
-// scope = 'global' | 'user:<uuid>'
-// Default seed row: global=true (dev-mode ON).
-// =============================================================================
-model TelemetrySetting {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  scope     String   @unique
-  enabled   Boolean
-  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz(6)
-  updatedBy String?  @map("updated_by")
-
-  @@map("telemetry_settings")
-}
-
-// =============================================================================
 // Releases — persisted across Dokploy redeploys so published notes survive
 // (prior implementation wrote to a JSON file inside the container).
 // =============================================================================
@@ -481,26 +466,6 @@ model BanEvidence {
 
   @@index([banId])
   @@map("ban_evidence")
-}
-
-// Self-reported performance telemetry from the desktop clients (overlay + monitor).
-// install_token is a loose reference — no FK constraint so history survives user deletion.
-model ClientMetric {
-  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  installToken String   @map("install_token")
-  source       String // 'overlay' | 'monitor'
-  sampledAt    DateTime @default(now()) @map("sampled_at") @db.Timestamptz(6)
-  appVersion   String   @map("app_version")
-  workingSetMb Int      @map("working_set_mb")
-  gcHeapMb     Int      @map("gc_heap_mb")
-  cpuPct       Float    @map("cpu_pct")
-  gifCacheMb   Int?     @map("gif_cache_mb") // overlay only
-  fps          Float? // overlay only
-
-  @@index([sampledAt(sort: Desc)])
-  @@index([installToken, sampledAt(sort: Desc)])
-  @@index([source, sampledAt(sort: Desc)])
-  @@map("client_metrics")
 }
 
 // =============================================================================

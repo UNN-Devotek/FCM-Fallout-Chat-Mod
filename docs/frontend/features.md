@@ -31,20 +31,6 @@ never passed through `OutletContext` — this is what triggers `isPublicMode`.
 
 ---
 
-## `client-performance/`
-
-Tracks Electron overlay client telemetry (memory, CPU, GIF cache, FPS).
-Staff-only (`/client-performance` route, `moderator+` role).
-
-| File | Purpose |
-|------|---------|
-| `pages/ClientPerformancePage.tsx` | Top-level page. Renders window/source selector, charts, and outliers table. |
-| `components/MetricLineChart.tsx` | CRT-styled line chart for time-bucketed metrics (p50/p90/p99 series). |
-| `components/OutliersTable.tsx` | Table of individual high-memory / high-CPU Electron client sessions. |
-| `hooks/useClientMetrics.ts` | TanStack Query hook. Fetches `GET /api/admin/client-metrics?window=<w>&source=<s>`. `staleTime: 60s`, `refetchInterval: 5min`. |
-
----
-
 ## `moderation/`
 
 The bulk of staff tooling. All routes are protected by `RoleGuard` with
@@ -66,7 +52,6 @@ certain user actions) do a secondary `ADMIN_ROLES` check inside the component.
 | `ChatCommands.tsx` | `/commands` | Manage custom slash commands served by the backend. |
 | `NameBlacklist.tsx` | `/name-blacklist` | Blocked username patterns. |
 | `Channels.tsx` | `/channels` | Create / edit chat channels (name, color, parent). |
-| `Telemetry.tsx` | `/telemetry` | User-action telemetry / analytics. |
 | `Voice.tsx` | `/voice` | Join-to-create Discord voice channel configuration (lobby ID, category, name template). |
 | `EmbedBuilder.tsx` | `/discord-embeds` | Rich Discord embed builder. Compose fields/images, post via bot, save as template, configure reaction roles. |
 | `selfService/MyApplications.tsx` | (sub-view) | Non-staff view of own applications. |

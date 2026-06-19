@@ -25,7 +25,6 @@ import Channels from './features/moderation/Channels';
 import AutoModeration from './features/moderation/AutoModeration';
 import AutoModViolations from './features/moderation/AutoModViolations';
 import ChatCommands from './features/moderation/ChatCommands';
-import Telemetry from './features/moderation/Telemetry';
 import NameBlacklist from './features/moderation/NameBlacklist';
 import Bans from './features/moderation/Bans';
 import BanForm from './features/moderation/BanForm';
@@ -41,7 +40,6 @@ import ChatOverlay from './features/chat/ChatOverlay';
 import Profile from './features/profile/Profile';
 import ReportPage from './features/public/ReportPage';
 import ApplyPage from './features/public/ApplyPage';
-import ClientPerformancePage from './features/client-performance/pages/ClientPerformancePage';
 import Devices from './features/system/Devices';
 import WikiSync from './features/wiki/WikiSync';
 
@@ -104,7 +102,6 @@ const router = createBrowserRouter([
       { path: '/player-reports', element: <PlayerReports /> },
       { path: '/bug-reports', element: <BugReports /> },
       { path: '/applications', element: <Applications /> },
-      { path: '/telemetry', element: <RoleGuard allowedRoles={MOD_ROLES}><Telemetry /></RoleGuard> },
       { path: '/name-blacklist', element: <RoleGuard allowedRoles={MOD_ROLES}><NameBlacklist /></RoleGuard> },
       { path: '/moderation/bans', element: <RoleGuard allowedRoles={MOD_ROLES}><Bans /></RoleGuard> },
       { path: '/moderation/bans/new', element: <RoleGuard allowedRoles={MOD_ROLES}><BanForm /></RoleGuard> },
@@ -115,7 +112,6 @@ const router = createBrowserRouter([
       { path: '/help', element: <HelpPage /> },
       { path: '/audit-log', element: <RoleGuard allowedRoles={MOD_ROLES}><AuditLog /></RoleGuard> },
       { path: '/server-health', element: <RoleGuard allowedRoles={MOD_ROLES}><ServerHealth /></RoleGuard> },
-      { path: '/client-performance', element: <RoleGuard allowedRoles={MOD_ROLES}><ClientPerformancePage /></RoleGuard> },
       { path: '/devices', element: <RoleGuard allowedRoles={MOD_ROLES}><Devices /></RoleGuard> },
       { path: '/wiki-sync', element: <RoleGuard allowedRoles={MOD_ROLES}><WikiSync /></RoleGuard> },
       { path: '*', element: <DefaultRedirect /> },

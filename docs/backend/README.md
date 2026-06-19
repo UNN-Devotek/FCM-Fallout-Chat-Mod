@@ -88,8 +88,6 @@ return RFC 7807 `429` responses. Defined in `middleware/rateLimiter.ts`.
 | `partyJoinLimiter` | `POST /api/parties/:id/join` | 8 | 1 min | token |
 | `partyInviteLimiter` | `POST /api/parties/:id/invite*` | 15 | 1 min | token |
 | `partyImageUploadLimiter` | `POST /api/parties/upload-image` | 10 | 1 min | token |
-| `clientMetricsIngestLimiter` | `POST /api/client-metrics` | 1 | 5 min | installToken or IP |
-
 Dev overlays (unpackaged Electron, `X-Overlay-Dev: 1`) get a higher cap instead of an outright skip so the header can't be used to bypass production limits. A token-gated `X-Dev-Bypass` header provides a full skip when `DEV_RATELIMIT_BYPASS_TOKEN` is set.
 
 ## Security Headers
