@@ -24,40 +24,68 @@ jest.mock('rate-limit-redis', () => ({
     localKeys: true,
   })),
 }));
+// Redis mock — `session:<token>` resolves to a userId so the real WS connect
+// handler passes token auth; everything else returns null/OK. Used by both the
+// route test (via server.ts) and the real handleConnection() WS test below.
+const TEST_TOKEN = 'test-session-token';
+const TEST_USER_ID = 'user-1234';
 jest.mock('../src/config/redis', () => ({
   getRedisClient: jest.fn().mockResolvedValue({
-    get: jest.fn().mockResolvedValue(null), set: jest.fn().mockResolvedValue('OK'),
+    get: jest.fn().mockImplementation(async (key) => (key === 'session:test-session-token' ? 'user-1234' : null)),
+    set: jest.fn().mockResolvedValue('OK'),
     del: jest.fn().mockResolvedValue(1), ping: jest.fn().mockResolvedValue('PONG'),
     connect: jest.fn().mockResolvedValue(undefined), on: jest.fn(),
     sendCommand: jest.fn().mockResolvedValue('OK'),
   }),
+  getSubscriberClient: jest.fn().mockResolvedValue({
+    subscribe: jest.fn().mockResolvedValue(undefined), on: jest.fn(),
+  }),
   healthCheck: jest.fn().mockResolvedValue(true),
+}));
+// Prisma mock — the real handleConnection() loads the user via
+// prisma.user.findUnique before reaching the telemetry emit. Return a clean,
+// non-banned, non-muted user so the handler walks all the way to the emit.
+jest.mock('../src/config/prisma', () => ({
+  __esModule: true,
+  default: {
+    user: {
+      findUnique: jest.fn().mockResolvedValue({
+        id: 'user-1234', username: 'tester', discordId: null,
+        discordUsername: null, discordDisplayName: null, installToken: null,
+        isBanned: false, isMuted: false, muteExpiresAt: null, muteReason: null,
+        muteCategory: null, bannedUntil: null, banCategory: null, banReason: null,
+        kickedUntil: null,
+      }),
+      update: jest.fn().mockResolvedValue({}),
+    },
+  },
+}));
+// Services the connect handler lazily require()s before the telemetry emit.
+jest.mock('../src/services/blockService', () => ({
+  getBlockedIds: jest.fn().mockResolvedValue(new Set()),
+}));
+jest.mock('../src/services/userRoleService', () => ({
+  getEffectiveRole: jest.fn().mockResolvedValue('user'),
+  isPrivilegedRole: jest.fn().mockReturnValue(false),
 }));
 
 const { WebSocket } = require('ws');
+const { EventEmitter } = require('events');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function makeMockWs(readyState = WebSocket.OPEN) {
-  return {
-    readyState,
-    sentMessages: [],
-    send(msg) { this.sentMessages.push(msg); },
-  };
-}
-
-/**
- * Simulate the telemetry kill-switch logic from handlers.ts.
- * Mirrors the exact block to keep the test structurally tied to the
- * implementation without importing the full handler module.
- */
-function simulateTelemetryKillSwitch(ws) {
-  // Telemetry collection was removed. Emit a one-time telemetry:set{enabled:false}
-  // on connect as a permanent kill-switch so any already-installed client that
-  // listens for it stops collecting. No DB lookup; always off.
-  if (ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({ type: 'telemetry:set', payload: { enabled: false } }));
-  }
+// A recording WebSocket double: a real EventEmitter (so the handler's
+// on/once/removeListener/emit calls work) that also records every frame sent
+// and reports itself OPEN. We assert the connect-time frames the handler pushes.
+function makeRecordingWs() {
+  const ws = new EventEmitter();
+  ws.readyState = WebSocket.OPEN;
+  ws.sentMessages = [];
+  ws.send = (msg) => { ws.sentMessages.push(msg); };
+  ws.close = () => {};
+  ws.ping = () => {};
+  ws.terminate = () => {};
+  return ws;
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
@@ -74,28 +102,24 @@ describe('Telemetry control removed', () => {
     expect(handlers.broadcastTelemetrySet).toBeUndefined();
   });
 
-  it('WS kill-switch sends telemetry:set { enabled: false } when socket is OPEN', () => {
-    const ws = makeMockWs(WebSocket.OPEN);
-    simulateTelemetryKillSwitch(ws);
+  it('real WS connect emits telemetry:set { enabled: false } kill-switch frame', async () => {
+    // Exercises the ACTUAL handleConnection() code path (not a re-implemented
+    // simulation): a reverting change (DB lookup, or a flag defaulting to true)
+    // would fail this test.
+    const { handleConnection } = require('../src/websocket/handlers');
+    const ws = makeRecordingWs();
+    const req = { url: '/', headers: { 'x-auth-token': TEST_TOKEN } };
 
-    expect(ws.sentMessages).toHaveLength(1);
-    const msg = JSON.parse(ws.sentMessages[0]);
-    expect(msg.type).toBe('telemetry:set');
-    expect(msg.payload).toEqual({ enabled: false });
-  });
+    await handleConnection(ws, req);
 
-  it('WS kill-switch does NOT send when socket is not OPEN', () => {
-    const ws = makeMockWs(WebSocket.CLOSED);
-    simulateTelemetryKillSwitch(ws);
+    const frames = ws.sentMessages.map((m) => JSON.parse(m));
+    const telemetryFrame = frames.find((f) => f.type === 'telemetry:set');
+    expect(telemetryFrame).toBeDefined();
+    expect(telemetryFrame.payload).toEqual({ enabled: false });
 
-    expect(ws.sentMessages).toHaveLength(0);
-  });
-
-  it('WS kill-switch always emits enabled:false (never true)', () => {
-    const ws = makeMockWs(WebSocket.OPEN);
-    simulateTelemetryKillSwitch(ws);
-
-    const msg = JSON.parse(ws.sentMessages[0]);
-    expect(msg.payload.enabled).toBe(false);
+    // Tear down: the handler registered a heartbeat setInterval cleared by the
+    // 'close' handler — fire it so no timer leaks past the test.
+    ws.readyState = WebSocket.CLOSED;
+    ws.emit('close');
   });
 });
