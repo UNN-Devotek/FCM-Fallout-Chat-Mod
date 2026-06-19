@@ -103,6 +103,21 @@ function resolveAppVersion(fs, dir, path) {
   return '0.0.0';
 }
 
+// Read the baked relay target (build.extraMetadata.fcmRelay merged into the
+// shipped package.json by electron-builder) for dev/test packages. Returns the
+// { relayHttp, relayWs } object or null. Read via fs (same pattern as
+// resolveAppVersion) rather than a relative require of the local package.json so
+// build-files.test.js does not flag it as a missing build.files entry. null in
+// dev (no merge) and in prod builds (no extraMetadata) -> falls through to prod.
+function resolveBakedRelay(fs, dir, path) {
+  // eslint-disable-next-line global-require
+  path = path || require('path');
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
+    return (pkg && pkg.fcmRelay) || null;
+  } catch { return null; }
+}
+
 // Pure form of registerHotkeys' `map` build + the per-bind `accelToAction` and
 // `isChar` derivation. Given a (possibly partial) keybind map, returns:
 //   { map, binds } where `map` is the fully-resolved accelerator map (defaults
@@ -279,13 +294,21 @@ function shouldRegisterShortcuts({ platform, kdeWayland, hasForegroundDetect, ga
 //   env.RELAY_HTTP = 'http://localhost:7177'
 //   env.RELAY_WS   = 'ws://localhost:7177/ws'
 //
-// Production (default — no env override needed):
+// Baked override (dev/test packages — see build.extraMetadata.fcmRelay):
+//   A packaged build can bake a relay target into package.json (electron-builder
+//   `extraMetadata.fcmRelay`) so a dev/test installer points at e.g.
+//   https://dev.falloutchatmod.com without the user setting any env var. main.js
+//   passes that object as `baked`. Precedence: env override > baked > prod default.
+//   A normal/prod build bakes nothing, so it is byte-for-byte the prod default.
+//
+// Production (default — no env override, no bake):
 //   relayHttp = 'https://falloutchatmod.com'
 //   relayWs   = 'wss://falloutchatmod.com/ws'
-function resolveRelayUrls(env) {
+function resolveRelayUrls(env, baked) {
+  const b = baked || {};
   return {
-    relayHttp: env.RELAY_HTTP || 'https://falloutchatmod.com',
-    relayWs:   env.RELAY_WS   || 'wss://falloutchatmod.com/ws',
+    relayHttp: env.RELAY_HTTP || b.relayHttp || 'https://falloutchatmod.com',
+    relayWs:   env.RELAY_WS   || b.relayWs   || 'wss://falloutchatmod.com/ws',
   };
 }
 
@@ -551,6 +574,7 @@ module.exports = {
   emitVisibilityDecision,
   desiredTopmost,
   resolveRelayUrls,
+  resolveBakedRelay,
   classifyInputGrab,
   buildKwinKeepAboveScript,
   buildKwinRemoveRulesScript,
