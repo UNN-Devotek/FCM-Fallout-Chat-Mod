@@ -348,6 +348,19 @@ export function getOverlayShell(): OverlayShell | null {
 }
 
 /**
+ * Is this relay host the PRODUCTION host? The overlay footer shows a "[DEV]"
+ * indicator whenever the build is pointed at any NON-prod relay
+ * (dev.falloutchatmod.com, a staging host, localhost, …) so a focus-tester can
+ * tell at a glance they're not on prod. Pure — unit-tested. Port is ignored;
+ * matching is case-insensitive.
+ */
+export function isProdRelayHost(host: string | null | undefined): boolean {
+  if (!host) return false;
+  const h = host.toLowerCase().replace(/:\d+$/, '');
+  return h === 'falloutchatmod.com' || h === 'www.falloutchatmod.com';
+}
+
+/**
  * Resolve a backend avatar path to a loadable URL.
  *
  * Backend sends `avatarUrl` as a RELATIVE same-origin path ("/avatars/<id>")
@@ -1296,8 +1309,8 @@ const BUILTIN_RELAYS: { cmd: SlashCommand; channelId: string | null; fallbackCol
   { cmd: { trigger: '/e',    description: 'Send to Events',              requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000003', fallbackColor: '#50C878' },
   { cmd: { trigger: '/r',    description: 'Send to Raids',               requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000004', fallbackColor: '#FF6644' },
   { cmd: { trigger: '/i',    description: 'Send to Infests',             requiresArgs: true, actionType: 'relay' }, channelId: '983995c1-f9ab-44c0-9b78-8b4cbf497273', fallbackColor: '#CC44FF' },
-  // /s omitted — server chat is disabled. A typed "/s ..." falls through to the
-  // backend, which returns a disabled notice.
+  // /s omitted — server chat is pending re-enable (tracked in the server-scoped-chat
+  // epic). A typed "/s ..." falls through to the backend, which returns a disabled notice.
 ];
 
 // Hardcoded form/utility commands — mirrors the desktop overlay's _acCommands list exactly.
@@ -3687,7 +3700,16 @@ export default function ChatOverlay() {
     },
     staleTime: 60_000,
   });
-  const displayVersion = liveVersion ?? __APP_VERSION__;
+  // Electron overlay only: the REAL running app version + relay host, from the
+  // shell bridge (getInfo). We prefer the actual running version over the
+  // latest-PUBLISHED liveVersion so the footer reflects what the user is running
+  // — a dev/QA build shows e.g. "1.3.91-dev", not the newest release on the
+  // relay. The website (no shell) keeps liveVersion (the latest available).
+  const [shellInfo, setShellInfo] = useState<{ appVersion?: string; relayHost?: string } | null>(null);
+  const displayVersion = (overlayShell && shellInfo?.appVersion) || liveVersion || __APP_VERSION__;
+  // DEV indicator: website dev-server (localhost) OR overlay on a non-prod relay.
+  const isDevEnv = (typeof window !== 'undefined' && window.location.hostname === 'localhost')
+    || (!!overlayShell && !!shellInfo?.relayHost && !isProdRelayHost(shellInfo.relayHost));
 
   // ── Live keybinds (Electron overlay only) ─────────────────────────────────
   // The shell registers global hotkeys and pushes the live map here so the footer
@@ -3696,7 +3718,10 @@ export default function ChatOverlay() {
   useEffect(() => {
     if (!overlayShell) return;
     const bridge = (window as any).relayBridge;
-    bridge?.getInfo?.().then((info: any) => { if (info?.keybinds) setShellKeybinds(info.keybinds); }).catch(() => {});
+    bridge?.getInfo?.().then((info: any) => {
+      if (info?.keybinds) setShellKeybinds(info.keybinds);
+      setShellInfo({ appVersion: info?.appVersion, relayHost: info?.relayHost });
+    }).catch(() => {});
     return bridge?.onKeybinds?.((kb: Record<string, string>) => setShellKeybinds(kb));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -8622,7 +8647,7 @@ export default function ChatOverlay() {
                 return parts.join(' · ');
               })() : 'Enter send · /help'}</span>
               <span style={{ color: hexAlpha(primaryColor, 0.8), textShadow: textOutline, flexShrink: 0, marginLeft: '6px' }}>
-                v{displayVersion}{typeof window !== 'undefined' && window.location.hostname === 'localhost' ? ' [DEV]' : ''}
+                v{displayVersion}{isDevEnv ? ' [DEV]' : ''}
               </span>
             </div>
           )}

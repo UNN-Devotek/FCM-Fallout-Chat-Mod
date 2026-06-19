@@ -195,6 +195,13 @@ services:
       # --- Dev-only admin / session secrets (SR-001: never prod's) ---
       ADMIN_API_KEY: ${ADMIN_API_KEY:?set ADMIN_API_KEY (dev-only, never prod)}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET (dev-only, never prod)}
+
+      # --- Overlay registration shared key (TOFU client-key path) ---
+      # Must match the overlay's baked DEFAULT_APP_CLIENT_KEY (overlay-core.js).
+      # Prod gets this via env_file: .env; this service lists vars explicitly, so
+      # without it POST /api/users returns 503 "Registration unavailable: server
+      # misconfigured" and the overlay mislabels it as a CF challenge.
+      APP_CLIENT_KEY: ${APP_CLIENT_KEY:-fo76-chat-desktop-v1}
     volumes:
       - releases_dev_downloads:/app/downloads
     security_opt: ["no-new-privileges:true"]

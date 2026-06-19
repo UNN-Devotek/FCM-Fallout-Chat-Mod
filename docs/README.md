@@ -7,8 +7,10 @@ moderation portal, rendered through a transparent in-game overlay.
 > **EULA §4(F) — two tracks, kept separate.** The default **desktop overlay** is EULA-safe: it only
 > checks whether the `Fallout76` process is running (to show/hide the overlay) and never reads game
 > memory, modifies game files, injects code, or scans networks/ports. The optional **in-game HUD mods
-> (`.ba2`)** are a separate, explicit opt-in install that swap UI assets only — never bundled into or
-> required by the overlay. Neither track reads game memory, injects code, or scans networks/ports.
+> (`.ba2`)** are a separate, explicit opt-in install that swap UI assets and may read the game's own
+> UI-layer data the HUD already renders (e.g. `worldId` / nearby-player roster from `BSUIDataManager`)
+> via ZFE's sanctioned outbound channel — never bundled into or required by the overlay. Neither track
+> reads game memory, injects code, or scans networks/ports.
 
 This folder is the central documentation hub. Each domain lives in its own subfolder, with a
 `README.md` that orients you and deeper topic files alongside it.

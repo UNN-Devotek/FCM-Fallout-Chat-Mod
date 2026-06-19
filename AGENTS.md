@@ -101,7 +101,11 @@ These are non-negotiable. Each links to the doc with the full context.
      chat inside the game HUD. These are an **additional, separate install option** the user chooses
      and installs at their own discretion — never bundled into or auto-installed by the overlay, and
      always clearly presented as the modding track. Even here the hard limits hold: **no game-memory
-     reading, no code injection, no network/port scanning** — the `.ba2` mods only swap UI assets.
+     reading, no code injection, no network/port scanning** — the `.ba2` mods swap UI assets and may
+     read the game's own UI-layer data that the HUD already renders (e.g. `worldId` / nearby-player
+     roster from `BSUIDataManager`) via ZFE's sanctioned outbound channel. This is not game-memory
+     reading, injection, or network/port scanning — it is reading data the game itself surfaces to its
+     own HUD, forwarded through the approved ZFE channel.
   Never blur the two: the EULA-safe overlay must never gain game-file modification, and the `.ba2`
   install must never be presented as required or default.
 - **One ChatOverlay component — never fork it.** `admin-dashboard/src/features/chat/ChatOverlay.tsx`
