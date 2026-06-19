@@ -118,9 +118,9 @@ User-created community chat rooms.
 |---|---|
 | `is_private` | Public parties feed the overlay public-mode combined feed |
 | `reap_policy` | `persistent` \| `ephemeral` (enum `party_reap_policy`) |
-| `owner_id` FK → `users` | RESTRICT on delete |
+| `owner_id` FK → `users` | CASCADE on delete — deleting a user hard-deletes the parties they own, cascading to that party's `party_members`, `party_invites`, and `party_messages` (every member loses the party and its history; there is no ownership-transfer step) |
 | `last_message_at` | Updated on new `party_messages` row for activity sorting |
-| `is_deleted` | Soft delete |
+| `is_deleted` | Soft delete (normal lifecycle). Distinct from the owner-delete hard cascade above. |
 
 ### `party_members` (`PartyMember`)
 
@@ -133,6 +133,7 @@ Status: `pending` \| `accepted` \| `declined` \| `expired`. Unique `(party_id, i
 ### `party_messages` (`PartyMessage`)
 
 Composite PK `(id, created_at)` (TimescaleDB candidate). Denormalizes `username` for read performance.
+Both FKs are **CASCADE on delete**: `party_id` → `parties` (a deleted party takes its messages with it — required so the `owner_id` owner-delete cascade does not stall on another member's messages) and `user_id` → `users` (a deleted author's messages are removed).
 
 ---
 
@@ -165,7 +166,7 @@ Full ban history. One row per ban event (including reversed ones). `users.is_ban
 
 | Column | Notes |
 |---|---|
-| `banned_by_id` FK → `users` | RESTRICT on delete |
+| `banned_by_id` FK → `users` (nullable) | SET NULL on delete — the issuing moderator may be deleted; the ban audit row survives with `banned_by_id = NULL` (evidence scoping treats a null issuer as fail-closed) |
 | `reason_category` | `Harassment` \| `HateSpeech` \| `Spam` \| `Cheating` \| `NSFW` \| `Threats` \| `Doxxing` \| `Other` |
 | `banned_until` | Null = permanent |
 | `reversed_at` / `reversed_by_id` / `reverse_reason` | Set when a ban is reversed |
