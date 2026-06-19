@@ -10,6 +10,11 @@ jest.mock('../src/config/database', () => ({
   withTransaction: jest.fn().mockImplementation(async (cb) => cb({ query: jest.fn().mockResolvedValue({ rows: [], rowCount: 0 }) })),
   pool: { on: jest.fn() },
 }));
+// Load-bearing: server.ts applies a global `apiLimiter` to all /api/ routes
+// (server.ts:178) backed by rate-limit-redis's RedisStore. Its real `increment`
+// runs a Lua script and rejects the redis mock's plain string reply ("Expected
+// result to be array of values"), 500-ing before the 410/404 handler is reached.
+// This mock stubs the store so requests pass through. Removing it breaks the test.
 jest.mock('rate-limit-redis', () => ({
   RedisStore: jest.fn().mockImplementation(() => ({
     init: jest.fn().mockResolvedValue(undefined),
