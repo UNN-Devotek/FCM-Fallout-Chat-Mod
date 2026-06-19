@@ -63,9 +63,17 @@ describe('stateHasRealData', () => {
 });
 
 describe('isCfChallenge', () => {
-  it('503 is always a CF challenge', () => {
-    expect(isCfChallenge(503, {}, '')).toBe(true);
-    expect(isCfChallenge(503, undefined, undefined)).toBe(true);
+  it('503 with CF markers (cf-mitigated / text/html) -> true', () => {
+    expect(isCfChallenge(503, { 'cf-mitigated': 'challenge' }, '{}')).toBe(true);
+    expect(isCfChallenge(503, { 'content-type': 'text/html; charset=utf-8' }, '<html>error</html>')).toBe(true);
+  });
+
+  it('503 JSON / no CF markers -> false (real backend error surfaces)', () => {
+    // Regression: a backend 503 like "Registration unavailable: server misconfigured"
+    // must NOT be masked as a CF challenge — the user needs to see the real message.
+    expect(isCfChallenge(503, { 'content-type': 'application/json' }, '{"detail":"Registration unavailable: server misconfigured"}')).toBe(false);
+    expect(isCfChallenge(503, {}, '')).toBe(false);
+    expect(isCfChallenge(503, undefined, undefined)).toBe(false);
   });
 
   it('403 with cf-mitigated header -> true', () => {
