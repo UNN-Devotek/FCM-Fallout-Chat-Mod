@@ -55,6 +55,14 @@ If the tunnel goes down:
 
 **Backend / dashboard changes** — push to `prod`; Dokploy rebuilds automatically. No client release needed.
 
+> **Promote `dev` → `prod` with a merge commit — never squash or rebase that PR.** Feature PRs are
+> squash-merged into `dev` (fine), but the `dev` → `prod` promotion PR **must** be merged as a *merge
+> commit* (`gh pr merge <n> --merge`). Squashing/rebasing the promotion replays every change as a *new*
+> commit SHA on `prod`, so `prod` and `dev` end up with byte-identical content but divergent histories —
+> both branches then perpetually report as ahead/behind each other (git compares SHAs, not file content).
+> `prod` is a protected branch (no force-push); the sole code owner is also the author, so use
+> `gh pr merge <n> --merge --admin` to bypass the self-approval requirement.
+
 **Electron overlay changes** — require a full packaging and publish pipeline. See [releasing-the-overlay.md](releasing-the-overlay.md).
 
 ---
