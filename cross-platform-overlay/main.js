@@ -376,7 +376,14 @@ const NEXUS_MOD_URL = 'https://www.nexusmods.com/fallout76/mods/4082';
 // Path A (dev:cloud, non-CF-Access dev backend): https://dev.falloutchatmod.com
 // Path B (dev:local):                            http://localhost:7177
 // Production default (no override):              https://falloutchatmod.com
-const { relayHttp: RELAY_HTTP, relayWs: RELAY_WS } = overlayCore.resolveRelayUrls(process.env);
+// A dev/test PACKAGE can also bake a target via build.extraMetadata.fcmRelay
+// (electron-builder merges it into the shipped package.json) so the installer
+// points at the dev backend with no env var. Precedence: env > baked > prod.
+// Read via fs (same pattern as resolveAppVersion) rather than a relative require
+// of the local package.json, which build-files.test.js would flag as a missing
+// build.files entry.
+const BAKED_RELAY = overlayCore.resolveBakedRelay(fs, __dirname, path);
+const { relayHttp: RELAY_HTTP, relayWs: RELAY_WS } = overlayCore.resolveRelayUrls(process.env, BAKED_RELAY);
 const RELAY_HOST = new URL(RELAY_HTTP).host;
 
 // Stable, identifiable User-Agent for every outbound request from the main

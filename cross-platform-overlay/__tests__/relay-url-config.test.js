@@ -20,7 +20,7 @@
 
 import core from '../overlay-core.js';
 
-const { resolveRelayUrls } = core;
+const { resolveRelayUrls, resolveBakedRelay } = core;
 
 describe('resolveRelayUrls', () => {
   it('returns production defaults when no env vars are set', () => {
@@ -53,5 +53,54 @@ describe('resolveRelayUrls', () => {
     const { relayHttp, relayWs } = resolveRelayUrls({ RELAY_HTTP: 'https://dev.falloutchatmod.com' });
     expect(relayHttp).toBe('https://dev.falloutchatmod.com');
     expect(relayWs).toBe('wss://falloutchatmod.com/ws');
+  });
+
+  // Baked override: a dev/test PACKAGE bakes a relay target via
+  // build.extraMetadata.fcmRelay; main.js passes it as the 2nd arg.
+  const BAKED = { relayHttp: 'https://dev.falloutchatmod.com', relayWs: 'wss://dev.falloutchatmod.com/ws' };
+
+  it('uses the baked relay target when no env override is set', () => {
+    const { relayHttp, relayWs } = resolveRelayUrls({}, BAKED);
+    expect(relayHttp).toBe('https://dev.falloutchatmod.com');
+    expect(relayWs).toBe('wss://dev.falloutchatmod.com/ws');
+  });
+
+  it('env override beats the baked target (precedence env > baked)', () => {
+    const env = { RELAY_HTTP: 'http://localhost:7177', RELAY_WS: 'ws://localhost:7177/ws' };
+    const { relayHttp, relayWs } = resolveRelayUrls(env, BAKED);
+    expect(relayHttp).toBe('http://localhost:7177');
+    expect(relayWs).toBe('ws://localhost:7177/ws');
+  });
+
+  it('falls back to prod default when neither env nor bake is present (prod-safe)', () => {
+    const { relayHttp, relayWs } = resolveRelayUrls({}, null);
+    expect(relayHttp).toBe('https://falloutchatmod.com');
+    expect(relayWs).toBe('wss://falloutchatmod.com/ws');
+  });
+
+  it('partial bake (relayHttp only) — relayWs falls through to prod default', () => {
+    const { relayHttp, relayWs } = resolveRelayUrls({}, { relayHttp: 'https://dev.falloutchatmod.com' });
+    expect(relayHttp).toBe('https://dev.falloutchatmod.com');
+    expect(relayWs).toBe('wss://falloutchatmod.com/ws');
+  });
+});
+
+describe('resolveBakedRelay', () => {
+  const fakeFs = (contents) => ({ readFileSync: () => contents });
+  const fakePath = { join: (...p) => p.join('/') };
+
+  it('returns the fcmRelay object baked into package.json', () => {
+    const fs = fakeFs(JSON.stringify({ version: '1.0.0', fcmRelay: { relayHttp: 'https://dev.falloutchatmod.com', relayWs: 'wss://dev.falloutchatmod.com/ws' } }));
+    expect(resolveBakedRelay(fs, '/app', fakePath)).toEqual({ relayHttp: 'https://dev.falloutchatmod.com', relayWs: 'wss://dev.falloutchatmod.com/ws' });
+  });
+
+  it('returns null when package.json has no fcmRelay (prod/dev build)', () => {
+    const fs = fakeFs(JSON.stringify({ version: '1.0.0' }));
+    expect(resolveBakedRelay(fs, '/app', fakePath)).toBeNull();
+  });
+
+  it('returns null and never throws when package.json is unreadable', () => {
+    const fs = { readFileSync: () => { throw new Error('ENOENT'); } };
+    expect(resolveBakedRelay(fs, '/app', fakePath)).toBeNull();
   });
 });

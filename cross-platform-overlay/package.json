@@ -182,6 +182,12 @@
         "libuuid1",
         "libsecret-1-0"
       ]
+    },
+    "extraMetadata": {
+      "fcmRelay": {
+        "relayHttp": "https://dev.falloutchatmod.com",
+        "relayWs": "wss://dev.falloutchatmod.com/ws"
+      }
     }
   },
   "homepage": "https://falloutchatmod.com"
