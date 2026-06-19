@@ -353,6 +353,13 @@ export async function createGiveaway(
       endsAt,
       status: 'active',
     },
+  }).catch((err: any) => {
+    // P2002 = unique constraint violation — the partial unique index fired,
+    // meaning a concurrent create beat us through the count() race.
+    if (err?.code === 'P2002') {
+      throw new GiveawayError('You already have an active giveaway. Stop it first.', 'CAP_REACHED');
+    }
+    throw err;
   });
 
   scheduleTimer(giveaway.id, endsAt);
