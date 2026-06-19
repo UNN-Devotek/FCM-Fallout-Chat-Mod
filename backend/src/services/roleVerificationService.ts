@@ -53,7 +53,10 @@ async function destroyAdminSessions(discordId: string): Promise<void> {
   try {
     const redis = await getRedisClient();
     // Scan for session keys -- connect-redis uses prefix "sess:"
-    let cursor = 0;
+    // node-redis v5+ uses STRING cursors for SCAN (both the argument and the
+    // returned `cursor`). Start at '0' and terminate on '0' — a numeric cursor
+    // would both mistype redis.scan() and make `cursor !== 0` loop forever.
+    let cursor = '0';
     const toDelete: string[] = [];
     do {
       const result = await redis.scan(cursor, { MATCH: 'sess:*', COUNT: 100 });
@@ -69,7 +72,7 @@ async function destroyAdminSessions(discordId: string): Promise<void> {
           }
         } catch { /* skip unparseable sessions */ }
       }
-    } while (cursor !== 0);
+    } while (cursor !== '0');
 
     if (toDelete.length > 0) {
       await redis.del(toDelete);
@@ -228,5 +231,5 @@ function stop(): void {
   }
 }
 
-export { start, stop, resolveRole, getCachedRole, cacheRole, runVerificationCycle };
-module.exports = { start, stop, resolveRole, getCachedRole, cacheRole, runVerificationCycle };
+export { start, stop, resolveRole, getCachedRole, cacheRole, runVerificationCycle, destroyAdminSessions };
+module.exports = { start, stop, resolveRole, getCachedRole, cacheRole, runVerificationCycle, destroyAdminSessions };

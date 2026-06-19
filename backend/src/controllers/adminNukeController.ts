@@ -56,7 +56,9 @@ async function nukeUsers(req: Request, res: Response, next: NextFunction): Promi
     // 2. Clear Redis session keys via SCAN + UNLINK (safer than KEYS).
     const redis = await getRedisClient();
     let clearedSessions = 0;
-    let cursor = 0;
+    // node-redis v5+ uses STRING cursors for SCAN (argument and return). Start at
+    // '0' and terminate on '0'; a numeric cursor mistypes redis.scan() under v6.
+    let cursor = '0';
     do {
       const reply = await redis.scan(cursor, { MATCH: 'session:*', COUNT: 500 });
       const keys: string[] = reply.keys;
@@ -64,8 +66,8 @@ async function nukeUsers(req: Request, res: Response, next: NextFunction): Promi
         await redis.unlink(keys);
         clearedSessions += keys.length;
       }
-      cursor = Number(reply.cursor);
-    } while (cursor !== 0);
+      cursor = reply.cursor;
+    } while (cursor !== '0');
 
     logger.warn(
       { audit: 'admin-nuke-users-complete', deletedUsers, clearedSessions },
