@@ -65,6 +65,14 @@ If the tunnel goes down:
 > `prod` is a protected branch (no force-push); the sole code owner is also the author, so use
 > `gh pr merge <n> --merge --admin` to bypass the self-approval requirement.
 
+> **Before promoting: the backend fails closed on unset MinIO config in production.** The startup
+> guard (`collectMinioProductionErrors` in `backend/src/config/environment.ts`) calls `process.exit(1)`
+> if `MINIO_ENDPOINT`, `MINIO_BUCKET`, or `MINIO_PUBLIC_URL` is unset (or `MINIO_ENDPOINT` is left at the
+> Docker default `http://minio:9700`, or the root user/password are at their dev defaults). `MINIO_ENDPOINT`
+> is the server-side, Docker-internal S3 endpoint; `MINIO_PUBLIC_URL` is the browser-reachable URL. Confirm
+> the prod `.env` defines all three before the next `dev` → `prod` promotion, or the backend will refuse to
+> boot. (`MINIO_BUCKET` may be any non-empty name, including `avatars`.)
+
 **Electron overlay changes** — require a full packaging and publish pipeline. See [releasing-the-overlay.md](releasing-the-overlay.md).
 
 ---

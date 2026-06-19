@@ -276,6 +276,47 @@ export function hudIdentitySecretGuardFails(opts: {
   return !opts.hudIdentitySecret || opts.hudIdentitySecret === DEV_DEFAULT_HUD_IDENTITY_SECRET;
 }
 
+// Insecure/dev defaults the production MinIO guard rejects. Hoisted to single
+// constants so the guard and any future drift-assertion test share one source of
+// truth (mirrors the DEV_DEFAULT_HUD_IDENTITY_SECRET pattern above).
+export const MINIO_DOCKER_DEFAULT_ENDPOINT = 'http://minio:9700';
+export const DEV_DEFAULT_MINIO_ROOT_USER = 'fo76minio';
+export const DEV_DEFAULT_MINIO_ROOT_PASSWORD = 'REDACTED';
+
+/**
+ * Pure predicate: collect the human-readable reasons the production startup guard
+ * would refuse to boot for these MinIO vars (empty array = OK). Exported (and
+ * re-attached to module.exports below) so the unit test asserts the REAL guard
+ * rather than a re-implemented copy — a revert of any check then fails CI, the
+ * way environmentStartupGuard.test.js covers hudIdentitySecretGuardFails.
+ *
+ * Note: MINIO_ENDPOINT is the SERVER-SIDE S3 client endpoint and is intended to
+ * stay Docker-internal in the Dokploy topology; we only require it to be set and
+ * not the literal compose default. Browser reachability is MINIO_PUBLIC_URL's job.
+ * MINIO_BUCKET must be set but its value is NOT constrained — 'avatars' is the
+ * long-standing code default (storage.ts) and a valid production bucket name.
+ */
+export function collectMinioProductionErrors(env: {
+  MINIO_ROOT_USER?: string;
+  MINIO_ROOT_PASSWORD?: string;
+  MINIO_ENDPOINT?: string;
+  MINIO_BUCKET?: string;
+  MINIO_PUBLIC_URL?: string;
+}): string[] {
+  const missing: string[] = [];
+  if (!env.MINIO_ROOT_USER || env.MINIO_ROOT_USER === DEV_DEFAULT_MINIO_ROOT_USER)
+    missing.push('MINIO_ROOT_USER (must be non-default)');
+  if (!env.MINIO_ROOT_PASSWORD || env.MINIO_ROOT_PASSWORD === DEV_DEFAULT_MINIO_ROOT_PASSWORD)
+    missing.push('MINIO_ROOT_PASSWORD (must be non-default)');
+  if (!env.MINIO_ENDPOINT || env.MINIO_ENDPOINT === MINIO_DOCKER_DEFAULT_ENDPOINT)
+    missing.push('MINIO_ENDPOINT (must be set; not the Docker compose default)');
+  if (!env.MINIO_BUCKET)
+    missing.push('MINIO_BUCKET (must be explicitly set)');
+  if (!env.MINIO_PUBLIC_URL)
+    missing.push('MINIO_PUBLIC_URL (must be set — the fallback uses MINIO_ENDPOINT, which is not browser-reachable in production)');
+  return missing;
+}
+
 // Fail fast on an unrecognized NODE_ENV. Without this, a typo like 'prod' or
 // 'Production' silently falls through to development behavior (dev-login,
 // sim routes, relaxed CORS) — a foot-gun that could expose those surfaces in
@@ -299,8 +340,7 @@ if (env.NODE_ENV === 'production') {
   if (!env.DISCORD_CLIENT_ID) missing.push('DISCORD_CLIENT_ID');
   if (!env.DISCORD_CLIENT_SECRET) missing.push('DISCORD_CLIENT_SECRET');
   if (!env.REDIS_PASSWORD && !env.REDIS_URL) missing.push('REDIS_PASSWORD');
-  if (!env.MINIO_ROOT_USER || env.MINIO_ROOT_USER === 'fo76minio') missing.push('MINIO_ROOT_USER (must be non-default)');
-  if (!env.MINIO_ROOT_PASSWORD || env.MINIO_ROOT_PASSWORD === 'REDACTED') missing.push('MINIO_ROOT_PASSWORD (must be non-default)');
+  missing.push(...collectMinioProductionErrors(env));
   if (missing.length > 0) {
     console.error(`FATAL: Missing required env vars in production: ${missing.join(', ')}`);
     process.exit(1);
@@ -359,4 +399,5 @@ export default env;
 // helper + sentinel onto env so they remain reachable from require('./environment').
 (env as unknown as Record<string, unknown>).hudIdentitySecretGuardFails = hudIdentitySecretGuardFails;
 (env as unknown as Record<string, unknown>).DEV_DEFAULT_HUD_IDENTITY_SECRET = DEV_DEFAULT_HUD_IDENTITY_SECRET;
+(env as unknown as Record<string, unknown>).collectMinioProductionErrors = collectMinioProductionErrors;
 module.exports = env;
