@@ -5,57 +5,24 @@ import prisma from '../config/prisma';
 import { constantTimeEquals } from '../utils/constantTimeEquals';
 import { postReleaseAnnouncement } from '../services/discordService';
 import { setLatestVersion } from '../services/latestReleaseVersion';
-
-// Download URL helpers — built inline (NOT imported) so the publish-verify gate
-// never depends on another module's export resolving. Must match the
-// electron-builder output: productName "Fallout Chat Mod" (WITH spaces).
-//
-// Human download links (website + Nexus) point at the ZIPs (installer + INSTALL-*.txt).
-// Raw installer files (CLI installer / direct download) reference the raw
-// .exe / .AppImage — those are verified separately below.
-const ELECTRON_DOWNLOADS = 'https://falloutchatmod.com/downloads/electron';
-
-// Human-download ZIPs (website + Nexus buttons).
-function linuxZipUrl(version: string): string {
-  return `${ELECTRON_DOWNLOADS}/${encodeURIComponent(`Fallout Chat Mod-${version}.AppImage (Linux).zip`)}`;
-}
-
-// Raw installer files — consumed by the CLI installer / direct download.
-function rawWindowsInstallerUrl(version: string): string {
-  return `${ELECTRON_DOWNLOADS}/${encodeURIComponent(`Fallout Chat Mod Setup ${version}.exe`)}`;
-}
-function rawLinuxAppImageUrl(version: string): string {
-  return `${ELECTRON_DOWNLOADS}/${encodeURIComponent(`Fallout Chat Mod-${version}.AppImage`)}`;
-}
+import {
+  linuxZipUrl,
+  rawWindowsInstallerUrl,
+  rawLinuxAppImageUrl,
+  assertAllowedDownloadUrl,
+  isAllowedDownloadUrl,
+} from '../utils/releaseDownloadUrls';
 
 /**
  * Verify a download URL serves a real, full installer (not a 404/error page).
  * Guards the publish pipeline: a filename mismatch or truncated upload serves a
  * tiny HTML/JSON error page that gets saved as .exe/.AppImage → users see "file
  * corrupted". We HEAD the URL and require 200 + a plausible installer size.
+ *
+ * URL building + the SSRF allow-list live in `utils/releaseDownloadUrls.ts` — a
+ * zero-dependency, environment-aware module (RELEASE_DOWNLOAD_HOST, default
+ * prod) so the dev/QA stack can publish + verify dev-hosted artifacts.
  */
-/**
- * SSRF guard: a publishable download URL must be an https URL on our own
- * downloads origin. This prevents `POST /admin/releases` from being used to
- * HEAD-probe internal hosts (minio, cloud metadata, co-tenant containers) on
- * the shared Docker network. Throws on any other host/scheme/path.
- */
-function assertAllowedDownloadUrl(url: string): void {
-  let u: URL;
-  try {
-    u = new URL(url);
-  } catch {
-    throw new Error('downloadUrl is not a valid URL');
-  }
-  if (
-    u.protocol !== 'https:' ||
-    u.hostname !== 'falloutchatmod.com' ||
-    !u.pathname.startsWith('/downloads/')
-  ) {
-    throw new Error('downloadUrl must be an https://falloutchatmod.com/downloads/ URL');
-  }
-}
-
 async function verifyDownload(url: string, label: string): Promise<void> {
   // Allow-list the target before issuing any request (SSRF defense).
   assertAllowedDownloadUrl(url);
@@ -89,21 +56,9 @@ const releaseBodySchema = z.object({
   downloadUrl: z
     .string()
     .url()
-    .refine(
-      (v) => {
-        try {
-          const u = new URL(v);
-          return (
-            u.protocol === 'https:' &&
-            u.hostname === 'falloutchatmod.com' &&
-            u.pathname.startsWith('/downloads/')
-          );
-        } catch {
-          return false;
-        }
-      },
-      { message: 'downloadUrl must be an https://falloutchatmod.com/downloads/ URL' },
-    ),
+    .refine(isAllowedDownloadUrl, {
+      message: 'downloadUrl must be an https URL on the configured downloads host (/downloads/…)',
+    }),
   releaseNotes: z.string().min(1),
 });
 

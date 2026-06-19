@@ -246,6 +246,17 @@ curl -X POST https://falloutchatmod.com/admin/releases \
 
 `downloadUrl` is the Windows ZIP URL (the website download button uses this).
 
+**Publishing to a non-prod stack (dev/QA).** `publishRelease` builds and verifies all
+four artifact URLs against an **environment-aware** downloads origin
+(`backend/src/utils/releaseDownloadUrls.ts`). It defaults to `falloutchatmod.com`, so
+prod is unchanged. A non-prod backend sets `RELEASE_DOWNLOAD_HOST=<that host>` (the dev
+stack defaults it to `dev.falloutchatmod.com` in `deploy/dev/docker-compose.yml`), which
+makes the SSRF allow-list, `verifyDownload`, and the linked artifact URLs all target that
+host's own `/downloads/` origin. To publish on dev: upload the four artifacts to the dev
+backend's downloads volume, then `POST https://dev.falloutchatmod.com/admin/releases` with
+a `downloadUrl` on `dev.falloutchatmod.com/downloads/…` (auth with the dev `ADMIN_API_KEY`
+via `X-Admin-API-Key`). The same fail-closed gates apply — smoke-test the dev build first.
+
 ### Step 7 — Nexus publish
 
 ```powershell
