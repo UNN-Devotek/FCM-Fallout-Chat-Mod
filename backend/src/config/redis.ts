@@ -7,10 +7,15 @@ import logger from './logger';
 // password in production (compose --requirepass), so unauthenticated configs
 // only work for local dev where no password is set.
 function redisOptions() {
-  if (env.REDIS_URL) return { url: env.REDIS_URL };
+  // Pin RESP2. node-redis v6 negotiates RESP3 by default, which changes some reply
+  // shapes (maps, push messages) that connect-redis and rate-limit-redis were written
+  // against under RESP2. Keep RESP2 until RESP3 is explicitly validated end-to-end.
+  const RESP = 2 as const;
+  if (env.REDIS_URL) return { url: env.REDIS_URL, RESP };
   return {
     socket: { host: env.REDIS_HOST, port: env.REDIS_PORT },
     ...(env.REDIS_PASSWORD ? { password: env.REDIS_PASSWORD } : {}),
+    RESP,
   };
 }
 
@@ -32,14 +37,14 @@ subscriberClient.on('error', (err: Error) => logger.error({ err }, 'Redis subscr
 subscriberClient.on('connect', () => logger.info('Redis subscriber connected'));
 subscriberClient.on('reconnecting', () => logger.warn('Redis subscriber reconnecting'));
 
-async function getRedisClient(): Promise<ReturnType<typeof createClient>> {
+async function getRedisClient(): Promise<typeof client> {
   if (!client.isOpen) {
     await client.connect();
   }
   return client;
 }
 
-async function getSubscriberClient(): Promise<ReturnType<typeof createClient>> {
+async function getSubscriberClient(): Promise<typeof subscriberClient> {
   if (!subscriberClient.isOpen) {
     await subscriberClient.connect();
   }
