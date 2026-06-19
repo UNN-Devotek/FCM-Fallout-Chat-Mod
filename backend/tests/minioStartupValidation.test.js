@@ -1,96 +1,88 @@
 'use strict';
 
 /**
- * Unit tests for issue #81: MINIO_ENDPOINT, MINIO_BUCKET, and MINIO_PUBLIC_URL
- * production startup validation.
+ * Unit tests for issue #81: MINIO_* production startup validation.
  *
- * The production guard in environment.ts collects missing/bad vars into a
- * `missing` array and calls process.exit(1) when non-empty. These tests
- * mirror that predicate logic directly — no subprocess spawning needed.
+ * These exercise the REAL exported predicate (collectMinioProductionErrors in
+ * src/config/environment.ts) — the same function the module-load production guard
+ * calls before process.exit(1) — so reverting any check makes them fail. (The
+ * earlier version of this suite re-implemented the predicate locally, which gave
+ * zero regression protection; see the #109 review, and the sibling
+ * environmentStartupGuard.test.js which imports hudIdentitySecretGuardFails the
+ * same way.)
+ *
+ * Note on MINIO_ENDPOINT: it is the SERVER-SIDE S3 client endpoint and is meant to
+ * stay Docker-internal in the Dokploy topology, so a value like the real prod
+ * alias 'http://fcm-minio:9700' is VALID — only the literal compose default
+ * 'http://minio:9700' is rejected. Browser reachability is MINIO_PUBLIC_URL's job.
+ * MINIO_BUCKET must be set but its value is unconstrained — 'avatars' (the code
+ * default in storage.ts) is a valid bucket name and must NOT be rejected.
  */
 
-// Mirrors the guard predicate added to environment.ts for MinIO vars.
-function collectMinioErrors(env) {
-  const missing = [];
-  if (!env.MINIO_ROOT_USER || env.MINIO_ROOT_USER === 'fo76minio')
-    missing.push('MINIO_ROOT_USER (must be non-default)');
-  if (!env.MINIO_ROOT_PASSWORD || env.MINIO_ROOT_PASSWORD === 'REDACTED')
-    missing.push('MINIO_ROOT_PASSWORD (must be non-default)');
-  if (!env.MINIO_ENDPOINT || env.MINIO_ENDPOINT === 'http://minio:9700')
-    missing.push('MINIO_ENDPOINT (must be set to the public/reachable endpoint, not the Docker default)');
-  if (!env.MINIO_BUCKET || env.MINIO_BUCKET === 'avatars')
-    missing.push('MINIO_BUCKET (must be explicitly set — do not rely on the default)');
-  if (!env.MINIO_PUBLIC_URL)
-    missing.push('MINIO_PUBLIC_URL (must be set — fallback uses MINIO_ENDPOINT which is not browser-reachable in production)');
-  return missing;
-}
+const { collectMinioProductionErrors } = require('../src/config/environment');
 
 const VALID = {
   MINIO_ROOT_USER: 'prod-access-key',
   MINIO_ROOT_PASSWORD: 'prod-secret-key',
-  MINIO_ENDPOINT: 'https://s3.falloutchatmod.com',
+  MINIO_ENDPOINT: 'http://fcm-minio:9700', // Docker-internal alias is valid (not the default)
   MINIO_BUCKET: 'fcm-media',
   MINIO_PUBLIC_URL: 'https://media.falloutchatmod.com',
 };
 
-describe('MinIO production startup guard', () => {
+const flagged = (env, key) => collectMinioProductionErrors(env).some(e => e.includes(key));
+
+describe('MinIO production startup guard (collectMinioProductionErrors)', () => {
   it('passes with all valid vars set', () => {
-    expect(collectMinioErrors(VALID)).toHaveLength(0);
+    expect(collectMinioProductionErrors(VALID)).toHaveLength(0);
   });
 
   it('flags missing MINIO_ENDPOINT', () => {
-    const errs = collectMinioErrors({ ...VALID, MINIO_ENDPOINT: '' });
-    expect(errs.some(e => e.includes('MINIO_ENDPOINT'))).toBe(true);
+    expect(flagged({ ...VALID, MINIO_ENDPOINT: '' }, 'MINIO_ENDPOINT')).toBe(true);
   });
 
-  it('flags Docker-default MINIO_ENDPOINT', () => {
-    const errs = collectMinioErrors({ ...VALID, MINIO_ENDPOINT: 'http://minio:9700' });
-    expect(errs.some(e => e.includes('MINIO_ENDPOINT'))).toBe(true);
+  it('flags the Docker compose default MINIO_ENDPOINT', () => {
+    expect(flagged({ ...VALID, MINIO_ENDPOINT: 'http://minio:9700' }, 'MINIO_ENDPOINT')).toBe(true);
   });
 
   it('flags missing MINIO_BUCKET', () => {
-    const errs = collectMinioErrors({ ...VALID, MINIO_BUCKET: '' });
-    expect(errs.some(e => e.includes('MINIO_BUCKET'))).toBe(true);
+    expect(flagged({ ...VALID, MINIO_BUCKET: '' }, 'MINIO_BUCKET')).toBe(true);
   });
 
-  it('flags default MINIO_BUCKET ("avatars")', () => {
-    const errs = collectMinioErrors({ ...VALID, MINIO_BUCKET: 'avatars' });
-    expect(errs.some(e => e.includes('MINIO_BUCKET'))).toBe(true);
+  it('accepts the bucket name "avatars" (the storage.ts code default is valid)', () => {
+    expect(flagged({ ...VALID, MINIO_BUCKET: 'avatars' }, 'MINIO_BUCKET')).toBe(false);
+  });
+
+  it('accepts a non-default custom bucket name', () => {
+    expect(flagged({ ...VALID, MINIO_BUCKET: 'my-custom-bucket' }, 'MINIO_BUCKET')).toBe(false);
   });
 
   it('flags missing MINIO_PUBLIC_URL', () => {
-    const errs = collectMinioErrors({ ...VALID, MINIO_PUBLIC_URL: '' });
-    expect(errs.some(e => e.includes('MINIO_PUBLIC_URL'))).toBe(true);
+    expect(flagged({ ...VALID, MINIO_PUBLIC_URL: '' }, 'MINIO_PUBLIC_URL')).toBe(true);
   });
 
   it('flags missing MINIO_ROOT_USER', () => {
-    const errs = collectMinioErrors({ ...VALID, MINIO_ROOT_USER: '' });
-    expect(errs.some(e => e.includes('MINIO_ROOT_USER'))).toBe(true);
+    expect(flagged({ ...VALID, MINIO_ROOT_USER: '' }, 'MINIO_ROOT_USER')).toBe(true);
   });
 
-  it('flags default MINIO_ROOT_USER ("fo76minio")', () => {
-    const errs = collectMinioErrors({ ...VALID, MINIO_ROOT_USER: 'fo76minio' });
-    expect(errs.some(e => e.includes('MINIO_ROOT_USER'))).toBe(true);
+  it('flags the default MINIO_ROOT_USER ("fo76minio")', () => {
+    expect(flagged({ ...VALID, MINIO_ROOT_USER: 'fo76minio' }, 'MINIO_ROOT_USER')).toBe(true);
   });
 
   it('flags missing MINIO_ROOT_PASSWORD', () => {
-    const errs = collectMinioErrors({ ...VALID, MINIO_ROOT_PASSWORD: '' });
-    expect(errs.some(e => e.includes('MINIO_ROOT_PASSWORD'))).toBe(true);
+    expect(flagged({ ...VALID, MINIO_ROOT_PASSWORD: '' }, 'MINIO_ROOT_PASSWORD')).toBe(true);
   });
 
-  it('collects all five errors when all vars are at defaults', () => {
-    const errs = collectMinioErrors({
-      MINIO_ROOT_USER: '',
-      MINIO_ROOT_PASSWORD: '',
+  it('collects every guarded error when all vars are empty/default', () => {
+    const errs = collectMinioProductionErrors({
+      MINIO_ROOT_USER: 'fo76minio',
+      MINIO_ROOT_PASSWORD: 'REDACTED',
       MINIO_ENDPOINT: 'http://minio:9700',
-      MINIO_BUCKET: 'avatars',
+      MINIO_BUCKET: '',
       MINIO_PUBLIC_URL: '',
     });
     expect(errs).toHaveLength(5);
-  });
-
-  it('non-default custom bucket name is accepted', () => {
-    const errs = collectMinioErrors({ ...VALID, MINIO_BUCKET: 'my-custom-bucket' });
-    expect(errs.some(e => e.includes('MINIO_BUCKET'))).toBe(false);
+    for (const key of ['MINIO_ROOT_USER', 'MINIO_ROOT_PASSWORD', 'MINIO_ENDPOINT', 'MINIO_BUCKET', 'MINIO_PUBLIC_URL']) {
+      expect(errs.some(e => e.includes(key))).toBe(true);
+    }
   });
 });
