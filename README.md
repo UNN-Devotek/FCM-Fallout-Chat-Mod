@@ -1,5 +1,7 @@
 # Fallout Chat Mod
 
+**🌐 [falloutchatmod.com](https://falloutchatmod.com)** · **📥 [Download on Nexus Mods](https://www.nexusmods.com/fallout76/mods/4082)**
+
 A real-time community chat platform for Fallout 76. No Script Extender required — works with any version of the game (Steam, Bethesda Launcher, Game Pass). The client does **not** read game memory, modify game files, or scan network connections. It only detects whether the game process is running (to show/hide the overlay) and opens a WebSocket to the relay.
 
 Chat is organised into community channels (General / Trading / Events / Raids) with a bidirectional Discord bridge, moderated through a browser-based admin dashboard.
