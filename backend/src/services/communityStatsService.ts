@@ -85,11 +85,6 @@ function whereClause(cfg: RangeConfig, col: string): string {
   return `WHERE ${col} >= now() - '${cfg.interval}'::interval`;
 }
 
-function andClause(cfg: RangeConfig, col: string): string {
-  if (cfg.interval === null) return '';
-  return `AND ${col} >= now() - '${cfg.interval}'::interval`;
-}
-
 // ── Queries ───────────────────────────────────────────────────────────────────
 
 async function getSignupsPerBucket(cfg: RangeConfig): Promise<DailyCount[]> {
