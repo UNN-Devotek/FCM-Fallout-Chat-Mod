@@ -56,7 +56,6 @@ import mcpRouter from './routes/mcp';
 import mcpAdminRouter from './routes/mcpAdmin';
 import playerListRouter from './routes/playerList';
 import gameBridgeRouter from './routes/gameBridge';
-import adminTelemetryRouter from './routes/adminTelemetry';
 import verifyDevRoleRouter from './routes/verifyDevRole';
 import { publicModerationLog } from './controllers/publicModerationController';
 import publicStatsRouter from './routes/publicStats';
@@ -78,7 +77,7 @@ import * as discordService from './services/discordService';
 import { captureAvatar, buildAvatarUrl } from './services/avatarService';
 import { getAvatarObject, getPartyImageObject } from './config/storage';
 import * as roleVerificationService from './services/roleVerificationService';
-import { handleConnection, broadcast, broadcastMessageDeletion, broadcastReportAlert, broadcastChannelUpdate, broadcastCommandsUpdate, getClientCount, initPubSub, snapshotActiveClients, broadcastTelemetrySet, resolveDisplayName, pushToUser, isUserWsConnected, isPendingDisconnect, refreshClientIdentity, broadcastToPartyMembers, getConnectedUserIds, refreshClientBlocks } from './websocket/handlers';
+import { handleConnection, broadcast, broadcastMessageDeletion, broadcastReportAlert, broadcastChannelUpdate, broadcastCommandsUpdate, getClientCount, initPubSub, snapshotActiveClients, resolveDisplayName, pushToUser, isUserWsConnected, isPendingDisconnect, refreshClientIdentity, broadcastToPartyMembers, getConnectedUserIds, refreshClientBlocks } from './websocket/handlers';
 import { startPartyReapJob } from './jobs/partyReap';
 import { startWikiIngestJob } from './jobs/wikiIngest';
 import { startWikiSyncSchedule } from './jobs/wikiSyncSchedule';
@@ -1115,32 +1114,6 @@ app.get('/api/admin/wiki/updates', requireDiscordRole('owner', 'admin'), getWiki
 app.post('/api/admin/camp/ingest',   requireDiscordRole('owner', 'admin'), triggerCampIngest);
 app.get('/api/admin/camp/updates',   requireDiscordRole('owner', 'admin'), getCampUpdates);
 
-// Remote telemetry control — admin GET/POST (Discord-OAuth admin role).
-app.use('/api/admin/telemetry', adminTelemetryRouter);
-
-// Admin-key authenticated mirrors of the telemetry endpoints — used by CLI
-// tooling that can't carry a Discord OAuth session. Same semantics as
-// /api/admin/telemetry but gated by X-Admin-API-Key.
-app.get('/admin/debug/telemetry', apiLimiter, requireAdminKey, async (_req, res, next) => {
-  try {
-    const { getTelemetryAdminView } = await import('./services/telemetryService');
-    res.json({ data: await getTelemetryAdminView() });
-  } catch (err) { next(err); }
-});
-app.post('/admin/debug/telemetry', apiLimiter, requireAdminKey, async (req, res, next) => {
-  try {
-    const { setTelemetry } = await import('./services/telemetryService');
-    const { scope: scopeStr, userId, enabled } = req.body as { scope: string; userId?: string; enabled: boolean };
-    if (typeof enabled !== 'boolean') { res.status(400).json({ error: '`enabled` must be a boolean' }); return; }
-    if (scopeStr !== 'global' && scopeStr !== 'user') { res.status(400).json({ error: '`scope` must be "global" or "user"' }); return; }
-    if (scopeStr === 'user' && !userId) { res.status(400).json({ error: '`userId` is required when scope is "user"' }); return; }
-    const scope = scopeStr === 'global' ? { kind: 'global' as const } : { kind: 'user' as const, userId: userId! };
-    const result = await setTelemetry(scope, enabled, 'admin-api');
-    const broadcastFn = (global as any).broadcastTelemetrySet as ((enabled: boolean, userId: string | null) => void) | undefined;
-    if (broadcastFn) broadcastFn(enabled, scope.kind === 'user' ? scope.userId : null);
-    res.json({ data: result });
-  } catch (err) { next(err); }
-});
 // SR-002: gate both proxy routes behind install-token auth (consumers — the
 // chat overlay + dashboard — already have the token; this stops anonymous
 // abuse of our Tenor API quota and the guild-emoji metadata leak).
@@ -1636,7 +1609,6 @@ wss.on('close', () => clearInterval(wsHeartbeat));
 (global as any).broadcastReportAlert = broadcastReportAlert;
 (global as any).broadcastChannelUpdate = broadcastChannelUpdate;
 (global as any).broadcastCommandsUpdate = broadcastCommandsUpdate;
-(global as any).broadcastTelemetrySet = broadcastTelemetrySet;
 // Party helpers — used by partiesController for invite pushes and member-update broadcasts
 (global as any).pushToUser = pushToUser;
 (global as any).broadcastToPartyMembers = broadcastToPartyMembers;

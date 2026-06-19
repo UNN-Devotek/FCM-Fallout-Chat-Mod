@@ -5,7 +5,6 @@ import { getRedisClient, getSubscriberClient } from '../config/redis';
 import prisma from '../config/prisma';
 import { query as dbQuery } from '../config/database';
 import { computeDiscriminator } from '../utils/discriminator';
-import { getEffectiveTelemetryFor } from '../services/telemetryService';
 import { buildAvatarUrl } from '../services/avatarService';
 import { hudPushNotify } from '../services/hudPush';
 import { isSocketSuperseded } from './socketSupersession';
@@ -1381,15 +1380,12 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
     logger.warn({ err, userId: user.id }, '[presence:state] connect-time snapshot send failed (non-fatal)');
   }
 
-  // Push initial telemetry:set so the desktop client starts in the correct state
-  // without waiting for an admin toggle event.
-  getEffectiveTelemetryFor(user.id).then((telemetryEnabled) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'telemetry:set', payload: { enabled: telemetryEnabled } }));
-    }
-  }).catch((err) => {
-    logger.warn({ err, userId: user.id }, '[telemetry] connect-time push failed (non-fatal)');
-  });
+  // Telemetry collection was removed. Emit a one-time telemetry:set{enabled:false}
+  // on connect as a permanent kill-switch so any already-installed client that
+  // listens for it stops collecting. No DB lookup; always off.
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: 'telemetry:set', payload: { enabled: false } }));
+  }
 
   // Deliver the latest published version to the newly connected client so it can
   // show a passive OS notification when a newer version is available (Nexus ToS
@@ -2224,29 +2220,6 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
 }
 
 
-/**
- * Broadcast a `telemetry:set` message to the appropriate WS clients.
- *
- * - When `userId` is null (global toggle): sends to every connected client.
- * - When `userId` is provided (user-scoped toggle): sends only to that user's sockets.
- *
- * Registered on `(global as any).broadcastTelemetrySet` so the admin route can call it
- * without a circular dependency.
- */
-export function broadcastTelemetrySet(enabled: boolean, userId: string | null): void {
-  const payload = JSON.stringify({ type: 'telemetry:set', payload: { enabled } });
-  if (userId === null) {
-    // Global toggle — send to all authenticated clients.
-    for (const [, client] of clients) {
-      if (client.ws.readyState === WebSocket.OPEN) {
-        client.ws.send(payload);
-      }
-    }
-  } else {
-    // User-scoped toggle.
-    pushToUser(userId, { type: 'telemetry:set', payload: { enabled } });
-  }
-}
 
 export { handleConnection, broadcast, broadcastMessageDeletion, broadcastReportAlert, broadcastChannelUpdate, getClientCount, initPubSub, disconnectByUserId, markClientMuted, notifyAndDisconnect };
 // The manual module.exports assignment OVERWRITES the ESM exports that
@@ -2262,7 +2235,6 @@ module.exports = {
   snapshotActiveClients, refreshClientIdentity,
   pushToUser, getConnectedUserIds, refreshClientBlocks,
   updateClientEndpoint,
-  broadcastTelemetrySet,
   broadcastToSession,
   resolveDisplayName,
   decideFlapHandoff,
