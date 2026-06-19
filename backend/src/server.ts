@@ -268,7 +268,7 @@ if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
       const token = uuidv4();
       const SESSION_TTL = 24 * 60 * 60; // 24 hours (was 30 days)
       await redis.set(`session:${token}`, user.id, { EX: SESSION_TTL });
-      res.json({ data: { token, displayName: p.username, discordLinked: true, role: p.role } });
+      res.json({ data: { token, userId: user.id, displayName: p.username, discordLinked: true, role: p.role } });
     } catch (err) {
       logger.error({ err }, '[dev] login-as failed');
       res.status(500).json({ error: 'Dev login failed' });

@@ -6920,7 +6920,7 @@ export default function ChatOverlay() {
                         fontSize={fontSize}
                         dimText={dimText}
                         footer={isActive ? (
-                          <div style={{ display: 'flex', gap: '6px', marginTop: '4px' }}>
+                          <div style={{ display: 'flex', gap: '6px', marginTop: '4px', justifyContent: isOwnGiveaway ? 'center' : 'flex-start' }}>
                             {isOwnGiveaway ? (
                               <span
                                 role="button" tabIndex={0}
