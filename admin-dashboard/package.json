@@ -15,13 +15,13 @@
   },
   "dependencies": {
     "@emoji-mart/data": "^1.2.1",
-    "@remotion/player": "^4.0.0",
+    "@remotion/player": "^4.0.481",
     "@tanstack/react-query": "^5.96.2",
     "@tanstack/react-virtual": "^3.13.23",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
-    "react-router-dom": "^7.17.0",
-    "remotion": "^4.0.0"
+    "react-router-dom": "^7.18.0",
+    "remotion": "^4.0.481"
   },
   "devDependencies": {
     "@playwright/test": "^1.50.1",
