@@ -313,6 +313,18 @@ export async function createParty(req: Request, res: Response, next: NextFunctio
     const memberId = uuidv4();
 
     const party = await prisma.$transaction(async (tx) => {
+      // Serialize concurrent creates by this owner so the owned-party cap holds
+      // atomically: lock the owner's user row (same FOR UPDATE idiom as the join/
+      // accept capacity guards) and re-count owned parties inside the lock before
+      // inserting. The pre-transaction atOwnedPartyCap() check above is a fast path;
+      // this is the authoritative guard that closes the count-then-create race.
+      await tx.$queryRaw`SELECT id FROM users WHERE id = ${callerId}::uuid FOR UPDATE`;
+      const ownedCount = await tx.party.count({ where: { ownerId: callerId, isDeleted: false } });
+      if (ownedCount >= MAX_OWNED_PARTIES_PER_USER) {
+        const err: any = new Error(OWNED_PARTY_CAP_MESSAGE);
+        err.status = 409;
+        throw err;
+      }
       const p = await tx.party.create({
         data: {
           id: partyId,
@@ -343,7 +355,9 @@ export async function createParty(req: Request, res: Response, next: NextFunctio
     });
 
     res.status(201).json({ data: { party } });
-  } catch (err) {
+  } catch (err: any) {
+    // The in-transaction owned-cap guard throws a 409 to roll back the insert.
+    if (err?.status === 409) return next(createError(409, err.message));
     next(err);
   }
 }
