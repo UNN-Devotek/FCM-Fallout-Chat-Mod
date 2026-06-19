@@ -127,7 +127,6 @@ snapshots) with no visible error.
 |-----|-------------|
 | `jobs/partyReap.ts` | Covered by `partyReap.test.js` (ephemeral + persistent GC, invite expiry, overlap guard). Still TODO: last-member end-session. |
 | `jobs/onlineSnapshotJob.ts` | Overlap guards covered by `onlineSnapshotJob.test.js`. Still TODO: assert `dbQuery` called with correct `online_count` payload; non-fatal on DB error path. |
-| `jobs/clientMetricsPurge.ts` | Purges rows older than TTL; non-fatal on error. |
 | `jobs/wikiSyncSchedule.ts` | Delegates to `runIncrementalSync`; errors swallowed without crashing. |
 | `jobs/campSyncSchedule.ts` | Same pattern as wiki sync. |
 

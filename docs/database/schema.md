@@ -261,19 +261,11 @@ Posted Discord messages whose reactions grant/remove roles. PK is `message_id` (
 
 ---
 
-## Releases & Telemetry
+## Releases & Snapshots
 
 ### `releases` (`Release`)
 
 Overlay release history. Persisted across container redeploys (previously written to a JSON file inside the container). The `version` field is unique; `download_url` points to the Windows ZIP on the VPS.
-
-### `telemetry_settings` (`TelemetrySetting`)
-
-Remote per-user and global toggle for world-trace telemetry. `scope = 'global' | 'user:<uuid>'`.
-
-### `client_metrics` (`ClientMetric`)
-
-Self-reported performance telemetry from desktop clients. `install_token` is a loose reference — no FK constraint so history survives user deletion.
 
 ### `online_snapshots` (`OnlineSnapshot`)
 

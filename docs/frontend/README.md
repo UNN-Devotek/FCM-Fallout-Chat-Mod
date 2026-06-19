@@ -4,7 +4,7 @@
 serves two distinct purposes simultaneously:
 
 1. **Admin / moderation portal** — staff-only tools (users, bans, auto-mod,
-   embeds, audit log, telemetry, etc.) behind Discord OAuth2 role guards.
+   embeds, audit log, etc.) behind Discord OAuth2 role guards.
 2. **Host for the shared `ChatOverlay` component** — the same overlay that
    renders inside the Electron desktop client and on the public landing page.
    See [chat-overlay.md](./chat-overlay.md) for the one-component / three-surfaces
@@ -49,7 +49,6 @@ admin-dashboard/src/
   features/
     auth/            # landing page, login, moderation-tab component
     chat/            # ChatOverlay (shared), LiveFeed, pickers, hooks
-    client-performance/  # Electron client metrics charts + hooks
     moderation/      # all staff tools (bans, reports, automod, etc.)
     profile/         # user profile page
     public/          # unauthenticated report / apply forms
@@ -61,9 +60,8 @@ admin-dashboard/src/
 ```
 
 Each feature folder contains components and, when needed, a `hooks/` sub-folder
-for TanStack Query hooks (e.g. `features/client-performance/hooks/useClientMetrics.ts`,
-`features/system/hooks/useCommunityStats.ts`). Complex features additionally
-have a `pages/` sub-folder (e.g. `features/client-performance/pages/`).
+for TanStack Query hooks (e.g. `features/system/hooks/useCommunityStats.ts`). Complex features
+additionally have a `pages/` sub-folder.
 
 ## State Management Summary
 

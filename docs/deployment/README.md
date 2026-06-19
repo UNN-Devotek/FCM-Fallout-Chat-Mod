@@ -42,6 +42,8 @@ upstream backend_pool {
 
 The standby stack is deployed once manually as a separate Dokploy compose service; it is not rebuilt on every push.
 
+> **Warning — schema-dropping migrations:** because the standby is not rebuilt on push, any migration that drops or renames database objects (e.g. removing the `client_metrics` telemetry table) requires a **manual rebuild and redeploy of the standby** before it is put into service. Failing to do so means the standby would start on failover running stale code that references dropped tables. The standby is not currently active, but this step is required whenever it is brought online after such a migration.
+
 ### Cloudflare Tunnel Rollback
 
 If the tunnel goes down:
@@ -54,6 +56,14 @@ If the tunnel goes down:
 ## Backend-only vs. Overlay Releases
 
 **Backend / dashboard changes** — push to `prod`; Dokploy rebuilds automatically. No client release needed.
+
+> **Promote `dev` → `prod` with a merge commit — never squash or rebase that PR.** Feature PRs are
+> squash-merged into `dev` (fine), but the `dev` → `prod` promotion PR **must** be merged as a *merge
+> commit* (`gh pr merge <n> --merge`). Squashing/rebasing the promotion replays every change as a *new*
+> commit SHA on `prod`, so `prod` and `dev` end up with byte-identical content but divergent histories —
+> both branches then perpetually report as ahead/behind each other (git compares SHAs, not file content).
+> `prod` is a protected branch (no force-push); the sole code owner is also the author, so use
+> `gh pr merge <n> --merge --admin` to bypass the self-approval requirement.
 
 **Electron overlay changes** — require a full packaging and publish pipeline. See [releasing-the-overlay.md](releasing-the-overlay.md).
 

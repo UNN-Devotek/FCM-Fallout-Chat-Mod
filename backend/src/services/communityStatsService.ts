@@ -21,11 +21,6 @@ export interface SourceSplit {
   discord: number;
 }
 
-export interface VersionCount {
-  version: string;
-  count: number;
-}
-
 export interface DownloadCount {
   version: string;
   count: number;
@@ -60,8 +55,6 @@ export interface CommunityStats {
   messagesPerChannel: ChannelMessageCount[];
   /** Game vs Discord message totals */
   messageSplit: SourceSplit;
-  /** Overlay app_version distribution */
-  versionDistribution: VersionCount[];
   /** Download counts per version (only versions with count > 2) */
   downloadsPerVersion: DownloadCount[];
   /** Moderation activity per bucket */
@@ -90,11 +83,6 @@ function rangeConfig(range: StatsRange): RangeConfig {
 function whereClause(cfg: RangeConfig, col: string): string {
   if (cfg.interval === null) return '';
   return `WHERE ${col} >= now() - '${cfg.interval}'::interval`;
-}
-
-function andClause(cfg: RangeConfig, col: string): string {
-  if (cfg.interval === null) return '';
-  return `AND ${col} >= now() - '${cfg.interval}'::interval`;
 }
 
 // ── Queries ───────────────────────────────────────────────────────────────────
@@ -220,23 +208,6 @@ async function getMessageSplit(cfg: RangeConfig): Promise<SourceSplit> {
   return { game, discord };
 }
 
-async function getVersionDistribution(cfg: RangeConfig): Promise<VersionCount[]> {
-  const result = await dbQuery(
-    `SELECT app_version AS version, count(DISTINCT install_token)::int AS count
-     FROM client_metrics
-     ${whereClause(cfg, 'sampled_at')}
-     ${cfg.interval ? 'AND' : 'WHERE'} app_version IS NOT NULL
-     GROUP BY app_version
-     ORDER BY count DESC
-     LIMIT 20`,
-    [],
-  );
-  return (result.rows as Array<{ version: string; count: number }>).map(r => ({
-    version: r.version,
-    count: Number(r.count),
-  }));
-}
-
 async function getDownloadsPerVersion(): Promise<DownloadCount[]> {
   // Downloads are an all-time counter — range filter doesn't apply
   const rows = await prisma.release.findMany({
@@ -309,7 +280,6 @@ export async function getCommunityStats(range: StatsRange = '90d'): Promise<Comm
     activityOverTime,
     messagesPerChannel,
     messageSplit,
-    versionDistribution,
     downloadsPerVersion,
     moderationPerBucket,
   ] = await Promise.all([
@@ -319,7 +289,6 @@ export async function getCommunityStats(range: StatsRange = '90d'): Promise<Comm
     getActivityOverTime(cfg),
     getMessagesPerChannel(cfg),
     getMessageSplit(cfg),
-    getVersionDistribution(cfg),
     getDownloadsPerVersion(),
     getModerationPerBucket(cfg),
   ]);
@@ -333,7 +302,6 @@ export async function getCommunityStats(range: StatsRange = '90d'): Promise<Comm
     activityOverTime,
     messagesPerChannel,
     messageSplit,
-    versionDistribution,
     downloadsPerVersion,
     moderationPerBucket,
   };

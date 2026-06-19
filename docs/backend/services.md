@@ -61,18 +61,6 @@ The avatar is served from the backend's own domain so it resolves correctly in t
 
 ---
 
-## telemetryService.ts
-
-**Role:** Manages the telemetry opt-in/out settings for performance tracing.
-
-- `getEffectiveTelemetryFor(userId)` — resolves effective enabled flag: user-scoped row if present, else global row. Result cached in Redis (`telemetry:effective:<userId>`, 60s TTL).
-- `setTelemetry(scope, enabled, updatedBy)` — upserts the DB row and invalidates the affected Redis key(s).
-- `getTelemetryAdminView()` — returns global setting + all users with explicit per-user overrides + recent trace activity.
-
-Called from `routes/adminTelemetry.ts` and its `/admin/debug/telemetry` mirror.
-
----
-
 ## communityStatsService.ts
 
 **Role:** Aggregates signup, message, version, and download counts for the admin dashboard.
@@ -229,16 +217,6 @@ Provides CRUD for the `user_blocks` table and an in-memory cache (per-blocker `S
 - `isBlocked(blockerId, blockedId)` — fast set lookup.
 
 Enforcement of block filtering in WS broadcasts and message history is noted as a future pass in the source comments.
-
----
-
-## clientMetricsService.ts
-
-**Role:** Stores and queries overlay performance snapshots (memory, CPU, FPS).
-
-- `recordClientMetric(installToken, data)` — inserts a `client_metrics` row.
-- `getClientMetricsAdminView(window, source)` — aggregated view for the admin dashboard.
-- `purgeOldClientMetrics()` — deletes rows older than 30 days (called by `jobs/clientMetricsPurge.ts`).
 
 ---
 
