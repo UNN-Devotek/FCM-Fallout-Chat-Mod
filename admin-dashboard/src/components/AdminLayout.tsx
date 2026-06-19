@@ -17,14 +17,12 @@ const ROUTE_TITLES: Record<string, string> = {
   '/player-reports': 'Player Reports',
   '/bug-reports': 'Bug Reports',
   '/applications': 'Applications',
-  '/telemetry': 'Telemetry',
   '/name-blacklist': 'Name Blacklist',
   '/voice': 'Voice',
   '/discord-embeds': 'Embeds',
   '/help': 'Help',
   '/audit-log': 'Audit Log',
   '/server-health': 'Server Health',
-  '/client-performance': 'Client Performance',
   '/devices': 'Devices',
   '/wiki-sync': 'Wiki Sync',
   '/profile': 'Profile',
@@ -95,11 +93,9 @@ const TABS: Tab[] = [
     label: 'SYSTEM',
     subTabs: [
       { path: '/server-health', label: 'SERVER HEALTH' },
-      { path: '/client-performance', label: 'CLIENT PERF' },
       { path: '/devices', label: 'DEVICES' },
       { path: '/audit-log', label: 'AUDIT LOG' },
       { path: '/commands', label: 'COMMANDS' },
-      { path: '/telemetry', label: 'TELEMETRY' },
       { path: '/wiki-sync', label: 'WIKI SYNC' },
     ]
   }
