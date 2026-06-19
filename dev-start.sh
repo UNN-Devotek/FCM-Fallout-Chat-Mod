@@ -27,13 +27,15 @@ done
 
 # Reset the DB user password to match .env, guards against stale passwords
 # from previous container incarnations where the volume survived but env changed.
+# Use PGPASSWORD + \set rather than string interpolation to avoid SQL injection
+# from a local password that contains a quote character.
 DB_PASSWORD=$(grep '^DB_PASSWORD=' "$ROOT/backend/.env" | cut -d= -f2 | tr -d ' ')
 DB_USER=$(grep '^DB_USER=' "$ROOT/backend/.env" | cut -d= -f2 | tr -d ' ')
 DB_NAME=$(grep '^DB_NAME=' "$ROOT/backend/.env" | cut -d= -f2 | tr -d ' ')
 if [ -n "$DB_PASSWORD" ] && [ -n "$DB_USER" ]; then
-  docker exec fcm-fallout-chat-mod-postgres-1 \
+  docker exec -e PGPASSWORD="$DB_PASSWORD" fcm-fallout-chat-mod-postgres-1 \
     psql -U "$DB_USER" -d "${DB_NAME:-fo76_chat}" \
-    -c "ALTER USER $DB_USER WITH PASSWORD '$DB_PASSWORD'" > /dev/null 2>&1 \
+    -c "ALTER USER \"$DB_USER\" WITH PASSWORD \$\$${DB_PASSWORD}\$\$" > /dev/null 2>&1 \
     && echo "    db password synced for $DB_USER" \
     || echo "    (password sync skipped — user may not exist yet)"
 fi

@@ -3,6 +3,13 @@
  *
  * Manages in-process draw timers and delegates persistence to Prisma.
  * Injected deps (broadcast, prisma) keep this testable without the real WS server.
+ *
+ * Design notes:
+ *  - Any authenticated chat user may create a giveaway (no role gate); the
+ *    1-active-per-user cap plus the per-user create cooldown prevent spam.
+ *  - All broadcasts go to the Events channel (caller passes the fixed UUID).
+ *  - reconcileActive() runs at startup and on a 5-minute periodic sweep so a
+ *    giveaway orphaned by a DB blip is retried, not silently abandoned.
  */
 
 import { v4 as uuidv4 } from 'uuid';
@@ -14,7 +21,6 @@ import logger from '../config/logger';
 
 export interface GiveawayDeps {
   prisma: PrismaClient;
-  /** Broadcast a frame to all connected WS clients. */
   broadcast: (payload: object) => void;
 }
 
@@ -56,17 +62,21 @@ const MIN_DURATION_MIN = 1;
 const MAX_DURATION_MIN = 60;
 const MAX_ITEM_NAME_LEN = 100;
 const MAX_ACTIVE_PER_USER = 1;
-/** Minimum ms between join/leave actions per user per giveaway. */
 const JOIN_LEAVE_COOLDOWN_MS = 2_000;
+/** After a giveaway ends or is cancelled, the creator must wait this long before starting another. */
+const CREATE_COOLDOWN_MS = 30_000;
 const REMINDER_THRESHOLD_MIN = 10;
+const RECONCILE_INTERVAL_MS = 5 * 60_000;
 
 // ── Module state ──────────────────────────────────────────────────────────────
 
 let deps: GiveawayDeps | null = null;
 const activeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const activeReminderTimers = new Map<string, ReturnType<typeof setTimeout>>();
-/** Cooldown map: `${giveawayId}:${userId}` → expiry timestamp */
+/** join/leave cooldown: `${giveawayId}:${userId}` → expiry ms */
 const joinLeaveCooldown = new Map<string, number>();
+/** create cooldown: `userId` → expiry ms */
+const createCooldown = new Map<string, number>();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -87,7 +97,6 @@ async function uniqueShortId(prisma: PrismaClient): Promise<string> {
   return uuidv4().replace(/-/g, '').slice(0, SHORT_ID_LEN).toUpperCase();
 }
 
-/** Safe broadcast: logs but never throws if the broadcast function errors. */
 function safeBroadcast(payload: object): void {
   try {
     deps?.broadcast(payload);
@@ -97,10 +106,7 @@ function safeBroadcast(payload: object): void {
 }
 
 function broadcastGiveawayUpdate(giveawayId: string, shortId: string, entryCount: number, status: string): void {
-  safeBroadcast({
-    type: 'giveaway:update',
-    payload: { giveawayId, shortId, entryCount, status },
-  });
+  safeBroadcast({ type: 'giveaway:update', payload: { giveawayId, shortId, entryCount, status } });
 }
 
 function isJoinLeaveCoolingDown(giveawayId: string, userId: string): boolean {
@@ -115,15 +121,46 @@ function setJoinLeaveCooldown(giveawayId: string, userId: string): void {
   joinLeaveCooldown.set(`${giveawayId}:${userId}`, Date.now() + JOIN_LEAVE_COOLDOWN_MS);
 }
 
+function isCreateCoolingDown(userId: string): boolean {
+  const exp = createCooldown.get(userId);
+  if (!exp) return false;
+  if (Date.now() >= exp) { createCooldown.delete(userId); return false; }
+  return true;
+}
+
+function setCreateCooldown(userId: string): void {
+  createCooldown.set(userId, Date.now() + CREATE_COOLDOWN_MS);
+}
+
 // Prune expired cooldown entries every 5 minutes.
 const _cooldownPruneInterval = setInterval(() => {
   const now = Date.now();
-  for (const [key, exp] of joinLeaveCooldown.entries()) {
-    if (now >= exp) joinLeaveCooldown.delete(key);
-  }
-}, 5 * 60 * 1_000);
-// unref so this interval doesn't block process exit or trip fake-timer runAllTimers in tests.
+  for (const [k, exp] of joinLeaveCooldown.entries()) if (now >= exp) joinLeaveCooldown.delete(k);
+  for (const [k, exp] of createCooldown.entries()) if (now >= exp) createCooldown.delete(k);
+}, 5 * 60_000);
 if (typeof _cooldownPruneInterval.unref === 'function') _cooldownPruneInterval.unref();
+
+// ── Bot message builder ───────────────────────────────────────────────────────
+
+function makeBotMessage(
+  content: string,
+  channelId: string,
+  metadata: Record<string, unknown>,
+): object {
+  return {
+    type: 'chat:message',
+    payload: {
+      id: uuidv4(),
+      content,
+      username: '[Vault-Tec]',
+      userId: 'system',
+      channelId,
+      source: 'bot',
+      timestamp: new Date().toISOString(),
+      metadata,
+    },
+  };
+}
 
 // ── Draw ──────────────────────────────────────────────────────────────────────
 
@@ -136,9 +173,6 @@ async function drawWinner(giveawayId: string): Promise<void> {
   const { prisma } = deps;
 
   try {
-    // Load entries and atomically mark as completed, guarding against cancel races.
-    // The update's where-clause includes `status: 'active'` so it no-ops if the
-    // giveaway was already cancelled between the timer firing and now.
     const giveaway = await prisma.giveaway.findUnique({
       where: { id: giveawayId },
       include: { entries: true },
@@ -151,9 +185,8 @@ async function drawWinner(giveawayId: string): Promise<void> {
       ? entries[Math.floor(Math.random() * entries.length)]
       : null;
 
-    // Atomic status update — if status changed to 'cancelled' concurrently this throws
-    // (Prisma P2025 record not found) because the where-clause won't match.
-    const updated = await prisma.giveaway.update({
+    // Atomic update — P2025 if cancelled concurrently.
+    await prisma.giveaway.update({
       where: { id: giveawayId, status: 'active' },
       data: {
         status: 'completed',
@@ -161,68 +194,39 @@ async function drawWinner(giveawayId: string): Promise<void> {
       },
     });
 
-    // Only broadcast after the DB write succeeded.
-    if (winner) {
-      safeBroadcast({
-        type: 'chat:message',
-        payload: {
-          id: uuidv4(),
-          content: `🎉 Giveaway winner: ${winner.username}! Prize: ${giveaway.itemName} (started by ${giveaway.creatorName}) [${giveaway.shortId}]`,
-          username: '[Vault-Tec]',
-          userId: 'system',
-          channelId: giveaway.channelId,
-          source: 'bot',
-          timestamp: new Date().toISOString(),
-          metadata: {
-            type: 'giveaway_winner',
-            giveawayId,
-            shortId: giveaway.shortId,
-            itemName: giveaway.itemName,
-            createdByUserId: giveaway.createdByUserId,
-            creatorName: giveaway.creatorName,
-            winnerName: winner.username,
-            entryCount: entries.length,
-          },
-        },
-      });
-    } else {
-      safeBroadcast({
-        type: 'chat:message',
-        payload: {
-          id: uuidv4(),
-          content: `🎁 Giveaway ended - no entries. [${giveaway.shortId}] ${giveaway.itemName}`,
-          username: '[Vault-Tec]',
-          userId: 'system',
-          channelId: giveaway.channelId,
-          source: 'bot',
-          timestamp: new Date().toISOString(),
-          metadata: {
-            type: 'giveaway_winner',
-            giveawayId,
-            shortId: giveaway.shortId,
-            itemName: giveaway.itemName,
-            createdByUserId: giveaway.createdByUserId,
-            creatorName: giveaway.creatorName,
-            winnerName: null,
-            entryCount: 0,
-          },
-        },
-      });
-    }
+    // Set create cooldown so the creator can't immediately spam a new giveaway.
+    setCreateCooldown(giveaway.createdByUserId);
 
+    const sharedMeta: Record<string, unknown> = {
+      type: 'giveaway_winner',
+      giveawayId,
+      shortId: giveaway.shortId,
+      itemName: giveaway.itemName,
+      createdByUserId: giveaway.createdByUserId,
+      creatorName: giveaway.creatorName,
+      winnerName: winner?.username ?? null,
+      entryCount: entries.length,
+    };
+
+    const content = winner
+      ? `🎉 Giveaway winner: ${winner.username}! Prize: ${giveaway.itemName} (started by ${giveaway.creatorName}) [${giveaway.shortId}]`
+      : `🎁 Giveaway ended - no entries. [${giveaway.shortId}] ${giveaway.itemName}`;
+
+    safeBroadcast(makeBotMessage(content, giveaway.channelId, sharedMeta));
     broadcastGiveawayUpdate(giveawayId, giveaway.shortId, entries.length, 'completed');
-    if (winner) {
-      logger.info({ giveawayId, shortId: giveaway.shortId, winner: winner.username }, 'Giveaway drawn');
-    } else {
-      logger.info({ giveawayId, shortId: giveaway.shortId }, 'Giveaway drawn - no entries');
-    }
+
+    logger.info(
+      { giveawayId, shortId: giveaway.shortId, winner: winner?.username ?? null },
+      winner ? 'Giveaway drawn' : 'Giveaway drawn - no entries',
+    );
   } catch (err: any) {
-    // P2025 = record not found — giveaway was cancelled before draw fired. Not an error.
     if (err?.code === 'P2025') {
       logger.info({ giveawayId }, 'drawWinner: giveaway already cancelled before draw (race avoided)');
       return;
     }
-    logger.error({ err, giveawayId }, 'drawWinner: DB error during draw (giveaway may remain active — reconcile will retry)');
+    // Non-P2025 DB error: giveaway stays active. The periodic reconcileActive sweep
+    // will re-schedule the draw on the next tick.
+    logger.error({ err, giveawayId }, 'drawWinner: DB error — giveaway remains active and will be retried by reconcileActive');
   }
 }
 
@@ -232,21 +236,13 @@ function scheduleReminder(giveaway: { id: string; shortId: string; itemName: str
   const timer = setTimeout(() => {
     activeReminderTimers.delete(giveaway.id);
     if (!deps) return;
-    // Calculate actual remaining time at fire time, not at schedule time.
     const secsLeft = Math.max(0, Math.round((giveaway.endsAt.getTime() - Date.now()) / 1000));
     const minsLeft = secsLeft >= 60 ? `${Math.ceil(secsLeft / 60)} min` : `${secsLeft}s`;
-    safeBroadcast({
-      type: 'chat:message',
-      payload: {
-        id: uuidv4(),
-        content: `⏰ Reminder: giveaway still open! Prize: ${giveaway.itemName} - ${minsLeft} left to enter. /giveaway join ${giveaway.shortId}`,
-        username: '[Vault-Tec]',
-        userId: 'system',
-        channelId: giveaway.channelId,
-        source: 'bot',
-        timestamp: new Date().toISOString(),
-      },
-    });
+    safeBroadcast(makeBotMessage(
+      `⏰ Reminder: giveaway still open! Prize: ${giveaway.itemName} - ${minsLeft} left to enter. /giveaway join ${giveaway.shortId}`,
+      giveaway.channelId,
+      {},
+    ));
   }, halfwayMs);
   activeReminderTimers.set(giveaway.id, timer);
 }
@@ -266,6 +262,10 @@ export async function init(injectedDeps: GiveawayDeps): Promise<void> {
   } catch (err) {
     logger.warn({ err }, 'giveawayService.reconcileActive failed at init (non-fatal - may be pending migration)');
   }
+
+  // Periodic sweep: re-schedule any giveaway whose draw timer was lost (e.g. non-P2025 DB error).
+  const _reconcileInterval = setInterval(() => { void reconcileActive(); }, RECONCILE_INTERVAL_MS);
+  if (typeof _reconcileInterval.unref === 'function') _reconcileInterval.unref();
 }
 
 export async function reconcileActive(): Promise<void> {
@@ -273,9 +273,7 @@ export async function reconcileActive(): Promise<void> {
   const { prisma } = deps;
   const now = new Date();
 
-  const active = await prisma.giveaway.findMany({
-    where: { status: 'active' },
-  });
+  const active = await prisma.giveaway.findMany({ where: { status: 'active' } });
 
   for (const g of active) {
     if (activeTimers.has(g.id)) continue;
@@ -312,7 +310,6 @@ export async function createGiveaway(
     throw new GiveawayError(`Item name must be 1-${MAX_ITEM_NAME_LEN} characters.`, 'INVALID_ARGS');
   }
 
-  // Strip invisible/directional unicode that could be used for spoofing.
   const sanitized = trimmed.replace(/[​-‏‪-‮⁠-⁤﻿]/g, '').trim();
   if (!sanitized) {
     throw new GiveawayError('Item name contains only invisible characters.', 'INVALID_ARGS');
@@ -325,10 +322,14 @@ export async function createGiveaway(
     throw new GiveawayError('Item name contains a prohibited phrase.', 'INVALID_ARGS');
   }
 
-  // Verify the channel exists.
-  const channel = await (prisma as any).channel?.findUnique({ where: { id: channelId } });
-  if (channel === null) {
+  // Verify the channel exists (typed correctly — no 'as any' needed).
+  const channel = await prisma.channel.findUnique({ where: { id: channelId } });
+  if (!channel) {
     throw new GiveawayError('Channel not found.', 'INVALID_ARGS');
+  }
+
+  if (isCreateCoolingDown(userId)) {
+    throw new GiveawayError(`Please wait a moment before starting another giveaway.`, 'RATE_LIMITED');
   }
 
   const existing = await prisma.giveaway.count({
@@ -357,29 +358,21 @@ export async function createGiveaway(
   scheduleTimer(giveaway.id, endsAt);
   scheduleReminder({ id: giveaway.id, shortId, itemName: sanitized, channelId, durationMin: clampedDuration, endsAt });
 
-  safeBroadcast({
-    type: 'chat:message',
-    payload: {
-      id: uuidv4(),
-      content: `🎁 ${username} started a giveaway! Prize: ${sanitized}. Type /giveaway join ${shortId} or click Join - ends in ${clampedDuration} min.`,
-      username: '[Vault-Tec]',
-      userId: 'system',
-      channelId,
-      source: 'bot',
-      timestamp: new Date().toISOString(),
-      metadata: {
-        type: 'giveaway',
-        giveawayId: giveaway.id,
-        shortId,
-        itemName: sanitized,
-        creatorName: username,
-        createdByUserId: userId,
-        endsAt: endsAt.toISOString(),
-        durationMin: clampedDuration,
-        entryCount: 0,
-      },
+  safeBroadcast(makeBotMessage(
+    `🎁 ${username} started a giveaway! Prize: ${sanitized}. Type /giveaway join ${shortId} or click Join - ends in ${clampedDuration} min.`,
+    channelId,
+    {
+      type: 'giveaway',
+      giveawayId: giveaway.id,
+      shortId,
+      itemName: sanitized,
+      creatorName: username,
+      createdByUserId: userId,
+      endsAt: endsAt.toISOString(),
+      durationMin: clampedDuration,
+      entryCount: 0,
     },
-  });
+  ));
 
   logger.info({ giveawayId: giveaway.id, shortId, userId, itemName: sanitized, durationMin: clampedDuration }, 'Giveaway created');
   return giveaway as unknown as GiveawayRow;
@@ -398,15 +391,16 @@ export async function joinGiveaway(
   if (giveaway.status !== 'active') throw new GiveawayError(`Giveaway ${shortId} is no longer active.`, 'NOT_ACTIVE');
   if (giveaway.createdByUserId === userId) throw new GiveawayError(`You can't enter your own giveaway.`, 'OWN_GIVEAWAY');
 
-  if (isJoinLeaveCoolingDown(giveaway.id, userId)) {
-    throw new GiveawayError('Please wait a moment before joining again.', 'RATE_LIMITED');
-  }
-  setJoinLeaveCooldown(giveaway.id, userId);
-
-  // Check if already entered before upserting to avoid spurious broadcasts.
+  // Check if already entered BEFORE setting the cooldown — re-clicking Join
+  // on an existing entry should not block the user from immediately Leaving.
   const existing = await prisma.giveawayEntry.findUnique({
     where: { giveawayId_userId: { giveawayId: giveaway.id, userId } },
   });
+
+  if (!existing && isJoinLeaveCoolingDown(giveaway.id, userId)) {
+    throw new GiveawayError('Please wait a moment before joining again.', 'RATE_LIMITED');
+  }
+  if (!existing) setJoinLeaveCooldown(giveaway.id, userId);
 
   await prisma.giveawayEntry.upsert({
     where: { giveawayId_userId: { giveawayId: giveaway.id, userId } },
@@ -416,7 +410,6 @@ export async function joinGiveaway(
 
   const entryCount = await prisma.giveawayEntry.count({ where: { giveawayId: giveaway.id } });
 
-  // Only broadcast if this was a new entry.
   if (!existing) {
     broadcastGiveawayUpdate(giveaway.id, shortId, entryCount, 'active');
   }
@@ -446,7 +439,6 @@ export async function leaveGiveaway(
 
   const entryCount = await prisma.giveawayEntry.count({ where: { giveawayId: giveaway.id } });
 
-  // Only broadcast if there was actually an entry to remove.
   if (deleted.count > 0) {
     broadcastGiveawayUpdate(giveaway.id, shortId, entryCount, 'active');
   }
@@ -474,42 +466,35 @@ export async function cancelGiveaway(
   const reminderTimer = activeReminderTimers.get(giveaway.id);
   if (reminderTimer) { clearTimeout(reminderTimer); activeReminderTimers.delete(giveaway.id); }
 
-  // Atomic update — where-clause includes status:'active' to guard against a concurrent draw.
   try {
     await prisma.giveaway.update({ where: { id: giveaway.id, status: 'active' }, data: { status: 'cancelled' } });
   } catch (err: any) {
     if (err?.code === 'P2025') {
-      // Draw already fired — treat as already completed, not an error.
       throw new GiveawayError(`Giveaway ${shortId} completed before it could be cancelled.`, 'NOT_ACTIVE');
     }
     throw err;
   }
 
+  // Apply create cooldown so the creator can't immediately restart.
+  setCreateCooldown(giveaway.createdByUserId);
+
   const entryCount = await prisma.giveawayEntry.count({ where: { giveawayId: giveaway.id } });
 
-  safeBroadcast({
-    type: 'chat:message',
-    payload: {
-      id: uuidv4(),
-      content: `❌ Giveaway cancelled: ${giveaway.itemName} [${shortId}]`,
-      username: '[Vault-Tec]',
-      userId: 'system',
-      channelId: giveaway.channelId,
-      source: 'bot',
-      timestamp: new Date().toISOString(),
-      metadata: {
-        type: 'giveaway_winner',
-        giveawayId: giveaway.id,
-        shortId,
-        itemName: giveaway.itemName,
-        createdByUserId: giveaway.createdByUserId,
-        creatorName: giveaway.creatorName,
-        winnerName: null,
-        entryCount,
-        cancelled: true,
-      },
+  safeBroadcast(makeBotMessage(
+    `❌ Giveaway cancelled: ${giveaway.itemName} [${shortId}]`,
+    giveaway.channelId,
+    {
+      type: 'giveaway_winner',
+      giveawayId: giveaway.id,
+      shortId,
+      itemName: giveaway.itemName,
+      createdByUserId: giveaway.createdByUserId,
+      creatorName: giveaway.creatorName,
+      winnerName: null,
+      entryCount,
+      cancelled: true,
     },
-  });
+  ));
   broadcastGiveawayUpdate(giveaway.id, shortId, entryCount, 'cancelled');
   logger.info({ giveawayId: giveaway.id, shortId, cancelledBy: userId, isMod }, 'Giveaway cancelled');
 }
@@ -524,10 +509,7 @@ export async function listActive(): Promise<GiveawayWithCount[]> {
     include: { _count: { select: { entries: true } } },
   });
 
-  return rows.map(r => ({
-    ...(r as unknown as GiveawayRow),
-    entryCount: r._count.entries,
-  }));
+  return rows.map(r => ({ ...(r as unknown as GiveawayRow), entryCount: r._count.entries }));
 }
 
 export async function listRecent(limit: number): Promise<GiveawayWithCount[]> {
@@ -543,8 +525,5 @@ export async function listRecent(limit: number): Promise<GiveawayWithCount[]> {
     include: { _count: { select: { entries: true } } },
   });
 
-  return rows.map(r => ({
-    ...(r as unknown as GiveawayRow),
-    entryCount: r._count.entries,
-  }));
+  return rows.map(r => ({ ...(r as unknown as GiveawayRow), entryCount: r._count.entries }));
 }

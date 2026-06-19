@@ -226,6 +226,36 @@ async function buildNukeCodesResponse(): Promise<{ text: string; metadata: Recor
 
 // ── /giveaway Sub-Command Handler ────────────────────────────────────────────
 
+/**
+ * Parse the argument string for `/giveaway start`.
+ * Exported for unit testing.
+ *
+ * Rules for the optional trailing duration:
+ *   - Last token must be a bare integer (digits only).
+ *   - The token immediately before it must NOT be 'x'/'X' (guards "Flux x 10").
+ *   - At least one token must remain as the item name after stripping it.
+ *
+ * Examples:
+ *   "Shoes x10"      → { itemName: "Shoes x10",      durationMin: 5  }
+ *   "Shoes x10 15"   → { itemName: "Shoes x10",      durationMin: 15 }
+ *   "Ultracite 10"   → { itemName: "Ultracite",       durationMin: 10 }
+ *   "Shoes x 10"     → { itemName: "Shoes x 10",      durationMin: 5  }
+ *   "Plans x5 20"    → { itemName: "Plans x5",        durationMin: 20 }
+ */
+export function parseGiveawayStart(rest: string): { itemName: string; durationMin: number } {
+  const DEFAULT = 5;
+  const parts = rest.split(' ');
+  const lastPart = parts[parts.length - 1];
+  const secondLast = parts.length >= 2 ? parts[parts.length - 2] : '';
+  const isDurationToken =
+    /^\d+$/.test(lastPart) &&
+    !/^x$/i.test(secondLast) &&
+    parts.length >= 2;
+  const trailingNum = isDurationToken ? parseInt(lastPart, 10) : null;
+  const itemName = trailingNum !== null ? parts.slice(0, -1).join(' ').trim() : rest;
+  return { itemName, durationMin: trailingNum ?? DEFAULT };
+}
+
 async function handleGiveawayCommand(
   args: string,
   userId: string,
@@ -266,18 +296,8 @@ async function handleGiveawayCommand(
     if (!rest) {
       return { handled: true, actionType: 'private', botMessage: 'Usage: /giveaway start <item name> [<minutes>]', targetChannelId: replyChannelId };
     }
-    // Parse optional trailing integer as duration: "/giveaway start Ultracite Flux 10"
-    // Only treat the last token as duration when:
-    //   1. It is a bare integer (no letters)
-    //   2. The token immediately before it is NOT 'x' or 'X' (guards "Flux x 10")
-    //   3. At least one token remains as the item name after removing it
-    const parts = rest.split(' ');
-    const lastPart = parts[parts.length - 1];
-    const secondLast = parts.length >= 2 ? parts[parts.length - 2] : '';
-    const isDurationToken = /^\d+$/.test(lastPart) && !/^x$/i.test(secondLast) && parts.length >= 2;
-    const trailingNum = isDurationToken ? parseInt(lastPart, 10) : null;
-    const itemName = trailingNum !== null ? parts.slice(0, -1).join(' ').trim() : rest;
-    const durationMin = trailingNum ?? 5;
+    // Parse optional trailing integer as duration — see parseGiveawayStart for rules.
+    const { itemName, durationMin } = parseGiveawayStart(rest);
 
     if (!itemName) {
       return { handled: true, actionType: 'private', botMessage: 'Usage: /giveaway start <item name> [<minutes>]', targetChannelId: replyChannelId };

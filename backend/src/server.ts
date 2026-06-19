@@ -1101,7 +1101,7 @@ app.get('/api/admin/parties/:id/messages', requirePartiesEnabled, requireDiscord
 app.delete('/api/admin/parties/:partyId/messages/:messageId', requirePartiesEnabled, requireDiscordRole('owner', 'admin'), adminDeletePartyMessage);
 
 // Giveaway admin — force-cancel any active giveaway (owner|admin|mod only)
-app.delete('/api/admin/giveaways/:shortId', requireDiscordRole('owner', 'admin', 'mod'), adminCancelGiveaway);
+app.delete('/api/admin/giveaways/:shortId', requireDiscordRole('owner', 'admin', 'moderator'), adminCancelGiveaway);
 
 // X-Admin-API-Key debug mirrors (CLI tooling)
 app.get('/admin/debug/parties', apiLimiter, requirePartiesEnabled, requireAdminKey, adminListParties);

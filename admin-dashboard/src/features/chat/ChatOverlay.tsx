@@ -6887,6 +6887,15 @@ export default function ChatOverlay() {
                     </div>
                   );
                 }
+                // ── Giveaway helpers (shared by announcement + list cards) ────
+                const sendGiveawayCmd = (verb: string, shortId: string) =>
+                  sendOrQueueChat({ type: 'chat:send', payload: { content: `/giveaway ${verb} ${shortId}`, channelId: activeSubId, clientCreatedAt: new Date().toISOString() } });
+                const giveawayBtnStyle = (color: string): React.CSSProperties => ({
+                  padding: '2px 10px', background: hexAlpha(color, 0.18), color, borderRadius: '4px',
+                  cursor: 'pointer', fontSize: `${fontSize - 1}px`, fontFamily: theme.fontFamily,
+                  border: 'none', flexShrink: 0,
+                });
+
                 // ── Giveaway announcement card ──────────────────────────────
                 if (md && md.type === 'giveaway') {
                   const gv = md as GiveawayMetadata;
@@ -6922,24 +6931,21 @@ export default function ChatOverlay() {
                         footer={isActive ? (
                           <div style={{ display: 'flex', gap: '6px', marginTop: '4px', justifyContent: isOwnGiveaway ? 'center' : 'flex-start' }}>
                             {isOwnGiveaway ? (
-                              <span
-                                role="button" tabIndex={0}
-                                style={{ padding: '2px 10px', background: hexAlpha('#FF6B4A', 0.15), color: hexAlpha('#FF6B4A', 0.9), borderRadius: '4px', cursor: 'pointer', fontSize: `${fontSize - 1}px`, fontFamily: theme.fontFamily }}
-                                onClick={() => sendOrQueueChat({ type: 'chat:send', payload: { content: `/giveaway stop ${gv.shortId}`, channelId: activeSubId, clientCreatedAt: new Date().toISOString() } })}
-                                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') sendOrQueueChat({ type: 'chat:send', payload: { content: `/giveaway stop ${gv.shortId}`, channelId: activeSubId, clientCreatedAt: new Date().toISOString() } }); }}
+                              <span role="button" tabIndex={0}
+                                style={giveawayBtnStyle('#FF6B4A')}
+                                onClick={() => sendGiveawayCmd('stop', gv.shortId)}
+                                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') sendGiveawayCmd('stop', gv.shortId); }}
                               >Cancel</span>
                             ) : (<>
-                              <span
-                                role="button" tabIndex={0}
-                                style={{ padding: '2px 10px', background: hexAlpha(gvAccent, 0.18), color: gvAccent, borderRadius: '4px', cursor: 'pointer', fontSize: `${fontSize - 1}px`, fontFamily: theme.fontFamily }}
-                                onClick={() => sendOrQueueChat({ type: 'chat:send', payload: { content: `/giveaway join ${gv.shortId}`, channelId: activeSubId, clientCreatedAt: new Date().toISOString() } })}
-                                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') sendOrQueueChat({ type: 'chat:send', payload: { content: `/giveaway join ${gv.shortId}`, channelId: activeSubId, clientCreatedAt: new Date().toISOString() } }); }}
+                              <span role="button" tabIndex={0}
+                                style={giveawayBtnStyle(gvAccent)}
+                                onClick={() => sendGiveawayCmd('join', gv.shortId)}
+                                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') sendGiveawayCmd('join', gv.shortId); }}
                               >Join</span>
-                              <span
-                                role="button" tabIndex={0}
-                                style={{ padding: '2px 10px', background: hexAlpha('#FF6B4A', 0.12), color: hexAlpha('#FF6B4A', 0.9), borderRadius: '4px', cursor: 'pointer', fontSize: `${fontSize - 1}px`, fontFamily: theme.fontFamily }}
-                                onClick={() => sendOrQueueChat({ type: 'chat:send', payload: { content: `/giveaway leave ${gv.shortId}`, channelId: activeSubId, clientCreatedAt: new Date().toISOString() } })}
-                                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') sendOrQueueChat({ type: 'chat:send', payload: { content: `/giveaway leave ${gv.shortId}`, channelId: activeSubId, clientCreatedAt: new Date().toISOString() } }); }}
+                              <span role="button" tabIndex={0}
+                                style={giveawayBtnStyle('#FF6B4A')}
+                                onClick={() => sendGiveawayCmd('leave', gv.shortId)}
+                                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') sendGiveawayCmd('leave', gv.shortId); }}
                               >Leave</span>
                             </>)}
                           </div>
@@ -6996,11 +7002,11 @@ export default function ChatOverlay() {
                     const secsLeft = Math.max(0, Math.floor((new Date(g.endsAt).getTime() - Date.now()) / 1000));
                     const timeLeft = secsLeft >= 60 ? `${Math.ceil(secsLeft / 60)}m left` : `${secsLeft}s left`;
                     const isOwnList = !!(myUserIdRef.current && g.createdByUserId && myUserIdRef.current === g.createdByUserId);
-                    const btnStyle = (color: string): React.CSSProperties => ({
-                      padding: '1px 7px', borderRadius: '3px', cursor: 'pointer',
-                      fontSize: `${Math.max(8, fontSize - 2)}px`, fontFamily: theme.fontFamily,
-                      border: 'none', background: hexAlpha(color, 0.18), color,
-                      flexShrink: 0,
+                    // Use shared giveawayBtnStyle but slightly smaller for the compact list row.
+                    const rowBtnStyle = (color: string): React.CSSProperties => ({
+                      ...giveawayBtnStyle(color),
+                      padding: '1px 7px',
+                      fontSize: `${Math.max(8, fontSize - 2)}px`,
                     });
                     return {
                       label: `[${g.shortId}] ${g.itemName}`,
@@ -7010,17 +7016,14 @@ export default function ChatOverlay() {
                             {entryCount} · {timeLeft} · {g.creatorName}
                           </span>
                           {isOwnList ? (
-                            <button style={btnStyle('#FF6B4A')}
-                              onClick={() => sendOrQueueChat({ type: 'chat:send', payload: { content: `/giveaway stop ${g.shortId}`, channelId: activeSubId, clientCreatedAt: new Date().toISOString() } })}>
+                            <button style={rowBtnStyle('#FF6B4A')} onClick={() => sendGiveawayCmd('stop', g.shortId)}>
                               Cancel
                             </button>
                           ) : (<>
-                            <button style={btnStyle(glAccent)}
-                              onClick={() => sendOrQueueChat({ type: 'chat:send', payload: { content: `/giveaway join ${g.shortId}`, channelId: activeSubId, clientCreatedAt: new Date().toISOString() } })}>
+                            <button style={rowBtnStyle(glAccent)} onClick={() => sendGiveawayCmd('join', g.shortId)}>
                               Join
                             </button>
-                            <button style={btnStyle('#FF6B4A')}
-                              onClick={() => sendOrQueueChat({ type: 'chat:send', payload: { content: `/giveaway leave ${g.shortId}`, channelId: activeSubId, clientCreatedAt: new Date().toISOString() } })}>
+                            <button style={rowBtnStyle('#FF6B4A')} onClick={() => sendGiveawayCmd('leave', g.shortId)}>
                               Leave
                             </button>
                           </>)}

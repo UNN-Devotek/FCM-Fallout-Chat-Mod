@@ -463,3 +463,45 @@ describe('giveawayService', () => {
     ).rejects.toMatchObject({ code: 'NOT_ACTIVE' });
   });
 });
+
+// ── parseGiveawayStart ────────────────────────────────────────────────────────
+
+describe('parseGiveawayStart', () => {
+  let parseGiveawayStart;
+
+  beforeEach(() => {
+    jest.resetModules();
+    // commandService has module-level side-effects (setInterval, DB cache) but
+    // parseGiveawayStart is a pure function — require is sufficient.
+    jest.mock('../src/config/logger', () => ({ __esModule: true, default: { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() } }));
+    jest.mock('../src/config/prisma', () => ({ __esModule: true, default: { chatCommand: { findMany: jest.fn().mockResolvedValue([]) } } }));
+    jest.mock('../src/services/serverStatusService', () => ({ __esModule: true, getServerStatus: jest.fn() }));
+    jest.mock('../src/services/nukeCodesService',   () => ({ __esModule: true, getNukeCodes: jest.fn() }));
+    jest.mock('../src/services/campService',        () => ({ __esModule: true, getCampItem: jest.fn() }));
+    jest.mock('../src/services/autoModService',     () => ({ __esModule: true, findProhibitedPhrase: jest.fn().mockResolvedValue(null) }));
+    jest.mock('../src/services/giveawayService',    () => ({ __esModule: true, createGiveaway: jest.fn(), joinGiveaway: jest.fn(), leaveGiveaway: jest.fn(), cancelGiveaway: jest.fn(), listActive: jest.fn().mockResolvedValue([]), listRecent: jest.fn().mockResolvedValue([]), GiveawayError: class GiveawayError extends Error { constructor(msg, code) { super(msg); this.code = code; } } }));
+    ({ parseGiveawayStart } = require('../src/services/commandService'));
+  });
+
+  const cases = [
+    // [input,                         expectedItem,           expectedDuration]
+    ['Shoes x10',                       'Shoes x10',            5  ],
+    ['Shoes x10 15',                    'Shoes x10',            15 ],
+    ['Ultracite Flux 10',               'Ultracite Flux',       10 ],
+    ['Shoes x 10',                      'Shoes x 10',           5  ], // 'x' before 10 — protected
+    ['Plans x5 20',                     'Plans x5',             20 ],
+    ['Flux 5',                          'Flux',                 5  ],
+    ['SingleWord',                      'SingleWord',           5  ], // single token, no duration
+    ['Item 999',                        'Item',                 999 ], // clamped by service, not parser
+    ['Item 0',                          'Item',                 0  ], // clamped by service
+    ['Multi Word Item No Duration',     'Multi Word Item No Duration', 5],
+    ['Multi Word Item 30',              'Multi Word Item',      30 ],
+    ['X 10',                            'X 10',                 5  ], // single-char 'X' before 10
+  ];
+
+  test.each(cases)('parseGiveawayStart(%j) → item=%j dur=%d', (input, expectedItem, expectedDuration) => {
+    const { itemName, durationMin } = parseGiveawayStart(input);
+    expect(itemName).toBe(expectedItem);
+    expect(durationMin).toBe(expectedDuration);
+  });
+});

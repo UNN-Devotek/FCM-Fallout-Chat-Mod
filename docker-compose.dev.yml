@@ -40,7 +40,7 @@ services:
       sh -c "apk add --no-cache openssl &&
              npm install &&
              npx prisma generate &&
-             npx prisma db push --accept-data-loss || true &&
+             (npx prisma db push --accept-data-loss || true) &&
              npx tsx watch src/server.ts"
     environment:
       NODE_ENV: development
