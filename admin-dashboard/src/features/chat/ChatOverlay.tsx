@@ -3452,8 +3452,10 @@ export default function ChatOverlay() {
     el.focus();
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) {
-      // No selection — append
-      const newText = (inputText + token).slice(0, 255);
+      // No selection -- append. Serialize from the live DOM rather than
+      // reading inputText state, which may be stale on rapid consecutive inserts.
+      const current = serializeRichInput(el);
+      const newText = (current + token).slice(0, 255);
       setInputText(newText);
       el.innerHTML = buildRichHtml(newText);
       return;
@@ -3497,7 +3499,7 @@ export default function ChatOverlay() {
     // Re-serialize and update state
     const serialized = serializeRichInput(el).slice(0, 255);
     setInputText(serialized);
-  }, [inputText, setInputText, buildRichHtml, serializeRichInput, insertAtCaret]);
+  }, [setInputText, buildRichHtml, serializeRichInput, insertAtCaret]);
 
   // Sync the rich input's HTML to the current inputText whenever it changes
   // from OUTSIDE (e.g. slash-command autocomplete sets inputText directly,
