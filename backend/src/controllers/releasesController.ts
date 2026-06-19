@@ -153,7 +153,7 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
     // part of the publish: if it cannot get out (with retries), the publish
     // fails and no DB row is created.
     try {
-      await postReleaseAnnouncement(version, releaseNotes, downloadUrl);
+      await postReleaseAnnouncement(version, releaseNotes);
     } catch (e: any) {
       return next(createError(
         502,
