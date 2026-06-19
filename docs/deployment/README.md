@@ -42,6 +42,8 @@ upstream backend_pool {
 
 The standby stack is deployed once manually as a separate Dokploy compose service; it is not rebuilt on every push.
 
+> **Warning — schema-dropping migrations:** because the standby is not rebuilt on push, any migration that drops or renames database objects (e.g. removing the `client_metrics` telemetry table) requires a **manual rebuild and redeploy of the standby** before it is put into service. Failing to do so means the standby would start on failover running stale code that references dropped tables. The standby is not currently active, but this step is required whenever it is brought online after such a migration.
+
 ### Cloudflare Tunnel Rollback
 
 If the tunnel goes down:

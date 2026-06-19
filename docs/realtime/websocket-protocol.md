@@ -416,7 +416,7 @@ Broadcast to all instances when a user's display name changes (e.g. after regist
 
 ---
 
-## Admin / Kill-Switch
+## Telemetry kill-switch (deprecated)
 
 ### `telemetry:set` (S→C) — deprecated kill-switch
 Emitted once on connect. Telemetry was removed; this event is a permanent kill-switch and is never toggled. The payload is always `{ "enabled": false }`.

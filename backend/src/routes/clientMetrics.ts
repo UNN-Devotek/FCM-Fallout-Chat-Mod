@@ -9,7 +9,7 @@ import { Router, Request, Response } from 'express';
 
 const ingestRouter = Router();
 
-ingestRouter.all('/', (_req: Request, res: Response): void => {
+ingestRouter.all('*', (_req: Request, res: Response): void => {
   res.status(410).json({
     type: 'https://fo76chat.app/errors/410',
     title: 'Gone',
