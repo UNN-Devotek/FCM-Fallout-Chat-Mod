@@ -65,12 +65,7 @@ import { makeJobTracker } from './jobs/jobTracker';
 import discordEmojisRouter from './routes/discordEmojis';
 import tenorSearchRouter from './routes/tenorSearch';
 import blockRouter from './routes/block';
-import {
-  ingestRouter as clientMetricsIngestRouter,
-  adminRouter as clientMetricsAdminRouter,
-  debugRouter as clientMetricsDebugRouter,
-} from './routes/clientMetrics';
-import { startClientMetricsPurgeJob } from './jobs/clientMetricsPurge';
+import { ingestRouter as clientMetricsIngestRouter } from './routes/clientMetrics';
 import {
   adminRouter as communityStatsAdminRouter,
   debugRouter as communityStatsDebugRouter,
@@ -1067,10 +1062,8 @@ if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
   app.use('/api/admin/sim', simUsersRouter);
 }
 app.use('/api/player-list', playerListRouter);
-// Client performance metrics — ingest (per-client) + admin views.
+// Client performance metrics — 410 tombstone (removed; already-installed clients stop cleanly).
 app.use('/api/client-metrics', clientMetricsIngestRouter);
-app.use('/api/admin/client-metrics', clientMetricsAdminRouter);
-app.use('/admin/debug/client-metrics', clientMetricsDebugRouter);
 
 // Community stats — aggregated signup / message / version / download metrics.
 // GET /api/admin/community-stats?range=90d   (Discord OAuth admin role)
@@ -1663,9 +1656,6 @@ setInterval(() => {
     logger.warn({ err }, 'Sessions cleanup failed (non-fatal)')
   );
 }, 60 * 60 * 1000);
-
-// Client performance metrics — daily purge (rows older than 30 days).
-startClientMetricsPurgeJob();
 
 // Online-snapshot cron — inserts the live WS client count every 5 min so the
 // public stats endpoint can serve an onlineOverTime chart. Purges rows older
