@@ -13,7 +13,10 @@ const VALID_REPORT_STATUSES = ['open', 'resolved', 'dismissed', 'escalated'];
 async function submitReport(req: Request, res: Response, next: NextFunction): Promise<void> {
   const { targetUserId, messageId, reason, notes } = req.body;
   try {
-    if (req.user.id === targetUserId) {
+    // Compare case-insensitively: targetUserId is Joi .uuid()-validated but NOT
+    // case-normalized, so an uppercased copy of the caller's own id would slip a
+    // case-sensitive === check while Postgres canonicalizes it to lowercase on insert.
+    if (String(req.user.id).toLowerCase() === String(targetUserId).toLowerCase()) {
       return next(createError(400, 'You cannot report yourself'));
     }
     // Use raw transaction for the message lock (FOR SHARE) -- Prisma doesn't support row-level locks

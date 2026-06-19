@@ -5,7 +5,10 @@
  *
  * Verified:
  *   (a) Reporting yourself returns 400.
- *   (b) Reporting a different user proceeds past the self-report check.
+ *   (b) Reporting a different user proceeds past the self-report check (201).
+ *   (c) Reporting yourself with an UPPERCASED copy of your own UUID still returns
+ *       400 — the guard must compare case-insensitively (Joi .uuid() accepts
+ *       uppercase without normalizing; Postgres canonicalizes to lowercase on insert).
  */
 
 const request = require('supertest');
@@ -104,11 +107,22 @@ describe('POST /api/reports self-report block', () => {
   });
 
   it('passes the self-report check when targeting a different user', async () => {
-    // prisma.$transaction will throw (not mocked to succeed) — we only care that
-    // the check itself does not block the request before reaching DB logic.
+    // The prisma stub resolves $transaction (invokes the callback) and report.create
+    // returns {}, so a non-self report reaches the 201 success path. Asserting the
+    // exact status (not just "not 400") also guards against a silent 500.
     const res = await request(app)
       .post('/api/reports')
       .send(VALID_BODY);
-    expect(res.status).not.toBe(400);
+    expect(res.status).toBe(201);
+  });
+
+  it('returns 400 when the target is an UPPERCASED copy of the caller\'s own UUID', async () => {
+    // Regression guard for the case-sensitivity bypass: req.user.id is lowercase,
+    // so a case-sensitive === would let an uppercased self-id slip through.
+    const res = await request(app)
+      .post('/api/reports')
+      .send({ targetUserId: REPORTER_ID.toUpperCase(), reason: 'Spamming' });
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ status: 400 });
   });
 });
