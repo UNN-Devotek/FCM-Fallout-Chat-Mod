@@ -47,6 +47,8 @@ export interface ChatEmbedCardProps {
 
   /** Label/value pairs rendered as an auto-fitting grid. */
   fields?: ChatEmbedField[];
+  /** Force the fields grid into a single column regardless of card width. */
+  singleColumn?: boolean;
   /** Freeform node below the grid. */
   footer?: React.ReactNode;
 
@@ -74,6 +76,7 @@ export const ChatEmbedCard: React.FC<ChatEmbedCardProps> = ({
   actions,
   fields,
   footer,
+  singleColumn = false,
   fontFamily,
   fontSize,
   dimText,
@@ -127,7 +130,7 @@ export const ChatEmbedCard: React.FC<ChatEmbedCardProps> = ({
       </div>
 
       {fields && fields.length > 0 && (
-        <div className="fcm-embed__grid">
+        <div className={`fcm-embed__grid${singleColumn ? ' fcm-embed__grid--single' : ''}`}>
           {fields.map((f, i) => (
             <div className="fcm-embed__field" key={i}>
               <span className="fcm-embed__label">{f.label}</span>

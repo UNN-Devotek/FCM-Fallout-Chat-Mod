@@ -817,6 +817,7 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
                     channelId: cmdResult.targetChannelId,
                     source: 'bot',
                     timestamp: new Date().toISOString(),
+                    ...(cmdResult.metadata ? { metadata: cmdResult.metadata } : {}),
                   },
                 });
               } else if (cmdResult.actionType === 'relay') {
@@ -1624,6 +1625,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
                   channelId: cmdResult.targetChannelId,
                   source: 'bot',
                   timestamp: new Date().toISOString(),
+                  ...(cmdResult.metadata ? { metadata: cmdResult.metadata } : {}),
                 },
               });
             } else if (cmdResult.actionType === 'relay') {

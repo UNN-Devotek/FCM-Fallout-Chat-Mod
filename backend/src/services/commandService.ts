@@ -3,6 +3,8 @@ import logger from '../config/logger';
 import { getServerStatus } from './serverStatusService';
 import { getNukeCodes } from './nukeCodesService';
 import { getCampItem } from './campService';
+import * as giveawayService from './giveawayService';
+import { GiveawayError } from './giveawayService';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -24,7 +26,7 @@ export interface ChatCommand {
 
 export type CommandResult =
   | { handled: false }
-  | { handled: true; actionType: 'message'; botMessage: string; targetChannelId: string; privateNotice?: string }
+  | { handled: true; actionType: 'message'; botMessage: string; targetChannelId: string; metadata?: Record<string, unknown> | null; privateNotice?: string }
   | { handled: true; actionType: 'relay'; relayContent: string; targetChannelId: string; responseColor?: string | null; privateNotice?: string; relayToDiscord: boolean }
   | { handled: true; actionType: 'private'; botMessage: string; targetChannelId: string; metadata?: Record<string, unknown> | null }
   | { handled: true; actionType: 'report'; reportContent: string; reportType: 'bug' | 'player'; targetChannelId: string }
@@ -130,6 +132,14 @@ function buildHelpResponse(commands: ChatCommand[]): string {
   lines.push('/wiki <name> — Look up a Fallout 76 item, weapon, creature, perk, or location');
   lines.push('/camp <item name> — Look up a CAMP item (budget cost, required plan, category)');
 
+  lines.push('', '— GIVEAWAYS —');
+  lines.push('/giveaway start <item> [<minutes>] - Start a giveaway (1-60 min, default 5)');
+  lines.push('/giveaway list - Show all active giveaways');
+  lines.push('/giveaway last [<number>] - Show results of last 1-10 giveaways (default 5)');
+  lines.push('/giveaway join <id> - Enter a giveaway');
+  lines.push('/giveaway leave <id> - Leave a giveaway you entered');
+  lines.push('/giveaway stop <id> - Cancel your giveaway (creator or mod only)');
+
   const relayCommands   = commands.filter(c => c.actionType === 'relay');
   const eventCommands   = commands.filter(c => c.actionType === 'announce');
   const msgCommands     = commands.filter(c => c.actionType === 'message');
@@ -212,6 +222,218 @@ async function buildNukeCodesResponse(): Promise<{ text: string; metadata: Recor
       validUntil: data.validUntil != null ? new Date(data.validUntil * 1000).toISOString() : null,
     },
   };
+}
+
+// ── /giveaway Sub-Command Handler ────────────────────────────────────────────
+
+/**
+ * Parse the argument string for `/giveaway start`.
+ * Exported for unit testing.
+ *
+ * Rules for the optional trailing duration:
+ *   - Last token must be a bare integer (digits only).
+ *   - The token immediately before it must NOT be 'x'/'X' (guards "Flux x 10").
+ *   - At least one token must remain as the item name after stripping it.
+ *
+ * Examples:
+ *   "Shoes x10"      → { itemName: "Shoes x10",      durationMin: 5  }
+ *   "Shoes x10 15"   → { itemName: "Shoes x10",      durationMin: 15 }
+ *   "Ultracite 10"   → { itemName: "Ultracite",       durationMin: 10 }
+ *   "Shoes x 10"     → { itemName: "Shoes x 10",      durationMin: 5  }
+ *   "Plans x5 20"    → { itemName: "Plans x5",        durationMin: 20 }
+ */
+export function parseGiveawayStart(rest: string): { itemName: string; durationMin: number } {
+  const DEFAULT = 5;
+  const parts = rest.split(' ');
+  const lastPart = parts[parts.length - 1];
+  const secondLast = parts.length >= 2 ? parts[parts.length - 2] : '';
+  const isDurationToken =
+    /^\d+$/.test(lastPart) &&
+    !/^x$/i.test(secondLast) &&
+    parts.length >= 2;
+  const trailingNum = isDurationToken ? parseInt(lastPart, 10) : null;
+  const itemName = trailingNum !== null ? parts.slice(0, -1).join(' ').trim() : rest;
+  return { itemName, durationMin: trailingNum ?? DEFAULT };
+}
+
+async function handleGiveawayCommand(
+  args: string,
+  userId: string,
+  username: string,
+  channelId: string,
+): Promise<CommandResult> {
+  // All giveaway activity is routed through Events regardless of the channel the user typed from.
+  const EVENTS_CHANNEL_ID = '00000000-0000-0000-0000-000000000003';
+  const replyChannelId = channelId; // private replies go back to wherever the user is
+  const giveawayChannelId = EVENTS_CHANNEL_ID;
+
+  const spaceIdx = args.indexOf(' ');
+  const subCmd = (spaceIdx < 0 ? args : args.slice(0, spaceIdx)).toLowerCase();
+  const rest = spaceIdx < 0 ? '' : args.slice(spaceIdx + 1).trim();
+
+  const USAGE = [
+    '◈ GIVEAWAY COMMANDS',
+    '',
+    '/giveaway start <item> [<minutes>]',
+    '  Start a raffle (1-60 min, default 5)',
+    '/giveaway list',
+    '  Show all active giveaways',
+    '/giveaway last [<number>]',
+    '  Show results of last 1-10 giveaways (default 5)',
+    '/giveaway join <id>',
+    '  Enter a giveaway by its short ID',
+    '/giveaway leave <id>',
+    '  Remove yourself from a giveaway',
+    '/giveaway stop <id>',
+    '  Cancel your giveaway (creator or mod only)',
+  ].join('\n');
+
+  if (!subCmd || subCmd === 'help') {
+    return { handled: true, actionType: 'private', botMessage: USAGE, targetChannelId: replyChannelId };
+  }
+
+  if (subCmd === 'start') {
+    if (!rest) {
+      return { handled: true, actionType: 'private', botMessage: 'Usage: /giveaway start <item name> [<minutes>]', targetChannelId: replyChannelId };
+    }
+    // Parse optional trailing integer as duration — see parseGiveawayStart for rules.
+    const { itemName, durationMin } = parseGiveawayStart(rest);
+
+    if (!itemName) {
+      return { handled: true, actionType: 'private', botMessage: 'Usage: /giveaway start <item name> [<minutes>]', targetChannelId: replyChannelId };
+    }
+
+    try {
+      await giveawayService.createGiveaway(userId, username, giveawayChannelId, itemName, durationMin);
+      return {
+        handled: true,
+        actionType: 'private',
+        botMessage: `🎁 Giveaway started! Prize: ${itemName} - Duration: ${Math.min(60, Math.max(1, durationMin))} min. Winner will be drawn automatically.`,
+        targetChannelId: replyChannelId,
+      };
+    } catch (err) {
+      const msg = err instanceof GiveawayError ? err.message : 'Failed to start giveaway. Try again.';
+      return { handled: true, actionType: 'private', botMessage: msg, targetChannelId: replyChannelId };
+    }
+  }
+
+  if (subCmd === 'list') {
+    try {
+      const active = await giveawayService.listActive();
+      return {
+        handled: true,
+        actionType: 'private',
+        botMessage: active.length === 0 ? 'No active giveaways right now.' : `${active.length} active giveaway${active.length === 1 ? '' : 's'}`,
+        targetChannelId: replyChannelId,
+        metadata: {
+          type: 'giveaway_list',
+          giveaways: active.map(g => ({
+            giveawayId: g.id,
+            shortId: g.shortId,
+            itemName: g.itemName,
+            creatorName: g.creatorName,
+            createdByUserId: g.createdByUserId,
+            endsAt: new Date(g.endsAt).toISOString(),
+            entryCount: g.entryCount,
+            status: g.status,
+          })),
+        },
+      };
+    } catch {
+      return { handled: true, actionType: 'private', botMessage: 'Failed to list giveaways.', targetChannelId: replyChannelId };
+    }
+  }
+
+  if (subCmd === 'join') {
+    const shortId = rest.toUpperCase();
+    if (!shortId) {
+      return { handled: true, actionType: 'private', botMessage: 'Usage: /giveaway join <id>', targetChannelId: replyChannelId };
+    }
+    try {
+      const { entryCount } = await giveawayService.joinGiveaway(shortId, userId, username);
+      return {
+        handled: true,
+        actionType: 'private',
+        botMessage: `✅ You've entered giveaway [${shortId}]! Total entries: ${entryCount}.`,
+        targetChannelId: replyChannelId,
+      };
+    } catch (err) {
+      const msg = err instanceof GiveawayError ? err.message : 'Failed to join giveaway.';
+      return { handled: true, actionType: 'private', botMessage: msg, targetChannelId: replyChannelId };
+    }
+  }
+
+  if (subCmd === 'leave') {
+    const shortId = rest.toUpperCase();
+    if (!shortId) {
+      return { handled: true, actionType: 'private', botMessage: 'Usage: /giveaway leave <id>', targetChannelId: replyChannelId };
+    }
+    try {
+      const { entryCount } = await giveawayService.leaveGiveaway(shortId, userId);
+      return {
+        handled: true,
+        actionType: 'private',
+        botMessage: `You've left giveaway [${shortId}]. Remaining entries: ${entryCount}.`,
+        targetChannelId: replyChannelId,
+      };
+    } catch (err) {
+      const msg = err instanceof GiveawayError ? err.message : 'Failed to leave giveaway.';
+      return { handled: true, actionType: 'private', botMessage: msg, targetChannelId: replyChannelId };
+    }
+  }
+
+  if (subCmd === 'stop') {
+    const shortId = rest.toUpperCase();
+    if (!shortId) {
+      return { handled: true, actionType: 'private', botMessage: 'Usage: /giveaway stop <id>', targetChannelId: replyChannelId };
+    }
+    try {
+      await giveawayService.cancelGiveaway(shortId, userId, false);
+      return {
+        handled: true,
+        actionType: 'private',
+        botMessage: `❌ Giveaway [${shortId}] cancelled.`,
+        targetChannelId: replyChannelId,
+      };
+    } catch (err) {
+      const msg = err instanceof GiveawayError ? err.message : 'Failed to cancel giveaway.';
+      return { handled: true, actionType: 'private', botMessage: msg, targetChannelId: replyChannelId };
+    }
+  }
+
+  if (subCmd === 'last') {
+    const n = parseInt(rest, 10);
+    const count = !rest ? 5 : (isNaN(n) ? null : Math.min(10, Math.max(1, n)));
+    if (count === null) {
+      return { handled: true, actionType: 'private', botMessage: 'Usage: /giveaway last [<number>] - show last 1-10 completed giveaways (default 5)', targetChannelId: replyChannelId };
+    }
+    try {
+      const recent = await giveawayService.listRecent(count);
+      return {
+        handled: true,
+        actionType: 'private',
+        botMessage: recent.length === 0 ? 'No completed giveaways yet.' : `Last ${recent.length} giveaway${recent.length === 1 ? '' : 's'}`,
+        targetChannelId: replyChannelId,
+        metadata: {
+          type: 'giveaway_history',
+          giveaways: recent.map(g => ({
+            giveawayId: g.id,
+            shortId: g.shortId,
+            itemName: g.itemName,
+            creatorName: g.creatorName,
+            winnerName: g.winnerName,
+            entryCount: g.entryCount,
+            status: g.status,
+            createdAt: new Date(g.createdAt).toISOString(),
+          })),
+        },
+      };
+    } catch {
+      return { handled: true, actionType: 'private', botMessage: 'Failed to fetch recent giveaways.', targetChannelId: replyChannelId };
+    }
+  }
+
+  return { handled: true, actionType: 'private', botMessage: USAGE, targetChannelId: replyChannelId };
 }
 
 // ── Main Entry Point ──────────────────────────────────────────────────────────
@@ -415,6 +637,11 @@ export async function tryHandleCommand(
 
   const commands = await getCommands();
   const cmd = commands.find(c => c.trigger === trigger || (c.alias != null && c.alias === trigger));
+
+  // Built-in /giveaway — start | list | join | leave | stop
+  if (trigger === '/giveaway') {
+    return handleGiveawayCommand(args, userId, username, channelId);
+  }
 
   if (!cmd) return { handled: false }; // unknown command — fall through to normal message
 
