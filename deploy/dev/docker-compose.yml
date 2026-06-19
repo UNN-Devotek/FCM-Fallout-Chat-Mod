@@ -202,6 +202,13 @@ services:
       # without it POST /api/users returns 503 "Registration unavailable: server
       # misconfigured" and the overlay mislabels it as a CF challenge.
       APP_CLIENT_KEY: ${APP_CLIENT_KEY:-fo76-chat-desktop-v1}
+
+      # --- Release pipeline: environment-aware downloads origin ---
+      # publishRelease verifies + links artifacts at https://<host>/downloads/…
+      # The code defaults to prod; the dev stack points it at itself so
+      # publish-to-dev verifies DEV-hosted artifacts, not prod's
+      # (backend/src/utils/releaseDownloadUrls.ts).
+      RELEASE_DOWNLOAD_HOST: ${RELEASE_DOWNLOAD_HOST:-dev.falloutchatmod.com}
     volumes:
       - releases_dev_downloads:/app/downloads
     security_opt: ["no-new-privileges:true"]
