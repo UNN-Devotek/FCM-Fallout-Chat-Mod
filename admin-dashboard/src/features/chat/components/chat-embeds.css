@@ -107,6 +107,10 @@
   min-width: 0;
 }
 
+.fcm-embed__grid--single {
+  grid-template-columns: 1fr;
+}
+
 .fcm-embed__field {
   display: flex;
   align-items: baseline;

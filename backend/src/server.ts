@@ -86,6 +86,8 @@ import { triggerCampIngest, getCampUpdates } from './controllers/campAdminContro
 import { ingestCampDatabase, isCampTableEmpty } from './services/campService';
 import { startCampSyncSchedule } from './jobs/campSyncSchedule';
 import partiesRouter from './routes/parties';
+import giveawaysRouter, { adminCancelGiveaway } from './routes/giveaways';
+import * as giveawayService from './services/giveawayService';
 import {
   adminListParties,
   adminGetParty,
@@ -848,7 +850,7 @@ app.get('/auth/ws-ticket', apiLimiter, async (req: Request, res: Response) => {
 
   const discordUser = (req.session as any).discordUser;
   // Role gate: only privileged staff may open admin-observer sockets.
-  const { isPrivilegedRole } = await import('./services/userRoleService');
+  const { isPrivilegedRole } = await import('./services/userRoleService').then(m => m.default ?? m);
   if (!isPrivilegedRole(discordUser.role)) {
     res.status(403).json({ data: null });
     return;
@@ -1033,6 +1035,7 @@ app.use('/api/game/hud-feed', hudFeedLimiter, hudFeedRouter);
 app.get('/api/parties/public', partiesListLimiter, listPublicParties);
 app.get('/api/parties/public/:id/messages', partiesListLimiter, listPublicPartyMessages);
 app.use('/api/parties', requireClientAuth, partiesRouter);
+app.use('/api/giveaways', requireClientAuth, giveawaysRouter);
 app.use('/api/block', requireClientAuth, blockRouter);
 app.use('/api/reports', reportsRouter);
 app.use('/api/moderation', moderationRouter);
@@ -1096,6 +1099,10 @@ app.get('/api/admin/parties', requirePartiesEnabled, requireDiscordRole('owner',
 app.get('/api/admin/parties/:id', requirePartiesEnabled, requireDiscordRole('owner', 'admin'), adminGetParty);
 app.get('/api/admin/parties/:id/messages', requirePartiesEnabled, requireDiscordRole('owner', 'admin'), adminListPartyMessages);
 app.delete('/api/admin/parties/:partyId/messages/:messageId', requirePartiesEnabled, requireDiscordRole('owner', 'admin'), adminDeletePartyMessage);
+
+// Giveaway admin — force-cancel any active giveaway (owner|admin|mod only)
+app.delete('/api/admin/giveaways/:shortId', requireDiscordRole('owner', 'admin', 'mod'), adminCancelGiveaway);
+
 // X-Admin-API-Key debug mirrors (CLI tooling)
 app.get('/admin/debug/parties', apiLimiter, requirePartiesEnabled, requireAdminKey, adminListParties);
 app.get('/admin/debug/parties/:id', apiLimiter, requirePartiesEnabled, requireAdminKey, adminGetParty);
@@ -1663,6 +1670,9 @@ startPartyReapJob({
   },
   broadcastToPartyMembers,
 });
+
+// Giveaway service — restore draw timers for any in-flight giveaways after restart.
+void giveawayService.init({ prisma: prisma as any, broadcast });
 
 // Moderation sweeps — every 5 min clear expired bans/mutes/kicks. WS guards
 // also auto-expire on access for connected users; this catches offline ones

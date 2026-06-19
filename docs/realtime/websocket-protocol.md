@@ -507,3 +507,59 @@ Accompanies an `error` frame when the message rate limit is exceeded.
   "payload": { "remaining": 0, "retryAfterMs": 1000 }
 }
 ```
+
+---
+
+## Giveaway Events
+
+### `giveaway:update` (S→C broadcast)
+
+Sent to all connected clients whenever the entry count or status of a giveaway changes (on join,
+leave, cancel, or draw). Clients use this to update live entry counts and button state on
+giveaway announcement cards without re-fetching.
+
+```json
+{
+  "type": "giveaway:update",
+  "payload": {
+    "giveawayId": "<uuid>",
+    "shortId": "A1B2C3",
+    "entryCount": 7,
+    "status": "active"
+  }
+}
+```
+
+`status` values: `"active"` | `"cancelled"` | `"completed"`.
+
+Giveaway announcements and winner results arrive as standard `chat:message` frames from source
+`"bot"` with a structured `metadata` field:
+
+**Announcement** (`metadata.type = "giveaway"`):
+```json
+{
+  "type": "giveaway",
+  "giveawayId": "<uuid>",
+  "shortId": "A1B2C3",
+  "itemName": "Ultracite Flux x10",
+  "creatorName": "Devotek",
+  "endsAt": "2026-06-19T14:35:00Z",
+  "durationMin": 5,
+  "entryCount": 0
+}
+```
+
+**Winner / end result** (`metadata.type = "giveaway_winner"`):
+```json
+{
+  "type": "giveaway_winner",
+  "giveawayId": "<uuid>",
+  "shortId": "A1B2C3",
+  "itemName": "Ultracite Flux x10",
+  "winnerName": "Wastelander76",
+  "entryCount": 12,
+  "cancelled": false
+}
+```
+
+`winnerName` is `null` when the giveaway ended with no entries. `cancelled: true` when stopped early.
