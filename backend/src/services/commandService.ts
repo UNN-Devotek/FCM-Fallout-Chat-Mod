@@ -267,9 +267,15 @@ async function handleGiveawayCommand(
       return { handled: true, actionType: 'private', botMessage: 'Usage: /giveaway start <item name> [<minutes>]', targetChannelId: replyChannelId };
     }
     // Parse optional trailing integer as duration: "/giveaway start Ultracite Flux 10"
+    // Only treat the last token as duration when:
+    //   1. It is a bare integer (no letters)
+    //   2. The token immediately before it is NOT 'x' or 'X' (guards "Flux x 10")
+    //   3. At least one token remains as the item name after removing it
     const parts = rest.split(' ');
     const lastPart = parts[parts.length - 1];
-    const trailingNum = /^\d+$/.test(lastPart) ? parseInt(lastPart, 10) : null;
+    const secondLast = parts.length >= 2 ? parts[parts.length - 2] : '';
+    const isDurationToken = /^\d+$/.test(lastPart) && !/^x$/i.test(secondLast) && parts.length >= 2;
+    const trailingNum = isDurationToken ? parseInt(lastPart, 10) : null;
     const itemName = trailingNum !== null ? parts.slice(0, -1).join(' ').trim() : rest;
     const durationMin = trailingNum ?? 5;
 
