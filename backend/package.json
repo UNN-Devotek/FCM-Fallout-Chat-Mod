@@ -33,7 +33,7 @@
     "node-emoji": "^1.11.0",
     "pg": "^8.13.3",
     "pino": "^10.3.1",
-    "rate-limit-redis": "^4.3.1",
+    "rate-limit-redis": "^5.0.0",
     "redis": "^6.0.0",
     "tar-stream": "^3.2.0",
     "uuid": "^11.1.1",
