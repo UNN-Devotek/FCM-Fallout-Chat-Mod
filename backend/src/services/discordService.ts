@@ -9,6 +9,12 @@ import reactionRoleService from './reactionRoleService';
 import ticketService from './ticketService';
 import { getEntry, bestMatch } from './wikiCatalogService';
 import { canon } from '../utils/textCanon';
+import {
+  RELEASE_PING,
+  downloadPageUrl,
+  releaseDownloadFieldValue,
+  nexusEndorseFieldValue,
+} from '../utils/releaseAnnouncement';
 
 let discordClient: Client | null = null;
 let broadcastFn: ((payload: any, excludeWs?: any) => void) | null = null; // Injected from WS handler to avoid circular deps
@@ -955,15 +961,10 @@ async function relayToDiscord(channelId: string, username: string, content: stri
 // Mod", WITH spaces). A mismatch serves a 404 error page → "file corrupted" on
 // install. Exported so the publish pipeline can VERIFY both platform downloads
 // exist before announcing (releasesController).
-// Human-download ZIP URLs for Discord release announcements (website + Nexus);
-// the CLI installers download the raw .exe / .AppImage directly.
-export const ELECTRON_BASE = 'https://falloutchatmod.com/downloads/electron';
-export function electronWindowsUrl(version: string): string {
-  return `${ELECTRON_BASE}/${encodeURIComponent(`Fallout Chat Mod Setup ${version} (Windows).zip`)}`;
-}
-export function electronLinuxUrl(version: string): string {
-  return `${ELECTRON_BASE}/${encodeURIComponent(`Fallout Chat Mod-${version}.AppImage (Linux).zip`)}`;
-}
+// Human-download ZIP URLs for Discord release announcements now live in the
+// ENVIRONMENT-AWARE utils/releaseAnnouncement + releaseDownloadUrls modules
+// (RELEASE_DOWNLOAD_HOST), so dev/QA announcements link to the dev host instead
+// of prod — see releaseDownloadFieldValue().
 
 // Discord "Updates" channel — release announcements are posted here.
 const UPDATES_CHANNEL_ID = process.env.DISCORD_UPDATES_CHANNEL_ID || '1479531502567166066';
@@ -975,7 +976,7 @@ const UPDATES_CHANNEL_ID = process.env.DISCORD_UPDATES_CHANNEL_ID || '1479531502
  * Discord-bridge unavailability (the bot may still be connecting when the
  * publish lands).
  */
-async function postReleaseAnnouncement(version: string, releaseNotes: string, downloadUrl: string): Promise<void> {
+async function postReleaseAnnouncement(version: string, releaseNotes: string): Promise<void> {
   const attemptDelays = [0, 500, 1500, 3000, 5000]; // 5 tries, ~10s total
   let lastErr: unknown = null;
 
@@ -991,15 +992,24 @@ async function postReleaseAnnouncement(version: string, releaseNotes: string, do
       if (!channel?.isTextBased()) {
         throw new Error(`Updates channel ${UPDATES_CHANNEL_ID} is not a text channel`);
       }
-      const downloadPage = process.env.DOWNLOAD_PAGE_URL || 'https://falloutchatmod.com';
       const embed = new EmbedBuilder()
         .setTitle(`Fallout Chat Mod v${version} is out`)
-        .setURL(downloadPage)
+        .setURL(downloadPageUrl())
         .setColor(0xF1C40F) // gold/yellow — matches the Securitron role color
         .setDescription((releaseNotes || 'A new version is available.').slice(0, 4000))
-        .addFields({ name: 'Download', value: `🪟 [Windows](${electronWindowsUrl(version)})  ·  🐧 [Linux (Proton)](${electronLinuxUrl(version)})  ·  [Download page](${downloadPage})` })
+        .addFields(
+          { name: '📥 Download', value: releaseDownloadFieldValue(version) },
+          { name: '❤️ Endorse on Nexus', value: nexusEndorseFieldValue() },
+        )
         .setTimestamp(new Date());
-      await (channel as TextChannel).send({ embeds: [embed] });
+      // Ping @everyone in the Updates channel. allowedMentions is REQUIRED for the
+      // ping to actually fire, and the bot must hold "Mention Everyone" in the
+      // channel — without the perm the message still posts, just without the ping.
+      await (channel as TextChannel).send({
+        content: RELEASE_PING,
+        embeds: [embed],
+        allowedMentions: { parse: ['everyone'] },
+      });
       logger.info({ version, channelId: UPDATES_CHANNEL_ID, attempt: i + 1 }, 'Posted release announcement to Discord');
       return; // success
     } catch (err) {
