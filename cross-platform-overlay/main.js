@@ -1278,6 +1278,9 @@ function openRelaySocket(id) {
         if (!updateNotifiedThisSession && overlayCore.cmpVersions(latestVersion, APP_VERSION) > 0) {
           updateNotifiedThisSession = true;
           showUpdateNotification(latestVersion);
+          // Also signal the renderer so it can show a persistent in-UI indicator
+          // (red dot on the version string in the settings panel).
+          sendToRenderer('relay:update-available', { latestVersion });
         }
       }
     } catch { /* not JSON or not an update event — ignore */ }

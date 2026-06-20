@@ -670,6 +670,8 @@ export function openComponentSettings() {
 
 let currentSettings: ShellSettings = DEFAULT_SHELL_SETTINGS;
 let onSettingsChange: ((s: ShellSettings) => void) | null = null;
+/** Reference to the version span — set once the settings panel is built. */
+let verSpanEl: HTMLElement | null = null;
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs?: Partial<HTMLElementTagNameMap[K]> & { className?: string }, ...kids: (Node | string)[]): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -928,6 +930,7 @@ function buildSettingsPanel() {
   // Show the build-time version from the Vite define constant. No live fetch —
   // the displayed version is always the installed build version.
   const verSpan = el('span', { className: 'ss-ver' }, `v${__APP_VERSION__}`);
+  verSpanEl = verSpan;
   head.append(verSpan);
   panel.append(head);
   // Official non-affiliation disclaimer — shown at the top of Settings, under the
@@ -1584,6 +1587,35 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
   // resizes the overlay when Fallout 76 launches/closes, and the old resize→
   // re-clamp path is what reset the font to ~8px on every game launch.
   startIdleLoop(currentSettings);
+
+  // Version update indicator: when main signals a newer version is available,
+  // mark the version span in the settings panel with a red dot.
+  window.relayBridge.onUpdateAvailable?.(({ latestVersion }) => {
+    // Inject the dot style once (idempotent — harmless if called twice).
+    if (!document.getElementById('shell-update-dot-style')) {
+      const s = document.createElement('style');
+      s.id = 'shell-update-dot-style';
+      s.textContent = [
+        '.ss-ver--outdated { position: relative; padding-right: 10px; }',
+        '.ss-ver--outdated::after {',
+        '  content: "";',
+        '  position: absolute;',
+        '  top: 2px;',
+        '  right: 0;',
+        '  width: 6px;',
+        '  height: 6px;',
+        '  border-radius: 50%;',
+        '  background: #e74c3c;',
+        '  box-shadow: 0 0 4px rgba(231,76,60,0.7);',
+        '}',
+      ].join('\n');
+      document.head.appendChild(s);
+    }
+    if (verSpanEl) {
+      verSpanEl.classList.add('ss-ver--outdated');
+      verSpanEl.title = `Update available: v${latestVersion}`;
+    }
+  });
 
   // While collapsed, re-assert on any window resize (compositor-driven or manual)
   // so the viewport never jumps to the chat input. Debounced; skips the
