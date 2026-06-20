@@ -135,7 +135,17 @@ if ($ZipAs) {
         }
     }
     Write-Host "[nexus] zipping $(Split-Path $FilePath -Leaf) -> $ZipAs  (extra files: $($filesToZip.Count - 1))"
-    Compress-Archive -Path $filesToZip -DestinationPath $zipPath -Force
+    # Compress-Archive on Linux emits a zip whose entries (Unix attrs / central-dir
+    # layout) can make Nexus's ClamAV fail the scan -> the file gets blocked even
+    # though the contents are clean. Use the standard `zip` tool there (-j flat, -X
+    # drop Unix extra fields) for a conventional Windows-like archive; Compress-Archive
+    # is fine on Windows.
+    if ($IsWindows) {
+        Compress-Archive -Path $filesToZip -DestinationPath $zipPath -Force
+    } else {
+        & zip -j -q -X $zipPath $filesToZip
+        if ($LASTEXITCODE -ne 0) { Fail "zip failed (exit $LASTEXITCODE) building $zipPath" }
+    }
     $FilePath = $zipPath
 }
 
