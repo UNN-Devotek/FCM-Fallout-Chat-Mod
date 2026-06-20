@@ -41,6 +41,34 @@ Before/just after publishing, confirm the packaged build launches cleanly via th
 
 ---
 
+## Release notes — standard format
+
+The `releaseNotes` we pass at publish time (Discord `#updates` announcement, Nexus,
+and the GitHub release all use the same text) follow ONE house format:
+
+- **A flat list of `type(scope): description` lines** — conventional-commit prefixes
+  (`feat` / `fix` / `chore` / `perf`) with a short scope (`overlay`, `giveaway`,
+  `security`, …). **No section headers.**
+- **One change per line.** Order: new features (`feat`) first, then notable
+  behavior changes, then fixes.
+- **No emojis.**
+- **Plain-English descriptions — NOT a commit log.** Translate each change to its
+  *user impact*; drop deep implementation detail (no "Electron 31→39",
+  "ozone-platform", "gamescope", internal module names). Collapse many small commits
+  into one readable line (e.g. a batch of CodeQL fixes → one `fix(security):` line).
+- **Always confirm the version + the exact notes with the user before publishing.**
+
+Example (the v1.3.91 release):
+
+```
+feat(giveaway): host community item raffles right from chat — start one with /giveaway start, others join with a single click, and a winner is drawn automatically when the timer ends (check active raffles with /giveaway list)
+feat(overlay): the overlay no longer auto-updates (per Nexus Mods' guidelines) — updates are now manual: you'll be notified when a new version is available, then download and re-run the installer to update
+fix(security): patched several vulnerabilities found by automated code scanning, including safer handling of links and redirects and stronger validation of incoming data
+fix(overlay): a range of reliability and quality fixes across chat connections, parties, and the moderation tools
+```
+
+---
+
 ## Release Pipeline (in order)
 
 **FAIL-CLOSED ORDER:** build -> **smoke-test (gate)** -> **VirusTotal (gate, must pass)** -> build ZIPs -> upload artifacts -> verify served sizes -> `POST /admin/releases` -> Nexus. If a gate fails, STOP — publish nothing.
