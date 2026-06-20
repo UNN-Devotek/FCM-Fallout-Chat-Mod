@@ -3707,6 +3707,7 @@ export default function ChatOverlay() {
   // relay. The website (no shell) keeps liveVersion (the latest available).
   const [shellInfo, setShellInfo] = useState<{ appVersion?: string; relayHost?: string } | null>(null);
   const displayVersion = (overlayShell && shellInfo?.appVersion) || liveVersion || __APP_VERSION__;
+  const [updateAvailableVersion, setUpdateAvailableVersion] = useState<string | null>(null);
   // DEV indicator: website dev-server (localhost) OR overlay on a non-prod relay.
   const isDevEnv = (typeof window !== 'undefined' && window.location.hostname === 'localhost')
     || (!!overlayShell && !!shellInfo?.relayHost && !isProdRelayHost(shellInfo.relayHost));
@@ -4728,6 +4729,9 @@ export default function ChatOverlay() {
                     });
                   }, 4100);
                 }
+              } else if (frame.type === 'app:update-available') {
+                const v = frame.payload?.latestVersion;
+                if (v && typeof v === 'string') setUpdateAvailableVersion(v);
               }
             } catch { /* ignore */ }
           };
@@ -8646,7 +8650,10 @@ export default function ChatOverlay() {
                 parts.push('/help');
                 return parts.join(' · ');
               })() : 'Enter send · /help'}</span>
-              <span style={{ color: hexAlpha(primaryColor, 0.8), textShadow: textOutline, flexShrink: 0, marginLeft: '6px' }}>
+              <span style={{ color: hexAlpha(primaryColor, 0.8), textShadow: textOutline, flexShrink: 0, marginLeft: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                {updateAvailableVersion && (
+                  <span title={`Update available: v${updateAvailableVersion}`} style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#e74c3c', boxShadow: '0 0 4px rgba(231,76,60,0.8)', flexShrink: 0, display: 'inline-block' }} />
+                )}
                 v{displayVersion}{isDevEnv ? ' [DEV]' : ''}
               </span>
             </div>

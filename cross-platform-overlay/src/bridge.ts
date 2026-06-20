@@ -105,6 +105,9 @@ interface RelayBridge {
    *  (fired after the OS toast). The renderer uses this to show a red-dot indicator
    *  on the version string in the settings panel. */
   onUpdateAvailable?(cb: (payload: { latestVersion: string }) => void): void;
+  /** Query main for a pending update version - catches update signals that fired
+   *  before the onUpdateAvailable listener was registered on startup. */
+  getPendingUpdate?(): Promise<string | null>;
   /** Dev-only: log in as a system persona, bypassing Discord OAuth.
    *  Hard-gated by !app.isPackaged in main.js — always { ok: false } in prod. */
   devLoginAs?(persona: string): Promise<{ ok: boolean; error?: string }>;
