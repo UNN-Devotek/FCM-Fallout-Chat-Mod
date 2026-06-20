@@ -301,8 +301,15 @@ via `X-Admin-API-Key`). The same fail-closed gates apply — smoke-test the dev 
 .\Packaging\publish-nexus-release.ps1 -Version X.Y.Z [-ReleaseNotes "..."]
 ```
 
+> **Windows Nexus upload is TEMPORARILY DISABLED (2026-06-20).** Nexus auto-quarantines the
+> unsigned Windows installer, so the `Windows` entry in the platform loop is commented out and
+> only the **Linux** file is published to Nexus; Windows users get the `.exe` from
+> `falloutchatmod.com` (still uploaded to the website in steps 4-6). A support ticket is open to
+> lift the quarantine. **Re-enable** by uncommenting the `Windows` line in `publish-nexus-release.ps1`
+> once the quarantine is lifted or the installer is code-signed.
+
 This script:
-1. Calls `Packaging/publish-nexus.ps1` once for each platform (Windows ZIP + Linux ZIP)
+1. Calls `Packaging/publish-nexus.ps1` once for each enabled platform (currently Linux only; Windows ZIP when re-enabled)
 2. Each call implements the 6-step Nexus v3 Upload API: open multipart session → upload chunks to S3 → complete S3 multipart → finalise → poll for `available` state → attach as new MAIN file (archiving the previous one)
 3. Uploads the Windows `.exe` to VirusTotal and pushes the permalink to `/admin/virustotal-url`
 

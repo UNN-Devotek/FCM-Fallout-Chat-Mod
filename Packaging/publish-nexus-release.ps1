@@ -140,7 +140,12 @@ $linuxInclude = @(
 )
 
 foreach ($p in @(
-    @{ Name = "Windows"; File = $winExe;   Zip = $winZip;   Group = $winGroup;   Desc = $winDesc;   Include = $winInclude   },
+    # TEMPORARILY DISABLED (2026-06-20): Nexus auto-quarantines the unsigned Windows
+    # installer (.exe), so we don't publish it to Nexus for now — Windows users get it
+    # from falloutchatmod.com. A support ticket is open to lift the quarantine.
+    # RE-ENABLE: uncomment the Windows line below once the quarantine is lifted or the
+    # installer is code-signed.
+    # @{ Name = "Windows"; File = $winExe;   Zip = $winZip;   Group = $winGroup;   Desc = $winDesc;   Include = $winInclude   },
     @{ Name = "Linux";   File = $linuxApp; Zip = $linuxZip; Group = $linuxGroup; Desc = $linuxDesc; Include = $linuxInclude }
 )) {
     if (-not (Test-Path $p.File)) { Write-Error "[$($p.Name)] artifact not found: $($p.File)"; exit 1 }
