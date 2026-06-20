@@ -90,7 +90,10 @@ $linuxApp = Join-Path $DistDir "Fallout Chat Mod-$Version.AppImage"
 if (-not $DryRun) {
     $vtGate = Join-Path $PSScriptRoot "vt-gate.ps1"
     Write-Host "==== Running VirusTotal gate before Nexus publish ===="
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $vtGate -Version $Version -DistDir $DistDir
+    # Cross-platform: Windows PowerShell on Windows, PowerShell 7 (pwsh) on Linux/macOS
+    # (a release can be cut from Linux). powershell.exe does not exist off Windows.
+    $psExe = if ($IsWindows) { 'powershell.exe' } else { 'pwsh' }
+    & $psExe -NoProfile -ExecutionPolicy Bypass -File $vtGate -Version $Version -DistDir $DistDir
     if ($LASTEXITCODE -ne 0) {
         Write-Error "VT gate FAILED (exit $LASTEXITCODE) - aborting Nexus publish. Release blocked."
         exit 1

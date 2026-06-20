@@ -47,11 +47,14 @@ function Fail($msg) { Write-Error "[package-downloads] $msg"; exit 1 }
 # --- Validate raw artifact existence -----------------------------------------
 $winExe   = Join-Path $DistDir "Fallout Chat Mod Setup $Version.exe"
 $linuxApp = Join-Path $DistDir "Fallout Chat Mod-$Version.AppImage"
-$linuxDeb = Join-Path $DistDir "Fallout Chat Mod-$Version.deb"
+# electron-builder names the .deb from the package name (e.g.
+# fallout-chatmod-cross-platform-overlay_${Version}_amd64.deb), NOT productName,
+# so glob for it rather than assuming the AppImage-style "Fallout Chat Mod-$Version.deb".
+$linuxDeb = (Get-ChildItem -Path $DistDir -Filter "*$Version*.deb" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
 
 if (-not (Test-Path $winExe))   { Fail "Windows installer not found: $winExe" }
 if (-not (Test-Path $linuxApp)) { Fail "Linux AppImage not found: $linuxApp" }
-if (-not (Test-Path $linuxDeb)) { Fail "Linux .deb not found: $linuxDeb (electron-builder deb target)" }
+if (-not $linuxDeb -or -not (Test-Path $linuxDeb)) { Fail "Linux .deb not found in $DistDir (electron-builder deb target)" }
 
 # --- Instruction files -------------------------------------------------------
 $installWin   = Join-Path $AssetsDir "install\INSTALL-WINDOWS.txt"
