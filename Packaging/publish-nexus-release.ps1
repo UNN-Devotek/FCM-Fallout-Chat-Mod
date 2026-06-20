@@ -111,7 +111,7 @@ $linuxZip = "Fallout Chat Mod-$Version.AppImage (Linux).zip"
 $winDesc = $notesBlock + @"
 Full install instructions for every platform: https://falloutchatmod.com (SYSTEM -> INSTALL)
 
-PREFER THE CLI? One-line install (PowerShell), auto-updates afterward:
+PREFER THE CLI? One-line install (PowerShell):
     irm https://falloutchatmod.com/install.ps1 | iex
 
 Or download this zip, extract, and run "Fallout Chat Mod Setup <version>.exe". See INSTALL-WINDOWS.txt inside the zip.
@@ -121,7 +121,7 @@ About antivirus / SmartScreen: because the installer isn't code-signed yet, you 
 $linuxDesc = $notesBlock + @"
 Full install instructions for every platform: https://falloutchatmod.com (SYSTEM -> INSTALL)
 
-PREFER THE CLI? One-line install (auto-updates afterward, adds an app-menu launcher):
+PREFER THE CLI? One-line install (adds an app-menu launcher):
     curl -fsSL https://falloutchatmod.com/install.sh | bash
 
 Or download this zip, extract, then: chmod +x the AppImage and run it. See INSTALL-LINUX.txt inside the zip. Requires an X11/XWayland session.
