@@ -1,0 +1,32 @@
+============================================
+  FALLOUT CHAT MOD
+============================================
+
+>>> WINDOWS USERS - READ THIS <<<
+
+The Windows installer is NOT in this download. Get it from the official site
+(it's the exact same build, and it's clean):
+
+    https://falloutchatmod.com        (then:  SYSTEM  ->  INSTALL)
+
+VirusTotal scan (always points to the current build):
+
+    https://falloutchatmod.com/virustotal
+
+Why isn't the Windows installer on Nexus? Nexus's automated system quarantines
+installer .exe files by default. It's a false positive (0 / 72 on VirusTotal),
+and we're getting it sorted out with Nexus support. Until then, grab the Windows
+version from the site above.
+
+--------------------------------------------
+
+>>> LINUX USERS <<<
+
+This download is for you:
+
+  1. Extract this zip.
+  2. chmod +x   the   "Fallout Chat Mod-<version>.AppImage"   file.
+  3. Run it.    (Requires an X11 / XWayland session.)
+
+Full guide + KDE Plasma (Wayland) notes: see INSTALL-LINUX.txt in this zip, or
+https://falloutchatmod.com  (SYSTEM -> INSTALL).
