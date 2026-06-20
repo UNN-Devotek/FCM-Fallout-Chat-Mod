@@ -25,13 +25,20 @@ export interface GitHubReleaseConfig {
   repo: string;
 }
 
-/** Resolve config from env; null if any piece is missing (→ skip cleanly). */
+// The repo is fixed for this project; env vars only need to OVERRIDE it (e.g. a
+// fork). Prod sets GITHUB_PAT but not GITHUB_OWNER/GITHUB_REPO, so default them.
+const DEFAULT_OWNER = 'UNN-Devotek';
+const DEFAULT_REPO = 'FCM-Fallout-Chat-Mod';
+
+/** Resolve config from env; null only if no token is available (→ skip cleanly). */
 export function githubReleaseConfig(): GitHubReleaseConfig | null {
   const token = process.env.GITHUB_RELEASE_TOKEN || process.env.GITHUB_PAT;
-  const owner = process.env.GITHUB_OWNER;
-  const repo = process.env.GITHUB_REPO;
-  if (!token || !owner || !repo) return null;
-  return { token, owner, repo };
+  if (!token) return null;
+  return {
+    token,
+    owner: process.env.GITHUB_OWNER || DEFAULT_OWNER,
+    repo: process.env.GITHUB_REPO || DEFAULT_REPO,
+  };
 }
 
 /** A `-suffix` (e.g. `1.3.91-dev`) marks a pre-release. */

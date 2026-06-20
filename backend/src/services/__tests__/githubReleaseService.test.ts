@@ -28,12 +28,18 @@ describe('githubReleaseService', () => {
   });
 
   describe('githubReleaseConfig', () => {
-    test('null when owner/repo/token missing', () => {
+    test('null only when no token is available', () => {
       for (const k of KEYS) delete process.env[k];
       assert.equal(githubReleaseConfig(), null);
     });
-    test('uses GITHUB_PAT + owner/repo when no dedicated token', () => {
+    test('defaults owner/repo to the FCM repo when unset (prod has only GITHUB_PAT)', () => {
       delete process.env.GITHUB_RELEASE_TOKEN;
+      delete process.env.GITHUB_OWNER;
+      delete process.env.GITHUB_REPO;
+      process.env.GITHUB_PAT = 'tok';
+      assert.deepEqual(githubReleaseConfig(), { token: 'tok', owner: 'UNN-Devotek', repo: 'FCM-Fallout-Chat-Mod' });
+    });
+    test('explicit GITHUB_OWNER/REPO override the defaults', () => {
       process.env.GITHUB_PAT = 'tok';
       process.env.GITHUB_OWNER = 'o';
       process.env.GITHUB_REPO = 'r';
@@ -42,8 +48,6 @@ describe('githubReleaseService', () => {
     test('GITHUB_RELEASE_TOKEN overrides GITHUB_PAT', () => {
       process.env.GITHUB_PAT = 'pat';
       process.env.GITHUB_RELEASE_TOKEN = 'rel';
-      process.env.GITHUB_OWNER = 'o';
-      process.env.GITHUB_REPO = 'r';
       assert.equal(githubReleaseConfig()?.token, 'rel');
     });
   });

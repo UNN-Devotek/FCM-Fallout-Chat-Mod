@@ -280,9 +280,9 @@ to mirror the same notes to a GitHub Release — tag `v<version>`, body = the no
 env-aware download links + the Nexus-endorse line. It is **best-effort** (logs + continues
 on any GitHub API failure; never blocks the publish) and **idempotent** (re-publishing a
 version updates its release). A `-suffix` version (e.g. `1.3.91-dev`) publishes as a GitHub
-**pre-release**. Config: `GITHUB_OWNER` / `GITHUB_REPO` + a token — `GITHUB_RELEASE_TOKEN`
-if set (needs `contents: write`), else the shared `GITHUB_PAT`; if any is unset, the step is
-skipped cleanly.
+**pre-release**. Config: a token — `GITHUB_RELEASE_TOKEN` if set (needs `contents: write`),
+else the shared `GITHUB_PAT` (prod already has this); owner/repo default to this repo and only
+need `GITHUB_OWNER` / `GITHUB_REPO` to override (e.g. a fork). Skipped cleanly when no token is set.
 
 **Publishing to a non-prod stack (dev/QA).** `publishRelease` builds and verifies all
 four artifact URLs against an **environment-aware** downloads origin
