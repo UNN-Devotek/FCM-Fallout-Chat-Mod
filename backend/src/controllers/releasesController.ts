@@ -5,6 +5,7 @@ import prisma from '../config/prisma';
 import { constantTimeEquals } from '../utils/constantTimeEquals';
 import { postReleaseAnnouncement } from '../services/discordService';
 import { setLatestVersion } from '../services/latestReleaseVersion';
+import { createGitHubRelease } from '../services/githubReleaseService';
 import {
   linuxZipUrl,
   rawWindowsInstallerUrl,
@@ -171,6 +172,12 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
     // Refresh the in-memory latest-version cache so newly connecting overlays
     // receive the updated version in their app:update-available handshake message.
     setLatestVersion(version);
+
+    // Best-effort: mirror the release to GitHub Releases (same notes + the
+    // env-aware download links). Never throws — a GitHub API failure must not
+    // fail a publish that already announced + recorded. Discord stays the only
+    // hard-required channel.
+    await createGitHubRelease(version, releaseNotes);
 
     res.json({ data: { message: `Release v${version} published`, ...toEntry(saved) } });
   } catch (err) {

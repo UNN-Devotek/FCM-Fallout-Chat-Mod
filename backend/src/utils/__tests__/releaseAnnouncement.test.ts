@@ -63,8 +63,11 @@ describe('releaseAnnouncement', () => {
     test('defaults to the prod host when RELEASE_DOWNLOAD_HOST is unset', () => {
       delete process.env.RELEASE_DOWNLOAD_HOST;
       const v = releaseDownloadFieldValue('1.2.3');
-      assert.ok(v.includes('https://falloutchatmod.com/downloads/electron/'));
-      assert.ok(!v.includes('dev.falloutchatmod.com'));
+      // Assert the exact prod links rather than a bare host substring — a bare
+      // `includes('host')` trips CodeQL's incomplete-url-substring-sanitization
+      // and proves nothing about the host. The full prod URLs exclude the dev host.
+      assert.ok(v.includes('🪟 [Windows](https://falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod%20Setup%201.2.3%20(Windows).zip)'));
+      assert.ok(v.includes('🐧 [Linux (Proton)](https://falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod-1.2.3.AppImage%20(Linux).zip)'));
     });
   });
 
