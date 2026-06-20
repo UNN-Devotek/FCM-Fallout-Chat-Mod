@@ -118,8 +118,11 @@ if ($ZipAs) {
     if ($ZipAs -notmatch '\.zip$') { Fail "-ZipAs must end in .zip (got '$ZipAs')" }
     # Prefer a temp dir on the same drive as the source file to avoid cross-drive
     # copies and to use available space (C: may be full on dev machines).
+    # Same-drive staging is a Windows optimization (C: may be full). On Linux,
+    # GetPathRoot() returns "/" which Test-Path passes but isn't writable — so the
+    # zip lands at "/<name>" (denied). Only use drive-root staging on Windows.
     $srcDrive  = [System.IO.Path]::GetPathRoot($FilePath)
-    $tempBase  = if ($srcDrive -and (Test-Path $srcDrive)) { $srcDrive } else { [System.IO.Path]::GetTempPath() }
+    $tempBase  = if ($IsWindows -and $srcDrive -and (Test-Path $srcDrive)) { $srcDrive } else { [System.IO.Path]::GetTempPath() }
     $zipPath   = Join-Path $tempBase $ZipAs
     if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
     # Build the list of files to include: the installer + any -IncludeFiles entries.
@@ -132,7 +135,17 @@ if ($ZipAs) {
         }
     }
     Write-Host "[nexus] zipping $(Split-Path $FilePath -Leaf) -> $ZipAs  (extra files: $($filesToZip.Count - 1))"
-    Compress-Archive -Path $filesToZip -DestinationPath $zipPath -Force
+    # Compress-Archive on Linux emits a zip whose entries (Unix attrs / central-dir
+    # layout) can make Nexus's ClamAV fail the scan -> the file gets blocked even
+    # though the contents are clean. Use the standard `zip` tool there (-j flat, -X
+    # drop Unix extra fields) for a conventional Windows-like archive; Compress-Archive
+    # is fine on Windows.
+    if ($IsWindows) {
+        Compress-Archive -Path $filesToZip -DestinationPath $zipPath -Force
+    } else {
+        & zip -j -q -X $zipPath $filesToZip
+        if ($LASTEXITCODE -ne 0) { Fail "zip failed (exit $LASTEXITCODE) building $zipPath" }
+    }
     $FilePath = $zipPath
 }
 
@@ -175,7 +188,12 @@ function Invoke-Nexus {
     #   retry loop below kicks in, instead of blocking the whole publish forever.
     # DIAGNOSE: `curl.exe -w 'http=%{http_code} ssl=%{time_appconnect}s' https://api.nexusmods.com/v1/users/validate.json -H "apikey: KEY"`
     #   http=000 + ssl=0 => this exact issue; add --ssl-revoke-best-effort.
-    $curlArgs = @("-s", "--ssl-revoke-best-effort", "--connect-timeout", "15", "--max-time", "120",
+    # curl binary + the Schannel-only flag are Windows-specific. On Linux/macOS use
+    # `curl` (the real binary, not the PowerShell alias) and omit
+    # --ssl-revoke-best-effort (a Windows Schannel option OpenSSL curl rejects).
+    $curlExe = if ($IsWindows) { 'curl.exe' } else { 'curl' }
+    $sslArgs = if ($IsWindows) { @('--ssl-revoke-best-effort') } else { @() }
+    $curlArgs = @("-s") + $sslArgs + @("--connect-timeout", "15", "--max-time", "120",
                   "-w", "`nHTTP_STATUS:%{http_code}", "-X", $Method.ToUpper(),
                   $Uri, "-H", "apikey: $ApiKey", "-H", "Content-Type: application/json")
     if ($null -ne $Body) {
@@ -193,7 +211,7 @@ function Invoke-Nexus {
     $httpStatus = 0; $respBody = ""
     try {
         for ($att = 1; $att -le 4; $att++) {
-            $rawOut = & curl.exe @curlArgs 2>&1
+            $rawOut = & $curlExe @curlArgs 2>&1
             $lines  = $rawOut -join "`n"
             $statusMatch = [regex]::Match($lines, 'HTTP_STATUS:(\d+)')
             $httpStatus  = if ($statusMatch.Success) { [int]$statusMatch.Groups[1].Value } else { 0 }
@@ -294,9 +312,12 @@ try {
     # --ssl-revoke-best-effort: same Schannel revocation fix as Invoke-Nexus above
     # (this presigned URL is on Cloudflare R2 -- *.r2.cloudflarestorage.com -- whose
     # cert chain triggers the same hard-revocation handshake failure on Windows).
-    $curlOut = & curl.exe -s --ssl-revoke-best-effort --connect-timeout 15 --max-time 120 -w "`nHTTP_STATUS:%{http_code}" -X POST $completeUrl `
-        -H "Content-Type: application/xml" `
-        --data-binary "@$xmlTmp" 2>&1
+    $curlExe = if ($IsWindows) { 'curl.exe' } else { 'curl' }
+    $sslArgs = if ($IsWindows) { @('--ssl-revoke-best-effort') } else { @() }
+    $cArgs = @("-s") + $sslArgs + @("--connect-timeout", "15", "--max-time", "120",
+              "-w", "`nHTTP_STATUS:%{http_code}", "-X", "POST", $completeUrl,
+              "-H", "Content-Type: application/xml", "--data-binary", "@$xmlTmp")
+    $curlOut = & $curlExe @cArgs 2>&1
     $statusLine = ($curlOut | Select-String "HTTP_STATUS:").ToString()
     $httpStatus = [int]($statusLine -replace '.*HTTP_STATUS:','')
     $respBody   = ($curlOut | Where-Object { $_ -notmatch "HTTP_STATUS:" }) -join "`n"
