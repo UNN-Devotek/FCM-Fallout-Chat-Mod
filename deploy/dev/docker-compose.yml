@@ -167,6 +167,11 @@ services:
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET}
       DISCORD_SERVER_ID: ${DISCORD_SERVER_ID}
       DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI:-https://dev.falloutchatmod.com/auth/discord/callback}
+      # Release announcement target. Code defaults DISCORD_UPDATES_CHANNEL_ID to a
+      # PROD channel the dev bot can't see (Missing Access → publishRelease 502s),
+      # so point it at the dev guild's #updates. DOWNLOAD_PAGE_URL is the embed link.
+      DISCORD_UPDATES_CHANNEL_ID: ${DISCORD_UPDATES_CHANNEL_ID:-1514511518434201697}
+      DOWNLOAD_PAGE_URL: ${DOWNLOAD_PAGE_URL:-https://dev.falloutchatmod.com}
       # Dev-guild role IDs (cloned dev server has BRAND-NEW IDs — see plan).
       OWNER_ROLE_ID: ${OWNER_ROLE_ID}
       ADMIN_ROLE_ID: ${ADMIN_ROLE_ID}
@@ -195,6 +200,20 @@ services:
       # --- Dev-only admin / session secrets (SR-001: never prod's) ---
       ADMIN_API_KEY: ${ADMIN_API_KEY:?set ADMIN_API_KEY (dev-only, never prod)}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET (dev-only, never prod)}
+
+      # --- Overlay registration shared key (TOFU client-key path) ---
+      # Must match the overlay's baked DEFAULT_APP_CLIENT_KEY (overlay-core.js).
+      # Prod gets this via env_file: .env; this service lists vars explicitly, so
+      # without it POST /api/users returns 503 "Registration unavailable: server
+      # misconfigured" and the overlay mislabels it as a CF challenge.
+      APP_CLIENT_KEY: ${APP_CLIENT_KEY:-fo76-chat-desktop-v1}
+
+      # --- Release pipeline: environment-aware downloads origin ---
+      # publishRelease verifies + links artifacts at https://<host>/downloads/…
+      # The code defaults to prod; the dev stack points it at itself so
+      # publish-to-dev verifies DEV-hosted artifacts, not prod's
+      # (backend/src/utils/releaseDownloadUrls.ts).
+      RELEASE_DOWNLOAD_HOST: ${RELEASE_DOWNLOAD_HOST:-dev.falloutchatmod.com}
     volumes:
       - releases_dev_downloads:/app/downloads
     security_opt: ["no-new-privileges:true"]

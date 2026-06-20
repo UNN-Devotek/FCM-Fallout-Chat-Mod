@@ -23,7 +23,7 @@ jobs:
   # so restrict release builds to the repo owner. Every build job needs this.
   authorize:
     name: Authorize (owner-only)
-    runs-on: [self-hosted, linux, unn]
+    runs-on: ubuntu-latest
     steps:
       - name: Verify actor is the owner
         env:
@@ -38,7 +38,7 @@ jobs:
   build-linux:
     name: Build Linux AppImage + deb
     needs: authorize
-    runs-on: [self-hosted, linux, unn]
+    runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash

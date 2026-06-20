@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   findTheme,
   getOverlayShell,
+  isProdRelayHost,
   resolveAvatarUrl,
   resolveMediaUrl,
   hexToRgba,
@@ -28,6 +29,29 @@ import {
   buildRichHtmlImpl,
   escapeHtmlAttr,
 } from '../ChatOverlay';
+
+// ── isProdRelayHost (drives the footer [DEV] indicator) ──────────────────────
+describe('isProdRelayHost', () => {
+  it('treats the prod host (and www) as prod — no [DEV]', () => {
+    expect(isProdRelayHost('falloutchatmod.com')).toBe(true);
+    expect(isProdRelayHost('www.falloutchatmod.com')).toBe(true);
+    expect(isProdRelayHost('FalloutChatMod.com')).toBe(true);      // case-insensitive
+    expect(isProdRelayHost('falloutchatmod.com:443')).toBe(true);  // port ignored
+  });
+
+  it('treats dev / staging / localhost as NON-prod — shows [DEV]', () => {
+    expect(isProdRelayHost('dev.falloutchatmod.com')).toBe(false);
+    expect(isProdRelayHost('staging.falloutchatmod.com')).toBe(false);
+    expect(isProdRelayHost('localhost:7177')).toBe(false);
+    expect(isProdRelayHost('127.0.0.1:7177')).toBe(false);
+  });
+
+  it('treats unknown/empty host as non-prod-positive=false (caller guards on presence)', () => {
+    expect(isProdRelayHost('')).toBe(false);
+    expect(isProdRelayHost(null)).toBe(false);
+    expect(isProdRelayHost(undefined)).toBe(false);
+  });
+});
 
 // ── findTheme ───────────────────────────────────────────────────────────────
 describe('findTheme', () => {

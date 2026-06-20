@@ -77,6 +77,25 @@ alphabetically. Used by the dashboard channel picker.
 Internal helper. Converts `EmbedData` to a discord.js `EmbedBuilder` with all
 Discord character limits applied.
 
+### `postReleaseAnnouncement(version, releaseNotes)` — `discordService.ts`
+
+Posted to the **Updates** channel (`DISCORD_UPDATES_CHANNEL_ID`) by `publishRelease`
+on every release. It is a **required** publish step — if it fails after retries the
+publish 502s and no release is recorded.
+
+- **Pings `@everyone`.** The message `content` is `@everyone` with
+  `allowedMentions: { parse: ['everyone'] }`; the ping only fires if the bot holds
+  **Mention Everyone** in that channel (otherwise it posts silently).
+- **Download field** — direct 🪟 Windows / 🐧 Linux ZIP links + a Download-page link.
+  The URLs are **environment-aware** (`utils/releaseAnnouncement.ts` →
+  `releaseDownloadUrls.ts`, `RELEASE_DOWNLOAD_HOST`), so a dev/QA release links to the
+  dev host instead of prod (where the dev artifacts would 404).
+- **Endorse-on-Nexus field** — encourages a Nexus endorsement, linking
+  `NEXUS_MOD_URL` (default `…/mods/4082`), with the caveat that Nexus only unlocks
+  endorsing after the user has downloaded the mod there at least once.
+- The copy + links are pure functions in `utils/releaseAnnouncement.ts` (unit-tested
+  in `releaseAnnouncement.test.ts`).
+
 ---
 
 ## Database

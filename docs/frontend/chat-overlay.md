@@ -53,6 +53,15 @@ everywhere simultaneously.
   component reads them via `MutationObserver` (`ChatOverlay.tsx:1135–1149`).
 - Avatar and media URLs are prefixed with `overlayShell.relayBase` because the
   renderer origin differs from the backend origin (`ChatOverlay.tsx:182–213`).
+- **Footer version + `[DEV]` indicator.** In the overlay the footer shows the
+  **actual running app version** (from the shell bridge `getInfo().appVersion`,
+  e.g. `1.3.91-dev`) rather than the latest-published `liveVersion` from
+  `GET /api/version` — so a dev/QA build is never mislabelled with the relay's
+  newest release. It appends `[DEV]` whenever the build is pointed at a non-prod
+  relay, decided by the pure `isProdRelayHost(host)` helper against
+  `getInfo().relayHost` (prod = `falloutchatmod.com` / `www.`). On the website
+  (no shell) the footer keeps `liveVersion` and only shows `[DEV]` on
+  `localhost`. See `isProdRelayHost` in [Key exported helpers](#key-exported-helpers).
 
 ## Surface Detection — How the Component Branches
 
@@ -128,6 +137,7 @@ Privileged users (role `owner`, `admin`, or `moderator`) see every party's messa
 | `isPrivilegedRole` | `(role: string) => boolean` | Returns true for owner/admin/moderator. Single source of truth, backed by `MOD_ROLES`. |
 | `shouldShowInMainFeed` | `(m, ctx) => boolean` | Pure: determines whether a message belongs in the main feed. Handles feedParent, child ids, joined party ids, and mod-observer inclusion. Testable without React. |
 | `formatMessageTimestamp` | `(value, format, opts?) => string` | Pure: formats a message's UTC timestamp in the VIEWER's local time. `format` is `'12h'`/`'24h'`; `opts.timeZone`/`opts.locale` exist for tests only. Returns `''` for missing/unparseable input. |
+| `isProdRelayHost` | `(host) => boolean` | Pure: true only for the prod relay host (`falloutchatmod.com`/`www.`), case-insensitive, port-ignored. Drives the footer `[DEV]` indicator so a build on any non-prod relay self-identifies. |
 
 ## Combined Feed
 

@@ -348,6 +348,19 @@ export function getOverlayShell(): OverlayShell | null {
 }
 
 /**
+ * Is this relay host the PRODUCTION host? The overlay footer shows a "[DEV]"
+ * indicator whenever the build is pointed at any NON-prod relay
+ * (dev.falloutchatmod.com, a staging host, localhost, …) so a focus-tester can
+ * tell at a glance they're not on prod. Pure — unit-tested. Port is ignored;
+ * matching is case-insensitive.
+ */
+export function isProdRelayHost(host: string | null | undefined): boolean {
+  if (!host) return false;
+  const h = host.toLowerCase().replace(/:\d+$/, '');
+  return h === 'falloutchatmod.com' || h === 'www.falloutchatmod.com';
+}
+
+/**
  * Resolve a backend avatar path to a loadable URL.
  *
  * Backend sends `avatarUrl` as a RELATIVE same-origin path ("/avatars/<id>")
@@ -1120,7 +1133,55 @@ interface WikiShareMetadata {
   kind?: string;
   wikiTitle?: string;
 }
-type ChatMessageMetadata = PartyInviteMetadata | NukeCodesMetadata | ServerStatusMetadata | CampItemMetadata | CardShareMetadata | WikiShareMetadata | { type?: string; [k: string]: unknown } | null;
+interface GiveawayMetadata {
+  type: 'giveaway';
+  giveawayId: string;
+  shortId: string;
+  itemName: string;
+  creatorName: string;
+  createdByUserId: string;
+  endsAt: string;
+  durationMin: number;
+  entryCount: number;
+}
+interface GiveawayWinnerMetadata {
+  type: 'giveaway_winner';
+  giveawayId: string;
+  shortId: string;
+  itemName: string;
+  winnerName: string | null;
+  entryCount: number;
+  cancelled?: boolean;
+}
+interface GiveawayListEntry {
+  giveawayId: string;
+  shortId: string;
+  itemName: string;
+  creatorName: string;
+  createdByUserId: string;
+  endsAt: string;
+  entryCount: number;
+  status: string;
+}
+interface GiveawayListMetadata {
+  type: 'giveaway_list';
+  giveaways: GiveawayListEntry[];
+}
+interface GiveawayHistoryEntry {
+  giveawayId: string;
+  shortId: string;
+  itemName: string;
+  creatorName: string;
+  winnerName: string | null;
+  entryCount: number;
+  status: string;
+  createdAt: string;
+}
+interface GiveawayHistoryMetadata {
+  type: 'giveaway_history';
+  giveaways: GiveawayHistoryEntry[];
+}
+type ChatMessageMetadata = PartyInviteMetadata | NukeCodesMetadata | ServerStatusMetadata | CampItemMetadata | CardShareMetadata | WikiShareMetadata | GiveawayMetadata | GiveawayWinnerMetadata | GiveawayListMetadata | GiveawayHistoryMetadata | { type?: string; [k: string]: unknown } | null;
 
 interface ChatMessage {
   id: string;
@@ -1248,8 +1309,8 @@ const BUILTIN_RELAYS: { cmd: SlashCommand; channelId: string | null; fallbackCol
   { cmd: { trigger: '/e',    description: 'Send to Events',              requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000003', fallbackColor: '#50C878' },
   { cmd: { trigger: '/r',    description: 'Send to Raids',               requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000004', fallbackColor: '#FF6644' },
   { cmd: { trigger: '/i',    description: 'Send to Infests',             requiresArgs: true, actionType: 'relay' }, channelId: '983995c1-f9ab-44c0-9b78-8b4cbf497273', fallbackColor: '#CC44FF' },
-  // /s omitted — server chat is disabled. A typed "/s ..." falls through to the
-  // backend, which returns a disabled notice.
+  // /s omitted — server chat is pending re-enable (tracked in the server-scoped-chat
+  // epic). A typed "/s ..." falls through to the backend, which returns a disabled notice.
 ];
 
 // Hardcoded form/utility commands — mirrors the desktop overlay's _acCommands list exactly.
@@ -1268,6 +1329,13 @@ const BUILTIN_FORMS: SlashCommand[] = [
   { trigger: '/p1',      description: 'Send to 1st joined party',                                     requiresArgs: true,  actionType: 'message' },
   { trigger: '/p2',      description: 'Send to 2nd joined party',                                     requiresArgs: true,  actionType: 'message' },
   { trigger: '/p3',      description: 'Send to 3rd joined party',                                     requiresArgs: true,  actionType: 'message' },
+  // Giveaways
+  { trigger: '/giveaway start', description: 'Start a community item raffle (1–60 min, default 5)',   requiresArgs: true,  actionType: 'message' },
+  { trigger: '/giveaway list',  description: 'Show all active giveaways',                             requiresArgs: false, actionType: 'message' },
+  { trigger: '/giveaway last',  description: 'Show results of last 1–10 giveaways (default 5)',       requiresArgs: false, actionType: 'message' },
+  { trigger: '/giveaway join',  description: 'Enter a giveaway by its short ID',                      requiresArgs: true,  actionType: 'message' },
+  { trigger: '/giveaway leave', description: 'Leave a giveaway you entered',                          requiresArgs: true,  actionType: 'message' },
+  { trigger: '/giveaway stop',  description: 'Cancel your giveaway (creator or mod only)',            requiresArgs: true,  actionType: 'message' },
 ];
 
 const MOD_ROLES = ['owner', 'admin', 'moderator'];
@@ -3410,6 +3478,11 @@ export default function ChatOverlay() {
   // so a burst on reconnect can't evict an id and allow a duplicate render.
   const seenMessageIdsRef = useRef<Set<string>>(new Set());
   const seenMessageIdQueueRef = useRef<string[]>([]);
+  // Live giveaway state keyed by giveawayId — updated via giveaway:update WS events.
+  // useRef avoids re-renders on every entry; card re-renders on setMessages trigger.
+  const giveawayLiveStateRef = useRef<Map<string, { entryCount: number; status: string; winnerName?: string | null }>>(new Map());
+  // Whether any giveaway is currently active — drives the ★ indicator on the Events tab.
+  const [giveawayActive, setGiveawayActive] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Rich (contentEditable) input ref — used only when overlayShell is active.
   const richInputRef = useRef<HTMLDivElement>(null);
@@ -3452,8 +3525,10 @@ export default function ChatOverlay() {
     el.focus();
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0) {
-      // No selection — append
-      const newText = (inputText + token).slice(0, 255);
+      // No selection -- append. Serialize from the live DOM rather than
+      // reading inputText state, which may be stale on rapid consecutive inserts.
+      const current = serializeRichInput(el);
+      const newText = (current + token).slice(0, 255);
       setInputText(newText);
       el.innerHTML = buildRichHtml(newText);
       return;
@@ -3497,7 +3572,7 @@ export default function ChatOverlay() {
     // Re-serialize and update state
     const serialized = serializeRichInput(el).slice(0, 255);
     setInputText(serialized);
-  }, [inputText, setInputText, buildRichHtml, serializeRichInput, insertAtCaret]);
+  }, [setInputText, buildRichHtml, serializeRichInput, insertAtCaret]);
 
   // Sync the rich input's HTML to the current inputText whenever it changes
   // from OUTSIDE (e.g. slash-command autocomplete sets inputText directly,
@@ -3625,7 +3700,16 @@ export default function ChatOverlay() {
     },
     staleTime: 60_000,
   });
-  const displayVersion = liveVersion ?? __APP_VERSION__;
+  // Electron overlay only: the REAL running app version + relay host, from the
+  // shell bridge (getInfo). We prefer the actual running version over the
+  // latest-PUBLISHED liveVersion so the footer reflects what the user is running
+  // — a dev/QA build shows e.g. "1.3.91-dev", not the newest release on the
+  // relay. The website (no shell) keeps liveVersion (the latest available).
+  const [shellInfo, setShellInfo] = useState<{ appVersion?: string; relayHost?: string } | null>(null);
+  const displayVersion = (overlayShell && shellInfo?.appVersion) || liveVersion || __APP_VERSION__;
+  // DEV indicator: website dev-server (localhost) OR overlay on a non-prod relay.
+  const isDevEnv = (typeof window !== 'undefined' && window.location.hostname === 'localhost')
+    || (!!overlayShell && !!shellInfo?.relayHost && !isProdRelayHost(shellInfo.relayHost));
 
   // ── Live keybinds (Electron overlay only) ─────────────────────────────────
   // The shell registers global hotkeys and pushes the live map here so the footer
@@ -3634,7 +3718,10 @@ export default function ChatOverlay() {
   useEffect(() => {
     if (!overlayShell) return;
     const bridge = (window as any).relayBridge;
-    bridge?.getInfo?.().then((info: any) => { if (info?.keybinds) setShellKeybinds(info.keybinds); }).catch(() => {});
+    bridge?.getInfo?.().then((info: any) => {
+      if (info?.keybinds) setShellKeybinds(info.keybinds);
+      setShellInfo({ appVersion: info?.appVersion, relayHost: info?.relayHost });
+    }).catch(() => {});
     return bridge?.onKeybinds?.((kb: Record<string, string>) => setShellKeybinds(kb));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -4291,6 +4378,11 @@ export default function ChatOverlay() {
             // Refetch channels on every (re)connect so the list is always current
             // even if channels:refresh events were missed during a disconnect.
             refetchChannelsRef.current?.();
+            // Hydrate active-giveaway indicator on connect.
+            fetch('/api/giveaways', { credentials: 'include' })
+              .then(r => r.ok ? r.json() : null)
+              .then(d => { if (d?.data?.length > 0) setGiveawayActive(true); })
+              .catch(() => {});
             // Report in-game state immediately on connect. The Electron shell
             // populates inGameRef via onGameState; on the website it stays false
             // (web users are not game clients — correct to be OFFLINE for presence).
@@ -4355,6 +4447,17 @@ export default function ChatOverlay() {
                   avatarUrl: frame.payload.avatarUrl ?? null,
                   metadata: frame.payload.metadata ?? null,
                 }]);
+
+                // Track active giveaways from broadcast metadata.
+                {
+                  const metaType = frame.payload.metadata?.type;
+                  if (metaType === 'giveaway') setGiveawayActive(true);
+                  if (metaType === 'giveaway_winner') {
+                    // Check if any other giveaways are still active.
+                    const anyStillActive = [...giveawayLiveStateRef.current.values()].some(g => g.status === 'active');
+                    if (!anyStillActive) setGiveawayActive(false);
+                  }
+                }
 
                 // Auto-unhide: if this LIVE message landed in the view the user is
                 // CURRENTLY looking at, keep the overlay open / reset its idle-
@@ -4584,6 +4687,27 @@ export default function ChatOverlay() {
                       ? { ...m, username: displayName }
                       : m
                   ));
+                }
+              } else if (frame.type === 'giveaway:update') {
+                const { giveawayId, shortId, entryCount, status, winnerName } = frame.payload ?? {};
+                if (giveawayId) {
+                  if (status === 'completed' || status === 'cancelled') {
+                    // Remove stale entries to prevent unbounded Map growth.
+                    giveawayLiveStateRef.current.delete(giveawayId);
+                  } else {
+                    giveawayLiveStateRef.current.set(giveawayId, { entryCount: entryCount ?? 0, status: status ?? 'active', winnerName });
+                  }
+                  // Update active-giveaway indicator: true if ANY giveaway is now active
+                  const anyActive = [...giveawayLiveStateRef.current.values()].some(g => g.status === 'active');
+                  setGiveawayActive(anyActive);
+                  // Trigger a re-render only if any visible message references this giveaway.
+                  setMessages(prev => {
+                    const hasCard = prev.some(m => {
+                      const md = m.metadata as any;
+                      return md && (md.giveawayId === giveawayId || md.shortId === shortId);
+                    });
+                    return hasCard ? [...prev] : prev;
+                  });
                 }
               } else if (frame.type === 'chat:typing') {
                 // Ephemeral typing indicator — show for 4s then auto-clear.
@@ -6788,6 +6912,184 @@ export default function ChatOverlay() {
                     </div>
                   );
                 }
+                // ── Giveaway helpers (shared by announcement + list cards) ────
+                const sendGiveawayCmd = (verb: string, shortId: string) =>
+                  sendOrQueueChat({ type: 'chat:send', payload: { content: `/giveaway ${verb} ${shortId}`, channelId: activeSubId, clientCreatedAt: new Date().toISOString() } });
+                const giveawayBtnStyle = (color: string): React.CSSProperties => ({
+                  padding: '2px 10px', background: hexAlpha(color, 0.18), color, borderRadius: '4px',
+                  cursor: 'pointer', fontSize: `${fontSize - 1}px`, fontFamily: theme.fontFamily,
+                  border: 'none', flexShrink: 0,
+                });
+
+                // ── Giveaway announcement card ──────────────────────────────
+                if (md && md.type === 'giveaway') {
+                  const gv = md as GiveawayMetadata;
+                  const liveState = giveawayLiveStateRef.current.get(gv.giveawayId);
+                  const liveEntryCount = liveState?.entryCount ?? gv.entryCount;
+                  const liveStatus = liveState?.status ?? 'active';
+                  const isActive = liveStatus === 'active';
+                  const gvAccent = primaryColor;
+                  const secsLeft = Math.max(0, Math.floor((new Date(gv.endsAt).getTime() - Date.now()) / 1000));
+                  const timeLeftStr = isActive
+                    ? (secsLeft >= 60 ? `${Math.ceil(secsLeft / 60)}m left` : `${secsLeft}s left`)
+                    : liveStatus === 'cancelled' ? 'Cancelled' : 'Ended';
+                  const isOwnGiveaway = !!(myUserIdRef.current && gv.createdByUserId && myUserIdRef.current === gv.createdByUserId);
+                  const gvFields: { label: string; value: string }[] = [
+                    { label: 'PRIZE', value: gv.itemName },
+                    { label: 'STARTED BY', value: gv.creatorName },
+                    { label: 'ENTRIES', value: String(liveEntryCount) },
+                    { label: 'TIME', value: timeLeftStr },
+                    { label: 'ID', value: gv.shortId },
+                  ];
+                  return (
+                    <div key={msg.id} style={{ padding: '2px 8px' }}>
+                      <ChatEmbedCard
+                        accent={gvAccent}
+                        icon="🎁"
+                        tag="GIVEAWAY"
+                        title={gv.itemName}
+                        fields={gvFields}
+                        hexAlpha={hexAlpha}
+                        fontFamily={theme.fontFamily}
+                        fontSize={fontSize}
+                        dimText={dimText}
+                        footer={isActive ? (
+                          <div style={{ display: 'flex', gap: '6px', marginTop: '4px', justifyContent: isOwnGiveaway ? 'center' : 'flex-start' }}>
+                            {isOwnGiveaway ? (
+                              <span role="button" tabIndex={0}
+                                style={giveawayBtnStyle('#FF6B4A')}
+                                onClick={() => sendGiveawayCmd('stop', gv.shortId)}
+                                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') sendGiveawayCmd('stop', gv.shortId); }}
+                              >Cancel</span>
+                            ) : (<>
+                              <span role="button" tabIndex={0}
+                                style={giveawayBtnStyle(gvAccent)}
+                                onClick={() => sendGiveawayCmd('join', gv.shortId)}
+                                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') sendGiveawayCmd('join', gv.shortId); }}
+                              >Join</span>
+                              <span role="button" tabIndex={0}
+                                style={giveawayBtnStyle('#FF6B4A')}
+                                onClick={() => sendGiveawayCmd('leave', gv.shortId)}
+                                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') sendGiveawayCmd('leave', gv.shortId); }}
+                              >Leave</span>
+                            </>)}
+                          </div>
+                        ) : undefined}
+                      />
+                    </div>
+                  );
+                }
+                // ── Giveaway winner/cancelled card ──────────────────────────
+                if (md && md.type === 'giveaway_winner') {
+                  const gw = md as GiveawayWinnerMetadata;
+                  const gwAccent = gw.cancelled ? '#888' : gw.winnerName ? '#55EFC4' : '#888';
+                  const gwTitle = gw.cancelled
+                    ? `Cancelled: ${gw.itemName}`
+                    : gw.winnerName
+                      ? `Winner: ${gw.winnerName}`
+                      : `No entries — ${gw.itemName}`;
+                  const gwFields: { label: string; value: string }[] = [
+                    { label: 'PRIZE', value: gw.itemName },
+                    { label: 'ENTRIES', value: String(gw.entryCount) },
+                    { label: 'ID', value: gw.shortId },
+                  ];
+                  return (
+                    <div key={msg.id} style={{ padding: '2px 8px' }}>
+                      <ChatEmbedCard
+                        accent={gwAccent}
+                        icon={gw.cancelled ? '❌' : gw.winnerName ? '🎉' : '🎁'}
+                        tag={gw.cancelled ? 'GIVEAWAY CANCELLED' : 'GIVEAWAY WINNER'}
+                        title={gwTitle}
+                        fields={gwFields}
+                        hexAlpha={hexAlpha}
+                        fontFamily={theme.fontFamily}
+                        fontSize={fontSize}
+                        dimText={dimText}
+                      />
+                    </div>
+                  );
+                }
+                // ── Giveaway list (active) card ─────────────────────────────
+                if (md && md.type === 'giveaway_list') {
+                  const gl = md as GiveawayListMetadata;
+                  const glAccent = primaryColor;
+                  if (gl.giveaways.length === 0) {
+                    return (
+                      <div key={msg.id} style={{ padding: '2px 8px' }}>
+                        <ChatEmbedCard accent={glAccent} icon="🎁" tag="ACTIVE GIVEAWAYS" title="No active giveaways right now"
+                          fields={[]} hexAlpha={hexAlpha} fontFamily={theme.fontFamily} fontSize={fontSize} dimText={dimText} />
+                      </div>
+                    );
+                  }
+                  const glFields = gl.giveaways.map(g => {
+                    const liveState = giveawayLiveStateRef.current.get(g.giveawayId);
+                    const entryCount = liveState?.entryCount ?? g.entryCount;
+                    const secsLeft = Math.max(0, Math.floor((new Date(g.endsAt).getTime() - Date.now()) / 1000));
+                    const timeLeft = secsLeft >= 60 ? `${Math.ceil(secsLeft / 60)}m left` : `${secsLeft}s left`;
+                    const isOwnList = !!(myUserIdRef.current && g.createdByUserId && myUserIdRef.current === g.createdByUserId);
+                    // Use shared giveawayBtnStyle but slightly smaller for the compact list row.
+                    const rowBtnStyle = (color: string): React.CSSProperties => ({
+                      ...giveawayBtnStyle(color),
+                      padding: '1px 7px',
+                      fontSize: `${Math.max(8, fontSize - 2)}px`,
+                    });
+                    return {
+                      label: `[${g.shortId}] ${g.itemName}`,
+                      value: (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', justifyContent: 'flex-end', width: '100%' }}>
+                          <span style={{ color: dimText, fontSize: `${Math.max(8, fontSize - 2)}px`, marginRight: '4px' }}>
+                            {entryCount} · {timeLeft} · {g.creatorName}
+                          </span>
+                          {isOwnList ? (
+                            <button style={rowBtnStyle('#FF6B4A')} onClick={() => sendGiveawayCmd('stop', g.shortId)}>
+                              Cancel
+                            </button>
+                          ) : (<>
+                            <button style={rowBtnStyle(glAccent)} onClick={() => sendGiveawayCmd('join', g.shortId)}>
+                              Join
+                            </button>
+                            <button style={rowBtnStyle('#FF6B4A')} onClick={() => sendGiveawayCmd('leave', g.shortId)}>
+                              Leave
+                            </button>
+                          </>)}
+                        </span>
+                      ) as React.ReactNode,
+                      valueStyle: { overflow: 'visible' } as React.CSSProperties,
+                    };
+                  });
+                  return (
+                    <div key={msg.id} style={{ padding: '2px 8px' }}>
+                      <ChatEmbedCard accent={glAccent} icon="🎁" tag="ACTIVE GIVEAWAYS"
+                        title={`${gl.giveaways.length} active`}
+                        fields={glFields} hexAlpha={hexAlpha} fontFamily={theme.fontFamily} fontSize={fontSize} dimText={dimText} singleColumn />
+                    </div>
+                  );
+                }
+                // ── Giveaway history card ───────────────────────────────────
+                if (md && md.type === 'giveaway_history') {
+                  const gh = md as GiveawayHistoryMetadata;
+                  const ghAccent = hexAlpha(primaryColor, 0.6);
+                  if (gh.giveaways.length === 0) {
+                    return (
+                      <div key={msg.id} style={{ padding: '2px 8px' }}>
+                        <ChatEmbedCard accent={ghAccent} icon="📋" tag="GIVEAWAY HISTORY" title="No completed giveaways yet"
+                          fields={[]} hexAlpha={hexAlpha} fontFamily={theme.fontFamily} fontSize={fontSize} dimText={dimText} />
+                      </div>
+                    );
+                  }
+                  const ghFields = gh.giveaways.map(g => {
+                    const icon = g.status === 'cancelled' ? '❌' : g.winnerName ? '🎉' : '🎁';
+                    const result = g.winnerName ? `Winner: ${g.winnerName}` : (g.status === 'cancelled' ? 'Cancelled' : 'No entries');
+                    return { label: `${icon} ${g.shortId}`, value: `${g.itemName} · ${result} · ${g.entryCount} entries · by ${g.creatorName}` };
+                  });
+                  return (
+                    <div key={msg.id} style={{ padding: '2px 8px' }}>
+                      <ChatEmbedCard accent={ghAccent} icon="📋" tag="GIVEAWAY HISTORY"
+                        title={`Last ${gh.giveaways.length} giveaway${gh.giveaways.length === 1 ? '' : 's'}`}
+                        fields={ghFields} hexAlpha={hexAlpha} fontFamily={theme.fontFamily} fontSize={fontSize} dimText={dimText} singleColumn />
+                    </div>
+                  );
+                }
                 // Parity with desktop overlay: Discord-relayed → purple [Discord];
                 // server → amber [Server]; party → [PartyName]; otherwise channel
                 // name (Trading → "Trade"). System (bot) messages get no tag.
@@ -7292,6 +7594,16 @@ export default function ChatOverlay() {
                   ...(overlayShell ? { WebkitAppRegion: 'no-drag' } as React.CSSProperties : {}),
                 }}>
                   {unread > 0 && <UnreadBadge n={unread} onClick={e => jumpToSubMention(e, sub.id)} />}
+                  {giveawayActive && sub.id === '00000000-0000-0000-0000-000000000003' && (
+                    <span title="Giveaway in progress!" style={{
+                      fontSize: `${Math.max(7, fontSize - 2)}px`,
+                      marginRight: '3px',
+                      color: primaryColor,
+                      opacity: 0.9,
+                      textShadow: glowEnabled ? `0 0 4px ${hexAlpha(primaryColor, 0.7)}` : 'none',
+                      lineHeight: 1,
+                    }}>★</span>
+                  )}
                   {label}
                 </span>
               );
@@ -8335,7 +8647,7 @@ export default function ChatOverlay() {
                 return parts.join(' · ');
               })() : 'Enter send · /help'}</span>
               <span style={{ color: hexAlpha(primaryColor, 0.8), textShadow: textOutline, flexShrink: 0, marginLeft: '6px' }}>
-                v{displayVersion}{typeof window !== 'undefined' && window.location.hostname === 'localhost' ? ' [DEV]' : ''}
+                v{displayVersion}{isDevEnv ? ' [DEV]' : ''}
               </span>
             </div>
           )}

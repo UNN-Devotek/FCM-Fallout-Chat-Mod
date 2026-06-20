@@ -1405,6 +1405,7 @@ ipcMain.handle('overlay:dev-login-as', async (_evt, persona) => {
                 displayName: json.data.displayName || '',
                 discordLinked: true,
                 role: json.data.role || null,
+                userId: json.data.userId || null,
               });
               resolve({ ok: true });
             } else {
@@ -2078,7 +2079,7 @@ async function startRelay(retryCount = 0) {
     return;
   }
   try {
-    const { token, displayName, discordLinked, discordName, discordUsername, discordDisplayName, discordAvatarUrl, username: regUsername, userRole: role, avatarUrl: regAvatarUrl } = await registerForToken(loadState(), clientKey);
+    const { token, userId: regUserId, displayName, discordLinked, discordName, discordUsername, discordDisplayName, discordAvatarUrl, username: regUsername, userRole: role, avatarUrl: regAvatarUrl } = await registerForToken(loadState(), clientKey);
     sessionToken = token;
     flushPendingWsOpens();
     diag('[relay] registered OK — displayName=' + (displayName || '(none)') + ' discordLinked=' + !!discordLinked + ' role=' + (role || 'user'));
@@ -2104,19 +2105,15 @@ async function startRelay(retryCount = 0) {
     if (isPrivileged()) reevaluateVisibility();
     sendToRenderer('relay:status', {
       state: 'authenticated',
-      // Pass back the displayName so the renderer can pre-populate fo76Name in
-      // settings if it hasn't been explicitly set yet.
       displayName: displayName || '',
-      // Real Discord link status from the register response.
       discordLinked: !!discordLinked,
       discordName: discordName || '',
       discordUsername: discordUsername || '',
       discordDisplayName: discordDisplayName || '',
       discordAvatarUrl: discordAvatarUrl || null,
       username: regUsername || '',
-      // Resolved role (owner/admin/moderator/null) → drives mod controls in the
-      // renderer's user context. Server-stored avatar URL for the user object.
       role: role || null,
+      userId: regUserId || null,
       avatarUrl: regAvatarUrl || loadState()?.avatarUrl || null,
     });
   } catch (err) {

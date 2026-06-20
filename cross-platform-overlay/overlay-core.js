@@ -41,19 +41,18 @@ function stateHasRealData(s) {
 }
 
 // CF/edge response classification. 429 is NOT a CF challenge (rate-limit).
-//   • 503 → always a CF challenge page.
-//   • 403 with cf-mitigated header OR text/html body OR cf-browser-verification
-//     in the body → CF challenge/WAF block.
-//   • 403 with JSON body → legitimate backend 403, not CF.
+//   • Only a 403 or 503 can be a Cloudflare edge block/challenge, and ONLY when a
+//     CF MARKER is present (cf-mitigated header OR text/html challenge/error page
+//     OR a cf-browser-verification body) — never on the status code alone.
+//   • A JSON 403/503 (RFC 7807 Problem Details) is a real backend error and is
+//     surfaced with its actual message, NOT masked as "blocked by edge". e.g. a
+//     503 "Registration unavailable: server misconfigured" must reach the user.
 function isCfChallenge(statusCode, resHeaders, body) {
-  if (statusCode === 503) return true;
-  if (statusCode === 403) {
-    if (resHeaders && resHeaders['cf-mitigated']) return true;
-    const ct = (resHeaders && (resHeaders['content-type'] || '')) || '';
-    if (ct.includes('text/html')) return true;
-    if (typeof body === 'string' && body.includes('cf-browser-verification')) return true;
-    return false;
-  }
+  if (statusCode !== 403 && statusCode !== 503) return false;
+  if (resHeaders && resHeaders['cf-mitigated']) return true;
+  const ct = (resHeaders && (resHeaders['content-type'] || '')) || '';
+  if (ct.includes('text/html')) return true;
+  if (typeof body === 'string' && body.includes('cf-browser-verification')) return true;
   return false;
 }
 

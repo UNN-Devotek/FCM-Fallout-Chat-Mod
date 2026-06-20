@@ -71,6 +71,9 @@ model User {
   blocksMade           Block[]            @relation("BlocksMade")
   blocksAgainst        Block[]            @relation("BlocksAgainst")
   mcpApiKeys           McpApiKey[]        @relation("McpApiKeyOwner")
+  giveawaysCreated     Giveaway[]         @relation("GiveawaysCreated")
+  giveawaysWon         Giveaway[]         @relation("GiveawaysWon")
+  giveawayEntries      GiveawayEntry[]    @relation("GiveawayEntries")
 
   @@index([installToken])
   @@index([steamId])
@@ -137,7 +140,7 @@ model Message {
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   // Relations
-  user    User    @relation(fields: [userId], references: [id], onDelete: Restrict)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   channel Channel @relation(fields: [channelId], references: [id], onDelete: Restrict)
 
   @@id([id, createdAt])
@@ -430,7 +433,7 @@ model NameBlacklistEntry {
 model Ban {
   id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId         String    @map("user_id") @db.Uuid
-  bannedById     String    @map("banned_by_id") @db.Uuid
+  bannedById     String?   @map("banned_by_id") @db.Uuid
   reasonCategory String    @map("reason_category") // Harassment | HateSpeech | Spam | Cheating | NSFW | Threats | Doxxing | Other
   reasonText     String    @map("reason_text")
   bannedUntil    DateTime? @map("banned_until") @db.Timestamptz(6) // null = permanent
@@ -440,7 +443,7 @@ model Ban {
   reverseReason  String?   @map("reverse_reason")
 
   user       User          @relation("BanTarget", fields: [userId], references: [id], onDelete: Cascade)
-  bannedBy   User          @relation("BanIssuer", fields: [bannedById], references: [id], onDelete: Restrict)
+  bannedBy   User?         @relation("BanIssuer", fields: [bannedById], references: [id], onDelete: SetNull)
   reversedBy User?         @relation("BanReverser", fields: [reversedById], references: [id], onDelete: SetNull)
   evidence   BanEvidence[]
 
@@ -586,7 +589,7 @@ model Party {
   updatedAt      DateTime        @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   // Relations
-  owner    User           @relation("PartyOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  owner    User           @relation("PartyOwner", fields: [ownerId], references: [id], onDelete: Cascade)
   members  PartyMember[]
   invites  PartyInvite[]
   messages PartyMessage[]
@@ -643,8 +646,12 @@ model PartyMessage {
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   // Relations
-  user  User  @relation("PartyMessages", fields: [userId], references: [id], onDelete: Restrict)
-  Party Party @relation(fields: [partyId], references: [id])
+  user  User  @relation("PartyMessages", fields: [userId], references: [id], onDelete: Cascade)
+  // Cascade on party delete so removing a Party (e.g. via the owner-delete cascade)
+  // also removes its messages. Without this the relation defaults to Restrict, and
+  // deleting the owner of a party that holds ANY member's messages throws an FK
+  // violation — the exact bug this migration set out to fix (issue #80).
+  Party Party @relation(fields: [partyId], references: [id], onDelete: Cascade)
 
   @@id([id, createdAt])
   @@index([partyId, createdAt(sort: Desc)])
@@ -861,4 +868,45 @@ model GithubIssueThread {
 
   @@index([discordThreadId])
   @@map("github_issue_threads")
+}
+
+// =============================================================================
+// Giveaway System — community item raffles created via /giveaway start
+// =============================================================================
+
+model Giveaway {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  shortId         String    @unique @map("short_id")            // 6-char e.g. "A1B2C3"
+  createdByUserId String    @map("created_by_user_id") @db.Uuid
+  creatorName     String    @map("creator_name")
+  channelId       String    @map("channel_id") @db.Uuid         // channel where announced
+  itemName        String    @map("item_name")
+  durationMin     Int       @map("duration_min")
+  endsAt          DateTime  @map("ends_at") @db.Timestamptz(6)
+  status          String    @default("active")                  // active | cancelled | completed
+  winnerId        String?   @map("winner_id") @db.Uuid
+  winnerName      String?   @map("winner_name")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  createdBy User            @relation("GiveawaysCreated", fields: [createdByUserId], references: [id], onDelete: Cascade)
+  winner    User?           @relation("GiveawaysWon", fields: [winnerId], references: [id], onDelete: SetNull)
+  entries   GiveawayEntry[]
+
+  @@index([status, endsAt])
+  @@map("giveaways")
+}
+
+model GiveawayEntry {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  giveawayId String   @map("giveaway_id") @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  username   String
+  joinedAt   DateTime @default(now()) @map("joined_at") @db.Timestamptz(6)
+
+  giveaway Giveaway @relation(fields: [giveawayId], references: [id], onDelete: Cascade)
+  user     User     @relation("GiveawayEntries", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([giveawayId, userId])
+  @@index([userId])
+  @@map("giveaway_entries")
 }

@@ -41,6 +41,34 @@ Before/just after publishing, confirm the packaged build launches cleanly via th
 
 ---
 
+## Release notes — standard format
+
+The `releaseNotes` we pass at publish time (Discord `#updates` announcement, Nexus,
+and the GitHub release all use the same text) follow ONE house format:
+
+- **A flat list of `type(scope): description` lines** — conventional-commit prefixes
+  (`feat` / `fix` / `chore` / `perf`) with a short scope (`overlay`, `giveaway`,
+  `security`, …). **No section headers.**
+- **One change per line.** Order: new features (`feat`) first, then notable
+  behavior changes, then fixes.
+- **No emojis.**
+- **Plain-English descriptions — NOT a commit log.** Translate each change to its
+  *user impact*; drop deep implementation detail (no "Electron 31→39",
+  "ozone-platform", "gamescope", internal module names). Collapse many small commits
+  into one readable line (e.g. a batch of CodeQL fixes → one `fix(security):` line).
+- **Always confirm the version + the exact notes with the user before publishing.**
+
+Example (the v1.3.91 release):
+
+```
+feat(giveaway): host community item raffles right from chat — start one with /giveaway start, others join with a single click, and a winner is drawn automatically when the timer ends (check active raffles with /giveaway list)
+feat(overlay): the overlay no longer auto-updates (per Nexus Mods' guidelines) — updates are now manual: you'll be notified when a new version is available, then download and re-run the installer to update
+fix(security): patched several vulnerabilities found by automated code scanning, including safer handling of links and redirects and stronger validation of incoming data
+fix(overlay): a range of reliability and quality fixes across chat connections, parties, and the moderation tools
+```
+
+---
+
 ## Release Pipeline (in order)
 
 **FAIL-CLOSED ORDER:** build -> **smoke-test (gate)** -> **VirusTotal (gate, must pass)** -> build ZIPs -> upload artifacts -> verify served sizes -> `POST /admin/releases` -> Nexus. If a gate fails, STOP — publish nothing.
@@ -245,6 +273,27 @@ curl -X POST https://falloutchatmod.com/admin/releases \
 ```
 
 `downloadUrl` is the Windows ZIP URL (the website download button uses this).
+
+**This step also creates a GitHub Release.** After the Discord post + DB record,
+`publishRelease` calls `createGitHubRelease` (`backend/src/services/githubReleaseService.ts`)
+to mirror the same notes to a GitHub Release — tag `v<version>`, body = the notes + the
+env-aware download links + the Nexus-endorse line. It is **best-effort** (logs + continues
+on any GitHub API failure; never blocks the publish) and **idempotent** (re-publishing a
+version updates its release). A `-suffix` version (e.g. `1.3.91-dev`) publishes as a GitHub
+**pre-release**. Config: a token — `GITHUB_RELEASE_TOKEN` if set (needs `contents: write`),
+else the shared `GITHUB_PAT` (prod already has this); owner/repo default to this repo and only
+need `GITHUB_OWNER` / `GITHUB_REPO` to override (e.g. a fork). Skipped cleanly when no token is set.
+
+**Publishing to a non-prod stack (dev/QA).** `publishRelease` builds and verifies all
+four artifact URLs against an **environment-aware** downloads origin
+(`backend/src/utils/releaseDownloadUrls.ts`). It defaults to `falloutchatmod.com`, so
+prod is unchanged. A non-prod backend sets `RELEASE_DOWNLOAD_HOST=<that host>` (the dev
+stack defaults it to `dev.falloutchatmod.com` in `deploy/dev/docker-compose.yml`), which
+makes the SSRF allow-list, `verifyDownload`, and the linked artifact URLs all target that
+host's own `/downloads/` origin. To publish on dev: upload the four artifacts to the dev
+backend's downloads volume, then `POST https://dev.falloutchatmod.com/admin/releases` with
+a `downloadUrl` on `dev.falloutchatmod.com/downloads/…` (auth with the dev `ADMIN_API_KEY`
+via `X-Admin-API-Key`). The same fail-closed gates apply — smoke-test the dev build first.
 
 ### Step 7 — Nexus publish
 

@@ -19,6 +19,15 @@ async function atPartyCap(userId: string): Promise<boolean> {
   return count >= MAX_PARTIES_PER_USER;
 }
 
+// A user may own at most this many (non-deleted) parties at once; they must
+// delete or transfer ownership of one before creating another.
+const MAX_OWNED_PARTIES_PER_USER = 3;
+const OWNED_PARTY_CAP_MESSAGE = `You can own at most ${MAX_OWNED_PARTIES_PER_USER} parties at once — delete or transfer ownership of one before creating another.`;
+async function atOwnedPartyCap(userId: string): Promise<boolean> {
+  const count = await prisma.party.count({ where: { ownerId: userId, isDeleted: false } });
+  return count >= MAX_OWNED_PARTIES_PER_USER;
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Party category allow-list
@@ -294,11 +303,28 @@ export async function createParty(req: Request, res: Response, next: NextFunctio
     return next(createError(409, PARTY_CAP_MESSAGE));
   }
 
+  // Separate cap on owned parties to prevent spam/clutter from solo-owned abandoned parties.
+  if (await atOwnedPartyCap(callerId)) {
+    return next(createError(409, OWNED_PARTY_CAP_MESSAGE));
+  }
+
   try {
     const partyId = uuidv4();
     const memberId = uuidv4();
 
     const party = await prisma.$transaction(async (tx) => {
+      // Serialize concurrent creates by this owner so the owned-party cap holds
+      // atomically: lock the owner's user row (same FOR UPDATE idiom as the join/
+      // accept capacity guards) and re-count owned parties inside the lock before
+      // inserting. The pre-transaction atOwnedPartyCap() check above is a fast path;
+      // this is the authoritative guard that closes the count-then-create race.
+      await tx.$queryRaw`SELECT id FROM users WHERE id = ${callerId}::uuid FOR UPDATE`;
+      const ownedCount = await tx.party.count({ where: { ownerId: callerId, isDeleted: false } });
+      if (ownedCount >= MAX_OWNED_PARTIES_PER_USER) {
+        const err: any = new Error(OWNED_PARTY_CAP_MESSAGE);
+        err.status = 409;
+        throw err;
+      }
       const p = await tx.party.create({
         data: {
           id: partyId,
@@ -329,7 +355,9 @@ export async function createParty(req: Request, res: Response, next: NextFunctio
     });
 
     res.status(201).json({ data: { party } });
-  } catch (err) {
+  } catch (err: any) {
+    // The in-transaction owned-cap guard throws a 409 to roll back the insert.
+    if (err?.status === 409) return next(createError(409, err.message));
     next(err);
   }
 }

@@ -107,26 +107,32 @@
   min-width: 0;
 }
 
+.fcm-embed__grid--single {
+  grid-template-columns: 1fr;
+}
+
 .fcm-embed__field {
   display: flex;
+  flex-wrap: wrap;            /* a long label (e.g. a giveaway title) pushes the value to its own row instead of crushing it */
   align-items: baseline;
-  gap: 8px;
+  gap: 1px 8px;              /* small row-gap once it wraps */
   min-width: 0;
 }
 
 .fcm-embed__label {
-  flex: 0 0 auto;
+  flex: 0 1 auto;            /* allow a long label to shrink rather than hog the whole row */
   min-width: 54px;
   font-size: var(--fcm-fs-sm);
   font-weight: bold;
   letter-spacing: 0.05em;
-  white-space: nowrap;
+  white-space: normal;       /* let a long label wrap (short labels are one word — unaffected) */
+  overflow-wrap: anywhere;
   color: var(--fcm-label, color-mix(in srgb, var(--fcm-accent) 60%, transparent));
 }
 
 .fcm-embed__value {
   flex: 1 1 auto;
-  min-width: 0;
+  min-width: min(100%, 8rem); /* never crush below ~8rem; wrap to its own row instead (or full width on a tiny card) */
   font-size: var(--fcm-fs-sm);
   color: var(--fcm-accent);
   overflow-wrap: anywhere;
@@ -165,6 +171,9 @@
 @container (max-width: 252px) {
   .fcm-embed__actions { flex-basis: 100%; margin-left: 0; justify-content: flex-end; }
   .fcm-embed__grid { grid-template-columns: 1fr; }
+  /* Very narrow: fully stack each field (label over value) so the value always
+     gets the full card width — no per-glyph crush even with a long label. */
+  .fcm-embed__field { flex-direction: column; align-items: stretch; }
 }
 
 /* ════════════════════════════════════════════════════════════════════════════

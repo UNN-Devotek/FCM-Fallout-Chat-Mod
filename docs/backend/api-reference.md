@@ -162,6 +162,20 @@ uncommitted insert.) Idempotent re-accept of an existing membership is exempt fr
 
 ---
 
+## Giveaways (`/api/giveaways`)
+
+Community item raffles. Created and joined via the `/giveaway` chat command; draw timer fires
+automatically server-side. The REST endpoints are for the dashboard and admin tooling.
+
+| Method   | Path                        | Auth                                    | Description             |
+|----------|-----------------------------|-----------------------------------------|-------------------------|
+| GET      | `/api/giveaways`            | requireClientAuth                       | List active giveaways   |
+| DELETE   | `/api/admin/giveaways/:id`  | requireDiscordRole(owner/admin/mod)     | Force-cancel a giveaway |
+
+`id` in the admin delete path is the giveaway `shortId` (6-char, e.g. `A1B2C3`), not the UUID.
+
+---
+
 ## Block (`/api/block`)
 
 `requireClientAuth` applied to whole router.
