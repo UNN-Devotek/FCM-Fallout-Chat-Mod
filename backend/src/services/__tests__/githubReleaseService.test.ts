@@ -79,9 +79,10 @@ describe('githubReleaseService', () => {
       const body = buildGitHubReleaseBody('1.3.91-dev', 'My notes here');
       assert.ok(body.includes('My notes here'));
       assert.ok(body.includes('## Download'));
-      assert.ok(body.includes('https://dev.falloutchatmod.com/downloads/electron/'));
+      // Full markdown links (not a bare host substring → CodeQL-clean, matches releaseAnnouncement.test).
+      assert.ok(body.includes('🪟 [Windows](https://dev.falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod%20Setup%201.3.91-dev%20(Windows).zip)'));
       assert.ok(body.includes('## Endorse on Nexus'));
-      assert.ok(body.includes('nexusmods.com/fallout76/mods/4082'));
+      assert.ok(body.includes('[endorse it on Nexus](https://www.nexusmods.com/fallout76/mods/4082)'));
     });
   });
 
