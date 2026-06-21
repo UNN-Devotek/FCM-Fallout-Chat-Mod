@@ -150,7 +150,48 @@ OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows
 > (`smoke-test.ps1` → `vt-gate.ps1` → upload → verify → `POST /admin/releases` → Nexus). The
 > `publish` input is reserved for a future automated publish step and is currently a no-op.
 
-The manual `electron-builder` invocations below remain valid as a fallback.
+#### Windows code signing (Azure Trusted Signing)
+
+The Windows installer is **code-signed via Azure Trusted Signing** by `build-windows.yml`. This
+removes the SmartScreen "unknown publisher" warning and is what lifts the Nexus installer
+quarantine (see Step 7). Signing happens automatically in the workflow's build step — no manual
+action per release.
+
+**How it's wired (and why it's in the workflow, not `package.json`):**
+
+- The signing config is injected at build time via `electron-builder -c.win.azureSignOptions.*`
+  CLI overrides. It is deliberately **NOT** in `package.json`, because the PR CI gate
+  (`ci.yml → overlay-build-windows-nsis`) builds on `windows-latest` with **no Azure
+  credentials** — if `azureSignOptions` lived in `package.json`, every PR build would try to sign
+  and fail. The guard test `cross-platform-overlay/__tests__/windows-signing.test.js` enforces
+  this split (and that signing can't silently regress to unsigned).
+- electron-builder auto-installs the `TrustedSigning` PowerShell module and calls
+  `Invoke-TrustedSigning`, authenticating with `EnvironmentCredential` from the
+  `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` repo secrets. The publisher name
+  comes from the `AZURE_PUBLISHER_NAME` repo variable (keeps the signer's legal name out of git
+  history; it is still public on each binary's cert subject).
+
+**Azure resources (provisioned 2026-06-21, `az` subscription `Azure subscription 1`):**
+
+| Resource | Value |
+| -------- | ----- |
+| Resource group | `fcm-signing-rg` (East US) |
+| Trusted Signing account | `fcm-trusted-signing` · endpoint `https://eus.codesigning.azure.net` · Basic SKU (~$10/mo) |
+| Certificate profile | `fcm-public-trust` (PublicTrust) |
+| Identity validation | Individual (CN = signer's legal name + city/state; street/ZIP excluded) |
+| CI service principal | `fcm-signing-ci` → role `Artifact Signing Certificate Profile Signer`, scoped to the account only |
+
+> **Runner prerequisite:** the self-hosted `[self-hosted, windows, unn]` runner needs `signtool`
+> (Windows SDK) on `PATH` — `Invoke-TrustedSigning` shells out to it. GitHub-hosted
+> `windows-latest` has it by default. If a signed build fails with a signtool-not-found error,
+> install the Windows SDK on the runner.
+>
+> **Rotate the SP secret** with `az ad sp credential reset --id <appId>` then update the
+> `AZURE_CLIENT_SECRET` repo secret. The credential carries a ~1-year default expiry.
+
+The manual `electron-builder` invocations below remain valid as a fallback. **Note:** a manual
+local `npx electron-builder --win` produces an **unsigned** installer (no Azure env locally) — use
+the `build-windows.yml` workflow when you need the signed, publishable artifact.
 
 **Windows** (requires an elevated shell; use `gsudo` from WSL):
 ```powershell
@@ -301,12 +342,16 @@ via `X-Admin-API-Key`). The same fail-closed gates apply — smoke-test the dev 
 .\Packaging\publish-nexus-release.ps1 -Version X.Y.Z [-ReleaseNotes "..."]
 ```
 
-> **Windows Nexus upload is TEMPORARILY DISABLED (2026-06-20).** Nexus auto-quarantines the
-> unsigned Windows installer, so the `Windows` entry in the platform loop is commented out and
-> only the **Linux** file is published to Nexus; Windows users get the `.exe` from
-> `falloutchatmod.com` (still uploaded to the website in steps 4-6). A support ticket is open to
-> lift the quarantine. **Re-enable** by uncommenting the `Windows` line in `publish-nexus-release.ps1`
-> once the quarantine is lifted or the installer is code-signed.
+> **Windows Nexus upload is currently DISABLED (since 2026-06-20), but the unblock is now in
+> hand.** Nexus auto-quarantines the *unsigned* Windows installer, so the `Windows` entry in the
+> platform loop is commented out and only the **Linux** file is published to Nexus; Windows users
+> get the `.exe` from `falloutchatmod.com` (still uploaded to the website in steps 4-6).
+> **As of 2026-06-21 the installer is code-signed** via Azure Trusted Signing (see Step 1 →
+> "Windows code signing"), which is the re-enable condition. **Re-enable once the FIRST
+> code-signed `.exe` has shipped and been verified** (signed + smoke + VT): uncomment the
+> `Windows` line in `publish-nexus-release.ps1`, restore the `…AppImage (Linux).zip` name, and
+> drop the `READ ME FIRST (Windows users).txt`. Until that first signed release is out, leave the
+> Linux-only publish in place.
 
 This script:
 1. Calls `Packaging/publish-nexus.ps1` once for each enabled platform (currently Linux only; Windows ZIP when re-enabled)
