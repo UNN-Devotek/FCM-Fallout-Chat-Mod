@@ -352,15 +352,17 @@ via `X-Admin-API-Key`). The same fail-closed gates apply — smoke-test the dev 
 .\Packaging\publish-nexus-release.ps1 -Version X.Y.Z [-ReleaseNotes "..."]
 ```
 
-> **Windows is back ON Nexus (since 2026-06-21).** The installer is code-signed (Azure Trusted
-> Signing — see Step 1 → "Windows code signing"), and v1.3.91's signed `.exe` went straight to
-> `state=available` on upload, so Nexus's unsigned-`.exe` file-type quarantine no longer triggers.
-> The `Windows` entry in the platform loop is **active** again, the Linux zip uses its proper
-> `…AppImage (Linux).zip` name, and `READ ME FIRST (Windows users).txt` is **no longer bundled**.
-> Both platforms publish to Nexus every release; the website remains the canonical direct download too.
+> **Windows Nexus upload is DISABLED — signing did NOT bypass it (since 2026-06-21).** The installer
+> is code-signed (Step 1 → "Windows code signing"), which removed the website SmartScreen warning,
+> but Nexus **still quarantines the `.exe`** by file-type policy: v1.3.91's signed `.exe` reported
+> `state=available` on upload, then Nexus's downstream scan flagged it and it was pulled. So the
+> `Windows` entry in the platform loop is **commented out** (Linux-only publish); the Linux zip is
+> renamed `Fallout Chat Mod <ver>.zip` and bundles `READ ME FIRST (Windows users).txt` pointing
+> Windows users to `falloutchatmod.com` (still uploaded to the website in steps 4-6). **Re-enable the
+> `Windows` line only if Nexus lifts the `.exe` quarantine** (support ticket).
 
 This script:
-1. Calls `Packaging/publish-nexus.ps1` once for each platform (Windows ZIP + Linux ZIP)
+1. Calls `Packaging/publish-nexus.ps1` once for each enabled platform (currently Linux only; Windows stays off Nexus per the note above)
 2. Each call implements the 6-step Nexus v3 Upload API: open multipart session → upload chunks to S3 → complete S3 multipart → finalise → poll for `available` state → attach as new MAIN file (archiving the previous one)
 3. Uploads the Windows `.exe` to VirusTotal and pushes the permalink to `/admin/virustotal-url`
 
