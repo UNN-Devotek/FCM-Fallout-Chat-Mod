@@ -105,7 +105,10 @@ if (-not $DryRun) {
 
 # Per-platform display name for the uploaded .zip (matches the manual naming).
 $winZip   = "Fallout Chat Mod Setup $Version (Windows).zip"
-$linuxZip = "Fallout Chat Mod-$Version.AppImage (Linux).zip"
+# TEMPORARY (Windows Nexus upload disabled): generic name with no "AppImage (Linux)" so the single
+# Nexus file reads as the mod's main download; the bundled README points Windows users to the site.
+# Revert to "Fallout Chat Mod-$Version.AppImage (Linux).zip" when the Windows file is re-enabled.
+$linuxZip = "Fallout Chat Mod $Version.zip"
 
 # Windows file: install instructions + CLI option (installer is code-signed; no AV disclaimer).
 $winDesc = $notesBlock + @"
@@ -117,6 +120,8 @@ PREFER THE CLI? One-line install (PowerShell):
 Or download this zip, extract, and run "Fallout Chat Mod Setup <version>.exe". See INSTALL-WINDOWS.txt inside the zip.
 "@
 $linuxDesc = $notesBlock + @"
+WINDOWS USERS: the Windows installer is not hosted on Nexus - download it from the official site (same build, scanned clean): https://falloutchatmod.com (SYSTEM -> INSTALL). VirusTotal: https://falloutchatmod.com/virustotal
+
 Full install instructions for every platform: https://falloutchatmod.com (SYSTEM -> INSTALL)
 
 PREFER THE CLI? One-line install (adds an app-menu launcher):
@@ -135,15 +140,18 @@ $winInclude   = @(
     (Join-Path $assetsDir "install\INSTALL-WINDOWS.txt")
 )
 $linuxInclude = @(
+    (Join-Path $assetsDir "install\READ ME FIRST (Windows users).txt"),
     (Join-Path $assetsDir "install\INSTALL-LINUX.txt"),
     (Join-Path $assetsDir "fallout-chatmod-keepabove.kwinrule")
 )
 
 foreach ($p in @(
-    # Windows re-enabled 2026-06-21: the installer is now code-signed (Azure Trusted
-    # Signing, CN=Lance Strickland), so it is published to Nexus alongside Linux again.
-    # If Nexus still file-type-quarantines the .exe, fall back to Linux-only here.
-    @{ Name = "Windows"; File = $winExe;   Zip = $winZip;   Group = $winGroup;   Desc = $winDesc;   Include = $winInclude   },
+    # Windows OFF Nexus (re-disabled 2026-06-21): even the CODE-SIGNED .exe is quarantined by
+    # Nexus's .exe file-type policy. It reported state=available on upload, then the downstream
+    # virus scan flagged it. Signing fixes the SmartScreen warning on the website but does NOT
+    # get past Nexus, so Windows stays OFF Nexus and the bundled README points Windows users to
+    # the site. RE-ENABLE only if Nexus lifts the .exe quarantine (support ticket).
+    # @{ Name = "Windows"; File = $winExe;   Zip = $winZip;   Group = $winGroup;   Desc = $winDesc;   Include = $winInclude   },
     @{ Name = "Linux";   File = $linuxApp; Zip = $linuxZip; Group = $linuxGroup; Desc = $linuxDesc; Include = $linuxInclude }
 )) {
     if (-not (Test-Path $p.File)) { Write-Error "[$($p.Name)] artifact not found: $($p.File)"; exit 1 }
