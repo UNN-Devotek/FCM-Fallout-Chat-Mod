@@ -172,24 +172,22 @@ These are non-negotiable. Each links to the doc with the full context.
   Dev features (e.g. wiki/camp) are LOCAL-ONLY until explicitly deployed — they don't exist on the
   prod overlay, so test them only on the dev surface (dev overlay → 7177, or the dashboard 7075→7177).
 
-## Nexus release state — Windows installer OFF Nexus (TEMPORARY, since 2026-06-20)
+## Nexus release state — Windows back ON Nexus (code-signed, since 2026-06-21)
 
-Nexus **auto-quarantines installer `.exe` files** (a file-type policy, not a real detection — the
-Windows build is **0/72 on VirusTotal**; `https://falloutchatmod.com/virustotal` always redirects to
-the current build's scan). So the Windows installer is **not published to Nexus** right now and a
-support ticket to lift the quarantine is open. In `Packaging/publish-nexus-release.ps1`: the `Windows`
-platform-loop entry is **commented out** (Linux-only publish); the Linux zip is temporarily renamed
-`Fallout Chat Mod <ver>.zip` (no `…AppImage (Linux)`) and bundles `READ ME FIRST (Windows users).txt`
-pointing Windows users to `falloutchatmod.com`, and its description carries the same Windows-download +
-VT link. The website (`falloutchatmod.com`) stays the canonical Windows download — the `.exe` is still
-built + uploaded there every release. **Revert all three** (uncomment the `Windows` entry, restore the
-`…AppImage (Linux).zip` name, drop the README) once the quarantine is lifted or the installer is
-code-signed (Azure Trusted Signing was being evaluated). See
-[docs/deployment/releasing-the-overlay.md](docs/deployment/releasing-the-overlay.md) → Step 7.
+The Windows installer is **code-signed** via Azure Trusted Signing (`CN=Lance Strickland`) and is
+**published to Nexus again** (resolved the earlier "OFF Nexus" workaround). Nexus's file-type
+quarantine — which held *unsigned* `.exe` uploads — no longer triggers: v1.3.91's signed `.exe`
+went straight to `state=available` on upload. In `Packaging/publish-nexus-release.ps1` the `Windows`
+platform-loop entry is **active**, the Linux zip uses its proper `…AppImage (Linux).zip` name, and
+`READ ME FIRST (Windows users).txt` is **no longer bundled**. Both platforms publish to Nexus every
+release; the website (`falloutchatmod.com`) remains the canonical direct download too.
+`https://falloutchatmod.com/virustotal` always redirects to the current build's scan (v1.3.91 = 0/67).
+Signing setup + the runner `.NET SDK` prereq: see
+[docs/deployment/releasing-the-overlay.md](docs/deployment/releasing-the-overlay.md) → "Windows code
+signing" and Step 7.
 
 > Aside: Nexus's `Compress-Archive`-zip → "scan failed" issue was a *separate, fixed* problem (the
-> Linux release path now zips with the `zip` tool, see #242). The quarantine above is the executable
-> policy, which zipping does not affect.
+> Linux release path now zips with the `zip` tool, see #242).
 
 ## Conventions
 

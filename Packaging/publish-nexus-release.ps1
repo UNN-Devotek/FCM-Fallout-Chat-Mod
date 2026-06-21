@@ -105,11 +105,7 @@ if (-not $DryRun) {
 
 # Per-platform display name for the uploaded .zip (matches the manual naming).
 $winZip   = "Fallout Chat Mod Setup $Version (Windows).zip"
-# TEMPORARY (Windows Nexus upload disabled): generic name with no "AppImage (Linux)"
-# so the single Nexus file reads as the mod's main download; the bundled README points
-# Windows users to the site. Revert to "Fallout Chat Mod-$Version.AppImage (Linux).zip"
-# when the Windows file is re-enabled.
-$linuxZip = "Fallout Chat Mod $Version.zip"
+$linuxZip = "Fallout Chat Mod-$Version.AppImage (Linux).zip"
 
 # Windows file: install instructions + CLI option (installer is code-signed; no AV disclaimer).
 $winDesc = $notesBlock + @"
@@ -121,8 +117,6 @@ PREFER THE CLI? One-line install (PowerShell):
 Or download this zip, extract, and run "Fallout Chat Mod Setup <version>.exe". See INSTALL-WINDOWS.txt inside the zip.
 "@
 $linuxDesc = $notesBlock + @"
-WINDOWS USERS: the Windows installer is not hosted on Nexus - download it from the official site (same build, scanned clean): https://falloutchatmod.com (SYSTEM -> INSTALL). VirusTotal: https://falloutchatmod.com/virustotal
-
 Full install instructions for every platform: https://falloutchatmod.com (SYSTEM -> INSTALL)
 
 PREFER THE CLI? One-line install (adds an app-menu launcher):
@@ -141,18 +135,15 @@ $winInclude   = @(
     (Join-Path $assetsDir "install\INSTALL-WINDOWS.txt")
 )
 $linuxInclude = @(
-    (Join-Path $assetsDir "install\READ ME FIRST (Windows users).txt"),
     (Join-Path $assetsDir "install\INSTALL-LINUX.txt"),
     (Join-Path $assetsDir "fallout-chatmod-keepabove.kwinrule")
 )
 
 foreach ($p in @(
-    # TEMPORARILY DISABLED (2026-06-20): Nexus auto-quarantines the unsigned Windows
-    # installer (.exe), so we don't publish it to Nexus for now — Windows users get it
-    # from falloutchatmod.com. A support ticket is open to lift the quarantine.
-    # RE-ENABLE: uncomment the Windows line below once the quarantine is lifted or the
-    # installer is code-signed.
-    # @{ Name = "Windows"; File = $winExe;   Zip = $winZip;   Group = $winGroup;   Desc = $winDesc;   Include = $winInclude   },
+    # Windows re-enabled 2026-06-21: the installer is now code-signed (Azure Trusted
+    # Signing, CN=Lance Strickland), so it is published to Nexus alongside Linux again.
+    # If Nexus still file-type-quarantines the .exe, fall back to Linux-only here.
+    @{ Name = "Windows"; File = $winExe;   Zip = $winZip;   Group = $winGroup;   Desc = $winDesc;   Include = $winInclude   },
     @{ Name = "Linux";   File = $linuxApp; Zip = $linuxZip; Group = $linuxGroup; Desc = $linuxDesc; Include = $linuxInclude }
 )) {
     if (-not (Test-Path $p.File)) { Write-Error "[$($p.Name)] artifact not found: $($p.File)"; exit 1 }
