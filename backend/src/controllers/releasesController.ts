@@ -61,6 +61,11 @@ const releaseBodySchema = z.object({
       message: 'downloadUrl must be an https URL on the configured downloads host (/downloads/…)',
     }),
   releaseNotes: z.string().min(1),
+  // When false, skip the Discord @everyone announcement for THIS publish (e.g. a
+  // code-signing-only release where pinging everyone is noise). Defaults to true —
+  // normal releases always announce. The site download + in-app update notification
+  // still update; the operator edits the existing announcement by hand.
+  announce: z.boolean().optional().default(true),
 });
 
 function toEntry(r: { version: string; downloadUrl: string; releaseNotes: string; publishedAt: Date; downloadCount: number }): ReleaseEntry {
@@ -124,7 +129,7 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
       return next(createError(400, detail));
     }
 
-    const { version, downloadUrl, releaseNotes } = parsed.data;
+    const { version, downloadUrl, releaseNotes, announce } = parsed.data;
     const publishedAt = new Date();
 
     // Pipeline gate: verify all four artifacts exist and are full-size on the
@@ -149,18 +154,23 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
       ));
     }
 
-    // Hard requirement: post the announcement to the Discord Updates channel
-    // BEFORE committing the DB row or broadcasting. The post is treated as
-    // part of the publish: if it cannot get out (with retries), the publish
-    // fails and no DB row is created.
-    try {
-      await postReleaseAnnouncement(version, releaseNotes);
-    } catch (e: any) {
-      return next(createError(
-        502,
-        `Discord Updates-channel post is required for publish and failed: ${e?.message || e}. ` +
-        `Check the Discord bot status and try again — no release was recorded.`,
-      ));
+    // Post the announcement to the Discord Updates channel BEFORE committing the
+    // DB row or broadcasting. The post is treated as part of the publish: if it
+    // cannot get out (with retries), the publish fails and no DB row is created.
+    //
+    // `announce: false` opts out (a quiet publish): the site download + in-app
+    // update notification still update below, but no @everyone post fires — the
+    // operator edits the existing announcement by hand.
+    if (announce) {
+      try {
+        await postReleaseAnnouncement(version, releaseNotes);
+      } catch (e: any) {
+        return next(createError(
+          502,
+          `Discord Updates-channel post is required for publish and failed: ${e?.message || e}. ` +
+          `Check the Discord bot status and try again — no release was recorded.`,
+        ));
+      }
     }
 
     const saved = await prisma.release.upsert({

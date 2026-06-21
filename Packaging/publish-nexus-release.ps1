@@ -90,7 +90,10 @@ $linuxApp = Join-Path $DistDir "Fallout Chat Mod-$Version.AppImage"
 if (-not $DryRun) {
     $vtGate = Join-Path $PSScriptRoot "vt-gate.ps1"
     Write-Host "==== Running VirusTotal gate before Nexus publish ===="
-    & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $vtGate -Version $Version -DistDir $DistDir
+    # Cross-platform: Windows PowerShell on Windows, PowerShell 7 (pwsh) on Linux/macOS
+    # (a release can be cut from Linux). powershell.exe does not exist off Windows.
+    $psExe = if ($IsWindows) { 'powershell.exe' } else { 'pwsh' }
+    & $psExe -NoProfile -ExecutionPolicy Bypass -File $vtGate -Version $Version -DistDir $DistDir
     if ($LASTEXITCODE -ne 0) {
         Write-Error "VT gate FAILED (exit $LASTEXITCODE) - aborting Nexus publish. Release blocked."
         exit 1
@@ -102,28 +105,34 @@ if (-not $DryRun) {
 
 # Per-platform display name for the uploaded .zip (matches the manual naming).
 $winZip   = "Fallout Chat Mod Setup $Version (Windows).zip"
-$linuxZip = "Fallout Chat Mod-$Version.AppImage (Linux).zip"
+# TEMPORARY (Windows Nexus upload disabled): generic name with no "AppImage (Linux)"
+# so the single Nexus file reads as the mod's main download; the bundled README points
+# Windows users to the site. Revert to "Fallout Chat Mod-$Version.AppImage (Linux).zip"
+# when the Windows file is re-enabled.
+$linuxZip = "Fallout Chat Mod $Version.zip"
 
-# Windows file carries the SmartScreen/AV false-positive disclaimer + CLI option.
+# Windows file: install instructions + CLI option (installer is code-signed; no AV disclaimer).
 $winDesc = $notesBlock + @"
 Full install instructions for every platform: https://falloutchatmod.com (SYSTEM -> INSTALL)
 
-PREFER THE CLI? One-line install (PowerShell), auto-updates afterward:
+PREFER THE CLI? One-line install (PowerShell):
     irm https://falloutchatmod.com/install.ps1 | iex
 
 Or download this zip, extract, and run "Fallout Chat Mod Setup <version>.exe". See INSTALL-WINDOWS.txt inside the zip.
-
-About antivirus / SmartScreen: because the installer isn't code-signed yet, you may see a SmartScreen "unknown publisher" warning, and some antivirus tools may flag it. This is a false positive driven by the lack of a signing certificate, not the app's behavior - Fallout Chat Mod does not modify game files, read game memory, or scan your network.
 "@
 $linuxDesc = $notesBlock + @"
+WINDOWS USERS: the Windows installer is not hosted on Nexus - download it from the official site (same build, scanned clean): https://falloutchatmod.com (SYSTEM -> INSTALL). VirusTotal: https://falloutchatmod.com/virustotal
+
 Full install instructions for every platform: https://falloutchatmod.com (SYSTEM -> INSTALL)
 
-PREFER THE CLI? One-line install (auto-updates afterward, adds an app-menu launcher):
+PREFER THE CLI? One-line install (adds an app-menu launcher):
     curl -fsSL https://falloutchatmod.com/install.sh | bash
 
 Or download this zip, extract, then: chmod +x the AppImage and run it. See INSTALL-LINUX.txt inside the zip. Requires an X11/XWayland session.
 
 KDE Plasma (Wayland) users: run Fallout 76 in WINDOWED mode (not Borderless) and set your taskbar/panel to Auto-Hide - that's the reliable setup. For a borderless look, use the Steam launch option PROTON_NO_WM_DECORATION=1 %command% instead. Do NOT add a game-side "Fullscreen = No" KWin rule (it breaks the loading screen / in-game UI).
+
+VirusTotal scan (always points to the current build): https://falloutchatmod.com/virustotal
 "@
 
 # Per-platform extra files to bundle into the Nexus zip alongside the installer.
@@ -132,12 +141,18 @@ $winInclude   = @(
     (Join-Path $assetsDir "install\INSTALL-WINDOWS.txt")
 )
 $linuxInclude = @(
+    (Join-Path $assetsDir "install\READ ME FIRST (Windows users).txt"),
     (Join-Path $assetsDir "install\INSTALL-LINUX.txt"),
     (Join-Path $assetsDir "fallout-chatmod-keepabove.kwinrule")
 )
 
 foreach ($p in @(
-    @{ Name = "Windows"; File = $winExe;   Zip = $winZip;   Group = $winGroup;   Desc = $winDesc;   Include = $winInclude   },
+    # TEMPORARILY DISABLED (2026-06-20): Nexus auto-quarantines the unsigned Windows
+    # installer (.exe), so we don't publish it to Nexus for now — Windows users get it
+    # from falloutchatmod.com. A support ticket is open to lift the quarantine.
+    # RE-ENABLE: uncomment the Windows line below once the quarantine is lifted or the
+    # installer is code-signed.
+    # @{ Name = "Windows"; File = $winExe;   Zip = $winZip;   Group = $winGroup;   Desc = $winDesc;   Include = $winInclude   },
     @{ Name = "Linux";   File = $linuxApp; Zip = $linuxZip; Group = $linuxGroup; Desc = $linuxDesc; Include = $linuxInclude }
 )) {
     if (-not (Test-Path $p.File)) { Write-Error "[$($p.Name)] artifact not found: $($p.File)"; exit 1 }
