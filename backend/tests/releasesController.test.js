@@ -273,6 +273,40 @@ describe('POST /admin/releases — successful publish refreshes cache', () => {
   });
 });
 
+describe('POST /admin/releases — announce flag (quiet publish)', () => {
+  it('skips the Discord announcement when announce=false but still publishes', async () => {
+    const discordService = require('../src/services/discordService');
+
+    const res = await request(app)
+      .post('/admin/releases')
+      .set('Authorization', `Bearer ${RELEASE_TOKEN}`)
+      .send({
+        version: VALID_VERSION,
+        downloadUrl: VALID_DOWNLOAD_URL,
+        releaseNotes: 'Quiet code-signing release',
+        announce: false,
+      });
+
+    // Publish still succeeds: site download + in-app update cache are updated…
+    expect(res.status).toBe(200);
+    expect(res.body.data.version).toBe(VALID_VERSION);
+    expect(latestVersionMock.setLatestVersion).toHaveBeenCalledWith(VALID_VERSION);
+    // …but NO @everyone Discord post fires.
+    expect(discordService.postReleaseAnnouncement).not.toHaveBeenCalled();
+  });
+
+  it('announces by default when announce is omitted', async () => {
+    const discordService = require('../src/services/discordService');
+
+    await request(app)
+      .post('/admin/releases')
+      .set('Authorization', `Bearer ${RELEASE_TOKEN}`)
+      .send({ version: VALID_VERSION, downloadUrl: VALID_DOWNLOAD_URL, releaseNotes: 'Normal release' });
+
+    expect(discordService.postReleaseAnnouncement).toHaveBeenCalledWith(VALID_VERSION, 'Normal release');
+  });
+});
+
 describe('GET /api/releases', () => {
   it('returns releases list', async () => {
     prismaMock.release.findMany.mockResolvedValue([
