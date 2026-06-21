@@ -60,6 +60,12 @@ describe('Windows release code signing (Azure Trusted Signing)', () => {
     }
   });
 
+  it('provisions the .NET SDK (TrustedSigning module fetches the dlib via `dotnet tool install`)', () => {
+    // Without dotnet on the runner, signing fails in NugetInstall.psm1 with
+    // "Start-Process: cannot find the file specified". Guard the setup-dotnet step.
+    expect(workflow).toMatch(/uses:\s*actions\/setup-dotnet@[0-9a-f]{40}/);
+  });
+
   it('does NOT put azureSignOptions in package.json (keeps the unsigned CI gate green)', () => {
     expect(pkg.build?.win?.azureSignOptions).toBeUndefined();
     // Belt-and-suspenders: the string must not appear anywhere in the build config.
