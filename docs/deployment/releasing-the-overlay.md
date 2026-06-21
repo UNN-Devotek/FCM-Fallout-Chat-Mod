@@ -317,6 +317,14 @@ curl -X POST https://falloutchatmod.com/admin/releases \
 
 `downloadUrl` is the Windows ZIP URL (the website download button uses this).
 
+**Optional `announce: false` — quiet publish (no Discord ping).** By default every publish
+force-posts a new `@everyone` announcement to `#updates`, and the publish *fails* if the post
+can't get out. Add `"announce": false` to the body to skip the Discord post for that publish
+(e.g. a code-signing-only release where pinging everyone is noise). Everything else still
+happens — `verifyDownload` gates, the site download updates, the `latestVersion` cache + in-app
+`app:update-available` fire, and the GitHub Release is created — only the Discord post is
+skipped, so you edit the existing announcement by hand. Omit it (or send `true`) for normal releases.
+
 **This step also creates a GitHub Release.** After the Discord post + DB record,
 `publishRelease` calls `createGitHubRelease` (`backend/src/services/githubReleaseService.ts`)
 to mirror the same notes to a GitHub Release — tag `v<version>`, body = the notes + the
