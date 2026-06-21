@@ -111,7 +111,7 @@ $winZip   = "Fallout Chat Mod Setup $Version (Windows).zip"
 # when the Windows file is re-enabled.
 $linuxZip = "Fallout Chat Mod $Version.zip"
 
-# Windows file carries the SmartScreen/AV false-positive disclaimer + CLI option.
+# Windows file: install instructions + CLI option (installer is code-signed; no AV disclaimer).
 $winDesc = $notesBlock + @"
 Full install instructions for every platform: https://falloutchatmod.com (SYSTEM -> INSTALL)
 
@@ -119,8 +119,6 @@ PREFER THE CLI? One-line install (PowerShell):
     irm https://falloutchatmod.com/install.ps1 | iex
 
 Or download this zip, extract, and run "Fallout Chat Mod Setup <version>.exe". See INSTALL-WINDOWS.txt inside the zip.
-
-About antivirus / SmartScreen: because the installer isn't code-signed yet, you may see a SmartScreen "unknown publisher" warning, and some antivirus tools may flag it. This is a false positive driven by the lack of a signing certificate, not the app's behavior - Fallout Chat Mod does not modify game files, read game memory, or scan your network.
 "@
 $linuxDesc = $notesBlock + @"
 WINDOWS USERS: the Windows installer is not hosted on Nexus - download it from the official site (same build, scanned clean): https://falloutchatmod.com (SYSTEM -> INSTALL). VirusTotal: https://falloutchatmod.com/virustotal

@@ -75,12 +75,29 @@ jobs:
           cd cross-platform-overlay
           npm run build:renderer
 
-      - name: Build Windows NSIS + portable packages
+      - name: Build Windows NSIS + portable packages (Azure Trusted Signing)
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # Azure Trusted Signing auth via EnvironmentCredential. The service principal
+          # `fcm-signing-ci` holds ONLY the "Artifact Signing Certificate Profile Signer"
+          # role, scoped to the `fcm-trusted-signing` account. electron-builder installs
+          # the TrustedSigning PowerShell module itself and calls Invoke-TrustedSigning.
+          # See docs/deployment/releasing-the-overlay.md → "Windows code signing".
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: |
           cd cross-platform-overlay
-          .\node_modules\.bin\electron-builder --win nsis portable --publish never
+          # `azureSignOptions` is injected HERE (not in package.json) on purpose: the
+          # unsigned CI gate build (ci.yml → overlay-build-windows-nsis, which has no
+          # Azure creds) must stay green. Putting it in package.json would make every
+          # PR build attempt to sign and fail. publisherName comes from a repo variable
+          # so the signer's legal name stays out of git history (it is still public on
+          # every signed binary's cert subject).
+          .\node_modules\.bin\electron-builder --win nsis portable --publish never `
+            "-c.win.azureSignOptions.publisherName=${{ vars.AZURE_PUBLISHER_NAME }}" `
+            "-c.win.azureSignOptions.endpoint=https://eus.codesigning.azure.net" `
+            "-c.win.azureSignOptions.certificateProfileName=fcm-public-trust" `
+            "-c.win.azureSignOptions.codeSigningAccountName=fcm-trusted-signing"
 
       - name: Compute SHA-512 (base64) of NSIS installer
         id: sha512
