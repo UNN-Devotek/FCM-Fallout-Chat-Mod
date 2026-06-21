@@ -352,19 +352,15 @@ via `X-Admin-API-Key`). The same fail-closed gates apply — smoke-test the dev 
 .\Packaging\publish-nexus-release.ps1 -Version X.Y.Z [-ReleaseNotes "..."]
 ```
 
-> **Windows Nexus upload is currently DISABLED (since 2026-06-20), but the unblock is now in
-> hand.** Nexus auto-quarantines the *unsigned* Windows installer, so the `Windows` entry in the
-> platform loop is commented out and only the **Linux** file is published to Nexus; Windows users
-> get the `.exe` from `falloutchatmod.com` (still uploaded to the website in steps 4-6).
-> **As of 2026-06-21 the installer is code-signed** via Azure Trusted Signing (see Step 1 →
-> "Windows code signing"), which is the re-enable condition. **Re-enable once the FIRST
-> code-signed `.exe` has shipped and been verified** (signed + smoke + VT): uncomment the
-> `Windows` line in `publish-nexus-release.ps1`, restore the `…AppImage (Linux).zip` name, and
-> drop the `READ ME FIRST (Windows users).txt`. Until that first signed release is out, leave the
-> Linux-only publish in place.
+> **Windows is back ON Nexus (since 2026-06-21).** The installer is code-signed (Azure Trusted
+> Signing — see Step 1 → "Windows code signing"), and v1.3.91's signed `.exe` went straight to
+> `state=available` on upload, so Nexus's unsigned-`.exe` file-type quarantine no longer triggers.
+> The `Windows` entry in the platform loop is **active** again, the Linux zip uses its proper
+> `…AppImage (Linux).zip` name, and `READ ME FIRST (Windows users).txt` is **no longer bundled**.
+> Both platforms publish to Nexus every release; the website remains the canonical direct download too.
 
 This script:
-1. Calls `Packaging/publish-nexus.ps1` once for each enabled platform (currently Linux only; Windows ZIP when re-enabled)
+1. Calls `Packaging/publish-nexus.ps1` once for each platform (Windows ZIP + Linux ZIP)
 2. Each call implements the 6-step Nexus v3 Upload API: open multipart session → upload chunks to S3 → complete S3 multipart → finalise → poll for `available` state → attach as new MAIN file (archiving the previous one)
 3. Uploads the Windows `.exe` to VirusTotal and pushes the permalink to `/admin/virustotal-url`
 
