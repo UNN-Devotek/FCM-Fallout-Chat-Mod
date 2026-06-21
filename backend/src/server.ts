@@ -99,6 +99,7 @@ import {
 import { requireDiscordRole } from './middleware/auth';
 import { initHudPushTcp } from './services/hudPushTcp';
 import { initHudPushWs } from './services/hudPushWs';
+import { attachChatUpgradeRouter } from './websocket/upgradeRouter';
 import { initLatestVersion } from './services/latestReleaseVersion';
 import hudFeedRouter from './routes/hudFeed';
 
@@ -1561,9 +1562,13 @@ app.use(errorHandler);
 const MAX_WS_CONNS_PER_IP = parseInt(process.env.MAX_WS_CONNS_PER_IP || '10', 10);
 const wsConnsByIp = new Map<string, number>();
 
+// noServer mode + a manual upgrade router (attachChatUpgradeRouter below).
+// Previously this was `{ server, path: '/ws' }`, but ws's auto-attached handler
+// aborts every non-'/ws' upgrade with HTTP 400 — which killed the HUD live
+// socket at '/ws/hud' before hudPushWs could claim it. verifyClient still runs
+// because it lives inside handleUpgrade(). See websocket/upgradeRouter.ts.
 const wss = new WebSocketServer({
-  server,
-  path: '/ws',
+  noServer: true,
   maxPayload: 8 * 1024,
   verifyClient: (info, cb) => {
     // Origin allow-list — only enforced when an Origin header is present.
@@ -1609,6 +1614,11 @@ const wsHeartbeat = setInterval(() => {
   });
 }, 30_000);
 wss.on('close', () => clearInterval(wsHeartbeat));
+
+// Route HTTP upgrades: '/ws' → this chat server; '/ws/hud' is left for
+// initHudPushWs(); unknown paths are rejected. Required because `wss` is now in
+// noServer mode (see the WebSocketServer comment above).
+attachChatUpgradeRouter(server, wss);
 
 // Expose broadcast fns to routes and Discord service
 (global as any).broadcast = broadcast;

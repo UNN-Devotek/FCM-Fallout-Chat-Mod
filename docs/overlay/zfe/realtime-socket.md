@@ -226,7 +226,19 @@ The SWF default send target must be a leaf channel (see `HUD_DEFAULT_CHANNEL_ID`
 ### hudPushWs.ts (Path B)
 
 - `noServer: true` WebSocketServer; manual `server.on('upgrade')` handling
-- Routes only `pathname === '/ws/hud'`; leaves all other paths untouched (avoids racing the `/ws` server)
+- Routes only `pathname === '/ws/hud'`; leaves all other paths untouched so the chat `/ws` router can claim them
+
+> **Upgrade routing (fixed 2026-06-21).** The main chat server was
+> `new WebSocketServer({ server, path: '/ws' })`, whose auto-attached upgrade
+> handler aborts **every** non-`/ws` upgrade with **HTTP 400** — and it runs
+> before hudPushWs's listener, so `/ws/hud` was killed before it could be
+> claimed. Path B was therefore never reachable end-to-end (hence the earlier
+> "ws:// UNVERIFIED" note). Fix: the chat server is now `noServer: true` behind
+> `backend/src/websocket/upgradeRouter.ts` (`attachChatUpgradeRouter`) — `/ws` →
+> chat (`verifyClient` still runs inside `handleUpgrade`), `/ws/hud` is left for
+> hudPushWs, all other paths are rejected. Tests:
+> `backend/tests/upgradeRouter.test.js`.
+
 - Enabled only when `HUD_PUSH_WS_ENABLED=true`
 - Per-IP cap: 3 concurrent connections (`wsHudConnsByIp` Map)
 - No auth, no Origin check — game client sends no/odd Origin; feed is public read-only
