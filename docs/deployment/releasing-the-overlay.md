@@ -181,10 +181,12 @@ action per release.
 | Identity validation | Individual (CN = signer's legal name + city/state; street/ZIP excluded) |
 | CI service principal | `fcm-signing-ci` → role `Artifact Signing Certificate Profile Signer`, scoped to the account only |
 
-> **Runner prerequisite:** the self-hosted `[self-hosted, windows, unn]` runner needs `signtool`
-> (Windows SDK) on `PATH` — `Invoke-TrustedSigning` shells out to it. GitHub-hosted
-> `windows-latest` has it by default. If a signed build fails with a signtool-not-found error,
-> install the Windows SDK on the runner.
+> **Runner prerequisite — .NET SDK (provided by the workflow):** the `TrustedSigning` module
+> fetches the Azure CodeSigning dlib via `dotnet tool install`, so the runner needs `dotnet`.
+> The self-hosted `[self-hosted, windows, unn]` runner has no .NET SDK, so `build-windows.yml`
+> installs it with `actions/setup-dotnet` (`8.0.x`) before the build. Without it, signing dies in
+> `NugetInstall.psm1` with `Start-Process: cannot find the file specified`. `signtool` itself does
+> NOT need separate install — the module bundles it via `Microsoft.Windows.SDK.BuildTools`.
 >
 > **Rotate the SP secret** with `az ad sp credential reset --id <appId>` then update the
 > `AZURE_CLIENT_SECRET` repo secret. The credential carries a ~1-year default expiry.
