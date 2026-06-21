@@ -214,6 +214,15 @@ services:
       # publish-to-dev verifies DEV-hosted artifacts, not prod's
       # (backend/src/utils/releaseDownloadUrls.ts).
       RELEASE_DOWNLOAD_HOST: ${RELEASE_DOWNLOAD_HOST:-dev.falloutchatmod.com}
+
+      # --- In-game HUD live push (FCMHUD/1 over /ws/hud) ---
+      # Receive-only WebSocket feed consumed by the ZFE FCMBridge HUD mod
+      # (wss://dev.falloutchatmod.com/ws/hud, via cloudflared-dev). Dev-only by
+      # design: initHudPushWs refuses to start when NODE_ENV=production (the
+      # /ws/hud path is unauthenticated), so enabling it here cannot affect prod.
+      # This service lists vars explicitly (no env_file), so it must live here to
+      # reach the backend. See docs/overlay/zfe/realtime-socket.md.
+      HUD_PUSH_WS_ENABLED: ${HUD_PUSH_WS_ENABLED:-true}
     volumes:
       - releases_dev_downloads:/app/downloads
     security_opt: ["no-new-privileges:true"]

@@ -32,6 +32,7 @@ is an explicit step of the M6 production-exposure milestone. Guard tests:
 |------|-------------------------------|---------------------|
 | Dev TCP | `127.0.0.1:4001` | local :7177, `HUD_PUSH_TCP_ENABLED=true` |
 | Dev WS | `ws://127.0.0.1:7177/ws/hud` | local :7177, `HUD_PUSH_WS_ENABLED=true` (ws:// support UNVERIFIED — see Probe findings below) |
+| Hosted Dev WS | `wss://dev.falloutchatmod.com/ws/hud` | `cloudflared-dev` tunnel; `HUD_PUSH_WS_ENABLED=true` set in `deploy/dev/docker-compose.yml`; `NODE_ENV=development` so the prod guard permits it. Receive-only (inbound bytes discarded — no in-game send over WS). |
 | Prod TCP | `tcp.falloutchatmod.com:4001` | direct host port, unproxied DNS |
 | Prod WS | `wss://falloutchatmod.com/ws/hud` | existing cloudflared tunnel, `HUD_PUSH_WS_ENABLED=true` |
 
