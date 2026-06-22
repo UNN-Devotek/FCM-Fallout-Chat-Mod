@@ -329,18 +329,6 @@ See `cross-platform-overlay/assets/install/INSTALL-LINUX.txt` for the KDE Plasma
 
 ---
 
-## Antivirus / SmartScreen
-
-Unsigned binaries trigger SmartScreen and some AV heuristics by reputation alone — not because of behavior. Fallout Chat Mod does not read game memory, modify game files, inject code, or scan network connections. The only potentially flagged behavior is the global low-level keyboard hook used for hotkeys (classic keylogger heuristic — a migration to `RegisterHotKey` is tracked in `docs/CODE-SIGNING.md`).
-
-Code signing is planned (Azure Trusted Signing). Until signed, if your AV blocks the overlay, add exclusions for:
-- `%LocalAppData%\Programs\Fallout Chat Mod\`
-- `%LocalAppData%\FalloutChatOverlay\`
-
-Code signing is on the roadmap to remove these reputation-based warnings.
-
----
-
 ## EULA Compliance
 
 Fallout Chat Mod ships in two clearly separated forms:
