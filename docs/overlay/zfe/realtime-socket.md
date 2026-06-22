@@ -32,7 +32,14 @@ is an explicit step of the M6 production-exposure milestone. Guard tests:
 |------|-------------------------------|---------------------|
 | Dev TCP | `127.0.0.1:4001` | local :7177, `HUD_PUSH_TCP_ENABLED=true` |
 | Dev WS | `ws://127.0.0.1:7177/ws/hud` | local :7177, `HUD_PUSH_WS_ENABLED=true` (ws:// support UNVERIFIED — see Probe findings below) |
-| Hosted Dev WS | `wss://dev.falloutchatmod.com/ws/hud` | `cloudflared-dev` tunnel; `HUD_PUSH_WS_ENABLED=true` set in `deploy/dev/docker-compose.yml`; `NODE_ENV=development` so the prod guard permits it. Receive-only (inbound bytes discarded — no in-game send over WS). |
+| Hosted Dev WS | `wss://dev.falloutchatmod.com:443/ws/hud` | `cloudflared-dev` tunnel; `HUD_PUSH_WS_ENABLED=true` set in `deploy/dev/docker-compose.yml`; `NODE_ENV=development` so the prod guard permits it. **Receive-only** (inbound bytes discarded — no in-game send over WS). |
+| Hosted Dev TCP (two-way) | `localhost:4001` (via `cloudflared access tcp --hostname dev-hud.falloutchatmod.com --url localhost:4001`) | backend-dev `HUD_PUSH_TCP_ENABLED=true` + `HUD_PUSH_TCP_HOST=0.0.0.0` + inline-PEM cert (`HUD_PUSH_TCP_TLS_CERT/KEY`, see `readPemValue`) + non-default `HUD_IDENTITY_SECRET`; a cloudflared **TCP route** `dev-hud.falloutchatmod.com → tcp://backend-dev:4001` (Access service-token). The **only** dev path that accepts inbound **SEND**. |
+
+> **ZFE endpoint format requires an explicit port** (verified against 0.9.1/0.9.2):
+> `ZFE_TEXT_CHAT_ENDPOINT` must be `host:port` or `wss://host:port/target` — a
+> portless `wss://host/path` is rejected with `endpoint must be host:port`. ZFE
+> wraps **every** endpoint (including `host:port`) in Schannel TLS and does not
+> validate the cert (self-signed is fine).
 | Prod TCP | `tcp.falloutchatmod.com:4001` | direct host port, unproxied DNS |
 | Prod WS | `wss://falloutchatmod.com/ws/hud` | existing cloudflared tunnel, `HUD_PUSH_WS_ENABLED=true` |
 
