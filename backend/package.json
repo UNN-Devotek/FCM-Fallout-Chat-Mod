@@ -14,7 +14,7 @@
     "test:coverage": "jest --coverage --runInBand --forceExit"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1072.0",
+    "@aws-sdk/client-s3": "^3.1073.0",
     "@prisma/client": "^5.22.0",
     "@types/tar-stream": "^3.1.4",
     "bull": "^4.16.5",
@@ -29,7 +29,7 @@
     "helmet": "^8.0.0",
     "joi": "^18.2.3",
     "multer": "^2.2.0",
-    "node-cron": "^4.4.1",
+    "node-cron": "^4.5.0",
     "node-emoji": "^2.2.0",
     "pg": "^8.22.0",
     "pino": "^10.3.1",
