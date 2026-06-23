@@ -71,6 +71,17 @@ async function main(): Promise<void> {
 
   const prisma = new PrismaClient();
   try {
+    // Some environments are managed purely by `prisma db push` and never ran
+    // `migrate deploy`, so the _prisma_migrations table simply does not exist
+    // (e.g. the hosted dev stack). There is no history to reconcile there.
+    const reg = await prisma.$queryRawUnsafe<Array<{ exists: boolean }>>(
+      "SELECT to_regclass('_prisma_migrations') IS NOT NULL AS exists",
+    );
+    if (!reg[0]?.exists) {
+      console.log('[reconcile] no _prisma_migrations table (schema is db-push-managed) — nothing to reconcile');
+      return;
+    }
+
     const rows = await prisma.$queryRawUnsafe<Array<{ migration_name: string; applied: boolean }>>(
       'SELECT migration_name, (finished_at IS NOT NULL AND rolled_back_at IS NULL) AS applied FROM _prisma_migrations',
     );
@@ -113,7 +124,7 @@ if (require.main === module) {
   main()
     .then(() => process.exit(0))
     .catch((err) => {
-      console.warn('[reconcile] non-fatal:', err?.message ?? err);
+      console.warn('[reconcile] non-fatal:', err?.message || String(err));
       process.exit(0);
     });
 }
