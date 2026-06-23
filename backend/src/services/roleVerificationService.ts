@@ -1,5 +1,6 @@
 import env from '../config/environment';
 import { shouldSkipRoleVerification } from '../utils/roleVerificationSkip';
+import { shouldRevokeOnMemberFetchStatus } from '../utils/memberFetchRevoke';
 import prisma from '../config/prisma';
 import { getRedisClient } from '../config/redis';
 import logger from '../config/logger';
@@ -106,9 +107,16 @@ async function verifyAdminUser(adminUser: { discord_id: string; role: string; us
     );
 
     if (!memberRes.ok) {
-      // User left the guild or bot can't see them -- revoke
-      logger.info({ discordId: adminUser.discord_id, status: memberRes.status }, 'Admin user no longer in guild -- revoking');
-      return false;
+      if (shouldRevokeOnMemberFetchStatus(memberRes.status)) {
+        // 404 — the member is genuinely gone from the guild; safe to revoke.
+        logger.info({ discordId: adminUser.discord_id }, 'Admin user no longer in guild (404) -- revoking');
+        return false;
+      }
+      // 429 / 5xx / 401 / 403 etc. are transient or bot-side, NOT a reliable
+      // signal the user lost their role. Revoking on these previously wiped valid
+      // moderators/admins during a Discord blip. Keep the row, retry next cycle.
+      logger.warn({ discordId: adminUser.discord_id, status: memberRes.status }, 'Role verification got non-OK status (transient) -- skipping, will retry next cycle');
+      return true;
     }
 
     const member = await memberRes.json() as { roles?: string[] };
