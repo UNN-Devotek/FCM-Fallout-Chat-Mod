@@ -214,7 +214,8 @@ Proposed `AllowedChannels` fragment value: **`global,trade,server,events,raids,i
 | `server` | FCM session scope (`scope:'session'`, `sessionId`) | map (room) | Same-world server chat — a **room**, not a static channel (see below) |
 | `party` | FCM `Party`/`PartyMember` (`scope:'party'`) | defer | Group room; needs identity linking + party membership first |
 | `whisper` | — (requires `targetUserId`) | omit | No 1:1 DM in FCM yet — omit from `AllowedChannels` until built |
-| `local`, `clan` | — | omit | No FCM equivalent; the spec says **omit defaults with no meaning** |
+| `clan` | FCM clan chat (**Clans epic #182**) | defer | Maps to the user's clan channel once Clans ships (relay resolves `clan` → their clan, members-only server-side) — see [roadmap note](#relationship-to-fcm-roadmap-issues) |
+| `local` | — | omit | No FCM equivalent; the spec says **omit defaults with no meaning** |
 
 **Rooms vs. static channels.** `global`/`trade`/`events`/`raids`/`infests` are **static topic
 channels** — a flat `slug → UUID` lookup. `server` and `party` are **dynamic-membership rooms**, and
@@ -229,6 +230,14 @@ Channel eligibility stays uniform with the rest of FCM: only **leaf** channels
 the hud-feed SQL already enforce. An unknown/omitted slug or a container target returns the
 relay-defined `invalid_channel` error (ZFE also pre-validates against `AllowedChannels`, so this is
 defense in depth).
+
+> **Static config vs. FCM's runtime channels.** `AllowedChannels` is **static** install config
+> (fragment / `zfe.ini`). FCM admins create channels at runtime (`POST /api/channels`), and clans
+> (#182) would add per-clan channels — none of which appear in a native client until the fragment is
+> reshipped or the user edits `zfe.ini`. So the native `chat.v1` client is bound to the **shipped
+> slug set**; FCMHUD/1's `CHAN~<channelId>` (any leaf UUID) has no such limit. This is a real
+> residual FCMHUD/1 advantage — see the [roadmap note](#relationship-to-fcm-roadmap-issues) and the
+> deprecation open question.
 
 ---
 
@@ -383,6 +392,38 @@ into the required `CI Summary` gate once stable.
 
 ---
 
+## Relationship to FCM roadmap issues
+
+This spec materially reshapes several tracked roadmap epics. It doesn't *close* them, but it changes
+the build approach and answers some of their open design questions:
+
+- **#137 Standalone in-game chat `.ba2`** (and **#138**, **#162**). This epic is the "standalone
+  chat" a `chat.v1` relay most directly enables. #138's scope — render the feed in-HUD, two-way
+  input, connect **directly to the backend with no overlay**, and the open question *"how the mod
+  authenticates the player without the overlay"* — is largely delivered by ZFE's **native** chat
+  client + the `chat.v1` relay: ZFE provides the in-game UI, input, and DPAPI token storage; FCM
+  provides `/relay`. #138's identity/auth question is specifically answered by the
+  `register → token → hello` model ([Identity & auth bridge](#identity--auth-bridge)). Net effect:
+  most of #137 could ship as *"expose `/relay` + package a ZFE-native-chat SWF with an
+  `AllowedChannels` fragment"* instead of building and maintaining the bespoke FCMBridge SWF.
+- **#152 Server-scoped chat** (**#154**, **#162**). The `server` slug + FCM session-scope rooms are
+  the in-game surface for server chat — #162 ("render server-only channel in-game") **without** a
+  custom SWF. The worldId/roster **data-bridge** (#161, part of #144) is separate and **unaffected** —
+  `chat.v1` is chat only, not game-UI data capture.
+- **#182 Clans / #187 clan chat.** Corrects this plan's earlier "`clan` has no FCM equivalent": once
+  Clans ships, the `clan` slug maps to the user's clan channel (relay resolves `clan` → their clan,
+  members-only enforced server-side). Caveat: `AllowedChannels` is static, so the richer #187 UX
+  (multiple per-clan channels as sub-tabs, runtime create/rename) stays a dashboard/overlay feature —
+  the native client carries a **single** `clan` slot.
+- **Cosmetic in-game features are NOT deliverable via `chat.v1`** (**#191**, **#192**, **#227**,
+  **#228**). The `chat.v1` event schema carries only `senderDisplayName` + `body` — **no name-color
+  or clan-tag field**. #227 specifically extends the *FCMHUD/1* wire (`col~ch~user~msg` + a 5th
+  color field), which is **ours** to control; ZFE's native client exposes no such hook. So in-game
+  blue usernames / clan titles / name colors remain a reason to keep **FCMHUD/1** (our own SWF = our
+  own rendering). This is the sharpest limit on deprecating the bespoke bridge.
+
+---
+
 ## Open questions / decisions needed
 
 The `AllowedChannels` revision of the spec **closed** several questions from the first draft:
@@ -398,14 +439,19 @@ convention (hide from history/poll). What remains:
    cross-link to the M7 `identityHash` when the same person uses both bridges (shared ban state).
 3. **`party` / `whisper`.** Both are deferred/omitted at launch. When do we add `party` (needs
    identity linking + party-membership binding) and `whisper` (needs a `Block`-aware DM feature)?
-4. **Live deletion.** Accept that, on the native client, a deleted message only **disappears from
-   history/poll** (no live pull from an already-rendered screen) until ZFE adds a `chat.delete`
-   event kind? FCM's dashboard/overlay surfaces are unaffected.
-5. **FCMHUD/1 deprecation — calculus has shifted.** With custom channels now working via
-   `AllowedChannels`, `chat.v1` is a **fuller** replacement than the first draft assumed. The
-   remaining FCMHUD/1-only advantages are narrow: in-game switching across **arbitrary** leaf
-   channels by UUID (vs. the fixed shipped slug list) and FCM-controlled rendering. Do we plan a
-   sunset of `FCMBridge.swf` once `chat.v1` ships, or keep both indefinitely?
+4. **Live deletion (spec-settled — just confirm).** Not really a choice: the spec **dictates**
+   hide-from-history/poll, and live removal of an already-rendered line needs a future ZFE
+   `chat.delete` event kind (the "own-SWF convention" escape hatch doesn't apply to ZFE's native
+   client). Confirm we accept that a native-client user keeps a deleted line on screen until refresh;
+   FCM's dashboard/overlay surfaces are unaffected.
+5. **FCMHUD/1 deprecation — narrower than #137 implies.** `chat.v1` can carry the core
+   standalone-chat scope (#137/#138), but two FCMHUD/1-only capabilities remain: (a) **cosmetic
+   rendering** — in-game name colors / clan tags (#191/#192/#227/#228), which `chat.v1` has no event
+   field for; and (b) reaching **runtime-created** channels — `AllowedChannels` is static install
+   config, so admin/clan channels created after install (`POST /api/channels`, #182) aren't
+   addressable by the native client until the fragment is reshipped, whereas FCMHUD/1's
+   `CHAN~<channelId>` targets any leaf channel. Keep both (chat.v1 for the turnkey standalone client,
+   FCMHUD/1 for cosmetics + dynamic channels), or invest in ZFE extensions to close the gap?
 6. **Slow-mode (optional).** Permanently advertise `canSetSlowMode=false`, or build a real
    per-channel slow-mode primitive later (it would also benefit the dashboard/overlay)?
 
