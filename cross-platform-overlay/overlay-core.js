@@ -265,6 +265,37 @@ function shouldRegisterShortcuts({ platform, kdeWayland, hasForegroundDetect, ga
   return gameActive || !!overlayFocused;
 }
 
+// Pure decision: what to do after a KDE-Wayland active-window poll spawn ends.
+//
+// Why this exists: on some distros (confirmed Fedora 44, xdotool 3.x) the chained
+// `xdotool getactivewindow getwindowclassname` hits a double-free *inside libxdo*
+// (`xdo_get_window_classname` → `XFree` → abort/SIGABRT) whenever the active window's
+// WM_CLASS can't be read cleanly — routine under XWayland when a native-Wayland
+// window is focused. Our JS error-handling can't prevent the per-spawn coredump, so
+// re-spawning into the crash every ~300ms produces a coredump storm. This breaker
+// detects repeated crashes and stops hammering the broken tool.
+//
+// Inputs:
+//   crashed            : boolean — the last spawn ended abnormally (signal set, or
+//                        non-zero/null exit code). A clean exit is `crashed:false`.
+//   consecutiveCrashes : number  — count of back-to-back crashes INCLUDING this one
+//                        (caller increments before calling; resets to 0 on clean exit).
+//   maxCrashes         : number  — threshold to trip the breaker (default 3).
+//   hasAltTool         : boolean — the *other* tool (kdotool↔xdotool) is on PATH.
+//
+// Returns one of:
+//   'continue'    — keep polling with the current tool (no trip, or a clean exit).
+//   'switch-tool' — trip: the current tool keeps crashing, but the alternate tool is
+//                   available, so switch to it and resume (gives crash-affected users
+//                   kdotool automatically when installed).
+//   'disable'     — trip with no alternate: stop the poller for this session and fall
+//                   back to game-running detection (no regression vs. "no tool").
+function decideForegroundPollerAction({ crashed, consecutiveCrashes, maxCrashes = 3, hasAltTool = false } = {}) {
+  if (!crashed) return 'continue';
+  if (consecutiveCrashes < maxCrashes) return 'continue';
+  return hasAltTool ? 'switch-tool' : 'disable';
+}
+
 // ── Relay URL resolution ───────────────────────────────────────────────────────
 // Single source of truth for the two relay URL env-override patterns. main.js calls
 // this at startup; tests call it directly to assert env override behaviour.
@@ -478,11 +509,27 @@ function resolveRelayProxyUrl(reqPath, relayHttp) {
   return url;
 }
 
-function planOzoneRelaunch({ kdeWayland, argv = [], appImagePath = null } = {}) {
+function planOzoneRelaunch({ kdeWayland, argv = [], appImagePath = null, execPath = null } = {}) {
   const FLAG = '--ozone-platform=x11';
   if (!kdeWayland) return null;
   if (argv.includes(FLAG)) return null;
-  const opts = { args: argv.slice(1).concat(FLAG) };
+  // The binary the child would re-exec: the persistent $APPIMAGE when known, else the
+  // current process's execPath.
+  const effectiveExec = appImagePath || execPath || null;
+  // Re-exec is UNSAFE when the only available binary is a transient AppImage FUSE mount
+  // (/tmp/.mount_*) AND $APPIMAGE is unset: app.exit(0) unmounts it before the child can
+  // start, so the child vanishes — the "launches once, then the shortcut does nothing"
+  // failure (issue #272). When unsafe, the caller must NOT exit; staying on native
+  // Wayland (degraded stacking) beats disappearing entirely.
+  const isTransientMount = !!effectiveExec && /\/\.mount_[^/]*\//.test(effectiveExec);
+  const safe = !!appImagePath || !isTransientMount;
+  const opts = {
+    args: argv.slice(1).concat(FLAG),
+    // Belt-and-suspenders alongside the argv flag: the env var also forces XWayland,
+    // in case a launcher (AppImageLauncher, a wrapper .desktop) mangles argv.
+    env: { ELECTRON_OZONE_PLATFORM_HINT: 'x11' },
+    safe,
+  };
   if (appImagePath) opts.execPath = appImagePath;
   return opts;
 }
@@ -537,6 +584,7 @@ module.exports = {
   isGameProcess,
   isGameClass,
   shouldRegisterShortcuts,
+  decideForegroundPollerAction,
   stateHasRealData,
   isCfChallenge,
   isSinglePrintableChar,

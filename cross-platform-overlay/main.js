@@ -130,23 +130,45 @@ if (KDE_WAYLAND) {
   // same pure logic via a local require to keep the relaunch decision testable.
   const _ozoneRelaunch = require('./overlay-core').planOzoneRelaunch({
     kdeWayland: KDE_WAYLAND, argv: process.argv, appImagePath: process.env.APPIMAGE || null,
+    execPath: process.execPath,
   });
-  if (_ozoneRelaunch) {
+  if (_ozoneRelaunch && _ozoneRelaunch.safe === false) {
+    // UNSAFE re-exec (issue #272): the only binary is a transient AppImage FUSE mount
+    // (/tmp/.mount_*) and $APPIMAGE is unset, so app.exit(0) would unmount it before the
+    // child starts → the app "launches once, then the shortcut does nothing". Do NOT
+    // exit; stay on native Wayland (stacking may be degraded) rather than vanish. This
+    // happens with some AppImageLauncher / wrapper launches; the .deb avoids it entirely.
+    try {
+      diag('[ozone] XWayland relaunch needed but UNSAFE — execPath=' + process.execPath +
+        ' is a transient AppImage mount and $APPIMAGE is unset; staying on native Wayland ' +
+        'to avoid disappearing on exit. Reinstall via the .deb or install.sh for reliable launch.');
+    } catch { /* logger not ready */ }
+  } else if (_ozoneRelaunch) {
     // NOTE: app.relaunch() does NOT work for an AppImage here — the relaunched instance
     // never reaches app.ready (verified). Re-exec manually via child_process instead, with
     // a CLEANED env: drop the AppImage-runtime vars (APPDIR/APPIMAGE/ARGV0/OWD point at the
     // transient /tmp/.mount_* path that's gone after we exit) so the fresh AppImage runtime
     // repopulates them, and APPIMAGELAUNCHER_DISABLE (it makes the binfmt handler misfire on
     // the re-exec). detached + unref + ignored stdio so the child outlives this process.
+    const exe = _ozoneRelaunch.execPath || process.execPath;
     try {
       const cp = require('child_process');
-      const exe = _ozoneRelaunch.execPath || process.execPath;
-      const env = { ...process.env };
+      const env = { ...process.env, ...(_ozoneRelaunch.env || {}) };
       for (const k of ['APPDIR', 'APPIMAGE', 'ARGV0', 'OWD', 'APPIMAGELAUNCHER_DISABLE']) delete env[k];
+      // Diagnostic BEFORE the spawn — if the child fails to start (FUSE/binfmt/launcher
+      // issues) this is the last line we log, which pinpoints the cause from a user report.
+      try {
+        diag('[ozone] relaunching for XWayland: exe=' + exe + ' $APPIMAGE=' + (process.env.APPIMAGE || '(unset)') +
+          ' args=' + JSON.stringify(_ozoneRelaunch.args));
+      } catch { /* logger not ready */ }
       const child = cp.spawn(exe, _ozoneRelaunch.args, { detached: true, stdio: 'ignore', env });
       child.unref();
       app.exit(0);
-    } catch { /* re-exec failed — fall through to the best-effort switches below */ }
+    } catch (e) {
+      // re-exec failed — log it (previously swallowed silently) and fall through to the
+      // best-effort switches below so we at least keep running.
+      try { diag('[ozone] relaunch spawn FAILED for exe=' + exe + ': ' + (e && e.message ? e.message : String(e))); } catch { /* ignore */ }
+    }
   }
   // Belt-and-suspenders: no-op on the relaunched X11 process; the route that actually
   // worked on older Electron (<=37, where the hint still selected X11).
@@ -2698,58 +2720,113 @@ function applyZOrder() {
 // pre-existing "game running → keys active" behavior (no regression).
 function _startForegroundPoller() {
   if (!KDE_WAYLAND) return; // only on KDE+Wayland
-  // Resolve which tool is available — prefer xdotool (XWayland, ubiquitous on
-  // Arch/CachyOS), then kdotool. `command -v` is POSIX and returns non-zero if
-  // the binary isn't found.
-  exec('command -v xdotool || command -v kdotool', { shell: '/bin/sh' }, (err, stdout) => {
-    const resolved = (stdout || '').trim().split('\n')[0].trim();
-    if (err || !resolved) {
+  // Resolve which tools are available — prefer xdotool (XWayland, ubiquitous on
+  // Arch/CachyOS), then kdotool. We detect BOTH (not just the first) so the crash
+  // circuit-breaker below can auto-switch to the alternate tool if the primary keeps
+  // aborting. `;` (not `||`) runs both probes; `command -v` prints the path when found.
+  exec('command -v xdotool; command -v kdotool', { shell: '/bin/sh' }, (_err, stdout) => {
+    const found = (stdout || '').split('\n').map((s) => s.trim().split('/').pop()).filter(Boolean);
+    const available = ['xdotool', 'kdotool'].filter((t) => found.includes(t)); // xdotool first
+    if (available.length === 0) {
       // Neither tool installed — log once and leave detection disabled.
       diag('[foreground] xdotool/kdotool not found on PATH — KDE-Wayland active-window detection disabled.');
-      diag('[foreground] Install xdotool (recommended) for precise hotkey-release support, or kdotool.');
+      diag('[foreground] Install kdotool (recommended on Wayland) or xdotool for precise hotkey-release support.');
       diag('[foreground] Falling back to game-running detection (hotkeys stay registered while FO76 is open).');
       return;
     }
-    fgTool = resolved.split('/').pop(); // 'xdotool' or 'kdotool'
+    fgTool = available[0];
     kdeWaylandForegroundDetect = true;
-    diag('[foreground] ' + fgTool + ' found — KDE-Wayland active-window detection ENABLED (~300ms poll).');
+    const altNote = available.length > 1 ? ' (fallback available: ' + available.filter((t) => t !== fgTool).join(',') + ')' : '';
+    diag('[foreground] ' + fgTool + ' found — KDE-Wayland active-window detection ENABLED (~300ms poll).' + altNote);
+    // `tried` tracks tools we've already polled with so the breaker never ping-pongs
+    // back to a tool that already crashed (xdotool→kdotool→xdotool…).
+    _runForegroundPoll(available, new Set([fgTool]));
+  });
+}
 
-    const POLL_INTERVAL_MS = 300;
-    // Poll by spawning the tool each interval. Each spawn is cheap (< 1ms startup)
-    // vs. a long-lived subprocess that could die silently.
-    fgPollTimer = setInterval(() => {
-      if (isQuitting) return;
-      let done = false;
-      let out = '';
-      try {
-        fgPoller = spawn(fgTool, ['getactivewindow', 'getwindowclassname']);
-        fgPoller.stdout.on('data', (d) => { out += d.toString(); });
-        fgPoller.on('close', () => {
-          if (done) return;
-          done = true;
-          // Empty output (e.g. a native-Wayland window is active, so xdotool sees
-          // no active X window) is a valid signal meaning "not the game".
-          const line = out.trim().toLowerCase();
-          // Only update and act when the value actually changed — avoids
-          // redundant applyZOrder / refreshShortcuts churn every 300ms.
-          if (line !== lastForegroundProc) {
-            lastForegroundProc = line;
-            if (gameRunning) applyZOrder();
-            applyFocusClickThrough();
+// Drive the ~300ms active-window poll with the currently-selected fgTool, guarded by a
+// crash circuit-breaker. On some distros (Fedora 44, xdotool 3.x) the chained
+// `getactivewindow getwindowclassname` aborts INSIDE libxdo (double-free in
+// xdo_get_window_classname → SIGABRT). We can't stop the per-spawn coredump, so after
+// MAX_CONSEC_CRASHES back-to-back signal deaths we either switch to the alternate tool
+// (if one is installed) or disable detection entirely — both stop the coredump storm.
+function _runForegroundPoll(available, tried) {
+  const POLL_INTERVAL_MS = 300;
+  const MAX_CONSEC_CRASHES = 3;
+  let consecutiveCrashes = 0;
+  // Poll by spawning the tool each interval. Each spawn is cheap (< 1ms startup)
+  // vs. a long-lived subprocess that could die silently.
+  fgPollTimer = setInterval(() => {
+    if (isQuitting) return;
+    let done = false;
+    let out = '';
+    try {
+      fgPoller = spawn(fgTool, ['getactivewindow', 'getwindowclassname']);
+      fgPoller.stdout.on('data', (d) => { out += d.toString(); });
+      // Drain stderr: a crashing xdotool prints a libc backtrace to stderr, and the
+      // default piped-but-unread stderr could fill and block the child before our
+      // 500ms kill. Discard it.
+      if (fgPoller.stderr) fgPoller.stderr.on('data', () => { /* discard */ });
+      fgPoller.on('close', (code, signal) => {
+        if (done) return;
+        done = true;
+        // A SIGNAL death (SIGABRT from the libxdo double-free, SIGSEGV, …) is a crash.
+        // A non-zero EXIT CODE with no signal is NOT a crash — xdotool returns 1 when
+        // there's simply no active X window (a native-Wayland window is focused), which
+        // is the normal "not the game" state. Our own 500ms timeout kill sets done=true
+        // first, so its SIGTERM never reaches here.
+        if (signal) {
+          consecutiveCrashes += 1;
+          const untried = available.filter((t) => !tried.has(t));
+          const action = overlayCore.decideForegroundPollerAction({
+            crashed: true, consecutiveCrashes, maxCrashes: MAX_CONSEC_CRASHES, hasAltTool: untried.length > 0,
+          });
+          if (action === 'switch-tool') {
+            const alt = untried[0];
+            diag('[foreground] ' + fgTool + ' crashed ' + consecutiveCrashes + 'x (' + signal +
+              ', likely libxdo getwindowclassname double-free) — switching to ' + alt + '.');
+            if (fgPollTimer) { clearInterval(fgPollTimer); fgPollTimer = null; }
+            fgTool = alt;
+            tried.add(alt);
+            _runForegroundPoll(available, tried);
+          } else if (action === 'disable') {
+            diag('[foreground] ' + fgTool + ' crashed ' + consecutiveCrashes + 'x (' + signal +
+              ', likely libxdo getwindowclassname double-free) — disabling active-window detection to stop coredump spam.');
+            diag('[foreground] Install kdotool (Wayland-native, no X11 double-free) to restore precise hotkey-release: https://github.com/jinliu/kdotool');
+            diag('[foreground] Falling back to game-running detection (hotkeys stay registered while FO76 is open).');
+            if (fgPollTimer) { clearInterval(fgPollTimer); fgPollTimer = null; }
+            kdeWaylandForegroundDetect = false;
+            lastForegroundProc = '';
             refreshShortcuts();
           }
-        });
-        fgPoller.on('error', () => { done = true; /* ignore — tool may have vanished */ });
-        // Safety timeout: if the process doesn't close in 500ms, kill it.
-        setTimeout(() => {
-          if (!done) {
-            done = true;
-            try { fgPoller && fgPoller.kill(); } catch { /* ignore */ }
-          }
-        }, 500);
-      } catch { /* ignore spawn errors */ }
-    }, POLL_INTERVAL_MS);
-  });
+          // action === 'continue' (still under threshold): keep polling; don't act on
+          // this spawn's (absent) output.
+          return;
+        }
+        // Clean exit — reset the crash streak. Empty output (e.g. a native-Wayland
+        // window is active, so xdotool sees no active X window) is a valid signal
+        // meaning "not the game".
+        consecutiveCrashes = 0;
+        const line = out.trim().toLowerCase();
+        // Only update and act when the value actually changed — avoids redundant
+        // applyZOrder / refreshShortcuts churn every 300ms.
+        if (line !== lastForegroundProc) {
+          lastForegroundProc = line;
+          if (gameRunning) applyZOrder();
+          applyFocusClickThrough();
+          refreshShortcuts();
+        }
+      });
+      fgPoller.on('error', () => { done = true; /* ignore — tool may have vanished */ });
+      // Safety timeout: if the process doesn't close in 500ms, kill it.
+      setTimeout(() => {
+        if (!done) {
+          done = true;
+          try { fgPoller && fgPoller.kill(); } catch { /* ignore */ }
+        }
+      }, 500);
+    } catch { /* ignore spawn errors */ }
+  }, POLL_INTERVAL_MS);
 }
 
 // Spawn a long-lived PowerShell that prints the foreground window's process name
@@ -3373,6 +3450,10 @@ ipcMain.on('input:context-menu', (_evt, { x, y }) => {
 // instance handles second-instance signals by restoring/focusing the window.
 const _gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!_gotSingleInstanceLock) {
+  // Another instance already holds the lock — this process hands off and exits. Logged
+  // so a "won't launch" report (issue #272) can be distinguished from a silent quit
+  // here vs. a failed AppImage mount / Ozone relaunch upstream.
+  try { diag('[singleton] lock not acquired (another instance is running) — exiting this process'); } catch { /* logger not ready */ }
   app.quit();
 } else {
   app.on('second-instance', () => {

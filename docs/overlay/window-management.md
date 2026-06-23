@@ -137,26 +137,38 @@ On **Windows**, a long-lived PowerShell process polls the foreground window via 
 On **KDE Wayland**, Wayland's security model forbids clients from querying the active window, so the Windows foreground poll does not apply. Because FO76 (Proton) **and** the overlay itself run under **XWayland** on KDE, the standard X11 tool [`xdotool`](https://github.com/jordansissel/xdotool) can read the active window's WM_CLASS here; [`kdotool`](https://github.com/jinliu/kdotool) (a pure-Wayland, KWin D-Bus counterpart) is used as a fallback. Both share the syntax `<tool> getactivewindow getwindowclassname` and are polled at ~300ms intervals.
 
 **How it works:**  
-`_startForegroundPoller()` is called from `startForegroundZOrder()` when `KDE_WAYLAND` is true. It resolves the tool via `command -v xdotool || command -v kdotool`:
+`_startForegroundPoller()` is called from `startForegroundZOrder()` when `KDE_WAYLAND` is true. It probes for **both** tools (`command -v xdotool; command -v kdotool`) so the crash circuit-breaker (below) can fall back to the other one, preferring `xdotool` when present:
 
-- **tool present:** Sets `kdeWaylandForegroundDetect = true` and records `fgTool`. A `setInterval` spawns the tool every 300ms; the printed WM_CLASS is lowercased into `lastForegroundProc`, and `applyZOrder()` / `applyFocusClickThrough()` / `refreshShortcuts()` are called on each change — mirroring the win32 PowerShell path. When a native-Wayland window is active, `xdotool getactivewindow` returns nothing (no active X window) — treated as "not the game", so the hotkeys are released.
+- **tool present:** Sets `kdeWaylandForegroundDetect = true` and records `fgTool`. `_runForegroundPoll()` spawns the tool every 300ms; the printed WM_CLASS is lowercased into `lastForegroundProc`, and `applyZOrder()` / `applyFocusClickThrough()` / `refreshShortcuts()` are called on each change — mirroring the win32 PowerShell path. When a native-Wayland window is active, `xdotool getactivewindow` exits non-zero with no output (no active X window) — treated as "not the game", so the hotkeys are released.
 - **neither tool present:** Logs a single diagnostic and leaves `kdeWaylandForegroundDetect = false`. `refreshShortcuts()` falls back to `gameRunning` as the gate for hotkey registration (the pre-existing behavior — no regression).
+
+**Crash circuit-breaker (issue #272):**  
+On some distros (confirmed **Fedora 44**, xdotool 3.x) the chained `getactivewindow getwindowclassname` aborts **inside libxdo** — a double-free in `xdo_get_window_classname` → `XFree` → `SIGABRT` — whenever the active window's WM_CLASS can't be read cleanly (routine under XWayland when a native-Wayland window is focused). Because the overlay re-spawns the tool every 300ms, this produces a **coredump storm** (≈3/sec, plus a burst during shutdown). Our JS error-handling can't prevent the per-spawn coredump, so the breaker stops re-spawning into the crash:
+
+- The `close` handler distinguishes a **crash** (terminated by a signal) from a normal **non-zero exit** (no active X window — *not* a crash). Only signal deaths count.
+- After `MAX_CONSEC_CRASHES = 3` back-to-back crashes, `decideForegroundPollerAction()` (`overlay-core.js`, unit-tested) returns either **`switch-tool`** — switch to the alternate tool (kdotool↔xdotool) if it's installed, tracked so it never ping-pongs back — or **`disable`** — stop the poller, set `kdeWaylandForegroundDetect = false`, and fall back to `gameRunning` gating. Either way the coredump storm stops after ≤3 cores. A clean poll resets the streak.
+- On `disable`, a single diagnostic recommends installing **`kdotool`** (Wayland-native, no X11 double-free).
 
 **WM_CLASS matching:**  
 Under XWayland + Proton, FO76 reports its WM_CLASS as `steam_app_1151340` (confirmed on CachyOS; some Proton/Wine versions report `fallout76.exe`, and `project76_gamepass.exe` for the Game Pass build). `isGameClass()` in `overlay-core.js` matches all of these: `isGameProcess()` strips the `.exe` suffix for the exe-name forms, and `XWAYLAND_GAME_CLASSES` covers `steam_app_1151340`.
 
 The overlay's own WM_CLASS (`Fallout Chat Mod` under XWayland) does **not** match `isGameClass()`, so the overlay window being focused is handled separately via `mainWindow.isFocused()`.
 
-**Installing xdotool (recommended for KDE Wayland users):**
+**Installing an active-window tool (KDE Wayland):**
+
+`kdotool` is **recommended on Wayland** — it talks to KWin over D-Bus and has none of the libxdo X11 double-free problem described above, so it never produces the coredump storm. `xdotool` also works (and is preferred when both are installed, for parity with the dev's verified setup), but on distros where it crashes the breaker will auto-switch to `kdotool` if present, or disable detection otherwise.
+
 ```bash
-# Arch / CachyOS / Manjaro
-sudo pacman -S xdotool
-# Fedora / RPM-based
-sudo dnf install xdotool
-# Ubuntu / Debian
-sudo apt install xdotool
+# kdotool (recommended on Wayland) — https://github.com/jinliu/kdotool
+#   Arch (AUR):  paru -S kdotool      Fedora/others: build from source (cargo)
+
+# xdotool (alternative)
+sudo pacman -S xdotool     # Arch / CachyOS / Manjaro
+sudo dnf install xdotool   # Fedora / RPM-based
+sudo apt install xdotool   # Ubuntu / Debian
 ```
-`kdotool` works too if preferred. Without either tool, global hotkeys (Insert/Delete/Home) remain registered for the entire FO76 session — they work correctly but are not released when you switch to Konsole or Discord.
+
+Without either tool (or after the breaker disables a crashing `xdotool`), global hotkeys (Insert/Delete/Home) remain registered for the entire FO76 session — they work correctly but are not released when you switch to Konsole or Discord. This is a graceful degradation, not a failure.
 
 ---
 
@@ -254,7 +266,9 @@ After sending a chat message, the renderer sends `overlay:return-to-game` IPC. I
 
 On KDE+Wayland the overlay forces the XWayland Ozone backend so it shares the same compositor stack as Fallout 76 under Proton. KWin therefore matches the overlay by its **X11 WM_CLASS**, which is `Fallout Chat Mod`. The bundled rule (`assets/fallout-chatmod-keepabove.kwinrule`, also written to userData on launch) matches `wmclass=fallout` (substring) **and** `title=Fallout Chat Mod` (substring); the game is `wmclass=steam_app_1151340` / `title=Fallout76`, so the class clause excludes it.
 
-> **Forcing XWayland on Electron 39 requires an argv relaunch — `appendSwitch` is too late.** Chromium 140 (Electron 38+) picks its Ozone platform from the real `argv` during early C++ bootstrap, *before* `main.js` runs. So `app.commandLine.appendSwitch('ozone-platform', 'x11')` (and the deprecated `ozone-platform-hint=x11`, which still worked on Electron ≤37) are **silently ignored** — the app stays on native Wayland, where it can't stack over the game *and* forces KWin out of direct scanout (game lag with no visible overlay). Verified on 39.8.10: only `--ozone-platform=x11` present on the actual argv forces XWayland. So when `KDE_WAYLAND` and that flag is absent from `process.argv`, `main.js` calls `app.relaunch({ args: argv+['--ozone-platform=x11'], execPath: $APPIMAGE })` + `app.exit(0)` once (argv-guarded so the child never re-relaunches; runs before `requestSingleInstanceLock` so the exiting parent holds no lock; uses `$APPIMAGE` because `process.execPath` is the transient `/tmp/.mount_*` path). The `appendSwitch` calls are kept as a no-op fallback / the route that still works on Electron ≤37.
+> **Forcing XWayland on Electron 39 requires an argv relaunch — `appendSwitch` is too late.** Chromium 140 (Electron 38+) picks its Ozone platform from the real `argv` during early C++ bootstrap, *before* `main.js` runs. So `app.commandLine.appendSwitch('ozone-platform', 'x11')` (and the deprecated `ozone-platform-hint=x11`, which still worked on Electron ≤37) are **silently ignored** — the app stays on native Wayland, where it can't stack over the game *and* forces KWin out of direct scanout (game lag with no visible overlay). Verified on 39.8.10: only `--ozone-platform=x11` present on the actual argv forces XWayland. So when `KDE_WAYLAND` and that flag is absent from `process.argv`, `main.js` re-execs itself via `child_process.spawn` with `--ozone-platform=x11` appended + `app.exit(0)` once (argv-guarded so the child never re-relaunches; runs before `requestSingleInstanceLock` so the exiting parent holds no lock; uses `$APPIMAGE` because `process.execPath` is the transient `/tmp/.mount_*` path). `planOzoneRelaunch()` (`overlay-core.js`, unit-tested) decides this and also carries `env: { ELECTRON_OZONE_PLATFORM_HINT: 'x11' }` for the child — a belt-and-suspenders force in case a launcher (AppImageLauncher, a wrapper `.desktop`) mangles argv. The `appendSwitch` calls are kept as a no-op fallback / the route that still works on Electron ≤37.
+>
+> **Re-exec safety guard (issue #272 — "launches once, then the shortcut does nothing").** `planOzoneRelaunch()` returns `safe: false` when the only binary available is a transient AppImage FUSE mount (`/tmp/.mount_*`) **and** `$APPIMAGE` is unset — because `app.exit(0)` would unmount it before the child can start, so the child vanishes. In that case `main.js` does **not** re-exec/exit; it logs `[ozone] … UNSAFE …` and stays on native Wayland (degraded stacking) rather than disappearing. This is rare (the AppImage runtime normally exports `$APPIMAGE`); it shows up with some AppImageLauncher / wrapper launches. The `[ozone] relaunching for XWayland: exe=… $APPIMAGE=… args=…` diagnostic logged immediately before the spawn (and the failure log in the `catch`) pinpoint a launch failure from a user report. **The `.deb` avoids this path entirely** (no FUSE mount).
 
 > **Do NOT call `app.setName()` to change the app_id.** The app name feeds `app.getPath('userData')` (`~/.config/Fallout Chat Mod`), so renaming it orphans every user's session/settings/keybinds on all platforms. KWin matches the XWayland WM_CLASS, so no app_id override is needed.
 
