@@ -19,19 +19,21 @@ speak it.
 
 FCM **already** ships in-game chat — but via a **bespoke** path, not this standard:
 
-- **FCMHUD/1** ([../realtime-socket.md](../realtime-socket.md), [../two-way-chat-implemented.md](../two-way-chat-implemented.md))
-  is FCM's *own* line protocol (`color~channel~user~content` + M7 `HELLO/SEND/CHAN` verbs) riding
-  ZFE's **generic** socket bridge, driven by FCM's custom `FCMBridge.swf`. FCM defines the wire
-  format and ships the SWF.
-- **`chat.v1`** (this folder) is a protocol **ZFE itself defines and drives** through its native
-  chat client. A compliant relay needs **none** of FCM's custom SWF or wire code — just the JSON
-  contract.
+In both cases **FCM owns the in-game chat UI — our own SWF.** What changes is the *plumbing*:
 
-**Decision (locked): `chat.v1` supersedes FCMHUD/1.** FCMHUD/1 was a dev-only experiment and **never
-shipped to production**, so it is being **deprecated** rather than run in parallel — FCM stops
-maintaining a bespoke SWF + wire format and keeps a single compliant relay. See
+- **FCMHUD/1** ([../realtime-socket.md](../realtime-socket.md), [../two-way-chat-implemented.md](../two-way-chat-implemented.md))
+  — our SWF rides ZFE's **generic** socket bridge and does its own networking + a *bespoke* line
+  protocol (`color~channel~user~content` + M7 `HELLO/SEND/CHAN`). FCM defines and maintains the wire.
+- **`chat.v1`** (this folder) — a protocol **ZFE itself defines and drives**. ZFE provides the native
+  chat **engine** (transport, token, reconnect, input); **our same SWF** just calls the `chat.v1.*`
+  API and renders. FCM stops maintaining a custom wire/transport, **not** the UI.
+
+**Decision (locked): `chat.v1` supersedes the FCMHUD/1 *transport*.** FCMHUD/1's wire/sockets were a
+dev-only experiment, **never shipped to production**, so they are **deprecated** rather than run in
+parallel. **The in-game chat SWF (the UI we already built) is kept** and rewired to `chat.v1`; only
+the bespoke protocol + push transports are retired. See
 [fcm-integration.md → How this differs](fcm-integration.md#how-this-differs-from-the-existing-fcmhud1-bridge)
-for the decision and the two ZFE-coordination follow-ups (in-game cosmetics, dynamic channels).
+for the decision and the two ZFE-coordination follow-ups (per-user cosmetics, dynamic channels).
 
 ## At a glance — the integration shape
 
