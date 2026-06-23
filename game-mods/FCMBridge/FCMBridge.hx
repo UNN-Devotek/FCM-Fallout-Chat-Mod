@@ -113,6 +113,14 @@ class FCMBridge extends MovieClip {
     var _connectAttempts:Int = 0;     // for log only
     var _connectIssuedAt:Float = 0;   // getTimer() ms of last connect() call (stale-nudge timer)
     var _bufResetLogged:Bool = false; // log buffer-reset once per session
+    // Pre-register legacy-bridge discovery retry — when this SWF is self-loaded by
+    // HUDMenuChat it is not on the stage yet, so a single synchronous lookup misses
+    // the bridge; retry until found.
+    var _bootTimer:Timer     = null;
+    var _bootTries:Int       = 0;
+    var _dbgN:Int            = 0;     // one-shot render-path diagnostics
+    static inline var SOCKET_BOOT_MS:Int  = 1500; // discovery retry interval
+    static inline var SOCKET_BOOT_MAX:Int = 40;   // give up after ~60s (poll-only)
 
     // ── Auto-hide (old TextChat chatBoxVisibilityTimeout behavior) ────────────
     // The whole panel fades out after AUTOHIDE_MS of no activity and fades back
@@ -309,6 +317,7 @@ class FCMBridge extends MovieClip {
             return;
         }
         zfeLog("info", "startup", "FCMBridge loaded");
+        zfeLog("info", "startup", "BUILD=selfloadfix1");
 
         // Diagnostic: getRuntimeInfo (unchanged from pre-M3)
         try {
@@ -328,27 +337,57 @@ class FCMBridge extends MovieClip {
             zfeLog("warn", "startup", "getRuntimeInfo threw: " + Std.string(e));
         }
 
-        // Start polling (fallback / cold-start path — stays running until first socket line)
-        poll();
-        _pollTimer = new Timer(POLL_MS);
-        _pollTimer.addEventListener(TimerEvent.TIMER, function(_) { poll(); });
-        _pollTimer.start();
+        // Start polling (fallback / cold-start path). Guarded: when self-loaded by
+        // HUDMenuChat the display context can make poll() throw — that must NOT kill
+        // the socket bootstrap below (the previous code lost the socket this way).
+        try { poll(); } catch (e:Dynamic) { zfeLog("warn", "startup", "initial poll threw: " + Std.string(e)); }
+        try {
+            _pollTimer = new Timer(POLL_MS);
+            _pollTimer.addEventListener(TimerEvent.TIMER, function(_) { try { poll(); } catch (e2:Dynamic) {} });
+            _pollTimer.start();
+        } catch (e:Dynamic) { zfeLog("warn", "startup", "poll timer setup threw: " + Std.string(e)); }
 
-        // Attempt legacy bridge discovery and start socket path
-        initSocket();
+        // Discover the legacy socket bridge with retry (handles the self-load race).
+        startSocketBoot();
     }
 
     // =========================================================================
     // Socket init — parent-chain walk + stage children to find legacy __SFCodeObj
     // =========================================================================
 
-    function initSocket():Void {
-        _legacy = findLegacyBridge(this);
-        if (_legacy == null) {
-            zfeLog("warn", "socket", "legacyMissing: no legacy __SFCodeObj found; staying on poll");
+    function startSocketBoot():Void {
+        if (_legacy != null || _bootTimer != null) return;
+        zfeLog("info", "socket", "bootStart");
+        _bootTries = 0;
+        try {
+            _bootTimer = new Timer(SOCKET_BOOT_MS, 0);
+            _bootTimer.addEventListener(TimerEvent.TIMER, function(_) { tryBootSocket(); });
+            _bootTimer.start();
+        } catch (e:Dynamic) {}
+        tryBootSocket(); // immediate attempt (direct-load fast path)
+    }
+
+    function tryBootSocket():Void {
+        if (_legacy != null) {
+            if (_bootTimer != null) { _bootTimer.stop(); _bootTimer = null; }
             return;
         }
-        zfeLog("info", "socket", "legacyFound: bridge object located");
+        _bootTries++;
+        var bridge:Dynamic = null;
+        try { bridge = findLegacyBridge(this); } catch (e:Dynamic) { bridge = null; }
+        if (_bootTries <= 3 || bridge != null) {
+            zfeLog("info", "socket", "bootTry n=" + _bootTries + " found=" + Std.string(bridge != null));
+        }
+        if (bridge == null) {
+            if (_bootTries >= SOCKET_BOOT_MAX) {
+                if (_bootTimer != null) { _bootTimer.stop(); _bootTimer = null; }
+                zfeLog("warn", "socket", "legacyMissing after " + _bootTries + " tries; staying on poll");
+            }
+            return; // retry on next tick
+        }
+        if (_bootTimer != null) { _bootTimer.stop(); _bootTimer = null; }
+        _legacy = bridge;
+        zfeLog("info", "socket", "legacyFound: bridge located (try " + _bootTries + ")");
 
         // Register once: anonymous object — native writes connected/bytesAvailable back onto it.
         // NEVER use a class instance here (sealed class → ReferenceError #1056).
@@ -359,6 +398,7 @@ class FCMBridge extends MovieClip {
         } catch (e:Dynamic) {
             zfeLog("warn", "socket", "register threw: " + Std.string(e));
             _legacy = null;
+            startSocketBoot(); // restart the retry loop
             return;
         }
 
@@ -378,6 +418,21 @@ class FCMBridge extends MovieClip {
      * containing "unsupported_command" — skip those.
      */
     function findLegacyBridge(scope:Dynamic):Dynamic {
+        // Direct paths that work even when self-loaded and not yet on the stage —
+        // mirror findZfeApi (scope.root and the global __SFCodeObj both reach ROOT_A,
+        // where the legacy bridge lives). isLegacyBridge() filters modern-API decoys.
+        var seeds:Array<Dynamic> = [];
+        try { seeds.push(scope); } catch (e:Dynamic) {}
+        try { seeds.push(scope.parent); } catch (e:Dynamic) {}
+        try { seeds.push(scope.root); } catch (e:Dynamic) {}
+        try { seeds.push(untyped __global__["__SFCodeObj"]); } catch (e:Dynamic) {}
+        for (s in seeds) {
+            if (s == null) continue;
+            try { if (isLegacyBridge(s)) return s; } catch (e:Dynamic) {}
+            var c:Dynamic = getSFCodeObj(s);
+            if (c != null && isLegacyBridge(c)) return c;
+        }
+
         // Walk parent chain (probe found legacy at depth 3; also on stage children)
         var node:Dynamic = scope;
         var depth:Int = 0;
@@ -539,6 +594,7 @@ class FCMBridge extends MovieClip {
         }
 
         if (chunk.length == 0) return;
+        if (chunk.length > 40 && _dbgN < 6) zfeLog("info", "socket", "DRAIN chunk=" + chunk.length + " nl=" + (chunk.split("\n").length - 1));
 
         // Append to line buffer; cap at BUF_CAP
         _lineBuf += chunk;
@@ -596,6 +652,7 @@ class FCMBridge extends MovieClip {
                 stopPoll();
             }
 
+            if (_dbgN < 6) zfeLog("info", "socket", "RECBRANCH f=" + line.split("~").length + " h=" + line.substr(0, 26));
             _records.push(line);
             while (_records.length > MAX_MSGS) _records.shift();
             renderRecords(_records);
@@ -739,40 +796,24 @@ class FCMBridge extends MovieClip {
      * direct interpolation into htmlText is safe.
      */
     function renderRecords(records:Array<String>):Void {
+        if (_dbgN < 6) { _dbgN++; zfeLog("info", "socket", "RENDER n=" + records.length + " tfnull=" + Std.string(_tf == null) + " r0=" + (records.length > 0 ? Std.string(records[0].split("~").length) + ":" + records[0].substr(0, 24) : "none")); }
         if (_tf == null) return;
-        // GFx's htmlText color parsing proved unreliable in this field (it painted
-        // the WHOLE feed with the first <font color>). Use the deterministic path
-        // instead: plain text + per-character-range setTextFormat. No html parsing.
-        var text:String = "";
-        var runs:Array<{s:Int, e:Int, c:Int, b:Bool}> = [];
+        // FO76's Scaleform/GFx runtime does NOT provide flash.text.TextFormat —
+        // referencing it (new TextFormat()/setTextFormat) fails method verification
+        // with Error #1014 ("class could not be found"), so this whole method threw
+        // before drawing anything and the panel stayed on "connecting". Render through
+        // the SAME single-<font> htmlText path setText() uses (proven to display).
+        // Content is zfeSafe()d server-side (no raw < > & ~), so it is htmlText-safe.
+        // Per-channel colors are a follow-up; correct *display* comes first.
+        var lines:Array<String> = [];
         for (rec in records) {
             var f = rec.split("~");
             if (f.length < 4) continue;
-            var col  = ~/^#[0-9a-fA-F]{6}$/.match(f[0]) ? f[0] : PRIMARY_HEX;
-            var ch   = f[1];
-            var user = f[2];
-            var msg  = f.slice(3).join("~");
-            var colInt:Null<Int> = Std.parseInt("0x" + col.substr(1));
-            if (colInt == null) colInt = PRIMARY;
-            if (text.length > 0) text += "\n";
-            var s0 = text.length; text += "[" + ch + "] ";
-            runs.push({s: s0, e: text.length, c: colInt, b: false});   // channel tag
-            var s1 = text.length; text += user + ": ";
-            runs.push({s: s1, e: text.length, c: PRIMARY, b: true});   // username (gold, bold)
-            var s2 = text.length; text += msg;
-            runs.push({s: s2, e: text.length, c: 0xFAF4DA, b: false}); // content (cream)
+            lines.push("[" + f[1] + "] " + f[2] + ": " + f.slice(3).join("~"));
         }
-        if (runs.length == 0) { setText("no messages yet"); return; }
-        _tf.text = text;
-        for (r in runs) {
-            if (r.e <= r.s) continue;
-            var fm = new TextFormat();
-            fm.color = r.c;
-            fm.bold  = r.b;
-            try { _tf.setTextFormat(fm, r.s, r.e); } catch (e:Dynamic) {}
-        }
-        // Auto-scroll to the newest line so the most recent message is always
-        // visible (otherwise overflow clips the bottom lines under the input box).
+        if (lines.length == 0) { setText("no messages yet"); return; }
+        setText(lines.join("\n"));
+        // Auto-scroll to the newest line so the most recent message is always visible.
         try { _tf.scrollV = _tf.maxScrollV; } catch (e:Dynamic) {}
     }
 
