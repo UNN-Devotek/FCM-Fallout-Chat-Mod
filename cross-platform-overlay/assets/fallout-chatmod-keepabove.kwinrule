@@ -25,15 +25,19 @@ layerrule=2
 fsplevel=0
 fsplevelrule=2
 
-# 2) THE FIX on KWin 6: stop KWin promoting the GAME to the active-fullscreen stacking
-#    layer (which outranks keep-above). Forcing fullscreen=false demotes Fallout 76 to the
-#    normal layer, so the overlay's keep-above wins even while the game has focus. The game
-#    still renders full-screen-sized in Borderless — only its KWin stacking layer changes.
-#    (Class steam_app_1151340 is FO76 on Steam; substring match also covers similar IDs.)
-[Fallout Chat Mod - demote game from fullscreen layer]
-Description=Fallout Chat Mod - demote game from fullscreen layer
-wmclass=steam_app_1151340
-wmclassmatch=2
-wmclasscomplete=false
-fullscreen=false
-fullscreenrule=2
+# 2) OPTIONAL (DISABLED BY DEFAULT) — demote the GAME from the active-fullscreen layer.
+#    For an EXCLUSIVE-fullscreen game, KWin promotes it above "keep above" windows;
+#    forcing fullscreen=false demotes it so the overlay stays on top. BUT this Force rule
+#    fights the game's own fullscreen state and causes ENDLESS FLICKER on some
+#    KWin/Proton setups (issue #272), so it is commented out here and NOT auto-applied.
+#    In BORDERLESS WINDOWED (recommended) you do not need it — rule 1 alone works.
+#    To enable it: use the app tray -> "Keep above exclusive-fullscreen game (may
+#    flicker)", or uncomment the section below and re-import.
+#
+# [Fallout Chat Mod - demote game from fullscreen layer]
+# Description=Fallout Chat Mod - demote game from fullscreen layer
+# wmclass=steam_app_1151340
+# wmclassmatch=2
+# wmclasscomplete=false
+# fullscreen=false
+# fullscreenrule=2

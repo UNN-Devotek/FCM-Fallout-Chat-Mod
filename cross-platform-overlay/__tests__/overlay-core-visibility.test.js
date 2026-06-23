@@ -184,7 +184,7 @@ describe('desiredTopmost', () => {
     expect(desiredTopmost({ ...base, forceVisible: true })).toBe(true);
   });
 
-  it('gameRunning -> true (even when not foreground / not focused)', () => {
+  it('gameRunning -> true (even when not foreground / not focused) in default mode', () => {
     expect(desiredTopmost({ ...base, gameRunning: true })).toBe(true);
   });
 
@@ -221,4 +221,34 @@ describe('desiredTopmost', () => {
       }
     }
   }
+});
+
+// Focus-aware mode (Linux KDE-Wayland with active-window detection): topmost ONLY
+// while the GAME is the foreground window (or overlay focused / forceVisible), so
+// tabbing to another app lowers the overlay — fixes the "above ALL windows" issue.
+describe('desiredTopmost — focus-aware mode', () => {
+  const base = {
+    hasWindow: true, forceVisible: false, gameRunning: false,
+    windowFocused: false, foregroundIsGame: false, focusAwareTopmost: true,
+  };
+
+  it('game RUNNING but not foreground -> FALSE (the key difference from default mode)', () => {
+    expect(desiredTopmost({ ...base, gameRunning: true, foregroundIsGame: false })).toBe(false);
+  });
+
+  it('game is the FOREGROUND window -> true', () => {
+    expect(desiredTopmost({ ...base, gameRunning: true, foregroundIsGame: true })).toBe(true);
+  });
+
+  it('overlay focused -> true even if the game is not foreground', () => {
+    expect(desiredTopmost({ ...base, windowFocused: true })).toBe(true);
+  });
+
+  it('forceVisible -> true regardless of foreground', () => {
+    expect(desiredTopmost({ ...base, forceVisible: true })).toBe(true);
+  });
+
+  it('nothing foreground / not focused -> false', () => {
+    expect(desiredTopmost(base)).toBe(false);
+  });
 });

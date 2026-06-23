@@ -188,13 +188,18 @@ layerrule=2
 fsplevel=0
 fsplevelrule=2
 
-[Fallout Chat Mod - demote game from fullscreen layer]
-Description=Fallout Chat Mod - demote game from fullscreen layer
-wmclass=steam_app_1151340
-wmclassmatch=2
-wmclasscomplete=false
-fullscreen=false
-fullscreenrule=2
+# OPTIONAL (disabled by default) - demote the GAME from the active-fullscreen layer.
+# Needed only for EXCLUSIVE-fullscreen; it fights the game's fullscreen state and
+# FLICKERS on some KWin/Proton setups. Enable via the app tray -> "Keep above
+# exclusive-fullscreen game (may flicker)", or uncomment + re-import. Borderless
+# windowed (recommended) does not need it.
+# [Fallout Chat Mod - demote game from fullscreen layer]
+# Description=Fallout Chat Mod - demote game from fullscreen layer
+# wmclass=steam_app_1151340
+# wmclassmatch=2
+# wmclasscomplete=false
+# fullscreen=false
+# fullscreenrule=2
 EOF
 
 cat > "$README_PATH" <<EOF

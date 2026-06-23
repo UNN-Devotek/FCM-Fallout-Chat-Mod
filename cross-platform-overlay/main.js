@@ -291,13 +291,18 @@ layerrule=2
 fsplevel=0
 fsplevelrule=2
 
-[Fallout Chat Mod - demote game from fullscreen layer]
-Description=Fallout Chat Mod - demote game from fullscreen layer
-wmclass=steam_app_1151340
-wmclassmatch=2
-wmclasscomplete=false
-fullscreen=false
-fullscreenrule=2
+# OPTIONAL (disabled by default) — demote the GAME from the active-fullscreen layer.
+# Needed only for EXCLUSIVE-fullscreen; it fights the game's fullscreen state and
+# FLICKERS on some KWin/Proton setups (issue #272). Enable via tray -> "Keep above
+# exclusive-fullscreen game (may flicker)", or uncomment + re-import. Borderless
+# windowed (recommended) does not need it.
+# [Fallout Chat Mod - demote game from fullscreen layer]
+# Description=Fallout Chat Mod - demote game from fullscreen layer
+# wmclass=steam_app_1151340
+# wmclassmatch=2
+# wmclasscomplete=false
+# fullscreen=false
+# fullscreenrule=2
 `;
 const LINUX_README_TEXT = `Fallout Chat Mod — Linux / KDE setup
 =====================================
@@ -398,6 +403,13 @@ function writeLinuxHelperFiles() {
 // rule is missing does it append group [N+1], bump count, and reconfigure. All
 // best-effort: on GNOME / missing tools / older KWin it no-ops (the interactive path
 // still opens the folder so the manual System-Settings → Import remains available).
+// The "demote game from fullscreen" KWin rule is OPT-IN (it fights the game's
+// fullscreen state and flickers on some KWin/Proton setups — issue #272). Persisted
+// in settings.kwinDemoteFullscreen; default false (borderless-windowed users don't
+// need it). Toggled from the tray.
+function isKwinDemoteEnabled() {
+  try { return loadState().settings && loadState().settings.kwinDemoteFullscreen === true; } catch { return false; }
+}
 function setupKdeKeepAbove({ interactive = false } = {}) {
   if (!IS_LINUX) return;
   const rulePath = writeLinuxHelperFiles();
@@ -405,19 +417,23 @@ function setupKdeKeepAbove({ interactive = false } = {}) {
     const dir = (() => { try { return app.getPath('userData'); } catch { return null; } })();
     if (dir) { try { shell.openPath(dir); } catch { /* ignore */ } }
   }
+  const includeDemote = isKwinDemoteEnabled();
   try {
     const { exec } = require('child_process');
     // Shared, unit-tested script builder (idempotency guard + numbered-group write
     // + count bump + KWin reconfigure). See overlay-core.buildKwinKeepAboveScript.
-    const script = overlayCore.buildKwinKeepAboveScript();
+    // includeDemote adds the (flicker-prone) fullscreen-demote rule only when the
+    // user has opted in; otherwise only the keep-above rule is applied (and any
+    // previously-installed demote rule is stripped).
+    const script = overlayCore.buildKwinKeepAboveScript({ includeDemote });
     exec(script, { timeout: 8000, shell: '/bin/sh' }, (err, stdout) => {
       const out = String(stdout || '');
-      if (err) diag('[linux] KDE keep-above auto-apply failed (use System Settings → Window Rules → Import): ' + String(err.message || err));
-      else if (out.includes('fcm-rule-present')) diag('[linux] KDE keep-above rule already present — skipped');
-      else diag('[linux] KDE keep-above rule installed (numbered group + count) + KWin reconfigured');
+      if (err) diag('[kwin] keep-above auto-apply failed (use System Settings → Window Rules → Import): ' + String(err.message || err));
+      else if (out.includes('fcm-rule-present')) diag('[kwin] keep-above rule already present (demote=' + includeDemote + ') — skipped');
+      else diag('[kwin] keep-above rule installed (demote=' + includeDemote + ') + KWin reconfigured');
     });
-  } catch (e) { diag('[linux] setupKdeKeepAbove exec failed:', String(e && e.message || e)); }
-  diag('[linux] setupKdeKeepAbove: rule at ' + rulePath + ' (interactive=' + interactive + ')');
+  } catch (e) { diag('[kwin] setupKdeKeepAbove exec failed:', String(e && e.message || e)); }
+  diag('[kwin] setupKdeKeepAbove: rule at ' + rulePath + ' (interactive=' + interactive + ', demote=' + includeDemote + ')');
 }
 const http = require('http');
 const { URL } = require('url');
@@ -2702,7 +2718,12 @@ function desiredTopmost() {
     forceVisible,
     gameRunning,
     windowFocused: !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()),
-    foregroundIsGame: isGameProcess(lastForegroundProc),
+    foregroundIsGame: isGameClass(lastForegroundProc),
+    // Focus-aware only where we can actually read the foreground window (KDE-Wayland
+    // with xdotool/kdotool present + not disabled by the crash breaker). Elsewhere
+    // fall back to session-long "game running" topmost (Windows DWM-flash avoidance /
+    // bare-Linux has no foreground API).
+    focusAwareTopmost: KDE_WAYLAND && kdeWaylandForegroundDetect,
   });
 }
 
@@ -3209,6 +3230,14 @@ function rebuildTrayMenu() {
     ...(IS_LINUX ? [
       { type: 'separator' },
       { label: 'KDE: keep overlay above game', click: () => setupKdeKeepAbove({ interactive: true }) },
+      // Opt-in: the fullscreen-demote rule keeps the overlay above an EXCLUSIVE-
+      // fullscreen game, but fights the game's fullscreen state and flickers on some
+      // setups (issue #272). Off by default — borderless-windowed users don't need it.
+      { label: 'Keep above exclusive-fullscreen game (may flicker)', type: 'checkbox', checked: isKwinDemoteEnabled(), click: (mi) => {
+        try { const st = loadState(); const settings = { ...(st.settings || {}), kwinDemoteFullscreen: !!mi.checked }; saveState({ settings }); } catch { /* ignore */ }
+        setupKdeKeepAbove({ interactive: false }); // re-apply rules with/without the demote rule (live KWin reconfigure)
+        rebuildTrayMenu();
+      } },
     ] : []),
     // Diagnostics: surface the log for bug reports + let users enable verbose
     // (per-tick) logging without a relaunch. The toggle persists to settings so it

@@ -160,15 +160,26 @@ function emitVisibilityDecision(isVisible, pendingHide) {
 }
 
 // Pure form of desiredTopmost. state = { hasWindow, forceVisible, gameRunning,
-// windowFocused, foregroundIsGame }. Returns true when the overlay should be
-// always-on-top. No window → false. Precedence: forceVisible → gameRunning →
-// windowFocused → game is the foreground process.
+// windowFocused, foregroundIsGame, focusAwareTopmost }. Returns true when the
+// overlay should be always-on-top. No window → false.
+//
+// Two modes:
+//   focusAwareTopmost=true  (Linux KDE-Wayland with active-window detection): float
+//     above the game ONLY while the GAME is actually the foreground window, so
+//     tabbing to another app lowers the overlay (no more "above ALL windows"). Safe
+//     on Linux — topmost flips don't cause a DWM-recomposition flash there.
+//   focusAwareTopmost=false (Windows, or Linux without detection): stay topmost for
+//     the whole session while the game is RUNNING. On Windows this is deliberate —
+//     it avoids true→false→true flips on tab-in that trigger DWM flashes; on bare
+//     Linux/X11 there's no foreground API to do better.
+// In both modes forceVisible and the overlay being focused force topmost.
 function desiredTopmost(state) {
   state = state || {};
   if (!state.hasWindow) return false;
   if (state.forceVisible) return true;
-  if (state.gameRunning) return true;
   if (state.windowFocused) return true;
+  if (state.focusAwareTopmost) return state.foregroundIsGame === true;
+  if (state.gameRunning) return true;
   return state.foregroundIsGame === true;
 }
 
@@ -424,21 +435,30 @@ function awkStripFcmSectionLines() {
 // named rules, preserving the user's own rules. Idempotent: if the active FCM rules are
 // already EXACTLY our two current named groups, it prints fcm-rule-present and skips the
 // reconfigure (so startup doesn't flash KWin on every launch).
-function buildKwinKeepAboveScript({ file = 'kwinrulesrc', title = 'Fallout Chat Mod', overlayWmclass = 'fallout', gameWmclass = 'steam_app_1151340' } = {}) {
+// includeDemote (default false): also write the "demote game from fullscreen layer"
+// rule. That rule force-sets the game's fullscreen=false to keep the overlay above a
+// FOCUSED fullscreen game on KWin 6 — but it FIGHTS the game's own fullscreen state
+// and causes endless flicker on some KWin/Proton setups (issue #272 follow-up). So it
+// is OPT-IN: borderless-windowed users (the recommended setup) don't need it; only
+// exclusive-fullscreen users enable it (tray → "Keep above exclusive-fullscreen game").
+function buildKwinKeepAboveScript({ file = 'kwinrulesrc', title = 'Fallout Chat Mod', overlayWmclass = 'fallout', gameWmclass = 'steam_app_1151340', includeDemote = false } = {}) {
   const ABOVE = 'fcm-keepabove';      // stable group name (overlay keep-above rule)
   const DEMOTE = 'fcm-game-demote';   // stable group name (game fullscreen-demote rule)
   const w = (grp, key, val) => `kwriteconfig6 --file ${file} --group ${grp} --key ${key} ${val}`;
-  return [
+  const lines = [
     ...kwinPartitionSnippet(file),
-    // Idempotency: already exactly our two current named rules (nothing stale) → skip.
+    // Idempotency: already EXACTLY the rules we want (nothing stale, demote present iff
+    // requested) → skip. Otherwise we strip + rewrite below so toggling demote on/off works.
     `N=$(printf '%s' "$FCM" | tr ' ' '\\n' | grep -c .)`,
     `case " $FCM " in *" ${ABOVE} "*) A=1 ;; *) A=0 ;; esac`,
     `case " $FCM " in *" ${DEMOTE} "*) D=1 ;; *) D=0 ;; esac`,
-    `if [ "$N" = "2" ] && [ "$A" = "1" ] && [ "$D" = "1" ]; then echo fcm-rule-present; exit 0; fi`,
-    // Clear stale FCM groups (old numbered/named) so they don't linger as orphaned sections —
-    // awk-strip them (kwriteconfig6 can't delete a section). We then re-write our two fresh below.
+    includeDemote
+      ? `if [ "$N" = "2" ] && [ "$A" = "1" ] && [ "$D" = "1" ]; then echo fcm-rule-present; exit 0; fi`
+      : `if [ "$N" = "1" ] && [ "$A" = "1" ] && [ "$D" = "0" ]; then echo fcm-rule-present; exit 0; fi`,
+    // Clear stale FCM groups (old numbered/named, and a now-unwanted demote) so they don't
+    // linger — awk-strip them (kwriteconfig6 can't delete a section). We re-write fresh below.
     ...awkStripFcmSectionLines(),
-    // Overlay keep-above rule.
+    // Overlay keep-above rule (always).
     w(ABOVE, 'Description', `"Fallout Chat Mod - keep above games"`),
     w(ABOVE, 'title', `"${title}"`),
     w(ABOVE, 'titlematch', '2'),
@@ -447,21 +467,29 @@ function buildKwinKeepAboveScript({ file = 'kwinrulesrc', title = 'Fallout Chat 
     w(ABOVE, 'wmclasscomplete', 'false'),
     w(ABOVE, 'above', 'true'),
     w(ABOVE, 'aboverule', '3'),
-    // Game fullscreen-demote rule (the one that actually keeps us above the focused game).
-    w(DEMOTE, 'Description', `"Fallout Chat Mod - demote game from fullscreen layer"`),
-    w(DEMOTE, 'wmclass', `"${gameWmclass}"`),
-    w(DEMOTE, 'wmclassmatch', '2'),
-    w(DEMOTE, 'wmclasscomplete', 'false'),
-    w(DEMOTE, 'fullscreen', 'false'),
-    w(DEMOTE, 'fullscreenrule', '2'),
-    // rules = preserved user rules + our two; count = its length.
-    `NEWR="\${KEEP:+$KEEP,}${ABOVE},${DEMOTE}"`,
+  ];
+  // Game fullscreen-demote rule — OPT-IN only (see note above).
+  if (includeDemote) {
+    lines.push(
+      w(DEMOTE, 'Description', `"Fallout Chat Mod - demote game from fullscreen layer"`),
+      w(DEMOTE, 'wmclass', `"${gameWmclass}"`),
+      w(DEMOTE, 'wmclassmatch', '2'),
+      w(DEMOTE, 'wmclasscomplete', 'false'),
+      w(DEMOTE, 'fullscreen', 'false'),
+      w(DEMOTE, 'fullscreenrule', '2'),
+    );
+  }
+  // rules = preserved user rules + ours; count = its length.
+  const NEWR = includeDemote ? `\${KEEP:+$KEEP,}${ABOVE},${DEMOTE}` : `\${KEEP:+$KEEP,}${ABOVE}`;
+  lines.push(
+    `NEWR="${NEWR}"`,
     `kwriteconfig6 --file ${file} --group General --key rules "$NEWR"`,
     `COUNT=$(printf '%s' "$NEWR" | tr ',' '\\n' | grep -c .)`,
     `kwriteconfig6 --file ${file} --group General --key count "$COUNT"`,
     KWIN_RECONF,
     `echo fcm-rule-installed`,
-  ].join('\n');
+  );
+  return lines.join('\n');
 }
 
 // Removal script (for uninstall). Strips ALL FCM-authored rules (current named + any stale
