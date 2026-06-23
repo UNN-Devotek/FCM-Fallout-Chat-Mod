@@ -248,15 +248,24 @@ connection's current world-session room; `party` (deferred) binds to the user's 
 the one place "WebSocket rooms" genuinely apply — for **fan-out membership**, not for expanding the
 addressable channel namespace (that job belongs to `AllowedChannels`).
 
-> **`server` chat needs `worldId` — a `chat.v1` gap for the fully-standalone mod.** The `server` slug
-> binds to the player's **current world-session room**, which requires the relay to know the
-> connection's `worldId`. The standalone chat `.ba2` is **fully self-contained** (#137/#293) — one
-> install, no data-bridge dependency — and reads `worldId` from the Scaleform/UI layer itself. But
-> `chat.v1` has **no field to convey it** to the relay (`send` carries only
-> `channel`/`body`/`targetUserId`; `AllowedChannels` is a static exact-match list, so a dynamic
-> `server:<worldId>` isn't accepted). So standalone **server-scoped** chat needs a `chat.v1`
-> context/session-field extension (folded into the ZFE-coordination issue #292). `global`/`trade`/
-> `events`/`raids` are fully standalone with one `.ba2` **today**.
+> **`server` chat conveys `worldId` in-band — no ZFE change needed (#293).** The `server` slug binds
+> to the player's **current world-session room**, so the relay must know the connection's `worldId`.
+> The standalone chat `.ba2` (#137/#293) reads `worldId` from the UI layer and **conveys it as an
+> intercepted control message** over the existing `send` op — a reserved system-`userId` / sentinel
+> the **relay consumes and never broadcasts, persists, or emits to poll/subscribe**. ZFE forwards it
+> as an ordinary in-spec `send` (valid channel, small body — ZFE never inspects the meaning). The
+> relay stores `worldId` per relay-`userId` (stale-after-~30s, like the existing player-bridge) and
+> binds `server` to that room; the SWF re-sends on world change. This works **today** because FCM
+> owns **both** ends (our SWF + our relay).
+>
+> **Generalization:** anything ZFE doesn't model can be **tunneled** through the fields it *does* pass
+> (`body` / `senderDisplayName` / `targetUserId`), encoded by one end and decoded/stripped by the
+> other. So per-user **cosmetics** are likely solvable the same way (relay encodes a color/clan suffix
+> in `senderDisplayName`; our SWF decodes + strips it). The **one** thing that can't be tunneled is
+> **channels** — ZFE validates them **client-side** against `AllowedChannels` — so **dynamic channels
+> are the only genuine `chat.v1` extension need** (#292). Hardening: intercept the control message
+> before `ingestMessage`/broadcast (airtight suppression), and optionally HMAC `worldId` against
+> spoofing.
 
 Channel eligibility stays uniform with the rest of FCM: only **leaf** channels
 (`parent_id IS NOT NULL AND NOT is_archived`) map to a slug — the same predicate `hudPush.ts` and
