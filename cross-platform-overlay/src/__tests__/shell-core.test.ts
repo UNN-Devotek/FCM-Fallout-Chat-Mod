@@ -22,6 +22,7 @@ import {
   resolveCollapsedHeight,
   computeResizeBounds,
   isDragTarget,
+  shouldExitTextEntryOnEscape,
   detectLinuxRenderer,
   BLOCKED_KEYS,
   type Bounds,
@@ -661,6 +662,56 @@ describe('isDragTarget', () => {
     const row = makeEl({ appRegion: 'drag', parent: root });
     const btn = makeEl({ tag: 'BUTTON', parent: row });
     expect(isDragTarget(btn, root)).toBe(false);
+  });
+});
+
+// ── shouldExitTextEntryOnEscape ──────────────────────────────────────────────
+
+describe('shouldExitTextEntryOnEscape', () => {
+  const root = makeEl({ id: 'root-sentinel' });
+  const host = makeEl({ id: 'shell-overlay-host', parent: root });
+
+  it('returns true for bare Escape from the chat textarea inside the overlay host', () => {
+    const textarea = makeEl({ tag: 'TEXTAREA', parent: host });
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', target: textarea })).toBe(true);
+  });
+
+  it('returns true for bare Escape from a contentEditable chat input descendant', () => {
+    const richInput = makeEl({ contentEditable: true, parent: host });
+    const child = makeEl({ tag: 'SPAN', parent: richInput });
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', target: child })).toBe(true);
+  });
+
+  it('returns false for Escape outside the overlay host', () => {
+    const textarea = makeEl({ tag: 'TEXTAREA', parent: root });
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', target: textarea })).toBe(false);
+  });
+
+  it('returns false for Escape in settings or onboarding inputs', () => {
+    for (const id of ['shell-settings-backdrop', 'shell-onboarding-backdrop']) {
+      const backdrop = makeEl({ id, parent: root });
+      const input = makeEl({ tag: 'INPUT', parent: backdrop });
+      expect(shouldExitTextEntryOnEscape({ key: 'Escape', target: input })).toBe(false);
+    }
+  });
+
+  it('returns false for non-editable overlay UI', () => {
+    const span = makeEl({ tag: 'SPAN', parent: host });
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', target: span })).toBe(false);
+  });
+
+  it('returns false for modified Escape chords', () => {
+    const textarea = makeEl({ tag: 'TEXTAREA', parent: host });
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', shiftKey: true, target: textarea })).toBe(false);
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', ctrlKey: true, target: textarea })).toBe(false);
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', altKey: true, target: textarea })).toBe(false);
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', metaKey: true, target: textarea })).toBe(false);
+  });
+
+  it('returns false for non-Escape keys and already-handled events', () => {
+    const textarea = makeEl({ tag: 'TEXTAREA', parent: host });
+    expect(shouldExitTextEntryOnEscape({ key: 'Enter', target: textarea })).toBe(false);
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', defaultPrevented: true, target: textarea })).toBe(false);
   });
 });
 

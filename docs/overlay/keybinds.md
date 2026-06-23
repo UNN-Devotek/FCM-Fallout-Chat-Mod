@@ -21,6 +21,8 @@ Source: `main.js:274–323`, `src/shell.ts:114–150`.
 
 Up to 8 **party direct-access** slots (`party1`–`party8`) can also be bound; these default to empty (unregistered).
 
+`Escape` is **not** a global keybind and is not user-bindable. It is handled only inside the renderer when the chat input already has DOM focus: pressing bare `Escape` exits text-entry mode, blurs the input, and uses the same return-to-game focus path as sending a message. If Fallout 76 or another app has focus, the overlay does not capture `Escape`.
+
 ---
 
 ## `userHidden` flag
