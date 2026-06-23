@@ -44,21 +44,21 @@ export function readMigrations(dir: string): DiskMigration[] {
 }
 
 /**
- * Split the on-disk migrations into those that need an INSERT (no row yet) vs a
- * mark-as-applied UPDATE (row exists but is not successfully applied). Pure.
+ * Decide the reconcile work. Pure.
+ *  - `toInsert`: migrations on disk with no row in the table yet (INSERT as applied).
+ *  - `failedCount`: EVERY not-applied row in the table (finished_at IS NULL or
+ *    rolled_back_at set). Counted table-wide — not just the on-disk subset —
+ *    because a migration can fail and later be removed from disk, leaving an
+ *    orphaned failed row that still emits P3009 and must be marked applied.
  */
 export function planReconcile(
   onDisk: DiskMigration[],
-  present: Set<string>,
-  appliedOk: Set<string>,
-): { toInsert: DiskMigration[]; toFix: string[] } {
-  const toInsert: DiskMigration[] = [];
-  const toFix: string[] = [];
-  for (const m of onDisk) {
-    if (!present.has(m.name)) toInsert.push(m);
-    else if (!appliedOk.has(m.name)) toFix.push(m.name);
-  }
-  return { toInsert, toFix };
+  rows: Array<{ migration_name: string; applied: boolean }>,
+): { toInsert: DiskMigration[]; failedCount: number } {
+  const present = new Set(rows.map((r) => r.migration_name));
+  const toInsert = onDisk.filter((m) => !present.has(m.name));
+  const failedCount = rows.reduce((n, r) => (r.applied ? n : n + 1), 0);
+  return { toInsert, failedCount };
 }
 
 async function main(): Promise<void> {
@@ -85,18 +85,17 @@ async function main(): Promise<void> {
     const rows = await prisma.$queryRawUnsafe<Array<{ migration_name: string; applied: boolean }>>(
       'SELECT migration_name, (finished_at IS NOT NULL AND rolled_back_at IS NULL) AS applied FROM _prisma_migrations',
     );
-    const present = new Set(rows.map((r) => r.migration_name));
-    const appliedOk = new Set(rows.filter((r) => r.applied).map((r) => r.migration_name));
-    const { toInsert, toFix } = planReconcile(onDisk, present, appliedOk);
+    const { toInsert, failedCount } = planReconcile(onDisk, rows);
 
-    if (toInsert.length === 0 && toFix.length === 0) {
-      console.log(`[reconcile] all ${onDisk.length} migrations already applied — no-op`);
+    if (toInsert.length === 0 && failedCount === 0) {
+      console.log(`[reconcile] all ${onDisk.length} migrations applied, no failed rows — no-op`);
       return;
     }
 
-    if (toFix.length > 0) {
-      // Failed/unfinished rows already carry the correct checksum — just mark
-      // them applied (clears P3009). Targets exactly the not-applied rows.
+    if (failedCount > 0) {
+      // Existing failed/unfinished rows already carry the correct checksum — just
+      // mark them applied (clears P3009). Targets the table directly so orphaned
+      // (no-longer-on-disk) failed rows are fixed too, not only the on-disk set.
       const fixed = await prisma.$executeRawUnsafe(
         'UPDATE _prisma_migrations SET finished_at = now(), rolled_back_at = NULL, logs = NULL, applied_steps_count = 1 WHERE finished_at IS NULL OR rolled_back_at IS NOT NULL',
       );
