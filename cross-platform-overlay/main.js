@@ -2719,15 +2719,13 @@ function desiredTopmost() {
     gameRunning,
     windowFocused: !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()),
     foregroundIsGame: isGameClass(lastForegroundProc),
-    // A fullscreen FO76 exposes no readable WM_CLASS (xdotool → "(null)"/empty); when
-    // the game is running and the foreground is unreadable, treat it as the game so the
-    // overlay stays on top (only a recognized other app lowers it).
     foregroundUnknown: overlayCore.isUnknownForegroundClass(lastForegroundProc),
-    // Focus-aware only where we can actually read the foreground window (KDE-Wayland
-    // with xdotool/kdotool present + not disabled by the crash breaker). Elsewhere
-    // fall back to session-long "game running" topmost (Windows DWM-flash avoidance /
-    // bare-Linux has no foreground API).
-    focusAwareTopmost: KDE_WAYLAND && kdeWaylandForegroundDetect,
+    // Focus-aware lowering is DISABLED on KDE-Wayland: the overlay is a notification-
+    // type window there (sits in KWin's notification layer, above the fullscreen game),
+    // which by design can't be lowered below other apps via setAlwaysOnTop — so we use
+    // session-long "game running → topmost" (the chosen "above the game, no flicker"
+    // behavior). Hotkey gating still uses the foreground class (see shouldRegisterShortcuts).
+    focusAwareTopmost: false,
   });
 }
 
@@ -3331,19 +3329,22 @@ function createWindow() {
     //     window (this is the Electron-supported equivalent of WS_EX_APPWINDOW —
     //     a non-tool window with a taskbar button + alt-tab entry).
     title: APP_TITLE,
-    // LINUX/KDE-WAYLAND STACKING FIX: `type:'notification'` sets
+    // LINUX/KDE-WAYLAND STACKING FIX (issue #272 follow-up — overlay was BEHIND a
+    // focused fullscreen game): `type:'notification'` sets
     // _NET_WM_WINDOW_TYPE_NOTIFICATION on the X11 (XWayland) surface. KWin places
-    // notification-type windows in a higher stacking layer than NORMAL windows —
-    // high enough to sit above a borderless/fullscreen game, which plain
-    // _NET_WM_STATE_ABOVE (what setAlwaysOnTop maps to on Linux) does NOT achieve
-    // (KWin's fullscreen-layer promotion outranks ABOVE). Confirmed working on KDE
-    // Plasma 6 Wayland by comparable Electron game overlays. The trade-off — a
-    // notification window is non-focusable by default — is handled in
-    // setClickThrough(), which toggles setFocusable() so chat input still works
-    // when the overlay is interactive. KDE+Wayland ONLY — other Linux setups
-    // (X11/GNOME/etc.) already worked and would lose taskbar/alt-tab + gain
-    // nothing here, so they keep a NORMAL window. Windows/macOS keep NORMAL too.
-    type: undefined,
+    // notification-type windows in a higher stacking layer (NotificationLayer) than
+    // NORMAL windows — ABOVE the active-fullscreen layer — so the overlay sits over a
+    // focused fullscreen FO76 WITHOUT the "demote game from fullscreen" KWin rule that
+    // flickers on some setups, and without relying on _NET_WM_STATE_ABOVE
+    // (setAlwaysOnTop), which KWin's fullscreen promotion outranks. Verified: a NORMAL
+    // window with keep-above loses to the focused game; a notification window wins.
+    // Trade-off: a notification window is non-focusable by default — handled in
+    // setClickThrough(), which toggles setFocusable() so chat input still works when
+    // the overlay is interactive — and it also sits above OTHER apps while shown
+    // (accepted; the overlay is game-gated / Delete-to-hide). KDE+Wayland ONLY: other
+    // Linux setups (X11/GNOME/etc.) already worked and would lose taskbar/alt-tab for
+    // nothing, so they keep a NORMAL window. Windows/macOS keep NORMAL too.
+    type: KDE_WAYLAND ? 'notification' : undefined,
     icon: appIcon() || undefined, // real product icon for taskbar / alt-tab
     // show:false — don't flash the window open before we know whether FO76 is
     // running. reevaluateVisibility() in did-finish-load shows it only if allowed.
