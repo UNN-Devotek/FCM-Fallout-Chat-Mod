@@ -183,23 +183,19 @@ wmclassmatch=2
 wmclasscomplete=false
 above=true
 aboverule=3
-layer=8
-layerrule=2
-fsplevel=0
-fsplevelrule=2
 
-# OPTIONAL (disabled by default) - demote the GAME from the active-fullscreen layer.
-# Needed only for EXCLUSIVE-fullscreen; it fights the game's fullscreen state and
-# FLICKERS on some KWin/Proton setups. Enable via the app tray -> "Keep above
-# exclusive-fullscreen game (may flicker)", or uncomment + re-import. Borderless
-# windowed (recommended) does not need it.
-# [Fallout Chat Mod - demote game from fullscreen layer]
-# Description=Fallout Chat Mod - demote game from fullscreen layer
-# wmclass=steam_app_1151340
-# wmclassmatch=2
-# wmclasscomplete=false
-# fullscreen=false
-# fullscreenrule=2
+# Keep the GAME below - the no-flicker fix for "overlay hidden behind a focused
+# fullscreen game". KWin evaluates keepBelow BEFORE the active-fullscreen promotion, so
+# the overlay (rule above) stays above a focused fullscreen FO76 with NO flicker.
+# Side effect: the game can be covered by the panel/other windows. Turn off via the app
+# tray -> "Keep game below overlay".
+[Fallout Chat Mod - keep game below]
+Description=Fallout Chat Mod - keep game below
+wmclass=steam_app_1151340
+wmclassmatch=2
+wmclasscomplete=false
+below=true
+belowrule=2
 EOF
 
 cat > "$README_PATH" <<EOF
@@ -281,9 +277,37 @@ SESSION_TYPE="$(printf '%s' "${XDG_SESSION_TYPE:-}" | tr 'A-Z' 'a-z')"
 if printf '%s' "$DESKTOP_ENV" | grep -q 'kde\|plasma' && [ "$SESSION_TYPE" = "wayland" ]; then
   echo
   say "KDE Plasma on Wayland detected — the overlay configures itself on first launch"
-  say "(forces XWayland + installs two KWin rules so it stays above the game). Just run"
-  say "Fallout 76 in BORDERLESS WINDOWED. If it ever shows BEHIND the game, use the tray"
-  say "menu -> \"KDE: keep overlay above game\" or import the bundled .kwinrule."
+  say "(forces XWayland + installs KWin rules so it stays above the game)."
+  # Install-time OPTION: the "keep game below overlay" KWin rule keeps the chat visible
+  # over a focused fullscreen game (the no-flicker fix). Default ON. Forcing the game
+  # below also lets the panel/other windows cover it, so offer to opt out. We only WRITE
+  # the setting for a FRESH install (no overlay-state.json yet) to avoid touching an
+  # existing user's state — otherwise the app default (on) applies and the tray toggle
+  # ("Keep game below overlay") is the control.
+  STATE_DIR="$CONFIG_HOME/Fallout Chat Mod"
+  STATE_FILE="$STATE_DIR/overlay-state.json"
+  ANS=""
+  # Detect a USABLE controlling terminal by actually opening /dev/tty (a bare
+  # `[ -r /dev/tty ]` is true even when piped with no tty → read would hang/EOF).
+  if { : >/dev/tty; } 2>/dev/null; then
+    printf '%s ' "==> Keep the game BELOW the overlay so chat stays visible over a fullscreen game? (recommended) [Y/n]" > /dev/tty
+    read -r ANS < /dev/tty 2>/dev/null || ANS=""
+  fi
+  case "$ANS" in
+    [Nn]*)
+      if [ ! -e "$STATE_FILE" ]; then
+        mkdir -p "$STATE_DIR" 2>/dev/null || true
+        printf '%s\n' '{"settings":{"kwinGameBelow":false}}' > "$STATE_FILE" 2>/dev/null \
+          && say "Disabled 'keep game below' (you can re-enable it in the tray menu)." \
+          || warn "Could not write the setting; toggle it in the tray menu after launch."
+      else
+        say "Existing settings found — leaving them. Toggle 'Keep game below overlay' in the tray menu if you want it off."
+      fi
+      ;;
+    *) say "'Keep game below overlay' will be ON (toggle it off any time in the tray menu)." ;;
+  esac
+  say "Run Fallout 76 in BORDERLESS WINDOWED. If chat ever shows BEHIND the game, check the"
+  say "tray menu -> \"Keep game below overlay\" / \"KDE: keep overlay above game\"."
 fi
 
 echo

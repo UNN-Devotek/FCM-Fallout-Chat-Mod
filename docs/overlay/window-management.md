@@ -174,12 +174,9 @@ Without either tool (or after the breaker disables a crashing `xdotool`), global
 
 ## Z-order controller
 
-`desiredTopmost()` decides whether `setAlwaysOnTop` should be `true`. It has **two modes** (`overlay-core.js`, unit-tested):
+`desiredTopmost()` (`overlay-core.js`, unit-tested) decides whether `setAlwaysOnTop` should be `true`: topmost while `forceVisible`, the overlay is focused, the game is the foreground process, or the game is `gameRunning` (session-long). `setAlwaysOnTop` maps to `_NET_WM_STATE_ABOVE` (KWin `AboveLayer`). On KWin 6 that alone loses to a *focused fullscreen* game, so the overlay being above the game is achieved by the **game keep-below KWin rule** (see below), not by `setAlwaysOnTop`. (`focusAwareTopmost` exists in the pure function for completeness but is **not** enabled — the overlay is a normal keep-above window above a kept-below game.)
 
-- **Focus-aware mode** (`focusAwareTopmost` — Linux **KDE-Wayland with active-window detection**, i.e. xdotool/kdotool present and not disabled by the crash breaker): topmost only when the **game is the foreground window**, the overlay is focused, or `forceVisible`. Tabbing from the game to another app **lowers** the overlay (it no longer sits above *all* windows). Safe on Linux — topmost flips don't cause a DWM-recomposition flash there.
-- **Default mode** (Windows, or Linux without detection): topmost for the **whole session while the game is `gameRunning`** (plus focused / `forceVisible` / game-foreground). On Windows this is deliberate — it avoids `true→false→true` flips on tab-in that trigger DWM flashes; on bare Linux/X11 there's no foreground API to do better.
-
-`applyZOrder()` is idempotent (tracks `overlayIsTopmost`) and suppressed during drags. In focus-aware mode the foreground poll calls `applyZOrder()` whenever the active window changes (while the game runs), so the overlay raises/lowers as you switch apps.
+`applyZOrder()` is idempotent (tracks `overlayIsTopmost`) and suppressed during drags. The overlay is a **NORMAL** window on all platforms (we tried `type:'notification'` for KDE stacking but reverted it — KWin's NotificationLayer is *below* the active-fullscreen layer, and notification windows are excluded from Alt-Tab/taskbar and non-focusable, so users couldn't tab into the chat).
 
 **Windows**: calls `mainWindow.setAlwaysOnTop(want, 'screen-saver')` — the highest standard Electron level, avoids DWM recomposition flash.
 
@@ -273,27 +270,27 @@ On KDE+Wayland the overlay forces the XWayland Ozone backend so it shares the sa
 
 ### Why "keep above" alone fails, and the layer fix
 
-Per KWin's `belongsToLayer()` (`src/window.cpp`), the layer order is `Normal(2) < Above(4) < Notification(5) < Active/fullscreen(6) < CriticalNotification(8) < OnScreenDisplay(9)`, and `isActiveFullScreen()` is checked **before** `keepAbove()`:
+Per KWin's `belongsToLayer()` (`src/window.cpp`), the layer order is `Below(1) < Normal(2) < Above(4) < Notification(5) < Active/fullscreen(6) < CriticalNotification(8) < OnScreenDisplay(9)`. Crucially, **`keepBelow()` is checked BEFORE `isActiveFullScreen()`**:
 
 ```cpp
-if (isActiveFullScreen()) return ActiveLayer;  // 6
-if (keepAbove())          return AboveLayer;   // 4  — loses
+if (isNotification())     return NotificationLayer;   // 5 — below active fullscreen
+if (keepBelow())          return BelowLayer;          // 1 — checked FIRST → escapes ActiveLayer
+if (isActiveFullScreen()) return ActiveLayer;         // 6
+if (keepAbove())          return AboveLayer;          // 4 — loses to a focused fullscreen game
 ```
 
-Borderless-windowed games (FO76 included) routinely still set `_NET_WM_STATE_FULLSCREEN`, so KWin treats FO76 as fullscreen and ranks it in `ActiveLayer` (6) — **above** any `keepAbove` overlay (4). No `above`/`aboverule` setting can win.
+Borderless-windowed games (FO76 included) routinely still set `_NET_WM_STATE_FULLSCREEN`, so a **focused** FO76 ranks in `ActiveLayer` (6) — above any `keepAbove` overlay (4) **and** above a `type:'notification'` overlay (5). No setting *on the overlay* can win (we tried notification type — it only helped while the overlay itself had focus, and broke Alt-Tab/focus). `layer`/`layerrule` is also ignored on KWin 6 (verified 6.6.5).
 
-**On KWin 6 (verified 6.6.5), `layer`/`layerrule` is IGNORED** — `layer=8` (CriticalNotification Force) does **not** lift the overlay above a focused fullscreen game, so keep-above alone loses whenever the game has focus (it stays on top only while the *overlay* is focused). The `layer`/`layerrule` keys are kept in the bundled `.kwinrule` for older KWin builds that still honor them, but the auto-applied rules no longer rely on them.
-
-**The demote rule (OPT-IN) — for exclusive fullscreen only.** A second rule on the **game** window (`wmclass=steam_app_1151340`, substring match) with `fullscreen=false` / `fullscreenrule=2` (Force) stops `isActiveFullScreen()` from firing, so KWin never promotes FO76 to `ActiveLayer` (6); the game sits in `NormalLayer` (2) and the overlay's `keepAbove` (4) wins even while the game is focused. **However, this Force rule fights the game's own fullscreen state and causes endless flicker on some KWin/Proton setups (issue #272), so it is OFF by default.** In **borderless windowed** (the recommended mode) the game isn't fullscreen-promoted, so the keep-above rule alone suffices and there's no flicker. Exclusive-fullscreen users can opt in via the tray (persisted as `settings.kwinDemoteFullscreen`).
+**The fix — keep the GAME below (`fcm-game-below`).** Forcing the game `below=true` / `belowrule=2` (Force) puts it in `BelowLayer` (1), which KWin evaluates *before* `isActiveFullScreen()` — so FO76 never reaches `ActiveLayer`, and a normal `keepAbove` overlay (4) sits above it even while the game is focused. Unlike the old fullscreen-demote rule, the game does **not** fight "below" (it's a stacking hint, not a state the game asserts), so there is **no flicker**. Default ON (`settings.kwinGameBelow`); the one side effect is that the panel/other windows can also cover the game, so it's an option (tray toggle + CLI-installer prompt). This replaced the retired `fcm-game-demote` (`fullscreen=false` Force) rule, which fought the game's fullscreen state and caused endless flicker (issue #272).
 
 ### How the rules get applied (automatic on startup)
 
 `setupKdeKeepAbove({ interactive })` writes the rule(s) into `~/.config/kwinrulesrc` via `kwriteconfig6`, then `qdbus org.kde.KWin /KWin reconfigure` (falls back to `qdbus6`/`qdbus-qt6`):
 
 - `fcm-keepabove` — keep-above on the overlay (`wmclass=fallout` + `title=Fallout Chat Mod`, `above=true`). **Always applied.**
-- `fcm-game-demote` — fullscreen demote on the game (`wmclass=steam_app_1151340`, `fullscreen=false` Force). **Only when `settings.kwinDemoteFullscreen` is enabled** (tray → "Keep above exclusive-fullscreen game (may flicker)"). Toggling it off re-runs the builder, which strips the demote rule and reconfigures KWin live.
+- `fcm-game-below` — keep-below on the game (`wmclass=steam_app_1151340`, `below=true` Force). **Applied by default** (`settings.kwinGameBelow`, default true; tray → "Keep game below overlay"; the CLI installer also prompts). Toggling it off re-runs the builder, which strips the rule and reconfigures KWin live.
 
-**KWin 6 format (verified):** the authoritative rule list is `[General] rules=`, a **comma-separated list of group NAMES** (plus a matching `count`). Writing numbered groups with only `count` is **not** enough — KWin rewrites `count` and drops the rules. We use **stable named groups** (so re-runs are idempotent and never collide with the user's own numbered rules) and **append** our names to any existing `rules=` list (preserving user rules). `buildKwinKeepAboveScript({ includeDemote })` (unit-tested) emits keep-above only by default, or both rules when opted in; its idempotency check matches the expected rule set exactly so toggling demote on/off always rewrites.
+**KWin 6 format (verified):** the authoritative rule list is `[General] rules=`, a **comma-separated list of group NAMES** (plus a matching `count`). Writing numbered groups with only `count` is **not** enough — KWin rewrites `count` and drops the rules. We use **stable named groups** (so re-runs are idempotent and never collide with the user's own numbered rules) and **append** our names to any existing `rules=` list (preserving user rules). `buildKwinKeepAboveScript({ includeBelow })` (unit-tested) emits keep-above always + game-below by default; its idempotency check matches the expected rule set exactly so toggling the option always rewrites.
 
 - **Automatic:** on **KDE+Wayland** it runs at startup (`app.whenReady`, `interactive: false`) so the overlay sits above the game for every user with **no manual step**. **Idempotent** — it exits early when `rules=` already holds exactly the expected set, so repeated launches never duplicate rules or reconfigure needlessly.
 - **Manual retry:** tray → **"KDE: keep overlay above game"** (`interactive: true`) additionally opens the userData folder for a hand import (System Settings → Window Rules → Import) if the automatic path fails (older KWin, missing `kwriteconfig6`, non-KDE).

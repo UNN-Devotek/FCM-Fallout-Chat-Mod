@@ -286,23 +286,20 @@ wmclassmatch=2
 wmclasscomplete=false
 above=true
 aboverule=3
-layer=8
-layerrule=2
-fsplevel=0
-fsplevelrule=2
 
-# OPTIONAL (disabled by default) — demote the GAME from the active-fullscreen layer.
-# Needed only for EXCLUSIVE-fullscreen; it fights the game's fullscreen state and
-# FLICKERS on some KWin/Proton setups (issue #272). Enable via tray -> "Keep above
-# exclusive-fullscreen game (may flicker)", or uncomment + re-import. Borderless
-# windowed (recommended) does not need it.
-# [Fallout Chat Mod - demote game from fullscreen layer]
-# Description=Fallout Chat Mod - demote game from fullscreen layer
-# wmclass=steam_app_1151340
-# wmclassmatch=2
-# wmclasscomplete=false
-# fullscreen=false
-# fullscreenrule=2
+# Keep the GAME below — the no-flicker fix for "overlay hidden behind a focused
+# fullscreen game". KWin evaluates keepBelow BEFORE the active-fullscreen promotion, so
+# the overlay (rule above) stays above a focused fullscreen FO76 with NO flicker.
+# (Replaces the old fullscreen-demote rule, which fought the game -> endless flicker.)
+# Side effect: the game can be covered by the panel/other windows. Turn off via the app
+# tray -> "Keep game below overlay".
+[Fallout Chat Mod - keep game below]
+Description=Fallout Chat Mod - keep game below
+wmclass=steam_app_1151340
+wmclassmatch=2
+wmclasscomplete=false
+below=true
+belowrule=2
 `;
 const LINUX_README_TEXT = `Fallout Chat Mod — Linux / KDE setup
 =====================================
@@ -403,12 +400,13 @@ function writeLinuxHelperFiles() {
 // rule is missing does it append group [N+1], bump count, and reconfigure. All
 // best-effort: on GNOME / missing tools / older KWin it no-ops (the interactive path
 // still opens the folder so the manual System-Settings → Import remains available).
-// The "demote game from fullscreen" KWin rule is OPT-IN (it fights the game's
-// fullscreen state and flickers on some KWin/Proton setups — issue #272). Persisted
-// in settings.kwinDemoteFullscreen; default false (borderless-windowed users don't
-// need it). Toggled from the tray.
-function isKwinDemoteEnabled() {
-  try { return loadState().settings && loadState().settings.kwinDemoteFullscreen === true; } catch { return false; }
+// The "keep game below" KWin rule is the no-flicker fix that keeps the overlay above a
+// focused fullscreen game (drops the game to KWin's BelowLayer). It's an OPTION because
+// forcing the game below also lets the panel/other windows cover it. Persisted in
+// settings.kwinGameBelow; default ON on KDE-Wayland (without it the overlay is hidden
+// behind a fullscreen game). Toggled from the tray; the CLI installer also prompts.
+function isKwinGameBelowEnabled() {
+  try { const s = loadState().settings; return !s || s.kwinGameBelow !== false; } catch { return true; }
 }
 function setupKdeKeepAbove({ interactive = false } = {}) {
   if (!IS_LINUX) return;
@@ -417,23 +415,23 @@ function setupKdeKeepAbove({ interactive = false } = {}) {
     const dir = (() => { try { return app.getPath('userData'); } catch { return null; } })();
     if (dir) { try { shell.openPath(dir); } catch { /* ignore */ } }
   }
-  const includeDemote = isKwinDemoteEnabled();
+  const includeBelow = isKwinGameBelowEnabled();
   try {
     const { exec } = require('child_process');
     // Shared, unit-tested script builder (idempotency guard + numbered-group write
     // + count bump + KWin reconfigure). See overlay-core.buildKwinKeepAboveScript.
-    // includeDemote adds the (flicker-prone) fullscreen-demote rule only when the
-    // user has opted in; otherwise only the keep-above rule is applied (and any
-    // previously-installed demote rule is stripped).
-    const script = overlayCore.buildKwinKeepAboveScript({ includeDemote });
+    // includeBelow adds the game keep-below rule (the fix); when the user opts out,
+    // only the keep-above rule is applied (and any previously-installed below/demote
+    // rule is stripped).
+    const script = overlayCore.buildKwinKeepAboveScript({ includeBelow });
     exec(script, { timeout: 8000, shell: '/bin/sh' }, (err, stdout) => {
       const out = String(stdout || '');
       if (err) diag('[kwin] keep-above auto-apply failed (use System Settings → Window Rules → Import): ' + String(err.message || err));
-      else if (out.includes('fcm-rule-present')) diag('[kwin] keep-above rule already present (demote=' + includeDemote + ') — skipped');
-      else diag('[kwin] keep-above rule installed (demote=' + includeDemote + ') + KWin reconfigured');
+      else if (out.includes('fcm-rule-present')) diag('[kwin] keep-above rule already present (gameBelow=' + includeBelow + ') — skipped');
+      else diag('[kwin] keep-above rule installed (gameBelow=' + includeBelow + ') + KWin reconfigured');
     });
   } catch (e) { diag('[kwin] setupKdeKeepAbove exec failed:', String(e && e.message || e)); }
-  diag('[kwin] setupKdeKeepAbove: rule at ' + rulePath + ' (interactive=' + interactive + ', demote=' + includeDemote + ')');
+  diag('[kwin] setupKdeKeepAbove: rule at ' + rulePath + ' (interactive=' + interactive + ', gameBelow=' + includeBelow + ')');
 }
 const http = require('http');
 const { URL } = require('url');
@@ -3237,12 +3235,12 @@ function rebuildTrayMenu() {
     ...(IS_LINUX ? [
       { type: 'separator' },
       { label: 'KDE: keep overlay above game', click: () => setupKdeKeepAbove({ interactive: true }) },
-      // Opt-in: the fullscreen-demote rule keeps the overlay above an EXCLUSIVE-
-      // fullscreen game, but fights the game's fullscreen state and flickers on some
-      // setups (issue #272). Off by default — borderless-windowed users don't need it.
-      { label: 'Keep above exclusive-fullscreen game (may flicker)', type: 'checkbox', checked: isKwinDemoteEnabled(), click: (mi) => {
-        try { const st = loadState(); const settings = { ...(st.settings || {}), kwinDemoteFullscreen: !!mi.checked }; saveState({ settings }); } catch { /* ignore */ }
-        setupKdeKeepAbove({ interactive: false }); // re-apply rules with/without the demote rule (live KWin reconfigure)
+      // The "keep game below" rule is what keeps the overlay above a focused fullscreen
+      // game on KWin 6 (no flicker). ON by default; turn OFF if you'd rather the panel/
+      // other windows not be able to cover the game.
+      { label: 'Keep game below overlay (fixes hidden-behind-fullscreen)', type: 'checkbox', checked: isKwinGameBelowEnabled(), click: (mi) => {
+        try { const st = loadState(); const settings = { ...(st.settings || {}), kwinGameBelow: !!mi.checked }; saveState({ settings }); } catch { /* ignore */ }
+        setupKdeKeepAbove({ interactive: false }); // re-apply rules with/without the game-below rule (live KWin reconfigure)
         rebuildTrayMenu();
       } },
     ] : []),
@@ -3329,22 +3327,16 @@ function createWindow() {
     //     window (this is the Electron-supported equivalent of WS_EX_APPWINDOW —
     //     a non-tool window with a taskbar button + alt-tab entry).
     title: APP_TITLE,
-    // LINUX/KDE-WAYLAND STACKING FIX (issue #272 follow-up — overlay was BEHIND a
-    // focused fullscreen game): `type:'notification'` sets
-    // _NET_WM_WINDOW_TYPE_NOTIFICATION on the X11 (XWayland) surface. KWin places
-    // notification-type windows in a higher stacking layer (NotificationLayer) than
-    // NORMAL windows — ABOVE the active-fullscreen layer — so the overlay sits over a
-    // focused fullscreen FO76 WITHOUT the "demote game from fullscreen" KWin rule that
-    // flickers on some setups, and without relying on _NET_WM_STATE_ABOVE
-    // (setAlwaysOnTop), which KWin's fullscreen promotion outranks. Verified: a NORMAL
-    // window with keep-above loses to the focused game; a notification window wins.
-    // Trade-off: a notification window is non-focusable by default — handled in
-    // setClickThrough(), which toggles setFocusable() so chat input still works when
-    // the overlay is interactive — and it also sits above OTHER apps while shown
-    // (accepted; the overlay is game-gated / Delete-to-hide). KDE+Wayland ONLY: other
-    // Linux setups (X11/GNOME/etc.) already worked and would lose taskbar/alt-tab for
-    // nothing, so they keep a NORMAL window. Windows/macOS keep NORMAL too.
-    type: KDE_WAYLAND ? 'notification' : undefined,
+    // NORMAL window on every platform. We tried `type:'notification'` on KDE-Wayland
+    // to out-rank a focused fullscreen game (KWin's NotificationLayer), but it is
+    // actually BELOW KWin's active-fullscreen layer (so it only helped while the overlay
+    // had focus) AND a notification window is excluded from Alt-Tab / the taskbar and is
+    // non-focusable — users couldn't tab into the chat. The correct KWin-6 fix is the
+    // "keep game below" window rule (fcm-game-below): it drops FO76 to BelowLayer, which
+    // KWin evaluates BEFORE the active-fullscreen promotion, so a NORMAL keep-above
+    // overlay sits above the game with no flicker — and stays a normal, focusable,
+    // tab-able window. See overlay-core.buildKwinKeepAboveScript + window-management.md.
+    type: undefined,
     icon: appIcon() || undefined, // real product icon for taskbar / alt-tab
     // show:false — don't flash the window open before we know whether FO76 is
     // running. reevaluateVisibility() in did-finish-load shows it only if allowed.
