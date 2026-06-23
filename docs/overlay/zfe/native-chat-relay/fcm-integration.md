@@ -248,6 +248,16 @@ connection's current world-session room; `party` (deferred) binds to the user's 
 the one place "WebSocket rooms" genuinely apply — for **fan-out membership**, not for expanding the
 addressable channel namespace (that job belongs to `AllowedChannels`).
 
+> **`server` chat needs `worldId` — a `chat.v1` gap for the fully-standalone mod.** The `server` slug
+> binds to the player's **current world-session room**, which requires the relay to know the
+> connection's `worldId`. The standalone chat `.ba2` is **fully self-contained** (#137/#293) — one
+> install, no data-bridge dependency — and reads `worldId` from the Scaleform/UI layer itself. But
+> `chat.v1` has **no field to convey it** to the relay (`send` carries only
+> `channel`/`body`/`targetUserId`; `AllowedChannels` is a static exact-match list, so a dynamic
+> `server:<worldId>` isn't accepted). So standalone **server-scoped** chat needs a `chat.v1`
+> context/session-field extension (folded into the ZFE-coordination issue #292). `global`/`trade`/
+> `events`/`raids` are fully standalone with one `.ba2` **today**.
+
 Channel eligibility stays uniform with the rest of FCM: only **leaf** channels
 (`parent_id IS NOT NULL AND NOT is_archived`) map to a slug — the same predicate `hudPush.ts` and
 the hud-feed SQL already enforce. An unknown/omitted slug or a container target returns the
