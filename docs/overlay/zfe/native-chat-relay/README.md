@@ -43,7 +43,8 @@ ZFE native chat SWF ──(chat.v1 JSON)──▶ NEW /relay adapter ──▶ e
 
 The adapter is a **thin translation layer**. The only net-new infrastructure is a **durable
 monotonic cursor** (for `poll`/`subscribe` dedup) and a **persistent relay token** identity; every
-other concern reuses an existing FCM service. Full detail in
+other concern reuses an existing FCM service. FCM's custom channels (Events / Raids / Infests) are
+carried by ZFE's **`AllowedChannels`** config — no protocol gap. Full detail in
 [fcm-integration.md](fcm-integration.md).
 
 ## See also

@@ -57,6 +57,7 @@ Data/ZFE/TextChat/fragments/MyChat.ini
 [TextChat]
 OpenChatKey=PAGE_DOWN
 DefaultChannel=global
+AllowedChannels=local,global,server,trade,party,clan,whisper
 EnableTimestamps=true
 Endpoint=wss://chat.example.com/relay
 AutoConnect=false
@@ -73,6 +74,7 @@ The canonical **user override** remains:
 [TextChat]
 OpenChatKey=PAGE_DOWN
 DefaultChannel=global
+AllowedChannels=local,global,server,trade,party,clan,whisper
 EnableTimestamps=true
 Endpoint=wss://chat.example.com/relay
 AutoConnect=false
@@ -80,7 +82,8 @@ AutoConnect=false
 
 Values in `zfe.ini` override fragment values **per key**. For example, if the fragment supplies
 `Endpoint` and the user sets only `OpenChatKey`, ZFE uses the fragment endpoint and the user
-hotkey.
+hotkey. Use **`AllowedChannels`** to ship custom normal channel IDs for your SWF — for example
+`global,market,raiders,whisper`.
 
 For local relay development:
 
@@ -372,16 +375,21 @@ state so the UI can fail quickly.
 
 ## Channels and limits
 
-ZFE currently allows these channels:
+The channel vocabulary is **configurable, not fixed.** If `[TextChat] AllowedChannels` is omitted,
+ZFE allows the built-in defaults `local`, `global`, `server`, `trade`, `party`, `clan`, `whisper`.
+A chat UI can ship a **different comma-separated list** in its active TextChat fragment, and users
+can override it in `zfe.ini`. This is the mechanism for relay-specific channels — a backend with
+`events`, `raids`, or `infests` ships those exact IDs.
 
-```
-local   global   server   trade   party   clan   whisper
-```
+**Channel ID rules:**
 
-The `system` channel is **reserved**; clients cannot send to it. Whispers require `targetUserId`.
+- May contain ASCII letters, digits, `_`, `-`, `.`, or `:`
+- Must be **shorter than 64 bytes**
+- `system` is **reserved** — clients cannot send to it even if it appears in config
+- Whispers require `targetUserId`
 
 ZFE enforces a local **512 UTF-16 code-unit** message body limit, but the relay **must enforce its
-own limits too**.
+own channel policy, permissions, and limits too**.
 
 ---
 
@@ -395,6 +403,40 @@ own limits too**.
 - For stronger ban resistance later, add server-side signals such as account linking, invite codes,
   operator review, rate limits, or proof of work. Do **not** base moderation solely on character
   display name.
+
+---
+
+## Existing relay compatibility notes
+
+This section is aimed at backends that **already** run a chat system (like FCM) and want to adapt
+rather than build greenfield.
+
+- **Custom channels.** ZFE does **not** require relays to use its default channel vocabulary. If the
+  backend already has channels such as `events`, `raids`, or `infests`, ship those IDs in the active
+  `AllowedChannels` fragment and have the SWF send those exact channel strings. **Omit** default
+  channels that have no meaning in the relay.
+- **Cursors.** Every visible event needs a monotonically increasing `id` cursor. If the backend has
+  no global message sequence, **assign a relay cursor when the message is broadcast** and make both
+  `poll` and `subscribe` return that **same** cursor value for the same event.
+- **Identity / account linking.** Display names are not identity. An existing account system can keep
+  ZFE users in a **limited** state until they complete account linking, then return stronger roles or
+  permission booleans from `register` or `hello`. If normal sending must be blocked before linking,
+  reject `send` with **`permission_denied`** — ZFE does **not** currently advertise a separate
+  `canSend` permission.
+- **Slow mode.** If the relay has no slow-mode feature, return `canSetSlowMode: false` and reject
+  `setSlowMode` with **`permission_denied`** or **`invalid_action`**.
+- **Message deletion.** ZFE currently has **no dedicated deleted-message event kind**. Relays can
+  **hide deleted messages** from later `poll` and history responses. Live removal of an
+  already-rendered message needs either a future ZFE event extension or a convention handled by your
+  own SWF.
+- **Muted users.** Prefer rejecting `send` with **`user_muted`** so the client can show an explicit
+  failure. Accepting and silently dropping muted sends is allowed by a relay, but gives weaker
+  feedback.
+
+> **Operational reject codes.** Beyond the four stable auth codes above, this section introduces
+> `permission_denied`, `invalid_action`, and `user_muted` as the recommended rejection codes for the
+> cases named here. ZFE surfaces them to the SWF; only the four auth codes drive ZFE's own
+> auto-register / back-off behavior.
 
 ---
 

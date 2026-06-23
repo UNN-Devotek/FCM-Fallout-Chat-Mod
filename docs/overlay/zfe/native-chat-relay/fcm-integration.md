@@ -21,6 +21,10 @@ the moderation action services, channel resolution, the Redis pub/sub fan-out, a
 `ws_rate:<userId>` limiter. The only net-new infrastructure is a **durable monotonic cursor** for
 `poll`/`subscribe` dedup and a **persistent relay token** identity.
 
+FCM's custom channels (Events / Raids / Infests) are **not** a blocker: ZFE's `AllowedChannels`
+config carries arbitrary relay channel IDs, so FCM ships its own slug list and maps each slug to a
+leaf-channel UUID. See [Channel mapping](#channel-mapping).
+
 ```
 ZFE native chat SWF
   └─ __ZFE.call("chat.v1.*")           [client-side, ZFE-owned]
@@ -55,9 +59,12 @@ ZFE native chat SWF
 | Moderation in-protocol | none (report/mute happen elsewhere) | `report` + `moderationAction` ops |
 
 **Strategic note.** Once ZFE ships native chat, `chat.v1` is the better long-term target: FCM stops
-maintaining a custom SWF and wire format and just keeps a compliant relay. The two can run in
-parallel during transition (both are additive front-ends onto the same services). A deprecation
-path for `FCMHUD/1` is an [open question](#open-questions--decisions-needed), not a v1 requirement.
+maintaining a custom SWF and wire format and just keeps a compliant relay. With `AllowedChannels`
+carrying FCM's custom channels (Events/Raids/Infests), `chat.v1` is now a **fuller** replacement
+than first assumed — the remaining FCMHUD/1-only edge is narrow (in-game switching across arbitrary
+leaf channels by UUID, and FCM-controlled rendering). The two can run in parallel during transition
+(both are additive front-ends onto the same services); the `FCMHUD/1` sunset is an
+[open question](#open-questions--decisions-needed), not a v1 requirement.
 
 ---
 
@@ -144,6 +151,17 @@ staff powers, support **opt-in account linking** later (invite code / Discord OA
 attaches the relay `userId` to an existing FCM `User` (Discord-authed, or the M7 `identityHash`).
 This is the contract's recommended "account linking / invite codes / operator review" path.
 
+The spec's compatibility notes spell out the **limited-until-linked** pattern: keep a fresh relay
+user in a limited state and return stronger `roles`/permission booleans from `register`/`hello`
+**after** linking. Two FCM-specific choices:
+
+- **Default — allow public sends pre-link.** A `register`-minted user should be able to post to
+  public channels immediately, matching how anonymous overlay install-token users already work (no
+  Discord required to chat). Linking only *elevates* (staff powers, stronger ban resistance).
+- **If we decide sending must be gated** (e.g. require linking before any send), reject `send` with
+  **`permission_denied`** — ZFE does **not** advertise a separate `canSend` permission, so this is
+  the prescribed way to express "registered but not yet allowed to talk."
+
 ### Auth error-code mapping
 
 | FCM state | `chat.v1` error code |
@@ -152,42 +170,65 @@ This is the contract's recommended "account linking / invite codes / operator re
 | `relayToken` revoked flag set | `auth_token_revoked` |
 | `user.isBanned` active (incl. `bannedUntil` in future) | `user_banned` |
 | `ws_rate:<userId>` exceeded | `rate_limited` |
-| `user.isMuted` at `send` | relay-defined `muted` (no stable code exists — see [open questions](#open-questions--decisions-needed)) |
-| body > 500 chars | relay-defined `message_too_long` |
+| `user.isMuted` at `send` | `user_muted` (the spec's recommended muted-send rejection) |
+| privileged op from an unlinked (non-staff) identity | `permission_denied` |
+| `setSlowMode` (no FCM primitive) | `permission_denied` / `invalid_action` |
+| `send` to unknown/omitted slug or container channel | `invalid_channel` (relay-defined) |
+| body > 500 chars | `message_too_long` (relay-defined) |
 
 Only the four codes in the [protocol spec](protocol-spec.md#success-and-error-envelopes)
-(`auth_token_invalid`, `auth_token_revoked`, `user_banned`, `rate_limited`) are **load-bearing**
-for ZFE. Relay-defined codes (`muted`, `message_too_long`) are surfaced to the SWF but ZFE takes no
-special action on them.
+(`auth_token_invalid`, `auth_token_revoked`, `user_banned`, `rate_limited`) drive ZFE's own
+auto-register / back-off behavior. The spec's **compatibility notes** add `user_muted`,
+`permission_denied`, and `invalid_action` as the recommended operational rejections — FCM should use
+those exact codes (the earlier draft's ad-hoc `muted` is replaced by `user_muted`). `invalid_channel`
+and `message_too_long` remain relay-defined; ZFE surfaces them to the SWF but takes no special
+action.
 
 ---
 
 ## Channel mapping
 
-ZFE's allowed channel vocabulary is fixed: `local global server trade party clan whisper`
-(plus reserved `system`). FCM's leaf channels are UUID-keyed and seeded in
-[`server.ts`](../../../../backend/src/server.ts) (`…0001` *Fallout 76* is a container, excluded).
+**The channel vocabulary is configurable — this resolves the earlier "custom channels" concern.**
+ZFE's `[TextChat] AllowedChannels` lets a relay ship its **own** channel IDs; the SWF sends those
+exact strings, and ZFE drops any default channel we omit. So FCM is **not** limited to
+`global/trade/server/…` — it ships a slug list including `events`, `raids`, `infests` and maps each
+to a leaf channel UUID server-side. (Earlier drafts of this plan treated Events/Raids/Infests as an
+unreachable gap; the `AllowedChannels` revision of the spec removes that constraint.)
 
-| ZFE channel | FCM target | Status | Notes |
+> **Ship slugs, not UUIDs.** Channel IDs are constrained to ASCII `[A-Za-z0-9_.:-]`, < 64 bytes.
+> FCM channels are UUIDs (technically valid, but ugly and internal-leaking), and ZFE has **no
+> separate channel-label field** — the channel **ID is what the native UI displays**. So ship
+> human-friendly **slugs** and keep a `slug ↔ channelId` map in the adapter; outbound events tag
+> `channel` with the slug (reverse-map UUID → slug).
+
+Proposed `AllowedChannels` fragment value: **`global,trade,server,events,raids,infests`**
+(`DefaultChannel=global`).
+
+| ZFE channel ID (shipped) | FCM target | Status | Notes |
 |---|---|---|---|
-| `global` | **General** `…0005` (`HUD_DEFAULT_CHANNEL_ID`) | **map** | The broad default channel |
-| `trade` | **Trading** `…0002` | **map** | Direct match |
-| `server` | FCM virtual-server channel (`server:` id namespace + session scope) | **map** | Same-world server chat; FCM already has `server:join-manual` + session-scoped pub/sub |
-| `local` | — | **alias→`server`** or reject | FO76 area chat has no FCM equivalent; alias to `server` initially |
-| `party` | FCM `Party` / `PartyMember` model | **defer** | Party is feature-gated and tied to authed overlay accounts; needs identity linking first |
-| `clan` | — | **defer/reject** | No FCM clan concept |
-| `whisper` | — (requires `targetUserId`) | **defer/reject** | FCM has no 1:1 DM; revisit with `Block`-aware DMs |
+| `global` | General `…0005` (`HUD_DEFAULT_CHANNEL_ID`) | map | Broad default |
+| `trade` | Trading `…0002` | map | Reuses ZFE's default name |
+| `events` | Events `…0003` | **map (custom)** | Custom ID via `AllowedChannels` |
+| `raids` | Raids `…0004` | **map (custom)** | Custom ID |
+| `infests` | Infests `983995c1-…` | **map (custom)** | Custom ID |
+| `server` | FCM session scope (`scope:'session'`, `sessionId`) | map (room) | Same-world server chat — a **room**, not a static channel (see below) |
+| `party` | FCM `Party`/`PartyMember` (`scope:'party'`) | defer | Group room; needs identity linking + party membership first |
+| `whisper` | — (requires `targetUserId`) | omit | No 1:1 DM in FCM yet — omit from `AllowedChannels` until built |
+| `local`, `clan` | — | omit | No FCM equivalent; the spec says **omit defaults with no meaning** |
 
-> **Gap — Events / Raids / Infests are unreachable.** FCM's `…0003` Events, `…0004` Raids, and
-> `983995c1-…` Infests leaf channels are **not** in ZFE's channel vocabulary, so the native client
-> cannot address them. Options: (a) accept that native-client users see only `global`/`trade`/
-> `server`; (b) ship one fragment per channel via `[TextChat] DefaultChannel`; (c) request ZFE
-> widen the vocabulary. This is a [decision needed](#open-questions--decisions-needed).
+**Rooms vs. static channels.** `global`/`trade`/`events`/`raids`/`infests` are **static topic
+channels** — a flat `slug → UUID` lookup. `server` and `party` are **dynamic-membership rooms**, and
+FCM already models them as Redis pub/sub **scopes** (`scope:'session'`/`'party'` with
+`sessionId`/`memberUserIds`) — exactly the right primitive. The `server` slug binds to the
+connection's current world-session room; `party` (deferred) binds to the user's party room. This is
+the one place "WebSocket rooms" genuinely apply — for **fan-out membership**, not for expanding the
+addressable channel namespace (that job belongs to `AllowedChannels`).
 
 Channel eligibility stays uniform with the rest of FCM: only **leaf** channels
-(`parent_id IS NOT NULL AND NOT is_archived`) are valid send/poll targets — the same predicate
-`hudPush.ts` and the hud-feed SQL already enforce. Sends to a container channel return a
-relay-defined `invalid_channel` error.
+(`parent_id IS NOT NULL AND NOT is_archived`) map to a slug — the same predicate `hudPush.ts` and
+the hud-feed SQL already enforce. An unknown/omitted slug or a container target returns the
+relay-defined `invalid_channel` error (ZFE also pre-validates against `AllowedChannels`, so this is
+defense in depth).
 
 ---
 
@@ -219,6 +260,12 @@ This keeps **push and poll dedup correct**, which is the cursor's entire purpose
 state, survives reconnect, works across instances). The alternative of deriving cursors from
 `createdAt` epoch-millis is rejected — within-millisecond collisions break strict monotonicity.
 
+> **The spec now endorses this exact approach.** The "Existing relay compatibility notes" section of
+> [protocol-spec.md](protocol-spec.md#existing-relay-compatibility-notes) states: *"assign a relay
+> cursor when the message is broadcast and make both poll and subscribe return that same cursor
+> value for the same event."* That is the broadcast-time `relaySeq` design above — so this is no
+> longer a speculative choice, it's the documented pattern.
+
 ---
 
 ## Message limits reconciliation
@@ -243,7 +290,7 @@ but the **server is authoritative**. Map from the requesting identity's FCM role
 | `canDeleteMessage` | `moderator`+ (FCM `requireDiscordRole`) |
 | `canMuteUser` | `moderator`+ |
 | `canBanUser` | `moderator`+ (FCM `createBan` is moderator-gated) |
-| `canSetSlowMode` | **always `false`** — FCM has no slow-mode primitive (see gap below) |
+| `canSetSlowMode` | **always `false`** — FCM has no slow-mode primitive; reject `setSlowMode` with `permission_denied` / `invalid_action` (per the spec's compatibility notes) |
 
 **Practical reality at launch:** a `register`-minted relay identity has `role: "user"` — it is
 **report-only**. Real moderation still happens through the dashboard. `moderationAction` ops only
@@ -260,12 +307,16 @@ privileged `moderationAction` ops from unlinked identities.
 | `unmuteUser` | `unmuteUserHandler` service path | map (staff-linked) |
 | `banUser` | `createBan` (needs a no-evidence service variant; the REST path is multipart) | map (staff-linked) |
 | `unbanUser` | `reverseBan` | map (staff-linked) |
-| `setSlowMode` | — | **unsupported** (no primitive; `canSetSlowMode=false`) |
+| `setSlowMode` | — | **unsupported** — reject with `permission_denied` / `invalid_action`; `canSetSlowMode=false` |
 
-> **Deletion-event gap.** The contract's documented event `kind` is `chat.message`; it does not
-> specify a `chat.delete` event. FCM soft-deletes and broadcasts `chat:delete` internally, but until
-> ZFE defines a deletion event kind, the native client won't reflect deletions live. Flagged as a
-> [decision needed](#open-questions--decisions-needed).
+> **Deletion — what the spec now prescribes.** ZFE still has **no dedicated deleted-message event
+> kind**. The compatibility notes say a relay should **hide deleted messages from later `poll` and
+> history responses** (FCM already does this — the `poll` query filters `isDeleted = false`), and
+> that **live removal of an already-rendered message needs a future ZFE event extension or a
+> convention handled by your own SWF**. Because the `chat.v1` path uses ZFE's **native** client (not
+> our SWF), the own-SWF option isn't available to us — so for now a deleted message simply **stops
+> appearing in history/poll** but isn't pulled from a screen that already rendered it. FCM's
+> internal `chat:delete` broadcast still drives the dashboard/overlay surfaces as before.
 
 ---
 
@@ -293,9 +344,9 @@ required by the EULA-safe desktop overlay.
 
 | Phase | Scope | Gate |
 |---|---|---|
-| **R0** | Sign-off + resolve the channel-vocabulary gap with ZFE | decisions below answered |
+| **R0** | Sign-off + finalize the `AllowedChannels` slug set (`global,trade,server,events,raids,infests`) + the decisions below | decisions answered |
 | **R1** | `/relay` route + `register`/`hello` + relay-token model (`User.relayToken`, `relay:<token>` Redis) + **dev-only guard** (refuse when `NODE_ENV=production`, mirroring `hudPush`) | loopback compat test passes (`register → subscribe → send → poll`) |
-| **R2** | `send` → `ingestMessage`, `relaySeq` cursor + `poll`; channels `global`/`trade`/`server` | unit + contract tests green |
+| **R2** | `send` → `ingestMessage`, `relaySeq` cursor + `poll`; slug↔UUID map for `global/trade/server/events/raids/infests` | unit + contract tests green |
 | **R3** | `subscribe` push via Redis pub/sub; cross-instance cursor consistency | push/poll dedup verified |
 | **R4** | `report` → `createReport` | |
 | **R5** | `moderationAction` (report-only first) + permissions + staff identity linking | |
@@ -317,8 +368,9 @@ tests:
   re-validation.
 - **Cursor monotonicity** — `relaySeq` strictly increases; `poll(cursor)` returns only newer
   events; `subscribe` does not drain history; reconnect-with-last-cursor yields only newer events.
-- **Channel mapping** — `global`/`trade`/`server` resolve to the right leaf UUIDs; container and
-  deferred channels (`party`/`clan`/`whisper`) are rejected cleanly.
+- **Channel mapping** — each shipped slug (`global`/`trade`/`server`/`events`/`raids`/`infests`)
+  resolves to the right leaf UUID and round-trips back to the slug on outbound events; unknown/
+  omitted slugs and container targets return `invalid_channel`.
 - **Loopback contract test** — reproduce the spec's local test (`register → subscribe → send →
   poll`) against an in-process relay, modeled on the existing
   [`backend/tests/upgradeRouter.test.js`](../../../../backend/tests/upgradeRouter.test.js) and
@@ -333,22 +385,29 @@ into the required `CI Summary` gate once stable.
 
 ## Open questions / decisions needed
 
-1. **Channel vocabulary gap.** Events / Raids / Infests aren't addressable by ZFE's fixed channel
-   set. Accept the reduced surface, ship per-channel fragments, or ask ZFE to widen it?
-2. **`local` / `clan` / `whisper`.** Alias `local`→`server`? Leave `clan`/`whisper` rejected until
-   FCM has clan/DM features?
-3. **Identity strength.** Display-name-only `register` is weaker than M7's `identityHash`. Do we
-   require account linking (invite code / Discord) before granting any non-report capability, and
-   should we cross-link to the existing `identityHash` when the same person uses both bridges?
-4. **Muted-send semantics.** FCMHUD/1 drops muted messages silently; the contract has no `muted`
-   error code. Drop silently (return `success:true` with no broadcast — risks cursor confusion),
-   or return a relay-defined `muted` error (cleaner, but ZFE shows a generic failure)?
-5. **Deletion events.** ZFE documents only `chat.message`. Do we wait for a ZFE `chat.delete` event
-   kind, or accept that deletions aren't reflected live on the native client?
-6. **Slow-mode.** `setSlowMode` has no FCM primitive. Build one, or permanently advertise
-   `canSetSlowMode=false`?
-7. **FCMHUD/1 deprecation.** Once `chat.v1` ships and FCM has a compliant relay, do we sunset the
-   bespoke `FCMBridge.swf` + `FCMHUD/1` path, or keep both indefinitely?
+The `AllowedChannels` revision of the spec **closed** several questions from the first draft:
+channels (custom IDs via `AllowedChannels`), the cursor design (now the documented pattern),
+muted-send (`user_muted`), slow-mode (`permission_denied`/`invalid_action`), and the deletion
+convention (hide from history/poll). What remains:
+
+1. **Channel slugs.** Confirm the public slug set (`global,trade,server,events,raids,infests`) and
+   that the native UI displays the slug as-is (no separate label field). Do we want prettier slugs
+   (e.g. `general` vs `global`), accepting that the slug is user-visible?
+2. **Identity strength & linking.** Default lets `register` users post to public channels (parity
+   with anonymous overlay users); linking only elevates. Confirm that, and decide whether to
+   cross-link to the M7 `identityHash` when the same person uses both bridges (shared ban state).
+3. **`party` / `whisper`.** Both are deferred/omitted at launch. When do we add `party` (needs
+   identity linking + party-membership binding) and `whisper` (needs a `Block`-aware DM feature)?
+4. **Live deletion.** Accept that, on the native client, a deleted message only **disappears from
+   history/poll** (no live pull from an already-rendered screen) until ZFE adds a `chat.delete`
+   event kind? FCM's dashboard/overlay surfaces are unaffected.
+5. **FCMHUD/1 deprecation — calculus has shifted.** With custom channels now working via
+   `AllowedChannels`, `chat.v1` is a **fuller** replacement than the first draft assumed. The
+   remaining FCMHUD/1-only advantages are narrow: in-game switching across **arbitrary** leaf
+   channels by UUID (vs. the fixed shipped slug list) and FCM-controlled rendering. Do we plan a
+   sunset of `FCMBridge.swf` once `chat.v1` ships, or keep both indefinitely?
+6. **Slow-mode (optional).** Permanently advertise `canSetSlowMode=false`, or build a real
+   per-channel slow-mode primitive later (it would also benefit the dashboard/overlay)?
 
 ---
 
