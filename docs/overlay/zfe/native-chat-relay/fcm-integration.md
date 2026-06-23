@@ -264,8 +264,11 @@ addressable channel namespace (that job belongs to `AllowedChannels`).
 > in `senderDisplayName`; our SWF decodes + strips it). The **one** thing that can't be tunneled is
 > **channels** — ZFE validates them **client-side** against `AllowedChannels` — so **dynamic channels
 > are the only genuine `chat.v1` extension need** (#292). Hardening: intercept the control message
-> before `ingestMessage`/broadcast (airtight suppression), and optionally HMAC `worldId` against
-> spoofing.
+> before `ingestMessage`/broadcast (airtight suppression), and **the control message MUST be
+> HMAC-signed** — `HMAC-SHA256(secret, worldId || relayUserId || timestamp)`; the relay **rejects**
+> any missing/invalid HMAC or stale timestamp (≈30s replay window). This is tamper-evidence + replay
+> / cross-user protection on top of the already TLS- and token-authenticated `send`; it does not stop
+> a user spoofing *their own* client-read `worldId` (inherent, low stakes — ephemeral server chat).
 
 Channel eligibility stays uniform with the rest of FCM: only **leaf** channels
 (`parent_id IS NOT NULL AND NOT is_archived`) map to a slug — the same predicate `hudPush.ts` and
