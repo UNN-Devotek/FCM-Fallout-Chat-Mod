@@ -20,11 +20,6 @@ export interface SourceSplit {
   discord: number;
 }
 
-export interface VersionCount {
-  version: string;
-  count: number;
-}
-
 export interface DownloadCount {
   version: string;
   count: number;
@@ -52,7 +47,8 @@ export interface CommunityStats {
   activityOverTime: ActivityPoint[];
   messagesPerChannel: ChannelMessageCount[];
   messageSplit: SourceSplit;
-  versionDistribution: VersionCount[];
+  // versionDistribution removed — its data source (app_version telemetry) was
+  // deleted in #117; the backend no longer returns it. See ServerHealth.tsx.
   downloadsPerVersion: DownloadCount[];
   moderationPerBucket: ModerationActivity[];
 }
