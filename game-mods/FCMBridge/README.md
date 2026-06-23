@@ -105,7 +105,7 @@ and add `AllowLocalhostDevelopment=yes` to `zfe.ini`. See
 - **NO HTML entities** (`&amp;`, `&lt;`, etc.) anywhere in `htmlText`
 - On-screen debug panels: use `tf.text` (plain), never `tf.htmlText`
 
-## Two-way in-game chat (M7 -- FCMChat.ba2)
+## Two-way in-game chat (M7 -- FCM-standalone.ba2)
 
 Milestone M7 adds a chat INPUT to FCMBridge: press INSERT in-game to focus a
 text field, type a message, press ENTER to send it to the FCM backend.  The
@@ -132,21 +132,24 @@ The input chain follows the mechanism used by the original FO76 Text Chat mod
 
 ### Single-.ba2 install (ini-line method)
 
-Everything ships in one file: FCMChat.ba2 (BTDX/GNRL format).
+Everything ships in one file: FCM-standalone.ba2 (BTDX/GNRL format).
 
 Contents:
-  interface/HUDMenu.swf    -- the patched HUDMenu (replaces the vanilla copy)
-  configuration/fcmchat.ini -- default chat settings
+  interface/HUDMenu.swf    -- patched HUDMenu (chat input + self-loads FCMBridge.swf)
+  interface/FCMBridge.swf  -- the chat feed renderer + __SFCodeObj socket bridge
 
 Install:
-1. Copy FCMChat.ba2 to <game>\Data\
+1. Copy FCM-standalone.ba2 to <game>\Data\
 2. Add to Fallout76Custom.ini under [Archive]:
-     sResourceArchive2List = FCMChat.ba2
+     sResourceArchive2List = FCM-standalone.ba2
 3. Set ZFE env vars (see below) and restart Steam.
 
-This is the standard Bethesda-sanctioned UI modding approach.  It does NOT
-require HUDModLoader for the chat input path (HUDModLoader is still used for
-the existing FCMBridge read-feed widget).
+This is the standard Bethesda-sanctioned UI modding approach and needs NO
+HUDModLoader: the patched HUDMenu self-loads FCMBridge.swf from the same archive
+when HUDModLoader is absent (`fcm-inject.as` -> `fcmSelfLoadBridge`). The same
+HUDMenu.swf still works WITH HUDModLoader too — it just skips the self-load and
+lets HUDModLoader supply FCMBridge.swf. (`fcmchat.ini` is NOT packed; GFx can't
+read files, so `fcmApplyIniDefaults` bakes the position defaults in at runtime.)
 
 ### ZFE dependency
 
@@ -161,16 +164,17 @@ See docs/overlay/zfe/realtime-socket.md for the full env var reference.
 
 ### Re-merge caveat
 
-Because FCMChat.ba2 contains a full copy of HUDMenu.swf, every Bethesda patch
-that updates the vanilla HUDMenu requires a re-merge: extract the new vanilla
-SWF, diff against the previous vanilla, re-apply our additions, recompile, and
-repack.  The additions are isolated in game-mods/FCMBridge/hudmenu-chat/ to
-make this as mechanical as possible.  See the BUILD.md in that folder.
+Because FCM-standalone.ba2 contains a full copy of HUDMenu.swf, every Bethesda
+patch that updates the vanilla HUDMenu requires a re-merge: extract the new
+vanilla SWF, re-run `apply-patch.py` on it (the anchor asserts flag any moved
+injection point), recompile, and repack.  FCMBridge.swf only needs rebuilding
+when FCMBridge.hx changes.  See the BUILD.md in that folder.
 
 ### Source and build guide
 
-  game-mods/FCMBridge/hudmenu-chat/FCMChatPatch.as  -- all AS3 additions
-  game-mods/FCMBridge/hudmenu-chat/fcmchat.ini      -- default config
+  game-mods/FCMBridge/hudmenu-chat/apply-patch.py   -- build tool (injects fcm-inject.as)
+  game-mods/FCMBridge/hudmenu-chat/fcm-inject.as    -- the actual injected AS3 (input + self-loader)
+  game-mods/FCMBridge/hudmenu-chat/FCMChatPatch.as  -- older reference of the additions (not used by build)
   game-mods/FCMBridge/hudmenu-chat/BUILD.md         -- step-by-step build guide
 
 ---
