@@ -1,249 +1,232 @@
-# FCMChat.ba2 -- Build and Packaging Guide
+# FCM-standalone.ba2 -- Build and Packaging Guide
 
-This guide walks through extracting the vanilla HUDMenu.swf, applying the
-FCMChatPatch.as additions, recompiling, and packaging everything into a
-single FCMChat.ba2 that users install with one ini-line.
+This guide builds the **all-in-one standalone** archive: the patched
+`HUDMenu.swf` (chat **input** + self-loader) **and** `FCMBridge.swf` (the chat
+**feed** renderer + socket bridge), packed into a single `FCM-standalone.ba2`
+that users install with one ini line. **No HUDModLoader required.**
 
-DO NOT redistribute Bethesda's decompiled HUDMenu source.  Only our
-additions (FCMChatPatch.as) belong in this repo.
+> Naming: this archive is `FCM-standalone.ba2`. Earlier drafts called it
+> `FCMChat.ba2` — same thing; "standalone" is the accurate name because the one
+> archive carries both SWFs and needs no other mod framework.
+
+DO NOT redistribute Bethesda's decompiled HUDMenu source/SWF. Only our additions
+(`fcm-inject.as`) belong in this repo.
+
+---
+
+## Architecture — two SWFs in one archive
+
+| SWF (inside the .ba2) | Built from | Role |
+|-----------------------|-----------|------|
+| `interface/HUDMenu.swf`   | vanilla HUDMenu + `apply-patch.py` (injects `fcm-inject.as`) | Chat **input** (focus a TextField, suspend WASD, `SEND~…`), and — when HUDModLoader is absent — **self-loads** `FCMBridge.swf` |
+| `interface/FCMBridge.swf` | `../FCMBridge.hx` (Haxe) | Chat **feed** render (`renderRecords`) + the `__SFCodeObj` socket/polling bridge |
+
+The patched HUDMenu's `fcmInit()` calls `fcmSelfLoadBridge()`, which is
+**conditional**: if the bridge is already present (HUDModLoader loaded it) it
+skips; otherwise — the standalone case — it does
+`Loader.load(new URLRequest("FCMBridge.swf"))` (a SWF loader, which works in GFx;
+`URLLoader` is sandbox-blocked) and `addChild`s it into the display tree. So the
+**same** `HUDMenu.swf` works both standalone and alongside HUDModLoader. See
+`fcm-inject.as` (`fcmSelfLoadBridge` / `fcmOnBridgeLoaded`).
 
 ---
 
 ## Prerequisites
 
-| Tool | Where to get |
-|------|-------------|
-| Bethesda Archive Extractor (BAE) or Archive2 | Nexus Mods -- "Bethesda Archive Extractor" |
-| JPEXS Free Flash Decompiler (ffdec) 21+ | github.com/jindrapetrik/jpexs-decompiler |
-| JRE 11+ (required by ffdec) | adoptium.net |
-| Adobe Animate 2019+ OR Apache Flex SDK 4.16+ | For recompiling the patched AS3 |
-| Archive2.exe (ships with CK for Fallout 76) | Bethesda Creation Kit |
-| Python 3 | python.org (only needed if patching the SWF version byte) |
+| Tool | Where to get | Used for |
+|------|-------------|----------|
+| Bethesda Archive Extractor (BAE) or Archive2 | Nexus -- "Bethesda Archive Extractor" | Extract vanilla `HUDMenu.swf` |
+| JPEXS Free Flash Decompiler (ffdec) 21+ | github.com/jindrapetrik/jpexs-decompiler | Decompile **and** recompile HUDMenu (`-replace`) |
+| JRE 11+ | adoptium.net | Required by ffdec |
+| Haxe 4.3+ | haxe.org / `scoop install haxe` | Build `FCMBridge.swf` |
+| Python 3 | python.org | `apply-patch.py`, SWF version-byte patch |
+| Archive2.exe (ships with CK) **or** any BA2 GNRL v1 packer | Bethesda Creation Kit / BSArch | Pack the `.ba2` |
+
+> Adobe Animate / the Flex SDK are **not** needed — `ffdec -replace` recompiles
+> the patched AS3 directly.
 
 ---
 
 ## Step 1 -- Extract vanilla HUDMenu.swf
 
-Fallout 76 stores its UI SWFs inside `SeventySix - Interface.ba2`.
+Fallout 76 stores its UI SWFs inside `SeventySix - Interface.ba2`:
 
 ```
-<FO76 game dir>\Data\SeventySix - Interface.ba2
+Archive2.exe "<FO76>\Data\SeventySix - Interface.ba2" -extract="interface\HUDMenu.swf" -outdir="<work>"
 ```
 
-Extract using BAE (GUI) or Archive2 (CLI):
+Result: `<work>\interface\HUDMenu.swf`.
 
-```
-Archive2.exe "C:\...\Data\SeventySix - Interface.ba2" -extract="interface\HUDMenu.swf" -outdir="C:\fcmchat-work"
-```
-
-Result: `C:\fcmchat-work\interface\HUDMenu.swf`
-
-**Always extract from the current live game files.**  Every Bethesda patch may
-change HUDMenu.swf, so this merge base must be fresh.  Using a stale copy
-(e.g., the one inside the original Text Chat mod) will break on the next
-game update.
+**Always extract from the CURRENT live game files.** Every Bethesda patch may
+change HUDMenu.swf, so the merge base must be fresh — a stale copy will break on
+the next game update.
 
 ---
 
-## Step 2 -- Decompile with JPEXS/ffdec
+## Step 2 -- Decompile with ffdec
 
-1. Open ffdec.
-2. File > Open > select `HUDMenu.swf`.
-3. In the Scripts tree, expand to `DefineSprite > HUDMenu.as` (the main class).
-4. Right-click the HUDMenu package > Export selected > ActionScript 3 source.
-5. Choose an output directory, e.g. `C:\fcmchat-work\src\`.
+```
+ffdec -export script <work>\src "<work>\interface\HUDMenu.swf"
+```
 
-ffdec will write one `.as` file per class.  The main file is:
-```
-C:\fcmchat-work\src\HUDMenu.as
-```
+(Or open in the ffdec GUI: `DefineSprite > HUDMenu.as` > Export selected >
+ActionScript 3 source.) The main file is `<work>\src\…\HUDMenu.as`.
 
 ---
 
-## Step 3 -- Apply the FCMChatPatch.as additions
+## Step 3 -- Patch HUDMenu.as with apply-patch.py
 
-Open `HUDMenu.as` in your editor.  You need to make five targeted changes.
-All blocks are documented with comments in `FCMChatPatch.as` -- read that
-file alongside this guide.
+The patch is **automated** — do not hand-paste blocks. Run:
 
-### 3a. Add import statements
-
-At the top of `HUDMenu.as`, after the existing `import` lines, add:
-
-```actionscript
-import flash.display.Shape;
-import flash.events.KeyboardEvent;
-import flash.events.FocusEvent;
-import flash.text.TextField;
-import flash.text.TextFieldType;
-import flash.text.TextFormat;
-import flash.ui.Keyboard;
-import flash.utils.Timer;
-import flash.events.TimerEvent;
+```
+python3 apply-patch.py "<work>\src\…\HUDMenu.as"
 ```
 
-(Skip any imports that are already present.)
+`apply-patch.py` injects, against six asserted anchors (it auto-detects the
+vanilla vs. HUDModLoader function-signature style, so the same script works on
+either base):
 
-### 3b. Add class-level field declarations (FCMChatPatch.as BLOCK 1)
+1. The extra imports (`flash.display.Loader`, `flash.net.URLRequest`,
+   `flash.system.ApplicationDomain`/`LoaderContext`, `flash.text.TextFormat`).
+2. The `_fcm*` state fields (after `HUDChatBase_mc`).
+3. `this.fcmInit();` (after the `CharacterInfoData` Subscribe).
+4. **All FCM methods from `fcm-inject.as`** (before `enterChatMode`).
+5. `this.fcmForward(...)` on the outbound `ChatMessage` dispatch.
+6. `this.fcmEvent(...)` in `ProcessUserEvent` + key probes in `chatEntryKeyUp`.
 
-Inside the `HUDMenu` class body, after the last existing field declaration,
-paste the entire BLOCK 1 section from FCMChatPatch.as.
+If any anchor is missing (e.g. Bethesda renamed something), the script exits with
+`ERROR: Anchor N … not found` — fix the anchor and re-run.
 
-### 3c. Add all FCM methods (FCMChatPatch.as BLOCKS 2-8)
-
-Paste BLOCKS 2-8 as new methods inside the `HUDMenu` class, after the
-existing methods.  Each block is a self-contained function -- order does not
-matter as long as they are all inside the class braces.
-
-### 3d. Wire up in the constructor
-
-Find the HUDMenu constructor function.  At the end of the constructor body
-(after existing init code), add:
-
-```actionscript
-fcmInitSocket();
-fcmBuildInputField();
-```
-
-For INI-driven configuration instead of hard-coded defaults, use the URLLoader
-pattern shown in BLOCK 9 of FCMChatPatch.as -- it calls fcmBuildInputField()
-in the load-complete callback.
-
-### 3e. Hook ProcessUserEvent
-
-Find the existing `ProcessUserEvent(name:String, isDown:Boolean)` method.
-Insert this as the very FIRST line of that function body:
-
-```actionscript
-fcmHandleUserEvent(name, isDown);
-```
-
-The rest of the method's original logic follows unchanged.
+> `fcm-inject.as` is the **source of truth** for the injected AS3 (the actual
+> 900+ line patch, incl. the self-loader and INI defaults). `FCMChatPatch.as` is
+> an older hand-annotated reference of the same additions (BLOCKS 1-9) kept for
+> reading — `apply-patch.py` does **not** use it.
 
 ---
 
-## Step 4 -- Recompile HUDMenu.swf
-
-Use Adobe Animate (File > Publish) or the Apache Flex/AIR SDK mxmlc:
+## Step 4 -- Recompile HUDMenu.swf with ffdec, patch version byte
 
 ```
-mxmlc -source-path C:\fcmchat-work\src -output C:\fcmchat-work\HUDMenu.swf C:\fcmchat-work\src\HUDMenu.as
+ffdec -replace "<work>\interface\HUDMenu.swf" "<work>\HUDMenu.swf" HUDMenu "<work>\src\…\HUDMenu.as"
 ```
 
-Or re-import the modified AS3 back into ffdec (Script > Import > AS3 source)
-and use ffdec's built-in recompiler.
-
-### SWF version byte check
-
-Scaleform in Fallout 76 requires SWF version byte 32.  If your compiler writes
-a different value, patch it:
+Scaleform in Fallout 76 requires **SWF version byte 32**. If ffdec writes a
+different value, patch it:
 
 ```python
-# Run from C:\fcmchat-work\
 with open('HUDMenu.swf','r+b') as f:
     d = bytearray(f.read()); d[3]=32; f.seek(0); f.write(d)
 ```
 
-Verify: `python -c "f=open('HUDMenu.swf','rb'); d=f.read(4); print(d[3])"`
-Should print `32`.
+Verify: `python3 -c "print(open('HUDMenu.swf','rb').read(4)[3])"` → `32`.
 
 ---
 
-## Step 5 -- Pack FCMChat.ba2
+## Step 5 -- Build FCMBridge.swf (the feed renderer)
 
-Assemble the archive contents in a staging folder:
+The standalone HUDMenu self-loads `FCMBridge.swf`, so it must be built and packed
+alongside it. From `game-mods/FCMBridge/`:
+
+```bash
+haxe --main FCMBridge --swf FCMBridge.swf --swf-version 32
+python3 -c "
+with open('FCMBridge.swf','r+b') as f:
+    d=bytearray(f.read()); d[3]=32; f.seek(0); f.write(d)"
+```
+
+Full FCMBridge build/iteration loop: **[../README.md](../README.md)** and
+[docs/overlay/zfe/fcmbridge-data-pattern.md](../../../docs/overlay/zfe/fcmbridge-data-pattern.md).
+
+---
+
+## Step 6 -- Pack FCM-standalone.ba2
+
+Stage **both** SWFs under `interface/`:
 
 ```
-C:\fcmchat-stage\
+<stage>\
   interface\
-    HUDMenu.swf          <- the recompiled patched SWF (Step 4)
-  configuration\
-    fcmchat.ini          <- the default config (from this folder)
+    HUDMenu.swf      <- patched (Step 4)
+    FCMBridge.swf    <- feed renderer (Step 5)
 ```
 
-Create the BTDX/GNRL archive with Archive2:
+Create the BTDX/GNRL archive:
 
 ```
-Archive2.exe C:\fcmchat-stage -create=FCMChat.ba2 -root=C:\fcmchat-stage -format=GNRL
+Archive2.exe <stage> -create=FCM-standalone.ba2 -root=<stage> -format=GNRL
 ```
 
-This produces `FCMChat.ba2` in the current directory.
+(On Linux, any BA2 **GNRL v1** packer works — the archive is just the two files
+above at `interface/…`, uncompressed, BTDX/GNRL.)
+
+> `fcmchat.ini` is **NOT** packed and is not functionally loaded: GFx blocks file
+> reads, so `fcm-inject.as`'s `fcmApplyIniDefaults()` hard-codes the position/size
+> defaults at runtime. The `.ini` is kept in this folder for reference / future
+> tooling only.
 
 ---
 
-## Step 6 -- Register the archive in Fallout76Custom.ini
+## Step 7 -- Register in Fallout76Custom.ini
 
-The user's custom ini lives at:
 ```
 %USERPROFILE%\Documents\My Games\Fallout 76\Fallout76Custom.ini
 ```
 
-Under the `[Archive]` section, append `FCMChat.ba2` to `sResourceArchive2List`:
-
 ```ini
 [Archive]
-sResourceArchive2List = FCMChat.ba2
+sResourceArchive2List = FCM-standalone.ba2
 ```
 
-If `sResourceArchive2List` already exists, append with a comma:
-
-```ini
-sResourceArchive2List = SomeOtherMod.ba2, FCMChat.ba2
-```
-
-Copy `FCMChat.ba2` to the game's `Data\` folder:
-```
-C:\...\SteamLibrary\steamapps\common\Fallout76\Data\FCMChat.ba2
-```
+(Append with a comma if the line already exists.) Copy `FCM-standalone.ba2` to
+`<FO76>\Data\`. No `sResourceDataDirsFinal` / `bInvalidateOlderFiles` loose-file
+lines are needed — the standalone ships everything inside the one archive.
 
 ---
 
-## Step 7 -- Configure ZFE for the live socket
+## Step 8 -- Configure ZFE for the live socket
 
-Two-way chat requires ZFE's Text Chat bridge.  Set these Windows User env
-vars (then fully exit and relaunch Steam):
+Two-way chat requires ZFE's Text Chat bridge. Set these Windows User env vars
+(then fully exit and relaunch Steam):
 
 ```powershell
 [Environment]::SetEnvironmentVariable('ZFE_ENABLE_TEXT_CHAT_LIVE_BACKEND','1','User')
-# Dev: point at local backend
+# Dev: local backend
 [Environment]::SetEnvironmentVariable('ZFE_TEXT_CHAT_ENDPOINT','127.0.0.1:4001','User')
-# Prod: use the FCM TCP endpoint
-# [Environment]::SetEnvironmentVariable('ZFE_TEXT_CHAT_ENDPOINT','tcp.falloutchatmod.com:4001','User')
+# Prod: the FCM TCP endpoint
+# [Environment]::SetEnvironmentVariable('ZFE_TEXT_CHAT_ENDPOINT','dev-hud.falloutchatmod.com:4001','User')
 ```
 
-The backend must have `HUD_PUSH_TCP_ENABLED=true` (and `NODE_ENV` != `production`
-while still behind the dev-only guard -- see docs/realtime/hud-push.md).
+The backend must have `HUD_PUSH_TCP_ENABLED=true`. See
+[docs/realtime/hud-push.md](../../../docs/realtime/hud-push.md) and
+[docs/overlay/zfe/realtime-socket.md](../../../docs/overlay/zfe/realtime-socket.md).
 
 ---
 
-## Step 8 -- Smoke test
+## Step 9 -- Smoke test
 
-1. Launch the game.
-2. Press INSERT.  The input box should appear at the bottom of the FCM widget.
-   The player character should NOT move (WASD suspended).
-3. Type a message and press ENTER.
-   - The backend log should show a SEND line processed.
-   - The message should appear in the chat feed within ~1 second (echo-back).
-4. Press ESC (or INSERT again).  Input box should disappear; movement resumes.
+1. Launch the game. The FCMBridge feed panel should render community chat (the
+   `zfe.log` shows `FCMBridge loaded` + socket `HELLO`/drain lines).
+2. Press the chat key (default INSERT). The input box appears; WASD is suspended.
+3. Type + ENTER → the backend logs a `SEND`; the message echoes into the feed
+   within ~1 s.
+4. ESC (or the chat key) closes input; movement resumes.
 
-Check `zfe.log` (in the game root) for FCMBridge socket lines confirming
-HELLO was sent and the connection is alive.
+`zfe.log` (game root) confirms both directions: `selfload … FCMBridge.swf load
+complete — re-scanning for bridge` (standalone load OK) and socket SEND/HELLO.
 
 ---
 
 ## Re-merging after a Bethesda patch
 
-Every Fallout 76 update that changes HUDMenu.swf requires a re-merge:
+Every FO76 update that changes HUDMenu.swf requires a re-merge:
 
-1. Extract the new vanilla HUDMenu.swf (Step 1).
-2. Decompile both the new vanilla SWF and the previous patched SWF.
-3. Diff the two vanilla versions to see what Bethesda changed.
-4. Re-apply only our additions (FCMChatPatch.as blocks) onto the new base.
-5. Recompile and repack (Steps 4-5).
+1. Extract the new vanilla HUDMenu.swf (Step 1) and decompile (Step 2).
+2. Run `apply-patch.py` on the fresh `HUDMenu.as` (Step 3). The anchor asserts
+   tell you immediately if Bethesda moved an injection point.
+3. Recompile + repack (Steps 4-6).
 
-This is the same maintenance burden as the original Text Chat mod.  There is
-no way around it with Path A (HUDMenu replacement) -- it is the trade-off
-for having ProcessUserEvent input delivery.
+`FCMBridge.swf` only needs rebuilding when `FCMBridge.hx` changes, not on a
+Bethesda HUDMenu patch.
 
 ---
 
@@ -251,7 +234,9 @@ for having ProcessUserEvent input delivery.
 
 ```
 game-mods/FCMBridge/hudmenu-chat/
-  FCMChatPatch.as   -- AS3 source additions (BLOCKS 1-9, commented)
-  fcmchat.ini       -- default config file (packed into ba2 at Data/configuration/)
+  apply-patch.py    -- the build tool (injects fcm-inject.as into HUDMenu.as)
+  fcm-inject.as     -- the actual injected AS3 (input + self-loader + defaults)
+  FCMChatPatch.as   -- older hand-annotated reference of the additions (not used by the build)
+  fcmchat.ini       -- reference defaults only (NOT packed; GFx can't read it)
   BUILD.md          -- this guide
 ```
