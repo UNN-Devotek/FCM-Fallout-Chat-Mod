@@ -178,7 +178,15 @@ function desiredTopmost(state) {
   if (!state.hasWindow) return false;
   if (state.forceVisible) return true;
   if (state.windowFocused) return true;
-  if (state.focusAwareTopmost) return state.foregroundIsGame === true;
+  if (state.focusAwareTopmost) {
+    if (state.foregroundIsGame === true) return true;
+    // A FULLSCREEN game often exposes no readable WM_CLASS to xdotool (foreground
+    // reads empty / "(null)"). If the game is running and the foreground is
+    // unreadable, it's almost certainly the game in fullscreen → stay on top. Only a
+    // RECOGNIZED other window (a real, non-game class) lowers the overlay.
+    if (state.gameRunning && state.foregroundUnknown === true) return true;
+    return false;
+  }
   if (state.gameRunning) return true;
   return state.foregroundIsGame === true;
 }
@@ -247,6 +255,18 @@ function isGameClass(name) {
   return XWAYLAND_GAME_CLASSES.some(c => lower === c);
 }
 
+// True when the active-window class is UNREADABLE — empty, or the literal "(null)"
+// that some xdotool builds print when the focused window exposes no WM_CLASS. A
+// FULLSCREEN FO76 (Proton/XWayland) commonly does exactly this — confirmed on
+// CachyOS: focused game → `xdotool getactivewindow getwindowclassname` returns
+// "(null)" and xprop shows no WM_CLASS. So when the game is RUNNING and the
+// foreground is unreadable, it's almost certainly the fullscreen game (not a real
+// other app), and callers should keep the overlay on top / hotkeys live.
+function isUnknownForegroundClass(name) {
+  const s = (name == null ? '' : String(name)).trim().toLowerCase();
+  return s === '' || s === '(null)';
+}
+
 // Pure function: should global hotkeys be registered right now?
 //
 // Inputs:
@@ -267,7 +287,10 @@ function shouldRegisterShortcuts({ platform, kdeWayland, hasForegroundDetect, ga
   if (platform === 'win32') {
     gameActive = isGameClass(foregroundProc);
   } else if (kdeWayland && hasForegroundDetect) {
-    gameActive = isGameClass(foregroundProc);
+    // Same fullscreen-game caveat as desiredTopmost: a focused fullscreen FO76 reads
+    // an unreadable class ("(null)"/empty), so treat "game running + unreadable
+    // foreground" as the game being active (keeps hotkeys live in-game).
+    gameActive = isGameClass(foregroundProc) || (!!gameRunning && isUnknownForegroundClass(foregroundProc));
   } else {
     // Fallback: no reliable foreground API — treat "game running" as "game active".
     // This matches the pre-kdotool Linux behavior exactly (no regression).
@@ -644,6 +667,7 @@ module.exports = {
   XWAYLAND_GAME_CLASSES,
   isGameProcess,
   isGameClass,
+  isUnknownForegroundClass,
   shouldRegisterShortcuts,
   decideForegroundPollerAction,
   resolveLogLevel,

@@ -2719,6 +2719,10 @@ function desiredTopmost() {
     gameRunning,
     windowFocused: !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()),
     foregroundIsGame: isGameClass(lastForegroundProc),
+    // A fullscreen FO76 exposes no readable WM_CLASS (xdotool → "(null)"/empty); when
+    // the game is running and the foreground is unreadable, treat it as the game so the
+    // overlay stays on top (only a recognized other app lowers it).
+    foregroundUnknown: overlayCore.isUnknownForegroundClass(lastForegroundProc),
     // Focus-aware only where we can actually read the foreground window (KDE-Wayland
     // with xdotool/kdotool present + not disabled by the crash breaker). Elsewhere
     // fall back to session-long "game running" topmost (Windows DWM-flash avoidance /
@@ -2912,6 +2916,11 @@ function _runForegroundPoll(available, tried) {
         // Only update and act when the value actually changed — avoids redundant
         // applyZOrder / refreshShortcuts churn every 300ms.
         if (line !== lastForegroundProc) {
+          // Verbose: the raw active-window class drives z-order + hotkey gating. A
+          // fullscreen game reads "(null)"/empty here (no WM_CLASS) — logging it makes
+          // "overlay won't stay above the game" diagnosable without a manual capture.
+          vdiag('[foreground] active-window class changed: "' + lastForegroundProc + '" → "' + line +
+            '" (isGame=' + isGameClass(line) + ' unknown=' + overlayCore.isUnknownForegroundClass(line) + ' gameRunning=' + gameRunning + ')');
           lastForegroundProc = line;
           if (gameRunning) applyZOrder();
           applyFocusClickThrough();
