@@ -4,7 +4,7 @@
 
 import core from '../overlay-core.js';
 
-const { isGameProcess, isGameClass, shouldRegisterShortcuts, XWAYLAND_GAME_CLASSES } = core;
+const { isGameProcess, isGameClass, isUnknownForegroundClass, shouldRegisterShortcuts, XWAYLAND_GAME_CLASSES } = core;
 
 // ── isGameClass ───────────────────────────────────────────────────────────────
 
@@ -139,6 +139,35 @@ describe('shouldRegisterShortcuts', () => {
 
     it('returns false when nothing is foreground and game is not running', () => {
       expect(shouldRegisterShortcuts({ ...base, gameRunning: false, foregroundProc: '', overlayFocused: false })).toBe(false);
+    });
+
+    // Fullscreen game: xdotool reads no WM_CLASS → "(null)"/empty. With the game
+    // running, that unreadable foreground must count as the game (keep hotkeys live).
+    it('returns true for a fullscreen game (foreground "(null)") while the game is running', () => {
+      expect(shouldRegisterShortcuts({ ...base, gameRunning: true, foregroundProc: '(null)', overlayFocused: false })).toBe(true);
+    });
+    it('returns true for an empty foreground while the game is running (fullscreen)', () => {
+      expect(shouldRegisterShortcuts({ ...base, gameRunning: true, foregroundProc: '', overlayFocused: false })).toBe(true);
+    });
+    it('returns false for "(null)" foreground when the game is NOT running', () => {
+      expect(shouldRegisterShortcuts({ ...base, gameRunning: false, foregroundProc: '(null)', overlayFocused: false })).toBe(false);
+    });
+  });
+
+  // ── isUnknownForegroundClass ────────────────────────────────────────────────
+  describe('isUnknownForegroundClass', () => {
+    it('treats empty / whitespace / "(null)" as unknown', () => {
+      expect(isUnknownForegroundClass('')).toBe(true);
+      expect(isUnknownForegroundClass('   ')).toBe(true);
+      expect(isUnknownForegroundClass('(null)')).toBe(true);
+      expect(isUnknownForegroundClass('(NULL)')).toBe(true);
+      expect(isUnknownForegroundClass(null)).toBe(true);
+      expect(isUnknownForegroundClass(undefined)).toBe(true);
+    });
+    it('treats a real class as known', () => {
+      expect(isUnknownForegroundClass('konsole')).toBe(false);
+      expect(isUnknownForegroundClass('steam_app_1151340')).toBe(false);
+      expect(isUnknownForegroundClass('fallout-chat-mod')).toBe(false);
     });
   });
 

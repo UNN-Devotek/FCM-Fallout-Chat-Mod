@@ -178,7 +178,15 @@ function desiredTopmost(state) {
   if (!state.hasWindow) return false;
   if (state.forceVisible) return true;
   if (state.windowFocused) return true;
-  if (state.focusAwareTopmost) return state.foregroundIsGame === true;
+  if (state.focusAwareTopmost) {
+    if (state.foregroundIsGame === true) return true;
+    // A FULLSCREEN game often exposes no readable WM_CLASS to xdotool (foreground
+    // reads empty / "(null)"). If the game is running and the foreground is
+    // unreadable, it's almost certainly the game in fullscreen → stay on top. Only a
+    // RECOGNIZED other window (a real, non-game class) lowers the overlay.
+    if (state.gameRunning && state.foregroundUnknown === true) return true;
+    return false;
+  }
   if (state.gameRunning) return true;
   return state.foregroundIsGame === true;
 }
@@ -247,6 +255,18 @@ function isGameClass(name) {
   return XWAYLAND_GAME_CLASSES.some(c => lower === c);
 }
 
+// True when the active-window class is UNREADABLE — empty, or the literal "(null)"
+// that some xdotool builds print when the focused window exposes no WM_CLASS. A
+// FULLSCREEN FO76 (Proton/XWayland) commonly does exactly this — confirmed on
+// CachyOS: focused game → `xdotool getactivewindow getwindowclassname` returns
+// "(null)" and xprop shows no WM_CLASS. So when the game is RUNNING and the
+// foreground is unreadable, it's almost certainly the fullscreen game (not a real
+// other app), and callers should keep the overlay on top / hotkeys live.
+function isUnknownForegroundClass(name) {
+  const s = (name == null ? '' : String(name)).trim().toLowerCase();
+  return s === '' || s === '(null)';
+}
+
 // Pure function: should global hotkeys be registered right now?
 //
 // Inputs:
@@ -267,7 +287,10 @@ function shouldRegisterShortcuts({ platform, kdeWayland, hasForegroundDetect, ga
   if (platform === 'win32') {
     gameActive = isGameClass(foregroundProc);
   } else if (kdeWayland && hasForegroundDetect) {
-    gameActive = isGameClass(foregroundProc);
+    // Same fullscreen-game caveat as desiredTopmost: a focused fullscreen FO76 reads
+    // an unreadable class ("(null)"/empty), so treat "game running + unreadable
+    // foreground" as the game being active (keeps hotkeys live in-game).
+    gameActive = isGameClass(foregroundProc) || (!!gameRunning && isUnknownForegroundClass(foregroundProc));
   } else {
     // Fallback: no reliable foreground API — treat "game running" as "game active".
     // This matches the pre-kdotool Linux behavior exactly (no regression).
@@ -435,28 +458,30 @@ function awkStripFcmSectionLines() {
 // named rules, preserving the user's own rules. Idempotent: if the active FCM rules are
 // already EXACTLY our two current named groups, it prints fcm-rule-present and skips the
 // reconfigure (so startup doesn't flash KWin on every launch).
-// includeDemote (default false): also write the "demote game from fullscreen layer"
-// rule. That rule force-sets the game's fullscreen=false to keep the overlay above a
-// FOCUSED fullscreen game on KWin 6 — but it FIGHTS the game's own fullscreen state
-// and causes endless flicker on some KWin/Proton setups (issue #272 follow-up). So it
-// is OPT-IN: borderless-windowed users (the recommended setup) don't need it; only
-// exclusive-fullscreen users enable it (tray → "Keep above exclusive-fullscreen game").
-function buildKwinKeepAboveScript({ file = 'kwinrulesrc', title = 'Fallout Chat Mod', overlayWmclass = 'fallout', gameWmclass = 'steam_app_1151340', includeDemote = false } = {}) {
+// includeBelow (default true): also write the "keep game below" rule (fcm-game-below).
+// THE KWin-6 FIX for "overlay hidden behind a focused fullscreen game": forcing the
+// game keepBelow drops it to KWin's BelowLayer, which KWin evaluates BEFORE the
+// active-fullscreen promotion — so a NORMAL keep-above overlay sits above the game even
+// while the game is focused. Unlike the old fullscreen-demote rule, the game does NOT
+// fight "below" (it's a stacking hint, not a state the game asserts), so there is NO
+// flicker. It's an OPTION (settings.kwinGameBelow / installer prompt) because forcing
+// the game below also lets the panel/other windows cover it; default ON on KDE-Wayland.
+function buildKwinKeepAboveScript({ file = 'kwinrulesrc', title = 'Fallout Chat Mod', overlayWmclass = 'fallout', gameWmclass = 'steam_app_1151340', includeBelow = true } = {}) {
   const ABOVE = 'fcm-keepabove';      // stable group name (overlay keep-above rule)
-  const DEMOTE = 'fcm-game-demote';   // stable group name (game fullscreen-demote rule)
+  const BELOW = 'fcm-game-below';     // stable group name (game keep-below rule)
   const w = (grp, key, val) => `kwriteconfig6 --file ${file} --group ${grp} --key ${key} ${val}`;
   const lines = [
     ...kwinPartitionSnippet(file),
-    // Idempotency: already EXACTLY the rules we want (nothing stale, demote present iff
-    // requested) → skip. Otherwise we strip + rewrite below so toggling demote on/off works.
+    // Idempotency: already EXACTLY the rules we want (nothing stale, game-below present
+    // iff requested) → skip. Otherwise strip + rewrite so toggling the option on/off works.
     `N=$(printf '%s' "$FCM" | tr ' ' '\\n' | grep -c .)`,
     `case " $FCM " in *" ${ABOVE} "*) A=1 ;; *) A=0 ;; esac`,
-    `case " $FCM " in *" ${DEMOTE} "*) D=1 ;; *) D=0 ;; esac`,
-    includeDemote
-      ? `if [ "$N" = "2" ] && [ "$A" = "1" ] && [ "$D" = "1" ]; then echo fcm-rule-present; exit 0; fi`
-      : `if [ "$N" = "1" ] && [ "$A" = "1" ] && [ "$D" = "0" ]; then echo fcm-rule-present; exit 0; fi`,
-    // Clear stale FCM groups (old numbered/named, and a now-unwanted demote) so they don't
-    // linger — awk-strip them (kwriteconfig6 can't delete a section). We re-write fresh below.
+    `case " $FCM " in *" ${BELOW} "*) B=1 ;; *) B=0 ;; esac`,
+    includeBelow
+      ? `if [ "$N" = "2" ] && [ "$A" = "1" ] && [ "$B" = "1" ]; then echo fcm-rule-present; exit 0; fi`
+      : `if [ "$N" = "1" ] && [ "$A" = "1" ] && [ "$B" = "0" ]; then echo fcm-rule-present; exit 0; fi`,
+    // Clear stale FCM groups (old numbered/named, the retired fcm-game-demote, and a
+    // now-unwanted fcm-game-below) — awk-strip them (kwriteconfig6 can't delete a section).
     ...awkStripFcmSectionLines(),
     // Overlay keep-above rule (always).
     w(ABOVE, 'Description', `"Fallout Chat Mod - keep above games"`),
@@ -468,19 +493,19 @@ function buildKwinKeepAboveScript({ file = 'kwinrulesrc', title = 'Fallout Chat 
     w(ABOVE, 'above', 'true'),
     w(ABOVE, 'aboverule', '3'),
   ];
-  // Game fullscreen-demote rule — OPT-IN only (see note above).
-  if (includeDemote) {
+  // Game keep-below rule — the no-flicker fix that beats the fullscreen layer.
+  if (includeBelow) {
     lines.push(
-      w(DEMOTE, 'Description', `"Fallout Chat Mod - demote game from fullscreen layer"`),
-      w(DEMOTE, 'wmclass', `"${gameWmclass}"`),
-      w(DEMOTE, 'wmclassmatch', '2'),
-      w(DEMOTE, 'wmclasscomplete', 'false'),
-      w(DEMOTE, 'fullscreen', 'false'),
-      w(DEMOTE, 'fullscreenrule', '2'),
+      w(BELOW, 'Description', `"Fallout Chat Mod - keep game below"`),
+      w(BELOW, 'wmclass', `"${gameWmclass}"`),
+      w(BELOW, 'wmclassmatch', '2'),
+      w(BELOW, 'wmclasscomplete', 'false'),
+      w(BELOW, 'below', 'true'),
+      w(BELOW, 'belowrule', '2'),
     );
   }
   // rules = preserved user rules + ours; count = its length.
-  const NEWR = includeDemote ? `\${KEEP:+$KEEP,}${ABOVE},${DEMOTE}` : `\${KEEP:+$KEEP,}${ABOVE}`;
+  const NEWR = includeBelow ? `\${KEEP:+$KEEP,}${ABOVE},${BELOW}` : `\${KEEP:+$KEEP,}${ABOVE}`;
   lines.push(
     `NEWR="${NEWR}"`,
     `kwriteconfig6 --file ${file} --group General --key rules "$NEWR"`,
@@ -644,6 +669,7 @@ module.exports = {
   XWAYLAND_GAME_CLASSES,
   isGameProcess,
   isGameClass,
+  isUnknownForegroundClass,
   shouldRegisterShortcuts,
   decideForegroundPollerAction,
   resolveLogLevel,

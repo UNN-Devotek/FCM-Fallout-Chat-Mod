@@ -5,12 +5,9 @@
 #   System Settings -> Window Management -> Window Rules -> Import...  (pick this file)
 #   then:  qdbus org.kde.KWin /KWin reconfigure   (or log out / in)
 #
-# TWO rules are needed on Plasma 6 (KWin 6):
+# TWO rules on Plasma 6 (KWin 6):
 #
-# 1) Keep the OVERLAY above other windows (above=true). NOTE: on KWin 6 the older
-#    layer=8 / layerrule=2 "CriticalNotification" force is IGNORED, so keep-above ALONE
-#    loses to a FOCUSED fullscreen game — that is why rule 2 is required. (layer/layerrule
-#    are left below only for older KWin builds that still honor them.)
+# 1) Keep the OVERLAY above other windows (above=true).
 [Fallout Chat Mod - keep above games]
 Description=Fallout Chat Mod - keep above games
 title=Fallout Chat Mod
@@ -20,24 +17,17 @@ wmclassmatch=2
 wmclasscomplete=false
 above=true
 aboverule=3
-layer=8
-layerrule=2
-fsplevel=0
-fsplevelrule=2
 
-# 2) OPTIONAL (DISABLED BY DEFAULT) — demote the GAME from the active-fullscreen layer.
-#    For an EXCLUSIVE-fullscreen game, KWin promotes it above "keep above" windows;
-#    forcing fullscreen=false demotes it so the overlay stays on top. BUT this Force rule
-#    fights the game's own fullscreen state and causes ENDLESS FLICKER on some
-#    KWin/Proton setups (issue #272), so it is commented out here and NOT auto-applied.
-#    In BORDERLESS WINDOWED (recommended) you do not need it — rule 1 alone works.
-#    To enable it: use the app tray -> "Keep above exclusive-fullscreen game (may
-#    flicker)", or uncomment the section below and re-import.
-#
-# [Fallout Chat Mod - demote game from fullscreen layer]
-# Description=Fallout Chat Mod - demote game from fullscreen layer
-# wmclass=steam_app_1151340
-# wmclassmatch=2
-# wmclasscomplete=false
-# fullscreen=false
-# fullscreenrule=2
+# 2) Keep the GAME below — the no-flicker fix for "overlay hidden behind a focused
+#    fullscreen game". KWin evaluates keepBelow BEFORE the active-fullscreen promotion,
+#    so the overlay (rule 1) stays above a focused fullscreen FO76 with NO flicker.
+#    (Replaces the old fullscreen-demote rule, which forced the game's fullscreen=false
+#    and fought the game -> endless flicker.) Side effect: the game can be covered by the
+#    panel / other windows. Turn it off via the app tray -> "Keep game below overlay".
+[Fallout Chat Mod - keep game below]
+Description=Fallout Chat Mod - keep game below
+wmclass=steam_app_1151340
+wmclassmatch=2
+wmclasscomplete=false
+below=true
+belowrule=2

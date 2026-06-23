@@ -12,8 +12,8 @@ import core from '../overlay-core.js';
 const { buildKwinKeepAboveScript, buildKwinRemoveRulesScript } = core;
 
 describe('buildKwinKeepAboveScript', () => {
-  const script = buildKwinKeepAboveScript();                       // default: demote OFF
-  const scriptDemote = buildKwinKeepAboveScript({ includeDemote: true });
+  const script = buildKwinKeepAboveScript();                       // default: game-below ON
+  const scriptNoBelow = buildKwinKeepAboveScript({ includeBelow: false });
 
   it('partitions existing rules into FCM (by Description) vs the user\'s own (KEEP)', () => {
     expect(script).toContain('--group General --key rules');
@@ -47,39 +47,43 @@ describe('buildKwinKeepAboveScript', () => {
     expect(script).toContain('qdbus-qt6 org.kde.KWin /KWin reconfigure');
   });
 
-  // ── default: demote rule OFF (issue #272 — it flickers on some setups) ─────────
+  it('never writes the retired flicker-prone fullscreen-demote rule', () => {
+    expect(script).not.toContain('fcm-game-demote');
+    expect(scriptNoBelow).not.toContain('fcm-game-demote');
+  });
 
-  describe('default (includeDemote=false)', () => {
-    it('does NOT write the flicker-prone fullscreen-demote rule', () => {
-      expect(script).not.toContain('--group fcm-game-demote --key fullscreen false');
-      expect(script).not.toContain('--group fcm-game-demote --key fullscreenrule 2');
+  // ── default: game keep-below ON (the no-flicker fix, issue #272) ───────────────
+
+  describe('default (includeBelow=true)', () => {
+    it('writes the game keep-below rule (drops the game to BelowLayer)', () => {
+      expect(script).toContain('--group fcm-game-below --key wmclass "steam_app_1151340"');
+      expect(script).toContain('--group fcm-game-below --key below true');
+      expect(script).toContain('--group fcm-game-below --key belowrule 2');
     });
 
-    it('idempotency expects EXACTLY the keep-above rule, no demote (N=1, A=1, D=0)', () => {
-      expect(script).toContain('if [ "$N" = "1" ] && [ "$A" = "1" ] && [ "$D" = "0" ]; then echo fcm-rule-present; exit 0; fi');
+    it('idempotency expects BOTH rules (N=2, A=1, B=1)', () => {
+      expect(script).toContain('if [ "$N" = "2" ] && [ "$A" = "1" ] && [ "$B" = "1" ]; then echo fcm-rule-present; exit 0; fi');
     });
 
-    it('rebuilds rules= as preserved-user-rules + keep-above only', () => {
-      expect(script).toContain('NEWR="${KEEP:+$KEEP,}fcm-keepabove"');
-      expect(script).not.toContain('fcm-keepabove,fcm-game-demote');
+    it('rebuilds rules= as preserved-user-rules + keep-above + game-below', () => {
+      expect(script).toContain('NEWR="${KEEP:+$KEEP,}fcm-keepabove,fcm-game-below"');
     });
   });
 
-  // ── opt-in: demote rule ON (exclusive-fullscreen users) ───────────────────────
+  // ── opt-out: game keep-below OFF (user turned the option off) ──────────────────
 
-  describe('includeDemote=true', () => {
-    it('also writes the game fullscreen-demote rule', () => {
-      expect(scriptDemote).toContain('--group fcm-game-demote --key wmclass "steam_app_1151340"');
-      expect(scriptDemote).toContain('--group fcm-game-demote --key fullscreen false');
-      expect(scriptDemote).toContain('--group fcm-game-demote --key fullscreenrule 2');
+  describe('includeBelow=false', () => {
+    it('does NOT write the game keep-below rule', () => {
+      expect(scriptNoBelow).not.toContain('--group fcm-game-below --key below true');
     });
 
-    it('idempotency expects BOTH rules (N=2, A=1, D=1)', () => {
-      expect(scriptDemote).toContain('if [ "$N" = "2" ] && [ "$A" = "1" ] && [ "$D" = "1" ]; then echo fcm-rule-present; exit 0; fi');
+    it('idempotency expects keep-above only (N=1, A=1, B=0)', () => {
+      expect(scriptNoBelow).toContain('if [ "$N" = "1" ] && [ "$A" = "1" ] && [ "$B" = "0" ]; then echo fcm-rule-present; exit 0; fi');
     });
 
-    it('rebuilds rules= as preserved-user-rules + both groups', () => {
-      expect(scriptDemote).toContain('NEWR="${KEEP:+$KEEP,}fcm-keepabove,fcm-game-demote"');
+    it('rebuilds rules= as preserved-user-rules + keep-above only', () => {
+      expect(scriptNoBelow).toContain('NEWR="${KEEP:+$KEEP,}fcm-keepabove"');
+      expect(scriptNoBelow).not.toContain('fcm-keepabove,fcm-game-below');
     });
   });
 });
