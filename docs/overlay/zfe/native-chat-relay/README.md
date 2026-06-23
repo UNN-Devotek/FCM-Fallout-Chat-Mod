@@ -27,11 +27,11 @@ FCM **already** ships in-game chat — but via a **bespoke** path, not this stan
   chat client. A compliant relay needs **none** of FCM's custom SWF or wire code — just the JSON
   contract.
 
-The strategic upside of `chat.v1`: FCM stops maintaining a bespoke SWF + wire format and keeps only
-a compliant relay. The two can run in parallel during transition (both are additive front-ends onto
-the same backend services). See
+**Decision (locked): `chat.v1` supersedes FCMHUD/1.** FCMHUD/1 was a dev-only experiment and **never
+shipped to production**, so it is being **deprecated** rather than run in parallel — FCM stops
+maintaining a bespoke SWF + wire format and keeps a single compliant relay. See
 [fcm-integration.md → How this differs](fcm-integration.md#how-this-differs-from-the-existing-fcmhud1-bridge)
-for the full side-by-side and the deprecation question.
+for the decision and the two ZFE-coordination follow-ups (in-game cosmetics, dynamic channels).
 
 ## At a glance — the integration shape
 

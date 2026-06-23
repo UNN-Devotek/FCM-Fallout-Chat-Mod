@@ -1,5 +1,12 @@
 # ZFE Real-Time Socket (FCMHUD/1)
 
+> ⚠️ **DEPRECATED.** FCMHUD/1 (this bespoke `color~channel~user~content` push bridge + the M7
+> inbound parser) was **dev-only and never shipped to production.** It is being **retired** in favor
+> of the **ZFE `chat.v1` native chat relay** — see [native-chat-relay/](native-chat-relay/README.md)
+> and its [FCM integration plan](native-chat-relay/fcm-integration.md) (phase **R7** removes the
+> `hudPush` TCP/WS front-ends + `/ws/hud`). Kept as reference until that retirement lands; do not
+> build new work against it.
+
 ZFE's `readRemoteData` has a 300 s cache floor — the feed can never be real-time on that path.
 ZFE ships a "Text Chat bridge" (live since dxgi.dll 0.9.1) that drives a native TCP socket or a
 WebSocket from AS3. FCMBridge rides that bridge to receive a live push feed from the backend.

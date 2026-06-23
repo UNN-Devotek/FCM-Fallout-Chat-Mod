@@ -1,12 +1,17 @@
 # Making the FCM Relay ZFE-Native-Chat Compatible
 
-> **Status: design proposal.** Nothing here is implemented. This doc specifies *how* FCM's
-> existing backend would expose a relay endpoint that speaks the
-> [ZFE Native Chat Relay Protocol (`chat.v1`)](protocol-spec.md), so a future ZFE's **native
-> chat client** can connect to FCM directly — without FCM's bespoke `FCMHUD/1` SWF/wire code.
+> **Status: planning artifact — implementation not started.** This doc specifies *how* FCM's
+> backend will expose a relay endpoint that speaks the
+> [ZFE Native Chat Relay Protocol (`chat.v1`)](protocol-spec.md), so ZFE's **native chat client**
+> connects to FCM directly. It references real files/services by path so it can be picked up as an
+> implementation plan.
 >
-> It references real files/services by path so it can be picked up as an implementation plan.
-> Treat every "FCM would…" as a proposal pending sign-off, not a description of shipped behavior.
+> **Decision (locked): `chat.v1` is the path forward; the bespoke `FCMHUD/1` bridge is deprecated.**
+> FCMHUD/1 (the custom `FCMBridge.swf` + `color~channel~user~content` wire + M7 input) was a
+> **dev-only experiment and was never shipped to production** — so retiring it is clean: no users to
+> migrate, no prod rollback risk. `chat.v1` becomes the **single** in-game chat path. See
+> [How this differs](#how-this-differs-from-the-existing-fcmhud1-bridge) for the decision and its
+> consequences (in-game cosmetics + dynamic channels need ZFE spec extensions, or move overlay-only).
 
 ## TL;DR
 
@@ -47,7 +52,7 @@ ZFE native chat SWF
 
 ## How this differs from the existing FCMHUD/1 bridge
 
-| | **FCMHUD/1** (shipping) | **`chat.v1` relay** (this proposal) |
+| | **FCMHUD/1** (deprecated — dev-only, never shipped to prod) | **`chat.v1` relay** (the path forward) |
 |---|---|---|
 | Who defines the wire format | **FCM** (bespoke) | **ZFE** (standard contract) |
 | In-game client | FCM's custom `FCMBridge.swf` (Haxe) | ZFE's **native** chat client |
@@ -58,13 +63,24 @@ ZFE native chat SWF
 | Read model | server-push lines, no cursor | monotonic `cursor` (poll + subscribe dedup) |
 | Moderation in-protocol | none (report/mute happen elsewhere) | `report` + `moderationAction` ops |
 
-**Strategic note.** Once ZFE ships native chat, `chat.v1` is the better long-term target: FCM stops
-maintaining a custom SWF and wire format and just keeps a compliant relay. With `AllowedChannels`
-carrying FCM's custom channels (Events/Raids/Infests), `chat.v1` is now a **fuller** replacement
-than first assumed — the remaining FCMHUD/1-only edge is narrow (in-game switching across arbitrary
-leaf channels by UUID, and FCM-controlled rendering). The two can run in parallel during transition
-(both are additive front-ends onto the same services); the `FCMHUD/1` sunset is an
-[open question](#open-questions--decisions-needed), not a v1 requirement.
+**Decision (locked): deprecate FCMHUD/1, adopt `chat.v1`.** FCMHUD/1 was a **dev-only experiment,
+never shipped to production** — there are no in-game-chat users today, so there is nothing to
+migrate and no rollback risk. We therefore retire the bespoke bridge rather than run two in-game
+paths: FCM stops maintaining a custom SWF + wire format and keeps a single compliant `chat.v1`
+relay. With `AllowedChannels` carrying FCM's custom channels (Events/Raids/Infests), `chat.v1`
+covers the core in-game chat scope.
+
+Two FCMHUD/1-only capabilities do **not** carry over to ZFE's native client and become explicit
+follow-ups rather than reasons to keep the old bridge alive:
+
+- **In-game cosmetics** (name colors / clan tags — #191/#192/#227) — `chat.v1` has no cosmetic event
+  field. Resolve by requesting a ZFE event-schema extension, or accept cosmetics as overlay/dashboard
+  only (#228 is overlay-side and is unaffected).
+- **Runtime-created channels** — `AllowedChannels` is static install config; admin/clan channels
+  created after install need a ZFE dynamic-channel-list mechanism, or a config reship.
+
+Both are tracked as ZFE-coordination follow-ups, not blockers on the deprecation. See
+[Relationship to FCM roadmap issues](#relationship-to-fcm-roadmap-issues).
 
 ---
 
@@ -360,10 +376,12 @@ required by the EULA-safe desktop overlay.
 | **R4** | `report` → `createReport` | |
 | **R5** | `moderationAction` (report-only first) + permissions + staff identity linking | |
 | **R6** | Production exposure: `wss://falloutchatmod.com/relay` via the existing Cloudflare tunnel; 10s keepalive frames (defeat CF ~100s idle WS drop, as `/ws/hud` already does) | smoke + scan gates per release rules |
+| **R7** | **Retire FCMHUD/1** — remove `FCMBridge.swf`/probe SWFs, the `hudPush` TCP/WS front-ends + `/ws/hud` route, the M7 inbound parser, and the dev env wiring; mark the FCMHUD/1 docs deprecated. Safe because it never reached prod. | dead code + dev-only transports removed; docs flagged deprecated |
 
 Mirror the HUD-push **dev-only production guard**: the `/relay` front-end refuses to start when
 `NODE_ENV=production` until R6 explicitly lifts it (the same pattern `initHudPushTcp`/`initHudPushWs`
-use, per [../realtime-socket.md](../realtime-socket.md#transport-overview)).
+use, per [../realtime-socket.md](../realtime-socket.md#transport-overview)). R7 then removes those
+HUD-push front-ends entirely.
 
 ---
 
@@ -415,12 +433,15 @@ the build approach and answers some of their open design questions:
   members-only enforced server-side). Caveat: `AllowedChannels` is static, so the richer #187 UX
   (multiple per-clan channels as sub-tabs, runtime create/rename) stays a dashboard/overlay feature —
   the native client carries a **single** `clan` slot.
-- **Cosmetic in-game features are NOT deliverable via `chat.v1`** (**#191**, **#192**, **#227**,
-  **#228**). The `chat.v1` event schema carries only `senderDisplayName` + `body` — **no name-color
-  or clan-tag field**. #227 specifically extends the *FCMHUD/1* wire (`col~ch~user~msg` + a 5th
-  color field), which is **ours** to control; ZFE's native client exposes no such hook. So in-game
-  blue usernames / clan titles / name colors remain a reason to keep **FCMHUD/1** (our own SWF = our
-  own rendering). This is the sharpest limit on deprecating the bespoke bridge.
+- **Cosmetic in-game features are NOT deliverable via `chat.v1`** (**#191**, **#192**, **#227**;
+  **#228** is overlay-side and unaffected). The `chat.v1` event schema carries only
+  `senderDisplayName` + `body` — **no name-color or clan-tag field**. With FCMHUD/1 deprecated, these
+  are **not** a reason to keep the old bridge; they become explicit follow-ups: request a ZFE
+  event-schema cosmetic extension, or scope in-game cosmetics out (overlay/dashboard keep them via
+  #228). Tracked under the deprecation epic's *ZFE-coordination* issue.
+- **Runtime-created channels** are not addressable by static `AllowedChannels` (admin/clan channels
+  created after install, `POST /api/channels` / #182). Also a ZFE-coordination follow-up (dynamic
+  channel-list mechanism), not a blocker on deprecation.
 
 ---
 
@@ -444,14 +465,13 @@ convention (hide from history/poll). What remains:
    `chat.delete` event kind (the "own-SWF convention" escape hatch doesn't apply to ZFE's native
    client). Confirm we accept that a native-client user keeps a deleted line on screen until refresh;
    FCM's dashboard/overlay surfaces are unaffected.
-5. **FCMHUD/1 deprecation — narrower than #137 implies.** `chat.v1` can carry the core
-   standalone-chat scope (#137/#138), but two FCMHUD/1-only capabilities remain: (a) **cosmetic
-   rendering** — in-game name colors / clan tags (#191/#192/#227/#228), which `chat.v1` has no event
-   field for; and (b) reaching **runtime-created** channels — `AllowedChannels` is static install
-   config, so admin/clan channels created after install (`POST /api/channels`, #182) aren't
-   addressable by the native client until the fragment is reshipped, whereas FCMHUD/1's
-   `CHAN~<channelId>` targets any leaf channel. Keep both (chat.v1 for the turnkey standalone client,
-   FCMHUD/1 for cosmetics + dynamic channels), or invest in ZFE extensions to close the gap?
+5. **FCMHUD/1 deprecation — DECIDED (locked).** We deprecate the bespoke bridge and go single-path on
+   `chat.v1`; FCMHUD/1 never reached production, so there is nothing to migrate (see
+   [How this differs](#how-this-differs-from-the-existing-fcmhud1-bridge) and **R7** in the rollout).
+   The two follow-on decisions are *how* to handle the capabilities that don't carry over — (a)
+   in-game **cosmetics** (#191/#192/#227): request a ZFE event-schema extension or scope them
+   overlay-only; (b) **runtime-created channels**: request a ZFE dynamic-channel-list mechanism or
+   accept config reships. Both are tracked under the deprecation epic, not reasons to keep FCMHUD/1.
 6. **Slow-mode (optional).** Permanently advertise `canSetSlowMode=false`, or build a real
    per-channel slow-mode primitive later (it would also benefit the dashboard/overlay)?
 

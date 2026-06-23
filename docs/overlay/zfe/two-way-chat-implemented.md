@@ -1,5 +1,10 @@
 # Two-Way In-Game Chat — IMPLEMENTED & WORKING
 
+> ⚠️ **DEPRECATED.** This is the **FCMHUD/1** bespoke bridge (custom `FCMBridge.swf` + M7 input). It
+> was a **dev-only experiment and never shipped to production.** It is being **retired** in favor of
+> the **ZFE `chat.v1` native chat relay** — see [native-chat-relay/](native-chat-relay/README.md).
+> Kept here as reverse-engineering reference only; do not build new work against it.
+
 **Status: functional.** A message typed in-game reaches the backend, is ingested with full governance,
 and broadcasts back to every surface (dashboard, overlay, in-game feed). This documents the **exact
 working pattern** discovered through a long debugging session so we can recover from regressions.
