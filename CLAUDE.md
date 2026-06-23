@@ -19,6 +19,7 @@ Full architecture and how the pieces connect: **[docs/README.md](docs/README.md)
 | WebSocket relay protocol, presence, sessions | [docs/realtime/](docs/realtime/README.md) |
 | Dashboard, the shared ChatOverlay component, theming | [docs/frontend/](docs/frontend/README.md) |
 | Electron overlay: window mgmt, keybinds, update notification, building | [docs/overlay/](docs/overlay/README.md) |
+| Overlay diagnostics: log file, levels, `--fcm-debug`/`FCM_DEBUG`, rotation | [docs/overlay/diagnostics-logging.md](docs/overlay/diagnostics-logging.md) |
 | In-game HUD feed (ZFE/FCMBridge): wire format, events, env vars | [docs/overlay/zfe/](docs/overlay/zfe/README.md) |
 | Discord bot: bridge, voice, embeds, reaction roles | [docs/discord/](docs/discord/README.md) |
 | Prisma schema, migrations, Redis usage | [docs/database/](docs/database/README.md) |

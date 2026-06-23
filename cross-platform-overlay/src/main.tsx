@@ -16,6 +16,7 @@ import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { initShell, openSettings } from './shell';
 // First-run onboarding overlay.
 import { showOnboarding } from './onboarding';
+import { shouldExitTextEntryOnEscape } from './shell-core';
 
 // 3) THE REAL COMPONENT — unmodified, imported straight from the dashboard source.
 import ChatOverlay from '@dashboard/features/chat/ChatOverlay';
@@ -165,6 +166,20 @@ function wireShellInputBehaviour() {
     },
     true, // capture: run before the component's own Enter handler
   );
+
+  // Escape exits text-entry mode only after the overlay already has DOM focus.
+  // This is intentionally not an Electron globalShortcut, so Escape remains
+  // untouched while the game or any other app is focused.
+  document.addEventListener('keydown', (e) => {
+    if (!shouldExitTextEntryOnEscape(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) active.blur();
+    else if (e.target instanceof HTMLElement) e.target.blur();
+    window.relayBridge.notifyInputFocusState?.(false);
+    window.relayBridge.returnToGame?.();
+  });
 
   // Focus-to-chat (Insert / tray): focus the component's input textarea or
   // rich contentEditable div (overlay-only, when custom emoji input is active).

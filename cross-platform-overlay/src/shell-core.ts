@@ -385,6 +385,58 @@ export function isDragTarget(
   return false;
 }
 
+// ── Text-entry Escape handling ────────────────────────────────────────────────
+
+/** Minimal element shape walked by shouldExitTextEntryOnEscape. */
+export interface TextEntryTargetEl {
+  tagName?: string;
+  isContentEditable?: boolean;
+  id?: string;
+  parentElement?: TextEntryTargetEl | null;
+}
+
+/** The subset of a DOM KeyboardEvent needed for text-entry Escape decisions. */
+export interface TextEntryEscapeEvent {
+  key: string;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  altKey?: boolean;
+  shiftKey?: boolean;
+  defaultPrevented?: boolean;
+  target?: unknown;
+}
+
+function asTextEntryTargetEl(value: unknown): TextEntryTargetEl | null {
+  if (!value || typeof value !== 'object') return null;
+  const el = value as TextEntryTargetEl;
+  if (typeof el.tagName !== 'string' && typeof el.id !== 'string' && !('parentElement' in el)) return null;
+  return el;
+}
+
+/**
+ * Returns true only for an unmodified Escape keydown that originated from an
+ * editable chat input inside the overlay host. This intentionally stays
+ * renderer-local; Escape must never be registered as an Electron globalShortcut.
+ */
+export function shouldExitTextEntryOnEscape(e: TextEntryEscapeEvent): boolean {
+  if (e.key !== 'Escape') return false;
+  if (e.defaultPrevented) return false;
+  if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return false;
+
+  let el = asTextEntryTargetEl(e.target);
+  let sawEditable = false;
+  while (el) {
+    const tag = (el.tagName || '').toUpperCase();
+    if (tag === 'TEXTAREA' || tag === 'INPUT' || el.isContentEditable === true) {
+      sawEditable = true;
+    }
+    if (el.id === 'shell-settings-backdrop' || el.id === 'shell-onboarding-backdrop') return false;
+    if (el.id === 'shell-overlay-host') return sawEditable;
+    el = asTextEntryTargetEl(el.parentElement);
+  }
+  return false;
+}
+
 /**
  * Decide whether the renderer is running on Linux. `navigator.platform` is
  * deprecated and may be reduced to '' by newer Chromium (Electron 39+); the

@@ -21,6 +21,10 @@ Source: `main.js:274–323`, `src/shell.ts:114–150`.
 
 Up to 8 **party direct-access** slots (`party1`–`party8`) can also be bound; these default to empty (unregistered).
 
+`Escape` is **not** a global keybind and is not user-bindable. It is handled only inside the renderer when the chat input already has DOM focus: pressing bare `Escape` exits text-entry mode, blurs the input, and uses the same return-to-game focus path as sending a message. If Fallout 76 or another app has focus, the overlay does not capture `Escape`.
+
+**Recoverability without a system tray.** Normally global shortcuts are released while another app is foreground (so they reach that app), and the system tray is the fallback for re-showing a hidden overlay. On desktops with **no StatusNotifierItem host** (where `new Tray()` fails — many wlroots/Wayland compositors, GNOME without an AppIndicator extension), `refreshShortcuts()` instead keeps the **summon binds** (`focus`/`toggle`, i.e. Insert/Delete by default) registered even while another app is foreground, so the overlay is never strandable. See [diagnostics-logging.md](diagnostics-logging.md#recoverability-without-a-tray) (`[hotkeys]` / `[tray]` log lines).
+
 ---
 
 ## `userHidden` flag
