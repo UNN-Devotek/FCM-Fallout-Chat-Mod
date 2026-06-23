@@ -296,6 +296,39 @@ function decideForegroundPollerAction({ crashed, consecutiveCrashes, maxCrashes 
   return hasAltTool ? 'switch-tool' : 'disable';
 }
 
+// ── Diagnostic logging level + rotation (pure; the logger in main.js is testable) ──
+
+// Resolve the active log level from env, argv, and persisted settings.
+//   'verbose' — per-tick logging on (deep debugging session).
+//   'info'    — default; lifecycle + state transitions only.
+// Precedence: explicit env (FCM_DEBUG / FCM_VERBOSE) or a launch flag
+// (--fcm-debug, or the --debug / --verbose aliases) turn verbose ON; otherwise the
+// persisted Settings → Debug logging toggle; else 'info'. Kept here (not main.js)
+// so the precedence is unit-testable without electron.
+function resolveLogLevel({ env = {}, argv = [], settings = null } = {}) {
+  env = env || {};                              // tolerate an explicit null
+  if (!Array.isArray(argv)) argv = [];
+  const truthy = (v) => {
+    const s = String(v == null ? '' : v).trim().toLowerCase();
+    return s === '1' || s === 'true' || s === 'yes' || s === 'on' || s === 'verbose' || s === 'debug';
+  };
+  if (truthy(env.FCM_DEBUG) || truthy(env.FCM_VERBOSE)) return 'verbose';
+  // --fcm-debug is the namespaced, documented launch flag (safe to pass to the
+  // AppImage / .deb binary / CLI: `"Fallout Chat Mod.AppImage" --fcm-debug`);
+  // --debug / --verbose are accepted aliases. The KDE-Wayland XWayland relaunch
+  // preserves user argv (planOzoneRelaunch concats), so the flag survives.
+  if (Array.isArray(argv) && (argv.includes('--fcm-debug') || argv.includes('--debug') || argv.includes('--verbose'))) return 'verbose';
+  if (settings && typeof settings === 'object' && settings.debugLogging === true) return 'verbose';
+  return 'info';
+}
+
+// True when the log file should be rotated (renamed to .1 and started fresh). Pure
+// so the rotation threshold is unit-testable; the caller supplies the current byte
+// size and the cap. Guards against NaN / non-positive caps.
+function shouldRotateLog(size, cap) {
+  return typeof size === 'number' && typeof cap === 'number' && cap > 0 && size > cap;
+}
+
 // ── Relay URL resolution ───────────────────────────────────────────────────────
 // Single source of truth for the two relay URL env-override patterns. main.js calls
 // this at startup; tests call it directly to assert env override behaviour.
@@ -585,6 +618,8 @@ module.exports = {
   isGameClass,
   shouldRegisterShortcuts,
   decideForegroundPollerAction,
+  resolveLogLevel,
+  shouldRotateLog,
   stateHasRealData,
   isCfChallenge,
   isSinglePrintableChar,
