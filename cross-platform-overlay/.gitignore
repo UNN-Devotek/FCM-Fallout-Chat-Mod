@@ -6,6 +6,9 @@ out/
 overlay-debug.log
 overlay-shot.png
 *.png
+# …but the Linux app icon is a real, build-required asset (electron-builder
+# linux.icon). Keep it tracked despite the blanket *.png ignore above.
+!assets/fcm-linux.png
 dist-electron/
 *.log
 .playwright-cli/
