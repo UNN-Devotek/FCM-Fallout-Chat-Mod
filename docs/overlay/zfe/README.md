@@ -9,6 +9,7 @@ ZFE is a `dxgi.dll` proxy for Fallout 76 that injects `__ZFE` into the Scaleform
 | [**FCMBridge Data Pattern**](fcmbridge-data-pattern.md) | **START HERE — the working end-to-end pipeline + every pitfall (quote-free payload, `yes`/`on` booleans, build/deploy steps)** |
 | [**Real-Time Socket (FCMHUD/1)**](realtime-socket.md) | Live push feed via ZFE's Text Chat bridge — wire protocol, env vars, backend architecture, probe tooling |
 | [**Two-Way Chat — Implemented**](two-way-chat-implemented.md) | Working in-game chat input (M7) — exact pattern, hard-won facts, build/install, design constraints |
+| [**Native Chat Relay (`chat.v1`)**](native-chat-relay/README.md) | Forward-looking — ZFE's upcoming standardized native chat client + a proposal to make the FCM relay speak its JSON contract (distinct from the bespoke FCMHUD/1 bridge) |
 | [Modder Guide](modder-guide.md) | Bridge discovery, `findZfeApi`, `getRuntimeInfo`, logging, safety boundary |
 | [ZFE API Reference](api-reference.md) | Remote Data, Storage, Events, Imports, and Legacy Compatibility — full API call reference |
 | [Environment Variables](env-vars.md) | Dev/testing only — normal users never need these |
