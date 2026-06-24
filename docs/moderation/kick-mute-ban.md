@@ -204,9 +204,19 @@ chat.v1 moderation issue #288).
    auth/link gate; #297) — durable, account-independent, blocks re-linking the same Discord/Nexus.
    The strongest evasion lever.
 
+## Implementation issues
+
+| Issue | What |
+|---|---|
+| **#163** | Epic — multi-provider identity & account linking (Discord + Nexus) |
+| **#282** | Epic — ZFE chat.v1 native chat relay |
+| **#295** | Mandatory auth gate + in-game device-code link (limited-until-linked; link-code/revocation specs) |
+| **#288** | chat.v1 `report` + `moderationAction` mapping + permissions (staff-Discord-gated) |
+| **#296** | Enforce bans/kicks/mutes on chat.v1 live sockets — cached status re-check + token revoke (permanent); `moderation:evict` pub/sub deferred |
+| **#297** | Provider-ID ban deny-list (`banned_identities`) — durable bans at the auth/link gate |
+
 ## See also
 
 - [README](README.md) · [automod](automod.md) · [reports-and-evidence](reports-and-evidence.md)
 - [auth lockdown / pairing design](../backend/hud-chat-auth-design.md)
 - [chat.v1 integration — auth gate + moderationAction mapping](../overlay/zfe/native-chat-relay/fcm-integration.md)
-- chat.v1 moderation issue: #288 · auth gate issue: #295
