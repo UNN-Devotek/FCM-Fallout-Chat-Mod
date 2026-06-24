@@ -148,8 +148,8 @@ Use a new `source` value (`"relay"`) so message provenance is distinguishable fr
 
 The `chat.v1` model is **token-only**: `register` mints a server-owned `userId` + opaque `token`;
 ZFE stores the token in a DPAPI-protected file and re-presents it via `hello`. There is **no**
-account-name handshake (unlike M7's `HELLO~account~character`), so the relay identity is weaker
-than the FCMHUD/1 `identityHash` and must be treated accordingly for moderation.
+account-name handshake — so a bare `register` is anonymous and, under the **lockdown**, is
+**limited until the user links Nexus or Discord** (see [Mandatory auth gate](#mandatory-auth-gate--limited-until-nexusdiscord-linked-locked)).
 
 ### Token lifetime — the key difference from FCM sessions
 
@@ -166,24 +166,34 @@ via its install token. ZFE relay tokens must **persist across game sessions** (t
 - **Revoke**: clear/rotate the `relayToken` column (or set a revoked flag). `hello` then returns
   `auth_token_revoked`.
 
-### Optional: linking to a stronger identity
+### Mandatory auth gate — limited until Nexus/Discord linked (locked)
 
-`register` deliberately creates a fresh, display-name-only identity — do **not** auto-merge on
-`displayName` (the contract explicitly warns against trusting it). For ban resistance and to grant
-staff powers, support **opt-in account linking** later (invite code / Discord OAuth handoff) that
-attaches the relay `userId` to an existing FCM `User` (Discord-authed, or the M7 `identityHash`).
-This is the contract's recommended "account linking / invite codes / operator review" path.
+**Chat access requires authentication.** A bare `register` no longer grants chat — it mints a
+**limited** identity that **cannot `send`** until the user links a **Nexus or Discord** account
+(one or the other). This is the lockdown decision; the authoritative design is
+[`docs/backend/hud-chat-auth-design.md`](../../../backend/hud-chat-auth-design.md) and epic #163.
 
-The spec's compatibility notes spell out the **limited-until-linked** pattern: keep a fresh relay
-user in a limited state and return stronger `roles`/permission booleans from `register`/`hello`
-**after** linking. Two FCM-specific choices:
+**Device-code upgrade flow (in-game — no token pasting):**
+1. SWF does the normal `register` → ZFE stores the token (DPAPI). The relay marks the identity
+   **limited** and rejects `send` with **`permission_denied`**.
+2. The relay issues a short **link code** the SWF shows in-game.
+3. The user opens `falloutchatmod.com/link`, signs in with **Discord or Nexus** (existing OAuth /
+   Nexus OAuth2+PKCE, §5.2 of the design doc), and enters the code.
+4. The relay **binds the `register` token's `userId` to the authed account** (writes the provider
+   link); the identity is now **authed** and `send` is allowed. The DPAPI token is reused as-is —
+   nothing to copy-paste.
 
-- **Default — allow public sends pre-link.** A `register`-minted user should be able to post to
-  public channels immediately, matching how anonymous overlay install-token users already work (no
-  Discord required to chat). Linking only *elevates* (staff powers, stronger ban resistance).
-- **If we decide sending must be gated** (e.g. require linking before any send), reject `send` with
-  **`permission_denied`** — ZFE does **not** advertise a separate `canSend` permission, so this is
-  the prescribed way to express "registered but not yet allowed to talk."
+This preserves "fully standalone, one `.ba2`" (no overlay process needed) while requiring a real,
+bannable identity. The gate mirrors the design doc's §3.1: an identity is upgraded only for a `User`
+with `discordId IS NOT NULL` **or** a `linked_identities` (Nexus) row.
+
+- **Public website** read-only stays open; **sending** requires auth (same gate).
+- **Overlay** is already Discord-walled; **Nexus is added** as an alternative login for basic chat.
+- **Admin dashboard** stays **Discord-only** — elevated/mod/dev roles require Discord (#168); linking
+  Nexus never grants elevated roles.
+- **Ban resistance:** because access now ties to a Nexus/Discord account, the `worldId`/ban-evasion
+  concerns (#293/#294) are materially reduced — discarding identity is costly. `register` still must
+  not auto-merge on `displayName` (presentation only); identity comes from the linked provider.
 
 ### Auth error-code mapping
 
@@ -194,7 +204,8 @@ user in a limited state and return stronger `roles`/permission booleans from `re
 | `user.isBanned` active (incl. `bannedUntil` in future) | `user_banned` |
 | `ws_rate:<userId>` exceeded | `rate_limited` |
 | `user.isMuted` at `send` | `user_muted` (the spec's recommended muted-send rejection) |
-| privileged op from an unlinked (non-staff) identity | `permission_denied` |
+| `send` from an **unlinked** (limited) identity — auth gate not yet completed | `permission_denied` |
+| privileged op from a non-staff (non-Discord) identity | `permission_denied` |
 | `setSlowMode` (no FCM primitive) | `permission_denied` / `invalid_action` |
 | `send` to unknown/omitted slug or container channel | `invalid_channel` (relay-defined) |
 | body > 500 chars | `message_too_long` (relay-defined) |
@@ -491,9 +502,12 @@ convention (hide from history/poll). What remains:
 1. **Channel slugs.** Confirm the public slug set (`global,trade,server,events,raids,infests`) and
    that the native UI displays the slug as-is (no separate label field). Do we want prettier slugs
    (e.g. `general` vs `global`), accepting that the slug is user-visible?
-2. **Identity strength & linking.** Default lets `register` users post to public channels (parity
-   with anonymous overlay users); linking only elevates. Confirm that, and decide whether to
-   cross-link to the M7 `identityHash` when the same person uses both bridges (shared ban state).
+2. **Auth gate — DECIDED (locked).** Chat access requires a linked **Nexus or Discord** account; a
+   bare `register` is **limited** and cannot `send` until the in-game **device-code link** completes
+   (reject with `permission_denied`). Public-website read stays open; sending is gated. Overlay adds
+   Nexus alongside its existing Discord wall; the admin dashboard stays Discord-only (elevated roles).
+   See [Mandatory auth gate](#mandatory-auth-gate--limited-until-nexusdiscord-linked-locked),
+   [`hud-chat-auth-design.md`](../../../backend/hud-chat-auth-design.md), and epic #163.
 3. **`party` / `whisper`.** Both are deferred/omitted at launch. When do we add `party` (needs
    identity linking + party-membership binding) and `whisper` (needs a `Block`-aware DM feature)?
 4. **Live deletion (spec-settled — just confirm).** Not really a choice: the spec **dictates**

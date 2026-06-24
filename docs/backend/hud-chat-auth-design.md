@@ -1,11 +1,47 @@
 # M6: HUD Chat Auth System — Design Document
 
-**Status:** Proposal / Pre-implementation  
+**Status:** Proposal / Pre-implementation · **updated 2026-06-23 for chat.v1 + the auth lockdown**  
 **Milestone:** M6 (production-exposure gate)  
 **Author:** Design session 2026-06-11  
-**Depends on:** M7 (two-way chat, landed), existing Discord OAuth flow
+**Depends on:** existing Discord OAuth flow; ZFE `chat.v1` relay (epic #282); multi-provider identity (epic #163)
 
 ---
+
+> ## ⚠️ Update (2026-06-23): chat.v1 transport + lockdown decisions
+>
+> This doc was written for the **FCMHUD/1** transport (`/ws/hud`, `tcp:4001`, the `HELLO~<token>~<char>`
+> wire, `fcm.ini [FCMBridge] PairingToken`). That transport is now **deprecated** in favor of the **ZFE
+> `chat.v1` native chat relay** ([`docs/overlay/zfe/native-chat-relay/`](../overlay/zfe/native-chat-relay/README.md),
+> epic #282). The **core of this design is unchanged and still authoritative** — the multi-provider
+> account model (§3.1 `linked_identities`), the provider **access gate** (§3.1: Discord **or** Nexus
+> required), Nexus OAuth2 + PKCE (§5.2), collision/recovery (§6), migration (§7), and the security
+> analysis (§8) all carry over. What changes is the **transport + pairing UX**, and the lockdown adds a
+> hard access requirement:
+>
+> **Locked decisions (supersede the §9 recommendations where noted):**
+> - **Mandatory gate (new).** Chat access **requires** a linked provider — **no anonymous chat**. A
+>   bare chat.v1 `register` mints a **limited** identity that cannot `send` until linked (relay returns
+>   `permission_denied`). Public-website read-only stays open; **sending requires auth**.
+> - **OD-3 → IMPLEMENT (was "defer").** Ship the **device-authorization (short code)** UX. Under
+>   chat.v1 there is **no token to paste at all**: the SWF does `register` (ZFE stores the token via
+>   DPAPI), shows a short **link code**, the user signs in at `falloutchatmod.com/link` (Discord **or**
+>   Nexus) and enters the code, and the relay **upgrades the existing token's account in place**.
+> - **OD-6 → Nexus for the OVERLAY too (was "game-link only").** Nexus is a first-class login for the
+>   **overlay** + in-game basic chat (Nexus **or** Discord). The **admin dashboard stays Discord-only**
+>   — elevated/mod/dev roles require Discord (#168); linking Nexus never grants them.
+>
+> **chat.v1 mapping of the pairing model:**
+>
+> | This doc (FCMHUD/1) | chat.v1 equivalent |
+> |---|---|
+> | `HELLO~<pairingToken>~<char>` (§4.3) | chat.v1 `register` (anonymous, **limited**) → **device-code link** upgrades the token |
+> | `fcm.ini [FCMBridge] PairingToken=` | **none** — ZFE holds the token (DPAPI); nothing is pasted |
+> | "mint token → copy-paste" (§4.5) | "register → show link code → sign in (Discord/Nexus) → relay binds account" |
+> | `identityHash = HMAC(secret, userId)` (§3.3) | **unchanged** — keyed on the authed account `userId` |
+> | Access gate (§3.1: Discord **or** Nexus) | **unchanged** — required before `send` |
+>
+> Read §3–§8 as-is for the account model, Nexus OAuth, collision/recovery, and security; substitute the
+> transport/UX per the table above. The §9 table is annotated inline (OD-3, OD-6).
 
 ## 1. Problem Statement
 
@@ -479,7 +515,7 @@ All of the following are unmodified by M6. They apply **after** successful token
 |---|---|---|---|
 | OD-1 | Token hash algorithm: argon2id vs bcrypt | argon2id: winner of PHC, better memory-hardness; bcrypt: widely supported, simpler | **argon2id** (use `@node-rs/argon2` or `argon2` npm package). bcrypt is fine but argon2id is the current standard. |
 | OD-2 | Nexus OAuth token storage: Redis vs encrypted DB columns | Redis: auto-expiry, no migration, simpler rotation; DB: survives Redis flush, easier audit | **Redis** with AES-256-GCM encryption, TTL = Nexus token expiry. Add `nexus_token_enc` Redis key `user:<userId>:nexus_token`. |
-| OD-3 | Pairing-code UX (device-authorization style short code) | Implement now vs defer | **Defer.** The paste is a one-time event. Ship the 43-char copy-paste first; add the device-code UX as a follow-up once the base auth is stable. |
+| OD-3 | Pairing-code UX (device-authorization style short code) | Implement now vs defer | ~~Defer~~ → **RESOLVED 2026-06-23: IMPLEMENT.** Under chat.v1 there is no token to paste — the SWF `register`s and shows a short link code; the user signs in (Discord/Nexus) and enters it; the relay upgrades the token in place. See the Update banner. |
 | OD-4 | `token_prefix` length: 6, 8, or 10 chars | Shorter = less entropy leaked; longer = fewer false positives before argon2 | **8 chars** (48 bits leaked; 208 bits remain; with argon2id protecting the hash, risk is negligible). |
 | OD-5 | Retroactive `HudIdentityBlock` migration: Option A (re-derive blocks) vs Option B (accept orphan) | See Section 7.2 | **Option B** if prod has never had HUD auth enabled; **Option A** if any blocks were issued in dev/staging. Confirm with operator. |
-| OD-6 | Nexus as sole provider (no Discord) — should it also be allowed for the main dashboard session, or only for the game link? | Dashboard currently requires Discord for role sync, embed management, etc. | Nexus auth for **game link only** in M6. Dashboard session remains Discord-only. This avoids reworking the admin/mod role pipeline. A subsequent milestone can extend Nexus to full dashboard access if needed. |
+| OD-6 | Nexus as sole provider (no Discord) — game-link only, or also overlay/dashboard? | Dashboard currently requires Discord for role sync, embed management, etc. | ~~Game-link only~~ → **RESOLVED 2026-06-23.** Nexus is a first-class login for the **overlay + in-game basic chat** (Nexus **or** Discord), per the lockdown. The **admin dashboard stays Discord-only** — elevated/mod/dev roles require Discord (#168); a Nexus-only account is a basic user and never holds elevated roles. |
