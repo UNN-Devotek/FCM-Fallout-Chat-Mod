@@ -248,10 +248,10 @@ if (!app.isPackaged) {
 // NOTE: do NOT call app.setName() here. The app name feeds app.getPath('userData')
 // (→ ~/.config/Fallout Chat Mod), so renaming it would orphan every existing
 // user's session/settings/keybinds on all platforms. KWin matches the overlay by
-// its X11 WM_CLASS ("Fallout Chat Mod", since the overlay runs under XWayland on
-// KDE) via the bundled keep-above rule's substring match on "fallout" — no app_id
-// override is needed. The electron-builder linux.desktopName only affects the
-// installed .desktop filename / native-Wayland app_id and does not change userData.
+// its X11 WM_CLASS ("fallout-chat-mod", since the overlay runs under XWayland on
+// KDE) via the bundled keep-above rule's exact-name match — no app_id override is
+// needed. The electron-builder linux.desktopName only affects the installed .desktop
+// filename / native-Wayland app_id and does not change userData.
 
 process.on('uncaughtException', (err) => {
   const msg = (err && err.message) ? err.message : String(err);
@@ -269,19 +269,16 @@ process.on('unhandledRejection', (reason) => {
 // cross-platform-overlay/assets/fallout-chatmod-keepabove.kwinrule + docs.
 // NOTE: kept byte-consistent with assets/fallout-chatmod-keepabove.kwinrule
 // (sans comments — KWin's INI parser ignores them). TWO rules:
-//   1) keep-above on the OVERLAY (wmclass "fallout" + title "Fallout Chat Mod").
-//   2) fullscreen-demote on the GAME (wmclass "steam_app_1151340").
-// On KWin 6 the layer=8/layerrule=2 force is IGNORED, so keep-above ALONE loses to a
-// FOCUSED fullscreen game. Rule 2 (fullscreen=false Force) demotes FO76 out of the
-// active-fullscreen layer so the overlay's keep-above wins even while playing. The
-// layer/layerrule keys are kept on rule 1 only for older KWin builds that honor them.
+//   1) keep-above on the OVERLAY (wmclass "fallout-chat-mod").
+//   2) keep game BELOW (wmclass "steam_app_1151340", below=true Force).
+//      KWin evaluates keepBelow() BEFORE isActiveFullScreen(), so the game never
+//      reaches ActiveLayer(6) — the overlay's keepAbove(4) wins with no flicker.
+//      (Replaces the retired fullscreen=false Force rule — issue #272.)
 // The overlay AUTO-APPLIES these on startup (setupKdeKeepAbove); this file is the
-// manual-import fallback. Game still renders full-screen-sized in Borderless.
+// manual-import fallback.
 const KWINRULE_TEXT = `[Fallout Chat Mod - keep above games]
 Description=Fallout Chat Mod - keep above games
-title=Fallout Chat Mod
-titlematch=2
-wmclass=fallout
+wmclass=fallout-chat-mod
 wmclassmatch=2
 wmclasscomplete=false
 above=true
