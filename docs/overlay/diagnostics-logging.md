@@ -65,7 +65,7 @@ can no longer grow the file without bound, and the prior session is preserved.
 | `[singleton]` | Second launch | The single-instance lock handing off / exiting |
 | `[linux]` (KWin) | First launch | KWin keep-above rule install / skip / failure |
 | `[relay]` | Connection events | Relay WebSocket connect/disconnect/error |
-| `[foreground]` | KDE-Wayland | Active-window tool resolution + the xdotool crash circuit-breaker |
+| `[foreground]` | KDE-Wayland; win32 poller lifecycle | KDE-Wayland: active-window tool resolution + the xdotool crash circuit-breaker. **Windows (issue #136):** foreground-poller lifecycle — `poller started` / `first line` / `exit … restarting in Ns` / `silent > Ns — releasing global hotkeys (fail-safe)` / `recovered`. A poller that exits immediately with no output logs a `blocked` hint (Constrained Language Mode / AppLocker). If `main.log` shows binds firing but **no** `[foreground]`/`[hotkeys]` transitions, the poller died silently — the self-heal + watchdog now prevent that. |
 
 ## Recoverability without a tray
 

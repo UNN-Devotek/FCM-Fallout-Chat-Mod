@@ -54,16 +54,33 @@ Because the registration loop reads `currentKeybinds` at runtime, rebinding a ke
 
 Single printable-character accelerators (`/`, `\`, any letter, digit, or symbol) are detected by `isSinglePrintableChar()` (`main.js:1941`) and marked `isChar = true`. These keys are automatically **unregistered while the overlay itself is focused**, so the user can type `/` or `\` in the chat input without the global shortcut intercepting them (`main.js:1977`).
 
+### Game-reserved-key warning
+
+When binding a key in Settings, a **bare** (modifier-less) Fallout 76 gameplay key — `Tab` (Pip-Boy), `Space`, `E`, `R`, `Q`, `W/A/S/D`, etc. — triggers a **warning** (`gameReservedWarning` in `shell-core.ts`; the editor in `shell.ts` shows a confirm). It **does not block** — the user can bind it anyway — but it prevents the silent footgun from issue #136, where `Tab`=nextChannel meant every in-game Pip-Boy open also popped the overlay. A modifier combo (e.g. `Alt+Tab`'s OS handling aside, `Ctrl+E`) is never flagged because the game never receives it.
+
+### Non-destructive one-time reset
+
+`KEYBIND_RESET_VERSION` (`shell.ts`) triggers a one-time keybind reset when a user's persisted version is older. The reset is **non-destructive** (issue #136 §3.1, `mergeKeybindDefaults` in `shell-core.ts`): it fills only **unset/blank** binds with the current defaults and **preserves every bind the user customised**. The old behavior wiped the whole map back to defaults, so a reinstall re-broke a working config; it now never clobbers a customised bind.
+
 ---
 
 ## Shortcut registration scope
 
 Global shortcuts steal the key from every application system-wide. To avoid interfering with other apps, the shortcuts are registered **only while the game or the overlay is the active context** (`refreshShortcuts`, `main.js:1965`):
 
-- **Windows**: "active" = game is the foreground process (detected via the ~300ms PowerShell foreground poll) OR the overlay window is focused.
+- **Windows**: "active" = game is the foreground process (detected via the ~100ms PowerShell foreground poll) OR the overlay window is focused.
 - **Linux/macOS**: no foreground-process API; "active" = `gameRunning` (process-list scan) OR overlay focused.
 
-`refreshShortcuts()` is idempotent: it tracks the last registered state in `_shortcutState` and skips if nothing has changed, preventing churn on the 300ms Windows poll.
+`refreshShortcuts()` is idempotent: it tracks the last registered state in `_shortcutState` and skips if nothing has changed, preventing churn on the Windows poll.
+
+### Windows foreground-poller resilience (self-heal + fail-safe — issue #136)
+
+On Windows the foreground process is read by a **single long-lived `powershell.exe` child** (`spawnWindowsForegroundPoller`), and it is the **only** thing that updates `lastForegroundProc`. If that poller died — or never started: PowerShell **Constrained Language Mode** blocks its `Add-Type`, and **AppLocker/AV** can block `powershell.exe` — the old code just nulled the handle with no restart, no watchdog, and no log. The last-known foreground (the game, while keys were registered) then froze and `refreshShortcuts()` stopped firing, so the global hotkeys were **never released** and fired in **every** app (issue #136). Two mechanisms now guarantee the keys are released:
+
+1. **Self-heal — restart with backoff.** When the poller dies it is relaunched with capped backoff (1s → 2s → 5s; `overlayCore.nextPollerBackoffMs`). A healthy line resets the backoff. So a transient PowerShell death can't permanently strand the hotkeys.
+2. **Fail-safe watchdog.** A 1-second interval (`startWindowsForegroundWatchdog`) checks `overlayCore.isForegroundStale(...)`: if **no foreground line has arrived for ~4s**, the poller is treated as dead/blocked → `lastForegroundProc` is cleared and `refreshShortcuts()` releases the hotkeys (keeping only the summon binds when there is no tray). This is the real fix — it releases the keys **regardless of why** the poller failed, including CLM/AppLocker where the poller can never run.
+
+The poller lifecycle is logged (`[foreground] win32 poller started / first line / exit / silent … / recovered`) so a silent death is diagnosable from `main.log`. A poller that exits immediately and never emitted a line is classified as `blocked-or-clm` (`overlayCore.classifyPollerExit`) and logs an actionable hint. **Trade-off:** on a machine where the poller can never run (CLM/AppLocker), the fail-safe means **in-game** hotkeys won't fire (the overlay can't tell the game is foreground) — only overlay-focused binds and (tray-less) summon binds work. That is the accepted degradation versus keys firing in every app.
 
 **All keybinds work in-game.** Once the context is active, *every* bind is registered — including the channel-cycle (PageUp/PageDown), settings (Home), and party/preset binds. (These were previously gated behind `overlayOnly` so they only fired while the overlay itself was focused, which left them dead during gameplay — only Insert/Delete/End worked in-game.) Because the active-context gate still releases all keys when neither the game nor overlay is focused, these keys are only reserved while you're actually in FCM or the game — other apps are unaffected. The `isChar` exception still applies: `/` and `\` are released while the overlay is focused so they stay typeable in chat. Trade-off: a key bound to an FCM action (e.g. PageUp/PageDown) is **not** delivered to the game while playing; rebind in Settings if it conflicts with an in-game control.
 

@@ -36,6 +36,8 @@ import {
   computeResizeBounds,
   isDragTarget as isDragTargetCore,
   detectLinuxRenderer,
+  gameReservedWarning,
+  mergeKeybindDefaults,
   type ResizeEdge,
 } from './shell-core';
 
@@ -102,9 +104,12 @@ export interface PositionPreset {
   w?: number; h?: number;   // captured window size
 }
 
-// Bump to force all users' keybinds back to current defaults exactly once.
-// Must NOT be baked into DEFAULT_SHELL_SETTINGS — the default leaves
-// keybindsResetVersion undefined (→ 0) so the guard (stored < current) can fire.
+// Bump to fill any NEW default binds for existing users exactly once. The reset is
+// NON-DESTRUCTIVE (issue #136 §3.1): it only fills unset/blank binds and preserves
+// every bind the user customised (see mergeKeybindDefaults), so a reinstall or a
+// version bump never clobbers a working config. Must NOT be baked into
+// DEFAULT_SHELL_SETTINGS — the default leaves keybindsResetVersion undefined (→ 0)
+// so the guard (stored < current) can fire.
 // v5: goFo76 and recentParty default to '' — single-char defaults (/,\) were broken
 //     because isSinglePrintableChar gating prevented them from ever firing.
 export const KEYBIND_RESET_VERSION = 5;
@@ -201,10 +206,13 @@ export function loadShellSettings(): ShellSettings {
       }
     }
   } catch { /* defaults */ }
-  // One-time keybind reset: restore new defaults if the persisted version is older,
-  // then stamp the version so later customisations are never clobbered.
+  // One-time keybind reset (NON-DESTRUCTIVE — issue #136 §3.1): when the persisted
+  // version is older, fill only UNSET/blank binds with the current defaults and keep
+  // every bind the user actually set, then stamp the version. The old code wiped the
+  // whole map back to defaults, so a reinstall re-broke a working config; now it
+  // never clobbers a customised bind.
   if ((s.keybindsResetVersion ?? 0) < KEYBIND_RESET_VERSION) {
-    s.keybinds = { ...DEFAULT_SHELL_SETTINGS.keybinds };
+    s.keybinds = mergeKeybindDefaults(s.keybinds, DEFAULT_SHELL_SETTINGS.keybinds);
     s.keybindsResetVersion = KEYBIND_RESET_VERSION;
     try { localStorage.setItem(SHELL_SETTINGS_KEY, JSON.stringify(s)); } catch { /* ignore */ }
   }
@@ -1309,6 +1317,14 @@ function buildSettingsPanel() {
           if (!accel) return; // wait for a non-modifier key
           window.removeEventListener('keydown', onKey, true);
           btn.classList.remove('listening');
+          // Warn (don't block) on a bare FO76 gameplay key — pressing it in-game would
+          // trigger both the overlay and the game (issue #136: Tab=nextChannel popped
+          // the overlay on every Pip-Boy open). The user can still bind it.
+          const warn = gameReservedWarning(accel);
+          if (warn && !window.confirm(warn + '\n\nBind it anyway?')) {
+            btn.textContent = prettyAccel(currentSettings.keybinds[key]); // keep the existing bind
+            return;
+          }
           const next = { ...currentSettings.keybinds, [key]: accel };
           commit({ keybinds: next });
           btn.textContent = prettyAccel(accel);
