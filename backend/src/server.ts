@@ -99,6 +99,7 @@ import {
 import { requireDiscordRole } from './middleware/auth';
 import { initHudPushTcp } from './services/hudPushTcp';
 import { initHudPushWs } from './services/hudPushWs';
+import { seedRelaySeq } from './services/relay/relaySeq';
 import { attachChatUpgradeRouter } from './websocket/upgradeRouter';
 import { initLatestVersion } from './services/latestReleaseVersion';
 import hudFeedRouter from './routes/hudFeed';
@@ -1533,7 +1534,7 @@ app.post('/admin/upload-release', apiLimiter, (req: Request, res: Response, next
 const dashboardDist = path.join(__dirname, '../admin-dashboard/dist');
 app.use(express.static(dashboardDist));
 app.get('*', (req: Request, res: Response, next: NextFunction) => {
-  if (req.path.startsWith('/api/') || req.path.startsWith('/auth/') || req.path === '/ws' || req.path.startsWith('/ws/')) {
+  if (req.path.startsWith('/api/') || req.path.startsWith('/auth/') || req.path === '/ws' || req.path.startsWith('/ws/') || req.path === '/relay') {
     return next();
   }
   res.sendFile(path.join(dashboardDist, 'index.html'), (err) => {
@@ -1747,6 +1748,10 @@ async function start(): Promise<void> {
     // HUD push transports — Path A (raw TCP) and Path B (WebSocket /ws/hud).
     await initHudPushTcp();
     initHudPushWs(server);
+
+    // chat.v1 relay: seed the monotonic relay sequence counter from DB high-water mark.
+    // Must run after Redis is connected and before the first relay send.
+    await seedRelaySeq();
 
     // Ensure default channels exist regardless of migration state
     try {

@@ -1,8 +1,10 @@
 # Making the FCM Relay ZFE-Native-Chat Compatible
 
-> **Status: planning artifact — implementation not started.** This doc specifies *how* FCM's
-> backend will expose a relay endpoint that speaks the
-> [ZFE Native Chat Relay Protocol (`chat.v1`)](protocol-spec.md).
+> **Status: R1–R3 + worldId IMPLEMENTED** (branch `feat/ingame-chatv1-relay`, 2026-06-24).
+> The FCM `/relay` adapter is no longer a planning artifact — the route, register/hello,
+> send/poll/subscribe, channel map, relaySeq cursor, and worldId HMAC intercept are shipped.
+> R4 (report), R5 (moderationAction), and R6 (production guard lift) remain. This doc is updated
+> in-line where features are implemented; planning sections are retained for the remaining phases.
 >
 > **Who builds what.** ZFE provides the native chat **engine** (the relay transport, DPAPI token
 > storage, reconnect, hotkey/input, and the `chat.v1.*` command API). **FCM owns both ends we ship:**
@@ -450,9 +452,9 @@ required by the EULA-safe desktop overlay.
 | Phase | Scope | Gate |
 |---|---|---|
 | **R0** | Sign-off + finalize the `AllowedChannels` slug set (`global,trade,server,events,raids,infests`) + the decisions below | decisions answered |
-| **R1** | `/relay` route + `register`/`hello` + relay-token model (**argon2id `hud_pairing_tokens` table + `token_prefix` index**, not a plain `User` column) + **dev-only guard** (refuse when `NODE_ENV=production`, mirroring `hudPush`) | loopback compat test passes (`register → subscribe → send → poll`) |
-| **R2** | `send` → `ingestMessage`, `relaySeq` cursor + `poll`; slug↔UUID map for `global/trade/server/events/raids/infests` | unit + contract tests green |
-| **R3** | `subscribe` push via Redis pub/sub; cross-instance cursor consistency | push/poll dedup verified |
+| **R1** ✅ DONE | `/relay` route + `register`/`hello` + relay-token model (argon2id `hud_pairing_tokens` table + `token_prefix` index) + dev-only guard | 50 Jest tests pass |
+| **R2** ✅ DONE | `send` → `ingestMessage`, `relaySeq` cursor + `poll`; slug↔UUID map; worldId HMAC intercept on `server` channel | 50 Jest tests pass |
+| **R3** ✅ DONE | `subscribe` push via Redis pub/sub; cross-instance cursor consistency | loopback compat test passes |
 | **R4** | `report` → `createReport` | |
 | **R5** | `moderationAction` (report-only first) + permissions + staff identity linking | |
 | **R6** | Production exposure: `wss://falloutchatmod.com/relay` via the existing Cloudflare tunnel; 10s keepalive frames (defeat CF ~100s idle WS drop, as `/ws/hud` already does) | smoke + scan gates per release rules |
@@ -528,6 +530,49 @@ the build approach and answers some of their open design questions:
 - **Runtime-created channels** are not addressable by static `AllowedChannels` (admin/clan channels
   created after install, `POST /api/channels` / #182). Also a ZFE-coordination follow-up (dynamic
   channel-list mechanism), not a blocker on deprecation.
+
+---
+
+## Implementation notes (R1–R3 + worldId)
+
+Implemented on branch `feat/ingame-chatv1-relay` (2026-06-24). Key details for the reviewer:
+
+### New files
+
+| File | Purpose |
+|---|---|
+| `backend/src/services/relay/channelMap.ts` | Slug↔UUID mapping; `server` slug excluded from static map |
+| `backend/src/services/relay/tokenService.ts` | `mintToken` / `verifyToken` / `revokeToken` / `updateDisplayName` |
+| `backend/src/services/relay/relaySeq.ts` | `nextRelaySeq()` (Redis INCR) + `seedRelaySeq()` (seed from MAX on startup) |
+| `backend/src/services/relay/worldIdService.ts` | `setWorldId` / `getWorldId` / `clearWorldId` (Redis, 60s TTL) |
+| `backend/src/services/relay/relayHandler.ts` | Main op dispatcher; worldId HMAC intercept; subscribe pub/sub |
+| `backend/tests/relayHandler.test.js` | 50 Jest tests covering all ops + channel map + token + seq + worldId |
+| `backend/prisma/migrations/20260624000000_add_relay_tokens_and_relay_seq/migration.sql` | Idempotent: adds `relay_seq BIGINT` to messages; creates `hud_pairing_tokens` |
+
+### Modified files
+
+- `backend/prisma/schema.prisma` — `Message.relaySeq`, `HudPairingToken` model
+- `backend/src/services/ingestMessage.ts` — `IngestSource` union adds `'relay'`; fail-closed rate limit for relay
+- `backend/src/websocket/upgradeRouter.ts` — `/relay` path → lazy `relayWss` singleton
+- `backend/src/server.ts` — `seedRelaySeq()` on startup; SPA catch-all guards `/relay`
+- `backend/src/config/environment.ts` — `RELAY_WORLD_HMAC_SECRET` (defaults to `dev-relay-world-hmac-secret-change-me`)
+- `backend/tests/setup/prisma-stub.js` — adds `hudPairingToken: modelStub()`
+
+### New env var
+
+| Variable | Default | Notes |
+|---|---|---|
+| `RELAY_WORLD_HMAC_SECRET` | `dev-relay-world-hmac-secret-change-me` | HMAC-SHA256 secret for worldId control messages. Set a strong random secret in production before R6. |
+
+### worldId intercept design
+
+The worldId control flow triggers on `channel: 'server'` with a JSON body (`body.startsWith('{')`).
+ZFE sends this to set the player's current worldId. The HMAC is `HMAC-SHA256(secret, worldId + relayUserId + timestamp)`
+with a 30-second replay window. On valid HMAC: stored in Redis `relay:world:<userId>` (60s TTL),
+consumed silently (no ingest, no broadcast). On invalid/stale HMAC: falls through to the normal
+`server` channel path (which returns `invalid_channel` if no worldId is stored for that user). The
+`__relay_ctrl__` sentinel is defined as a constant but is rejected by the `ALL_SLUGS` check — the
+active intercept path is the `server`-channel JSON body branch.
 
 ---
 

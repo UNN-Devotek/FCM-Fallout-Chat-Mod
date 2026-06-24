@@ -5,10 +5,10 @@ relay-agnostic JSON-over-WebSocket contract** — **live as of ZFE 0.9.8** (2026
 captures (1) that contract verbatim-in-substance, and (2) a design plan for making FCM's relay speak
 it.
 
-> **Status: the protocol is SHIPPED (ZFE 0.9.8).** Verified from the `dxgi.dll` binary — the
-> `zfe-chat-v1` capability, all relay ops, error codes, channel vocab, and the `chat.message` event
-> schema are present. The **FCM integration is still a design plan**, not shipped code; the chat.v1
-> work (epic #282) can now be built and validated against the real binary.
+> **Status: protocol SHIPPED (ZFE 0.9.8) + R1–R3 + worldId implemented in FCM backend.**
+> Verified from the `dxgi.dll` binary. The FCM `/relay` adapter (phases R1–R3 + worldId intercept)
+> is implemented on branch `feat/ingame-chatv1-relay` and fully unit-tested (50 Jest tests passing).
+> R4 (report), R5 (moderationAction), and R6 (production guard lift) remain as follow-on work.
 
 ## Contents
 

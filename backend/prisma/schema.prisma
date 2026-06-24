@@ -74,6 +74,8 @@ model User {
   giveawaysCreated     Giveaway[]         @relation("GiveawaysCreated")
   giveawaysWon         Giveaway[]         @relation("GiveawaysWon")
   giveawayEntries      GiveawayEntry[]    @relation("GiveawayEntries")
+  hudPairingTokens        HudPairingToken[]
+  hudPairingTokensLinked  HudPairingToken[] @relation("HudPairingTokenLinkedUser")
 
   @@index([installToken])
   @@index([steamId])
@@ -134,9 +136,10 @@ model Message {
   userId          String   @map("user_id") @db.Uuid
   channelId       String   @map("channel_id") @db.Uuid
   parentChannelId String?  @map("parent_channel_id") @db.Uuid
-  source          String   @default("game") // 'game' | 'discord' | 'hud'
+  source          String   @default("game") // 'game' | 'discord' | 'hud' | 'relay'
   isDeleted       Boolean  @default(false) @map("is_deleted")
   metadata        Json?    // optional structured payload (e.g. party_invite embed)
+  relaySeq        BigInt?  @map("relay_seq") // monotonic relay cursor (relay source only)
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   // Relations
@@ -148,6 +151,7 @@ model Message {
   @@index([parentChannelId, createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
   @@index([isDeleted, channelId, createdAt(sort: Desc)])
+  @@index([relaySeq], map: "messages_relay_seq_idx")
   @@map("messages")
 }
 
@@ -909,4 +913,34 @@ model GiveawayEntry {
   @@unique([giveawayId, userId])
   @@index([userId])
   @@map("giveaway_entries")
+}
+
+// =============================================================================
+// HUD Pairing Tokens — relay token store for ZFE chat.v1 clients.
+// Each row is a single token issued to a ZFE client. Tokens are argon2id-hashed;
+// the raw token is returned once at mint time and never stored. Prefix (first 8
+// chars of the base64url token) is indexed for fast lookup without scanning all
+// hashes. revokedAt is set by moderation actions or on ban.
+// =============================================================================
+model HudPairingToken {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tokenHash    String    @map("token_hash")
+  tokenPrefix  String    @map("token_prefix")
+  fo76Name     String    @map("fo76_name")
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(6)
+  lastUsedAt   DateTime? @map("last_used_at") @db.Timestamptz(6)
+  userId       String    @map("user_id") @db.Uuid
+  role         String    @default("user")
+  // linkedUserId is NULL until the user redeems a link code via /api/link/redeem.
+  // NULL = "limited" (can receive but not send). Set by markRelayTokenLinked().
+  linkedUserId String?   @map("linked_user_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user       User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  linkedUser User? @relation("HudPairingTokenLinkedUser", fields: [linkedUserId], references: [id], onDelete: SetNull)
+
+  @@index([tokenPrefix])
+  @@index([userId])
+  @@index([linkedUserId])
+  @@map("hud_pairing_tokens")
 }

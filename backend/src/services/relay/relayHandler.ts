@@ -1,0 +1,725 @@
+/**
+ * relayHandler.ts — ZFE chat.v1 JSON-frame op dispatcher.
+ *
+ * Handles a single WebSocket connection on the /relay path. Supports two
+ * connection modes:
+ *   - Short-lived RPC: one request frame → one response frame (register, hello,
+ *     send, poll, report, moderationAction).
+ *   - Long-lived push: subscribe → acknowledgement + live event push.
+ *
+ * Identity model:
+ *   - register: server mints userId + token; stores argon2id hash; returns token
+ *     ONCE (never again). User is "limited" until linked (no Discord/Nexus account).
+ *   - hello: token re-auth; may update displayName. Never returns the token.
+ *   - Every subsequent op re-validates the token per frame.
+ *
+ * worldId intercept (#293):
+ *   A reserved control message is intercepted BEFORE ingestMessage when the body
+ *   matches the signed worldId sentinel. It is consumed, never broadcast or persisted.
+ *
+ * Dev-only guard: refuses to accept connections when NODE_ENV==='production'
+ * (mirrors hudPushTcp.ts pattern). Lifted explicitly at R6 rollout.
+ */
+
+import * as crypto from 'crypto';
+import type WebSocket from 'ws';
+import type http from 'http';
+import { getRedisClient, getSubscriberClient } from '../../config/redis';
+import prisma from '../../config/prisma';
+import logger from '../../config/logger';
+import env, { DEV_DEFAULT_RELAY_WORLD_HMAC_SECRET } from '../../config/environment';
+import { mintToken, verifyToken, revokeToken, updateDisplayName, markRelayTokenLinked } from './tokenService';
+import { slugToChannelId, channelIdToSlug, ALL_SLUGS } from './channelMap';
+import { setWorldId, getWorldId } from './worldIdService';
+import { nextRelaySeq } from './relaySeq';
+import { ingestMessage, finalizeMessage } from '../ingestMessage';
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+/**
+ * NUL-delimited sentinel that the SWF prepends to worldId control messages
+ * when it sends on channel 'server'.
+ * Wire format: "\x00fcm.world.v1\x00<worldId>|<relayUserId>|<ts>|<hmac>"
+ */
+const WORLD_ID_SENTINEL_PREFIX  = '\x00fcm.world.v1\x00';
+const WORLD_ID_HMAC_WINDOW_S    = 30;    // 30-second replay window (ts is unix SECONDS)
+const POLL_HISTORY_LIMIT        = 30;    // initial history window on cursor=0
+const REDIS_BROADCAST_CHANNEL   = 'chat:broadcast';
+const LINK_URL                  = 'falloutchatmod.com/link';
+
+// ── Link-code service (dynamic import — WT2 may not yet be merged) ────────────
+
+/**
+ * Issue a link code for a limited relay identity.
+ * Dynamic import so this module compiles solo before WT2 merges into the same
+ * deployment. If WT2's linkCodeService is absent, returns null (no-op).
+ */
+function issueLinkCode(relayUserId: string): Promise<string | null> {
+  // Use require() so this works in both CJS (Jest/tests) and bundled ESM.
+  // Dynamic import() fails in Jest's CJS transform context without --experimental-vm-modules.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+    const svc: any = require('../../services/linkCodeService');
+    if (typeof svc.issueLinkCode === 'function') {
+      return Promise.resolve(svc.issueLinkCode(relayUserId));
+    }
+  } catch (err: any) {
+    if (
+      err?.code === 'MODULE_NOT_FOUND' ||
+      (err?.message && (err.message as string).includes('Cannot find module'))
+    ) {
+      // WT2 not yet merged — graceful no-op.
+    } else {
+      logger.warn({ err, relayUserId }, '[relayHandler] issueLinkCode failed');
+    }
+  }
+  return Promise.resolve(null);
+}
+
+/**
+ * Push a SYSTEM NOTICE event to a subscriber connection immediately.
+ * Used to deliver the link code to the SWF client right after register/hello.
+ *
+ * Canonical shape (canonical — WT3 gamemod-dev matches on this):
+ *   { id: <cursor>, kind: 'chat.message', channel: 'system',
+ *     senderUserId: 'system', senderDisplayName: 'FCM',
+ *     body: 'LINK REQUIRED - visit falloutchatmod.com/link, sign in, and enter code: XXXX-XXXX (expires 10m)',
+ *     targetUserId: '' }
+ *
+ * Delivered directly on `ws` — not broadcast (only the registering/hello-ing client sees it).
+ */
+async function pushLinkNotice(ws: WebSocket, relayUserId: string): Promise<void> {
+  const code = await issueLinkCode(relayUserId);
+  // Format code as XXXX-XXXX if it looks like an 8-char hex/alphanum string.
+  const formatted = code && code.length === 8
+    ? `${code.slice(0, 4)}-${code.slice(4)}`
+    : code ?? '????-????';
+
+  const redis  = await getRedisClient();
+  const cursor = await redis.incr('relay:seq');
+
+  const event = {
+    id:                cursor,
+    kind:              'chat.message',
+    channel:           'system',
+    senderUserId:      'system',
+    senderDisplayName: 'FCM',
+    body:              `LINK REQUIRED - visit ${LINK_URL}, sign in, and enter code: ${formatted} (expires 10m)`,
+    targetUserId:      '',
+  };
+  send(ws, { op: 'event', cursor, event });
+}
+
+// ── Error envelope ────────────────────────────────────────────────────────────
+
+/**
+ * Stable error codes:
+ *   auth_token_invalid  — token not found / stale
+ *   auth_token_revoked  — explicitly revoked
+ *   user_banned         — user is banned
+ *   rate_limited        — hit ws_rate limit
+ *
+ * Operational codes (surfaced to SWF but ZFE takes no special action):
+ *   permission_denied   — limited identity (not linked), or insufficient role
+ *   invalid_channel     — unknown/omitted slug
+ *   message_too_long    — body > 500 chars
+ *   user_muted          — user is muted
+ *   invalid_action      — unknown moderationAction action
+ */
+function errEnvelope(code: string, message: string): object {
+  return { success: false, error: { code, message } };
+}
+
+function send(ws: WebSocket, payload: object): void {
+  try {
+    ws.send(JSON.stringify(payload));
+  } catch { /* already closed */ }
+}
+
+// ── worldId HMAC verification ─────────────────────────────────────────────────
+
+/**
+ * Verify a worldId control message sent by the SWF on channel 'server'.
+ *
+ * Wire format (body):
+ *   "\x00fcm.world.v1\x00<worldId>|<relayUserId>|<ts>|<hmac>"
+ *
+ * Fields (pipe-delimited, after stripping the sentinel prefix):
+ *   worldId     — the player's current server WorldId from BSUIDataManager
+ *   relayUserId — must match the authenticated socket's userId
+ *   ts          — unix SECONDS (decimal string); freshness window ±30 s
+ *   hmac        — HMAC-SHA256(RELAY_WORLD_HMAC_SECRET, worldId + relayUserId + ts)
+ *                 over the raw concatenation of the three field values, no separators
+ *
+ * Returns { worldId } on success, null on any failure (wrong prefix, stale ts,
+ * mismatched relayUserId, bad HMAC).
+ */
+function verifyWorldIdHmac(body: string, socketUserId: string): { worldId: string } | null {
+  // 1. Sentinel prefix check.
+  if (!body.startsWith(WORLD_ID_SENTINEL_PREFIX)) return null;
+
+  const payload = body.slice(WORLD_ID_SENTINEL_PREFIX.length);
+  const parts   = payload.split('|');
+  if (parts.length !== 4) return null;
+
+  const [worldId, sentUserId, tsStr, hmac] = parts;
+  if (!worldId || !sentUserId || !tsStr || !hmac) return null;
+
+  // 2. relayUserId must match the authenticated socket userId.
+  if (sentUserId !== socketUserId) return null;
+
+  // 3. Freshness check (ts is unix SECONDS).
+  const ts  = Number(tsStr);
+  if (!Number.isFinite(ts)) return null;
+  const nowS = Date.now() / 1000;
+  if (Math.abs(nowS - ts) > WORLD_ID_HMAC_WINDOW_S) return null;
+
+  // 4. HMAC verification.
+  const secret = env.RELAY_WORLD_HMAC_SECRET ?? '';
+  if (!secret) return null;
+
+  // Warn in production if the secret is still the dev placeholder.
+  if (env.NODE_ENV === 'production' && secret === DEV_DEFAULT_RELAY_WORLD_HMAC_SECRET) {
+    logger.warn('[relayHandler] RELAY_WORLD_HMAC_SECRET is still the dev placeholder in production — worldId control messages will be rejected');
+    return null;
+  }
+
+  // HMAC is over raw concatenation of the three field values (no separators).
+  const expected = crypto
+    .createHmac('sha256', secret)
+    .update(`${worldId}${sentUserId}${tsStr}`)
+    .digest('hex');
+
+  // timingSafeEqual throws on length mismatch — guard against malformed hmac.
+  let valid = false;
+  try {
+    const aHmac = Buffer.from(hmac,     'hex');
+    const aExp  = Buffer.from(expected, 'hex');
+    valid = aHmac.length === aExp.length && crypto.timingSafeEqual(aHmac, aExp);
+  } catch {
+    return null;
+  }
+  return valid ? { worldId } : null;
+}
+
+// ── Subscribe registry ────────────────────────────────────────────────────────
+
+interface SubscriberState {
+  ws: WebSocket;
+  userId: string;
+  cursor: number;
+  worldId: string | null;
+}
+
+// Module-level subscriber set — cleared on disconnect.
+const subscribers = new Set<SubscriberState>();
+
+// Redis pub/sub listener — initialised once per process.
+let pubSubReady = false;
+
+async function ensurePubSub(): Promise<void> {
+  if (pubSubReady) return;
+  pubSubReady = true; // set before await to prevent double-init races
+
+  try {
+    const sub = await getSubscriberClient();
+    await sub.subscribe(REDIS_BROADCAST_CHANNEL, (message: string) => {
+      let payload: Record<string, unknown>;
+      try { payload = JSON.parse(message); } catch { return; }
+
+      // We only forward chat:message events.
+      if (payload.type !== 'chat:message') return;
+      const p = payload.payload as Record<string, unknown>;
+      if (!p) return;
+
+      const relaySeq    = typeof p.relaySeq === 'number' ? p.relaySeq : null;
+      const channelId   = typeof p.channelId === 'string' ? p.channelId : null;
+      const slug        = channelId ? channelIdToSlug(channelId) : null;
+
+      // No relaySeq = not a relay-originating message; skip
+      if (relaySeq === null) return;
+
+      const eventObj = {
+        id:                relaySeq,
+        kind:              'chat.message',
+        messageId:         p.id,
+        channel:           slug ?? channelId, // fall back to UUID if no slug
+        senderUserId:      p.userId,
+        senderDisplayName: p.username,
+        body:              p.content,
+        targetUserId:      '',
+      };
+
+      const frame = JSON.stringify({ op: 'event', cursor: relaySeq, event: eventObj });
+
+      for (const sub of subscribers) {
+        if (sub.cursor >= relaySeq) continue; // already seen
+        // TODO R7: worldId filter for 'server' channel once worldId is tracked on subscriber
+        try { sub.ws.send(frame); } catch { /* already closed */ }
+        sub.cursor = relaySeq;
+      }
+    });
+  } catch (err) {
+    pubSubReady = false;
+    logger.error({ err }, '[relayHandler] Redis pub/sub subscription failed');
+  }
+}
+
+// ── Op handlers ───────────────────────────────────────────────────────────────
+
+async function handleRegister(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
+  const displayName = typeof frame.displayName === 'string' ? frame.displayName.trim() : '';
+  if (!displayName) {
+    send(ws, errEnvelope('invalid_request', 'displayName is required'));
+    return;
+  }
+
+  const { userId, token, role } = await mintToken(displayName);
+  send(ws, {
+    success:     true,
+    userId:      `user_${userId.replace(/-/g, '')}`,
+    displayName,
+    token,
+    role,
+    // New registrations are always limited — state='limited' until link flow completes.
+    state:       'limited',
+  });
+
+  // Push a SYSTEM NOTICE with the link code so the SWF can surface it in-game
+  // immediately after register. Non-blocking — failure is logged but doesn't fail
+  // the register response (which is already sent above).
+  pushLinkNotice(ws, userId).catch((err) =>
+    logger.warn({ err, userId }, '[relayHandler] pushLinkNotice failed on register'),
+  );
+}
+
+async function handleHello(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
+  const rawToken = typeof frame.token === 'string' ? frame.token : null;
+  if (!rawToken) {
+    send(ws, errEnvelope('auth_token_invalid', 'token is required'));
+    return;
+  }
+
+  const identity = await verifyToken(rawToken);
+  if (!identity) {
+    send(ws, errEnvelope('auth_token_invalid', 'Token not found or invalid'));
+    return;
+  }
+
+  // Check if the user is banned.
+  const user = await prisma.user.findUnique({
+    where: { id: identity.userId },
+    select: { isBanned: true },
+  });
+  if (user?.isBanned) {
+    send(ws, errEnvelope('user_banned', 'This account is banned'));
+    return;
+  }
+
+  // Update displayName if provided and different.
+  const newName = typeof frame.displayName === 'string' ? frame.displayName.trim() : '';
+  if (newName && newName !== identity.fo76Name) {
+    await updateDisplayName(identity.userId, newName);
+  }
+
+  const state = identity.isLinked ? 'authenticated' : 'limited';
+
+  send(ws, {
+    success:     true,
+    userId:      `user_${identity.userId.replace(/-/g, '')}`,
+    displayName: newName || identity.fo76Name,
+    role:        identity.role,
+    state,
+  });
+
+  // If still limited: push a fresh SYSTEM NOTICE with a (refreshed) link code
+  // so the SWF always surfaces the correct code on reconnect.
+  if (!identity.isLinked) {
+    pushLinkNotice(ws, identity.userId).catch((err) =>
+      logger.warn({ err, userId: identity.userId }, '[relayHandler] pushLinkNotice failed on hello'),
+    );
+  }
+}
+
+/**
+ * getAuthState — reflects the current link state for the SWF to gate its input.
+ *
+ * Response shape:
+ *   { success: true, userId, state: 'authenticated'|'limited', permissions: { canReport, canSend } }
+ *
+ * userId is always populated (the SWF needs it for the worldId HMAC even while limited).
+ * state='authenticated' only when linked_user_id is set; otherwise 'limited'.
+ * permissions.canSend reflects isLinked (same gate as handleSend).
+ * permissions.canReport: false for now (R4 wires this); always false until R4 merges.
+ */
+async function handleGetAuthState(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
+  const rawToken = typeof frame.token === 'string' ? frame.token : null;
+  if (!rawToken) {
+    send(ws, errEnvelope('auth_token_invalid', 'token is required'));
+    return;
+  }
+
+  const identity = await verifyToken(rawToken);
+  if (!identity) {
+    send(ws, errEnvelope('auth_token_invalid', 'Token not found or invalid'));
+    return;
+  }
+
+  const state = identity.isLinked ? 'authenticated' : 'limited';
+
+  send(ws, {
+    success: true,
+    userId:  `user_${identity.userId.replace(/-/g, '')}`,
+    state,
+    permissions: {
+      canSend:   identity.isLinked,
+      canReport: false, // R4: wired when report op is fully implemented
+    },
+  });
+}
+
+async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
+  const rawToken = typeof frame.token === 'string' ? frame.token : null;
+  if (!rawToken) {
+    send(ws, errEnvelope('auth_token_invalid', 'token is required'));
+    return;
+  }
+
+  const identity = await verifyToken(rawToken);
+  if (!identity) {
+    send(ws, errEnvelope('auth_token_invalid', 'Token not found or invalid'));
+    return;
+  }
+
+  // Check ban.
+  const user = await prisma.user.findUnique({
+    where: { id: identity.userId },
+    select: { isBanned: true, isMuted: true },
+  });
+  if (user?.isBanned) {
+    send(ws, errEnvelope('user_banned', 'This account is banned'));
+    return;
+  }
+  if (user?.isMuted) {
+    send(ws, errEnvelope('user_muted', 'You are currently muted'));
+    return;
+  }
+
+  // Auth gate: limited identities cannot send.
+  if (!identity.isLinked) {
+    send(ws, errEnvelope('permission_denied', 'Account not linked — complete the link flow at falloutchatmod.com/link'));
+    return;
+  }
+
+  const slug = typeof frame.channel === 'string' ? frame.channel : '';
+  const body = typeof frame.body === 'string' ? frame.body : '';
+
+  // ── worldId control-message intercept (TOP of send, before ALL_SLUGS check) ──
+  // The SWF sends a NUL-sentinel-prefixed body on channel 'server' to set the
+  // player's current worldId. Intercept, verify, store, and drop (no
+  // broadcast/persist/cursor). Failures fall through silently so the 'server'
+  // channel path handles them (returns invalid_channel if no worldId stored).
+  if (slug === 'server' && body.startsWith(WORLD_ID_SENTINEL_PREFIX)) {
+    const ctrl = verifyWorldIdHmac(body, identity.userId);
+    if (ctrl) {
+      await setWorldId(identity.userId, ctrl.worldId);
+      send(ws, { success: true, messageId: '' });
+      return;
+    }
+    // Bad/stale HMAC — fall through; 'server' without a stored worldId → invalid_channel below.
+  }
+
+  if (!ALL_SLUGS.includes(slug)) {
+    send(ws, errEnvelope('invalid_channel', `Unknown channel: ${slug}`));
+    return;
+  }
+
+  if (body.length > 500) {
+    send(ws, errEnvelope('message_too_long', 'Message body exceeds 500 characters'));
+    return;
+  }
+
+  // Discard targetUserId on all non-whisper sends (whisper is omitted).
+  // (frame.targetUserId is intentionally ignored here)
+
+  // Resolve channel UUID.
+  let channelId: string | null = null;
+  if (slug === 'server') {
+    const worldId = await getWorldId(identity.userId);
+    if (!worldId) {
+      send(ws, errEnvelope('invalid_channel', 'No active server session — send worldId first'));
+      return;
+    }
+    // Server channel is the worldId-scoped session room. FCM uses world-session
+    // scope; we route to General as a fallback until world-scope is wired in.
+    // TODO(R2+): resolve to the session-scoped room channel by worldId.
+    channelId = env.HUD_DEFAULT_CHANNEL_ID;
+  } else {
+    channelId = slugToChannelId(slug);
+    if (!channelId) {
+      send(ws, errEnvelope('invalid_channel', `Channel '${slug}' is not mapped`));
+      return;
+    }
+  }
+
+  // Assign relay cursor BEFORE ingestMessage so it is included in the broadcast.
+  const relaySeq = await nextRelaySeq();
+
+  const result = await ingestMessage({
+    userId:    identity.userId,
+    channelId,
+    rawContent: body,
+    source:    'relay',
+  });
+
+  if (!result.ok) {
+    const code =
+      result.reason === 'muted'          ? 'user_muted'      :
+      result.reason === 'rate-limited'   ? 'rate_limited'    :
+      result.reason === 'invalid-channel' ? 'invalid_channel' :
+      result.reason === 'channel-not-found' ? 'invalid_channel' :
+      result.reason === 'invalid-content' ? 'message_too_long' :
+      'permission_denied';
+    send(ws, errEnvelope(code, result.reason ?? 'Send rejected'));
+    return;
+  }
+
+  // ingestMessage calls finalizeMessage internally — we need to also push the
+  // relaySeq. Because finalizeMessage is called inside ingestMessage, we do a
+  // second finalizeMessage call only for relay source to attach the seq.
+  // Actually: ingestMessage already called finalizeMessage and broadcast happened
+  // without relaySeq. We need to amend the flow.
+  //
+  // DESIGN NOTE: Since ingestMessage → finalizeMessage already broadcast without
+  // relaySeq, we need to re-broadcast with relaySeq for subscribers.
+  // The relay's pub/sub listener filters on relaySeq presence, so this second
+  // emit is the one subscribers will see.
+  // The messageId from the first ingest is reused.
+  //
+  // This is a known limitation of the current architecture — the relay path
+  // should call finalizeMessage directly rather than through ingestMessage to
+  // avoid the double broadcast. For now the first broadcast (without relaySeq)
+  // will be ignored by the relay subscriber (no relaySeq = skipped), and the
+  // relay path emits a second broadcast with relaySeq. Non-relay WS clients
+  // see only the first (which is fine).
+  //
+  // TODO: refactor ingestMessage to accept a pre-computed relaySeq and pass it
+  // through to finalizeMessage — avoids the double broadcast entirely.
+
+  // Re-broadcast with relaySeq by publishing to Redis directly.
+  try {
+    const redis = await getRedisClient();
+    const slug2 = channelIdToSlug(channelId) ?? slug;
+    const rebroadcast = {
+      type: 'chat:message',
+      payload: {
+        id:        result.messageId,
+        content:   body,
+        username:  identity.fo76Name,
+        userId:    identity.userId,
+        channelId,
+        source:    'relay',
+        timestamp: new Date().toISOString(),
+        relaySeq,
+      },
+    };
+    await redis.publish(REDIS_BROADCAST_CHANNEL, JSON.stringify(rebroadcast));
+  } catch (err) {
+    logger.warn({ err }, '[relayHandler] relay-seq rebroadcast failed');
+  }
+
+  send(ws, { success: true, messageId: result.messageId });
+}
+
+async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
+  const rawToken = typeof frame.token === 'string' ? frame.token : null;
+  if (!rawToken) {
+    send(ws, errEnvelope('auth_token_invalid', 'token is required'));
+    return;
+  }
+
+  const identity = await verifyToken(rawToken);
+  if (!identity) {
+    send(ws, errEnvelope('auth_token_invalid', 'Token not found or invalid'));
+    return;
+  }
+
+  const cursor = typeof frame.cursor === 'number' ? frame.cursor : 0;
+  const max    = Math.min(typeof frame.max === 'number' ? frame.max : 64, 100);
+
+  let rows: Array<{
+    id: string;
+    relay_seq: bigint | null;
+    content: string;
+    user_id: string;
+    channel_id: string;
+    username: string;
+    fo76_account_name: string | null;
+  }>;
+
+  if (cursor === 0) {
+    // Initial history window.
+    rows = await prisma.$queryRaw`
+      SELECT m.id, m.relay_seq, m.content, m.user_id,
+             m.channel_id,
+             COALESCE(u.fo76_account_name, u.discord_display_name, u.username) AS username,
+             u.fo76_account_name
+      FROM   messages m
+      JOIN   users    u ON u.id = m.user_id
+      JOIN   channels c ON c.id = m.channel_id
+      WHERE  m.relay_seq IS NOT NULL
+        AND  c.parent_id IS NOT NULL
+        AND  NOT c.is_archived
+        AND  NOT m.is_deleted
+      ORDER BY m.relay_seq DESC
+      LIMIT  ${POLL_HISTORY_LIMIT}
+    `;
+    rows = rows.reverse(); // oldest first
+  } else {
+    rows = await prisma.$queryRaw`
+      SELECT m.id, m.relay_seq, m.content, m.user_id,
+             m.channel_id,
+             COALESCE(u.fo76_account_name, u.discord_display_name, u.username) AS username,
+             u.fo76_account_name
+      FROM   messages m
+      JOIN   users    u ON u.id = m.user_id
+      JOIN   channels c ON c.id = m.channel_id
+      WHERE  m.relay_seq > ${BigInt(cursor)}
+        AND  c.parent_id IS NOT NULL
+        AND  NOT c.is_archived
+        AND  NOT m.is_deleted
+      ORDER BY m.relay_seq ASC
+      LIMIT  ${max}
+    `;
+  }
+
+  const events = rows.map((row) => ({
+    id:                Number(row.relay_seq),
+    kind:              'chat.message',
+    messageId:         row.id,
+    channel:           channelIdToSlug(row.channel_id) ?? row.channel_id,
+    senderUserId:      row.user_id,
+    senderDisplayName: row.username,
+    body:              row.content,
+    targetUserId:      '',
+  }));
+
+  send(ws, { success: true, events });
+}
+
+async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
+  const rawToken = typeof frame.token === 'string' ? frame.token : null;
+  if (!rawToken) {
+    send(ws, errEnvelope('auth_token_invalid', 'token is required'));
+    return;
+  }
+
+  const identity = await verifyToken(rawToken);
+  if (!identity) {
+    send(ws, errEnvelope('auth_token_invalid', 'Token not found or invalid'));
+    return;
+  }
+
+  // Check ban.
+  const user = await prisma.user.findUnique({
+    where: { id: identity.userId },
+    select: { isBanned: true },
+  });
+  if (user?.isBanned) {
+    send(ws, errEnvelope('user_banned', 'This account is banned'));
+    return;
+  }
+
+  const cursor = typeof frame.cursor === 'number' ? frame.cursor : 0;
+  const worldId = await getWorldId(identity.userId);
+
+  const state: SubscriberState = {
+    ws,
+    userId: identity.userId,
+    cursor,
+    worldId,
+  };
+  subscribers.add(state);
+
+  // Ensure pub/sub is wired.
+  await ensurePubSub();
+
+  send(ws, {
+    success:     true,
+    op:          'subscribed',
+    cursor,
+    userId:      `user_${identity.userId.replace(/-/g, '')}`,
+    displayName: identity.fo76Name,
+    role:        identity.role,
+  });
+
+  // Clean up subscriber on disconnect.
+  ws.once('close', () => {
+    subscribers.delete(state);
+  });
+}
+
+// ── Re-export for WT2 inter-agent dynamic import ──────────────────────────────
+
+// WT2's /api/link/redeem does:
+//   import('../../src/services/relay/relayIdentityService').then(m => m.markRelayTokenLinked(...))
+// We expose the function from here so WT2 can resolve it without needing a
+// separate relayIdentityService module. The path used in link.ts routes to
+// relayIdentityService — create a thin re-export shim there too.
+export { markRelayTokenLinked };
+
+// ── Main entry point ──────────────────────────────────────────────────────────
+
+/**
+ * Handle one WebSocket connection on the /relay path.
+ * Dispatches JSON frames by op field. The connection may be short-lived (RPC)
+ * or long-lived (subscribe). All errors return the stable error envelope.
+ */
+export function handleRelayConnection(ws: WebSocket, _req: http.IncomingMessage): void {
+  // Dev-only guard — mirrors hudPushTcp.ts initHudPushTcp pattern.
+  if (env.NODE_ENV === 'production') {
+    logger.warn('[relayHandler] /relay connection refused: not yet exposed in production (R6 lifts this guard)');
+    ws.close(1008, 'relay not available in production');
+    return;
+  }
+
+  ws.on('message', async (data) => {
+    let frame: Record<string, unknown>;
+    try {
+      frame = JSON.parse(data.toString());
+    } catch {
+      send(ws, errEnvelope('invalid_request', 'Frame must be valid JSON'));
+      return;
+    }
+
+    const op = typeof frame.op === 'string' ? frame.op : '';
+
+    try {
+      switch (op) {
+        case 'register':        await handleRegister(ws, frame); break;
+        case 'hello':           await handleHello(ws, frame); break;
+        case 'getAuthState':    await handleGetAuthState(ws, frame); break;
+        case 'send':            await handleSend(ws, frame); break;
+        case 'poll':            await handlePoll(ws, frame); break;
+        case 'subscribe':       await handleSubscribe(ws, frame); break;
+        case 'report':
+          // R4: placeholder — returns success for now; full implementation in R4
+          send(ws, { success: true, status: 'reported' });
+          break;
+        case 'moderationAction':
+          // R5: placeholder — returns permission_denied for non-staff
+          send(ws, errEnvelope('permission_denied', 'Moderation actions require a linked staff account'));
+          break;
+        default:
+          send(ws, errEnvelope('invalid_request', `Unknown op: ${op}`));
+      }
+    } catch (err) {
+      logger.error({ err, op }, '[relayHandler] unhandled error in op handler');
+      send(ws, errEnvelope('internal_error', 'Internal server error'));
+    }
+  });
+
+  ws.on('error', (err) => {
+    logger.warn({ err }, '[relayHandler] WebSocket error');
+  });
+}
