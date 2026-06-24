@@ -1,27 +1,52 @@
-# FCMChatWidget — Build & Install Guide
+# FCMChatWidget — Build & Install Guide (chat.v1)
 
 ## What this builds
 
-`FCMChatWidget.swf` — a HUDModLoader widget that adds an interactive amber-themed
-chat UI to Fallout 76's HUD. It receives the FCM community feed (same socket as
-FCMBridge) and lets the player send messages using the HUDModLoader text-entry API.
+`FCMChatWidget.swf` inside `FCMChatWidget.ba2` — a HUDModLoader widget that renders
+FCM community chat inside Fallout 76's HUD, using the ZFE chat.v1 native API (ZFE 0.9.8+).
 
-> **Untested caveat:** The `SharedHUDTools.TextEdit` / `FormatTextEdit` input path
-> has not yet been tested in-game. Bridge discovery, receive, and send protocol are
-> all proven by FCMBridge and the hudmenu-chat patch. The SharedHUDTools call path
-> is architecturally new for this project. See "Known gaps" below.
+The widget:
+- Discovers `__ZFE` on the parent HUDMenu frame via `findZfeApi()` — no env-var or
+  `child_bridge_access` workaround needed. HUDModLoader's `ApplicationDomain.currentDomain`
+  puts the widget in the same domain as HUDMenu, where ZFE installs `__ZFE`.
+- Calls `chat.v1.getRuntimeInfo` first to gate on `zfe-chat-online-v1` (requires ZFE 0.9.8+).
+- Connects via `chat.v1.connect`, polls via `chat.v1.pollEvents` (2 s cursor poll),
+  sends via `chat.v1.sendMessage` with slug-based channels.
+- Handles limited-state (unlinked account): receive-only, pinned link-code notice.
+- Self-reads `worldId` from BSUIDataManager, sends HMAC-SHA256 control message on the
+  `server` channel to bind the world-session room (EULA section 4(F)-safe: game's own HUD data).
 
 ---
 
 ## Prerequisites
 
-| Tool | Version | How to get |
-|------|---------|-----------|
-| Haxe | 4.3+ | `scoop install haxe` (Windows) or haxe.org |
-| Python 3 | any | for the mandatory SWF version-byte patch |
-| HUDModLoader | latest | Nexus — required at runtime |
-| ZFE (dxgi.dll + zfe.ini) | latest | required at runtime for socket |
-| ffdec (JPEXS) | 21.0.5+ | optional — for SWF inspection only |
+| Tool | Required | Notes |
+|------|----------|-------|
+| Haxe | build | 4.3+ |
+| Python 3 | build | stdlib only |
+| HUDModLoader | runtime | Nexus; provides HUDMenu shell + SharedHUDTools |
+| ZFE (dxgi.dll + zfe.ini) | runtime | 0.9.8+ required |
+
+---
+
+## Widget load mechanism — why a ba2 is required
+
+HUDModLoader reads `Data/hudmodloader.ini` (bare name per line) and calls:
+
+```actionscript
+// LoaderHelper.load() -- from decompiled source:
+this._loader.load(new URLRequest("FCMChatWidget.swf"),
+    new LoaderContext(false, ApplicationDomain.currentDomain));
+```
+
+`URLRequest("FCMChatWidget.swf")` is a **relative URL**. In Fallout 76's Scaleform/GFx
+context, relative URLs are resolved through the **archive virtual filesystem**. The loader
+SWF lives at `interface/hudmodloader.swf` inside HUDModLoader.ba2 -- so the relative URL
+resolves to `interface/FCMChatWidget.swf` inside any loaded ba2.
+
+A loose file at `Data/interface/FCMChatWidget.swf` is invisible unless
+`bInvalidateOlderFiles=1` and loose interface dirs are enabled. The ba2 path is clean
+and matches the distribution deliverable.
 
 ---
 
@@ -29,120 +54,208 @@ FCMBridge) and lets the player send messages using the HUDModLoader text-entry A
 
 Run from the `game-mods/FCMBridge/hudmodloader-chat/` directory.
 
-### 1. Compile
+### Step 1 -- Compile
 
 ```bash
-# Windows (Scoop Haxe path — adjust if installed elsewhere)
-/mnt/c/Users/<YourName>/scoop/shims/haxe.exe build.hxml
+# Staged toolchain:
+HAXE_STD_PATH=<buildtools>/haxe_*/std <buildtools>/haxe_*/haxe build.hxml
 
-# Or on Linux with system Haxe
+# System Haxe:
 haxe build.hxml
 ```
 
-This produces `FCMChatWidget.swf`.
+Produces `FCMChatWidget.swf` (CWS -- zlib-compressed, Haxe default).
 
-### 2. Patch the SWF version byte (MANDATORY)
+### Step 2 -- Patch SWF (CWS to FWS, version byte 32)
 
-Haxe writes SWF version byte 43 (Flash Player 32 in one encoding). FO76's Scaleform
-expects version byte 32. Without this patch the game ignores or crashes on the SWF.
+Scaleform requires FWS (uncompressed) with version byte 32.
+
+```python
+python3 - << 'EOF'
+import zlib, struct
+path = 'FCMChatWidget.swf'
+with open(path, 'rb') as f:
+    raw = f.read()
+sig = raw[:3]
+if sig == b'CWS':
+    body = zlib.decompress(raw[8:])
+    file_len = 8 + len(body)
+    header = b'FWS' + raw[3:4] + struct.pack('<I', file_len)
+    raw = bytearray(header + body)
+else:
+    raw = bytearray(raw)
+raw[3] = 32
+with open(path, 'wb') as f:
+    f.write(bytes(raw))
+print("Patched: FWS v32, %d bytes" % len(raw))
+EOF
+```
+
+### Step 3 -- Pack into FCMChatWidget.ba2
+
+`ba2tool.py` (in `hudmenu-chat/`) supports creating new BTDX GNRL ba2 archives. The
+Bethesda hash algorithm was reverse-engineered from HUDModLoader.ba2 known records and
+is verified at import time.
 
 ```bash
-python3 -c "
-with open('FCMChatWidget.swf','r+b') as f:
-    d = bytearray(f.read()); d[3]=32; f.seek(0); f.write(d)
-"
+python3 ../hudmenu-chat/ba2tool.py create \
+    FCMChatWidget.ba2 \
+    "interface/FCMChatWidget.swf=FCMChatWidget.swf"
 ```
 
-### 3. Copy the SWF
+Output record:
+- Internal path: `interface/FCMChatWidget.swf`
+- `nameHash=0x87ac17e5` (btdx_hash("fcmchatwidget"))
+- `dirHash=0xd2fdf873`  (btdx_hash("interface") -- same as HUDModLoader.ba2)
 
-HUDModLoader loads SWFs from the path listed in `hudmodloader.ini`. Default path
-matches what ships in the FCMBridge BA2:
-
-```
-Data/MCM/Config/FCMBridge/hudmodloader-chat/FCMChatWidget.swf
-```
-
-On Linux/WSL2:
+### Step 4 -- Install files
 
 ```bash
-cp FCMChatWidget.swf \
-   "/mnt/d/SteamLibrary/steamapps/common/Fallout76/Data/MCM/Config/FCMBridge/hudmodloader-chat/FCMChatWidget.swf"
+GAME="/mnt/d/SteamLibrary/steamapps/common/Fallout76"
+
+cp FCMChatWidget.ba2 "$GAME/Data/FCMChatWidget.ba2"
+cp FCMChat.ini       "$GAME/Data/FCMChat.ini"
+
+mkdir -p "$GAME/Data/ZFE/TextChat/fragments/"
+cp FCMChatWidget.ini "$GAME/Data/ZFE/TextChat/fragments/FCMChatWidget.ini"
 ```
 
-Create the directory first if it does not exist:
+### Step 5 -- Register the ba2
 
-```bash
-mkdir -p "/mnt/d/SteamLibrary/steamapps/common/Fallout76/Data/MCM/Config/FCMBridge/hudmodloader-chat/"
-```
-
-### 4. Copy the config file
-
-```bash
-cp FCMChat.ini \
-   "/mnt/d/SteamLibrary/steamapps/common/Fallout76/Data/FCMChat.ini"
-```
-
-The widget loads `../FCMChat.ini` relative to the SWF, which resolves to
-`Data/FCMChat.ini`. Edit x/y/width/height/fontSize/openKey/channel to taste.
-
-### 5. Add to hudmodloader.ini
-
-Append the entry from `hudmodloader.ini` in this directory to the game's
-`Data/hudmodloader.ini`. FCMChatWidget should appear **after** FCMBridge so it
-renders on top:
+In `Fallout76Custom.ini` `[Archive]`:
 
 ```ini
-[FCMChatWidget]
-file=Data/MCM/Config/FCMBridge/hudmodloader-chat/FCMChatWidget.swf
-reloadable=true
+[Archive]
+sResourceArchive2List=HUDModLoader.ba2, FCMChatWidget.ba2
 ```
 
-### 6. Launch the game
+If other ba2s are already listed, append `, FCMChatWidget.ba2`.
 
-Boot Fallout 76 with HUDModLoader active. The widget should appear at startup.
+### Step 6 -- Register with HUDModLoader
+
+Add to game's `Data/hudmodloader.ini` (bare name, no section or file= syntax):
+
+```
+FCMChatWidget
+```
+
+### Step 7 -- ZFE endpoint (if not already set)
+
+`Data/configuration/zfe.ini`:
+
+```ini
+[TextChat]
+Endpoint=wss://dev.falloutchatmod.com/relay
+```
+
+For local relay: `Endpoint=ws://127.0.0.1:7177/zfe-relay`
+
+The fragment supplies the dev default; `zfe.ini` overrides per-key.
+
+### Step 8 -- Launch the game
+
+Boot Fallout 76 with HUDModLoader and ZFE active. The widget loads automatically.
+
+---
+
+## Keybind configuration
+
+Two independent bindings control chat input. Keep them matching (default: `PAGE_DOWN`).
+
+### 1. ZFE native hotkey
+
+File: `Data/ZFE/TextChat/fragments/FCMChatWidget.ini`
+
+```ini
+[TextChat]
+OpenChatKey=PAGE_DOWN
+```
+
+User override (wins over fragment, per-key): `Data/configuration/zfe.ini` `[TextChat] OpenChatKey=...`
+
+### 2. HUDMod::UserEvent binding
+
+File: `Data/FCMChat.ini`
+
+```ini
+[FCMChat]
+openKey=PAGE_DOWN
+```
+
+### Valid key/action names
+
+| Value | Key |
+|-------|-----|
+| `Console` | Tilde / backtick |
+| `TeamChat` | T (default team chat) |
+| `PAGE_DOWN` | Page Down |
+| `NextPage` | Page Down (also used for channel cycling) |
+| `DiagnosticSnapshot` | Rarely used; safe fallback |
+
+---
+
+## Controls
+
+| Action | Binding |
+|--------|---------|
+| Open chat input | Page Down (configurable -- see above) |
+| Switch channel | `/g` `/t` `/e` `/i` `/r` in input, or Page Down (NextPage) |
+| Scroll | `scrollUp/Down()` -- implemented but not yet bound to a key |
+| Close input | Esc |
+
+Channels: `global` (GENERAL), `trade` (TRADING), `events` (EVENTS), `infests`
+(INFESTS), `raids` (RAIDS).
 
 ---
 
 ## Verifying it loaded
 
-1. Press **F12** in-game to open the HUDTools menu.
-2. FCMChatWidget should appear in the widget list marked "reloadable".
-3. Use the HUDTools reload button to hot-reload after a SWF change (no game restart needed).
-4. Check `%LocalAppData%\zfe.log` for lines tagged `[FCMChatWidget]` — they appear as
-   `Mod API [FCMChatWidget]` entries from `zfeLog()`.
-5. Press `~` (tilde) to open the chat input. Type a message and press Enter.
-6. Watch `backend/hud-diag.log` on the server for `HELLO-ACCEPTED` and `SEND ok=true` lines.
+Open `zfe.log` (Windows: `%LocalAppData%\zfe.log`; Linux/Proton: `~/.local/share/zfe/zfe.log`).
 
----
+Expected on load (ZFE found on first attempt):
 
-## Packaging into FCMBridge.ba2
+```
+[FCMChatWidget] info startup: FCMChatWidget 2.0.3 loaded
+[FCMChatWidget] info startup: BUILD=chatv1-widget
+[FCMChatWidget] info startup: zfe-chat-online-v1 OK
+[FCMChatWidget] info startup: found after 1 attempt(s)
+[FCMChatWidget] info hud: SharedHUDTools constructed + registered
+[FCMChatWidget] info connect: attempt=1 displayName=<YourName>
+[FCMChatWidget] info connect: connected
+[FCMChatWidget] info auth: userId=<prefix>...
+[FCMChatWidget] info auth: authState=authenticated
+[FCMChatWidget] info world: worldId changed; sending control message
+```
 
-If you want to distribute the widget inside the FCMBridge BA2 rather than as a
-loose file:
+If ZFE is still attaching when the widget loads, you may first see:
 
-1. The BA2 swapping toolchain lives in `game-mods/FCMBridge/tools/`.
-2. Add `FCMChatWidget.swf` and `FCMChat.ini` as new records using the same
-   GNRL packing approach documented in `hudmenu-chat/BUILD.md`.
-3. The loose-file path (`Data/MCM/Config/…`) is reliable for HUDModLoader widgets;
-   the BA2 path is optional but avoids loose-file loading quirks.
+```
+[HUD status bar] chat.v1: searching ZFE (1/30)...
+[HUD status bar] chat.v1: searching ZFE (2/30)...
+...then the startup lines above when found (up to ~30 s)
+```
+
+Expected on send:
+
+```
+[FCMChatWidget] info send: sent ch=global len=<n>
+```
+
+If the widget produces NO zfe.log output at all: the ba2 was not loaded by the game.
+Check `sResourceArchive2List` contains `FCMChatWidget.ba2` and the file is in `Data/`.
+
+If you see "ZFE not found" on screen after 30 s: ZFE is not installed or zfe.ini is misconfigured.
+
+Press **F12** in-game (HUDTools menu) -- FCMChatWidget should appear. `isReloadable=true`
+so a hot-reload button is available without restarting.
 
 ---
 
 ## Known gaps / follow-ups
 
-- **SharedHUDTools.TextEdit untested in-game.** The call goes through `Reflect`
-  to avoid a compile-time class reference. If HUDModLoader's `SharedHUDTools` class
-  exposes `TextEdit` and `FormatTextEdit` under different names, update
-  `FCMChatWidget.hx` accordingly after inspecting a decompiled HUDModLoader SWF
-  with ffdec.
-- **Scroll keybind.** `scrollUp()` / `scrollDown()` / `scrollToBottom()` are
-  implemented but no HUDModUserEvent is wired to them yet. Wire via `onUserEvent`
-  once the best control-map action is confirmed (e.g. `"PipBoy"` held for scroll).
-- **Identity.** BSUIDataManager `AccountInfoData` / `CharacterInfoData` is read
-  lazily on first send. If the data isn't populated yet at that moment the identity
-  fields will be empty strings — the backend auto-provisions. Confirm timing in-game.
-- **Channel selector.** Only one channel (`FCMChat.ini channel=`) is supported.
-  Multi-channel tab UI is a future iteration.
-- **Pending-echo dedup.** The local echo record uses `PENDING_HEX` color to dim it.
-  When the server broadcasts the real record back, both appear. Dedup (match
-  user+content, replace pending) is a follow-up.
+- **SharedHUDTools.TextEdit untested in-game.** Wired via `Reflect` to avoid compile-time
+  class dependency. If method name or signature differs in the shipped HUDTools.swf, update
+  `openInput()` in `FCMChatWidget.hx`.
+- **Scroll keybind.** `scrollUp/Down/ToBottom()` implemented, not yet wired to a HUDMod
+  action key.
+- **Pending-echo dedup.** Server echo of a sent message shows twice. Follow-up.
