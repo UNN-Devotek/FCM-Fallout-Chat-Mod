@@ -7,7 +7,7 @@
 
 ---
 
-> ## ⚠️ Update (2026-06-23): chat.v1 transport + lockdown decisions
+> ## Update (2026-06-23): chat.v1 transport + lockdown decisions
 >
 > This doc was written for the **FCMHUD/1** transport (`/ws/hud`, `tcp:4001`, the `HELLO~<token>~<char>`
 > wire, `fcm.ini [FCMBridge] PairingToken`). That transport is the **active in-game transport we ship

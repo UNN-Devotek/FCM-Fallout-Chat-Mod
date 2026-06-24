@@ -1,6 +1,6 @@
 # Two-Way In-Game Chat — IMPLEMENTED & WORKING
 
-> ℹ️ **ACTIVE (re-sequenced 2026-06-24).** This **FCMHUD/1** two-way input (custom `FCMBridge.swf` +
+> **ACTIVE (re-sequenced 2026-06-24).** This **FCMHUD/1** two-way input (custom `FCMBridge.swf` +
 > M7) is the **shipping in-game path now** — the HUD feature push (epic #302) builds on it. ZFE
 > **`chat.v1`** ([native-chat-relay/](native-chat-relay/README.md)) is a **later transport swap**, not
 > a current replacement. This pattern stays the in-game-input reference until chat.v1 ships AND is

@@ -1,12 +1,14 @@
 # ZFE Native Chat Relay (`chat.v1`)
 
-A future ZFE update ships a **first-class native chat client** inside Fallout 76 with a
-**standardized, relay-agnostic JSON-over-WebSocket contract**. This sub-topic captures (1) that
-upstream contract verbatim-in-substance, and (2) a design proposal for making FCM's existing relay
-speak it.
+ZFE ships a **first-class native chat client** inside Fallout 76 with a **standardized,
+relay-agnostic JSON-over-WebSocket contract** — **live as of ZFE 0.9.8** (2026-06-23). This sub-topic
+captures (1) that contract verbatim-in-substance, and (2) a design plan for making FCM's relay speak
+it.
 
-> **Status: forward-looking.** The protocol is an **upstream spec for a not-yet-live ZFE update**;
-> the FCM integration is a **design proposal**, not shipped code. Treat both as planning references.
+> **Status: the protocol is SHIPPED (ZFE 0.9.8).** Verified from the `dxgi.dll` binary — the
+> `zfe-chat-v1` capability, all relay ops, error codes, channel vocab, and the `chat.message` event
+> schema are present. The **FCM integration is still a design plan**, not shipped code; the chat.v1
+> work (epic #282) can now be built and validated against the real binary.
 
 ## Contents
 

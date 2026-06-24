@@ -1,10 +1,11 @@
 # ZFE Native Chat Relay Protocol (`chat.v1`) — Upstream Contract
 
-> **Status: upstream spec, not yet live.** This is the relay contract for a **future ZFE
-> update** that ships a *first-class native chat client* inside Fallout 76. It is reproduced
-> here verbatim-in-substance (reformatted into the house doc style) as the canonical reference
-> for any FCM work that targets it. Nothing in FCM implements this yet — see
-> [fcm-integration.md](fcm-integration.md) for how we *would* make the FCM relay speak it.
+> **Status: SHIPPED in ZFE 0.9.8 (2026-06-23).** This is the relay contract ZFE's native chat client
+> implements — **verified directly from the `dxgi.dll` binary** (the `zfe-chat-v1` capability, the
+> `register`/`hello`/`send`/`poll`/`subscribe`/`report`/`moderationAction` ops, the error codes, the
+> channel vocab, and the `chat.message` event schema are all present). Reproduced here
+> verbatim-in-substance as the canonical reference. FCM's relay does **not** implement it yet — see
+> [fcm-integration.md](fcm-integration.md) for the integration plan (epic #282, now buildable).
 >
 > **This is NOT the existing FCMHUD/1 bridge.** FCM's shipping in-game chat is a *bespoke*
 > line protocol (`color~channel~user~content` + M7 `HELLO/SEND/CHAN` verbs) riding ZFE's
