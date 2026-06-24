@@ -1,6 +1,11 @@
 -- Migration: add_relay_tokens_and_relay_seq
 -- Adds the relay_seq cursor column to messages and the hud_pairing_tokens table.
 -- All DDL is idempotent (IF NOT EXISTS / DO $$ guards) per project migration policy.
+--
+-- Identity model note:
+--   user_id is TEXT (relay-owned identity, e.g. "user_" + hex).
+--   It is NOT a FK to users — a fresh register is anonymous until the link flow
+--   completes. linked_user_id (UUID FK → users.id) is the authoritative "linked" flag.
 
 -- Add relay_seq column to messages (idempotent)
 DO $$ BEGIN
@@ -23,6 +28,8 @@ DO $$ BEGIN
 END $$;
 
 -- hud_pairing_tokens table (idempotent)
+-- user_id is TEXT (relay identity namespace) — NOT a UUID FK to users.
+-- linked_user_id is the FK to users.id, set by markRelayTokenLinked() after link redemption.
 CREATE TABLE IF NOT EXISTS hud_pairing_tokens (
   id             UUID        NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
   token_hash     TEXT        NOT NULL,
@@ -30,7 +37,7 @@ CREATE TABLE IF NOT EXISTS hud_pairing_tokens (
   fo76_name      TEXT        NOT NULL,
   revoked_at     TIMESTAMPTZ,
   last_used_at   TIMESTAMPTZ,
-  user_id        UUID        NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id        TEXT        NOT NULL,
   role           TEXT        NOT NULL DEFAULT 'user',
   -- linked_user_id: NULL = limited (receive-only); SET by /api/link/redeem via markRelayTokenLinked()
   linked_user_id UUID        REFERENCES users(id) ON DELETE SET NULL,

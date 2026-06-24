@@ -74,7 +74,6 @@ model User {
   giveawaysCreated     Giveaway[]         @relation("GiveawaysCreated")
   giveawaysWon         Giveaway[]         @relation("GiveawaysWon")
   giveawayEntries      GiveawayEntry[]    @relation("GiveawayEntries")
-  hudPairingTokens        HudPairingToken[]
   hudPairingTokensLinked  HudPairingToken[] @relation("HudPairingTokenLinkedUser")
   linkedIdentities        LinkedIdentity[]
   redeemedLinkCodes       HudLinkCode[]     @relation("RedeemedLinkCodes")
@@ -985,6 +984,14 @@ model GiveawayEntry {
 // the raw token is returned once at mint time and never stored. Prefix (first 8
 // chars of the base64url token) is indexed for fast lookup without scanning all
 // hashes. revokedAt is set by moderation actions or on ban.
+//
+// Identity model:
+//   userId      = relay-owned TEXT identity ("user_"+hex). No FK to users — a fresh
+//                 register is ANONYMOUS (no FCM account yet). This is the relay_user_id
+//                 namespace WT2 references.
+//   linkedUserId = FK→users.id (UUID). NULL = "limited" (receive-only, no send).
+//                 Set to a real FCM users.id by markRelayTokenLinked() when the user
+//                 redeems a link code via /api/link/redeem. Non-null = "authenticated".
 // =============================================================================
 model HudPairingToken {
   id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
@@ -993,14 +1000,15 @@ model HudPairingToken {
   fo76Name     String    @map("fo76_name")
   revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(6)
   lastUsedAt   DateTime? @map("last_used_at") @db.Timestamptz(6)
-  userId       String    @map("user_id") @db.Uuid
+  // userId is the relay TEXT identity — NOT a FK to users. Anonymous at register.
+  userId       String    @map("user_id")
   role         String    @default("user")
   // linkedUserId is NULL until the user redeems a link code via /api/link/redeem.
   // NULL = "limited" (can receive but not send). Set by markRelayTokenLinked().
   linkedUserId String?   @map("linked_user_id") @db.Uuid
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  user       User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Only linkedUserId has a FK to users — it is the FCM account bound on link redemption.
   linkedUser User? @relation("HudPairingTokenLinkedUser", fields: [linkedUserId], references: [id], onDelete: SetNull)
 
   @@index([tokenPrefix])

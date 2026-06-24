@@ -28,11 +28,11 @@ import { getRedisClient, getSubscriberClient } from '../../config/redis';
 import prisma from '../../config/prisma';
 import logger from '../../config/logger';
 import env, { DEV_DEFAULT_RELAY_WORLD_HMAC_SECRET } from '../../config/environment';
-import { mintToken, verifyToken, revokeToken, updateDisplayName, markRelayTokenLinked } from './tokenService';
+import { mintToken, verifyToken, updateDisplayName, markRelayTokenLinked } from './tokenService';
 import { slugToChannelId, channelIdToSlug, ALL_SLUGS } from './channelMap';
 import { setWorldId, getWorldId } from './worldIdService';
 import { nextRelaySeq } from './relaySeq';
-import { ingestMessage, finalizeMessage } from '../ingestMessage';
+import { ingestMessage } from '../ingestMessage';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -277,7 +277,8 @@ async function handleRegister(ws: WebSocket, frame: Record<string, unknown>): Pr
   const { userId, token, role } = await mintToken(displayName);
   send(ws, {
     success:     true,
-    userId:      `user_${userId.replace(/-/g, '')}`,
+    // userId is already in "user_"+hex format from mintToken — pass through directly.
+    userId,
     displayName,
     token,
     role,
@@ -306,11 +307,14 @@ async function handleHello(ws: WebSocket, frame: Record<string, unknown>): Promi
     return;
   }
 
-  // Check if the user is banned.
-  const user = await prisma.user.findUnique({
-    where: { id: identity.userId },
-    select: { isBanned: true },
-  });
+  // Check if the linked FCM account is banned.
+  // identity.userId is a relay TEXT id — ban state lives on the linked FCM users row.
+  const user = identity.linkedUserId
+    ? await prisma.user.findUnique({
+        where: { id: identity.linkedUserId },
+        select: { isBanned: true },
+      })
+    : null;
   if (user?.isBanned) {
     send(ws, errEnvelope('user_banned', 'This account is banned'));
     return;
@@ -326,7 +330,8 @@ async function handleHello(ws: WebSocket, frame: Record<string, unknown>): Promi
 
   send(ws, {
     success:     true,
-    userId:      `user_${identity.userId.replace(/-/g, '')}`,
+    // identity.userId is relay TEXT ("user_"+hex) — pass through directly.
+    userId:      identity.userId,
     displayName: newName || identity.fo76Name,
     role:        identity.role,
     state,
@@ -369,7 +374,8 @@ async function handleGetAuthState(ws: WebSocket, frame: Record<string, unknown>)
 
   send(ws, {
     success: true,
-    userId:  `user_${identity.userId.replace(/-/g, '')}`,
+    // identity.userId is relay TEXT ("user_"+hex) — pass through directly.
+    userId:  identity.userId,
     state,
     permissions: {
       canSend:   identity.isLinked,
@@ -391,9 +397,17 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     return;
   }
 
-  // Check ban.
+  // Auth gate: limited identities cannot send (check before any user lookup).
+  // We check this BEFORE ban/mute to avoid unnecessary DB queries for limited users.
+  if (!identity.isLinked) {
+    send(ws, errEnvelope('permission_denied', 'Account not linked — complete the link flow at falloutchatmod.com/link'));
+    return;
+  }
+
+  // Check ban/mute on the linked FCM users row.
+  // identity.userId is relay TEXT — ban state lives on the FCM account (linkedUserId).
   const user = await prisma.user.findUnique({
-    where: { id: identity.userId },
+    where: { id: identity.linkedUserId! },
     select: { isBanned: true, isMuted: true },
   });
   if (user?.isBanned) {
@@ -402,12 +416,6 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   }
   if (user?.isMuted) {
     send(ws, errEnvelope('user_muted', 'You are currently muted'));
-    return;
-  }
-
-  // Auth gate: limited identities cannot send.
-  if (!identity.isLinked) {
-    send(ws, errEnvelope('permission_denied', 'Account not linked — complete the link flow at falloutchatmod.com/link'));
     return;
   }
 
@@ -620,12 +628,14 @@ async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): P
     return;
   }
 
-  // Check ban.
-  const user = await prisma.user.findUnique({
-    where: { id: identity.userId },
-    select: { isBanned: true },
-  });
-  if (user?.isBanned) {
+  // Check ban on the linked FCM account (if linked; subscribers can be limited).
+  const banUser = identity.linkedUserId
+    ? await prisma.user.findUnique({
+        where: { id: identity.linkedUserId },
+        select: { isBanned: true },
+      })
+    : null;
+  if (banUser?.isBanned) {
     send(ws, errEnvelope('user_banned', 'This account is banned'));
     return;
   }
@@ -648,7 +658,8 @@ async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): P
     success:     true,
     op:          'subscribed',
     cursor,
-    userId:      `user_${identity.userId.replace(/-/g, '')}`,
+    // identity.userId is relay TEXT ("user_"+hex) — pass through directly.
+    userId:      identity.userId,
     displayName: identity.fo76Name,
     role:        identity.role,
   });
@@ -658,15 +669,6 @@ async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): P
     subscribers.delete(state);
   });
 }
-
-// ── Re-export for WT2 inter-agent dynamic import ──────────────────────────────
-
-// WT2's /api/link/redeem does:
-//   import('../../src/services/relay/relayIdentityService').then(m => m.markRelayTokenLinked(...))
-// We expose the function from here so WT2 can resolve it without needing a
-// separate relayIdentityService module. The path used in link.ts routes to
-// relayIdentityService — create a thin re-export shim there too.
-export { markRelayTokenLinked };
 
 // ── Main entry point ──────────────────────────────────────────────────────────
 

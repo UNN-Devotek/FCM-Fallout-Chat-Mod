@@ -271,14 +271,18 @@ function send(ws, payload) {
   ws.send(JSON.stringify(payload));
 }
 
-// Inject a fake linked user into the mock state and configure token rows
-// so verifyToken() will find and verify it.
+// Inject a fake linked relay identity into the mock state.
+// mintToken now returns a relay TEXT userId (no users row created). We
+// simulate a completed link by setting linkedUserId on token rows to a
+// fake FCM user UUID, and putting that FCM user in _userMap for ban checks.
+const FAKE_FCM_USER_ID = 'fcm-account-uuid-001';
 async function setupLinkedUser() {
   _tokenRows = [];
   _userMap   = {};
   const { userId, token } = await mintToken('Player1');
-  _userMap[userId] = {
-    id:       userId,
+  // FCM users row (linked_user_id target) — keyed by FCM UUID.
+  _userMap[FAKE_FCM_USER_ID] = {
+    id:       FAKE_FCM_USER_ID,
     discordId: 'discord-123',
     steamId:   null,
     isBanned:  false,
@@ -286,8 +290,7 @@ async function setupLinkedUser() {
   };
   // Set linkedUserId on token rows so verifyToken sees this identity as linked.
   _tokenRows.forEach((r) => {
-    r.user         = _userMap[r.userId];
-    r.linkedUserId = userId; // linked to itself (any non-null value = linked)
+    r.linkedUserId = FAKE_FCM_USER_ID;
   });
   return { userId, token };
 }
@@ -458,12 +461,16 @@ describe('tokenService', () => {
       }));
   });
 
-  test('mintToken creates lightweight user row with fo76AccountName', async () => {
+  test('mintToken does NOT create a users row (anonymous relay identity)', async () => {
+    // Under the device-link model, register is anonymous — no FCM account is created.
+    // Only hud_pairing_tokens row is inserted; users row is created only after link redemption.
+    const prisma = require('../src/config/prisma').default;
+    prisma.user.create.mockClear();
     await mintToken('FO76Player');
-    expect(require('../src/config/prisma').default.user.create)
-      .toHaveBeenCalledWith(expect.objectContaining({
-        data: expect.objectContaining({ fo76AccountName: 'FO76Player' }),
-      }));
+    expect(prisma.user.create).not.toHaveBeenCalled();
+    expect(prisma.hudPairingToken.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ fo76Name: 'FO76Player' }),
+    }));
   });
 });
 
@@ -688,7 +695,11 @@ describe('relay WebSocket ops', () => {
     wsReg.close();
     const { token } = regRes;
     const rawId = lastRawUserId();
-    _userMap[rawId] = { id: rawId, discordId: null, steamId: null, isBanned: true, isMuted: false };
+    // Simulate a linked identity whose FCM account is banned.
+    // Ban check resolves via linkedUserId → FCM users row.
+    const fcmBanId = 'fcm-banned-user-001';
+    _userMap[fcmBanId] = { id: fcmBanId, discordId: null, steamId: null, isBanned: true, isMuted: false };
+    markTokensLinked(rawId, fcmBanId);
 
     const { ws, msgs } = await conn();
     const res = await waitForMsg(ws, msgs, () => send(ws, { op: 'hello', token }));
@@ -761,7 +772,11 @@ describe('relay WebSocket ops', () => {
     wsReg.close();
     const { token } = regRes;
     const rawId = lastRawUserId();
-    _userMap[rawId] = { id: rawId, discordId: 'disc-3', steamId: null, isBanned: false, isMuted: true };
+    // Simulate a linked identity whose FCM account is muted.
+    // Mute check resolves via linkedUserId → FCM users row.
+    const fcmMuteId = 'fcm-muted-user-001';
+    _userMap[fcmMuteId] = { id: fcmMuteId, discordId: null, steamId: null, isBanned: false, isMuted: true };
+    markTokensLinked(rawId, fcmMuteId);
 
     const { ws, msgs } = await conn();
     const res = await waitForMsg(ws, msgs, () =>
