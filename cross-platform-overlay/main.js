@@ -683,6 +683,15 @@ let fgTool = null;                // resolved tool name: 'xdotool' | 'kdotool'
 let kdeWaylandForegroundDetect = false; // true once a foreground tool is confirmed present
 let zorderTimer = null;           // fallback JS timer (re-applies desired state)
 let lastForegroundProc = '';      // last reported foreground process name (lower)
+// ── win32 foreground-poller self-heal + fail-safe (issue #136) ───────────────
+let lastForegroundAt = 0;         // ms ts of the last foreground line from the win32 poller
+let pollerStartedAt = 0;          // ms ts the current win32 poller child was spawned
+let pollerEverEmitted = false;    // current win32 poller child produced >= 1 line
+let pollerRestartCount = 0;       // consecutive win32 poller restarts (backoff index; resets on a healthy line)
+let pollerRestartTimer = null;    // pending win32 poller relaunch timer
+let fgWatchdogTimer = null;       // win32 fail-safe staleness watchdog interval
+let fgFailClosed = false;         // true while the watchdog has released keys (poller silent)
+const FG_STALE_MS = 4000;         // no foreground line for this long → fail closed (release hotkeys)
 let overlayIsTopmost = false;     // current applied alwaysOnTop state
 let lastUserFocusMs = 0;          // ts of last explicit user focus (Insert/focusToChat)
 const FOCUS_GUARD_MS = 800;       // window after a user focus during which the overlay stays interactive (beats the 100ms foreground poll)
@@ -2935,6 +2944,114 @@ function _runForegroundPoll(available, tried) {
   }, POLL_INTERVAL_MS);
 }
 
+// Build + spawn the long-lived PowerShell foreground poller (win32). Extracted from
+// startForegroundZOrder so it can be RELAUNCHED after a death (issue #136): the
+// poller is the ONLY thing that updates lastForegroundProc, so if it dies with no
+// restart the last-known foreground (the game, while keys were registered) freezes
+// and the global hotkeys are never released again. Each healthy line resets the
+// restart backoff and clears any fail-closed state (the watchdog re-engages if the
+// lines stop again).
+function spawnWindowsForegroundPoller() {
+  if (process.platform !== 'win32' || isQuitting) return;
+  const ps = `
+$sig = @'
+using System;
+using System.Runtime.InteropServices;
+public class Fg {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr h, out int pid);
+}
+'@
+Add-Type $sig
+while ($true) {
+  try {
+    $h = [Fg]::GetForegroundWindow()
+    $pid2 = 0
+    [void][Fg]::GetWindowThreadProcessId($h, [ref]$pid2)
+    $p = Get-Process -Id $pid2 -ErrorAction SilentlyContinue
+    if ($p) { Write-Output $p.ProcessName } else { Write-Output '' }
+  } catch { Write-Output '' }
+  Start-Sleep -Milliseconds 100
+}`;
+  pollerStartedAt = Date.now();
+  lastForegroundAt = Date.now(); // grace: give the poller FG_STALE_MS to emit its first line before the watchdog trips
+  pollerEverEmitted = false;
+  try {
+    zorderProc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true });
+    diag('[foreground] win32 poller started (pid=' + (zorderProc && zorderProc.pid) + ')');
+    let buf = '';
+    zorderProc.stdout.on('data', (d) => {
+      buf += d.toString();
+      let nl;
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim();
+        buf = buf.slice(nl + 1);
+        if (!line) continue;
+        // A line arrived → the poller is healthy. Stamp the watchdog clock, reset the
+        // restart backoff, and clear any fail-closed state from a previous silence.
+        lastForegroundAt = Date.now();
+        pollerRestartCount = 0;
+        if (!pollerEverEmitted) { pollerEverEmitted = true; diag('[foreground] win32 poller: first line ("' + line.toLowerCase() + '")'); }
+        if (fgFailClosed) { fgFailClosed = false; diag('[foreground] win32 poller recovered — re-evaluating hotkeys'); }
+        lastForegroundProc = line.toLowerCase();
+        if (gameRunning) applyZOrder();
+        applyFocusClickThrough();
+        refreshShortcuts();
+      }
+    });
+    zorderProc.on('error', (err) => handleWindowsPollerDown('error', err && err.message));
+    zorderProc.on('exit', (code) => handleWindowsPollerDown('exit', code));
+  } catch (e) {
+    handleWindowsPollerDown('spawn-throw', String(e && e.message || e));
+  }
+}
+
+// Relaunch the win32 poller after a death, with capped backoff (1s → 2s → 5s). A
+// poller that exits immediately and never emitted a line is the BLOCKED signature
+// (PowerShell Constrained Language Mode rejecting `Add-Type`, or AppLocker/AV
+// blocking powershell.exe) — log an actionable hint and keep retrying; the watchdog
+// meanwhile fails closed so the hotkeys are released regardless of WHY it failed.
+function handleWindowsPollerDown(reason, detail) {
+  zorderProc = null;
+  if (isQuitting) return;
+  const kind = overlayCore.classifyPollerExit({ msSinceStart: Date.now() - pollerStartedAt, everEmitted: pollerEverEmitted });
+  const backoff = overlayCore.nextPollerBackoffMs(pollerRestartCount);
+  if (kind === 'blocked-or-clm') {
+    diag('[foreground] win32 poller ' + reason + ' immediately with no output (' + detail + ') — powershell.exe likely blocked ' +
+      '(Constrained Language Mode / AppLocker). Hotkeys released as a fail-safe; in-game hotkeys need a working foreground poll. Retrying in ' + (backoff / 1000) + 's.');
+  } else {
+    diag('[foreground] win32 poller ' + reason + ' (' + detail + ') — restarting in ' + (backoff / 1000) + 's.');
+  }
+  pollerRestartCount += 1;
+  if (pollerRestartTimer) clearTimeout(pollerRestartTimer);
+  pollerRestartTimer = setTimeout(() => {
+    pollerRestartTimer = null;
+    spawnWindowsForegroundPoller();
+  }, backoff);
+}
+
+// Fail-safe watchdog (win32) — the real #136 fix, independent of WHY the poller
+// failed. The poller is a single point of failure: if it dies, is blocked, or never
+// starts, lastForegroundProc freezes and refreshShortcuts() stops firing, so the
+// global hotkeys are never released and fire in every app. Once per second, if no
+// foreground line has arrived for FG_STALE_MS, FORGET the stale foreground
+// (lastForegroundProc='') and re-run refreshShortcuts() — which releases the hotkeys
+// (keeping only the summon binds when there's no tray). When the poller recovers, its
+// stdout handler clears fgFailClosed and re-registers.
+function startWindowsForegroundWatchdog() {
+  if (process.platform !== 'win32' || fgWatchdogTimer) return;
+  fgWatchdogTimer = setInterval(() => {
+    if (isQuitting) return;
+    if (!overlayCore.isForegroundStale({ lastLineAt: lastForegroundAt, now: Date.now(), staleMs: FG_STALE_MS })) return;
+    if (!fgFailClosed) {
+      fgFailClosed = true;
+      diag('[foreground] win32 poller silent > ' + (FG_STALE_MS / 1000) + 's — releasing global hotkeys (fail-safe, #136)');
+    }
+    if (lastForegroundProc !== '') lastForegroundProc = '';
+    refreshShortcuts();
+  }, 1000);
+}
+
 // Spawn a long-lived PowerShell that prints the foreground window's process name
 // (~300ms cadence). We read its stdout lines and update lastForegroundProc.
 function startForegroundZOrder() {
@@ -2986,41 +3103,12 @@ function startForegroundZOrder() {
   // actually present, not just in foreground — handles Proton/Wine sub-processes).
   startGameScan();
 
-  const ps = `
-$sig = @'
-using System;
-using System.Runtime.InteropServices;
-public class Fg {
-  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] public static extern int GetWindowThreadProcessId(IntPtr h, out int pid);
-}
-'@
-Add-Type $sig
-while ($true) {
-  try {
-    $h = [Fg]::GetForegroundWindow()
-    $pid2 = 0
-    [void][Fg]::GetWindowThreadProcessId($h, [ref]$pid2)
-    $p = Get-Process -Id $pid2 -ErrorAction SilentlyContinue
-    if ($p) { Write-Output $p.ProcessName } else { Write-Output '' }
-  } catch { Write-Output '' }
-  Start-Sleep -Milliseconds 100
-}`;
-  try {
-    zorderProc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true });
-    let buf = '';
-    zorderProc.stdout.on('data', (d) => {
-      buf += d.toString();
-      let nl;
-      while ((nl = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, nl).trim();
-        buf = buf.slice(nl + 1);
-        if (line) { lastForegroundProc = line.toLowerCase(); if (gameRunning) applyZOrder(); applyFocusClickThrough(); refreshShortcuts(); }
-      }
-    });
-    zorderProc.on('error', () => { zorderProc = null; });
-    zorderProc.on('exit', () => { zorderProc = null; });
-  } catch { zorderProc = null; }
+  // Spawn the foreground poller and start the fail-safe watchdog (issue #136).
+  // The poller self-heals (restart-with-backoff on death) and the watchdog releases
+  // the global hotkeys whenever the poller goes silent, so a dead/blocked poller can
+  // never strand the hotkeys "registered everywhere".
+  spawnWindowsForegroundPoller();
+  startWindowsForegroundWatchdog();
 
   // Focus/blur of the overlay also flips topmost (user interacting with chat).
   // On focus/show Electron can reset setIgnoreMouseEvents back to interactive,
@@ -3713,6 +3801,9 @@ app.on('will-quit', () => {
   if (gameScanTimer) { clearInterval(gameScanTimer); gameScanTimer = null; }
   if (collapseAnim) clearInterval(collapseAnim);
   if (zorderProc) { try { zorderProc.kill(); } catch { /* ignore */ } zorderProc = null; }
+  // win32 foreground-poller self-heal + watchdog cleanup (issue #136).
+  if (pollerRestartTimer) { clearTimeout(pollerRestartTimer); pollerRestartTimer = null; }
+  if (fgWatchdogTimer) { clearInterval(fgWatchdogTimer); fgWatchdogTimer = null; }
   // KDE-Wayland kdotool poller cleanup.
   if (fgPollTimer) { clearInterval(fgPollTimer); fgPollTimer = null; }
   if (fgPoller) { try { fgPoller.kill(); } catch { /* ignore */ } fgPoller = null; }

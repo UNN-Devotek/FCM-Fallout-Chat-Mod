@@ -129,6 +129,69 @@ export function prettyAccel(a: string, isMac: boolean): string {
     .replace(/\+/g, ' + ');
 }
 
+/**
+ * Fallout 76 default gameplay/UI keys. Binding the overlay to one of these as a
+ * BARE (modifier-less) key means pressing it in-game triggers BOTH the overlay
+ * action AND the game (issue #136: the reporter bound Tab=nextChannel, so every
+ * Pip-Boy open also popped the overlay). The editor WARNS — it does not block — so
+ * a user who really wants it can still bind it. The value is a short human label of
+ * what the game uses the key for, used to build the warning. Keys are in Electron
+ * accelerator form (single letters upper-cased; 'Space'/'Tab' named) so they match
+ * accelFromEvent output exactly.
+ */
+export const GAME_RESERVED_KEYS: Record<string, string> = {
+  Tab: 'the Pip-Boy',
+  Space: 'jump',
+  E: 'use / interact',
+  R: 'reload',
+  Q: 'quick-action',
+  F: 'melee / take-all',
+  C: 'crouch',
+  V: 'melee bash',
+  T: 'voice / push-to-talk',
+  // WASD movement
+  W: 'move forward',
+  A: 'move left',
+  S: 'move back',
+  D: 'move right',
+};
+
+/**
+ * If `accel` is a bare FO76 gameplay key, return a human warning string; otherwise
+ * null. A modifier combo (Ctrl/Alt/Shift/Cmd/Super + key) is never reserved — the
+ * game won't see it — so those always return null. See GAME_RESERVED_KEYS / #136.
+ */
+export function gameReservedWarning(accel: string | null | undefined): string | null {
+  if (!accel || typeof accel !== 'string') return null;
+  // Any modifier-prefixed combo is safe (game never receives Ctrl/Alt/Shift+key).
+  if (/^(CommandOrControl|Ctrl|Control|Cmd|Command|Shift|Alt|Option|Super|Meta|Hyper)\+/i.test(accel)) return null;
+  const use = GAME_RESERVED_KEYS[accel];
+  if (!use) return null;
+  return `Fallout 76 uses ${accel} for ${use}. Binding it will also trigger the game in-game. Pick another key or add a modifier (e.g. Alt+${accel}).`;
+}
+
+/**
+ * Non-destructive keybind reset (issue #136 §3.1). The one-time reset must NOT wipe
+ * a user's customised binds. It returns a full keybind map that starts from the
+ * defaults and then keeps every bind the user actually SET (a non-empty string),
+ * filling only the unset/blank ones. So a reinstall — or a KEYBIND_RESET_VERSION
+ * bump that adds a new default action — never clobbers a working config. Inputs are
+ * not mutated; non-string user values are treated as unset.
+ */
+export function mergeKeybindDefaults<T extends Record<string, string>>(
+  current: Partial<T> | null | undefined,
+  defaults: T,
+): T {
+  const out: T = { ...defaults };
+  if (current && typeof current === 'object') {
+    for (const k of Object.keys(out) as (keyof T)[]) {
+      const v = current[k];
+      if (typeof v === 'string' && v.trim() !== '') out[k] = v as T[keyof T];
+    }
+  }
+  return out;
+}
+
 // ── Channel normalization ──────────────────────────────────────────────────────
 
 /**

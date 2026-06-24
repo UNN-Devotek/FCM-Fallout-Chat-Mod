@@ -330,6 +330,51 @@ function decideForegroundPollerAction({ crashed, consecutiveCrashes, maxCrashes 
   return hasAltTool ? 'switch-tool' : 'disable';
 }
 
+// ── Windows foreground-poller resilience (issue #136) ─────────────────────────
+// On win32 the foreground process is read by a SINGLE long-lived powershell.exe
+// child (the only thing that updates lastForegroundProc). If it dies — or never
+// starts: PowerShell Constrained Language Mode blocks its `Add-Type`, and
+// AppLocker/AV can block powershell.exe — the last-known foreground (the game,
+// while keys were registered) freezes and refreshShortcuts() stops firing, so the
+// global hotkeys are NEVER released and fire in every app (#136). These pure
+// helpers back the self-heal: a capped restart backoff, a fail-safe staleness
+// watchdog, and a diagnostic exit classifier. main.js owns the timers/spawns.
+
+// Backoff (ms) before relaunching the win32 poller after its Nth death. Ramps
+// 1s → 2s → 5s and caps at 5s, so a transient death recovers fast while a hard
+// failure (blocked powershell) can't spin in a tight relaunch loop. restartCount
+// is how many restarts have already happened (0 = first restart after first death).
+function nextPollerBackoffMs(restartCount) {
+  const schedule = [1000, 2000, 5000];
+  const n = Number.isFinite(restartCount) && restartCount > 0 ? Math.floor(restartCount) : 0;
+  return schedule[Math.min(n, schedule.length - 1)];
+}
+
+// Fail-safe watchdog test: has the foreground poller gone silent? When the poller
+// is dead/blocked/never-started, no new lines arrive and lastForegroundProc is
+// stuck. Treat "no line for longer than staleMs" as "we don't know the foreground"
+// and tell the caller to fail closed (clear foreground → refreshShortcuts releases
+// the global hotkeys). lastLineAt is the ms timestamp of the last line (0/null =
+// never seen). Refuses to trip on invalid now/staleMs so a missing clock can't
+// spuriously release a working user's keys.
+function isForegroundStale({ lastLineAt, now, staleMs } = {}) {
+  if (typeof now !== 'number' || typeof staleMs !== 'number' || staleMs <= 0) return false;
+  const last = typeof lastLineAt === 'number' ? lastLineAt : 0;
+  return (now - last) > staleMs;
+}
+
+// Classify a win32 poller exit for diagnostics. A poller that exits almost
+// immediately and never emitted a single foreground line is the signature of a
+// BLOCKED launch (Constrained Language Mode rejecting `Add-Type`, or AppLocker/AV
+// blocking powershell.exe) — distinct from a normal mid-run crash. Lets main.js
+// log an actionable hint instead of dying silently (why #136 was hard to spot).
+// Returns 'blocked-or-clm' (fast exit, never emitted) | 'crashed' (everything else).
+function classifyPollerExit({ msSinceStart, everEmitted, quickExitMs = 1500 } = {}) {
+  const fast = typeof msSinceStart === 'number' && msSinceStart >= 0 && msSinceStart < quickExitMs;
+  if (!everEmitted && fast) return 'blocked-or-clm';
+  return 'crashed';
+}
+
 // ── Diagnostic logging level + rotation (pure; the logger in main.js is testable) ──
 
 // Resolve the active log level from env, argv, and persisted settings.
@@ -672,6 +717,9 @@ module.exports = {
   isUnknownForegroundClass,
   shouldRegisterShortcuts,
   decideForegroundPollerAction,
+  nextPollerBackoffMs,
+  isForegroundStale,
+  classifyPollerExit,
   resolveLogLevel,
   shouldRotateLog,
   stateHasRealData,
