@@ -2,27 +2,33 @@
  * tokenService.ts — relay token mint / verify / revoke.
  *
  * Token flow:
- *   register → mintToken:  generate UUID userId + 256-bit token (base64url),
- *                           hash with argon2id, store in hud_pairing_tokens.
+ *   register → mintToken:  generate relay userId (TEXT, "user_"+hex) + 256-bit
+ *                           base64url token, hash with argon2id, store in
+ *                           hud_pairing_tokens. NO users row created — a fresh
+ *                           register is an anonymous limited identity.
  *   hello    → verifyToken: prefix lookup → argon2.verify → return RelayToken.
  *
  * Token prefix = first 8 chars of the raw base64url token (indexed for fast
  * prefix lookup without scanning the full hash list).
  *
- * Lightweight user rows are created in the users table with:
- *   username     = 'relay-<tokenPrefix>'
- *   installToken = 'relay-<userId>'
+ * Identity model:
+ *   userId      = relay TEXT identity ("user_"+hex). Never a UUID FK to users.
+ *                 This is the relay_user_id namespace WT2 references.
+ *   linkedUserId = UUID FK → users.id.  NULL = "limited" — token owner cannot
+ *                 send; receives a system notice with a link code.  Non-null =
+ *                 "linked" — full send permissions granted. Authoritative flag.
  *
  * linked_user_id lifecycle:
- *   NULL       = "limited" — token owner cannot send; receives system notice with link code.
- *   non-NULL   = "linked"  — full send permissions granted.
- *   Set by markRelayTokenLinked(), called from /api/link/redeem (WT2) after the
- *   user redeems a link code + provider gate passes.
+ *   NULL       → "limited" (register default)
+ *   non-NULL   → "linked"  (set by markRelayTokenLinked() called from /api/link/redeem)
+ *
+ * Ban/mute state: resolved via linkedUserId → users row (limited users are
+ * blocked from send anyway; ban check still runs when linked to support
+ * revocation of already-linked accounts).
  */
 
 import * as argon2 from 'argon2';
 import { randomBytes } from 'crypto';
-import { v4 as uuidv4 } from 'uuid';
 import prisma from '../../config/prisma';
 import logger from '../../config/logger';
 
@@ -35,47 +41,39 @@ const ARGON2_OPTIONS: argon2.Options = {
 
 /** Identity returned from a successful verifyToken call. */
 export interface RelayToken {
+  /** Relay TEXT identity — "user_"+hex. NOT a users.id UUID. */
   userId: string;
   fo76Name: string;
   role: 'user';
   /**
-   * true when linked_user_id is set — i.e. the user has completed the link flow
+   * true when linked_user_id is set — the user has completed the link flow
    * via /api/link/redeem and has at least one verified external provider.
-   * false = "limited" — can receive but cannot send.
+   * false = "limited" — can receive system notices but cannot send.
    */
   isLinked: boolean;
-  /** The FCM user UUID that the relay identity was bound to on link redemption. */
+  /** The FCM users.id UUID the relay identity was bound to. Null while limited. */
   linkedUserId: string | null;
 }
 
 /**
  * Mint a fresh relay token for a new ZFE client.
  *
- * Creates a lightweight user row (if one does not already exist for this
- * fo76Name — callers should deduplicate, but mintToken is idempotent at the
- * DB level because username is unique), then inserts a hud_pairing_tokens row.
+ * Inserts a hud_pairing_tokens row with a relay-owned TEXT userId
+ * ("user_"+randomHex). Does NOT create a row in the users table — a fresh
+ * registration is anonymous/limited until the user completes the link flow.
  *
- * Returns the raw token string — store it nowhere; hand it straight to the ZFE
- * client and discard. The hash lives in the DB.
+ * Returns the raw token string — give it to the ZFE client once and discard.
+ * The hash lives in the DB; the raw value is never stored.
  */
 export async function mintToken(fo76Name: string): Promise<{ userId: string; token: string; role: 'user' }> {
-  const userId       = uuidv4();
-  const rawBytes     = randomBytes(32);
-  const token        = rawBytes.toString('base64url');
-  const tokenPrefix  = token.slice(0, 8);
-  const tokenHash    = await argon2.hash(token, ARGON2_OPTIONS);
+  // Relay userId: "user_" + 32 random hex chars (128 bits). TEXT, not UUID.
+  const userId      = `user_${randomBytes(16).toString('hex')}`;
+  const rawBytes    = randomBytes(32);
+  const token       = rawBytes.toString('base64url');
+  const tokenPrefix = token.slice(0, 8);
+  const tokenHash   = await argon2.hash(token, ARGON2_OPTIONS);
 
-  // Create a lightweight user row for this relay identity.
-  // username must be unique in the users table.
-  await prisma.user.create({
-    data: {
-      id:           userId,
-      username:     `relay-${tokenPrefix}`,
-      installToken: `relay-${userId}`,
-      fo76AccountName: fo76Name,
-    },
-  });
-
+  // No users row — relay identity starts anonymous/limited.
   await prisma.hudPairingToken.create({
     data: {
       userId,
@@ -83,7 +81,7 @@ export async function mintToken(fo76Name: string): Promise<{ userId: string; tok
       tokenPrefix,
       fo76Name,
       role: 'user',
-      // linkedUserId starts NULL — the identity is "limited" until link redemption.
+      // linkedUserId starts NULL — "limited" until link redemption.
     },
   });
 
@@ -111,19 +109,6 @@ export async function verifyToken(token: string): Promise<RelayToken | null> {
       tokenPrefix: prefix,
       revokedAt: null,
     },
-    include: {
-      user: {
-        select: {
-          id: true,
-          fo76AccountName: true,
-          fo76CharacterName: true,
-          discordId: true,
-          steamId: true,
-          isBanned: true,
-          isMuted: true,
-        },
-      },
-    },
   });
 
   for (const row of rows) {
@@ -143,16 +128,16 @@ export async function verifyToken(token: string): Promise<RelayToken | null> {
       data: { lastUsedAt: new Date() },
     }).catch((err) => logger.warn({ err }, '[tokenService] last_used_at update failed'));
 
-    // isLinked is determined by linked_user_id being set (the authoritative flag),
-    // not by discordId/steamId on the user row — those are account-level, whereas
-    // linked_user_id tracks whether THIS relay identity completed the link flow.
+    // isLinked is determined solely by linked_user_id (the authoritative flag).
+    // discordId/steamId on the users row are account-level; they don't govern
+    // whether THIS relay identity completed the link flow.
     const linkedUserId = (row as any).linkedUserId ?? null;
     const isLinked     = linkedUserId !== null;
 
     return {
-      userId:       row.userId,
-      fo76Name:     row.fo76Name,
-      role:         'user',
+      userId:    row.userId,
+      fo76Name:  row.fo76Name,
+      role:      'user',
       isLinked,
       linkedUserId,
     };
@@ -179,7 +164,7 @@ export async function markRelayTokenLinked(relayUserId: string, fcmUserId: strin
 }
 
 /**
- * Revoke all active tokens for a userId.
+ * Revoke all active tokens for a relay userId.
  * Sets revoked_at = NOW() on every row where revoked_at IS NULL.
  */
 export async function revokeToken(userId: string): Promise<void> {
@@ -191,17 +176,13 @@ export async function revokeToken(userId: string): Promise<void> {
 }
 
 /**
- * Update the fo76_name on all active token rows for a userId.
+ * Update the fo76_name on all active token rows for a relay userId.
  * Used when a ZFE client reports a display-name change.
+ * Does NOT update the users table (relay userId has no users row).
  */
 export async function updateDisplayName(userId: string, fo76Name: string): Promise<void> {
   await prisma.hudPairingToken.updateMany({
     where: { userId, revokedAt: null },
     data:  { fo76Name },
-  });
-  // Also propagate to the user row.
-  await prisma.user.update({
-    where: { id: userId },
-    data:  { fo76AccountName: fo76Name },
   });
 }
