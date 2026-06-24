@@ -232,7 +232,7 @@ The SWF reads `PairingToken` from the ini on startup and substitutes it into the
 1. Parse HELLO~<token>~<charName>
 2. Look up token candidate:
    a. Search hud_pairing_tokens WHERE revoked_at IS NULL
-      - Use the first 6 chars of the token as a lookup hint (stored alongside hash as token_prefix)
+      - Use the first 8 chars of the token as a lookup hint (stored alongside hash as token_prefix)
         to avoid full-table argon2 verification — see performance note below.
    b. argon2.verify(row.token_hash, receivedToken)
    c. If no match or revoked → destroy socket (send ERROR~AUTH_FAILED\n first, then close)

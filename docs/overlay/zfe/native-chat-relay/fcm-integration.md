@@ -446,7 +446,7 @@ required by the EULA-safe desktop overlay.
 | Phase | Scope | Gate |
 |---|---|---|
 | **R0** | Sign-off + finalize the `AllowedChannels` slug set (`global,trade,server,events,raids,infests`) + the decisions below | decisions answered |
-| **R1** | `/relay` route + `register`/`hello` + relay-token model (`User.relayToken`, `relay:<token>` Redis) + **dev-only guard** (refuse when `NODE_ENV=production`, mirroring `hudPush`) | loopback compat test passes (`register → subscribe → send → poll`) |
+| **R1** | `/relay` route + `register`/`hello` + relay-token model (**argon2id `hud_pairing_tokens` table + `token_prefix` index**, not a plain `User` column) + **dev-only guard** (refuse when `NODE_ENV=production`, mirroring `hudPush`) | loopback compat test passes (`register → subscribe → send → poll`) |
 | **R2** | `send` → `ingestMessage`, `relaySeq` cursor + `poll`; slug↔UUID map for `global/trade/server/events/raids/infests` | unit + contract tests green |
 | **R3** | `subscribe` push via Redis pub/sub; cross-instance cursor consistency | push/poll dedup verified |
 | **R4** | `report` → `createReport` | |
