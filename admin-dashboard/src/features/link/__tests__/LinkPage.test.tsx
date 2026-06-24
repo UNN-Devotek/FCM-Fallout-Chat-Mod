@@ -18,13 +18,13 @@ describe('LinkPage', () => {
   });
 
   it('shows loading state initially', () => {
-    global.fetch = vi.fn().mockReturnValue(new Promise(() => {}));
+    globalThis.fetch = vi.fn().mockReturnValue(new Promise(() => {}));
     renderPage();
     expect(screen.getByText(/AUTHENTICATING/i)).toBeInTheDocument();
   });
 
   it('shows sign-in buttons when unauthenticated (401)', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       status: 401,
       ok: false,
     } as Response);
@@ -35,7 +35,7 @@ describe('LinkPage', () => {
   });
 
   it('shows code entry form when authenticated', async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    globalThis.fetch = vi.fn().mockResolvedValue({
       status: 200,
       ok: true,
       json: async () => ({
@@ -54,7 +54,7 @@ describe('LinkPage', () => {
 
   it('shows success state after valid code submission', async () => {
     let callCount = 0;
-    global.fetch = vi.fn().mockImplementation(() => {
+    globalThis.fetch = vi.fn().mockImplementation(() => {
       callCount++;
       if (callCount === 1) {
         return Promise.resolve({
@@ -89,7 +89,7 @@ describe('LinkPage', () => {
 
   it('shows expired error for 410 response', async () => {
     let callCount = 0;
-    global.fetch = vi.fn().mockImplementation(() => {
+    globalThis.fetch = vi.fn().mockImplementation(() => {
       callCount++;
       if (callCount === 1) {
         return Promise.resolve({
@@ -122,7 +122,7 @@ describe('LinkPage', () => {
 
   it('shows rate-limited error for 429 response', async () => {
     let callCount = 0;
-    global.fetch = vi.fn().mockImplementation(() => {
+    globalThis.fetch = vi.fn().mockImplementation(() => {
       callCount++;
       if (callCount === 1) {
         return Promise.resolve({
@@ -153,7 +153,7 @@ describe('LinkPage', () => {
   });
 
   it('shows error banner when ?error=nexus_denied', async () => {
-    global.fetch = vi.fn().mockResolvedValue({ status: 401, ok: false } as Response);
+    globalThis.fetch = vi.fn().mockResolvedValue({ status: 401, ok: false } as Response);
     renderPage('?error=nexus_denied');
     await waitFor(() => {
       expect(screen.getByText(/AUTH ERROR/i)).toBeInTheDocument();
@@ -162,7 +162,7 @@ describe('LinkPage', () => {
   });
 
   it('shows account banned error for ?error=account_banned', async () => {
-    global.fetch = vi.fn().mockResolvedValue({ status: 401, ok: false } as Response);
+    globalThis.fetch = vi.fn().mockResolvedValue({ status: 401, ok: false } as Response);
     renderPage('?error=account_banned');
     await waitFor(() => {
       expect(screen.getByText(/not permitted/i)).toBeInTheDocument();
