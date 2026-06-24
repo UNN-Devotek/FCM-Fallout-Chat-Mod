@@ -269,7 +269,7 @@ process.on('unhandledRejection', (reason) => {
 // cross-platform-overlay/assets/fallout-chatmod-keepabove.kwinrule + docs.
 // NOTE: kept byte-consistent with assets/fallout-chatmod-keepabove.kwinrule
 // (sans comments — KWin's INI parser ignores them). TWO rules:
-//   1) keep-above on the OVERLAY (wmclass "fallout-chat-mod" + title "Fallout Chat Mod").
+//   1) keep-above on the OVERLAY (wmclass "fallout-chat-mod").
 //   2) keep game BELOW (wmclass "steam_app_1151340", below=true Force).
 //      KWin evaluates keepBelow() BEFORE isActiveFullScreen(), so the game never
 //      reaches ActiveLayer(6) — the overlay's keepAbove(4) wins with no flicker.

@@ -152,7 +152,7 @@ Exec="$APP_PATH" %U
 Icon=${ICON_PATH}
 Terminal=false
 Categories=Game;Network;Chat;
-StartupWMClass=Fallout Chat Mod
+StartupWMClass=fallout-chat-mod
 EOF
 chmod +x "$DESKTOP_FILE"
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1 || true
