@@ -151,20 +151,27 @@ ZFE stores the token in a DPAPI-protected file and re-presents it via `hello`. T
 account-name handshake — so a bare `register` is anonymous and, under the **lockdown**, is
 **limited until the user links Nexus or Discord** (see [Mandatory auth gate](#mandatory-auth-gate--limited-until-nexusdiscord-linked-locked)).
 
-### Token lifetime — the key difference from FCM sessions
+### Token lifetime + storage — argon2id (the key difference from FCM sessions)
 
-FCM session tokens (`session:<token>` in Redis) are **24h** and the overlay silently re-registers
-via its install token. ZFE relay tokens must **persist across game sessions** (the saved-token →
-`hello` flow is the whole point). So:
+FCM session tokens (`session:<token>` in Redis) are **24h** and the overlay silently re-registers via
+its install token. ZFE relay tokens must **persist across game sessions** (the saved-token → `hello`
+flow is the whole point), so they are a long-lived credential and **must be stored hashed**, per
+[`hud-chat-auth-design.md` §4](../../../backend/hud-chat-auth-design.md) (one source of truth — **not**
+a plain column on `User`):
 
 - **Mint** (`register`): generate `userId` (server UUID, surfaced to ZFE as `user_<hex>`) and a
-  high-entropy `token`. Persist on the `User` row (proposed `relayToken` unique column, mirroring
-  the existing `installToken`), and optionally cache `relay:<token> → userId` in Redis for fast
-  validation. **Never** accept a client-supplied id.
-- **Authenticate** (`hello` / every op token): look up `relayToken` → `User`. Update `displayName`
-  if provided (display only — never changes `userId`/`role`/ban/mute/history, per contract).
-- **Revoke**: clear/rotate the `relayToken` column (or set a revoked flag). `hello` then returns
-  `auth_token_revoked`.
+  256-bit `token` (`crypto.randomBytes(32)`, base64url). Store **only the argon2id hash** in the
+  dedicated `hud_pairing_tokens` table (`token_hash`, `fo76_name`, `revoked_at`). **Never** accept a
+  client-supplied id.
+- **Lookup performance:** also store the first 8 chars of the raw token as an indexed `token_prefix`
+  (`WHERE token_prefix = $1 AND revoked_at IS NULL`) so each `hello`/op does **one** argon2id verify
+  against a single candidate row, not a full-table scan (argon2id is ~100 ms by design; the prefix
+  narrows first). An optional short-TTL Redis cache may skip the verify for hot reconnects.
+- **Authenticate** (`hello` / every op): `token_prefix` lookup → `argon2.verify` → `User`. Update
+  `displayName` only (never `userId`/`role`/ban/mute/history, per contract).
+- **Revoke**: set `revoked_at` (permanent ban / account deletion / rotation) → `hello` returns
+  `auth_token_revoked`. Temp ban/kick/mute do **not** revoke — they auto-resume; see
+  [moderation §3](../../../moderation/kick-mute-ban.md).
 
 ### Mandatory auth gate — limited until Nexus/Discord linked (locked)
 
@@ -280,6 +287,17 @@ addressable channel namespace (that job belongs to `AllowedChannels`).
 > binds `server` to that room; the SWF re-sends on world change. This works **today** because FCM
 > owns **both** ends (our SWF + our relay).
 >
+> **Live `subscribe` re-bind on world change (must specify).** `worldId` arrives over `send` (possibly
+> a short-lived connection), but the `server` room membership of a **long-lived `subscribe` socket**
+> doesn't move by itself. On a `worldId` change the relay must **re-bind that subscriber to the new
+> world room** — re-evaluate the `server`-channel membership on the next pushed event / keepalive (the
+> same hook the moderation re-check uses), unsubscribing from the old room and joining the new one. A
+> stale `worldId` (past the ~30s TTL) drops `server` from the subscriber's visible set until refreshed.
+>
+> **`targetUserId` hygiene (security).** `targetUserId` is meaningful only for `whisper` (omitted from
+> `AllowedChannels` at v1). The relay must **discard `targetUserId` on every non-whisper `send`** — it
+> must never reach `ingestMessage` or influence routing/fan-out for `global`/`trade`/`server`/etc.
+>
 > **Generalization:** anything ZFE doesn't model can be **tunneled** through the fields it *does* pass
 > (`body` / `senderDisplayName` / `targetUserId`), encoded by one end and decoded/stripped by the
 > other. So per-user **cosmetics** are likely solvable the same way (relay encodes a color/clan suffix
@@ -337,6 +355,11 @@ This keeps **push and poll dedup correct**, which is the cursor's entire purpose
 `INCR` + a persisted indexed column is the minimal, horizontally-safe design (no per-connection
 state, survives reconnect, works across instances). The alternative of deriving cursors from
 `createdAt` epoch-millis is rejected — within-millisecond collisions break strict monotonicity.
+
+> **Counter durability (required).** `relay:seq` must not reset to 0 on a Redis restart — that would
+> make everything "newer" than existing clients' cursors and **replay the whole window as
+> duplicates**. On startup, **seed `relay:seq` from `MAX(messages.relay_seq)`** (or run Redis with AOF
+> persistence). Treat a `relaySeq` that ever goes backwards as a hard error.
 
 > **The spec now endorses this exact approach.** The "Existing relay compatibility notes" section of
 > [protocol-spec.md](protocol-spec.md#existing-relay-compatibility-notes) states: *"assign a relay

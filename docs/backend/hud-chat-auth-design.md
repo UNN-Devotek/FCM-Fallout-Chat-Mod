@@ -1,6 +1,6 @@
 # M6: HUD Chat Auth System — Design Document
 
-**Status:** Proposal / Pre-implementation · **updated 2026-06-23 for chat.v1 + the auth lockdown**  
+**Status:** **Design — locked** for chat.v1 + the auth lockdown (2026-06-23); pre-implementation. The §9 Open Decisions are resolved (OD-3/OD-6) or carried as recommendations.  
 **Milestone:** M6 (production-exposure gate)  
 **Author:** Design session 2026-06-11  
 **Depends on:** existing Discord OAuth flow; ZFE `chat.v1` relay (epic #282); multi-provider identity (epic #163)

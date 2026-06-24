@@ -129,8 +129,14 @@ website visitor), so sub-second read-cutoff isn't worth extra infra at v1.
 - **In-game `moderationAction` (chat.v1 op)** is honored **only** for an identity linked to a staff
   Discord account; an unlinked/basic identity gets `permission_denied`. It maps to the same
   `moderationActionsService` calls. Realistically a convenience for staff who are in-game; the
-  authoritative surface stays the dashboard. (`banUser` from in-game needs a no-evidence service
-  variant or a "pending-evidence" ban the mod completes on the dashboard.)
+  authoritative surface stays the dashboard.
+- **In-game `banUser` = pending-evidence ban (decided).** An in-game ban (from a staff-Discord-linked
+  identity) **applies immediately** — the offender is banned the same way a dashboard ban works — but
+  the `bans` row is flagged **`pendingEvidence`** (the chat.v1 path can't carry evidence files). The
+  ban appears in the dashboard's **pending-evidence queue**; the issuing admin **must upload evidence
+  on the site to finalize** it. This keeps the "every ban has evidence" rule without blocking
+  in-the-moment in-game enforcement. (Policy knob: flag-only vs. auto-reverse if no evidence within a
+  window — default flag-only + dashboard nag.) Tracked in #288.
 - **Reports** flow in from any surface: chat.v1 `report` op → `reportsController.createReport`
   → the same moderation queue.
 
