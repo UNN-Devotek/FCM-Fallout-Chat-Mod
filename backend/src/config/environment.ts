@@ -124,6 +124,16 @@ export interface Environment {
   DEVELOPER_ROLE_ID: string;
   // Role @-pinged in bug/suggestion ticket threads (support team).
   SUPPORT_ROLE_ID: string;
+  // Nexus OAuth 2.0 + PKCE (feature-flagged: disabled when creds are absent)
+  // Confidential client: client_secret required at token endpoint alongside PKCE.
+  // Registration: email Nexus support (https://nexusmods.com/users/myaccount?tab=api).
+  // OIDC discovery: https://users.nexusmods.com/.well-known/openid-configuration
+  NEXUS_OAUTH_CLIENT_ID: string;
+  NEXUS_OAUTH_CLIENT_SECRET: string;
+  NEXUS_OAUTH_REDIRECT_URI: string;
+  // HUD identity hash secret (M6+): HMAC-SHA256 key for identityHash = HMAC(secret, userId)
+  // Replaces HUD_IDENTITY_SECRET for account-derived (unforgeable) identity hashes.
+  HUD_IDENTITY_HASH_SECRET: string;
 }
 
 const env: Environment = {
@@ -246,6 +256,11 @@ const env: Environment = {
   GITHUB_WEBHOOK_SECRET: process.env.GITHUB_WEBHOOK_SECRET || '',
   DEVELOPER_ROLE_ID: process.env.DEVELOPER_ROLE_ID || '',
   SUPPORT_ROLE_ID: process.env.SUPPORT_ROLE_ID || '',
+  // Nexus OAuth 2.0 + PKCE (feature-flagged: disabled when creds are absent)
+  NEXUS_OAUTH_CLIENT_ID: process.env.NEXUS_OAUTH_CLIENT_ID || '',
+  NEXUS_OAUTH_CLIENT_SECRET: process.env.NEXUS_OAUTH_CLIENT_SECRET || '',
+  NEXUS_OAUTH_REDIRECT_URI: process.env.NEXUS_OAUTH_REDIRECT_URI || 'http://localhost:7177/auth/nexus/callback',
+  HUD_IDENTITY_HASH_SECRET: process.env.HUD_IDENTITY_HASH_SECRET || '',
 };
 
 // The dev fallback value for HUD_IDENTITY_SECRET (the HMAC key that derives

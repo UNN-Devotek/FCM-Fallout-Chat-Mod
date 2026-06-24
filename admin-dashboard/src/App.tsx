@@ -42,6 +42,7 @@ import ReportPage from './features/public/ReportPage';
 import ApplyPage from './features/public/ApplyPage';
 import Devices from './features/system/Devices';
 import WikiSync from './features/wiki/WikiSync';
+import LinkPage from './features/link/LinkPage';
 
 const MOD_ROLES = ['owner', 'admin', 'moderator'];
 
@@ -80,6 +81,7 @@ const router = createBrowserRouter([
   /* Public routes */
   { path: '/', element: <LandingPage /> },
   { path: '/login', element: <LoginPage /> },
+  { path: '/link', element: <LinkPage /> },
   { path: '/report', element: <ReportPage /> },
   { path: '/apply', element: <ApplyPage /> },
 
