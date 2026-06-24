@@ -13,9 +13,9 @@
 FCM already has account-level **kick / mute / ban** with **immediate** enforcement, Discord
 propagation, evidence, audit, role gating, and protected-target rules. The auth lockdown makes the
 **ban target an account** (`users.id`) tied to Nexus and/or Discord — far stronger than the old
-anonymous/name-derived identity. The one piece to add is a **cross-surface eviction signal** so a
-ban/kick issued anywhere (dashboard) drops the offender's **chat.v1** in-game socket too — the relay
-needs the analog of the overlay's `notifyAndDisconnect`.
+anonymous/name-derived identity. To extend it to chat.v1 the relay just needs a **cached status
+re-check** (per-op + per-keepalive) plus **token revocation for permanent bans** (#296) — that cuts
+send and read cross-instance without new infra; a dedicated eviction pub/sub signal is **deferred**.
 
 ---
 
@@ -74,36 +74,33 @@ With the [mandatory Nexus/Discord gate](../overlay/zfe/native-chat-relay/fcm-int
 
 ---
 
-## 3. Enforcing on chat.v1 sessions — the net-new piece **(proposed)**
+## 3. Enforcing on chat.v1 sessions
 
-The chat.v1 relay is a **separate front-end** (`/relay`) from the overlay's `/ws`. Today's
-`notifyAndDisconnect` only closes `/ws` sockets on the local instance — it knows nothing about
-`/relay` sockets or other instances. So moderation must become **cross-surface and cross-instance**.
+The chat.v1 relay is a **separate front-end** (`/relay`) from the overlay's `/ws`, and the backend
+runs multiple instances — so a dashboard action must reach the offender's in-game socket on any
+instance. The simplest mechanism that does this needs **no dedicated cross-instance signal** (#296):
 
-**Recommendation: a moderation eviction signal over Redis pub/sub.** When any action that should
-drop a live session fires (`kickUser` / `createBan` / token revoke / immediate-revocation from
-[#295](../overlay/zfe/native-chat-relay/fcm-integration.md)), publish a small envelope on a
-`moderation:evict` channel:
+**1. Cached status re-check (the backbone).** The relay re-checks `isBanned` / `kickedUntil` /
+`isMuted` from a **short-TTL cache** (Redis `relay:status:<userId>`, ~10–15s) on every `hello` and
+`send`. A dashboard action propagates to every instance within the TTL. This blocks **sending**
+immediately and **reconnect** outright, and **auto-expires** — a temp ban/kick/mute resumes with no
+re-link. Rejections: `user_banned` / `user_muted` / kick-cooldown.
 
-```json
-{ "userId": "…", "action": "ban" | "kick" | "revoke", "until": "ISO|null", "reason": "…" }
-```
+**2. Token revocation — permanent ban / account deletion only.** Additionally clear/rotate the relay
+token so the saved DPAPI token is dead (`hello` → `auth_token_revoked`; ZFE won't auto-register around
+it). **Do NOT revoke for temp ban/kick/mute** — those must auto-resume via the existing device-code
+link, not force a re-link. (Mute is never a revocation — the user stays authed, just can't `send`.)
 
-Both front-ends subscribe:
+**3. Live read stream.** A long-lived `subscribe` socket is authed once, so revocation alone doesn't
+stop it reading. The relay checks the cached flag **before each pushed `event` and on each ~10 s
+keepalive ping**; if banned/kicked it closes the socket → read is cut within ~one keepalive interval.
+Public channels are readable by anyone anyway (a banned user briefly reading `global` ≈ an anonymous
+website visitor), so sub-second read-cutoff isn't worth extra infra at v1.
 
-- **`/ws` (overlay/dashboard):** the existing `notifyAndDisconnect` path, now also driven by the
-  Redis signal so it works across instances.
-- **`/relay` (chat.v1):** the adapter keeps a **subscriber registry keyed by `userId`** (model it on
-  `hudPush.ts`). On an evict signal for that `userId`:
-  - **ban / kick:** close the long-lived `subscribe` socket immediately, and set a Redis flag so any
-    in-flight or subsequent `register` / `hello` / `send` returns the stable code **`user_banned`**
-    (kick → reject `hello`/reconnect until `kickedUntil`).
-  - **mute:** no socket close — subsequent `send` returns **`user_muted`** (the spec's muted-send
-    code); already covered by the `ingestMessage` mute check the relay reuses.
-
-This is the chat.v1 analog of `notifyAndDisconnect` / `markClientMuted`, made cross-instance. It is
-**immediate**, matching the [#295 revocation decision](../overlay/zfe/native-chat-relay/fcm-integration.md)
-(close active sockets at once; also re-check on every `hello`).
+> **Why not a dedicated `moderation:evict` pub/sub signal?** It would give *sub-second* active
+> disconnect, but the cached-flag re-check above already cuts send (per-op) and read (per-keepalive,
+> ~10 s) cross-instance with far less machinery. The pub/sub signal is **deferred** (#296) — worth it
+> only once **private channels (party/clan, #182)** need instant read-cutoff, or for polished kick UX.
 
 **Action → chat.v1 mapping:**
 
@@ -183,8 +180,10 @@ chat.v1 moderation issue #288).
 
 1. **Reuse the account-level machinery** (kick/mute/ban + evidence + audit + Discord propagation) —
    don't fork it for chat.v1.
-2. **Add a `moderation:evict` Redis signal** so a dashboard ban/kick drops the chat.v1 in-game socket
-   immediately, cross-instance — the one net-new piece. **(proposed)**
+2. **Enforce on chat.v1 via a cached status re-check** (per-op + per-keepalive, short Redis TTL) +
+   **token revocation for permanent bans/deletion only** (#296). A dedicated `moderation:evict`
+   pub/sub signal is **deferred** — the cached check already cuts send (per-op) and read (~10 s)
+   cross-instance without it; revisit when private channels (party/clan) need instant read-cutoff.
 3. **Keep the ban target = account `userId`**; rekey `identityHash` to `userId`; retire
    `HudIdentityBlock` as a separate gate.
 4. **Gate in-game `moderationAction` on a staff Discord link**; dashboard stays the authoritative
