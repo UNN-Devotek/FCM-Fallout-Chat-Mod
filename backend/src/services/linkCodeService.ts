@@ -7,12 +7,14 @@ const CODE_LENGTH = 8;
 const TTL_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_ATTEMPTS = 5;
 
-/** Generate an 8-char Crockford base32 code (uppercase, no I/L/O/U). */
+/** Generate an 8-char Crockford base32 code (uppercase, no I/L/O/U).
+ * Uses crypto.randomInt (unbiased rejection sampling) rather than modulo on a
+ * random byte, which would bias the distribution for alphabets whose length does
+ * not evenly divide 256. */
 export function generateLinkCode(): string {
-  const bytes = crypto.randomBytes(CODE_LENGTH);
   let code = '';
   for (let i = 0; i < CODE_LENGTH; i++) {
-    code += CROCKFORD_ALPHABET[bytes[i] % CROCKFORD_ALPHABET.length];
+    code += CROCKFORD_ALPHABET[crypto.randomInt(CROCKFORD_ALPHABET.length)];
   }
   return code;
 }

@@ -1013,7 +1013,7 @@ app.get('/auth/nexus/callback', authLimiter, async (req: Request, res: Response)
  * DELETE /auth/nexus
  * Unlink Nexus identity (only if at least one other provider remains).
  */
-app.delete('/auth/nexus', requireAuth, async (req: Request, res: Response, next) => {
+app.delete('/auth/nexus', authLimiter, requireAuth, async (req: Request, res: Response, next) => {
   try {
     const result = await unlinkProviderIdentity(req.user!.id, 'nexus');
     if (!result.ok) {
