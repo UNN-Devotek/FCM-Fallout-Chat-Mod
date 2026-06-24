@@ -15,7 +15,8 @@ name: CI
 # The single required branch-protection check is the `CI Summary` job below.
 # It gates: unit-vitest (overlay + dashboard matrix), overlay-launch-smoke-linux
 # (packaged-launch smoke), overlay-build-windows-nsis (NSIS build verification),
-# lint-typecheck, and backend-jest — all blocking for PRs.
+# lint-typecheck, backend-jest, and gamemod-anchors (in-game .ba2 SWF anchors) —
+# all blocking for PRs.
 #
 # The `overlay-build-windows-nsis` job builds the NSIS installer NATIVELY on
 # `windows-latest` (no Wine, no Docker, no GHCR image — the self-hosted Wine/DinD
@@ -266,6 +267,21 @@ jobs:
         working-directory: ${{ matrix.workspace }}
         run: npm run test:unit --if-present
 
+  # ── Game-mod SWF anchor tests (Python) — REQUIRED gate ───────────────────────
+  # The in-game HUD .ba2 build patches Bethesda's HUDMenu via apply-patch.py against
+  # fixed anchors in fcm-inject.as; test_anchors.py asserts the chat.v1 API surface,
+  # FCMHUD/1 removal, the TextChat fragment, and the worldId/link-code wiring are all
+  # present so a future edit can't silently break the patch. Pure stdlib — uses the
+  # runner's system python3, no extra action.
+  gamemod-anchors:
+    name: Game-mod SWF anchors (Python)
+    needs: authorize
+    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - name: Run FCMBridge anchor tests
+        run: python3 game-mods/FCMBridge/hudmenu-chat/test_anchors.py
+
   # ── Overlay launch smoke (Linux) — REQUIRED gate ─────────────────────────────
   # Builds the packaged overlay and asserts a clean startup. Catches crash-on-launch
   # (e.g. v1.3.82's missing './overlay-core' in the asar, which bricked users).
@@ -369,6 +385,7 @@ jobs:
       - overlay-build-windows-nsis     # NSIS build verification + no-feed-files assertion (Windows)
       - lint-typecheck                 # Phase 2: now a required blocking gate
       - backend-jest                   # Phase 2: now a required blocking gate
+      - gamemod-anchors                # in-game .ba2 SWF anchor checks (Python)
     steps:
       # Require every listed job to have SUCCEEDED. A skipped job (e.g. an
       # unlabeled fork PR where `authorize` did not run) must NOT pass the gate,
