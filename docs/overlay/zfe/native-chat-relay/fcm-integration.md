@@ -288,9 +288,11 @@ addressable channel namespace (that job belongs to `AllowedChannels`).
 > are the only genuine `chat.v1` extension need** (#292). Hardening: intercept the control message
 > before `ingestMessage`/broadcast (airtight suppression), and **the control message MUST be
 > HMAC-signed** — `HMAC-SHA256(secret, worldId || relayUserId || timestamp)`; the relay **rejects**
-> any missing/invalid HMAC or stale timestamp (≈30s replay window). This is tamper-evidence + replay
-> / cross-user protection on top of the already TLS- and token-authenticated `send`; it does not stop
-> a user spoofing *their own* client-read `worldId` (inherent, low stakes — ephemeral server chat).
+> any missing/invalid HMAC or stale timestamp (≈30s replay window). This is **replay + cross-user**
+> protection (**not** tamper-evidence against the originating client — the signing key ships in the
+> `.ba2`) on top of the already TLS- and token-authenticated `send`; it does **not** stop a user
+> spoofing *their own* client-read `worldId`. That residual is the deferred server-side corroboration
+> track (#294); the stakes are low (ephemeral server chat).
 
 Channel eligibility stays uniform with the rest of FCM: only **leaf** channels
 (`parent_id IS NOT NULL AND NOT is_archived`) map to a slug — the same predicate `hudPush.ts` and
