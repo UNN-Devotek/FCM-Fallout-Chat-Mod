@@ -66,6 +66,11 @@ With the [mandatory Nexus/Discord gate](../overlay/zfe/native-chat-relay/fcm-int
 
 - **Target = `users.id`** (the account), which links Discord and/or Nexus (`linked_identities`) and
   the device/install token. One ban flag on the account blocks **all** surfaces at once.
+- **Provider-ID deny-list (`banned_identities`, #297).** A **permanent** ban also deny-lists the
+  account's external **Discord and Nexus IDs** (`provider` + `provider_uid`), checked at the
+  **auth/link gate** (device-code link, overlay Discord login, Nexus OAuth callback). This makes the
+  ban **durable** — it survives FCM-account deletion and blocks re-linking the **same** provider to a
+  fresh FCM account. The strongest evasion lever (§5).
 - **`identityHash` rekey** (per [auth design §3.3](../backend/hud-chat-auth-design.md)):
   `HMAC(HUD_IDENTITY_HASH_SECRET, userId)` — account-derived, not name-derived, so it's unforgeable
   and survives renames. `HudIdentityBlock` (if kept as a fast relay-side check) keys on this.
@@ -135,13 +140,17 @@ website visitor), so sub-second read-cutoff isn't worth extra infra at v1.
 
 The lockdown is the main anti-evasion lever — but it's not absolute. Honest picture:
 
-- **Strong:** a ban hits the account; to evade, a user needs a **new Nexus or Discord account**
-  (Nexus carries mod-download history/reputation; both cost effort). Permanent bans also **revoke
-  the device** (`installToken`) and apply a **Discord guild ban**.
-- **Residual:** someone with multiple provider accounts can re-link a fresh one. Mitigations that
-  stack (mostly already present): device-key revocation, the `register`-limited gate (can't chat
-  before linking), per-IP connection caps, the FO76-name claim + presence cross-check
-  ([auth §6.5](../backend/hud-chat-auth-design.md)), and report-driven human review. The
+- **Strong:** a ban hits the account; permanent bans also **revoke the device** (`installToken`) and
+  apply a **Discord guild ban**.
+- **Strongest — provider-ID deny-list (#297):** a permanent ban deny-lists the account's Discord +
+  Nexus IDs at the **auth/link gate**, so the **same** provider account can never authenticate to FCM
+  again — even on a new FCM account, even after the original is deleted. To evade, the user needs a
+  **brand-new** Nexus or Discord account (the highest-cost path; Nexus carries mod-download
+  history/reputation).
+- **Residual:** a fresh provider account still works (fundamental — the deny-list keys on *known*
+  IDs). Stacked mitigations: device-key revocation, the `register`-limited gate (can't chat before
+  linking), per-IP connection caps, the FO76-name claim + presence cross-check
+  ([auth §6.5](../backend/hud-chat-auth-design.md)), and report-driven review. The
   `worldId`-spoofing hardening (#293/#294) is a related, separate track.
 - **Recommendation:** keep bans account-level (not identity-hash-only), always revoke the device on
   permanent bans, and surface "new account, same FO76 name / same device fingerprint" signals to
@@ -191,6 +200,9 @@ chat.v1 moderation issue #288).
 5. **Always revoke the device + Discord-lockdown on permanent bans**; surface evasion signals to the
    dashboard rather than auto-blocking.
 6. **Slow-mode** stays a deferred, per-channel feature.
+7. **Deny-list external provider IDs on permanent bans** (`banned_identities`, checked at the
+   auth/link gate; #297) — durable, account-independent, blocks re-linking the same Discord/Nexus.
+   The strongest evasion lever.
 
 ## See also
 

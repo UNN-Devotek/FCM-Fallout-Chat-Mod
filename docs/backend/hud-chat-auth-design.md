@@ -136,6 +136,8 @@ model LinkedIdentity {
 
 **Chat access gate:** a pairing token may only be minted for a `User` where EITHER `discordId IS NOT NULL` OR a `linked_identities` row exists for that user. A user who has never authenticated with any provider cannot obtain a pairing token. This is enforced in `POST /api/link/pairing-token`.
 
+**Ban deny-list (the inverse gate):** a permanent ban deny-lists the account's provider IDs in a `banned_identities` table (`provider` + `provider_uid`), checked at the **same gate** and at the device-code link / OAuth callbacks — a deny-listed Discord/Nexus ID cannot mint or upgrade a token **even on a fresh FCM account or after the original is deleted**. This is the durable, account-independent ban layer; see [moderation/kick-mute-ban.md §5](../moderation/kick-mute-ban.md) and #297.
+
 ### 3.2 FO76 name claim
 
 The `fo76AccountName` field on `User` becomes the claimed FO76 display name, bound at pairing-token mint time. It is **self-asserted** — the system cannot verify it against Bethesda. What the provider link buys is a real, bannable identity: the Nexus account (with its mod-download history, reputation, and ban record) is tied to the FO76 name claim. Name squatting and abuse are attributable.
