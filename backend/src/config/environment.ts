@@ -130,6 +130,16 @@ export interface Environment {
   // fully authenticate (the signing key is embedded in the mod). Dev default is
   // allowed here; must be a strong secret in production.
   RELAY_WORLD_HMAC_SECRET: string;
+  // Nexus OAuth 2.0 + PKCE (feature-flagged: disabled when creds are absent)
+  // Confidential client: client_secret required at token endpoint alongside PKCE.
+  // Registration: email Nexus support (https://nexusmods.com/users/myaccount?tab=api).
+  // OIDC discovery: https://users.nexusmods.com/.well-known/openid-configuration
+  NEXUS_OAUTH_CLIENT_ID: string;
+  NEXUS_OAUTH_CLIENT_SECRET: string;
+  NEXUS_OAUTH_REDIRECT_URI: string;
+  // HUD identity hash secret (M6+): HMAC-SHA256 key for identityHash = HMAC(secret, userId)
+  // Replaces HUD_IDENTITY_SECRET for account-derived (unforgeable) identity hashes.
+  HUD_IDENTITY_HASH_SECRET: string;
 }
 
 const env: Environment = {
@@ -255,6 +265,11 @@ const env: Environment = {
   // chat.v1 relay worldId HMAC secret — mirrors the value the .ba2 mod ships.
   // Dev default is allowed here; production guard warns if still the placeholder.
   RELAY_WORLD_HMAC_SECRET: process.env.RELAY_WORLD_HMAC_SECRET || 'fcm-world-v1-dev-placeholder',
+  // Nexus OAuth 2.0 + PKCE (feature-flagged: disabled when creds are absent)
+  NEXUS_OAUTH_CLIENT_ID: process.env.NEXUS_OAUTH_CLIENT_ID || '',
+  NEXUS_OAUTH_CLIENT_SECRET: process.env.NEXUS_OAUTH_CLIENT_SECRET || '',
+  NEXUS_OAUTH_REDIRECT_URI: process.env.NEXUS_OAUTH_REDIRECT_URI || 'http://localhost:7177/auth/nexus/callback',
+  HUD_IDENTITY_HASH_SECRET: process.env.HUD_IDENTITY_HASH_SECRET || '',
 };
 
 // The dev fallback value for HUD_IDENTITY_SECRET (the HMAC key that derives

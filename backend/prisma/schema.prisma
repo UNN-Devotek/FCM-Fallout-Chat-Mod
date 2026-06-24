@@ -76,6 +76,8 @@ model User {
   giveawayEntries      GiveawayEntry[]    @relation("GiveawayEntries")
   hudPairingTokens        HudPairingToken[]
   hudPairingTokensLinked  HudPairingToken[] @relation("HudPairingTokenLinkedUser")
+  linkedIdentities        LinkedIdentity[]
+  redeemedLinkCodes       HudLinkCode[]     @relation("RedeemedLinkCodes")
 
   @@index([installToken])
   @@index([steamId])
@@ -816,6 +818,68 @@ model HudIdentityBlock {
   @@index([identityHash])
   @@index([type])
   @@map("hud_identity_blocks")
+}
+
+// =============================================================================
+// Auth gate: linked identities, link codes, and banned identities (#163, #297)
+// =============================================================================
+
+// linked_identities: non-Discord provider links per user.
+// Discord identity stays inline on users (load-bearing for sessions/dashboard).
+// Provider 'nexus' goes here. Future: 'steam', 'bethesda'.
+model LinkedIdentity {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  provider     String    // 'nexus' | future providers
+  providerUid  String    @map("provider_uid")
+  username     String?
+  linkedAt     DateTime  @default(now()) @map("linked_at") @db.Timestamptz(6)
+  lastVerified DateTime? @map("last_verified") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUid])
+  @@unique([userId, provider])
+  @@index([userId])
+  @@map("linked_identities")
+}
+
+// hud_link_codes: 8-char Crockford base32 device-authorization codes.
+// TTL 10 min, single-use, <=5 attempts, one active per relay identity.
+// Issued by the relay (per relayUserId — the chat.v1 userId of the limited identity).
+// Redeemed by an authed FCM user on /link; redeemedByUserId is set on successful redeem.
+// Integration seam: relay polls WHERE code = $1 AND used_at IS NOT NULL; redeemedByUserId
+// identifies the FCM account to bind the relay token to (limited → linked upgrade).
+model HudLinkCode {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                String    @unique
+  relayUserId         String    @map("relay_user_id")
+  redeemedByUserId    String?   @map("redeemed_by_user_id") @db.Uuid
+  expiresAt           DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt              DateTime? @map("used_at") @db.Timestamptz(6)
+  attempts            Int       @default(0)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  redeemedBy User? @relation("RedeemedLinkCodes", fields: [redeemedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([relayUserId])
+  @@index([expiresAt])
+  @@map("hud_link_codes")
+}
+
+// banned_identities: provider-level deny-list (#297).
+// A deny-listed provider identity is refused at OAuth callback and link-code redemption,
+// regardless of which FCM account they attempt to link to.
+model BannedIdentity {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider    String
+  providerUid String   @map("provider_uid")
+  reason      String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([provider, providerUid])
+  @@index([provider, providerUid])
+  @@map("banned_identities")
 }
 
 // Per-entity error log for the wiki ingestion job.
