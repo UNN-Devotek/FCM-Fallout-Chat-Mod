@@ -90,18 +90,18 @@ async function checkRateLimit(userId: string, source: IngestSource): Promise<boo
     return (results[2] as number) > 5; // true = exceeded
   } catch (err) {
     // SR-004: fail OPEN for the authenticated WS path (availability for known
-    // users), but fail CLOSED for the 'hud' transport — it is unauthenticated
-    // (identity asserted over a raw socket), so a Redis outage must not remove
-    // its only flood control. Returning true here marks it rate-limited.
-    const failClosed = source === 'hud';
-    logger.warn({ err, source, failClosed }, `[ingestMessage] rate-limit Redis error — ${failClosed ? 'fail-closed (hud)' : 'fail-open (ws)'}`);
+    // users), but fail CLOSED for the 'hud' and 'relay' transports — both are
+    // lower-trust paths where a Redis outage must not remove flood control.
+    // Returning true here marks the message as rate-limited.
+    const failClosed = source === 'hud' || source === 'relay';
+    logger.warn({ err, source, failClosed }, `[ingestMessage] rate-limit Redis error — ${failClosed ? `fail-closed (${source})` : 'fail-open (ws/mcp)'}`);
     return failClosed;
   }
 }
 
 // ── Result type ───────────────────────────────────────────────────────────────
 
-export type IngestSource = 'hud' | 'ws' | 'mcp';
+export type IngestSource = 'hud' | 'ws' | 'mcp' | 'relay';
 
 export interface IngestResult {
   ok: boolean;
@@ -256,12 +256,13 @@ export async function finalizeMessage(opts: {
   channelId: string;
   content: string;        // already emoji-expanded; caller trims
   displayName: string;
-  source: string;         // 'hud' | 'game' | 'ws' | …
+  source: string;         // 'hud' | 'game' | 'ws' | 'relay' | …
   messageId?: string;
   createdAt?: string;
   avatarUrl?: string | null;
   metadata?: Record<string, unknown> | null;
   mentions?: Array<{ name: string; discordId: string }>;
+  relaySeq?: number;      // relay path only — monotonic cursor assigned by nextRelaySeq()
 }): Promise<{ messageId: string; createdAt: string }> {
   const messageId   = opts.messageId ?? uuidv4();
   const createdAt   = opts.createdAt ?? new Date().toISOString();
@@ -278,6 +279,7 @@ export async function finalizeMessage(opts: {
   };
   if (opts.avatarUrl !== undefined) payload.avatarUrl = opts.avatarUrl;
   if (hasMetadata) payload.metadata = opts.metadata ?? null;
+  if (opts.relaySeq !== undefined) payload.relaySeq = opts.relaySeq;
 
   broadcast({ type: 'chat:message', payload });
   incrementMessageCount();
@@ -294,6 +296,7 @@ export async function finalizeMessage(opts: {
     createdAt,
   };
   if (hasMetadata) record.metadata = opts.metadata ?? null;
+  if (opts.relaySeq !== undefined) record.relaySeq = opts.relaySeq;
 
   Promise.resolve(messageQueue.add(record as any)).catch((qErr) => {
     logger.warn({ err: qErr, messageId }, '[finalizeMessage] queue failed — falling back to direct persist');

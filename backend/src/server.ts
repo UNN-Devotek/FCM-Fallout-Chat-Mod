@@ -71,6 +71,8 @@ import {
 } from './routes/adminCommunityStats';
 import migrationRouter from './routes/migration';
 import { requireMigrationKey } from './middleware/requireMigrationKey';
+import linkRouter from './routes/link';
+import { isBannedIdentity, linkProviderIdentity, unlinkProviderIdentity } from './routes/link';
 
 // Services
 import * as discordService from './services/discordService';
@@ -99,6 +101,7 @@ import {
 import { requireDiscordRole } from './middleware/auth';
 import { initHudPushTcp } from './services/hudPushTcp';
 import { initHudPushWs } from './services/hudPushWs';
+import { seedRelaySeq } from './services/relay/relaySeq';
 import { attachChatUpgradeRouter } from './websocket/upgradeRouter';
 import { initLatestVersion } from './services/latestReleaseVersion';
 import hudFeedRouter from './routes/hudFeed';
@@ -838,6 +841,193 @@ app.get('/api/auth/discord-status/:installToken', async (req: Request, res: Resp
   }
 });
 
+/**
+ * GET /auth/nexus
+ * Initiates Nexus OAuth2 + PKCE flow (confidential client: requires client_secret at token endpoint).
+ * Feature-flagged: only active when NEXUS_OAUTH_CLIENT_ID + NEXUS_OAUTH_CLIENT_SECRET are set.
+ * OIDC issuer: https://users.nexusmods.com (discovery: /.well-known/openid-configuration)
+ * Scopes: openid public (scopes_supported per discovery doc).
+ */
+app.get('/auth/nexus', authLimiter, async (req: Request, res: Response) => {
+  if (!env.NEXUS_OAUTH_CLIENT_ID || !env.NEXUS_OAUTH_CLIENT_SECRET) {
+    res.status(503).send('Nexus OAuth is not configured on this server.');
+    return;
+  }
+
+  const crypto = require('crypto') as typeof import('crypto');
+  const codeVerifier = crypto.randomBytes(32).toString('base64url');
+  const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+  const state = uuidv4();
+
+  try {
+    const redis = await getRedisClient();
+    await redis.set(`nexus_oauth_state:${state}`, JSON.stringify({ codeVerifier }), { EX: 600 });
+  } catch (err) {
+    logger.error({ err }, 'Failed to store Nexus OAuth state');
+    res.status(500).send('Internal error');
+    return;
+  }
+
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost:7177';
+  const redirectUri = env.NEXUS_OAUTH_REDIRECT_URI || `${proto}://${host}/auth/nexus/callback`;
+
+  const params = new URLSearchParams({
+    client_id: env.NEXUS_OAUTH_CLIENT_ID,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: 'openid public',   // scopes_supported per Nexus OIDC discovery
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+  });
+  // authorization_endpoint from Nexus OIDC discovery
+  res.redirect(`https://users.nexusmods.com/oauth/authorize?${params}`);
+});
+
+/**
+ * GET /auth/nexus/callback
+ * Handles Nexus OAuth2 + PKCE callback (confidential client: client_secret_post at token endpoint).
+ * Uses OIDC userinfo endpoint (https://users.nexusmods.com/oauth/userinfo) and `sub` claim as
+ * the stable Nexus user id (stored as providerUid in linked_identities/banned_identities).
+ */
+app.get('/auth/nexus/callback', authLimiter, async (req: Request, res: Response) => {
+  if (!env.NEXUS_OAUTH_CLIENT_ID || !env.NEXUS_OAUTH_CLIENT_SECRET) {
+    res.status(503).send('Nexus OAuth is not configured.');
+    return;
+  }
+
+  const { code, state, error } = req.query as Record<string, string | undefined>;
+
+  if (error) {
+    logger.warn({ error }, 'Nexus OAuth error returned');
+    res.redirect('/link?error=nexus_denied');
+    return;
+  }
+
+  if (!code || !state) {
+    res.redirect('/link?error=nexus_invalid');
+    return;
+  }
+
+  let codeVerifier: string;
+  try {
+    const redis = await getRedisClient();
+    const stored = await redis.get(`nexus_oauth_state:${state}`);
+    await redis.del(`nexus_oauth_state:${state}`);
+    if (!stored) {
+      res.redirect('/link?error=nexus_state');
+      return;
+    }
+    ({ codeVerifier } = JSON.parse(stored));
+  } catch (err) {
+    logger.error({ err }, 'Failed to validate Nexus OAuth state');
+    res.status(500).send('Internal error');
+    return;
+  }
+
+  try {
+    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+    const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost:7177';
+    const redirectUri = env.NEXUS_OAUTH_REDIRECT_URI || `${proto}://${host}/auth/nexus/callback`;
+
+    // Exchange code for tokens (client_secret_post — Nexus supports client_secret_basic and
+    // client_secret_post; we use post so the secret travels in the body alongside PKCE verifier).
+    // token_endpoint: https://users.nexusmods.com/oauth/token (from OIDC discovery)
+    const tokenRes = await fetch('https://users.nexusmods.com/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectUri,
+        client_id: env.NEXUS_OAUTH_CLIENT_ID,
+        client_secret: env.NEXUS_OAUTH_CLIENT_SECRET,  // client_secret_post method
+        code_verifier: codeVerifier,                    // PKCE verifier
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      logger.error({ status: tokenRes.status }, 'Nexus token exchange failed');
+      res.redirect('/link?error=nexus_token');
+      return;
+    }
+
+    const tokens = (await tokenRes.json()) as { access_token: string };
+
+    // Fetch userinfo from OIDC userinfo_endpoint (https://users.nexusmods.com/oauth/userinfo).
+    // `sub` is the stable Nexus user id (string); `name` is the display username.
+    // Other available claims: email, avatar, group_id, membership_roles, premium_expiry, age_verified.
+    const userRes = await fetch('https://users.nexusmods.com/oauth/userinfo', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    });
+
+    if (!userRes.ok) {
+      logger.error({ status: userRes.status }, 'Nexus userinfo fetch failed');
+      res.redirect('/link?error=nexus_userinfo');
+      return;
+    }
+
+    // `sub` = stable Nexus user id (store as providerUid); `name` = Nexus username
+    const nexusUser = (await userRes.json()) as { sub: string; name: string };
+    const providerUid = nexusUser.sub;  // `sub` is the OIDC stable identifier
+
+    // Check deny-list
+    const banned = await isBannedIdentity('nexus', providerUid);
+    if (banned) {
+      logger.warn({ providerUid }, 'Nexus identity is deny-listed');
+      res.redirect('/link?error=account_banned');
+      return;
+    }
+
+    // If already signed in via Discord, link Nexus to that account
+    const sess = req.session as any;
+    if (sess?.discordUser?.id) {
+      const existing = await prisma.user.findFirst({
+        where: { discordId: sess.discordUser.id },
+        select: { id: true },
+      });
+      if (existing) {
+        await linkProviderIdentity({
+          userId: existing.id,
+          provider: 'nexus',
+          providerUid,
+          username: nexusUser.name,
+        });
+        logger.info({ userId: existing.id, providerUid }, 'Nexus identity linked to existing session user');
+        res.redirect('/link?linked=nexus');
+        return;
+      }
+    }
+
+    // No existing session: store Nexus identity in session for the /link page
+    sess.nexusUser = { providerUid, name: nexusUser.name };
+    res.redirect('/link?provider=nexus');
+  } catch (err) {
+    logger.error({ err }, 'Nexus OAuth callback error');
+    res.redirect('/link?error=nexus_error');
+  }
+});
+
+/**
+ * DELETE /auth/nexus
+ * Unlink Nexus identity (only if at least one other provider remains).
+ */
+app.delete('/auth/nexus', authLimiter, requireAuth, async (req: Request, res: Response, next) => {
+  try {
+    const result = await unlinkProviderIdentity(req.user!.id, 'nexus');
+    if (!result.ok) {
+      if (result.reason === 'last_provider') {
+        return next(createError(409, 'Cannot remove your last linked provider.'));
+      }
+      return next(createError(404, 'Nexus identity not linked.'));
+    }
+    res.json({ data: { success: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.get('/auth/logout', apiLimiter, (req: Request, res: Response) => {
   req.session.destroy(() => res.redirect('/'));
 });
@@ -1065,6 +1255,10 @@ if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
   app.use('/api/admin/sim', simUsersRouter);
 }
 app.use('/api/player-list', playerListRouter);
+// Auth gate: device-code link, provider linking, pairing tokens.
+// Individual routes carry their own requireAuth — this mount is public so /link page
+// can call /api/link/game as a 401-probe before the user signs in.
+app.use('/api/link', apiLimiter, linkRouter);
 // Client performance metrics — 410 tombstone (removed; already-installed clients stop cleanly).
 app.use('/api/client-metrics', clientMetricsIngestRouter);
 
@@ -1533,7 +1727,7 @@ app.post('/admin/upload-release', apiLimiter, (req: Request, res: Response, next
 const dashboardDist = path.join(__dirname, '../admin-dashboard/dist');
 app.use(express.static(dashboardDist));
 app.get('*', (req: Request, res: Response, next: NextFunction) => {
-  if (req.path.startsWith('/api/') || req.path.startsWith('/auth/') || req.path === '/ws' || req.path.startsWith('/ws/')) {
+  if (req.path.startsWith('/api/') || req.path.startsWith('/auth/') || req.path === '/ws' || req.path.startsWith('/ws/') || req.path === '/relay') {
     return next();
   }
   res.sendFile(path.join(dashboardDist, 'index.html'), (err) => {
@@ -1747,6 +1941,10 @@ async function start(): Promise<void> {
     // HUD push transports — Path A (raw TCP) and Path B (WebSocket /ws/hud).
     await initHudPushTcp();
     initHudPushWs(server);
+
+    // chat.v1 relay: seed the monotonic relay sequence counter from DB high-water mark.
+    // Must run after Redis is connected and before the first relay send.
+    await seedRelaySeq();
 
     // Ensure default channels exist regardless of migration state
     try {
