@@ -33,7 +33,7 @@ describe('buildKwinKeepAboveScript', () => {
 
   it('always writes the overlay keep-above rule', () => {
     expect(script).toContain('--group fcm-keepabove --key above true');
-    expect(script).toContain('--group fcm-keepabove --key wmclass "fallout"');
+    expect(script).toContain('--group fcm-keepabove --key wmclass "fallout-chat-mod"');
   });
 
   it('does NOT rely on layer/layerrule (ignored by KWin 6)', () => {

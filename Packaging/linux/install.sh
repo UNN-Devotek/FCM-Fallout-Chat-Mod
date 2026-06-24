@@ -176,9 +176,7 @@ KWINRULE_PATH="$APP_DIR/fallout-chatmod-keepabove.kwinrule"
 cat > "$KWINRULE_PATH" <<'EOF'
 [Fallout Chat Mod - keep above games]
 Description=Fallout Chat Mod - keep above games
-title=Fallout Chat Mod
-titlematch=2
-wmclass=fallout
+wmclass=fallout-chat-mod
 wmclassmatch=2
 wmclasscomplete=false
 above=true
