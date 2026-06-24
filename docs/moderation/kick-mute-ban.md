@@ -50,10 +50,10 @@ Key properties (all in `moderationActionsService.ts`):
 - **Discord propagation.** Mute → Discord timeout (≤28d cap); permanent ban → role-strip + guild
   ban; reverse → restore roles. HUD/in-game moderation has **no** Discord propagation yet.
 
-The old **FCMHUD/1** in-game path used `HudIdentityBlock` (keyed on
+The **FCMHUD/1** in-game path uses `HudIdentityBlock` (keyed on
 `identityHash = HMAC(secret, fo76AccountName)`) checked at `HELLO` (ban → destroy socket) and `SEND`
-(mute/ban → drop). That bridge is **deprecated** ([R7](../overlay/zfe/native-chat-relay/fcm-integration.md));
-see §6 for what replaces it.
+(mute/ban → drop) — **active now** (we ship on FCMHUD/1, #302). It is superseded by account-level
+checks **later** when chat.v1 lands ([R7](../overlay/zfe/native-chat-relay/fcm-integration.md)); see §6.
 
 See [README](README.md), [automod](automod.md), [reports-and-evidence](reports-and-evidence.md).
 

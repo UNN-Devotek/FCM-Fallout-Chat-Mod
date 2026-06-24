@@ -28,12 +28,13 @@ In both cases **FCM owns the in-game chat UI — our own SWF.** What changes is 
   chat **engine** (transport, token, reconnect, input); **our same SWF** just calls the `chat.v1.*`
   API and renders. FCM stops maintaining a custom wire/transport, **not** the UI.
 
-**Decision (locked): `chat.v1` supersedes the FCMHUD/1 *transport*.** FCMHUD/1's wire/sockets were a
-dev-only experiment, **never shipped to production**, so they are **deprecated** rather than run in
-parallel. **The in-game chat SWF (the UI we already built) is kept** and rewired to `chat.v1`; only
-the bespoke protocol + push transports are retired. See
-[fcm-integration.md → How this differs](fcm-integration.md#how-this-differs-from-the-existing-fcmhud1-bridge)
-for the decision and the two ZFE-coordination follow-ups (per-user cosmetics, dynamic channels).
+**Decision (re-sequenced 2026-06-24): ship on FCMHUD/1 now; `chat.v1` is a *later* transport swap.**
+Because ZFE's chat.v1 publish date is unknown, FCMHUD/1 (which we own and works today) is the **active
+shipping transport** for the in-game HUD mod (epic #302; prod exposure #139). `chat.v1` supersedes it
+**later** — a wire swap, with the feature layer (commands, customization, server chat) built
+transport-agnostic so it carries over unchanged. FCMHUD/1 retires (#291) **only after** chat.v1 ships
+AND is validated. The in-game chat SWF (the UI we built) is kept either way. See
+[fcm-integration.md → How this differs](fcm-integration.md#how-this-differs-from-the-existing-fcmhud1-bridge).
 
 ## At a glance — the integration shape
 

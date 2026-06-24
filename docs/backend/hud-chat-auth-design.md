@@ -10,9 +10,12 @@
 > ## ⚠️ Update (2026-06-23): chat.v1 transport + lockdown decisions
 >
 > This doc was written for the **FCMHUD/1** transport (`/ws/hud`, `tcp:4001`, the `HELLO~<token>~<char>`
-> wire, `fcm.ini [FCMBridge] PairingToken`). That transport is now **deprecated** in favor of the **ZFE
-> `chat.v1` native chat relay** ([`docs/overlay/zfe/native-chat-relay/`](../overlay/zfe/native-chat-relay/README.md),
-> epic #282). The **core of this design is unchanged and still authoritative** — the multi-provider
+> wire, `fcm.ini [FCMBridge] PairingToken`). That transport is the **active in-game transport we ship
+> on now** (#302); the **ZFE `chat.v1` native chat relay**
+> ([`docs/overlay/zfe/native-chat-relay/`](../overlay/zfe/native-chat-relay/README.md), epic #282)
+> supersedes it **later** (re-sequenced). **Both flavors of this auth design apply:** the pairing-token
+> `HELLO~<token>` gate ships on FCMHUD/1 now; the device-code refinement lands with chat.v1. The
+> **core of this design is unchanged and still authoritative** — the multi-provider
 > account model (§3.1 `linked_identities`), the provider **access gate** (§3.1: Discord **or** Nexus
 > required), Nexus OAuth2 + PKCE (§5.2), collision/recovery (§6), migration (§7), and the security
 > analysis (§8) all carry over. What changes is the **transport + pairing UX**, and the lockdown adds a

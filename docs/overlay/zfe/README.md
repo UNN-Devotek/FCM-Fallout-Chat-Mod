@@ -8,8 +8,8 @@ ZFE is a `dxgi.dll` proxy for Fallout 76 that injects `__ZFE` into the Scaleform
 |---|---|
 | [**FCMBridge Data Pattern**](fcmbridge-data-pattern.md) | **START HERE — the working end-to-end pipeline + every pitfall (quote-free payload, `yes`/`on` booleans, build/deploy steps)** |
 | [**Native Chat Relay (`chat.v1`)**](native-chat-relay/README.md) | **The path forward** — ZFE's standardized native chat client + the plan to make the FCM relay speak its JSON contract. **Supersedes FCMHUD/1.** |
-| [Real-Time Socket (FCMHUD/1)](realtime-socket.md) | ⚠️ **DEPRECATED** (dev-only, never shipped to prod) — the bespoke live push bridge; wire protocol, env vars, backend architecture, probe tooling. Reference only. |
-| [Two-Way Chat — Implemented](two-way-chat-implemented.md) | ⚠️ **DEPRECATED** — the FCMHUD/1 in-game input (M7) pattern. Reference only; superseded by `chat.v1`. |
+| [Real-Time Socket (FCMHUD/1)](realtime-socket.md) | **ACTIVE transport** — the live push bridge we ship the HUD mod on now (#302 / prod exposure #139); `chat.v1` supersedes it **later**. Wire protocol, env vars, backend architecture, probe tooling. |
+| [Two-Way Chat — Implemented](two-way-chat-implemented.md) | **ACTIVE** — the FCMHUD/1 in-game input (M7) pattern; shipping path now, `chat.v1` is the later swap. |
 | [Modder Guide](modder-guide.md) | Bridge discovery, `findZfeApi`, `getRuntimeInfo`, logging, safety boundary |
 | [ZFE API Reference](api-reference.md) | Remote Data, Storage, Events, Imports, and Legacy Compatibility — full API call reference |
 | [Environment Variables](env-vars.md) | Dev/testing only — normal users never need these |
