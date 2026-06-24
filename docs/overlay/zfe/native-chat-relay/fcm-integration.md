@@ -195,6 +195,17 @@ with `discordId IS NOT NULL` **or** a `linked_identities` (Nexus) row.
   concerns (#293/#294) are materially reduced — discarding identity is costly. `register` still must
   not auto-merge on `displayName` (presentation only); identity comes from the linked provider.
 
+**Link code + revocation (locked):**
+- **Link code:** 8 chars from Crockford base32 (excludes `I`/`L`/`O`/`U`), shown grouped `XXXX-XXXX`,
+  case-insensitive; **TTL 10 min**, single-use, **one active code per relay `userId`** (a new request
+  supersedes the old); ≤5 redemption attempts then invalidated; redemption rate-limited.
+- **Cannot unlink your last provider** — the unlink endpoint refuses removing the only remaining
+  provider (an account must always keep ≥1 of Nexus/Discord).
+- **Revocation is immediate, not next-connect** — a ban, token revoke, account deletion, or admin
+  force-unlink **closes active subscribe sockets at once** and rejects any in-flight
+  `register`/`hello`/`send` (`user_banned` / `auth_token_revoked`); also re-checked on every
+  `hello`/reconnect.
+
 ### Auth error-code mapping
 
 | FCM state | `chat.v1` error code |
