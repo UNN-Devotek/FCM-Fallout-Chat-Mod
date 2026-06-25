@@ -112,6 +112,10 @@ export interface Environment {
   PROD_VERIFY_TOKEN: string;
   // QA tester gate — dev guild only. The QA role ID in the DEV Discord guild.
   DEV_QA_ROLE_ID: string;
+  // Golden-build version lock (dev-only). The single currently-active QA build
+  // version, and the on/off switch for the lock.
+  QA_ACTIVE_VERSION: string;
+  QA_BUILD_LOCK: boolean;
   // GitHub ticketing (Discord <-> GitHub Issues/Projects). GITHUB_PAT is a
   // fine-grained PAT (owner UNN-Devotek) needing Issues:R/W + Projects:R/W.
   // Projects v2 are GraphQL-only; the *_NUMBER values are the /users/<owner>/projects/<N> numbers.
@@ -256,6 +260,8 @@ const env: Environment = {
   PROD_VERIFY_URL: process.env.PROD_VERIFY_URL || '',
   PROD_VERIFY_TOKEN: process.env.PROD_VERIFY_TOKEN || '',
   DEV_QA_ROLE_ID: process.env.DEV_QA_ROLE_ID || '',
+  QA_ACTIVE_VERSION: process.env.QA_ACTIVE_VERSION || '',
+  QA_BUILD_LOCK: process.env.QA_BUILD_LOCK === 'true',
 
   // GitHub ticketing
   GITHUB_PAT: process.env.GITHUB_PAT || '',
