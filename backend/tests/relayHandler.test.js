@@ -805,6 +805,38 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
+  test('send forwards the linked FCM user UUID to ingestMessage, not the relay TEXT id', async () => {
+    // Regression: handleSend used to pass identity.userId (the relay "user_"+hex TEXT
+    // id) to ingestMessage, which runs prisma.user.findUnique({ id }) expecting a UUID
+    // -> P2023 throw -> internal_error -> ZFE surfaces relay_rejected in-game. The
+    // message author/moderation identity must be the linked FCM account UUID.
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'LinkedSender' }),
+    );
+    wsReg.close();
+    const { token } = regRes;
+    const rawId = lastRawUserId();                 // relay TEXT id, e.g. "user_abc..."
+    const fcmId = 'fcm-linked-sender-001';          // stands in for a users.id UUID
+    _userMap[fcmId] = { id: fcmId, discordId: 'disc-x', steamId: null, isBanned: false, isMuted: false };
+    markTokensLinked(rawId, fcmId);
+
+    const ingestMock = require('../src/services/ingestMessage').ingestMessage;
+    ingestMock.mockClear();
+
+    const { ws, msgs } = await conn();
+    const res = await waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'send', token, channel: 'global', body: 'hi' }),
+    );
+    expect(res).toMatchObject({ success: true });
+    expect(ingestMock).toHaveBeenCalled();
+    const args = ingestMock.mock.calls[0][0];
+    expect(args.userId).toBe(fcmId);                          // the linked FCM UUID
+    expect(args.userId).not.toBe(rawId);                     // NOT the relay TEXT id
+    expect(String(args.userId).startsWith('user_')).toBe(false);
+    ws.close();
+  });
+
   test('send does not forward targetUserId to ingestMessage', async () => {
     const { ws: wsReg, msgs: msgsReg } = await conn();
     const regRes = await waitForMsg(wsReg, msgsReg, () =>

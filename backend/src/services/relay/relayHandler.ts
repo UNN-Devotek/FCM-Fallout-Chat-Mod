@@ -473,8 +473,13 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   // Assign relay cursor BEFORE ingestMessage so it is included in the broadcast.
   const relaySeq = await nextRelaySeq();
 
+  // ingestMessage attributes messages.user_id (a UUID FK -> users.id) and runs the
+  // mute/automod checks against that users row. identity.userId is the relay TEXT id
+  // ("user_"+hex), NOT a UUID — passing it makes prisma.user.findUnique throw P2023
+  // ("invalid UUID"). Use the linked FCM account UUID (guaranteed set: the !isLinked
+  // gate above already returned permission_denied for unlinked identities).
   const result = await ingestMessage({
-    userId:    identity.userId,
+    userId:    identity.linkedUserId!,
     channelId,
     rawContent: body,
     source:    'relay',
@@ -524,7 +529,9 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
         id:        result.messageId,
         content:   body,
         username:  identity.fo76Name,
-        userId:    identity.userId,
+        // userId must match messages.user_id (the linked FCM account UUID), not the
+        // relay TEXT id — keeps the broadcast consistent with what poll/history return.
+        userId:    identity.linkedUserId!,
         channelId,
         source:    'relay',
         timestamp: new Date().toISOString(),
