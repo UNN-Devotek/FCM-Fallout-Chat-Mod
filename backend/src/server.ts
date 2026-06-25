@@ -106,6 +106,7 @@ import { attachChatUpgradeRouter } from './websocket/upgradeRouter';
 import { initLatestVersion } from './services/latestReleaseVersion';
 import { initActiveQaVersion } from './services/activeQaVersion';
 import { setQaActiveVersion, getQaActiveVersion } from './controllers/qaVersionController';
+import { qaStart, makeQaCallbackHandler, defaultQaCallbackDeps } from './controllers/qaOAuthController';
 import hudFeedRouter from './routes/hudFeed';
 
 const app = express();
@@ -288,7 +289,8 @@ if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
 if (env.NODE_ENV === 'development') {
   app.post('/api/admin/qa/active-version', apiLimiter, requireAdminKey, setQaActiveVersion);
   app.get('/api/admin/qa/active-version', apiLimiter, requireAdminKey, getQaActiveVersion);
-  // (Task 5 adds /auth/discord/qa/start + /auth/discord/qa/callback here.)
+  app.get('/auth/discord/qa/start', authLimiter, qaStart);
+  app.get('/auth/discord/qa/callback', authLimiter, makeQaCallbackHandler(defaultQaCallbackDeps));
   // (Task 6 adds GET /api/auth/qa-status/:installToken here.)
 }
 
