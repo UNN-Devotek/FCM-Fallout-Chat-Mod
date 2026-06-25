@@ -94,6 +94,26 @@ This is the subtlety that cost us the most, now fully explained:
 - **The native bridge / code-object pattern:** AS↔C++ goes through a code object (vanilla `BGSCodeObj`;
   ours is ZFE's `__SFCodeObj`/`BRG_OBJ`). It exposes named functions callable from AS
   (`call("writeUTFBytes", …)`). Only Null/Bool/Int/Number/String cross — strings for everything.
+- **ZFE native chat-input session (ZFE 0.9.8+) — the sanctioned way to capture text.** ZFE's
+  `dxgi.dll` exposes a native chat-input API as **TOP-LEVEL** ZFE commands (called bare, like
+  `getRuntimeInfo` / `readStorage` — **NOT** `chat.v1.` commands): **`setChatInputActive`**,
+  **`isChatInputActive`**, **`readChatInput`**, **`clearChatInput`**, **`consumeChatInputSubmitted`**,
+  **`isChatKeyPressed`**. Prefixing them with `chat.v1.` returns
+  `{"success":false,"error":{"code":"unsupported_command",...}}` (confirmed in-game, v2.5.0 test). They
+  take **BARE-VALUE payloads (NOT JSON)** and return **BARE booleans/strings** (decoded in-game, v2.5.2
+  probe → v2.5.3): `setChatInputActive("true")` → `true` and ACTIVATES (`"1"` also works; JSON `{}` /
+  `{"active":true}` return `false` and do nothing); `setChatInputActive("false")` deactivates;
+  `consumeChatInputSubmitted("{}")` → a bare boolean (`true` = Enter pressed since last check — **not**
+  the text); `readChatInput("{}")` → the in-progress buffer text (this is where the message text comes
+  from); `isChatInputActive`/`isChatKeyPressed` → `true`/`false`; `clearChatInput("{}")` → `true`. ZFE
+  drives FO76's own text-input gate for you, so you do **not** roll your own input field. `sendMessage`
+  is the one command that IS `chat.v1.`-prefixed (never bare — a bare `sendMessage` hits the legacy
+  bridge and returns literal `false`). FCMChatWidget v2.5.3 runs the real flow when a clean
+  self-resetting probe proves it usable: `setChatInputActive("true")` → poll `readChatInput` (show
+  in-progress text) + `consumeChatInputSubmitted` (Enter) + `isChatInputActive` (Esc) → on submit
+  `chat.v1.sendMessage` the `readChatInput` text → `clearChatInput` + `setChatInputActive("false")`. A
+  low-rate `isChatKeyPressed` edge poll opens chat on the OpenChatKey (PAGE_DOWN); SharedHUDTools
+  remains the fallback. See `game-mods/FCMBridge/hudmodloader-chat/BUILD.md` → "Native chat input (v2.5.3)".
 
 ## 6. Z-order & layering (a cleaner fix than our hack)
 
