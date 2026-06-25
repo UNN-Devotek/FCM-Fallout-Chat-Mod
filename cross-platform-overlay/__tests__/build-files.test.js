@@ -77,7 +77,8 @@ describe('electron-builder build.files completeness', () => {
       const missing = [];
 
       for (const dep of deps) {
-        const filename = `${dep}.js`;
+        // Special case: package.json is a JSON file, not .js
+        const filename = dep === 'package.json' ? 'package.json' : `${dep}.js`;
         if (!isCovered(filename, buildFiles)) {
           missing.push(filename);
         }
