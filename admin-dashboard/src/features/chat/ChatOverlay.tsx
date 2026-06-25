@@ -254,6 +254,34 @@ export function computeMainTabCutout(offsetLeft: number, offsetWidth: number): {
 }
 
 /**
+ * Px from the bottom of the message list within which we treat the user as
+ * "pinned to the latest message" and keep auto-scrolling on new appends. Beyond
+ * it, the user has deliberately scrolled up to read history and must not be
+ * yanked back down.
+ */
+export const STICK_TO_BOTTOM_THRESHOLD = 80;
+
+/**
+ * Whether a scroll position counts as "at the bottom" (stuck to the latest msg).
+ *
+ * This MUST be sampled from a real scroll event (the user's actual position),
+ * NOT recomputed right after a tall message is appended: once a tall card is in
+ * the DOM, `scrollHeight` has already grown while `scrollTop` hasn't moved, so
+ * `scrollHeight - scrollTop - clientHeight` ≈ the card's height and a
+ * post-append reading wrongly looks like "scrolled up". See #313 — the old
+ * auto-scroll guard made exactly that mistake and never scrolled to `/camp`
+ * and `/nukecodes` cards.
+ */
+export function isNearBottom(
+  scrollHeight: number,
+  scrollTop: number,
+  clientHeight: number,
+  threshold: number = STICK_TO_BOTTOM_THRESHOLD,
+): boolean {
+  return scrollHeight - scrollTop - clientHeight <= threshold;
+}
+
+/**
  * Whether becoming-visible must force a WS reconnect. onVisibility(true) fires on
  * hidden->visible, so overlayVisible was false. Only kick when the gate WON'T
  * already re-run the WS effect: the game was running (gate = overlayVisible ||
@@ -3435,6 +3463,12 @@ export default function ChatOverlay() {
   // first time messages populate, so opening the page lands you at the latest
   // message. The in-game overlay (overlayShell) deliberately does NOT auto-jump.
   const didInitialScrollRef = useRef(false);
+  // #313: Tracks whether the user is currently pinned to the bottom of the feed,
+  // sampled from real scroll events (see isNearBottom). The auto-scroll effect
+  // reads THIS — the user's actual intent — instead of re-measuring distance
+  // after a (possibly tall) message has already been appended, which corrupts
+  // the reading. Defaults true so a fresh feed pins to the latest message.
+  const stickToBottomRef = useRef(true);
   // Timer used to debounce the initial cold-start scroll-to-bottom (Fix 2).
   // We reset the timer on each incoming messages batch during the initial-load
   // window and only fire scrollToBottom() once the feed has quieted for ~220ms.
@@ -5011,12 +5045,15 @@ export default function ChatOverlay() {
       return;
     }
 
-    const container = end.parentElement;
-    if (container) {
-      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-      if (distanceFromBottom > 80) return; // user scrolled up to read — don't yank them
-    }
-    end.scrollIntoView({ behavior: 'auto' });
+    // #313: Decide from the user's tracked intent (sampled during real scroll
+    // events, see the stick-tracking effect below) — NOT from a distance reading
+    // taken after a tall card was already appended, which reads as the card's
+    // height and was misfiring the "user scrolled up" guard.
+    if (!stickToBottomRef.current) return; // user scrolled up to read — don't yank them
+    // Multi-pass pin so a tall card (and its async-loading image) lands fully in
+    // view across the reflow frames, not a single-shot scrollIntoView that ends
+    // up short.
+    scrollToBottom();
   }, [messages, scrollToBottom]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Clean up the initial-scroll debounce timer on unmount.
@@ -5026,6 +5063,25 @@ export default function ChatOverlay() {
         clearTimeout(initialScrollTimerRef.current);
       }
     };
+  }, []);
+
+  // #313: Track stick-to-bottom INTENT from real scroll events. Reading the
+  // distance HERE (as the user scrolls) is what lets the auto-scroll effect
+  // distinguish "user scrolled up to read history" from "a tall card was just
+  // appended at the bottom" — the latter inflates a post-append distance reading
+  // and used to misfire the guard. Always-on and seeded from the actual position
+  // (never assumed pinned), independent of the lazy-load top-scroll listener
+  // (which is gated off in public mode). The container is display-toggled, not
+  // unmounted, so a single mount-time attach stays valid.
+  useEffect(() => {
+    const cont = messagesContRef.current;
+    if (!cont) return;
+    const onScroll = () => {
+      stickToBottomRef.current = isNearBottom(cont.scrollHeight, cont.scrollTop, cont.clientHeight);
+    };
+    onScroll(); // seed from the current position
+    cont.addEventListener('scroll', onScroll, { passive: true });
+    return () => cont.removeEventListener('scroll', onScroll);
   }, []);
 
   // (a2) Activating the chat by clicking/focusing the input box → land at the
@@ -6882,6 +6938,10 @@ export default function ChatOverlay() {
                         title="Click to zoom"
                         style={{ display: 'block', maxWidth: '100%', maxHeight: '80px', objectFit: 'contain', background: 'transparent', cursor: 'zoom-in' }}
                         onClick={() => setChatLightboxSrc(resolveMediaUrl(ci.imageUrl!))}
+                        // #313: the image loads async and grows the card AFTER the
+                        // append already scrolled — re-pin if the user is still at
+                        // the bottom so the (now taller) card lands fully in view.
+                        onLoad={() => { if (stickToBottomRef.current) scrollToBottom(); }}
                         onError={e => { (e.currentTarget as HTMLImageElement).parentElement!.style.display = 'none'; }}
                       />
                     </div>
