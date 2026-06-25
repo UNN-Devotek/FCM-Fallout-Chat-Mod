@@ -1389,6 +1389,15 @@ function openRelaySocket(id) {
   sock.on('close', (code, reason) => {
     relaySockets.delete(id);
     relaySendBuffers.delete(id);
+    // Golden-build lock: the dev backend rejected this build as outdated. This is
+    // terminal — do NOT auto-reconnect. Tell the user to grab the current QA build.
+    if (code === 4003) {
+      diag('[relay] WS closed 4003 OUTDATED_BUILD — prompting update');
+      try { showUpdateNotification((reason && reason.toString().split(':')[1]) || ''); } catch { /* ignore */ }
+      sendToRenderer('relay:status', { state: 'error', message: 'This QA build is no longer active. Download the current QA build from the dev Discord.' });
+      sendToRenderer('proxy:ws:close', { id, code, reason: reason && reason.toString() });
+      return;
+    }
     sendToRenderer('proxy:ws:close', { id, code, reason: reason && reason.toString() });
   });
   sock.on('error', (err) => sendToRenderer('proxy:ws:error', { id, message: err.message }));
