@@ -1310,6 +1310,7 @@ ipcMain.handle('proxy:http', async (_evt, reqDesc) => {
   return new Promise((resolve) => {
     const outHeaders = overlayCore.filterProxyHeaders(headers);
     if (sessionToken) outHeaders['X-Auth-Token'] = sessionToken;
+    outHeaders['X-Client-Version'] = APP_VERSION;
     outHeaders['User-Agent'] = APP_UA;
     outHeaders['Origin'] = RELAY_HTTP;
     // cookie is never in the allowlist, but delete defensively in case the
@@ -1352,6 +1353,7 @@ function openRelaySocket(id) {
   const sock = new WebSocket(RELAY_WS, {
     headers: {
       'X-Auth-Token': sessionToken,
+      'X-Client-Version': APP_VERSION,
       'User-Agent': APP_UA,
       'Origin': RELAY_HTTP,
     },
