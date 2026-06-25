@@ -110,9 +110,8 @@ export function makeQaCallbackHandler(deps: QaCallbackDeps): RequestHandler {
 export const defaultQaCallbackDeps: QaCallbackDeps = {
   async consumeState(state) {
     const redis = await getRedisClient();
-    const it = await redis.get(`qa_oauth_state:${state}`);
-    if (it) await redis.del(`qa_oauth_state:${state}`);
-    return it;
+    const it = await redis.getDel(`qa_oauth_state:${state}`);
+    return it ?? null;
   },
   async exchangeCode(code, redirectUri) {
     const r = await fetch('https://discord.com/api/oauth2/token', {
