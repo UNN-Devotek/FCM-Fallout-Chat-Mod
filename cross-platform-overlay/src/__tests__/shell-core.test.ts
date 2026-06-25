@@ -20,6 +20,7 @@ import {
   IDLE_COLLAPSE_SECONDS_DEFAULT,
   shellToWebSettings,
   resolveCollapsedHeight,
+  revealCollapsedElements,
   computeResizeBounds,
   isDragTarget,
   shouldExitTextEntryOnEscape,
@@ -856,5 +857,47 @@ describe('mergeKeybindDefaults', () => {
     const merged = mergeKeybindDefaults(current, defaults);
     expect(merged.focus).toBe('Insert');
     expect(merged.toggle).toBe('Delete');
+  });
+});
+
+// ── revealCollapsedElements (#327: force-expand must fully un-hide) ────────────
+// Both expand paths must remove the root 'collapsed' class AND clear
+// 'fcm-collapsed-hidden' from every element hidden during collapse. The Insert
+// force-expand path used to drop only 'collapsed', leaving the body/input/footer
+// hidden when it won the race against setCollapsed(false) — "everything invisible
+// except the top bar".
+describe('revealCollapsedElements (#327 full reveal on expand)', () => {
+  // Minimal element stub: a real Set behind classList so removals are observable.
+  const elWith = (...classes: string[]) => {
+    const set = new Set(classes);
+    return { set, classList: { remove: (t: string) => { set.delete(t); } } };
+  };
+
+  it('removes "collapsed" from root and "fcm-collapsed-hidden" from every hidden element', () => {
+    const root = elWith('collapsed', 'other');
+    const body = elWith('fcm-collapsed-hidden');
+    const input = elWith('fcm-collapsed-hidden', 'foo');
+    const footer = elWith('fcm-collapsed-hidden');
+
+    revealCollapsedElements(root, [body, input, footer]);
+
+    expect(root.set.has('collapsed')).toBe(false);
+    expect(root.set.has('other')).toBe(true);            // unrelated classes untouched
+    expect(body.set.has('fcm-collapsed-hidden')).toBe(false);
+    expect(input.set.has('fcm-collapsed-hidden')).toBe(false);
+    expect(input.set.has('foo')).toBe(true);
+    expect(footer.set.has('fcm-collapsed-hidden')).toBe(false);
+  });
+
+  it('is null-safe for the root and still un-hides the elements', () => {
+    const body = elWith('fcm-collapsed-hidden');
+    expect(() => revealCollapsedElements(null, [body])).not.toThrow();
+    expect(body.set.has('fcm-collapsed-hidden')).toBe(false);
+  });
+
+  it('handles an empty hidden set (just clears the root class)', () => {
+    const root = elWith('collapsed');
+    expect(() => revealCollapsedElements(root, [])).not.toThrow();
+    expect(root.set.has('collapsed')).toBe(false);
   });
 });
