@@ -107,6 +107,7 @@ import { initLatestVersion } from './services/latestReleaseVersion';
 import { initActiveQaVersion } from './services/activeQaVersion';
 import { setQaActiveVersion, getQaActiveVersion } from './controllers/qaVersionController';
 import { qaStart, makeQaCallbackHandler, defaultQaCallbackDeps } from './controllers/qaOAuthController';
+import { makeQaStatusHandler, defaultQaStatusDeps } from './controllers/qaStatusController';
 import hudFeedRouter from './routes/hudFeed';
 
 const app = express();
@@ -291,7 +292,7 @@ if (env.NODE_ENV === 'development') {
   app.get('/api/admin/qa/active-version', apiLimiter, requireAdminKey, getQaActiveVersion);
   app.get('/auth/discord/qa/start', authLimiter, qaStart);
   app.get('/auth/discord/qa/callback', authLimiter, makeQaCallbackHandler(defaultQaCallbackDeps));
-  // (Task 6 adds GET /api/auth/qa-status/:installToken here.)
+  app.get('/api/auth/qa-status/:installToken', apiLimiter, makeQaStatusHandler(defaultQaStatusDeps));
 }
 
 app.get('/auth/discord', authLimiter, async (req: Request, res: Response) => {
