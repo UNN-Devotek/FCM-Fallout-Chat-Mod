@@ -465,6 +465,114 @@ quickly:
 - **Deferred (not yet built):** dev OAuth flow wiring into `server.ts`; the broker that
   mints/returns short-lived Access + DB credentials; `fcm-dev-cli login`.
 
+## QA tester access
+
+External QA testers need access to the live hosted dev environment but are not developers.
+They install a pre-built QA build of the overlay (the `dist:qa` artifact), log in with
+Discord via the QA OAuth flow, and connect to `dev.falloutchatmod.com`. They never touch
+the dev Discord application credentials, the database, or the object store.
+
+### Cloudflare Access path-bypass policy
+
+The overlay is a native application that makes unauthenticated (no browser cookie/SSO)
+HTTP and WebSocket calls to the backend. Cloudflare Access uses its own HTTPS intercept
+for SSO; that intercept breaks WebSocket upgrades and API calls from non-browser clients.
+The fix is to add CF Access applications that **bypass** Access for the overlay surface
+while keeping SSO enforcement on the human (dashboard) surface.
+
+CF evaluates policies from most-specific path first. On `dev.falloutchatmod.com` configure:
+
+| Policy | Path(s) | Action | Reason |
+|--------|---------|--------|--------|
+| Bypass | `/ws` | Bypass | WebSocket upgrade path |
+| Bypass | `/auth/discord/qa/*` | Bypass | QA OAuth start + callback |
+| Bypass | `/api/auth/qa-status/*` | Bypass | QA login polling endpoint |
+| Bypass | `/api/*` | Bypass | All overlay REST calls (register, channels, messages, etc.) |
+| Access (SSO) | `/api/admin/*` | Require "FCM Developers" group | Admin-only API |
+| Access (SSO) | `/api/internal/*` | Require "FCM Developers" group | Internal endpoints |
+| Access (SSO) | `/` (catch-all) | Require "FCM Developers" group | Dashboard root + static assets |
+
+The `/api/admin/*` and `/api/internal/*` bypass-exceptions are evaluated before `/api/*`
+because CF matches most-specific path first, so those paths stay SSO-gated even though
+`/api/*` is bypassed.
+
+**Verify WebSocket through the bypass:** after applying the policy, confirm that a WS
+upgrade to `wss://dev.falloutchatmod.com/ws` with a valid `X-Auth-Token` header succeeds
+(HTTP 101). If the upgrade receives HTTP 307 or an HTML redirect page, the `/ws` bypass
+is not applied or the `*` path catch-all is overriding it.
+
+### Security model on the bypassed surface
+
+The overlay surface is bypassed at the CF layer; the application-level gate is the
+security boundary. Two controls enforce it:
+
+1. **QA role gate** - `GET /auth/discord/qa/callback` checks that the authenticated
+   Discord user holds the `DEV_QA_ROLE_ID` role in the dev guild. No role = no session
+   grant.
+2. **Golden-build lock** - when `QA_BUILD_LOCK=true` the backend checks the
+   `x-client-version` header on every WS upgrade and on `GET /api/auth/qa-status/:installToken`.
+   A version that does not match `QA_ACTIVE_VERSION` receives close code `4003` (WS) or
+   HTTP 426 (poll). This ensures only the currently-blessed QA build can connect.
+
+The dev data is fake by construction (no real users, no real chat, no PII) so an attacker
+who bypasses the application gate finds nothing confidential.
+
+### Onboarding a QA tester
+
+1. Invite the tester to the **dev Discord server** and assign them the **QA** role
+   (`DEV_QA_ROLE_ID`).
+2. Send them the `dist:qa` build artifact via the dev Discord updates channel.
+3. They install and run it; the overlay opens the QA OAuth flow in-app.
+4. The backend verifies their QA role and hands back a session token.
+
+No CF Access group membership is needed for QA testers (they use the bypass path).
+No email allowlist entry is needed.
+
+**Revoke access:** remove the QA role from the tester in the dev Discord server. Their
+next login attempt will fail the role check. Existing sessions expire at their natural
+24-hour TTL.
+
+### New env vars (dev backend only)
+
+| Var | Purpose |
+|-----|---------|
+| `DEV_QA_ROLE_ID` | Discord role ID in the dev guild that grants QA tester access |
+| `DISCORD_QA_REDIRECT_URI` | Explicit callback URI for QA OAuth; falls back to `<proto+host>/auth/discord/qa/callback` when empty |
+| `QA_ACTIVE_VERSION` | The single currently-blessed QA build version string |
+| `QA_BUILD_LOCK` | `true` to enforce the golden-build lock; `false` (default) to disable |
+
+These vars are dev-only. The QA endpoints are only mounted when `NODE_ENV=development`
+(see [dev-only endpoints](#dev-only-endpoints-nodeenvdevelopment) in the backend docs).
+
+### Registering the QA OAuth redirect URI
+
+In the Discord developer portal, add `https://dev.falloutchatmod.com/auth/discord/qa/callback`
+as an allowed redirect URI on the **dev Discord application** (not the prod app). If
+`DISCORD_QA_REDIRECT_URI` is set, use that value instead.
+
+### Flipping the golden build
+
+When a new QA artifact is ready, update the blessed version via the admin API:
+
+```bash
+curl -X POST https://dev.falloutchatmod.com/api/admin/qa/active-version \
+  -H "x-admin-api-key: <ADMIN_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"version": "1.2.3"}'
+```
+
+Retrieve the current active version:
+
+```bash
+curl https://dev.falloutchatmod.com/api/admin/qa/active-version \
+  -H "x-admin-api-key: <ADMIN_API_KEY>"
+```
+
+Post the new `dist:qa` artifact to the dev Discord updates channel so testers know to
+reinstall before the old build stops connecting.
+
+---
+
 ## Standup checklist
 
 Code artifacts (in repo):
