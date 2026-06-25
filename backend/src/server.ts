@@ -104,6 +104,8 @@ import { initHudPushWs } from './services/hudPushWs';
 import { seedRelaySeq } from './services/relay/relaySeq';
 import { attachChatUpgradeRouter } from './websocket/upgradeRouter';
 import { initLatestVersion } from './services/latestReleaseVersion';
+import { initActiveQaVersion } from './services/activeQaVersion';
+import { setQaActiveVersion, getQaActiveVersion } from './controllers/qaVersionController';
 import hudFeedRouter from './routes/hudFeed';
 
 const app = express();
@@ -278,6 +280,16 @@ if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
       res.status(500).json({ error: 'Dev login failed' });
     }
   });
+}
+
+// QA-tester surface — live only on the dev backend (NODE_ENV=development),
+// independent of ENABLE_DEV_LOGIN (hosted dev runs with it off). Never mounts in
+// production. See docs/deployment/hosted-dev-environment.md (QA tester access).
+if (env.NODE_ENV === 'development') {
+  app.post('/api/admin/qa/active-version', apiLimiter, requireAdminKey, setQaActiveVersion);
+  app.get('/api/admin/qa/active-version', apiLimiter, requireAdminKey, getQaActiveVersion);
+  // (Task 5 adds /auth/discord/qa/start + /auth/discord/qa/callback here.)
+  // (Task 6 adds GET /api/auth/qa-status/:installToken here.)
 }
 
 app.get('/auth/discord', authLimiter, async (req: Request, res: Response) => {
@@ -2090,6 +2102,7 @@ async function start(): Promise<void> {
     // Initialize the latest release version cache from DB so newly connecting
     // overlays receive the app:update-available handshake message immediately.
     await initLatestVersion();
+    await initActiveQaVersion();
 
     // Load name blacklist into in-memory cache and subscribe to cross-instance refresh broadcasts.
     await loadBlacklist();
