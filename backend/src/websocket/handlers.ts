@@ -179,10 +179,14 @@ import { incrementMessageCount, setFullscreenStatus, removeFullscreenClient } fr
 import { tryHandleCommand } from '../services/commandService';
 import { getServerPlayers } from '../services/playerListService';
 import { emojifyShortcodes } from '../utils/emoji';
+import { evaluateBuildGate } from '../services/buildLock';
+import { getActiveQaVersion } from '../services/activeQaVersion';
+import env from '../config/environment';
 
 // WebSocket close codes
 const WS_CLOSE_AUTH_FAILED = 4001;
 const WS_CLOSE_BANNED = 4002;
+const WS_CLOSE_OUTDATED_BUILD = 4003;
 
 interface ClientEntry {
   ws: WebSocket;
@@ -1399,6 +1403,19 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
     }
   } catch (err) {
     logger.warn({ err, userId: user.id }, '[app:update-available] connect-time send failed (non-fatal)');
+  }
+
+  // Golden-build lock (dev-only): reject a stale QA build. No-op in prod, where
+  // QA_BUILD_LOCK is unset. Fail-open when no active version is configured.
+  if (env.QA_BUILD_LOCK) {
+    const activeQaVersion = await getActiveQaVersion();
+    const gate = evaluateBuildGate(req.headers as Record<string, unknown>, activeQaVersion, true);
+    if (!gate.allowed) {
+      logger.info({ userId: user.id, clientVersion: gate.clientVersion, activeQaVersion }, '[ws] rejecting outdated build');
+      ws.close(WS_CLOSE_OUTDATED_BUILD, `OUTDATED_BUILD:${activeQaVersion || ''}`);
+      clients.delete(token);
+      return;
+    }
   }
 
   // Broadcast room:join (user connected)
