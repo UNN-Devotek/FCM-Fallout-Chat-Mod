@@ -1908,6 +1908,85 @@ ipcMain.on('discord:link', () => {
   oauthWin.loadURL(linkUrl).catch((e) => oauthFallback(String(e && e.message || e)));
 });
 
+// ─── QA login (golden dev build) ──────────────────────────────────────────────
+// Opens the QA Discord OAuth in a window, then polls /api/auth/qa-status until the
+// backend hands back a role-gated session token (or 426 OUTDATED_BUILD).
+function startQaLogin() {
+  const st = loadState();
+  if (!st || !st.installToken) return;
+  const startUrl = `${RELAY_HTTP}/auth/discord/qa/start?installToken=${encodeURIComponent(st.installToken)}`;
+  const callbackPath = '/auth/discord/qa/callback';
+  sendToRenderer('relay:status', { state: 'qa_required' });
+
+  let win = null;
+  try {
+    win = new BrowserWindow({
+      width: 520, height: 720, parent: mainWindow || undefined, modal: false,
+      title: 'QA Login — Fallout Chat Mod', icon: appIcon() || undefined, center: true,
+      webPreferences: { contextIsolation: true, nodeIntegration: false },
+    });
+  } catch {
+    try { shell.openExternal(startUrl); } catch { /* ignore */ }
+    pollQaStatus(0);
+    return;
+  }
+  const wc = win.webContents;
+  const checkNav = (url) => {
+    try {
+      if (new URL(url).pathname === callbackPath) {
+        setTimeout(() => { if (win && !win.isDestroyed()) win.close(); }, 1200);
+      }
+    } catch { /* ignore */ }
+  };
+  wc.on('did-navigate', (_e, url) => checkNav(url));
+  wc.on('will-redirect', (_e, url) => checkNav(url));
+  wc.on('did-redirect-navigation', (_e, url) => checkNav(url));
+  win.on('closed', () => { win = null; pollQaStatus(0); });
+  win.loadURL(startUrl).catch(() => { try { shell.openExternal(startUrl); } catch { /* ignore */ } pollQaStatus(0); });
+}
+
+function pollQaStatus(attempt = 0) {
+  const st = loadState();
+  if (!st || !st.installToken) return;
+  const MAX = 20;
+  const url = new URL(`${RELAY_HTTP}/api/auth/qa-status/${encodeURIComponent(st.installToken)}`);
+  const req = httpModule(url).request(
+    { hostname: url.hostname, port: url.port || undefined, path: url.pathname, method: 'GET',
+      headers: { 'Content-Type': 'application/json', 'X-Client-Version': APP_VERSION } },
+    (res) => {
+      if (res.statusCode === 426) {
+        res.resume();
+        diag('[qa-status] 426 OUTDATED_BUILD');
+        try { showUpdateNotification(''); } catch { /* ignore */ }
+        sendToRenderer('relay:status', { state: 'error', message: 'This QA build is no longer active. Download the current QA build from the dev Discord.' });
+        return;
+      }
+      let data = '';
+      res.on('data', (c) => (data += c));
+      res.on('end', () => {
+        let d = {};
+        try { d = (JSON.parse(data).data) || {}; } catch { /* ignore */ }
+        if (d.authorized && d.token) {
+          sessionToken = d.token;
+          flushPendingWsOpens();
+          saveState({ discordLinked: true, displayName: d.displayName || '', userRole: d.role || null });
+          userRole = d.role || null;
+          rebuildTray();
+          sendToRenderer('relay:status', { state: 'authenticated', displayName: d.displayName || '', discordLinked: true, role: d.role || null });
+          return;
+        }
+        if (attempt + 1 < MAX) setTimeout(() => pollQaStatus(attempt + 1), 1500);
+        else sendToRenderer('relay:status', { state: 'error', message: 'QA login timed out. Click to retry.' });
+      });
+    },
+  );
+  req.on('error', () => { if (attempt + 1 < MAX) setTimeout(() => pollQaStatus(attempt + 1), 1500); });
+  req.setTimeout(12000, () => req.destroy(new Error('qa-status timeout')));
+  req.end();
+}
+
+ipcMain.handle('overlay:qa-login', async () => { startQaLogin(); return { ok: true }; });
+
 // Discord link status refresh: poll /api/auth/discord-status/:installToken and
 // broadcast the real linked state to the renderer as 'relay:discord-status'. The
 // renderer calls this (via ipcMain 'discord:refresh-status') after returning from
@@ -3574,7 +3653,11 @@ function createWindow() {
         ).catch(() => { /* ignore */ });
       }
     } catch { /* ignore */ }
-    startRelay();
+    if (BUILD_CHANNEL === 'qa') {
+      startQaLogin();
+    } else {
+      startRelay();
+    }
     // Re-focus the chat input after a reload if it was focused before.
     // We fire this after startRelay so the component has received relay:status
     // and re-mounted before we ask it to focus. A short delay lets the React
