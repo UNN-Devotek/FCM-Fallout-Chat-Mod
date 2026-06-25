@@ -110,6 +110,8 @@ export interface Environment {
   // read the prod guild without the dev bot.
   PROD_VERIFY_URL: string;
   PROD_VERIFY_TOKEN: string;
+  // QA tester gate — dev guild only. The QA role ID in the DEV Discord guild.
+  DEV_QA_ROLE_ID: string;
   // GitHub ticketing (Discord <-> GitHub Issues/Projects). GITHUB_PAT is a
   // fine-grained PAT (owner UNN-Devotek) needing Issues:R/W + Projects:R/W.
   // Projects v2 are GraphQL-only; the *_NUMBER values are the /users/<owner>/projects/<N> numbers.
@@ -253,6 +255,7 @@ const env: Environment = {
   DEV_DEVELOPER_ROLE_ID: process.env.DEV_DEVELOPER_ROLE_ID || '',
   PROD_VERIFY_URL: process.env.PROD_VERIFY_URL || '',
   PROD_VERIFY_TOKEN: process.env.PROD_VERIFY_TOKEN || '',
+  DEV_QA_ROLE_ID: process.env.DEV_QA_ROLE_ID || '',
 
   // GitHub ticketing
   GITHUB_PAT: process.env.GITHUB_PAT || '',
