@@ -373,6 +373,19 @@ state, survives reconnect, works across instances). The alternative of deriving 
 > value for the same event."* That is the broadcast-time `relaySeq` design above — so this is no
 > longer a speculative choice, it's the documented pattern.
 
+> **Implemented as a SINGLE broadcast (no double-broadcast).** `handleSend` computes
+> `relaySeq = nextRelaySeq()` and passes it INTO `ingestMessage`, which threads it through to
+> `finalizeMessage`. `finalizeMessage` then (a) includes `relaySeq` in the one `chat:message`
+> broadcast and (b) persists it on `messages.relay_seq` via the write-behind queue
+> (`messageService.persistMessage` writes the `relay_seq` column). The relay pub/sub subscriber
+> (`ensurePubSub` in `relayHandler.ts`) unwraps the WS handler's `broadcast()` envelope
+> (`{ instanceId, payload: { type, payload } }`) and forwards any event carrying a `relaySeq`.
+> This replaced an earlier hack where `handleSend` published a *second* relay-only Redis
+> rebroadcast just to attach the cursor — the row was persisted with `relay_seq = NULL`, so
+> `poll`/history (which filter `WHERE relay_seq IS NOT NULL`) never returned in-game sends. The seq
+> is **relay-only**: `ingestMessage`/`finalizeMessage` leave `relay_seq` NULL for `hud`/`ws`/`mcp`,
+> and those broadcasts omit `relaySeq` (unchanged behavior).
+
 ---
 
 ## Message limits reconciliation
@@ -552,7 +565,8 @@ Implemented on branch `feat/ingame-chatv1-relay` (2026-06-24). Key details for t
 ### Modified files
 
 - `backend/prisma/schema.prisma` — `Message.relaySeq`, `HudPairingToken` model
-- `backend/src/services/ingestMessage.ts` — `IngestSource` union adds `'relay'`; fail-closed rate limit for relay
+- `backend/src/services/ingestMessage.ts` — `IngestSource` union adds `'relay'`; fail-closed rate limit for relay; optional `relaySeq` opt threaded to `finalizeMessage` (relay-only; persists `messages.relay_seq` + single broadcast)
+- `backend/src/services/messageService.ts` — `persistMessage` writes the `relay_seq` column (BigInt when provided, NULL otherwise) so relay sends are returned by `poll`/history
 - `backend/src/websocket/upgradeRouter.ts` — `/relay` path → lazy `relayWss` singleton
 - `backend/src/server.ts` — `seedRelaySeq()` on startup; SPA catch-all guards `/relay`
 - `backend/src/config/environment.ts` — `RELAY_WORLD_HMAC_SECRET` (defaults to `dev-relay-world-hmac-secret-change-me`)
