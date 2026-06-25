@@ -12,6 +12,14 @@ The widget:
 - Calls `chat.v1.getRuntimeInfo` first to gate on `zfe-chat-online-v1` (requires ZFE 0.9.8+).
 - Connects via `chat.v1.connect`, polls via `chat.v1.pollEvents` (2 s cursor poll),
   sends via `chat.v1.sendMessage` with slug-based channels.
+- (v2.5.3) The native chat-input verbs are **top-level / bare** ZFE commands taking
+  **bare-value payloads** (`"true"`/`"false"`/`"1"`, NOT JSON) and returning **bare
+  booleans/strings**. `setChatInputActive("true")` ACTIVATES, `"false"` deactivates;
+  `consumeChatInputSubmitted` returns a bare boolean (`true` = Enter pressed) and the
+  message text comes from `readChatInput`. When a clean self-resetting probe proves it
+  usable, `openInput()` runs the native flow (open → read → consume → send → clear); a
+  low-rate `isChatKeyPressed` poll opens chat on PAGE_DOWN; otherwise SharedHUDTools is the
+  fallback. `sendMessage` stays `chat.v1.sendMessage`. See "Native chat input (v2.5.3)" below.
 - Handles limited-state (unlinked account): receive-only, pinned link-code notice.
 - Self-reads `worldId` from BSUIDataManager, sends HMAC-SHA256 control message on the
   `server` channel to bind the world-session room (EULA section 4(F)-safe: game's own HUD data).
@@ -24,8 +32,13 @@ The widget:
 |------|----------|-------|
 | Haxe | build | 4.3+ |
 | Python 3 | build | stdlib only |
-| HUDModLoader | runtime | Nexus; provides HUDMenu shell + SharedHUDTools |
+| HUDModLoader | runtime | Nexus; provides HUDMenu shell + SharedHUDTools + HUDButton + GFx font aliases |
 | ZFE (dxgi.dll + zfe.ini) | runtime | 0.9.8+ required |
+
+No font/TTF dependency — v2.5.3 uses HUDModLoader's engine-registered GFx font aliases
+(see "Fonts" below), so there is nothing to embed at build time. HUDModLoader is still
+listed (runtime) because the native chat-input path falls back to SharedHUDTools when the
+ZFE native input session is unavailable.
 
 ---
 
@@ -160,7 +173,7 @@ Boot Fallout 76 with HUDModLoader and ZFE active. The widget loads automatically
 
 ## Keybind configuration
 
-Two independent bindings control chat input. Keep them matching (default: `PAGE_DOWN`).
+One binding controls chat input. Default: `PAGE_DOWN`. No custom keybind config.
 
 ### 1. ZFE native hotkey
 
@@ -182,6 +195,9 @@ File: `Data/FCMChat.ini`
 openKey=PAGE_DOWN
 ```
 
+Keep `openKey` and `OpenChatKey` matching — they fire from the same physical key
+via two independent paths (HUDMod::UserEvent and ZFE's key poll).
+
 ### Valid key/action names
 
 | Value | Key |
@@ -199,12 +215,17 @@ openKey=PAGE_DOWN
 | Action | Binding |
 |--------|---------|
 | Open chat input | Page Down (configurable -- see above) |
-| Switch channel | `/g` `/t` `/e` `/i` `/r` in input, or Page Down (NextPage) |
-| Scroll | `scrollUp/Down()` -- implemented but not yet bound to a key |
-| Close input | Esc |
+| Type + submit | Type in the HUDTools entry box, press Enter |
+| Cancel input | Esc |
+| Switch channel | Click a channel tab, `/g` `/t` `/e` `/i` `/r` in input, or Page Down (NextPage, cycle when closed) |
+| Scroll back | Page Up (PrevPage when input closed) |
+| Scroll to newest | Page Down (NextPage cycles; F12 menu "Scroll to newest"), or it auto-scrolls when not scrolled back |
+| F12 menu | Channel switch, "Scroll to newest", and "Link account..." (when limited) |
 
 Channels: `global` (GENERAL), `trade` (TRADING), `events` (EVENTS), `infests`
-(INFESTS), `raids` (RAIDS).
+(INFESTS), `raids` (RAIDS). The channel-tab row is rendered as interactive HUDButtons
+when HUDButton is available (gamepad-focusable + clickable); it falls back to a static
+text strip otherwise.
 
 ---
 
@@ -215,17 +236,35 @@ Open `zfe.log` (Windows: `%LocalAppData%\zfe.log`; Linux/Proton: `~/.local/share
 Expected on load (ZFE found on first attempt):
 
 ```
-[FCMChatWidget] info startup: FCMChatWidget 2.0.3 loaded
-[FCMChatWidget] info startup: BUILD=chatv1-widget
+[FCMChatWidget] info startup: FCMChatWidget 2.5.3 loaded
+[FCMChatWidget] info startup: BUILD=chatv1-widget-v2.5.3
 [FCMChatWidget] info startup: zfe-chat-online-v1 OK
 [FCMChatWidget] info startup: found after 1 attempt(s)
-[FCMChatWidget] info hud: SharedHUDTools constructed + registered
+[FCMChatWidget] info hud: SharedHUDTools registered
 [FCMChatWidget] info connect: attempt=1 displayName=<YourName>
 [FCMChatWidget] info connect: connected
 [FCMChatWidget] info auth: userId=<prefix>...
 [FCMChatWidget] info auth: authState=authenticated
+[FCMChatWidget] info probe: startup probe begin (v2.5.3)
+[FCMChatWidget] info probe: getRuntimeInfo (chat.v1.getRuntimeInfo) raw={...}
+[FCMChatWidget] info probe: getAuthState (chat.v1.getAuthState) raw={...}
+[FCMChatWidget] info probe: setChatInputActive(true) (setChatInputActive) raw=true
+[FCMChatWidget] info probe: setChatInputActive(false) (setChatInputActive) raw=true
+[FCMChatWidget] info probe: clearChatInput (clearChatInput) raw=true
+[FCMChatWidget] info probe: nativeInputUsable=true
+[FCMChatWidget] info probe: startup probe end
+[FCMChatWidget] info nativein: open-key poll started (150ms)
 [FCMChatWidget] info world: worldId changed; sending control message
 ```
+
+The **startup probe** runs once, right after `authState=authenticated`. It is now CLEAN
+and self-resetting: it logs `chat.v1.getRuntimeInfo` / `chat.v1.getAuthState` once, then
+activates with the decoded bare payload `setChatInputActive("true")`, sets
+`_nativeInputUsable = nativeTruthy(raw)`, and ALWAYS deactivates (`setChatInputActive("false")`)
++ `clearChatInput("{}")` so native input is left INACTIVE (v2.5.2's probe used the wrong
+`{"active":false}` reset and left native input STUCK ACTIVE, which fought the SharedHUDTools
+box). The always-on watcher is REMOVED; its only useful job (open via PAGE_DOWN) is now a
+low-rate `pollOpenKey()` that opens chat on an `isChatKeyPressed` false→true edge.
 
 If ZFE is still attaching when the widget loads, you may first see:
 
@@ -235,10 +274,52 @@ If ZFE is still attaching when the widget loads, you may first see:
 ...then the startup lines above when found (up to ~30 s)
 ```
 
-Expected on send:
+Expected on input open + send via the NATIVE flow (open key, or PAGE_DOWN edge):
 
 ```
+[FCMChatWidget] info nativein: isChatKeyPressed edge; opening input
+[FCMChatWidget] info nativein: setChatInputActive(true) raw=true
+[FCMChatWidget] info input path: native-chat-input
+[FCMChatWidget] info nativein: read raw=hello
+[FCMChatWidget] info nativein: clearChatInput raw=true
+[FCMChatWidget] info nativein: setChatInputActive(false) raw=true
+[FCMChatWidget] info send: payload ch=global len=<n>
+[FCMChatWidget] info nativein: send-in-session raw={"success":true,...}
 [FCMChatWidget] info send: sent ch=global len=<n>
+```
+
+The `send-in-session raw=...` line logs the FULL `chat.v1.sendMessage` result from a
+native submit (first 200 chars), so we learn whether send works after a native session.
+
+If the probe finds native input unusable, `openInput()` falls back to SharedHUDTools so the
+user can still type (and `chat.v1.sendMessage` is exercised from that path):
+
+```
+[FCMChatWidget] info input path: shared-hud-tools
+[FCMChatWidget] info input: FormatTextEdit ok
+[FCMChatWidget] info input: FormatOnScreenKeyboard ok
+[FCMChatWidget] info input: opened
+[FCMChatWidget] info send: sent ch=global len=<n>
+```
+
+On a confirmed send the message is also echoed locally **immediately** (optimistic echo)
+so the sender sees their line without waiting for the next poll; the server's echo of the
+same message is deduped (by `messageId`, or by sender+channel+body) so it never shows twice.
+
+If the relay rejects the send, you will see the mapped error code in the log and a
+matching one-line notice in the feed (e.g. `permission_denied` shows the link prompt,
+`user_muted` / `rate_limited` / `invalid_channel` / `message_too_long` show their notice,
+and `auth_*` / `user_banned` trigger a reconnect):
+
+```
+[FCMChatWidget] warn send: relay rejected code=permission_denied raw={"success":false,...}
+```
+
+Slash commands (`/g`, `/t`, `/e`, `/i`, `/r`, plus long forms like `/general`,
+`/trading`) consume the input without sending and update the active tab highlight:
+
+```
+[FCMChatWidget] info chan: selected global
 ```
 
 If the widget produces NO zfe.log output at all: the ba2 was not loaded by the game.
@@ -253,9 +334,145 @@ so a hot-reload button is available without restarting.
 
 ## Known gaps / follow-ups
 
-- **SharedHUDTools.TextEdit untested in-game.** Wired via `Reflect` to avoid compile-time
-  class dependency. If method name or signature differs in the shipped HUDTools.swf, update
-  `openInput()` in `FCMChatWidget.hx`.
-- **Scroll keybind.** `scrollUp/Down/ToBottom()` implemented, not yet wired to a HUDMod
-  action key.
-- **Pending-echo dedup.** Server echo of a sent message shows twice. Follow-up.
+- **Real displayName / worldId.** BSUIDataManager reads are attempted but fall back to
+  "Wanderer" / empty if AccountInfoData is not available at connect time. This is a
+  timing issue (widget loads before player is fully in-world). The connect-time fallback
+  is safe; worldId HMAC is retried every 5 s so it will be sent once available.
+
+## Native chat input (v2.5.3)
+
+### History
+
+v2.4.0's `sendMessage` failed with `dispatch_failed` (hardcoded inside ZFE's `dxgi.dll`).
+v2.5.0 mis-prefixed the input verbs (`chat.v1.<verb>`) → `unsupported_command`, proving the
+verbs are **top-level** (bare). v2.5.1 called them bare; v2.5.2 probed them and proved they
+return **bare booleans/strings (not JSON)**. v2.5.3 **decoded the contract** from the v2.5.2
+probe: the verbs take **bare-value payloads**, and programmatic activation DOES work with the
+right payload.
+
+### The decoded contract (bare-value payloads, bare returns)
+
+`callTop(verb, payload)` → `__ZFE.call(verb, payload)` (bare, never `chat.v1.`-prefixed).
+Payloads are **bare values, NOT JSON**:
+
+| Verb (bare) | Payload | Returns | Notes |
+|------|---------|---------|-------|
+| `setChatInputActive` | `"true"` | `true` | ACTIVATES (isChatInputActive after = `true`). `"1"` also works. JSON `{}` / `{"active":true}` return `false` and do nothing. |
+| `setChatInputActive` | `"false"` | `true` | deactivates |
+| `consumeChatInputSubmitted` | `"{}"` | bare boolean | `true` = Enter pressed since last check. **Not the text.** |
+| `readChatInput` | `"{}"` | bare string | the in-progress buffer text (this is where the MESSAGE TEXT comes from) |
+| `isChatInputActive` | `"{}"` | `true`/`false` | session active? |
+| `isChatKeyPressed` | `"{}"` | `true` | when the OpenChatKey (PAGE_DOWN) is pressed |
+| `clearChatInput` | `"{}"` | `true` | resets the input buffer |
+
+`chat.v1.getAuthState` returns ZFE's internal state JSON
+(`{"success":true,"state":"authenticated","connected":true,"liveSubscriber":{"active":true},
+"roles":["user"],"permissions":{...}}`). `sendMessage` is `chat.v1.sendMessage` ONLY —
+**never** bare (bare hits the legacy bridge and returns literal `false`).
+
+`nativeTruthy(raw)`: trims + lowercases; truthy IFF `== "true"` OR `== "1"` OR contains
+`"success":true`. A bare `false` / empty / JSON / failure response is NOT truthy. Used for
+`setChatInputActive` / `isChatInputActive` / `isChatKeyPressed` / `consumeChatInputSubmitted`.
+
+`parseInputText(raw)`: the `readChatInput` buffer text — a bare string (`hello`), a
+JSON-quoted string (strip the surrounding quotes), or a JSON object (extract a
+`text`/`value`/`input` field). A bare `false` / empty → `""`.
+
+### Clean self-resetting startup probe
+
+Once per session (after `authState=authenticated`), `runStartupProbe()` logs
+`chat.v1.getRuntimeInfo` / `chat.v1.getAuthState` once, then activates with the decoded bare
+payload `setChatInputActive("true")`, sets `_nativeInputUsable = nativeTruthy(raw)` (falling
+back to `isChatInputActive` if needed), and **ALWAYS** deactivates (`setChatInputActive("false")`)
++ `clearChatInput("{}")` so native input is left INACTIVE. (v2.5.2's probe used the wrong
+`{"active":false}` reset and left native input STUCK ACTIVE, which fought the SharedHUDTools
+box so the user could not type.) The always-on watcher and the payload-variant loop are
+REMOVED — we know the answer now.
+
+### Open triggers
+
+- `onUserEvent` open key (`~` / Console / `_cfgOpenKey` / TeamChat) → `openInput()`.
+- `pollOpenKey()` — a low-rate (~150 ms) timer that runs only while `_connected && !_inputOpen`
+  and opens chat on a false→true edge of `isChatKeyPressed` (so the ZFE OpenChatKey PAGE_DOWN
+  opens chat too). Debounced via `_lastChatKey`. It NEVER consumes/reads outside an open session.
+- `openInput()`: if `_nativeInputUsable` → `openInputNative()`, else `openInputSharedHudTools()`.
+  Never both.
+
+### The native input flow (the real one)
+
+`openInputNative()`: `callTop("setChatInputActive", "true")`; if `nativeTruthy(raw)` (or
+`isChatInputActive` becomes truthy) set `_inputOpen=_nativeInput=true`, show the typing
+prompt, start `_inputTimer` (~100 ms) → `pollNativeInput()`. On failure, fall back to
+SharedHUDTools.
+
+`pollNativeInput()` each tick (all guarded):
+
+1. `readChatInput("{}")` → `parseInputText` → keep in `_inProgress`, show it in the prompt
+   (`typingPrompt()` + " > " + text) so the user sees what they type.
+2. if `nativeTruthy(consumeChatInputSubmitted("{}"))` → SUBMIT: read the buffer once more,
+   `final = textNow || _inProgress`, `closeInputNative()`, and if non-empty run `final`
+   through the shared `handleSubmittedText` (slash `/g /t /e /i /r` switch consuming, else
+   send). The send is a direct `chat.v1.sendMessage`, and its FULL raw result is logged as
+   `[nativein] send-in-session raw=<...200...>` (so we learn whether send works after a native
+   session). Local-echo on a confirmed send as usual.
+3. else if `!nativeTruthy(isChatInputActive("{}"))` → user cancelled (Esc) → `closeInputNative()`.
+
+`closeInputNative()`: stop `_inputTimer`; `clearChatInput("{}")`; `setChatInputActive("false")`;
+reset state + prompt. The loop only ever runs while a native session is open (never polls
+consume/read outside one).
+
+### Tested logic
+
+`chatVerbFailed`, `nativeCommandName`/`callTop` (bare), `sendCommandName` (chat.v1.-only),
+`setChatInputActivePayload` (bare `"true"`/`"false"`), `nativeTruthy` (`"true"`/`"1"`/`success:true`),
+`probeUsable` (truthy-only gate), and `parseInputText` (bare string / quoted / json / `false`)
+are mirrored in `cross-platform-overlay/__tests__/fcm-chat-widget-logic.js` and covered by Vitest.
+
+## Fonts (v2.5.3 - engine aliases)
+
+v2.5.3 uses HUDModLoader's **engine-registered GFx font aliases** — there is **no font
+embed**:
+
+- `$MAIN_Font_Light` — body / feed / messages / prompts / system notices (`FONT_BODY`).
+- `$MAIN_Font_Bold`  — channel-tab labels, sender names, headers, active-tab (`FONT_BOLD`).
+
+These aliases are registered by HUDModLoader at the GFx engine level (see `HUDTools.as`
+`entry_tf`, which uses `$MAIN_Font_Light`, and `HUDButton.as` label TextFields, which use
+`$MAIN_Font_Bold`). Unlike HUDMenu.swf's per-movie symbol `$$MAIN_Font` — which is **not**
+resolvable in a child widget SWF — and unlike a Flash `@:font`-embedded TTF — which **GFx
+ignores** for child SWFs — these engine aliases **do** resolve inside a child widget SWF
+loaded into `ApplicationDomain.currentDomain`, proven by HUDButton / HUDTools / HUDKeyboard
+rendering with them. `embedFonts = true` is kept on every TextField (the HUDTools entry_tf
+precedent); the aliases resolve fine with it.
+
+**Result:** no TTF dependency at build time. The SWF is ~35 KB (FWS, uncompressed;
+v2.5.x's native chat-input + probe code added ~9 KB over v2.4.0's ~26 KB) versus the
+v2.3.0 embed's ~711 KB.
+
+**Root cause of the v2.3.0 tofu:** GFx resolves fonts per-movie. `$$MAIN_Font` is
+HUDMenu.swf's symbol (not in a child SWF), and the Flash-embedded DejaVuSans TTF was
+ignored by GFx for the child SWF — so every glyph rendered as a tofu square even with the
+embed present.
+
+**Fallback (only if the aliases still tofu in-game):** re-add the `@:font` embed and set
+`TextFormat.font` / the `FormatTextEdit` font argument to the TTF's **DefineFont family
+name `"DejaVu Sans"`** (with the space) — **not** the postscript `"DejaVuSans"`. GFx
+matches the DefineFont family name; the v2.3.0 build used the postscript name, which is the
+only reason its embed failed as a fallback.
+
+## Input path notes (v2.2.0 fix)
+
+v2.0.3 "immediately released" root cause: `HUDTools.startTextEdit` (HUDTools.as line 248)
+gates on BOTH `entryFormats.hasOwnProperty(sendMod)` (set by `FormatTextEdit`) AND
+`entryOSKFormats.hasOwnProperty(sendMod)` (set by `FormatOnScreenKeyboard`). v2.0.3 called
+`FormatTextEdit` only, so the gate failed → HUDTools sent `ERROR|TXT` → `SharedHUDTools`
+called `textFunction(null)` immediately → appeared as "immediately released" with no text.
+
+v2.1.0/2.1.1 replaced SharedHUDTools entirely with a custom `TextFieldType.INPUT` field
+and `BSUIDataManager.dispatchEvent("ControlMap::StartEditText")`. That approach failed because
+`BSUIDataManager` is unreachable from a child SWF loaded with `ApplicationDomain.currentDomain`
+(not the native HUDMenu scope). Proved on Windows: `ReferenceError #1065` on StartEditText.
+
+v2.2.0 restores SharedHUDTools.TextEdit and adds the missing `FormatOnScreenKeyboard` call
+(position off-screen at y=-300 so the gamepad OSK is invisible on PC). All three calls
+are now made in order: `FormatTextEdit` → `FormatOnScreenKeyboard` → `TextEdit`.

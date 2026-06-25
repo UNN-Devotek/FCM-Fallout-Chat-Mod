@@ -18,17 +18,54 @@ import flash.events.IOErrorEvent;
  *   __ZFE.call("chat.v1.sendMessage",payload)   — send a message
  *   __ZFE.call("chat.v1.getAuthState","{}") — connection/auth health
  *
- * Input path: SharedHUDTools.TextEdit / FormatTextEdit — the HUDModLoader-native
- * text-entry mechanism. All SharedHUDTools usage (FormatTextEdit, TextEdit,
- * Register, RegisterMenu) is kept intact from the pre-chat.v1 build.
+ * Font: GFx engine-registered HUDModLoader aliases — NO embed.
+ *   `$MAIN_Font_Light` (body) and `$MAIN_Font_Bold` (bold/headers/tab labels) are
+ *   font aliases registered by HUDModLoader at the GFx engine level (see HUDTools.as
+ *   entry_tf / HUDButton.as label TextFields). Unlike HUDMenu.swf's per-movie symbol
+ *   `$$MAIN_Font` (NOT resolvable in a child widget SWF), and unlike a Flash-@:font
+ *   embedded TTF (GFx IGNORES child-SWF embedded TTFs — this is why the v2.3.0
+ *   DejaVuSans embed still rendered tofu), these aliases DO resolve inside any child
+ *   widget SWF loaded into ApplicationDomain.currentDomain — proven by HUDButton /
+ *   HUDTools / HUDKeyboard, which render with them. embedFonts=true is kept on every
+ *   TextField (the HUDTools entry_tf precedent); the aliases resolve fine with it.
+ *   FONT_BODY is also passed to FormatTextEdit (matches HUDTools' entry_tf default).
+ *
+ * Input path (v2.5.3): DECODED native chat-input API. The verbs are TOP-LEVEL ZFE
+ *   commands that take BARE-VALUE payloads (not JSON) and return bare booleans/strings:
+ *     setChatInputActive payload "true" -> true (ACTIVATES); "false" deactivates.
+ *       (JSON {} / {"active":true} return false / do nothing — use bare "true"/"false".)
+ *     consumeChatInputSubmitted -> bare BOOLEAN (true = Enter pressed since last check);
+ *       the MESSAGE TEXT comes from readChatInput, NOT from the consume result.
+ *     readChatInput -> the in-progress text buffer (bare string).
+ *     isChatInputActive -> true/false ; isChatKeyPressed -> true when OpenChatKey
+ *       (PAGE_DOWN) pressed ; clearChatInput -> true.
+ *   nativeTruthy(raw): trimmed/lowercased == "true" OR == "1" OR contains "success":true.
+ *   FLOW (openInputNative): setChatInputActive("true") -> _inputTimer (~100 ms)
+ *     pollNativeInput(): readChatInput (show in-progress) ; if consume truthy => SUBMIT
+ *       (final text = readChatInput, run through shared handleSubmittedText -> direct
+ *       chat.v1.sendMessage, log full raw) ; else if !isChatInputActive => cancel (Esc).
+ *     closeInputNative(): clearChatInput + setChatInputActive("false").
+ *   OPEN triggers: HUDMod::UserEvent open key, AND a low-rate (~150 ms) pollOpenKey()
+ *     that opens on an isChatKeyPressed false->true edge (so PAGE_DOWN opens chat).
+ *   _nativeInputUsable is set by a CLEAN self-resetting startup probe (activate, test,
+ *     deactivate+clear). If not usable, openInput() falls back to SharedHUDTools so the
+ *     user can still type. NEVER run both. sendMessage stays chat.v1.sendMessage ONLY.
+ *
+ * Input path (FALLBACK): SharedHUDTools.FormatTextEdit + FormatOnScreenKeyboard + TextEdit.
+ *   HUDModLoader's HUDTools handles StartEditText/EndEditText and gamepad OSK.
+ *   ALL THREE must be called in order:
+ *     1. FormatTextEdit(x,y,w,h,font,size,hexColor,bgHexColor,bgAlpha)
+ *     2. FormatOnScreenKeyboard(oskX,oskY) — REQUIRED even on KB/mouse
+ *     3. TextEdit(callback, startText)
+ *   Without FormatOnScreenKeyboard, HUDTools sends ERROR|TXT → callback(null)
+ *   immediately (the v2.0.3 "immediately released" bug).
  *
  * ZFE API discovery: widget runs in HUDModLoader's ApplicationDomain (shared with
  * HUDMenu). ZFE attaches __ZFE to the HUDMenu top-level frame — findZfeApi()
- * walks parent/root/stage to find it. No env vars or child_bridge_access needed
- * because the widget is a sibling of HUDMenu, not a child SWF.
+ * walks parent/root/stage to find it.
  *
- * Channel slugs (AllowedChannels in Data/ZFE/TextChat/fragments/FCM.ini):
- *   global, trade, server, events, raids, infests
+ * Channel slugs (AllowedChannels in Data/ZFE/TextChat/fragments/FCMChatWidget.ini):
+ *   global, trade, events, infests, raids, server
  * DefaultChannel: global
  *
  * worldId self-read (#293, EULA §4(F)-safe — UI layer only, no memory reads):
@@ -49,18 +86,36 @@ import flash.events.IOErrorEvent;
  *   6. embedFonts = true + a real embedded/known font; text goes blank otherwise.
  *   7. No fl.motion.*, shaders, gradient masks, networking classes.
  *   8. No TextField update per-frame; event-driven only.
+ *   9. NO getChildAt/numChildren on arbitrary native Scaleform objects (VM crash).
+ *  10. NO hard casts (MovieClip(...)) — dynamic untyped access only in findZfeApi.
  *
  * Docs:
  *   docs/overlay/zfe/native-chat-relay/protocol-spec.md  — chat.v1 call surface
  *   docs/overlay/zfe/native-chat-relay/fcm-integration.md — FCM relay adapter + worldId
+ *   docs/overlay/zfe/scaleform-ui-guide.md §3,§9 — font embedding, HUDModLoader API
+ *   docs/overlay/zfe/textchat-blueprint.md  — Text Chat mod decompile reference
  */
+
 class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.0.3";  // fix: minimal safe findZfeApi (no BFS traversal)
+    static inline var VERSION:String  = "2.5.3";  // decoded native API: bare-value payloads ("true"/"false"); consume=boolean, text from readChatInput; real open->read->consume->send->clear flow; PAGE_DOWN open via isChatKeyPressed
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
+
+    // ── Font aliases — HUDModLoader engine-registered GFx fonts (NO embed) ────
+    // These are GFx aliases registered by HUDModLoader (HUDTools.as entry_tf uses
+    // "$MAIN_Font_Light"; HUDButton.as label TextFields use "$MAIN_Font_Bold").
+    // They resolve in child widget SWFs (ApplicationDomain.currentDomain) with
+    // embedFonts=true — no @:font embed needed (GFx ignores child-SWF embedded TTFs).
+    static inline var FONT_BODY:String = "$MAIN_Font_Light";  // body / feed / messages / prompts / notices
+    static inline var FONT_BOLD:String = "$MAIN_Font_Bold";   // tab labels / headers / sender names / active-tab
+    // FALLBACK (do NOT ship unless aliases tofu in-game): re-add the @:font embed and
+    // set TextFormat.font / the FormatTextEdit font arg to the TTF's DefineFont FAMILY
+    // name "DejaVu Sans" (with the space) — NOT the postscript "DejaVuSans". GFx matches
+    // the DefineFont family name; the v2.3.0 build used the postscript name, which is the
+    // only reason its embed also rendered tofu as a fallback.
 
     // ── chat.v1 poll / connect timing ─────────────────────────────────────────
     static inline var POLL_MS:Int          = 2000;
@@ -74,22 +129,22 @@ class FCMChatWidget extends MovieClip {
     static inline var MAX_SEND_LEN:Int  = 225;   // truncate before send
 
     // ── Channel tables ────────────────────────────────────────────────────────
-    // Slugs match AllowedChannels in Data/ZFE/TextChat/fragments/FCM.ini.
+    // Slugs match AllowedChannels in Data/ZFE/TextChat/fragments/FCMChatWidget.ini.
     // "server" (index 5) is the world-session channel — not directly selectable.
     static var CHAN_SLUGS:Array<String> = ["global", "trade", "events", "infests", "raids", "server"];
     static var CHAN_NAMES:Array<String> = ["GENERAL", "TRADING", "EVENTS", "INFESTS", "RAIDS", "SERVER"];
 
-    // ── Default layout (overridden by FCMChat.ini) ────────────────────────────
+    // ── Layout ────────────────────────────────────────────────────────────────
+    // No header row (removed per user request). No status row (removed per user request).
+    // Row order from top: TAB_H (main tab) | SUB_H (channel tabs) | log | INPUT_H
     static inline var DEFAULT_X:Int        = 10;
     static inline var DEFAULT_Y:Int        = 10;
     static inline var DEFAULT_W:Int        = 480;
-    static inline var DEFAULT_H:Int        = 330;
+    static inline var DEFAULT_H:Int        = 306;
     static inline var DEFAULT_FONT_SIZE:Int = 14;
     static inline var INPUT_H:Int           = 28;
-    static inline var HDR_H:Int             = 24;
     static inline var TAB_H:Int             = 22;
     static inline var SUB_H:Int             = 20;
-    static inline var STATUS_H:Int          = 18;
 
     // ── Design tokens — amber Pip-Boy theme ───────────────────────────────────
     static inline var BG_COLOR:Int             = 0x0A0907;
@@ -97,6 +152,8 @@ class FCMChatWidget extends MovieClip {
     static inline var PRIMARY:Int              = 0xF5CB5B;
     static inline var PRIMARY_HEX:String       = "#F5CB5B";
     static inline var PRIMARY_HEX_NOHASH:String= "F5CB5B";
+    static inline var INACTIVE_HEX_NOHASH:String= "B49544";  // HUDButton inactive-tab text (no '#')
+    static inline var TEXT_HEX_NOHASH:String   = "FAF4DA";   // HUDButton active-tab text (no '#')
     static inline var TEXT_HEX:String          = "#FAF4DA";
     static inline var INACTIVE_HEX:String      = "#B49544";
     static inline var DIM_HEX:String           = "#AC9043";
@@ -114,17 +171,15 @@ class FCMChatWidget extends MovieClip {
     var _cfgW:Int          = DEFAULT_W;
     var _cfgH:Int          = DEFAULT_H;
     var _cfgFontSize:Int   = DEFAULT_FONT_SIZE;
-    // Matches ZFE fragment OpenChatKey=PAGE_DOWN so one key opens both ZFE layer and HUDTools input.
-    var _cfgOpenKey:String = "PAGE_DOWN";
+    // OpenChatKey: must match ZFE fragment OpenChatKey so one key opens both ZFE layer and input.
+    var _cfgOpenKey:String  = "PAGE_DOWN";
 
     // ── Display objects ───────────────────────────────────────────────────────
     var _bg:Shape;
     var _logTf:TextField;
-    var _inputPromptTf:TextField;
-    var _hdrTf:TextField;
     var _tabTf:TextField;
     var _subTf:TextField;
-    var _statusTf:TextField;
+    var _promptTf:TextField;
     var _fmt:TextFormat;
 
     // ── Chat render state ─────────────────────────────────────────────────────
@@ -159,9 +214,34 @@ class FCMChatWidget extends MovieClip {
     var _authState:String        = "limited";
     var _pinnedSystemBody:String = "";
 
-    // ── SharedHUDTools (HUDModLoader input API) ───────────────────────────────
-    var _hudTools:Dynamic        = null;
+    // ── Input state ───────────────────────────────────────────────────────────
     var _inputOpen:Bool          = false;
+    // v2.5.3: DECODED native chat-input API — bare-value payloads ("true"/"false"),
+    // consume=boolean, text from readChatInput. Native is the primary path when usable.
+    var _nativeInput:Bool        = false;          // true while a native session owns input
+    var _inputTimer:flash.utils.Timer = null;      // in-session native input poll (~100 ms)
+    var _inProgress:String       = "";             // last readChatInput buffer text
+    var _lastReadRaw:String      = "";             // throttle [nativein] read logging
+    var _nativeSubmitInFlight:Bool = false;        // mark a send originating from a native submit (diagnostic log)
+    // The startup probe sets _nativeInputUsable; openInput() uses the native flow only
+    // when true (else SharedHUDTools fallback so the user can still type).
+    var _nativeInputUsable:Bool  = false;          // native chat-input session works (probe result)
+    var _probeSent:Bool          = false;          // one-shot startup probe guard
+    static inline var INPUT_POLL_MS:Int  = 100;    // in-session native input-poll interval
+    // ── Open-key poll (v2.5.3) — open chat on the ZFE OpenChatKey (PAGE_DOWN) edge ─────
+    var _openKeyTimer:flash.utils.Timer = null;    // low-rate (~150 ms) open-trigger poll
+    static inline var OPEN_KEY_MS:Int = 150;       // open-key poll interval
+    var _lastChatKey:Bool        = false;          // last isChatKeyPressed truthiness (edge detect)
+
+    // ── SharedHUDTools (HUDModLoader text-entry + F12 menu integration) ───────
+    var _hudTools:Dynamic        = null;
+
+    // ── HUDButton interactive channel tabs ────────────────────────────────────
+    var _btnCls:Dynamic          = null;   // resolved HUDButton class (null → text-strip fallback)
+    var _chanBtns:Array<Dynamic> = [];     // the 5 channel-tab HUDButton instances
+
+    // ── Optimistic-echo dedup (our just-sent messages) ────────────────────────
+    var _pendingEchoes:Array<{key:String, ts:Float}> = [];
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -225,8 +305,10 @@ class FCMChatWidget extends MovieClip {
     }
 
     function afterConfig():Void {
-        buildPanel();
+        // attachHUDModListeners → constructHudTools resolves _btnCls (HUDButton),
+        // which buildPanel needs to decide tabs-vs-text-strip. Order matters.
         attachHUDModListeners();
+        buildPanel();
         // Delay ZFE init 3 s — ZFE API may not be ready at SWF load time.
         var t:Timer = new Timer(3000, 1);
         t.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) { init(); });
@@ -234,13 +316,14 @@ class FCMChatWidget extends MovieClip {
     }
 
     // =========================================================================
-    // Panel chrome
+    // Panel chrome — no header row, no status row
     // =========================================================================
 
     function buildPanel():Void {
         var w:Int = _cfgW;
         var h:Int = _cfgH;
-        var logH:Int = h - HDR_H - TAB_H - SUB_H - STATUS_H - INPUT_H;
+        // Log area gets everything except tab rows and input.
+        var logH:Int = h - TAB_H - SUB_H - INPUT_H;
 
         _bg = new Shape();
         var g = _bg.graphics;
@@ -248,42 +331,39 @@ class FCMChatWidget extends MovieClip {
         g.lineStyle(1, PRIMARY, 0.3);
         g.drawRect(0, 0, w, h);
         g.endFill();
+        // Main tab row background
         g.lineStyle();
-        g.beginFill(CHROME_COLOR, 0.98);
-        g.drawRect(1, 1, w - 2, HDR_H - 1);
-        g.endFill();
         g.beginFill(0x080705, 0.98);
-        g.drawRect(1, HDR_H, w - 2, TAB_H);
+        g.drawRect(1, 1, w - 2, TAB_H);
         g.endFill();
+        // Channel tab row background
         g.beginFill(0x080705, 0.85);
-        g.drawRect(1, HDR_H + TAB_H, w - 2, SUB_H);
+        g.drawRect(1, TAB_H, w - 2, SUB_H);
         g.endFill();
-        g.lineStyle(1, PRIMARY, 0.5);
-        g.moveTo(0, HDR_H); g.lineTo(w, HDR_H);
+        // Separator lines
         g.lineStyle(1, PRIMARY, 0.3);
-        g.moveTo(0, HDR_H + TAB_H); g.lineTo(w, HDR_H + TAB_H);
+        g.moveTo(0, TAB_H); g.lineTo(w, TAB_H);
         g.lineStyle(1, PRIMARY, 0.2);
-        g.moveTo(0, HDR_H + TAB_H + SUB_H); g.lineTo(w, HDR_H + TAB_H + SUB_H);
-        g.lineStyle(1, PRIMARY, 0.25);
-        g.moveTo(0, HDR_H + TAB_H + SUB_H + logH); g.lineTo(w, HDR_H + TAB_H + SUB_H + logH);
+        g.moveTo(0, TAB_H + SUB_H); g.lineTo(w, TAB_H + SUB_H);
+        // Log/input separator
         g.lineStyle(1, PRIMARY, 0.4);
         g.moveTo(0, h - INPUT_H); g.lineTo(w, h - INPUT_H);
         addChild(_bg);
 
-        _hdrTf = makeChromeTf(8, 4, w - 16, HDR_H - 4);
-        _hdrTf.htmlText = '<font face="$$MAIN_Font" size="14" color="' + PRIMARY_HEX + '"><b> FCM COMMUNITY CHAT</b></font>'
-            + '<font face="$$MAIN_Font" size="11" color="' + INACTIVE_HEX + '">  v' + VERSION + '</font>';
-        addChild(_hdrTf);
-
-        _tabTf = makeChromeTf(8, HDR_H + 2, w - 16, TAB_H - 2);
+        _tabTf = makeChromeTf(8, 2, w - 16, TAB_H - 2);
         renderMainTabs();
         addChild(_tabTf);
 
-        _subTf = makeChromeTf(8, HDR_H + TAB_H + 2, w - 16, SUB_H - 2);
-        renderSubTabs();
-        addChild(_subTf);
+        // Channel-tab row: interactive HUDButtons when available, else the text strip.
+        if (_btnCls != null) {
+            buildChannelTabs();
+        } else {
+            _subTf = makeChromeTf(8, TAB_H + 2, w - 16, SUB_H - 2);
+            renderSubTabs();
+            addChild(_subTf);
+        }
 
-        var logY:Int = HDR_H + TAB_H + SUB_H + 4;
+        var logY:Int = TAB_H + SUB_H + 4;
         _logTf = new TextField();
         _logTf.x = 6;
         _logTf.y = logY;
@@ -295,7 +375,7 @@ class FCMChatWidget extends MovieClip {
         _logTf.mouseEnabled = false;
         _logTf.embedFonts = true;
         _fmt = new TextFormat();
-        _fmt.font    = "$$MAIN_Font";
+        _fmt.font    = FONT_BODY;
         _fmt.size    = _cfgFontSize;
         _fmt.color   = 0xFAF4DA;
         _fmt.leading = 3;
@@ -303,13 +383,10 @@ class FCMChatWidget extends MovieClip {
         setLogText("connecting...");
         addChild(_logTf);
 
-        _statusTf = makeChromeTf(6, h - INPUT_H - STATUS_H + 2, w - 12, STATUS_H - 2);
-        setStatus("chat.v1: init");
-        addChild(_statusTf);
-
-        _inputPromptTf = makeChromeTf(6, h - INPUT_H + 4, w - 12, INPUT_H - 6);
-        setInputPrompt(idlePrompt());
-        addChild(_inputPromptTf);
+        // ── Prompt row: idle hint / "typing..." (HUDTools draws its own entry box) ──
+        _promptTf = makeChromeTf(6, h - INPUT_H + 4, w - 12, INPUT_H - 6);
+        setPrompt(idlePrompt());
+        addChild(_promptTf);
 
         x = _cfgX;
         y = _cfgY;
@@ -322,46 +399,53 @@ class FCMChatWidget extends MovieClip {
         tf.selectable = false;
         tf.mouseEnabled = false;
         tf.embedFonts = true;
+        // Apply the engine body alias so chrome text resolves (not tofu).
+        var fmt:TextFormat = new TextFormat();
+        fmt.font  = FONT_BODY;
+        fmt.size  = 13;
+        fmt.color = 0xB49544;
+        tf.defaultTextFormat = fmt;
         return tf;
     }
 
     function renderMainTabs():Void {
         if (_tabTf == null) return;
         _tabTf.htmlText =
-            '<font face="$$MAIN_Font" size="13" color="' + PRIMARY_HEX + '"><b>[ FALLOUT 76 ]</b></font>'
-            + '<font face="$$MAIN_Font" size="13" color="' + INACTIVE_HEX + '">  PARTY</font>';
+            '<font face="' + FONT_BOLD + '" size="13" color="' + PRIMARY_HEX + '"><b>[ FALLOUT 76 ]</b></font>'
+            + '<font face="' + FONT_BODY + '" size="13" color="' + INACTIVE_HEX + '">  PARTY</font>';
     }
 
     function renderSubTabs():Void {
         if (_subTf == null) return;
+        // Fallback text strip (used only when HUDButton is unavailable).
         // Show only the first 5 (non-server) channels in the tab strip.
         var displayNames:Array<String> = ["GENERAL", "TRADING", "EVENTS", "INFESTS", "RAIDS"];
         var html:Array<String> = [];
         for (i in 0...displayNames.length) {
             var color:String = (i == _chanIdx) ? PRIMARY_HEX : INACTIVE_HEX;
-            html.push('<font face="$$MAIN_Font" size="12" color="' + color + '"><b>' + displayNames[i] + '</b></font>');
+            html.push('<font face="' + FONT_BOLD + '" size="12" color="' + color + '"><b>' + displayNames[i] + '</b></font>');
         }
-        _subTf.htmlText = html.join('<font face="$$MAIN_Font" size="12" color="' + INACTIVE_HEX + '">  </font>');
+        _subTf.htmlText = html.join('<font face="' + FONT_BODY + '" size="12" color="' + INACTIVE_HEX + '">  </font>');
     }
 
     function idlePrompt():String {
-        return '<font face="$$MAIN_Font" size="13" color="' + DIM_HEX + '">&#x203A; Press ['
-            + _cfgOpenKey + '] to open chat  |  [NextPage] to switch channel</font>';
+        return '<font face="' + FONT_BODY + '" size="13" color="' + DIM_HEX + '">&#x203A; ['
+            + _cfgOpenKey + '] chat  |  [/g /t /e /i /r] channel</font>';
+    }
+
+    function typingPrompt():String {
+        return '<font face="' + FONT_BODY + '" size="13" color="' + PRIMARY_HEX
+            + '">&#x203A; [Enter] send  |  [Esc] cancel</font>';
     }
 
     function setLogText(s:String):Void {
         if (_logTf == null) return;
-        _logTf.htmlText = '<font face="$$MAIN_Font" size="' + _cfgFontSize + '" color="' + TEXT_HEX + '">' + s + '</font>';
+        _logTf.htmlText = '<font face="' + FONT_BODY + '" size="' + _cfgFontSize + '" color="' + TEXT_HEX + '">' + s + '</font>';
     }
 
-    function setStatus(s:String):Void {
-        if (_statusTf == null) return;
-        _statusTf.htmlText = '<font face="$$MAIN_Font" size="11" color="' + INACTIVE_HEX + '">' + s + '</font>';
-    }
-
-    function setInputPrompt(html:String):Void {
-        if (_inputPromptTf == null) return;
-        _inputPromptTf.htmlText = html;
+    function setPrompt(html:String):Void {
+        if (_promptTf == null) return;
+        _promptTf.htmlText = html;
     }
 
     // =========================================================================
@@ -378,15 +462,20 @@ class FCMChatWidget extends MovieClip {
     }
 
     /**
-     * Construct a SharedHUDTools instance.
+     * Construct a SharedHUDTools instance for text-entry + F12 menu.
      *
-     * SharedHUDTools is an INSTANCE class: new SharedHUDTools(modName, hudMode).
-     * The class lives in HUDModLoader's ApplicationDomain (shared with all widgets).
-     * We call Register(callback) to subscribe to the HUDTools IPC bus, which is
-     * required before FormatTextEdit/TextEdit will work.
-     * We call RegisterMenu to appear in the F12 HUDTools menu.
+     * Register(callback) subscribes to the HUDTools IPC bus (required before
+     * TextEdit/FormatTextEdit will work).
+     * RegisterMenu(build, select) adds us to the F12 HUDTools menu.
      */
     function constructHudTools():Void {
+        // Extensions.enabled is REQUIRED before any scaleform.gfx.* use AND before
+        // instantiating HUDButton (it uses TextFieldEx internally).
+        try {
+            var ext:Dynamic = untyped __global__["scaleform.gfx.Extensions"];
+            if (ext != null) ext.enabled = true;
+        } catch (e:Dynamic) {}
+
         try {
             var cls:Dynamic = untyped __global__["flash.utils.getDefinitionByName"]("SharedHUDTools");
             if (cls != null) {
@@ -396,25 +485,65 @@ class FCMChatWidget extends MovieClip {
                 Reflect.callMethod(_hudTools, Reflect.field(_hudTools, "RegisterMenu"),
                     [function(parentItem:String):Void { onBuildMenu(parentItem); },
                      function(item:String):Void { onSelectMenu(item); }]);
-                zfeLog("info", "hud", "SharedHUDTools constructed + registered");
+                // Position the F12 HUDTools menu just under the channel-tab row.
+                try {
+                    Reflect.callMethod(_hudTools, Reflect.field(_hudTools, "FormatMenu"),
+                        [_cfgX, _cfgY + TAB_H, "down"]);
+                } catch (e:Dynamic) {}
+                zfeLog("info", "hud", "SharedHUDTools registered");
             }
         } catch (e:Dynamic) {
             zfeLog("warn", "hud", "SharedHUDToolsMissing: " + Std.string(e));
-            setInputPrompt('<font face="$$MAIN_Font" size="12" color="' + DIM_HEX
-                + '">&#x203A; Input unavailable (HUDModLoader not detected)</font>');
         }
+
+        // Resolve HUDButton once; null → text-strip fallback for channel tabs.
+        try {
+            _btnCls = untyped __global__["flash.utils.getDefinitionByName"]("HUDButton");
+        } catch (e:Dynamic) {
+            _btnCls = null;
+            zfeLog("warn", "ui", "HUDButton missing");
+        }
+        if (_btnCls == null) zfeLog("warn", "ui", "HUDButton missing");
     }
 
     function onHudMessage(sender:String, msg:String):Void {
         zfeLog("info", "hud", "msg from=" + sender + " body=" + msg.substr(0, 80));
     }
 
+    /**
+     * F12 HUDTools menu build callback.
+     * Adds channel-switch entries, a scroll-to-newest action, and a link action
+     * (enabled only while auth is limited).
+     * AddMenuItem(id, text, isEnabled=true, isMenu=false, timeout=-1).
+     */
     function onBuildMenu(parentItem:Dynamic):Void {
-        // No sub-items for now — widget just appears as a top-level entry.
+        if (_hudTools == null) return;
+        var add:Dynamic = Reflect.field(_hudTools, "AddMenuItem");
+        if (add == null) return;
+        var names:Array<String> = ["General", "Trading", "Events", "Infests", "Raids"];
+        try {
+            for (i in 0...5) {
+                Reflect.callMethod(_hudTools, add, ["chan" + i, names[i], true, false, -1]);
+            }
+            Reflect.callMethod(_hudTools, add, ["scrollbottom", "Scroll to newest", true, false, -1]);
+            Reflect.callMethod(_hudTools, add, ["relink", "Link account...", _authState != "authenticated", false, -1]);
+        } catch (e:Dynamic) {
+            zfeLog("warn", "menu", "AddMenuItem threw: " + Std.string(e));
+        }
     }
 
+    /**
+     * F12 HUDTools menu select callback. id is the AddMenuItem id string.
+     */
     function onSelectMenu(item:Dynamic):Void {
-        // No menu items to handle yet.
+        var id:String = Std.string(item);
+        if (StringTools.startsWith(id, "chan")) {
+            selectChannel(Std.parseInt(id.substr(4)));
+        } else if (id == "scrollbottom") {
+            scrollToBottom();
+        } else if (id == "relink") {
+            setLogText(linkHint());
+        }
     }
 
     /**
@@ -430,12 +559,20 @@ class FCMChatWidget extends MovieClip {
         if (!isDown) {
             if (action == _cfgOpenKey || action == "Console"
                     || action == "ConsoleToggles" || action == "TeamChat") {
+                // While a native session owns input, ignore the open key — the native
+                // session is driving the keystrokes (re-issuing would double-open).
+                if (_inputOpen && _nativeInput) return;
                 if (!_inputOpen) openInput();
                 return;
             }
-            // NextPage (Page Down — dead in FO76 HUD) → cycle channel.
-            if (action == "NextPage") {
+            // NextPage (Page Down action) → cycle channel (when input closed).
+            if (action == "NextPage" && !_inputOpen) {
                 cycleChannel();
+                return;
+            }
+            // PrevPage (Page Up action) → scroll back through history (when input closed).
+            if (action == "PrevPage" && !_inputOpen) {
+                scrollUp();
                 return;
             }
         }
@@ -445,17 +582,81 @@ class FCMChatWidget extends MovieClip {
     // Channel switching
     // =========================================================================
 
+    /**
+     * Build the interactive channel-tab row from HUDButton instances.
+     * Called from buildPanel() only when _btnCls (HUDButton) resolved.
+     * Replaces the _subTf text strip with 5 clickable, gamepad-focusable tabs.
+     */
+    function buildChannelTabs():Void {
+        if (_btnCls == null) return;
+        var labels:Array<String> = ["GENERAL", "TRADING", "EVENTS", "INFESTS", "RAIDS"];
+        var cell:Int = Std.int((_cfgW - 16) / 5);   // per-tab column width
+        var bw:Int   = cell - 2;                      // button width (gap between)
+        var bh:Int   = SUB_H - 2;
+        for (i in 0...5) {
+            var ci:Int = i;   // per-iteration capture for the click closure
+            try {
+                var b:Dynamic = untyped __new__(_btnCls, bw, bh);
+                Reflect.setProperty(b, "text", labels[i]);
+                b.x = 8 + i * cell;
+                b.y = TAB_H + 1;
+                // setInfo(id, isEnabled, isMenu, timeout)
+                try {
+                    Reflect.callMethod(b, Reflect.field(b, "setInfo"), ["chan" + i, true, false, 0]);
+                } catch (e:Dynamic) {}
+                // setColors(textColor, bgColor, bgAlpha, selectColor, selectBGColor) — hex, no '#'
+                try {
+                    Reflect.callMethod(b, Reflect.field(b, "setColors"),
+                        [INACTIVE_HEX_NOHASH, "080705", 0.85, "080705", PRIMARY_HEX_NOHASH]);
+                } catch (e:Dynamic) {}
+                try {
+                    b.addEventListener(flash.events.MouseEvent.CLICK,
+                        function(_) { selectChannel(ci); });
+                } catch (e:Dynamic) {}
+                addChild(b);
+                _chanBtns.push(b);
+            } catch (e:Dynamic) {
+                zfeLog("warn", "ui", "HUDButton instantiate threw: " + Std.string(e));
+            }
+        }
+        setSelectedTab(_chanIdx);
+    }
+
+    /**
+     * Reflect the active channel in the tab row.
+     * HUDButton has an isSelected setter; the text-strip fallback re-renders.
+     */
+    function setSelectedTab(idx:Int):Void {
+        if (_chanBtns.length == 0) {
+            renderSubTabs();
+            return;
+        }
+        for (k in 0..._chanBtns.length) {
+            try { Reflect.setProperty(_chanBtns[k], "isSelected", (k == idx)); } catch (e:Dynamic) {}
+        }
+    }
+
+    /**
+     * Single channel-switch entry point (tab click, slash, cycle, F12 menu).
+     */
+    function selectChannel(idx:Int):Void {
+        if (idx < 0 || idx > 4 || idx == _chanIdx) { setSelectedTab(idx); return; }
+        _chanIdx = idx;
+        _records = [];               // clear visible feed (per-channel)
+        _bScrolling = false; _newWhileScrolled = 0;
+        setSelectedTab(idx);
+        renderRecords();             // re-render (hits the connecting/link notice guard)
+        zfeLog("info", "chan", "selected " + CHAN_SLUGS[idx]);
+    }
+
     function cycleChannel():Void {
         // Cycle over the first 5 channels (skip "server" at index 5).
-        _chanIdx = (_chanIdx + 1) % 5;
-        _records = [];
-        renderSubTabs();
-        zfeLog("info", "chan", "switched to " + CHAN_SLUGS[_chanIdx]);
+        selectChannel((_chanIdx + 1) % 5);
     }
 
     /**
      * Slash-command channel switching.
-     * Returns true if the command matched (pure channel-switch — do not send as msg).
+     * Returns true if the command matched — caller must NOT send the text as a message.
      */
     function switchChannelBySlash(cmd:String):Bool {
         cmd = cmd.toLowerCase();
@@ -466,26 +667,261 @@ class FCMChatWidget extends MovieClip {
         else if (cmd == "i" || cmd == "inf"     || cmd == "infests")  idx = 3;
         else if (cmd == "r" || cmd == "raid"    || cmd == "raids")    idx = 4;
         if (idx < 0) return false;
-        _chanIdx = idx;
-        _records = [];
-        renderSubTabs();
-        zfeLog("info", "chan", "slash switched to " + CHAN_SLUGS[idx]);
+        selectChannel(idx);
         return true;
     }
 
     // =========================================================================
-    // SharedHUDTools.TextEdit — open / submit
+    // SharedHUDTools text-entry
+    //
+    // Flow (per decompiled HUDTools.as + SharedHUDTools.as):
+    //
+    //   1. FormatTextEdit(x,y,w,h,font,size,hexColor,bgHexColor,bgAlpha)
+    //      → HUDTools stores entryFormats[VENDOR] via HUDMessageProvider IPC.
+    //      font arg is the engine body alias (FONT_BODY = $MAIN_Font_Light),
+    //      matching HUDTools' own entry_tf default — no embed needed.
+    //
+    //   2. FormatOnScreenKeyboard(oskX,oskY)
+    //      → HUDTools stores entryOSKFormats[VENDOR].
+    //      REQUIRED even on KB/mouse: startTextEdit checks BOTH Dicts.
+    //      Missing → ERROR|TXT → textFunction(null) immediately ("released").
+    //
+    //   3. TextEdit(callback, "")
+    //      → HUDTools.startTextEdit: adds entry_tf to topLevel, focuses it,
+    //        dispatches ControlMap::StartEditText. User types; Enter → callback(text).
+    //      → Esc/Tab → callback(null). Fires ONCE, then textFunction is nulled.
+    //
     // =========================================================================
+
+    // =========================================================================
+    // Native chat-input verb invocation (TOP-LEVEL ZFE commands)
+    //
+    // The v2.5.0 in-game test proved the native chat-input verbs are TOP-LEVEL ZFE
+    // commands (like getRuntimeInfo / readStorage), NOT chat.v1. commands:
+    //   __ZFE.call("chat.v1.setChatInputActive", ...)
+    //     → {"success":false,"error":{"code":"unsupported_command",...}}
+    // So we call them BARE (no "chat.v1." prefix) via callTop(). NEVER prefix these.
+    //
+    // sendMessage is the opposite: it is chat.v1.sendMessage ONLY — never bare (bare
+    // hits the useless legacy bridge, which returns literal `false`). See sendMessage().
+    // =========================================================================
+
+    /**
+     * True if a raw response looks like "command not found / not dispatched".
+     * Includes unsupported_command (the v2.5.0 prefixed-verb failure mode).
+     */
+    static function chatVerbFailed(raw:String):Bool {
+        if (raw == null) return true;
+        return raw.indexOf("dispatch_failed") >= 0
+            || raw.indexOf("unsupported_command") >= 0
+            || raw.indexOf("Unknown op") >= 0
+            || raw.indexOf("unknown command") >= 0;
+    }
+
+    /**
+     * Call a TOP-LEVEL ZFE command bare (no "chat.v1." prefix). Used for the native
+     * chat-input verbs. Returns Std.string(result), or "" on throw.
+     */
+    function callTop(verb:String, payload:String):String {
+        if (_api == null) return "";
+        try {
+            return Std.string(_api.call(verb, payload));
+        } catch (e:Dynamic) {
+            zfeLog("warn", "nativein", verb + " threw: " + Std.string(e));
+            return "";
+        }
+    }
+
+    /** Trim a raw response for diagnostic logging (n chars max). */
+    static inline function clip(s:String, n:Int):String {
+        return (s == null) ? "" : (s.length > n ? s.substr(0, n) : s);
+    }
+    static inline function clip200(s:String):String { return clip(s, 200); }
+
+    /**
+     * v2.5.3 — the native verbs return BARE booleans/strings (NOT JSON). "Truthy" means
+     * the raw, trimmed+lowercased, equals "true" OR equals "1" OR contains "success":true.
+     * A bare "false" / "" / JSON / a failure response is NOT truthy. Used for
+     * setChatInputActive / isChatInputActive / isChatKeyPressed / consumeChatInputSubmitted.
+     */
+    static function nativeTruthy(raw:String):Bool {
+        if (raw == null) return false;
+        var t:String = StringTools.trim(raw).toLowerCase();
+        if (t.length == 0) return false;
+        if (chatVerbFailed(raw)) return false;       // dispatch_failed / unsupported_command / etc.
+        if (t.indexOf('"success":false') >= 0) return false;
+        return t == "true" || t == "1" || t.indexOf('"success":true') >= 0;
+    }
+
+    /**
+     * Parse the readChatInput buffer text. The raw may be a bare string ("hello"), a
+     * JSON-quoted string ("\"hello\""), or a JSON object with a text/value/input field.
+     * A bare "false" / "" is treated as no text. Returns the in-progress text.
+     */
+    static function parseInputText(raw:String):String {
+        if (raw == null) return "";
+        var t:String = StringTools.trim(raw);
+        if (t.length == 0) return "";
+        var low:String = t.toLowerCase();
+        if (low == "false") return "";               // bare boolean "no buffer"
+        // JSON object → extract a text/value/input field.
+        if (t.charAt(0) == "{") {
+            var f:String = extractJsonString(t, "text");
+            if (f.length > 0) return f;
+            f = extractJsonString(t, "value");
+            if (f.length > 0) return f;
+            f = extractJsonString(t, "input");
+            return f;
+        }
+        // Strip surrounding double-quotes from a JSON-quoted bare string.
+        if (t.length >= 2 && t.charAt(0) == '"' && t.charAt(t.length - 1) == '"') {
+            t = t.substr(1, t.length - 2);
+        }
+        return t;
+    }
 
     function openInput():Void {
         if (_inputOpen) return;
+        // PRIMARY: ZFE native chat-input session — only when the probe proved it usable.
+        if (_nativeInputUsable && openInputNative()) return;
+        openInputSharedHudTools();
+    }
+
+    // =========================================================================
+    // Native chat-input session (PRIMARY) — decoded bare-value-payload flow (v2.5.3)
+    //
+    //   open:   setChatInputActive("true")        (bare "true" — NOT JSON)
+    //   loop:   readChatInput("{}")               -> in-progress text (show in prompt)
+    //           consumeChatInputSubmitted("{}")   -> bare boolean: true == Enter pressed
+    //           isChatInputActive("{}")           -> bare boolean: false == cancelled (Esc)
+    //   send:   final text from readChatInput -> handleSubmittedText -> chat.v1.sendMessage
+    //   close:  clearChatInput("{}") + setChatInputActive("false")
+    // =========================================================================
+
+    /**
+     * Open the ZFE native chat-input session via the decoded bare-value contract.
+     * Returns true on success (caller is done); false → caller falls back to
+     * the SharedHUDTools path.
+     */
+    function openInputNative():Bool {
+        if (_api == null) return false;
+        var raw:String = callTop("setChatInputActive", "true");   // bare "true", NOT JSON
+        zfeLog("info", "nativein", "setChatInputActive(true) raw=" + clip200(raw));
+
+        // Activation worked if the raw is truthy, or isChatInputActive becomes truthy.
+        var active:Bool = nativeTruthy(raw);
+        if (!active) {
+            var a:String = callTop("isChatInputActive", "{}");
+            active = nativeTruthy(a);
+            zfeLog("info", "nativein", "isChatInputActive after activate raw=" + clip200(a));
+        }
+        if (!active) {
+            zfeLog("warn", "nativein", "setChatInputActive not active; falling back");
+            return false;
+        }
+
+        _inputOpen   = true;
+        _nativeInput = true;
+        _inProgress  = "";
+        _lastReadRaw = "";
+        setPrompt(typingPrompt());
+        zfeLog("info", "input path", "native-chat-input");
+
+        if (_inputTimer != null) { _inputTimer.stop(); _inputTimer = null; }
+        _inputTimer = new flash.utils.Timer(INPUT_POLL_MS);
+        _inputTimer.addEventListener(TimerEvent.TIMER, function(_) { pollNativeInput(); });
+        _inputTimer.start();
+        return true;
+    }
+
+    /**
+     * In-session native input tick (every INPUT_POLL_MS while a native session is open).
+     * Guarded so a parse error never stops the timer — but a submit/cancel DOES close it.
+     * Only ever called while a native session is open (never polls outside one).
+     */
+    function pollNativeInput():Void {
+        if (!_nativeInput) return;
+        try {
+            // ── 1. read the in-progress buffer; show it in the prompt ───────
+            var rraw:String = callTop("readChatInput", "{}");
+            if (rraw != _lastReadRaw) {
+                _lastReadRaw = rraw;
+                zfeLog("info", "nativein", "read raw=" + clip200(rraw));
+            }
+            var text:String = parseInputText(rraw);
+            _inProgress = text;
+            if (text.length > 0) {
+                setPrompt(typingPrompt() + ' <font face="' + FONT_BODY + '" size="13" color="'
+                    + TEXT_HEX + '"> &#x203A; ' + text + '</font>');
+            } else {
+                setPrompt(typingPrompt());
+            }
+
+            // ── 2. submit? consume returns a bare boolean (true = Enter pressed) ──
+            if (nativeTruthy(callTop("consumeChatInputSubmitted", "{}"))) {
+                // Read the final buffer once more; prefer it over the cached value.
+                var textNow:String = parseInputText(callTop("readChatInput", "{}"));
+                var fin:String = (textNow.length > 0) ? textNow : _inProgress;
+                closeInputNative();
+                fin = StringTools.trim(fin);
+                if (fin.length > 0) {
+                    // Mark this send as native-submit so sendMessage logs the full raw
+                    // (we are learning whether send works after a native session).
+                    _nativeSubmitInFlight = true;
+                    handleSubmittedText(fin);
+                    _nativeSubmitInFlight = false;   // clear (slash-only inputs never send)
+                }
+                return;
+            }
+
+            // ── 3. still active? a non-truthy isChatInputActive = user cancelled (Esc) ──
+            if (!nativeTruthy(callTop("isChatInputActive", "{}"))) {
+                zfeLog("info", "nativein", "isChatInputActive false; cancelled");
+                closeInputNative();
+                return;
+            }
+        } catch (e:Dynamic) {
+            // Never let a parse error stop the timer.
+            zfeLog("warn", "nativein", "pollNativeInput threw: " + Std.string(e));
+        }
+    }
+
+    /**
+     * Close the native chat-input session: stop the poll timer, clear + deactivate
+     * the native input (bare "false"), and reset the prompt.
+     */
+    function closeInputNative():Void {
+        if (_inputTimer != null) { _inputTimer.stop(); _inputTimer = null; }
+        var c1:String = callTop("clearChatInput", "{}");
+        zfeLog("info", "nativein", "clearChatInput raw=" + clip200(c1));
+        var c2:String = callTop("setChatInputActive", "false");   // bare "false", NOT JSON
+        zfeLog("info", "nativein", "setChatInputActive(false) raw=" + clip200(c2));
+        _inputOpen   = false;
+        _nativeInput = false;
+        _inProgress  = "";
+        setPrompt(idlePrompt());
+    }
+
+    // =========================================================================
+    // SharedHUDTools text-entry (FALLBACK)
+    // =========================================================================
+
+    function openInputSharedHudTools():Void {
+        if (_inputOpen) return;
         if (_hudTools == null) {
             constructHudTools();
-            if (_hudTools == null) return;
+            if (_hudTools == null) {
+                zfeLog("warn", "input", "SharedHUDTools unavailable; cannot open input");
+                return;
+            }
         }
         _inputOpen = true;
-        setInputPrompt('<font face="$$MAIN_Font" size="13" color="' + PRIMARY_HEX + '">&#x203A; typing...</font>');
+        setPrompt(typingPrompt());
+        zfeLog("info", "input path", "shared-hud-tools");
 
+        // ── Step 1: FormatTextEdit — position + style the entry box ─────────
+        // x/y are stage coordinates (1920×1080 space). Position at widget's lower edge.
+        // Color args are hex strings WITHOUT '#'. Font arg is the engine body alias.
         var editX:Float = x + 6;
         var editY:Float = y + _cfgH - INPUT_H + 4;
         var editW:Float = _cfgW - 12;
@@ -494,30 +930,76 @@ class FCMChatWidget extends MovieClip {
         try {
             Reflect.callMethod(_hudTools, Reflect.field(_hudTools, "FormatTextEdit"),
                 [editX, editY, editW, editH,
-                 "$$MAIN_Font", _cfgFontSize,
-                 PRIMARY_HEX_NOHASH,
-                 "0C0A08",
-                 0.96]);
+                 FONT_BODY,                  // engine alias — matches HUDTools' entry_tf default ($MAIN_Font_Light)
+                 _cfgFontSize,
+                 PRIMARY_HEX_NOHASH,         // text color — no '#'
+                 "0C0A08",                   // bg color — no '#'
+                 0.96]);                    // bg alpha (>0 triggers background rendering)
+            zfeLog("info", "input", "FormatTextEdit ok");
         } catch (e:Dynamic) {
             zfeLog("warn", "input", "FormatTextEdit threw: " + Std.string(e));
         }
 
+        // ── Step 2: FormatOnScreenKeyboard — REQUIRED even on PC/KB/mouse ───
+        // Position off-screen (y=-300) so the gamepad OSK is invisible on PC.
+        try {
+            Reflect.callMethod(_hudTools, Reflect.field(_hudTools, "FormatOnScreenKeyboard"),
+                [0.0, -300.0]);
+            zfeLog("info", "input", "FormatOnScreenKeyboard ok");
+        } catch (e:Dynamic) {
+            zfeLog("warn", "input", "FormatOnScreenKeyboard threw: " + Std.string(e));
+        }
+
+        // ── Step 3: TextEdit — open the entry; callback fires on submit ──────
         try {
             Reflect.callMethod(_hudTools, Reflect.field(_hudTools, "TextEdit"),
-                [onInputSubmit, ""]);
+                [function(text:Dynamic):Void { onInputSubmit(text); }, ""]);
         } catch (e:Dynamic) {
             zfeLog("warn", "input", "TextEdit threw: " + Std.string(e));
             _inputOpen = false;
-            setInputPrompt(idlePrompt());
+            setPrompt(idlePrompt());
+            return;
         }
+        zfeLog("info", "input", "opened");
     }
 
+    /**
+     * Callback from SharedHUDTools.TextEdit.
+     * text == null: user cancelled (Esc/Tab) or TextEdit failed.
+     * text == String: user submitted (Enter); may be empty.
+     * Fires exactly once; textFunction is nulled by SharedHUDTools after.
+     */
     function onInputSubmit(text:Dynamic):Void {
         _inputOpen = false;
-        setInputPrompt(idlePrompt());
+        setPrompt(idlePrompt());
+        var s:String = (text == null) ? "" : Std.string(text);
+        handleSubmittedText(s);
+    }
+
+    /**
+     * Shared submit handler — used by BOTH the native input path (pollNativeInput) and
+     * the SharedHUDTools fallback (onInputSubmit). Applies the slash channel-switch
+     * logic ("/g /t /e /i /r"), consuming a bare slash command, then sends the rest.
+     */
+    function handleSubmittedText(text:String):Void {
         var s:String = (text == null) ? "" : Std.string(text);
         s = StringTools.trim(s);
         if (s.length == 0) return;
+
+        // Slash-command channel switch: "/g /t /e /i /r" (or ".g" alias).
+        // If the whole input IS a slash command (bare or with trailing content),
+        // consume it — never let it leak through as a chat message.
+        if (s.length > 1 && (s.charAt(0) == "/" || s.charAt(0) == ".")) {
+            var spaceIdx:Int = s.indexOf(" ");
+            var slashCmd:String = (spaceIdx > 0) ? s.substr(1, spaceIdx - 1) : s.substr(1);
+            if (switchChannelBySlash(slashCmd)) {
+                // Slash consumed — send remaining text (after the space) if any.
+                var rest:String = (spaceIdx > 0) ? StringTools.trim(s.substr(spaceIdx + 1)) : "";
+                if (rest.length == 0) return;  // bare "/g" — done, do NOT send
+                s = rest;                       // "/g hello" — send "hello" to the new channel
+            }
+        }
+
         sendMessage(s);
     }
 
@@ -532,21 +1014,8 @@ class FCMChatWidget extends MovieClip {
         }
         if (_authState != "authenticated") {
             zfeLog("warn", "send", "send blocked; authState=" + _authState + " (account not linked)");
-            // Show the link-code notice in the input bar.
-            var hint:String = (_pinnedSystemBody.length > 0) ? _pinnedSystemBody : "Link your account at falloutchatmod.com/link to chat";
-            setInputPrompt('<font face="$$MAIN_Font" size="12" color="#FF8C00">' + hint + '</font>');
+            setLogText(linkHint());
             return;
-        }
-
-        // Slash-command channel switching: "/cmd" or "/cmd rest" or ".cmd" alias.
-        if (raw.length > 1 && (raw.charAt(0) == "/" || raw.charAt(0) == ".")) {
-            var spaceIdx:Int = raw.indexOf(" ");
-            var slashCmd:String = (spaceIdx > 0) ? raw.substr(1, spaceIdx - 1) : raw.substr(1);
-            if (switchChannelBySlash(slashCmd)) {
-                var rest:String = (spaceIdx > 0) ? StringTools.trim(raw.substr(spaceIdx + 1)) : "";
-                if (rest.length == 0) return;
-                raw = rest;
-            }
         }
 
         if (raw.length > MAX_SEND_LEN) raw = raw.substr(0, MAX_SEND_LEN);
@@ -555,11 +1024,61 @@ class FCMChatWidget extends MovieClip {
 
         var slug:String = CHAN_SLUGS[_chanIdx];
         var payload:String = '{"channel":"' + jsonEscape(slug) + '","targetUserId":"","body":"' + jsonEscape(raw) + '"}';
+        zfeLog("info", "send", "payload ch=" + slug + " len=" + raw.length);
         try {
-            _api.call("chat.v1.sendMessage", payload);
-            zfeLog("info", "send", "sent ch=" + slug + " len=" + raw.length);
+            // sendMessage is chat.v1.sendMessage ONLY — never bare. Bare hits the
+            // useless legacy bridge (returns literal `false`) → false "Send failed."
+            var rs:String = Std.string(_api.call("chat.v1.sendMessage", payload));
+            // v2.5.3 diagnostic: when this send is from a just-closed native session,
+            // log the FULL raw result so we learn whether send works in that context.
+            if (_nativeSubmitInFlight) {
+                _nativeSubmitInFlight = false;
+                zfeLog("info", "nativein", "send-in-session raw=" + clip200(rs));
+            }
+            var success:Bool = (rs.indexOf('"success":true') >= 0 || rs.indexOf('success:true') >= 0);
+            if (success) {
+                zfeLog("info", "send", "sent ch=" + slug + " len=" + raw.length);
+                // Optimistic local echo on CONFIRMED send (only when we know our id).
+                if (_relayUserId.length > 0) {
+                    var messageId:String = extractJsonString(rs, "messageId");
+                    var dedupKey:String = (messageId.length > 0)
+                        ? echoIdKey(messageId)
+                        : echoSbKey(_relayUserId, slug, raw);
+                    _pendingEchoes.push({ key: dedupKey, ts: flash.Lib.getTimer() });
+                    // Render immediately on the active channel.
+                    if (slug == CHAN_SLUGS[_chanIdx]) {
+                        _records.push(PRIMARY_HEX + "~" + slug + "~" + _displayName + "~" + raw);
+                        while (_records.length > MAX_MSGS) _records.shift();
+                        renderRecords();
+                    }
+                }
+            } else {
+                // Surface the relay error code to the user.
+                var code:String = extractJsonString(rs, "code");
+                zfeLog("warn", "send", "relay rejected code=" + code + " raw=" + rs.substr(0, 200));
+                switch (code) {
+                    case "permission_denied":
+                        setLogText(linkHint());
+                    case "user_muted":
+                        setLogText("You are muted and cannot send right now.");
+                    case "rate_limited":
+                        setLogText("Sending too fast - slow down.");
+                    case "invalid_channel":
+                        setLogText("That channel is not available.");
+                    case "message_too_long":
+                        setLogText("Message too long (max " + MAX_SEND_LEN + ").");
+                    case "auth_token_invalid", "auth_token_revoked", "user_banned":
+                        setLogText("Chat session ended - reconnecting...");
+                        _connected = false;
+                        stopPollTimer();
+                        scheduleConnectRetry();
+                    default:
+                        setLogText(code.length > 0 ? ("Send failed: " + code) : "Send failed.");
+                }
+            }
         } catch (e:Dynamic) {
             zfeLog("warn", "send", "sendMessage threw: " + Std.string(e));
+            setLogText("Send failed (no relay).");
         }
     }
 
@@ -571,11 +1090,7 @@ class FCMChatWidget extends MovieClip {
      * init() — entry point called 3 s after stage attach.
      *
      * ZFE installs __ZFE on the HUDMenu root a few seconds after dxgi.dll loads.
-     * The widget may init before that happens, so we retry every ZFE_SEARCH_MS ms
-     * up to ZFE_SEARCH_MAX times (~30 s total). Each tick calls findZfeApi() which
-     * does an exhaustive multi-strategy tree walk (see below).
-     *
-     * Once found we run the capability gate (chat.v1.getRuntimeInfo) then startConnect().
+     * Retry every ZFE_SEARCH_MS ms up to ZFE_SEARCH_MAX times (~30 s total).
      */
     function init():Void {
         _zfeSearchTries = 0;
@@ -591,10 +1106,9 @@ class FCMChatWidget extends MovieClip {
         }
         if (_zfeSearchTries >= ZFE_SEARCH_MAX) {
             setLogText("ZFE not found\nInstall dxgi.dll + zfe.ini");
-            setStatus("chat.v1: no ZFE after " + ZFE_SEARCH_MAX + "s");
             return;
         }
-        setStatus("chat.v1: searching ZFE (" + _zfeSearchTries + "/" + ZFE_SEARCH_MAX + ")...");
+        setLogText("searching for ZFE (" + _zfeSearchTries + "/" + ZFE_SEARCH_MAX + ")...");
         if (_zfeSearchTimer != null) { _zfeSearchTimer.stop(); _zfeSearchTimer = null; }
         _zfeSearchTimer = new Timer(ZFE_SEARCH_MS, 1);
         _zfeSearchTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
@@ -607,19 +1121,16 @@ class FCMChatWidget extends MovieClip {
     function onZfeFound():Void {
         if (_zfeSearchTimer != null) { _zfeSearchTimer.stop(); _zfeSearchTimer = null; }
 
-        // Capability gate: chat.v1.getRuntimeInfo returns {"capabilities":["zfe-chat-online-v1",...]}.
-        // Do NOT use getRuntimeInfo (general) — that returns zfe-chat-v1 but NOT the chat-online
-        // capability string. Verified from protocol-spec.md and dxgi.dll binary.
+        // Capability gate: zfe-chat-online-v1 required (ZFE 0.9.8+).
         try {
             var info:String = Std.string(_api.call("chat.v1.getRuntimeInfo", "{}"));
             if (info.indexOf("zfe-chat-online-v1") < 0) {
                 zfeLog("warn", "startup", "zfe-chat-online-v1 not present; need ZFE 0.9.8+");
                 setLogText("ZFE 0.9.8+ required\nfor chat.v1");
-                setStatus("chat.v1: capability missing");
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.5.3");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
@@ -638,7 +1149,7 @@ class FCMChatWidget extends MovieClip {
         if (_api == null) return;
         _connectAttempts++;
         zfeLog("info", "connect", "attempt=" + _connectAttempts + " displayName=" + _displayName);
-        setStatus("chat.v1: connecting...");
+        setLogText("connecting...");
 
         var payload:String = '{"displayName":"' + jsonEscape(_displayName) + '","autoRegister":true}';
         var result:Dynamic = null;
@@ -660,13 +1171,13 @@ class FCMChatWidget extends MovieClip {
         _connected = true;
         _connectDelay = CONNECT_RETRY_MS;
         zfeLog("info", "connect", "connected");
-        setStatus("chat.v1: connected");
         setLogText("connected. loading...");
 
         refreshAuthState();
         _cursor = 0;
         startPollTimer();
         startWorldTimer();
+        startOpenKeyTimer();
     }
 
     function scheduleConnectRetry():Void {
@@ -678,7 +1189,7 @@ class FCMChatWidget extends MovieClip {
             startConnect();
         });
         _connectTimer.start();
-        setStatus("chat.v1: retrying in " + Std.int(_connectDelay / 1000) + "s...");
+        setLogText("retrying in " + Std.int(_connectDelay / 1000) + "s...");
     }
 
     // =========================================================================
@@ -705,6 +1216,13 @@ class FCMChatWidget extends MovieClip {
                 zfeLog("info", "auth", "authState=" + _authState);
                 renderRecords();
             }
+            // One-shot startup probe — once auth succeeds, capture the full raw shapes
+            // of the top-level native-input verbs (and getRuntimeInfo/getAuthState) and
+            // set _nativeInputUsable. Runs exactly once per session.
+            if (_authState == "authenticated" && !_probeSent) {
+                _probeSent = true;
+                runStartupProbe();
+            }
             if (_authState != "authenticated" && _connected) {
                 zfeLog("warn", "auth", "state not authenticated; reconnecting");
                 _connected = false;
@@ -713,6 +1231,88 @@ class FCMChatWidget extends MovieClip {
             }
         } catch (e:Dynamic) {
             zfeLog("warn", "auth", "getAuthState threw: " + Std.string(e));
+        }
+    }
+
+    // =========================================================================
+    // One-shot startup probe — clean, self-resetting (v2.5.3)
+    //
+    // The native API is decoded: bare-value payloads, bare-boolean returns. The probe
+    // determines _nativeInputUsable cleanly — activate with bare "true", test, then
+    // ALWAYS deactivate (bare "false") + clearChatInput so native input is left INACTIVE
+    // (no stuck state, which fought the SharedHUDTools box in v2.5.2). Also logs
+    // getRuntimeInfo / getAuthState once for reference.
+    // =========================================================================
+
+    function probe(label:String, verb:String, payload:String, max:Int):String {
+        var raw:String;
+        try {
+            raw = Std.string(_api.call(verb, payload));
+        } catch (e:Dynamic) {
+            raw = "<threw: " + Std.string(e) + ">";
+        }
+        zfeLog("info", "probe", label + " (" + verb + ") raw=" + clip(raw, max));
+        return raw;
+    }
+
+    function runStartupProbe():Void {
+        if (_api == null) return;
+        zfeLog("info", "probe", "startup probe begin (v" + VERSION + ")");
+
+        // Full runtime/auth shapes (chat.v1.* — known-good prefixed commands).
+        probe("getRuntimeInfo", "chat.v1.getRuntimeInfo", "{}", 800);
+        probe("getAuthState",   "chat.v1.getAuthState",   "{}", 800);
+
+        // Activate with the DECODED bare-value payload "true", test, then ALWAYS reset.
+        var openRaw:String = probe("setChatInputActive(true)", "setChatInputActive", "true", 200);
+        var usable:Bool = nativeTruthy(openRaw);
+        if (!usable) {
+            var a:String = probe("isChatInputActive", "isChatInputActive", "{}", 200);
+            usable = nativeTruthy(a);
+        }
+        // ALWAYS leave native input INACTIVE — no stuck state.
+        probe("setChatInputActive(false)", "setChatInputActive", "false", 200);
+        probe("clearChatInput",            "clearChatInput",      "{}",    200);
+
+        _nativeInputUsable = usable;
+        zfeLog("info", "probe", "nativeInputUsable=" + _nativeInputUsable);
+        zfeLog("info", "probe", "startup probe end");
+    }
+
+    // =========================================================================
+    // Open-key poll (v2.5.3) — open chat on the ZFE OpenChatKey (PAGE_DOWN) edge
+    //
+    // Replaces the v2.5.2 always-on watcher. Low-rate (~150 ms), runs only while
+    // connected AND no input is open. On a false->true edge of isChatKeyPressed it
+    // calls openInput(). It does NOT consume/read outside an open session.
+    // =========================================================================
+
+    function startOpenKeyTimer():Void {
+        if (_openKeyTimer != null) { _openKeyTimer.stop(); _openKeyTimer = null; }
+        _lastChatKey = false;
+        _openKeyTimer = new flash.utils.Timer(OPEN_KEY_MS);
+        _openKeyTimer.addEventListener(TimerEvent.TIMER, function(_) { pollOpenKey(); });
+        _openKeyTimer.start();
+        zfeLog("info", "nativein", "open-key poll started (" + OPEN_KEY_MS + "ms)");
+    }
+
+    function stopOpenKeyTimer():Void {
+        if (_openKeyTimer != null) { _openKeyTimer.stop(); _openKeyTimer = null; }
+    }
+
+    /** Open chat on a false->true edge of isChatKeyPressed (ZFE OpenChatKey = PAGE_DOWN). */
+    function pollOpenKey():Void {
+        if (_api == null || !_connected) return;
+        if (_inputOpen) { _lastChatKey = false; return; }   // not while typing
+        try {
+            var kp:Bool = nativeTruthy(callTop("isChatKeyPressed", "{}"));
+            if (kp && !_lastChatKey) {
+                zfeLog("info", "nativein", "isChatKeyPressed edge; opening input");
+                openInput();
+            }
+            _lastChatKey = kp;
+        } catch (e:Dynamic) {
+            zfeLog("warn", "nativein", "pollOpenKey threw: " + Std.string(e));
         }
     }
 
@@ -763,6 +1363,10 @@ class FCMChatWidget extends MovieClip {
         if (evStart < 0) evStart = rs.indexOf('events:[');
         if (evStart < 0) return;
 
+        // Expire stale optimistic-echo dedup keys (>15s) so a never-arriving
+        // server echo cannot permanently suppress later messages.
+        expirePendingEchoes();
+
         var newRecords:Bool = false;
         var i:Int = evStart;
         while (i < rs.length) {
@@ -785,20 +1389,28 @@ class FCMChatWidget extends MovieClip {
                 continue;
             }
 
-            var channel:String      = extractJsonString(obj, "channel");
+            var rawChannel:String   = extractJsonString(obj, "channel");
+            var channel:String      = normChannel(rawChannel);
             var senderUserId:String = extractJsonString(obj, "senderUserId");
             var displayName:String  = extractJsonString(obj, "senderDisplayName");
             var body:String         = extractJsonString(obj, "body");
+            var messageId:String    = extractJsonString(obj, "messageId");
             var evId:Int            = extractJsonInt(obj, "id");
 
+            // Always advance the cursor, even for skipped/deduped events.
             if (evId > _cursor) _cursor = evId;
             if (body.length == 0) continue;
 
             // System channel — pinned link-code notice.
-            if (channel == "system" || senderUserId == "system") {
+            if (rawChannel == "system" || senderUserId == "system") {
                 _pinnedSystemBody = body;
                 zfeLog("info", "system", "pinned system notice updated");
                 newRecords = true;
+                continue;
+            }
+
+            // Dedup our own echoed message (already shown optimistically).
+            if (isOwnEcho(messageId, senderUserId, channel, body)) {
                 continue;
             }
 
@@ -807,13 +1419,71 @@ class FCMChatWidget extends MovieClip {
             if (channel != activeSlug && channel != "server") continue;
 
             // Record format: "#COLOR~channel~displayName~body"
-            // Use PRIMARY_HEX for normal messages.
             _records.push(PRIMARY_HEX + "~" + channel + "~" + displayName + "~" + body);
             while (_records.length > MAX_MSGS) _records.shift();
+            if (_bScrolling) _newWhileScrolled++;
             newRecords = true;
         }
 
         if (newRecords) renderRecords();
+    }
+
+    /**
+     * Dedup keys for optimistic echo.
+     * id key  = "id:" + messageId  (server-assigned id, when present).
+     * sb key  = "sb:" + senderUserId + "|" + channel + "|" + body.
+     */
+    static inline function echoIdKey(messageId:String):String {
+        return "id:" + messageId;
+    }
+    static inline function echoSbKey(userId:String, channel:String, body:String):String {
+        return "sb:" + userId + "|" + channel + "|" + body;
+    }
+
+    function expirePendingEchoes():Void {
+        var now:Float = flash.Lib.getTimer();
+        var kept:Array<{key:String, ts:Float}> = [];
+        for (e in _pendingEchoes) {
+            if (now - e.ts <= 15000) kept.push(e);
+        }
+        _pendingEchoes = kept;
+    }
+
+    /**
+     * Returns true if an incoming chat.message is our own optimistic echo
+     * (already rendered locally). Consumes the matched _pendingEchoes entry.
+     */
+    function isOwnEcho(messageId:String, senderUserId:String, channel:String, body:String):Bool {
+        // Strong signal: the relay told us our own id and it's coming back.
+        if (_relayUserId.length > 0 && senderUserId == _relayUserId) {
+            removePendingMatch(messageId, senderUserId, channel, body);
+            return true;
+        }
+        // Otherwise match against pending keys.
+        var idK:String = (messageId.length > 0) ? echoIdKey(messageId) : "";
+        var sbUser:String = (_relayUserId.length > 0) ? _relayUserId : senderUserId;
+        var sbK:String = echoSbKey(sbUser, channel, body);
+        for (k in 0..._pendingEchoes.length) {
+            var pk:String = _pendingEchoes[k].key;
+            if ((idK.length > 0 && pk == idK) || pk == sbK) {
+                _pendingEchoes.splice(k, 1);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function removePendingMatch(messageId:String, senderUserId:String, channel:String, body:String):Void {
+        var idK:String = (messageId.length > 0) ? echoIdKey(messageId) : "";
+        var sbUser:String = (_relayUserId.length > 0) ? _relayUserId : senderUserId;
+        var sbK:String = echoSbKey(sbUser, channel, body);
+        for (k in 0..._pendingEchoes.length) {
+            var pk:String = _pendingEchoes[k].key;
+            if ((idK.length > 0 && pk == idK) || pk == sbK) {
+                _pendingEchoes.splice(k, 1);
+                return;
+            }
+        }
     }
 
     function updateCursorFromEvent(obj:String):Void {
@@ -873,7 +1543,7 @@ class FCMChatWidget extends MovieClip {
 
         // Pinned system notice — shown above feed when auth is limited.
         if (_authState != "authenticated" && _pinnedSystemBody.length > 0) {
-            html.push('<font face="$$MAIN_Font" size="' + fs + '" color="#FF8C00">** '
+            html.push('<font face="' + FONT_BODY + '" size="' + fs + '" color="#FF8C00">** '
                 + _pinnedSystemBody + ' **</font>');
         }
 
@@ -884,20 +1554,42 @@ class FCMChatWidget extends MovieClip {
             var ch:String   = f[1];
             var user:String = f[2];
             var msg:String  = f.slice(3).join("~");
+            // [channel] + body = light; sender name (the <b> span) = bold alias.
             html.push(
-                '<font face="$$MAIN_Font" size="' + fs + '">'
+                '<font face="' + FONT_BODY + '" size="' + fs + '">'
                 + '<font color="' + CHANNEL_HEX + '">[' + ch + ']</font> '
-                + '<b><font color="' + col + '">' + user + ':</font></b> '
+                + '<b><font face="' + FONT_BOLD + '" color="' + col + '">' + user + ':</font></b> '
                 + '<font color="' + TEXT_HEX + '">' + msg + '</font>'
                 + '</font>');
         }
 
-        if (html.length == 0) { setLogText("no messages yet"); return; }
+        // Empty-feed notice priority: never clobber the connecting/link notice.
+        if (html.length == 0) {
+            if (!_connected) { setLogText("connecting..."); return; }
+            if (_authState != "authenticated") { setLogText(linkHint()); return; }
+            setLogText("No messages in " + CHAN_NAMES[_chanIdx] + " yet"); return;
+        }
+
+        // "v N new" hint when scrolled up and new messages arrived below.
+        if (_bScrolling && _newWhileScrolled > 0) {
+            html.push('<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + PRIMARY_HEX
+                + '">v ' + _newWhileScrolled + ' new - PageDown</font>');
+        }
+
         _logTf.htmlText = html.join("<br/>");
 
         if (!_bScrolling) {
             try { _logTf.setSelection(_logTf.length, _logTf.length); } catch (e:Dynamic) {}
         }
+    }
+
+    /**
+     * The pinned link/connect notice text — never overwritten by an empty-feed placeholder.
+     */
+    function linkHint():String {
+        return (_pinnedSystemBody.length > 0)
+            ? _pinnedSystemBody
+            : "Link your account at falloutchatmod.com/link to chat";
     }
 
     // =========================================================================
@@ -906,30 +1598,21 @@ class FCMChatWidget extends MovieClip {
 
     public function scrollUp():Void {
         if (_logTf == null) return;
-        if (_logTf.scrollV > 1) { _logTf.scrollV--; _bScrolling = true; updateScrollIndicator(); }
+        if (_logTf.scrollV > 1) { _logTf.scrollV--; _bScrolling = true; }
     }
 
     public function scrollDown():Void {
         if (_logTf == null) return;
         _logTf.scrollV++;
         if (_logTf.scrollV >= _logTf.maxScrollV) {
-            _bScrolling = false; _newWhileScrolled = 0; updateScrollIndicator();
+            _bScrolling = false; _newWhileScrolled = 0;
         }
     }
 
     public function scrollToBottom():Void {
         if (_logTf == null) return;
         try { _logTf.setSelection(_logTf.length, _logTf.length); } catch (e:Dynamic) {}
-        _bScrolling = false; _newWhileScrolled = 0; updateScrollIndicator();
-    }
-
-    function updateScrollIndicator():Void {
-        if (_newWhileScrolled > 0) {
-            setStatus("chat.v1: live  |  +" + _newWhileScrolled + " new"
-                + (_newWhileScrolled == 1 ? " message" : " messages") + " below");
-        } else if (_connected) {
-            setStatus("chat.v1: live");
-        }
+        _bScrolling = false; _newWhileScrolled = 0;
     }
 
     // =========================================================================
@@ -1105,6 +1788,23 @@ class FCMChatWidget extends MovieClip {
         return Std.parseInt(json.substring(start, end));
     }
 
+    /**
+     * Normalize a relay-supplied channel slug to our canonical CHAN_SLUGS values.
+     * Guards against the relay tagging messages "general"/"trading"/etc.
+     */
+    static function normChannel(c:String):String {
+        c = StringTools.trim(c).toLowerCase();
+        switch (c) {
+            case "general":         return "global";
+            case "gen":             return "global";
+            case "trading":         return "trade";
+            case "event":           return "events";
+            case "infest", "inf":   return "infests";
+            case "raid":            return "raids";
+            default:                return c;
+        }
+    }
+
     static function jsonEscape(s:String):String {
         if (s == null) return "";
         s = s.split("\\").join("\\\\");
@@ -1145,32 +1845,17 @@ class FCMChatWidget extends MovieClip {
     /**
      * findZfeApi — finds the ZFE bridge object on the HUDMenu root.
      *
-     * ARCHITECTURE:
      * ZFE (dxgi.dll) installs __ZFE on the HUDMenu root (stage.getChildAt(0)).
-     * The widget display chain is: widget → Loader content root → Loader → HUDMenu root.
-     * hudmodloader.as line 31: `this.topLevel = stage.getChildAt(0)` — same pattern used here.
      *
-     * SAFETY RULES (crashes are real — GFx hard-crashes on bad dynamic property access):
-     *   - Every single property read and child access is in its own try/catch.
-     *   - NO getChildAt loop on arbitrary objects (only stage.getChildAt(0), guarded).
-     *   - NO BFS over stage descendants — native Scaleform objects crash on numChildren/getChildAt.
-     *   - NO hard casts (MovieClip(...), etc.) — dynamic untyped access only.
-     *   - NO scope.stage[nm] or scope.root[nm] as dynamic property bags (crashes native objs).
-     *   - parent-chain walk: each step in its own try/catch; loop does NOT propagate throws.
-     *
-     * Strategies (in order):
-     *   1. stage.getChildAt(0)    — the HUDMenu root itself; most reliable.
-     *   2. parent-chain walk      — up to 25 levels; each step independently guarded.
-     *   3. scope.root             — widget's Loader content root (some ZFE configs).
-     *   4. scope.stage            — stage object direct property (fallback).
-     *
-     * Returns bridge object with non-null .call, or null (caller retries via tryFindZfe).
+     * SAFETY RULES:
+     *   - Every property read and child access is in its own try/catch.
+     *   - NO getChildAt loop on arbitrary objects.
+     *   - NO BFS over stage descendants — Scaleform crashes on numChildren/getChildAt.
+     *   - NO hard casts — dynamic untyped access only.
      */
     static function findZfeApi(scope:Dynamic):Dynamic {
         var NAMES:Array<String> = ["__ZFE", "ZFECodeObj", "__SFCodeObj"];
 
-        // check() probes one object for any of the known bridge property names.
-        // Every access is individually guarded — a throw on one name never stops the others.
         function check(obj:Dynamic):Dynamic {
             if (obj == null) return null;
             for (nm in NAMES) {
@@ -1184,9 +1869,7 @@ class FCMChatWidget extends MovieClip {
             return null;
         }
 
-        // ── Strategy 1: stage.getChildAt(0) = HUDMenu root ───────────────────
-        // This is the EXACT object ZFE installs __ZFE on. hudmodloader.as line 31
-        // uses `stage.getChildAt(0)` to get its own topLevel reference.
+        // Strategy 1: stage.getChildAt(0) = HUDMenu root (most reliable)
         try {
             var st:Dynamic = scope.stage;
             if (st != null) {
@@ -1199,9 +1882,7 @@ class FCMChatWidget extends MovieClip {
             }
         } catch (_:Dynamic) {}
 
-        // ── Strategy 2: parent-chain walk (up to 25 levels) ──────────────────
-        // Widget chain: widget → Loader content root → Loader → HUDMenu root.
-        // Each parent step and each check() call is independently guarded.
+        // Strategy 2: parent-chain walk (up to 25 levels)
         var cur:Dynamic = scope;
         var depth:Int = 0;
         while (cur != null && depth < 25) {
@@ -1213,8 +1894,7 @@ class FCMChatWidget extends MovieClip {
             depth++;
         }
 
-        // ── Strategy 3: scope.root ────────────────────────────────────────────
-        // The widget SWF's own Loader content root. Some ZFE builds attach there.
+        // Strategy 3: scope.root
         try {
             var r:Dynamic = null;
             try { r = scope.root; } catch (_:Dynamic) {}
@@ -1224,8 +1904,7 @@ class FCMChatWidget extends MovieClip {
             }
         } catch (_:Dynamic) {}
 
-        // ── Strategy 4: scope.stage direct property ───────────────────────────
-        // Last resort — ZFE may register globally on the stage object itself.
+        // Strategy 4: scope.stage direct property
         try {
             var st:Dynamic = null;
             try { st = scope.stage; } catch (_:Dynamic) {}

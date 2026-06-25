@@ -33,6 +33,7 @@ This plan covers the four overlay-related modules:
 | Group 3 — `onboarding-core.ts` state machine | ✅ Done | `src/__tests__/onboarding-core.test.ts` |
 | Group 4 — `ChatOverlay.tsx` P0 pure helpers | ✅ Done | `src/features/chat/__tests__/chatOverlayHelpers.test.ts` |
 | Group 4 — `ChatOverlay.tsx` public-mode lockdown | ✅ Done | `src/features/chat/__tests__/publicModeLockdown.test.tsx` |
+| In-game HUD widget — `FCMChatWidget.hx` pure logic (normChannel, optimistic-echo dedup/expiry, send-error→message map, slash parse/consume, empty-feed notice priority) | ✅ Done | `__tests__/fcm-chat-widget-logic.test.js` (+ ported `fcm-chat-widget-logic.js`) — runs in the `cross-platform-overlay` leg of the `unit-vitest` CI matrix |
 | Group 1 P1 — main.js IPC handlers (register/relay/discord/keybinds/visibility) | ⏳ Backlog | — |
 | Group 2 P1 — shell.ts stateful (applyScale, tickIdle, navChannel, auth machine) | ⏳ Backlog | — |
 | Group 3 P1 — `ProxiedWebSocket` lifecycle, onboarding IPC/UI | ⏳ Backlog | — |
