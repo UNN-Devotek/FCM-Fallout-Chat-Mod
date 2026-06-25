@@ -425,7 +425,13 @@ function shouldRotateLog(size, cap) {
 // Production (default — no env override needed):
 //   relayHttp = 'https://falloutchatmod.com'
 //   relayWs   = 'wss://falloutchatmod.com/ws'
-function resolveRelayUrls(env) {
+function resolveRelayUrls(env, channel) {
+  if (channel === 'qa') {
+    return {
+      relayHttp: env.RELAY_HTTP || 'https://dev.falloutchatmod.com',
+      relayWs:   env.RELAY_WS   || 'wss://dev.falloutchatmod.com/ws',
+    };
+  }
   return {
     relayHttp: env.RELAY_HTTP || 'https://falloutchatmod.com',
     relayWs:   env.RELAY_WS   || 'wss://falloutchatmod.com/ws',

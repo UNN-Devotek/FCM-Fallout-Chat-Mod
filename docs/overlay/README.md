@@ -115,6 +115,70 @@ These features are correctly wired and light up on native Windows builds or nati
 
 ---
 
+## QA build channel
+
+The overlay ships in two build channels: `stable` (the default production build) and `qa`
+(a special dev-only build for QA testers connecting to `dev.falloutchatmod.com`).
+
+### Building the QA artifact
+
+```bash
+cd cross-platform-overlay
+npm run dist:qa
+```
+
+The `dist:qa` script sets `BUILD_CHANNEL=qa` (injected into the renderer as
+`__BUILD_CHANNEL__`) and passes `-c.extraMetadata.fcmChannel=qa` to `electron-builder`,
+which writes `fcmChannel: "qa"` into the packed `package.json`. The built app name is
+`Fallout Chat Mod QA`.
+
+### Runtime channel detection
+
+The main process reads the channel at startup:
+
+```js
+const BUILD_CHANNEL = (() => {
+  try { return require('./package.json').fcmChannel || process.env.BUILD_CHANNEL || 'stable'; }
+  catch { return process.env.BUILD_CHANNEL || 'stable'; }
+})();
+```
+
+When `BUILD_CHANNEL === 'qa'` the overlay resolves relay URLs to the dev backend
+(`dev.falloutchatmod.com`) instead of production.
+
+### QA login flow
+
+A `qa`-channel build does not use the standard Discord OAuth link flow. Instead, it
+presents an in-app "QA Login" button that:
+
+1. Opens `/auth/discord/qa/start` in a browser window (on the dev backend).
+2. The user completes Discord OAuth; the dev backend verifies they hold the `DEV_QA_ROLE_ID`
+   role in the dev guild and stores a one-time session grant in Redis.
+3. The overlay polls `GET /api/auth/qa-status/:installToken` (with
+   `X-Client-Version: <version>`) until the backend returns an `authorized: true`
+   response with a session token.
+4. If the backend returns HTTP 426 (`OUTDATED_BUILD`), the build version does not match
+   the active QA version and the overlay shows an update prompt instead of completing login.
+
+### `X-Client-Version` header
+
+`qa`-channel builds send `X-Client-Version: <APP_VERSION>` on:
+
+- The WS upgrade request (`main.js`, alongside `X-Auth-Token`)
+- The QA status poll (`GET /api/auth/qa-status/:installToken`)
+
+The dev backend uses this header to enforce the golden-build lock (`QA_BUILD_LOCK`). A
+build whose version string does not match `QA_ACTIVE_VERSION` is rejected:
+
+- **WS upgrade:** closed with code `4003`; close reason is `OUTDATED_BUILD:<activeVersion>`.
+  The overlay logs `[relay] WS closed 4003 OUTDATED_BUILD` and shows an update prompt.
+- **QA status poll:** HTTP 426 response; the overlay aborts login and shows an update prompt.
+
+`stable`-channel builds also send `X-Client-Version` on the WS upgrade but the production
+backend never checks it (`QA_BUILD_LOCK` defaults to false in production).
+
+---
+
 ## Cross-links
 
 - Chat overlay React component internals: `../frontend/chat-overlay.md`

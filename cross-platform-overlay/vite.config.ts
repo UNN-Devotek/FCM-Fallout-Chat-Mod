@@ -47,6 +47,7 @@ export default defineConfig({
   define: {
     // Resolved from package.json at build/dev-server start time.
     __APP_VERSION__: JSON.stringify(pkgVersion),
+    __BUILD_CHANNEL__: JSON.stringify(process.env.BUILD_CHANNEL || 'stable'),
   },
   resolve: {
     alias: [
