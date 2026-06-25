@@ -1408,13 +1408,17 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
   // Golden-build lock (dev-only): reject a stale QA build. No-op in prod, where
   // QA_BUILD_LOCK is unset. Fail-open when no active version is configured.
   if (env.QA_BUILD_LOCK) {
-    const activeQaVersion = await getActiveQaVersion();
-    const gate = evaluateBuildGate(req.headers as Record<string, unknown>, activeQaVersion, true);
-    if (!gate.allowed) {
-      logger.info({ userId: user.id, clientVersion: gate.clientVersion, activeQaVersion }, '[ws] rejecting outdated build');
-      ws.close(WS_CLOSE_OUTDATED_BUILD, `OUTDATED_BUILD:${activeQaVersion || ''}`);
-      clients.delete(token);
-      return;
+    try {
+      const activeQaVersion = await getActiveQaVersion();
+      const gate = evaluateBuildGate(req.headers as Record<string, unknown>, activeQaVersion, true);
+      if (!gate.allowed) {
+        logger.info({ userId: user.id, clientVersion: gate.clientVersion, activeQaVersion }, '[ws] rejecting outdated build');
+        ws.close(WS_CLOSE_OUTDATED_BUILD, `OUTDATED_BUILD:${activeQaVersion || ''}`);
+        clients.delete(token);
+        return;
+      }
+    } catch (err) {
+      logger.warn({ err, userId: user.id }, '[ws] build-gate check failed; failing open');
     }
   }
 
