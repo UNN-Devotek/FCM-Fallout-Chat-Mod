@@ -187,3 +187,5 @@ backend never checks it (`QA_BUILD_LOCK` defaults to false in production).
 - Build instructions: `building.md`
 - Keybind reference: `keybinds.md`
 - Window management: `window-management.md`
+- In-game HUD chat (separate opt-in `.ba2` track): `zfe/README.md` — ZFE `chat.v1` works on native
+  Windows (0.9.9+) but is Proton/Wine-blocked (#326), so this desktop overlay stays the Linux chat path.
