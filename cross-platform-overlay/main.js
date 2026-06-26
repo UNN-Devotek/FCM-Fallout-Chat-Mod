@@ -2488,6 +2488,11 @@ function _stealForegroundWin32() {
   try { app.focus({ steal: true }); } catch { /* ignore — older Electron */ }
 }
 
+function dispatchFocusInput(reason) {
+  diag('[focusToChat] dispatch overlay:focus-input reason=' + reason);
+  sendToRenderer('overlay:focus-input', true);
+}
+
 function focusToChat() {
   if (!mainWindow) return;
   // Treat the window as hidden if it is not visible OR if it is hidden-to-tray
@@ -2519,7 +2524,7 @@ function focusToChat() {
     // Without this the renderer's overlayVisible stays false after the 20s grace
     // fires (hide→show via Insert) and the WS stays disconnected with no live chat.
     emitVisibility(true);
-    sendToRenderer('overlay:focus-input', true);
+    dispatchFocusInput('focusToChat:hidden-immediate');
     if (collapsed) {
       sendToRenderer('overlay:force-expand', true);
       expandFromHeader(true);
@@ -2541,7 +2546,7 @@ function focusToChat() {
   // When the game is foreground, mainWindow.focus() alone does not pull focus
   // to the overlay — the OS denies it. app.focus({steal:true}) overrides this.
   _stealForegroundWin32();
-  sendToRenderer('overlay:focus-input', true);
+  dispatchFocusInput('focusToChat:visible-immediate');
   if (collapsed) {
     sendToRenderer('overlay:force-expand', true);
     expandFromHeader(true);
@@ -3365,7 +3370,7 @@ function expandFromHeader(focusInput) {
     : (expandedBounds && expandedBounds.height >= MIN_HEIGHT ? expandedBounds.height : DEFAULT_HEIGHT);
   expandedBounds = null; // clear so a manual resize while expanded isn't accidentally restored
   animateHeightTo(targetH, () => {
-    if (focusInput) { mainWindow.focus(); sendToRenderer('overlay:focus-input', true); }
+    if (focusInput) { mainWindow.focus(); dispatchFocusInput('expandFromHeader:post-animation'); }
   });
 }
 
@@ -3665,7 +3670,7 @@ function createWindow() {
     if (inputWasFocused) {
       setTimeout(() => {
         if (mainWindow && !mainWindow.isDestroyed()) {
-          sendToRenderer('overlay:focus-input', true);
+          dispatchFocusInput('post-reload-refocus');
         }
       }, 800);
     }
