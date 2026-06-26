@@ -556,13 +556,17 @@ as an allowed redirect URI on the **dev Discord application** (not the prod app)
 
 ### Flipping the golden build
 
+Each `npm run dist:qa` stamps a unique version `<base>-qa.<UTC-timestamp>` and prints it
+on completion (`QA_ACTIVE_VERSION=<version>`). Use that exact string as the blessed
+version below — that uniqueness is what lets the lock retire the previous build.
+
 When a new QA artifact is ready, update the blessed version via the admin API:
 
 ```bash
 curl -X POST https://dev.falloutchatmod.com/api/admin/qa/active-version \
   -H "x-admin-api-key: <ADMIN_API_KEY>" \
   -H "Content-Type: application/json" \
-  -d '{"version": "1.2.3"}'
+  -d '{"version": "1.3.91-qa.20260626014530"}'
 ```
 
 Retrieve the current active version:
