@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { focusChatInput } from '../focus-chat';
 
 type RectOpts = {
