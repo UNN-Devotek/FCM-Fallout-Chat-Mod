@@ -2,6 +2,16 @@
 
 There are three distinct auth flows in the backend, each serving a different client type.
 
+> **Direction (locked): mandatory multi-provider auth gate.** Chat access is moving to **require a
+> linked Nexus or Discord account** (one or the other). The overlay already enforces a Discord login
+> wall; **Nexus is being added** as an alternative, and the in-game chat gets a **device-code link**.
+> The install-token flow below stays as the device/session mechanism, but on its own it no longer
+> grants chat — a bare install is **limited** until linked. Public-website read-only stays open;
+> **sending is gated**. The admin dashboard stays Discord-only (elevated roles need Discord, #168).
+> Authoritative design: [hud-chat-auth-design.md](hud-chat-auth-design.md) (multi-provider + pairing /
+> device-code) and epic #163; the chat.v1 in-game gate is in
+> [native-chat-relay/fcm-integration.md](../overlay/zfe/native-chat-relay/fcm-integration.md#mandatory-auth-gate--limited-until-nexusdiscord-linked-locked).
+
 ---
 
 ## 1. Overlay / Desktop Client Auth (install token → session token)

@@ -66,6 +66,11 @@ jest.mock('../src/services/discordService', () => ({
   postReleaseAnnouncement: jest.fn().mockResolvedValue(undefined),
 }));
 
+// Best-effort GitHub release — stub it so the test never reaches the real GitHub API
+jest.mock('../src/services/githubReleaseService', () => ({
+  createGitHubRelease: jest.fn().mockResolvedValue(undefined),
+}));
+
 // Capture calls to the latestReleaseVersion cache
 jest.mock('../src/services/latestReleaseVersion', () => ({
   getLatestVersion: jest.fn().mockReturnValue(null),
@@ -146,6 +151,9 @@ beforeEach(() => {
     getStatus: jest.fn().mockReturnValue('disconnected'),
     relayToDiscord: jest.fn().mockResolvedValue(undefined),
     postReleaseAnnouncement: jest.fn().mockResolvedValue(undefined),
+  }));
+  jest.mock('../src/services/githubReleaseService', () => ({
+    createGitHubRelease: jest.fn().mockResolvedValue(undefined),
   }));
   jest.mock('../src/services/latestReleaseVersion', () => ({
     getLatestVersion: jest.fn().mockReturnValue(null),
@@ -256,11 +264,46 @@ describe('POST /admin/releases — successful publish refreshes cache', () => {
       .set('Authorization', `Bearer ${RELEASE_TOKEN}`)
       .send({ version: VALID_VERSION, downloadUrl: VALID_DOWNLOAD_URL, releaseNotes: 'Test release' });
 
+    // postReleaseAnnouncement(version, releaseNotes) — the download link is now
+    // derived env-aware inside the announcement, no longer passed in (#235).
     expect(discordService.postReleaseAnnouncement).toHaveBeenCalledWith(
       VALID_VERSION,
       'Test release',
-      VALID_DOWNLOAD_URL,
     );
+  });
+});
+
+describe('POST /admin/releases — announce flag (quiet publish)', () => {
+  it('skips the Discord announcement when announce=false but still publishes', async () => {
+    const discordService = require('../src/services/discordService');
+
+    const res = await request(app)
+      .post('/admin/releases')
+      .set('Authorization', `Bearer ${RELEASE_TOKEN}`)
+      .send({
+        version: VALID_VERSION,
+        downloadUrl: VALID_DOWNLOAD_URL,
+        releaseNotes: 'Quiet code-signing release',
+        announce: false,
+      });
+
+    // Publish still succeeds: site download + in-app update cache are updated…
+    expect(res.status).toBe(200);
+    expect(res.body.data.version).toBe(VALID_VERSION);
+    expect(latestVersionMock.setLatestVersion).toHaveBeenCalledWith(VALID_VERSION);
+    // …but NO @everyone Discord post fires.
+    expect(discordService.postReleaseAnnouncement).not.toHaveBeenCalled();
+  });
+
+  it('announces by default when announce is omitted', async () => {
+    const discordService = require('../src/services/discordService');
+
+    await request(app)
+      .post('/admin/releases')
+      .set('Authorization', `Bearer ${RELEASE_TOKEN}`)
+      .send({ version: VALID_VERSION, downloadUrl: VALID_DOWNLOAD_URL, releaseNotes: 'Normal release' });
+
+    expect(discordService.postReleaseAnnouncement).toHaveBeenCalledWith(VALID_VERSION, 'Normal release');
   });
 });
 

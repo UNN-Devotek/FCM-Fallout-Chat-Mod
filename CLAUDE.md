@@ -19,11 +19,13 @@ Full architecture and how the pieces connect: **[docs/README.md](docs/README.md)
 | WebSocket relay protocol, presence, sessions | [docs/realtime/](docs/realtime/README.md) |
 | Dashboard, the shared ChatOverlay component, theming | [docs/frontend/](docs/frontend/README.md) |
 | Electron overlay: window mgmt, keybinds, update notification, building | [docs/overlay/](docs/overlay/README.md) |
+| Overlay diagnostics: log file, levels, `--fcm-debug`/`FCM_DEBUG`, rotation | [docs/overlay/diagnostics-logging.md](docs/overlay/diagnostics-logging.md) |
 | In-game HUD feed (ZFE/FCMBridge): wire format, events, env vars | [docs/overlay/zfe/](docs/overlay/zfe/README.md) |
 | Discord bot: bridge, voice, embeds, reaction roles | [docs/discord/](docs/discord/README.md) |
 | Prisma schema, migrations, Redis usage | [docs/database/](docs/database/README.md) |
 | Automod, reports/evidence, role model | [docs/moderation/](docs/moderation/README.md) |
 | Local dev, release pipeline, packaging, code signing, deploy | [docs/deployment/](docs/deployment/README.md) |
+| QA-tester builds: golden-build lock, build/bless/distribute runbook | [docs/deployment/qa-builds.md](docs/deployment/qa-builds.md) |
 | Marketing assets (Remotion GIFs/stills), re-export commands | [docs/marketing/](docs/marketing/README.md) |
 
 ## CI Infrastructure
@@ -77,6 +79,15 @@ DB/Redis/MinIO, dedicated Cloudflare tunnel, **never** prod data (real wiki/camp
 
 Revoke by removing the `developer` role in either server and/or the email from the Access group.
 Most contributors never need this — they run the local stack and PR against `dev`.
+
+**QA testers — a lighter, separate path (NOT the developer onboarding above).** Vetted
+end-users run a packaged "golden" QA build against dev, gated by a dev-guild **`QA`** Discord
+role only — **no Cloudflare Access email, no dual `developer` role**. A version-string
+golden-build lock (`QA_BUILD_LOCK` + `QA_ACTIVE_VERSION`, enforced via `x-client-version` →
+HTTP 426 / WS 4003) retires stale builds; the overlay paths are CF-Access **bypassed** while
+the dashboard stays SSO-gated. The QA build channel is `npm run dist:qa` (Linux) / the
+**Build Windows QA** Actions workflow (self-hosted runner). Full build/bless/distribute
+runbook: [docs/deployment/qa-builds.md](docs/deployment/qa-builds.md).
 
 ---
 
@@ -171,6 +182,26 @@ These are non-negotiable. Each links to the doc with the full context.
   - **NEVER kill `Fallout76`** — that's the game.
   Dev features (e.g. wiki/camp) are LOCAL-ONLY until explicitly deployed — they don't exist on the
   prod overlay, so test them only on the dev surface (dev overlay → 7177, or the dashboard 7075→7177).
+
+## Nexus release state — Windows installer OFF Nexus (signing did NOT help, since 2026-06-21)
+
+The Windows installer is **code-signed** (Azure Trusted Signing, `CN=Lance Strickland`) — which
+killed the SmartScreen "unknown publisher" warning on the **website** download. But signing does
+**NOT** get the `.exe` onto Nexus: Nexus **still quarantines installer `.exe` files** (a file-type
+policy, not a real detection). v1.3.91's signed `.exe` reported `state=available` at upload, then
+Nexus's downstream virus scan flagged it and it was pulled — so the Windows installer stays **off
+Nexus**. In `Packaging/publish-nexus-release.ps1`: the `Windows` platform-loop entry is **commented
+out** (Linux-only publish); the Linux zip is renamed `Fallout Chat Mod <ver>.zip` (no `…AppImage
+(Linux)`) and bundles `READ ME FIRST (Windows users).txt` pointing Windows users to
+`falloutchatmod.com`, with the same Windows-download + VT link in its description. The website
+(`falloutchatmod.com`) is the canonical Windows download — the signed `.exe` is built + uploaded
+there every release, and `https://falloutchatmod.com/virustotal` redirects to the current scan
+(v1.3.91 = 0/67). **Re-enable the `Windows` entry only if Nexus lifts the `.exe` quarantine**
+(support ticket). See
+[docs/deployment/releasing-the-overlay.md](docs/deployment/releasing-the-overlay.md) → Step 7.
+
+> Aside: Nexus's `Compress-Archive`-zip → "scan failed" issue was a *separate, fixed* problem (the
+> Linux release path now zips with the `zip` tool, see #242).
 
 ## Conventions
 

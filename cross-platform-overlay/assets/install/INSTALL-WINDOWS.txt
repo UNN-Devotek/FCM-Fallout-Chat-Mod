@@ -2,17 +2,10 @@ Fallout Chat Mod — Windows install
 ====================================
 
 1. Double-click "Fallout Chat Mod Setup <version>.exe" (in this folder).
-2. Windows SmartScreen may show "Windows protected your PC / unknown
-   publisher". This is expected — the installer is not code-signed yet, so
-   Windows flags it by reputation, NOT because of anything it does. Click
-   "More info" -> "Run anyway".
-   (Some antivirus tools may also flag it for the same reason. It is a false
-   positive: Fallout Chat Mod does not modify game files, read game memory, or
-   scan your network.)
-3. The installer is per-user — no administrator prompt. It installs to:
+2. The installer is per-user — no administrator prompt. It installs to:
      %LocalAppData%\Programs\Fallout Chat Mod\
-4. Launch "Fallout Chat Mod" from the Start Menu (or the desktop shortcut).
-5. Sign in with Discord and finish the short onboarding (enter your Fallout 76
+3. Launch "Fallout Chat Mod" from the Start Menu (or the desktop shortcut).
+4. Sign in with Discord and finish the short onboarding (enter your Fallout 76
    name when asked).
 
 Using the overlay

@@ -167,6 +167,14 @@ services:
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET}
       DISCORD_SERVER_ID: ${DISCORD_SERVER_ID}
       DISCORD_REDIRECT_URI: ${DISCORD_REDIRECT_URI:-https://dev.falloutchatmod.com/auth/discord/callback}
+      # Release announcement target. Code defaults DISCORD_UPDATES_CHANNEL_ID to a
+      # PROD channel the dev bot can't see (Missing Access → publishRelease 502s),
+      # so point it at the dev guild's #updates. DOWNLOAD_PAGE_URL is the embed link.
+      DISCORD_UPDATES_CHANNEL_ID: ${DISCORD_UPDATES_CHANNEL_ID:-1514511518434201697}
+      DOWNLOAD_PAGE_URL: ${DOWNLOAD_PAGE_URL:-https://dev.falloutchatmod.com}
+      # Public web base for user-facing links (chat link-flow URL the in-game HUD shows).
+      # Dev must override the prod default so the in-game "visit …/link" notice points at dev.
+      FCM_PUBLIC_BASE_URL: ${FCM_PUBLIC_BASE_URL:-https://dev.falloutchatmod.com}
       # Dev-guild role IDs (cloned dev server has BRAND-NEW IDs — see plan).
       OWNER_ROLE_ID: ${OWNER_ROLE_ID}
       ADMIN_ROLE_ID: ${ADMIN_ROLE_ID}
@@ -209,6 +217,33 @@ services:
       # publish-to-dev verifies DEV-hosted artifacts, not prod's
       # (backend/src/utils/releaseDownloadUrls.ts).
       RELEASE_DOWNLOAD_HOST: ${RELEASE_DOWNLOAD_HOST:-dev.falloutchatmod.com}
+
+      # --- In-game HUD live push (FCMHUD/1 over /ws/hud) ---
+      # Receive-only WebSocket feed consumed by the ZFE FCMBridge HUD mod
+      # (wss://dev.falloutchatmod.com/ws/hud, via cloudflared-dev). Dev-only by
+      # design: initHudPushWs refuses to start when NODE_ENV=production (the
+      # /ws/hud path is unauthenticated), so enabling it here cannot affect prod.
+      # This service lists vars explicitly (no env_file), so it must live here to
+      # reach the backend. See docs/overlay/zfe/realtime-socket.md.
+      HUD_PUSH_WS_ENABLED: ${HUD_PUSH_WS_ENABLED:-true}
+
+      # --- In-game HUD two-way TCP transport (FCMHUD/1 over raw TLS TCP) ---
+      # ZFE's host:port transport — the ONLY path that accepts inbound SEND
+      # (the /ws/hud WS path is receive-only). Reached from outside via a
+      # cloudflared TCP route (dev-hud.falloutchatmod.com -> backend-dev:4001),
+      # so it binds 0.0.0.0 to be reachable by cloudflared-dev on this network.
+      # Dev-only: initHudPushTcp refuses to start under NODE_ENV=production.
+      HUD_PUSH_TCP_ENABLED: ${HUD_PUSH_TCP_ENABLED:-true}
+      HUD_PUSH_TCP_HOST: 0.0.0.0
+      HUD_PUSH_TCP_PORT: "4001"
+      # Self-signed PEM, inline (ZFE does not validate the cert). Single-line with
+      # \n escapes; hudPushTcp.readPemValue restores them. Values live in the
+      # Dokploy fcm-dev env, never in git.
+      HUD_PUSH_TCP_TLS_CERT: ${HUD_PUSH_TCP_TLS_CERT}
+      HUD_PUSH_TCP_TLS_KEY: ${HUD_PUSH_TCP_TLS_KEY}
+      # HMAC key for HUD identity hashing — REQUIRED for inbound SEND
+      # (SR-003: initHudPushTcp refuses the inbound path on the default secret).
+      HUD_IDENTITY_SECRET: ${HUD_IDENTITY_SECRET}
     volumes:
       - releases_dev_downloads:/app/downloads
     security_opt: ["no-new-privileges:true"]

@@ -268,6 +268,11 @@ Mounted at both paths. Auth is handled inside `releasesController` using `ADMIN_
 | GET | `/admin/releases` or `/api/releases` | public | List releases (current version + notes) |
 | DELETE | `/admin/releases/:version` | Bearer `ADMIN_RELEASE_TOKEN` | Remove release entry |
 
+**POST body:** `{ version, downloadUrl, releaseNotes, announce? }`. `announce` defaults to `true`;
+set it `false` for a **quiet publish** that skips the Discord `@everyone` post (the site download,
+`latestVersion` cache / in-app `app:update-available`, and the GitHub Release still update). See
+[releasing-the-overlay.md](../deployment/releasing-the-overlay.md) → Step 6.
+
 ---
 
 ## Version (`/api/version`)

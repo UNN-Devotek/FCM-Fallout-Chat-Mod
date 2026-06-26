@@ -144,6 +144,10 @@ contextBridge.exposeInMainWorld('relayBridge', {
   // Dev-only: log in as a system persona without Discord OAuth.
   // main.js hard-gates this behind !app.isPackaged — returns { ok: false } in prod.
   devLoginAs: (persona) => ipcRenderer.invoke('overlay:dev-login-as', persona),
+
+  // QA build: trigger the QA Discord OAuth flow + poll for role-gated session token.
+  // Used by the renderer's retry button if the automatic startup login fails.
+  qaLogin: () => ipcRenderer.invoke('overlay:qa-login'),
 });
 
 // Durable settings seeded SYNCHRONOUSLY from the Electron state file

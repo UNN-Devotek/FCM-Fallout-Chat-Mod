@@ -184,7 +184,7 @@ describe('desiredTopmost', () => {
     expect(desiredTopmost({ ...base, forceVisible: true })).toBe(true);
   });
 
-  it('gameRunning -> true (even when not foreground / not focused)', () => {
+  it('gameRunning -> true (even when not foreground / not focused) in default mode', () => {
     expect(desiredTopmost({ ...base, gameRunning: true })).toBe(true);
   });
 
@@ -221,4 +221,46 @@ describe('desiredTopmost', () => {
       }
     }
   }
+});
+
+// Focus-aware mode (Linux KDE-Wayland with active-window detection): topmost ONLY
+// while the GAME is the foreground window (or overlay focused / forceVisible), so
+// tabbing to another app lowers the overlay — fixes the "above ALL windows" issue.
+describe('desiredTopmost — focus-aware mode', () => {
+  const base = {
+    hasWindow: true, forceVisible: false, gameRunning: false,
+    windowFocused: false, foregroundIsGame: false, focusAwareTopmost: true,
+  };
+
+  it('a RECOGNIZED other app is foreground (game running) -> FALSE (lowers the overlay)', () => {
+    // e.g. Firefox/Konsole focused while the game runs: foregroundIsGame=false AND the
+    // class is readable (not unknown) → overlay drops behind that app.
+    expect(desiredTopmost({ ...base, gameRunning: true, foregroundIsGame: false, foregroundUnknown: false })).toBe(false);
+  });
+
+  it('game is the FOREGROUND window (class matches) -> true', () => {
+    expect(desiredTopmost({ ...base, gameRunning: true, foregroundIsGame: true })).toBe(true);
+  });
+
+  it('FULLSCREEN game (unreadable class) + game running -> true (issue: overlay must stay on top)', () => {
+    // The bug we fixed: a fullscreen FO76 exposes no WM_CLASS (xdotool → "(null)"),
+    // so foregroundIsGame=false but foregroundUnknown=true → keep the overlay on top.
+    expect(desiredTopmost({ ...base, gameRunning: true, foregroundIsGame: false, foregroundUnknown: true })).toBe(true);
+  });
+
+  it('unreadable foreground but game NOT running -> false (bare desktop, not the game)', () => {
+    expect(desiredTopmost({ ...base, gameRunning: false, foregroundUnknown: true })).toBe(false);
+  });
+
+  it('overlay focused -> true even if the game is not foreground', () => {
+    expect(desiredTopmost({ ...base, windowFocused: true })).toBe(true);
+  });
+
+  it('forceVisible -> true regardless of foreground', () => {
+    expect(desiredTopmost({ ...base, forceVisible: true })).toBe(true);
+  });
+
+  it('nothing foreground / not focused -> false', () => {
+    expect(desiredTopmost(base)).toBe(false);
+  });
 });

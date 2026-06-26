@@ -217,6 +217,58 @@ describe('ingestMessage — happy path', () => {
   });
 });
 
+describe('ingestMessage — relaySeq threading (relay source)', () => {
+  it('threads a provided relaySeq into the broadcast payload AND the persist record', async () => {
+    const result = await ingestMessage({
+      userId: 'relay-user-1',
+      channelId: VALID_CHANNEL_ID,
+      rawContent: 'relay message',
+      source: 'relay',
+      relaySeq: 42,
+    });
+
+    expect(result.ok).toBe(true);
+
+    // Broadcast payload carries relaySeq so the relay pub/sub subscriber forwards it.
+    expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'chat:message',
+      payload: expect.objectContaining({
+        content: 'relay message',
+        source: 'relay',
+        relaySeq: 42,
+      }),
+    }));
+
+    // Persist record carries relaySeq so messages.relay_seq is written
+    // (poll/history filter on relay_seq IS NOT NULL).
+    expect(messageQueue.add).toHaveBeenCalledWith(expect.objectContaining({
+      content: 'relay message',
+      source: 'relay',
+      relaySeq: 42,
+    }));
+  });
+
+  it('omits relaySeq from the broadcast payload and persist record for non-relay sources', async () => {
+    const result = await ingestMessage({
+      userId: 'hud-user-1',
+      channelId: VALID_CHANNEL_ID,
+      rawContent: 'hud message',
+      source: 'hud',
+      // no relaySeq
+    });
+
+    expect(result.ok).toBe(true);
+
+    // Non-relay broadcast payload must NOT include relaySeq (unchanged behavior).
+    const broadcastArg = broadcast.mock.calls[0][0];
+    expect(broadcastArg.payload).not.toHaveProperty('relaySeq');
+
+    // Non-relay persist record must NOT include relaySeq → relay_seq stays NULL.
+    const recordArg = messageQueue.add.mock.calls[0][0];
+    expect(recordArg).not.toHaveProperty('relaySeq');
+  });
+});
+
 describe('ingestMessage — mute checks', () => {
   it('returns muted when user isMuted=true (permanent)', async () => {
     prismaStub.user.findUnique.mockResolvedValue({ ...BASE_USER, isMuted: true, muteExpiresAt: null });

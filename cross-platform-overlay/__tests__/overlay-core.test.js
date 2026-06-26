@@ -623,3 +623,22 @@ describe('resolveRelayProxyUrl', () => {
     expect(resolveRelayProxyUrl('/api', 'not a url')).toBeNull();
   });
 });
+
+describe('resolveRelayUrls (build channel)', () => {
+  it('stable/undefined channel -> prod defaults', () => {
+    expect(core.resolveRelayUrls({})).toEqual({
+      relayHttp: 'https://falloutchatmod.com',
+      relayWs: 'wss://falloutchatmod.com/ws',
+    });
+  });
+  it('qa channel -> dev defaults', () => {
+    expect(core.resolveRelayUrls({}, 'qa')).toEqual({
+      relayHttp: 'https://dev.falloutchatmod.com',
+      relayWs: 'wss://dev.falloutchatmod.com/ws',
+    });
+  });
+  it('env override beats the channel default', () => {
+    expect(core.resolveRelayUrls({ RELAY_HTTP: 'http://localhost:7177', RELAY_WS: 'ws://localhost:7177/ws' }, 'qa'))
+      .toEqual({ relayHttp: 'http://localhost:7177', relayWs: 'ws://localhost:7177/ws' });
+  });
+});

@@ -570,12 +570,6 @@ function InstallPanel() {
           <span className="install-dl-btn" style={{ ...downloadBtnStyle, opacity: 0.5, cursor: 'default' }}>↓ WINDOWS — UNAVAILABLE</span>
         )}
       </div>
-      <div style={warningBoxStyle}>
-        ⚠ SmartScreen may show &ldquo;Windows protected your PC — unknown publisher&rdquo;
-        (the binary is unsigned). Click <strong style={{ color: 'rgba(200,168,64,0.85)' }}>More info</strong> →{' '}
-        <strong style={{ color: 'rgba(200,168,64,0.85)' }}>Run anyway</strong> to proceed.
-      </div>
-
       <div style={stepStyle}>STEP 2 (ALTERNATIVE) — ONE-LINE INSTALL</div>
       <div style={bodyStyle}>
         Prefer the terminal? Paste this into <strong style={{ color: '#C8A840' }}>PowerShell</strong> to
