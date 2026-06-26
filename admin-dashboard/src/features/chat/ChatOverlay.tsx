@@ -6404,17 +6404,26 @@ export default function ChatOverlay() {
       // is no awkward floating "max N" / blank cell.
       // 0 (pre-measure) is treated as wide so the first paint shows everything.
       const plw = partyListWidth || 9999;
-      const showCategory = plw >= 320;
-      const showOnline = plw >= 230;
       // Row line-height/height follow fontSize so large fonts don't clip.
       const partyRowLine = `${Math.max(18, fontSize + 8)}px`;
       const statFontSize = `${Math.max(9, fontSize - 2)}px`;
       // Fixed-width, left-aligned stat cells so member/online/category line up
       // as columns down the list (scales with font so big fonts never clip).
-      const memberCellW = `${Math.max(46, fontSize * 4)}px`;
-      const onlineCellW = `${Math.max(36, fontSize * 3)}px`;
-      const categoryCellW = `${Math.max(64, fontSize * 5.5)}px`;
-      const actionCellW = `${Math.max(46, fontSize * 4)}px`;
+      const memberCellPx = Math.max(46, fontSize * 4);
+      const onlineCellPx = Math.max(36, fontSize * 3);
+      const categoryCellPx = Math.max(64, fontSize * 5.5);
+      const baseActionCellPx = Math.max(46, fontSize * 4);
+      const actionCellPx = Math.max(104, fontSize * 8);
+      // The original collapse thresholds were tuned for a single action button.
+      // Shift them by the extra width introduced by the new OPEN + LEAVE/DELETE
+      // action cluster so narrow layouts preserve the previous density balance.
+      const actionThresholdDelta = actionCellPx - baseActionCellPx;
+      const showCategory = plw >= 320 + actionThresholdDelta;
+      const showOnline = plw >= 230 + actionThresholdDelta;
+      const memberCellW = `${memberCellPx}px`;
+      const onlineCellW = `${onlineCellPx}px`;
+      const categoryCellW = `${categoryCellPx}px`;
+      const actionCellW = `${actionCellPx}px`;
       // Per-row CSS grid with FIXED tracks so the dot / name / category / member /
       // online / action columns line up at the same x on EVERY row (a flex row
       // let the action-button width shift the stat columns out of alignment).
@@ -6754,17 +6763,31 @@ export default function ChatOverlay() {
                       }}
                     ><span style={{ display: 'block', transform: 'translateY(-1px)' }}>ACCEPT</span></button>
                   ) : party.isMember ? (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setPartyView(party.id); }}
-                      style={{
-                        height: '18px', minHeight: 0, boxSizing: 'border-box',
-                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                        padding: '0 5px', fontSize: '11px', fontFamily: theme.fontFamily,
-                        background: hexAlpha(primaryColor, 0.1), border: `1px solid ${hexAlpha(primaryColor, 0.4)}`,
-                        color: primaryColor, cursor: 'pointer', flexShrink: 0,
-                        lineHeight: '1', paddingBottom: '2px',
-                      }}
-                    ><span style={{ display: 'block', transform: 'translateY(-1px)' }}>OPEN</span></button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setPartyView(party.id); }}
+                        style={{
+                          flex: 1, height: '18px', minHeight: 0, minWidth: 0, boxSizing: 'border-box',
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          padding: '0 5px', fontSize: '11px', fontFamily: theme.fontFamily,
+                          background: hexAlpha(primaryColor, 0.1), border: `1px solid ${hexAlpha(primaryColor, 0.4)}`,
+                          color: primaryColor, cursor: 'pointer', lineHeight: '1', paddingBottom: '2px',
+                        }}
+                      ><span style={{ display: 'block', transform: 'translateY(-1px)' }}>OPEN</span></button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLeaveConfirmFor({ partyId: party.id, isOwner: party.role === 'owner' });
+                        }}
+                        style={{
+                          flex: 1, height: '18px', minHeight: 0, minWidth: 0, boxSizing: 'border-box',
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          padding: '0 5px', fontSize: '11px', fontFamily: theme.fontFamily,
+                          background: 'transparent', border: `1px solid ${hexAlpha('#FF4444', 0.4)}`,
+                          color: '#FF4444', cursor: 'pointer', lineHeight: '1', paddingBottom: '2px',
+                        }}
+                      ><span style={{ display: 'block', transform: 'translateY(-1px)' }}>{party.role === 'owner' ? 'DELETE' : 'LEAVE'}</span></button>
+                    </div>
                   ) : !party.isPrivate ? (
                     <button
                       onClick={async (e) => {
@@ -9413,13 +9436,11 @@ export default function ChatOverlay() {
               </div>
             );
           })()}
-          {/* Footer: invite / leave / delete — compact buttons, permission-gated.
-              Invite → owner/co-mod only · Delete → owner only · everyone else
-              sees just Leave. */}
+          {/* Footer: invite only — leave/delete now live in the Parties browser row
+              action area so the main party actions stay grouped together. */}
           {(() => {
             const myParty = parties.find(p => p.id === partyView);
             const myRole = myParty?.role;
-            const isOwner = myRole === 'owner';
             const canInvite = myRole === 'owner' || myRole === 'comod';
             const compactBtn: React.CSSProperties = {
               flex: 1, minHeight: 0, boxSizing: 'border-box', height: '22px',
@@ -9436,10 +9457,6 @@ export default function ChatOverlay() {
                     style={{ ...compactBtn, border: `1px solid ${hexAlpha(primaryColor, 0.4)}`, color: primaryColor }}
                   >+ INVITE</button>
                 )}
-                <button
-                  onClick={() => { if (typeof partyView === 'string') setLeaveConfirmFor({ partyId: partyView, isOwner }); }}
-                  style={{ ...compactBtn, border: `1px solid ${hexAlpha('#FF4444', 0.4)}`, color: '#FF4444' }}
-                >{isOwner ? 'DELETE' : 'LEAVE'}</button>
               </div>
             );
           })()}
