@@ -678,6 +678,33 @@ export function openComponentSettings() {
 
 let currentSettings: ShellSettings = DEFAULT_SHELL_SETTINGS;
 let onSettingsChange: ((s: ShellSettings) => void) | null = null;
+/** Reference to the version span — set once the settings panel is built. */
+let verSpanEl: HTMLElement | null = null;
+/** Latched when an update signal arrives before the panel is built. */
+let pendingUpdateVersion: string | null = null;
+
+function applyUpdateDot(latestVersion: string): void {
+  if (!verSpanEl) return;
+  if (!verSpanEl.querySelector('.ss-update-dot')) {
+    const dot = document.createElement('span');
+    dot.className = 'ss-update-dot';
+    dot.title = `Update available: v${latestVersion}`;
+    dot.style.cssText = [
+      'display:inline-block',
+      'width:7px',
+      'height:7px',
+      'border-radius:50%',
+      'background:#e74c3c',
+      'box-shadow:0 0 5px rgba(231,76,60,0.8)',
+      'margin-left:5px',
+      'vertical-align:middle',
+      'flex-shrink:0',
+    ].join(';');
+    verSpanEl.style.display = 'inline-flex';
+    verSpanEl.style.alignItems = 'center';
+    verSpanEl.appendChild(dot);
+  }
+}
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs?: Partial<HTMLElementTagNameMap[K]> & { className?: string }, ...kids: (Node | string)[]): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -936,6 +963,8 @@ function buildSettingsPanel() {
   // Show the build-time version from the Vite define constant. No live fetch —
   // the displayed version is always the installed build version.
   const verSpan = el('span', { className: 'ss-ver' }, `v${__APP_VERSION__}`);
+  verSpanEl = verSpan;
+  if (pendingUpdateVersion) applyUpdateDot(pendingUpdateVersion);
   head.append(verSpan);
   panel.append(head);
   // Official non-affiliation disclaimer — shown at the top of Settings, under the
@@ -1600,6 +1629,20 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
   // resizes the overlay when Fallout 76 launches/closes, and the old resize→
   // re-clamp path is what reset the font to ~8px on every game launch.
   startIdleLoop(currentSettings);
+
+  // Version update indicator: when main signals a newer version is available,
+  // latch the version and apply a red dot to the settings panel version span.
+  // The panel may not be built yet (it's lazy), so we store the version and
+  // apply it when the panel is first opened.
+  window.relayBridge.onUpdateAvailable?.(({ latestVersion }) => {
+    pendingUpdateVersion = latestVersion;
+    applyUpdateDot(latestVersion);
+  });
+  // Also poll on startup — the update event may have fired before this listener
+  // was registered (WS connects early, before initShell completes).
+  window.relayBridge.getPendingUpdate?.().then(v => {
+    if (v) { pendingUpdateVersion = v; applyUpdateDot(v); }
+  }).catch(() => { /* non-fatal */ });
 
   // While collapsed, re-assert on any window resize (compositor-driven or manual)
   // so the viewport never jumps to the chat input. Debounced; skips the

@@ -620,6 +620,9 @@ let isQuitting = false;
 // Once-per-session guard: prevents the update toast from re-firing on WS reconnects
 // within the same app launch. Reset to false on each app start.
 let updateNotifiedThisSession = false;
+/** Latched when an update fires — renderer can query this on init to catch
+ *  signals that arrived before its onUpdateAvailable listener was registered. */
+let pendingRendererUpdateVersion = null;
 // Track whether the chat input was focused before a reload so we can re-focus it.
 let inputWasFocused = false;
 // User role from register response (null = regular user). Used to show the
@@ -1380,7 +1383,9 @@ function openRelaySocket(id) {
         const latestVersion = msg.payload.latestVersion;
         if (!updateNotifiedThisSession && overlayCore.cmpVersions(latestVersion, APP_VERSION) > 0) {
           updateNotifiedThisSession = true;
+          pendingRendererUpdateVersion = latestVersion;
           showUpdateNotification(latestVersion);
+          sendToRenderer('relay:update-available', { latestVersion });
         }
       }
     } catch { /* not JSON or not an update event — ignore */ }
@@ -1475,6 +1480,9 @@ ipcMain.handle('overlay:get-info', () => ({
   clickThrough, toggleShortcut: currentKeybinds.toggle || TOGGLE_SHORTCUT, platform: process.platform, relayHost: RELAY_HOST,
   appVersion: APP_VERSION, keybinds: currentKeybinds, isDev: !app.isPackaged,
 }));
+// Let the renderer query the pending update version on init, catching any
+// update signal that fired before the onUpdateAvailable listener was registered.
+ipcMain.handle('overlay:get-pending-update', () => pendingRendererUpdateVersion);
 // Synchronous version — used by bridge.ts to set relayBase before first render.
 ipcMain.on('overlay:get-relay-host-sync', (evt) => { evt.returnValue = RELAY_HOST; });
 
