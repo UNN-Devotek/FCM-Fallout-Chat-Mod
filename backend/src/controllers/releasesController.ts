@@ -125,7 +125,7 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
 
     const parsed = releaseBodySchema.safeParse(req.body);
     if (!parsed.success) {
-      const detail = parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join('; ');
+      const detail = parsed.error.issues.map((e) => `${e.path.join('.')}: ${e.message}`).join('; ');
       return next(createError(400, detail));
     }
 

@@ -210,6 +210,22 @@ npm run dist:win    # Windows NSIS installer → dist/
 npm run dist:linux  # Linux AppImage → dist/
 ```
 
+### QA builds (hosted-dev testers)
+
+A separate **QA build channel** lets vetted testers run the overlay against the hosted dev
+environment (`dev.falloutchatmod.com`) as regular users — gated by a dev-guild `QA` Discord
+role plus a version-string golden-build lock, with no Cloudflare Access email and no
+developer role.
+
+```bash
+cd cross-platform-overlay
+npm run dist:qa     # "Fallout Chat Mod QA" → dist-electron/ (Linux); prints QA_ACTIVE_VERSION
+```
+
+Windows QA builds run on the self-hosted runner via the **Build Windows QA** GitHub Actions
+workflow. Full build → bless → distribute → retire runbook:
+[docs/deployment/qa-builds.md](docs/deployment/qa-builds.md).
+
 ### 6. Run backend tests
 
 ```bash

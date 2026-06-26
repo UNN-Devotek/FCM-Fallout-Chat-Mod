@@ -115,6 +115,95 @@ These features are correctly wired and light up on native Windows builds or nati
 
 ---
 
+## QA build channel
+
+The overlay ships in two build channels: `stable` (the default production build) and `qa`
+(a special dev-only build for QA testers connecting to `dev.falloutchatmod.com`).
+
+### Building the QA artifact
+
+```bash
+cd cross-platform-overlay
+npm run dist:qa
+```
+
+`dist:qa` runs `scripts/build-qa.mjs`, which:
+
+- Computes a **unique per-build version** `<base>-qa.<UTC-timestamp>` (e.g.
+  `1.3.91-qa.20260626014530`) so the golden-build lock can tell a fresh build from a
+  retired one (the lock matches the version string exactly — without a unique stamp,
+  rebuilding the same `package.json` version could not retire the old build).
+- Injects that version into BOTH the renderer (`FCM_BUILD_VERSION` -> `__APP_VERSION__`)
+  and the packaged app (`-c.extraMetadata.version` -> the packed `package.json`, which
+  `main.js` reads and sends as the `x-client-version` header the lock checks).
+- Sets `BUILD_CHANNEL=qa` (renderer `__BUILD_CHANNEL__`) and `-c.extraMetadata.fcmChannel=qa`
+  (packed `package.json`), and names the app `Fallout Chat Mod QA`.
+
+On completion it prints the line to bless the build, e.g.
+`QA_ACTIVE_VERSION=1.3.91-qa.20260626014530` — set that on the dev backend (env or
+`POST /api/admin/qa/active-version`) to make this build the active golden build.
+
+An explicit `FCM_BUILD_VERSION` overrides the auto-stamp — use it to pin ONE version
+across a coordinated Linux + Windows golden release (so a single `QA_ACTIVE_VERSION`
+admits both), or to match an already-blessed lock value:
+
+```bash
+FCM_BUILD_VERSION=1.3.91-qa.20260626 npm run dist:qa
+```
+
+**Windows QA build:** run the **Build Windows QA** workflow (`.github/workflows/build-windows-qa.yml`,
+`workflow_dispatch`, owner-only) on the self-hosted `[self-hosted, windows, unn]` runner —
+it runs `dist:qa` and uploads the unsigned NSIS + portable `.exe` as a workflow artifact.
+Its optional `version` input maps to `FCM_BUILD_VERSION` (pin it to match the active lock).
+Wine cannot build Electron 31+ on Linux, so Windows QA builds use the runner.
+
+### Runtime channel detection
+
+The main process reads the channel at startup:
+
+```js
+const BUILD_CHANNEL = (() => {
+  try { return require('./package.json').fcmChannel || process.env.BUILD_CHANNEL || 'stable'; }
+  catch { return process.env.BUILD_CHANNEL || 'stable'; }
+})();
+```
+
+When `BUILD_CHANNEL === 'qa'` the overlay resolves relay URLs to the dev backend
+(`dev.falloutchatmod.com`) instead of production.
+
+### QA login flow
+
+A `qa`-channel build does not use the standard Discord OAuth link flow. Instead, it
+presents an in-app "QA Login" button that:
+
+1. Opens `/auth/discord/qa/start` in a browser window (on the dev backend).
+2. The user completes Discord OAuth; the dev backend verifies they hold the `DEV_QA_ROLE_ID`
+   role in the dev guild and stores a one-time session grant in Redis.
+3. The overlay polls `GET /api/auth/qa-status/:installToken` (with
+   `X-Client-Version: <version>`) until the backend returns an `authorized: true`
+   response with a session token.
+4. If the backend returns HTTP 426 (`OUTDATED_BUILD`), the build version does not match
+   the active QA version and the overlay shows an update prompt instead of completing login.
+
+### `X-Client-Version` header
+
+`qa`-channel builds send `X-Client-Version: <APP_VERSION>` on:
+
+- The WS upgrade request (`main.js`, alongside `X-Auth-Token`)
+- The QA status poll (`GET /api/auth/qa-status/:installToken`)
+
+The dev backend uses this header to enforce the golden-build lock (`QA_BUILD_LOCK`). A
+build whose version string does not match `QA_ACTIVE_VERSION` is rejected:
+
+- **WS upgrade:** closed with code `4003`; close reason is `OUTDATED_BUILD:<activeVersion>`.
+  The overlay logs `[relay] WS closed 4003 OUTDATED_BUILD` and shows an update prompt.
+- **QA status poll:** HTTP 426 response; the overlay aborts login and shows an update prompt.
+
+`stable`-channel builds also send `X-Client-Version` on the WS upgrade but the production
+backend never checks it (`QA_BUILD_LOCK` defaults to false in production).
+
+---
+
 ## Cross-links
 
 - Chat overlay React component internals: `../frontend/chat-overlay.md`
@@ -123,3 +212,5 @@ These features are correctly wired and light up on native Windows builds or nati
 - Build instructions: `building.md`
 - Keybind reference: `keybinds.md`
 - Window management: `window-management.md`
+- In-game HUD chat (separate opt-in `.ba2` track): `zfe/README.md` — ZFE `chat.v1` works on native
+  Windows (0.9.9+) but is Proton/Wine-blocked (#326), so this desktop overlay stays the Linux chat path.

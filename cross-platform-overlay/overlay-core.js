@@ -425,7 +425,13 @@ function shouldRotateLog(size, cap) {
 // Production (default — no env override needed):
 //   relayHttp = 'https://falloutchatmod.com'
 //   relayWs   = 'wss://falloutchatmod.com/ws'
-function resolveRelayUrls(env) {
+function resolveRelayUrls(env, channel) {
+  if (channel === 'qa') {
+    return {
+      relayHttp: env.RELAY_HTTP || 'https://dev.falloutchatmod.com',
+      relayWs:   env.RELAY_WS   || 'wss://dev.falloutchatmod.com/ws',
+    };
+  }
   return {
     relayHttp: env.RELAY_HTTP || 'https://falloutchatmod.com',
     relayWs:   env.RELAY_WS   || 'wss://falloutchatmod.com/ws',
@@ -450,18 +456,18 @@ function classifyInputGrab(psOutput) {
 // spawning anything. main.js runs the result via child_process.exec on KDE.
 //
 // TWO rules are needed on Plasma 6 (verified on KWin 6.6.5):
-//   • "keep above" on the OVERLAY (wmclass=fallout, title="Fallout Chat Mod"): above=true.
-//     (The `layer=8`/`layerrule=2` CriticalNotification force that older KWin honored is
-//     IGNORED by KWin 6, so keep-above ALONE loses to a focused fullscreen game.)
-//   • "demote game" on the GAME (wmclass=steam_app_1151340): fullscreen=false (Force).
-//     This stops KWin promoting the focused game to the active-fullscreen layer (6), so the
-//     overlay's keep-above (4) wins even while you're playing. THIS is the rule that fixes
-//     "overlay drops under when I click the game".
+//   • "keep above" on the OVERLAY (wmclass=fallout-chat-mod): above=true.
+//   • "keep game below" on the GAME (wmclass=steam_app_1151340): below=true (Force).
+//     KWin evaluates keepBelow() BEFORE isActiveFullScreen(), so dropping the game to
+//     BelowLayer(1) prevents it from ever reaching ActiveLayer(6) — the overlay's
+//     keepAbove(4) wins even while the game is focused, with NO flicker.
+//     (Replaces the retired fcm-game-demote / fullscreen=false Force rule, which fought the
+//     game's own fullscreen state and caused endless flicker — issue #272.)
 //
 // FORMAT (KWin 6, also verified): the authoritative rule list is [General] `rules=` — a
 // COMMA-SEPARATED list of group NAMES — plus a matching `count`. Writing numbered groups +
 // only `count` is NOT enough (KWin rewrites count and drops the rules). We use STABLE NAMED
-// groups (fcm-keepabove / fcm-game-demote).
+// groups (fcm-keepabove / fcm-game-below).
 //
 // SELF-HEALING CLEANUP: both builders below first PARTITION the existing `rules=` list into
 // the user's own rules (KEEP) vs FCM-authored rules (matched by a "Fallout Chat Mod" prefix
@@ -511,7 +517,7 @@ function awkStripFcmSectionLines() {
 // fight "below" (it's a stacking hint, not a state the game asserts), so there is NO
 // flicker. It's an OPTION (settings.kwinGameBelow / installer prompt) because forcing
 // the game below also lets the panel/other windows cover it; default ON on KDE-Wayland.
-function buildKwinKeepAboveScript({ file = 'kwinrulesrc', title = 'Fallout Chat Mod', overlayWmclass = 'fallout', gameWmclass = 'steam_app_1151340', includeBelow = true } = {}) {
+function buildKwinKeepAboveScript({ file = 'kwinrulesrc', overlayWmclass = 'fallout-chat-mod', gameWmclass = 'steam_app_1151340', includeBelow = true } = {}) {
   const ABOVE = 'fcm-keepabove';      // stable group name (overlay keep-above rule)
   const BELOW = 'fcm-game-below';     // stable group name (game keep-below rule)
   const w = (grp, key, val) => `kwriteconfig6 --file ${file} --group ${grp} --key ${key} ${val}`;
@@ -530,8 +536,6 @@ function buildKwinKeepAboveScript({ file = 'kwinrulesrc', title = 'Fallout Chat 
     ...awkStripFcmSectionLines(),
     // Overlay keep-above rule (always).
     w(ABOVE, 'Description', `"Fallout Chat Mod - keep above games"`),
-    w(ABOVE, 'title', `"${title}"`),
-    w(ABOVE, 'titlematch', '2'),
     w(ABOVE, 'wmclass', `"${overlayWmclass}"`),
     w(ABOVE, 'wmclassmatch', '2'),
     w(ABOVE, 'wmclasscomplete', 'false'),
