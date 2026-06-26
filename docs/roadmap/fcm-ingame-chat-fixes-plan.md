@@ -1,10 +1,30 @@
 # FCM In-Game Chat — Channel, Identity & Input-Box Fixes (Plan)
 
-**Status:** PLANNED — 2026-06-11
+**Status:** PLANNED — 2026-06-11 (see status update below)
 **Context:** Two-way in-game chat (non-HUDModLoader / RABCDAsm HUDMenu patch + FCMBridge feed widget)
 is now functional: send round-trips (`SEND … ok=true`) and the feed renders. Four issues remain,
 surfaced during live testing. This plan captures the root causes (from logs + DB) and splits the
 work into parallelizable workstreams for sub-agents.
+
+> **Status update — 2026-06-26 (chat.v1 path).** Work since moved to the ZFE **`chat.v1`** widget
+> (`FCMChatWidget`, a HUDModLoader child SWF) rather than the HUDMenu patch this plan was written for.
+> Current state:
+> - **Font rendering:** FIXED — the widget renders via the GFx engine aliases `$MAIN_Font_Light`
+>   (body) / `$MAIN_Font_Bold` (headers/tabs); the earlier tofu/blank-text issue is resolved.
+> - **Interactive UI:** DONE — the amber-themed scrolling chat UI with channel tabs is built into
+>   `FCMChatWidget` (merged to dev, PR #330); it replaces the native green box this plan targeted.
+> - **Send works on native Windows:** chat.v1 send round-trips end-to-end on ZFE 0.9.9+ with relay
+>   fixes **#334** (attribute to the linked FCM user UUID, not the relay TEXT id) and **#335**
+>   (persist `messages.relay_seq` so `poll`/history return relay sends).
+> - **Native chat input decoded:** ZFE's top-level `setChatInputActive` / `isChatInputActive` /
+>   `readChatInput` / `consumeChatInputSubmitted` / `clearChatInput` API (bare-value payloads,
+>   `consumeChatInputSubmitted` returns a bool — read text from `readChatInput`) is understood and used;
+>   a `SharedHUDTools` fallback text-entry path is retained.
+> - **Remaining:** Proton/Wine is BLOCKED on an upstream Zig TLS bug (fix = ZFE on Zig >= 0.14.0),
+>   tracked in **#326** — see
+>   [../overlay/zfe/native-chat-relay/proton-status.md](../overlay/zfe/native-chat-relay/proton-status.md);
+>   plus minor follow-ups (e.g. the #11 link-notice URL). The channel/identity backend work below
+>   (WS-A / WS-D) still applies regardless of transport.
 
 ---
 

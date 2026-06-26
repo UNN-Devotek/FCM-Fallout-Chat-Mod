@@ -207,6 +207,8 @@ const {
   _resetRelayWss,
 } = require('../src/websocket/upgradeRouter');
 
+const { deriveLinkUrl } = require('../src/services/relay/relayHandler');
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function makeServer() {
@@ -302,6 +304,19 @@ function markTokensLinked(relayUserId, fcmUserId) {
     .filter((r) => r.userId === relayUserId && !r.revokedAt)
     .forEach((r) => { r.linkedUserId = fcmUserId; });
 }
+
+// ── deriveLinkUrl (env-aware link-flow URL) ──────────────────────────────────────
+
+describe('deriveLinkUrl', () => {
+  test('strips scheme + trailing slash and appends /link', () => {
+    expect(deriveLinkUrl('https://dev.falloutchatmod.com')).toBe('dev.falloutchatmod.com/link');
+    expect(deriveLinkUrl('https://falloutchatmod.com/')).toBe('falloutchatmod.com/link');
+    expect(deriveLinkUrl('http://localhost:7177')).toBe('localhost:7177/link');
+  });
+  test('falls back to the prod host when the base is empty', () => {
+    expect(deriveLinkUrl('')).toBe('falloutchatmod.com/link');
+  });
+});
 
 // ── channelMap ─────────────────────────────────────────────────────────────────
 
@@ -802,6 +817,145 @@ describe('relay WebSocket ops', () => {
     );
     expect(res).toMatchObject({ success: true });
     expect(typeof res.messageId).toBe('string');
+    ws.close();
+  });
+
+  test('send forwards the linked FCM user UUID to ingestMessage, not the relay TEXT id', async () => {
+    // Regression: handleSend used to pass identity.userId (the relay "user_"+hex TEXT
+    // id) to ingestMessage, which runs prisma.user.findUnique({ id }) expecting a UUID
+    // -> P2023 throw -> internal_error -> ZFE surfaces relay_rejected in-game. The
+    // message author/moderation identity must be the linked FCM account UUID.
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'LinkedSender' }),
+    );
+    wsReg.close();
+    const { token } = regRes;
+    const rawId = lastRawUserId();                 // relay TEXT id, e.g. "user_abc..."
+    const fcmId = 'fcm-linked-sender-001';          // stands in for a users.id UUID
+    _userMap[fcmId] = { id: fcmId, discordId: 'disc-x', steamId: null, isBanned: false, isMuted: false };
+    markTokensLinked(rawId, fcmId);
+
+    const ingestMock = require('../src/services/ingestMessage').ingestMessage;
+    ingestMock.mockClear();
+
+    const { ws, msgs } = await conn();
+    const res = await waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'send', token, channel: 'global', body: 'hi' }),
+    );
+    expect(res).toMatchObject({ success: true });
+    expect(ingestMock).toHaveBeenCalled();
+    const args = ingestMock.mock.calls[0][0];
+    expect(args.userId).toBe(fcmId);                          // the linked FCM UUID
+    expect(args.userId).not.toBe(rawId);                     // NOT the relay TEXT id
+    expect(String(args.userId).startsWith('user_')).toBe(false);
+    ws.close();
+  });
+
+  test('send passes a numeric relaySeq into ingestMessage (single-broadcast model)', async () => {
+    // Regression: handleSend must thread the pre-computed relaySeq INTO ingestMessage
+    // (which forwards it to finalizeMessage → persisted messages.relay_seq + single
+    // broadcast). The old code persisted via ingestMessage WITHOUT relaySeq and then
+    // published a SEPARATE second rebroadcast carrying relaySeq. That double broadcast
+    // is gone: there must be exactly one ingest call carrying the seq, and NO extra
+    // relay-seq rebroadcast published to Redis from handleSend.
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'SeqIngestPlayer' }),
+    );
+    wsReg.close();
+    const { token } = regRes;
+    const rawId = lastRawUserId();
+    const fcmId = 'fcm-seq-ingest-001';
+    _userMap[fcmId] = { id: fcmId, discordId: 'disc-seq-i', steamId: null, isBanned: false, isMuted: false };
+    markTokensLinked(rawId, fcmId);
+
+    const ingestMock = require('../src/services/ingestMessage').ingestMessage;
+    ingestMock.mockClear();
+    redisMock.publish.mockClear();
+
+    const { ws, msgs } = await conn();
+    const res = await waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'send', token, channel: 'global', body: 'seq please' }),
+    );
+    expect(res).toMatchObject({ success: true });
+
+    expect(ingestMock).toHaveBeenCalledTimes(1);
+    const args = ingestMock.mock.calls[0][0];
+    expect(typeof args.relaySeq).toBe('number');
+    expect(args.relaySeq).toBeGreaterThan(0);
+    expect(args.source).toBe('relay');
+    expect(args.userId).toBe(fcmId);
+
+    // No separate relay-seq rebroadcast: handleSend no longer publishes the
+    // second chat:message envelope itself (the single broadcast lives inside
+    // finalizeMessage, which is reached through ingestMessage).
+    const rebroadcasts = redisMock.publish.mock.calls.filter(
+      ([, msg]) => typeof msg === 'string' && msg.includes('"type":"chat:message"'),
+    );
+    expect(rebroadcasts).toHaveLength(0);
+    ws.close();
+  });
+
+  test('relay subscriber forwards a wrapped broadcast() envelope carrying relaySeq', async () => {
+    // finalizeMessage emits a SINGLE broadcast via the WS handler's broadcast(),
+    // which publishes a wrapped envelope on chat:broadcast:
+    //   { instanceId, payload: { type:'chat:message', payload:{ …, relaySeq } } }
+    // The relay subscriber must unwrap that envelope and push an 'event' frame
+    // to subscribed ZFE clients.
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'SubFwdPlayer' }),
+    );
+    wsReg.close();
+    const { token } = regRes;
+    const rawId = lastRawUserId();
+    _userMap[rawId] = { id: rawId, discordId: 'disc-subfwd', steamId: null, isBanned: false, isMuted: false };
+
+    const { ws, msgs } = await conn();
+    const subRes = await waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'subscribe', token, cursor: 0 }),
+    );
+    expect(subRes).toMatchObject({ success: true, op: 'subscribed' });
+
+    const beforeLen = msgs.length;
+    // Simulate finalizeMessage's broadcast() Redis publish (wrapped envelope).
+    const wrapped = JSON.stringify({
+      instanceId: 'other-instance',
+      payload: {
+        type: 'chat:message',
+        payload: {
+          id: 'msg-fwd-1',
+          content: 'forwarded body',
+          username: 'SubFwdPlayer',
+          userId: 'fcm-fwd-001',
+          channelId: '00000000-0000-0000-0000-000000000005',
+          source: 'relay',
+          timestamp: new Date().toISOString(),
+          relaySeq: 9999,
+        },
+      },
+    });
+    await redisMock.publish('chat:broadcast', wrapped);
+
+    // Wait for the event frame to land on the subscriber socket.
+    await new Promise((resolve) => {
+      const iv = setInterval(() => {
+        if (msgs.length > beforeLen) { clearInterval(iv); resolve(); }
+      }, 20);
+      setTimeout(() => { clearInterval(iv); resolve(); }, 1000);
+    });
+
+    const evt = msgs.slice(beforeLen).find((m) => m.op === 'event');
+    expect(evt).toBeDefined();
+    expect(evt.cursor).toBe(9999);
+    expect(evt.event).toMatchObject({
+      id: 9999,
+      kind: 'chat.message',
+      messageId: 'msg-fwd-1',
+      channel: 'global',
+      body: 'forwarded body',
+    });
     ws.close();
   });
 

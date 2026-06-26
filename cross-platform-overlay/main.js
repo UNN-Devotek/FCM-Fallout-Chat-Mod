@@ -459,7 +459,11 @@ const NEXUS_MOD_URL = 'https://www.nexusmods.com/fallout76/mods/4082';
 // Path A (dev:cloud, non-CF-Access dev backend): https://dev.falloutchatmod.com
 // Path B (dev:local):                            http://localhost:7177
 // Production default (no override):              https://falloutchatmod.com
-const { relayHttp: RELAY_HTTP, relayWs: RELAY_WS } = overlayCore.resolveRelayUrls(process.env);
+const BUILD_CHANNEL = (() => {
+  try { return require('./package.json').fcmChannel || process.env.BUILD_CHANNEL || 'stable'; }
+  catch { return process.env.BUILD_CHANNEL || 'stable'; }
+})();
+const { relayHttp: RELAY_HTTP, relayWs: RELAY_WS } = overlayCore.resolveRelayUrls(process.env, BUILD_CHANNEL);
 const RELAY_HOST = new URL(RELAY_HTTP).host;
 
 // Stable, identifiable User-Agent for every outbound request from the main
@@ -616,6 +620,9 @@ let isQuitting = false;
 // Once-per-session guard: prevents the update toast from re-firing on WS reconnects
 // within the same app launch. Reset to false on each app start.
 let updateNotifiedThisSession = false;
+/** Latched when an update fires — renderer can query this on init to catch
+ *  signals that arrived before its onUpdateAvailable listener was registered. */
+let pendingRendererUpdateVersion = null;
 // Track whether the chat input was focused before a reload so we can re-focus it.
 let inputWasFocused = false;
 // User role from register response (null = regular user). Used to show the
@@ -1306,6 +1313,7 @@ ipcMain.handle('proxy:http', async (_evt, reqDesc) => {
   return new Promise((resolve) => {
     const outHeaders = overlayCore.filterProxyHeaders(headers);
     if (sessionToken) outHeaders['X-Auth-Token'] = sessionToken;
+    outHeaders['X-Client-Version'] = APP_VERSION;
     outHeaders['User-Agent'] = APP_UA;
     outHeaders['Origin'] = RELAY_HTTP;
     // cookie is never in the allowlist, but delete defensively in case the
@@ -1348,6 +1356,7 @@ function openRelaySocket(id) {
   const sock = new WebSocket(RELAY_WS, {
     headers: {
       'X-Auth-Token': sessionToken,
+      'X-Client-Version': APP_VERSION,
       'User-Agent': APP_UA,
       'Origin': RELAY_HTTP,
     },
@@ -1374,7 +1383,9 @@ function openRelaySocket(id) {
         const latestVersion = msg.payload.latestVersion;
         if (!updateNotifiedThisSession && overlayCore.cmpVersions(latestVersion, APP_VERSION) > 0) {
           updateNotifiedThisSession = true;
+          pendingRendererUpdateVersion = latestVersion;
           showUpdateNotification(latestVersion);
+          sendToRenderer('relay:update-available', { latestVersion });
         }
       }
     } catch { /* not JSON or not an update event — ignore */ }
@@ -1383,6 +1394,15 @@ function openRelaySocket(id) {
   sock.on('close', (code, reason) => {
     relaySockets.delete(id);
     relaySendBuffers.delete(id);
+    // Golden-build lock: the dev backend rejected this build as outdated. This is
+    // terminal — do NOT auto-reconnect. Tell the user to grab the current QA build.
+    if (code === 4003) {
+      diag('[relay] WS closed 4003 OUTDATED_BUILD — prompting update');
+      try { showUpdateNotification((reason && reason.toString().split(':')[1]) || ''); } catch { /* ignore */ }
+      sendToRenderer('relay:status', { state: 'error', message: 'This QA build is no longer active. Download the current QA build from the dev Discord.' });
+      sendToRenderer('proxy:ws:close', { id, code, reason: reason && reason.toString() });
+      return;
+    }
     sendToRenderer('proxy:ws:close', { id, code, reason: reason && reason.toString() });
   });
   sock.on('error', (err) => sendToRenderer('proxy:ws:error', { id, message: err.message }));
@@ -1460,6 +1480,9 @@ ipcMain.handle('overlay:get-info', () => ({
   clickThrough, toggleShortcut: currentKeybinds.toggle || TOGGLE_SHORTCUT, platform: process.platform, relayHost: RELAY_HOST,
   appVersion: APP_VERSION, keybinds: currentKeybinds, isDev: !app.isPackaged,
 }));
+// Let the renderer query the pending update version on init, catching any
+// update signal that fired before the onUpdateAvailable listener was registered.
+ipcMain.handle('overlay:get-pending-update', () => pendingRendererUpdateVersion);
 // Synchronous version — used by bridge.ts to set relayBase before first render.
 ipcMain.on('overlay:get-relay-host-sync', (evt) => { evt.returnValue = RELAY_HOST; });
 
@@ -1892,6 +1915,85 @@ ipcMain.on('discord:link', () => {
 
   oauthWin.loadURL(linkUrl).catch((e) => oauthFallback(String(e && e.message || e)));
 });
+
+// ─── QA login (golden dev build) ──────────────────────────────────────────────
+// Opens the QA Discord OAuth in a window, then polls /api/auth/qa-status until the
+// backend hands back a role-gated session token (or 426 OUTDATED_BUILD).
+function startQaLogin() {
+  const st = loadState();
+  if (!st || !st.installToken) return;
+  const startUrl = `${RELAY_HTTP}/auth/discord/qa/start?installToken=${encodeURIComponent(st.installToken)}`;
+  const callbackPath = '/auth/discord/qa/callback';
+  sendToRenderer('relay:status', { state: 'qa_required' });
+
+  let win = null;
+  try {
+    win = new BrowserWindow({
+      width: 520, height: 720, parent: mainWindow || undefined, modal: false,
+      title: 'QA Login — Fallout Chat Mod', icon: appIcon() || undefined, center: true,
+      webPreferences: { contextIsolation: true, nodeIntegration: false },
+    });
+  } catch {
+    try { shell.openExternal(startUrl); } catch { /* ignore */ }
+    pollQaStatus(0);
+    return;
+  }
+  const wc = win.webContents;
+  const checkNav = (url) => {
+    try {
+      if (new URL(url).pathname === callbackPath) {
+        setTimeout(() => { if (win && !win.isDestroyed()) win.close(); }, 1200);
+      }
+    } catch { /* ignore */ }
+  };
+  wc.on('did-navigate', (_e, url) => checkNav(url));
+  wc.on('will-redirect', (_e, url) => checkNav(url));
+  wc.on('did-redirect-navigation', (_e, url) => checkNav(url));
+  win.on('closed', () => { win = null; pollQaStatus(0); });
+  win.loadURL(startUrl).catch(() => { try { shell.openExternal(startUrl); } catch { /* ignore */ } pollQaStatus(0); });
+}
+
+function pollQaStatus(attempt = 0) {
+  const st = loadState();
+  if (!st || !st.installToken) return;
+  const MAX = 20;
+  const url = new URL(`${RELAY_HTTP}/api/auth/qa-status/${encodeURIComponent(st.installToken)}`);
+  const req = httpModule(url).request(
+    { hostname: url.hostname, port: url.port || undefined, path: url.pathname, method: 'GET',
+      headers: { 'Content-Type': 'application/json', 'X-Client-Version': APP_VERSION } },
+    (res) => {
+      if (res.statusCode === 426) {
+        res.resume();
+        diag('[qa-status] 426 OUTDATED_BUILD');
+        try { showUpdateNotification(''); } catch { /* ignore */ }
+        sendToRenderer('relay:status', { state: 'error', message: 'This QA build is no longer active. Download the current QA build from the dev Discord.' });
+        return;
+      }
+      let data = '';
+      res.on('data', (c) => (data += c));
+      res.on('end', () => {
+        let d = {};
+        try { d = (JSON.parse(data).data) || {}; } catch { /* ignore */ }
+        if (d.authorized && d.token) {
+          sessionToken = d.token;
+          flushPendingWsOpens();
+          saveState({ discordLinked: true, displayName: d.displayName || '', userRole: d.role || null });
+          userRole = d.role || null;
+          rebuildTray();
+          sendToRenderer('relay:status', { state: 'authenticated', displayName: d.displayName || '', discordLinked: true, role: d.role || null });
+          return;
+        }
+        if (attempt + 1 < MAX) setTimeout(() => pollQaStatus(attempt + 1), 1500);
+        else sendToRenderer('relay:status', { state: 'error', message: 'QA login timed out. Click to retry.' });
+      });
+    },
+  );
+  req.on('error', () => { if (attempt + 1 < MAX) setTimeout(() => pollQaStatus(attempt + 1), 1500); });
+  req.setTimeout(12000, () => req.destroy(new Error('qa-status timeout')));
+  req.end();
+}
+
+ipcMain.handle('overlay:qa-login', async () => { startQaLogin(); return { ok: true }; });
 
 // Discord link status refresh: poll /api/auth/discord-status/:installToken and
 // broadcast the real linked state to the renderer as 'relay:discord-status'. The
@@ -2394,6 +2496,11 @@ function _stealForegroundWin32() {
   try { app.focus({ steal: true }); } catch { /* ignore — older Electron */ }
 }
 
+function dispatchFocusInput(reason) {
+  diag('[focusToChat] dispatch overlay:focus-input reason=' + reason);
+  sendToRenderer('overlay:focus-input', true);
+}
+
 function focusToChat() {
   if (!mainWindow) return;
   // Treat the window as hidden if it is not visible OR if it is hidden-to-tray
@@ -2425,7 +2532,7 @@ function focusToChat() {
     // Without this the renderer's overlayVisible stays false after the 20s grace
     // fires (hide→show via Insert) and the WS stays disconnected with no live chat.
     emitVisibility(true);
-    sendToRenderer('overlay:focus-input', true);
+    dispatchFocusInput('focusToChat:hidden-immediate');
     if (collapsed) {
       sendToRenderer('overlay:force-expand', true);
       expandFromHeader(true);
@@ -2447,7 +2554,7 @@ function focusToChat() {
   // When the game is foreground, mainWindow.focus() alone does not pull focus
   // to the overlay — the OS denies it. app.focus({steal:true}) overrides this.
   _stealForegroundWin32();
-  sendToRenderer('overlay:focus-input', true);
+  dispatchFocusInput('focusToChat:visible-immediate');
   if (collapsed) {
     sendToRenderer('overlay:force-expand', true);
     expandFromHeader(true);
@@ -3271,7 +3378,7 @@ function expandFromHeader(focusInput) {
     : (expandedBounds && expandedBounds.height >= MIN_HEIGHT ? expandedBounds.height : DEFAULT_HEIGHT);
   expandedBounds = null; // clear so a manual resize while expanded isn't accidentally restored
   animateHeightTo(targetH, () => {
-    if (focusInput) { mainWindow.focus(); sendToRenderer('overlay:focus-input', true); }
+    if (focusInput) { mainWindow.focus(); dispatchFocusInput('expandFromHeader:post-animation'); }
   });
 }
 
@@ -3559,7 +3666,11 @@ function createWindow() {
         ).catch(() => { /* ignore */ });
       }
     } catch { /* ignore */ }
-    startRelay();
+    if (BUILD_CHANNEL === 'qa') {
+      startQaLogin();
+    } else {
+      startRelay();
+    }
     // Re-focus the chat input after a reload if it was focused before.
     // We fire this after startRelay so the component has received relay:status
     // and re-mounted before we ask it to focus. A short delay lets the React
@@ -3567,7 +3678,7 @@ function createWindow() {
     if (inputWasFocused) {
       setTimeout(() => {
         if (mainWindow && !mainWindow.isDestroyed()) {
-          sendToRenderer('overlay:focus-input', true);
+          dispatchFocusInput('post-reload-refocus');
         }
       }, 800);
     }

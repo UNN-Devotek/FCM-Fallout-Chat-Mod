@@ -119,6 +119,11 @@ export interface IngestResult {
  * @param rawContent  - Raw text from the client (before emoji expansion).
  * @param source      - 'hud' or 'ws' (telemetry tag only).
  * @param identityHash - (HUD only) identityHash for block lookup; undefined for WS path.
+ * @param relaySeq    - (relay ONLY) pre-computed monotonic cursor from nextRelaySeq().
+ *                      Threaded through to finalizeMessage so the persisted row carries
+ *                      relay_seq and the single broadcast carries relaySeq. Omitted (and
+ *                      therefore NULL) for all non-relay sources — their behavior is
+ *                      unchanged.
  */
 export async function ingestMessage(opts: {
   userId: string;
@@ -126,8 +131,9 @@ export async function ingestMessage(opts: {
   rawContent: string;
   source: IngestSource;
   identityHash?: string;
+  relaySeq?: number;
 }): Promise<IngestResult> {
-  const { userId, channelId, source, identityHash } = opts;
+  const { userId, channelId, source, identityHash, relaySeq } = opts;
   let rawContent = opts.rawContent;
 
   // Drop slash commands from HUD — not supported on the HUD transport.
@@ -231,6 +237,9 @@ export async function ingestMessage(opts: {
     content: content.trim(),
     displayName,
     source,
+    // relaySeq is relay-only — undefined for hud/ws/mcp so finalizeMessage leaves
+    // relay_seq NULL and the broadcast payload omits it (unchanged behavior).
+    relaySeq,
   });
 
   return { ok: true, messageId };
