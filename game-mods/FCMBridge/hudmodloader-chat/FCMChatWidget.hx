@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.6.0";  // customization + feed polish: FcmConfig-driven colors/geometry/limits/keybinds, createdAt timestamps, proper-cased channel tags, blank idle prompt, outlined single "FALLOUT 76" main tab (#344), default open key INSERT (PAGE_DOWN fallback, VER-1)
+    static inline var VERSION:String  = "2.6.2";  // channel switching: OpenChatKey cycles channels while chat open (only readable key; unbound keys are all "Unmapped"), slash /g/t/e/i/r direct jumps shown as [X] in sub-tabs; removed dead Page Up/Down keybinds + diag
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -300,32 +300,37 @@ class FCMChatWidget extends MovieClip {
         g.beginFill(_cfg.tabRowColor, 0.85);
         g.drawRect(1, TAB_H, w - 2, SUB_H);
         g.endFill();
-        // Separator lines
-        g.lineStyle(1, _cfg.borderColor, 0.3);
-        g.moveTo(0, TAB_H); g.lineTo(w, TAB_H);
-        g.lineStyle(1, _cfg.borderColor, 0.2);
+        // Sub-tab row bottom divider + log/input separator (full width, overlay parity @0.45).
+        g.lineStyle(1, _cfg.borderColor, 0.45);
         g.moveTo(0, TAB_H + SUB_H); g.lineTo(w, TAB_H + SUB_H);
-        // Log/input separator
         g.lineStyle(1, _cfg.borderColor, 0.4);
         g.moveTo(0, h - INPUT_H); g.lineTo(w, h - INPUT_H);
-        // Active main-tab outline box (#344 / CAP-015 / A.7) — frames the "FALLOUT 76"
-        // label like the overlay's active tab. Thin solid outline, no fill, NO filters.
-        g.lineStyle(1, _cfg.tabActiveColor, 0.9);
-        g.drawRect(4, 3, 118, TAB_H - 6);
         addChild(_bg);
 
+        // Main tab label first so we can measure it to size the outline box.
         _tabTf = makeChromeTf(8, 2, w - 16, TAB_H - 2);
         renderMainTabs();
         addChild(_tabTf);
 
-        // Channel-tab row: interactive HUDButtons when available, else the text strip.
-        if (_btnCls != null) {
-            buildChannelTabs();
-        } else {
-            _subTf = makeChromeTf(8, TAB_H + 2, w - 16, SUB_H - 2);
-            renderSubTabs();
-            addChild(_subTf);
-        }
+        // Active main-tab outline (overlay parity, CAP-015/A.7): border TOP+LEFT+RIGHT only
+        // (open bottom), sized to the label, and the main-tab-row divider is CUT OUT under
+        // the tab so NO line runs beneath the active tab. Solid lines, no fill, no filters.
+        var tw:Float = 0.0;
+        try { tw = _tabTf.textWidth; } catch (e:Dynamic) {}
+        var boxL:Int = 4;
+        var boxR:Int = (tw > 20) ? Std.int(8 + tw + 6) : 104;   // fit the text (tight right pad)
+        g.lineStyle(1, _cfg.tabActiveColor, 0.5);
+        g.moveTo(boxL, 2);     g.lineTo(boxR, 2);       // top
+        g.moveTo(boxL, 2);     g.lineTo(boxL, TAB_H);   // left
+        g.moveTo(boxR, 2);     g.lineTo(boxR, TAB_H);   // right
+        g.lineStyle(1, _cfg.borderColor, 0.45);          // row divider, cut out under the tab
+        g.moveTo(0, TAB_H);    g.lineTo(boxL, TAB_H);
+        g.moveTo(boxR, TAB_H); g.lineTo(w, TAB_H);
+
+        // Channel sub-tabs: plain text strip (NO boxes/borders) — active bright, inactive dim.
+        _subTf = makeChromeTf(8, TAB_H + 2, w - 16, SUB_H - 2);
+        renderSubTabs();
+        addChild(_subTf);
 
         var logY:Int = TAB_H + SUB_H + 4;
         _logTf = new TextField();
@@ -388,9 +393,9 @@ class FCMChatWidget extends MovieClip {
 
     function renderSubTabs():Void {
         if (_subTf == null) return;
-        // Fallback text strip (used only when HUDButton is unavailable).
-        // Show only the first 5 (non-server) channels in the tab strip.
-        var displayNames:Array<String> = ["GENERAL", "TRADING", "EVENTS", "INFESTS", "RAIDS"];
+        // Borderless text strip (no boxes). Active channel bright, inactive dim. The bracketed
+        // first letter is the slash shortcut ([G] -> /g) — discoverable without a help row.
+        var displayNames:Array<String> = ["[G]ENERAL", "[T]RADING", "[E]VENTS", "[I]NFESTS", "[R]AIDS"];
         var html:Array<String> = [];
         for (i in 0...displayNames.length) {
             var color:String = (i == _chanIdx) ? hx(_cfg.tabActiveColor) : hx(_cfg.tabInactiveColor);
@@ -407,8 +412,9 @@ class FCMChatWidget extends MovieClip {
     }
 
     function typingPrompt():String {
-        return '<font face="' + FONT_BODY + '" size="13" color="' + hx(_cfg.tabActiveColor)
-            + '">&#x203A; [Enter] send  |  [Esc] cancel</font>';
+        // No help text while typing (user request) — the prompt row shows only the
+        // in-progress typed text (pollNativeInput appends it). Blank when nothing typed.
+        return "";
     }
 
     function setLogText(s:String):Void {
@@ -523,39 +529,26 @@ class FCMChatWidget extends MovieClip {
     }
 
     /**
-     * HUDMod::UserEvent handler.
-     * event.EventName (String), event.IsKeyDown (Boolean) per HUDModUserEvent.as.
+     * HUDMod::UserEvent handler — control-map ACTIONS only. FO76 collapses every unbound key
+     * (INSERT, Page Up/Down, Delete, …) to "Unmapped" with no key info, so this path is reliable
+     * ONLY for real named actions. It is just a secondary open-chat trigger for when OpenChatKey
+     * is a real action (Console / TeamChat). The primary open AND the channel cycle run off the
+     * native isChatKeyPressed poll (pollOpenKey); channel jumps are slash commands (/g /t /e /i /r);
+     * hide is /hide. event.EventName (String), event.IsKeyDown (Boolean) per HUDModUserEvent.as.
      */
     function onUserEvent(e:Dynamic):Void {
         var action:String = "";
         var isDown:Bool   = false;
         try { action = Std.string(e.EventName); }  catch (_:Dynamic) {}
         try { isDown = (e.IsKeyDown == true); }    catch (_:Dynamic) {}
+        if (isDown) return;
 
-        if (!isDown) {
-            if (action == _cfg.openKey || action == "Console"
-                    || action == "ConsoleToggles" || action == "TeamChat") {
-                // While a native session owns input, ignore the open key — the native
-                // session is driving the keystrokes (re-issuing would double-open).
-                if (_inputOpen && _nativeInput) return;
-                if (!_inputOpen) openInput();   // openInput() restores from hidden first (CAP-011)
-                return;
-            }
-            // Optional hideKey (config-driven, unset by default) → toggle hide/restore.
-            if (_cfg.hideKey != "" && action == _cfg.hideKey && !_inputOpen) {
-                if (_hidden) show(); else hide();
-                return;
-            }
-            // channelNextKey (default NextPage / Page Down) → next channel (when input closed).
-            if (action == _cfg.channelNextKey && !_inputOpen) {
-                cycleChannel();
-                return;
-            }
-            // channelPrevKey (default PrevPage / Page Up) → previous channel (when input closed).
-            if (action == _cfg.channelPrevKey && !_inputOpen) {
-                cyclePrev();
-                return;
-            }
+        // Open only on a real action used as the open key (never on "Unmapped", which would
+        // open on ANY unbound key). INSERT etc. open via the native poll, not here.
+        if (action == "Console" || action == "ConsoleToggles" || action == "TeamChat"
+                || (action == _cfg.openKey && action != "Unmapped")) {
+            if (_inputOpen && _nativeInput) return;
+            if (!_inputOpen) openInput();   // openInput() restores from hidden first (CAP-011)
         }
     }
 
@@ -860,7 +853,7 @@ class FCMChatWidget extends MovieClip {
             _inProgress = text;
             if (text.length > 0) {
                 setPrompt(typingPrompt() + ' <font face="' + FONT_BODY + '" size="13" color="'
-                    + hx(_cfg.textColor) + '"> &#x203A; ' + text + '</font>');
+                    + hx(_cfg.textColor) + '"> &#x203A; ' + FcmConfig.htmlEscape(text) + '</font>');
             } else {
                 setPrompt(typingPrompt());
             }
@@ -1142,7 +1135,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.6.0");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.6.2");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
@@ -1315,12 +1308,21 @@ class FCMChatWidget extends MovieClip {
     /** Open chat on a false->true edge of isChatKeyPressed (ZFE OpenChatKey = PAGE_DOWN). */
     function pollOpenKey():Void {
         if (_api == null || !_connected) return;
-        if (_inputOpen) { _lastChatKey = false; return; }   // not while typing
         try {
+            // The OpenChatKey is the ONE key a HUD widget can read (isChatKeyPressed). FO76
+            // collapses every other unbound key to "Unmapped" (indistinguishable), so this is
+            // the only key-driven control we get. On its rising edge: open chat when closed;
+            // cycle to the next channel when already open. Slash (/g /t /e /i /r) covers direct
+            // jumps + reverse. (Hidden: openInput() un-hides first.)
             var kp:Bool = nativeTruthy(callTop("isChatKeyPressed", "{}"));
             if (kp && !_lastChatKey) {
-                zfeLog("info", "nativein", "isChatKeyPressed edge; opening input");
-                openInput();
+                if (!_inputOpen) {
+                    zfeLog("info", "nativein", "OpenChatKey edge; opening input");
+                    openInput();
+                } else {
+                    zfeLog("info", "nativein", "OpenChatKey edge while open; cycling channel");
+                    cycleChannel();
+                }
             }
             _lastChatKey = kp;
         } catch (e:Dynamic) {
@@ -1556,13 +1558,14 @@ class FCMChatWidget extends MovieClip {
         // Pinned system notice — shown above feed when auth is limited.
         if (_authState != "authenticated" && _pinnedSystemBody.length > 0) {
             html.push('<font face="' + FONT_BODY + '" size="' + fs + '" color="#FF8C00">** '
-                + _pinnedSystemBody + ' **</font>');
+                + FcmConfig.htmlEscape(_pinnedSystemBody) + ' **</font>');
         }
 
         for (rec in _records) {
             var col:String  = ~/^#[0-9a-fA-F]{6}$/.match(rec.color) ? rec.color : hx(_cfg.senderColor);
-            var user:String = rec.user;
-            var msg:String  = rec.body;
+            // Escape sender name + body — both are unsanitized relay/Discord input (SR-001).
+            var user:String = FcmConfig.htmlEscape(rec.user);
+            var msg:String  = FcmConfig.htmlEscape(rec.body);
             // Optional "HH:MM " timestamp prefix (CAP-013, D-08 — only when the event carries a time).
             var tsHtml:String = "";
             if (_cfg.showTimestamps && rec.ts != null && rec.ts != "") {

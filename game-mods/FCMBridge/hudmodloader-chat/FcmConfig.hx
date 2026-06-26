@@ -114,6 +114,24 @@ class FcmConfig {
         return (~/^[0-9][0-9]:[0-9][0-9]$/.match(r)) ? r : "";
     }
 
+    /**
+     * Escape user-controlled text (chat body, sender name, in-progress input) before it
+     * is interpolated into a Scaleform GFx `htmlText` string. The relay does NOT sanitize
+     * message content or display names (SR-001), so a message containing &, < or > would
+     * otherwise crash the GFx htmlText parser (crash rule #2 — HUD-wide render break) or
+     * inject markup that spoofs another sender's name/color. Uses NUMERIC character refs
+     * only (named entities like &amp; can trip the GFx parser; numeric refs such as
+     * &#x203A; are proven safe). `&` is escaped first so the refs we emit aren't re-encoded.
+     */
+    public static function htmlEscape(s:String):String {
+        if (s == null) return "";
+        s = StringTools.replace(s, "&", "&#38;");
+        s = StringTools.replace(s, "<", "&#60;");
+        s = StringTools.replace(s, ">", "&#62;");
+        s = StringTools.replace(s, "\"", "&#34;");
+        return s;
+    }
+
     public static function clampInt(v:Int, lo:Int, hi:Int):Int {
         return v < lo ? lo : (v > hi ? hi : v);
     }

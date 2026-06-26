@@ -140,6 +140,22 @@ class TestFcmConfig {
         eqs("hhmm non-numeric", FcmConfig.hhmm("2026-06-26Tab:cdZ"),    "");
         eqs("hhmm no colon",    FcmConfig.hhmm("2026-06-26T1234:56Z"),  "");
 
+        // ── htmlEscape: numeric refs for unsanitized relay input (SR-001, crash rule #2) ──
+        eqs("htmlEscape plain",  FcmConfig.htmlEscape("hello world"), "hello world");
+        eqs("htmlEscape lt",     FcmConfig.htmlEscape("a<b"),   "a&#60;b");
+        eqs("htmlEscape gt",     FcmConfig.htmlEscape("a>b"),   "a&#62;b");
+        eqs("htmlEscape amp",    FcmConfig.htmlEscape("a&b"),   "a&#38;b");
+        eqs("htmlEscape quote",  FcmConfig.htmlEscape("a\"b"),  "a&#34;b");
+        // amp escaped first so the refs we emit are not double-encoded
+        eqs("htmlEscape no double-encode", FcmConfig.htmlEscape("a&b<c"), "a&#38;b&#60;c");
+        // markup-injection / GFx-crash payloads are neutralized
+        eqs("htmlEscape font tag", FcmConfig.htmlEscape("</font><font color=\"#FF0000\">x"),
+            "&#60;/font&#62;&#60;font color=&#34;#FF0000&#34;&#62;x");
+        eqs("htmlEscape img tag",  FcmConfig.htmlEscape("<img src='evil.swf'>"),
+            "&#60;img src='evil.swf'&#62;");
+        eqs("htmlEscape null",   FcmConfig.htmlEscape(null), "");
+        eqs("htmlEscape empty",  FcmConfig.htmlEscape(""),   "");
+
         if (failures > 0) { Sys.println(failures + " FAILURE(S)"); Sys.exit(1); }
         Sys.println("ALL PASS");
     }
