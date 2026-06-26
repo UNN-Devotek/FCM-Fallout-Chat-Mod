@@ -121,6 +121,13 @@ class FCMBridge extends MovieClip {
     static inline var BOOT_MS:Int  = 1500;
     static inline var BOOT_MAX:Int = 40;
 
+    // ── Host-injected ZFE reference ───────────────────────────────────────────
+    // The patched HUDMenu holds __ZFE at the top (parent) level even when
+    // ZFE's child_bridge_access=disabled prevents ZFE from auto-injecting into
+    // child SWFs. fcmSetZfe() lets the parent share its reference directly,
+    // bypassing the need for self-discovery in the child SWF.
+    var _zfeInjectedByHost:Bool = false;
+
     // ── Auto-hide ─────────────────────────────────────────────────────────────
     static inline var AUTOHIDE_MS:Int  = 25000;
     static inline var FADE_TICK_MS:Int = 50;
@@ -305,8 +312,40 @@ class FCMBridge extends MovieClip {
         _api = findZfeApi(this);
         if (_api == null) {
             setText("ZFE not found\nInstall dxgi.dll + zfe.ini");
+            // Leave _api null; fcmSetZfe() will drive the post-discovery boot
+            // if the host (patched HUDMenu) finds __ZFE and calls us.
             return;
         }
+        postDiscoveryInit();
+    }
+
+    /**
+     * Called by the patched HUDMenu (fcm-inject.as) to inject the __ZFE
+     * reference that ZFE attached at the top-level (parent) SWF.
+     *
+     * ZFE 0.9.8 sets child_bridge_access=disabled — it does NOT auto-inject
+     * __ZFE into child SWFs. The parent HUDMenu holds __ZFE normally; sharing
+     * it here lets FCMBridge function fully without HUDModLoader.
+     *
+     * Safe to call even if self-discovery already succeeded (no-op in that case).
+     * Safe to call before self-discovery finishes (drives boot if api is null).
+     */
+    public function fcmSetZfe(api:Dynamic):Void {
+        if (_zfeInjectedByHost) return;       // already injected
+        if (api == null) return;
+        if (_api != null) return;             // self-discovery already succeeded
+        _zfeInjectedByHost = true;
+        _api = api;
+        zfeLog("info", "zfe", "api injected by host");
+        postDiscoveryInit();
+    }
+
+    /**
+     * Post-discovery boot: capability check + displayName read + connect.
+     * Called both from init() (self-discovery path) and fcmSetZfe() (host-inject
+     * path) so the two paths converge on exactly the same startup sequence.
+     */
+    function postDiscoveryInit():Void {
         zfeLog("info", "startup", "FCMBridge loaded");
         zfeLog("info", "startup", "BUILD=chatv1");
 

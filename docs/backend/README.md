@@ -101,6 +101,24 @@ Helmet is applied globally with a Content Security Policy:
 
 CORS allows `env.CLIENT_ORIGINS` with credentials. The `trust proxy` setting is gated on `TRUST_PROXY` to prevent header spoofing on direct deployments.
 
+## Dev-only endpoints (`NODE_ENV=development`)
+
+The following endpoints are mounted **only** when `NODE_ENV=development`. They are absent
+in production regardless of any other env var. They serve the QA tester workflow and the
+golden-build version lock; see [hosted-dev-environment.md](../deployment/hosted-dev-environment.md#qa-tester-access).
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/auth/discord/qa/start` | none | Initiates Discord OAuth for QA testers; redirects to Discord |
+| `GET` | `/auth/discord/qa/callback` | none (state CSRF) | OAuth callback; verifies `DEV_QA_ROLE_ID`, stores a one-time session grant in Redis |
+| `GET` | `/api/auth/qa-status/:installToken` | none | Polled by the QA overlay; enforces the golden-build lock (checks `x-client-version` header; returns 426 on mismatch); returns the session grant once and deletes it |
+| `POST` | `/api/admin/qa/active-version` | `x-admin-api-key` | Sets the active QA build version (`QA_ACTIVE_VERSION` in Redis) |
+| `GET` | `/api/admin/qa/active-version` | `x-admin-api-key` | Returns the currently-active QA build version |
+
+All five routes are also subject to `apiLimiter` or `authLimiter` (same caps as their
+equivalent non-QA paths). The routes are independent of `ENABLE_DEV_LOGIN` — the hosted
+dev environment runs with `ENABLE_DEV_LOGIN=false` while still enabling these endpoints.
+
 ## Related Documentation
 
 - [Auth model](./auth.md)

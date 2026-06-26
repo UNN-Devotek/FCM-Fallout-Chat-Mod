@@ -89,6 +89,15 @@ if inject_src:
     check("FCMBridge.swf" in inject_src,
           "fcm-inject.as loads FCMBridge.swf via Loader (standalone path)")
 
+    # ZFE host-pass: HUDMenu shares __ZFE with the child bridge (ZFE 0.9.8
+    # child_bridge_access=disabled fix).
+    check("fcmPassZfeToBridge" in inject_src,
+          "fcm-inject.as defines fcmPassZfeToBridge (host ZFE pass-down for child_bridge_access=disabled)")
+    check("hostZfe" in inject_src,
+          "fcm-inject.as discovers hostZfe at HUDMenu level before passing")
+    check("fcmSetZfe" in inject_src,
+          "fcm-inject.as calls fcmSetZfe on the bridge (injects __ZFE reference)")
+
     # Channel table uses slugs, not UUIDs.
     check('"global"' in inject_src or "'global'" in inject_src,
           "fcm-inject.as channel table contains 'global' slug")
@@ -256,6 +265,15 @@ if bridge_src:
     # The sendWorldIdControl call goes directly to _api.call, bypassing the _authState check.
     check("sendWorldIdControl" in bridge_src,
           "FCMBridge.hx sendWorldIdControl is separate from gated fcmSendMessage")
+
+    # ZFE host-inject: fcmSetZfe lets the parent SWF share __ZFE with the child
+    # (child_bridge_access=disabled fix for ZFE 0.9.8).
+    check("fcmSetZfe" in bridge_src,
+          "FCMBridge.hx exposes public fcmSetZfe() for host-injected ZFE reference")
+    check("postDiscoveryInit" in bridge_src,
+          "FCMBridge.hx has postDiscoveryInit() helper (shared by self-discovery and host-inject paths)")
+    check("_zfeInjectedByHost" in bridge_src,
+          "FCMBridge.hx tracks _zfeInjectedByHost to guard against double-init")
 
 # ---------------------------------------------------------------------------
 # 4b. Verify fcm-inject.as auth gate additions
