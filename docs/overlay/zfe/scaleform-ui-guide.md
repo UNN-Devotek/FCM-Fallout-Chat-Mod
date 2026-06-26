@@ -47,10 +47,22 @@ before any `scaleform.gfx.*` call.
 
 - **`embedFonts` is mandatory** on dynamic/input TextFields or text renders **blank** (GFx has no OS
   font fallback). Static text is fine (vector-baked).
-- **Reuse the game's font library** rather than embedding our own where possible — reference Bethesda's
-  embedded font binding (we use `"$$MAIN_Font"`). If you embed your own: `embedAsCFF="false"` (classic
-  TextField, NOT TLF), `advancedAntiAliasing="true"`, and a **narrow unicode range** (Latin ≈ 69KB;
-  don't over-embed). Bold/italic are **separate faces** — embed them too if used.
+- **Reuse the game's font library** rather than embedding our own where possible — reference an
+  engine-registered font binding. **Which binding depends on the movie scope** (verified in-game,
+  FCMChatWidget v2.3.0 → v2.5.3):
+  - In **HUDMenu.swf itself** (a HUDMenu surgery patch), Bethesda's per-movie symbol `"$$MAIN_Font"`
+    resolves.
+  - In a **child widget SWF** loaded into `ApplicationDomain.currentDomain` (any HUDModLoader widget),
+    `$$MAIN_Font` does **NOT** resolve and a Flash `@:font`-embedded TTF is **ignored by GFx** — both
+    render every glyph as a **tofu square**. Use HUDModLoader's **engine-registered GFx aliases**
+    instead: **`$MAIN_Font_Light`** (body text) / **`$MAIN_Font_Bold`** (headers/labels). These DO
+    resolve in a child SWF (proven by HUDButton / HUDTools / HUDKeyboard), with no TTF embed —
+    keep `embedFonts=true`. See `game-mods/FCMBridge/hudmodloader-chat/BUILD.md` → "Fonts".
+  - If you must embed your own: `embedAsCFF="false"` (classic TextField, NOT TLF),
+    `advancedAntiAliasing="true"`, a **narrow unicode range** (Latin ≈ 69KB; don't over-embed), and set
+    `TextFormat.font` to the **DefineFont family name** (e.g. `"DejaVu Sans"` with the space), NOT the
+    postscript name (`"DejaVuSans"`) — GFx matches the family name. Bold/italic are **separate faces** —
+    embed them too if used.
 - **`htmlText` is XML-strict.** Raw `&`, `<`, `>` in *content* break parsing → the whole field can
   render blank. Use numeric refs (`&#39;`) over named entities. Server-side `zfeSafe()` already strips
   `< > & " ~ |` — keep that contract on both ends.
@@ -94,7 +106,7 @@ This is the subtlety that cost us the most, now fully explained:
 - **The native bridge / code-object pattern:** AS↔C++ goes through a code object (vanilla `BGSCodeObj`;
   ours is ZFE's `__SFCodeObj`/`BRG_OBJ`). It exposes named functions callable from AS
   (`call("writeUTFBytes", …)`). Only Null/Bool/Int/Number/String cross — strings for everything.
-- **ZFE native chat-input session (ZFE 0.9.8+) — the sanctioned way to capture text.** ZFE's
+- **ZFE native chat-input session (ZFE 0.9.9+) — the sanctioned way to capture text.** ZFE's
   `dxgi.dll` exposes a native chat-input API as **TOP-LEVEL** ZFE commands (called bare, like
   `getRuntimeInfo` / `readStorage` — **NOT** `chat.v1.` commands): **`setChatInputActive`**,
   **`isChatInputActive`**, **`readChatInput`**, **`clearChatInput`**, **`consumeChatInputSubmitted`**,
@@ -114,6 +126,15 @@ This is the subtlety that cost us the most, now fully explained:
   `chat.v1.sendMessage` the `readChatInput` text → `clearChatInput` + `setChatInputActive("false")`. A
   low-rate `isChatKeyPressed` edge poll opens chat on the OpenChatKey (PAGE_DOWN); SharedHUDTools
   remains the fallback. See `game-mods/FCMBridge/hudmodloader-chat/BUILD.md` → "Native chat input (v2.5.3)".
+- **Native Windows only — Proton/Wine is BLOCKED (2026-06-26, tracked in #326).** chat.v1 works
+  end-to-end on native Windows but **crashes the game under Proton/Wine** at `chat.v1.connect` (a Zig
+  `__fastfail` panic). Root cause is an upstream Zig TLS bug — `std.crypto.tls.Client.readvAdvanced`
+  panics on PARTIAL socket reads (Wine read fragmentation + Cloudflare TLS 1.3 padding make it
+  deterministic), fixed by Zig PR #20587 in **Zig 0.14.0**; the fix is the ZFE author rebuilding on
+  Zig >= 0.14.0. chat.v1 uses its OWN Zig TLS client + a PEM CA bundle (the host CA bundle loads fine,
+  `certs=149`) — **not** Schannel; the old `Schannel/Winsock` ZFE log line was the LEGACY Text Chat
+  transport (relabeled `Legacy Text Chat transport backend` in ZFE 0.9.11). There is no client-side
+  workaround. Linux/Steam-Deck users run the desktop overlay (native, no ZFE) instead.
 
 ## 6. Z-order & layering (a cleaner fix than our hack)
 

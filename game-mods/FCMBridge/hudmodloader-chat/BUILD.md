@@ -1,15 +1,22 @@
 # FCMChatWidget — Build & Install Guide (chat.v1)
 
+> **Status (2026-06-26):** v2.5.3 — WORKS end-to-end on **native Windows** with **ZFE 0.9.9+**;
+> merged to `dev` (PR #330). **BLOCKED under Proton/Wine** (Linux / Steam Deck) by an upstream
+> Zig TLS bug — see "Proton / Wine status" below. Linux/Steam-Deck users run the desktop overlay
+> (native Linux chat, no ZFE) until ZFE ships a Zig-0.14.0 build.
+
 ## What this builds
 
 `FCMChatWidget.swf` inside `FCMChatWidget.ba2` — a HUDModLoader widget that renders
-FCM community chat inside Fallout 76's HUD, using the ZFE chat.v1 native API (ZFE 0.9.8+).
+FCM community chat inside Fallout 76's HUD, using the ZFE chat.v1 native API. ZFE **0.9.9+**
+is required (0.9.8's `chat.v1.sendMessage` returned `dispatch_failed` — the send never reached
+the relay; 0.9.9 fixed dispatch).
 
 The widget:
 - Discovers `__ZFE` on the parent HUDMenu frame via `findZfeApi()` — no env-var or
   `child_bridge_access` workaround needed. HUDModLoader's `ApplicationDomain.currentDomain`
   puts the widget in the same domain as HUDMenu, where ZFE installs `__ZFE`.
-- Calls `chat.v1.getRuntimeInfo` first to gate on `zfe-chat-online-v1` (requires ZFE 0.9.8+).
+- Calls `chat.v1.getRuntimeInfo` first to gate on `zfe-chat-online-v1` (requires ZFE 0.9.9+).
 - Connects via `chat.v1.connect`, polls via `chat.v1.pollEvents` (2 s cursor poll),
   sends via `chat.v1.sendMessage` with slug-based channels.
 - (v2.5.3) The native chat-input verbs are **top-level / bare** ZFE commands taking
@@ -33,7 +40,7 @@ The widget:
 | Haxe | build | 4.3+ |
 | Python 3 | build | stdlib only |
 | HUDModLoader | runtime | Nexus; provides HUDMenu shell + SharedHUDTools + HUDButton + GFx font aliases |
-| ZFE (dxgi.dll + zfe.ini) | runtime | 0.9.8+ required |
+| ZFE (dxgi.dll + zfe.ini) | runtime | **0.9.9+ required**; native Windows only (Proton/Wine is blocked — see below) |
 
 No font/TTF dependency — v2.5.3 uses HUDModLoader's engine-registered GFx font aliases
 (see "Fonts" below), so there is nothing to embed at build time. HUDModLoader is still
@@ -62,6 +69,20 @@ A loose file at `Data/interface/FCMChatWidget.swf` is invisible unless
 and matches the distribution deliverable.
 
 ---
+
+## Full per-install layout (native Windows)
+
+The verified working install places these files (relative to the FO76 root):
+
+| Path | Contents |
+|------|----------|
+| `dxgi.dll` (FO76 root) | ZFE 0.9.9+ proxy DLL |
+| `Data/HUDModLoader.ba2`, `Data/FCMChatWidget.ba2` | HUDModLoader + this widget |
+| `Data/FCMChat.ini` | widget config (position, open key, channel) |
+| `Data/hudmodloader.ini` | bare line `FCMChatWidget` |
+| `Data/ZFE/TextChat/fragments/FCMChatWidget.ini` | ZFE fragment (endpoint default, `OpenChatKey`) |
+| `Data/configuration/zfe.ini` | `[TextChat] Endpoint=wss://<host>/relay` (per-key override) |
+| `Documents/My Games/Fallout 76/Fallout76Custom.ini` | `[Archive] sResourceArchive2List=HUDModLoader.ba2, FCMChatWidget.ba2` |
 
 ## Build steps
 
@@ -168,6 +189,11 @@ The fragment supplies the dev default; `zfe.ini` overrides per-key.
 ### Step 8 -- Launch the game
 
 Boot Fallout 76 with HUDModLoader and ZFE active. The widget loads automatically.
+
+> **Linux/Proton note:** NO Steam launch option is required — ZFE's `dxgi.dll` proxy loads
+> without `WINEDLLOVERRIDES` (the usual `WINEDLLOVERRIDES="dxgi=n,b" %command%` is harmless but
+> unnecessary on CachyOS). However, chat.v1 **crashes under Proton/Wine** at `chat.v1.connect` —
+> see "Proton / Wine status" below. The native Linux chat path is the desktop overlay, not this widget.
 
 ---
 
@@ -338,6 +364,27 @@ so a hot-reload button is available without restarting.
   "Wanderer" / empty if AccountInfoData is not available at connect time. This is a
   timing issue (widget loads before player is fully in-world). The connect-time fallback
   is safe; worldId HMAC is retried every 5 s so it will be sent once available.
+
+## Proton / Wine status — BLOCKED, upstream-only (tracked in #326)
+
+chat.v1 works on **native Windows** (ZFE 0.9.9+) but **crashes the game under Proton/Wine** at
+`chat.v1.connect` (a Zig panic / `__fastfail`).
+
+- **Root cause:** Zig `std.crypto.tls.Client.readvAdvanced` out-of-bounds / `@memcpy` panic on
+  PARTIAL socket reads (Zig issues #15226 / #15673 / #14573), FIXED by Zig PR #20587 shipped in
+  **Zig 0.14.0**. Wine's read fragmentation + Cloudflare TLS 1.3 record padding make the crash
+  deterministic under Proton (intermittent on native Windows). The ZFE binary carries the sibling
+  error `TlsConnectionTruncated`.
+- chat.v1 uses its **own Zig TLS client + a PEM CA bundle** (NOT Schannel — the old `Schannel/Winsock`
+  log line was the LEGACY Text Chat transport, relabeled `Legacy Text Chat transport backend` in
+  ZFE 0.9.11). ZFE 0.9.11 logging confirms the host CA bundle LOADS FINE (`certs=149`) and the crash
+  is in the TLS read, so the CA bundle is not the cause.
+- **Fix is upstream-only:** the ZFE author must rebuild on Zig >= 0.14.0. There is **no client-side
+  workaround** — plaintext `ws://` loopback is refused (ZFE won't `autoRegister` over insecure even
+  with `[TextChat] AllowLocalhostDevelopment=yes`), a local `wss://` proxy still runs ZFE's buggy Zig
+  TLS client, and there is no config to skip cert verification.
+- **Linux / Steam Deck users:** use the desktop overlay (native, no ZFE) until ZFE ships the
+  Zig-0.14.0 build.
 
 ## Native chat input (v2.5.3)
 

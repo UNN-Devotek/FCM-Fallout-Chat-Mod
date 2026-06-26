@@ -6,6 +6,18 @@
 > R4 (report), R5 (moderationAction), and R6 (production guard lift) remain. This doc is updated
 > in-line where features are implemented; planning sections are retained for the remaining phases.
 >
+> **Status (2026-06-26): in-game send works end-to-end on native Windows (ZFE 0.9.9+).** Two relay
+> fixes were required and merged to `dev`:
+> - **#334 — attribute `send` to the linked FCM user UUID.** `handleSend` now persists the message
+>   under `identity.linkedUserId` (the linked `users.id` UUID), **not** `identity.userId` (the relay
+>   TEXT id `user_<hex>`). The TEXT id was passed straight to `prisma.user.findUnique`, which raised
+>   P2023 (invalid UUID) → internal_error → ZFE surfaced `relay_rejected`. `send` is gated on
+>   `isLinked`, so `linkedUserId` is always present.
+> - **#335 — persist `relay_seq` on relay sends** (see [Cursor design](#cursor-design-the-main-net-new-piece)).
+>
+> **Proton/Wine remains blocked** (Zig TLS bug, fix = ZFE on Zig ≥ 0.14.0; tracked in **#326**) — see
+> [Proton/Wine status](#protonwine-status--blocked-upstream).
+>
 > **Who builds what.** ZFE provides the native chat **engine** (the relay transport, DPAPI token
 > storage, reconnect, hotkey/input, and the `chat.v1.*` command API). **FCM owns both ends we ship:**
 > the backend **relay** *and* the in-game chat **UI — our own SWF.** That UI **already exists** (the
@@ -189,8 +201,14 @@ a plain column on `User`):
 **Device-code upgrade flow (in-game — no token pasting):**
 1. SWF does the normal `register` → ZFE stores the token (DPAPI). The relay marks the identity
    **limited** and rejects `send` with **`permission_denied`**.
-2. The relay issues a short **link code** the SWF shows in-game.
-3. The user opens `falloutchatmod.com/link`, signs in with **Discord or Nexus** (existing OAuth /
+2. The relay issues a short **link code** and pushes a SYSTEM NOTICE the SWF shows in-game:
+   `LINK REQUIRED - visit <host>/link, sign in, and enter code: XXXX-XXXX (expires 10m)`. The `<host>`
+   is **env-aware** — the relay derives it from `FCM_PUBLIC_BASE_URL` (`backend/src/config/environment.ts`,
+   default `https://falloutchatmod.com`; the dev stack sets `https://dev.falloutchatmod.com` via
+   `deploy/dev/docker-compose.yml`), so dev points users at `dev.falloutchatmod.com/link`. The same
+   value backs the `permission_denied` "complete the link flow at …" message. (Previously this URL was
+   hardcoded to the prod host, so the dev relay wrongly pointed users at prod.)
+3. The user opens that `<host>/link` page, signs in with **Discord or Nexus** (existing OAuth /
    Nexus OAuth2+PKCE, §5.2 of the design doc), and enters the code.
 4. The relay **binds the `register` token's `userId` to the authed account** (writes the provider
    link); the identity is now **authed** and `send` is allowed. The DPAPI token is reused as-is —
@@ -373,6 +391,26 @@ state, survives reconnect, works across instances). The alternative of deriving 
 > value for the same event."* That is the broadcast-time `relaySeq` design above — so this is no
 > longer a speculative choice, it's the documented pattern.
 
+> **Implemented as a SINGLE broadcast (no double-broadcast).** `handleSend` computes
+> `relaySeq = nextRelaySeq()` and passes it INTO `ingestMessage`, which threads it through to
+> `finalizeMessage`. `finalizeMessage` then (a) includes `relaySeq` in the one `chat:message`
+> broadcast and (b) persists it on `messages.relay_seq` via the write-behind queue
+> (`messageService.persistMessage` writes the `relay_seq` column). The relay pub/sub subscriber
+> (`ensurePubSub` in `relayHandler.ts`) unwraps the WS handler's `broadcast()` envelope
+> (`{ instanceId, payload: { type, payload } }`) and forwards any event carrying a `relaySeq`.
+> This replaced an earlier hack where `handleSend` published a *second* relay-only Redis
+> rebroadcast just to attach the cursor — the row was persisted with `relay_seq = NULL`, so
+> `poll`/history (which filter `WHERE relay_seq IS NOT NULL`) never returned in-game sends. The seq
+> is **relay-only**: `ingestMessage`/`finalizeMessage` leave `relay_seq` NULL for `hud`/`ws`/`mcp`,
+> and those broadcasts omit `relaySeq` (unchanged behavior). **Persisting `relay_seq` is #335.**
+
+> **Sender attribution — persist under the linked FCM user UUID (#334).** `handleSend` passes
+> `identity.linkedUserId` (the linked `users.id` UUID) as the message author, **not**
+> `identity.userId` (the relay TEXT id `user_<hex>` surfaced to ZFE). The TEXT id flowed into
+> `prisma.user.findUnique`, which raised P2023 (invalid UUID) → internal_error → ZFE surfaced
+> `relay_rejected`. `send` is gated on `isLinked` (the auth gate), so `linkedUserId` is always set
+> by the time a `send` is accepted.
+
 ---
 
 ## Message limits reconciliation
@@ -444,6 +482,27 @@ The native chat SWF is a **HUD mod** — it rides the **`.ba2` modding track** (
 game-memory reading, no code injection, no network/port scanning.** The relay is just a chat
 server; the adapter changes nothing about that boundary. This track must never be bundled into or
 required by the EULA-safe desktop overlay.
+
+---
+
+## Proton/Wine status — BLOCKED (upstream)
+
+chat.v1 in-game chat works on **native Windows** (ZFE 0.9.9+) but **crashes the game under
+Proton/Wine** (Linux / Steam Deck). This is an **upstream ZFE/Zig** problem, not an FCM relay one —
+the relay is identical for both platforms.
+
+- **Symptom.** `chat.v1.connect` panics (a Zig `__fastfail`) during the TLS handshake to the relay.
+- **Root cause.** Zig `std.crypto.tls.Client.readvAdvanced` has an out-of-bounds `@memcpy` on
+  **partial socket reads**, fixed by Zig 0.14.0. Wine's read fragmentation plus Cloudflare's TLS 1.3
+  record padding make it deterministic under Proton (only intermittent on native Windows).
+- **Not the CA bundle.** ZFE 0.9.11 logging confirms the host PEM CA bundle loads fine
+  (`certs=149`) and the crash is in the TLS *read* afterward. (The legacy `Schannel/Winsock` log line
+  is the **legacy Text Chat** transport — chat.v1 uses its **own Zig TLS client + PEM CA bundle**,
+  not Schannel.)
+- **Fix.** ZFE must be rebuilt on **Zig ≥ 0.14.0**. There is no client-side workaround: plaintext
+  `ws://` loopback is refused (ZFE won't `autoRegister` over insecure), and a local `wss://` proxy
+  still drives ZFE's buggy Zig TLS client. Tracked in **#326**.
+- **Meanwhile.** Linux / Steam-Deck users use the **native desktop overlay** (no ZFE) for chat.
 
 ---
 
@@ -545,14 +604,15 @@ Implemented on branch `feat/ingame-chatv1-relay` (2026-06-24). Key details for t
 | `backend/src/services/relay/tokenService.ts` | `mintToken` / `verifyToken` / `revokeToken` / `updateDisplayName` |
 | `backend/src/services/relay/relaySeq.ts` | `nextRelaySeq()` (Redis INCR) + `seedRelaySeq()` (seed from MAX on startup) |
 | `backend/src/services/relay/worldIdService.ts` | `setWorldId` / `getWorldId` / `clearWorldId` (Redis, 60s TTL) |
-| `backend/src/services/relay/relayHandler.ts` | Main op dispatcher; worldId HMAC intercept; subscribe pub/sub |
+| `backend/src/services/relay/relayHandler.ts` | Main op dispatcher; worldId HMAC intercept; subscribe pub/sub; `handleSend` attributes the send to `identity.linkedUserId` (linked `users.id` UUID, **not** the relay TEXT id) — #334 |
 | `backend/tests/relayHandler.test.js` | 50 Jest tests covering all ops + channel map + token + seq + worldId |
 | `backend/prisma/migrations/20260624000000_add_relay_tokens_and_relay_seq/migration.sql` | Idempotent: adds `relay_seq BIGINT` to messages; creates `hud_pairing_tokens` |
 
 ### Modified files
 
 - `backend/prisma/schema.prisma` — `Message.relaySeq`, `HudPairingToken` model
-- `backend/src/services/ingestMessage.ts` — `IngestSource` union adds `'relay'`; fail-closed rate limit for relay
+- `backend/src/services/ingestMessage.ts` — `IngestSource` union adds `'relay'`; fail-closed rate limit for relay; optional `relaySeq` opt threaded to `finalizeMessage` (relay-only; persists `messages.relay_seq` + single broadcast)
+- `backend/src/services/messageService.ts` — `persistMessage` writes the `relay_seq` column (BigInt when provided, NULL otherwise) so relay sends are returned by `poll`/history
 - `backend/src/websocket/upgradeRouter.ts` — `/relay` path → lazy `relayWss` singleton
 - `backend/src/server.ts` — `seedRelaySeq()` on startup; SPA catch-all guards `/relay`
 - `backend/src/config/environment.ts` — `RELAY_WORLD_HMAC_SECRET` (defaults to `dev-relay-world-hmac-secret-change-me`)

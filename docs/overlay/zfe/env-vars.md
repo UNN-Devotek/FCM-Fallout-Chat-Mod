@@ -63,8 +63,14 @@ require a **full Steam exit + relaunch** after any change (the game inherits Ste
 | Variable | Value | Effect |
 |----------|-------|--------|
 | `ZFE_ENABLE_TEXT_CHAT_LIVE_BACKEND` | exactly `1` | Enables the Text Chat bridge (Schannel/Winsock transport) |
-| `ZFE_TEXT_CHAT_ENDPOINT` | `host:port` (TCP) or `wss://host/path` (TLS WS) | Overrides the built-in default (`wss://falloutchatmod.com/ws/hud`). Plain `ws://` support is UNVERIFIED. |
+| `ZFE_TEXT_CHAT_ENDPOINT` | `host:port` (TCP) or `wss://host/path` (TLS WS) | Overrides the built-in default (`wss://falloutchatmod.com/ws/hud`). Plain `ws://` is refused for chat.v1 (ZFE won't `autoRegister` over an insecure endpoint). |
 | `ZFE_DISABLE_TEXT_CHAT_LIVE_BACKEND` | exactly `1` | Force-disables the bridge even when `ZFE_ENABLE_TEXT_CHAT_LIVE_BACKEND=1` |
+
+> For chat.v1, `[TextChat] AllowLocalhostDevelopment=yes` in `zfe.ini` only *enables* a localhost
+> endpoint — it does NOT enable `autoRegister` over an insecure `ws://` loopback, so a plaintext local
+> relay still cannot complete the handshake. A local `wss://` proxy works at the transport layer but
+> still runs ZFE's Zig TLS client (the same one that crashes under Proton — see
+> [native-chat-relay/proton-status.md](native-chat-relay/proton-status.md)).
 
 Dev setup (TCP, local backend):
 ```powershell
@@ -77,6 +83,17 @@ Dev setup (TCP, local backend):
 When opt-in is absent: `Text Chat transport backend: Schannel/Winsock (opt-in-disabled)`
 
 See [realtime-socket.md](realtime-socket.md) for the full protocol and backend setup.
+
+> **Note (2026-06-26):** the `Schannel/Winsock` line above is the **legacy Text Chat (FCMHUD/1)**
+> transport. The newer ZFE **`chat.v1`** native chat relay
+> ([native-chat-relay/](native-chat-relay/README.md)) uses its **own Zig TLS client** and is driven by
+> different config — `ZFE_TEXT_CHAT_ENDPOINT` (or `[TextChat] Endpoint=` in `zfe.ini`) and the
+> localhost opt-in below. There is **no environment variable** to skip TLS certificate verification or
+> to override the CA bundle path. Under Wine/Proton, chat.v1 reads the system CA bundle from the
+> Wine `Z:` system paths automatically (logged as `chat.v1 TLS CA source: wine_pem_bundle`); on native
+> Windows it uses the Windows certificate store (`windows_store`). chat.v1 is currently BLOCKED under
+> Proton/Wine by an upstream Zig TLS bug — see
+> [native-chat-relay/proton-status.md](native-chat-relay/proton-status.md) (#326).
 
 ## Disabling Remote Data For Testing
 

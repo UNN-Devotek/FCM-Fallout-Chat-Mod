@@ -4,8 +4,14 @@
 > implements — **verified directly from the `dxgi.dll` binary** (the `zfe-chat-v1` capability, the
 > `register`/`hello`/`send`/`poll`/`subscribe`/`report`/`moderationAction` ops, the error codes, the
 > channel vocab, and the `chat.message` event schema are all present). Reproduced here
-> verbatim-in-substance as the canonical reference. FCM's relay does **not** implement it yet — see
-> [fcm-integration.md](fcm-integration.md) for the integration plan (epic #282, now buildable).
+> verbatim-in-substance as the canonical reference. FCM's relay implements R1–R3 + worldId — see
+> [fcm-integration.md](fcm-integration.md) for the integration status (epic #282).
+>
+> **Status (2026-06-26): end-to-end send works on native Windows (ZFE 0.9.9+).** The `chat.v1.send`
+> path is verified in-game against the FCM relay on **native Windows**. The 0.9.8 `dispatch_failed`
+> on `sendMessage` was an upstream ZFE bug fixed in **0.9.9**. **Proton/Wine is blocked** by an
+> upstream Zig TLS bug (fix = ZFE on Zig ≥ 0.14.0; #326). See [ZFE version history](#zfe-version-history)
+> and [Transport / TLS](#transport--tls-chatv1-is-not-schannel) below.
 >
 > **This is NOT the existing FCMHUD/1 bridge.** FCM's shipping in-game chat is a *bespoke*
 > line protocol (`color~channel~user~content` + M7 `HELLO/SEND/CHAN` verbs) riding ZFE's
@@ -17,6 +23,36 @@
 
 ZFE is **relay agnostic**. A server can be written in any language as long as it speaks the
 JSON-over-WebSocket contract below.
+
+---
+
+## ZFE version history
+
+chat.v1-relevant ZFE builds:
+
+| ZFE | chat.v1 status |
+|-----|----------------|
+| 0.9.8 | Protocol shipped, but `chat.v1.sendMessage` returned `dispatch_failed` (ZFE-side — the send never dispatched to the relay). |
+| **0.9.9** | **Dispatch bug fixed → send works on native Windows.** This is the build the working Windows path needs. |
+| 0.9.10 | Added Wine detection (`wine_get_version`) + a Zig TLS client + system-CA loading (Wine `Z:` paths), but chat still crashed under Wine. |
+| 0.9.11 | Corrected misleading logging — the `Schannel/Winsock` line is the **legacy Text Chat** (now labeled `Legacy Text Chat transport backend`), not chat.v1. Added chat.v1 TLS CA logging (`TLS CA source: windows_store \| wine_pem_bundle`). |
+
+---
+
+## Transport / TLS — chat.v1 is NOT Schannel
+
+chat.v1 uses its **own Zig TLS client** plus a **PEM CA bundle**, on every platform. The
+`Schannel/Winsock` line in older ZFE logs refers to the **legacy Text Chat** transport (SFE
+compat), **not** chat.v1 — corrected in ZFE 0.9.11's logging.
+
+**Proton/Wine (Linux/Steam Deck) is BLOCKED — upstream.** `chat.v1.connect` panics the game during
+the TLS handshake: Zig `std.crypto.tls.Client.readvAdvanced` has an out-of-bounds `@memcpy` on
+**partial socket reads**, fixed by Zig 0.14.0. Wine read fragmentation + Cloudflare TLS 1.3 record
+padding make it deterministic under Proton (only intermittent on native Windows). ZFE 0.9.11 logging
+confirms the host CA bundle loads fine (`certs=149`) before the crash, so the CA bundle is not the
+cause. **Fix = ZFE rebuilt on Zig ≥ 0.14.0**; there is no client-side workaround (plaintext `ws://`
+loopback is refused, and a local `wss://` proxy still drives ZFE's buggy Zig TLS client). Tracked in
+**#326**. Linux / Steam-Deck users use the native desktop overlay meanwhile.
 
 ---
 
