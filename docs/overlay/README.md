@@ -143,6 +143,20 @@ On completion it prints the line to bless the build, e.g.
 `QA_ACTIVE_VERSION=1.3.91-qa.20260626014530` — set that on the dev backend (env or
 `POST /api/admin/qa/active-version`) to make this build the active golden build.
 
+An explicit `FCM_BUILD_VERSION` overrides the auto-stamp — use it to pin ONE version
+across a coordinated Linux + Windows golden release (so a single `QA_ACTIVE_VERSION`
+admits both), or to match an already-blessed lock value:
+
+```bash
+FCM_BUILD_VERSION=1.3.91-qa.20260626 npm run dist:qa
+```
+
+**Windows QA build:** run the **Build Windows QA** workflow (`.github/workflows/build-windows-qa.yml`,
+`workflow_dispatch`, owner-only) on the self-hosted `[self-hosted, windows, unn]` runner —
+it runs `dist:qa` and uploads the unsigned NSIS + portable `.exe` as a workflow artifact.
+Its optional `version` input maps to `FCM_BUILD_VERSION` (pin it to match the active lock).
+Wine cannot build Electron 31+ on Linux, so Windows QA builds use the runner.
+
 ### Runtime channel detection
 
 The main process reads the channel at startup:
