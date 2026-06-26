@@ -45,8 +45,12 @@ export default defineConfig({
   base: './', // Electron loads via file:// — relative asset paths required.
   plugins: [react(), tailwindcss()],
   define: {
-    // Resolved from package.json at build/dev-server start time.
-    __APP_VERSION__: JSON.stringify(pkgVersion),
+    // FCM_BUILD_VERSION (set by scripts/build-qa.mjs for a unique per-build QA
+    // version) wins; otherwise resolved from package.json at build/dev-server
+    // start time. Keeps the renderer's displayed version in lock-step with the
+    // packaged version + the X-Client-Version the golden-build lock checks.
+    __APP_VERSION__: JSON.stringify(process.env.FCM_BUILD_VERSION || pkgVersion),
+    __BUILD_CHANNEL__: JSON.stringify(process.env.BUILD_CHANNEL || 'stable'),
   },
   resolve: {
     alias: [

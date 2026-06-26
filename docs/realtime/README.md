@@ -76,6 +76,14 @@ Close codes used by the backend:
 | `4001` | Auth failed (missing/invalid/expired token or ticket) |
 | `4002` | User is banned |
 | `4002` with body `KICK_COOLDOWN:<secs>` | Kicked; retry after N seconds |
+| `4003` | Outdated build — only on the dev backend when `QA_BUILD_LOCK=true`; the close reason is `OUTDATED_BUILD:<activeVersion>`. The overlay shows an update prompt. |
+
+**`x-client-version` upgrade header (dev/QA path only):** game-client overlays built with
+the `qa` build channel (`dist:qa`) send an `x-client-version: <version>` header on the WS
+upgrade request. When `QA_BUILD_LOCK=true` the backend evaluates this against
+`QA_ACTIVE_VERSION` via `buildLock.ts:evaluateBuildGate`. A mismatch closes the socket
+with `4003`. The header is read by Node's HTTP layer (always lowercase: `x-client-version`).
+This mechanism is a no-op on the production backend — `QA_BUILD_LOCK` defaults to false.
 
 ---
 

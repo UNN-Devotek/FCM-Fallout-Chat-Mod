@@ -22,6 +22,51 @@
          this.fcmSelfLoadBridge();
       }
 
+      // Pass the __ZFE reference we hold at the HUDMenu (parent) level down to
+      // the FCMBridge child SWF. ZFE 0.9.8 sets child_bridge_access=disabled so
+      // it does NOT inject __ZFE into child SWFs; the parent holds it normally.
+      // Sharing it here lets FCMBridge connect even without HUDModLoader.
+      public function fcmPassZfeToBridge() : void
+      {
+         if(this._fcmBridge == null) { return; }
+         try
+         {
+            // Discover __ZFE using the documented order at the HUDMenu level.
+            var hostZfe:* = null;
+            try { hostZfe = this["__ZFE"]; } catch(e0:Error) {}
+            if(hostZfe == null)
+            {
+               try { if(this.parent != null) { hostZfe = this.parent["__ZFE"]; } } catch(e1:Error) {}
+            }
+            if(hostZfe == null)
+            {
+               try { if(this.root != null) { hostZfe = this.root["__ZFE"]; } } catch(e2:Error) {}
+            }
+            if(hostZfe == null)
+            {
+               try { hostZfe = ZFECodeObj; } catch(e3:Error) {}
+            }
+            if(hostZfe == null)
+            {
+               try { hostZfe = __SFCodeObj; } catch(e4:Error) {}
+            }
+            var found:String = (hostZfe != null) ? "found" : "absent";
+            this.fcmLog("info","zfe","hostZfe=" + found);
+            if(hostZfe != null)
+            {
+               try { this._fcmBridge.fcmSetZfe(hostZfe); }
+               catch(eSet:Error)
+               {
+                  this.fcmLog("warn","zfe","fcmSetZfe threw: " + eSet.message);
+               }
+            }
+         }
+         catch(ePass:Error)
+         {
+            this.fcmLog("warn","zfe","fcmPassZfeToBridge threw: " + ePass.message);
+         }
+      }
+
       // Self-load FCMBridge.swf into the HUD when HUDModLoader is NOT present.
       // Uses flash.display.Loader (SWF loader — works in GFx) NOT URLLoader
       // (data loader — sandbox-blocked in GFx). Shares ApplicationDomain so
@@ -48,6 +93,7 @@
                      {
                         this.fcmLog("info","selfload","FCMBridge child found on stage by name — skip self-load");
                         this._fcmBridge = sc;
+                        this.fcmPassZfeToBridge();
                         return;
                      }
                   }
@@ -118,6 +164,7 @@
                      {
                         this._fcmBridge = sc;
                         this.fcmLog("info","selfload","bridge found after self-load OK");
+                        this.fcmPassZfeToBridge();
                         return;
                      }
                   }
@@ -486,7 +533,7 @@
                      try
                      {
                         var sc:* = stg.getChildAt(si);
-                        if(sc != null && sc.fcmSendMessage != null) { this._fcmBridge = sc; break; }
+                        if(sc != null && sc.fcmSendMessage != null) { this._fcmBridge = sc; this.fcmPassZfeToBridge(); break; }
                      }
                      catch(eC:Error) {}
                   }

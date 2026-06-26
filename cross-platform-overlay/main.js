@@ -248,10 +248,10 @@ if (!app.isPackaged) {
 // NOTE: do NOT call app.setName() here. The app name feeds app.getPath('userData')
 // (→ ~/.config/Fallout Chat Mod), so renaming it would orphan every existing
 // user's session/settings/keybinds on all platforms. KWin matches the overlay by
-// its X11 WM_CLASS ("Fallout Chat Mod", since the overlay runs under XWayland on
-// KDE) via the bundled keep-above rule's substring match on "fallout" — no app_id
-// override is needed. The electron-builder linux.desktopName only affects the
-// installed .desktop filename / native-Wayland app_id and does not change userData.
+// its X11 WM_CLASS ("fallout-chat-mod", since the overlay runs under XWayland on
+// KDE) via the bundled keep-above rule's exact-name match — no app_id override is
+// needed. The electron-builder linux.desktopName only affects the installed .desktop
+// filename / native-Wayland app_id and does not change userData.
 
 process.on('uncaughtException', (err) => {
   const msg = (err && err.message) ? err.message : String(err);
@@ -269,19 +269,16 @@ process.on('unhandledRejection', (reason) => {
 // cross-platform-overlay/assets/fallout-chatmod-keepabove.kwinrule + docs.
 // NOTE: kept byte-consistent with assets/fallout-chatmod-keepabove.kwinrule
 // (sans comments — KWin's INI parser ignores them). TWO rules:
-//   1) keep-above on the OVERLAY (wmclass "fallout" + title "Fallout Chat Mod").
-//   2) fullscreen-demote on the GAME (wmclass "steam_app_1151340").
-// On KWin 6 the layer=8/layerrule=2 force is IGNORED, so keep-above ALONE loses to a
-// FOCUSED fullscreen game. Rule 2 (fullscreen=false Force) demotes FO76 out of the
-// active-fullscreen layer so the overlay's keep-above wins even while playing. The
-// layer/layerrule keys are kept on rule 1 only for older KWin builds that honor them.
+//   1) keep-above on the OVERLAY (wmclass "fallout-chat-mod").
+//   2) keep game BELOW (wmclass "steam_app_1151340", below=true Force).
+//      KWin evaluates keepBelow() BEFORE isActiveFullScreen(), so the game never
+//      reaches ActiveLayer(6) — the overlay's keepAbove(4) wins with no flicker.
+//      (Replaces the retired fullscreen=false Force rule — issue #272.)
 // The overlay AUTO-APPLIES these on startup (setupKdeKeepAbove); this file is the
-// manual-import fallback. Game still renders full-screen-sized in Borderless.
+// manual-import fallback.
 const KWINRULE_TEXT = `[Fallout Chat Mod - keep above games]
 Description=Fallout Chat Mod - keep above games
-title=Fallout Chat Mod
-titlematch=2
-wmclass=fallout
+wmclass=fallout-chat-mod
 wmclassmatch=2
 wmclasscomplete=false
 above=true
@@ -462,7 +459,11 @@ const NEXUS_MOD_URL = 'https://www.nexusmods.com/fallout76/mods/4082';
 // Path A (dev:cloud, non-CF-Access dev backend): https://dev.falloutchatmod.com
 // Path B (dev:local):                            http://localhost:7177
 // Production default (no override):              https://falloutchatmod.com
-const { relayHttp: RELAY_HTTP, relayWs: RELAY_WS } = overlayCore.resolveRelayUrls(process.env);
+const BUILD_CHANNEL = (() => {
+  try { return require('./package.json').fcmChannel || process.env.BUILD_CHANNEL || 'stable'; }
+  catch { return process.env.BUILD_CHANNEL || 'stable'; }
+})();
+const { relayHttp: RELAY_HTTP, relayWs: RELAY_WS } = overlayCore.resolveRelayUrls(process.env, BUILD_CHANNEL);
 const RELAY_HOST = new URL(RELAY_HTTP).host;
 
 // Stable, identifiable User-Agent for every outbound request from the main
@@ -1309,6 +1310,7 @@ ipcMain.handle('proxy:http', async (_evt, reqDesc) => {
   return new Promise((resolve) => {
     const outHeaders = overlayCore.filterProxyHeaders(headers);
     if (sessionToken) outHeaders['X-Auth-Token'] = sessionToken;
+    outHeaders['X-Client-Version'] = APP_VERSION;
     outHeaders['User-Agent'] = APP_UA;
     outHeaders['Origin'] = RELAY_HTTP;
     // cookie is never in the allowlist, but delete defensively in case the
@@ -1351,6 +1353,7 @@ function openRelaySocket(id) {
   const sock = new WebSocket(RELAY_WS, {
     headers: {
       'X-Auth-Token': sessionToken,
+      'X-Client-Version': APP_VERSION,
       'User-Agent': APP_UA,
       'Origin': RELAY_HTTP,
     },
@@ -1386,6 +1389,15 @@ function openRelaySocket(id) {
   sock.on('close', (code, reason) => {
     relaySockets.delete(id);
     relaySendBuffers.delete(id);
+    // Golden-build lock: the dev backend rejected this build as outdated. This is
+    // terminal — do NOT auto-reconnect. Tell the user to grab the current QA build.
+    if (code === 4003) {
+      diag('[relay] WS closed 4003 OUTDATED_BUILD — prompting update');
+      try { showUpdateNotification((reason && reason.toString().split(':')[1]) || ''); } catch { /* ignore */ }
+      sendToRenderer('relay:status', { state: 'error', message: 'This QA build is no longer active. Download the current QA build from the dev Discord.' });
+      sendToRenderer('proxy:ws:close', { id, code, reason: reason && reason.toString() });
+      return;
+    }
     sendToRenderer('proxy:ws:close', { id, code, reason: reason && reason.toString() });
   });
   sock.on('error', (err) => sendToRenderer('proxy:ws:error', { id, message: err.message }));
@@ -1895,6 +1907,85 @@ ipcMain.on('discord:link', () => {
 
   oauthWin.loadURL(linkUrl).catch((e) => oauthFallback(String(e && e.message || e)));
 });
+
+// ─── QA login (golden dev build) ──────────────────────────────────────────────
+// Opens the QA Discord OAuth in a window, then polls /api/auth/qa-status until the
+// backend hands back a role-gated session token (or 426 OUTDATED_BUILD).
+function startQaLogin() {
+  const st = loadState();
+  if (!st || !st.installToken) return;
+  const startUrl = `${RELAY_HTTP}/auth/discord/qa/start?installToken=${encodeURIComponent(st.installToken)}`;
+  const callbackPath = '/auth/discord/qa/callback';
+  sendToRenderer('relay:status', { state: 'qa_required' });
+
+  let win = null;
+  try {
+    win = new BrowserWindow({
+      width: 520, height: 720, parent: mainWindow || undefined, modal: false,
+      title: 'QA Login — Fallout Chat Mod', icon: appIcon() || undefined, center: true,
+      webPreferences: { contextIsolation: true, nodeIntegration: false },
+    });
+  } catch {
+    try { shell.openExternal(startUrl); } catch { /* ignore */ }
+    pollQaStatus(0);
+    return;
+  }
+  const wc = win.webContents;
+  const checkNav = (url) => {
+    try {
+      if (new URL(url).pathname === callbackPath) {
+        setTimeout(() => { if (win && !win.isDestroyed()) win.close(); }, 1200);
+      }
+    } catch { /* ignore */ }
+  };
+  wc.on('did-navigate', (_e, url) => checkNav(url));
+  wc.on('will-redirect', (_e, url) => checkNav(url));
+  wc.on('did-redirect-navigation', (_e, url) => checkNav(url));
+  win.on('closed', () => { win = null; pollQaStatus(0); });
+  win.loadURL(startUrl).catch(() => { try { shell.openExternal(startUrl); } catch { /* ignore */ } pollQaStatus(0); });
+}
+
+function pollQaStatus(attempt = 0) {
+  const st = loadState();
+  if (!st || !st.installToken) return;
+  const MAX = 20;
+  const url = new URL(`${RELAY_HTTP}/api/auth/qa-status/${encodeURIComponent(st.installToken)}`);
+  const req = httpModule(url).request(
+    { hostname: url.hostname, port: url.port || undefined, path: url.pathname, method: 'GET',
+      headers: { 'Content-Type': 'application/json', 'X-Client-Version': APP_VERSION } },
+    (res) => {
+      if (res.statusCode === 426) {
+        res.resume();
+        diag('[qa-status] 426 OUTDATED_BUILD');
+        try { showUpdateNotification(''); } catch { /* ignore */ }
+        sendToRenderer('relay:status', { state: 'error', message: 'This QA build is no longer active. Download the current QA build from the dev Discord.' });
+        return;
+      }
+      let data = '';
+      res.on('data', (c) => (data += c));
+      res.on('end', () => {
+        let d = {};
+        try { d = (JSON.parse(data).data) || {}; } catch { /* ignore */ }
+        if (d.authorized && d.token) {
+          sessionToken = d.token;
+          flushPendingWsOpens();
+          saveState({ discordLinked: true, displayName: d.displayName || '', userRole: d.role || null });
+          userRole = d.role || null;
+          rebuildTray();
+          sendToRenderer('relay:status', { state: 'authenticated', displayName: d.displayName || '', discordLinked: true, role: d.role || null });
+          return;
+        }
+        if (attempt + 1 < MAX) setTimeout(() => pollQaStatus(attempt + 1), 1500);
+        else sendToRenderer('relay:status', { state: 'error', message: 'QA login timed out. Click to retry.' });
+      });
+    },
+  );
+  req.on('error', () => { if (attempt + 1 < MAX) setTimeout(() => pollQaStatus(attempt + 1), 1500); });
+  req.setTimeout(12000, () => req.destroy(new Error('qa-status timeout')));
+  req.end();
+}
+
+ipcMain.handle('overlay:qa-login', async () => { startQaLogin(); return { ok: true }; });
 
 // Discord link status refresh: poll /api/auth/discord-status/:installToken and
 // broadcast the real linked state to the renderer as 'relay:discord-status'. The
@@ -3562,7 +3653,11 @@ function createWindow() {
         ).catch(() => { /* ignore */ });
       }
     } catch { /* ignore */ }
-    startRelay();
+    if (BUILD_CHANNEL === 'qa') {
+      startQaLogin();
+    } else {
+      startRelay();
+    }
     // Re-focus the chat input after a reload if it was focused before.
     // We fire this after startRelay so the component has received relay:status
     // and re-mounted before we ask it to focus. A short delay lets the React

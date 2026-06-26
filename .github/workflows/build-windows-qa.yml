@@ -1,0 +1,81 @@
+name: Build Windows QA
+
+# Builds the QA-channel Windows overlay (BUILD_CHANNEL=qa -> targets the dev backend
+# + QA OAuth login) on the self-hosted Windows runner and uploads it as a workflow
+# artifact. Unsigned by design: QA testers are vetted, and QA builds are not published
+# to the release registry or Nexus. The signed PROD installer is build-windows.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Pin the QA build version (e.g. 1.3.91-dev to match the live QA_ACTIVE_VERSION lock). Leave blank to auto-stamp a unique <base>-qa.<timestamp>.'
+        required: false
+        type: string
+        default: ''
+
+# Build only reads the repo and uploads an artifact via GITHUB_TOKEN.
+permissions:
+  contents: read
+
+jobs:
+  # Owner-only gate: workflow_dispatch is runnable by anyone with write access, so
+  # restrict runner builds to the repo owner (mirrors build-windows.yml).
+  authorize:
+    name: Authorize (owner-only)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify actor is the owner
+        env:
+          ACTOR: ${{ github.actor }}
+        run: |
+          if [ "$ACTOR" != "UNN-Devotek" ]; then
+            echo "::error::$ACTOR is not authorized to trigger QA builds (owner-only)."
+            exit 1
+          fi
+          echo "Authorized: $ACTOR"
+
+  build-windows-qa:
+    name: Build Windows QA (unsigned)
+    needs: authorize
+    runs-on: [self-hosted, windows, unn]
+    defaults:
+      run:
+        shell: powershell
+
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '24'
+
+      # The overlay shares admin-dashboard's ChatOverlay; the renderer build pulls
+      # those cross-imports, so admin-dashboard deps must be present too.
+      - name: Install admin-dashboard dependencies
+        run: |
+          cd admin-dashboard
+          npm ci
+
+      - name: Install overlay dependencies
+        run: |
+          cd cross-platform-overlay
+          npm ci
+
+      # dist:qa (scripts/build-qa.mjs) bakes fcmChannel=qa + a version into the
+      # renderer and the packed package.json. FCM_BUILD_VERSION pins the version when
+      # provided (blank -> auto-stamp). It prints the QA_ACTIVE_VERSION to bless.
+      - name: Build QA artifact (BUILD_CHANNEL=qa, targets dev)
+        env:
+          FCM_BUILD_VERSION: ${{ inputs.version }}
+        run: |
+          cd cross-platform-overlay
+          npm run dist:qa
+
+      - name: Upload QA installer artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fcm-overlay-qa-windows
+          # NSIS installer + portable .exe. No latest.yml / blockmap (no auto-update).
+          path: |
+            cross-platform-overlay/dist-electron/*.exe
+          retention-days: 90
