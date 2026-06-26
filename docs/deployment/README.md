@@ -83,6 +83,7 @@ If the tunnel goes down:
 |------|----------|
 | [local-dev.md](local-dev.md) | Local stack setup, dev port map, per-platform instructions |
 | [hosted-dev-environment.md](hosted-dev-environment.md) | Isolated hosted dev stack for contributors: sanitizing seed pipeline, secure remote DB/object-store access, dev Discord |
+| [qa-builds.md](qa-builds.md) | QA-tester builds: the dev-guild QA role gate + golden-build lock, and the build / bless / distribute / retire runbook (Linux `dist:qa` + the Build Windows QA runner workflow) |
 | [releasing-the-overlay.md](releasing-the-overlay.md) | Full Electron release pipeline, step by step |
 | [packaging.md](packaging.md) | What each `Packaging/` script does |
 | [code-signing.md](code-signing.md) | AV / SmartScreen situation; Azure Trusted Signing path |

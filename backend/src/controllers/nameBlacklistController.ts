@@ -42,7 +42,7 @@ export async function listBlacklist(_req: Request, res: Response, next: NextFunc
 export async function createBlacklistEntry(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const parsed = createSchema.safeParse(req.body);
-    if (!parsed.success) return next(createError(400, parsed.error.errors[0]?.message ?? 'Invalid body'));
+    if (!parsed.success) return next(createError(400, parsed.error.issues[0]?.message ?? 'Invalid body'));
     const { pattern, matchType, enabled, note } = parsed.data;
     // Validate regex compiles before persisting.
     if (matchType === 'regex') {
@@ -76,7 +76,7 @@ export async function updateBlacklistEntry(req: Request, res: Response, next: Ne
   try {
     const { id } = req.params;
     const parsed = updateSchema.safeParse(req.body);
-    if (!parsed.success) return next(createError(400, parsed.error.errors[0]?.message ?? 'Invalid body'));
+    if (!parsed.success) return next(createError(400, parsed.error.issues[0]?.message ?? 'Invalid body'));
     if (parsed.data.matchType === 'regex' && parsed.data.pattern) {
       try { new RegExp(parsed.data.pattern, 'i'); } catch { return next(createError(400, 'Invalid regex pattern')); }
     }

@@ -26,6 +26,10 @@ describe('QA build channel plumbing', () => {
     expect(src).toMatch(/FCM_BUILD_VERSION/);
     expect(src).toMatch(/BUILD_CHANNEL/);
   });
+  it('build-qa.mjs lets an explicit FCM_BUILD_VERSION pin the version (coordinated multi-platform builds)', () => {
+    const src = readFileSync(join(ROOT, 'scripts', 'build-qa.mjs'), 'utf8');
+    expect(src).toMatch(/process\.env\.FCM_BUILD_VERSION\s*\|\|/);
+  });
 });
 
 describe('computeQaVersion (unique per-build QA version)', () => {
