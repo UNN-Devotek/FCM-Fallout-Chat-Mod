@@ -50,7 +50,7 @@
     "cross-env": "^10.1.0",
     "electron": "^41.7.2",
     "electron-builder": "^26.15.2",
-    "jsdom": "^25.0.1",
+    "jsdom": "^29.1.1",
     "semver": "^7.7.1",
     "tailwindcss": "^4.2.2",
     "typescript": "^6.0.3",
