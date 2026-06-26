@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.5.3";  // decoded native API: bare-value payloads ("true"/"false"); consume=boolean, text from readChatInput; real open->read->consume->send->clear flow; PAGE_DOWN open via isChatKeyPressed
+    static inline var VERSION:String  = "2.6.0";  // customization + feed polish: FcmConfig-driven colors/geometry/limits/keybinds, createdAt timestamps, proper-cased channel tags, blank idle prompt, outlined single "FALLOUT 76" main tab (#344), default open key INSERT (PAGE_DOWN fallback, VER-1)
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -125,8 +125,7 @@ class FCMChatWidget extends MovieClip {
     static inline var WORLD_POLL_MS:Int    = 5000;
 
     // ── Chat UX ───────────────────────────────────────────────────────────────
-    static inline var MAX_MSGS:Int      = 100;   // ring buffer cap
-    static inline var MAX_SEND_LEN:Int  = 225;   // truncate before send
+    // ring-buffer cap + send-length cap now live in FcmConfig (_cfg.maxMessages/maxSendLen)
 
     // ── Channel tables ────────────────────────────────────────────────────────
     // Slugs match AllowedChannels in Data/ZFE/TextChat/fragments/FCMChatWidget.ini.
@@ -134,45 +133,27 @@ class FCMChatWidget extends MovieClip {
     static var CHAN_SLUGS:Array<String> = ["global", "trade", "events", "infests", "raids", "server"];
     static var CHAN_NAMES:Array<String> = ["GENERAL", "TRADING", "EVENTS", "INFESTS", "RAIDS", "SERVER"];
 
-    // ── Layout ────────────────────────────────────────────────────────────────
-    // No header row (removed per user request). No status row (removed per user request).
+    // ── Layout (row heights fixed; user-config deferred to v2 per spec D-04) ───
     // Row order from top: TAB_H (main tab) | SUB_H (channel tabs) | log | INPUT_H
-    static inline var DEFAULT_X:Int        = 10;
-    static inline var DEFAULT_Y:Int        = 10;
-    static inline var DEFAULT_W:Int        = 480;
-    static inline var DEFAULT_H:Int        = 306;
-    static inline var DEFAULT_FONT_SIZE:Int = 14;
     static inline var INPUT_H:Int           = 28;
     static inline var TAB_H:Int             = 22;
     static inline var SUB_H:Int             = 20;
 
-    // ── Design tokens — amber Pip-Boy theme ───────────────────────────────────
-    static inline var BG_COLOR:Int             = 0x0A0907;
-    static inline var CHROME_COLOR:Int         = 0x0C0A08;
-    static inline var PRIMARY:Int              = 0xF5CB5B;
-    static inline var PRIMARY_HEX:String       = "#F5CB5B";
-    static inline var PRIMARY_HEX_NOHASH:String= "F5CB5B";
-    static inline var INACTIVE_HEX_NOHASH:String= "B49544";  // HUDButton inactive-tab text (no '#')
-    static inline var TEXT_HEX_NOHASH:String   = "FAF4DA";   // HUDButton active-tab text (no '#')
-    static inline var TEXT_HEX:String          = "#FAF4DA";
-    static inline var INACTIVE_HEX:String      = "#B49544";
-    static inline var DIM_HEX:String           = "#AC9043";
-    static inline var CHANNEL_HEX:String       = "#8FBC8F";
-    static inline var BG_ALPHA:Float           = 0.94;
+    // Colors / geometry / limits / keybinds now live in FcmConfig (`_cfg`), parsed
+    // from Data/FCMChat.ini. Derive "#RRGGBB" / "RRGGBB" strings from the Int colors
+    // via hx() / nh(). Defaults in FcmConfig reproduce the amber Pip-Boy theme.
 
     // ── HMAC-SHA256 shared secret (worldId control message) ───────────────────
     // Matches WORLD_HMAC_SECRET in FCMBridge.hx and the relay.
     static inline var WORLD_HMAC_SECRET:String = "fcm-world-v1-dev-placeholder";
     static inline var WORLD_CTRL_PREFIX:String = "\x00fcm.world.v1\x00";
 
-    // ── Config ────────────────────────────────────────────────────────────────
-    var _cfgX:Int          = DEFAULT_X;
-    var _cfgY:Int          = DEFAULT_Y;
-    var _cfgW:Int          = DEFAULT_W;
-    var _cfgH:Int          = DEFAULT_H;
-    var _cfgFontSize:Int   = DEFAULT_FONT_SIZE;
-    // OpenChatKey: must match ZFE fragment OpenChatKey so one key opens both ZFE layer and input.
-    var _cfgOpenKey:String  = "PAGE_DOWN";
+    // ── Config (FcmConfig — parsed from Data/FCMChat.ini; see FcmConfig.hx) ─────
+    var _cfg:FcmConfig = new FcmConfig();
+
+    // Hex-string helpers for htmlText / setColors / FormatTextEdit (derive from _cfg Ints).
+    static inline function hx(c:Int):String { return "#" + StringTools.hex(c, 6); }
+    static inline function nh(c:Int):String { return StringTools.hex(c, 6); }
 
     // ── Display objects ───────────────────────────────────────────────────────
     var _bg:Shape;
@@ -183,12 +164,15 @@ class FCMChatWidget extends MovieClip {
     var _fmt:TextFormat;
 
     // ── Chat render state ─────────────────────────────────────────────────────
-    var _records:Array<String>   = [];
+    var _records:Array<{color:String, channel:String, user:String, body:String, ts:String}> = [];
     var _bScrolling:Bool         = false;
     var _newWhileScrolled:Int    = 0;
 
     // ── Channel state ─────────────────────────────────────────────────────────
     var _chanIdx:Int             = 0;   // 0=global
+
+    // ── Hide state (CAP-011) ────────────────────────────────────────────────────
+    var _hidden:Bool             = false;   // true while the panel is hidden (/hide, F12, hideKey)
 
     // ── chat.v1 session state ─────────────────────────────────────────────────
     var _api:Dynamic             = null;
@@ -276,32 +260,8 @@ class FCMChatWidget extends MovieClip {
 
     function onConfigLoaded(e:Event):Void {
         var ul:URLLoader = cast e.target;
-        parseIni(Std.string(ul.data));
+        _cfg = FcmConfig.parse(Std.string(ul.data));
         afterConfig();
-    }
-
-    function parseIni(raw:String):Void {
-        var lines:Array<String> = raw.split("\n");
-        var inSection:Bool = false;
-        for (l in lines) {
-            l = StringTools.trim(l);
-            if (l.length == 0 || l.charAt(0) == ";") continue;
-            if (l == "[FCMChat]") { inSection = true; continue; }
-            if (l.charAt(0) == "[") { inSection = false; continue; }
-            if (!inSection) continue;
-            var eq:Int = l.indexOf("=");
-            if (eq < 0) continue;
-            var key:String = StringTools.trim(l.substr(0, eq)).toLowerCase();
-            var val:String = StringTools.trim(l.substr(eq + 1));
-            switch (key) {
-                case "x":         _cfgX        = Std.parseInt(val);
-                case "y":         _cfgY        = Std.parseInt(val);
-                case "width":     _cfgW        = Std.parseInt(val);
-                case "height":    _cfgH        = Std.parseInt(val);
-                case "fontsize":  _cfgFontSize = Std.parseInt(val);
-                case "openkey":   _cfgOpenKey  = val;
-            }
-        }
     }
 
     function afterConfig():Void {
@@ -320,34 +280,38 @@ class FCMChatWidget extends MovieClip {
     // =========================================================================
 
     function buildPanel():Void {
-        var w:Int = _cfgW;
-        var h:Int = _cfgH;
+        var w:Int = _cfg.width;
+        var h:Int = _cfg.height;
         // Log area gets everything except tab rows and input.
         var logH:Int = h - TAB_H - SUB_H - INPUT_H;
 
         _bg = new Shape();
         var g = _bg.graphics;
-        g.beginFill(BG_COLOR, BG_ALPHA);
-        g.lineStyle(1, PRIMARY, 0.3);
+        g.beginFill(_cfg.bgColor, _cfg.bgAlpha);
+        g.lineStyle(1, _cfg.borderColor, 0.3);
         g.drawRect(0, 0, w, h);
         g.endFill();
         // Main tab row background
         g.lineStyle();
-        g.beginFill(0x080705, 0.98);
+        g.beginFill(_cfg.tabRowColor, 0.98);
         g.drawRect(1, 1, w - 2, TAB_H);
         g.endFill();
         // Channel tab row background
-        g.beginFill(0x080705, 0.85);
+        g.beginFill(_cfg.tabRowColor, 0.85);
         g.drawRect(1, TAB_H, w - 2, SUB_H);
         g.endFill();
         // Separator lines
-        g.lineStyle(1, PRIMARY, 0.3);
+        g.lineStyle(1, _cfg.borderColor, 0.3);
         g.moveTo(0, TAB_H); g.lineTo(w, TAB_H);
-        g.lineStyle(1, PRIMARY, 0.2);
+        g.lineStyle(1, _cfg.borderColor, 0.2);
         g.moveTo(0, TAB_H + SUB_H); g.lineTo(w, TAB_H + SUB_H);
         // Log/input separator
-        g.lineStyle(1, PRIMARY, 0.4);
+        g.lineStyle(1, _cfg.borderColor, 0.4);
         g.moveTo(0, h - INPUT_H); g.lineTo(w, h - INPUT_H);
+        // Active main-tab outline box (#344 / CAP-015 / A.7) — frames the "FALLOUT 76"
+        // label like the overlay's active tab. Thin solid outline, no fill, NO filters.
+        g.lineStyle(1, _cfg.tabActiveColor, 0.9);
+        g.drawRect(4, 3, 118, TAB_H - 6);
         addChild(_bg);
 
         _tabTf = makeChromeTf(8, 2, w - 16, TAB_H - 2);
@@ -372,24 +336,30 @@ class FCMChatWidget extends MovieClip {
         _logTf.multiline  = true;
         _logTf.wordWrap   = true;
         _logTf.selectable = false;
-        _logTf.mouseEnabled = false;
+        _logTf.mouseEnabled = true;   // enable mouse-wheel scroll (CAP-008, VER-2)
         _logTf.embedFonts = true;
         _fmt = new TextFormat();
         _fmt.font    = FONT_BODY;
-        _fmt.size    = _cfgFontSize;
-        _fmt.color   = 0xFAF4DA;
+        _fmt.size    = _cfg.fontSize;
+        _fmt.color   = _cfg.textColor;
         _fmt.leading = 3;
         _logTf.defaultTextFormat = _fmt;
         setLogText("connecting...");
         addChild(_logTf);
+
+        // Mouse-wheel over the log scrolls history (CAP-008, VER-2). HUD-availability
+        // unverified; F12 "Scroll to newest" + auto-scroll stay the fallback.
+        try {
+            _logTf.addEventListener(flash.events.MouseEvent.MOUSE_WHEEL, onLogWheel);
+        } catch (e:Dynamic) {}
 
         // ── Prompt row: idle hint / "typing..." (HUDTools draws its own entry box) ──
         _promptTf = makeChromeTf(6, h - INPUT_H + 4, w - 12, INPUT_H - 6);
         setPrompt(idlePrompt());
         addChild(_promptTf);
 
-        x = _cfgX;
-        y = _cfgY;
+        x = _cfg.x;
+        y = _cfg.y;
     }
 
     function makeChromeTf(tx:Float, ty:Float, tw:Float, th:Float):TextField {
@@ -403,16 +373,17 @@ class FCMChatWidget extends MovieClip {
         var fmt:TextFormat = new TextFormat();
         fmt.font  = FONT_BODY;
         fmt.size  = 13;
-        fmt.color = 0xB49544;
+        fmt.color = _cfg.tabInactiveColor;
         tf.defaultTextFormat = fmt;
         return tf;
     }
 
     function renderMainTabs():Void {
         if (_tabTf == null) return;
+        // #344 / CAP-015 / D-11: single main tab "FALLOUT 76" (no PARTY); the active
+        // outline box is drawn in buildPanel() via _bg.graphics (no brackets, no filters).
         _tabTf.htmlText =
-            '<font face="' + FONT_BOLD + '" size="13" color="' + PRIMARY_HEX + '"><b>[ FALLOUT 76 ]</b></font>'
-            + '<font face="' + FONT_BODY + '" size="13" color="' + INACTIVE_HEX + '">  PARTY</font>';
+            '<font face="' + FONT_BOLD + '" size="13" color="' + hx(_cfg.tabActiveColor) + '"><b>FALLOUT 76</b></font>';
     }
 
     function renderSubTabs():Void {
@@ -422,25 +393,27 @@ class FCMChatWidget extends MovieClip {
         var displayNames:Array<String> = ["GENERAL", "TRADING", "EVENTS", "INFESTS", "RAIDS"];
         var html:Array<String> = [];
         for (i in 0...displayNames.length) {
-            var color:String = (i == _chanIdx) ? PRIMARY_HEX : INACTIVE_HEX;
+            var color:String = (i == _chanIdx) ? hx(_cfg.tabActiveColor) : hx(_cfg.tabInactiveColor);
             html.push('<font face="' + FONT_BOLD + '" size="12" color="' + color + '"><b>' + displayNames[i] + '</b></font>');
         }
-        _subTf.htmlText = html.join('<font face="' + FONT_BODY + '" size="12" color="' + INACTIVE_HEX + '">  </font>');
+        _subTf.htmlText = html.join('<font face="' + FONT_BODY + '" size="12" color="' + hx(_cfg.tabInactiveColor) + '">  </font>');
     }
 
     function idlePrompt():String {
-        return '<font face="' + FONT_BODY + '" size="13" color="' + DIM_HEX + '">&#x203A; ['
-            + _cfgOpenKey + '] chat  |  [/g /t /e /i /r] channel</font>';
+        // Blank when idle unless showHints (CAP-014); in-progress text still shows while typing.
+        if (!_cfg.showHints) return "";
+        return '<font face="' + FONT_BODY + '" size="13" color="' + hx(_cfg.promptColor) + '">&#x203A; ['
+            + _cfg.openKey + '] chat  |  [/g /t /e /i /r] channel</font>';
     }
 
     function typingPrompt():String {
-        return '<font face="' + FONT_BODY + '" size="13" color="' + PRIMARY_HEX
+        return '<font face="' + FONT_BODY + '" size="13" color="' + hx(_cfg.tabActiveColor)
             + '">&#x203A; [Enter] send  |  [Esc] cancel</font>';
     }
 
     function setLogText(s:String):Void {
         if (_logTf == null) return;
-        _logTf.htmlText = '<font face="' + FONT_BODY + '" size="' + _cfgFontSize + '" color="' + TEXT_HEX + '">' + s + '</font>';
+        _logTf.htmlText = '<font face="' + FONT_BODY + '" size="' + _cfg.fontSize + '" color="' + hx(_cfg.textColor) + '">' + s + '</font>';
     }
 
     function setPrompt(html:String):Void {
@@ -488,7 +461,7 @@ class FCMChatWidget extends MovieClip {
                 // Position the F12 HUDTools menu just under the channel-tab row.
                 try {
                     Reflect.callMethod(_hudTools, Reflect.field(_hudTools, "FormatMenu"),
-                        [_cfgX, _cfgY + TAB_H, "down"]);
+                        [_cfg.x, _cfg.y + TAB_H, "down"]);
                 } catch (e:Dynamic) {}
                 zfeLog("info", "hud", "SharedHUDTools registered");
             }
@@ -526,6 +499,7 @@ class FCMChatWidget extends MovieClip {
                 Reflect.callMethod(_hudTools, add, ["chan" + i, names[i], true, false, -1]);
             }
             Reflect.callMethod(_hudTools, add, ["scrollbottom", "Scroll to newest", true, false, -1]);
+            Reflect.callMethod(_hudTools, add, ["hidechat", "Hide chat", true, false, -1]);
             Reflect.callMethod(_hudTools, add, ["relink", "Link account...", _authState != "authenticated", false, -1]);
         } catch (e:Dynamic) {
             zfeLog("warn", "menu", "AddMenuItem threw: " + Std.string(e));
@@ -541,6 +515,8 @@ class FCMChatWidget extends MovieClip {
             selectChannel(Std.parseInt(id.substr(4)));
         } else if (id == "scrollbottom") {
             scrollToBottom();
+        } else if (id == "hidechat") {
+            hide();
         } else if (id == "relink") {
             setLogText(linkHint());
         }
@@ -557,22 +533,27 @@ class FCMChatWidget extends MovieClip {
         try { isDown = (e.IsKeyDown == true); }    catch (_:Dynamic) {}
 
         if (!isDown) {
-            if (action == _cfgOpenKey || action == "Console"
+            if (action == _cfg.openKey || action == "Console"
                     || action == "ConsoleToggles" || action == "TeamChat") {
                 // While a native session owns input, ignore the open key — the native
                 // session is driving the keystrokes (re-issuing would double-open).
                 if (_inputOpen && _nativeInput) return;
-                if (!_inputOpen) openInput();
+                if (!_inputOpen) openInput();   // openInput() restores from hidden first (CAP-011)
                 return;
             }
-            // NextPage (Page Down action) → cycle channel (when input closed).
-            if (action == "NextPage" && !_inputOpen) {
+            // Optional hideKey (config-driven, unset by default) → toggle hide/restore.
+            if (_cfg.hideKey != "" && action == _cfg.hideKey && !_inputOpen) {
+                if (_hidden) show(); else hide();
+                return;
+            }
+            // channelNextKey (default NextPage / Page Down) → next channel (when input closed).
+            if (action == _cfg.channelNextKey && !_inputOpen) {
                 cycleChannel();
                 return;
             }
-            // PrevPage (Page Up action) → scroll back through history (when input closed).
-            if (action == "PrevPage" && !_inputOpen) {
-                scrollUp();
+            // channelPrevKey (default PrevPage / Page Up) → previous channel (when input closed).
+            if (action == _cfg.channelPrevKey && !_inputOpen) {
+                cyclePrev();
                 return;
             }
         }
@@ -590,7 +571,7 @@ class FCMChatWidget extends MovieClip {
     function buildChannelTabs():Void {
         if (_btnCls == null) return;
         var labels:Array<String> = ["GENERAL", "TRADING", "EVENTS", "INFESTS", "RAIDS"];
-        var cell:Int = Std.int((_cfgW - 16) / 5);   // per-tab column width
+        var cell:Int = Std.int((_cfg.width - 16) / 5);   // per-tab column width
         var bw:Int   = cell - 2;                      // button width (gap between)
         var bh:Int   = SUB_H - 2;
         for (i in 0...5) {
@@ -607,7 +588,7 @@ class FCMChatWidget extends MovieClip {
                 // setColors(textColor, bgColor, bgAlpha, selectColor, selectBGColor) — hex, no '#'
                 try {
                     Reflect.callMethod(b, Reflect.field(b, "setColors"),
-                        [INACTIVE_HEX_NOHASH, "080705", 0.85, "080705", PRIMARY_HEX_NOHASH]);
+                        [nh(_cfg.tabInactiveColor), nh(_cfg.tabRowColor), 0.85, nh(_cfg.tabRowColor), nh(_cfg.tabActiveColor)]);
                 } catch (e:Dynamic) {}
                 try {
                     b.addEventListener(flash.events.MouseEvent.CLICK,
@@ -652,6 +633,31 @@ class FCMChatWidget extends MovieClip {
     function cycleChannel():Void {
         // Cycle over the first 5 channels (skip "server" at index 5).
         selectChannel((_chanIdx + 1) % 5);
+    }
+
+    function cyclePrev():Void {
+        // Reverse-cycle over the first 5 channels (skip "server" at index 5).
+        selectChannel((_chanIdx + 4) % 5);
+    }
+
+    // =========================================================================
+    // Hide / restore (CAP-011)
+    //
+    // hide() sets this.visible=false; show() sets it back. Timers + listeners keep
+    // running while hidden so the feed stays current. Triggers: /hide, F12 "Hide chat",
+    // optional hideKey action. Restore: the open key (INSERT) via openInput() -> show().
+    // =========================================================================
+
+    function hide():Void {
+        this.visible = false;
+        _hidden = true;
+        zfeLog("info", "hide", "panel hidden");
+    }
+
+    function show():Void {
+        this.visible = true;
+        _hidden = false;
+        zfeLog("info", "hide", "panel restored");
     }
 
     /**
@@ -782,6 +788,8 @@ class FCMChatWidget extends MovieClip {
 
     function openInput():Void {
         if (_inputOpen) return;
+        // The open key both restores a hidden panel AND opens input (CAP-011, guaranteed).
+        if (_hidden) show();
         // PRIMARY: ZFE native chat-input session — only when the probe proved it usable.
         if (_nativeInputUsable && openInputNative()) return;
         openInputSharedHudTools();
@@ -852,7 +860,7 @@ class FCMChatWidget extends MovieClip {
             _inProgress = text;
             if (text.length > 0) {
                 setPrompt(typingPrompt() + ' <font face="' + FONT_BODY + '" size="13" color="'
-                    + TEXT_HEX + '"> &#x203A; ' + text + '</font>');
+                    + hx(_cfg.textColor) + '"> &#x203A; ' + text + '</font>');
             } else {
                 setPrompt(typingPrompt());
             }
@@ -923,17 +931,17 @@ class FCMChatWidget extends MovieClip {
         // x/y are stage coordinates (1920×1080 space). Position at widget's lower edge.
         // Color args are hex strings WITHOUT '#'. Font arg is the engine body alias.
         var editX:Float = x + 6;
-        var editY:Float = y + _cfgH - INPUT_H + 4;
-        var editW:Float = _cfgW - 12;
+        var editY:Float = y + _cfg.height - INPUT_H + 4;
+        var editW:Float = _cfg.width - 12;
         var editH:Float = INPUT_H - 6;
 
         try {
             Reflect.callMethod(_hudTools, Reflect.field(_hudTools, "FormatTextEdit"),
                 [editX, editY, editW, editH,
                  FONT_BODY,                  // engine alias — matches HUDTools' entry_tf default ($MAIN_Font_Light)
-                 _cfgFontSize,
-                 PRIMARY_HEX_NOHASH,         // text color — no '#'
-                 "0C0A08",                   // bg color — no '#'
+                 _cfg.fontSize,
+                 nh(_cfg.tabActiveColor),    // text color — no '#'
+                 nh(_cfg.tabRowColor),       // bg color — no '#'
                  0.96]);                    // bg alpha (>0 triggers background rendering)
             zfeLog("info", "input", "FormatTextEdit ok");
         } catch (e:Dynamic) {
@@ -986,6 +994,9 @@ class FCMChatWidget extends MovieClip {
         s = StringTools.trim(s);
         if (s.length == 0) return;
 
+        // /hide — hide the panel (CAP-011). Consume: never send. Restore with the open key.
+        if (s.toLowerCase() == "/hide") { hide(); return; }
+
         // Slash-command channel switch: "/g /t /e /i /r" (or ".g" alias).
         // If the whole input IS a slash command (bare or with trailing content),
         // consume it — never let it leak through as a chat message.
@@ -1018,7 +1029,7 @@ class FCMChatWidget extends MovieClip {
             return;
         }
 
-        if (raw.length > MAX_SEND_LEN) raw = raw.substr(0, MAX_SEND_LEN);
+        if (raw.length > _cfg.maxSendLen) raw = raw.substr(0, _cfg.maxSendLen);
         raw = fcmClean(raw);
         if (raw.length == 0) return;
 
@@ -1047,8 +1058,9 @@ class FCMChatWidget extends MovieClip {
                     _pendingEchoes.push({ key: dedupKey, ts: flash.Lib.getTimer() });
                     // Render immediately on the active channel.
                     if (slug == CHAN_SLUGS[_chanIdx]) {
-                        _records.push(PRIMARY_HEX + "~" + slug + "~" + _displayName + "~" + raw);
-                        while (_records.length > MAX_MSGS) _records.shift();
+                        // Own-message time stays blank until a server time exists (D-08).
+                        _records.push({ color: hx(_cfg.senderColor), channel: slug, user: _displayName, body: raw, ts: "" });
+                        while (_records.length > _cfg.maxMessages) _records.shift();
                         renderRecords();
                     }
                 }
@@ -1066,7 +1078,7 @@ class FCMChatWidget extends MovieClip {
                     case "invalid_channel":
                         setLogText("That channel is not available.");
                     case "message_too_long":
-                        setLogText("Message too long (max " + MAX_SEND_LEN + ").");
+                        setLogText("Message too long (max " + _cfg.maxSendLen + ").");
                     case "auth_token_invalid", "auth_token_revoked", "user_banned":
                         setLogText("Chat session ended - reconnecting...");
                         _connected = false;
@@ -1130,7 +1142,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.5.3");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.6.0");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
@@ -1395,6 +1407,7 @@ class FCMChatWidget extends MovieClip {
             var displayName:String  = extractJsonString(obj, "senderDisplayName");
             var body:String         = extractJsonString(obj, "body");
             var messageId:String    = extractJsonString(obj, "messageId");
+            var createdAt:String    = extractJsonString(obj, "createdAt");
             var evId:Int            = extractJsonInt(obj, "id");
 
             // Always advance the cursor, even for skipped/deduped events.
@@ -1418,9 +1431,8 @@ class FCMChatWidget extends MovieClip {
             var activeSlug:String = CHAN_SLUGS[_chanIdx];
             if (channel != activeSlug && channel != "server") continue;
 
-            // Record format: "#COLOR~channel~displayName~body"
-            _records.push(PRIMARY_HEX + "~" + channel + "~" + displayName + "~" + body);
-            while (_records.length > MAX_MSGS) _records.shift();
+            _records.push({ color: hx(_cfg.senderColor), channel: channel, user: displayName, body: body, ts: createdAt });
+            while (_records.length > _cfg.maxMessages) _records.shift();
             if (_bScrolling) _newWhileScrolled++;
             newRecords = true;
         }
@@ -1539,7 +1551,7 @@ class FCMChatWidget extends MovieClip {
         } catch (e:Dynamic) {}
 
         var html:Array<String> = [];
-        var fs:Int = _cfgFontSize;
+        var fs:Int = _cfg.fontSize;
 
         // Pinned system notice — shown above feed when auth is limited.
         if (_authState != "authenticated" && _pinnedSystemBody.length > 0) {
@@ -1548,18 +1560,27 @@ class FCMChatWidget extends MovieClip {
         }
 
         for (rec in _records) {
-            var f:Array<String> = rec.split("~");
-            if (f.length < 4) continue;
-            var col:String  = ~/^#[0-9a-fA-F]{6}$/.match(f[0]) ? f[0] : PRIMARY_HEX;
-            var ch:String   = f[1];
-            var user:String = f[2];
-            var msg:String  = f.slice(3).join("~");
+            var col:String  = ~/^#[0-9a-fA-F]{6}$/.match(rec.color) ? rec.color : hx(_cfg.senderColor);
+            var user:String = rec.user;
+            var msg:String  = rec.body;
+            // Optional "HH:MM " timestamp prefix (CAP-013, D-08 — only when the event carries a time).
+            var tsHtml:String = "";
+            if (_cfg.showTimestamps && rec.ts != null && rec.ts != "") {
+                var hm:String = FcmConfig.hhmm(rec.ts);
+                if (hm != "") tsHtml = '<font color="' + hx(_cfg.timestampColor) + '">' + hm + '</font> ';
+            }
+            // Optional proper-cased channel tag (CAP-012, D-09).
+            var tagHtml:String = "";
+            if (_cfg.showChannelTag) {
+                tagHtml = '<font color="' + hx(_cfg.channelTagColor) + '">[' + FcmConfig.chanLabel(rec.channel) + ']</font> ';
+            }
             // [channel] + body = light; sender name (the <b> span) = bold alias.
             html.push(
                 '<font face="' + FONT_BODY + '" size="' + fs + '">'
-                + '<font color="' + CHANNEL_HEX + '">[' + ch + ']</font> '
+                + tsHtml
+                + tagHtml
                 + '<b><font face="' + FONT_BOLD + '" color="' + col + '">' + user + ':</font></b> '
-                + '<font color="' + TEXT_HEX + '">' + msg + '</font>'
+                + '<font color="' + hx(_cfg.textColor) + '">' + msg + '</font>'
                 + '</font>');
         }
 
@@ -1572,8 +1593,8 @@ class FCMChatWidget extends MovieClip {
 
         // "v N new" hint when scrolled up and new messages arrived below.
         if (_bScrolling && _newWhileScrolled > 0) {
-            html.push('<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + PRIMARY_HEX
-                + '">v ' + _newWhileScrolled + ' new - PageDown</font>');
+            html.push('<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + hx(_cfg.tabActiveColor)
+                + '">v ' + _newWhileScrolled + ' new - wheel down or F12 Scroll to newest</font>');
         }
 
         _logTf.htmlText = html.join("<br/>");
@@ -1613,6 +1634,16 @@ class FCMChatWidget extends MovieClip {
         if (_logTf == null) return;
         try { _logTf.setSelection(_logTf.length, _logTf.length); } catch (e:Dynamic) {}
         _bScrolling = false; _newWhileScrolled = 0;
+    }
+
+    /** Mouse-wheel over the log: wheel up scrolls back, wheel down toward newest (CAP-008). */
+    function onLogWheel(e:flash.events.MouseEvent):Void {
+        try {
+            if (e.delta > 0) scrollUp();
+            else if (e.delta < 0) scrollDown();
+        } catch (err:Dynamic) {
+            zfeLog("warn", "scroll", "onLogWheel threw: " + Std.string(err));
+        }
     }
 
     // =========================================================================

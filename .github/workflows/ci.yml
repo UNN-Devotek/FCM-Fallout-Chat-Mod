@@ -274,13 +274,19 @@ jobs:
   # present so a future edit can't silently break the patch. Pure stdlib — uses the
   # runner's system python3, no extra action.
   gamemod-anchors:
-    name: Game-mod SWF anchors (Python)
+    name: Game-mod SWF anchors + config (Python + Haxe)
     needs: authorize
     runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
       - name: Run FCMBridge anchor tests
         run: python3 game-mods/FCMBridge/hudmenu-chat/test_anchors.py
+      # FcmConfig parser/clamp unit tests (CAP-001..005, #303/#304) — pure Haxe, --interp.
+      - name: Install Haxe
+        run: sudo apt-get update && sudo apt-get install -y haxe
+      - name: Run FcmConfig unit tests
+        working-directory: game-mods/FCMBridge/hudmodloader-chat
+        run: haxe test-config.hxml
 
   # ── Overlay launch smoke (Linux) — REQUIRED gate ─────────────────────────────
   # Builds the packaged overlay and asserts a clean startup. Catches crash-on-launch

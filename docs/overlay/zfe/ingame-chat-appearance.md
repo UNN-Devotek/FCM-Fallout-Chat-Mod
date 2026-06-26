@@ -4,6 +4,22 @@ Review of the FCMBridge HUD panel against the `ChatOverlay.tsx` reference design
 Sources: `game-mods/FCMBridge/FCMBridge.hx` (all lines), `admin-dashboard/src/features/chat/ChatOverlay.tsx`
 (lines 56–145 theme block; 5711–7150 render path), `docs/overlay/zfe/scaleform-ui-guide.md`.
 
+> **Live widget config (`FCMChatWidget`, chat.v1).** The roadmap below was written against the
+> older `FCMBridge.hx` (FCMHUD/1, hardcoded constants). The shipping in-game chat is the
+> HUDModLoader widget `game-mods/FCMBridge/hudmodloader-chat/FCMChatWidget.hx`, whose appearance
+> is now **fully user-editable** without a rebuild via `Data/FCMChat.ini` (`[FCMChat]` section,
+> parsed + clamped by `FcmConfig.parse()`). The full key catalog — **colors**
+> (`bgColor`, `borderColor`, `textColor`, `senderColor`, `channelTagColor`, `tabActiveColor`,
+> `tabInactiveColor`, `promptColor`, `tabRowColor`, `timestampColor`), **opacity** (`bgAlpha`),
+> **geometry** (`x`, `y`, `width`, `height`, `fontSize`), **limits** (`maxMessages`,
+> `maxSendLen`), **toggles** (`showChannelTag`, `showTimestamps`, `showHints`), and **keybinds**
+> (`openKey`, `channelNextKey`, `channelPrevKey`, `hideKey`) — lives in the commented
+> `Data/FCMChat.ini` (every value validated/clamped, invalid falls back to default).
+> Keybinds: [../keybinds.md](../keybinds.md) (in-game HUD section). Two feed-polish defaults
+> that differ from the table below: each message now carries an `HH:MM` **timestamp** (sourced
+> from the relay's `createdAt`, `showTimestamps` on by default) and the channel tag renders the
+> channel's **proper-cased name** (e.g. `[General]`, `[Server]`) instead of a raw lowercase slug.
+
 ---
 
 ## 1. Current State Inventory
