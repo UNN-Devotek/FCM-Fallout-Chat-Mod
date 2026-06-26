@@ -180,12 +180,14 @@ function wireShellInputBehaviour() {
 
     if (result.state === 'blocked') {
       logFocusAttempt(`${prefix} blocked: ${result.reason}`);
+      window.relayBridge.notifyInputFocusState?.(false);
       clearPendingFocusRetries();
       return true;
     }
 
     if (attemptIndex === focusRetrySteps.length - 1) {
       logFocusAttempt(`${prefix} failed: ${result.reason}`);
+      window.relayBridge.notifyInputFocusState?.(false);
       clearPendingFocusRetries();
       return true;
     }

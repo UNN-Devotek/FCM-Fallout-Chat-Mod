@@ -3572,7 +3572,7 @@ function createWindow() {
     if (inputWasFocused) {
       setTimeout(() => {
         if (mainWindow && !mainWindow.isDestroyed()) {
-          sendToRenderer('overlay:focus-input', true);
+          dispatchFocusInput('post-reload-refocus');
         }
       }, 800);
     }
