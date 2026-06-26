@@ -582,8 +582,8 @@ the build approach and answers some of their open design questions:
   the native client carries a **single** `clan` slot.
 - **Per-user cosmetics are a *data* gap on `chat.v1` only** (**#191**, **#192**, **#227**;
   **#228** is overlay-side and unaffected). On **FCMHUD/1 today** cosmetics ship via the 5th wire
-  field (#227) — no gap. The gap is `chat.v1`-era: its event carries only `senderDisplayName` + `body`,
-  so it isn't *handed* the per-user name-color / clan-tag data. When we swap to `chat.v1`, resolve via
+  field (#227) — no gap. The gap is `chat.v1`-era: its event carries `senderDisplayName`, `body`, and
+  `createdAt` (added #340) but **not** the per-user name-color / clan-tag data. When we swap to `chat.v1`, resolve via
   a ZFE event-schema cosmetic extension (then our SWF renders it) or the in-band `senderDisplayName`
   tunnel (#300), else keep cosmetics overlay-only (#228).
 - **Runtime-created channels** are not addressable by static `AllowedChannels` (admin/clan channels
