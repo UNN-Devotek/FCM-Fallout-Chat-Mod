@@ -262,6 +262,14 @@ export function computeMainTabCutout(offsetLeft: number, offsetWidth: number): {
 export const STICK_TO_BOTTOM_THRESHOLD = 80;
 
 /**
+ * Looser bottom threshold for the typing-indicator re-pin. The indicator is a
+ * small (~16px) sibling whose appearance/disappearance resizes the message
+ * area, so a more generous band keeps the newest message visible without
+ * yanking a user who has genuinely scrolled up to read history.
+ */
+export const TYPING_INDICATOR_STICK_THRESHOLD = 120;
+
+/**
  * Whether a scroll position counts as "at the bottom" (stuck to the latest msg).
  *
  * This MUST be sampled from a real scroll event (the user's actual position),
@@ -5117,8 +5125,7 @@ export default function ChatOverlay() {
     if (!cont) return;
     // Generous threshold so the indicator's own height (~16px) isn't read as
     // "scrolled up". If the user genuinely scrolled up to read history, leave them.
-    const distanceFromBottom = cont.scrollHeight - cont.scrollTop - cont.clientHeight;
-    if (distanceFromBottom > 120) return;
+    if (!isNearBottom(cont.scrollHeight, cont.scrollTop, cont.clientHeight, TYPING_INDICATOR_STICK_THRESHOLD)) return;
     const pin = () => { const c = messagesContRef.current; if (c) c.scrollTop = c.scrollHeight; };
     requestAnimationFrame(() => { pin(); requestAnimationFrame(pin); });
     setTimeout(pin, 50);
