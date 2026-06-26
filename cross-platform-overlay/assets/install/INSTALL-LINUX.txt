@@ -26,8 +26,22 @@ the package in place (works even if you are several versions behind).
 Requirements
 ------------
 - A desktop environment with an X11 or XWayland session.
-- FUSE (most distros have it). If the AppImage won't mount, run with:
-     ./"Fallout Chat Mod-<version>.AppImage" --appimage-extract-and-run
+- libfuse2 (libfuse.so.2) for the AppImage to mount. Most distros have it, but
+  FEDORA ships only fuse3 by default, so the AppImage may "launch once, then the
+  shortcut does nothing". Two fixes:
+     * Recommended on Fedora/Debian/Ubuntu: use the .deb above (no FUSE needed).
+     * Or install libfuse2 (Fedora: sudo dnf install fuse-libs; Debian/Ubuntu:
+       sudo apt install libfuse2), or run with --appimage-extract-and-run:
+          ./"Fallout Chat Mod-<version>.AppImage" --appimage-extract-and-run
+
+AppImageLauncher users — IMPORTANT
+----------------------------------
+If you have AppImageLauncher, do NOT use its "Integrate AppImage and run" prompt
+for this app. It moves the AppImage and creates its own shortcut, which can leave
+a launcher that works once and then won't reopen (you'd have to remove and re-add
+the AppImage every time). Just run the AppImage directly, or use the .deb. If a
+shortcut has already broken this way, remove the AppImageLauncher integration for
+"Fallout Chat Mod" and run the AppImage (or install the .deb) instead.
 
 Using the overlay
 -----------------

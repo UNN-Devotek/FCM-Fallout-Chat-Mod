@@ -33,9 +33,12 @@ import {
   IDLE_COLLAPSE_SECONDS_DEFAULT,
   shellToWebSettings,
   resolveCollapsedHeight,
+  revealCollapsedElements,
   computeResizeBounds,
   isDragTarget as isDragTargetCore,
   detectLinuxRenderer,
+  gameReservedWarning,
+  mergeKeybindDefaults,
   type ResizeEdge,
 } from './shell-core';
 
@@ -102,9 +105,12 @@ export interface PositionPreset {
   w?: number; h?: number;   // captured window size
 }
 
-// Bump to force all users' keybinds back to current defaults exactly once.
-// Must NOT be baked into DEFAULT_SHELL_SETTINGS — the default leaves
-// keybindsResetVersion undefined (→ 0) so the guard (stored < current) can fire.
+// Bump to fill any NEW default binds for existing users exactly once. The reset is
+// NON-DESTRUCTIVE (issue #136 §3.1): it only fills unset/blank binds and preserves
+// every bind the user customised (see mergeKeybindDefaults), so a reinstall or a
+// version bump never clobbers a working config. Must NOT be baked into
+// DEFAULT_SHELL_SETTINGS — the default leaves keybindsResetVersion undefined (→ 0)
+// so the guard (stored < current) can fire.
 // v5: goFo76 and recentParty default to '' — single-char defaults (/,\) were broken
 //     because isSinglePrintableChar gating prevented them from ever firing.
 export const KEYBIND_RESET_VERSION = 5;
@@ -201,10 +207,13 @@ export function loadShellSettings(): ShellSettings {
       }
     }
   } catch { /* defaults */ }
-  // One-time keybind reset: restore new defaults if the persisted version is older,
-  // then stamp the version so later customisations are never clobbered.
+  // One-time keybind reset (NON-DESTRUCTIVE — issue #136 §3.1): when the persisted
+  // version is older, fill only UNSET/blank binds with the current defaults and keep
+  // every bind the user actually set, then stamp the version. The old code wiped the
+  // whole map back to defaults, so a reinstall re-broke a working config; now it
+  // never clobbers a customised bind.
   if ((s.keybindsResetVersion ?? 0) < KEYBIND_RESET_VERSION) {
-    s.keybinds = { ...DEFAULT_SHELL_SETTINGS.keybinds };
+    s.keybinds = mergeKeybindDefaults(s.keybinds, DEFAULT_SHELL_SETTINGS.keybinds);
     s.keybindsResetVersion = KEYBIND_RESET_VERSION;
     try { localStorage.setItem(SHELL_SETTINGS_KEY, JSON.stringify(s)); } catch { /* ignore */ }
   }
@@ -442,8 +451,7 @@ function setCollapsed(next: boolean, focusInput = false) {
     // 260ms > 240ms animation — reveal content once fully expanded.
     setTimeout(() => {
       if (collapsed) return;
-      root?.classList.remove('collapsed');
-      hiddenEls.forEach(e => e.classList.remove('fcm-collapsed-hidden'));
+      revealCollapsedElements(root, hiddenEls);
       // Jump the feed to the latest message so the user sees the most recent
       // chat after expanding. Defer a frame so the body has laid out first.
       scrollMessagesToBottomDeferred();
@@ -670,6 +678,33 @@ export function openComponentSettings() {
 
 let currentSettings: ShellSettings = DEFAULT_SHELL_SETTINGS;
 let onSettingsChange: ((s: ShellSettings) => void) | null = null;
+/** Reference to the version span — set once the settings panel is built. */
+let verSpanEl: HTMLElement | null = null;
+/** Latched when an update signal arrives before the panel is built. */
+let pendingUpdateVersion: string | null = null;
+
+function applyUpdateDot(latestVersion: string): void {
+  if (!verSpanEl) return;
+  if (!verSpanEl.querySelector('.ss-update-dot')) {
+    const dot = document.createElement('span');
+    dot.className = 'ss-update-dot';
+    dot.title = `Update available: v${latestVersion}`;
+    dot.style.cssText = [
+      'display:inline-block',
+      'width:7px',
+      'height:7px',
+      'border-radius:50%',
+      'background:#e74c3c',
+      'box-shadow:0 0 5px rgba(231,76,60,0.8)',
+      'margin-left:5px',
+      'vertical-align:middle',
+      'flex-shrink:0',
+    ].join(';');
+    verSpanEl.style.display = 'inline-flex';
+    verSpanEl.style.alignItems = 'center';
+    verSpanEl.appendChild(dot);
+  }
+}
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs?: Partial<HTMLElementTagNameMap[K]> & { className?: string }, ...kids: (Node | string)[]): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -928,6 +963,8 @@ function buildSettingsPanel() {
   // Show the build-time version from the Vite define constant. No live fetch —
   // the displayed version is always the installed build version.
   const verSpan = el('span', { className: 'ss-ver' }, `v${__APP_VERSION__}`);
+  verSpanEl = verSpan;
+  if (pendingUpdateVersion) applyUpdateDot(pendingUpdateVersion);
   head.append(verSpan);
   panel.append(head);
   // Official non-affiliation disclaimer — shown at the top of Settings, under the
@@ -1309,6 +1346,14 @@ function buildSettingsPanel() {
           if (!accel) return; // wait for a non-modifier key
           window.removeEventListener('keydown', onKey, true);
           btn.classList.remove('listening');
+          // Warn (don't block) on a bare FO76 gameplay key — pressing it in-game would
+          // trigger both the overlay and the game (issue #136: Tab=nextChannel popped
+          // the overlay on every Pip-Boy open). The user can still bind it.
+          const warn = gameReservedWarning(accel);
+          if (warn && !window.confirm(warn + '\n\nBind it anyway?')) {
+            btn.textContent = prettyAccel(currentSettings.keybinds[key]); // keep the existing bind
+            return;
+          }
           const next = { ...currentSettings.keybinds, [key]: accel };
           commit({ keybinds: next });
           btn.textContent = prettyAccel(accel);
@@ -1584,6 +1629,20 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
   // resizes the overlay when Fallout 76 launches/closes, and the old resize→
   // re-clamp path is what reset the font to ~8px on every game launch.
   startIdleLoop(currentSettings);
+
+  // Version update indicator: when main signals a newer version is available,
+  // latch the version and apply a red dot to the settings panel version span.
+  // The panel may not be built yet (it's lazy), so we store the version and
+  // apply it when the panel is first opened.
+  window.relayBridge.onUpdateAvailable?.(({ latestVersion }) => {
+    pendingUpdateVersion = latestVersion;
+    applyUpdateDot(latestVersion);
+  });
+  // Also poll on startup — the update event may have fired before this listener
+  // was registered (WS connects early, before initShell completes).
+  window.relayBridge.getPendingUpdate?.().then(v => {
+    if (v) { pendingUpdateVersion = v; applyUpdateDot(v); }
+  }).catch(() => { /* non-fatal */ });
 
   // While collapsed, re-assert on any window resize (compositor-driven or manual)
   // so the viewport never jumps to the chat input. Debounced; skips the
@@ -1864,7 +1923,15 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
     if (msgActivityTimeout) { clearTimeout(msgActivityTimeout); msgActivityTimeout = null; }
     if (collapsed) {
       collapsed = false;
-      document.getElementById('root')?.classList.remove('collapsed');
+      // #327: fully reveal — not just the root 'collapsed' class. Previously this
+      // path left the body/input/footer carrying 'fcm-collapsed-hidden', so when
+      // the Insert hotkey's force-expand won the race against the local
+      // keydown→setCollapsed(false) path (which then no-op'd on its guard), the
+      // overlay expanded but showed nothing but the top bar. Funnel through the
+      // same reveal as setCollapsed so the two paths can't diverge.
+      const hiddenEls = collapsedHidden.slice();
+      collapsedHidden = [];
+      revealCollapsedElements(document.getElementById('root'), hiddenEls);
       scrollMessagesToBottomDeferred();
     }
   });

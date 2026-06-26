@@ -210,6 +210,22 @@ npm run dist:win    # Windows NSIS installer → dist/
 npm run dist:linux  # Linux AppImage → dist/
 ```
 
+### QA builds (hosted-dev testers)
+
+A separate **QA build channel** lets vetted testers run the overlay against the hosted dev
+environment (`dev.falloutchatmod.com`) as regular users — gated by a dev-guild `QA` Discord
+role plus a version-string golden-build lock, with no Cloudflare Access email and no
+developer role.
+
+```bash
+cd cross-platform-overlay
+npm run dist:qa     # "Fallout Chat Mod QA" → dist-electron/ (Linux); prints QA_ACTIVE_VERSION
+```
+
+Windows QA builds run on the self-hosted runner via the **Build Windows QA** GitHub Actions
+workflow. Full build → bless → distribute → retire runbook:
+[docs/deployment/qa-builds.md](docs/deployment/qa-builds.md).
+
 ### 6. Run backend tests
 
 ```bash
@@ -326,18 +342,6 @@ FO76: Options → Display → Display Mode → **Windowed Borderless** (recommen
 ## Display Mode (Linux / Proton)
 
 See `cross-platform-overlay/assets/install/INSTALL-LINUX.txt` for the KDE Plasma / Wayland setup. Short version: run FO76 in **WINDOWED** mode (not Borderless) and set the taskbar to Auto-Hide.
-
----
-
-## Antivirus / SmartScreen
-
-Unsigned binaries trigger SmartScreen and some AV heuristics by reputation alone — not because of behavior. Fallout Chat Mod does not read game memory, modify game files, inject code, or scan network connections. The only potentially flagged behavior is the global low-level keyboard hook used for hotkeys (classic keylogger heuristic — a migration to `RegisterHotKey` is tracked in `docs/CODE-SIGNING.md`).
-
-Code signing is planned (Azure Trusted Signing). Until signed, if your AV blocks the overlay, add exclusions for:
-- `%LocalAppData%\Programs\Fallout Chat Mod\`
-- `%LocalAppData%\FalloutChatOverlay\`
-
-Code signing is on the roadmap to remove these reputation-based warnings.
 
 ---
 

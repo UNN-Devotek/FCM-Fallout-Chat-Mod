@@ -160,15 +160,34 @@ function emitVisibilityDecision(isVisible, pendingHide) {
 }
 
 // Pure form of desiredTopmost. state = { hasWindow, forceVisible, gameRunning,
-// windowFocused, foregroundIsGame }. Returns true when the overlay should be
-// always-on-top. No window → false. Precedence: forceVisible → gameRunning →
-// windowFocused → game is the foreground process.
+// windowFocused, foregroundIsGame, focusAwareTopmost }. Returns true when the
+// overlay should be always-on-top. No window → false.
+//
+// Two modes:
+//   focusAwareTopmost=true  (Linux KDE-Wayland with active-window detection): float
+//     above the game ONLY while the GAME is actually the foreground window, so
+//     tabbing to another app lowers the overlay (no more "above ALL windows"). Safe
+//     on Linux — topmost flips don't cause a DWM-recomposition flash there.
+//   focusAwareTopmost=false (Windows, or Linux without detection): stay topmost for
+//     the whole session while the game is RUNNING. On Windows this is deliberate —
+//     it avoids true→false→true flips on tab-in that trigger DWM flashes; on bare
+//     Linux/X11 there's no foreground API to do better.
+// In both modes forceVisible and the overlay being focused force topmost.
 function desiredTopmost(state) {
   state = state || {};
   if (!state.hasWindow) return false;
   if (state.forceVisible) return true;
-  if (state.gameRunning) return true;
   if (state.windowFocused) return true;
+  if (state.focusAwareTopmost) {
+    if (state.foregroundIsGame === true) return true;
+    // A FULLSCREEN game often exposes no readable WM_CLASS to xdotool (foreground
+    // reads empty / "(null)"). If the game is running and the foreground is
+    // unreadable, it's almost certainly the game in fullscreen → stay on top. Only a
+    // RECOGNIZED other window (a real, non-game class) lowers the overlay.
+    if (state.gameRunning && state.foregroundUnknown === true) return true;
+    return false;
+  }
+  if (state.gameRunning) return true;
   return state.foregroundIsGame === true;
 }
 
@@ -236,6 +255,18 @@ function isGameClass(name) {
   return XWAYLAND_GAME_CLASSES.some(c => lower === c);
 }
 
+// True when the active-window class is UNREADABLE — empty, or the literal "(null)"
+// that some xdotool builds print when the focused window exposes no WM_CLASS. A
+// FULLSCREEN FO76 (Proton/XWayland) commonly does exactly this — confirmed on
+// CachyOS: focused game → `xdotool getactivewindow getwindowclassname` returns
+// "(null)" and xprop shows no WM_CLASS. So when the game is RUNNING and the
+// foreground is unreadable, it's almost certainly the fullscreen game (not a real
+// other app), and callers should keep the overlay on top / hotkeys live.
+function isUnknownForegroundClass(name) {
+  const s = (name == null ? '' : String(name)).trim().toLowerCase();
+  return s === '' || s === '(null)';
+}
+
 // Pure function: should global hotkeys be registered right now?
 //
 // Inputs:
@@ -256,13 +287,125 @@ function shouldRegisterShortcuts({ platform, kdeWayland, hasForegroundDetect, ga
   if (platform === 'win32') {
     gameActive = isGameClass(foregroundProc);
   } else if (kdeWayland && hasForegroundDetect) {
-    gameActive = isGameClass(foregroundProc);
+    // Same fullscreen-game caveat as desiredTopmost: a focused fullscreen FO76 reads
+    // an unreadable class ("(null)"/empty), so treat "game running + unreadable
+    // foreground" as the game being active (keeps hotkeys live in-game).
+    gameActive = isGameClass(foregroundProc) || (!!gameRunning && isUnknownForegroundClass(foregroundProc));
   } else {
     // Fallback: no reliable foreground API — treat "game running" as "game active".
     // This matches the pre-kdotool Linux behavior exactly (no regression).
     gameActive = !!gameRunning;
   }
   return gameActive || !!overlayFocused;
+}
+
+// Pure decision: what to do after a KDE-Wayland active-window poll spawn ends.
+//
+// Why this exists: on some distros (confirmed Fedora 44, xdotool 3.x) the chained
+// `xdotool getactivewindow getwindowclassname` hits a double-free *inside libxdo*
+// (`xdo_get_window_classname` → `XFree` → abort/SIGABRT) whenever the active window's
+// WM_CLASS can't be read cleanly — routine under XWayland when a native-Wayland
+// window is focused. Our JS error-handling can't prevent the per-spawn coredump, so
+// re-spawning into the crash every ~300ms produces a coredump storm. This breaker
+// detects repeated crashes and stops hammering the broken tool.
+//
+// Inputs:
+//   crashed            : boolean — the last spawn ended abnormally (signal set, or
+//                        non-zero/null exit code). A clean exit is `crashed:false`.
+//   consecutiveCrashes : number  — count of back-to-back crashes INCLUDING this one
+//                        (caller increments before calling; resets to 0 on clean exit).
+//   maxCrashes         : number  — threshold to trip the breaker (default 3).
+//   hasAltTool         : boolean — the *other* tool (kdotool↔xdotool) is on PATH.
+//
+// Returns one of:
+//   'continue'    — keep polling with the current tool (no trip, or a clean exit).
+//   'switch-tool' — trip: the current tool keeps crashing, but the alternate tool is
+//                   available, so switch to it and resume (gives crash-affected users
+//                   kdotool automatically when installed).
+//   'disable'     — trip with no alternate: stop the poller for this session and fall
+//                   back to game-running detection (no regression vs. "no tool").
+function decideForegroundPollerAction({ crashed, consecutiveCrashes, maxCrashes = 3, hasAltTool = false } = {}) {
+  if (!crashed) return 'continue';
+  if (consecutiveCrashes < maxCrashes) return 'continue';
+  return hasAltTool ? 'switch-tool' : 'disable';
+}
+
+// ── Windows foreground-poller resilience (issue #136) ─────────────────────────
+// On win32 the foreground process is read by a SINGLE long-lived powershell.exe
+// child (the only thing that updates lastForegroundProc). If it dies — or never
+// starts: PowerShell Constrained Language Mode blocks its `Add-Type`, and
+// AppLocker/AV can block powershell.exe — the last-known foreground (the game,
+// while keys were registered) freezes and refreshShortcuts() stops firing, so the
+// global hotkeys are NEVER released and fire in every app (#136). These pure
+// helpers back the self-heal: a capped restart backoff, a fail-safe staleness
+// watchdog, and a diagnostic exit classifier. main.js owns the timers/spawns.
+
+// Backoff (ms) before relaunching the win32 poller after its Nth death. Ramps
+// 1s → 2s → 5s and caps at 5s, so a transient death recovers fast while a hard
+// failure (blocked powershell) can't spin in a tight relaunch loop. restartCount
+// is how many restarts have already happened (0 = first restart after first death).
+function nextPollerBackoffMs(restartCount) {
+  const schedule = [1000, 2000, 5000];
+  const n = Number.isFinite(restartCount) && restartCount > 0 ? Math.floor(restartCount) : 0;
+  return schedule[Math.min(n, schedule.length - 1)];
+}
+
+// Fail-safe watchdog test: has the foreground poller gone silent? When the poller
+// is dead/blocked/never-started, no new lines arrive and lastForegroundProc is
+// stuck. Treat "no line for longer than staleMs" as "we don't know the foreground"
+// and tell the caller to fail closed (clear foreground → refreshShortcuts releases
+// the global hotkeys). lastLineAt is the ms timestamp of the last line (0/null =
+// never seen). Refuses to trip on invalid now/staleMs so a missing clock can't
+// spuriously release a working user's keys.
+function isForegroundStale({ lastLineAt, now, staleMs } = {}) {
+  if (typeof now !== 'number' || typeof staleMs !== 'number' || staleMs <= 0) return false;
+  const last = typeof lastLineAt === 'number' ? lastLineAt : 0;
+  return (now - last) > staleMs;
+}
+
+// Classify a win32 poller exit for diagnostics. A poller that exits almost
+// immediately and never emitted a single foreground line is the signature of a
+// BLOCKED launch (Constrained Language Mode rejecting `Add-Type`, or AppLocker/AV
+// blocking powershell.exe) — distinct from a normal mid-run crash. Lets main.js
+// log an actionable hint instead of dying silently (why #136 was hard to spot).
+// Returns 'blocked-or-clm' (fast exit, never emitted) | 'crashed' (everything else).
+function classifyPollerExit({ msSinceStart, everEmitted, quickExitMs = 1500 } = {}) {
+  const fast = typeof msSinceStart === 'number' && msSinceStart >= 0 && msSinceStart < quickExitMs;
+  if (!everEmitted && fast) return 'blocked-or-clm';
+  return 'crashed';
+}
+
+// ── Diagnostic logging level + rotation (pure; the logger in main.js is testable) ──
+
+// Resolve the active log level from env, argv, and persisted settings.
+//   'verbose' — per-tick logging on (deep debugging session).
+//   'info'    — default; lifecycle + state transitions only.
+// Precedence: explicit env (FCM_DEBUG / FCM_VERBOSE) or a launch flag
+// (--fcm-debug, or the --debug / --verbose aliases) turn verbose ON; otherwise the
+// persisted Settings → Debug logging toggle; else 'info'. Kept here (not main.js)
+// so the precedence is unit-testable without electron.
+function resolveLogLevel({ env = {}, argv = [], settings = null } = {}) {
+  env = env || {};                              // tolerate an explicit null
+  if (!Array.isArray(argv)) argv = [];
+  const truthy = (v) => {
+    const s = String(v == null ? '' : v).trim().toLowerCase();
+    return s === '1' || s === 'true' || s === 'yes' || s === 'on' || s === 'verbose' || s === 'debug';
+  };
+  if (truthy(env.FCM_DEBUG) || truthy(env.FCM_VERBOSE)) return 'verbose';
+  // --fcm-debug is the namespaced, documented launch flag (safe to pass to the
+  // AppImage / .deb binary / CLI: `"Fallout Chat Mod.AppImage" --fcm-debug`);
+  // --debug / --verbose are accepted aliases. The KDE-Wayland XWayland relaunch
+  // preserves user argv (planOzoneRelaunch concats), so the flag survives.
+  if (Array.isArray(argv) && (argv.includes('--fcm-debug') || argv.includes('--debug') || argv.includes('--verbose'))) return 'verbose';
+  if (settings && typeof settings === 'object' && settings.debugLogging === true) return 'verbose';
+  return 'info';
+}
+
+// True when the log file should be rotated (renamed to .1 and started fresh). Pure
+// so the rotation threshold is unit-testable; the caller supplies the current byte
+// size and the cap. Guards against NaN / non-positive caps.
+function shouldRotateLog(size, cap) {
+  return typeof size === 'number' && typeof cap === 'number' && cap > 0 && size > cap;
 }
 
 // ── Relay URL resolution ───────────────────────────────────────────────────────
@@ -282,7 +425,13 @@ function shouldRegisterShortcuts({ platform, kdeWayland, hasForegroundDetect, ga
 // Production (default — no env override needed):
 //   relayHttp = 'https://falloutchatmod.com'
 //   relayWs   = 'wss://falloutchatmod.com/ws'
-function resolveRelayUrls(env) {
+function resolveRelayUrls(env, channel) {
+  if (channel === 'qa') {
+    return {
+      relayHttp: env.RELAY_HTTP || 'https://dev.falloutchatmod.com',
+      relayWs:   env.RELAY_WS   || 'wss://dev.falloutchatmod.com/ws',
+    };
+  }
   return {
     relayHttp: env.RELAY_HTTP || 'https://falloutchatmod.com',
     relayWs:   env.RELAY_WS   || 'wss://falloutchatmod.com/ws',
@@ -307,18 +456,18 @@ function classifyInputGrab(psOutput) {
 // spawning anything. main.js runs the result via child_process.exec on KDE.
 //
 // TWO rules are needed on Plasma 6 (verified on KWin 6.6.5):
-//   • "keep above" on the OVERLAY (wmclass=fallout, title="Fallout Chat Mod"): above=true.
-//     (The `layer=8`/`layerrule=2` CriticalNotification force that older KWin honored is
-//     IGNORED by KWin 6, so keep-above ALONE loses to a focused fullscreen game.)
-//   • "demote game" on the GAME (wmclass=steam_app_1151340): fullscreen=false (Force).
-//     This stops KWin promoting the focused game to the active-fullscreen layer (6), so the
-//     overlay's keep-above (4) wins even while you're playing. THIS is the rule that fixes
-//     "overlay drops under when I click the game".
+//   • "keep above" on the OVERLAY (wmclass=fallout-chat-mod): above=true.
+//   • "keep game below" on the GAME (wmclass=steam_app_1151340): below=true (Force).
+//     KWin evaluates keepBelow() BEFORE isActiveFullScreen(), so dropping the game to
+//     BelowLayer(1) prevents it from ever reaching ActiveLayer(6) — the overlay's
+//     keepAbove(4) wins even while the game is focused, with NO flicker.
+//     (Replaces the retired fcm-game-demote / fullscreen=false Force rule, which fought the
+//     game's own fullscreen state and caused endless flicker — issue #272.)
 //
 // FORMAT (KWin 6, also verified): the authoritative rule list is [General] `rules=` — a
 // COMMA-SEPARATED list of group NAMES — plus a matching `count`. Writing numbered groups +
 // only `count` is NOT enough (KWin rewrites count and drops the rules). We use STABLE NAMED
-// groups (fcm-keepabove / fcm-game-demote).
+// groups (fcm-keepabove / fcm-game-below).
 //
 // SELF-HEALING CLEANUP: both builders below first PARTITION the existing `rules=` list into
 // the user's own rules (KEEP) vs FCM-authored rules (matched by a "Fallout Chat Mod" prefix
@@ -360,44 +509,61 @@ function awkStripFcmSectionLines() {
 // named rules, preserving the user's own rules. Idempotent: if the active FCM rules are
 // already EXACTLY our two current named groups, it prints fcm-rule-present and skips the
 // reconfigure (so startup doesn't flash KWin on every launch).
-function buildKwinKeepAboveScript({ file = 'kwinrulesrc', title = 'Fallout Chat Mod', overlayWmclass = 'fallout', gameWmclass = 'steam_app_1151340' } = {}) {
+// includeBelow (default true): also write the "keep game below" rule (fcm-game-below).
+// THE KWin-6 FIX for "overlay hidden behind a focused fullscreen game": forcing the
+// game keepBelow drops it to KWin's BelowLayer, which KWin evaluates BEFORE the
+// active-fullscreen promotion — so a NORMAL keep-above overlay sits above the game even
+// while the game is focused. Unlike the old fullscreen-demote rule, the game does NOT
+// fight "below" (it's a stacking hint, not a state the game asserts), so there is NO
+// flicker. It's an OPTION (settings.kwinGameBelow / installer prompt) because forcing
+// the game below also lets the panel/other windows cover it; default ON on KDE-Wayland.
+function buildKwinKeepAboveScript({ file = 'kwinrulesrc', overlayWmclass = 'fallout-chat-mod', gameWmclass = 'steam_app_1151340', includeBelow = true } = {}) {
   const ABOVE = 'fcm-keepabove';      // stable group name (overlay keep-above rule)
-  const DEMOTE = 'fcm-game-demote';   // stable group name (game fullscreen-demote rule)
+  const BELOW = 'fcm-game-below';     // stable group name (game keep-below rule)
   const w = (grp, key, val) => `kwriteconfig6 --file ${file} --group ${grp} --key ${key} ${val}`;
-  return [
+  const lines = [
     ...kwinPartitionSnippet(file),
-    // Idempotency: already exactly our two current named rules (nothing stale) → skip.
+    // Idempotency: already EXACTLY the rules we want (nothing stale, game-below present
+    // iff requested) → skip. Otherwise strip + rewrite so toggling the option on/off works.
     `N=$(printf '%s' "$FCM" | tr ' ' '\\n' | grep -c .)`,
     `case " $FCM " in *" ${ABOVE} "*) A=1 ;; *) A=0 ;; esac`,
-    `case " $FCM " in *" ${DEMOTE} "*) D=1 ;; *) D=0 ;; esac`,
-    `if [ "$N" = "2" ] && [ "$A" = "1" ] && [ "$D" = "1" ]; then echo fcm-rule-present; exit 0; fi`,
-    // Clear stale FCM groups (old numbered/named) so they don't linger as orphaned sections —
-    // awk-strip them (kwriteconfig6 can't delete a section). We then re-write our two fresh below.
+    `case " $FCM " in *" ${BELOW} "*) B=1 ;; *) B=0 ;; esac`,
+    includeBelow
+      ? `if [ "$N" = "2" ] && [ "$A" = "1" ] && [ "$B" = "1" ]; then echo fcm-rule-present; exit 0; fi`
+      : `if [ "$N" = "1" ] && [ "$A" = "1" ] && [ "$B" = "0" ]; then echo fcm-rule-present; exit 0; fi`,
+    // Clear stale FCM groups (old numbered/named, the retired fcm-game-demote, and a
+    // now-unwanted fcm-game-below) — awk-strip them (kwriteconfig6 can't delete a section).
     ...awkStripFcmSectionLines(),
-    // Overlay keep-above rule.
+    // Overlay keep-above rule (always).
     w(ABOVE, 'Description', `"Fallout Chat Mod - keep above games"`),
-    w(ABOVE, 'title', `"${title}"`),
-    w(ABOVE, 'titlematch', '2'),
     w(ABOVE, 'wmclass', `"${overlayWmclass}"`),
     w(ABOVE, 'wmclassmatch', '2'),
     w(ABOVE, 'wmclasscomplete', 'false'),
     w(ABOVE, 'above', 'true'),
     w(ABOVE, 'aboverule', '3'),
-    // Game fullscreen-demote rule (the one that actually keeps us above the focused game).
-    w(DEMOTE, 'Description', `"Fallout Chat Mod - demote game from fullscreen layer"`),
-    w(DEMOTE, 'wmclass', `"${gameWmclass}"`),
-    w(DEMOTE, 'wmclassmatch', '2'),
-    w(DEMOTE, 'wmclasscomplete', 'false'),
-    w(DEMOTE, 'fullscreen', 'false'),
-    w(DEMOTE, 'fullscreenrule', '2'),
-    // rules = preserved user rules + our two; count = its length.
-    `NEWR="\${KEEP:+$KEEP,}${ABOVE},${DEMOTE}"`,
+  ];
+  // Game keep-below rule — the no-flicker fix that beats the fullscreen layer.
+  if (includeBelow) {
+    lines.push(
+      w(BELOW, 'Description', `"Fallout Chat Mod - keep game below"`),
+      w(BELOW, 'wmclass', `"${gameWmclass}"`),
+      w(BELOW, 'wmclassmatch', '2'),
+      w(BELOW, 'wmclasscomplete', 'false'),
+      w(BELOW, 'below', 'true'),
+      w(BELOW, 'belowrule', '2'),
+    );
+  }
+  // rules = preserved user rules + ours; count = its length.
+  const NEWR = includeBelow ? `\${KEEP:+$KEEP,}${ABOVE},${BELOW}` : `\${KEEP:+$KEEP,}${ABOVE}`;
+  lines.push(
+    `NEWR="${NEWR}"`,
     `kwriteconfig6 --file ${file} --group General --key rules "$NEWR"`,
     `COUNT=$(printf '%s' "$NEWR" | tr ',' '\\n' | grep -c .)`,
     `kwriteconfig6 --file ${file} --group General --key count "$COUNT"`,
     KWIN_RECONF,
     `echo fcm-rule-installed`,
-  ].join('\n');
+  );
+  return lines.join('\n');
 }
 
 // Removal script (for uninstall). Strips ALL FCM-authored rules (current named + any stale
@@ -478,11 +644,27 @@ function resolveRelayProxyUrl(reqPath, relayHttp) {
   return url;
 }
 
-function planOzoneRelaunch({ kdeWayland, argv = [], appImagePath = null } = {}) {
+function planOzoneRelaunch({ kdeWayland, argv = [], appImagePath = null, execPath = null } = {}) {
   const FLAG = '--ozone-platform=x11';
   if (!kdeWayland) return null;
   if (argv.includes(FLAG)) return null;
-  const opts = { args: argv.slice(1).concat(FLAG) };
+  // The binary the child would re-exec: the persistent $APPIMAGE when known, else the
+  // current process's execPath.
+  const effectiveExec = appImagePath || execPath || null;
+  // Re-exec is UNSAFE when the only available binary is a transient AppImage FUSE mount
+  // (/tmp/.mount_*) AND $APPIMAGE is unset: app.exit(0) unmounts it before the child can
+  // start, so the child vanishes — the "launches once, then the shortcut does nothing"
+  // failure (issue #272). When unsafe, the caller must NOT exit; staying on native
+  // Wayland (degraded stacking) beats disappearing entirely.
+  const isTransientMount = !!effectiveExec && /\/\.mount_[^/]*\//.test(effectiveExec);
+  const safe = !!appImagePath || !isTransientMount;
+  const opts = {
+    args: argv.slice(1).concat(FLAG),
+    // Belt-and-suspenders alongside the argv flag: the env var also forces XWayland,
+    // in case a launcher (AppImageLauncher, a wrapper .desktop) mangles argv.
+    env: { ELECTRON_OZONE_PLATFORM_HINT: 'x11' },
+    safe,
+  };
   if (appImagePath) opts.execPath = appImagePath;
   return opts;
 }
@@ -536,7 +718,14 @@ module.exports = {
   XWAYLAND_GAME_CLASSES,
   isGameProcess,
   isGameClass,
+  isUnknownForegroundClass,
   shouldRegisterShortcuts,
+  decideForegroundPollerAction,
+  nextPollerBackoffMs,
+  isForegroundStale,
+  classifyPollerExit,
+  resolveLogLevel,
+  shouldRotateLog,
   stateHasRealData,
   isCfChallenge,
   isSinglePrintableChar,

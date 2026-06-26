@@ -48,6 +48,7 @@ module.exports = {
     playerReport: modelStub(),
     chatCommand: modelStub(),
     hudIdentityBlock: modelStub(),
+    hudPairingToken: modelStub(),
     $transaction: jest.fn(async (arg) => typeof arg === 'function' ? arg(module.exports.default) : Promise.all(arg)),
     $executeRaw: jest.fn().mockResolvedValue(0),
     $queryRaw: jest.fn().mockResolvedValue([]),

@@ -332,16 +332,11 @@ export default function ServerHealth() {
                 Versions &amp; Downloads
               </div>
               <div style={chartGridStyle}>
-                <div style={chartWrapStyle}>
-                  <CrtBarChart
-                    title="Client Version Distribution"
-                    horizontal
-                    data={communityStats.versionDistribution.map(v => ({
-                      label: v.version,
-                      value: v.count,
-                    }))}
-                  />
-                </div>
+                {/* "Client Version Distribution" chart removed: its data source
+                    (per-client app_version telemetry) was deliberately deleted in
+                    #117. The backend no longer returns versionDistribution, so
+                    mapping over it crashed this page. Re-add only if version
+                    telemetry is reintroduced. */}
                 <div style={chartWrapStyle}>
                   <CrtBarChart
                     title="Downloads per Version"

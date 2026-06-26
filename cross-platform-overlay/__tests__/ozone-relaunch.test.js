@@ -41,4 +41,41 @@ describe('planOzoneRelaunch', () => {
     const childArgv = ['/app', ...first.args];
     expect(planOzoneRelaunch({ kdeWayland: true, argv: childArgv })).toBeNull();
   });
+
+  // ── env hint (belt-and-suspenders XWayland force) ────────────────────────────
+
+  it('always carries ELECTRON_OZONE_PLATFORM_HINT=x11 in the plan env', () => {
+    const plan = planOzoneRelaunch({ kdeWayland: true, argv: ['/app'] });
+    expect(plan.env).toEqual({ ELECTRON_OZONE_PLATFORM_HINT: 'x11' });
+  });
+
+  // ── re-exec safety (issue #272: "launches once, then shortcut does nothing") ──
+
+  it('marks the relaunch SAFE for a normal (non-AppImage) install', () => {
+    const plan = planOzoneRelaunch({ kdeWayland: true, argv: ['/usr/lib/fcm/fallout-chat-mod'], execPath: '/usr/lib/fcm/fallout-chat-mod' });
+    expect(plan.safe).toBe(true);
+  });
+
+  it('marks the relaunch SAFE when $APPIMAGE is set even if execPath is a transient mount', () => {
+    const plan = planOzoneRelaunch({
+      kdeWayland: true,
+      argv: ['/tmp/.mount_abc/fallout-chat-mod'],
+      execPath: '/tmp/.mount_abc/fallout-chat-mod',
+      appImagePath: '/home/u/Applications/Fallout Chat Mod.AppImage',
+    });
+    expect(plan.safe).toBe(true);
+    expect(plan.execPath).toBe('/home/u/Applications/Fallout Chat Mod.AppImage');
+  });
+
+  it('marks the relaunch UNSAFE when execPath is a transient /tmp/.mount_* path and $APPIMAGE is unset', () => {
+    // The doomed case: re-execing the mount, then app.exit(0) unmounts it → child dies.
+    const plan = planOzoneRelaunch({
+      kdeWayland: true,
+      argv: ['/tmp/.mount_abc/fallout-chat-mod'],
+      execPath: '/tmp/.mount_abc/fallout-chat-mod',
+      appImagePath: null,
+    });
+    expect(plan.safe).toBe(false);
+    expect(plan.execPath).toBeUndefined(); // caller falls back to process.execPath, but must NOT exit
+  });
 });

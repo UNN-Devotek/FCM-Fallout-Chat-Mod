@@ -2,6 +2,11 @@
 
 The moderation subsystem covers: role-based access control, content filtering (word filter + automod rules), spam detection, user reports, ban management with evidence storage, audit logging, and name validation.
 
+> **Multi-surface chat moderation (kick / mute / ban):** for how these actions work across the
+> dashboard, overlay, and the new in-game **chat.v1** `.ba2` under the Nexus/Discord auth lockdown —
+> including the cross-surface eviction signal and the account-level ban target — see
+> [kick-mute-ban.md](kick-mute-ban.md).
+
 ## Role Model
 
 There are three staff roles, determined by Discord guild membership:
