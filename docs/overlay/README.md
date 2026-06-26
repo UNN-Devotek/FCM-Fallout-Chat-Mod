@@ -127,10 +127,35 @@ cd cross-platform-overlay
 npm run dist:qa
 ```
 
-The `dist:qa` script sets `BUILD_CHANNEL=qa` (injected into the renderer as
-`__BUILD_CHANNEL__`) and passes `-c.extraMetadata.fcmChannel=qa` to `electron-builder`,
-which writes `fcmChannel: "qa"` into the packed `package.json`. The built app name is
-`Fallout Chat Mod QA`.
+`dist:qa` runs `scripts/build-qa.mjs`, which:
+
+- Computes a **unique per-build version** `<base>-qa.<UTC-timestamp>` (e.g.
+  `1.3.91-qa.20260626014530`) so the golden-build lock can tell a fresh build from a
+  retired one (the lock matches the version string exactly — without a unique stamp,
+  rebuilding the same `package.json` version could not retire the old build).
+- Injects that version into BOTH the renderer (`FCM_BUILD_VERSION` -> `__APP_VERSION__`)
+  and the packaged app (`-c.extraMetadata.version` -> the packed `package.json`, which
+  `main.js` reads and sends as the `x-client-version` header the lock checks).
+- Sets `BUILD_CHANNEL=qa` (renderer `__BUILD_CHANNEL__`) and `-c.extraMetadata.fcmChannel=qa`
+  (packed `package.json`), and names the app `Fallout Chat Mod QA`.
+
+On completion it prints the line to bless the build, e.g.
+`QA_ACTIVE_VERSION=1.3.91-qa.20260626014530` — set that on the dev backend (env or
+`POST /api/admin/qa/active-version`) to make this build the active golden build.
+
+An explicit `FCM_BUILD_VERSION` overrides the auto-stamp — use it to pin ONE version
+across a coordinated Linux + Windows golden release (so a single `QA_ACTIVE_VERSION`
+admits both), or to match an already-blessed lock value:
+
+```bash
+FCM_BUILD_VERSION=1.3.91-qa.20260626 npm run dist:qa
+```
+
+**Windows QA build:** run the **Build Windows QA** workflow (`.github/workflows/build-windows-qa.yml`,
+`workflow_dispatch`, owner-only) on the self-hosted `[self-hosted, windows, unn]` runner —
+it runs `dist:qa` and uploads the unsigned NSIS + portable `.exe` as a workflow artifact.
+Its optional `version` input maps to `FCM_BUILD_VERSION` (pin it to match the active lock).
+Wine cannot build Electron 31+ on Linux, so Windows QA builds use the runner.
 
 ### Runtime channel detection
 
@@ -187,3 +212,5 @@ backend never checks it (`QA_BUILD_LOCK` defaults to false in production).
 - Build instructions: `building.md`
 - Keybind reference: `keybinds.md`
 - Window management: `window-management.md`
+- In-game HUD chat (separate opt-in `.ba2` track): `zfe/README.md` — ZFE `chat.v1` works on native
+  Windows (0.9.9+) but is Proton/Wine-blocked (#326), so this desktop overlay stays the Linux chat path.

@@ -488,13 +488,17 @@ CF evaluates policies from most-specific path first. On `dev.falloutchatmod.com`
 | Bypass | `/auth/discord/qa/*` | Bypass | QA OAuth start + callback |
 | Bypass | `/api/auth/qa-status/*` | Bypass | QA login polling endpoint |
 | Bypass | `/api/*` | Bypass | All overlay REST calls (register, channels, messages, etc.) |
-| Access (SSO) | `/api/admin/*` | Require "FCM Developers" group | Admin-only API |
-| Access (SSO) | `/api/internal/*` | Require "FCM Developers" group | Internal endpoints |
 | Access (SSO) | `/` (catch-all) | Require "FCM Developers" group | Dashboard root + static assets |
 
-The `/api/admin/*` and `/api/internal/*` bypass-exceptions are evaluated before `/api/*`
-because CF matches most-specific path first, so those paths stay SSO-gated even though
-`/api/*` is bypassed.
+Note on `/api/admin/*` and `/api/internal/*`: in the live config these are NOT CF-Access
+(SSO) gated — they fall under the wholesale `/api/*` bypass above. They are instead
+protected at the application layer: `/api/admin/*` requires the `ADMIN_API_KEY`
+(`x-admin-api-key`, constant-time compared) and `/api/internal/verify-dev-role` requires
+the `PROD_VERIFY_TOKEN` service token. This is the pre-existing dev posture (the overlay
+needs the whole `/api` prefix bypassed). If you want defense-in-depth SSO on those paths,
+add dedicated, more-specific `/api/admin/*` + `/api/internal/*` Access apps (CF matches
+most-specific first) — but note that would force CF-Access creds on the maintainer's admin
+calls, e.g. flipping the golden build via `POST /api/admin/qa/active-version`.
 
 **Verify WebSocket through the bypass:** after applying the policy, confirm that a WS
 upgrade to `wss://dev.falloutchatmod.com/ws` with a valid `X-Auth-Token` header succeeds
@@ -552,13 +556,17 @@ as an allowed redirect URI on the **dev Discord application** (not the prod app)
 
 ### Flipping the golden build
 
+Each `npm run dist:qa` stamps a unique version `<base>-qa.<UTC-timestamp>` and prints it
+on completion (`QA_ACTIVE_VERSION=<version>`). Use that exact string as the blessed
+version below — that uniqueness is what lets the lock retire the previous build.
+
 When a new QA artifact is ready, update the blessed version via the admin API:
 
 ```bash
 curl -X POST https://dev.falloutchatmod.com/api/admin/qa/active-version \
   -H "x-admin-api-key: <ADMIN_API_KEY>" \
   -H "Content-Type: application/json" \
-  -d '{"version": "1.2.3"}'
+  -d '{"version": "1.3.91-qa.20260626014530"}'
 ```
 
 Retrieve the current active version:

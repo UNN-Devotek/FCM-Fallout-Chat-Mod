@@ -10,6 +10,14 @@
 > public-mode lockdown RTL, bridge+onboarding core logic, shell-core helpers.
 > **What's next:** P1 main-process IPC handlers (register/relay/discord/keybinds/visibility),
 > stateful shell helpers (applyScale, tickIdle, navChannel), and E2E once the mock relay exists.
+>
+> **In-game HUD chat (chat.v1) — 2026-06-26:** the `FCMChatWidget.hx` pure-logic suite
+> (`fcm-chat-widget-logic.test.js`) is ✅ Done and runs in the `unit-vitest` matrix (see the table
+> below). Live in-game validation is **PASS on native Windows** (ZFE 0.9.9+, relay fixes #334/#335 —
+> send round-trips end-to-end) and **BLOCKED on Proton/Wine** by an upstream Zig TLS bug (#326), so
+> in-game send is validated manually on the Windows VM only. The SWF/transport layer remains
+> manual-test (no automated in-game harness); see
+> [../overlay/zfe/native-chat-relay/proton-status.md](../overlay/zfe/native-chat-relay/proton-status.md).
 
 This plan covers the four overlay-related modules:
 
