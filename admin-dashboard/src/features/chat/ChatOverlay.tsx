@@ -361,6 +361,27 @@ export function isProdRelayHost(host: string | null | undefined): boolean {
 }
 
 /**
+ * Is `candidate` a STRICTLY newer version than `current`?
+ *
+ * Mirrors the shell's `cmpVersions` guard (cross-platform-overlay/overlay-core.js):
+ * the backend broadcasts `app:update-available` to EVERY client whenever it has a
+ * latest version cached — it does NOT compare against the client's installed
+ * build — so the update dot must do the comparison itself. We can't import the
+ * shell's `cmpVersions` here (it's a CommonJS module in a different package, outside
+ * the Vite build root), so this is a minimal, intentionally identical re-implementation.
+ *
+ * Uses locale-aware numeric compare so '1.3.10' > '1.3.9' (not string-ordered).
+ * A pre-release suffix sorts AFTER the bare release (e.g. '1.3.91-dev' > '1.3.91'),
+ * which matches the shell: a dev/QA build of a release must NOT light the dot for
+ * that same release. Malformed / non-string inputs are treated as '0.0.0', so they
+ * never appear newer than a real version.
+ */
+export function isVersionNewer(candidate: string | null | undefined, current: string | null | undefined): boolean {
+  const normalize = (v: string | null | undefined) => (typeof v === 'string' && v.trim() ? v.trim() : '0.0.0');
+  return normalize(candidate).localeCompare(normalize(current), undefined, { numeric: true, sensitivity: 'base' }) > 0;
+}
+
+/**
  * Resolve a backend avatar path to a loadable URL.
  *
  * Backend sends `avatarUrl` as a RELATIVE same-origin path ("/avatars/<id>")
@@ -3707,6 +3728,12 @@ export default function ChatOverlay() {
   // relay. The website (no shell) keeps liveVersion (the latest available).
   const [shellInfo, setShellInfo] = useState<{ appVersion?: string; relayHost?: string } | null>(null);
   const displayVersion = (overlayShell && shellInfo?.appVersion) || liveVersion || __APP_VERSION__;
+  // Mirror displayVersion into a ref so the long-lived WS message handler (whose
+  // effect deps are [wsGate, wsReconnectTick]) always compares against the CURRENT
+  // installed/displayed version — not the value captured when the socket connected
+  // (displayVersion arrives async from the shell bridge / GET /api/version).
+  const displayVersionRef = useRef(displayVersion);
+  useEffect(() => { displayVersionRef.current = displayVersion; }, [displayVersion]);
   const [updateAvailableVersion, setUpdateAvailableVersion] = useState<string | null>(null);
   // DEV indicator: website dev-server (localhost) OR overlay on a non-prod relay.
   const isDevEnv = (typeof window !== 'undefined' && window.location.hostname === 'localhost')
@@ -4730,8 +4757,14 @@ export default function ChatOverlay() {
                   }, 4100);
                 }
               } else if (frame.type === 'app:update-available') {
+                // The backend broadcasts this to EVERY client whenever it merely has
+                // a latest version cached — it does not compare to the client's build.
+                // Only light the dot when `v` is STRICTLY newer than what we're running,
+                // mirroring the shell's guarded `relay:update-available` path (main.js).
                 const v = frame.payload?.latestVersion;
-                if (v && typeof v === 'string') setUpdateAvailableVersion(v);
+                if (v && typeof v === 'string' && isVersionNewer(v, displayVersionRef.current)) {
+                  setUpdateAvailableVersion(v);
+                }
               }
             } catch { /* ignore */ }
           };
