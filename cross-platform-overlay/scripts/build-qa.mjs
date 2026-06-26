@@ -33,12 +33,18 @@ if (isMain) {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
   const pkg = JSON.parse(readFileSync(path.join(root, 'package.json'), 'utf8'));
   const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14); // YYYYMMDDHHMMSS (UTC)
-  const version = computeQaVersion(pkg.version, stamp);
+  // An explicit FCM_BUILD_VERSION wins (e.g. to pin ONE version across a coordinated
+  // Linux + Windows golden release, or to match an already-blessed QA_ACTIVE_VERSION);
+  // otherwise auto-stamp a unique <base>-qa.<timestamp> so the lock can retire old builds.
+  const version = process.env.FCM_BUILD_VERSION || computeQaVersion(pkg.version, stamp);
   console.log(`[dist:qa] building QA version ${version}`);
   const env = { ...process.env, BUILD_CHANNEL: 'qa', FCM_BUILD_VERSION: version };
+  // Resolve the local electron-builder bin explicitly so it works regardless of
+  // PATH (e.g. on the self-hosted Windows runner).
+  const eb = path.join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'electron-builder.cmd' : 'electron-builder');
   execSync('npm run build:renderer', { stdio: 'inherit', cwd: root, env });
   execSync(
-    `electron-builder -c.extraMetadata.fcmChannel=qa -c.extraMetadata.version=${version} -c.productName="Fallout Chat Mod QA"`,
+    `"${eb}" -c.extraMetadata.fcmChannel=qa -c.extraMetadata.version=${version} -c.productName="Fallout Chat Mod QA"`,
     { stdio: 'inherit', cwd: root, env },
   );
   console.log(`\n[dist:qa] done. Bless this build on the dev backend with:  QA_ACTIVE_VERSION=${version}`);
