@@ -33,6 +33,7 @@ import {
   IDLE_COLLAPSE_SECONDS_DEFAULT,
   shellToWebSettings,
   resolveCollapsedHeight,
+  revealCollapsedElements,
   computeResizeBounds,
   isDragTarget as isDragTargetCore,
   detectLinuxRenderer,
@@ -450,8 +451,7 @@ function setCollapsed(next: boolean, focusInput = false) {
     // 260ms > 240ms animation — reveal content once fully expanded.
     setTimeout(() => {
       if (collapsed) return;
-      root?.classList.remove('collapsed');
-      hiddenEls.forEach(e => e.classList.remove('fcm-collapsed-hidden'));
+      revealCollapsedElements(root, hiddenEls);
       // Jump the feed to the latest message so the user sees the most recent
       // chat after expanding. Defer a frame so the body has laid out first.
       scrollMessagesToBottomDeferred();
@@ -1880,7 +1880,15 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
     if (msgActivityTimeout) { clearTimeout(msgActivityTimeout); msgActivityTimeout = null; }
     if (collapsed) {
       collapsed = false;
-      document.getElementById('root')?.classList.remove('collapsed');
+      // #327: fully reveal — not just the root 'collapsed' class. Previously this
+      // path left the body/input/footer carrying 'fcm-collapsed-hidden', so when
+      // the Insert hotkey's force-expand won the race against the local
+      // keydown→setCollapsed(false) path (which then no-op'd on its guard), the
+      // overlay expanded but showed nothing but the top bar. Funnel through the
+      // same reveal as setCollapsed so the two paths can't diverge.
+      const hiddenEls = collapsedHidden.slice();
+      collapsedHidden = [];
+      revealCollapsedElements(document.getElementById('root'), hiddenEls);
       scrollMessagesToBottomDeferred();
     }
   });
