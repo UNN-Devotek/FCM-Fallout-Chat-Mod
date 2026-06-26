@@ -2,13 +2,21 @@
 
 ZFE is a `dxgi.dll` proxy for Fallout 76 that injects `__ZFE` into the Scaleform VM, giving HUD mods outbound communication and persistent storage. FCMBridge uses it to display the chat feed inside the game HUD.
 
+> **chat.v1 in-game chat status (2026-06-26):** the ZFE `chat.v1` native chat relay works end-to-end
+> on **native Windows** (ZFE 0.9.9+) — a message typed in-game round-trips through FCM's `/relay` and
+> broadcasts to every surface. It is **BLOCKED under Proton/Wine** (Linux / Steam Deck) by an upstream
+> Zig TLS bug; the fix is ZFE rebuilt on Zig >= 0.14.0 (tracked in **#326**). On Linux the native
+> desktop overlay remains the chat path. Full writeup:
+> [native-chat-relay/proton-status.md](native-chat-relay/proton-status.md).
+
 ## Guides
 
 | Guide | What it covers |
 |---|---|
 | [**FCMBridge Data Pattern**](fcmbridge-data-pattern.md) | **START HERE — the working end-to-end pipeline + every pitfall (quote-free payload, `yes`/`on` booleans, build/deploy steps)** |
-| [**Real-Time Socket (FCMHUD/1)**](realtime-socket.md) | Live push feed via ZFE's Text Chat bridge — wire protocol, env vars, backend architecture, probe tooling |
-| [**Two-Way Chat — Implemented**](two-way-chat-implemented.md) | Working in-game chat input (M7) — exact pattern, hard-won facts, build/install, design constraints |
+| [**Native Chat Relay (`chat.v1`)**](native-chat-relay/README.md) | **The path forward** — ZFE's standardized native chat client + the plan to make the FCM relay speak its JSON contract. **Supersedes FCMHUD/1.** |
+| [Real-Time Socket (FCMHUD/1)](realtime-socket.md) | **ACTIVE transport** — the live push bridge we ship the HUD mod on now (#302 / prod exposure #139); `chat.v1` supersedes it **later**. Wire protocol, env vars, backend architecture, probe tooling. |
+| [Two-Way Chat — Implemented](two-way-chat-implemented.md) | **ACTIVE** — the FCMHUD/1 in-game input (M7) pattern; shipping path now, `chat.v1` is the later swap. |
 | [Modder Guide](modder-guide.md) | Bridge discovery, `findZfeApi`, `getRuntimeInfo`, logging, safety boundary |
 | [ZFE API Reference](api-reference.md) | Remote Data, Storage, Events, Imports, and Legacy Compatibility — full API call reference |
 | [Environment Variables](env-vars.md) | Dev/testing only — normal users never need these |

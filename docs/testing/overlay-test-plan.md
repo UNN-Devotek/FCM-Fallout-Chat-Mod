@@ -10,6 +10,14 @@
 > public-mode lockdown RTL, bridge+onboarding core logic, shell-core helpers.
 > **What's next:** P1 main-process IPC handlers (register/relay/discord/keybinds/visibility),
 > stateful shell helpers (applyScale, tickIdle, navChannel), and E2E once the mock relay exists.
+>
+> **In-game HUD chat (chat.v1) — 2026-06-26:** the `FCMChatWidget.hx` pure-logic suite
+> (`fcm-chat-widget-logic.test.js`) is ✅ Done and runs in the `unit-vitest` matrix (see the table
+> below). Live in-game validation is **PASS on native Windows** (ZFE 0.9.9+, relay fixes #334/#335 —
+> send round-trips end-to-end) and **BLOCKED on Proton/Wine** by an upstream Zig TLS bug (#326), so
+> in-game send is validated manually on the Windows VM only. The SWF/transport layer remains
+> manual-test (no automated in-game harness); see
+> [../overlay/zfe/native-chat-relay/proton-status.md](../overlay/zfe/native-chat-relay/proton-status.md).
 
 This plan covers the four overlay-related modules:
 
@@ -33,6 +41,7 @@ This plan covers the four overlay-related modules:
 | Group 3 — `onboarding-core.ts` state machine | ✅ Done | `src/__tests__/onboarding-core.test.ts` |
 | Group 4 — `ChatOverlay.tsx` P0 pure helpers | ✅ Done | `src/features/chat/__tests__/chatOverlayHelpers.test.ts` |
 | Group 4 — `ChatOverlay.tsx` public-mode lockdown | ✅ Done | `src/features/chat/__tests__/publicModeLockdown.test.tsx` |
+| In-game HUD widget — `FCMChatWidget.hx` pure logic (normChannel, optimistic-echo dedup/expiry, send-error→message map, slash parse/consume, empty-feed notice priority) | ✅ Done | `__tests__/fcm-chat-widget-logic.test.js` (+ ported `fcm-chat-widget-logic.js`) — runs in the `cross-platform-overlay` leg of the `unit-vitest` CI matrix |
 | Group 1 P1 — main.js IPC handlers (register/relay/discord/keybinds/visibility) | ⏳ Backlog | — |
 | Group 2 P1 — shell.ts stateful (applyScale, tickIdle, navChannel, auth machine) | ⏳ Backlog | — |
 | Group 3 P1 — `ProxiedWebSocket` lifecycle, onboarding IPC/UI | ⏳ Backlog | — |

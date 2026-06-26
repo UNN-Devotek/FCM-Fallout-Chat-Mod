@@ -74,6 +74,9 @@ model User {
   giveawaysCreated     Giveaway[]         @relation("GiveawaysCreated")
   giveawaysWon         Giveaway[]         @relation("GiveawaysWon")
   giveawayEntries      GiveawayEntry[]    @relation("GiveawayEntries")
+  hudPairingTokensLinked  HudPairingToken[] @relation("HudPairingTokenLinkedUser")
+  linkedIdentities        LinkedIdentity[]
+  redeemedLinkCodes       HudLinkCode[]     @relation("RedeemedLinkCodes")
 
   @@index([installToken])
   @@index([steamId])
@@ -134,9 +137,10 @@ model Message {
   userId          String   @map("user_id") @db.Uuid
   channelId       String   @map("channel_id") @db.Uuid
   parentChannelId String?  @map("parent_channel_id") @db.Uuid
-  source          String   @default("game") // 'game' | 'discord' | 'hud'
+  source          String   @default("game") // 'game' | 'discord' | 'hud' | 'relay'
   isDeleted       Boolean  @default(false) @map("is_deleted")
   metadata        Json?    // optional structured payload (e.g. party_invite embed)
+  relaySeq        BigInt?  @map("relay_seq") // monotonic relay cursor (relay source only)
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   // Relations
@@ -148,6 +152,7 @@ model Message {
   @@index([parentChannelId, createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
   @@index([isDeleted, channelId, createdAt(sort: Desc)])
+  @@index([relaySeq], map: "messages_relay_seq_idx")
   @@map("messages")
 }
 
@@ -814,6 +819,68 @@ model HudIdentityBlock {
   @@map("hud_identity_blocks")
 }
 
+// =============================================================================
+// Auth gate: linked identities, link codes, and banned identities (#163, #297)
+// =============================================================================
+
+// linked_identities: non-Discord provider links per user.
+// Discord identity stays inline on users (load-bearing for sessions/dashboard).
+// Provider 'nexus' goes here. Future: 'steam', 'bethesda'.
+model LinkedIdentity {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  provider     String    // 'nexus' | future providers
+  providerUid  String    @map("provider_uid")
+  username     String?
+  linkedAt     DateTime  @default(now()) @map("linked_at") @db.Timestamptz(6)
+  lastVerified DateTime? @map("last_verified") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUid])
+  @@unique([userId, provider])
+  @@index([userId])
+  @@map("linked_identities")
+}
+
+// hud_link_codes: 8-char Crockford base32 device-authorization codes.
+// TTL 10 min, single-use, <=5 attempts, one active per relay identity.
+// Issued by the relay (per relayUserId — the chat.v1 userId of the limited identity).
+// Redeemed by an authed FCM user on /link; redeemedByUserId is set on successful redeem.
+// Integration seam: relay polls WHERE code = $1 AND used_at IS NOT NULL; redeemedByUserId
+// identifies the FCM account to bind the relay token to (limited → linked upgrade).
+model HudLinkCode {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                String    @unique
+  relayUserId         String    @map("relay_user_id")
+  redeemedByUserId    String?   @map("redeemed_by_user_id") @db.Uuid
+  expiresAt           DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt              DateTime? @map("used_at") @db.Timestamptz(6)
+  attempts            Int       @default(0)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  redeemedBy User? @relation("RedeemedLinkCodes", fields: [redeemedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([relayUserId])
+  @@index([expiresAt])
+  @@map("hud_link_codes")
+}
+
+// banned_identities: provider-level deny-list (#297).
+// A deny-listed provider identity is refused at OAuth callback and link-code redemption,
+// regardless of which FCM account they attempt to link to.
+model BannedIdentity {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider    String
+  providerUid String   @map("provider_uid")
+  reason      String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([provider, providerUid])
+  @@index([provider, providerUid])
+  @@map("banned_identities")
+}
+
 // Per-entity error log for the wiki ingestion job.
 // Never aborts the whole run — failed entities land here for targeted retry.
 model WikiIngestError {
@@ -909,4 +976,43 @@ model GiveawayEntry {
   @@unique([giveawayId, userId])
   @@index([userId])
   @@map("giveaway_entries")
+}
+
+// =============================================================================
+// HUD Pairing Tokens — relay token store for ZFE chat.v1 clients.
+// Each row is a single token issued to a ZFE client. Tokens are argon2id-hashed;
+// the raw token is returned once at mint time and never stored. Prefix (first 8
+// chars of the base64url token) is indexed for fast lookup without scanning all
+// hashes. revokedAt is set by moderation actions or on ban.
+//
+// Identity model:
+//   userId      = relay-owned TEXT identity ("user_"+hex). No FK to users — a fresh
+//                 register is ANONYMOUS (no FCM account yet). This is the relay_user_id
+//                 namespace WT2 references.
+//   linkedUserId = FK→users.id (UUID). NULL = "limited" (receive-only, no send).
+//                 Set to a real FCM users.id by markRelayTokenLinked() when the user
+//                 redeems a link code via /api/link/redeem. Non-null = "authenticated".
+// =============================================================================
+model HudPairingToken {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tokenHash    String    @map("token_hash")
+  tokenPrefix  String    @map("token_prefix")
+  fo76Name     String    @map("fo76_name")
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(6)
+  lastUsedAt   DateTime? @map("last_used_at") @db.Timestamptz(6)
+  // userId is the relay TEXT identity — NOT a FK to users. Anonymous at register.
+  userId       String    @map("user_id")
+  role         String    @default("user")
+  // linkedUserId is NULL until the user redeems a link code via /api/link/redeem.
+  // NULL = "limited" (can receive but not send). Set by markRelayTokenLinked().
+  linkedUserId String?   @map("linked_user_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Only linkedUserId has a FK to users — it is the FCM account bound on link redemption.
+  linkedUser User? @relation("HudPairingTokenLinkedUser", fields: [linkedUserId], references: [id], onDelete: SetNull)
+
+  @@index([tokenPrefix])
+  @@index([userId])
+  @@index([linkedUserId])
+  @@map("hud_pairing_tokens")
 }
