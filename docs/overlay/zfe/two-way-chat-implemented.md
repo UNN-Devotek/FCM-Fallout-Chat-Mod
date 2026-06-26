@@ -5,6 +5,12 @@
 > **`chat.v1`** ([native-chat-relay/](native-chat-relay/README.md)) is a **later transport swap**, not
 > a current replacement. This pattern stays the in-game-input reference until chat.v1 ships AND is
 > validated (#291, post-launch).
+>
+> **chat.v1 update (2026-06-26):** chat.v1 two-way send now **works end-to-end on native Windows**
+> (ZFE 0.9.9+ plus relay fixes #334/#335) — the later transport swap is proven on Windows. It remains
+> **BLOCKED under Proton/Wine** by an upstream Zig TLS bug (#326), so FCMHUD/1 stays the active path and
+> the native desktop overlay remains the Linux chat path. See
+> [native-chat-relay/proton-status.md](native-chat-relay/proton-status.md).
 
 **Status: functional.** A message typed in-game reaches the backend, is ingested with full governance,
 and broadcasts back to every surface (dashboard, overlay, in-game feed). This documents the **exact

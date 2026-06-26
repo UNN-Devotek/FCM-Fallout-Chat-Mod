@@ -2,6 +2,13 @@
 
 ZFE is a `dxgi.dll` proxy for Fallout 76 that injects `__ZFE` into the Scaleform VM, giving HUD mods outbound communication and persistent storage. FCMBridge uses it to display the chat feed inside the game HUD.
 
+> **chat.v1 in-game chat status (2026-06-26):** the ZFE `chat.v1` native chat relay works end-to-end
+> on **native Windows** (ZFE 0.9.9+) — a message typed in-game round-trips through FCM's `/relay` and
+> broadcasts to every surface. It is **BLOCKED under Proton/Wine** (Linux / Steam Deck) by an upstream
+> Zig TLS bug; the fix is ZFE rebuilt on Zig >= 0.14.0 (tracked in **#326**). On Linux the native
+> desktop overlay remains the chat path. Full writeup:
+> [native-chat-relay/proton-status.md](native-chat-relay/proton-status.md).
+
 ## Guides
 
 | Guide | What it covers |

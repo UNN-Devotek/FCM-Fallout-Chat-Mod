@@ -298,6 +298,25 @@ export function resolveCollapsedHeight(o: CollapsedHeightInput): number {
   return Math.round(o.barH + Math.ceil(headerVisual)) + 1;
 }
 
+// Minimal element shape for the reveal helper — just the classList.remove we use.
+// HTMLElement satisfies this, so shell.ts passes real elements unchanged, and the
+// helper stays DOM-free for unit tests.
+export interface ClassListTarget {
+  classList: { remove(token: string): void };
+}
+// Fully reveal collapsed content: drop the root 'collapsed' class AND clear
+// 'fcm-collapsed-hidden' from every element hidden during collapse. Both expand
+// paths (setCollapsed's deferred reveal and the force-expand/Insert handler) must
+// funnel through this so they can't diverge — the divergence was #327, where the
+// force-expand path removed 'collapsed' but left the body/input/footer hidden.
+export function revealCollapsedElements(
+  root: ClassListTarget | null,
+  hidden: Iterable<ClassListTarget>,
+): void {
+  root?.classList.remove('collapsed');
+  for (const el of hidden) el.classList.remove('fcm-collapsed-hidden');
+}
+
 // ── Shell → React-component settings mirror ─────────────────────────────────────
 // The Electron shell owns the full ShellSettings, but the shared ChatOverlay
 // component reads a SUBSET from its own localStorage key (WEB_SETTINGS_KEY). The

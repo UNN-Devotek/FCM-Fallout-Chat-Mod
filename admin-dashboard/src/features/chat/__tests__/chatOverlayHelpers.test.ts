@@ -28,6 +28,8 @@ import {
   shouldForceReconnectOnVisible,
   buildRichHtmlImpl,
   escapeHtmlAttr,
+  isNearBottom,
+  STICK_TO_BOTTOM_THRESHOLD,
 } from '../ChatOverlay';
 
 // ── isProdRelayHost (drives the footer [DEV] indicator) ──────────────────────
@@ -816,5 +818,49 @@ describe('buildRichHtmlImpl', () => {
     expect(out.startsWith('&lt;b&gt;hi&lt;/b&gt; ')).toBe(true);
     expect(out).toContain('<img src="https://cdn.discordapp.com/emojis/1234567890123456.png"');
     expect(out).toContain('&lt;i&gt;bye&lt;/i&gt;');
+  });
+});
+
+// ── isNearBottom (#313: /camp & /nukecodes cards must scroll into view) ───────
+// The auto-scroll effect decides whether to keep the feed pinned to the latest
+// message from the user's tracked stick-to-bottom intent. That intent is sampled
+// via isNearBottom from REAL scroll events — never recomputed right after a tall
+// card is appended, because by then scrollHeight has grown but scrollTop hasn't,
+// so the reading looks like "scrolled up" (the original #313 bug).
+describe('isNearBottom (#313 stick-to-bottom intent)', () => {
+  it('is true when the viewport is exactly at the bottom', () => {
+    // scrollHeight 1000, scrolled fully (1000 - 200 clientHeight = 800), distance 0.
+    expect(isNearBottom(1000, 800, 200)).toBe(true);
+  });
+
+  it('is true within the threshold of the bottom', () => {
+    // distance = 1000 - 760 - 200 = 40 (≤ 80).
+    expect(isNearBottom(1000, 760, 200)).toBe(true);
+  });
+
+  it('is false once the user has scrolled up past the threshold to read history', () => {
+    // distance = 2000 - 500 - 200 = 1300 — a deliberate scroll-up; must NOT yank.
+    expect(isNearBottom(2000, 500, 200)).toBe(false);
+  });
+
+  it('treats a tall freshly-appended card as the bug it is — sampling AFTER the append is wrong', () => {
+    // The user is pinned at the bottom: scrollHeight 1000, scrollTop 800, clientHeight 200.
+    expect(isNearBottom(1000, 800, 200)).toBe(true);
+    // A ~300px /camp card is appended. The browser hasn't moved scrollTop yet, but
+    // scrollHeight already grew to 1300. Re-measuring NOW yields distance 300, which
+    // isNearBottom would (correctly, for this position) call "not at bottom" — this is
+    // precisely why intent must be sampled during scroll, not recomputed post-append.
+    expect(isNearBottom(1300, 800, 200)).toBe(false);
+    // Intent captured BEFORE the append (the values the scroll listener recorded) stays
+    // true, so the effect keeps pinning and the tall card scrolls fully into view.
+  });
+
+  it('honours a custom threshold', () => {
+    expect(isNearBottom(1000, 700, 200, 120)).toBe(true);  // distance 100 ≤ 120
+    expect(isNearBottom(1000, 700, 200, 50)).toBe(false);  // distance 100 > 50
+  });
+
+  it('exposes a sane default threshold', () => {
+    expect(STICK_TO_BOTTOM_THRESHOLD).toBe(80);
   });
 });

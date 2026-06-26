@@ -45,7 +45,19 @@ const WORLD_ID_SENTINEL_PREFIX  = '\x00fcm.world.v1\x00';
 const WORLD_ID_HMAC_WINDOW_S    = 30;    // 30-second replay window (ts is unix SECONDS)
 const POLL_HISTORY_LIMIT        = 30;    // initial history window on cursor=0
 const REDIS_BROADCAST_CHANNEL   = 'chat:broadcast';
-const LINK_URL                  = 'falloutchatmod.com/link';
+
+/**
+ * Build the human-facing link-flow URL (bare host + /link) from the public base URL.
+ * Env-aware (FCM_PUBLIC_BASE_URL) so dev shows dev.falloutchatmod.com/link and prod shows
+ * falloutchatmod.com/link. Scheme is stripped to match the in-game notice's bare-host format.
+ */
+export function deriveLinkUrl(baseUrl: string): string {
+  const host = (baseUrl || 'https://falloutchatmod.com')
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/+$/, '');
+  return `${host}/link`;
+}
+const LINK_URL                  = deriveLinkUrl(env.FCM_PUBLIC_BASE_URL);
 
 // ── Link-code service (dynamic import — WT2 may not yet be merged) ────────────
 
@@ -224,12 +236,20 @@ async function ensurePubSub(): Promise<void> {
   try {
     const sub = await getSubscriberClient();
     await sub.subscribe(REDIS_BROADCAST_CHANNEL, (message: string) => {
-      let payload: Record<string, unknown>;
-      try { payload = JSON.parse(message); } catch { return; }
+      let parsed: Record<string, unknown>;
+      try { parsed = JSON.parse(message); } catch { return; }
+
+      // The WS handler's broadcast() publishes a wrapped envelope on this same
+      // Redis channel: { instanceId, payload: { type:'chat:message', payload:{…} } }.
+      // Unwrap one level when the envelope shape is present; tolerate an already
+      // unwrapped { type, payload } too (defensive).
+      const envelope = (parsed.instanceId !== undefined && parsed.payload !== undefined)
+        ? (parsed.payload as Record<string, unknown>)
+        : parsed;
 
       // We only forward chat:message events.
-      if (payload.type !== 'chat:message') return;
-      const p = payload.payload as Record<string, unknown>;
+      if (envelope.type !== 'chat:message') return;
+      const p = envelope.payload as Record<string, unknown>;
       if (!p) return;
 
       const relaySeq    = typeof p.relaySeq === 'number' ? p.relaySeq : null;
@@ -400,7 +420,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   // Auth gate: limited identities cannot send (check before any user lookup).
   // We check this BEFORE ban/mute to avoid unnecessary DB queries for limited users.
   if (!identity.isLinked) {
-    send(ws, errEnvelope('permission_denied', 'Account not linked — complete the link flow at falloutchatmod.com/link'));
+    send(ws, errEnvelope('permission_denied', `Account not linked — complete the link flow at ${LINK_URL}`));
     return;
   }
 
@@ -470,14 +490,27 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     }
   }
 
-  // Assign relay cursor BEFORE ingestMessage so it is included in the broadcast.
+  // Assign relay cursor BEFORE ingestMessage so it is threaded through
+  // finalizeMessage into BOTH the single broadcast and the persisted row.
   const relaySeq = await nextRelaySeq();
 
+  // ingestMessage attributes messages.user_id (a UUID FK -> users.id) and runs the
+  // mute/automod checks against that users row. identity.userId is the relay TEXT id
+  // ("user_"+hex), NOT a UUID — passing it makes prisma.user.findUnique throw P2023
+  // ("invalid UUID"). Use the linked FCM account UUID (guaranteed set: the !isLinked
+  // gate above already returned permission_denied for unlinked identities).
+  //
+  // relaySeq is passed through so finalizeMessage (1) PERSISTS it on messages.relay_seq
+  // — without which poll/history (WHERE relay_seq IS NOT NULL) never return the row —
+  // and (2) includes it in the single broadcast the relay pub/sub subscriber forwards.
+  // This replaces the old double-broadcast hack (one broadcast without relaySeq from
+  // ingest, then a second relay-only rebroadcast with relaySeq).
   const result = await ingestMessage({
-    userId:    identity.userId,
+    userId:    identity.linkedUserId!,
     channelId,
     rawContent: body,
     source:    'relay',
+    relaySeq,
   });
 
   if (!result.ok) {
@@ -490,50 +523,6 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       'permission_denied';
     send(ws, errEnvelope(code, result.reason ?? 'Send rejected'));
     return;
-  }
-
-  // ingestMessage calls finalizeMessage internally — we need to also push the
-  // relaySeq. Because finalizeMessage is called inside ingestMessage, we do a
-  // second finalizeMessage call only for relay source to attach the seq.
-  // Actually: ingestMessage already called finalizeMessage and broadcast happened
-  // without relaySeq. We need to amend the flow.
-  //
-  // DESIGN NOTE: Since ingestMessage → finalizeMessage already broadcast without
-  // relaySeq, we need to re-broadcast with relaySeq for subscribers.
-  // The relay's pub/sub listener filters on relaySeq presence, so this second
-  // emit is the one subscribers will see.
-  // The messageId from the first ingest is reused.
-  //
-  // This is a known limitation of the current architecture — the relay path
-  // should call finalizeMessage directly rather than through ingestMessage to
-  // avoid the double broadcast. For now the first broadcast (without relaySeq)
-  // will be ignored by the relay subscriber (no relaySeq = skipped), and the
-  // relay path emits a second broadcast with relaySeq. Non-relay WS clients
-  // see only the first (which is fine).
-  //
-  // TODO: refactor ingestMessage to accept a pre-computed relaySeq and pass it
-  // through to finalizeMessage — avoids the double broadcast entirely.
-
-  // Re-broadcast with relaySeq by publishing to Redis directly.
-  try {
-    const redis = await getRedisClient();
-    const slug2 = channelIdToSlug(channelId) ?? slug;
-    const rebroadcast = {
-      type: 'chat:message',
-      payload: {
-        id:        result.messageId,
-        content:   body,
-        username:  identity.fo76Name,
-        userId:    identity.userId,
-        channelId,
-        source:    'relay',
-        timestamp: new Date().toISOString(),
-        relaySeq,
-      },
-    };
-    await redis.publish(REDIS_BROADCAST_CHANNEL, JSON.stringify(rebroadcast));
-  } catch (err) {
-    logger.warn({ err }, '[relayHandler] relay-seq rebroadcast failed');
   }
 
   send(ws, { success: true, messageId: result.messageId });

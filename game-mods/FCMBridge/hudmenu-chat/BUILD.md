@@ -77,6 +77,37 @@ fragment is only the default.
 
 ---
 
+## Dev vs prod build (quick path)
+
+Use `build.sh` in `game-mods/FCMBridge/` instead of running the steps below manually:
+
+```bash
+cd game-mods/FCMBridge
+./build.sh --target dev    # wss://dev.falloutchatmod.com/relay
+./build.sh --target prod   # wss://falloutchatmod.com/relay
+```
+
+The script:
+- Compiles `FCMBridge.hx` (Haxe), converts CWS->FWS v32.
+- Extracts the vanilla `HUDMenu.swf` from the live game installation, decompiles
+  it, runs `test_anchors.py` (hard stop on any failure), applies `apply-patch.py`.
+- Recompiles the patched `HUDMenu.as` with ffdec and patches version byte to 32.
+- Stamps the endpoint into `Data/ZFE/TextChat/fragments/FCM.ini` by target.
+- Packs `FCM-standalone.ba2` via `ba2tool.py blobswap` (reuses vanilla archive
+  record headers, swaps in both SWFs and the stamped FCM.ini).
+- Writes `Data/configuration/zfe.ini` `[TextChat] Endpoint=...` alongside the
+  fragment. **This is the reliable endpoint config for the standalone path**: the
+  TextChat fragment (`Data/ZFE/TextChat/fragments/FCM.ini`) is only loaded by ZFE
+  when an entry for it appears in `Data/hudmodloader.ini` — which the standalone
+  does not ship. `Data/configuration/zfe.ini` overrides always apply regardless,
+  so it is the only reliable config vector for the no-HUDModLoader standalone.
+- If the game is not running, installs directly into `$GAME/Data/`.
+
+Tool paths are picked up from the staged buildtools directory or from env vars
+`HAXE`, `JAVA`, `FFDEC`. Override `GAME` to point to a non-default FO76 install.
+
+---
+
 ## Step 0 -- Verify anchors (run once on a fresh ffdec export)
 
 Before patching a new or updated `HUDMenu.as`, run the anchor test to confirm

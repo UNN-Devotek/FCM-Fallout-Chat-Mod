@@ -152,7 +152,7 @@ Exec="$APP_PATH" %U
 Icon=${ICON_PATH}
 Terminal=false
 Categories=Game;Network;Chat;
-StartupWMClass=Fallout Chat Mod
+StartupWMClass=fallout-chat-mod
 EOF
 chmod +x "$DESKTOP_FILE"
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$DESKTOP_DIR" >/dev/null 2>&1 || true
@@ -176,9 +176,7 @@ KWINRULE_PATH="$APP_DIR/fallout-chatmod-keepabove.kwinrule"
 cat > "$KWINRULE_PATH" <<'EOF'
 [Fallout Chat Mod - keep above games]
 Description=Fallout Chat Mod - keep above games
-title=Fallout Chat Mod
-titlematch=2
-wmclass=fallout
+wmclass=fallout-chat-mod
 wmclassmatch=2
 wmclasscomplete=false
 above=true
