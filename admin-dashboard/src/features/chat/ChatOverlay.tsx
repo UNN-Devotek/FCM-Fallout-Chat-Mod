@@ -254,6 +254,42 @@ export function computeMainTabCutout(offsetLeft: number, offsetWidth: number): {
 }
 
 /**
+ * Px from the bottom of the message list within which we treat the user as
+ * "pinned to the latest message" and keep auto-scrolling on new appends. Beyond
+ * it, the user has deliberately scrolled up to read history and must not be
+ * yanked back down.
+ */
+export const STICK_TO_BOTTOM_THRESHOLD = 80;
+
+/**
+ * Looser bottom threshold for the typing-indicator re-pin. The indicator is a
+ * small (~16px) sibling whose appearance/disappearance resizes the message
+ * area, so a more generous band keeps the newest message visible without
+ * yanking a user who has genuinely scrolled up to read history.
+ */
+export const TYPING_INDICATOR_STICK_THRESHOLD = 120;
+
+/**
+ * Whether a scroll position counts as "at the bottom" (stuck to the latest msg).
+ *
+ * This MUST be sampled from a real scroll event (the user's actual position),
+ * NOT recomputed right after a tall message is appended: once a tall card is in
+ * the DOM, `scrollHeight` has already grown while `scrollTop` hasn't moved, so
+ * `scrollHeight - scrollTop - clientHeight` ≈ the card's height and a
+ * post-append reading wrongly looks like "scrolled up". See #313 — the old
+ * auto-scroll guard made exactly that mistake and never scrolled to `/camp`
+ * and `/nukecodes` cards.
+ */
+export function isNearBottom(
+  scrollHeight: number,
+  scrollTop: number,
+  clientHeight: number,
+  threshold: number = STICK_TO_BOTTOM_THRESHOLD,
+): boolean {
+  return scrollHeight - scrollTop - clientHeight <= threshold;
+}
+
+/**
  * Whether becoming-visible must force a WS reconnect. onVisibility(true) fires on
  * hidden->visible, so overlayVisible was false. Only kick when the gate WON'T
  * already re-run the WS effect: the game was running (gate = overlayVisible ||
@@ -358,6 +394,27 @@ export function isProdRelayHost(host: string | null | undefined): boolean {
   if (!host) return false;
   const h = host.toLowerCase().replace(/:\d+$/, '');
   return h === 'falloutchatmod.com' || h === 'www.falloutchatmod.com';
+}
+
+/**
+ * Is `candidate` a STRICTLY newer version than `current`?
+ *
+ * Mirrors the shell's `cmpVersions` guard (cross-platform-overlay/overlay-core.js):
+ * the backend broadcasts `app:update-available` to EVERY client whenever it has a
+ * latest version cached — it does NOT compare against the client's installed
+ * build — so the update dot must do the comparison itself. We can't import the
+ * shell's `cmpVersions` here (it's a CommonJS module in a different package, outside
+ * the Vite build root), so this is a minimal, intentionally identical re-implementation.
+ *
+ * Uses locale-aware numeric compare so '1.3.10' > '1.3.9' (not string-ordered).
+ * A pre-release suffix sorts AFTER the bare release (e.g. '1.3.91-dev' > '1.3.91'),
+ * which matches the shell: a dev/QA build of a release must NOT light the dot for
+ * that same release. Malformed / non-string inputs are treated as '0.0.0', so they
+ * never appear newer than a real version.
+ */
+export function isVersionNewer(candidate: string | null | undefined, current: string | null | undefined): boolean {
+  const normalize = (v: string | null | undefined) => (typeof v === 'string' && v.trim() ? v.trim() : '0.0.0');
+  return normalize(candidate).localeCompare(normalize(current), undefined, { numeric: true, sensitivity: 'base' }) > 0;
 }
 
 /**
@@ -3435,6 +3492,12 @@ export default function ChatOverlay() {
   // first time messages populate, so opening the page lands you at the latest
   // message. The in-game overlay (overlayShell) deliberately does NOT auto-jump.
   const didInitialScrollRef = useRef(false);
+  // #313: Tracks whether the user is currently pinned to the bottom of the feed,
+  // sampled from real scroll events (see isNearBottom). The auto-scroll effect
+  // reads THIS — the user's actual intent — instead of re-measuring distance
+  // after a (possibly tall) message has already been appended, which corrupts
+  // the reading. Defaults true so a fresh feed pins to the latest message.
+  const stickToBottomRef = useRef(true);
   // Timer used to debounce the initial cold-start scroll-to-bottom (Fix 2).
   // We reset the timer on each incoming messages batch during the initial-load
   // window and only fire scrollToBottom() once the feed has quieted for ~220ms.
@@ -3707,6 +3770,13 @@ export default function ChatOverlay() {
   // relay. The website (no shell) keeps liveVersion (the latest available).
   const [shellInfo, setShellInfo] = useState<{ appVersion?: string; relayHost?: string } | null>(null);
   const displayVersion = (overlayShell && shellInfo?.appVersion) || liveVersion || __APP_VERSION__;
+  // Mirror displayVersion into a ref so the long-lived WS message handler (whose
+  // effect deps are [wsGate, wsReconnectTick]) always compares against the CURRENT
+  // installed/displayed version — not the value captured when the socket connected
+  // (displayVersion arrives async from the shell bridge / GET /api/version).
+  const displayVersionRef = useRef(displayVersion);
+  useEffect(() => { displayVersionRef.current = displayVersion; }, [displayVersion]);
+  const [updateAvailableVersion, setUpdateAvailableVersion] = useState<string | null>(null);
   // DEV indicator: website dev-server (localhost) OR overlay on a non-prod relay.
   const isDevEnv = (typeof window !== 'undefined' && window.location.hostname === 'localhost')
     || (!!overlayShell && !!shellInfo?.relayHost && !isProdRelayHost(shellInfo.relayHost));
@@ -4728,6 +4798,15 @@ export default function ChatOverlay() {
                     });
                   }, 4100);
                 }
+              } else if (frame.type === 'app:update-available') {
+                // The backend broadcasts this to EVERY client whenever it merely has
+                // a latest version cached — it does not compare to the client's build.
+                // Only light the dot when `v` is STRICTLY newer than what we're running,
+                // mirroring the shell's guarded `relay:update-available` path (main.js).
+                const v = frame.payload?.latestVersion;
+                if (v && typeof v === 'string' && isVersionNewer(v, displayVersionRef.current)) {
+                  setUpdateAvailableVersion(v);
+                }
               }
             } catch { /* ignore */ }
           };
@@ -5011,12 +5090,15 @@ export default function ChatOverlay() {
       return;
     }
 
-    const container = end.parentElement;
-    if (container) {
-      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-      if (distanceFromBottom > 80) return; // user scrolled up to read — don't yank them
-    }
-    end.scrollIntoView({ behavior: 'auto' });
+    // #313: Decide from the user's tracked intent (sampled during real scroll
+    // events, see the stick-tracking effect below) — NOT from a distance reading
+    // taken after a tall card was already appended, which reads as the card's
+    // height and was misfiring the "user scrolled up" guard.
+    if (!stickToBottomRef.current) return; // user scrolled up to read — don't yank them
+    // Multi-pass pin so a tall card (and its async-loading image) lands fully in
+    // view across the reflow frames, not a single-shot scrollIntoView that ends
+    // up short.
+    scrollToBottom();
   }, [messages, scrollToBottom]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Clean up the initial-scroll debounce timer on unmount.
@@ -5026,6 +5108,25 @@ export default function ChatOverlay() {
         clearTimeout(initialScrollTimerRef.current);
       }
     };
+  }, []);
+
+  // #313: Track stick-to-bottom INTENT from real scroll events. Reading the
+  // distance HERE (as the user scrolls) is what lets the auto-scroll effect
+  // distinguish "user scrolled up to read history" from "a tall card was just
+  // appended at the bottom" — the latter inflates a post-append distance reading
+  // and used to misfire the guard. Always-on and seeded from the actual position
+  // (never assumed pinned), independent of the lazy-load top-scroll listener
+  // (which is gated off in public mode). The container is display-toggled, not
+  // unmounted, so a single mount-time attach stays valid.
+  useEffect(() => {
+    const cont = messagesContRef.current;
+    if (!cont) return;
+    const onScroll = () => {
+      stickToBottomRef.current = isNearBottom(cont.scrollHeight, cont.scrollTop, cont.clientHeight);
+    };
+    onScroll(); // seed from the current position
+    cont.addEventListener('scroll', onScroll, { passive: true });
+    return () => cont.removeEventListener('scroll', onScroll);
   }, []);
 
   // (a2) Activating the chat by clicking/focusing the input box → land at the
@@ -5061,8 +5162,7 @@ export default function ChatOverlay() {
     if (!cont) return;
     // Generous threshold so the indicator's own height (~16px) isn't read as
     // "scrolled up". If the user genuinely scrolled up to read history, leave them.
-    const distanceFromBottom = cont.scrollHeight - cont.scrollTop - cont.clientHeight;
-    if (distanceFromBottom > 120) return;
+    if (!isNearBottom(cont.scrollHeight, cont.scrollTop, cont.clientHeight, TYPING_INDICATOR_STICK_THRESHOLD)) return;
     const pin = () => { const c = messagesContRef.current; if (c) c.scrollTop = c.scrollHeight; };
     requestAnimationFrame(() => { pin(); requestAnimationFrame(pin); });
     setTimeout(pin, 50);
@@ -6304,17 +6404,26 @@ export default function ChatOverlay() {
       // is no awkward floating "max N" / blank cell.
       // 0 (pre-measure) is treated as wide so the first paint shows everything.
       const plw = partyListWidth || 9999;
-      const showCategory = plw >= 320;
-      const showOnline = plw >= 230;
       // Row line-height/height follow fontSize so large fonts don't clip.
       const partyRowLine = `${Math.max(18, fontSize + 8)}px`;
       const statFontSize = `${Math.max(9, fontSize - 2)}px`;
       // Fixed-width, left-aligned stat cells so member/online/category line up
       // as columns down the list (scales with font so big fonts never clip).
-      const memberCellW = `${Math.max(46, fontSize * 4)}px`;
-      const onlineCellW = `${Math.max(36, fontSize * 3)}px`;
-      const categoryCellW = `${Math.max(64, fontSize * 5.5)}px`;
-      const actionCellW = `${Math.max(46, fontSize * 4)}px`;
+      const memberCellPx = Math.max(46, fontSize * 4);
+      const onlineCellPx = Math.max(36, fontSize * 3);
+      const categoryCellPx = Math.max(64, fontSize * 5.5);
+      const baseActionCellPx = Math.max(46, fontSize * 4);
+      const actionCellPx = Math.max(104, fontSize * 8);
+      // The original collapse thresholds were tuned for a single action button.
+      // Shift them by the extra width introduced by the new OPEN + LEAVE/DELETE
+      // action cluster so narrow layouts preserve the previous density balance.
+      const actionThresholdDelta = actionCellPx - baseActionCellPx;
+      const showCategory = plw >= 320 + actionThresholdDelta;
+      const showOnline = plw >= 230 + actionThresholdDelta;
+      const memberCellW = `${memberCellPx}px`;
+      const onlineCellW = `${onlineCellPx}px`;
+      const categoryCellW = `${categoryCellPx}px`;
+      const actionCellW = `${actionCellPx}px`;
       // Per-row CSS grid with FIXED tracks so the dot / name / category / member /
       // online / action columns line up at the same x on EVERY row (a flex row
       // let the action-button width shift the stat columns out of alignment).
@@ -6654,17 +6763,31 @@ export default function ChatOverlay() {
                       }}
                     ><span style={{ display: 'block', transform: 'translateY(-1px)' }}>ACCEPT</span></button>
                   ) : party.isMember ? (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setPartyView(party.id); }}
-                      style={{
-                        height: '18px', minHeight: 0, boxSizing: 'border-box',
-                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                        padding: '0 5px', fontSize: '11px', fontFamily: theme.fontFamily,
-                        background: hexAlpha(primaryColor, 0.1), border: `1px solid ${hexAlpha(primaryColor, 0.4)}`,
-                        color: primaryColor, cursor: 'pointer', flexShrink: 0,
-                        lineHeight: '1', paddingBottom: '2px',
-                      }}
-                    ><span style={{ display: 'block', transform: 'translateY(-1px)' }}>OPEN</span></button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setPartyView(party.id); }}
+                        style={{
+                          flex: 1, height: '18px', minHeight: 0, minWidth: 0, boxSizing: 'border-box',
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          padding: '0 5px', fontSize: '11px', fontFamily: theme.fontFamily,
+                          background: hexAlpha(primaryColor, 0.1), border: `1px solid ${hexAlpha(primaryColor, 0.4)}`,
+                          color: primaryColor, cursor: 'pointer', lineHeight: '1', paddingBottom: '2px',
+                        }}
+                      ><span style={{ display: 'block', transform: 'translateY(-1px)' }}>OPEN</span></button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLeaveConfirmFor({ partyId: party.id, isOwner: party.role === 'owner' });
+                        }}
+                        style={{
+                          flex: 1, height: '18px', minHeight: 0, minWidth: 0, boxSizing: 'border-box',
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          padding: '0 5px', fontSize: '11px', fontFamily: theme.fontFamily,
+                          background: 'transparent', border: `1px solid ${hexAlpha('#FF4444', 0.4)}`,
+                          color: '#FF4444', cursor: 'pointer', lineHeight: '1', paddingBottom: '2px',
+                        }}
+                      ><span style={{ display: 'block', transform: 'translateY(-1px)' }}>{party.role === 'owner' ? 'DELETE' : 'LEAVE'}</span></button>
+                    </div>
                   ) : !party.isPrivate ? (
                     <button
                       onClick={async (e) => {
@@ -6882,6 +7005,10 @@ export default function ChatOverlay() {
                         title="Click to zoom"
                         style={{ display: 'block', maxWidth: '100%', maxHeight: '80px', objectFit: 'contain', background: 'transparent', cursor: 'zoom-in' }}
                         onClick={() => setChatLightboxSrc(resolveMediaUrl(ci.imageUrl!))}
+                        // #313: the image loads async and grows the card AFTER the
+                        // append already scrolled — re-pin if the user is still at
+                        // the bottom so the (now taller) card lands fully in view.
+                        onLoad={() => { if (stickToBottomRef.current) scrollToBottom(); }}
                         onError={e => { (e.currentTarget as HTMLImageElement).parentElement!.style.display = 'none'; }}
                       />
                     </div>
@@ -8646,7 +8773,10 @@ export default function ChatOverlay() {
                 parts.push('/help');
                 return parts.join(' · ');
               })() : 'Enter send · /help'}</span>
-              <span style={{ color: hexAlpha(primaryColor, 0.8), textShadow: textOutline, flexShrink: 0, marginLeft: '6px' }}>
+              <span style={{ color: hexAlpha(primaryColor, 0.8), textShadow: textOutline, flexShrink: 0, marginLeft: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                {updateAvailableVersion && (
+                  <span title={`Update available: v${updateAvailableVersion}`} style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#e74c3c', boxShadow: '0 0 4px rgba(231,76,60,0.8)', flexShrink: 0, display: 'inline-block' }} />
+                )}
                 v{displayVersion}{isDevEnv ? ' [DEV]' : ''}
               </span>
             </div>
@@ -9306,13 +9436,11 @@ export default function ChatOverlay() {
               </div>
             );
           })()}
-          {/* Footer: invite / leave / delete — compact buttons, permission-gated.
-              Invite → owner/co-mod only · Delete → owner only · everyone else
-              sees just Leave. */}
+          {/* Footer: invite only — leave/delete now live in the Parties browser row
+              action area so the main party actions stay grouped together. */}
           {(() => {
             const myParty = parties.find(p => p.id === partyView);
             const myRole = myParty?.role;
-            const isOwner = myRole === 'owner';
             const canInvite = myRole === 'owner' || myRole === 'comod';
             const compactBtn: React.CSSProperties = {
               flex: 1, minHeight: 0, boxSizing: 'border-box', height: '22px',
@@ -9329,10 +9457,6 @@ export default function ChatOverlay() {
                     style={{ ...compactBtn, border: `1px solid ${hexAlpha(primaryColor, 0.4)}`, color: primaryColor }}
                   >+ INVITE</button>
                 )}
-                <button
-                  onClick={() => { if (typeof partyView === 'string') setLeaveConfirmFor({ partyId: partyView, isOwner }); }}
-                  style={{ ...compactBtn, border: `1px solid ${hexAlpha('#FF4444', 0.4)}`, color: '#FF4444' }}
-                >{isOwner ? 'DELETE' : 'LEAVE'}</button>
               </div>
             );
           })()}

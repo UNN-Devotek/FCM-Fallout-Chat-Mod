@@ -16,6 +16,7 @@ import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { initShell, openSettings } from './shell';
 // First-run onboarding overlay.
 import { showOnboarding } from './onboarding';
+import { focusChatInput } from './focus-chat';
 import { shouldExitTextEntryOnEscape } from './shell-core';
 
 // 3) THE REAL COMPONENT — unmodified, imported straight from the dashboard source.
@@ -143,6 +144,58 @@ function mountShellBar() {
 // the document level: if the user types `/hide` and presses Enter, hide the
 // window before the component would try to send it as a message.
 function wireShellInputBehaviour() {
+  const focusRetrySteps = [
+    { label: 'immediate', kind: 'immediate' as const },
+    { label: 'requestAnimationFrame', kind: 'raf' as const },
+    { label: '50ms', kind: 'timeout' as const, delayMs: 50 },
+    { label: '150ms', kind: 'timeout' as const, delayMs: 150 },
+    { label: '300ms', kind: 'timeout' as const, delayMs: 300 },
+    { label: '600ms', kind: 'timeout' as const, delayMs: 600 },
+  ];
+  let focusRequestSeq = 0;
+  const focusTimeouts = new Set<number>();
+  const focusRafs = new Set<number>();
+
+  const clearPendingFocusRetries = () => {
+    for (const id of focusTimeouts) clearTimeout(id);
+    focusTimeouts.clear();
+    for (const id of focusRafs) cancelAnimationFrame(id);
+    focusRafs.clear();
+  };
+
+  const logFocusAttempt = (msg: string) => window.relayBridge.logDiag?.(msg);
+
+  const runFocusAttempt = (requestId: number, attemptIndex: number): boolean => {
+    if (requestId !== focusRequestSeq) return true;
+    const step = focusRetrySteps[attemptIndex];
+    const result = focusChatInput(document);
+    const prefix = `[focus-chat] attempt ${attemptIndex + 1}/${focusRetrySteps.length} ${step.label}`;
+
+    if (result.state === 'focused') {
+      logFocusAttempt(`${prefix} success target=${result.targetLabel ?? result.targetKind ?? 'unknown'}`);
+      window.relayBridge.notifyInputFocusState?.(true);
+      clearPendingFocusRetries();
+      return true;
+    }
+
+    if (result.state === 'blocked') {
+      logFocusAttempt(`${prefix} blocked: ${result.reason}`);
+      window.relayBridge.notifyInputFocusState?.(false);
+      clearPendingFocusRetries();
+      return true;
+    }
+
+    if (attemptIndex === focusRetrySteps.length - 1) {
+      logFocusAttempt(`${prefix} failed: ${result.reason}`);
+      window.relayBridge.notifyInputFocusState?.(false);
+      clearPendingFocusRetries();
+      return true;
+    }
+
+    logFocusAttempt(`${prefix} pending: ${result.reason}`);
+    return false;
+  };
+
   document.addEventListener(
     'keydown',
     (e) => {
@@ -184,13 +237,31 @@ function wireShellInputBehaviour() {
   // Focus-to-chat (Insert / tray): focus the component's input textarea or
   // rich contentEditable div (overlay-only, when custom emoji input is active).
   window.relayBridge.onFocusInput(() => {
-    // Prefer the contenteditable rich-input (overlay path), then fall back to
-    // the last textarea/input (website path and muted state).
-    const richInput = document.querySelector<HTMLElement>('#shell-overlay-host [contenteditable]');
-    if (richInput) { richInput.focus(); return; }
-    const inputs = document.querySelectorAll<HTMLTextAreaElement>('#shell-overlay-host textarea, #shell-overlay-host input');
-    const target = inputs[inputs.length - 1];
-    if (target) { target.focus(); }
+    const requestId = ++focusRequestSeq;
+    clearPendingFocusRetries();
+    logFocusAttempt('[focus-chat] request received');
+
+    for (const [attemptIndex, step] of focusRetrySteps.entries()) {
+      if (step.kind === 'immediate') {
+        if (runFocusAttempt(requestId, attemptIndex)) break;
+        continue;
+      }
+
+      if (step.kind === 'raf') {
+        const rafId = requestAnimationFrame(() => {
+          focusRafs.delete(rafId);
+          runFocusAttempt(requestId, attemptIndex);
+        });
+        focusRafs.add(rafId);
+        continue;
+      }
+
+      const timeoutId = window.setTimeout(() => {
+        focusTimeouts.delete(timeoutId);
+        runFocusAttempt(requestId, attemptIndex);
+      }, step.delayMs);
+      focusTimeouts.add(timeoutId);
+    }
   });
 }
 

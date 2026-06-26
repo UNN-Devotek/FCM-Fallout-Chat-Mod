@@ -88,6 +88,12 @@ contextBridge.exposeInMainWorld('relayBridge', {
   onBlurInput:   (cb) => { const h = ()      => cb();  ipcRenderer.on('overlay:blur-input',    h); return () => ipcRenderer.removeListener('overlay:blur-input',    h); },
   // Main asks the renderer to clear idle state + un-collapse (focus-to-chat).
   onForceExpand: (cb) => { const h = ()      => cb();  ipcRenderer.on('overlay:force-expand',  h); return () => ipcRenderer.removeListener('overlay:force-expand',  h); },
+  // Main notifies the renderer when a newer version is available (fires once per
+  // session, after the OS toast). Used to show a persistent red-dot indicator.
+  onUpdateAvailable: (cb) => { const h = (_e, v) => cb(v); ipcRenderer.on('relay:update-available', h); return () => ipcRenderer.removeListener('relay:update-available', h); },
+  // Query main for a pending update version - catches signals that arrived
+  // before the onUpdateAvailable listener was registered.
+  getPendingUpdate: () => ipcRenderer.invoke('overlay:get-pending-update'),
   // Main → renderer commands: 'channel:next' | 'channel:prev' | 'settings:open' | 'party:recent'.
   onCommand:     (cb) => { const h = (_e, v) => cb(v); ipcRenderer.on('overlay:command',       h); return () => ipcRenderer.removeListener('overlay:command',       h); },
   // Main pushes the live keybind map whenever hotkeys are (re)registered, so the
