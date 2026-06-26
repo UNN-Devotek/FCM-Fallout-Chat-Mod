@@ -201,8 +201,14 @@ a plain column on `User`):
 **Device-code upgrade flow (in-game — no token pasting):**
 1. SWF does the normal `register` → ZFE stores the token (DPAPI). The relay marks the identity
    **limited** and rejects `send` with **`permission_denied`**.
-2. The relay issues a short **link code** the SWF shows in-game.
-3. The user opens `falloutchatmod.com/link`, signs in with **Discord or Nexus** (existing OAuth /
+2. The relay issues a short **link code** and pushes a SYSTEM NOTICE the SWF shows in-game:
+   `LINK REQUIRED - visit <host>/link, sign in, and enter code: XXXX-XXXX (expires 10m)`. The `<host>`
+   is **env-aware** — the relay derives it from `FCM_PUBLIC_BASE_URL` (`backend/src/config/environment.ts`,
+   default `https://falloutchatmod.com`; the dev stack sets `https://dev.falloutchatmod.com` via
+   `deploy/dev/docker-compose.yml`), so dev points users at `dev.falloutchatmod.com/link`. The same
+   value backs the `permission_denied` "complete the link flow at …" message. (Previously this URL was
+   hardcoded to the prod host, so the dev relay wrongly pointed users at prod.)
+3. The user opens that `<host>/link` page, signs in with **Discord or Nexus** (existing OAuth /
    Nexus OAuth2+PKCE, §5.2 of the design doc), and enters the code.
 4. The relay **binds the `register` token's `userId` to the authed account** (writes the provider
    link); the identity is now **authed** and `send` is allowed. The DPAPI token is reused as-is —

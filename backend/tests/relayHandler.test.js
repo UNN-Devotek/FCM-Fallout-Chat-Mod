@@ -207,6 +207,8 @@ const {
   _resetRelayWss,
 } = require('../src/websocket/upgradeRouter');
 
+const { deriveLinkUrl } = require('../src/services/relay/relayHandler');
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function makeServer() {
@@ -302,6 +304,19 @@ function markTokensLinked(relayUserId, fcmUserId) {
     .filter((r) => r.userId === relayUserId && !r.revokedAt)
     .forEach((r) => { r.linkedUserId = fcmUserId; });
 }
+
+// ── deriveLinkUrl (env-aware link-flow URL) ──────────────────────────────────────
+
+describe('deriveLinkUrl', () => {
+  test('strips scheme + trailing slash and appends /link', () => {
+    expect(deriveLinkUrl('https://dev.falloutchatmod.com')).toBe('dev.falloutchatmod.com/link');
+    expect(deriveLinkUrl('https://falloutchatmod.com/')).toBe('falloutchatmod.com/link');
+    expect(deriveLinkUrl('http://localhost:7177')).toBe('localhost:7177/link');
+  });
+  test('falls back to the prod host when the base is empty', () => {
+    expect(deriveLinkUrl('')).toBe('falloutchatmod.com/link');
+  });
+});
 
 // ── channelMap ─────────────────────────────────────────────────────────────────
 

@@ -45,7 +45,19 @@ const WORLD_ID_SENTINEL_PREFIX  = '\x00fcm.world.v1\x00';
 const WORLD_ID_HMAC_WINDOW_S    = 30;    // 30-second replay window (ts is unix SECONDS)
 const POLL_HISTORY_LIMIT        = 30;    // initial history window on cursor=0
 const REDIS_BROADCAST_CHANNEL   = 'chat:broadcast';
-const LINK_URL                  = 'falloutchatmod.com/link';
+
+/**
+ * Build the human-facing link-flow URL (bare host + /link) from the public base URL.
+ * Env-aware (FCM_PUBLIC_BASE_URL) so dev shows dev.falloutchatmod.com/link and prod shows
+ * falloutchatmod.com/link. Scheme is stripped to match the in-game notice's bare-host format.
+ */
+export function deriveLinkUrl(baseUrl: string): string {
+  const host = (baseUrl || 'https://falloutchatmod.com')
+    .replace(/^https?:\/\//i, '')
+    .replace(/\/+$/, '');
+  return `${host}/link`;
+}
+const LINK_URL                  = deriveLinkUrl(env.FCM_PUBLIC_BASE_URL);
 
 // ── Link-code service (dynamic import — WT2 may not yet be merged) ────────────
 
@@ -408,7 +420,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   // Auth gate: limited identities cannot send (check before any user lookup).
   // We check this BEFORE ban/mute to avoid unnecessary DB queries for limited users.
   if (!identity.isLinked) {
-    send(ws, errEnvelope('permission_denied', 'Account not linked — complete the link flow at falloutchatmod.com/link'));
+    send(ws, errEnvelope('permission_denied', `Account not linked — complete the link flow at ${LINK_URL}`));
     return;
   }
 

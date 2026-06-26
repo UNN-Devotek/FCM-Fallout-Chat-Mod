@@ -172,6 +172,9 @@ services:
       # so point it at the dev guild's #updates. DOWNLOAD_PAGE_URL is the embed link.
       DISCORD_UPDATES_CHANNEL_ID: ${DISCORD_UPDATES_CHANNEL_ID:-1514511518434201697}
       DOWNLOAD_PAGE_URL: ${DOWNLOAD_PAGE_URL:-https://dev.falloutchatmod.com}
+      # Public web base for user-facing links (chat link-flow URL the in-game HUD shows).
+      # Dev must override the prod default so the in-game "visit …/link" notice points at dev.
+      FCM_PUBLIC_BASE_URL: ${FCM_PUBLIC_BASE_URL:-https://dev.falloutchatmod.com}
       # Dev-guild role IDs (cloned dev server has BRAND-NEW IDs — see plan).
       OWNER_ROLE_ID: ${OWNER_ROLE_ID}
       ADMIN_ROLE_ID: ${ADMIN_ROLE_ID}

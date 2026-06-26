@@ -45,6 +45,7 @@ export interface Environment {
   MINIO_ROOT_PASSWORD: string;
   MINIO_BUCKET: string;
   MINIO_PUBLIC_URL: string;
+  FCM_PUBLIC_BASE_URL: string;
   VIRUSTOTAL_URL: string;
   // Tenor GIF search proxy
   TENOR_API_KEY: string;
@@ -224,6 +225,9 @@ const env: Environment = {
   MINIO_ROOT_PASSWORD: process.env.MINIO_ROOT_PASSWORD || '',
   MINIO_BUCKET: process.env.MINIO_BUCKET || 'avatars',
   MINIO_PUBLIC_URL: process.env.MINIO_PUBLIC_URL || '',
+  // Public web base for user-facing links (e.g. the chat link-flow URL the in-game HUD shows).
+  // Prod default; the dev stack sets this to https://dev.falloutchatmod.com via its compose env.
+  FCM_PUBLIC_BASE_URL: process.env.FCM_PUBLIC_BASE_URL || 'https://falloutchatmod.com',
 
   VIRUSTOTAL_URL: process.env.VIRUSTOTAL_URL || '',
 
