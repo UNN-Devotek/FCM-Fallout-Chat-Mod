@@ -101,20 +101,6 @@ function issueLinkCode(relayUserId: string): Promise<string | null> {
  * Delivered directly on `ws` — not broadcast (only the registering/hello-ing client sees it).
  */
 async function pushLinkNotice(ws: WebSocket, relayUserId: string): Promise<void> {
-  // Defer the notice so the register/hello response is delivered as a SINGLE, clean
-  // first frame. A fragile client read loop (notably ZFE's Wine/Schannel transport)
-  // can choke when the relay sends the response and this notice back-to-back over TLS:
-  // it mis-reads the second frame's bytes as part of the first (short partial read) and
-  // aborts the connection before it ever subscribes. A short gap lets such a client
-  // finish reading the response — and subscribe — before the notice arrives.
-  // Tunable via RELAY_NOTICE_DELAY_MS (default 1200ms; set 0 to restore the legacy
-  // immediate send).
-  const delayMs = Number(process.env.RELAY_NOTICE_DELAY_MS ?? 1200);
-  if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
-  // The client may have closed/aborted during the gap — don't issue a code for a dead
-  // socket (readyState 1 = OPEN in the ws library).
-  if (ws.readyState !== 1) return;
-
   const code = await issueLinkCode(relayUserId);
   // Format code as XXXX-XXXX if it looks like an 8-char hex/alphanum string.
   const formatted = code && code.length === 8
@@ -667,8 +653,22 @@ async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): P
     role:        identity.role,
   });
 
-  // Clean up subscriber on disconnect.
+  // Keepalive: ZFE's Wine/Winsock subscribe recv times out on idle (WSAETIMEDOUT /
+  // "WSA error 10060") and treats it as a disconnect, dropping the live connection into
+  // a reconnect loop. Send a periodic WS ping so the client's recv always sees inbound
+  // traffic before its idle timeout fires. Tunable via RELAY_PING_INTERVAL_MS
+  // (default 4000ms; 0 disables).
+  const pingMs = Number(process.env.RELAY_PING_INTERVAL_MS ?? 4000);
+  const pingTimer = pingMs > 0
+    ? setInterval(() => {
+        if (ws.readyState !== 1) return;       // 1 = OPEN
+        try { ws.ping(); } catch { /* socket closing */ }
+      }, pingMs)
+    : null;
+
+  // Clean up subscriber (and stop the keepalive) on disconnect.
   ws.once('close', () => {
+    if (pingTimer) clearInterval(pingTimer);
     subscribers.delete(state);
   });
 }
