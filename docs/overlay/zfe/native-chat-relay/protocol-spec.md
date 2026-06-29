@@ -324,7 +324,8 @@ Response:
       "senderUserId": "user_0123456789abcdef0123456789abcdef",
       "senderDisplayName": "CharacterName",
       "body": "hello",
-      "targetUserId": ""
+      "targetUserId": "",
+      "createdAt": "2026-06-26T12:34:56.000Z"
     }
   ]
 }
@@ -332,6 +333,10 @@ Response:
 
 `id` is the **relay cursor**. It must **increase monotonically** for visible events. ZFE uses it to
 avoid duplicate messages between push and poll.
+
+`createdAt` is the message's **server send time** as an ISO 8601 UTC string (sourced from
+`messages.created_at`). Clients render timestamps from this field. The system link-notice carries
+the time it was issued. Older relays may omit it (treat absent/empty as "no timestamp").
 
 When `cursor` is `0`, the server **may** include an initial visible history window. The history
 size is relay policy, not a ZFE rule — a relay can return no history, five messages, twenty
@@ -371,7 +376,8 @@ Push new events as they become visible to that user:
     "senderUserId": "user_0123456789abcdef0123456789abcdef",
     "senderDisplayName": "CharacterName",
     "body": "hello",
-    "targetUserId": ""
+    "targetUserId": "",
+    "createdAt": "2026-06-26T12:34:56.000Z"
   }
 }
 ```
