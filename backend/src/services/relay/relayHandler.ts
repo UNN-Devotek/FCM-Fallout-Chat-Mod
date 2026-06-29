@@ -658,7 +658,7 @@ async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): P
   // a reconnect loop. Send a periodic WS ping so the client's recv always sees inbound
   // traffic before its idle timeout fires. Tunable via RELAY_PING_INTERVAL_MS
   // (default 4000ms; 0 disables).
-  const pingMs = Number(process.env.RELAY_PING_INTERVAL_MS ?? 4000);
+  const pingMs = Number(process.env.RELAY_PING_INTERVAL_MS ?? 0); // TEST(lag-isolation): keepalive OFF to isolate ZFE held-connection lag — REVERT to 4000 after
   const pingTimer = pingMs > 0
     ? setInterval(() => {
         if (ws.readyState !== 1) return;       // 1 = OPEN
