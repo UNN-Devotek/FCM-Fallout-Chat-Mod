@@ -148,19 +148,18 @@ export const defaultQaCallbackDeps: QaCallbackDeps = {
     // the desktop-app user record is updated in-place; placeholder username keeps
     // the @unique username constraint clean.
     const displayName = String(identity.global_name || identity.username).slice(0, 128);
-    // Detach this discordId from any OTHER placeholder install row before the
-    // upsert, so a returning tester who reinstalls (new installToken) does not
-    // hit the User.discordId @unique constraint. Scoped to placeholder rows
-    // (discord:/pending- usernames) so a real-name user's row is never touched.
-    // Mirrors the production link-flow detach (server.ts:717-727).
+    // Detach this discordId from ANY OTHER install row before the upsert, so a
+    // returning tester who reinstalls (new installToken) does not hit the
+    // User.discordId @unique constraint. The `NOT: { installToken }` guard already
+    // protects the current install's own row, so this is safe to apply regardless
+    // of username — a Discord identity links to exactly one install at a time, and
+    // the latest login wins. (Previously this was scoped to placeholder
+    // `discord:`/`pending-` usernames, which silently skipped a row whose username
+    // had become a real onboarded name and then collided on re-auth — see #<pr>.)
     await prisma.user.updateMany({
       where: {
         discordId: identity.id,
         NOT: { installToken },
-        OR: [
-          { username: { startsWith: 'discord:' } },
-          { username: { startsWith: 'pending-' } },
-        ],
       },
       data: { discordId: null },
     });
