@@ -182,6 +182,15 @@ services:
       DEVELOPER_ROLE_ID: ${DEVELOPER_ROLE_ID}
       SUPPORT_ROLE_ID: ${SUPPORT_ROLE_ID}
 
+      # --- QA golden-build flow (dev-only) ---
+      # This service does NOT use env_file, so the QA vars (present in the Dokploy stack env)
+      # must be listed explicitly or they never reach the container — without DEV_QA_ROLE_ID the
+      # QA-role grant can't be issued and the QA overlay login times out.
+      DEV_QA_ROLE_ID: ${DEV_QA_ROLE_ID}
+      DISCORD_QA_REDIRECT_URI: ${DISCORD_QA_REDIRECT_URI:-https://dev.falloutchatmod.com/auth/discord/qa/callback}
+      QA_BUILD_LOCK: ${QA_BUILD_LOCK:-false}
+      QA_ACTIVE_VERSION: ${QA_ACTIVE_VERSION}
+
       # --- GitHub ticketing (Discord <-> GitHub Issues/Projects) ---
       # This service does NOT use env_file, so each var must be listed explicitly.
       GITHUB_PAT: ${GITHUB_PAT}
