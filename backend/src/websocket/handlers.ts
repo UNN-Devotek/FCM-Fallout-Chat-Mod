@@ -20,6 +20,12 @@ import { incrementMessageCount, setFullscreenStatus, removeFullscreenClient } fr
 import { tryHandleCommand } from '../services/commandService';
 import { getServerPlayers } from '../services/playerListService';
 import {
+  notePendingDisconnectSuppressed,
+  noteUserConnected,
+  noteUserDisconnected,
+  noteUserPendingDisconnect,
+} from '../services/onlinePresenceService';
+import {
   PrivateConversationAccessError,
   PrivateMessageUnavailableError,
   getOrCreatePrivateConversation,
@@ -189,7 +195,6 @@ export async function broadcastToSession(payload: any, sessionId: string | null 
   }
   return delivered;
 }
-
 // WebSocket close codes
 const WS_CLOSE_AUTH_FAILED = 4001;
 const WS_CLOSE_BANNED = 4002;
@@ -1400,6 +1405,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       const decision = decideFlapHandoff({ endpoint: pd.endpoint }, newEp);
       clearTimeout(pd.timer);
       pendingDisconnect.delete(user.id);
+      notePendingDisconnectSuppressed(user.id);
       if (decision.kind === 'fire-old-immediately') {
         try { pd.fire(); } catch { /* non-fatal */ }
         logger.info(
@@ -1471,12 +1477,15 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
         logger.info({ userId: user.id, clientVersion: gate.clientVersion, activeQaVersion }, '[ws] rejecting outdated build');
         ws.close(WS_CLOSE_OUTDATED_BUILD, `OUTDATED_BUILD:${activeQaVersion || ''}`);
         clients.delete(token);
+        noteUserDisconnected(user.id);
         return;
       }
     } catch (err) {
       logger.warn({ err, userId: user.id }, '[ws] build-gate check failed; failing open');
     }
   }
+
+  noteUserConnected(user.id);
 
   // Broadcast room:join (user connected)
   broadcast({ type: 'room:join', payload: { username: displayName, timestamp: new Date().toISOString() } }, ws);
@@ -2462,9 +2471,11 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
         }
         pendingDisconnect.delete(user.id);
         if (!stillGone) {
+          notePendingDisconnectSuppressed(user.id);
           logger.info({ userId: user.id, ep }, '[ws-flap] reconnected before timer fired — suppressing');
           return;
         }
+        noteUserDisconnected(user.id);
         fireDeferred(ep);
       }, WS_FLAP_GRACE_MS);
 
@@ -2475,7 +2486,10 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       });
     };
 
-    scheduleDeferred(closingEndpoint);
+    const enteredPresenceGrace = noteUserPendingDisconnect(user.id);
+    if (enteredPresenceGrace) {
+      scheduleDeferred(closingEndpoint);
+    }
     // Do NOT null serverEndpoint/alternateEndpoints/serverJoinedAt on close.
     // Backend deploys drop every WS in flight; clearing on each close caused
     // state loss across deploys (serverEndpoint nulled → reconnect's :3000
@@ -2501,6 +2515,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
     if (!isSocketSuperseded(clients.get(token)?.ws, ws)) {
       clients.delete(token);
       removeFullscreenClient(user.id);
+      noteUserDisconnected(user.id);
     }
   });
 }

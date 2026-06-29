@@ -31,6 +31,7 @@ import {
   isNearBottom,
   STICK_TO_BOTTOM_THRESHOLD,
   buildMentionInsert,
+  BUILTIN_FORMS,
 } from '../ChatOverlay';
 
 // ── isProdRelayHost (drives the footer [DEV] indicator) ──────────────────────
@@ -53,6 +54,18 @@ describe('isProdRelayHost', () => {
     expect(isProdRelayHost('')).toBe(false);
     expect(isProdRelayHost(null)).toBe(false);
     expect(isProdRelayHost(undefined)).toBe(false);
+  });
+});
+
+describe('slash-command built-ins', () => {
+  it('includes /online in the built-in autocomplete command list', () => {
+    expect(BUILTIN_FORMS.some((cmd) => cmd.trigger === '/online')).toBe(true);
+  });
+});
+
+describe('slash-command built-ins', () => {
+  it('includes /online in the built-in autocomplete command list', () => {
+    expect(BUILTIN_FORMS.some((cmd) => cmd.trigger === '/online')).toBe(true);
   });
 });
 

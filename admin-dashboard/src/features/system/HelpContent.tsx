@@ -54,6 +54,7 @@ const BUILTIN_COMMANDS: BuiltIn[] = [
   { trigger: '/report player', description: 'Submit a player report (player name, reason, description)'                                                       },
   { trigger: '/apply',         description: 'Open the staff application form'                                                                                 },
   // ── Fallout 76 lookups ────────────────────────────────────────────────────────
+  { trigger: '/online',        description: 'Show total users online in chat'                                                                               },
   { trigger: '/serverstatus',  description: 'Show Fallout 76 server status (up/down)'                                                                          },
   { trigger: '/nukecodes',     description: "Show this week's nuke launch codes (Alpha/Bravo/Charlie)"                                                   },
   { trigger: '/wiki',          description: 'Search the Fallout 76 wiki — type a name (weapons, armor, items, creatures, locations, quests); pick a result with ↑↓ + Enter/Tab or click' },

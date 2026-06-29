@@ -14,6 +14,7 @@ const SYSTEM_TRIGGERS = new Set(['/apply', '/report']);
 // one of these triggers would be silently ignored, so reject creation upfront.
 const RESERVED_BUILTINS = new Set([
   '/help', '/s', '/g', '/t', '/e', '/r', '/i', '/raid',
+  '/online',
   '/serverstatus', '/server-status', '/nukecodes', '/codes',
   '/wiki', '/camp', '/minerva',
 ]);

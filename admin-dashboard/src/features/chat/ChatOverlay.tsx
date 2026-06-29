@@ -1455,11 +1455,12 @@ const BUILTIN_RELAYS: { cmd: SlashCommand; channelId: string | null; fallbackCol
 
 // Hardcoded form/utility commands — mirrors the desktop overlay's _acCommands list exactly.
 // These are excluded from the DB fetch so descriptions stay consistent.
-const BUILTIN_FORMS: SlashCommand[] = [
+export const BUILTIN_FORMS: SlashCommand[] = [
   { trigger: '/report bug',   description: 'Bug report — title, description, steps to reproduce, expected vs actual',            requiresArgs: true,  actionType: 'report'  },
   { trigger: '/report player', description: 'Player report — player name, reason, description',                                   requiresArgs: true,  actionType: 'report'  },
   { trigger: '/apply',        description: 'Join the mod team — in-game name, age, timezone, availability, experience, motivation', requiresArgs: false, actionType: 'message' },
   // FO76 data lookups — handled backend-side, reply privately to the sender.
+  { trigger: '/online',       description: 'Show total users online in chat',                                                   requiresArgs: false, actionType: 'message' },
   { trigger: '/serverstatus', description: 'Show Fallout 76 server status (up/down)',                                            requiresArgs: false, actionType: 'message' },
   { trigger: '/nukecodes',    description: 'Show this week\'s nuke launch codes (Alpha/Bravo/Charlie)',                       requiresArgs: false, actionType: 'message' },
   { trigger: '/minerva',      description: 'Show Minerva\'s current or next Big Sale — location, list number, and dates',     requiresArgs: false, actionType: 'message' },
