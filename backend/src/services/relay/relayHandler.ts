@@ -118,6 +118,7 @@ async function pushLinkNotice(ws: WebSocket, relayUserId: string): Promise<void>
     senderDisplayName: 'FCM',
     body:              `LINK REQUIRED - visit ${LINK_URL}, sign in, and enter code: ${formatted} (expires 10m)`,
     targetUserId:      '',
+    createdAt:         new Date().toISOString(),
   };
   send(ws, { op: 'event', cursor, event });
 }
@@ -259,6 +260,12 @@ async function ensurePubSub(): Promise<void> {
       // No relaySeq = not a relay-originating message; skip
       if (relaySeq === null) return;
 
+      // The broadcast() payload carries the server time as `timestamp` (ISO 8601 UTC,
+      // set by finalizeMessage). Forward it as `createdAt` so clients can render times.
+      const createdAt = typeof p.timestamp === 'string'
+        ? p.timestamp
+        : (typeof p.createdAt === 'string' ? p.createdAt : '');
+
       const eventObj = {
         id:                relaySeq,
         kind:              'chat.message',
@@ -268,6 +275,7 @@ async function ensurePubSub(): Promise<void> {
         senderDisplayName: p.username,
         body:              p.content,
         targetUserId:      '',
+        createdAt,
       };
 
       const frame = JSON.stringify({ op: 'event', cursor: relaySeq, event: eventObj });
@@ -552,13 +560,14 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
     channel_id: string;
     username: string;
     fo76_account_name: string | null;
+    created_at: Date | string | null;
   }>;
 
   if (cursor === 0) {
     // Initial history window.
     rows = await prisma.$queryRaw`
       SELECT m.id, m.relay_seq, m.content, m.user_id,
-             m.channel_id,
+             m.channel_id, m.created_at,
              COALESCE(u.fo76_account_name, u.discord_display_name, u.username) AS username,
              u.fo76_account_name
       FROM   messages m
@@ -575,7 +584,7 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
   } else {
     rows = await prisma.$queryRaw`
       SELECT m.id, m.relay_seq, m.content, m.user_id,
-             m.channel_id,
+             m.channel_id, m.created_at,
              COALESCE(u.fo76_account_name, u.discord_display_name, u.username) AS username,
              u.fo76_account_name
       FROM   messages m
@@ -599,6 +608,7 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
     senderDisplayName: row.username,
     body:              row.content,
     targetUserId:      '',
+    createdAt:         row.created_at ? new Date(row.created_at).toISOString() : '',
   }));
 
   send(ws, { success: true, events });

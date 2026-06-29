@@ -94,18 +94,28 @@ headers). These resolve inside a child widget SWF (unlike HUDMenu's per-movie `$
 unlike a Flash-embedded TTF, which GFx ignores for child SWFs); `embedFonts=true` is kept on every
 TextField. Details + the tofu root cause: [BUILD.md](BUILD.md) → "Fonts (v2.5.3 - engine aliases)".
 
-## Position
+## Customization (`Data/FCMChat.ini`)
 
-Coordinate space is always 1920×1080 (HUDModLoader's fixed HUD viewport). Defaults
-to `x=10, y=10`. Edit `Data/FCMChat.ini` to reposition.
+All appearance + behavior is user-editable in `Data/FCMChat.ini`, parsed by `FcmConfig`
+(`FcmConfig.hx`). Coordinate space is always 1920×1080 (HUDModLoader's fixed HUD viewport).
+Editable keys (defaults reproduce the amber Pip-Boy theme): position `x`/`y`, `width`/`height`,
+`fontSize`; colors `bgColor`/`bgAlpha`/`borderColor`/`textColor`/`senderColor`/`channelTagColor`/
+`tabActiveColor`/`tabInactiveColor`/`promptColor`/`tabRowColor`/`timestampColor`; limits
+`maxMessages`/`maxSendLen`; toggles `showChannelTag`/`showTimestamps`/`showHints`; keybinds
+`openKey`/`channelNextKey`/`channelPrevKey`/`hideKey`. Colors accept `#RRGGBB`, `RRGGBB`, or
+`0xRRGGBB`. Every value is validated + clamped — a bad edit falls back to its default, never
+crashes, never goes off-screen. Edit, then reload via the F12 HUDTools menu. Full catalog with
+ranges: the comments in `FCMChat.ini`. Design + decisions: `docs/roadmap/hud-widget-customization-spec.md`.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `FCMChatWidget.hx` | Main widget source (Haxe → AS3 SWF) |
+| `FcmConfig.hx` | User-config model + INI parser/clamp (pure, unit-tested) |
+| `TestFcmConfig.hx` / `test-config.hxml` | `FcmConfig` unit tests (`haxe --interp`; run in CI) |
 | `build.hxml` | Haxe build file |
-| `FCMChat.ini` | Default per-user config (position, font size, open key, channel) |
+| `FCMChat.ini` | Per-user config — position, size, colors, font, limits, keybinds, toggles |
 | `FCMChatWidget.ini` | ZFE TextChat fragment (endpoint default, `OpenChatKey`) |
 | `hudmodloader.ini` | Entry to append to the game's `Data/hudmodloader.ini` |
 | `BUILD.md` | Full build + install + verification steps |
