@@ -117,6 +117,13 @@ prompt and reinstall. No separate de-list step.
 - **Tester can't connect / "update required":** their build's version != `QA_ACTIVE_VERSION`.
   Re-bless or redistribute the current build. Confirm: `GET /api/admin/qa/active-version`.
 - **"You need the QA role":** the account lacks the `QA` role in the **dev** guild.
+- **"Could not create your session" after the role gate passes:** a `User.discordId`
+  (`@map("discord_id_link")`) `@unique` collision in the QA OAuth callback — a prior
+  install row for the same Discord account still held the link. The callback now detaches
+  the Discord ID from **any** other install before linking (`upsertUser`, scoped only by
+  `NOT: { installToken }`), so this is fixed for new logins. To clear a row stranded by the
+  old build, null its `discord_id_link`; check the dev backend log for
+  `[qa-oauth] failed to issue QA session` (Prisma `P2002`).
 - **"503 / connection blocked by edge (CF challenge)":** a needed overlay path is not
   CF-bypassed (see [hosted-dev-environment.md](hosted-dev-environment.md) -> CF Access
   path-bypass).
