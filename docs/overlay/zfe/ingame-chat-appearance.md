@@ -53,6 +53,19 @@ Sources: `game-mods/FCMBridge/FCMBridge.hx` (all lines), `admin-dashboard/src/fe
 >   (no more dim alpha seam between the main tab and the sub-tabs); the only line on that
 >   boundary is a yellow (`tabActiveColor`) separator at `y=TAB_H`, cut out under the active tab
 >   so the tab outline + separator form one continuous line that wraps the active "FALLOUT 76" tab.
+>
+> **Link prompt + send errors (v2.6.7).**
+> - **Numbered link prompt (Flow A).** When unlinked, the widget shows numbered steps —
+>   `1) Open <linkUrl> in a web browser  2) Sign in with Discord or Nexus  3) Enter this code: <CODE>`
+>   — with the code pulled from the relay's pinned notice (`extractLinkCode`) and shown bold/larger.
+>   (The code is shown IN-GAME; you enter it on the web `/link` page. Signing into `/link` only
+>   logs into your FCM account — the identity isn't linked until the code is redeemed.)
+> - **Send errors no longer mislabel.** The relay now returns `message_blocked` (automod) and
+>   `slash_ignored` (a `/command` typed in-game) instead of collapsing them into `permission_denied`
+>   — so a filtered/slash message from a LINKED user no longer wrongly says "link your account."
+>   The widget shows "Message blocked by the chat filter." / "Slash commands work in the dashboard,
+>   not in-game." `permission_denied` now means genuinely not-linked only.
+> - **Smaller default size:** `width`/`height` defaults are now `400 x 260` (were `480 x 306`).
 
 ---
 

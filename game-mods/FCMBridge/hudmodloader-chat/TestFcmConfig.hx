@@ -51,8 +51,8 @@ class TestFcmConfig {
         var d = FcmConfig.parse("");
         eqi("default x", d.x, 10);
         eqi("default y", d.y, 10);
-        eqi("default width", d.width, 480);
-        eqi("default height", d.height, 306);
+        eqi("default width", d.width, 400);
+        eqi("default height", d.height, 260);
         eqi("default fontSize", d.fontSize, 14);
         eqi("default bgColor", d.bgColor, 0x0A0907);
         eqi("default borderColor", d.borderColor, 0xF5CB5B);
@@ -124,7 +124,7 @@ class TestFcmConfig {
         // ── section-scoped: keys outside [FCMChat] ignored; comments skipped ──
         var scoped = FcmConfig.parse("x=999\n[Other]\nwidth=999\n[FCMChat]\n; comment\nx=42\n");
         eqi("section scope x", scoped.x, 42);
-        eqi("section scope width default", scoped.width, 480);
+        eqi("section scope width default", scoped.width, 400);
 
         // ── chanLabel: slug -> proper-cased channel name (CAP-012, D-09) ──
         eqs("chanLabel global",  FcmConfig.chanLabel("global"),  "General");

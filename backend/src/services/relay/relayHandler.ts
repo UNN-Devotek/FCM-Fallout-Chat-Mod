@@ -137,6 +137,8 @@ async function pushLinkNotice(ws: WebSocket, relayUserId: string): Promise<void>
  *   invalid_channel     — unknown/omitted slug
  *   message_too_long    — body > 500 chars
  *   user_muted          — user is muted
+ *   message_blocked     — rejected by automod (NOT a link/permission problem)
+ *   slash_ignored       — a "/command" was typed in-game (not supported there)
  *   invalid_action      — unknown moderationAction action
  */
 function errEnvelope(code: string, message: string): object {
@@ -522,14 +524,23 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   });
 
   if (!result.ok) {
+    // Map ingest failure reasons to stable client codes. IMPORTANT: automod + slash-command
+    // failures get their OWN codes — they must NOT collapse into permission_denied, or the
+    // in-game widget tells a LINKED user to "link your account" for a filtered/slash message.
     const code =
-      result.reason === 'muted'          ? 'user_muted'      :
-      result.reason === 'rate-limited'   ? 'rate_limited'    :
-      result.reason === 'invalid-channel' ? 'invalid_channel' :
-      result.reason === 'channel-not-found' ? 'invalid_channel' :
-      result.reason === 'invalid-content' ? 'message_too_long' :
+      result.reason === 'muted'             ? 'user_muted'        :
+      result.reason === 'rate-limited'      ? 'rate_limited'      :
+      result.reason === 'invalid-channel'   ? 'invalid_channel'   :
+      result.reason === 'channel-not-found' ? 'invalid_channel'   :
+      result.reason === 'invalid-content'   ? 'message_too_long'  :
+      result.reason === 'automod'           ? 'message_blocked'   :
+      result.reason === 'slash-command-dropped' ? 'slash_ignored' :
       'permission_denied';
-    send(ws, errEnvelope(code, result.reason ?? 'Send rejected'));
+    const msg =
+      code === 'message_blocked' ? 'Message blocked by the chat filter' :
+      code === 'slash_ignored'   ? 'Slash commands are not supported in-game' :
+      (result.reason ?? 'Send rejected');
+    send(ws, errEnvelope(code, msg));
     return;
   }
 

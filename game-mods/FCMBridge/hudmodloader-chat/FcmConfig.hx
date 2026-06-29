@@ -19,8 +19,8 @@ class FcmConfig {
     // ── Geometry + font ────────────────────────────────────────────────────────
     public var x:Int            = 10;
     public var y:Int            = 10;
-    public var width:Int        = 480;
-    public var height:Int       = 306;
+    public var width:Int        = 400;
+    public var height:Int       = 260;
     public var fontSize:Int     = 14;
 
     // ── Colors (0xRRGGBB) + opacity ────────────────────────────────────────────

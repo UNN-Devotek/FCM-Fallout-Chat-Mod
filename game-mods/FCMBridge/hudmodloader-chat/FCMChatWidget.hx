@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.6.6";  // unlinked = link screen only (no chat history on first load); configurable linkUrl (dev builds point to dev.falloutchatmod.com/link); single yellow main->sub separator that wraps the active tab (removed the dim tab-row alpha seam); sub-tabs use header colors, per-channel chat_rooms.color only on [Channel] message tags; pollMs configurable
+    static inline var VERSION:String  = "2.6.7";  // numbered in-game link steps (Flow A) + code extraction from the relay notice; automod/slash sends no longer say "link your account" (new relay codes message_blocked/slash_ignored); smaller default size 400x260; + v2.6.6 (link-screen-when-unlinked, linkUrl, single yellow main->sub separator, per-channel [Channel] tag colors, pollMs)
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -1066,7 +1066,13 @@ class FCMChatWidget extends MovieClip {
                 zfeLog("warn", "send", "relay rejected code=" + code + " raw=" + rs.substr(0, 200));
                 switch (code) {
                     case "permission_denied":
+                        // Genuine not-linked / insufficient-role only (automod + slash now have
+                        // their own codes below, so this no longer fires for filtered messages).
                         setLogText(linkHint());
+                    case "message_blocked":
+                        setLogText("Message blocked by the chat filter.");
+                    case "slash_ignored":
+                        setLogText("Slash commands work in the dashboard, not in-game.");
                     case "user_muted":
                         setLogText("You are muted and cannot send right now.");
                     case "rate_limited":
@@ -1138,7 +1144,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.6.6");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.6.7");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
@@ -1608,12 +1614,43 @@ class FCMChatWidget extends MovieClip {
     }
 
     /**
-     * The pinned link/connect notice text — never overwritten by an empty-feed placeholder.
+     * The in-game link prompt — numbered steps (Flow A): the code is shown IN-GAME (pulled from
+     * the relay's pinned notice), the player enters it on the web /link page. Multi-line htmlText;
+     * dynamic bits (url, code) are htmlEscaped (crash rule #2: numeric refs only).
      */
     function linkHint():String {
-        return (_pinnedSystemBody.length > 0)
-            ? _pinnedSystemBody
-            : "Link your account at " + _cfg.linkUrl + " to chat";
+        var code:String = extractLinkCode(_pinnedSystemBody);
+        var url:String  = FcmConfig.htmlEscape(_cfg.linkUrl);
+        var s:String =
+            '<font face="' + FONT_BOLD + '" color="' + hx(_cfg.tabActiveColor) + '"><b>LINK YOUR ACCOUNT TO CHAT</b></font><br/>'
+            + '<font color="' + hx(_cfg.textColor) + '">'
+            + '1) Open ' + url + ' in a web browser<br/>'
+            + '2) Sign in with Discord or Nexus<br/>'
+            + '3) Enter this code:</font> ';
+        if (code.length > 0) {
+            s += '<font face="' + FONT_BOLD + '" size="' + (_cfg.fontSize + 2)
+                + '" color="' + hx(_cfg.tabActiveColor) + '"><b>' + FcmConfig.htmlEscape(code) + '</b></font>';
+        } else {
+            s += '<font color="' + hx(_cfg.promptColor) + '">(waiting for your code...)</font>';
+        }
+        return s;
+    }
+
+    /** Pull the "XXXX-XXXX" code out of the relay notice ("...enter code: XXXX-XXXX (expires...)"). */
+    static function extractLinkCode(body:String):String {
+        if (body == null) return "";
+        var i:Int = body.indexOf("code: ");
+        if (i < 0) return "";
+        var rest:String = StringTools.trim(body.substr(i + 6));
+        var out:StringBuf = new StringBuf();
+        for (j in 0...rest.length) {
+            var cc:Int = rest.charCodeAt(j);
+            // 0-9, A-Z, a-z, '-' only; stop at the first space/paren/other.
+            if ((cc >= 48 && cc <= 57) || (cc >= 65 && cc <= 90) || (cc >= 97 && cc <= 122) || cc == 45)
+                out.add(rest.charAt(j));
+            else break;
+        }
+        return out.toString();
     }
 
     // =========================================================================

@@ -852,6 +852,32 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
+  test('linked send rejected by automod → message_blocked (NOT permission_denied)', async () => {
+    // Regression: automod/slash ingest failures used to collapse into permission_denied,
+    // which the in-game widget then showed as "link your account" to an ALREADY-linked user.
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'AutomodSender' }),
+    );
+    wsReg.close();
+    const { token } = regRes;
+    const rawId = lastRawUserId();
+    const fcmId = 'fcm-automod-001';
+    _userMap[fcmId] = { id: fcmId, discordId: 'disc-am', steamId: null, isBanned: false, isMuted: false };
+    markTokensLinked(rawId, fcmId);
+
+    const ingestMock = require('../src/services/ingestMessage').ingestMessage;
+    ingestMock.mockResolvedValueOnce({ ok: false, reason: 'automod' });
+
+    const { ws, msgs } = await conn();
+    const res = await waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'send', token, channel: 'global', body: 'filtered words' }),
+    );
+    expect(res).toMatchObject({ success: false, error: { code: 'message_blocked' } });
+    expect(res.error.code).not.toBe('permission_denied');
+    ws.close();
+  });
+
   test('send passes a numeric relaySeq into ingestMessage (single-broadcast model)', async () => {
     // Regression: handleSend must thread the pre-computed relaySeq INTO ingestMessage
     // (which forwards it to finalizeMessage → persisted messages.relay_seq + single
