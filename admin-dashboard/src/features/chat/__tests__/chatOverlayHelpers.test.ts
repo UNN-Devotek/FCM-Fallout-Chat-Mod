@@ -30,6 +30,7 @@ import {
   escapeHtmlAttr,
   isNearBottom,
   STICK_TO_BOTTOM_THRESHOLD,
+  buildMentionInsert,
 } from '../ChatOverlay';
 
 // ── isProdRelayHost (drives the footer [DEV] indicator) ──────────────────────
@@ -775,7 +776,47 @@ describe('escapeHtmlAttr', () => {
   });
 });
 
-// ── buildRichHtmlImpl (rich-input HTML builder — XSS sink) ───────────────────
+// ── buildMentionInsert (click-to-mention text transform) ─────────────────────
+describe('buildMentionInsert', () => {
+  it('appends @name to an empty input', () => {
+    expect(buildMentionInsert('', 'Bob', 0, 0)).toBe('@Bob ');
+  });
+
+  it('appends @name with no extra space when input already ends with a space', () => {
+    expect(buildMentionInsert('hello ', 'Bob', 6, 6)).toBe('hello @Bob ');
+  });
+
+  it('inserts a spacer when the character before cursor is not a space', () => {
+    expect(buildMentionInsert('hello', 'Bob', 5, 5)).toBe('hello @Bob ');
+  });
+
+  it('inserts at cursor position mid-string, spacer + original space = two spaces before tail', () => {
+    // cursor is between 'foo' (no trailing space) and ' bar' (leading space) →
+    // spacer is added, mention trailing space + original leading space both preserved
+    expect(buildMentionInsert('foo bar', 'Bob', 3, 3)).toBe('foo @Bob  bar');
+  });
+
+  it('replaces the selected range with the mention', () => {
+    expect(buildMentionInsert('foo SELECTED bar', 'Bob', 4, 12)).toBe('foo @Bob  bar');
+  });
+
+  it('preserves special characters in display names exactly', () => {
+    expect(buildMentionInsert('', 'Ñoño★', 0, 0)).toBe('@Ñoño★ ');
+  });
+
+  it('caps the result at maxLen', () => {
+    const long = 'x'.repeat(250);
+    const result = buildMentionInsert(long, 'Bob', 250, 250, 255);
+    expect(result.length).toBe(255);
+  });
+
+  it('does not add a spacer when the input is empty (cursor at 0)', () => {
+    const result = buildMentionInsert('', 'Alice', 0, 0);
+    expect(result.startsWith('@')).toBe(true);
+    expect(result).not.toContain('  ');
+  });
+});
+
 describe('buildRichHtmlImpl', () => {
   it('HTML-escapes free text so no tag can be injected', () => {
     expect(buildRichHtmlImpl('<script>alert(1)</script>')).toBe('&lt;script&gt;alert(1)&lt;/script&gt;');

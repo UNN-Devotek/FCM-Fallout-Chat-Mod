@@ -135,6 +135,14 @@ Status: `pending` \| `accepted` \| `declined` \| `expired`. Unique `(party_id, i
 Composite PK `(id, created_at)` (TimescaleDB candidate). Denormalizes `username` for read performance.
 Both FKs are **CASCADE on delete**: `party_id` → `parties` (a deleted party takes its messages with it — required so the `owner_id` owner-delete cascade does not stall on another member's messages) and `user_id` → `users` (a deleted author's messages are removed).
 
+### `private_conversations` (`PrivateConversation`)
+
+One row per sorted user pair (`user_a_id`, `user_b_id`) for overlay private messages. `last_message_at` drives inbox ordering. `user_a_last_read_at` / `user_b_last_read_at` track unread counts per participant. Unique `(user_a_id, user_b_id)` guarantees exactly one conversation per pair.
+
+### `private_messages` (`PrivateMessage`)
+
+Separate storage for PM traffic. Composite PK `(id, created_at)` matches the main/party message tables. `conversation_id` cascades on delete to `private_conversations`; `sender_id` cascades on delete to `users`. PMs are intentionally **not** stored in `messages` or `party_messages`, so they never enter public channel history, party history, or the Discord relay path.
+
 ---
 
 ## Moderation

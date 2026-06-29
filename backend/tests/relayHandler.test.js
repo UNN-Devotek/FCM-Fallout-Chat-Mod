@@ -959,6 +959,55 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
+  test('relay subscriber forwards createdAt from the broadcast timestamp', async () => {
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'TsFwdPlayer' }),
+    );
+    wsReg.close();
+    const { token } = regRes;
+    const rawId = lastRawUserId();
+    _userMap[rawId] = { id: rawId, discordId: 'disc-tsfwd', steamId: null, isBanned: false, isMuted: false };
+
+    const { ws, msgs } = await conn();
+    const subRes = await waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'subscribe', token, cursor: 0 }),
+    );
+    expect(subRes).toMatchObject({ success: true, op: 'subscribed' });
+
+    const ISO = '2026-06-26T01:02:03.000Z';
+    const beforeLen = msgs.length;
+    const wrapped = JSON.stringify({
+      instanceId: 'other-instance',
+      payload: {
+        type: 'chat:message',
+        payload: {
+          id: 'msg-tsfwd-1',
+          content: 'timed forward',
+          username: 'TsFwdPlayer',
+          userId: 'fcm-tsfwd-001',
+          channelId: '00000000-0000-0000-0000-000000000005',
+          source: 'relay',
+          timestamp: ISO,
+          relaySeq: 9998,
+        },
+      },
+    });
+    await redisMock.publish('chat:broadcast', wrapped);
+
+    await new Promise((resolve) => {
+      const iv = setInterval(() => {
+        if (msgs.length > beforeLen) { clearInterval(iv); resolve(); }
+      }, 20);
+      setTimeout(() => { clearInterval(iv); resolve(); }, 1000);
+    });
+
+    const evt = msgs.slice(beforeLen).find((m) => m.op === 'event');
+    expect(evt).toBeDefined();
+    expect(evt.event.createdAt).toBe(ISO);
+    ws.close();
+  });
+
   test('send does not forward targetUserId to ingestMessage', async () => {
     const { ws: wsReg, msgs: msgsReg } = await conn();
     const regRes = await waitForMsg(wsReg, msgsReg, () =>
@@ -1054,6 +1103,35 @@ describe('relay WebSocket ops', () => {
     expect(res.events).toHaveLength(1);
     expect(res.events[0].id).toBe(5);
     expect(res.events[0].channel).toBe('global');
+    ws.close();
+  });
+
+  test('poll events include createdAt (ISO 8601 UTC) from the message row', async () => {
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'TsPollPlayer' }),
+    );
+    wsReg.close();
+    const { token } = regRes;
+
+    const ISO = '2026-06-26T12:34:56.000Z';
+    require('../src/config/prisma').default.$queryRaw.mockResolvedValueOnce([{
+      id: 'msg-ts-1',
+      relay_seq: BigInt(7),
+      content: 'timed',
+      user_id: 'u1',
+      channel_id: '00000000-0000-0000-0000-000000000005',
+      username: 'TsPollPlayer',
+      fo76_account_name: null,
+      created_at: new Date(ISO),
+    }]);
+
+    const { ws, msgs } = await conn();
+    const res = await waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'poll', token, cursor: 6, max: 10 }),
+    );
+    expect(res.events).toHaveLength(1);
+    expect(res.events[0].createdAt).toBe(ISO);
     ws.close();
   });
 

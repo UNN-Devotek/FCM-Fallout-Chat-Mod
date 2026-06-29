@@ -21,7 +21,7 @@ The `/auth/ws-ticket` REST endpoint issues a 60-second single-use token that upg
 
 ## Backpressure
 
-Broadcast loops (`localBroadcast`, `broadcastToPartyMembers`, `broadcastToSession`) check each socket's `bufferedAmount` before sending. If `bufferedAmount` exceeds `WS_MAX_BUFFERED_BYTES` (5 MB) the frame is skipped for that socket and a warning is logged. This prevents the Node.js event loop from stalling on a slow or stuck client.
+Broadcast loops (`localBroadcast`, `broadcastToPartyMembers`, `broadcastToSession`, `broadcastToUsers`) check each socket's `bufferedAmount` before sending. If `bufferedAmount` exceeds `WS_MAX_BUFFERED_BYTES` (5 MB) the frame is skipped for that socket and a warning is logged. This prevents the Node.js event loop from stalling on a slow or stuck client.
 
 ---
 
@@ -34,6 +34,7 @@ The backend can run as multiple instances behind a load balancer. Broadcasts use
 | *(none)* | Global channel chat | all local clients |
 | `scope:'party'` | Party chat messages | `memberUserIds` array |
 | `scope:'session'` | Server/world-session chat | `sessionId` UUID |
+| `scope:'users'` | Private-message delivery / read receipts | `userIds` array |
 
 Each instance ignores envelopes where `instanceId` matches its own `INSTANCE_ID` (echo suppression). If Redis is unavailable at startup, `initPubSub` retries automatically every 30 s — multi-instance delivery degrades gracefully rather than staying permanently disabled.
 
@@ -243,6 +244,136 @@ Sent when a moderator soft-deletes a message.
 }
 ```
 `handlers.ts:1204–1206`
+
+---
+
+## Private Messages
+
+Private messages use their own tables (`private_conversations`, `private_messages`) and their own WebSocket frames. They are delivered only to the sender and recipient, are never relayed to Discord, and never appear in public channel feeds, party feeds, or public website mode.
+
+### `pm:list` (C→S request, S→C response)
+
+Requests the caller's private-message inbox. The server responds with `payload.conversations`, sorted by most recent `last_message_at`.
+
+```json
+{
+  "type": "pm:list",
+  "payload": {
+    "conversations": [
+      {
+        "conversationId": "<uuid>",
+        "otherUserId": "<uuid>",
+        "otherDisplayName": "Stealthmog",
+        "lastMessagePreview": "meet at whitespring?",
+        "lastMessageSenderId": "<uuid>",
+        "lastMessageAt": "2026-06-25T15:53:00.000Z",
+        "unreadCount": 2
+      }
+    ]
+  }
+}
+```
+
+`lastMessageSenderId` is the user id of the most recent non-deleted private message in the conversation, or `null` when the conversation exists but has no messages yet.
+
+`pm:open` reuses the same response frame and adds `openedConversationId` when the server creates or finds the target conversation.
+
+### `pm:open` (C→S)
+
+Creates or returns the sorted-pair conversation for the caller and `targetUserId`.
+
+```json
+{
+  "type": "pm:open",
+  "payload": { "targetUserId": "<uuid>" }
+}
+```
+
+### `pm:history` (C→S request, S→C response)
+
+Loads one private conversation's history. Only participants may request it.
+
+```json
+{
+  "type": "pm:history",
+  "payload": {
+    "conversationId": "<uuid>",
+    "limit": 100,
+    "offset": 0
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "type": "pm:history",
+  "payload": {
+    "conversationId": "<uuid>",
+    "messages": [
+      {
+        "id": "<uuid>",
+        "conversationId": "<uuid>",
+        "senderId": "<uuid>",
+        "senderName": "Stealthmog",
+        "recipientId": "<uuid>",
+        "content": "meet at whitespring?",
+        "createdAt": "2026-06-25T15:52:00.000Z"
+      }
+    ]
+  }
+}
+```
+
+### `pm:send` (C→S)
+
+Sends a private message to exactly one recipient. Enforcement matches channel chat where applicable: authenticated users only, no self-PM, blocked pairs rejected with the generic error `Message unavailable.`, mute checks, rate limits, participant-only access, automod, and a 255-character content limit.
+
+```json
+{
+  "type": "pm:send",
+  "payload": {
+    "conversationId": "<uuid>",
+    "recipientUserId": "<uuid>",
+    "content": "meet at whitespring?",
+    "clientCreatedAt": "2026-06-25T15:10:00.000Z"
+  }
+}
+```
+
+### `pm:message` (S→C)
+
+Delivered only to the sender and recipient.
+
+```json
+{
+  "type": "pm:message",
+  "payload": {
+    "id": "<uuid>",
+    "conversationId": "<uuid>",
+    "senderId": "<uuid>",
+    "senderName": "Stealthmog",
+    "recipientId": "<uuid>",
+    "content": "meet at whitespring?",
+    "createdAt": "2026-06-25T15:10:00.000Z"
+  }
+}
+```
+
+### `pm:read` (C→S and S→C)
+
+Marks the caller's read watermark for one conversation. The server echoes a `pm:read` frame to the caller's sockets so multiple overlay windows/tabs keep the unread badge in sync.
+
+```json
+{
+  "type": "pm:read",
+  "payload": {
+    "conversationId": "<uuid>",
+    "unreadCount": 0
+  }
+}
+```
 
 ---
 
