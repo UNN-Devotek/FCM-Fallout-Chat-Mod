@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.6.7";  // numbered in-game link steps (Flow A) + code extraction from the relay notice; automod/slash sends no longer say "link your account" (new relay codes message_blocked/slash_ignored); smaller default size 400x260; + v2.6.6 (link-screen-when-unlinked, linkUrl, single yellow main->sub separator, per-channel [Channel] tag colors, pollMs)
+    static inline var VERSION:String  = "2.6.8";  // link step 2 says "Sign in with Discord" (Nexus OAuth not wired yet); + v2.6.7 (numbered Flow-A link steps + code extraction, automod/slash send codes, 400x260 default)
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -1144,7 +1144,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.6.7");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.6.8");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
@@ -1625,7 +1625,7 @@ class FCMChatWidget extends MovieClip {
             '<font face="' + FONT_BOLD + '" color="' + hx(_cfg.tabActiveColor) + '"><b>LINK YOUR ACCOUNT TO CHAT</b></font><br/>'
             + '<font color="' + hx(_cfg.textColor) + '">'
             + '1) Open ' + url + ' in a web browser<br/>'
-            + '2) Sign in with Discord or Nexus<br/>'
+            + '2) Sign in with Discord<br/>'
             + '3) Enter this code:</font> ';
         if (code.length > 0) {
             s += '<font face="' + FONT_BOLD + '" size="' + (_cfg.fontSize + 2)
