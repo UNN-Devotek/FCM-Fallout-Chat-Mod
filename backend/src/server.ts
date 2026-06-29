@@ -1,6 +1,7 @@
 // dotenv is loaded in config/environment.ts before any env vars are read
 import { constantTimeEquals } from './utils/constantTimeEquals';
 import { clientIp } from './utils/clientIp';
+import { paramStr } from './utils/reqParams';
 import { requireAuth, requireAnyAuthedClient } from './middleware/auth';
 import { mergeUserInto } from './utils/mergeUser';
 import { devPersonaDiscordId, devPersonaUsername } from './utils/devPersonaDiscordId';
@@ -205,7 +206,7 @@ if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
 
   const DEV_PRIVILEGED = ['owner', 'admin', 'moderator', 'supporter', 'developer'];
   app.get('/auth/dev-login/:persona', (req: Request, res: Response) => {
-    const persona = DEV_PERSONAS[req.params.persona];
+    const persona = DEV_PERSONAS[paramStr(req, 'persona')];
     if (!persona) { res.status(404).send('Unknown dev persona'); return; }
     (req.session as any).discordUser = { ...persona, avatar: null, roles: [] };
     const dest = DEV_PRIVILEGED.includes(persona.role) ? 'server-health' : 'chat';
@@ -805,7 +806,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
  * Polling endpoint for desktop clients to check Discord link status.
  */
 app.get('/api/auth/discord-status/:installToken', async (req: Request, res: Response) => {
-  const { installToken } = req.params;
+  const installToken = paramStr(req, 'installToken');
   if (!installToken) { res.status(400).json({ data: { linked: false } }); return; }
 
   try {
@@ -1426,7 +1427,7 @@ app.post('/admin/debug/clear-rate-limit', apiLimiter, requireAdminKey, async (re
 // GET /admin/debug/users/:userId/aliases — alias history mirror (X-Admin-API-Key)
 app.get('/admin/debug/users/:userId/aliases', apiLimiter, requireAdminKey, async (req: Request, res: Response, next: NextFunction) => {
   const UUID_RE_LOCAL = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (!UUID_RE_LOCAL.test(req.params.userId)) {
+  if (!UUID_RE_LOCAL.test(paramStr(req, 'userId'))) {
     res.status(400).json({ error: 'Invalid user ID format' });
     return;
   }
@@ -1741,7 +1742,9 @@ app.post('/admin/upload-release', apiLimiter, (req: Request, res: Response, next
 // -- Admin dashboard (SPA) — served from backend when built into the image ----
 const dashboardDist = path.join(__dirname, '../admin-dashboard/dist');
 app.use(express.static(dashboardDist));
-app.get('*', (req: Request, res: Response, next: NextFunction) => {
+// Express 5 (path-to-regexp v8) rejects the bare '*' string path; a RegExp
+// catch-all preserves the SPA-fallback behaviour (matches every path incl. '/').
+app.get(/.*/, (req: Request, res: Response, next: NextFunction) => {
   if (req.path.startsWith('/api/') || req.path.startsWith('/auth/') || req.path === '/ws' || req.path.startsWith('/ws/') || req.path === '/relay') {
     return next();
   }

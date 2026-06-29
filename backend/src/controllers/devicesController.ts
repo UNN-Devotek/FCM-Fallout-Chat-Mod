@@ -3,6 +3,7 @@
  * See docs/device-keypair-auth-plan.md.
  */
 import { Request, Response, NextFunction } from 'express';
+import { paramsOf } from '../utils/reqParams';
 import prisma from '../config/prisma';
 import env from '../config/environment';
 import { createError } from '../middleware/errorHandler';
@@ -96,7 +97,7 @@ export async function listDevices(_req: Request, res: Response, next: NextFuncti
 /** DELETE /api/admin/devices/:installToken — revoke a device key (admin). */
 export async function revokeDevice(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { installToken } = req.params;
+    const { installToken } = paramsOf(req);
     const existing = await prisma.device.findUnique({ where: { installToken }, select: { id: true } });
     if (!existing) return next(createError(404, 'Device not found'));
     await prisma.device.update({ where: { installToken }, data: { revokedAt: new Date() } });

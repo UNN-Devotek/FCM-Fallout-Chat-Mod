@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { paramStr, paramsOf } from '../utils/reqParams';
 import crypto from 'crypto';
 import prisma from '../config/prisma';
 import { uploadReportImages, ImageUploadError } from '../services/reportImageService';
@@ -26,7 +27,7 @@ const VALID_REPORT_STATUSES = new Set(['open', 'reviewed', 'closed']);
 const VALID_REPORT_TYPES_CREATE = new Set(['player', 'bug']);
 
 export async function updatePlayerReport(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const { id } = req.params;
+  const { id } = paramsOf(req);
   const { status } = req.body;
   // SR-007: constrain status to known enum values
   if (status !== undefined && !VALID_REPORT_STATUSES.has(status)) {
@@ -106,7 +107,7 @@ export async function getMinePlayerReport(req: Request, res: Response, next: Nex
     const user = await prisma.user.findFirst({ where: { discordId: id.discordId }, select: { id: true } });
     if (!user) { res.status(404).json({ title: 'Not Found' }); return; }
     const report = await prisma.playerReport.findFirst({
-      where: { id: req.params.id, userId: user.id },
+      where: { id: paramStr(req, 'id'), userId: user.id },
     });
     if (!report) { res.status(404).json({ title: 'Not Found' }); return; }
     res.json({ data: report });

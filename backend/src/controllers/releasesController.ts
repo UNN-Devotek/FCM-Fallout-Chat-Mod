@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { paramsOf } from '../utils/reqParams';
 import { z } from 'zod';
 import { createError } from '../middleware/errorHandler';
 import prisma from '../config/prisma';
@@ -223,7 +224,7 @@ async function deleteRelease(req: Request, res: Response, next: NextFunction): P
     if (!validBearer && !validApiKey) {
       return next(createError(401, 'Unauthorized'));
     }
-    const { version } = req.params;
+    const { version } = paramsOf(req);
     const deleted = await prisma.release.deleteMany({ where: { version } });
     if (deleted.count === 0) return next(createError(404, `Release ${version} not found`));
     res.json({ data: { deleted: true, version } });

@@ -69,6 +69,7 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
+import { paramsOf } from '../utils/reqParams';
 import prisma from '../config/prisma';
 import { createError } from '../middleware/errorHandler';
 import { invalidateRulesCache } from '../services/autoModEngine';
@@ -144,7 +145,7 @@ export async function createAutoModRule(req: Request, res: Response, next: NextF
 
 // ── PUT /api/moderation/automod-rules/:id ─────────────────────────────────────
 export async function updateAutoModRule(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const { id } = req.params;
+  const { id } = paramsOf(req);
   if (!validateUuid(id)) return next(createError(400, 'Invalid rule ID'));
 
   const { name, enabled, triggerType, triggerMetadata, actions, exemptChannelIds, exemptRoles } = req.body;
@@ -189,7 +190,7 @@ export async function updateAutoModRule(req: Request, res: Response, next: NextF
 
 // ── DELETE /api/moderation/automod-rules/:id ──────────────────────────────────
 export async function deleteAutoModRule(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const { id } = req.params;
+  const { id } = paramsOf(req);
   if (!validateUuid(id)) return next(createError(400, 'Invalid rule ID'));
   try {
     const existing = await prisma.autoModRule.findUnique({ where: { id } });
@@ -213,7 +214,7 @@ export async function deleteAutoModRule(req: Request, res: Response, next: NextF
 
 // ── PATCH /api/moderation/automod-rules/:id/toggle ────────────────────────────
 export async function toggleAutoModRule(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const { id } = req.params;
+  const { id } = paramsOf(req);
   if (!validateUuid(id)) return next(createError(400, 'Invalid rule ID'));
   const { enabled } = req.body;
   if (typeof enabled !== 'boolean') return next(createError(422, 'enabled must be a boolean'));

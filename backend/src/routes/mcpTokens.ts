@@ -4,6 +4,7 @@ import { mintToken, listTokensForUser, revokeToken } from '../services/mcpTokenS
 import { createError } from '../middleware/errorHandler';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
+import { paramStr } from '../utils/reqParams';
 
 const router = express.Router();
 
@@ -63,7 +64,7 @@ router.delete('/:id', requireDashboardAuth, async (req: Request, res: Response, 
       select: { id: true },
     });
     if (!user) return next(createError(404, 'User not found'));
-    await revokeToken(user.id, req.params.id);
+    await revokeToken(user.id, paramStr(req, 'id'));
     res.json({ data: { revoked: true } });
   } catch (err: any) {
     if (err.status) return next(createError(err.status, err.message));

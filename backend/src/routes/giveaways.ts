@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import * as giveawayService from '../services/giveawayService';
 import { GiveawayError } from '../services/giveawayService';
 import logger from '../config/logger';
+import { paramStr } from '../utils/reqParams';
 
 const SHORT_ID_RE = /^[A-Z0-9]{6}$/;
 
@@ -24,7 +25,7 @@ export { router as giveawaysRouter };
 // Admin force-cancel — wired in server.ts under requireDiscordRole(owner/admin/mod).
 // :shortId must be the 6-char giveaway shortId (e.g. "A1B2C3").
 export async function adminCancelGiveaway(req: Request, res: Response): Promise<void> {
-  const { shortId } = req.params;
+  const shortId = paramStr(req, 'shortId');
 
   if (!SHORT_ID_RE.test(shortId ?? '')) {
     res.status(400).json({ error: 'Invalid shortId — must be 6 uppercase alphanumeric characters' });

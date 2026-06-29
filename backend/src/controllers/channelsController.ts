@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { paramStr } from '../utils/reqParams';
 import prisma from '../config/prisma';
 import { createError } from '../middleware/errorHandler';
 import logger from '../config/logger';
@@ -82,7 +83,7 @@ async function createChannel(req: Request, res: Response, next: NextFunction): P
  * PATCH /api/channels/:id -- admin+
  */
 async function updateChannel(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!UUID_RE.test(req.params.id)) return next(createError(400, 'Invalid channel ID format'));
+  if (!UUID_RE.test(paramStr(req, 'id'))) return next(createError(400, 'Invalid channel ID format'));
 
   const data: any = {};
   if (req.body.name !== undefined) data.name = req.body.name;
@@ -98,12 +99,12 @@ async function updateChannel(req: Request, res: Response, next: NextFunction): P
 
   try {
     const channel = await prisma.channel.updateMany({
-      where: { id: req.params.id, isArchived: false },
+      where: { id: paramStr(req, 'id'), isArchived: false },
       data,
     });
     if (channel.count === 0) return next(createError(404, 'Channel not found'));
 
-    const updated = await prisma.channel.findUnique({ where: { id: req.params.id } });
+    const updated = await prisma.channel.findUnique({ where: { id: paramStr(req, 'id') } });
     try {
       if ((global as any).broadcastChannelUpdate) (global as any).broadcastChannelUpdate('updated', updated);
     } catch { /* non-fatal */ }
@@ -118,28 +119,28 @@ async function updateChannel(req: Request, res: Response, next: NextFunction): P
  * Archives the channel; preserves history.
  */
 async function archiveChannel(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!UUID_RE.test(req.params.id)) return next(createError(400, 'Invalid channel ID format'));
+  if (!UUID_RE.test(paramStr(req, 'id'))) return next(createError(400, 'Invalid channel ID format'));
   try {
     const result = await prisma.channel.updateMany({
-      where: { id: req.params.id, isArchived: false },
+      where: { id: paramStr(req, 'id'), isArchived: false },
       data: { isArchived: true },
     });
     if (result.count === 0) return next(createError(404, 'Channel not found'));
     // Also archive children
     await prisma.channel.updateMany({
-      where: { parentId: req.params.id, isArchived: false },
+      where: { parentId: paramStr(req, 'id'), isArchived: false },
       data: { isArchived: true },
     });
     await prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'archive_channel',
-        targetId: req.params.id,
+        targetId: paramStr(req, 'id'),
         targetType: 'channel',
       },
     });
     try {
-      if ((global as any).broadcastChannelUpdate) (global as any).broadcastChannelUpdate('archived', { id: req.params.id });
+      if ((global as any).broadcastChannelUpdate) (global as any).broadcastChannelUpdate('archived', { id: paramStr(req, 'id') });
     } catch { /* non-fatal */ }
     res.json({ data: { archived: true } });
   } catch (err) {
@@ -152,17 +153,17 @@ async function archiveChannel(req: Request, res: Response, next: NextFunction): 
  * Hard-deletes the channel and all its messages. Irreversible.
  */
 async function deleteChannelPermanently(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!UUID_RE.test(req.params.id)) return next(createError(400, 'Invalid channel ID format'));
+  if (!UUID_RE.test(paramStr(req, 'id'))) return next(createError(400, 'Invalid channel ID format'));
   try {
-    const channel = await prisma.channel.findUnique({ where: { id: req.params.id } });
+    const channel = await prisma.channel.findUnique({ where: { id: paramStr(req, 'id') } });
     if (!channel) return next(createError(404, 'Channel not found'));
 
     // Collect IDs to delete: the channel itself plus any children
     const childIds = (await prisma.channel.findMany({
-      where: { parentId: req.params.id },
+      where: { parentId: paramStr(req, 'id') },
       select: { id: true },
     })).map(c => c.id);
-    const allIds = [req.params.id, ...childIds];
+    const allIds = [paramStr(req, 'id'), ...childIds];
 
     await prisma.$transaction([
       // Messages have onDelete: Restrict — delete them first
@@ -170,20 +171,20 @@ async function deleteChannelPermanently(req: Request, res: Response, next: NextF
       // Children (DiscordRelayMapping cascades automatically)
       prisma.channel.deleteMany({ where: { id: { in: childIds } } }),
       // Parent channel
-      prisma.channel.delete({ where: { id: req.params.id } }),
+      prisma.channel.delete({ where: { id: paramStr(req, 'id') } }),
     ]);
 
     await prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'delete_channel',
-        targetId: req.params.id,
+        targetId: paramStr(req, 'id'),
         targetType: 'channel',
         metadata: { name: channel.name, childCount: childIds.length },
       },
     });
     try {
-      if ((global as any).broadcastChannelUpdate) (global as any).broadcastChannelUpdate('deleted', { id: req.params.id });
+      if ((global as any).broadcastChannelUpdate) (global as any).broadcastChannelUpdate('deleted', { id: paramStr(req, 'id') });
     } catch { /* non-fatal */ }
     res.json({ data: { deleted: true } });
   } catch (err) {

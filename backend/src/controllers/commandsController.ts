@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { paramStr } from '../utils/reqParams';
 import prisma from '../config/prisma';
 import { bustCommandCache } from '../services/commandService';
 
@@ -88,8 +89,8 @@ export async function createCommand(req: Request, res: Response, next: NextFunct
 }
 
 export async function updateCommand(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validId(req.params.id)) { res.status(400).json({ title: 'Bad Request', detail: 'Invalid ID.' }); return; }
-  const id = parseInt(req.params.id, 10);
+  if (!validId(paramStr(req, 'id'))) { res.status(400).json({ title: 'Bad Request', detail: 'Invalid ID.' }); return; }
+  const id = parseInt(paramStr(req, 'id'), 10);
 
   try {
     const existing = await prisma.chatCommand.findUnique({ where: { id } });
@@ -137,8 +138,8 @@ export async function updateCommand(req: Request, res: Response, next: NextFunct
 }
 
 export async function deleteCommand(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validId(req.params.id)) { res.status(400).json({ title: 'Bad Request', detail: 'Invalid ID.' }); return; }
-  const id = parseInt(req.params.id, 10);
+  if (!validId(paramStr(req, 'id'))) { res.status(400).json({ title: 'Bad Request', detail: 'Invalid ID.' }); return; }
+  const id = parseInt(paramStr(req, 'id'), 10);
 
   try {
     const existing = await prisma.chatCommand.findUnique({ where: { id } });
