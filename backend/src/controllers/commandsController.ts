@@ -15,7 +15,7 @@ const SYSTEM_TRIGGERS = new Set(['/apply', '/report']);
 const RESERVED_BUILTINS = new Set([
   '/help', '/s', '/g', '/t', '/e', '/r', '/i', '/raid',
   '/serverstatus', '/server-status', '/nukecodes', '/codes',
-  '/wiki', '/camp',
+  '/wiki', '/camp', '/minerva',
 ]);
 
 function validId(id: string): boolean {

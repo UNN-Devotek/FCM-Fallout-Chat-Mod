@@ -5,6 +5,7 @@ import { getNukeCodes } from './nukeCodesService';
 import { getCampItem } from './campService';
 import * as giveawayService from './giveawayService';
 import { GiveawayError } from './giveawayService';
+import { getMinervaStatus } from './minervaService';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -220,6 +221,40 @@ async function buildNukeCodesResponse(): Promise<{ text: string; metadata: Recor
       bravo: data.bravo,
       charlie: data.charlie,
       validUntil: data.validUntil != null ? new Date(data.validUntil * 1000).toISOString() : null,
+    },
+  };
+}
+
+// ── /minerva Response Builder ─────────────────────────────────────────────────
+
+function buildMinervaResponse(): { text: string; metadata: Record<string, unknown> } {
+  const { active, next } = getMinervaStatus();
+  const fmt = (d: Date) => d.toUTCString().replace(':00 GMT', ' UTC').replace(/:\d\d UTC/, ' UTC');
+  const sale = active ?? next;
+  const superTag = sale.isSuperSale ? ' ★ SUPER SALE' : '';
+  const lines = [
+    `◈ MINERVA'S BIG SALE${superTag}`,
+    '',
+    `LOCATION — ${sale.location}`,
+    `LIST     — #${sale.listNumber}`,
+    `${active ? 'ENDS' : 'STARTS'}    — ${fmt(active ? sale.endUtc : sale.startUtc)}`,
+    '',
+    'More info at falloutbuilds.com/fo76/minerva',
+  ];
+  return {
+    text: lines.join('\n'),
+    metadata: {
+      type: 'minerva',
+      location: sale.location,
+      listNumber: sale.listNumber,
+      isSuperSale: sale.isSuperSale,
+      isActive: !!active,
+      startUtc: sale.startUtc.toISOString(),
+      endUtc: sale.endUtc.toISOString(),
+      nextLocation: active ? next.location : null,
+      nextListNumber: active ? next.listNumber : null,
+      nextIsSuperSale: active ? next.isSuperSale : null,
+      nextStartUtc: active ? next.startUtc.toISOString() : null,
     },
   };
 }
@@ -566,6 +601,18 @@ export async function tryHandleCommand(
   // Built-in /nukecodes — current week's Alpha/Bravo/Charlie silo codes via NukaCrypt
   if (trigger === '/nukecodes' || trigger === '/codes') {
     const r = await buildNukeCodesResponse();
+    return {
+      handled: true,
+      actionType: 'private',
+      botMessage: r.text,
+      metadata: r.metadata,
+      targetChannelId: channelId,
+    };
+  }
+
+  // Built-in /minerva — current or next Minerva Big Sale location and dates
+  if (trigger === '/minerva') {
+    const r = buildMinervaResponse();
     return {
       handled: true,
       actionType: 'private',
