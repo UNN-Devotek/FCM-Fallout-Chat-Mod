@@ -878,6 +878,27 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
+  test('limited (unlinked) subscriber receives the system link-code notice on subscribe', async () => {
+    // Regression: the link notice was pushed only on register/hello — a transient connection the
+    // in-game widget's pollEvents/liveSubscriber never reads — so the code never reached the widget.
+    // It must ALSO be pushed on the long-lived subscribe connection.
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'LimitedSub' }),
+    );
+    wsReg.close();
+    const { token } = regRes;   // fresh register = limited (never linked)
+
+    const { ws, msgs } = await conn();
+    await waitForMsg(ws, msgs, () => send(ws, { op: 'subscribe', token }));
+    // The notice is pushed right after 'subscribed'; allow it to land, then scan.
+    await new Promise((r) => setTimeout(r, 300));
+    const notice = msgs.find((m) => m && m.op === 'event' && m.event && m.event.channel === 'system');
+    expect(notice).toBeTruthy();
+    expect(String(notice.event.body)).toMatch(/enter code:/i);
+    ws.close();
+  });
+
   test('send passes a numeric relaySeq into ingestMessage (single-broadcast model)', async () => {
     // Regression: handleSend must thread the pre-computed relaySeq INTO ingestMessage
     // (which forwards it to finalizeMessage → persisted messages.relay_seq + single

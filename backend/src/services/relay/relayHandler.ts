@@ -674,6 +674,16 @@ async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): P
     role:        identity.role,
   });
 
+  // If still LIMITED (not linked), push the link-code notice on THIS long-lived subscribe
+  // connection. The register/hello pushes land on a transient connection the client's
+  // pollEvents/liveSubscriber never reads, so the code never reached the in-game widget; the
+  // widget treats the arrival of a system notice as the authoritative "not linked" signal.
+  if (!identity.isLinked) {
+    pushLinkNotice(ws, identity.userId).catch((err) =>
+      logger.warn({ err, userId: identity.userId }, '[relayHandler] pushLinkNotice failed on subscribe'),
+    );
+  }
+
   // Keepalive: ZFE's Wine/Winsock subscribe recv times out on idle (WSAETIMEDOUT /
   // "WSA error 10060") and treats it as a disconnect, dropping the live connection into
   // a reconnect loop. Send a periodic WS ping so the client's recv always sees inbound

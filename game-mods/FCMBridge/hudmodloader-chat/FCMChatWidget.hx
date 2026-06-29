@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.6.8";  // link step 2 says "Sign in with Discord" (Nexus OAuth not wired yet); + v2.6.7 (numbered Flow-A link steps + code extraction, automod/slash send codes, 400x260 default)
+    static inline var VERSION:String  = "2.6.9";  // FIX: link screen + code now driven by the relay system link-notice (_needsLink), not ZFE getAuthState (which is always "authenticated"=connected); relay pushes the notice on the subscribe connection so pollEvents actually receives it; + v2.6.8 (Discord-only link step)
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -199,6 +199,9 @@ class FCMChatWidget extends MovieClip {
     // ── Auth state ────────────────────────────────────────────────────────────
     var _authState:String        = "limited";
     var _pinnedSystemBody:String = "";
+    // True once the relay has sent a system link-code notice (sent ONLY to limited/unlinked
+    // identities) — the authoritative "not linked" signal (ZFE getAuthState can't tell us).
+    var _needsLink:Bool = false;
 
     // ── Input state ───────────────────────────────────────────────────────────
     var _inputOpen:Bool          = false;
@@ -1045,6 +1048,8 @@ class FCMChatWidget extends MovieClip {
             var success:Bool = (rs.indexOf('"success":true') >= 0 || rs.indexOf('success:true') >= 0);
             if (success) {
                 zfeLog("info", "send", "sent ch=" + slug + " len=" + raw.length);
+                // A successful send proves this identity is LINKED — clear the link gate.
+                if (_needsLink) { _needsLink = false; _pinnedSystemBody = ""; }
                 // Optimistic local echo on CONFIRMED send (only when we know our id).
                 if (_relayUserId.length > 0) {
                     var messageId:String = extractJsonString(rs, "messageId");
@@ -1068,6 +1073,8 @@ class FCMChatWidget extends MovieClip {
                     case "permission_denied":
                         // Genuine not-linked / insufficient-role only (automod + slash now have
                         // their own codes below, so this no longer fires for filtered messages).
+                        // A denied send confirms we're NOT linked → drive the persistent gate.
+                        _needsLink = true;
                         setLogText(linkHint());
                     case "message_blocked":
                         setLogText("Message blocked by the chat filter.");
@@ -1144,7 +1151,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.6.8");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.6.9");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
@@ -1425,10 +1432,12 @@ class FCMChatWidget extends MovieClip {
             if (evId > _cursor) _cursor = evId;
             if (body.length == 0) continue;
 
-            // System channel — pinned link-code notice.
+            // System channel — pinned link-code notice. The relay sends this ONLY to limited
+            // (unlinked) identities, so its arrival means "not linked" → drive the link gate.
             if (rawChannel == "system" || senderUserId == "system") {
                 _pinnedSystemBody = body;
-                zfeLog("info", "system", "pinned system notice updated");
+                _needsLink = true;
+                zfeLog("info", "system", "link notice received -> needsLink");
                 newRecords = true;
                 continue;
             }
@@ -1564,7 +1573,12 @@ class FCMChatWidget extends MovieClip {
         // First load / not linked: show ONLY the link screen — never the chat history (user
         // request). An unlinked identity can't post, so the link prompt takes the whole feed.
         if (!_connected) { setLogText("connecting..."); return; }
-        if (_authState != "authenticated") { setLogText(linkHint()); return; }
+        // Link gate. ZFE's getAuthState.state is ALWAYS "authenticated" when merely CONNECTED
+        // (it does NOT reflect the relay's linked/limited state), so we must NOT use it here.
+        // The relay sends a system link-code notice ONLY to limited (unlinked) identities; its
+        // arrival (_needsLink) is the authoritative "not linked" signal. Cleared on a successful
+        // send (which only a linked identity can do).
+        if (_needsLink) { setLogText(linkHint()); return; }
 
         var html:Array<String> = [];
         var fs:Int = _cfg.fontSize;
