@@ -176,6 +176,12 @@ jest.mock('../src/services/ingestMessage', () => ({
   _clearIngestCaches: jest.fn(),
 }));
 
+// Mock the link-code service so pushLinkNotice can mint a code without the real prisma/redis
+// pipeline (otherwise issueLinkCode rejects on the unmocked hud_link_codes table -> no notice).
+jest.mock('../src/services/linkCodeService', () => ({
+  issueLinkCode: jest.fn().mockResolvedValue('ABCD1234'),
+}));
+
 // ── Imports after mocks ────────────────────────────────────────────────────────
 
 const http           = require('http');
