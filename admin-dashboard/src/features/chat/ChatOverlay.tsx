@@ -7543,12 +7543,12 @@ export default function ChatOverlay() {
                       <ChatEmbedCard
                         accent={mvAccent}
                         icon="⛟"
-                        tag={mv.isSuperSale ? 'MINERVA ★ SUPER SALE' : 'MINERVA'}
+                        tag={mv.isSuperSale ? '★ SUPER SALE' : ''}
                         title="Minerva's Big Sale"
                         onShareToChat={() => shareCardToChat({ command: '/minerva', label: "Minerva's Big Sale", accent: mvAccent, icon: '⛟' })}
                         shareDisabled={cardShareCooldown}
                         fields={mvFields}
-                        inlineMeta={
+                        footerLeft={
                           <span role="button" tabIndex={0} title="More info at falloutbuilds.com"
                             onClick={() => openUrl('https://www.falloutbuilds.com/fo76/minerva')}
                             onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') openUrl('https://www.falloutbuilds.com/fo76/minerva'); }}
