@@ -461,6 +461,22 @@ export function resolveMediaUrl(url: string): string {
   return url;
 }
 
+/** Computes the result of inserting `@displayName ` into `current` at [selStart, selEnd].
+ *  Adds a space before the mention when the preceding character is not already a space.
+ *  The returned string is capped at `maxLen` characters. */
+export function buildMentionInsert(
+  current: string,
+  displayName: string,
+  selStart: number,
+  selEnd: number,
+  maxLen = 255,
+): string {
+  const before = current.slice(0, selStart);
+  const after = current.slice(selEnd);
+  const spacer = before.length > 0 && !before.endsWith(' ') ? ' ' : '';
+  return (before + spacer + `@${displayName} ` + after).slice(0, maxLen);
+}
+
 /** Escape a value for safe interpolation into a double/single-quoted HTML attribute. */
 export function escapeHtmlAttr(v: string): string {
   return v
@@ -5541,6 +5557,38 @@ export default function ChatOverlay() {
     else inputRef.current?.focus();
   }
 
+  function insertMentionFromClick(displayName: string) {
+    const textarea = inputRef.current;
+    if (textarea) {
+      const start = textarea.selectionStart ?? inputText.length;
+      const end = textarea.selectionEnd ?? start;
+      const next = buildMentionInsert(inputText, displayName, start, end);
+      const afterLen = inputText.slice(end).length;
+      const newCaret = Math.max(0, next.length - afterLen);
+      setInputText(next);
+      requestAnimationFrame(() => {
+        if (!inputRef.current) return;
+        inputRef.current.focus();
+        inputRef.current.setSelectionRange(newCaret, newCaret);
+      });
+      return;
+    }
+    if (richInputRef.current) {
+      const next = buildMentionInsert(inputText, displayName, inputText.length, inputText.length);
+      setInputText(next);
+      richInputRef.current.innerHTML = buildRichHtml(next);
+      requestAnimationFrame(() => {
+        if (!richInputRef.current) return;
+        richInputRef.current.focus();
+        const r = document.createRange();
+        r.selectNodeContents(richInputRef.current);
+        r.collapse(false);
+        const s = window.getSelection();
+        if (s) { s.removeAllRanges(); s.addRange(r); }
+      });
+    }
+  }
+
   // ── Offline outbox helper ─────────────────────────────────────────────────
   // Sends a chat:send frame immediately when the WS is open, or queues it for
   // automatic flush on the next reconnect. Inert in public mode.
@@ -7310,11 +7358,20 @@ export default function ChatOverlay() {
                         );
                       })()}
                       {msg.userId && msg.userId !== 'system' ? (
-                        <Link to={`/profile/${msg.userId}`} className="username-chip" style={{
-                          fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline,
-                        }}>
-                          {displayName}:{' '}
-                        </Link>
+                        isPublicMode ? (
+                          <Link to={`/profile/${msg.userId}`} className="username-chip" style={{
+                            fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline,
+                          }}>
+                            {displayName}:{' '}
+                          </Link>
+                        ) : (
+                          <span role="button" tabIndex={0} className="username-chip username-chip--mention" style={{
+                            fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline,
+                            cursor: 'pointer',
+                          }} onClick={() => insertMentionFromClick(displayName)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') insertMentionFromClick(displayName); }}>
+                            {displayName}:{' '}
+                          </span>
+                        )
                       ) : (
                         <span style={{ fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline }}>
                           {displayName}:{' '}
@@ -7865,11 +7922,20 @@ export default function ChatOverlay() {
                         [{msg.serverEndpoint}]{' '}
                       </span>
                       {msg.userId && msg.userId !== 'system' ? (
-                        <Link to={`/profile/${msg.userId}`} className="username-chip" style={{
-                          fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline,
-                        }}>
-                          {feedDisplayName}:{' '}
-                        </Link>
+                        isPublicMode ? (
+                          <Link to={`/profile/${msg.userId}`} className="username-chip" style={{
+                            fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline,
+                          }}>
+                            {feedDisplayName}:{' '}
+                          </Link>
+                        ) : (
+                          <span role="button" tabIndex={0} className="username-chip username-chip--mention" style={{
+                            fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline,
+                            cursor: 'pointer',
+                          }} onClick={() => insertMentionFromClick(feedDisplayName)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') insertMentionFromClick(feedDisplayName); }}>
+                            {feedDisplayName}:{' '}
+                          </span>
+                        )
                       ) : (
                         <span style={{ fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline }}>
                           {feedDisplayName}:{' '}
