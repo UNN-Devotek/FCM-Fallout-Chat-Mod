@@ -1269,6 +1269,32 @@ interface ChatMessage {
   metadata?: ChatMessageMetadata;
 }
 
+interface PrivateConversationSummary {
+  conversationId: string;
+  otherUserId: string;
+  otherDisplayName: string;
+  lastMessagePreview: string;
+  lastMessageSenderId: string | null;
+  lastMessageAt: string;
+  unreadCount: number;
+}
+
+interface PrivateMessagePayload {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  senderName: string;
+  recipientId: string;
+  content: string;
+  createdAt: string;
+}
+
+interface PrivateUserSearchResult {
+  userId: string;
+  displayName: string;
+  avatarUrl?: string | null;
+}
+
 interface SubChannel {
   id: string;
   name: string;
@@ -1293,6 +1319,7 @@ interface Channel {
 // ── Party interfaces ──────────────────────────────────────────────────────────
 
 const PARTY_MAIN_ID = '__party__';
+const PM_MAIN_ID = '__pm__';
 
 // Per-channel initial history batch size (also the lazy-load page size). When a
 // returned batch is smaller than this, we've hit the start of history.
@@ -1301,6 +1328,33 @@ const HISTORY_PAGE = 300;
 // enough that lazy-loaded older batches aren't trimmed off the top when a new
 // live message arrives, while still bounding memory.
 const MESSAGE_CAP = 2000;
+
+function toPrivateChatMessage(message: PrivateMessagePayload): ChatMessage {
+  return {
+    id: message.id,
+    content: message.content,
+    username: message.senderName,
+    userId: message.senderId,
+    channelId: message.conversationId,
+    source: 'pm',
+    timestamp: message.createdAt,
+  };
+}
+
+function formatPrivateConversationPreview(
+  conversation: PrivateConversationSummary,
+  messages: ChatMessage[] | undefined,
+  currentUserId: string,
+): string {
+  const latestMessage = messages && messages.length > 0 ? messages[messages.length - 1] : null;
+  const previewText = latestMessage?.content ?? conversation.lastMessagePreview;
+  if (!previewText) return '';
+
+  const senderId = latestMessage?.userId ?? conversation.lastMessageSenderId;
+  if (senderId === currentUserId) return `You: ${previewText}`;
+  if (senderId && senderId === conversation.otherUserId) return `${conversation.otherDisplayName}: ${previewText}`;
+  return previewText;
+}
 
 interface Party {
   id: string;
@@ -3206,9 +3260,43 @@ export default function ChatOverlay() {
   const [partyDescriptionEditor, setPartyDescriptionEditor] = useState<{ partyId: string } | null>(null);
   // live party:member-update cache
   const [partyMemberCache, setPartyMemberCache] = useState<Record<string, PartyMember[]>>({});
+  const [pmView, setPmView] = useState<'inbox' | string>('inbox');
+  const [privateConversations, setPrivateConversations] = useState<PrivateConversationSummary[]>([]);
+  const [privateMessages, setPrivateMessages] = useState<Record<string, ChatMessage[]>>({});
+  const [pmSearch, setPmSearch] = useState('');
+  const [pmSearchResults, setPmSearchResults] = useState<PrivateUserSearchResult[]>([]);
+  const [pmSearchLoading, setPmSearchLoading] = useState(false);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
+
+  useEffect(() => { pmViewRef.current = pmView; }, [pmView]);
+
+  useEffect(() => {
+    if (isPublicMode || activeMainId !== PM_MAIN_ID || pmView !== 'inbox') {
+      setPmSearchLoading(false);
+      setPmSearchResults([]);
+      return;
+    }
+    const term = pmSearch.trim();
+    if (term.length < 2) {
+      setPmSearchLoading(false);
+      setPmSearchResults([]);
+      return;
+    }
+    setPmSearchLoading(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await api.get<{ results: PrivateUserSearchResult[] }>(`/api/block/search?q=${encodeURIComponent(term)}`);
+        setPmSearchResults((res?.results ?? []).filter(result => result.userId !== (user?.id ?? '')));
+      } catch {
+        setPmSearchResults([]);
+      } finally {
+        setPmSearchLoading(false);
+      }
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [pmSearch, activeMainId, pmView, isPublicMode, user?.id]);
 
   // Close the floating member panel when the overlay idle-collapses (the shell
   // fires `fcm-overlay-collapsed`). The panel is absolutely positioned, so left
@@ -3735,6 +3823,7 @@ export default function ChatOverlay() {
 
   const activeSubIdRef = useRef(activeSubId);
   const partyViewRef = useRef<string>('browser');
+  const pmViewRef = useRef<'inbox' | string>('inbox');
   // Track which party histories have been requested this WS session to avoid duplicate sends.
   const requestedPartyHistoriesRef = useRef<Set<string>>(new Set());
   const allChannelsRef = useRef<Channel[]>([]);
@@ -4461,6 +4550,7 @@ export default function ChatOverlay() {
             if (pv && pv !== 'browser') {
               ws!.send(JSON.stringify({ type: 'party:history', payload: { partyId: pv, limit: 200 } }));
             }
+            ws!.send(JSON.stringify({ type: 'pm:list', payload: {} }));
             // Refetch channels on every (re)connect so the list is always current
             // even if channels:refresh events were missed during a disconnect.
             refetchChannelsRef.current?.();
@@ -4756,6 +4846,85 @@ export default function ChatOverlay() {
                 setPartyMemberCache(prev => { const n = { ...prev }; delete n[partyId]; return n; });
                 // If viewing this party, return to browser
                 setPartyView(prev => prev === partyId ? 'browser' : prev);
+              } else if (frame.type === 'pm:list') {
+                const nextConversations = Array.isArray(frame.payload?.conversations)
+                  ? frame.payload.conversations as PrivateConversationSummary[]
+                  : [];
+                setPrivateConversations(nextConversations);
+                if (typeof frame.payload?.openedConversationId === 'string') {
+                  setActiveMainId(PM_MAIN_ID);
+                  setPmView(frame.payload.openedConversationId);
+                } else if (pmViewRef.current !== 'inbox' && !nextConversations.some(c => c.conversationId === pmViewRef.current)) {
+                  setPmView('inbox');
+                }
+              } else if (frame.type === 'pm:history') {
+                const conversationId = typeof frame.payload?.conversationId === 'string' ? frame.payload.conversationId : '';
+                const incoming = Array.isArray(frame.payload?.messages)
+                  ? (frame.payload.messages as PrivateMessagePayload[]).map(toPrivateChatMessage)
+                  : [];
+                if (conversationId) {
+                  const latestMessage = incoming.length > 0 ? incoming[incoming.length - 1] : null;
+                  setPrivateMessages(prev => ({ ...prev, [conversationId]: incoming }));
+                  setPrivateConversations(prev => prev.map(conversation =>
+                    conversation.conversationId === conversationId
+                      ? {
+                        ...conversation,
+                        unreadCount: 0,
+                        lastMessagePreview: latestMessage?.content ?? conversation.lastMessagePreview,
+                        lastMessageSenderId: latestMessage?.userId ?? conversation.lastMessageSenderId,
+                        lastMessageAt: latestMessage?.timestamp ?? conversation.lastMessageAt,
+                      }
+                      : conversation,
+                  ));
+                }
+              } else if (frame.type === 'pm:message') {
+                const payload = frame.payload as PrivateMessagePayload;
+                if (!payload?.conversationId || !payload?.id) return;
+                const mapped = toPrivateChatMessage(payload);
+                const senderIsMe = payload.senderId === (user?.id ?? '');
+                const conversationActive = activeMainIdRef.current === PM_MAIN_ID && pmViewRef.current === payload.conversationId;
+                setPrivateMessages(prev => {
+                  const existing = prev[payload.conversationId] ?? [];
+                  if (existing.some(message => message.id === payload.id)) return prev;
+                  return {
+                    ...prev,
+                    [payload.conversationId]: [...existing, mapped],
+                  };
+                });
+                setPrivateConversations(prev => {
+                  const existing = prev.find(conversation => conversation.conversationId === payload.conversationId);
+                  const unreadCount = senderIsMe || conversationActive
+                    ? 0
+                    : (existing?.unreadCount ?? 0) + 1;
+                  const nextConversation: PrivateConversationSummary = {
+                    conversationId: payload.conversationId,
+                    otherUserId: senderIsMe ? payload.recipientId : payload.senderId,
+                    otherDisplayName: senderIsMe
+                      ? (existing?.otherDisplayName ?? 'Wanderer')
+                      : payload.senderName,
+                    lastMessagePreview: payload.content,
+                    lastMessageSenderId: payload.senderId,
+                    lastMessageAt: payload.createdAt,
+                    unreadCount,
+                  };
+                  const others = prev.filter(conversation => conversation.conversationId !== payload.conversationId);
+                  return [nextConversation, ...others];
+                });
+                if (!senderIsMe && conversationActive && wsRef.current?.readyState === WebSocket.OPEN) {
+                  wsRef.current.send(JSON.stringify({
+                    type: 'pm:read',
+                    payload: { conversationId: payload.conversationId },
+                  }));
+                }
+              } else if (frame.type === 'pm:read') {
+                const conversationId = typeof frame.payload?.conversationId === 'string' ? frame.payload.conversationId : '';
+                if (conversationId) {
+                  setPrivateConversations(prev => prev.map(conversation =>
+                    conversation.conversationId === conversationId
+                      ? { ...conversation, unreadCount: frame.payload?.unreadCount ?? 0 }
+                      : conversation,
+                  ));
+                }
               } else if (frame.type === 'user:identity_updated') {
                 // Backend broadcasts the resolved displayName whenever a user's
                 // FO76 name or Discord name is updated. Store it so we can
@@ -4990,6 +5159,14 @@ export default function ChatOverlay() {
     fo76SubsRef.current   = fo76Main?.children ?? [];
     fo76MainIdRef.current = fo76Main?.id ?? null;
   }, [fo76Main?.id, channelsRaw]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!isPublicMode || activeMainId !== PM_MAIN_ID) return;
+    setPmView('inbox');
+    if (fo76Main?.id) {
+      setActiveMainId(fo76Main.id);
+      if (fo76Main.children?.[0]?.id) setActiveSubId(fo76Main.children[0].id);
+    }
+  }, [isPublicMode, activeMainId, fo76Main]);
   // Persist the selected tab at module level (overlay only) so a remount restores
   // it instead of snapping back to General. Only store real selections.
   useEffect(() => {
@@ -5008,6 +5185,15 @@ export default function ChatOverlay() {
     }));
     requestedPartyHistoriesRef.current.add(partyView);
   }, [activeMainId, partyView]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (activeMainId !== PM_MAIN_ID || pmView === 'inbox') return;
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({
+      type: 'pm:history',
+      payload: { conversationId: pmView, limit: 100 },
+    }));
+  }, [activeMainId, pmView]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load history for all joined parties so the General feed can show party
   // messages that arrived before this session (not just live messages).
@@ -5167,6 +5353,7 @@ export default function ChatOverlay() {
   // pushed under the indicator. Re-pin to bottom on each typing-visibility change
   // so the newest message stays fully visible above the indicator.
   const typingVisibleForScope = useMemo(() => {
+    if (activeMainId === PM_MAIN_ID) return false;
     const isParty = activeMainId === PARTY_MAIN_ID && partyView !== 'browser';
     const activeScopeKey = isParty ? `party:${partyView}` : `ch:${activeSubId}`;
     const myId = user?.id ?? '';
@@ -5621,10 +5808,31 @@ export default function ChatOverlay() {
     ws.send(JSON.stringify({ type: 'party:send', payload: { partyId, content } }));
   }, []);
 
+  const openPrivateConversation = useCallback((targetUserId: string) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'pm:open', payload: { targetUserId } }));
+  }, []);
+
+  const sendPrivateMessageFrame = useCallback((conversationId: string, recipientUserId: string, content: string) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({
+      type: 'pm:send',
+      payload: {
+        conversationId,
+        recipientUserId,
+        content,
+        clientCreatedAt: new Date().toISOString(),
+      },
+    }));
+  }, []);
+
   // Send a throttled chat:typing frame (once per 2s per scope).
   const sendTyping = useCallback(() => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (activeMainId === PM_MAIN_ID) return;
     const isParty = activeMainId === PARTY_MAIN_ID && partyView !== 'browser';
     const scopeKey = isParty ? `party:${partyView}` : `ch:${activeSubId}`;
     const now = Date.now();
@@ -5701,6 +5909,17 @@ export default function ChatOverlay() {
     // a reconnect; never queue them). chat:send paths go through sendOrQueueChat which
     // will queue them if the WS is down.
     const wsOpen = wsRef.current?.readyState === WebSocket.OPEN;
+
+    if (activeMainId === PM_MAIN_ID && pmView !== 'inbox') {
+      const conversation = privateConversations.find(entry => entry.conversationId === pmView);
+      if (!wsOpen || !conversation) return;
+      sendPrivateMessageFrame(pmView, conversation.otherUserId, text);
+      setInputText('');
+      if (richInputRef.current) richInputRef.current.innerHTML = '';
+      if (richInputRef.current) richInputRef.current.focus();
+      else inputRef.current?.focus();
+      return;
+    }
 
     // Client-side relay: intercept /g /t /e /r /i /s so they always go to the
     // correct target channel regardless of which sub-tab is active.
@@ -5824,7 +6043,7 @@ export default function ChatOverlay() {
     // Electron only: signal the shell to return focus to FO76 after send.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).relayBridge?.returnToGame?.();
-  }, [inputText, activeSubId, mainChannels, joinedParties, sendChatMessage, sendPartyMessage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [inputText, activeSubId, mainChannels, joinedParties, sendChatMessage, sendPartyMessage, activeMainId, pmView, privateConversations, sendPrivateMessageFrame]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Moderation actions
   async function executeModAction(body: any) {
@@ -5858,6 +6077,9 @@ export default function ChatOverlay() {
 
   const activeMain = mainChannels.find(c => c.id === activeMainId);
   const subChannels = activeMain?.children || [];
+  const isOnPmTab = activeMainId === PM_MAIN_ID;
+  const activePmConversation = privateConversations.find(c => c.conversationId === pmView) ?? null;
+  const pmMainUnread = privateConversations.reduce((sum, conversation) => sum + (conversation.unreadCount || 0), 0);
   const flattenedChannels = useMemo(
     () => [...mainChannels, ...mainChannels.flatMap(m => m.children || [])],
     [mainChannels]
@@ -5922,6 +6144,9 @@ export default function ChatOverlay() {
     // messages authored by a blocked user. Never hides your own / system / bot.
     const notBlocked = (m: ChatMessage) =>
       !m.userId || m.userId === (user?.id ?? '') || !blockedIds.has(m.userId);
+    if (activeMainId === PM_MAIN_ID && pmView !== 'inbox') {
+      return (privateMessages[pmView] ?? []).filter(notBlocked);
+    }
     // Party in-chat view: messages keyed by partyId (partyId === channelId in the message)
     if (activeMainId === PARTY_MAIN_ID && partyView !== 'browser') {
       return messages.filter(m => m.channelId === partyView && notBlocked(m));
@@ -5952,7 +6177,7 @@ export default function ChatOverlay() {
         );
     }
     return messages.filter(m => m.channelId === activeSubId && notBlocked(m));
-  }, [messages, activeSubId, isMainFeedView, feedParent, activeMainId, partyView, blockedIds, user?.id, joinedParties, isPublicMode, publicPartyIdKey, isMod, hiddenChannelIds]);
+  }, [messages, activeSubId, isMainFeedView, feedParent, activeMainId, partyView, pmView, blockedIds, user?.id, joinedParties, isPublicMode, publicPartyIdKey, isMod, hiddenChannelIds, privateMessages]);
 
   // After a mention-badge click switched channel, run the scroll once the new
   // channel's messages have rendered into the DOM (this effect re-runs whenever
@@ -6401,6 +6626,41 @@ export default function ChatOverlay() {
         {partyMainUnread > 0 && <UnreadBadge n={partyMainUnread} />}
         {pendingInviteCount > 0 && <UnreadBadge n={pendingInviteCount} />}
         PARTY
+      </div>
+    );
+  }
+
+  function renderPmMainTab() {
+    const isActive = activeMainId === PM_MAIN_ID;
+    const tabStyle: React.CSSProperties = {
+      height: '20px',
+      alignSelf: 'flex-end',
+      padding: '0 9px 0 8px',
+      marginRight: '4px',
+      marginBottom: '-1px',
+      fontSize: `${fontSize}px`,
+      fontWeight: 'bold',
+      letterSpacing: tabLetterSpacing,
+      cursor: 'pointer',
+      color: isActive ? primaryText : inactiveTabText,
+      background: 'transparent',
+      borderTop: isActive ? `1px solid ${hexAlpha(primaryColor, 0.5)}` : '1px solid transparent',
+      borderLeft: isActive ? `1px solid ${hexAlpha(primaryColor, 0.5)}` : '1px solid transparent',
+      borderRight: isActive ? `1px solid ${hexAlpha(primaryColor, 0.5)}` : '1px solid transparent',
+      borderBottom: 'none',
+      textTransform: 'uppercase',
+      userSelect: 'none',
+      whiteSpace: 'nowrap',
+      display: 'inline-flex',
+      alignItems: 'center',
+      boxSizing: 'border-box',
+      textShadow: isActive && glowEnabled ? `0 0 6px ${hexAlpha(primaryColor, 0.6 * textAlpha)}, ${textOutline}` : textOutline,
+      ...(overlayShell ? { WebkitAppRegion: 'no-drag' } as React.CSSProperties : {}),
+    };
+    return (
+      <div key={PM_MAIN_ID} ref={isActive ? activeMainTabRef : undefined} onClick={() => setActiveMainId(PM_MAIN_ID)} style={tabStyle}>
+        {pmMainUnread > 0 && <UnreadBadge n={pmMainUnread} />}
+        PM
       </div>
     );
   }
@@ -6871,9 +7131,157 @@ export default function ChatOverlay() {
   // Memoized normal-feed message rows. Decoupled from inputText so typing
   // (e.g. holding Backspace) no longer re-renders all ~300 rows. Recomputes
   // only when a listed dependency actually changes.
+  const filteredPrivateConversations = useMemo(() => {
+    const term = pmSearch.trim().toLowerCase();
+    if (!term) return privateConversations;
+    return privateConversations.filter(conversation => {
+      const formattedPreview = formatPrivateConversationPreview(
+        conversation,
+        privateMessages[conversation.conversationId],
+        user?.id ?? '',
+      ).toLowerCase();
+      return conversation.otherDisplayName.toLowerCase().includes(term)
+        || conversation.lastMessagePreview.toLowerCase().includes(term)
+        || formattedPreview.includes(term);
+    });
+  }, [privateConversations, privateMessages, pmSearch, user?.id]);
+
+  const privateSearchResults = useMemo(() => {
+    const existingUserIds = new Set(privateConversations.map(conversation => conversation.otherUserId));
+    return pmSearchResults.filter(result => !existingUserIds.has(result.userId));
+  }, [pmSearchResults, privateConversations]);
+
+  function renderPrivateInboxContent() {
+    return (
+      <div data-pm-inbox="true" style={{ padding: '6px 8px 8px' }}>
+        <input
+          value={pmSearch}
+          onChange={e => setPmSearch(e.target.value)}
+          placeholder="Type to search..."
+          style={{
+            width: '100%',
+            boxSizing: 'border-box',
+            marginBottom: '8px',
+            background: inputBgRgba,
+            border: `1px solid ${hexAlpha(primaryColor, 0.25)}`,
+            color: textRgba,
+            fontFamily: theme.fontFamily,
+            fontSize: `${fontSize}px`,
+            lineHeight: '18px',
+            padding: '5px 8px',
+            outline: 'none',
+          }}
+        />
+        {privateSearchResults.length > 0 && (
+          <div style={{ marginBottom: '8px' }}>
+            <div style={{ color: hexAlpha(dimText, 0.8), fontSize: '10px', letterSpacing: '0.08em', marginBottom: '4px' }}>
+              USERS
+            </div>
+            {privateSearchResults.map(result => (
+              <div
+                key={`pm-user-${result.userId}`}
+                onClick={() => openPrivateConversation(result.userId)}
+                style={{
+                  padding: '6px 4px',
+                  cursor: 'pointer',
+                  borderBottom: `1px solid ${hexAlpha(primaryColor, 0.08)}`,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = hexAlpha(primaryColor, 0.08); }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+              >
+                <div style={{ color: primaryText, fontWeight: 'bold', textShadow: textOutline }}>
+                  {result.displayName}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {pmSearchLoading && (
+          <div style={{ color: dimText, fontSize: `${Math.max(10, fontSize - 1)}px`, marginBottom: '6px' }}>
+            Searching...
+          </div>
+        )}
+        {filteredPrivateConversations.length === 0 ? (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: '120px',
+            color: hexAlpha(theme.secondaryColor, 0.4),
+            fontSize: `${fontSize}px`,
+            fontFamily: '"Courier New", Courier, monospace',
+          }}>
+            No Private Messages Yet...
+          </div>
+        ) : (
+          filteredPrivateConversations.map(conversation => (
+            <div
+              key={conversation.conversationId}
+              data-pm-inbox-row="true"
+              onClick={() => setPmView(conversation.conversationId)}
+              style={{
+                padding: '6px 4px',
+                cursor: 'pointer',
+                borderBottom: `1px solid ${hexAlpha(primaryColor, 0.08)}`,
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = hexAlpha(primaryColor, 0.08); }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+                <span style={{
+                  flex: 1,
+                  color: primaryText,
+                  fontWeight: 'bold',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  textShadow: textOutline,
+                }}>
+                  {conversation.otherDisplayName}
+                </span>
+                <span style={{
+                  color: hexAlpha(dimText, 0.78),
+                  fontSize: `${Math.max(9, fontSize - 2)}px`,
+                  whiteSpace: 'nowrap',
+                  textShadow: textOutline,
+                }}>
+                  {formatMessageTimestamp(conversation.lastMessageAt, settings.timestampFormat)}
+                </span>
+                {conversation.unreadCount > 0 && <UnreadBadge n={conversation.unreadCount} />}
+              </div>
+              <div style={{
+                color: textRgba,
+                fontSize: `${Math.max(10, fontSize - 1)}px`,
+                marginTop: '2px',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                textShadow: textOutline,
+              }}>
+                {formatPrivateConversationPreview(
+                  conversation,
+                  privateMessages[conversation.conversationId],
+                  user?.id ?? '',
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    );
+  }
+
+  const inputPlaceholder = 'Type a message...';
+  const showComposer = !isPublicMode
+    && !adminFeedActive
+    && (!isOnPartyTab || partyView !== 'browser')
+    && (!isOnPmTab || pmView !== 'inbox');
+
   const normalFeedRows = useMemo(() =>
               visibleMessages.map(msg => {
-                const displayName = resolveUsername(msg);
+                const displayName = isOnPmTab && msg.userId && msg.userId === (user?.id ?? '')
+                  ? 'You'
+                  : resolveUsername(msg);
                 // ── Party-invite embed ──────────────────────────────────────
                 // Public-invitation messages carry metadata.type === 'party_invite'.
                 // Render a styled embed with a Join button instead of plain text.
@@ -7468,6 +7876,7 @@ export default function ChatOverlay() {
           {partiesAvailable !== false && (
             <PartyErrorBoundary fallback={null}>{renderPartyMainTab()}</PartyErrorBoundary>
           )}
+          {!isPublicMode && renderPmMainTab()}
 
           {/* Push buttons to the right */}
           <div style={{ flex: 1 }} />
@@ -7582,7 +7991,7 @@ export default function ChatOverlay() {
               full width EXCEPT under the active main tab — drawn as two segments:
               [0 → activeTab.left] and [activeTab.right → full width]. The active
               tab's open bottom then "sits" on this line. Both shell + website. */}
-          {tabCutout && (subChannels.length > 0 || isOnPartyTab) && (
+          {tabCutout && (subChannels.length > 0 || isOnPartyTab || isOnPmTab) && (
             <>
               <div style={{
                 position: 'absolute', left: 0, bottom: 0, height: '1px',
@@ -7726,6 +8135,39 @@ export default function ChatOverlay() {
             </div>
           </div>
           </PartyErrorBoundary>
+        ) : isOnPmTab ? (
+          <div data-fcm-subtab-row="pm" style={{
+            display: 'flex', alignItems: 'center',
+            padding: overlayShell ? '0 6px 0 16px' : '0 6px 0 15px',
+            height: '22px',
+            boxSizing: 'border-box',
+            background: chromeRgba,
+            borderBottom: `1px solid ${hexAlpha(primaryColor, 0.45)}`,
+            flexShrink: 0,
+            ...(overlayShell ? { WebkitAppRegion: 'drag' } as React.CSSProperties : {}),
+          }}>
+            <span
+              onClick={() => setPmView('inbox')}
+              style={{
+                fontSize: overlayShell ? `${Math.max(8, fontSize - 1)}px` : `${fontSize}px`,
+                letterSpacing: tabLetterSpacing,
+                cursor: 'pointer',
+                color: pmView === 'inbox' ? primaryText : inactiveTabText,
+                fontWeight: 'bold',
+                textTransform: 'uppercase' as const,
+                marginRight: `${scaleGap(12)}px`,
+                borderBottom: 'none',
+                paddingBottom: '1px',
+                userSelect: 'none',
+                whiteSpace: 'nowrap',
+                display: 'inline-flex', alignItems: 'center', flexShrink: 0,
+                textShadow: pmView === 'inbox' && glowEnabled ? `0 0 6px ${hexAlpha(primaryColor, 0.6 * textAlpha)}, ${textOutline}` : textOutline,
+                ...(overlayShell ? { WebkitAppRegion: 'no-drag' } as React.CSSProperties : {}),
+              }}
+            >
+              INBOX
+            </span>
+          </div>
         ) : subChannels.length > 0 && (
           <div data-fcm-subtab-row="channels" style={{
             display: 'flex', alignItems: 'center', flexWrap: 'nowrap', overflow: 'hidden',
@@ -7883,6 +8325,8 @@ export default function ChatOverlay() {
 
           {isOnPartyTab && partyView === 'browser' ? (
             <PartyErrorBoundary>{renderPartyContent()}</PartyErrorBoundary>
+          ) : isOnPmTab && pmView === 'inbox' ? (
+            renderPrivateInboxContent()
           ) : adminFeedActive ? (
             feedMessages.length === 0 ? (
               <div style={{
@@ -7954,17 +8398,51 @@ export default function ChatOverlay() {
               })
             )
           ) : (
-            visibleMessages.length === 0 ? (
-              <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                height: '100%', color: hexAlpha(theme.secondaryColor, 0.4),
-                fontSize: `${fontSize}px`, fontFamily: '"Courier New", Courier, monospace',
-              }}>
-                No Radio Signals Detected...
-              </div>
-            ) : (
-              normalFeedRows
-            )
+            <>
+              {isOnPmTab && activePmConversation && (
+                <div data-pm-conversation="true" style={{
+                  padding: '4px 8px 6px',
+                  borderBottom: `1px solid ${hexAlpha(primaryColor, 0.15)}`,
+                  marginBottom: '4px',
+                }}>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setPmView('inbox')}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setPmView('inbox'); }}
+                    style={{
+                      color: primaryColor,
+                      cursor: 'pointer',
+                      fontSize: `${Math.max(10, fontSize - 1)}px`,
+                      fontWeight: 'bold',
+                      marginBottom: '4px',
+                      textShadow: textOutline,
+                    }}
+                  >
+                    {'< BACK TO INBOX'}
+                  </div>
+                  <div style={{
+                    color: hexAlpha(primaryColor, 0.92),
+                    fontSize: `${Math.max(11, fontSize)}px`,
+                    fontWeight: 'bold',
+                    textShadow: textOutline,
+                  }}>
+                    {activePmConversation.otherDisplayName}
+                  </div>
+                </div>
+              )}
+              {visibleMessages.length === 0 ? (
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  height: '100%', color: hexAlpha(theme.secondaryColor, 0.4),
+                  fontSize: `${fontSize}px`, fontFamily: '"Courier New", Courier, monospace',
+                }}>
+                  {isOnPmTab ? 'No Private Messages Yet...' : 'No Radio Signals Detected...'}
+                </div>
+              ) : (
+                normalFeedRows
+              )}
+            </>
           )}
           <div ref={messagesEndRef} />
         </div>
@@ -8000,7 +8478,8 @@ export default function ChatOverlay() {
         )}
 
         {/* ── Typing indicator — in-flow flex child between messages and input ── */}
-        {!isPublicMode && (!isOnPartyTab || partyView !== 'browser') && !adminFeedActive && (() => {
+        {showComposer && (() => {
+          if (isOnPmTab) return null;
           const isParty = activeMainId === PARTY_MAIN_ID && partyView !== 'browser';
           const activeScopeKey = isParty ? `party:${partyView}` : `ch:${activeSubId}`;
           const myId = user?.id ?? '';
@@ -8280,7 +8759,7 @@ export default function ChatOverlay() {
           )}
 
           {/* Hide input in public/logged-out mode (read-only) and party browser view */}
-          {!isPublicMode && (!isOnPartyTab || partyView !== 'browser') && <div style={{
+          {showComposer && <div style={{
             background: inputBgRgba, paddingTop: '6px', paddingBottom: '8px',
             borderTop: `1px solid ${borderRgba}`,
           }}>
@@ -8333,7 +8812,7 @@ export default function ChatOverlay() {
                     overflow: 'hidden',
                     zIndex: 0,
                   }}>
-                    Type a message...
+                    {inputPlaceholder}
                   </span>
                 )}
               <div
@@ -8605,7 +9084,7 @@ export default function ChatOverlay() {
               }}
               maxLength={255}
               rows={1}
-              placeholder="Type a message..."
+              placeholder={inputPlaceholder}
               style={{
                 flex: 1,
                 background: 'transparent',
@@ -8937,6 +9416,11 @@ export default function ChatOverlay() {
                     setInputText(prev => (prev.startsWith(mention) ? prev : mention + prev));
                     setTimeout(() => inputRef.current?.focus(), 0);
                   }}]
+                : []),
+              ...(!isPublicMode && ctxMenu.msg.userId && ctxMenu.msg.userId !== 'system'
+                  && ctxMenu.msg.source !== 'bot' && ctxMenu.msg.source !== 'system'
+                  && ctxMenu.msg.userId !== (user?.id ?? '')
+                ? [{ label: 'Message', action: () => { openPrivateConversation(ctxMenu.msg.userId!); } }]
                 : []),
               // Copy items are harmless and available to everyone (incl. public mode).
               { label: copyFlash === 'msg' ? '✓ COPIED' : 'Copy Message', action: () => copyToClipboard(ctxMenu.msg.content, 'msg') },

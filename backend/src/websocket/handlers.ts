@@ -9,6 +9,29 @@ import { buildAvatarUrl } from '../services/avatarService';
 import { hudPushNotify } from '../services/hudPush';
 import { isSocketSuperseded } from './socketSupersession';
 import { getLatestVersion } from '../services/latestReleaseVersion';
+import { shadowMute } from '../services/autoModService';
+import { engineEvaluate } from '../services/autoModEngine';
+import { relayToDiscord, invalidateRelayMappingsCache } from '../services/discordService';
+import { persistMessage } from '../services/messageService';
+import { finalizeMessage } from '../services/ingestMessage';
+import messageQueue from '../queues/messagePersist';
+import logger from '../config/logger';
+import { incrementMessageCount, setFullscreenStatus, removeFullscreenClient } from '../controllers/healthController';
+import { tryHandleCommand } from '../services/commandService';
+import { getServerPlayers } from '../services/playerListService';
+import {
+  PrivateConversationAccessError,
+  PrivateMessageUnavailableError,
+  getOrCreatePrivateConversation,
+  getPrivateHistory,
+  listPrivateConversations,
+  markPrivateConversationRead,
+  sendPrivateMessage,
+} from '../services/privateMessagingService';
+import { emojifyShortcodes } from '../utils/emoji';
+import { evaluateBuildGate } from '../services/buildLock';
+import { getActiveQaVersion } from '../services/activeQaVersion';
+import env from '../config/environment';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -167,22 +190,6 @@ export async function broadcastToSession(payload: any, sessionId: string | null 
   return delivered;
 }
 
-
-import { shadowMute } from '../services/autoModService';
-import { engineEvaluate } from '../services/autoModEngine';
-import { relayToDiscord, invalidateRelayMappingsCache } from '../services/discordService';
-import { persistMessage } from '../services/messageService';
-import { finalizeMessage } from '../services/ingestMessage';
-import messageQueue from '../queues/messagePersist';
-import logger from '../config/logger';
-import { incrementMessageCount, setFullscreenStatus, removeFullscreenClient } from '../controllers/healthController';
-import { tryHandleCommand } from '../services/commandService';
-import { getServerPlayers } from '../services/playerListService';
-import { emojifyShortcodes } from '../utils/emoji';
-import { evaluateBuildGate } from '../services/buildLock';
-import { getActiveQaVersion } from '../services/activeQaVersion';
-import env from '../config/environment';
-
 // WebSocket close codes
 const WS_CLOSE_AUTH_FAILED = 4001;
 const WS_CLOSE_BANNED = 4002;
@@ -215,6 +222,43 @@ interface ClientEntry {
 
 // In-memory client registry
 const clients = new Map<string, ClientEntry>();
+
+export async function broadcastToUsers(
+  payload: any,
+  userIds: string[],
+  excludeWs: WebSocket | null = null,
+): Promise<number> {
+  const userSet = new Set(userIds.filter((id) => typeof id === 'string' && id.length > 0));
+  if (userSet.size === 0) return 0;
+
+  const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  let delivered = 0;
+
+  for (const [, client] of clients) {
+    if (!userSet.has(client.userId)) continue;
+    if (client.ws === excludeWs || client.ws.readyState !== WebSocket.OPEN) continue;
+    if (recipientHasBlockedSender(payload, client)) continue;
+    try {
+      if (safeSend(client.ws, data, `broadcastToUsers:${client.userId}`)) delivered++;
+    } catch (err) {
+      logger.warn({ err, userId: client.userId }, 'broadcastToUsers: send failed (non-fatal)');
+    }
+  }
+
+  if (pubsubActive) {
+    const envelope = JSON.stringify({
+      instanceId: INSTANCE_ID,
+      payload,
+      scope: 'users',
+      userIds: [...userSet],
+    });
+    getRedisClient()
+      .then((redis) => redis.publish(PUBSUB_CHANNEL, envelope))
+      .catch((err) => logger.warn({ err }, 'broadcastToUsers: Redis publish failed (non-fatal)'));
+  }
+
+  return delivered;
+}
 
 // ── WS-flap grace window ──────────────────────────────────────────────────────
 // When a WS socket closes and the same user reconnects within WS_FLAP_GRACE_MS,
@@ -475,12 +519,13 @@ async function checkWsRateLimit(userId: string): Promise<boolean> {
  * blocked user is invisible to the blocker — their chat messages, and the bot
  * output of their slash commands, never reach the blocker.
  *
- * Only filters message-bearing frames that carry an author userId (chat:message
- * and bot replies that echo the blocked sender's userId). Frames without a
- * sender userId, or system/global frames, are never filtered.
+ * Only filters message-bearing frames that carry an author id (chat:message and
+ * bot replies echo it as `userId`; private-message frames carry it as `senderId`).
+ * Frames without a sender id, or system/global frames, are never filtered.
  */
 function recipientHasBlockedSender(payload: any, recipient: ClientEntry): boolean {
-  const senderId: unknown = payload?.payload?.userId;
+  // chat/bot frames author the sender as `userId`; PM frames use `senderId`.
+  const senderId: unknown = payload?.payload?.userId ?? payload?.payload?.senderId;
   if (typeof senderId !== 'string' || senderId.length === 0) return false;
   // 'system' is the synthetic id for [Vault-Tec]/system frames — never blocked.
   if (senderId === 'system') return false;
@@ -605,6 +650,17 @@ async function initPubSub(): Promise<void> {
             if (client.worldSessionId !== envelope.sessionId) continue;
             if (recipientHasBlockedSender(envelope.payload, client)) continue;
             try { safeSend(client.ws, data, `pubsub:session:${client.userId}`); } catch { /* non-fatal */ }
+          }
+          return;
+        }
+        if (envelope.scope === 'users' && Array.isArray(envelope.userIds)) {
+          const userSet = new Set<string>(envelope.userIds);
+          const data = JSON.stringify(envelope.payload);
+          for (const [, client] of clients) {
+            if (client.ws.readyState !== WebSocket.OPEN) continue;
+            if (!userSet.has(client.userId)) continue;
+            if (recipientHasBlockedSender(envelope.payload, client)) continue;
+            try { safeSend(client.ws, data, `pubsub:user:${client.userId}`); } catch { /* non-fatal */ }
           }
           return;
         }
@@ -1501,6 +1557,213 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
         break;
       }
 
+      case 'pm:list': {
+        try {
+          const conversations = await listPrivateConversations(user.id);
+          ws.send(JSON.stringify({ type: 'pm:list', payload: { conversations } }));
+        } catch (err) {
+          logger.warn({ err, userId: user.id }, '[pm:list] failed');
+          sendWsError(ws, 'Could not load private messages.');
+        }
+        break;
+      }
+
+      case 'pm:open': {
+        const targetUserId = frame.payload?.targetUserId;
+        if (typeof targetUserId !== 'string' || !UUID_RE.test(targetUserId)) {
+          sendWsError(ws, 'Invalid targetUserId.');
+          break;
+        }
+        try {
+          const conversation = await getOrCreatePrivateConversation(user.id, targetUserId);
+          const conversations = await listPrivateConversations(user.id);
+          ws.send(JSON.stringify({
+            type: 'pm:list',
+            payload: {
+              conversations,
+              openedConversationId: conversation.id,
+            },
+          }));
+        } catch (err: any) {
+          if (err instanceof PrivateMessageUnavailableError) {
+            sendWsError(ws, err.message);
+          } else {
+            logger.warn({ err, userId: user.id, targetUserId }, '[pm:open] failed');
+            sendWsError(ws, 'Could not open private conversation.');
+          }
+        }
+        break;
+      }
+
+      case 'pm:history': {
+        const conversationId = frame.payload?.conversationId;
+        if (typeof conversationId !== 'string' || !UUID_RE.test(conversationId)) {
+          sendWsError(ws, 'Invalid conversationId.');
+          break;
+        }
+        try {
+          const messages = await getPrivateHistory(
+            user.id,
+            conversationId,
+            frame.payload?.limit ?? 100,
+            frame.payload?.offset ?? 0,
+          );
+          await markPrivateConversationRead(user.id, conversationId);
+          ws.send(JSON.stringify({
+            type: 'pm:history',
+            payload: {
+              conversationId,
+              messages,
+            },
+          }));
+          await broadcastToUsers({
+            type: 'pm:read',
+            payload: { conversationId, unreadCount: 0 },
+          }, [user.id]);
+        } catch (err: any) {
+          if (err instanceof PrivateConversationAccessError || err instanceof PrivateMessageUnavailableError) {
+            sendWsError(ws, err.message);
+          } else {
+            logger.warn({ err, userId: user.id, conversationId }, '[pm:history] failed');
+            sendWsError(ws, 'Could not load private conversation.');
+          }
+        }
+        break;
+      }
+
+      case 'pm:read': {
+        const conversationId = frame.payload?.conversationId;
+        if (typeof conversationId !== 'string' || !UUID_RE.test(conversationId)) {
+          sendWsError(ws, 'Invalid conversationId.');
+          break;
+        }
+        try {
+          await markPrivateConversationRead(user.id, conversationId);
+          await broadcastToUsers({
+            type: 'pm:read',
+            payload: { conversationId, unreadCount: 0 },
+          }, [user.id]);
+        } catch (err: any) {
+          if (err instanceof PrivateConversationAccessError || err instanceof PrivateMessageUnavailableError) {
+            sendWsError(ws, err.message);
+          } else {
+            logger.warn({ err, userId: user.id, conversationId }, '[pm:read] failed');
+            sendWsError(ws, 'Could not update private message state.');
+          }
+        }
+        break;
+      }
+
+      case 'pm:send': {
+        const pmClient = clients.get(token);
+        if (!pmClient) break;
+
+        let pmMuteDetail: { until: string | null; reason: string | null; category: string | null } | null = null;
+        if (pmClient.isMuted) {
+          const dbUser = await prisma.user.findUnique({
+            where: { id: user.id },
+            select: { isMuted: true, muteExpiresAt: true, muteReason: true, muteCategory: true },
+          });
+          if (dbUser) {
+            if (dbUser.isMuted && dbUser.muteExpiresAt && new Date(dbUser.muteExpiresAt) < new Date()) {
+              await prisma.user.update({
+                where: { id: user.id },
+                data: { isMuted: false, muteExpiresAt: null, muteReason: null, muteCategory: null, mutedById: null },
+              });
+              pmClient.isMuted = false;
+            } else if (!dbUser.isMuted) {
+              pmClient.isMuted = false;
+            } else {
+              pmMuteDetail = {
+                until: dbUser.muteExpiresAt ? new Date(dbUser.muteExpiresAt).toISOString() : null,
+                reason: dbUser.muteReason ?? null,
+                category: dbUser.muteCategory ?? null,
+              };
+            }
+          }
+        }
+        if (pmClient.isMuted) {
+          ws.send(JSON.stringify({ type: 'user:muted', payload: pmMuteDetail ?? { until: null, reason: null, category: null } }));
+          const detail = pmMuteDetail?.reason
+            ? `${pmMuteDetail.category ? `${pmMuteDetail.category}: ` : ''}${pmMuteDetail.reason}`
+            : '';
+          sendWsError(ws, detail ? `You are muted — ${detail}` : 'You are muted.');
+          break;
+        }
+
+        const rateLimited = await checkWsRateLimit(user.id);
+        if (rateLimited) {
+          ws.send(JSON.stringify({ type: 'rate:status', payload: { remaining: 0, retryAfterMs: 1000 } }));
+          sendWsError(ws, 'Rate limit exceeded. Slow down.');
+          break;
+        }
+
+        const recipientUserId = frame.payload?.recipientUserId;
+        const conversationId = frame.payload?.conversationId;
+        const clientCreatedAt = frame.payload?.clientCreatedAt;
+        let content = frame.payload?.content;
+
+        if (typeof recipientUserId !== 'string' || !UUID_RE.test(recipientUserId)) {
+          sendWsError(ws, 'Invalid recipientUserId.');
+          break;
+        }
+        if (conversationId != null && (typeof conversationId !== 'string' || !UUID_RE.test(conversationId))) {
+          sendWsError(ws, 'Invalid conversationId.');
+          break;
+        }
+        if (typeof content !== 'string' || content.trim().length === 0) {
+          sendWsError(ws, 'Invalid message content.');
+          break;
+        }
+        if (clientCreatedAt) {
+          const clientTime = new Date(clientCreatedAt).getTime();
+          if (isNaN(clientTime) || Math.abs(Date.now() - clientTime) > CLIENT_TIMESTAMP_SKEW_MS) {
+            sendWsError(ws, 'Message timestamp out of range.');
+            break;
+          }
+        }
+
+        content = emojifyShortcodes(content);
+        const pmEngineResult = await engineEvaluate(content, `pm:${recipientUserId}`, user);
+        if (pmEngineResult.block) {
+          if (pmEngineResult.customMessage?.includes('Spam')) {
+            await shadowMute(user.id);
+            pmClient.isMuted = true;
+          }
+          sendWsError(ws, pmEngineResult.customMessage || 'Message blocked by content filter.');
+          break;
+        }
+
+        try {
+          if (conversationId) {
+            const conversation = await getOrCreatePrivateConversation(user.id, recipientUserId);
+            if (conversation.id !== conversationId) {
+              sendWsError(ws, 'Invalid conversationId.');
+              break;
+            }
+          }
+
+          const message = await sendPrivateMessage(user.id, recipientUserId, content);
+          await broadcastToUsers({
+            type: 'pm:message',
+            payload: {
+              ...message,
+              isPrivate: true,
+            },
+          }, [user.id, recipientUserId]);
+        } catch (err: any) {
+          if (err instanceof PrivateConversationAccessError || err instanceof PrivateMessageUnavailableError) {
+            sendWsError(ws, err.message);
+          } else if (err?.statusCode === 400) {
+            sendWsError(ws, err.message);
+          } else {
+            logger.warn({ err, userId: user.id, recipientUserId }, '[pm:send] failed');
+            sendWsError(ws, 'Could not send private message.');
+          }
+        }
+        break;
+      }
+
       case 'chat:send': {
         const client = clients.get(token);
         if (!client) return;
@@ -2259,6 +2522,7 @@ module.exports = {
   pushToUser, getConnectedUserIds, refreshClientBlocks,
   updateClientEndpoint,
   broadcastToSession,
+  broadcastToUsers,
   resolveDisplayName,
   decideFlapHandoff,
   WS_FLAP_GRACE_MS_EXPORT,
