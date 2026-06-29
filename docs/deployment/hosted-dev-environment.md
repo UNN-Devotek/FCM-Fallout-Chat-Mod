@@ -66,7 +66,7 @@ non-confidential **by construction**, remote dev access is safe.
 | Credentials | Own dev DB password, Redis password, MinIO creds, `SESSION_SECRET`, Discord app. **Zero overlap with prod.** A full dev compromise leaks no prod secret. |
 | Resource limits | Memory + CPU caps on every dev service so a runaway/abusive dev container cannot starve prod. |
 | Ingress | Dedicated `cloudflared-dev` tunnel attached only to `fcm-dev-network`. |
-| Access | Cloudflare Access in front of every dev hostname. Per-developer, logged, instantly revocable. |
+| Access | **App-level auth is the gate for the dev website** (the dual dev-Discord `developer` role gate on `dev.falloutchatmod.com` + `dev-hud`), like prod — the Cloudflare Access **edge gate was removed 2026-06-29**. Raw stores (`dev-db` / `dev-s3`) are **still** CF-Access service-token gated. |
 
 Because contributors get **application-level access only** (no SSH, no Dokploy
 rights, no container shell), the usual shared-VPS risk — hostile code execution →
@@ -473,6 +473,13 @@ Discord via the QA OAuth flow, and connect to `dev.falloutchatmod.com`. They nev
 the dev Discord application credentials, the database, or the object store.
 
 ### Cloudflare Access path-bypass policy
+
+> **SUPERSEDED (2026-06-29).** The CF Access **edge gate on the dev website was removed entirely** —
+> `dev.falloutchatmod.com` + `dev-hud` are now open at the edge, with the app-level dual-`developer`-role
+> gate as the only protection (like prod), and all the per-path bypass apps below were deleted. Only
+> `dev-db` + `dev-s3` remain CF-Access (service-token) gated. The section below is retained for history /
+> if the edge gate is ever reinstated. Rationale: app-auth already protects every data path (verified
+> `/api/*` returns 401 without a session even when edge-reachable), and the gate broke the in-game `/link` flow.
 
 The overlay is a native application that makes unauthenticated (no browser cookie/SSO)
 HTTP and WebSocket calls to the backend. Cloudflare Access uses its own HTTPS intercept

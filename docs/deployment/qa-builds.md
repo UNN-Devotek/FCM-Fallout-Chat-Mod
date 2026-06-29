@@ -28,11 +28,11 @@ outdated (or exploitable) build can be retired instantly.
   `GET /api/auth/qa-status/:installToken` poll and **WS close `4003`** on the relay
   handshake. Dev-only, active only when `QA_BUILD_LOCK=true` (fails open if no active
   version is set).
-- **Cloudflare Access path-bypass (reachability).** On `dev.falloutchatmod.com` the overlay
-  paths (`/ws`, `/auth/*`, `/api/*`) are CF Access **bypass** apps; only the dashboard root
-  stays SSO-gated (developers). App-level auth is the security boundary on the bypassed
-  surface — acceptable because the dev dataset is fake by construction. The QA paths are
-  already covered by the existing `/auth` + `/api` bypass apps; no new CF app is needed.
+- **Edge reachability (2026-06-29: CF Access removed from the dev website).** `dev.falloutchatmod.com`
+  is now **open at the edge** — the CF Access gate + per-path bypass apps were deleted — so QA testers
+  reach the overlay paths (`/ws`, `/auth/*`, `/api/*`) **and** the `/link` page directly. App-level auth
+  is the only security boundary (acceptable because the dev dataset is fake by construction). No CF Access
+  apps or bypasses are needed for the website anymore; only `dev-db` / `dev-s3` stay service-token gated.
 
 ## The cycle: build -> bless -> distribute -> retire
 
