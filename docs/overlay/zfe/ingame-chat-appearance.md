@@ -4,6 +4,56 @@ Review of the FCMBridge HUD panel against the `ChatOverlay.tsx` reference design
 Sources: `game-mods/FCMBridge/FCMBridge.hx` (all lines), `admin-dashboard/src/features/chat/ChatOverlay.tsx`
 (lines 56–145 theme block; 5711–7150 render path), `docs/overlay/zfe/scaleform-ui-guide.md`.
 
+> **Live widget config (`FCMChatWidget`, chat.v1).** The roadmap below was written against the
+> older `FCMBridge.hx` (FCMHUD/1, hardcoded constants). The shipping in-game chat is the
+> HUDModLoader widget `game-mods/FCMBridge/hudmodloader-chat/FCMChatWidget.hx`, whose appearance
+> is now **fully user-editable** without a rebuild via `Data/FCMChat.ini` (`[FCMChat]` section,
+> parsed + clamped by `FcmConfig.parse()`). The full key catalog — **colors**
+> (`bgColor`, `borderColor`, `textColor`, `senderColor`, `channelTagColor`, `tabActiveColor`,
+> `tabInactiveColor`, `promptColor`, `tabRowColor`, `timestampColor`), **opacity** (`bgAlpha`),
+> **geometry** (`x`, `y`, `width`, `height`, `fontSize`), **limits** (`maxMessages`,
+> `maxSendLen`, `pollMs`), **toggles** (`showChannelTag`, `showTimestamps`, `showHints`), and **keybinds**
+> (`openKey`, `channelNextKey`, `channelPrevKey`, `hideKey`) — lives in the commented
+> `Data/FCMChat.ini` (every value validated/clamped, invalid falls back to default).
+> Keybinds: [../keybinds.md](../keybinds.md) (in-game HUD section). Two feed-polish defaults
+> that differ from the table below: each message now carries an `HH:MM` **timestamp** (sourced
+> from the relay's `createdAt`, `showTimestamps` on by default) and the channel tag renders the
+> channel's **proper-cased name** (e.g. `[General]`, `[Server]`) instead of a raw lowercase slug.
+>
+> **Per-channel colors — `[Channel]` message tags only (v2.6.3, scoped to tags in v2.6.5).**
+> Each `[Channel]` **message tag** renders in that channel's **own color**, mirroring the
+> website's `chat_rooms.color` (pulled from PROD 2026-06-28): General `#1ABAFF`, Trading
+> `#008F37`, Events `#C88A51`, Infests `#5ABD0A`, Raids `#CE0909`, Server `#ECBB51`. Override
+> per channel in `FCMChat.ini` (`colorGeneral` / `colorTrading` / `colorEvents` /
+> `colorInfests` / `colorRaids` / `colorServer`), read via `FcmConfig.channelColor(slug)`.
+> **The sub-tab ROW does NOT use per-channel colors** — it uses the **header text colors**
+> (active = `tabActiveColor`, inactive = `tabInactiveColor`, matching the "FALLOUT 76" main
+> tab). (v2.6.4 briefly colored the sub-tab row per-channel; **reverted in v2.6.5** by request.)
+> This is the static mirror (**Option B**); **Option A** — the relay feeding live
+> `chat_rooms.color` over chat.v1 so tags auto-track dashboard edits — is planned for later
+> (`channelColor()` is the override point). Also: the sub-tab first-letter brackets
+> (`[G]ENERAL` → `GENERAL`) and the dim divider line under the active main tab were removed.
+>
+> **Poll cadence / game-lag knob (v2.6.4).** The event-poll interval is now configurable via
+> `pollMs` (default **5000**ms, was a hard-coded 2000ms; clamped 1000..60000). Each poll opens
+> a **fresh wss connection** = a full TLS handshake (~120ms under Wine/Proton), so at 2s it
+> stuttered the game. Raising `pollMs` trades message-refresh speed for smoothness; lowering it
+> is snappier but laggier. The real fix is ZFE **reusing its persistent connection** for polls
+> instead of a new handshake per call (flagged to the ZFE author).
+>
+> **Onboarding + tab chrome (v2.6.6).**
+> - **Unlinked = link screen only.** On first load (or any time the identity is not linked),
+>   the widget shows ONLY the link prompt — it no longer renders chat history to an unlinked
+>   user (`renderRecords` returns the link screen when `_authState != "authenticated"`).
+> - **Configurable link URL.** `FcmConfig.linkUrl` (FCMChat.ini `linkUrl`, URL-safe charset,
+>   default `falloutchatmod.com/link`) sets the link-prompt URL; **dev builds use
+>   `dev.falloutchatmod.com/link`**. (The relay's link-code notice is already env-correct; this
+>   is the pre-notice fallback text.)
+> - **Single yellow main→sub separator.** The two tab-row background fills were merged into one
+>   (no more dim alpha seam between the main tab and the sub-tabs); the only line on that
+>   boundary is a yellow (`tabActiveColor`) separator at `y=TAB_H`, cut out under the active tab
+>   so the tab outline + separator form one continuous line that wraps the active "FALLOUT 76" tab.
+
 ---
 
 ## 1. Current State Inventory

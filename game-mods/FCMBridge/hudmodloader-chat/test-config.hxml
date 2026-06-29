@@ -1,0 +1,5 @@
+## FcmConfig unit tests — pure parser/clamp, no flash deps.
+## Run from the hudmodloader-chat/ directory: haxe test-config.hxml
+## Wired into CI (gamemod job) alongside the Python anchor tests.
+--main TestFcmConfig
+--interp
