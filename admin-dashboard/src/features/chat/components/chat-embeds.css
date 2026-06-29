@@ -151,6 +151,16 @@
   justify-content: flex-end;
   margin-top: 4px;
 }
+/* When a bottom-left node is present, split the row: left node ↔ share button. */
+.fcm-embed__share--split {
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.fcm-embed__footer-left {
+  min-width: 0;
+  font-size: var(--fcm-fs-sm);
+}
 .fcm-embed__share-btn {
   all: unset;
   cursor: pointer;
