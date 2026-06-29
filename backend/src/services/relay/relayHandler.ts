@@ -653,8 +653,22 @@ async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): P
     role:        identity.role,
   });
 
-  // Clean up subscriber on disconnect.
+  // Keepalive: ZFE's Wine/Winsock subscribe recv times out on idle (WSAETIMEDOUT /
+  // "WSA error 10060") and treats it as a disconnect, dropping the live connection into
+  // a reconnect loop. Send a periodic WS ping so the client's recv always sees inbound
+  // traffic before its idle timeout fires. Tunable via RELAY_PING_INTERVAL_MS
+  // (default 4000ms; 0 disables).
+  const pingMs = Number(process.env.RELAY_PING_INTERVAL_MS ?? 4000);
+  const pingTimer = pingMs > 0
+    ? setInterval(() => {
+        if (ws.readyState !== 1) return;       // 1 = OPEN
+        try { ws.ping(); } catch { /* socket closing */ }
+      }, pingMs)
+    : null;
+
+  // Clean up subscriber (and stop the keepalive) on disconnect.
   ws.once('close', () => {
+    if (pingTimer) clearInterval(pingTimer);
     subscribers.delete(state);
   });
 }
