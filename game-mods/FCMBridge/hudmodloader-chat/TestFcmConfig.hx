@@ -61,6 +61,10 @@ class TestFcmConfig {
         check("default bgAlpha", d.bgAlpha == 0.94);
         eqi("default maxMessages", d.maxMessages, 100);
         eqi("default maxSendLen", d.maxSendLen, 225);
+        eqi("default pollMs", d.pollMs, 5000);
+        eqi("parse pollMs", FcmConfig.parse("[FCMChat]\npollMs=8000\n").pollMs, 8000);
+        eqi("clamp pollMs min", FcmConfig.parse("[FCMChat]\npollMs=10\n").pollMs, 1000);
+        eqi("clamp pollMs max", FcmConfig.parse("[FCMChat]\npollMs=999999\n").pollMs, 60000);
         eqs("default openKey", d.openKey, "INSERT");
         // openKey is interpolated into htmlText (idle prompt) — must be a safe key token
         // ([A-Za-z0-9_]); anything else falls back to default (crash rule #2, htmlText injection).
@@ -72,6 +76,11 @@ class TestFcmConfig {
         eqb("default showChannelTag", d.showChannelTag, true);
         eqb("default showTimestamps", d.showTimestamps, true);
         eqb("default showHints", d.showHints, false);
+        eqs("default linkUrl", d.linkUrl, "falloutchatmod.com/link");
+        eqs("parse linkUrl (dev)",
+            FcmConfig.parse("[FCMChat]\nlinkUrl=dev.falloutchatmod.com/link\n").linkUrl, "dev.falloutchatmod.com/link");
+        eqs("linkUrl unsafe->default",
+            FcmConfig.parse("[FCMChat]\nlinkUrl=<b>&x\n").linkUrl, "falloutchatmod.com/link");
 
         // ── full parse ──
         var ini = "[FCMChat]\n"
@@ -127,6 +136,25 @@ class TestFcmConfig {
         eqs("chanLabel unknown->TitleCase", FcmConfig.chanLabel("foobar"), "Foobar");
         eqs("chanLabel empty",   FcmConfig.chanLabel(""),        "");
         eqs("chanLabel null",    FcmConfig.chanLabel(null),      "");
+
+        // ── channelColor: per-channel colors mirror website chat_rooms.color (prod 2026-06-28) ──
+        eqi("chanColor global (General)",  d.channelColor("global"),  0x1ABAFF);
+        eqi("chanColor trade (Trading)",   d.channelColor("trade"),   0x008F37);
+        eqi("chanColor events",            d.channelColor("events"),  0xC88A51);
+        eqi("chanColor infests",           d.channelColor("infests"), 0x5ABD0A);
+        eqi("chanColor raids",             d.channelColor("raids"),   0xCE0909);
+        eqi("chanColor server",            d.channelColor("server"),  0xECBB51);
+        eqi("chanColor unknown->tagColor", d.channelColor("nope"),    d.channelTagColor);
+        eqi("chanColor null->tagColor",    d.channelColor(null),      d.channelTagColor);
+        eqi("chanColor case-insensitive",  d.channelColor("  RAIDS "), 0xCE0909);
+        eqi("chanColor INI override",
+            FcmConfig.parse("[FCMChat]\ncolorRaids=#123456\n").channelColor("raids"), 0x123456);
+
+        // ── dimColor: scales a color toward black (inactive sub-tabs) ──
+        eqi("dimColor 0.5",      FcmConfig.dimColor(0xFFFFFF, 0.5), 0x7F7F7F);
+        eqi("dimColor 0.0",      FcmConfig.dimColor(0xABCDEF, 0.0), 0x000000);
+        eqi("dimColor 1.0",      FcmConfig.dimColor(0xABCDEF, 1.0), 0xABCDEF);
+        eqi("dimColor clamp >1", FcmConfig.dimColor(0x102030, 2.0), 0x102030);
 
         // ── hhmm: ISO 8601 UTC -> "HH:MM" (24h, substring only, CAP-013, D-08) ──
         eqs("hhmm typical", FcmConfig.hhmm("2026-06-26T12:34:56.000Z"), "12:34");

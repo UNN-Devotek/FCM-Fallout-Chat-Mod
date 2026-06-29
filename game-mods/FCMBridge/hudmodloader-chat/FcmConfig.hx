@@ -36,9 +36,28 @@ class FcmConfig {
     public var tabRowColor:Int      = 0x080705;
     public var timestampColor:Int   = 0xAC9043;
 
+    // ── Per-channel colors — mirror the website chat_rooms.color (pulled from PROD
+    //    2026-06-28). Drive the channel sub-tabs + the [Channel] message tag so each
+    //    channel renders in its website color. Overridable in FCMChat.ini
+    //    (colorGeneral / colorTrading / colorEvents / colorInfests / colorRaids /
+    //    colorServer). Option A will overwrite these at runtime from relay-fed live
+    //    colors once in-game chat connects (channelColor() is the read point).
+    public var chanColorGlobal:Int  = 0x1ABAFF;   // General
+    public var chanColorTrade:Int   = 0x008F37;   // Trading
+    public var chanColorEvents:Int  = 0xC88A51;   // Events
+    public var chanColorInfests:Int = 0x5ABD0A;   // Infests
+    public var chanColorRaids:Int   = 0xCE0909;   // Raids
+    public var chanColorServer:Int  = 0xECBB51;   // Server / world (Fallout 76 parent)
+
     // ── Limits ─────────────────────────────────────────────────────────────────
     public var maxMessages:Int  = 100;
     public var maxSendLen:Int   = 225;
+
+    // Event-poll interval (ms). Each poll opens a fresh wss connection — a full TLS handshake
+    // (~120ms under Wine/Proton) — so a low value churns handshakes and can stutter the game.
+    // Higher = smoother but slower message refresh. Clamped 1000..60000. (The real fix is ZFE
+    // reusing its persistent connection for polls; until then this is the lag knob.)
+    public var pollMs:Int       = 5000;
 
     // ── Keybinds ───────────────────────────────────────────────────────────────
     // openKey = the ONE native ZFE key (free-choice; ZFE reads it via isChatKeyPressed).
@@ -53,11 +72,35 @@ class FcmConfig {
     public var showTimestamps:Bool  = true;
     public var showHints:Bool       = false;      // blank idle prompt by default (CAP-014)
 
+    // ── Link flow ────────────────────────────────────────────────────────────────
+    // URL shown in the widget's link prompt (linkHint fallback). DEV builds set this to
+    // dev.falloutchatmod.com/link via FCMChat.ini; prod uses the default. URL-safe charset
+    // only (it is interpolated into htmlText — crash rule #2; invalid -> default).
+    public var linkUrl:String       = "falloutchatmod.com/link";
+
     // Deliverable FO76 control-map actions a HUD-layer widget can actually receive.
     static var ACTIONS:Array<String> =
         ["NextPage", "PrevPage", "Console", "ConsoleToggles", "TeamChat", "DiagnosticSnapshot"];
 
     public function new() {}
+
+    /**
+     * Per-channel tag/sub-tab color, mirroring the website's chat_rooms.color.
+     * Unknown/empty slug -> channelTagColor (generic fallback). Option A will set the
+     * chanColor* fields from relay-fed live colors once in-game chat connects.
+     */
+    public function channelColor(slug:String):Int {
+        if (slug == null) return channelTagColor;
+        switch (StringTools.trim(slug).toLowerCase()) {
+            case "global":  return chanColorGlobal;
+            case "trade":   return chanColorTrade;
+            case "events":  return chanColorEvents;
+            case "infests": return chanColorInfests;
+            case "raids":   return chanColorRaids;
+            case "server":  return chanColorServer;
+        }
+        return channelTagColor;
+    }
 
     // ── Pure helpers ───────────────────────────────────────────────────────────
 
@@ -74,6 +117,15 @@ class FcmConfig {
         if (!(~/^[0-9a-fA-F]{6}$/.match(t))) return fallback;
         var v:Null<Int> = Std.parseInt("0x" + t);
         return (v == null) ? fallback : v;
+    }
+
+    /** Dim a color toward black by `factor` (0..1) — used for inactive channel sub-tabs. */
+    public static function dimColor(c:Int, factor:Float):Int {
+        var f:Float = (factor < 0) ? 0.0 : (factor > 1 ? 1.0 : factor);
+        var r:Int = Std.int(((c >> 16) & 0xFF) * f);
+        var g:Int = Std.int(((c >> 8)  & 0xFF) * f);
+        var b:Int = Std.int(( c        & 0xFF) * f);
+        return (r << 16) | (g << 8) | b;
     }
 
     /**
@@ -201,6 +253,12 @@ class FcmConfig {
                 case "textcolor":       cfg.textColor = parseHexColor(val, cfg.textColor);
                 case "sendercolor":     cfg.senderColor = parseHexColor(val, cfg.senderColor);
                 case "channeltagcolor": cfg.channelTagColor = parseHexColor(val, cfg.channelTagColor);
+                case "colorgeneral":    cfg.chanColorGlobal = parseHexColor(val, cfg.chanColorGlobal);
+                case "colortrading":    cfg.chanColorTrade = parseHexColor(val, cfg.chanColorTrade);
+                case "colorevents":     cfg.chanColorEvents = parseHexColor(val, cfg.chanColorEvents);
+                case "colorinfests":    cfg.chanColorInfests = parseHexColor(val, cfg.chanColorInfests);
+                case "colorraids":      cfg.chanColorRaids = parseHexColor(val, cfg.chanColorRaids);
+                case "colorserver":     cfg.chanColorServer = parseHexColor(val, cfg.chanColorServer);
                 case "tabactivecolor":  cfg.tabActiveColor = parseHexColor(val, cfg.tabActiveColor);
                 case "tabinactivecolor": cfg.tabInactiveColor = parseHexColor(val, cfg.tabInactiveColor);
                 case "promptcolor":     cfg.promptColor = parseHexColor(val, cfg.promptColor);
@@ -208,6 +266,7 @@ class FcmConfig {
                 case "timestampcolor":  cfg.timestampColor = parseHexColor(val, cfg.timestampColor);
                 case "maxmessages":     cfg.maxMessages = parseIntOr(val, cfg.maxMessages);
                 case "maxsendlen":      cfg.maxSendLen = parseIntOr(val, cfg.maxSendLen);
+                case "pollms":          cfg.pollMs = parseIntOr(val, cfg.pollMs);
                 case "openkey":
                     // openKey is interpolated into htmlText (idle prompt) — restrict to a safe key
                     // token; anything with &/</> etc. falls back to default (crash rule #2 guard).
@@ -219,6 +278,10 @@ class FcmConfig {
                 case "showchanneltag":  cfg.showChannelTag = parseBool(val, cfg.showChannelTag);
                 case "showtimestamps":  cfg.showTimestamps = parseBool(val, cfg.showTimestamps);
                 case "showhints":       cfg.showHints = parseBool(val, cfg.showHints);
+                case "linkurl":
+                    // URL-safe charset only — interpolated into htmlText (crash rule #2).
+                    var lu:String = StringTools.trim(val);
+                    cfg.linkUrl = (lu.length > 0 && ~/^[A-Za-z0-9._:\/-]+$/.match(lu)) ? lu : cfg.linkUrl;
                 default: // unknown key — ignore
             }
         }
@@ -238,5 +301,6 @@ class FcmConfig {
         bgAlpha  = clampFloat(bgAlpha, 0.0, 1.0);
         maxMessages = clampInt(maxMessages, 10, 500);
         maxSendLen  = clampInt(maxSendLen, 1, 500);     // server hard cap 500
+        pollMs      = clampInt(pollMs, 1000, 60000);    // 1s..60s event-poll interval
     }
 }

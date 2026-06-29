@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.6.2";  // channel switching: OpenChatKey cycles channels while chat open (only readable key; unbound keys are all "Unmapped"), slash /g/t/e/i/r direct jumps shown as [X] in sub-tabs; removed dead Page Up/Down keybinds + diag
+    static inline var VERSION:String  = "2.6.6";  // unlinked = link screen only (no chat history on first load); configurable linkUrl (dev builds point to dev.falloutchatmod.com/link); single yellow main->sub separator that wraps the active tab (removed the dim tab-row alpha seam); sub-tabs use header colors, per-channel chat_rooms.color only on [Channel] message tags; pollMs configurable
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -118,7 +118,9 @@ class FCMChatWidget extends MovieClip {
     // only reason its embed also rendered tofu as a fallback.
 
     // ── chat.v1 poll / connect timing ─────────────────────────────────────────
-    static inline var POLL_MS:Int          = 2000;
+    // Event-poll interval moved to FcmConfig.pollMs (tunable via FCMChat.ini `pollMs`,
+    // default 5000) — each poll is a fresh wss/TLS handshake under Wine, so the rate is the
+    // game-lag knob. See FcmConfig.pollMs.
     static inline var CONNECT_RETRY_MS:Int = 3000;
     static inline var CONNECT_MAX_MS:Int   = 30000;
     // worldId re-read interval (ms)
@@ -291,14 +293,11 @@ class FCMChatWidget extends MovieClip {
         g.lineStyle(1, _cfg.borderColor, 0.3);
         g.drawRect(0, 0, w, h);
         g.endFill();
-        // Main tab row background
+        // Tab rows (main + sub) — ONE fill at a single alpha so there is NO dim seam between
+        // the main-tab row and the sub-tab row (user request; the two-alpha fill left a faint line).
         g.lineStyle();
         g.beginFill(_cfg.tabRowColor, 0.98);
-        g.drawRect(1, 1, w - 2, TAB_H);
-        g.endFill();
-        // Channel tab row background
-        g.beginFill(_cfg.tabRowColor, 0.85);
-        g.drawRect(1, TAB_H, w - 2, SUB_H);
+        g.drawRect(1, 1, w - 2, TAB_H + SUB_H);
         g.endFill();
         // Sub-tab row bottom divider + log/input separator (full width, overlay parity @0.45).
         g.lineStyle(1, _cfg.borderColor, 0.45);
@@ -323,7 +322,9 @@ class FCMChatWidget extends MovieClip {
         g.moveTo(boxL, 2);     g.lineTo(boxR, 2);       // top
         g.moveTo(boxL, 2);     g.lineTo(boxL, TAB_H);   // left
         g.moveTo(boxR, 2);     g.lineTo(boxR, TAB_H);   // right
-        g.lineStyle(1, _cfg.borderColor, 0.45);          // row divider, cut out under the tab
+        // The ONLY main->sub separator: a yellow line at y=TAB_H across the full width, CUT OUT
+        // under the active tab so the outline + this line form one continuous yellow line that
+        // WRAPS the active "FALLOUT 76" tab. No dim divider anywhere on this boundary.
         g.moveTo(0, TAB_H);    g.lineTo(boxL, TAB_H);
         g.moveTo(boxR, TAB_H); g.lineTo(w, TAB_H);
 
@@ -393,9 +394,11 @@ class FCMChatWidget extends MovieClip {
 
     function renderSubTabs():Void {
         if (_subTf == null) return;
-        // Borderless text strip (no boxes). Active channel bright, inactive dim. The bracketed
-        // first letter is the slash shortcut ([G] -> /g) — discoverable without a help row.
-        var displayNames:Array<String> = ["[G]ENERAL", "[T]RADING", "[E]VENTS", "[I]NFESTS", "[R]AIDS"];
+        // Borderless text strip (no boxes). Sub-tabs use the HEADER text colors (same as the
+        // "FALLOUT 76" main tab): active channel = tabActiveColor (bright), inactive =
+        // tabInactiveColor (dim). Per-channel colors (chat_rooms.color) are applied only to the
+        // [Channel] message tags, NOT this tab row. Slash /g /t /e /i /r still switch channels.
+        var displayNames:Array<String> = ["GENERAL", "TRADING", "EVENTS", "INFESTS", "RAIDS"];
         var html:Array<String> = [];
         for (i in 0...displayNames.length) {
             var color:String = (i == _chanIdx) ? hx(_cfg.tabActiveColor) : hx(_cfg.tabInactiveColor);
@@ -1135,7 +1138,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.6.2");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.6.6");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
@@ -1336,7 +1339,7 @@ class FCMChatWidget extends MovieClip {
 
     function startPollTimer():Void {
         stopPollTimer();
-        _pollTimer = new Timer(POLL_MS);
+        _pollTimer = new Timer(_cfg.pollMs);
         _pollTimer.addEventListener(TimerEvent.TIMER, function(_) { pollEvents(); });
         _pollTimer.start();
         pollEvents(); // immediate first poll for history
@@ -1552,14 +1555,13 @@ class FCMChatWidget extends MovieClip {
             if (ext != null) ext.enabled = true;
         } catch (e:Dynamic) {}
 
+        // First load / not linked: show ONLY the link screen — never the chat history (user
+        // request). An unlinked identity can't post, so the link prompt takes the whole feed.
+        if (!_connected) { setLogText("connecting..."); return; }
+        if (_authState != "authenticated") { setLogText(linkHint()); return; }
+
         var html:Array<String> = [];
         var fs:Int = _cfg.fontSize;
-
-        // Pinned system notice — shown above feed when auth is limited.
-        if (_authState != "authenticated" && _pinnedSystemBody.length > 0) {
-            html.push('<font face="' + FONT_BODY + '" size="' + fs + '" color="#FF8C00">** '
-                + FcmConfig.htmlEscape(_pinnedSystemBody) + ' **</font>');
-        }
 
         for (rec in _records) {
             var col:String  = ~/^#[0-9a-fA-F]{6}$/.match(rec.color) ? rec.color : hx(_cfg.senderColor);
@@ -1575,7 +1577,7 @@ class FCMChatWidget extends MovieClip {
             // Optional proper-cased channel tag (CAP-012, D-09).
             var tagHtml:String = "";
             if (_cfg.showChannelTag) {
-                tagHtml = '<font color="' + hx(_cfg.channelTagColor) + '">[' + FcmConfig.chanLabel(rec.channel) + ']</font> ';
+                tagHtml = '<font color="' + hx(_cfg.channelColor(rec.channel)) + '">[' + FcmConfig.chanLabel(rec.channel) + ']</font> ';
             }
             // [channel] + body = light; sender name (the <b> span) = bold alias.
             html.push(
@@ -1587,10 +1589,8 @@ class FCMChatWidget extends MovieClip {
                 + '</font>');
         }
 
-        // Empty-feed notice priority: never clobber the connecting/link notice.
+        // Authenticated with an empty feed (the unlinked / connecting cases returned above).
         if (html.length == 0) {
-            if (!_connected) { setLogText("connecting..."); return; }
-            if (_authState != "authenticated") { setLogText(linkHint()); return; }
             setLogText("No messages in " + CHAN_NAMES[_chanIdx] + " yet"); return;
         }
 
@@ -1613,7 +1613,7 @@ class FCMChatWidget extends MovieClip {
     function linkHint():String {
         return (_pinnedSystemBody.length > 0)
             ? _pinnedSystemBody
-            : "Link your account at falloutchatmod.com/link to chat";
+            : "Link your account at " + _cfg.linkUrl + " to chat";
     }
 
     // =========================================================================
