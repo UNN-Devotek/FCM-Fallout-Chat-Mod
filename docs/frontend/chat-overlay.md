@@ -95,6 +95,7 @@ Server enforcement is primary; these client-side checks are a backstop.
 | Slash commands | Not available |
 | Username context menu | Shows Copy items only; no moderation/account actions |
 | Party tab (PARTY) | Public-only, read-only — lists `isPrivate=false` parties only; action is VIEW not JOIN |
+| PM tab | Hidden entirely — no inbox, no PM conversation view, no `Message` context-menu item |
 | Party join/invite | Disabled; clicking VIEW navigates to party browser |
 | Party right-click | Suppressed (`ChatOverlay.tsx:4168`) |
 | Combined feed party inclusion | Public parties only (`feedPartyIds = publicPartyIdKey.split(',')`, `ChatOverlay.tsx:3464`) |
@@ -110,14 +111,29 @@ The tab bar has two rows, both rendered inside the overlay header:
 channel (`parentId === null`). Clicking a main tab shows the combined feed for
 that main channel plus all its sub-channels.
 
-**Row 2 — Sub-channels + parties**: sub-channel tabs (`children` of the active
-main), followed by dynamically appended joined-party tabs. The active party tab
-can be right-clicked for context actions (Invite, Leave, Delete). An overflow
-ellipsis (`…`) appears when joined-party tabs exceed the available row width
-(`ChatOverlay.tsx:1260–1268`).
+**Row 2 — Sub-channels + special views**: sub-channel tabs (`children` of the
+active main), the PARTY browser/joined-party row, or the PM inbox row. The
+active party tab can be right-clicked for context actions (Invite, Leave,
+Delete). An overflow ellipsis (`…`) appears when joined-party tabs exceed the
+available row width (`ChatOverlay.tsx:1260–1268`).
 
 The special constant `PARTY_MAIN_ID = '__party__'` (`ChatOverlay.tsx:760`) is
 used as the `activeMainId` sentinel when the PARTY main tab is selected.
+`PM_MAIN_ID = '__pm__'` is the matching sentinel for private messages.
+
+## Private messages
+
+The shared `ChatOverlay.tsx` owns PM UI too — there is no separate DM panel or
+forked component.
+
+- **Top-level tab:** `PM` sits beside `FALLOUT 76` and `PARTY`.
+- **Second row:** PM always renders a single `INBOX` tab. Per-user PM tabs are never added.
+- **Inbox view:** search box (`Type to search...`), text-only conversation rows, no avatars, ordered by most-recent `lastMessageAt`, unread badge per row, and a sender-prefixed preview (`You: <message>` when the current user sent the latest PM, otherwise `<OtherUserDisplayName>: <message>`). Inbox filtering matches the participant name, raw preview text, and the sender-prefixed preview text.
+- **Conversation view:** a `< BACK TO INBOX` row, then the other participant's display name as the header, followed by the normal shared message renderer plus the normal 255-character composer/counter.
+- **Composer routing:** when `activeMainId === PM_MAIN_ID` and `pmView !== 'inbox'`, Enter sends `pm:send` only. PM content never reuses `chat:send` or `party:send`.
+- **Context menu:** authenticated message rows add a `Message` item near the top. The label is exactly `Message`; it is hidden for self, missing `userId`, bots/system rows, and public mode.
+- **WebSocket state:** on connect the overlay requests `pm:list`; opening a conversation requests `pm:history`; incoming `pm:message` frames update the inbox summary and active thread in place; active-thread receives trigger `pm:read`.
+- **Isolation:** PM messages live only in `privateMessages` state. They never merge into the shared `messages` array, so they cannot leak into the combined feed, sub-channel views, party views, or public-mode REST polling.
 
 ## Party moderation visibility
 
