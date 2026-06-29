@@ -1,4 +1,5 @@
 import { Request, Response, RequestHandler } from 'express';
+import { paramStr } from '../utils/reqParams';
 import { getRedisClient } from '../config/redis';
 import logger from '../config/logger';
 import env from '../config/environment';
@@ -20,7 +21,7 @@ export interface QaStatusDeps {
  */
 export function makeQaStatusHandler(deps: QaStatusDeps): RequestHandler {
   return async (req: Request, res: Response): Promise<void> => {
-    const installToken = req.params.installToken;
+    const installToken = paramStr(req, 'installToken');
     if (!installToken) { res.status(400).json({ data: { authorized: false } }); return; }
 
     const activeVersion = await deps.getActiveQaVersion();

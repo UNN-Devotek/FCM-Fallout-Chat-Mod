@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { paramStr, paramsOf } from '../utils/reqParams';
 import prisma from '../config/prisma';
 
 export async function listApplications(_req: Request, res: Response, next: NextFunction): Promise<void> {
@@ -48,7 +49,7 @@ export async function getMineApplication(req: Request, res: Response, next: Next
     const user = await prisma.user.findFirst({ where: { discordId: id.discordId }, select: { id: true } });
     if (!user) { res.status(404).json({ title: 'Not Found' }); return; }
     const app = await prisma.staffApplication.findFirst({
-      where: { id: req.params.id, userId: user.id },
+      where: { id: paramStr(req, 'id'), userId: user.id },
     });
     if (!app) { res.status(404).json({ title: 'Not Found' }); return; }
     res.json({ data: app });
@@ -93,7 +94,7 @@ export async function createApplication(req: Request, res: Response, next: NextF
 }
 
 export async function updateApplication(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const { id } = req.params;
+  const { id } = paramsOf(req);
   const { status, adminNotes } = req.body;
   try {
     const app = await prisma.staffApplication.update({

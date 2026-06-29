@@ -15,6 +15,7 @@ import { RedisStore } from 'rate-limit-redis';
 import { getRedisClient } from '../config/redis';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
+import { paramStr } from '../utils/reqParams';
 
 // Re-export for use in server.ts Nexus OAuth routes
 export { isBannedIdentity, linkProviderIdentity, unlinkProviderIdentity };
@@ -323,7 +324,7 @@ router.delete('/pairing-token', requireAuth, async (req: Request, res: Response,
 router.delete('/provider/:provider', requireAuth, async (req: Request, res: Response, next) => {
   try {
     const userId = req.user!.id;
-    const { provider } = req.params;
+    const provider = paramStr(req, 'provider');
 
     if (provider === 'discord') {
       return next(

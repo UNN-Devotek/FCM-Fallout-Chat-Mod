@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { paramStr } from '../utils/reqParams';
 import prisma from '../config/prisma';
 import { query as dbQuery } from '../config/database';
 import { createError } from '../middleware/errorHandler';
@@ -47,9 +48,9 @@ async function addWordFilter(req: Request, res: Response, next: NextFunction): P
  * DELETE /api/moderation/word-filter/:id
  */
 async function deleteWordFilter(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validatePosInt(req.params.id)) return next(createError(400, 'Invalid word filter ID'));
+  if (!validatePosInt(paramStr(req, 'id'))) return next(createError(400, 'Invalid word filter ID'));
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(paramStr(req, 'id'), 10);
     const existing = await prisma.wordFilter.findUnique({ where: { id } });
     if (!existing) return next(createError(404, 'Filter entry not found'));
     await prisma.wordFilter.delete({ where: { id } });
@@ -111,9 +112,9 @@ async function createDiscordRelayMapping(req: Request, res: Response, next: Next
  * DELETE /api/moderation/discord-relay-mappings/:id
  */
 async function deleteDiscordRelayMapping(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validatePosInt(req.params.id)) return next(createError(400, 'Invalid relay mapping ID'));
+  if (!validatePosInt(paramStr(req, 'id'))) return next(createError(400, 'Invalid relay mapping ID'));
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(paramStr(req, 'id'), 10);
     const existing = await prisma.discordRelayMapping.findUnique({ where: { id } });
     if (!existing) return next(createError(404, 'Mapping not found'));
     await prisma.discordRelayMapping.delete({ where: { id } });
@@ -302,7 +303,7 @@ async function updateSettings(req: Request, res: Response, next: NextFunction): 
  */
 async function updateWordFilter(req: Request, res: Response, next: NextFunction): Promise<void> {
   const { phrase, testMode } = req.body;
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(paramStr(req, 'id'), 10);
   if (isNaN(id)) return next(createError(400, 'Invalid filter ID'));
 
   // At least one field must be provided
@@ -440,13 +441,13 @@ async function createDiscordEmbed(req: Request, res: Response, next: NextFunctio
 
 /** PUT /api/moderation/discord-embeds/:id — update a template */
 async function updateDiscordEmbed(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validatePosInt(req.params.id)) return next(createError(400, 'Invalid embed ID'));
+  if (!validatePosInt(paramStr(req, 'id'))) return next(createError(400, 'Invalid embed ID'));
   const { name, data } = req.body ?? {};
   if (!name || typeof name !== 'string' || !name.trim()) return next(createError(400, 'name is required'));
   const err = validateEmbed(data);
   if (err) return next(createError(422, err));
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(paramStr(req, 'id'), 10);
     const existing = await prisma.discordEmbed.findUnique({ where: { id } });
     if (!existing) return next(createError(404, 'Embed not found'));
     const row = await prisma.discordEmbed.update({ where: { id }, data: { name: name.trim().slice(0, 100), data } });
@@ -456,9 +457,9 @@ async function updateDiscordEmbed(req: Request, res: Response, next: NextFunctio
 
 /** DELETE /api/moderation/discord-embeds/:id */
 async function deleteDiscordEmbed(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validatePosInt(req.params.id)) return next(createError(400, 'Invalid embed ID'));
+  if (!validatePosInt(paramStr(req, 'id'))) return next(createError(400, 'Invalid embed ID'));
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(paramStr(req, 'id'), 10);
     const existing = await prisma.discordEmbed.findUnique({ where: { id } });
     if (!existing) return next(createError(404, 'Embed not found'));
     await prisma.discordEmbed.delete({ where: { id } });
@@ -566,7 +567,7 @@ async function listReactionRolePanels(_req: Request, res: Response, next: NextFu
 
 /** DELETE /api/moderation/reaction-role-panels/:messageId — stop a panel granting roles */
 async function deleteReactionRolePanel(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const messageId = req.params.messageId;
+  const messageId = paramStr(req, 'messageId');
   if (!/^\d{17,20}$/.test(messageId)) return next(createError(400, 'Invalid message ID'));
   try {
     const ok = await reactionRoleService.deletePanel(messageId);

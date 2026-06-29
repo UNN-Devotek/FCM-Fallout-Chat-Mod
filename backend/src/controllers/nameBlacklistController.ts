@@ -6,6 +6,7 @@
  * a Redis pub/sub broadcast so other backend instances also reload.
  */
 import { Request, Response, NextFunction } from 'express';
+import { paramsOf } from '../utils/reqParams';
 import { z } from 'zod';
 import prisma from '../config/prisma';
 import { createError } from '../middleware/errorHandler';
@@ -74,7 +75,7 @@ export async function createBlacklistEntry(req: Request, res: Response, next: Ne
 
 export async function updateBlacklistEntry(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { id } = req.params;
+    const { id } = paramsOf(req);
     const parsed = updateSchema.safeParse(req.body);
     if (!parsed.success) return next(createError(400, parsed.error.issues[0]?.message ?? 'Invalid body'));
     if (parsed.data.matchType === 'regex' && parsed.data.pattern) {
@@ -110,7 +111,7 @@ export async function updateBlacklistEntry(req: Request, res: Response, next: Ne
 
 export async function deleteBlacklistEntry(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { id } = req.params;
+    const { id } = paramsOf(req);
     const deleted = await prisma.nameBlacklistEntry.deleteMany({ where: { id } });
     if (deleted.count === 0) return next(createError(404, 'Entry not found'));
     await refreshBlacklist();

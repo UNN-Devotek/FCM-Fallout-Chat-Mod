@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { paramStr } from '../utils/reqParams';
 import { v4 as uuidv4 } from 'uuid';
 import prisma from '../config/prisma';
 import { createError } from '../middleware/errorHandler';
@@ -123,23 +124,23 @@ async function scrubMessages(req: Request, res: Response, next: NextFunction): P
  * DELETE /api/messages/:id -- moderator+
  */
 async function deleteMessage(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!UUID_RE.test(req.params.id)) return next(createError(400, 'Invalid message ID format'));
+  if (!UUID_RE.test(paramStr(req, 'id'))) return next(createError(400, 'Invalid message ID format'));
   try {
     // Raw query required — Message has a composite PK.
     const result = await prisma.$executeRaw`
-      UPDATE messages SET is_deleted = TRUE WHERE id = ${req.params.id}::uuid AND NOT is_deleted`;
+      UPDATE messages SET is_deleted = TRUE WHERE id = ${paramStr(req, 'id')}::uuid AND NOT is_deleted`;
 
     if (result === 0) return next(createError(404, 'Message not found'));
     await prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'delete_message',
-        targetId: req.params.id,
+        targetId: paramStr(req, 'id'),
         targetType: 'message',
       },
     });
     if ((global as any).broadcastMessageDeletion) {
-      (global as any).broadcastMessageDeletion(req.params.id);
+      (global as any).broadcastMessageDeletion(paramStr(req, 'id'));
     }
     res.json({ data: { deleted: true } });
   } catch (err) {

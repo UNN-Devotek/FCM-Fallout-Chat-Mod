@@ -4,6 +4,7 @@ import prisma from '../config/prisma';
 import { Prisma } from '@prisma/client';
 import { getRedisClient } from '../config/redis';
 import { createError } from '../middleware/errorHandler';
+import { paramStr, paramsOf } from '../utils/reqParams';
 import env from '../config/environment';
 import logger from '../config/logger';
 import { computeDiscriminator } from '../utils/discriminator';
@@ -641,10 +642,10 @@ async function deleteSession(req: Request, res: Response, next: NextFunction): P
  * GET /api/users/:id -- moderator+
  */
 async function getUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
     const user = await prisma.user.findUnique({
-      where: { id: req.params.id },
+      where: { id: paramStr(req, 'id') },
       select: {
         id: true, username: true, steamId: true,
         discordId: true, discordUsername: true, discordAvatar: true,
@@ -669,7 +670,7 @@ async function getUserProfile(req: Request, res: Response, next: NextFunction): 
   // The dashboard session stores the Discord snowflake as user.id; the
   // desktop client and internal admin rows use a UUID. Accept either and
   // look up by whichever format the caller sent.
-  const raw = req.params.id;
+  const raw = paramStr(req, 'id');
   const byUuid   = validateUuid(raw);
   const byDiscord = /^\d{15,22}$/.test(raw); // Discord snowflakes are 17-19 digits; allow a little slack
   if (!byUuid && !byDiscord) return next(createError(400, 'Invalid user ID format'));
@@ -705,13 +706,13 @@ async function getUserProfile(req: Request, res: Response, next: NextFunction): 
  * GET /api/users/:id/messages -- moderator+
  */
 async function getUserMessages(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 100);
   const offset = Math.min(Math.max(parseInt(req.query.offset as string, 10) || 0, 0), 10000);
 
   try {
     const messages = await prisma.message.findMany({
-      where: { userId: req.params.id, isDeleted: false },
+      where: { userId: paramStr(req, 'id'), isDeleted: false },
       select: { id: true, content: true, channelId: true, source: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
       take: limit,
@@ -727,20 +728,20 @@ async function getUserMessages(req: Request, res: Response, next: NextFunction):
  * POST /api/users/:id/mute -- moderator+
  */
 async function muteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   const { duration, reason } = req.body;
   const muteExpiresAt = new Date(Date.now() + duration * 60 * 1000);
 
   try {
     await prisma.user.update({
-      where: { id: req.params.id },
+      where: { id: paramStr(req, 'id') },
       data: { isMuted: true, muteExpiresAt },
     });
     await prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'mute',
-        targetId: req.params.id,
+        targetId: paramStr(req, 'id'),
         targetType: 'user',
         reason,
       },
@@ -756,19 +757,19 @@ async function muteUser(req: Request, res: Response, next: NextFunction): Promis
  * Reverses a mute and grants 60-minute spam immunity window.
  */
 async function unmuteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
     await prisma.user.update({
-      where: { id: req.params.id },
+      where: { id: paramStr(req, 'id') },
       data: { isMuted: false, muteExpiresAt: null },
     });
     // Grant spam immunity so the user isn't immediately re-flagged
-    await setSpamImmunity(req.params.id);
+    await setSpamImmunity(paramStr(req, 'id'));
     await prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'unmute',
-        targetId: req.params.id,
+        targetId: paramStr(req, 'id'),
         targetType: 'user',
         reason: 'Moderator reversed mute -- spam immunity granted',
       },
@@ -783,21 +784,21 @@ async function unmuteUser(req: Request, res: Response, next: NextFunction): Prom
  * POST /api/users/:id/kick -- moderator+
  */
 async function kickUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
     // Invalidate all active Redis sessions for this user
     const redis = await getRedisClient();
     const sessions = await prisma.session.findMany({
-      where: { userId: req.params.id, expiresAt: { gt: new Date() } },
+      where: { userId: paramStr(req, 'id'), expiresAt: { gt: new Date() } },
       select: { token: true },
     });
     await Promise.all(sessions.map((s) => redis.del(`session:${s.token}`)));
-    await prisma.session.deleteMany({ where: { userId: req.params.id } });
+    await prisma.session.deleteMany({ where: { userId: paramStr(req, 'id') } });
     await prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'kick',
-        targetId: req.params.id,
+        targetId: paramStr(req, 'id'),
         targetType: 'user',
       },
     });
@@ -811,26 +812,26 @@ async function kickUser(req: Request, res: Response, next: NextFunction): Promis
  * POST /api/users/:id/ban -- admin+
  */
 async function banUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   const { reason } = req.body;
   try {
     await prisma.user.update({
-      where: { id: req.params.id },
+      where: { id: paramStr(req, 'id') },
       data: { isBanned: true, banReason: reason },
     });
     // Kick active sessions
     const redis = await getRedisClient();
     const sessions = await prisma.session.findMany({
-      where: { userId: req.params.id },
+      where: { userId: paramStr(req, 'id') },
       select: { token: true },
     });
     await Promise.all(sessions.map((s) => redis.del(`session:${s.token}`)));
-    await prisma.session.deleteMany({ where: { userId: req.params.id } });
+    await prisma.session.deleteMany({ where: { userId: paramStr(req, 'id') } });
     await prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'ban',
-        targetId: req.params.id,
+        targetId: paramStr(req, 'id'),
         targetType: 'user',
         reason,
       },
@@ -845,17 +846,17 @@ async function banUser(req: Request, res: Response, next: NextFunction): Promise
  * DELETE /api/users/:id/ban -- owner+
  */
 async function unbanUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
     await prisma.user.update({
-      where: { id: req.params.id },
+      where: { id: paramStr(req, 'id') },
       data: { isBanned: false, banReason: null },
     });
     await prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'unban',
-        targetId: req.params.id,
+        targetId: paramStr(req, 'id'),
         targetType: 'user',
       },
     });
@@ -870,29 +871,29 @@ async function unbanUser(req: Request, res: Response, next: NextFunction): Promi
  * Clears PII in users table; message content is preserved for context.
  */
 async function wipeUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
     // Use raw query for gen_random_uuid() in the update
     await prisma.$executeRaw`
       UPDATE users
       SET username = 'Anonymized User', steam_id = NULL, install_token = gen_random_uuid()::text,
           is_banned = TRUE, ban_reason = 'Account wiped by admin', updated_at = NOW()
-      WHERE id = ${req.params.id}::uuid`;
+      WHERE id = ${paramStr(req, 'id')}::uuid`;
 
     // Purge all active Redis sessions immediately so wiped user cannot continue chatting
     const redis = await getRedisClient();
     const sessions = await prisma.session.findMany({
-      where: { userId: req.params.id },
+      where: { userId: paramStr(req, 'id') },
       select: { token: true },
     });
     await Promise.all(sessions.map((s) => redis.del(`session:${s.token}`)));
-    await prisma.session.deleteMany({ where: { userId: req.params.id } });
+    await prisma.session.deleteMany({ where: { userId: paramStr(req, 'id') } });
 
     await prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'wipe',
-        targetId: req.params.id,
+        targetId: paramStr(req, 'id'),
         targetType: 'user',
         reason: 'Data erasure request',
       },
@@ -905,7 +906,7 @@ async function wipeUser(req: Request, res: Response, next: NextFunction): Promis
 
 async function deleteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { id } = req.params;
+    const { id } = paramsOf(req);
     if (!validateUuid(id)) { next(createError(400, 'Invalid user ID')); return; }
 
     // Delete all related data first (messages, reports, sessions)
@@ -947,12 +948,12 @@ async function deleteUser(req: Request, res: Response, next: NextFunction): Prom
  * Returns the alias history (previous FO76 names) for a user, newest-first.
  */
 async function getUserAliases(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
     const rows = await (prisma as any).$queryRaw`
       SELECT alias, created_at AS "createdAt"
       FROM user_aliases
-      WHERE user_id = ${req.params.id}::uuid
+      WHERE user_id = ${paramStr(req, 'id')}::uuid
       ORDER BY created_at DESC
     ` as Array<{ alias: string; createdAt: Date }>;
     res.json({ data: { aliases: rows.map((a: { alias: string; createdAt: Date }) => ({ alias: a.alias, createdAt: a.createdAt.toISOString() })) } });

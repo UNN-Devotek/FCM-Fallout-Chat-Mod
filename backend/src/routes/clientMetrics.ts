@@ -9,7 +9,9 @@ import { Router, Request, Response } from 'express';
 
 const ingestRouter = Router();
 
-ingestRouter.all('*', (_req: Request, res: Response): void => {
+// Express 5 (path-to-regexp v8) rejects the bare '*' string path; a RegExp
+// catch-all is the equivalent "match every path" route.
+ingestRouter.all(/.*/, (_req: Request, res: Response): void => {
   res.status(410).json({
     type: 'https://fo76chat.app/errors/410',
     title: 'Gone',
