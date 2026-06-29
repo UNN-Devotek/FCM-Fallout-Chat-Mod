@@ -1190,6 +1190,19 @@ interface CampItemMetadata {
   atomPrice?: number | null;
   atomBundle?: string | null;
 }
+interface MinervaMetadata {
+  type: 'minerva';
+  location: string;
+  listNumber: number;
+  isSuperSale: boolean;
+  isActive: boolean;
+  startUtc: string;
+  endUtc: string;
+  nextLocation: string | null;
+  nextListNumber: number | null;
+  nextIsSuperSale: boolean | null;
+  nextStartUtc: string | null;
+}
 interface CardShareMetadata {
   type: 'card_share';
   command: string;
@@ -1449,6 +1462,7 @@ const BUILTIN_FORMS: SlashCommand[] = [
   // FO76 data lookups — handled backend-side, reply privately to the sender.
   { trigger: '/serverstatus', description: 'Show Fallout 76 server status (up/down)',                                            requiresArgs: false, actionType: 'message' },
   { trigger: '/nukecodes',    description: 'Show this week\'s nuke launch codes (Alpha/Bravo/Charlie)',                       requiresArgs: false, actionType: 'message' },
+  { trigger: '/minerva',      description: 'Show Minerva\'s current or next Big Sale — location, list number, and dates',     requiresArgs: false, actionType: 'message' },
   { trigger: '/wiki',         description: 'Search the Fallout 76 wiki — weapons, armor, items, creatures, locations, quests…',  requiresArgs: true,  actionType: 'wiki'    },
   { trigger: '/camp',         description: 'Look up a CAMP item — category, sub-category, budget cost, and plan requirement',       requiresArgs: true,  actionType: 'message' },
   // Party shortcuts — resolved dynamically at send time; listed here for autocomplete only.
@@ -5889,7 +5903,7 @@ export default function ChatOverlay() {
   const openSharedCard = useCallback((command: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     if (!activeSubId) return;
-    if (!/^\/(nukecodes|serverstatus|camp)\b/.test(command)) return;
+    if (!/^\/(nukecodes|serverstatus|camp|minerva)\b/.test(command)) return;
     wsRef.current.send(JSON.stringify({
       type: 'chat:send',
       payload: {
@@ -7486,6 +7500,60 @@ export default function ChatOverlay() {
                             onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') openUrl(ci.sourceUrl); }}
                             style={{ color: hexAlpha(campAccent, 0.85), textDecoration: 'underline', cursor: 'pointer' }}
                           >via 76 CAMP Database &#8599;</span>
+                        }
+                        hexAlpha={hexAlpha}
+                        fontFamily={theme.fontFamily}
+                        fontSize={fontSize}
+                        dimText={dimText}
+                      />
+                    </div>
+                  );
+                }
+                // ── Minerva card ─────────────────────────────────────────────
+                if (md && md.type === 'minerva') {
+                  const mv = md as unknown as MinervaMetadata;
+                  const mvAccent = '#F1C40F';
+                  const fmtDate = (iso: string) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+                  const fmtDuration = (iso: string) => {
+                    const diffMs = new Date(iso).getTime() - Date.now();
+                    if (diffMs <= 0) return 'ending soon';
+                    const totalMins = Math.floor(diffMs / 60000);
+                    const days = Math.floor(totalMins / 1440);
+                    const hours = Math.floor((totalMins % 1440) / 60);
+                    const mins = totalMins % 60;
+                    const parts = [];
+                    if (days > 0) parts.push(`${days}d`);
+                    if (hours > 0) parts.push(`${hours}h`);
+                    if (mins > 0 || parts.length === 0) parts.push(`${mins}m`);
+                    return parts.join(' ');
+                  };
+                  const mvFields: { label: string; value: string }[] = [
+                    { label: 'STATUS', value: mv.isActive ? 'ACTIVE NOW' : 'UPCOMING' },
+                    { label: 'LOCATION', value: mv.location + (mv.isSuperSale ? ' ★' : '') },
+                    { label: 'LIST', value: `#${mv.listNumber}${mv.isSuperSale ? ' (Super Sale)' : ''}` },
+                    { label: mv.isActive ? 'ENDS' : 'STARTS', value: fmtDate(mv.isActive ? mv.endUtc : mv.startUtc) },
+                    { label: mv.isActive ? 'LEAVES IN' : 'ARRIVES IN', value: fmtDuration(mv.isActive ? mv.endUtc : mv.startUtc) },
+                    ...(mv.isActive && mv.nextLocation ? [
+                      { label: 'NEXT', value: `${mv.nextLocation}${mv.nextIsSuperSale ? ' ★' : ''} — List #${mv.nextListNumber}` },
+                      { label: 'NEXT STARTS', value: fmtDate(mv.nextStartUtc!) },
+                    ] : []),
+                  ];
+                  return (
+                    <div key={msg.id} style={{ padding: '2px 8px' }}>
+                      <ChatEmbedCard
+                        accent={mvAccent}
+                        icon="⛟"
+                        tag={mv.isSuperSale ? 'MINERVA ★ SUPER SALE' : 'MINERVA'}
+                        title="Minerva's Big Sale"
+                        onShareToChat={() => shareCardToChat({ command: '/minerva', label: "Minerva's Big Sale", accent: mvAccent, icon: '⛟' })}
+                        shareDisabled={cardShareCooldown}
+                        fields={mvFields}
+                        inlineMeta={
+                          <span role="button" tabIndex={0} title="More info at falloutbuilds.com"
+                            onClick={() => openUrl('https://www.falloutbuilds.com/fo76/minerva')}
+                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') openUrl('https://www.falloutbuilds.com/fo76/minerva'); }}
+                            style={{ color: hexAlpha(mvAccent, 0.85), textDecoration: 'underline', cursor: 'pointer' }}
+                          >more info &#8599;</span>
                         }
                         hexAlpha={hexAlpha}
                         fontFamily={theme.fontFamily}
