@@ -108,7 +108,42 @@ Position presets are an optional keybind slot type. Each preset stores a saved w
 
 ---
 
+## In-game HUD chat widget keybinds (`.ba2` track)
+
+These are **separate** from the Electron overlay's global shortcuts above. The in-game HUD chat
+widget (`FCMChatWidget`, the explicit-opt-in `.ba2` install) runs on a Scaleform HUD layer that
+receives **no raw keyboard events** — its input surface is restricted to (1) the one native open
+key polled by ZFE and (2) named Fallout 76 control-map **actions** the loader forwards as
+`HUDMod::UserEvent`. Configure them in `Data/FCMChat.ini` (`[FCMChat]` section).
+
+| Default | Action / config key | Behavior |
+|---------|---------------------|----------|
+| `Insert` | `openKey` (native ZFE key) | **Open / restore.** Opens the native chat input; if the panel is hidden, restores it first. The only freely-choosable physical key (ZFE `isChatKeyPressed`). `PAGE_DOWN` is the known-good fallback if `INSERT` does not fire in-game. |
+| `Page Down` | `channelNextKey` = `NextPage` | Advance to the next channel. |
+| `Page Up` | `channelPrevKey` = `PrevPage` | Go to the previous channel. |
+| `/hide` + `F12` | (`/hide` slash command; F12 "Hide chat" menu) | Hide the panel. Feed keeps running in the background; restore with the open key (`Insert`). |
+| (optional) `hideKey` | `hideKey` = `<action>` | Optional power-user hide bind; default **UNSET**. Accepts a forwarded action only; hide is always available via `/hide` + F12 regardless. |
+| Mouse-wheel | (not a keybind) | Scroll the feed history. F12 "Scroll to newest" + auto-scroll are the menu fallbacks. |
+
+`Enter` (send) and `Esc` (cancel) stay native to the game's chat input session and are **not**
+rebindable.
+
+**Deliverable action set** — the only values `channelNextKey` / `channelPrevKey` / `hideKey`
+accept (forwarded by the loader as `HUDMod::UserEvent`): `NextPage` (Page Down), `PrevPage`
+(Page Up), `Console` (`~`), `TeamChat` (`T`), `DiagnosticSnapshot` (F12 — collides with the
+HUDTools menu, avoid as `hideKey`). Any other physical key must be remapped to one of these
+actions in Fallout 76's control settings, then set the matching action name here.
+
+Two open-key bindings must agree: `Data/ZFE/TextChat/fragments/FCMChatWidget.ini` `OpenChatKey`
+(authoritative native key) and `FCMChat.ini` `openKey` (the `HUDMod::UserEvent` path) — both
+default `INSERT`. Full key catalog (colors / geometry / opacity / limits / toggles / keybinds):
+see [zfe/ingame-chat-appearance.md](zfe/ingame-chat-appearance.md) and the commented
+`Data/FCMChat.ini`.
+
+---
+
 ## Cross-links
 
 - Visibility gating and `canShowOverlay`: `window-management.md`
+- In-game HUD chat widget config catalog: [zfe/ingame-chat-appearance.md](zfe/ingame-chat-appearance.md)
 - Overview: `README.md`

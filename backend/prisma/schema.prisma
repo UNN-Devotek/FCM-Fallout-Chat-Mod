@@ -68,6 +68,9 @@ model User {
   partyInvitesReceived PartyInvite[]      @relation("PartyInvitesReceived")
   partyInvitesSent     PartyInvite[]      @relation("PartyInvitesSent")
   partyMessages        PartyMessage[]     @relation("PartyMessages")
+  privateConversationsA PrivateConversation[] @relation("PrivateConversationA")
+  privateConversationsB PrivateConversation[] @relation("PrivateConversationB")
+  privateMessagesSent  PrivateMessage[]   @relation("PrivateMessagesSent")
   blocksMade           Block[]            @relation("BlocksMade")
   blocksAgainst        Block[]            @relation("BlocksAgainst")
   mcpApiKeys           McpApiKey[]        @relation("McpApiKeyOwner")
@@ -662,6 +665,45 @@ model PartyMessage {
   @@index([partyId, createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
   @@map("party_messages")
+}
+
+// =============================================================================
+// Private Messages
+// =============================================================================
+model PrivateConversation {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userAId          String    @map("user_a_id") @db.Uuid
+  userBId          String    @map("user_b_id") @db.Uuid
+  userALastReadAt  DateTime? @map("user_a_last_read_at") @db.Timestamptz(6)
+  userBLastReadAt  DateTime? @map("user_b_last_read_at") @db.Timestamptz(6)
+  lastMessageAt    DateTime? @map("last_message_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  userA    User             @relation("PrivateConversationA", fields: [userAId], references: [id], onDelete: Cascade)
+  userB    User             @relation("PrivateConversationB", fields: [userBId], references: [id], onDelete: Cascade)
+  messages PrivateMessage[]
+
+  @@unique([userAId, userBId])
+  @@index([userAId, lastMessageAt(sort: Desc)])
+  @@index([userBId, lastMessageAt(sort: Desc)])
+  @@map("private_conversations")
+}
+
+model PrivateMessage {
+  id             String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String   @map("conversation_id") @db.Uuid
+  senderId       String   @map("sender_id") @db.Uuid
+  content        String
+  isDeleted      Boolean  @default(false) @map("is_deleted")
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  conversation PrivateConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User                @relation("PrivateMessagesSent", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@id([id, createdAt])
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([senderId, createdAt(sort: Desc)])
+  @@map("private_messages")
 }
 
 // =============================================================================
