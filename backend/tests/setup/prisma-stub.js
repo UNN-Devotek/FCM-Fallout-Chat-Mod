@@ -28,6 +28,8 @@ module.exports = {
     party: modelStub(),
     partyMember: modelStub(),
     partyInvite: modelStub(),
+    privateConversation: modelStub(),
+    privateMessage: modelStub(),
     campItem: modelStub(),
     wordFilter: modelStub(),
     moderationSetting: modelStub(),
