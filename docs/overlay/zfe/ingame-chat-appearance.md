@@ -66,6 +66,19 @@ Sources: `game-mods/FCMBridge/FCMBridge.hx` (all lines), `admin-dashboard/src/fe
 >   The widget shows "Message blocked by the chat filter." / "Slash commands work in the dashboard,
 >   not in-game." `permission_denied` now means genuinely not-linked only.
 > - **Smaller default size:** `width`/`height` defaults are now `400 x 260` (were `480 x 306`).
+>
+> **Post-link handshake + game-input lockout (v2.7.0 / v2.7.1).**
+> - **v2.7.0 handshake:** after the web redeem, the relay pushes a `LINK COMPLETE` system event to
+>   the user's live subscriber and the widget resets its link gate on every (re)connect, so it hands
+>   off from the link screen to chat after activation (and recovers after a drop). See also the relay
+>   redeem path — the dynamic import must be `../services/...` (resolves in the compiled build), not
+>   `../../src/...` (tsx-only), or `markRelayTokenLinked` silently no-ops and the token never links.
+> - **v2.7.1 game-input lockout:** while the chat input is active the widget dispatches the engine
+>   event `ControlMap::StartEditText` on `BSUIDataManager` (and `EndEditText` on close) — this is what
+>   makes the engine suspend its own keyboard/gamepad routing (WASD/hotkeys stop firing while typing).
+>   ZFE's native input captures the text but does NOT block the engine, so we dispatch the edit-text
+>   events ourselves (the original FO76 Text Chat mod's mechanism — see
+>   [textchat-blueprint.md](textchat-blueprint.md) §2). Best-effort + guarded.
 
 ---
 

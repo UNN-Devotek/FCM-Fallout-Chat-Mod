@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.7.0";  // post-link handshake: relay pushes "LINK COMPLETE" on redeem + widget resets the link gate on every (re)connect, so the widget hands off to chat after activation and recovers after a drop; + v2.6.9 (link gate driven by relay notice, not getAuthState)
+    static inline var VERSION:String  = "2.7.1";  // lock out game keys while typing: dispatch engine ControlMap::StartEditText/EndEditText on BSUIDataManager in the native input path (ZFE captures text but does not block the engine); + v2.7.0 (post-link handshake)
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -810,6 +810,33 @@ class FCMChatWidget extends MovieClip {
      * Returns true on success (caller is done); false → caller falls back to
      * the SharedHUDTools path.
      */
+    /**
+     * Suspend (start=true) / restore (start=false) the GAME's own keyboard+gamepad routing while
+     * the chat input is active. ZFE's native input captures text but does NOT block the engine, so
+     * WASD/hotkeys still fire while typing. The original FO76 Text Chat mod blocks them WITHOUT ZFE
+     * by dispatching the engine's ControlMap edit-text events on BSUIDataManager (the same UI-data
+     * surface we already read for worldId — EULA §4(F)-safe). Best-effort + fully guarded: if the
+     * class/dispatch isn't available it logs and continues (no worse than today).
+     */
+    function dispatchEditText(start:Bool):Void {
+        var type:String = start ? "ControlMap::StartEditText" : "ControlMap::EndEditText";
+        try {
+            var bsui:Dynamic = untyped __global__["BSUIDataManager"];
+            if (bsui == null) { zfeLog("warn", "input", "BSUIDataManager null; cannot " + type); return; }
+            var ev:Dynamic;
+            try {
+                var ceCls:Dynamic = untyped __global__["flash.utils.getDefinitionByName"]("CustomEvent");
+                ev = untyped __new__(ceCls, type, { tag: "Chat" });
+            } catch (ce:Dynamic) {
+                ev = new flash.events.Event(type);   // fallback: engine may key off event.type alone
+            }
+            bsui.dispatchEvent(ev);
+            zfeLog("info", "input", type + " dispatched (game input " + (start ? "suspended" : "restored") + ")");
+        } catch (e:Dynamic) {
+            zfeLog("warn", "input", type + " dispatch threw: " + Std.string(e));
+        }
+    }
+
     function openInputNative():Bool {
         if (_api == null) return false;
         var raw:String = callTop("setChatInputActive", "true");   // bare "true", NOT JSON
@@ -833,6 +860,8 @@ class FCMChatWidget extends MovieClip {
         _lastReadRaw = "";
         setPrompt(typingPrompt());
         zfeLog("info", "input path", "native-chat-input");
+        // Lock out the game's own keys while typing (ZFE captures text but doesn't block the engine).
+        dispatchEditText(true);
 
         if (_inputTimer != null) { _inputTimer.stop(); _inputTimer = null; }
         _inputTimer = new flash.utils.Timer(INPUT_POLL_MS);
@@ -903,6 +932,8 @@ class FCMChatWidget extends MovieClip {
         zfeLog("info", "nativein", "clearChatInput raw=" + clip200(c1));
         var c2:String = callTop("setChatInputActive", "false");   // bare "false", NOT JSON
         zfeLog("info", "nativein", "setChatInputActive(false) raw=" + clip200(c2));
+        // Restore the game's own key routing.
+        dispatchEditText(false);
         _inputOpen   = false;
         _nativeInput = false;
         _inProgress  = "";
@@ -1151,7 +1182,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.0");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.1");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
