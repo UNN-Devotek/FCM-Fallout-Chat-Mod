@@ -199,7 +199,10 @@ router.post('/redeem', requireLinkAuth, redemptionIpLimiter, async (req: Request
     // and deploys solo before WT1 merges.
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const relayService: any = await import('../../src/services/relay/relayIdentityService' as any);
+      // NOTE: '../services/...' (NOT '../../src/...') so this resolves in the COMPILED build
+      // (dist/routes -> dist/services), not just under tsx dev. The old path threw
+      // MODULE_NOT_FOUND in prod, so the token was never actually linked (code marked used only).
+      const relayService: any = await import('../services/relay/relayIdentityService');
       await relayService.markRelayTokenLinked(relayUserId, actorId);
       logger.info({ relayUserId, actorId }, 'Relay identity upgraded to linked');
       // Handshake: tell the user's live in-game subscriber it's now linked, so an
