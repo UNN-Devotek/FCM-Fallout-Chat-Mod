@@ -8166,7 +8166,7 @@ export default function ChatOverlay() {
               full width EXCEPT under the active main tab — drawn as two segments:
               [0 → activeTab.left] and [activeTab.right → full width]. The active
               tab's open bottom then "sits" on this line. Both shell + website. */}
-          {tabCutout && (subChannels.length > 0 || isOnPartyTab || isOnPmTab) && (
+          {tabCutout && (subChannels.length > 0 || isOnPartyTab) && (
             <>
               <div style={{
                 position: 'absolute', left: 0, bottom: 0, height: '1px',
@@ -8310,39 +8310,6 @@ export default function ChatOverlay() {
             </div>
           </div>
           </PartyErrorBoundary>
-        ) : isOnPmTab ? (
-          <div data-fcm-subtab-row="pm" style={{
-            display: 'flex', alignItems: 'center',
-            padding: overlayShell ? '0 6px 0 16px' : '0 6px 0 15px',
-            height: '22px',
-            boxSizing: 'border-box',
-            background: chromeRgba,
-            borderBottom: `1px solid ${hexAlpha(primaryColor, 0.45)}`,
-            flexShrink: 0,
-            ...(overlayShell ? { WebkitAppRegion: 'drag' } as React.CSSProperties : {}),
-          }}>
-            <span
-              onClick={() => setPmView('inbox')}
-              style={{
-                fontSize: overlayShell ? `${Math.max(8, fontSize - 1)}px` : `${fontSize}px`,
-                letterSpacing: tabLetterSpacing,
-                cursor: 'pointer',
-                color: pmView === 'inbox' ? primaryText : inactiveTabText,
-                fontWeight: 'bold',
-                textTransform: 'uppercase' as const,
-                marginRight: `${scaleGap(12)}px`,
-                borderBottom: 'none',
-                paddingBottom: '1px',
-                userSelect: 'none',
-                whiteSpace: 'nowrap',
-                display: 'inline-flex', alignItems: 'center', flexShrink: 0,
-                textShadow: pmView === 'inbox' && glowEnabled ? `0 0 6px ${hexAlpha(primaryColor, 0.6 * textAlpha)}, ${textOutline}` : textOutline,
-                ...(overlayShell ? { WebkitAppRegion: 'no-drag' } as React.CSSProperties : {}),
-              }}
-            >
-              INBOX
-            </span>
-          </div>
         ) : subChannels.length > 0 && (
           <div data-fcm-subtab-row="channels" style={{
             display: 'flex', alignItems: 'center', flexWrap: 'nowrap', overflow: 'hidden',

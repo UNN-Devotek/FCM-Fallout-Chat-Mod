@@ -112,7 +112,9 @@ channel (`parentId === null`). Clicking a main tab shows the combined feed for
 that main channel plus all its sub-channels.
 
 **Row 2 — Sub-channels + special views**: sub-channel tabs (`children` of the
-active main), the PARTY browser/joined-party row, or the PM inbox row. The
+active main) or the PARTY browser/joined-party row. The **PM tab renders no
+sub-tab row** (inbox is the default view; return-to-inbox lives in the
+open-conversation header). The
 active party tab can be right-clicked for context actions (Invite, Leave,
 Delete). An overflow ellipsis (`…`) appears when joined-party tabs exceed the
 available row width (`ChatOverlay.tsx:1260–1268`).
@@ -127,7 +129,7 @@ The shared `ChatOverlay.tsx` owns PM UI too — there is no separate DM panel or
 forked component.
 
 - **Top-level tab:** `PM` sits beside `FALLOUT 76` and `PARTY`.
-- **Second row:** PM always renders a single `INBOX` tab. Per-user PM tabs are never added.
+- **Second row:** PM renders **no sub-tab row** at all (the old single `INBOX` sub-tab was removed as redundant). The inbox is the default view; per-user PM tabs are never added.
 - **Inbox view:** search box (`Type to search...`), text-only conversation rows, no avatars, ordered by most-recent `lastMessageAt`, unread badge per row, and a sender-prefixed preview (`You: <message>` when the current user sent the latest PM, otherwise `<OtherUserDisplayName>: <message>`). Inbox filtering matches the participant name, raw preview text, and the sender-prefixed preview text.
 - **Conversation view:** a `< BACK TO INBOX` row, then the other participant's display name as the header, followed by the normal shared message renderer plus the normal 255-character composer/counter.
 - **Composer routing:** when `activeMainId === PM_MAIN_ID` and `pmView !== 'inbox'`, Enter sends `pm:send` only. PM content never reuses `chat:send` or `party:send`.

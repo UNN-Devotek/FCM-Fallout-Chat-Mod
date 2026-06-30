@@ -224,7 +224,11 @@ describe('ChatOverlay private messaging', () => {
 
     fireEvent.click(screen.getByText('PM'));
     expect(await screen.findByPlaceholderText('Type to search...')).toBeTruthy();
-    expect(screen.getByText('INBOX')).toBeTruthy();
+    // The PM tab no longer renders a sub-tab row (no redundant INBOX sub-tab) —
+    // inbox is the default view and the back-to-inbox affordance lives in the
+    // open-conversation header instead.
+    expect(container.querySelector('[data-fcm-subtab-row="pm"]')).toBeNull();
+    expect(screen.queryByText('INBOX')).toBeNull();
     expect(screen.getByText('Stealthmog')).toBeTruthy();
     expect(screen.getByText('Stealthmog: meet at whitespring?')).toBeTruthy();
     expect(screen.getByText('You: omw')).toBeTruthy();
