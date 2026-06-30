@@ -161,6 +161,21 @@ export async function markRelayTokenLinked(relayUserId: string, fcmUserId: strin
     data:   { linkedUserId: fcmUserId },
   });
   logger.info({ relayUserId, fcmUserId, count: result.count }, '[tokenService] relay token linked');
+
+  // Propagate the in-game CHARACTER name onto the linked FCM account so chat HISTORY (which
+  // derives the sender from the user row, not per-message) shows the character, not the Discord
+  // name. Live messages already carry identity.fo76Name via handleSend; this keeps history aligned.
+  try {
+    const tok = await prisma.hudPairingToken.findFirst({
+      where:  { userId: relayUserId },
+      select: { fo76Name: true },
+    });
+    if (tok?.fo76Name) {
+      await prisma.user.update({ where: { id: fcmUserId }, data: { fo76AccountName: tok.fo76Name } });
+    }
+  } catch (err) {
+    logger.warn({ err, relayUserId, fcmUserId }, '[tokenService] fo76AccountName propagation failed (non-fatal)');
+  }
 }
 
 /**

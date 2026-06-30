@@ -594,6 +594,17 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
   const cursor = typeof frame.cursor === 'number' ? frame.cursor : 0;
   const max    = Math.min(typeof frame.max === 'number' ? frame.max : 64, 100);
 
+  const events = await fetchHistoryEvents(cursor, max);
+  send(ws, { success: true, events });
+}
+
+/**
+ * Recent chat history as chat.message events. cursor=0 → the initial window (latest
+ * POLL_HISTORY_LIMIT, oldest-first); otherwise everything with relay_seq > cursor.
+ * Shared by handlePoll AND the subscribe-time backfill so history reaches the in-game
+ * widget over the live subscribe connection (the path it actually drains via pollEvents).
+ */
+async function fetchHistoryEvents(cursor: number, max: number): Promise<Array<Record<string, unknown>>> {
   let rows: Array<{
     id: string;
     relay_seq: bigint | null;
@@ -606,7 +617,6 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
   }>;
 
   if (cursor === 0) {
-    // Initial history window.
     rows = await prisma.$queryRaw`
       SELECT m.id, m.relay_seq, m.content, m.user_id,
              m.channel_id, m.created_at,
@@ -641,7 +651,7 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
     `;
   }
 
-  const events = rows.map((row) => ({
+  return rows.map((row) => ({
     id:                Number(row.relay_seq),
     kind:              'chat.message',
     messageId:         row.id,
@@ -652,8 +662,6 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
     targetUserId:      '',
     createdAt:         row.created_at ? new Date(row.created_at).toISOString() : '',
   }));
-
-  send(ws, { success: true, events });
 }
 
 async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
@@ -704,6 +712,23 @@ async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): P
     displayName: identity.fo76Name,
     role:        identity.role,
   });
+
+  // Backfill recent history on THIS long-lived subscribe connection. The in-game widget drains
+  // events via pollEvents off the subscribe stream; ZFE doesn't re-issue a cursor=0 poll, so the
+  // standalone handlePoll history never reaches it. Push the initial window here as op:event
+  // frames (same shape as live broadcasts) so the feed loads on connect. Advance the subscriber
+  // cursor past them so the live path doesn't immediately re-send the same rows.
+  try {
+    const history = await fetchHistoryEvents(0, POLL_HISTORY_LIMIT);
+    for (const ev of history) {
+      send(ws, { op: 'event', cursor: ev.id as number, event: ev });
+    }
+    if (history.length > 0) {
+      state.cursor = Math.max(state.cursor, Number(history[history.length - 1].id));
+    }
+  } catch (err) {
+    logger.warn({ err, userId: identity.userId }, '[relayHandler] history backfill on subscribe failed');
+  }
 
   // If still LIMITED (not linked), push the link-code notice on THIS long-lived subscribe
   // connection. The register/hello pushes land on a transient connection the client's
