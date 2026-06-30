@@ -523,6 +523,133 @@ export function buildRichHtmlImpl(text: string): string {
   return html;
 }
 
+/** Serialize rich-input DOM/fragment nodes back to the plain-text message form. */
+export function serializeRichContent(input: Pick<ParentNode, 'childNodes'>): string {
+  function walk(node: Node): string {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
+    if (node.nodeName === 'IMG') {
+      const token = (node as HTMLImageElement).dataset.token;
+      return token ?? (node as HTMLImageElement).alt ?? '';
+    }
+    if (node.nodeName === 'BR') return '\n';
+    let out = '';
+    const isBlock = node.nodeName === 'DIV' || node.nodeName === 'P';
+    for (const child of Array.from(node.childNodes)) out += walk(child);
+    if (isBlock && (node as Element).previousSibling) out = '\n' + out;
+    return out;
+  }
+
+  let out = '';
+  for (const node of Array.from(input.childNodes)) out += walk(node);
+  return out.replace(/\n$/, '');
+}
+
+/** Compute plain-text selection offsets for the rich composer, if selection is inside it. */
+export function getRichSelectionOffsets(
+  el: HTMLDivElement,
+  selection: Selection | null = window.getSelection(),
+): { start: number; end: number } | null {
+  if (!selection || selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  if (!el.contains(range.startContainer) || !el.contains(range.endContainer)) return null;
+
+  const startRange = document.createRange();
+  startRange.selectNodeContents(el);
+  startRange.setEnd(range.startContainer, range.startOffset);
+
+  const endRange = document.createRange();
+  endRange.selectNodeContents(el);
+  endRange.setEnd(range.endContainer, range.endOffset);
+
+  return {
+    start: serializeRichContent(startRange.cloneContents()).length,
+    end: serializeRichContent(endRange.cloneContents()).length,
+  };
+}
+
+/** Restore the rich composer caret at a plain-text offset across text, <br>, and emoji <img> nodes. */
+export function placeRichCaretAtOffset(
+  el: HTMLDivElement,
+  offset: number,
+  selection: Selection | null = window.getSelection(),
+): void {
+  const targetOffset = Math.max(0, offset);
+  let remaining = targetOffset;
+  let placed = false;
+  const range = document.createRange();
+
+  function walk(node: Node) {
+    if (placed) return;
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      const len = (node as Text).length;
+      if (remaining <= len) {
+        range.setStart(node, remaining);
+        range.collapse(true);
+        placed = true;
+        return;
+      }
+      remaining -= len;
+      return;
+    }
+
+    if (node.nodeName === 'IMG') {
+      const token = (node as HTMLImageElement).dataset.token ?? (node as HTMLImageElement).alt ?? '';
+      const len = token.length;
+      if (remaining <= len) {
+        range.setStartAfter(node);
+        range.collapse(true);
+        placed = true;
+        return;
+      }
+      remaining -= len;
+      return;
+    }
+
+    if (node.nodeName === 'BR') {
+      if (remaining <= 1) {
+        range.setStartAfter(node);
+        range.collapse(true);
+        placed = true;
+        return;
+      }
+      remaining -= 1;
+      return;
+    }
+
+    for (const child of Array.from(node.childNodes)) walk(child);
+  }
+
+  walk(el);
+
+  if (!placed) {
+    range.selectNodeContents(el);
+    range.collapse(false);
+  }
+
+  if (selection) {
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+}
+
+/** Insert a token into plain text, clamp to max length, and return the advanced caret offset. */
+export function insertTokenIntoText(
+  current: string,
+  start: number,
+  end: number,
+  token: string,
+  maxLength = 255,
+): { text: string; caretOffset: number } {
+  const safeStart = Math.max(0, Math.min(current.length, start));
+  const safeEnd = Math.max(safeStart, Math.min(current.length, end));
+  const text = (current.slice(0, safeStart) + token + current.slice(safeEnd)).slice(0, maxLength);
+  return {
+    text,
+    caretOffset: Math.min(text.length, safeStart + token.length),
+  };
+}
+
 /**
  * Round avatar: Discord image when available (resolved via resolveAvatarUrl),
  * otherwise a letter circle (first char of the name). On image load error it
@@ -3667,6 +3794,7 @@ export default function ChatOverlay() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Rich (contentEditable) input ref — used only when overlayShell is active.
   const richInputRef = useRef<HTMLDivElement>(null);
+  const richSelectionRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
   // Tracks whether the chat input had focus immediately before a state update
   // (e.g. chat:history repopulation) so we can restore it afterward.
   const inputWasFocusedRef = useRef<boolean>(false);
@@ -3677,21 +3805,20 @@ export default function ChatOverlay() {
   // custom emoji <img data-token="<:name:id>"> nodes become their token and
   // everything else is plain text. Preserves newlines from <br>/<div>.
   const serializeRichInput = useCallback((el: HTMLDivElement): string => {
-    function walk(node: Node): string {
-      if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
-      if (node.nodeName === 'IMG') {
-        const token = (node as HTMLImageElement).dataset.token;
-        return token ?? (node as HTMLImageElement).alt ?? '';
-      }
-      if (node.nodeName === 'BR') return '\n';
-      let out = '';
-      const isBlock = node.nodeName === 'DIV' || node.nodeName === 'P';
-      for (const child of Array.from(node.childNodes)) out += walk(child);
-      if (isBlock && (node as Element).previousSibling) out = '\n' + out;
-      return out;
-    }
-    return walk(el).replace(/\n$/, ''); // strip trailing newline added by browser
+    return serializeRichContent(el);
   }, []);
+
+  const syncRichSelectionRef = useCallback((el: HTMLDivElement) => {
+    const offsets = getRichSelectionOffsets(el);
+    if (offsets) {
+      richSelectionRef.current = offsets;
+      return offsets;
+    }
+    const end = serializeRichInput(el).length;
+    const fallback = { start: end, end };
+    richSelectionRef.current = fallback;
+    return fallback;
+  }, [serializeRichInput]);
 
   // Stable callback wrapper over the top-level, unit-tested buildRichHtmlImpl
   // (which owns all HTML escaping/sanitization for the rich input). Kept as a
@@ -3703,56 +3830,24 @@ export default function ChatOverlay() {
   const richInsertAtCaret = useCallback((token: string) => {
     const el = richInputRef.current;
     if (!el) { insertAtCaret(token); return; } // fallback to textarea
+    const current = serializeRichInput(el);
+    const liveSelection = getRichSelectionOffsets(el);
+    const fallbackSelection = richSelectionRef.current;
+    const next = insertTokenIntoText(
+      current,
+      liveSelection?.start ?? fallbackSelection.start,
+      liveSelection?.end ?? fallbackSelection.end,
+      token,
+      255,
+    );
+
+    // Rebuild from the canonical plain-text model immediately so rapid picker
+    // clicks reuse the advanced caret and the composer keeps emoji inline.
+    el.innerHTML = buildRichHtml(next.text);
     el.focus();
-    const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0) {
-      // No selection -- append. Serialize from the live DOM rather than
-      // reading inputText state, which may be stale on rapid consecutive inserts.
-      const current = serializeRichInput(el);
-      const newText = (current + token).slice(0, 255);
-      setInputText(newText);
-      el.innerHTML = buildRichHtml(newText);
-      return;
-    }
-    const range = sel.getRangeAt(0);
-    // Delete any selected content first
-    range.deleteContents();
-    const CUSTOM_RE = /<(a?):([A-Za-z0-9_]+):(\d{16,22})>/;
-    if (CUSTOM_RE.test(token)) {
-      // Insert as an <img> node
-      const m = CUSTOM_RE.exec(token)!;
-      const animated = m[1] === 'a';
-      const name = m[2];
-      const id = m[3];
-      const src = animated
-        ? `https://cdn.discordapp.com/emojis/${id}.webp?animated=true`
-        : `https://cdn.discordapp.com/emojis/${id}.png`;
-      const img = document.createElement('img');
-      img.src = src;
-      img.alt = `:${name}:`;
-      img.title = `:${name}:`;
-      img.dataset.token = token;
-      img.style.cssText = 'height:20px;vertical-align:middle;margin:0 1px;display:inline';
-      range.insertNode(img);
-      // Move caret after the img
-      const after = document.createRange();
-      after.setStartAfter(img);
-      after.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(after);
-    } else {
-      // Plain text / unicode emoji
-      const textNode = document.createTextNode(token);
-      range.insertNode(textNode);
-      const after = document.createRange();
-      after.setStartAfter(textNode);
-      after.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(after);
-    }
-    // Re-serialize and update state
-    const serialized = serializeRichInput(el).slice(0, 255);
-    setInputText(serialized);
+    placeRichCaretAtOffset(el, next.caretOffset);
+    richSelectionRef.current = { start: next.caretOffset, end: next.caretOffset };
+    setInputText(next.text);
   }, [setInputText, buildRichHtml, serializeRichInput, insertAtCaret]);
 
   // Sync the rich input's HTML to the current inputText whenever it changes
@@ -3772,28 +3867,7 @@ export default function ChatOverlay() {
     const current = serializeRichInput(el);
     if (current === inputText) return; // DOM already matches — nothing to do
 
-    // Save caret offset before rewrite so we can restore it after.
-    let savedOffset: number | null = null;
-    try {
-      const sel = window.getSelection();
-      if (sel && sel.rangeCount > 0 && el.contains(sel.getRangeAt(0).startContainer)) {
-        // Walk text nodes to compute a flat character offset.
-        const range = sel.getRangeAt(0);
-        let offset = 0;
-        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-        let node: Node | null;
-        while ((node = walker.nextNode())) {
-          if (node === range.startContainer) {
-            offset += range.startOffset;
-            break;
-          }
-          offset += (node as Text).length;
-        }
-        savedOffset = offset;
-      }
-    } catch {
-      // Ignore — will fall back to end-of-content
-    }
+    const savedOffset = getRichSelectionOffsets(el)?.start ?? richSelectionRef.current.start;
 
     el.innerHTML = buildRichHtml(inputText);
 
@@ -3801,33 +3875,9 @@ export default function ChatOverlay() {
     requestAnimationFrame(() => {
       const target = richInputRef.current;
       if (!target) return;
-      const r = document.createRange();
-      if (savedOffset !== null) {
-        // Re-walk text nodes and place caret at the saved offset (clamped).
-        let remaining = savedOffset;
-        const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
-        let placed = false;
-        let node: Node | null;
-        while ((node = walker.nextNode())) {
-          const len = (node as Text).length;
-          if (remaining <= len) {
-            r.setStart(node, remaining);
-            r.collapse(true);
-            placed = true;
-            break;
-          }
-          remaining -= len;
-        }
-        if (!placed) {
-          r.selectNodeContents(target);
-          r.collapse(false);
-        }
-      } else {
-        r.selectNodeContents(target);
-        r.collapse(false);
-      }
-      const s = window.getSelection();
-      if (s) { s.removeAllRanges(); s.addRange(r); }
+      const caretOffset = Math.min(inputText.length, savedOffset);
+      placeRichCaretAtOffset(target, caretOffset);
+      richSelectionRef.current = { start: caretOffset, end: caretOffset };
     });
   }, [inputText]); // eslint-disable-line react-hooks/exhaustive-deps
   // ^^ Intentionally omitting buildRichHtml/serializeRichInput/overlayShell —
@@ -8931,6 +8981,8 @@ export default function ChatOverlay() {
                       if (sel) { sel.removeAllRanges(); sel.addRange(r); }
                     }
                   }
+                  const selection = getRichSelectionOffsets(el);
+                  richSelectionRef.current = selection ?? { start: finalText.length, end: finalText.length };
                   setInputText(finalText);
                   const cursor = finalText.length;
                   const mention = getMentionAt(finalText, cursor);
@@ -8939,6 +8991,9 @@ export default function ChatOverlay() {
                   else { setMentionOpen(false); setMentionSuggestions([]); }
                   if (clamped.trim()) sendTyping();
                 }}
+                onFocus={e => { syncRichSelectionRef(e.currentTarget); }}
+                onMouseUp={e => { syncRichSelectionRef(e.currentTarget); }}
+                onKeyUp={e => { syncRichSelectionRef(e.currentTarget); }}
                 onKeyDown={e => {
                   // Mention popover takes priority over slash-command
                   if (mentionOpen && mentionSuggestions.length > 0) {

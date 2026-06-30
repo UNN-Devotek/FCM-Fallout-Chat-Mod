@@ -28,6 +28,10 @@ import {
   shouldForceReconnectOnVisible,
   buildRichHtmlImpl,
   escapeHtmlAttr,
+  serializeRichContent,
+  getRichSelectionOffsets,
+  placeRichCaretAtOffset,
+  insertTokenIntoText,
   isNearBottom,
   STICK_TO_BOTTOM_THRESHOLD,
   buildMentionInsert,
@@ -868,6 +872,46 @@ describe('buildRichHtmlImpl', () => {
 // via isNearBottom from REAL scroll events — never recomputed right after a tall
 // card is appended, because by then scrollHeight has grown but scrollTop hasn't,
 // so the reading looks like "scrolled up" (the original #313 bug).
+describe('insertTokenIntoText', () => {
+  it('inserts sequential emoji picks after the advanced caret', () => {
+    const first = insertTokenIntoText('', 0, 0, '😀');
+    expect(first.text).toBe('😀');
+    expect(first.caretOffset).toBe('😀'.length);
+
+    const second = insertTokenIntoText(first.text, first.caretOffset, first.caretOffset, '😂');
+    expect(second.text).toBe('😀😂');
+    expect(second.caretOffset).toBe('😀😂'.length);
+  });
+
+  it('replaces the selected range before advancing the caret', () => {
+    const next = insertTokenIntoText('hello world', 0, 5, 'bye');
+    expect(next.text).toBe('bye world');
+    expect(next.caretOffset).toBe(3);
+  });
+});
+
+describe('rich composer caret helpers', () => {
+  it('serializes custom emoji images back to their token text', () => {
+    const el = document.createElement('div');
+    el.innerHTML = buildRichHtmlImpl('😀 <:vault:1234567890123456>');
+
+    expect(serializeRichContent(el)).toBe('😀 <:vault:1234567890123456>');
+  });
+
+  it('restores a caret offset after rebuilding rich composer HTML', () => {
+    const el = document.createElement('div');
+    el.contentEditable = 'true';
+    el.innerHTML = buildRichHtmlImpl('😀😂');
+    document.body.appendChild(el);
+
+    placeRichCaretAtOffset(el, '😀'.length);
+    expect(getRichSelectionOffsets(el)).toEqual({
+      start: '😀'.length,
+      end: '😀'.length,
+    });
+  });
+});
+
 describe('isNearBottom (#313 stick-to-bottom intent)', () => {
   it('is true when the viewport is exactly at the bottom', () => {
     // scrollHeight 1000, scrolled fully (1000 - 200 clientHeight = 800), distance 0.

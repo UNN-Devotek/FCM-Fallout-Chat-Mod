@@ -19,6 +19,89 @@ interface EmojiMartData {
 }
 
 const DATA = emojiData as EmojiMartData;
+const CUSTOM_EMOJI_TOKEN_RE = /^<(a?):([A-Za-z0-9_]+):(\d{16,22})>$/;
+export const RECENT_EMOJI_STORAGE_KEY = 'fcm-recent-emojis';
+export const RECENT_EMOJI_LIMIT = 16;
+
+const NATIVE_TO_ENTRY = new Map<string, EmojiMartEntry>();
+for (const entry of Object.values(DATA.emojis)) {
+  const native = entry.skins[0]?.native;
+  if (native) NATIVE_TO_ENTRY.set(native, entry);
+}
+
+export function normalizeRecentEmojiTokens(value: unknown, maxCount = RECENT_EMOJI_LIMIT): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of value) {
+    if (typeof raw !== 'string') continue;
+    const token = raw.trim();
+    if (!token || seen.has(token)) continue;
+    seen.add(token);
+    out.push(token);
+    if (out.length >= maxCount) break;
+  }
+  return out;
+}
+
+export function recordRecentEmoji(tokens: string[], token: string, maxCount = RECENT_EMOJI_LIMIT): string[] {
+  const trimmed = token.trim();
+  if (!trimmed) return normalizeRecentEmojiTokens(tokens, maxCount);
+  return normalizeRecentEmojiTokens([trimmed, ...tokens.filter((t) => t !== trimmed)], maxCount);
+}
+
+export function loadRecentEmojiTokens(
+  storage: Pick<Storage, 'getItem'> | null = typeof localStorage === 'undefined' ? null : localStorage,
+): string[] {
+  if (!storage) return [];
+  try {
+    return normalizeRecentEmojiTokens(JSON.parse(storage.getItem(RECENT_EMOJI_STORAGE_KEY) ?? '[]'));
+  } catch {
+    return [];
+  }
+}
+
+export function saveRecentEmojiTokens(
+  tokens: string[],
+  storage: Pick<Storage, 'setItem'> | null = typeof localStorage === 'undefined' ? null : localStorage,
+): void {
+  if (!storage) return;
+  try {
+    storage.setItem(RECENT_EMOJI_STORAGE_KEY, JSON.stringify(normalizeRecentEmojiTokens(tokens)));
+  } catch {
+    // Ignore storage failures; picker should still work in-memory.
+  }
+}
+
+function parseCustomEmojiToken(token: string): { name: string; url: string } | null {
+  const match = CUSTOM_EMOJI_TOKEN_RE.exec(token);
+  if (!match) return null;
+  const animated = match[1] === 'a';
+  const name = match[2];
+  const id = match[3];
+  return {
+    name,
+    url: animated
+      ? `https://cdn.discordapp.com/emojis/${id}.webp?animated=true`
+      : `https://cdn.discordapp.com/emojis/${id}.png`,
+  };
+}
+
+function recentEmojiMatchesQuery(token: string, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+
+  const custom = parseCustomEmojiToken(token);
+  if (custom) return custom.name.toLowerCase().includes(q);
+
+  const unicode = NATIVE_TO_ENTRY.get(token);
+  if (!unicode) return token.toLowerCase().includes(q);
+  return (
+    unicode.name.toLowerCase().includes(q) ||
+    unicode.id.toLowerCase().includes(q) ||
+    unicode.keywords.some((k) => k.toLowerCase().includes(q))
+  );
+}
 
 // Human-friendly category labels (Discord ordering)
 const CAT_LABELS: Record<string, string> = {
@@ -75,6 +158,7 @@ export default function EmojiPicker({
   style: styleOverride,
 }: EmojiPickerProps) {
   const [query, setQuery] = useState('');
+  const [recentEmojis, setRecentEmojis] = useState<string[]>(() => loadRecentEmojiTokens());
   const containerRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -148,6 +232,11 @@ export default function EmojiPicker({
     return all.filter(e => e.name.toLowerCase().includes(q));
   }, [discordEmojis, query]);
 
+  const filteredRecent = useMemo(
+    () => recentEmojis.filter((token) => recentEmojiMatchesQuery(token, query)),
+    [recentEmojis, query],
+  );
+
   // ── Theme helpers ─────────────────────────────────────────────────────────
   const panelBg      = hexToRgba(chromeColor, 0.96);
   const panelBorder  = hexAlpha(primaryColor, 0.7);
@@ -156,17 +245,27 @@ export default function EmojiPicker({
   const activeBg     = hexAlpha(primaryColor, 0.25);
   const scrollStyle  = hexAlpha(primaryColor, 0.25);
 
+  const handleInsert = React.useCallback((token: string) => {
+    setRecentEmojis(prev => {
+      const next = recordRecentEmoji(prev, token);
+      saveRecentEmojiTokens(next);
+      return next;
+    });
+    onInsert(token);
+    onClose();
+  }, [onInsert, onClose]);
+
   // Pure-CSS hover/active so the ~1500-emoji grid does NOT re-render on every
   // mouse move (the prior hovered/pressed useState made every hover trigger a
   // full-grid re-render, which locked up the browser).
-  const SectionHeading = React.useCallback(({ label }: { label: string }) => (
+  const SectionHeading = React.useCallback(({ label, preserveCase = false }: { label: string; preserveCase?: boolean }) => (
     <div style={{
       padding: '6px 8px 2px',
       fontSize: '9px',
       fontFamily,
       color: sectionHead,
       letterSpacing: '0.1em',
-      textTransform: 'uppercase',
+      textTransform: preserveCase ? 'none' : 'uppercase',
       userSelect: 'none',
       fontWeight: 'bold',
     }}>
@@ -261,6 +360,32 @@ export default function EmojiPicker({
           </div>
         ) : (
         <>
+        {/* RECENT section */}
+        {filteredRecent.length > 0 && (
+          <>
+            <SectionHeading label="Recent" preserveCase />
+            <div style={{ display: 'flex', flexWrap: 'wrap', padding: '0 4px 4px' }}>
+              {filteredRecent.map(token => {
+                const custom = parseCustomEmojiToken(token);
+                return (
+                  <EmojiCell
+                    key={`recent-${token}`}
+                    id={`recent-${token}`}
+                    title={custom ? `:${custom.name}:` : token}
+                    onClick={() => { handleInsert(token); }}
+                  >
+                    {custom ? (
+                      <img src={custom.url} alt={`:${custom.name}:`} loading="lazy"
+                        style={{ width: 24, height: 24, objectFit: 'contain' }} />
+                    ) : (
+                      <span style={{ fontSize: 20, lineHeight: '32px', userSelect: 'none' }}>{token}</span>
+                    )}
+                  </EmojiCell>
+                );
+              })}
+            </div>
+          </>
+        )}
         {/* YOUR SERVER section */}
         <SectionHeading label="Your Server" />
         {filteredDiscord.length === 0 ? (
@@ -276,7 +401,7 @@ export default function EmojiPicker({
                   key={e.id}
                   id={`d-${e.id}`}
                   title={`:${e.name}:`}
-                  onClick={() => { onInsert(e.animated ? `<a:${e.name}:${e.id}>` : `<:${e.name}:${e.id}>`); onClose(); }}
+                  onClick={() => { handleInsert(e.animated ? `<a:${e.name}:${e.id}>` : `<:${e.name}:${e.id}>`); }}
                 >
                   <img src={e.url} alt={`:${e.name}:`} loading="lazy"
                     style={{ width: 24, height: 24, objectFit: 'contain' }} />
@@ -297,7 +422,7 @@ export default function EmojiPicker({
                     key={e.id}
                     id={`u-${e.id}`}
                     title={`:${e.id}:`}
-                    onClick={() => { onInsert(native); onClose(); }}
+                    onClick={() => { handleInsert(native); }}
                   >
                     <span style={{ fontSize: 20, lineHeight: '32px', userSelect: 'none' }}>{native}</span>
                   </EmojiCell>

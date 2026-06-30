@@ -52,6 +52,25 @@ describe('usePickerInsert', () => {
     expect(setInputText).toHaveBeenCalledWith('😀 😂');
   });
 
+  it('advances the textarea value and caret between rapid inserts', () => {
+    const ref = { current: el };
+    const setInputText = vi.fn();
+    const { result } = renderHook(() =>
+      usePickerInsert(ref as any, '', setInputText),
+    );
+
+    act(() => {
+      result.current('😀');
+      result.current('😂');
+    });
+
+    expect(setInputText).toHaveBeenNthCalledWith(1, '😀');
+    expect(setInputText).toHaveBeenNthCalledWith(2, '😀😂');
+    expect(el.value).toBe('😀😂');
+    expect(el.selectionStart).toBe('😀😂'.length);
+    expect(el.selectionEnd).toBe('😀😂'.length);
+  });
+
   it('inserts at a mid-string caret position', () => {
     el.value = 'hello world';
     el.selectionStart = 5;
