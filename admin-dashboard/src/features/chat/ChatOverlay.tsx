@@ -651,6 +651,23 @@ export function insertTokenIntoText(
 }
 
 /**
+ * Resolve where the caret should land after the rich input's text is set from
+ * OUTSIDE (autocomplete, emoji insert, clear-on-send). Normally we preserve the
+ * previously-saved caret offset (clamped to the new length) so emoji/token
+ * inserts don't yank the caret. But for command-autocomplete completions the
+ * caret must collapse to the END — otherwise picking "/minerva" while the caret
+ * sat at offset 4 ("/min") restores offset 4 and lands mid-command ("/min|erva").
+ */
+export function resolveExternalSetCaret(
+  textLength: number,
+  savedOffset: number,
+  forceToEnd: boolean,
+): number {
+  if (forceToEnd) return textLength;
+  return Math.min(textLength, Math.max(0, savedOffset));
+}
+
+/**
  * Round avatar: Discord image when available (resolved via resolveAvatarUrl),
  * otherwise a letter circle (first char of the name). On image load error it
  * falls back to the letter too. `size` in px; colors themed by the caller.
@@ -3796,6 +3813,10 @@ export default function ChatOverlay() {
   // Rich (contentEditable) input ref — used only when overlayShell is active.
   const richInputRef = useRef<HTMLDivElement>(null);
   const richSelectionRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
+  // One-shot flag: when an external setInputText should land the caret at the END
+  // (slash-command autocomplete) rather than restoring the saved offset. Consumed
+  // and cleared by the rich-input sync effect on the next run.
+  const caretToEndRef = useRef<boolean>(false);
   // Tracks whether the chat input had focus immediately before a state update
   // (e.g. chat:history repopulation) so we can restore it afterward.
   const inputWasFocusedRef = useRef<boolean>(false);
@@ -3869,14 +3890,18 @@ export default function ChatOverlay() {
     if (current === inputText) return; // DOM already matches — nothing to do
 
     const savedOffset = getRichSelectionOffsets(el)?.start ?? richSelectionRef.current.start;
+    // Consume the one-shot "caret to end" flag (set by slash-command autocomplete).
+    const forceToEnd = caretToEndRef.current;
+    caretToEndRef.current = false;
 
     el.innerHTML = buildRichHtml(inputText);
 
-    // Restore caret (or place at end) after programmatic set.
+    // Restore caret (or, for command completions, collapse to end) after the
+    // programmatic set.
     requestAnimationFrame(() => {
       const target = richInputRef.current;
       if (!target) return;
-      const caretOffset = Math.min(inputText.length, savedOffset);
+      const caretOffset = resolveExternalSetCaret(inputText.length, savedOffset, forceToEnd);
       placeRichCaretAtOffset(target, caretOffset);
       richSelectionRef.current = { start: caretOffset, end: caretOffset };
     });
@@ -5652,10 +5677,21 @@ export default function ChatOverlay() {
   }, [inputText, acSuggestions.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function selectAcSuggestion(cmd: SlashCommand) {
-    setInputText(cmd.trigger + ' ');
+    const nextText = cmd.trigger + ' ';
+    // Land the caret at the END of the completed command, not wherever it sat
+    // mid-typing (the rich-input sync effect would otherwise restore the saved
+    // offset and drop the caret into the middle of the command).
+    caretToEndRef.current = true;
+    setInputText(nextText);
     setAcOpen(false);
-    if (richInputRef.current) richInputRef.current.focus();
-    else inputRef.current?.focus();
+    if (richInputRef.current) {
+      richInputRef.current.focus();
+    } else if (inputRef.current) {
+      // Website plain-textarea path: place caret at end directly (no rich sync effect).
+      const ta = inputRef.current;
+      ta.focus();
+      requestAnimationFrame(() => { ta.setSelectionRange(nextText.length, nextText.length); });
+    }
   }
 
   // ── Wiki autocomplete effect ──────────────────────────────────────────────
