@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.6.9";  // FIX: link screen + code now driven by the relay system link-notice (_needsLink), not ZFE getAuthState (which is always "authenticated"=connected); relay pushes the notice on the subscribe connection so pollEvents actually receives it; + v2.6.8 (Discord-only link step)
+    static inline var VERSION:String  = "2.7.0";  // post-link handshake: relay pushes "LINK COMPLETE" on redeem + widget resets the link gate on every (re)connect, so the widget hands off to chat after activation and recovers after a drop; + v2.6.9 (link gate driven by relay notice, not getAuthState)
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -1151,7 +1151,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.6.9");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.0");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
@@ -1191,6 +1191,11 @@ class FCMChatWidget extends MovieClip {
 
         _connected = true;
         _connectDelay = CONNECT_RETRY_MS;
+        // Reset the link gate on every (re)connect: if still limited, the relay re-sends the
+        // link-required notice (via pollEvents) and we re-raise it; if now LINKED, no notice
+        // arrives and we stay in chat. This recovers cleanly after a drop/"relay unreachable"
+        // once the account has been linked on the web.
+        _needsLink = false;
         zfeLog("info", "connect", "connected");
         setLogText("connected. loading...");
 
@@ -1432,12 +1437,19 @@ class FCMChatWidget extends MovieClip {
             if (evId > _cursor) _cursor = evId;
             if (body.length == 0) continue;
 
-            // System channel — pinned link-code notice. The relay sends this ONLY to limited
-            // (unlinked) identities, so its arrival means "not linked" → drive the link gate.
+            // System channel — link handshake. "LINK COMPLETE" means the web redeem finished
+            // (relay pushed it post-activation) → clear the gate and hand off to chat. Anything
+            // else is the link-required code notice (relay sends it ONLY to limited identities).
             if (rawChannel == "system" || senderUserId == "system") {
-                _pinnedSystemBody = body;
-                _needsLink = true;
-                zfeLog("info", "system", "link notice received -> needsLink");
+                if (body.indexOf("LINK COMPLETE") >= 0) {
+                    _needsLink = false;
+                    _pinnedSystemBody = "";
+                    zfeLog("info", "system", "link complete -> chat activated");
+                } else {
+                    _pinnedSystemBody = body;
+                    _needsLink = true;
+                    zfeLog("info", "system", "link notice received -> needsLink");
+                }
                 newRecords = true;
                 continue;
             }

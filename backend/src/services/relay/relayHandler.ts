@@ -123,6 +123,35 @@ async function pushLinkNotice(ws: WebSocket, relayUserId: string): Promise<void>
   send(ws, { op: 'event', cursor, event });
 }
 
+/**
+ * Push a one-shot "link complete" system event to a user's live subscriber(s). Called from the
+ * web redeem flow right after markRelayTokenLinked, so an ALREADY-CONNECTED in-game widget
+ * transitions from the link screen to chat without waiting for a reconnect. The widget treats a
+ * "LINK COMPLETE" system body as the authoritative "now linked" signal (clears its link gate).
+ */
+export async function notifyLinkComplete(relayUserId: string): Promise<void> {
+  const redis  = await getRedisClient();
+  const cursor = await redis.incr('relay:seq');
+  const event = {
+    id:                cursor,
+    kind:              'chat.message',
+    channel:           'system',
+    senderUserId:      'system',
+    senderDisplayName: 'FCM',
+    body:              'LINK COMPLETE - account linked. Chat activated.',
+    targetUserId:      '',
+    createdAt:         new Date().toISOString(),
+  };
+  let pushed = 0;
+  for (const sub of subscribers) {
+    if (sub.userId === relayUserId && sub.ws.readyState === 1) {
+      send(sub.ws, { op: 'event', cursor, event });
+      pushed++;
+    }
+  }
+  logger.info({ relayUserId, pushed }, '[relayHandler] notifyLinkComplete pushed');
+}
+
 // ── Error envelope ────────────────────────────────────────────────────────────
 
 /**

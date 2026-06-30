@@ -202,6 +202,10 @@ router.post('/redeem', requireLinkAuth, redemptionIpLimiter, async (req: Request
       const relayService: any = await import('../../src/services/relay/relayIdentityService' as any);
       await relayService.markRelayTokenLinked(relayUserId, actorId);
       logger.info({ relayUserId, actorId }, 'Relay identity upgraded to linked');
+      // Handshake: tell the user's live in-game subscriber it's now linked, so an
+      // already-connected widget transitions from the link screen to chat immediately
+      // (no reconnect needed). Optional-chained: a no-op if the relay module lacks it.
+      await relayService.notifyLinkComplete?.(relayUserId);
     } catch (relayErr: any) {
       // If the relay service module isn't present yet (WT1 not merged), log and continue.
       // The relay will also poll hud_link_codes.used_at as its own fallback.

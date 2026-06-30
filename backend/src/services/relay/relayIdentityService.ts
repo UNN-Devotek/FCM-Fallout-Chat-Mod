@@ -12,3 +12,6 @@
  */
 
 export { markRelayTokenLinked } from './tokenService';
+// Push the "link complete" handshake to the user's live in-game subscriber (post-redeem),
+// so an already-connected widget transitions from the link screen to chat immediately.
+export { notifyLinkComplete } from './relayHandler';

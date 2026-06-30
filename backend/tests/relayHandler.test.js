@@ -905,6 +905,27 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
+  test('notifyLinkComplete pushes a LINK COMPLETE handshake to the live subscriber', async () => {
+    // After the web redeem marks the identity linked, the relay pushes a "LINK COMPLETE" system
+    // event to the user's live subscriber so an already-connected in-game widget hands off to chat.
+    const { notifyLinkComplete } = require('../src/services/relay/relayHandler');
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    await waitForMsg(wsReg, msgsReg, () => send(wsReg, { op: 'register', displayName: 'HandshakeUser' }));
+    const token = msgsReg.find((m) => m && m.token)?.token;
+    const relayUserId = lastRawUserId();
+    wsReg.close();
+
+    const { ws, msgs } = await conn();
+    await waitForMsg(ws, msgs, () => send(ws, { op: 'subscribe', token }));
+    await new Promise((r) => setTimeout(r, 150));
+    await notifyLinkComplete(relayUserId);
+    await new Promise((r) => setTimeout(r, 250));
+    const done = msgs.find((m) => m && m.op === 'event' && m.event && m.event.channel === 'system'
+      && String(m.event.body).includes('LINK COMPLETE'));
+    expect(done).toBeTruthy();
+    ws.close();
+  });
+
   test('send passes a numeric relaySeq into ingestMessage (single-broadcast model)', async () => {
     // Regression: handleSend must thread the pre-computed relaySeq INTO ingestMessage
     // (which forwards it to finalizeMessage → persisted messages.relay_seq + single
