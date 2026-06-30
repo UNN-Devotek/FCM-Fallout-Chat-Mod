@@ -4,7 +4,12 @@ import { useOutletContext, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import type { AuthUser } from '../../contexts/AuthContext';
-import EmojiPicker from './EmojiPicker';
+import EmojiPicker, {
+  extractEmojiTokens,
+  loadRecentEmojiTokens,
+  recordRecentEmoji,
+  saveRecentEmojiTokens,
+} from './EmojiPicker';
 import GifPicker from './GifPicker';
 import { usePickerInsert } from './usePickerInsert';
 import { useDebouncedSearch } from './useDebouncedSearch';
@@ -5893,12 +5898,25 @@ export default function ChatOverlay() {
 
   // Build + send/queue a plain chat:send frame. Centralizes the payload shape
   // (clientCreatedAt stamping, mentions default) shared by every text send site.
+  // Log any emoji (native or custom) in an OUTGOING message into the recent-emoji
+  // store, so typing+sending an emoji surfaces it in the picker's Recent row the
+  // same as clicking it from the picker. Newest-first, deduped, capped at
+  // RECENT_EMOJI_LIMIT — all enforced by recordRecentEmoji/save.
+  const recordSentEmojis = useCallback((content: string) => {
+    const tokens = extractEmojiTokens(content);
+    if (tokens.length === 0) return;
+    let next = loadRecentEmojiTokens();
+    for (const token of tokens) next = recordRecentEmoji(next, token);
+    saveRecentEmojiTokens(next);
+  }, []);
+
   const sendChatMessage = useCallback((content: string, channelId: string, mentions: { name: string; discordId: string }[] = []) => {
+    recordSentEmojis(content);
     sendOrQueueChat({
       type: 'chat:send',
       payload: { content, channelId, clientCreatedAt: new Date().toISOString(), mentions },
     });
-  }, [sendOrQueueChat]);
+  }, [sendOrQueueChat, recordSentEmojis]);
 
   // Send a party:send frame. Unlike chat:send, party messages are NEVER queued
   // (party state may be stale after a reconnect), so this no-ops when the WS is
@@ -5906,8 +5924,9 @@ export default function ChatOverlay() {
   const sendPartyMessage = useCallback((partyId: string, content: string) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    recordSentEmojis(content);
     ws.send(JSON.stringify({ type: 'party:send', payload: { partyId, content } }));
-  }, []);
+  }, [recordSentEmojis]);
 
   const openPrivateConversation = useCallback((targetUserId: string) => {
     const ws = wsRef.current;
@@ -5918,6 +5937,7 @@ export default function ChatOverlay() {
   const sendPrivateMessageFrame = useCallback((conversationId: string, recipientUserId: string, content: string) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    recordSentEmojis(content);
     ws.send(JSON.stringify({
       type: 'pm:send',
       payload: {
@@ -5927,7 +5947,7 @@ export default function ChatOverlay() {
         clientCreatedAt: new Date().toISOString(),
       },
     }));
-  }, []);
+  }, [recordSentEmojis]);
 
   // Send a throttled chat:typing frame (once per 2s per scope).
   const sendTyping = useCallback(() => {

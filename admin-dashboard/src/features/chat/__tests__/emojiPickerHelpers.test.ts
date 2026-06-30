@@ -6,6 +6,7 @@ import {
   recordRecentEmoji,
   loadRecentEmojiTokens,
   saveRecentEmojiTokens,
+  extractEmojiTokens,
 } from '../EmojiPicker';
 
 function makeStorage(seed: Record<string, string> = {}) {
@@ -47,5 +48,52 @@ describe('emoji picker recent helpers', () => {
     });
 
     expect(loadRecentEmojiTokens(storage)).toEqual([]);
+  });
+});
+
+describe('extractEmojiTokens', () => {
+  // A controlled "known native" set so the test is independent of emoji-mart data.
+  const known = new Set(['😀', '😂', '🎉', '👍', '👨‍👩‍👧']);
+  const isKnown = (s: string) => known.has(s);
+
+  it('returns nothing for plain text', () => {
+    expect(extractEmojiTokens('hello world', isKnown)).toEqual([]);
+    expect(extractEmojiTokens('', isKnown)).toEqual([]);
+  });
+
+  it('extracts native emoji in first-appearance order', () => {
+    expect(extractEmojiTokens('gg 😀 nice 😂 yes 😀', isKnown)).toEqual(['😀', '😂']);
+  });
+
+  it('extracts custom emoji tokens', () => {
+    expect(extractEmojiTokens('hi <:vault:1234567890123456> there', isKnown)).toEqual([
+      '<:vault:1234567890123456>',
+    ]);
+    expect(extractEmojiTokens('<a:spin:9876543210987654>', isKnown)).toEqual([
+      '<a:spin:9876543210987654>',
+    ]);
+  });
+
+  it('extracts mixed native + custom in order, deduped', () => {
+    expect(
+      extractEmojiTokens('😀 <:vault:1234567890123456> 😀 🎉', isKnown),
+    ).toEqual(['😀', '<:vault:1234567890123456>', '🎉']);
+  });
+
+  it('keeps ZWJ sequences as a single token', () => {
+    expect(extractEmojiTokens('family 👨‍👩‍👧 here', isKnown)).toEqual(['👨‍👩‍👧']);
+  });
+
+  it('strips a VS16 variation selector to match the known canonical form', () => {
+    // '👍️' should be recorded as the known '👍'.
+    expect(extractEmojiTokens('nice 👍️', isKnown)).toEqual(['👍']);
+  });
+
+  it('ignores pictographic glyphs not recognized as known emoji', () => {
+    expect(extractEmojiTokens('weird 🭀 glyph', isKnown)).toEqual([]);
+  });
+
+  it('uses the emoji-mart map by default (no predicate injected)', () => {
+    expect(extractEmojiTokens('party 🎉 time')).toEqual(['🎉']);
   });
 });
