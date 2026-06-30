@@ -707,6 +707,44 @@ function syntheticDevDiscordId(installToken) {
   return '9' + dec.slice(-17).padStart(17, '0'); // always an 18-digit string
 }
 
+// FO76 Proton AppID — its compatdata prefix holds the Wine registry we patch.
+const FO76_APPID = '1151340';
+
+// Candidate `user.reg` paths for FO76's Proton prefix across the given Steam library
+// roots (e.g. ~/.local/share/Steam, ~/.steam/steam, and any libraryfolders.vdf paths).
+// The caller checks which actually exist.
+function fo76UserRegCandidates(steamRoots = []) {
+  return steamRoots
+    .filter(Boolean)
+    .map(r => `${String(r).replace(/\/+$/, '')}/steamapps/compatdata/${FO76_APPID}/pfx/user.reg`);
+}
+
+// Pure, idempotent edit of a Wine `user.reg` to enable Wine's own mouse capture for FO76
+// (winecfg → Graphics → "Automatically capture the mouse in full-screen windows"). This is
+// what keeps the cursor locked to the game on KWin Wayland — KWin revokes the game's pointer
+// constraint when the overlay sits on top, but Wine's own X grab is honoured. Returns the new
+// file contents, or null if both keys are already set (no write needed). See
+// docs/overlay/linux-overlay-approaches.md.
+function buildFo76GrabUserReg(content) {
+  const text = String(content == null ? '' : content);
+  const hasFull = /^"GrabFullscreen"\s*=\s*"Y"/m.test(text);
+  const hasPtr = /^"GrabPointer"\s*=\s*"Y"/m.test(text);
+  if (hasFull && hasPtr) return null; // already configured
+  const adds = [];
+  if (!hasFull) adds.push('"GrabFullscreen"="Y"');
+  if (!hasPtr) adds.push('"GrabPointer"="Y"');
+  // The section header is `[Software\\Wine\\X11 Driver] <timestamp>` (double-backslashes in
+  // the .reg text). Insert missing keys right after it if present; else append the section.
+  const headerRe = /^\[Software\\\\Wine\\\\X11 Driver\].*$/m;
+  const m = headerRe.exec(text);
+  if (m) {
+    const idx = m.index + m[0].length;
+    return text.slice(0, idx) + '\n' + adds.join('\n') + text.slice(idx);
+  }
+  const sep = text.length && !text.endsWith('\n') ? '\n' : '';
+  return text + sep + '\n[Software\\\\Wine\\\\X11 Driver] 0\n#time=0\n' + adds.join('\n') + '\n';
+}
+
 module.exports = {
   DEFAULT_APP_CLIENT_KEY,
   DEFAULT_WIDTH,
@@ -749,4 +787,7 @@ module.exports = {
   syntheticDevDiscordId,
   filterProxyHeaders,
   resolveRelayProxyUrl,
+  FO76_APPID,
+  fo76UserRegCandidates,
+  buildFo76GrabUserReg,
 };

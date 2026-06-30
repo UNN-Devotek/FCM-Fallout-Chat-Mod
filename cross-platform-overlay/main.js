@@ -430,6 +430,64 @@ function setupKdeKeepAbove({ interactive = false } = {}) {
   } catch (e) { diag('[kwin] setupKdeKeepAbove exec failed:', String(e && e.message || e)); }
   diag('[kwin] setupKdeKeepAbove: rule at ' + rulePath + ' (interactive=' + interactive + ', gameBelow=' + includeBelow + ')');
 }
+
+// Discover Steam library roots (default install dirs + any libraryfolders.vdf paths),
+// so we can locate the FO76 Proton prefix wherever the game is installed.
+function discoverSteamRoots() {
+  const os = require('os');
+  const home = os.homedir();
+  const base = [
+    path.join(home, '.local/share/Steam'),
+    path.join(home, '.steam/steam'),
+    path.join(home, '.steam/root'),
+    path.join(home, '.var/app/com.valvesoftware.Steam/.local/share/Steam'), // flatpak
+  ];
+  const roots = new Set();
+  for (const b of base) { try { if (fs.existsSync(b)) roots.add(b); } catch { /* ignore */ } }
+  for (const b of [...roots]) {
+    for (const vdf of [path.join(b, 'steamapps/libraryfolders.vdf'), path.join(b, 'config/libraryfolders.vdf')]) {
+      try {
+        const txt = fs.readFileSync(vdf, 'utf8');
+        const re = /"path"\s*"([^"]+)"/g; let m;
+        while ((m = re.exec(txt)) !== null) roots.add(m[1].replace(/\\\\/g, '/'));
+      } catch { /* ignore */ }
+    }
+  }
+  return [...roots];
+}
+
+function fo76IsRunning() {
+  try {
+    const { execSync } = require('child_process');
+    const out = execSync('ps -A -o comm=', { timeout: 4000 }).toString();
+    return out.split('\n').some(l => l.trim().toLowerCase() === 'fallout76.exe');
+  } catch { return false; }
+}
+
+// Enable Wine's own mouse capture in the FO76 Proton prefix (GrabFullscreen/GrabPointer) —
+// the cursor-lock fix on KWin Wayland (KWin revokes the game's pointer constraint when the
+// overlay is on top, but Wine's own X grab is honoured). Idempotent + backs up user.reg.
+// See docs/overlay/linux-overlay-approaches.md. Surfaced via the tray (KDE submenu).
+function fixFo76CursorLock() {
+  if (!IS_LINUX) return;
+  const { dialog } = require('electron');
+  const notify = (type, message, detail) => {
+    try { dialog.showMessageBox({ type, title: 'Fallout Chat Mod — in-game cursor lock', message, detail: detail || '', buttons: ['OK'] }); }
+    catch { diag('[cursor-fix] ' + message + (detail ? ' — ' + detail : '')); }
+  };
+  const candidates = overlayCore.fo76UserRegCandidates(discoverSteamRoots());
+  const reg = candidates.find(p => { try { return fs.existsSync(p); } catch { return false; } });
+  if (!reg) { notify('warning', 'Could not find the Fallout 76 Proton prefix.', 'Launch FO76 once via Steam/Proton so its prefix is created, then try again.'); return; }
+  if (fo76IsRunning()) { notify('warning', 'Fallout 76 is running.', 'Fully quit FO76 first (Proton rewrites the prefix on exit), then run this again.'); return; }
+  let content;
+  try { content = fs.readFileSync(reg, 'utf8'); } catch (e) { notify('error', 'Could not read the FO76 prefix.', String(e && e.message || e)); return; }
+  const updated = overlayCore.buildFo76GrabUserReg(content);
+  if (updated == null) { notify('info', 'In-game cursor lock is already enabled.', 'Wine GrabFullscreen/GrabPointer are already set for Fallout 76. Launch FO76 (Fullscreen recommended) and the cursor stays locked to the game.'); return; }
+  try { fs.writeFileSync(reg + '.fcm-bak', content); fs.writeFileSync(reg, updated); }
+  catch (e) { notify('error', 'Could not write the FO76 prefix.', String(e && e.message || e)); return; }
+  diag('[cursor-fix] applied Wine GrabFullscreen/GrabPointer to ' + reg);
+  notify('info', 'In-game cursor lock enabled for Fallout 76.', 'Relaunch Fallout 76 (Fullscreen mode recommended). Wine now keeps the mouse cursor locked to the game while the overlay is on top. (Backup saved next to user.reg.)');
+}
 const http = require('http');
 const { URL } = require('url');
 // Helper: pick http or https module based on the relay URL protocol.
@@ -3435,6 +3493,10 @@ function rebuildTrayMenu() {
         setupKdeKeepAbove({ interactive: false }); // re-apply rules with/without the game-below rule (live KWin reconfigure)
         rebuildTrayMenu();
       } },
+      // Cursor-lock fix: enable Wine's own mouse capture in the FO76 prefix so the cursor
+      // stays locked to the game on KWin Wayland (KWin revokes the game's pointer constraint
+      // when the overlay is on top). One-click, idempotent; needs FO76 closed.
+      { label: 'Fix in-game cursor lock (Wayland) — needs FO76 closed', click: () => fixFo76CursorLock() },
     ] : []),
     // Diagnostics: surface the log for bug reports + let users enable verbose
     // (per-tick) logging without a relaunch. The toggle persists to settings so it

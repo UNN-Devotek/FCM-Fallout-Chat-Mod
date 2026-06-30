@@ -219,6 +219,15 @@ KDE Plasma (Wayland) — automatic
   Or use the app tray menu -> "KDE: keep overlay above game".
 - The uninstaller removes these KWin rules (restores FO76's fullscreen stacking).
 
+In-game cursor lock (KWin Wayland)
+- On Wayland, KWin releases Fallout 76's mouse-lock when the overlay sits on top,
+  so the cursor can drift off the game. Fix it from the tray menu ->
+  "Fix in-game cursor lock (Wayland)". It enables Wine's own mouse capture
+  (GrabFullscreen/GrabPointer) in the FO76 Proton prefix — one-click, idempotent,
+  with a backup. Quit Fallout 76 first, click it, then relaunch FO76 in Fullscreen.
+- Equivalent manual step: protontricks 1151340 winecfg -> Graphics tab ->
+  "Automatically capture the mouse in full-screen windows".
+
 Do NOT run the game inside gamescope for overlay purposes — its nested
 compositor isolates the game and no external overlay can draw over it.
 
