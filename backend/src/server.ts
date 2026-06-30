@@ -466,10 +466,15 @@ app.get('/auth/discord/callback', authLimiter, async (req: Request, res: Respons
       role: adminRole,
     };
 
-    // Redirect to the frontend dashboard. Members (non-admin) land on /chat;
-    // admin/mod roles land on /server-health.
+    // Redirect target. A user completing the in-game link flow (intent=link) must land on
+    // /link (the code-entry screen) regardless of role — otherwise privileged roles get sent to
+    // /server-health and can never enter their code. Otherwise: members → /chat, admin/mod →
+    // /server-health.
+    const dest = stateData.intent === 'link'
+      ? '/link'
+      : (adminRole === 'member' ? '/chat' : '/server-health');
     await new Promise<void>(resolve => req.session.save(() => resolve()));
-    res.redirect(`${frontendBase}${adminRole === 'member' ? '/chat' : '/server-health'}`);
+    res.redirect(`${frontendBase}${dest}`);
   } catch (err) {
     logger.error({ err }, 'Discord OAuth callback error');
     res.status(500).send('Authentication failed.');
