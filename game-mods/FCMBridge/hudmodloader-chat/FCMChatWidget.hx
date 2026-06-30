@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.7.1";  // lock out game keys while typing: dispatch engine ControlMap::StartEditText/EndEditText on BSUIDataManager in the native input path (ZFE captures text but does not block the engine); + v2.7.0 (post-link handshake)
+    static inline var VERSION:String  = "2.7.2";  // chat input now goes through SharedHUDTools (HUDModLoader HUDTools dispatches engine StartEditText/EndEditText -> LOCKS game keys while typing); ZFE native input is a no-lock fallback only (its CustomEvent dispatch fails #1065 from the overlay domain); + v2.7.0/2.7.1
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -789,9 +789,14 @@ class FCMChatWidget extends MovieClip {
         if (_inputOpen) return;
         // The open key both restores a hidden panel AND opens input (CAP-011, guaranteed).
         if (_hidden) show();
-        // PRIMARY: ZFE native chat-input session — only when the probe proved it usable.
-        if (_nativeInputUsable && openInputNative()) return;
+        // PRIMARY: SharedHUDTools text-entry. HUDModLoader's HUDTools dispatches the engine's
+        // StartEditText/EndEditText (in the correct domain), so it LOCKS OUT the game's own keys
+        // while typing. The ZFE native input only captures text — it cannot block the engine
+        // (our own CustomEvent dispatch fails from the overlay domain, #1065, so WASD leaks into
+        // the field). Native is therefore a last-resort, no-lock fallback only.
         openInputSharedHudTools();
+        if (_inputOpen) return;
+        if (_nativeInputUsable) openInputNative();
     }
 
     // =========================================================================
@@ -1182,7 +1187,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.1");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.2");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
