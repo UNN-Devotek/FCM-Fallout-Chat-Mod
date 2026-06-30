@@ -68,6 +68,7 @@ const CHANNEL_CMDS: CmdRow[] = [
 ];
 
 const FO76_CMDS: CmdRow[] = [
+  { trigger: '/online', description: 'Show total users online in chat' },
   { trigger: '/serverstatus', description: 'Show Fallout 76 server status (up / down)' },
   { trigger: '/nukecodes', args: '', description: 'Show this week\'s nuke launch codes (Alpha / Bravo / Charlie)', note: 'alias: /codes' },
   { trigger: '/wiki', args: '<name>', description: 'Look up a Fallout 76 item, weapon, creature, perk, or location' },

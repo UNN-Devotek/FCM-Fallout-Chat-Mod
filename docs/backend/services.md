@@ -78,7 +78,7 @@ Accepts a `StatsRange` (`all | 90d | 60d | 30d | 7d | 1d`). Returns daily bucket
 
 Commands are configured via `GET/POST/PATCH/DELETE /api/commands`. The WS handler calls `handleCommand` when a message starts with `/`.
 
-**Code-constant built-ins** (handled before any DB lookup, never stored in `chat_commands`): `/help`, `/s` (disabled), the channel relays `/g /t /e /r`, `/report`, `/apply`, and the Fallout 76 data lookups **`/serverstatus`** (alias `/server-status`), **`/nukecodes`** (alias `/codes`), and **`/camp <item name>`**. These reply privately to the sender with a formatted card built from `serverStatusService` / `nukeCodesService` / `campService` (below). All built-in triggers are reserved in `commandsController` (`RESERVED_BUILTINS`) so admins can't shadow them with DB rows.
+**Code-constant built-ins** (handled before any DB lookup, never stored in `chat_commands`): `/help`, `/s` (disabled), the channel relays `/g /t /e /r`, `/report`, `/apply`, and the Fallout 76 lookups **`/online`**, **`/serverstatus`** (alias `/server-status`), **`/nukecodes`** (alias `/codes`), and **`/camp <item name>`**. `/online` replies privately with plain text in the form `N users online in chat.` and, when the requester has a fresh world snapshot, `N users online in chat. M players in your world.` All built-in triggers are reserved in `commandsController` (`RESERVED_BUILTINS`) so admins can't shadow them with DB rows.
 
 ---
 

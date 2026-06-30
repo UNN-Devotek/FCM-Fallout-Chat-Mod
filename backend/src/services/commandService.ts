@@ -3,6 +3,8 @@ import logger from '../config/logger';
 import { getServerStatus } from './serverStatusService';
 import { getNukeCodes } from './nukeCodesService';
 import { getCampItem } from './campService';
+import { getGlobalOnlineCount } from './onlinePresenceService';
+import { getServerPlayersForUser } from './playerListService';
 import * as giveawayService from './giveawayService';
 import { GiveawayError } from './giveawayService';
 import { getMinervaStatus } from './minervaService';
@@ -128,6 +130,7 @@ function buildHelpResponse(commands: ChatCommand[]): string {
   lines.push('/apply — Open the staff application form');
 
   lines.push('', '— FALLOUT 76 —');
+  lines.push('/online — Show total users online in chat');
   lines.push('/serverstatus — Show Fallout 76 server status (up/down)');
   lines.push('/nukecodes — Show this week\'s nuke launch codes (Alpha/Bravo/Charlie)');
   lines.push('/wiki <name> — Look up a Fallout 76 item, weapon, creature, perk, or location');
@@ -221,6 +224,30 @@ async function buildNukeCodesResponse(): Promise<{ text: string; metadata: Recor
       bravo: data.bravo,
       charlie: data.charlie,
       validUntil: data.validUntil != null ? new Date(data.validUntil * 1000).toISOString() : null,
+    },
+  };
+}
+
+async function buildOnlineResponse(
+  userId: string,
+  localClientCount: number,
+): Promise<{ text: string; metadata: Record<string, unknown> }> {
+  const [totalOnline, worldPlayers] = await Promise.all([
+    getGlobalOnlineCount(localClientCount),
+    getServerPlayersForUser(userId),
+  ]);
+
+  const worldPlayerCount = worldPlayers?.players?.length ?? null;
+  const text = worldPlayerCount === null
+    ? `${totalOnline} users online in chat.`
+    : `${totalOnline} users online in chat. ${worldPlayerCount} players in your world.`;
+
+  return {
+    text,
+    metadata: {
+      type: 'online_status',
+      totalOnline,
+      worldPlayerCount,
     },
   };
 }
@@ -482,7 +509,7 @@ async function handleGiveawayCommand(
  * @param channelId        Channel the message was sent in (UUID)
  * @param channelName      Human-readable channel name
  * @param serverEndpoint   Unused — retained for call-site compatibility
- * @param playerCount      Unused — retained for call-site compatibility
+ * @param playerCount      Local deduplicated chat-user count from getClientCount()
  * @param parentChannelId  Parent channel UUID (for allowedChannelId check on sub-channels)
  */
 export async function tryHandleCommand(
@@ -582,6 +609,19 @@ export async function tryHandleCommand(
       handled: true,
       actionType: 'private',
       botMessage: '◈ STAFF APPLICATION\n\nInterested in joining the Fallout Chat Mod team?\n\nVisit: https://falloutchatmod.com/apply\n\nApplications are reviewed by the moderation team. Requirements: active community member, no recent bans, 18+.',
+      targetChannelId: channelId,
+    };
+  }
+
+  // Built-in /online — total chat users online across backend instances plus
+  // the requester's latest world player-list size when available.
+  if (trigger === '/online') {
+    const r = await buildOnlineResponse(userId, playerCount);
+    return {
+      handled: true,
+      actionType: 'private',
+      botMessage: r.text,
+      metadata: r.metadata,
       targetChannelId: channelId,
     };
   }
