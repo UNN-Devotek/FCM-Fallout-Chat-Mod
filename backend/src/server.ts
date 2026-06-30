@@ -12,7 +12,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import session from 'express-session';
-import RedisStore from 'connect-redis';
+import { RedisStore } from 'connect-redis';
 import { WebSocketServer } from 'ws';
 import { v4 as uuidv4 } from 'uuid';
 import cron from 'node-cron';

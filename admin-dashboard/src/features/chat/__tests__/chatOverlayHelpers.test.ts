@@ -67,12 +67,6 @@ describe('slash-command built-ins', () => {
   });
 });
 
-describe('slash-command built-ins', () => {
-  it('includes /online in the built-in autocomplete command list', () => {
-    expect(BUILTIN_FORMS.some((cmd) => cmd.trigger === '/online')).toBe(true);
-  });
-});
-
 // ── findTheme ───────────────────────────────────────────────────────────────
 describe('findTheme', () => {
   it('returns the matching theme by id', () => {
