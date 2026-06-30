@@ -24,6 +24,7 @@ import {
   noteUserConnected,
   noteUserDisconnected,
   noteUserPendingDisconnect,
+  registerLocalPresenceSource,
 } from '../services/onlinePresenceService';
 import {
   PrivateConversationAccessError,
@@ -414,6 +415,25 @@ export function getConnectedUserIds(): string[] {
   }
   return Array.from(out);
 }
+
+/**
+ * Authoritative set of userIds that are "present" on THIS instance: anyone with
+ * an OPEN socket, plus anyone inside the flap-grace window (pendingDisconnect).
+ * This is the same set getClientCount() sizes, exposed so onlinePresenceService
+ * can flush it to Redis for the cross-instance /online count without keeping a
+ * drift-prone parallel refcount. Order doesn't matter — callers dedup.
+ */
+export function getLocallyPresentUserIds(): string[] {
+  const seen = new Set<string>();
+  for (const c of clients.values()) {
+    if (c.userId && c.ws.readyState === WebSocket.OPEN) seen.add(c.userId);
+  }
+  for (const userId of pendingDisconnect.keys()) seen.add(userId);
+  return Array.from(seen);
+}
+
+// Wire the WS layer in as the single source of truth for local presence.
+registerLocalPresenceSource(getLocallyPresentUserIds);
 
 /** No-op stub retained for call-site compatibility. World-detection was removed. */
 export function updateClientEndpoint(_userId: string, _endpoint: string | null): void {
@@ -2486,7 +2506,14 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       });
     };
 
-    const enteredPresenceGrace = noteUserPendingDisconnect(user.id);
+    // Flush presence, then decide from the AUTHORITATIVE socket registry whether
+    // this was the user's last live socket. The closing token was already removed
+    // from `clients` above (line ~2439), so isUserWsConnected() is false iff no
+    // other OPEN socket remains. (Previously this relied on a refcount return
+    // value from noteUserPendingDisconnect, which could drift; see
+    // onlinePresenceService for why the refcount was removed.)
+    noteUserPendingDisconnect(user.id);
+    const enteredPresenceGrace = !isUserWsConnected(user.id);
     if (enteredPresenceGrace) {
       scheduleDeferred(closingEndpoint);
     }

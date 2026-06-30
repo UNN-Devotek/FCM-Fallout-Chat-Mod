@@ -32,6 +32,7 @@ import {
   getRichSelectionOffsets,
   placeRichCaretAtOffset,
   insertTokenIntoText,
+  resolveExternalSetCaret,
   isNearBottom,
   STICK_TO_BOTTOM_THRESHOLD,
   buildMentionInsert,
@@ -894,6 +895,26 @@ describe('insertTokenIntoText', () => {
     const next = insertTokenIntoText('hello world', 0, 5, 'bye');
     expect(next.text).toBe('bye world');
     expect(next.caretOffset).toBe(3);
+  });
+});
+
+describe('resolveExternalSetCaret', () => {
+  it('collapses the caret to the end when forceToEnd is set (slash-command completion)', () => {
+    // type "/min" (caret at 4) -> complete to "/minerva " (len 9). Without the
+    // flag the saved offset (4) would land mid-command "/min|erva".
+    expect(resolveExternalSetCaret(9, 4, true)).toBe(9);
+  });
+
+  it('restores the saved offset (clamped) for ordinary external sets', () => {
+    expect(resolveExternalSetCaret(11, 5, false)).toBe(5);
+  });
+
+  it('clamps a stale saved offset to the new text length', () => {
+    expect(resolveExternalSetCaret(3, 8, false)).toBe(3);
+  });
+
+  it('never returns a negative offset', () => {
+    expect(resolveExternalSetCaret(5, -2, false)).toBe(0);
   });
 });
 

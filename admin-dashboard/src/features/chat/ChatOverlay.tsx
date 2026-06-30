@@ -4,7 +4,12 @@ import { useOutletContext, Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import type { AuthUser } from '../../contexts/AuthContext';
-import EmojiPicker from './EmojiPicker';
+import EmojiPicker, {
+  extractEmojiTokens,
+  loadRecentEmojiTokens,
+  recordRecentEmoji,
+  saveRecentEmojiTokens,
+} from './EmojiPicker';
 import GifPicker from './GifPicker';
 import { usePickerInsert } from './usePickerInsert';
 import { useDebouncedSearch } from './useDebouncedSearch';
@@ -648,6 +653,23 @@ export function insertTokenIntoText(
     text,
     caretOffset: Math.min(text.length, safeStart + token.length),
   };
+}
+
+/**
+ * Resolve where the caret should land after the rich input's text is set from
+ * OUTSIDE (autocomplete, emoji insert, clear-on-send). Normally we preserve the
+ * previously-saved caret offset (clamped to the new length) so emoji/token
+ * inserts don't yank the caret. But for command-autocomplete completions the
+ * caret must collapse to the END — otherwise picking "/minerva" while the caret
+ * sat at offset 4 ("/min") restores offset 4 and lands mid-command ("/min|erva").
+ */
+export function resolveExternalSetCaret(
+  textLength: number,
+  savedOffset: number,
+  forceToEnd: boolean,
+): number {
+  if (forceToEnd) return textLength;
+  return Math.min(textLength, Math.max(0, savedOffset));
 }
 
 /**
@@ -3796,6 +3818,10 @@ export default function ChatOverlay() {
   // Rich (contentEditable) input ref — used only when overlayShell is active.
   const richInputRef = useRef<HTMLDivElement>(null);
   const richSelectionRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
+  // One-shot flag: when an external setInputText should land the caret at the END
+  // (slash-command autocomplete) rather than restoring the saved offset. Consumed
+  // and cleared by the rich-input sync effect on the next run.
+  const caretToEndRef = useRef<boolean>(false);
   // Tracks whether the chat input had focus immediately before a state update
   // (e.g. chat:history repopulation) so we can restore it afterward.
   const inputWasFocusedRef = useRef<boolean>(false);
@@ -3869,14 +3895,18 @@ export default function ChatOverlay() {
     if (current === inputText) return; // DOM already matches — nothing to do
 
     const savedOffset = getRichSelectionOffsets(el)?.start ?? richSelectionRef.current.start;
+    // Consume the one-shot "caret to end" flag (set by slash-command autocomplete).
+    const forceToEnd = caretToEndRef.current;
+    caretToEndRef.current = false;
 
     el.innerHTML = buildRichHtml(inputText);
 
-    // Restore caret (or place at end) after programmatic set.
+    // Restore caret (or, for command completions, collapse to end) after the
+    // programmatic set.
     requestAnimationFrame(() => {
       const target = richInputRef.current;
       if (!target) return;
-      const caretOffset = Math.min(inputText.length, savedOffset);
+      const caretOffset = resolveExternalSetCaret(inputText.length, savedOffset, forceToEnd);
       placeRichCaretAtOffset(target, caretOffset);
       richSelectionRef.current = { start: caretOffset, end: caretOffset };
     });
@@ -5652,10 +5682,21 @@ export default function ChatOverlay() {
   }, [inputText, acSuggestions.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function selectAcSuggestion(cmd: SlashCommand) {
-    setInputText(cmd.trigger + ' ');
+    const nextText = cmd.trigger + ' ';
+    // Land the caret at the END of the completed command, not wherever it sat
+    // mid-typing (the rich-input sync effect would otherwise restore the saved
+    // offset and drop the caret into the middle of the command).
+    caretToEndRef.current = true;
+    setInputText(nextText);
     setAcOpen(false);
-    if (richInputRef.current) richInputRef.current.focus();
-    else inputRef.current?.focus();
+    if (richInputRef.current) {
+      richInputRef.current.focus();
+    } else if (inputRef.current) {
+      // Website plain-textarea path: place caret at end directly (no rich sync effect).
+      const ta = inputRef.current;
+      ta.focus();
+      requestAnimationFrame(() => { ta.setSelectionRange(nextText.length, nextText.length); });
+    }
   }
 
   // ── Wiki autocomplete effect ──────────────────────────────────────────────
@@ -5857,12 +5898,25 @@ export default function ChatOverlay() {
 
   // Build + send/queue a plain chat:send frame. Centralizes the payload shape
   // (clientCreatedAt stamping, mentions default) shared by every text send site.
+  // Log any emoji (native or custom) in an OUTGOING message into the recent-emoji
+  // store, so typing+sending an emoji surfaces it in the picker's Recent row the
+  // same as clicking it from the picker. Newest-first, deduped, capped at
+  // RECENT_EMOJI_LIMIT — all enforced by recordRecentEmoji/save.
+  const recordSentEmojis = useCallback((content: string) => {
+    const tokens = extractEmojiTokens(content);
+    if (tokens.length === 0) return;
+    let next = loadRecentEmojiTokens();
+    for (const token of tokens) next = recordRecentEmoji(next, token);
+    saveRecentEmojiTokens(next);
+  }, []);
+
   const sendChatMessage = useCallback((content: string, channelId: string, mentions: { name: string; discordId: string }[] = []) => {
+    recordSentEmojis(content);
     sendOrQueueChat({
       type: 'chat:send',
       payload: { content, channelId, clientCreatedAt: new Date().toISOString(), mentions },
     });
-  }, [sendOrQueueChat]);
+  }, [sendOrQueueChat, recordSentEmojis]);
 
   // Send a party:send frame. Unlike chat:send, party messages are NEVER queued
   // (party state may be stale after a reconnect), so this no-ops when the WS is
@@ -5870,8 +5924,9 @@ export default function ChatOverlay() {
   const sendPartyMessage = useCallback((partyId: string, content: string) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    recordSentEmojis(content);
     ws.send(JSON.stringify({ type: 'party:send', payload: { partyId, content } }));
-  }, []);
+  }, [recordSentEmojis]);
 
   const openPrivateConversation = useCallback((targetUserId: string) => {
     const ws = wsRef.current;
@@ -5882,6 +5937,7 @@ export default function ChatOverlay() {
   const sendPrivateMessageFrame = useCallback((conversationId: string, recipientUserId: string, content: string) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    recordSentEmojis(content);
     ws.send(JSON.stringify({
       type: 'pm:send',
       payload: {
@@ -5891,7 +5947,7 @@ export default function ChatOverlay() {
         clientCreatedAt: new Date().toISOString(),
       },
     }));
-  }, []);
+  }, [recordSentEmojis]);
 
   // Send a throttled chat:typing frame (once per 2s per scope).
   const sendTyping = useCallback(() => {
@@ -8110,7 +8166,7 @@ export default function ChatOverlay() {
               full width EXCEPT under the active main tab — drawn as two segments:
               [0 → activeTab.left] and [activeTab.right → full width]. The active
               tab's open bottom then "sits" on this line. Both shell + website. */}
-          {tabCutout && (subChannels.length > 0 || isOnPartyTab || isOnPmTab) && (
+          {tabCutout && (subChannels.length > 0 || isOnPartyTab) && (
             <>
               <div style={{
                 position: 'absolute', left: 0, bottom: 0, height: '1px',
@@ -8254,39 +8310,6 @@ export default function ChatOverlay() {
             </div>
           </div>
           </PartyErrorBoundary>
-        ) : isOnPmTab ? (
-          <div data-fcm-subtab-row="pm" style={{
-            display: 'flex', alignItems: 'center',
-            padding: overlayShell ? '0 6px 0 16px' : '0 6px 0 15px',
-            height: '22px',
-            boxSizing: 'border-box',
-            background: chromeRgba,
-            borderBottom: `1px solid ${hexAlpha(primaryColor, 0.45)}`,
-            flexShrink: 0,
-            ...(overlayShell ? { WebkitAppRegion: 'drag' } as React.CSSProperties : {}),
-          }}>
-            <span
-              onClick={() => setPmView('inbox')}
-              style={{
-                fontSize: overlayShell ? `${Math.max(8, fontSize - 1)}px` : `${fontSize}px`,
-                letterSpacing: tabLetterSpacing,
-                cursor: 'pointer',
-                color: pmView === 'inbox' ? primaryText : inactiveTabText,
-                fontWeight: 'bold',
-                textTransform: 'uppercase' as const,
-                marginRight: `${scaleGap(12)}px`,
-                borderBottom: 'none',
-                paddingBottom: '1px',
-                userSelect: 'none',
-                whiteSpace: 'nowrap',
-                display: 'inline-flex', alignItems: 'center', flexShrink: 0,
-                textShadow: pmView === 'inbox' && glowEnabled ? `0 0 6px ${hexAlpha(primaryColor, 0.6 * textAlpha)}, ${textOutline}` : textOutline,
-                ...(overlayShell ? { WebkitAppRegion: 'no-drag' } as React.CSSProperties : {}),
-              }}
-            >
-              INBOX
-            </span>
-          </div>
         ) : subChannels.length > 0 && (
           <div data-fcm-subtab-row="channels" style={{
             display: 'flex', alignItems: 'center', flexWrap: 'nowrap', overflow: 'hidden',

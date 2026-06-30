@@ -50,6 +50,42 @@ export function recordRecentEmoji(tokens: string[], token: string, maxCount = RE
   return normalizeRecentEmojiTokens([trimmed, ...tokens.filter((t) => t !== trimmed)], maxCount);
 }
 
+// Matches a custom emoji token (<:name:id> / <a:name:id>) OR a native unicode
+// emoji grapheme (a pictographic base + optional VS16, ZWJ-joined sequences,
+// and a skin-tone modifier). Single combined pattern so we collect tokens in
+// first-appearance order.
+const EMOJI_OR_CUSTOM_GLOBAL_RE =
+  /<a?:[A-Za-z0-9_]+:\d{16,22}>|\p{Extended_Pictographic}(?:\uFE0F|[\u{1F3FB}-\u{1F3FF}]|\u200D\p{Extended_Pictographic})*/gu;
+
+/**
+ * Extract emoji tokens (native unicode + custom <:name:id>) from a message in
+ * first-appearance order, deduplicated. Native graphemes are only kept when
+ * recognized by `isKnownNative` so we never record arbitrary pictographic glyphs
+ * the picker can't render in its Recent row; the recorded token is the canonical
+ * native string the picker stores (VS16 stripped when that is the known form).
+ *
+ * `isKnownNative` is injectable for testing; it defaults to the emoji-mart map.
+ */
+export function extractEmojiTokens(
+  text: string,
+  isKnownNative: (native: string) => boolean = (native) => NATIVE_TO_ENTRY.has(native),
+): string[] {
+  if (!text) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (tok: string) => {
+    if (tok && !seen.has(tok)) { seen.add(tok); out.push(tok); }
+  };
+  for (const match of text.matchAll(EMOJI_OR_CUSTOM_GLOBAL_RE)) {
+    const raw = match[0];
+    if (raw.startsWith('<')) { push(raw); continue; }
+    if (isKnownNative(raw)) { push(raw); continue; }
+    const stripped = raw.replace(/\uFE0F/g, '');
+    if (stripped !== raw && isKnownNative(stripped)) push(stripped);
+  }
+  return out;
+}
+
 export function loadRecentEmojiTokens(
   storage: Pick<Storage, 'getItem'> | null = typeof localStorage === 'undefined' ? null : localStorage,
 ): string[] {

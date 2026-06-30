@@ -8,25 +8,32 @@ const ONLINE_USERS_TTL_SEC = 45;
 const INSTANCE_ID = randomUUID();
 const INSTANCE_KEY = `${ONLINE_USERS_KEY_PREFIX}${INSTANCE_ID}`;
 
-const openUserCounts = new Map<string, number>();
-const pendingUsers = new Set<string>();
+// Single source of truth: the WS layer registers a provider that returns the
+// userIds with at least one live (OPEN or flap-grace) socket on THIS instance.
+// We deliberately do NOT maintain a parallel hand-incremented refcount here —
+// that drifted whenever a note*() call was unbalanced (e.g. the golden-build
+// reject path fired noteUserDisconnected without a matching noteUserConnected),
+// inflating/corrupting the /online count. Reading the live socket registry
+// directly makes that class of bug impossible.
+let liveLocalUserIdsProvider: (() => string[]) | null = null;
 
-function decrementOpenCount(userId: string): number {
-  const current = openUserCounts.get(userId) ?? 0;
-  if (current <= 1) {
-    openUserCounts.delete(userId);
-    return 0;
-  }
-  const next = current - 1;
-  openUserCounts.set(userId, next);
-  return next;
+// Legacy fallback sets — only consulted when no provider has been registered
+// (e.g. unit tests that exercise the service in isolation). Kept minimal.
+const fallbackUsers = new Set<string>();
+
+/**
+ * Register the authoritative source of locally-connected userIds. Called once
+ * by the WS handlers module at load. Idempotent.
+ */
+export function registerLocalPresenceSource(provider: () => string[]): void {
+  liveLocalUserIdsProvider = provider;
 }
 
 function getLocalOnlineUserIds(): string[] {
-  return Array.from(new Set<string>([
-    ...openUserCounts.keys(),
-    ...pendingUsers.values(),
-  ]));
+  if (liveLocalUserIdsProvider) {
+    return Array.from(new Set<string>(liveLocalUserIdsProvider()));
+  }
+  return Array.from(fallbackUsers);
 }
 
 export async function flushLocalPresenceToRedis(): Promise<void> {
@@ -45,33 +52,26 @@ export async function flushLocalPresenceToRedis(): Promise<void> {
   }
 }
 
+// The note*() calls are now pure "presence may have changed — flush soon"
+// signals. The actual set is always recomputed from the live provider at flush
+// time, so unbalanced calls can no longer corrupt the count. The fallback set
+// is maintained only for the no-provider (unit-test) path.
 export function noteUserConnected(userId: string): void {
-  openUserCounts.set(userId, (openUserCounts.get(userId) ?? 0) + 1);
-  pendingUsers.delete(userId);
+  if (!liveLocalUserIdsProvider) fallbackUsers.add(userId);
   void flushLocalPresenceToRedis();
 }
 
-export function noteUserPendingDisconnect(userId: string): boolean {
-  const remaining = decrementOpenCount(userId);
-  if (remaining === 0) {
-    pendingUsers.add(userId);
-    void flushLocalPresenceToRedis();
-    return true;
-  }
+export function noteUserPendingDisconnect(_userId: string): boolean {
   void flushLocalPresenceToRedis();
-  return false;
+  return true;
 }
 
-export function notePendingDisconnectSuppressed(userId: string): void {
-  pendingUsers.delete(userId);
+export function notePendingDisconnectSuppressed(_userId: string): void {
   void flushLocalPresenceToRedis();
 }
 
 export function noteUserDisconnected(userId: string): void {
-  const remaining = decrementOpenCount(userId);
-  if (remaining === 0) {
-    pendingUsers.delete(userId);
-  }
+  if (!liveLocalUserIdsProvider) fallbackUsers.delete(userId);
   void flushLocalPresenceToRedis();
 }
 
