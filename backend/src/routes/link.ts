@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { createError } from '../middleware/errorHandler';
 import { requireAuth } from '../middleware/auth';
 import { redeemLinkCode } from '../services/linkCodeService';
@@ -49,11 +49,71 @@ const redemptionIpLimiter = rateLimit({
 });
 
 /**
+ * Link-flow auth: resolves req.user from EITHER the overlay install session (X-Auth-Token)
+ * OR a signed-in dashboard/web Discord cookie session (resolved to the FCM user by discordId).
+ * The web /link page authenticates by COOKIE, so the token-only requireAuth would 401 it into a
+ * sign-in loop and the code-entry screen would never show. This implements the routes' documented
+ * "X-Auth-Token or Discord session" contract. Mirrors requireAuth's ban auto-lift + reject.
+ */
+async function requireLinkAuth(req: Request, _res: Response, next: NextFunction): Promise<void> {
+  try {
+    let userId: string | null = null;
+
+    const token = req.headers['x-auth-token'];
+    if (typeof token === 'string' && token) {
+      const redis = await getRedisClient();
+      userId = await redis.get(`session:${token}`);
+    }
+
+    // Fall back to the dashboard/web Discord cookie session.
+    if (!userId) {
+      const sess = req.session as any;
+      const discordId: string | undefined = sess?.discordUser?.id ?? sess?.publicUser?.discordId;
+      if (discordId) {
+        const u = await prisma.user.findFirst({ where: { discordId }, select: { id: true } });
+        userId = u?.id ?? null;
+      }
+    }
+
+    if (!userId) return next(createError(401, 'Sign in to link your account.'));
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, username: true, isBanned: true, bannedUntil: true, banReason: true, banCategory: true },
+    });
+    if (!user) return next(createError(401, 'User not found'));
+
+    // Auto-lift expired temp bans, then reject active bans (mirrors requireAuth).
+    if (user.isBanned && user.bannedUntil && new Date(user.bannedUntil) < new Date()) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { isBanned: false, bannedUntil: null, banReason: null, banCategory: null, bannedById: null, bannedAt: null },
+      }).catch(() => {});
+      (user as any).isBanned = false;
+    }
+    if (user.isBanned) {
+      return next(createError(403, JSON.stringify({
+        type: 'banned',
+        until: user.bannedUntil ? user.bannedUntil.toISOString() : null,
+        permanent: user.bannedUntil === null,
+        reason: user.banReason ?? null,
+        category: user.banCategory ?? null,
+      })));
+    }
+
+    req.user = user as any;
+    next();
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * GET /api/link/game
  * Returns the current link state for the authenticated user.
- * Auth: session (X-Auth-Token or Discord session)
+ * Auth: session (X-Auth-Token or Discord cookie session) — see requireLinkAuth.
  */
-router.get('/game', requireAuth, async (req: Request, res: Response, next) => {
+router.get('/game', requireLinkAuth, async (req: Request, res: Response, next) => {
   try {
     const userId = req.user!.id;
     const hasProvider = await hasLinkedProvider(userId);
@@ -96,7 +156,7 @@ router.get('/game', requireAuth, async (req: Request, res: Response, next) => {
  *     (dynamic import — graceful 503 if relay WT1 not yet merged)
  *   - Writes audit log entry
  */
-router.post('/redeem', requireAuth, redemptionIpLimiter, async (req: Request, res: Response, next) => {
+router.post('/redeem', requireLinkAuth, redemptionIpLimiter, async (req: Request, res: Response, next) => {
   try {
     const { code } = req.body as { code?: string };
     if (!code || typeof code !== 'string') {
