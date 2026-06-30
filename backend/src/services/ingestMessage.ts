@@ -132,6 +132,10 @@ export async function ingestMessage(opts: {
   source: IngestSource;
   identityHash?: string;
   relaySeq?: number;
+  // Explicit display-name override. The relay/HUD path passes the in-game CHARACTER name
+  // (identity.fo76Name, e.g. "Wanderer") so chat shows that, not the linked FCM account's
+  // Discord name (the message is still attributed to the linked user UUID for moderation).
+  displayName?: string;
 }): Promise<IngestResult> {
   const { userId, channelId, source, identityHash, relaySeq } = opts;
   let rawContent = opts.rawContent;
@@ -228,9 +232,11 @@ export async function ingestMessage(opts: {
   // name is the social/player name shown in-game; fall back to character name,
   // then the generic chain. WS (dashboard) messages keep the Discord display name.
   const displayName =
-    source === 'hud'
-      ? (dbUser.fo76AccountName || dbUser.fo76CharacterName || dbUser.discordDisplayName || dbUser.discordUsername || dbUser.username)
-      : (dbUser.discordDisplayName ?? dbUser.discordUsername ?? dbUser.username);
+    (opts.displayName && opts.displayName.trim())
+      ? opts.displayName.trim()
+      : source === 'hud'
+        ? (dbUser.fo76AccountName || dbUser.fo76CharacterName || dbUser.discordDisplayName || dbUser.discordUsername || dbUser.username)
+        : (dbUser.discordDisplayName ?? dbUser.discordUsername ?? dbUser.username);
   const { messageId } = await finalizeMessage({
     userId,
     channelId,

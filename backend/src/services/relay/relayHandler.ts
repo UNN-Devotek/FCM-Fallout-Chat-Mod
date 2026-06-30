@@ -550,6 +550,8 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     rawContent: body,
     source:    'relay',
     relaySeq,
+    // Show the in-game CHARACTER name in chat (not the linked FCM account's Discord name).
+    displayName: identity.fo76Name,
   });
 
   if (!result.ok) {
