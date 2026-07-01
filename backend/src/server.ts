@@ -2017,7 +2017,7 @@ async function start(): Promise<void> {
           id: 'a0000000-0000-0000-0000-000000000002',
           name: 'Block flagged words',
           triggerType: 'KEYWORD_PRESET',
-          triggerMetadata: { presets: ['PROFANITY', 'SEXUAL_CONTENT', 'SLURS'], allow_list: ['ass', 'damn', 'fuck', 'hell', 'shit'] },
+          triggerMetadata: { presets: ['SEXUAL_CONTENT', 'SLURS'] },
         },
         {
           id: 'a0000000-0000-0000-0000-000000000003',

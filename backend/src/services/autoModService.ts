@@ -13,8 +13,8 @@ import { canon } from '../utils/textCanon';
 //
 // Categories: racial/ethnic slurs, sexist/misogynistic terms, homophobic slurs,
 // explicit sexual terms that have no legitimate use in party/user names.
-const BASELINE_DENYLIST: ReadonlyArray<{ phrase: string; compiled: RegExp }> = [
-  // Racial/ethnic slurs
+const BASELINE_CHAT_DENYLIST_PHRASES = [
+  // Racial / ethnic slurs
   'nigger', 'nigga', 'chink', 'spic', 'spick', 'kike', 'wetback', 'gook',
   'towelhead', 'raghead', 'coon', 'jigaboo', 'porch monkey', 'jungle bunny',
   'beaner', 'cracker', 'honky', 'zipperhead', 'slant', 'squaw', 'redskin',
@@ -23,16 +23,29 @@ const BASELINE_DENYLIST: ReadonlyArray<{ phrase: string; compiled: RegExp }> = [
   'cunt', 'twat', 'bitch', 'whore', 'slut', 'skank', 'ho',
   // Homophobic / transphobic slurs
   'faggot', 'fag', 'dyke', 'tranny', 'shemale', 'sissy',
-  // Explicit sexual
+  // Severe abuse terms that should still hard-block outside optional presets
+  'pedo', 'pedophile', 'rape', 'rapist',
+] as const;
+
+const BASELINE_IDENTIFIER_DENYLIST_PHRASES = [
+  ...BASELINE_CHAT_DENYLIST_PHRASES,
+  // Identifiers stay stricter than normal chat.
   'cock', 'dick', 'pussy', 'asshole', 'motherfucker', 'fucker', 'fuck',
-  'shit', 'bastard', 'pedo', 'pedophile', 'rape', 'rapist',
-].map(phrase => ({
-  phrase,
-  // Compile against the canonical (diacritic-stripped) form with the 'u' flag so
-  // Unicode word boundaries behave and so a phrase ever stored with an accent
-  // matches the same canon() form the input is reduced to before testing.
-  compiled: new RegExp(`\\b${canon(phrase).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'iu'),
-}));
+  'shit', 'bastard',
+] as const;
+
+function compileBoundaryPhraseList(phrases: readonly string[]) {
+  return phrases.map((phrase) => ({
+    phrase,
+    compiled: new RegExp(
+      `\\b${canon(phrase).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`,
+      'iu',
+    ),
+  }));
+}
+
+const BASELINE_DENYLIST: ReadonlyArray<{ phrase: string; compiled: RegExp }> =
+  compileBoundaryPhraseList(BASELINE_CHAT_DENYLIST_PHRASES);
 
 // Substring variant — used for party names and usernames (identifiers) where slurs
 // may be embedded in concatenated strings without spaces (e.g. "nigger76", "slutqueen").
@@ -41,7 +54,7 @@ const BASELINE_DENYLIST: ReadonlyArray<{ phrase: string; compiled: RegExp }> = [
 // words ("school", "raccoon", "grapes", "peacock"). Terms of 5+ chars are unambiguous
 // enough that substring-embedding is the right default.
 const BASELINE_DENYLIST_NAMES: ReadonlyArray<{ phrase: string; compiled: RegExp }> =
-  BASELINE_DENYLIST.map(({ phrase }) => {
+  BASELINE_IDENTIFIER_DENYLIST_PHRASES.map((phrase) => {
     // Match against the canonical (diacritic-stripped) form: identifiers are
     // canon()-reduced before testing, so the pattern must be canonical too.
     const canonPhrase = canon(phrase);

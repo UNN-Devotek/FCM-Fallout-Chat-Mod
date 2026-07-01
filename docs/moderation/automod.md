@@ -8,7 +8,7 @@ All content moderation on `chat:send` goes through a single entry point: `engine
 
 1. **Staff exemption** — `isProtectedTarget(user.id)` is checked first. Moderators, admins, and the owner bypass ALL content moderation. (`autoModEngine.ts:336-343`)
 
-2. **Legacy word filter** — calls `filterContent(content, userId)` from `autoModService.ts`. Checks the hardcoded baseline denylist first, then the `word_filter` DB table.
+2. **Legacy word filter** — calls `filterContent(content, userId)` from `autoModService.ts`. Checks the hardcoded chat baseline denylist first, then the `word_filter` DB table.
 
 3. **Legacy spam detection** — calls `detectSpam(userId)` from `autoModService.ts`. Uses a Redis sorted-set sliding window.
 
@@ -46,11 +46,15 @@ Baseline-denylist, `word_filter`, and name-blacklist regexes are compiled with t
 
 ## Legacy Word Filter (`autoModService.ts`)
 
-### Baseline Denylist
+### Baseline Denylists
 
-A hardcoded array of ~40 slurs and explicit terms compiled at startup as word-boundary regexes (`\bphrase\b`, case-insensitive, `u` flag) against the **canonical form** of each phrase (see [Unicode Canonicalization](#unicode-canonicalization-bypass-defense)). This list is checked before any DB query and cannot be disabled by admins. It also has a substring-match variant (`BASELINE_DENYLIST_NAMES`) used for identifiers like party names and usernames where slurs may appear without spaces.
+`autoModService.ts` now keeps two hardcoded baseline lists:
 
-Source: `autoModService.ts:15-57`.
+- `BASELINE_CHAT_DENYLIST_PHRASES` — always blocks hate speech / slurs plus a small set of severe abuse terms (`pedo`, `pedophile`, `rape`, `rapist`) in normal chat.
+- `BASELINE_IDENTIFIER_DENYLIST_PHRASES` — used by `findProhibitedPhrase()` for usernames / party names and stays stricter than chat by also rejecting explicit profanity terms there.
+
+Ordinary profanity such as `fuck`, `shit`, or `bastard` is intentionally **not** in the chat baseline anymore, so common cussing is no longer hard-blocked before the rule engine runs.
+Listed/base slur and hate-speech terms in that baseline still block normally. This change does not try to solve every deliberate slur-evasion variant.
 
 ### `word_filter` Table
 
@@ -91,7 +95,7 @@ Rules are stored in the DB and cached in memory for 30 seconds (`RULES_CACHE_TTL
     "regex_patterns": ["\\b\\d{4}-\\d{4}\\b"],
     "allow_list": ["allowedterm"],
     "mention_total_limit": 5,               // for MENTION_SPAM
-    "presets": ["PROFANITY", "SLURS"]       // for KEYWORD_PRESET
+    "presets": ["SEXUAL_CONTENT", "SLURS"]  // default seeded KEYWORD_PRESET
   },
   "actions": [
     { "type": "BLOCK", "metadata": { "customMessage": "Not allowed." } },
@@ -109,7 +113,7 @@ Rules are stored in the DB and cached in memory for 30 seconds (`RULES_CACHE_TTL
 | Type | How it evaluates |
 |---|---|
 | `KEYWORD` | Matches `keyword_filter[]` (wildcard `*` → `.*`) and `regex_patterns[]`; skips if any `allow_list` entry matches |
-| `KEYWORD_PRESET` | Same matching as KEYWORD against the in-code `PRESET_LISTS` (`PROFANITY`, `SEXUAL_CONTENT`, `SLURS`) |
+| `KEYWORD_PRESET` | Same matching as KEYWORD against the in-code `PRESET_LISTS` (`PROFANITY`, `SEXUAL_CONTENT`, `SLURS`). The default seeded flagged-words rule now uses `SEXUAL_CONTENT + SLURS`, not `PROFANITY`. |
 | `MENTION_SPAM` | Counts unique `@username` and `<@id>` mentions; triggers if count ≥ `mention_total_limit` |
 | `SPAM` | Re-uses the Redis window from step 2 (no duplicate check); effectively a no-op rule at step 4 since step 2 already handled it |
 | `LINK` | Finds `https?://` URLs; blocks unless the hostname matches an entry in `allow_list` |
