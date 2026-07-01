@@ -468,6 +468,47 @@ function fo76IsRunning() {
 // the cursor-lock fix on KWin Wayland (KWin revokes the game's pointer constraint when the
 // overlay is on top, but Wine's own X grab is honoured). Idempotent + backs up user.reg.
 // See docs/overlay/linux-overlay-approaches.md. Surfaced via the tray (KDE submenu).
+// Shared core (no UI): locate the FO76 prefix and apply the Wine grab idempotently.
+// Returns { status, reg }. status: 'no-prefix' | 'fo76-running' | 'already' | 'applied' | 'error'.
+function applyFo76Grab() {
+  const candidates = overlayCore.fo76UserRegCandidates(discoverSteamRoots());
+  const reg = candidates.find(p => { try { return fs.existsSync(p); } catch { return false; } });
+  const running = reg ? fo76IsRunning() : false;
+  if (!reg || running) {
+    return { status: overlayCore.fo76GrabStatus({ regFound: !!reg, fo76Running: running }), reg };
+  }
+  let content;
+  try { content = fs.readFileSync(reg, 'utf8'); } catch (e) { return { status: 'error', reg, error: e }; }
+  const updated = overlayCore.buildFo76GrabUserReg(content);
+  const status = overlayCore.fo76GrabStatus({ regFound: true, fo76Running: false, changed: updated != null });
+  if (updated == null) return { status, reg }; // 'already'
+  try { fs.writeFileSync(reg + '.fcm-bak', content); fs.writeFileSync(reg, updated); }
+  catch (e) { return { status: 'error', reg, error: e }; }
+  diag('[cursor-fix] applied Wine GrabFullscreen/GrabPointer to ' + reg);
+  return { status, reg }; // 'applied'
+}
+
+function isFo76CursorAutoFixEnabled() {
+  try { const s = loadState().settings; return !s || s.fo76CursorAutoFix !== false; } catch { return true; }
+}
+
+// Auto-apply on startup so end users need do nothing. KDE-Wayland only (where the fix is
+// needed), opt-out via settings, idempotent (no-op once set — self-heals if Proton resets the
+// prefix). Notifies only when it actually changes something. Runs at app-ready, before FO76 is
+// launched (the overlay autostarts on login), so Proton won't overwrite it.
+function maybeAutoFixFo76CursorLock() {
+  if (!KDE_WAYLAND || !isFo76CursorAutoFixEnabled()) return;
+  try {
+    const r = applyFo76Grab();
+    if (r.status === 'applied') {
+      showSystemNotification('Fallout Chat Mod — in-game cursor lock enabled',
+        'Fallout 76 will now keep the mouse locked to the game while the overlay is on top. Relaunch FO76 if it was open.');
+    }
+    diag('[cursor-fix] auto: ' + r.status + (r.reg ? ' (' + r.reg + ')' : ''));
+  } catch (e) { diag('[cursor-fix] auto failed: ' + String(e && e.message || e)); }
+}
+
+// Tray (interactive): same core, with explicit dialog feedback per status.
 function fixFo76CursorLock() {
   if (!IS_LINUX) return;
   const { dialog } = require('electron');
@@ -475,18 +516,14 @@ function fixFo76CursorLock() {
     try { dialog.showMessageBox({ type, title: 'Fallout Chat Mod — in-game cursor lock', message, detail: detail || '', buttons: ['OK'] }); }
     catch { diag('[cursor-fix] ' + message + (detail ? ' — ' + detail : '')); }
   };
-  const candidates = overlayCore.fo76UserRegCandidates(discoverSteamRoots());
-  const reg = candidates.find(p => { try { return fs.existsSync(p); } catch { return false; } });
-  if (!reg) { notify('warning', 'Could not find the Fallout 76 Proton prefix.', 'Launch FO76 once via Steam/Proton so its prefix is created, then try again.'); return; }
-  if (fo76IsRunning()) { notify('warning', 'Fallout 76 is running.', 'Fully quit FO76 first (Proton rewrites the prefix on exit), then run this again.'); return; }
-  let content;
-  try { content = fs.readFileSync(reg, 'utf8'); } catch (e) { notify('error', 'Could not read the FO76 prefix.', String(e && e.message || e)); return; }
-  const updated = overlayCore.buildFo76GrabUserReg(content);
-  if (updated == null) { notify('info', 'In-game cursor lock is already enabled.', 'Wine GrabFullscreen/GrabPointer are already set for Fallout 76. Launch FO76 (Fullscreen recommended) and the cursor stays locked to the game.'); return; }
-  try { fs.writeFileSync(reg + '.fcm-bak', content); fs.writeFileSync(reg, updated); }
-  catch (e) { notify('error', 'Could not write the FO76 prefix.', String(e && e.message || e)); return; }
-  diag('[cursor-fix] applied Wine GrabFullscreen/GrabPointer to ' + reg);
-  notify('info', 'In-game cursor lock enabled for Fallout 76.', 'Relaunch Fallout 76 (Fullscreen mode recommended). Wine now keeps the mouse cursor locked to the game while the overlay is on top. (Backup saved next to user.reg.)');
+  const r = applyFo76Grab();
+  switch (r.status) {
+    case 'no-prefix': notify('warning', 'Could not find the Fallout 76 Proton prefix.', 'Launch FO76 once via Steam/Proton so its prefix is created, then try again.'); break;
+    case 'fo76-running': notify('warning', 'Fallout 76 is running.', 'Fully quit FO76 first (Proton rewrites the prefix on exit), then run this again.'); break;
+    case 'already': notify('info', 'In-game cursor lock is already enabled.', 'Wine GrabFullscreen/GrabPointer are already set for Fallout 76. Launch FO76 (Fullscreen recommended) and the cursor stays locked to the game.'); break;
+    case 'applied': notify('info', 'In-game cursor lock enabled for Fallout 76.', 'Relaunch Fallout 76 (Fullscreen mode recommended). Wine now keeps the mouse cursor locked to the game while the overlay is on top. (Backup saved next to user.reg.)'); break;
+    default: notify('error', 'Could not update the FO76 prefix.', String((r.error && r.error.message) || r.error || 'unknown error'));
+  }
 }
 const http = require('http');
 const { URL } = require('url');
@@ -3497,6 +3534,10 @@ function rebuildTrayMenu() {
       // stays locked to the game on KWin Wayland (KWin revokes the game's pointer constraint
       // when the overlay is on top). One-click, idempotent; needs FO76 closed.
       { label: 'Fix in-game cursor lock (Wayland) — needs FO76 closed', click: () => fixFo76CursorLock() },
+      { label: 'Auto-fix cursor lock on launch', type: 'checkbox', checked: isFo76CursorAutoFixEnabled(), click: (mi) => {
+        try { const st = loadState(); const settings = { ...(st.settings || {}), fo76CursorAutoFix: !!mi.checked }; saveState({ settings }); } catch { /* ignore */ }
+        if (mi.checked) maybeAutoFixFo76CursorLock();
+      } },
     ] : []),
     // Diagnostics: surface the log for bug reports + let users enable verbose
     // (per-tick) logging without a relaunch. The toggle persists to settings so it
@@ -3903,6 +3944,7 @@ app.whenReady().then(() => {
   // skips if already installed (see setupKdeKeepAbove). Other Linux setups just get
   // the helper files written (setupKdeKeepAbove writes them on its first line too).
   if (KDE_WAYLAND) setupKdeKeepAbove({ interactive: false });
+  if (KDE_WAYLAND) maybeAutoFixFo76CursorLock(); // zero-effort in-game cursor lock (idempotent)
   else writeLinuxHelperFiles();
   // One-time userData migration (productName "Fallout ChatMod" → "Fallout Chat Mod").
   // MUST run before any loadState()/register so the migrated install token is used
