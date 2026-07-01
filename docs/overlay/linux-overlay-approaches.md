@@ -25,7 +25,8 @@ Three parts, all shippable from the installer:
    the game whenever FO76 is focused and releases it when focus leaves (overlay stays usable).
    Confirmed: cursor held on fast flicks, free movement in menus, frees for the overlay — all by
    Wine, independent of KWin's broken pointer constraint. **Applied automatically on overlay
-   launch** (KDE Wayland) — idempotent, backs up `user.reg`, self-heals if a Proton update resets
+   launch** (any Wayland session — worst on KWin, but the Wine grab is compositor-agnostic so
+   GNOME/wlroots get it too; X11 doesn't need it) — idempotent, backs up `user.reg`, self-heals if a Proton update resets
    the prefix; opt-out + manual re-apply via the tray ("Auto-fix cursor lock on launch" /
    "Fix in-game cursor lock (Wayland)"). Requires FO76 closed (Proton rewrites user.reg on exit),
    which is the normal case at login when the overlay autostarts. Implemented in

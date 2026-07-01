@@ -492,12 +492,14 @@ function isFo76CursorAutoFixEnabled() {
   try { const s = loadState().settings; return !s || s.fo76CursorAutoFix !== false; } catch { return true; }
 }
 
-// Auto-apply on startup so end users need do nothing. KDE-Wayland only (where the fix is
-// needed), opt-out via settings, idempotent (no-op once set — self-heals if Proton resets the
-// prefix). Notifies only when it actually changes something. Runs at app-ready, before FO76 is
-// launched (the overlay autostarts on login), so Proton won't overwrite it.
+// Auto-apply on startup so end users need do nothing. ANY Wayland session (the compositor's
+// pointer-constraint handling is what breaks the game's cursor lock when the overlay is on top;
+// this is worst on KWin but the Wine grab is a compositor-agnostic fix, so we apply it on all
+// Wayland — GNOME/wlroots too). X11 doesn't need it. Opt-out via settings, idempotent (no-op
+// once set — self-heals if Proton resets the prefix). Notifies only when it actually changes
+// something. Runs at app-ready, before FO76 is launched (overlay autostarts on login).
 function maybeAutoFixFo76CursorLock() {
-  if (!KDE_WAYLAND || !isFo76CursorAutoFixEnabled()) return;
+  if (!(IS_LINUX && IS_WAYLAND) || !isFo76CursorAutoFixEnabled()) return;
   try {
     const r = applyFo76Grab();
     if (r.status === 'applied') {
@@ -3944,7 +3946,7 @@ app.whenReady().then(() => {
   // skips if already installed (see setupKdeKeepAbove). Other Linux setups just get
   // the helper files written (setupKdeKeepAbove writes them on its first line too).
   if (KDE_WAYLAND) setupKdeKeepAbove({ interactive: false });
-  if (KDE_WAYLAND) maybeAutoFixFo76CursorLock(); // zero-effort in-game cursor lock (idempotent)
+  if (IS_LINUX && IS_WAYLAND) maybeAutoFixFo76CursorLock(); // zero-effort in-game cursor lock (any Wayland; idempotent)
   else writeLinuxHelperFiles();
   // One-time userData migration (productName "Fallout ChatMod" → "Fallout Chat Mod").
   // MUST run before any loadState()/register so the migrated install token is used
