@@ -39,6 +39,7 @@ import { persistMessage } from './messageService';
 import messageQueue from '../queues/messagePersist';
 import { emojifyShortcodes } from '../utils/emoji';
 import { broadcast } from '../websocket/handlers';
+import { nextRelaySeq } from './relay/relaySeq';
 import { incrementMessageCount } from '../controllers/healthController';
 import { shadowMute } from './autoModService';
 import { getActiveBlock } from './hudIdentityService';
@@ -282,6 +283,11 @@ export async function finalizeMessage(opts: {
   const messageId   = opts.messageId ?? uuidv4();
   const createdAt   = opts.createdAt ?? new Date().toISOString();
   const hasMetadata = 'metadata' in opts;
+  // Assign a relay cursor to EVERY message (was relay/in-game only). The relay pub/sub only forwards
+  // messages carrying a relaySeq, and in-game history filters `relay_seq IS NOT NULL` — so without
+  // this, overlay/web/Discord messages never reach the in-game feed OR history. This unifies all
+  // surfaces (overlay <-> in-game <-> Discord) onto the same channels.
+  const relaySeq = opts.relaySeq ?? await nextRelaySeq();
 
   const payload: Record<string, unknown> = {
     id: messageId,
@@ -294,7 +300,7 @@ export async function finalizeMessage(opts: {
   };
   if (opts.avatarUrl !== undefined) payload.avatarUrl = opts.avatarUrl;
   if (hasMetadata) payload.metadata = opts.metadata ?? null;
-  if (opts.relaySeq !== undefined) payload.relaySeq = opts.relaySeq;
+  payload.relaySeq = relaySeq;
 
   broadcast({ type: 'chat:message', payload });
   incrementMessageCount();
@@ -311,7 +317,7 @@ export async function finalizeMessage(opts: {
     createdAt,
   };
   if (hasMetadata) record.metadata = opts.metadata ?? null;
-  if (opts.relaySeq !== undefined) record.relaySeq = opts.relaySeq;
+  record.relaySeq = relaySeq;
 
   Promise.resolve(messageQueue.add(record as any)).catch((qErr) => {
     logger.warn({ err: qErr, messageId }, '[finalizeMessage] queue failed — falling back to direct persist');
