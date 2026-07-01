@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.7.7";  // BACKSPACE fix: dispatch PlatformChangeEvent(PC_KB_MOUSE) before SharedHUDTools TextEdit so it uses the native keyboard field (entry_tf), not the off-screen OSK; keyboard editing works + key-lock preserved; + v2.7.0-2.7.6
+    static inline var VERSION:String  = "2.7.8";  // FIX never-connect: never send empty displayName (relay rejects invalid_display_name); keep "Wanderer" default + re-read name each attempt; + backspace fix (2.7.7)
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -1328,14 +1328,15 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.7");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.8");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
             zfeLog("warn", "startup", "getRuntimeInfo threw: " + Std.string(e));
         }
 
-        _displayName = readDisplayName();
+        var nm0:String = readDisplayName();
+        if (nm0 != null && nm0.length > 0) _displayName = nm0;  // keep "Wanderer" default until a real name is available
         startConnect();
     }
 
@@ -1346,6 +1347,14 @@ class FCMChatWidget extends MovieClip {
     function startConnect():Void {
         if (_api == null) return;
         _connectAttempts++;
+        // Re-read the FO76 name each attempt until we have a real one; NEVER connect with an empty
+        // displayName (the relay rejects it with invalid_display_name). The default "Wanderer" is
+        // reconciled to the real name by the relay hello sync once linked.
+        if (_displayName == null || _displayName.length == 0 || _displayName == "Wanderer") {
+            var nm:String = readDisplayName();
+            if (nm != null && nm.length > 0) _displayName = nm;
+            if (_displayName == null || _displayName.length == 0) _displayName = "Wanderer";
+        }
         zfeLog("info", "connect", "attempt=" + _connectAttempts + " displayName=" + _displayName);
         setLogText("connecting...");
 
