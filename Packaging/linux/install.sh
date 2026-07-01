@@ -35,65 +35,79 @@ say()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!! \033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mxx \033[0m %s\n' "$*" >&2; exit 1; }
 
-# --- In-game cursor lock (Wayland) --------------------------------------------
+# --- In-game cursor lock (Wayland) via protontricks --------------------------
 # On Wayland the compositor drops Fallout 76's mouse-lock when the overlay sits on
-# top, so the cursor can drift off the game. The fix is Wine's own mouse capture in
-# the FO76 Proton prefix — the community-standard winecfg "Automatically capture the
-# mouse in full-screen windows" setting (registry: GrabFullscreen). We apply it here
-# at install time (best-effort: prefix must exist + FO76 closed). The overlay tray
-# also has "Fix in-game cursor lock" to (re)apply later; X11 sessions don't need it.
+# top, so the cursor can drift off the game. We enable Wine's mouse capture with the
+# protontricks/winetricks verb "grabfullscreen=y" (the winecfg "Automatically capture
+# the mouse in full-screen windows" setting) — NO hand-editing of Wine config. Best
+# effort: needs protontricks + FO76's prefix (launch the game once) + FO76 closed. The
+# overlay tray "Fix in-game cursor lock (Wayland)" re-runs the same command later.
+# X11 sessions don't need any of this.
 FO76_APPID="1151340"
 
 print_cursor_manual_steps() {
   cat <<'MAN'
-    To enable the in-game mouse-lock by hand (works on KDE + Wayland and Fedora):
-      1. Install "protontricks" via your distro's package manager.
-      2. Run:  protontricks 1151340 winecfg
-      3. Open the "Input" tab.
-      4. Tick "Automatically capture the mouse in full-screen windows", click OK.
-      5. Launch Fallout 76 in Fullscreen.
+    To enable the in-game mouse-lock by hand (community-standard method):
+      1. Install protontricks: pacman -S protontricks (Arch/CachyOS) / dnf install
+         protontricks (Fedora) / pipx install protontricks (Debian/Ubuntu).
+      2. Run:  protontricks 1151340 grabfullscreen=y
+         (GUI equivalent: protontricks 1151340 winecfg -> Input tab -> tick
+          "Automatically capture the mouse in full-screen windows".)
+      3. Launch Fallout 76 in Fullscreen.
 MAN
 }
 
-# Echo the path to FO76's Proton-prefix user.reg (searches every Steam library), or nothing.
-find_fo76_userreg() {
-  local r vdf p rel="steamapps/compatdata/$FO76_APPID/pfx/user.reg"
-  for r in "$DATA_HOME/Steam" "$HOME/.steam/steam" "$HOME/.steam/root" \
-           "$HOME/.var/app/com.valvesoftware.Steam/.local/share/Steam"; do
-    [ -f "$r/$rel" ] && { printf '%s\n' "$r/$rel"; return 0; }
-    for vdf in "$r/steamapps/libraryfolders.vdf" "$r/config/libraryfolders.vdf"; do
-      [ -f "$vdf" ] || continue
-      while IFS= read -r p; do
-        [ -n "$p" ] && [ -f "$p/$rel" ] && { printf '%s\n' "$p/$rel"; return 0; }
-      done < <(grep -oE '"path"[[:space:]]+"[^"]+"' "$vdf" 2>/dev/null | sed -E 's/.*"([^"]+)"$/\1/; s#\\\\#/#g')
-    done
-  done
+# Ensure protontricks is runnable; echo the invocation ("protontricks" or the flatpak
+# command) on success, or nothing. Best-effort auto-install from the distro/pipx.
+ensure_protontricks() {
+  command -v protontricks >/dev/null 2>&1 && { printf 'protontricks'; return 0; }
+  if command -v pacman >/dev/null 2>&1; then
+    sudo pacman -S --needed --noconfirm protontricks >/dev/null 2>&1 || true
+  elif command -v dnf >/dev/null 2>&1; then
+    sudo dnf install -y protontricks >/dev/null 2>&1 || true
+  elif command -v apt-get >/dev/null 2>&1; then
+    command -v pipx >/dev/null 2>&1 || sudo apt-get install -y pipx >/dev/null 2>&1 || true
+    command -v pipx >/dev/null 2>&1 && pipx install protontricks >/dev/null 2>&1 || true
+  elif command -v pipx >/dev/null 2>&1; then
+    pipx install protontricks >/dev/null 2>&1 || true
+  fi
+  export PATH="$HOME/.local/bin:$PATH"
+  command -v protontricks >/dev/null 2>&1 && { printf 'protontricks'; return 0; }
+  if command -v flatpak >/dev/null 2>&1 && flatpak info com.github.Matoking.protontricks >/dev/null 2>&1; then
+    printf 'flatpak run com.github.Matoking.protontricks'; return 0
+  fi
   return 1
 }
 
 apply_fo76_cursor_lock() {
-  local reg
-  reg="$(find_fo76_userreg)"
-  if [ -z "$reg" ]; then
-    warn "In-game cursor lock: Fallout 76's Proton prefix not found yet. Launch FO76 once via Steam,"
-    warn "then re-run this installer OR use the overlay tray -> \"Fix in-game cursor lock (Wayland)\"."
-    print_cursor_manual_steps; return 0
-  fi
   if ps -A -o comm= 2>/dev/null | grep -qix 'Fallout76.exe'; then
     warn "In-game cursor lock: Fallout 76 is running. Close it and re-run this installer, or use the tray button."
     print_cursor_manual_steps; return 0
   fi
-  if grep -q '"GrabFullscreen"="Y"' "$reg" 2>/dev/null && grep -q '"GrabPointer"="Y"' "$reg" 2>/dev/null; then
-    say "In-game cursor lock already enabled in the Fallout 76 Proton prefix."; return 0
-  fi
-  cp -f "$reg" "$reg.fcm-bak" 2>/dev/null || true
-  if grep -qF '[Software\\Wine\\X11 Driver]' "$reg"; then
-    grep -q '"GrabFullscreen"="Y"' "$reg" || sed -i '0,/^\[Software\\\\Wine\\\\X11 Driver\]/s//&\n"GrabFullscreen"="Y"/' "$reg"
-    grep -q '"GrabPointer"="Y"'    "$reg" || sed -i '0,/^\[Software\\\\Wine\\\\X11 Driver\]/s//&\n"GrabPointer"="Y"/'    "$reg"
+  local PT
+  PT="$(ensure_protontricks)" || {
+    warn "In-game cursor lock: protontricks isn't installed (and couldn't be auto-installed)."
+    print_cursor_manual_steps; return 0
+  }
+  say "Enabling the in-game cursor lock via protontricks (grabfullscreen)…"
+  local out=""
+  if [ -n "${DISPLAY:-}" ]; then
+    out="$($PT "$FO76_APPID" grabfullscreen=y 2>&1)" || true
+  elif command -v xvfb-run >/dev/null 2>&1; then
+    out="$(xvfb-run -a $PT "$FO76_APPID" grabfullscreen=y 2>&1)" || true
   else
-    printf '\n[Software\\\\Wine\\\\X11 Driver] 0\n#time=0\n"GrabFullscreen"="Y"\n"GrabPointer"="Y"\n' >> "$reg"
+    out="__nodisplay__"
   fi
-  say "Enabled the in-game cursor lock in the Fallout 76 Proton prefix (Wine mouse capture) — relaunch FO76 in Fullscreen."
+  if printf '%s' "$out" | grep -qiE 'No Proton|not found|No installed|Steam is not|could not find'; then
+    warn "In-game cursor lock: couldn't reach Fallout 76's Proton prefix — launch the game once via Steam,"
+    warn "then re-run this installer (or use the overlay tray -> \"Fix in-game cursor lock (Wayland)\")."
+    print_cursor_manual_steps; return 0
+  fi
+  if [ "$out" = "__nodisplay__" ]; then
+    warn "In-game cursor lock: no display available to run protontricks from this context."
+    print_cursor_manual_steps; return 0
+  fi
+  say "Enabled the in-game cursor lock for Fallout 76 (protontricks grabfullscreen). Relaunch FO76 in Fullscreen."
 }
 
 command -v curl >/dev/null 2>&1 || die "curl is required."
@@ -282,16 +296,17 @@ KDE Plasma (Wayland) — automatic
 
 In-game cursor lock (Wayland)
 - On Wayland the compositor drops Fallout 76's mouse-lock when the overlay sits on
-  top, so the cursor can drift off the game. THIS INSTALLER enables Wine's own mouse
-  capture (the winecfg "Automatically capture the mouse in full-screen windows"
-  setting) in the FO76 Proton prefix, so the cursor stays locked to the game.
+  top, so the cursor can drift off the game. THIS INSTALLER enables it via protontricks
+  (the "grabfullscreen=y" winetricks verb -- the winecfg "Automatically capture the
+  mouse in full-screen windows" setting), so the cursor stays locked to the game. No
+  Wine config is hand-edited. protontricks is auto-installed if missing.
 - It can only do this if Fallout 76's Proton prefix already exists (you've launched
   the game at least once) and FO76 is closed. If not, the installer prints the manual
   steps -- or just use the overlay tray -> "Fix in-game cursor lock (Wayland)" after
   you've run FO76 once. X11 sessions don't need any of this.
-- Manual method (community-standard): protontricks 1151340 winecfg -> "Input" tab ->
-  tick "Automatically capture the mouse in full-screen windows", then run FO76 in
-  Fullscreen.
+- Manual method: protontricks 1151340 grabfullscreen=y  (GUI equivalent:
+  protontricks 1151340 winecfg -> "Input" tab -> tick "Automatically capture the mouse
+  in full-screen windows"), then run FO76 in Fullscreen.
 
 Do NOT run the game inside gamescope for overlay purposes — its nested
 compositor isolates the game and no external overlay can draw over it.
