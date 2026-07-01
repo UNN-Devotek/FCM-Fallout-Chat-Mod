@@ -709,21 +709,23 @@ function InstallPanel() {
       <div style={bodyStyle}>
         On Wayland the compositor drops Fallout 76&apos;s mouse-lock while the overlay sits on top, so the
         cursor could drift off the game. <strong style={{ color: '#C8A840' }}>The installer enables it for
-        you</strong> — it turns on Wine&apos;s own mouse capture (the winecfg &ldquo;Automatically capture the
-        mouse in full-screen windows&rdquo; setting) in the Fallout 76 Proton prefix, so the cursor stays
-        locked to the game. X11 sessions don&apos;t need this.
+        you via protontricks</strong> — it runs the <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>grabfullscreen</code> winetricks
+        verb (the winecfg &ldquo;Automatically capture the mouse in full-screen windows&rdquo; setting), so the
+        cursor stays locked to the game. No Wine config is hand-edited, and protontricks is auto-installed if
+        missing. X11 sessions don&apos;t need this.
       </div>
       <div style={{ ...bodyStyle, marginTop: '8px' }}>
-        The installer can only do this if you&apos;ve <strong style={{ color: '#C8A840' }}>launched Fallout 76
+        It can only do this if you&apos;ve <strong style={{ color: '#C8A840' }}>launched Fallout 76
         at least once</strong> (so its Proton prefix exists) and the game is closed. If not, run the game
         once, then re-run the installer — or right-click the tray icon and choose{' '}
         <strong style={{ color: '#C8A840' }}>Fix in-game cursor lock (Wayland)</strong>.
       </div>
       <div style={{ ...bodyStyle, marginTop: '8px' }}>
-        Manual method (community-standard):{' '}
-        <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>protontricks 1151340 winecfg</code>{' '}
+        Manual method:{' '}
+        <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>protontricks 1151340 grabfullscreen=y</code>{' '}
+        (GUI equivalent: <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>protontricks 1151340 winecfg</code>{' '}
         → <strong style={{ color: '#C8A840' }}>Input</strong> tab → tick &ldquo;Automatically capture the
-        mouse in full-screen windows&rdquo;, then run Fallout 76 in Fullscreen.
+        mouse in full-screen windows&rdquo;), then run Fallout 76 in Fullscreen.
       </div>
 
       <div style={{ ...warningBoxStyle, marginTop: '14px' }}>

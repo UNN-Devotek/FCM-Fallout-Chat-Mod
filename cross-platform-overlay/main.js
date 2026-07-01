@@ -433,29 +433,6 @@ function setupKdeKeepAbove({ interactive = false } = {}) {
 
 // Discover Steam library roots (default install dirs + any libraryfolders.vdf paths),
 // so we can locate the FO76 Proton prefix wherever the game is installed.
-function discoverSteamRoots() {
-  const os = require('os');
-  const home = os.homedir();
-  const base = [
-    path.join(home, '.local/share/Steam'),
-    path.join(home, '.steam/steam'),
-    path.join(home, '.steam/root'),
-    path.join(home, '.var/app/com.valvesoftware.Steam/.local/share/Steam'), // flatpak
-  ];
-  const roots = new Set();
-  for (const b of base) { try { if (fs.existsSync(b)) roots.add(b); } catch { /* ignore */ } }
-  for (const b of [...roots]) {
-    for (const vdf of [path.join(b, 'steamapps/libraryfolders.vdf'), path.join(b, 'config/libraryfolders.vdf')]) {
-      try {
-        const txt = fs.readFileSync(vdf, 'utf8');
-        const re = /"path"\s*"([^"]+)"/g; let m;
-        while ((m = re.exec(txt)) !== null) roots.add(m[1].replace(/\\\\/g, '/'));
-      } catch { /* ignore */ }
-    }
-  }
-  return [...roots];
-}
-
 function fo76IsRunning() {
   try {
     const { execSync } = require('child_process');
@@ -464,28 +441,40 @@ function fo76IsRunning() {
   } catch { return false; }
 }
 
-// Enable Wine's own mouse capture in the FO76 Proton prefix (GrabFullscreen/GrabPointer) —
-// the cursor-lock fix on KWin Wayland (KWin revokes the game's pointer constraint when the
-// overlay is on top, but Wine's own X grab is honoured). Idempotent + backs up user.reg.
-// See docs/overlay/linux-overlay-approaches.md. Surfaced via the tray (KDE submenu).
-// Shared core (no UI): locate the FO76 prefix and apply the Wine grab idempotently.
-// Returns { status, reg }. status: 'no-prefix' | 'fo76-running' | 'already' | 'applied' | 'error'.
+// Locate protontricks: native `protontricks`, else the flatpak. Returns the argv prefix
+// (e.g. ['protontricks'] or ['flatpak','run','com.github.Matoking.protontricks']) or null.
+function findProtontricks() {
+  const { execSync } = require('child_process');
+  try { execSync('command -v protontricks', { shell: '/bin/sh', stdio: 'ignore' }); return ['protontricks']; }
+  catch { /* not native */ }
+  try { execSync('flatpak info com.github.Matoking.protontricks', { stdio: 'ignore' }); return ['flatpak', 'run', 'com.github.Matoking.protontricks']; }
+  catch { /* not flatpak */ }
+  return null;
+}
+
+// Enable the in-game cursor lock via protontricks' winetricks verb `grabfullscreen=y`
+// (the winecfg "Automatically capture the mouse in full-screen windows" setting) — no
+// hand-editing of Wine config. Needs protontricks + FO76's prefix (game launched once) +
+// FO76 closed + a display (the overlay runs under XWayland, so DISPLAY is set). Surfaced
+// via the tray. Returns { status }: 'applied'|'fo76-running'|'no-prefix'|'no-protontricks'|'error'.
 function applyFo76Grab() {
-  const candidates = overlayCore.fo76UserRegCandidates(discoverSteamRoots());
-  const reg = candidates.find(p => { try { return fs.existsSync(p); } catch { return false; } });
-  const running = reg ? fo76IsRunning() : false;
-  if (!reg || running) {
-    return { status: overlayCore.fo76GrabStatus({ regFound: !!reg, fo76Running: running }), reg };
+  if (fo76IsRunning()) return { status: 'fo76-running' };
+  const pt = findProtontricks();
+  if (!pt) return { status: 'no-protontricks' };
+  const { execFileSync } = require('child_process');
+  const noPrefix = (s) => /No Proton|not found|No installed|could not find|Steam is not/i.test(s || '');
+  try {
+    const out = execFileSync(pt[0], [...pt.slice(1), '1151340', 'grabfullscreen=y'],
+      { timeout: 120000, encoding: 'utf8', env: { ...process.env } });
+    if (noPrefix(out)) return { status: 'no-prefix' };
+    diag('[cursor-fix] protontricks grabfullscreen=y applied for FO76');
+    return { status: 'applied' };
+  } catch (e) {
+    const msg = String((e && (e.stdout || e.message)) || e);
+    if (noPrefix(msg)) return { status: 'no-prefix' };
+    diag('[cursor-fix] protontricks failed: ' + msg.slice(0, 200));
+    return { status: 'error', error: e };
   }
-  let content;
-  try { content = fs.readFileSync(reg, 'utf8'); } catch (e) { return { status: 'error', reg, error: e }; }
-  const updated = overlayCore.buildFo76GrabUserReg(content);
-  const status = overlayCore.fo76GrabStatus({ regFound: true, fo76Running: false, changed: updated != null });
-  if (updated == null) return { status, reg }; // 'already'
-  try { fs.writeFileSync(reg + '.fcm-bak', content); fs.writeFileSync(reg, updated); }
-  catch (e) { return { status: 'error', reg, error: e }; }
-  diag('[cursor-fix] applied Wine GrabFullscreen/GrabPointer to ' + reg);
-  return { status, reg }; // 'applied'
 }
 
 // NOTE: the in-game cursor-lock (Wine GrabFullscreen/GrabPointer in the FO76 prefix) is applied
@@ -504,11 +493,11 @@ function fixFo76CursorLock() {
   };
   const r = applyFo76Grab();
   switch (r.status) {
-    case 'no-prefix': notify('warning', 'Could not find the Fallout 76 Proton prefix.', 'Launch FO76 once via Steam/Proton so its prefix is created, then try again.'); break;
-    case 'fo76-running': notify('warning', 'Fallout 76 is running.', 'Fully quit FO76 first (Proton rewrites the prefix on exit), then run this again.'); break;
-    case 'already': notify('info', 'In-game cursor lock is already enabled.', 'Wine GrabFullscreen/GrabPointer are already set for Fallout 76. Launch FO76 (Fullscreen recommended) and the cursor stays locked to the game.'); break;
-    case 'applied': notify('info', 'In-game cursor lock enabled for Fallout 76.', 'Relaunch Fallout 76 (Fullscreen mode recommended). Wine now keeps the mouse cursor locked to the game while the overlay is on top. (Backup saved next to user.reg.)'); break;
-    default: notify('error', 'Could not update the FO76 prefix.', String((r.error && r.error.message) || r.error || 'unknown error'));
+    case 'no-protontricks': notify('warning', 'protontricks is required.', 'Install it (Arch/CachyOS: sudo pacman -S protontricks · Fedora: sudo dnf install protontricks · Debian/Ubuntu: pipx install protontricks), then try again.'); break;
+    case 'no-prefix': notify('warning', 'Could not reach the Fallout 76 Proton prefix.', 'Launch FO76 once via Steam/Proton so its prefix is created, then try again.'); break;
+    case 'fo76-running': notify('warning', 'Fallout 76 is running.', 'Fully quit FO76 first, then run this again.'); break;
+    case 'applied': notify('info', 'In-game cursor lock enabled for Fallout 76.', 'Applied via protontricks (grabfullscreen). Relaunch Fallout 76 in Fullscreen and the cursor stays locked to the game while the overlay is on top.'); break;
+    default: notify('error', 'protontricks could not enable the cursor lock.', String((r.error && r.error.message) || r.error || 'unknown error'));
   }
 }
 const http = require('http');
