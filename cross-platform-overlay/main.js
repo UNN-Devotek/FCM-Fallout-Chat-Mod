@@ -397,13 +397,18 @@ function writeLinuxHelperFiles() {
 // rule is missing does it append group [N+1], bump count, and reconfigure. All
 // best-effort: on GNOME / missing tools / older KWin it no-ops (the interactive path
 // still opens the folder so the manual System-Settings → Import remains available).
-// The "keep game below" KWin rule is the no-flicker fix that keeps the overlay above a
-// focused fullscreen game (drops the game to KWin's BelowLayer). It's an OPTION because
-// forcing the game below also lets the panel/other windows cover it. Persisted in
-// settings.kwinGameBelow; default ON on KDE-Wayland (without it the overlay is hidden
-// behind a fullscreen game). Toggled from the tray; the CLI installer also prompts.
+// The `fcm-overlay-layer` force-Layer rule (layer=overlay) keeps the overlay above a focused
+// fullscreen game WITHOUT demoting the game (so the game keeps normal fullscreen above the
+// panel) — the primary KWin-6 fix, always applied. The "keep game below" rule is now an OPT-IN
+// FALLBACK (default OFF) for setups where the force-Layer rule doesn't take; it drops the game
+// to BelowLayer, which also lets the panel cover it. Persisted in
+// settings.kwinGameBelow; default OFF on KDE-Wayland (the force-Layer rule handles keeping
+// the overlay above a fullscreen game). Toggled from the tray; the CLI installer also prompts.
+// Opt-in FALLBACK (default OFF): the `fcm-overlay-layer` force-Layer rule now lifts the overlay
+// above a fullscreen game without demoting it, so we no longer force the game below by default
+// (which also dropped it below the panel). Only ON if the user explicitly enabled it.
 function isKwinGameBelowEnabled() {
-  try { const s = loadState().settings; return !s || s.kwinGameBelow !== false; } catch { return true; }
+  try { const s = loadState().settings; return !!(s && s.kwinGameBelow === true); } catch { return false; }
 }
 // Is the overlay window actually on screen right now (not hidden to tray / minimized)?
 // Used to gate the game-below rule + always-on-top: a hidden overlay must not hold the
@@ -3577,10 +3582,10 @@ function rebuildTrayMenu() {
     ...(IS_LINUX ? [
       { type: 'separator' },
       { label: 'KDE: keep overlay above game', click: () => setupKdeKeepAbove({ interactive: true }) },
-      // The "keep game below" rule is what keeps the overlay above a focused fullscreen
-      // game on KWin 6 (no flicker). ON by default; turn OFF if you'd rather the panel/
-      // other windows not be able to cover the game.
-      { label: 'Keep game below overlay (fixes hidden-behind-fullscreen)', type: 'checkbox', checked: isKwinGameBelowEnabled(), click: (mi) => {
+      // Fallback only: the force-Layer rule (fcm-overlay-layer) already keeps the overlay above
+      // a fullscreen game WITHOUT demoting it. Enable this only if that doesn't work on your
+      // setup — it drops the game to BelowLayer, which also lets the panel cover the game.
+      { label: 'Fallback: force game below overlay (also drops it under the panel)', type: 'checkbox', checked: isKwinGameBelowEnabled(), click: (mi) => {
         try { const st = loadState(); const settings = { ...(st.settings || {}), kwinGameBelow: !!mi.checked }; saveState({ settings }); } catch { /* ignore */ }
         _lastGameBelowApplied = null;      // setting changed → force a re-evaluate
         syncKwinGameBelow('toggle');       // re-apply rules with/without game-below (gated on visibility)
