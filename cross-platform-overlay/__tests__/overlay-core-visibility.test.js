@@ -14,6 +14,11 @@ const {
   desiredTopmost,
   shouldForceGameBelow,
   nextPresenceState,
+  shouldHidePanelInGame,
+  buildPanelHidingSaveScript,
+  parsePanelHidingSave,
+  buildPanelHidingSetScript,
+  buildPanelHidingRestoreScript,
   isSinglePrintableChar,
 } = core;
 
@@ -333,5 +338,52 @@ describe('nextPresenceState', () => {
     expect(r).toEqual({ candidate: null, stableCount: 0, commit: false, gameRunning: true }); // hit === committed → reset
     r = nextPresenceState({ found: false, gameRunning: true, candidate: r.candidate, stableCount: r.stableCount, appearScans: A, disappearScans: D });
     expect(r.stableCount).toBe(1); // restarts, not 2
+  });
+});
+
+// KDE panel auto-hide while in-game (opt-in) — pure decision + script/parse helpers.
+describe('panel auto-hide helpers', () => {
+  it('shouldHidePanelInGame requires enabled AND gameRunning AND overlayVisible', () => {
+    expect(shouldHidePanelInGame({ enabled: true, gameRunning: true, overlayVisible: true })).toBe(true);
+    expect(shouldHidePanelInGame({ enabled: false, gameRunning: true, overlayVisible: true })).toBe(false);
+    expect(shouldHidePanelInGame({ enabled: true, gameRunning: false, overlayVisible: true })).toBe(false);
+    expect(shouldHidePanelInGame({ enabled: true, gameRunning: true, overlayVisible: false })).toBe(false);
+    expect(shouldHidePanelInGame()).toBe(false);
+  });
+
+  it('parsePanelHidingSave parses id=mode pairs, keeping only known modes', () => {
+    expect(parsePanelHidingSave('424=autohide,7=none')).toEqual({ 424: 'autohide', 7: 'none' });
+    // garbage / unknown modes / partial output are dropped, not thrown on:
+    expect(parsePanelHidingSave('1=bogus,2=dodgewindows,3=ERR, ,')).toEqual({ 2: 'dodgewindows' });
+    expect(parsePanelHidingSave('')).toEqual({});
+    expect(parsePanelHidingSave(null)).toEqual({});
+  });
+
+  it('buildPanelHidingSetScript validates the mode (falls back to autohide) and touches all panels', () => {
+    expect(buildPanelHidingSetScript('autohide')).toContain('.hiding="autohide"');
+    expect(buildPanelHidingSetScript('none')).toContain('.hiding="none"');
+    expect(buildPanelHidingSetScript('rm -rf')).toContain('.hiding="autohide"'); // injection-safe fallback
+    expect(buildPanelHidingSetScript('autohide')).toContain('for(var i=0;i<panelIds.length;i++)');
+  });
+
+  it('buildPanelHidingRestoreScript emits a guarded per-id restore, skipping invalid ids/modes', () => {
+    const js = buildPanelHidingRestoreScript({ 424: 'none', 7: 'autohide' });
+    expect(js).toContain('try{panelById(424).hiding="none";}catch(e){}');
+    expect(js).toContain('try{panelById(7).hiding="autohide";}catch(e){}');
+    // non-numeric id and unknown mode are dropped:
+    expect(buildPanelHidingRestoreScript({ 'x': 'none', 5: 'bogus' })).toBe('');
+    expect(buildPanelHidingRestoreScript({})).toBe('');
+  });
+
+  it('save script prints a comma-joined id=hiding list', () => {
+    expect(buildPanelHidingSaveScript()).toContain('panelById(panelIds[i]).hiding');
+    expect(buildPanelHidingSaveScript()).toContain('print(o.join(","))');
+  });
+
+  it('round-trips: save output → parse → restore script references the same ids/modes', () => {
+    const map = parsePanelHidingSave('424=autohide,99=none');
+    const restore = buildPanelHidingRestoreScript(map);
+    expect(restore).toContain('panelById(424).hiding="autohide"');
+    expect(restore).toContain('panelById(99).hiding="none"');
   });
 });
