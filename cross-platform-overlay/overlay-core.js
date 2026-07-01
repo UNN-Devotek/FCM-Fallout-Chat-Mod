@@ -745,6 +745,16 @@ function buildFo76GrabUserReg(content) {
   return text + sep + '\n[Software\\\\Wine\\\\X11 Driver] 0\n#time=0\n' + adds.join('\n') + '\n';
 }
 
+// Pure status for the FO76 cursor-lock apply flow (keeps the fs-driven caller in main.js
+// trivial + testable). regFound: a prefix user.reg was located; fo76Running: game is up
+// (must be closed — Proton rewrites user.reg on exit); changed: buildFo76GrabUserReg
+// returned an edit (vs null = already configured).
+function fo76GrabStatus({ regFound, fo76Running, changed } = {}) {
+  if (!regFound) return 'no-prefix';
+  if (fo76Running) return 'fo76-running';
+  return changed ? 'applied' : 'already';
+}
+
 module.exports = {
   DEFAULT_APP_CLIENT_KEY,
   DEFAULT_WIDTH,
@@ -790,4 +800,5 @@ module.exports = {
   FO76_APPID,
   fo76UserRegCandidates,
   buildFo76GrabUserReg,
+  fo76GrabStatus,
 };

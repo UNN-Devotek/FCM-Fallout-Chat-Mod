@@ -58,3 +58,18 @@ describe('buildFo76GrabUserReg', () => {
     }
   });
 });
+
+describe('fo76GrabStatus', () => {
+  it('no-prefix when the prefix was not found', () => {
+    expect(core.fo76GrabStatus({ regFound: false })).toBe('no-prefix');
+  });
+  it('fo76-running takes priority over changed', () => {
+    expect(core.fo76GrabStatus({ regFound: true, fo76Running: true, changed: true })).toBe('fo76-running');
+  });
+  it('applied when a change was written', () => {
+    expect(core.fo76GrabStatus({ regFound: true, fo76Running: false, changed: true })).toBe('applied');
+  });
+  it('already when nothing changed', () => {
+    expect(core.fo76GrabStatus({ regFound: true, fo76Running: false, changed: false })).toBe('already');
+  });
+});
