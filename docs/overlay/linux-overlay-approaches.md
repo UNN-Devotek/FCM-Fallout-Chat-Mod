@@ -20,7 +20,11 @@ Three parts, all shippable from the installer:
    the cursor lock — stacking only.
 3. **Enable Wine's own mouse capture via protontricks** — run the winetricks verb
    `protontricks 1151340 grabfullscreen=y` (the winecfg "Automatically capture the mouse in
-   full-screen windows" setting; internally `HKCU\Software\Wine\X11 Driver` `GrabFullscreen`=`Y`).
+   full-screen windows" setting; internally `HKCU\Software\Wine\X11 Driver` `GrabFullscreen`=`Y`)
+   for Fullscreen, PLUS `GrabPointer`=`Y` for Borderless-Windowed via
+   `protontricks 1151340 -c 'wine reg add "HKCU\Software\Wine\X11 Driver" /v GrabPointer /t REG_SZ /d Y /f && wineserver -w'`
+   (no winetricks verb exists for GrabPointer; `wineserver -w` flushes `user.reg` — Wine only
+   persists the registry on shutdown). Both keys are set by the installer and the tray action.
    **Wine** then confines the cursor to the game whenever FO76 is focused and releases it when focus
    leaves (overlay stays usable). Confirmed: cursor held on fast flicks, free movement in menus,
    frees for the overlay — all by Wine, independent of KWin's broken pointer constraint. **No Wine

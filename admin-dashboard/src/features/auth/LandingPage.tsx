@@ -709,10 +709,10 @@ function InstallPanel() {
       <div style={bodyStyle}>
         On Wayland the compositor drops Fallout 76&apos;s mouse-lock while the overlay sits on top, so the
         cursor could drift off the game. <strong style={{ color: '#C8A840' }}>The installer enables it for
-        you via protontricks</strong> — it runs the <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>grabfullscreen</code> winetricks
-        verb (the winecfg &ldquo;Automatically capture the mouse in full-screen windows&rdquo; setting), so the
-        cursor stays locked to the game. No Wine config is hand-edited, and protontricks is auto-installed if
-        missing. X11 sessions don&apos;t need this.
+        you via protontricks</strong> — the <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>grabfullscreen</code> winetricks
+        verb (Fullscreen) plus a <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>GrabPointer</code> setting
+        (Borderless-Windowed), so the cursor stays locked in either display mode. No Wine config is
+        hand-edited, and protontricks is auto-installed if missing. X11 sessions don&apos;t need this.
       </div>
       <div style={{ ...bodyStyle, marginTop: '8px' }}>
         It can only do this if you&apos;ve <strong style={{ color: '#C8A840' }}>launched Fallout 76
@@ -725,7 +725,9 @@ function InstallPanel() {
         <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>protontricks 1151340 grabfullscreen=y</code>{' '}
         (GUI equivalent: <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>protontricks 1151340 winecfg</code>{' '}
         → <strong style={{ color: '#C8A840' }}>Input</strong> tab → tick &ldquo;Automatically capture the
-        mouse in full-screen windows&rdquo;), then run Fallout 76 in Fullscreen.
+        mouse in full-screen windows&rdquo;). For Borderless too, also add{' '}
+        <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>GrabPointer=Y</code>{' '}
+        under the same <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>X11 Driver</code> key. Then run Fallout 76.
       </div>
 
       <div style={{ ...warningBoxStyle, marginTop: '14px' }}>
