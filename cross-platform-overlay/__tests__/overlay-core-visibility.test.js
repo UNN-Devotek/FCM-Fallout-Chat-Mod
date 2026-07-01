@@ -12,6 +12,8 @@ const {
   visibilityDecision,
   emitVisibilityDecision,
   desiredTopmost,
+  shouldForceGameBelow,
+  nextPresenceState,
   isSinglePrintableChar,
 } = core;
 
@@ -262,5 +264,74 @@ describe('desiredTopmost — focus-aware mode', () => {
 
   it('nothing foreground / not focused -> false', () => {
     expect(desiredTopmost(base)).toBe(false);
+  });
+});
+
+// shouldForceGameBelow: the KWin "keep game below" rule only applies while the overlay is
+// actually visible over a running game (and the user hasn't opted out). Hiding the overlay
+// must drop it so FO76 returns above the panel.
+describe('shouldForceGameBelow', () => {
+  it('game running + overlay visible + enabled -> true', () => {
+    expect(shouldForceGameBelow({ gameRunning: true, overlayVisible: true, gameBelowEnabled: true })).toBe(true);
+  });
+  it('overlay hidden -> false (game reclaims normal stacking, panel visible again)', () => {
+    expect(shouldForceGameBelow({ gameRunning: true, overlayVisible: false, gameBelowEnabled: true })).toBe(false);
+  });
+  it('game not running -> false', () => {
+    expect(shouldForceGameBelow({ gameRunning: false, overlayVisible: true, gameBelowEnabled: true })).toBe(false);
+  });
+  it('user opted out -> false even when visible + running', () => {
+    expect(shouldForceGameBelow({ gameRunning: true, overlayVisible: true, gameBelowEnabled: false })).toBe(false);
+  });
+  it('missing/empty state -> false', () => {
+    expect(shouldForceGameBelow()).toBe(false);
+    expect(shouldForceGameBelow({})).toBe(false);
+  });
+});
+
+// nextPresenceState: hysteresis reducer. A launch needs `appearScans` consecutive hits, an
+// exit needs `disappearScans`, and a FAILED scan (found=null) carries no info — it keeps the
+// committed state and clears any pending flip.
+describe('nextPresenceState', () => {
+  const A = 2, D = 3; // appear / disappear thresholds used below
+
+  it('scan failure (found=null) keeps state and clears any pending flip', () => {
+    const r = nextPresenceState({ found: null, gameRunning: true, candidate: false, stableCount: 1, appearScans: A, disappearScans: D });
+    expect(r).toEqual({ candidate: null, stableCount: 0, commit: false, gameRunning: true });
+  });
+
+  it('found === current committed state is a no-op (resets pending)', () => {
+    const r = nextPresenceState({ found: true, gameRunning: true, candidate: false, stableCount: 2, appearScans: A, disappearScans: D });
+    expect(r).toEqual({ candidate: null, stableCount: 0, commit: false, gameRunning: true });
+  });
+
+  it('launch: needs appearScans consecutive hits before committing true', () => {
+    // 1st scan sees the game while committed=false → pending, not yet committed.
+    let r = nextPresenceState({ found: true, gameRunning: false, candidate: null, stableCount: 0, appearScans: A, disappearScans: D });
+    expect(r).toEqual({ candidate: true, stableCount: 1, commit: false, gameRunning: false });
+    // 2nd consecutive hit → commit.
+    r = nextPresenceState({ found: true, gameRunning: false, candidate: r.candidate, stableCount: r.stableCount, appearScans: A, disappearScans: D });
+    expect(r).toEqual({ candidate: null, stableCount: 0, commit: true, gameRunning: true });
+  });
+
+  it('exit is held LONGER (disappearScans) than launch — a 2-scan miss does NOT drop the game', () => {
+    // committed=true, two consecutive misses is still short of D=3 → no commit.
+    let r = nextPresenceState({ found: false, gameRunning: true, candidate: null, stableCount: 0, appearScans: A, disappearScans: D });
+    expect(r.commit).toBe(false); expect(r.stableCount).toBe(1);
+    r = nextPresenceState({ found: false, gameRunning: true, candidate: r.candidate, stableCount: r.stableCount, appearScans: A, disappearScans: D });
+    expect(r.commit).toBe(false); expect(r.stableCount).toBe(2);
+    // 3rd consecutive miss → finally commit the exit.
+    r = nextPresenceState({ found: false, gameRunning: true, candidate: r.candidate, stableCount: r.stableCount, appearScans: A, disappearScans: D });
+    expect(r).toEqual({ candidate: null, stableCount: 0, commit: true, gameRunning: false });
+  });
+
+  it('a flip-flop resets the counter (must be CONSECUTIVE)', () => {
+    // miss, then a hit (back to committed=true, resets), then miss again → counter restarts at 1.
+    let r = nextPresenceState({ found: false, gameRunning: true, candidate: null, stableCount: 0, appearScans: A, disappearScans: D });
+    expect(r.stableCount).toBe(1);
+    r = nextPresenceState({ found: true, gameRunning: true, candidate: r.candidate, stableCount: r.stableCount, appearScans: A, disappearScans: D });
+    expect(r).toEqual({ candidate: null, stableCount: 0, commit: false, gameRunning: true }); // hit === committed → reset
+    r = nextPresenceState({ found: false, gameRunning: true, candidate: r.candidate, stableCount: r.stableCount, appearScans: A, disappearScans: D });
+    expect(r.stableCount).toBe(1); // restarts, not 2
   });
 });

@@ -126,7 +126,10 @@ A periodic scan runs every **2.5 seconds** via `scanForGame()` (`main.js:500`):
 - **Windows**: `tasklist /FI "IMAGENAME eq Fallout76.exe" /FO CSV /NH`
 - **Linux/macOS**: `ps -A -o command=` filtered for `/fallout76\.exe/i` (matches Proton)
 
-To prevent flickering on transient scan failures, `onGamePresenceChanged()` uses **hysteresis**: a new presence state must be confirmed across `PRESENCE_FLIP_SCANS = 2` consecutive scans before `gameRunning` flips (`main.js:544`).
+To prevent flickering on transient scan failures, `onGamePresenceChanged()` uses **hysteresis** via the pure, unit-tested `overlayCore.nextPresenceState()` reducer:
+
+- A **launch** must persist `PRESENCE_FLIP_SCANS_ON = 2` consecutive scans before `gameRunning` flips to `true`; an **exit** must persist `PRESENCE_FLIP_SCANS_OFF = 3` (held longer, so a single transient miss mid-game can't drop the overlay).
+- A **failed scan** (`ps` error/timeout → `scanForGame` passes `found = null`) carries **no information**: it keeps the committed `gameRunning` and clears any pending flip. Previously a scan error was read as `found = false`, so a transient `ps` hiccup could flip the game "off" and yank the overlay — that was the game-scan flap.
 
 On the **not-running → running transition**, `userHidden` is cleared automatically so the overlay auto-shows when the user launches the game (even if they previously hid it with Delete, `main.js:563`).
 
@@ -176,7 +179,7 @@ Without either tool (or after the breaker disables a crashing `xdotool`), global
 
 `desiredTopmost()` (`overlay-core.js`, unit-tested) decides whether `setAlwaysOnTop` should be `true`: topmost while `forceVisible`, the overlay is focused, the game is the foreground process, or the game is `gameRunning` (session-long). `setAlwaysOnTop` maps to `_NET_WM_STATE_ABOVE` (KWin `AboveLayer`). On KWin 6 that alone loses to a *focused fullscreen* game, so the overlay being above the game is achieved by the **game keep-below KWin rule** (see below), not by `setAlwaysOnTop`. (`focusAwareTopmost` exists in the pure function for completeness but is **not** enabled — the overlay is a normal keep-above window above a kept-below game.)
 
-`applyZOrder()` is idempotent (tracks `overlayIsTopmost`) and suppressed during drags. The overlay is a **NORMAL** window on all platforms (we tried `type:'notification'` for KDE stacking but reverted it — KWin's NotificationLayer is *below* the active-fullscreen layer, and notification windows are excluded from Alt-Tab/taskbar and non-focusable, so users couldn't tab into the chat).
+`applyZOrder()` is idempotent (tracks `overlayIsTopmost`) and suppressed during drags. **When the overlay is hidden to tray, `applyZOrder()` RELEASES `setAlwaysOnTop` on Linux** (and stops the z-order heartbeat) instead of leaving the flag stuck — otherwise a hidden window kept holding the game demoted below the panel. On Windows the flag is kept while hidden (a hidden window doesn't affect stacking and re-toggling would DWM-flash on the next show). The overlay is a **NORMAL** window on all platforms (we tried `type:'notification'` for KDE stacking but reverted it — KWin's NotificationLayer is *below* the active-fullscreen layer, and notification windows are excluded from Alt-Tab/taskbar and non-focusable, so users couldn't tab into the chat).
 
 **Windows**: calls `mainWindow.setAlwaysOnTop(want, 'screen-saver')` — the highest standard Electron level, avoids DWM recomposition flash.
 
@@ -283,12 +286,14 @@ Borderless-windowed games (FO76 included) routinely still set `_NET_WM_STATE_FUL
 
 **The fix — keep the GAME below (`fcm-game-below`).** Forcing the game `below=true` / `belowrule=2` (Force) puts it in `BelowLayer` (1), which KWin evaluates *before* `isActiveFullScreen()` — so FO76 never reaches `ActiveLayer`, and a normal `keepAbove` overlay (4) sits above it even while the game is focused. Unlike the old fullscreen-demote rule, the game does **not** fight "below" (it's a stacking hint, not a state the game asserts), so there is **no flicker**. Default ON (`settings.kwinGameBelow`); the one side effect is that the panel/other windows can also cover the game, so it's an option (tray toggle + CLI-installer prompt). This replaced the retired `fcm-game-demote` (`fullscreen=false` Force) rule, which fought the game's fullscreen state and caused endless flicker (issue #272).
 
+**Visibility-gated (fixes "the game sits below the taskbar even when the overlay is hidden").** Because `below=true` drops FO76 under the panel too, the game-below rule is applied **only while the overlay is actually visible over the game** — the pure `overlayCore.shouldForceGameBelow({ gameRunning, overlayVisible, gameBelowEnabled })` (unit-tested) gates it on `gameRunning && overlayVisible && setting`. When the overlay hides to tray, `syncKwinGameBelow()` (driven by the window `hide`/`show` events + the game-gate) removes the rule so FO76 reclaims normal fullscreen stacking (back above the panel), and `applyZOrder()` releases `setAlwaysOnTop` too (a hidden window previously left the flag stuck, holding the game demoted). `syncKwinGameBelow` change-detects the gated state so it only reconfigures KWin on an actual flip, never from the z-order heartbeat.
+
 ### How the rules get applied (automatic on startup)
 
 `setupKdeKeepAbove({ interactive })` writes the rule(s) into `~/.config/kwinrulesrc` via `kwriteconfig6`, then `qdbus org.kde.KWin /KWin reconfigure` (falls back to `qdbus6`/`qdbus-qt6`):
 
 - `fcm-keepabove` — keep-above on the overlay (`wmclass=fallout-chat-mod`, `above=true`). **Always applied.**
-- `fcm-game-below` — keep-below on the game (`wmclass=steam_app_1151340`, `below=true` Force). **Applied by default** (`settings.kwinGameBelow`, default true; tray → "Keep game below overlay"; the CLI installer also prompts). Toggling it off re-runs the builder, which strips the rule and reconfigures KWin live.
+- `fcm-game-below` — keep-below on the game (`wmclass=steam_app_1151340`, `below=true` Force). **Applied only while the overlay is visible over a running game** (`settings.kwinGameBelow` default true AND `gameRunning` AND `overlayVisible` — see `shouldForceGameBelow`; tray → "Keep game below overlay"; the CLI installer also prompts). Hiding the overlay removes it (game returns above the panel); toggling the setting off re-runs the builder, which strips the rule and reconfigures KWin live.
 
 **KWin 6 format (verified):** the authoritative rule list is `[General] rules=`, a **comma-separated list of group NAMES** (plus a matching `count`). Writing numbered groups with only `count` is **not** enough — KWin rewrites `count` and drops the rules. We use **stable named groups** (so re-runs are idempotent and never collide with the user's own numbered rules) and **append** our names to any existing `rules=` list (preserving user rules). `buildKwinKeepAboveScript({ includeBelow })` (unit-tested) emits keep-above always + game-below by default; its idempotency check matches the expected rule set exactly so toggling the option always rewrites.
 

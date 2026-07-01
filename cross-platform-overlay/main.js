@@ -405,6 +405,12 @@ function writeLinuxHelperFiles() {
 function isKwinGameBelowEnabled() {
   try { const s = loadState().settings; return !s || s.kwinGameBelow !== false; } catch { return true; }
 }
+// Is the overlay window actually on screen right now (not hidden to tray / minimized)?
+// Used to gate the game-below rule + always-on-top: a hidden overlay must not hold the
+// game demoted below the panel.
+function overlayVisibleForZOrder() {
+  return !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized());
+}
 function setupKdeKeepAbove({ interactive = false } = {}) {
   if (!IS_LINUX) return;
   const rulePath = writeLinuxHelperFiles();
@@ -412,7 +418,14 @@ function setupKdeKeepAbove({ interactive = false } = {}) {
     const dir = (() => { try { return app.getPath('userData'); } catch { return null; } })();
     if (dir) { try { shell.openPath(dir); } catch { /* ignore */ } }
   }
-  const includeBelow = isKwinGameBelowEnabled();
+  // Only force the game BELOW while the overlay is actually visible over it. When the
+  // overlay is hidden to tray we drop the rule so FO76 reclaims normal fullscreen
+  // stacking (above the panel) — fixes "game sits under the taskbar even when hidden".
+  const includeBelow = overlayCore.shouldForceGameBelow({
+    gameRunning,
+    overlayVisible: overlayVisibleForZOrder(),
+    gameBelowEnabled: isKwinGameBelowEnabled(),
+  });
   try {
     const { exec } = require('child_process');
     // Shared, unit-tested script builder (idempotency guard + numbered-group write
@@ -429,6 +442,24 @@ function setupKdeKeepAbove({ interactive = false } = {}) {
     });
   } catch (e) { diag('[kwin] setupKdeKeepAbove exec failed:', String(e && e.message || e)); }
   diag('[kwin] setupKdeKeepAbove: rule at ' + rulePath + ' (interactive=' + interactive + ', gameBelow=' + includeBelow + ')');
+}
+
+// Re-apply the KWin rules ONLY when the gated game-below state actually flips (game
+// launch/exit, overlay show/hide). The install script is idempotent (no KWin reconfigure
+// when the rule set is unchanged), and this guard avoids even spawning it when nothing
+// changed — so this is safe to call on every transition, but NOT from the 3s heartbeat.
+let _lastGameBelowApplied = null;
+function syncKwinGameBelow(reason) {
+  if (!IS_LINUX) return;
+  const includeBelow = overlayCore.shouldForceGameBelow({
+    gameRunning,
+    overlayVisible: overlayVisibleForZOrder(),
+    gameBelowEnabled: isKwinGameBelowEnabled(),
+  });
+  if (includeBelow === _lastGameBelowApplied) return;
+  _lastGameBelowApplied = includeBelow;
+  diag('[kwin] game-below -> ' + includeBelow + (reason ? ' (' + reason + ')' : ''));
+  setupKdeKeepAbove({ interactive: false });
 }
 
 // Discover Steam library roots (default install dirs + any libraryfolders.vdf paths),
@@ -789,7 +820,8 @@ let _lastDiagFound = null;         // diagnostic: last logged detection state
 let _inputGrabWarned = false;      // diagnostic: warned once about gamescope exclusive input grab
 let _presenceCandidate = null;     // pending gameRunning value awaiting confirmation (hysteresis)
 let _presenceStableCount = 0;      // consecutive scans agreeing on _presenceCandidate
-const PRESENCE_FLIP_SCANS = 2;     // scans (×2.5s) a new presence must persist before we flip gameRunning
+const PRESENCE_FLIP_SCANS_ON = 2;  // scans (×2.5s) a LAUNCH must persist before we flip gameRunning→true
+const PRESENCE_FLIP_SCANS_OFF = 3; // scans an EXIT must persist (held longer so a transient miss mid-game can't drop the overlay)
 
 function scanForGame() {
   if (process.platform === 'win32') {
@@ -816,11 +848,19 @@ function scanForGame() {
       'ps -A -o command=',
       { timeout: 4000 },
       (err, stdout) => {
+        if (err) {
+          // A ps failure/timeout carries NO information about the game — do NOT read it
+          // as "game gone" (that would drop the overlay mid-game on a transient hiccup).
+          // Keep the committed state; a real change still needs fresh confirmations.
+          onGamePresenceChanged(null);
+          vdiag('[game-scan] ps error — keeping gameRunning=' + gameRunning + ': ' + String(err.message || err));
+          return;
+        }
         // Match the EXECUTABLE (Fallout76.exe), not a bare "fallout76" substring —
         // otherwise opening a file with "76" in the name (e.g. Fallout76.ini /
         // Fallout76Custom.ini in an editor under Wine) is a false positive that
         // pops the overlay open. The game runs as Fallout76.exe under Proton.
-        const found = !err && /fallout76\.exe/i.test(stdout || '');
+        const found = /fallout76\.exe/i.test(stdout || '');
         _scanCount++;
         // Linux/Proton diagnostics: dump candidate process lines (fallout/wine/
         // proton/steam/fo76) so if FO76-via-Proton isn't detected we can see EXACTLY
@@ -865,25 +905,35 @@ function scanForGame() {
   }
 }
 
+// `found`: true (game seen) | false (not seen) | null (scan FAILED — no information).
+// Hysteresis lives in the pure overlay-core.nextPresenceState reducer: a single bad scan
+// used to flip gameRunning instantly, churning z-order + visibility (reads as the overlay
+// flashing/bouncing). A launch must persist PRESENCE_FLIP_SCANS_ON scans, an exit
+// PRESENCE_FLIP_SCANS_OFF (held longer), and a scan failure never drops the game.
 function onGamePresenceChanged(found) {
-  if (found === gameRunning) { _presenceCandidate = null; _presenceStableCount = 0; return; }
-  // Hysteresis: a single bad scan (tasklist timeout / transient miss) used to flip
-  // gameRunning instantly, which churns z-order + visibility — reading as the overlay
-  // flashing/reloading and bouncing focus. Require the NEW state to persist across
-  // PRESENCE_FLIP_SCANS consecutive scans before committing.
-  if (found === _presenceCandidate) { _presenceStableCount++; }
-  else { _presenceCandidate = found; _presenceStableCount = 1; }
-  if (_presenceStableCount < PRESENCE_FLIP_SCANS) {
-    diag('[game-gate] presence candidate=' + found + ' (' + _presenceStableCount + '/' + PRESENCE_FLIP_SCANS + ') — awaiting confirm, current=' + gameRunning);
+  const r = overlayCore.nextPresenceState({
+    found,
+    gameRunning,
+    candidate: _presenceCandidate,
+    stableCount: _presenceStableCount,
+    appearScans: PRESENCE_FLIP_SCANS_ON,
+    disappearScans: PRESENCE_FLIP_SCANS_OFF,
+  });
+  _presenceCandidate = r.candidate;
+  _presenceStableCount = r.stableCount;
+  if (!r.commit) {
+    if (found != null && found !== gameRunning) {
+      diag('[game-gate] presence candidate=' + found + ' (' + _presenceStableCount + '/' +
+        (found ? PRESENCE_FLIP_SCANS_ON : PRESENCE_FLIP_SCANS_OFF) + ') — awaiting confirm, current=' + gameRunning);
+    }
     return;
   }
-  _presenceCandidate = null; _presenceStableCount = 0;
   const wasRunning = gameRunning;
-  gameRunning = found;
-  diag('[game-gate] gameRunning changed to ' + found + ' chatActive=' + chatActive + ' isPrivileged=' + isPrivileged() + ' forceVisible=' + forceVisible);
+  gameRunning = r.gameRunning;
+  diag('[game-gate] gameRunning changed to ' + gameRunning + ' chatActive=' + chatActive + ' isPrivileged=' + isPrivileged() + ' forceVisible=' + forceVisible);
   // On game-launch transition (not-running → running), clear userHidden so alt-tabbing
   // back into the game brings the overlay back after the user had hidden it with Delete.
-  if (found && !wasRunning) {
+  if (gameRunning && !wasRunning) {
     diag('[game-gate] game launched — clearing userHidden');
     userHidden = false;
   }
@@ -895,19 +945,21 @@ function onGamePresenceChanged(found) {
   // client:status over the WS — this is how the backend knows whether to count
   // this user as "online" for party presence.
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('overlay:game-state', found);
+    mainWindow.webContents.send('overlay:game-state', gameRunning);
   }
   // On non-Windows where we have no foreground-window API: mirror game-running
   // state onto lastForegroundProc so the existing desiredTopmost() logic works.
   // While the game is running → act topmost; when it stops → drop back.
   if (process.platform !== 'win32') {
-    lastForegroundProc = found ? GAME_PROCESSES[0].toLowerCase() : '';
+    lastForegroundProc = gameRunning ? GAME_PROCESSES[0].toLowerCase() : '';
     applyZOrder();
   }
   // Re-evaluate overlay visibility for ALL platforms:
   //   game launched → show (now allowed for regular users)
   //   game closed   → hide if fully set up and not privileged/force-visible
   reevaluateVisibility();
+  // Add/remove the KWin game-below rule to match the new game+visibility state (Linux).
+  syncKwinGameBelow('game-' + (gameRunning ? 'launch' : 'exit'));
 }
 
 function startGameScan() {
@@ -2948,7 +3000,21 @@ function applyZOrder(opts) {
   // vdiag (verbose) so they don't flood the log — a real z-order CHANGE still logs
   // at info. (Heartbeat re-applies were the #1 source of log bloat.)
   const zlog = (opts && opts.heartbeat) ? vdiag : diag;
-  if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!mainWindow.isVisible()) {
+    // Overlay hidden to tray. On Linux, RELEASE always-on-top (and stop the heartbeat) so
+    // a hidden window doesn't keep holding the game out of exclusive fullscreen — otherwise
+    // the flag stayed stuck from when it was visible and FO76 stayed under the panel even
+    // after hiding. On Windows we keep the flag: a hidden window doesn't affect stacking and
+    // re-toggling it would DWM-flash on the next show.
+    if (IS_LINUX && overlayIsTopmost) {
+      overlayIsTopmost = false;
+      _stopLinuxZOrderHeartbeat();
+      try { mainWindow.setAlwaysOnTop(false); } catch { /* ignore */ }
+      diag('[zorder] linux: released always-on-top (overlay hidden)');
+    }
+    return;
+  }
   // Suppress z-order changes while the user is dragging the window. On Windows,
   // calling setAlwaysOnTop on a transparent window triggers a DWM recomposition
   // that flashes/dims the overlay visuals mid-drag. We skip the re-apply until
@@ -3267,7 +3333,15 @@ function startForegroundZOrder() {
         overlayIsTopmost = false; // force re-apply even if state is unchanged
         applyZOrder();
         applyFocusClickThrough(mainWindow.isFocused());
+        syncKwinGameBelow('show'); // re-add game-below now that we're showing over the game
         diag('[zorder] linux: show event — re-asserting always-on-top');
+      });
+      // On hide-to-tray, drop the game-below rule (and applyZOrder releases always-on-top)
+      // so FO76 returns to normal fullscreen stacking above the panel while nothing is shown.
+      mainWindow.on('hide', () => {
+        applyZOrder();
+        syncKwinGameBelow('hide');
+        diag('[zorder] linux: hide event — released game-below + always-on-top');
       });
     }
     applyZOrder();
@@ -3508,7 +3582,8 @@ function rebuildTrayMenu() {
       // other windows not be able to cover the game.
       { label: 'Keep game below overlay (fixes hidden-behind-fullscreen)', type: 'checkbox', checked: isKwinGameBelowEnabled(), click: (mi) => {
         try { const st = loadState(); const settings = { ...(st.settings || {}), kwinGameBelow: !!mi.checked }; saveState({ settings }); } catch { /* ignore */ }
-        setupKdeKeepAbove({ interactive: false }); // re-apply rules with/without the game-below rule (live KWin reconfigure)
+        _lastGameBelowApplied = null;      // setting changed → force a re-evaluate
+        syncKwinGameBelow('toggle');       // re-apply rules with/without game-below (gated on visibility)
         rebuildTrayMenu();
       } },
       // Cursor-lock fix: enable Wine's own mouse capture in the FO76 prefix so the cursor
