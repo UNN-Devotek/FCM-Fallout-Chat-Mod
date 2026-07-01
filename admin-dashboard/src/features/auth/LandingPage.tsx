@@ -704,24 +704,26 @@ function InstallPanel() {
         Uninstalling removes these KWin rules and restores Fallout 76&apos;s fullscreen stacking.
       </div>
 
-      {/* ── KDE Plasma (Wayland) — in-game cursor lock ──────────────── */}
-      <div style={{ ...subHeaderStyle, marginTop: '18px' }}>IN-GAME CURSOR LOCK — AUTOMATIC</div>
+      {/* ── Wayland — in-game cursor lock ───────────────────────────── */}
+      <div style={{ ...subHeaderStyle, marginTop: '18px' }}>IN-GAME CURSOR LOCK (WAYLAND)</div>
       <div style={bodyStyle}>
-        On KDE Plasma (Wayland), KWin releases Fallout 76&apos;s mouse-lock while the overlay sits on top,
-        so the cursor could drift off the game during play. The overlay now fixes this{' '}
-        <strong style={{ color: '#C8A840' }}>automatically on launch</strong> — it enables Wine&apos;s own
-        mouse capture in the Fallout 76 Proton prefix, so the cursor stays locked to the game while you
-        play and frees the moment you open the overlay to type. It&apos;s idempotent and self-heals if a
-        Proton update ever resets the prefix. <strong style={{ color: '#C8A840' }}>Nothing to do.</strong>
+        On Wayland the compositor drops Fallout 76&apos;s mouse-lock while the overlay sits on top, so the
+        cursor could drift off the game. <strong style={{ color: '#C8A840' }}>The installer enables it for
+        you</strong> — it turns on Wine&apos;s own mouse capture (the winecfg &ldquo;Automatically capture the
+        mouse in full-screen windows&rdquo; setting) in the Fallout 76 Proton prefix, so the cursor stays
+        locked to the game. X11 sessions don&apos;t need this.
       </div>
       <div style={{ ...bodyStyle, marginTop: '8px' }}>
-        If Fallout 76 happened to be open the very first time the overlay started, quit the game and it
-        re-applies on the next overlay launch — or right-click the tray icon and choose{' '}
-        <strong style={{ color: '#C8A840' }}>Fix in-game cursor lock (Wayland)</strong>. You can turn the
-        automatic behaviour off via the tray →{' '}
-        <strong style={{ color: '#C8A840' }}>Auto-fix cursor lock on launch</strong>. (Manual equivalent:{' '}
+        The installer can only do this if you&apos;ve <strong style={{ color: '#C8A840' }}>launched Fallout 76
+        at least once</strong> (so its Proton prefix exists) and the game is closed. If not, run the game
+        once, then re-run the installer — or right-click the tray icon and choose{' '}
+        <strong style={{ color: '#C8A840' }}>Fix in-game cursor lock (Wayland)</strong>.
+      </div>
+      <div style={{ ...bodyStyle, marginTop: '8px' }}>
+        Manual method (community-standard):{' '}
         <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>protontricks 1151340 winecfg</code>{' '}
-        → Graphics → &ldquo;Automatically capture the mouse in full-screen windows&rdquo;.)
+        → <strong style={{ color: '#C8A840' }}>Input</strong> tab → tick &ldquo;Automatically capture the
+        mouse in full-screen windows&rdquo;, then run Fallout 76 in Fullscreen.
       </div>
 
       <div style={{ ...warningBoxStyle, marginTop: '14px' }}>
