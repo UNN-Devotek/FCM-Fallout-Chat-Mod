@@ -146,6 +146,8 @@ beforeEach(() => {
 
   // Default rate-limit multi: count = 1 (under limit of 5).
   getRedisClient.mockResolvedValue({
+    // incr backs nextRelaySeq() — every ingested message assigns a relaySeq.
+    incr: jest.fn().mockResolvedValue(1),
     multi: jest.fn().mockReturnValue({
       zRemRangeByScore: jest.fn().mockReturnThis(),
       zAdd: jest.fn().mockReturnThis(),
@@ -248,24 +250,28 @@ describe('ingestMessage — relaySeq threading (relay source)', () => {
     }));
   });
 
-  it('omits relaySeq from the broadcast payload and persist record for non-relay sources', async () => {
+  it('assigns a fresh relaySeq (via nextRelaySeq) for non-relay sources so all surfaces unify', async () => {
+    // Cross-surface fix: EVERY message gets a relaySeq. When the caller does not pass one
+    // (hud/ws/mcp), finalizeMessage falls back to nextRelaySeq() (mocked incr -> 1) so the
+    // overlay relay pub/sub subscriber and the in-game `relay_seq IS NOT NULL` history query
+    // both see the message.
     const result = await ingestMessage({
       userId: 'hud-user-1',
       channelId: VALID_CHANNEL_ID,
       rawContent: 'hud message',
       source: 'hud',
-      // no relaySeq
+      // no relaySeq -> nextRelaySeq() assigns one
     });
 
     expect(result.ok).toBe(true);
 
-    // Non-relay broadcast payload must NOT include relaySeq (unchanged behavior).
+    // Broadcast payload carries the fallback relaySeq.
     const broadcastArg = broadcast.mock.calls[0][0];
-    expect(broadcastArg.payload).not.toHaveProperty('relaySeq');
+    expect(broadcastArg.payload).toHaveProperty('relaySeq', 1);
 
-    // Non-relay persist record must NOT include relaySeq → relay_seq stays NULL.
+    // Persist record carries the fallback relaySeq -> messages.relay_seq is written.
     const recordArg = messageQueue.add.mock.calls[0][0];
-    expect(recordArg).not.toHaveProperty('relaySeq');
+    expect(recordArg).toHaveProperty('relaySeq', 1);
   });
 });
 
@@ -325,6 +331,8 @@ describe('ingestMessage — rate limit', () => {
   describe('Redis error during rate-limit check', () => {
     beforeEach(() => {
       getRedisClient.mockResolvedValue({
+        // ws fail-open path proceeds to nextRelaySeq(), which needs incr.
+        incr: jest.fn().mockResolvedValue(1),
         multi: jest.fn().mockReturnValue({
           zRemRangeByScore: jest.fn().mockReturnThis(),
           zAdd: jest.fn().mockReturnThis(),
