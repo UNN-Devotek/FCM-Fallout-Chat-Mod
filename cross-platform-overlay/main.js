@@ -488,27 +488,11 @@ function applyFo76Grab() {
   return { status, reg }; // 'applied'
 }
 
-function isFo76CursorAutoFixEnabled() {
-  try { const s = loadState().settings; return !s || s.fo76CursorAutoFix !== false; } catch { return true; }
-}
-
-// Auto-apply on startup so end users need do nothing. ANY Wayland session (the compositor's
-// pointer-constraint handling is what breaks the game's cursor lock when the overlay is on top;
-// this is worst on KWin but the Wine grab is a compositor-agnostic fix, so we apply it on all
-// Wayland — GNOME/wlroots too). X11 doesn't need it. Opt-out via settings, idempotent (no-op
-// once set — self-heals if Proton resets the prefix). Notifies only when it actually changes
-// something. Runs at app-ready, before FO76 is launched (overlay autostarts on login).
-function maybeAutoFixFo76CursorLock() {
-  if (!(IS_LINUX && IS_WAYLAND) || !isFo76CursorAutoFixEnabled()) return;
-  try {
-    const r = applyFo76Grab();
-    if (r.status === 'applied') {
-      showSystemNotification('Fallout Chat Mod — in-game cursor lock enabled',
-        'Fallout 76 will now keep the mouse locked to the game while the overlay is on top. Relaunch FO76 if it was open.');
-    }
-    diag('[cursor-fix] auto: ' + r.status + (r.reg ? ' (' + r.reg + ')' : ''));
-  } catch (e) { diag('[cursor-fix] auto failed: ' + String(e && e.message || e)); }
-}
+// NOTE: the in-game cursor-lock (Wine GrabFullscreen/GrabPointer in the FO76 prefix) is applied
+// by the INSTALLER at install time (Packaging/linux/install.sh) — the community-standard
+// protontricks/winecfg "Automatically capture the mouse in full-screen windows" setting. The
+// overlay no longer auto-applies it on launch; the tray action below is the manual re-apply for
+// anyone who runs FO76 after installing (or after a Proton prefix reset). See applyFo76Grab.
 
 // Tray (interactive): same core, with explicit dialog feedback per status.
 function fixFo76CursorLock() {
@@ -3536,10 +3520,6 @@ function rebuildTrayMenu() {
       // stays locked to the game on KWin Wayland (KWin revokes the game's pointer constraint
       // when the overlay is on top). One-click, idempotent; needs FO76 closed.
       { label: 'Fix in-game cursor lock (Wayland) — needs FO76 closed', click: () => fixFo76CursorLock() },
-      { label: 'Auto-fix cursor lock on launch', type: 'checkbox', checked: isFo76CursorAutoFixEnabled(), click: (mi) => {
-        try { const st = loadState(); const settings = { ...(st.settings || {}), fo76CursorAutoFix: !!mi.checked }; saveState({ settings }); } catch { /* ignore */ }
-        if (mi.checked) maybeAutoFixFo76CursorLock();
-      } },
     ] : []),
     // Diagnostics: surface the log for bug reports + let users enable verbose
     // (per-tick) logging without a relaunch. The toggle persists to settings so it
@@ -3946,7 +3926,7 @@ app.whenReady().then(() => {
   // skips if already installed (see setupKdeKeepAbove). Other Linux setups just get
   // the helper files written (setupKdeKeepAbove writes them on its first line too).
   if (KDE_WAYLAND) setupKdeKeepAbove({ interactive: false });
-  if (IS_LINUX && IS_WAYLAND) maybeAutoFixFo76CursorLock(); // zero-effort in-game cursor lock (any Wayland; idempotent)
+  // In-game cursor lock is applied by the installer now (not auto on launch) — tray → "Fix in-game cursor lock" re-applies.
   else writeLinuxHelperFiles();
   // One-time userData migration (productName "Fallout ChatMod" → "Fallout Chat Mod").
   // MUST run before any loadState()/register so the migrated install token is used

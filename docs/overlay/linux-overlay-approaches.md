@@ -24,14 +24,16 @@ Three parts, all shippable from the installer:
    "Automatically capture the mouse in full-screen windows"). **Wine** then confines the cursor to
    the game whenever FO76 is focused and releases it when focus leaves (overlay stays usable).
    Confirmed: cursor held on fast flicks, free movement in menus, frees for the overlay — all by
-   Wine, independent of KWin's broken pointer constraint. **Applied automatically on overlay
-   launch** (any Wayland session — worst on KWin, but the Wine grab is compositor-agnostic so
-   GNOME/wlroots get it too; X11 doesn't need it) — idempotent, backs up `user.reg`, self-heals if a Proton update resets
-   the prefix; opt-out + manual re-apply via the tray ("Auto-fix cursor lock on launch" /
-   "Fix in-game cursor lock (Wayland)"). Requires FO76 closed (Proton rewrites user.reg on exit),
-   which is the normal case at login when the overlay autostarts. Implemented in
-   `main.js` (`maybeAutoFixFo76CursorLock` / `applyFo76Grab`) on the pure
-   `overlay-core.buildFo76GrabUserReg` + `fo76GrabStatus` helpers (unit-tested). Manual
+   Wine, independent of KWin's broken pointer constraint. **Applied by the Linux installer**
+   (`Packaging/linux/install.sh` → `apply_fo76_cursor_lock`) on any Wayland session — the
+   community-standard winecfg "Automatically capture the mouse in full-screen windows" setting.
+   Best-effort: needs FO76's prefix to exist + FO76 closed (Proton rewrites user.reg on exit);
+   otherwise the installer prints the manual `protontricks 1151340 winecfg` → Input-tab steps.
+   Idempotent, backs up `user.reg`. Re-apply any time via the tray "Fix in-game cursor lock
+   (Wayland)" (`main.js` `fixFo76CursorLock` / `applyFo76Grab`, on the unit-tested
+   `overlay-core.buildFo76GrabUserReg` + `fo76GrabStatus` helpers). X11 doesn't need it.
+   (History: the overlay used to auto-apply this on every launch; moved to the installer +
+   tray-only per the community protontricks approach.) Manual
    equivalent: `protontricks 1151340 winecfg` → Graphics → "Automatically capture the mouse …".
 
 ### What did NOT work (dead ends, for the record)
