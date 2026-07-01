@@ -537,44 +537,58 @@ function awkStripFcmSectionLines() {
   ];
 }
 
-// Install (clean + apply) script. Removes any stale FCM rules, then writes the two current
+// Install (clean + apply) script. Removes any stale FCM rules, then writes the current
 // named rules, preserving the user's own rules. Idempotent: if the active FCM rules are
-// already EXACTLY our two current named groups, it prints fcm-rule-present and skips the
+// already EXACTLY our current named groups, it prints fcm-rule-present and skips the
 // reconfigure (so startup doesn't flash KWin on every launch).
-// includeBelow (default true): also write the "keep game below" rule (fcm-game-below).
-// THE KWin-6 FIX for "overlay hidden behind a focused fullscreen game": forcing the
-// game keepBelow drops it to KWin's BelowLayer, which KWin evaluates BEFORE the
-// active-fullscreen promotion — so a NORMAL keep-above overlay sits above the game even
-// while the game is focused. Unlike the old fullscreen-demote rule, the game does NOT
-// fight "below" (it's a stacking hint, not a state the game asserts), so there is NO
-// flicker. It's an OPTION (settings.kwinGameBelow / installer prompt) because forcing
-// the game below also lets the panel/other windows cover it; default ON on KDE-Wayland.
-function buildKwinKeepAboveScript({ file = 'kwinrulesrc', overlayWmclass = 'fallout-chat-mod', gameWmclass = 'steam_app_1151340', includeBelow = true } = {}) {
-  const ABOVE = 'fcm-keepabove';      // stable group name (overlay keep-above rule)
-  const BELOW = 'fcm-game-below';     // stable group name (game keep-below rule)
+//
+// THE KWin-6 FIX for "overlay hidden behind a focused fullscreen game" is the force-Layer
+// rule `fcm-overlay-layer` (`layer=overlay`, `layerrule=2`=Force): it puts the OVERLAY in
+// KWin's OverlayLayer, ABOVE the active-fullscreen game, WITHOUT demoting the game — so the
+// game keeps its normal fullscreen stacking (above the panel) and the overlay keeps keyboard
+// focus (its window TYPE stays Normal). Added in KWin 6.0 (KDE Bug 441074, the sanctioned
+// "stay above fullscreen" mechanism); verified on KWin 6.7.1 (a matched window jumps to
+// stackingLayer 9). Always applied alongside the plain keep-above rule.
+//
+// includeBelow (default FALSE): an OPT-IN FALLBACK "keep game below" rule (fcm-game-below,
+// `below=true`) for the rare setup where the force-Layer rule doesn't take. It drops the game
+// to BelowLayer, which also puts it below the PANEL — so it's off by default now that the
+// force-Layer rule handles the common case. (settings.kwinGameBelow / tray toggle.)
+function buildKwinKeepAboveScript({ file = 'kwinrulesrc', overlayWmclass = 'fallout-chat-mod', gameWmclass = 'steam_app_1151340', includeBelow = false, overlayLayer = 'overlay' } = {}) {
+  const ABOVE = 'fcm-keepabove';       // overlay keep-above (belt-and-suspenders)
+  const LAYER = 'fcm-overlay-layer';   // overlay force-Layer=Overlay — beats fullscreen WITHOUT demoting the game
+  const BELOW = 'fcm-game-below';      // opt-in fallback: demote the game (also drops it below the panel)
   const w = (grp, key, val) => `kwriteconfig6 --file ${file} --group ${grp} --key ${key} ${val}`;
   const lines = [
     ...kwinPartitionSnippet(file),
-    // Idempotency: already EXACTLY the rules we want (nothing stale, game-below present
-    // iff requested) → skip. Otherwise strip + rewrite so toggling the option on/off works.
+    // Idempotency: keep-above + overlay-layer are ALWAYS wanted; game-below present iff
+    // requested → skip. Otherwise strip + rewrite so toggling the option on/off works.
     `N=$(printf '%s' "$FCM" | tr ' ' '\\n' | grep -c .)`,
     `case " $FCM " in *" ${ABOVE} "*) A=1 ;; *) A=0 ;; esac`,
+    `case " $FCM " in *" ${LAYER} "*) L=1 ;; *) L=0 ;; esac`,
     `case " $FCM " in *" ${BELOW} "*) B=1 ;; *) B=0 ;; esac`,
     includeBelow
-      ? `if [ "$N" = "2" ] && [ "$A" = "1" ] && [ "$B" = "1" ]; then echo fcm-rule-present; exit 0; fi`
-      : `if [ "$N" = "1" ] && [ "$A" = "1" ] && [ "$B" = "0" ]; then echo fcm-rule-present; exit 0; fi`,
+      ? `if [ "$N" = "3" ] && [ "$A" = "1" ] && [ "$L" = "1" ] && [ "$B" = "1" ]; then echo fcm-rule-present; exit 0; fi`
+      : `if [ "$N" = "2" ] && [ "$A" = "1" ] && [ "$L" = "1" ] && [ "$B" = "0" ]; then echo fcm-rule-present; exit 0; fi`,
     // Clear stale FCM groups (old numbered/named, the retired fcm-game-demote, and a
     // now-unwanted fcm-game-below) — awk-strip them (kwriteconfig6 can't delete a section).
     ...awkStripFcmSectionLines(),
-    // Overlay keep-above rule (always).
+    // Overlay keep-above rule (always). Harmless belt-and-suspenders below the force-Layer rule.
     w(ABOVE, 'Description', `"Fallout Chat Mod - keep above games"`),
     w(ABOVE, 'wmclass', `"${overlayWmclass}"`),
     w(ABOVE, 'wmclassmatch', '2'),
     w(ABOVE, 'wmclasscomplete', 'false'),
     w(ABOVE, 'above', 'true'),
     w(ABOVE, 'aboverule', '3'),
+    // Overlay force-Layer = Overlay (always) — THE fix. Above active-fullscreen, no demotion.
+    w(LAYER, 'Description', `"Fallout Chat Mod - overlay layer"`),
+    w(LAYER, 'wmclass', `"${overlayWmclass}"`),
+    w(LAYER, 'wmclassmatch', '2'),
+    w(LAYER, 'wmclasscomplete', 'false'),
+    w(LAYER, 'layer', overlayLayer),
+    w(LAYER, 'layerrule', '2'),
   ];
-  // Game keep-below rule — the no-flicker fix that beats the fullscreen layer.
+  // Opt-in fallback: keep game below (also drops it below the panel — hence off by default).
   if (includeBelow) {
     lines.push(
       w(BELOW, 'Description', `"Fallout Chat Mod - keep game below"`),
@@ -586,7 +600,9 @@ function buildKwinKeepAboveScript({ file = 'kwinrulesrc', overlayWmclass = 'fall
     );
   }
   // rules = preserved user rules + ours; count = its length.
-  const NEWR = includeBelow ? `\${KEEP:+$KEEP,}${ABOVE},${BELOW}` : `\${KEEP:+$KEEP,}${ABOVE}`;
+  const NEWR = includeBelow
+    ? `\${KEEP:+$KEEP,}${ABOVE},${LAYER},${BELOW}`
+    : `\${KEEP:+$KEEP,}${ABOVE},${LAYER}`;
   lines.push(
     `NEWR="${NEWR}"`,
     `kwriteconfig6 --file ${file} --group General --key rules "$NEWR"`,

@@ -13,11 +13,16 @@ Three parts, all shippable from the installer:
 1. **Force the FCM overlay into XWayland** (`ELECTRON_OZONE_PLATFORM_HINT=x11` + `--ozone-platform=x11`;
    the overlay already relaunches into XWayland on KDE-Wayland). It then displays on top of FO76
    correctly (transparent, always-on-top, click-through).
-2. **Two KWin window rules (both load-bearing — verified):** `fcm-keepabove`
-   (`wmclass=fallout-chat-mod`, `above=true`, Force) AND `fcm-game-below`
-   (`wmclass=steam_app_1151340`, `below=true`). Dropping `fcm-game-below` makes the overlay slip
-   BEHIND a *focused* fullscreen FO76 (KWin's active-fullscreen promotion wins). Neither affects
-   the cursor lock — stacking only.
+2. **KWin force-Layer window rule (the fix — verified on KWin 6.7.1):** `fcm-overlay-layer`
+   (`wmclass=fallout-chat-mod`, `layer=overlay`, `layerrule=2`=Force) puts the overlay in KWin's
+   `OverlayLayer(9)`, ABOVE the active-fullscreen game, WITHOUT demoting the game — so FO76 keeps
+   normal fullscreen stacking (above the panel) and the overlay keeps keyboard focus (window type
+   stays Normal). Added in KWin 6.0 (KDE Bug 441074). Applied alongside a plain `fcm-keepabove`
+   (`above=true`) belt-and-suspenders. The old `fcm-game-below` (`below=true` on the game) is now
+   an **opt-in fallback (default off)** — it worked but also dropped the game under the taskbar.
+   Neither affects the cursor lock — stacking only. (Empirically: a matched window jumps from
+   `layer=2` to `layer=9`; an earlier "layer/layerrule ignored by KWin 6" note was never actually
+   tested with this rule and is wrong.)
 3. **Enable Wine's own mouse capture via protontricks** — run the winetricks verb
    `protontricks 1151340 grabfullscreen=y` (the winecfg "Automatically capture the mouse in
    full-screen windows" setting; internally `HKCU\Software\Wine\X11 Driver` `GrabFullscreen`=`Y`)
