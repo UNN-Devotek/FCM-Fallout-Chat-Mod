@@ -53,7 +53,9 @@ print_cursor_manual_steps() {
       2. Run:  protontricks 1151340 grabfullscreen=y
          (GUI equivalent: protontricks 1151340 winecfg -> Input tab -> tick
           "Automatically capture the mouse in full-screen windows".)
-      3. Launch Fallout 76 in Fullscreen.
+      3. For Borderless-Windowed too, also run:
+         protontricks 1151340 -c 'wine reg add "HKCU\Software\Wine\X11 Driver" /v GrabPointer /t REG_SZ /d Y /f && wineserver -w'
+      4. Launch Fallout 76 (Fullscreen or Borderless-Windowed).
 MAN
 }
 
@@ -107,7 +109,15 @@ apply_fo76_cursor_lock() {
     warn "In-game cursor lock: no display available to run protontricks from this context."
     print_cursor_manual_steps; return 0
   fi
-  say "Enabled the in-game cursor lock for Fallout 76 (protontricks grabfullscreen). Relaunch FO76 in Fullscreen."
+  # Also set GrabPointer so the lock holds in Borderless-Windowed (no winetricks verb
+  # exists for it). `wineserver -w` forces user.reg to flush before wine lingers.
+  local ptr='wine reg add "HKCU\Software\Wine\X11 Driver" /v GrabPointer /t REG_SZ /d Y /f && wineserver -w'
+  if [ -n "${DISPLAY:-}" ]; then
+    $PT -c "$ptr" "$FO76_APPID" >/dev/null 2>&1 || true
+  elif command -v xvfb-run >/dev/null 2>&1; then
+    xvfb-run -a $PT -c "$ptr" "$FO76_APPID" >/dev/null 2>&1 || true
+  fi
+  say "Enabled the in-game cursor lock for Fallout 76 (protontricks: GrabFullscreen + GrabPointer). Works in Fullscreen and Borderless — relaunch FO76."
 }
 
 command -v curl >/dev/null 2>&1 || die "curl is required."
@@ -296,17 +306,18 @@ KDE Plasma (Wayland) — automatic
 
 In-game cursor lock (Wayland)
 - On Wayland the compositor drops Fallout 76's mouse-lock when the overlay sits on
-  top, so the cursor can drift off the game. THIS INSTALLER enables it via protontricks
-  (the "grabfullscreen=y" winetricks verb -- the winecfg "Automatically capture the
-  mouse in full-screen windows" setting), so the cursor stays locked to the game. No
-  Wine config is hand-edited. protontricks is auto-installed if missing.
+  top, so the cursor can drift off the game. THIS INSTALLER enables it via protontricks:
+  the "grabfullscreen=y" winetricks verb (Fullscreen) PLUS a GrabPointer reg add
+  (Borderless-Windowed), so the cursor stays locked in either display mode. No Wine
+  config is hand-edited. protontricks is auto-installed if missing.
 - It can only do this if Fallout 76's Proton prefix already exists (you've launched
   the game at least once) and FO76 is closed. If not, the installer prints the manual
   steps -- or just use the overlay tray -> "Fix in-game cursor lock (Wayland)" after
   you've run FO76 once. X11 sessions don't need any of this.
-- Manual method: protontricks 1151340 grabfullscreen=y  (GUI equivalent:
-  protontricks 1151340 winecfg -> "Input" tab -> tick "Automatically capture the mouse
-  in full-screen windows"), then run FO76 in Fullscreen.
+- Manual method: protontricks 1151340 grabfullscreen=y  and  protontricks 1151340 -c
+  'wine reg add "HKCU\Software\Wine\X11 Driver" /v GrabPointer /t REG_SZ /d Y /f &&
+  wineserver -w'  (GUI equivalent of the first: protontricks 1151340 winecfg -> "Input"
+  tab -> tick "Automatically capture the mouse in full-screen windows"). Then run FO76.
 
 Do NOT run the game inside gamescope for overlay purposes — its nested
 compositor isolates the game and no external overlay can draw over it.
