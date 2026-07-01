@@ -294,6 +294,14 @@ Per KWin's `Window::layer()` the layer order (KWin 6.7) low→high is `Desktop(0
 
 All paths are best-effort and no-op gracefully when the KDE tools are absent. Non-KDE-Wayland Linux sessions only get the helper files written to userData (no `kwinrulesrc` edit).
 
+### Optional: hide the taskbar while in-game (KDE)
+
+The force-Layer rule lifts the *overlay* above the game, but it doesn't move the *game* — a game run **borderless-windowed** sits in `NormalLayer(2)`, below the panel (`Above(3)`), so the taskbar's edge can still cover the game (a real-fullscreen game in `ActiveLayer(5)` is already above the panel, so this doesn't arise there). Opt-in tray toggle **"Hide taskbar while in-game (KDE)"** (`settings.kdePanelHideInGame`, **default OFF**) sets every Plasma panel to `autohide` while the overlay is visible over a running game, and restores the user's exact per-panel modes afterward.
+
+- Mechanism: plasmashell `evaluateScript` over D-Bus (`qdbus6`/`qdbus-qt6`/`qdbus`, probed). Pure `overlayCore.buildPanelHidingSaveScript` / `parsePanelHidingSave` / `buildPanelHidingSetScript` / `buildPanelHidingRestoreScript` (unit-tested) build/parse the JS; `main.js` runs it.
+- Gated by `overlayCore.shouldHidePanelInGame({ gameRunning, overlayVisible, enabled })` and driven by `syncPanelHideInGame()` on the same show/hide + game-gate transitions as the KWin rule (never the heartbeat).
+- **Crash-safe:** the captured original per-panel modes are written to `userData/.fcm-panel-hiding.json` *before* switching to autohide; that file's existence means "panels hidden, not yet restored." It's restored (and deleted) when the game exits / overlay hides / app quits (`before-quit`), and — if a crash skipped that — on the **next startup**. Handles multiple panels/monitors; skips gracefully if Plasma widgets are locked.
+
 > **XWayland forcing has a side effect: drag-to-move under fractional scaling.** Forcing XWayland (required for stacking) means the overlay no longer gets native-Wayland fractional scaling. On mixed-DPI KDE setups (e.g. monitors at 1.0 + 1.25 + 1.45), a frameless drive-the-move-from-JS drag that re-reads `getBounds()` each tick feeds geometry back through KWin's scale and the window **grows on every move event**. Fix: the drag handler captures the window size **once** at `overlay:move-start` and commands that exact size every `overlay:move-tick` via `setBounds` (never re-reading `getBounds` mid-drag), so the size can't compound.
 
 ---

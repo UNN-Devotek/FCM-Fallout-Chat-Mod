@@ -223,6 +223,56 @@ function nextPresenceState({ found, gameRunning, candidate, stableCount, appearS
   return { candidate: null, stableCount: 0, commit: true, gameRunning: found };
 }
 
+// ── KDE panel auto-hide while in-game (opt-in) ───────────────────────────────
+// Residual to the force-Layer rule: a BORDERLESS game sits in NormalLayer, BELOW the panel,
+// so the taskbar's edge covers it. Opt-in: while the overlay is visible over a running game
+// we set every Plasma panel to "autohide" (fully retracts) via plasmashell evaluateScript,
+// and restore each panel's ORIGINAL mode afterward. Pure string/decision helpers here; the
+// qdbus side effects + crash-safe persistence live in main.js.
+const PANEL_HIDING_MODES = ['none', 'autohide', 'dodgewindows', 'windowsgobelow'];
+
+// Hide the taskbar right now? Opt-in setting AND overlay visible over a running game (same
+// gate as the game-below fallback). Off → restore the panel.
+function shouldHidePanelInGame({ gameRunning, overlayVisible, enabled } = {}) {
+  return !!(enabled && gameRunning && overlayVisible);
+}
+
+// evaluateScript JS: print each panel's `id=hidingMode`, comma-joined, so we can capture and
+// later restore the user's EXACT per-panel modes. (`panelIds`/`panelById` are plasma globals.)
+function buildPanelHidingSaveScript() {
+  return 'var o=[];for(var i=0;i<panelIds.length;i++){try{o.push(panelIds[i]+"="+panelById(panelIds[i]).hiding);}catch(e){}}print(o.join(","));';
+}
+
+// Parse the save-script output ("424=autohide,7=none") into a { id: mode } map, keeping only
+// KNOWN modes (defensive against ERR/garbage/partial output).
+function parsePanelHidingSave(output) {
+  const map = {};
+  String(output == null ? '' : output).trim().split(',').forEach((pair) => {
+    const m = /^\s*(\d+)=(\S+)\s*$/.exec(pair);
+    if (m && PANEL_HIDING_MODES.includes(m[2])) map[m[1]] = m[2];
+  });
+  return map;
+}
+
+// evaluateScript JS: set EVERY panel to `mode` (validated; falls back to autohide).
+function buildPanelHidingSetScript(mode) {
+  const safe = PANEL_HIDING_MODES.includes(mode) ? mode : 'autohide';
+  return 'for(var i=0;i<panelIds.length;i++){try{panelById(panelIds[i]).hiding="' + safe + '";}catch(e){}}';
+}
+
+// evaluateScript JS: restore each panel to its saved mode (per-id, guarded, validated). Returns
+// '' when the map has nothing valid (caller can skip the call).
+function buildPanelHidingRestoreScript(savedMap) {
+  const lines = [];
+  for (const id of Object.keys(savedMap || {})) {
+    if (!/^\d+$/.test(id)) continue;
+    const mode = savedMap[id];
+    if (!PANEL_HIDING_MODES.includes(mode)) continue;
+    lines.push('try{panelById(' + id + ').hiding="' + mode + '";}catch(e){}');
+  }
+  return lines.join('');
+}
+
 function isPrivilegedRole(role) {
   return PRIVILEGED_ROLES.includes(role || '');
 }
@@ -793,6 +843,11 @@ module.exports = {
   desiredTopmost,
   shouldForceGameBelow,
   nextPresenceState,
+  shouldHidePanelInGame,
+  buildPanelHidingSaveScript,
+  parsePanelHidingSave,
+  buildPanelHidingSetScript,
+  buildPanelHidingRestoreScript,
   resolveRelayUrls,
   classifyInputGrab,
   buildKwinKeepAboveScript,

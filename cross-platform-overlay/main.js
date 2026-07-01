@@ -467,6 +467,86 @@ function syncKwinGameBelow(reason) {
   setupKdeKeepAbove({ interactive: false });
 }
 
+// --- KDE panel auto-hide while in-game (opt-in, default OFF) ------------------
+// Residual to the force-Layer rule: a BORDERLESS game sits below the panel. When enabled,
+// set every Plasma panel to "autohide" while the overlay is visible over a running game, and
+// restore the user's exact per-panel modes on exit. Crash-safe: the saved modes are persisted
+// to userData, so a crash-then-relaunch restores them (see restore-on-startup + before-quit).
+let _qdbusBin = null;
+function resolveQdbusBin() {
+  if (_qdbusBin !== null) return _qdbusBin;
+  const { execSync } = require('child_process');
+  _qdbusBin = '';
+  for (const b of ['qdbus6', 'qdbus-qt6', 'qdbus']) {
+    try { execSync('command -v ' + b, { shell: '/bin/sh', stdio: 'ignore' }); _qdbusBin = b; break; } catch { /* next */ }
+  }
+  return _qdbusBin;
+}
+// Run a plasmashell evaluateScript. Returns { ok, out, locked }.
+function plasmaEval(js) {
+  const bin = resolveQdbusBin();
+  if (!bin) return { ok: false, out: '' };
+  const { execFileSync } = require('child_process');
+  try {
+    const out = execFileSync(bin, ['org.kde.plasmashell', '/PlasmaShell', 'org.kde.PlasmaShell.evaluateScript', js],
+      { timeout: 6000, encoding: 'utf8' });
+    if (/Widgets are locked/i.test(out || '')) return { ok: false, locked: true, out: String(out || '') };
+    return { ok: true, out: String(out || '') };
+  } catch (e) {
+    const msg = String((e && (e.stdout || e.message)) || e);
+    return { ok: false, locked: /Widgets are locked/i.test(msg), out: msg };
+  }
+}
+function isPanelHideInGameEnabled() {
+  try { const s = loadState().settings; return !!(s && s.kdePanelHideInGame === true); } catch { return false; }
+}
+// Persisted saved per-panel modes (its EXISTENCE means "panels hidden, not yet restored").
+function panelHidingStatePath() {
+  try { return path.join(app.getPath('userData'), '.fcm-panel-hiding.json'); } catch { return null; }
+}
+function readSavedPanelHiding() {
+  const p = panelHidingStatePath();
+  try { return (p && fs.existsSync(p)) ? JSON.parse(fs.readFileSync(p, 'utf8')) : null; } catch { return null; }
+}
+function writeSavedPanelHiding(map) { const p = panelHidingStatePath(); if (p) { try { fs.writeFileSync(p, JSON.stringify(map)); } catch { /* ignore */ } } }
+function clearSavedPanelHiding() { const p = panelHidingStatePath(); if (p) { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch { /* ignore */ } } }
+
+let _panelHidingActive = false;
+function applyPanelHideInGame() {
+  if (_panelHidingActive) return;
+  // Capture current modes only if we don't already have a saved map (a stale one from a
+  // crash is the authoritative restore target and must not be overwritten with "autohide").
+  if (!readSavedPanelHiding()) {
+    const r = plasmaEval(overlayCore.buildPanelHidingSaveScript());
+    if (!r.ok) { if (r.locked) diag('[panel-hide] skipped — Plasma widgets are locked'); return; }
+    const map = overlayCore.parsePanelHidingSave(r.out);
+    if (!Object.keys(map).length) return;                 // no panels → nothing to do
+    if (Object.values(map).every(m => m === 'autohide')) { // already all autohide → treat as active, no-op
+      writeSavedPanelHiding(map); _panelHidingActive = true; return;
+    }
+    writeSavedPanelHiding(map);
+  }
+  const s = plasmaEval(overlayCore.buildPanelHidingSetScript('autohide'));
+  if (s.ok) { _panelHidingActive = true; diag('[panel-hide] taskbar set to autohide while in-game'); }
+}
+function restorePanelHiding() {
+  const map = readSavedPanelHiding();
+  if (!map || !Object.keys(map).length) { clearSavedPanelHiding(); _panelHidingActive = false; return; }
+  const js = overlayCore.buildPanelHidingRestoreScript(map);
+  const r = js ? plasmaEval(js) : { ok: true };
+  if (r.ok || r.locked) { clearSavedPanelHiding(); _panelHidingActive = false; diag('[panel-hide] restored user panel modes'); }
+}
+// Drive on every game/visibility transition (NOT the heartbeat). Also restores a stale
+// saved map (e.g. the setting was turned off, or a previous crash) when we shouldn't hide.
+function syncPanelHideInGame(reason) {
+  if (!IS_LINUX) return;
+  const want = overlayCore.shouldHidePanelInGame({
+    gameRunning, overlayVisible: overlayVisibleForZOrder(), enabled: isPanelHideInGameEnabled(),
+  });
+  if (want && !_panelHidingActive) { diag('[panel-hide] hide (' + (reason || '') + ')'); applyPanelHideInGame(); }
+  else if (!want && (_panelHidingActive || readSavedPanelHiding())) { diag('[panel-hide] restore (' + (reason || '') + ')'); restorePanelHiding(); }
+}
+
 // Discover Steam library roots (default install dirs + any libraryfolders.vdf paths),
 // so we can locate the FO76 Proton prefix wherever the game is installed.
 function fo76IsRunning() {
@@ -963,8 +1043,9 @@ function onGamePresenceChanged(found) {
   //   game launched → show (now allowed for regular users)
   //   game closed   → hide if fully set up and not privileged/force-visible
   reevaluateVisibility();
-  // Add/remove the KWin game-below rule to match the new game+visibility state (Linux).
+  // Add/remove the KWin game-below rule + panel auto-hide to match the new state (Linux).
   syncKwinGameBelow('game-' + (gameRunning ? 'launch' : 'exit'));
+  syncPanelHideInGame('game-' + (gameRunning ? 'launch' : 'exit'));
 }
 
 function startGameScan() {
@@ -3339,6 +3420,7 @@ function startForegroundZOrder() {
         applyZOrder();
         applyFocusClickThrough(mainWindow.isFocused());
         syncKwinGameBelow('show'); // re-add game-below now that we're showing over the game
+        syncPanelHideInGame('show'); // hide the taskbar (opt-in) now that we're over the game
         diag('[zorder] linux: show event — re-asserting always-on-top');
       });
       // On hide-to-tray, drop the game-below rule (and applyZOrder releases always-on-top)
@@ -3346,6 +3428,7 @@ function startForegroundZOrder() {
       mainWindow.on('hide', () => {
         applyZOrder();
         syncKwinGameBelow('hide');
+        syncPanelHideInGame('hide'); // restore the taskbar while nothing is shown
         diag('[zorder] linux: hide event — released game-below + always-on-top');
       });
     }
@@ -3589,6 +3672,14 @@ function rebuildTrayMenu() {
         try { const st = loadState(); const settings = { ...(st.settings || {}), kwinGameBelow: !!mi.checked }; saveState({ settings }); } catch { /* ignore */ }
         _lastGameBelowApplied = null;      // setting changed → force a re-evaluate
         syncKwinGameBelow('toggle');       // re-apply rules with/without game-below (gated on visibility)
+        rebuildTrayMenu();
+      } },
+      // Optional: hide the KDE taskbar/panel while in-game so it can't cover a BORDERLESS
+      // game (the force-Layer rule already keeps the OVERLAY above; this is about the panel).
+      // Restores your exact panel modes when the game exits / overlay hides / app quits.
+      { label: 'Hide taskbar while in-game (KDE)', type: 'checkbox', checked: isPanelHideInGameEnabled(), click: (mi) => {
+        try { const st = loadState(); const settings = { ...(st.settings || {}), kdePanelHideInGame: !!mi.checked }; saveState({ settings }); } catch { /* ignore */ }
+        syncPanelHideInGame('toggle');     // hide now if in-game, or restore if turned off
         rebuildTrayMenu();
       } },
       // Cursor-lock fix: enable Wine's own mouse capture in the FO76 prefix so the cursor
@@ -4003,6 +4094,9 @@ app.whenReady().then(() => {
   if (KDE_WAYLAND) setupKdeKeepAbove({ interactive: false });
   // In-game cursor lock is applied by the installer now (not auto on launch) — tray → "Fix in-game cursor lock" re-applies.
   else writeLinuxHelperFiles();
+  // Crash recovery: if a previous run set panels to autohide and died before restoring, the
+  // saved-modes file still exists — restore the user's panels now (before the game-gate runs).
+  if (IS_LINUX && readSavedPanelHiding()) { diag('[panel-hide] stale saved state at startup — restoring'); restorePanelHiding(); }
   // One-time userData migration (productName "Fallout ChatMod" → "Fallout Chat Mod").
   // MUST run before any loadState()/register so the migrated install token is used
   // and the user stays on their real account (discordLinked carries over).
@@ -4061,7 +4155,7 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
-app.on('before-quit', () => { isQuitting = true; persistBounds(); });
+app.on('before-quit', () => { isQuitting = true; persistBounds(); if (IS_LINUX) restorePanelHiding(); });
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
