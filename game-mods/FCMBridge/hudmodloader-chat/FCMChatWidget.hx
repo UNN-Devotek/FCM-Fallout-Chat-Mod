@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.7.3";  // read real FO76 name from the game (AccountInfoData.name) with a bounded wait before first connect, instead of the "Wanderer" placeholder; relay hello syncs linked fo76_account_name so live+history show it; + v2.7.0-2.7.2
+    static inline var VERSION:String  = "2.7.4";  // per-channel feed: renderRecords filters _records by active channel + selectChannel no longer wipes history on switch (F12/tab switching + per-channel history now work); + v2.7.0-2.7.3
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -622,10 +622,12 @@ class FCMChatWidget extends MovieClip {
     function selectChannel(idx:Int):Void {
         if (idx < 0 || idx > 4 || idx == _chanIdx) { setSelectedTab(idx); return; }
         _chanIdx = idx;
-        _records = [];               // clear visible feed (per-channel)
+        // Keep ALL channels' messages in _records (from the history backfill + live); renderRecords
+        // filters by the active channel. Do NOT clear here, or switching a channel would blank its
+        // history (the backfilled messages for that channel would be discarded).
         _bScrolling = false; _newWhileScrolled = 0;
         setSelectedTab(idx);
-        renderRecords();             // re-render (hits the connecting/link notice guard)
+        renderRecords();             // re-render (filters to the newly-selected channel)
         zfeLog("info", "chan", "selected " + CHAN_SLUGS[idx]);
     }
 
@@ -1187,7 +1189,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.3");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.4");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
@@ -1632,6 +1634,8 @@ class FCMChatWidget extends MovieClip {
         var fs:Int = _cfg.fontSize;
 
         for (rec in _records) {
+            // Per-channel view: only render messages for the active tab's channel.
+            if (rec.channel != CHAN_SLUGS[_chanIdx]) continue;
             var col:String  = ~/^#[0-9a-fA-F]{6}$/.match(rec.color) ? rec.color : hx(_cfg.senderColor);
             // Escape sender name + body — both are unsanitized relay/Discord input (SR-001).
             var user:String = FcmConfig.htmlEscape(rec.user);
