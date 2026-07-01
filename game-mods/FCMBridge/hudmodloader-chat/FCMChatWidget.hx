@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.7.6";  // F12 Customize submenu: live resize/move/opacity/color-theme + best-effort persist (writeChatConfigFile); + v2.7.0-2.7.5
+    static inline var VERSION:String  = "2.7.7";  // BACKSPACE fix: dispatch PlatformChangeEvent(PC_KB_MOUSE) before SharedHUDTools TextEdit so it uses the native keyboard field (entry_tf), not the off-screen OSK; keyboard editing works + key-lock preserved; + v2.7.0-2.7.6
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -1064,6 +1064,23 @@ class FCMChatWidget extends MovieClip {
     // SharedHUDTools text-entry (FALLBACK)
     // =========================================================================
 
+    // Dispatch a PlatformChangeEvent(PC_KB_MOUSE) so SharedHUDTools.startTextEdit picks the native
+    // keyboard field (stage.focus = entry_tf) instead of the on-screen-keyboard/controller path —
+    // this is what makes Backspace/arrows work. HUDTools listens for this on the stage; the event
+    // ctor is (uiPlatform, bPS3Switch, uiController) and PLATFORM_PC_KB_MOUSE == 0.
+    function forceKeyboardPlatform():Void {
+        try {
+            var cls:Dynamic = untyped __global__["flash.utils.getDefinitionByName"]("Shared.AS3.Events.PlatformChangeEvent");
+            var ev:Dynamic = untyped __new__(cls, 0, false, 0);
+            if (stage != null) {
+                stage.dispatchEvent(ev);
+                zfeLog("info", "input", "forced PC_KB_MOUSE platform (keyboard editing/backspace)");
+            }
+        } catch (e:Dynamic) {
+            zfeLog("warn", "input", "forceKeyboardPlatform threw: " + Std.string(e));
+        }
+    }
+
     function openInputSharedHudTools():Void {
         if (_inputOpen) return;
         if (_hudTools == null) {
@@ -1076,6 +1093,15 @@ class FCMChatWidget extends MovieClip {
         _inputOpen = true;
         setPrompt(typingPrompt());
         zfeLog("info", "input path", "shared-hud-tools");
+
+        // ── Step 0: force KEYBOARD input mode (fixes backspace) ─────────────
+        // SharedHUDTools.startTextEdit uses stage.focus = entry_tf (native TextField editing,
+        // incl. Backspace) ONLY when isInputKeyboard() is true — i.e. uiController ==
+        // PLATFORM_PC_KB_MOUSE (0). Under Proton/Steam Input the game reports a controller, so it
+        // falls to the on-screen-keyboard path (we push off-screen) and Backspace does nothing.
+        // Dispatch a PlatformChangeEvent(PC_KB_MOUSE) on the stage BEFORE TextEdit so HUDTools
+        // switches to keyboard mode (must be before entryMode — the same handler ends an active edit).
+        forceKeyboardPlatform();
 
         // ── Step 1: FormatTextEdit — position + style the entry box ─────────
         // x/y are stage coordinates (1920×1080 space). Position at widget's lower edge.
@@ -1302,7 +1328,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.6");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.7");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
