@@ -383,6 +383,15 @@ async function handleHello(ws: WebSocket, frame: Record<string, unknown>): Promi
   const newName = typeof frame.displayName === 'string' ? frame.displayName.trim() : '';
   if (newName && newName !== identity.fo76Name) {
     await updateDisplayName(identity.userId, newName);
+    // Keep the linked account's fo76_account_name in sync so chat HISTORY (which derives the
+    // sender from the user row) shows the current character name, not a stale one. This is what
+    // lets the real FO76 name land once the widget re-hellos with it after the game populates it.
+    if (identity.linkedUserId) {
+      await prisma.user.update({
+        where: { id: identity.linkedUserId },
+        data:  { fo76AccountName: newName },
+      }).catch((err) => logger.warn({ err, userId: identity.linkedUserId }, '[relayHandler] fo76AccountName sync on hello failed'));
+    }
   }
 
   const state = identity.isLinked ? 'authenticated' : 'limited';

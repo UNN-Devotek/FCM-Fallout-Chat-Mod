@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.7.2";  // chat input now goes through SharedHUDTools (HUDModLoader HUDTools dispatches engine StartEditText/EndEditText -> LOCKS game keys while typing); ZFE native input is a no-lock fallback only (its CustomEvent dispatch fails #1065 from the overlay domain); + v2.7.0/2.7.1
+    static inline var VERSION:String  = "2.7.3";  // read real FO76 name from the game (AccountInfoData.name) with a bounded wait before first connect, instead of the "Wanderer" placeholder; relay hello syncs linked fo76_account_name so live+history show it; + v2.7.0-2.7.2
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -1187,7 +1187,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.2");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.3");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
@@ -1752,6 +1752,9 @@ class FCMChatWidget extends MovieClip {
     // BSUIDataManager reads — displayName + worldId
     // =========================================================================
 
+    // Returns the FO76 account/character name from the game's UI data, or "" if the game
+    // hasn't populated it yet (it loads a few seconds after HUD init — NOT ready at first connect).
+    // Callers must treat "" as "not ready yet" and keep waiting, not as a name.
     function readDisplayName():String {
         try {
             var a:Dynamic = untyped __global__["BSUIDataManager"].GetDataFromClient("AccountInfoData");
@@ -1760,7 +1763,7 @@ class FCMChatWidget extends MovieClip {
                 if (n.length > 0) return jsonEscape(n.substr(0, 64));
             }
         } catch (e:Dynamic) {}
-        return "Wanderer";
+        return "";
     }
 
     function readWorldId():String {
