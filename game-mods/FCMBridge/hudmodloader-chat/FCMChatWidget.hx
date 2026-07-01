@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.7.5";  // auto-hide (default 60s, reveal on new message, F12 toggle); + v2.7.0-2.7.4
+    static inline var VERSION:String  = "2.7.6";  // F12 Customize submenu: live resize/move/opacity/color-theme + best-effort persist (writeChatConfigFile); + v2.7.0-2.7.5
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -178,6 +178,7 @@ class FCMChatWidget extends MovieClip {
     // Auto-hide: hide after _cfg.autoHideSec of no activity; reveal on a new message. F12-toggleable.
     var _autoHideOn:Bool         = false;
     var _autoHideTimer:Timer     = null;
+    var _themeIdx:Int            = 0;       // F12 Customize → cycle color theme
 
     // ── chat.v1 session state ─────────────────────────────────────────────────
     var _api:Dynamic             = null;
@@ -509,14 +510,31 @@ class FCMChatWidget extends MovieClip {
         if (_hudTools == null) return;
         var add:Dynamic = Reflect.field(_hudTools, "AddMenuItem");
         if (add == null) return;
-        var names:Array<String> = ["General", "Trading", "Events", "Infests", "Raids"];
+        var p:String = Std.string(parentItem);
         try {
+            // Customize submenu (opened when the "customize" isMenu item is selected — HUDTools
+            // re-invokes this builder with parentItem = the submenu id).
+            if (p == "customize") {
+                Reflect.callMethod(_hudTools, add, ["cz_bigger",  "Size +",        true, false, -1]);
+                Reflect.callMethod(_hudTools, add, ["cz_smaller", "Size -",        true, false, -1]);
+                Reflect.callMethod(_hudTools, add, ["cz_up",      "Move up",       true, false, -1]);
+                Reflect.callMethod(_hudTools, add, ["cz_down",    "Move down",     true, false, -1]);
+                Reflect.callMethod(_hudTools, add, ["cz_left",    "Move left",     true, false, -1]);
+                Reflect.callMethod(_hudTools, add, ["cz_right",   "Move right",    true, false, -1]);
+                Reflect.callMethod(_hudTools, add, ["cz_opac_up", "Opacity +",     true, false, -1]);
+                Reflect.callMethod(_hudTools, add, ["cz_opac_dn", "Opacity -",     true, false, -1]);
+                Reflect.callMethod(_hudTools, add, ["cz_theme",   "Color theme >", true, false, -1]);
+                return;
+            }
+            // Top-level menu.
+            var names:Array<String> = ["General", "Trading", "Events", "Infests", "Raids"];
             for (i in 0...5) {
                 Reflect.callMethod(_hudTools, add, ["chan" + i, names[i], true, false, -1]);
             }
             Reflect.callMethod(_hudTools, add, ["scrollbottom", "Scroll to newest", true, false, -1]);
             Reflect.callMethod(_hudTools, add, ["hidechat", "Hide chat", true, false, -1]);
             Reflect.callMethod(_hudTools, add, ["autohide", (_autoHideOn ? "Auto-hide: ON" : "Auto-hide: OFF"), true, false, -1]);
+            Reflect.callMethod(_hudTools, add, ["customize", "Customize...", true, true, -1]);   // isMenu=true
             Reflect.callMethod(_hudTools, add, ["relink", "Link account...", _authState != "authenticated", false, -1]);
         } catch (e:Dynamic) {
             zfeLog("warn", "menu", "AddMenuItem threw: " + Std.string(e));
@@ -528,7 +546,9 @@ class FCMChatWidget extends MovieClip {
      */
     function onSelectMenu(item:Dynamic):Void {
         var id:String = Std.string(item);
-        if (StringTools.startsWith(id, "chan")) {
+        if (StringTools.startsWith(id, "cz_")) {
+            doCustomize(id);
+        } else if (StringTools.startsWith(id, "chan")) {
             selectChannel(Std.parseInt(id.substr(4)));
         } else if (id == "scrollbottom") {
             scrollToBottom();
@@ -688,6 +708,69 @@ class FCMChatWidget extends MovieClip {
             if (!_inputOpen && !_hidden) hide();
         });
         _autoHideTimer.start();
+    }
+
+    // =========================================================================
+    // F12 Customize — live resize / move / opacity / color theme (+ best-effort persist)
+    // =========================================================================
+
+    // Live re-layout after a Customize change. Removes children BY REFERENCE only — NEVER
+    // numChildren/getChildAt (Scaleform VM crash, rule #9). buildPanel re-adds everything,
+    // re-applies x/y from _cfg, and repopulates _chanBtns.
+    function rebuildPanel():Void {
+        if (_chanBtns != null) { for (b in _chanBtns) { try { removeChild(b); } catch (e:Dynamic) {} } }
+        _chanBtns = [];
+        var kids:Array<flash.display.DisplayObject> = [_bg, _tabTf, _subTf, _logTf, _promptTf];
+        for (c in kids) { try { if (c != null) removeChild(c); } catch (e:Dynamic) {} }
+        buildPanel();
+        setSelectedTab(_chanIdx);
+        renderRecords();
+    }
+
+    // border, text, sender, tabActive, tabInactive
+    static var THEMES:Array<Array<Int>> = [
+        [0xF5CB5B, 0xFAF4DA, 0xF5CB5B, 0xF5CB5B, 0xB49544],   // Amber (default)
+        [0x5AB0FF, 0xE6F2FF, 0x5AB0FF, 0x5AB0FF, 0x3A6A99],   // Blue
+        [0x6AD46A, 0xE8FBE8, 0x6AD46A, 0x6AD46A, 0x3F7F3F],   // Green
+        [0xD8D8D8, 0xF2F2F2, 0xFFFFFF, 0xFFFFFF, 0x888888],   // Mono
+    ];
+
+    function cycleTheme():Void {
+        _themeIdx = (_themeIdx + 1) % THEMES.length;
+        var t:Array<Int> = THEMES[_themeIdx];
+        _cfg.borderColor = t[0]; _cfg.textColor = t[1]; _cfg.senderColor = t[2];
+        _cfg.tabActiveColor = t[3]; _cfg.tabInactiveColor = t[4];
+    }
+
+    function doCustomize(id:String):Void {
+        switch (id) {
+            case "cz_bigger":  _cfg.width += 30; _cfg.height += 20;
+            case "cz_smaller": _cfg.width -= 30; _cfg.height -= 20;
+            case "cz_up":      _cfg.y -= 20;
+            case "cz_down":    _cfg.y += 20;
+            case "cz_left":    _cfg.x -= 20;
+            case "cz_right":   _cfg.x += 20;
+            case "cz_opac_up": _cfg.bgAlpha += 0.1;
+            case "cz_opac_dn": _cfg.bgAlpha -= 0.1;
+            case "cz_theme":   cycleTheme();
+            default: return;
+        }
+        _cfg.clamp();   // keep size/position on-screen + alpha in range
+        // Move is cheap (just reposition the container); size/opacity/theme need a redraw.
+        if (id == "cz_up" || id == "cz_down" || id == "cz_left" || id == "cz_right") { x = _cfg.x; y = _cfg.y; }
+        else rebuildPanel();
+        persistConfig();
+    }
+
+    // Best-effort persist so customizations survive relaunch. writeChatConfigFile is a ZFE native
+    // call; if unavailable the change is still applied live this session (guarded, no-op on failure).
+    function persistConfig():Void {
+        try {
+            var raw:String = callTop("writeChatConfigFile", _cfg.toIni());
+            zfeLog("info", "customize", "persist raw=" + clip200(raw));
+        } catch (e:Dynamic) {
+            zfeLog("warn", "customize", "persist threw: " + Std.string(e));
+        }
     }
 
     /**
@@ -1219,7 +1302,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.5");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.6");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {

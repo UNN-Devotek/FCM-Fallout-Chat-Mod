@@ -296,7 +296,7 @@ class FcmConfig {
     }
 
     /** Clamp every numeric value to a safe range; keep the panel on-screen. */
-    function clamp():Void {
+    public function clamp():Void {
         // Size first (x/y bounds depend on it).
         width    = clampInt(width, 200, VIEW_W);
         height   = clampInt(height, 120, VIEW_H);
@@ -308,5 +308,46 @@ class FcmConfig {
         maxSendLen  = clampInt(maxSendLen, 1, 500);     // server hard cap 500
         pollMs      = clampInt(pollMs, 1000, 60000);    // 1s..60s event-poll interval
         autoHideSec = clampInt(autoHideSec, 0, 600);    // 0 = off, else 1s..10min
+    }
+
+    /** Serialize back to the [FCMChat] INI (for F12 Customize persistence via writeChatConfigFile).
+        Outputs EVERY field so a round-trip never drops settings (linkUrl, keys, per-channel colors). */
+    public function toIni():String {
+        var h = function(c:Int):String return StringTools.hex(c & 0xFFFFFF, 6);
+        var b = function(v:Bool):String return v ? "true" : "false";
+        var s = new StringBuf();
+        s.add("[FCMChat]\n");
+        s.add("x=" + x + "\n");                 s.add("y=" + y + "\n");
+        s.add("width=" + width + "\n");         s.add("height=" + height + "\n");
+        s.add("fontSize=" + fontSize + "\n");
+        s.add("bgColor=" + h(bgColor) + "\n");  s.add("bgAlpha=" + bgAlpha + "\n");
+        s.add("borderColor=" + h(borderColor) + "\n");
+        s.add("textColor=" + h(textColor) + "\n");
+        s.add("senderColor=" + h(senderColor) + "\n");
+        s.add("channelTagColor=" + h(channelTagColor) + "\n");
+        s.add("tabActiveColor=" + h(tabActiveColor) + "\n");
+        s.add("tabInactiveColor=" + h(tabInactiveColor) + "\n");
+        s.add("promptColor=" + h(promptColor) + "\n");
+        s.add("tabRowColor=" + h(tabRowColor) + "\n");
+        s.add("timestampColor=" + h(timestampColor) + "\n");
+        s.add("chanColorGlobal=" + h(chanColorGlobal) + "\n");
+        s.add("chanColorTrade=" + h(chanColorTrade) + "\n");
+        s.add("chanColorEvents=" + h(chanColorEvents) + "\n");
+        s.add("chanColorInfests=" + h(chanColorInfests) + "\n");
+        s.add("chanColorRaids=" + h(chanColorRaids) + "\n");
+        s.add("chanColorServer=" + h(chanColorServer) + "\n");
+        s.add("maxMessages=" + maxMessages + "\n");
+        s.add("maxSendLen=" + maxSendLen + "\n");
+        s.add("pollMs=" + pollMs + "\n");
+        s.add("autoHideSec=" + autoHideSec + "\n");
+        s.add("openKey=" + openKey + "\n");
+        s.add("channelNextKey=" + channelNextKey + "\n");
+        s.add("channelPrevKey=" + channelPrevKey + "\n");
+        s.add("hideKey=" + hideKey + "\n");
+        s.add("showChannelTag=" + b(showChannelTag) + "\n");
+        s.add("showTimestamps=" + b(showTimestamps) + "\n");
+        s.add("showHints=" + b(showHints) + "\n");
+        s.add("linkUrl=" + linkUrl + "\n");
+        return s.toString();
     }
 }
