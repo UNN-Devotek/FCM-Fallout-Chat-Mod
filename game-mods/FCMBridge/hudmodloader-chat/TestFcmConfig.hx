@@ -54,6 +54,7 @@ class TestFcmConfig {
         eqi("default width", d.width, 400);
         eqi("default height", d.height, 260);
         eqi("default fontSize", d.fontSize, 14);
+        eqi("default autoHideSec", d.autoHideSec, 60);
         eqi("default bgColor", d.bgColor, 0x0A0907);
         eqi("default borderColor", d.borderColor, 0xF5CB5B);
         eqi("default textColor", d.textColor, 0xFAF4DA);

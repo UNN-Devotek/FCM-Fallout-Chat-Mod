@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.7.4";  // per-channel feed: renderRecords filters _records by active channel + selectChannel no longer wipes history on switch (F12/tab switching + per-channel history now work); + v2.7.0-2.7.3
+    static inline var VERSION:String  = "2.7.5";  // auto-hide (default 60s, reveal on new message, F12 toggle); + v2.7.0-2.7.4
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -175,6 +175,9 @@ class FCMChatWidget extends MovieClip {
 
     // ── Hide state (CAP-011) ────────────────────────────────────────────────────
     var _hidden:Bool             = false;   // true while the panel is hidden (/hide, F12, hideKey)
+    // Auto-hide: hide after _cfg.autoHideSec of no activity; reveal on a new message. F12-toggleable.
+    var _autoHideOn:Bool         = false;
+    var _autoHideTimer:Timer     = null;
 
     // ── chat.v1 session state ─────────────────────────────────────────────────
     var _api:Dynamic             = null;
@@ -270,6 +273,7 @@ class FCMChatWidget extends MovieClip {
     }
 
     function afterConfig():Void {
+        _autoHideOn = (_cfg != null && _cfg.autoHideSec > 0);   // default from config (60s)
         // attachHUDModListeners → constructHudTools resolves _btnCls (HUDButton),
         // which buildPanel needs to decide tabs-vs-text-strip. Order matters.
         attachHUDModListeners();
@@ -512,6 +516,7 @@ class FCMChatWidget extends MovieClip {
             }
             Reflect.callMethod(_hudTools, add, ["scrollbottom", "Scroll to newest", true, false, -1]);
             Reflect.callMethod(_hudTools, add, ["hidechat", "Hide chat", true, false, -1]);
+            Reflect.callMethod(_hudTools, add, ["autohide", (_autoHideOn ? "Auto-hide: ON" : "Auto-hide: OFF"), true, false, -1]);
             Reflect.callMethod(_hudTools, add, ["relink", "Link account...", _authState != "authenticated", false, -1]);
         } catch (e:Dynamic) {
             zfeLog("warn", "menu", "AddMenuItem threw: " + Std.string(e));
@@ -529,6 +534,11 @@ class FCMChatWidget extends MovieClip {
             scrollToBottom();
         } else if (id == "hidechat") {
             hide();
+        } else if (id == "autohide") {
+            _autoHideOn = !_autoHideOn;
+            if (_autoHideOn) { bumpAutoHide(); }
+            else { if (_autoHideTimer != null) { _autoHideTimer.stop(); _autoHideTimer = null; } if (_hidden) show(); }
+            zfeLog("info", "menu", "auto-hide " + (_autoHideOn ? "on" : "off"));
         } else if (id == "relink") {
             setLogText(linkHint());
         }
@@ -628,6 +638,7 @@ class FCMChatWidget extends MovieClip {
         _bScrolling = false; _newWhileScrolled = 0;
         setSelectedTab(idx);
         renderRecords();             // re-render (filters to the newly-selected channel)
+        bumpAutoHide();              // channel switch = activity
         zfeLog("info", "chan", "selected " + CHAN_SLUGS[idx]);
     }
 
@@ -652,13 +663,31 @@ class FCMChatWidget extends MovieClip {
     function hide():Void {
         this.visible = false;
         _hidden = true;
+        if (_autoHideTimer != null) { _autoHideTimer.stop(); _autoHideTimer = null; }
         zfeLog("info", "hide", "panel hidden");
     }
 
     function show():Void {
         this.visible = true;
         _hidden = false;
+        bumpAutoHide();
         zfeLog("info", "hide", "panel restored");
+    }
+
+    /**
+     * Restart the auto-hide countdown (called on any activity: show, open input, channel switch,
+     * new message). When it elapses with no further activity — and the input isn't open — the
+     * panel hides. A new message reveals it again (see parseAndRenderEvents). F12-toggleable.
+     */
+    function bumpAutoHide():Void {
+        if (_autoHideTimer != null) { _autoHideTimer.stop(); _autoHideTimer = null; }
+        if (!_autoHideOn || _cfg == null || _cfg.autoHideSec <= 0) return;
+        _autoHideTimer = new Timer(_cfg.autoHideSec * 1000, 1);
+        _autoHideTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
+            _autoHideTimer = null;
+            if (!_inputOpen && !_hidden) hide();
+        });
+        _autoHideTimer.start();
     }
 
     /**
@@ -791,6 +820,7 @@ class FCMChatWidget extends MovieClip {
         if (_inputOpen) return;
         // The open key both restores a hidden panel AND opens input (CAP-011, guaranteed).
         if (_hidden) show();
+        bumpAutoHide();   // opening input = activity (the timer also never hides while input is open)
         // PRIMARY: SharedHUDTools text-entry. HUDModLoader's HUDTools dispatches the engine's
         // StartEditText/EndEditText (in the correct domain), so it LOCKS OUT the game's own keys
         // while typing. The ZFE native input only captures text — it cannot block the engine
@@ -1189,7 +1219,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.4");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.5");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
@@ -1237,6 +1267,7 @@ class FCMChatWidget extends MovieClip {
         zfeLog("info", "connect", "connected");
         setLogText("connected. loading...");
 
+        bumpAutoHide();   // start the idle countdown (hides after autoHideSec if nothing happens)
         refreshAuthState();
         _cursor = 0;
         startPollTimer();
@@ -1507,7 +1538,11 @@ class FCMChatWidget extends MovieClip {
             newRecords = true;
         }
 
-        if (newRecords) renderRecords();
+        if (newRecords) {
+            if (_autoHideOn && _hidden) show();   // auto-hide: pop back up on a new message
+            renderRecords();
+            bumpAutoHide();                        // any new message counts as activity
+        }
     }
 
     /**
