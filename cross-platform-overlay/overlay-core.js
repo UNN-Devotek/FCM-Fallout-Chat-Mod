@@ -191,6 +191,38 @@ function desiredTopmost(state) {
   return state.foregroundIsGame === true;
 }
 
+// Whether the KWin "keep game below" rule should be active right now. It drops FO76 to
+// KWin's BelowLayer so the overlay shows over a focused fullscreen game — but BelowLayer
+// is also below the panel, so while it's applied the game sits under the taskbar. We
+// therefore only want it while the overlay is ACTUALLY visible over the game: game
+// running AND overlay visible AND the user hasn't opted out. When the overlay is hidden
+// to tray there's nothing to show, so the rule comes off and FO76 returns to normal
+// fullscreen stacking (above the panel). See main.js syncKwinGameBelow / applyZOrder.
+function shouldForceGameBelow({ gameRunning, overlayVisible, gameBelowEnabled } = {}) {
+  return !!(gameBelowEnabled && gameRunning && overlayVisible);
+}
+
+// Pure hysteresis reducer for FO76 presence detection. A single bad scan must NOT flip
+// the overlay's game-state — that churns z-order + visibility (reads as the overlay
+// flashing/bouncing). `found` is the scan result: true (game seen), false (not seen), or
+// null when the scan itself FAILED (ps error/timeout) and therefore carries NO info — a
+// failure keeps the committed state and drops any pending flip (a scan hiccup must never
+// be read as "game exited"). A genuine change must persist across `appearScans` (launch)
+// or `disappearScans` (exit) consecutive scans before it commits; disappearance is held
+// longer so a transient miss mid-game can't drop the overlay. Returns the next
+// accumulator + whether to commit, plus the resulting gameRunning.
+function nextPresenceState({ found, gameRunning, candidate, stableCount, appearScans = 2, disappearScans = 3 } = {}) {
+  if (found == null || found === gameRunning) {
+    return { candidate: null, stableCount: 0, commit: false, gameRunning: !!gameRunning };
+  }
+  const nextCount = (found === candidate) ? (stableCount || 0) + 1 : 1;
+  const need = found ? appearScans : disappearScans;
+  if (nextCount < need) {
+    return { candidate: found, stableCount: nextCount, commit: false, gameRunning: !!gameRunning };
+  }
+  return { candidate: null, stableCount: 0, commit: true, gameRunning: found };
+}
+
 function isPrivilegedRole(role) {
   return PRIVILEGED_ROLES.includes(role || '');
 }
@@ -743,6 +775,8 @@ module.exports = {
   visibilityDecision,
   emitVisibilityDecision,
   desiredTopmost,
+  shouldForceGameBelow,
+  nextPresenceState,
   resolveRelayUrls,
   classifyInputGrab,
   buildKwinKeepAboveScript,

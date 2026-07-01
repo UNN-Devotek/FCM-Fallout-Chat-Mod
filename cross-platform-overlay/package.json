@@ -1,6 +1,6 @@
 {
   "name": "fallout-chatmod-cross-platform-overlay",
-  "version": "1.3.95-dev",
+  "version": "1.3.96-dev",
   "productName": "Fallout Chat Mod",
   "description": "Cross-platform (Windows/macOS/Linux) Electron overlay that mounts the live ChatOverlay React component and feeds it data from the production relay.",
   "author": {
