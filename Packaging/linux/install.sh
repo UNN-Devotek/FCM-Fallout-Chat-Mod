@@ -35,89 +35,31 @@ say()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!! \033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mxx \033[0m %s\n' "$*" >&2; exit 1; }
 
-# --- In-game cursor lock (Wayland) via protontricks --------------------------
+# --- In-game cursor lock (Wayland) is a Proton/Wine concern -------------------
 # On Wayland the compositor drops Fallout 76's mouse-lock when the overlay sits on
-# top, so the cursor can drift off the game. We enable Wine's mouse capture with the
-# protontricks/winetricks verb "grabfullscreen=y" (the winecfg "Automatically capture
-# the mouse in full-screen windows" setting) — NO hand-editing of Wine config. Best
-# effort: needs protontricks + FO76's prefix (launch the game once) + FO76 closed. The
-# overlay tray "Fix in-game cursor lock (Wayland)" re-runs the same command later.
-# X11 sessions don't need any of this.
-FO76_APPID="1151340"
+# top, so the cursor can drift off the game. Fixing this means enabling Wine's own
+# mouse capture inside FO76's Proton prefix — outside this mod's scope. This
+# installer never touches the game/Proton prefix; it only prints the manual,
+# community-standard steps below as a one-time tip. X11 sessions don't need it.
 
 print_cursor_manual_steps() {
   cat <<'MAN'
     To enable the in-game mouse-lock by hand (community-standard method):
-      1. Install protontricks: pacman -S protontricks (Arch/CachyOS) / dnf install
+      1. Recommended: run Fallout 76 on the latest Proton 11.x available in
+         Steam (Fallout 76 -> Properties -> Compatibility -> Force the use of
+         a specific Steam Play compatibility tool -> pick the newest Proton
+         11.x), or a well-maintained community build like Proton-CachyOS or
+         GE-Proton (install via ProtonUp-Qt). Newer Wine/DXVK builds are more
+         reliable at persisting the settings below.
+      2. Install protontricks: pacman -S protontricks (Arch/CachyOS) / dnf install
          protontricks (Fedora) / pipx install protontricks (Debian/Ubuntu).
-      2. Run:  protontricks 1151340 grabfullscreen=y
+      3. Run:  protontricks 1151340 grabfullscreen=y
          (GUI equivalent: protontricks 1151340 winecfg -> Input tab -> tick
           "Automatically capture the mouse in full-screen windows".)
-      3. For Borderless-Windowed too, also run:
+      4. For Borderless-Windowed too, also run:
          protontricks 1151340 -c 'wine reg add "HKCU\Software\Wine\X11 Driver" /v GrabPointer /t REG_SZ /d Y /f && wineserver -w'
-      4. Launch Fallout 76 (Fullscreen or Borderless-Windowed).
+      5. Launch Fallout 76 (Fullscreen or Borderless-Windowed).
 MAN
-}
-
-# Ensure protontricks is runnable; echo the invocation ("protontricks" or the flatpak
-# command) on success, or nothing. Best-effort auto-install from the distro/pipx.
-ensure_protontricks() {
-  command -v protontricks >/dev/null 2>&1 && { printf 'protontricks'; return 0; }
-  if command -v pacman >/dev/null 2>&1; then
-    sudo pacman -S --needed --noconfirm protontricks >/dev/null 2>&1 || true
-  elif command -v dnf >/dev/null 2>&1; then
-    sudo dnf install -y protontricks >/dev/null 2>&1 || true
-  elif command -v apt-get >/dev/null 2>&1; then
-    command -v pipx >/dev/null 2>&1 || sudo apt-get install -y pipx >/dev/null 2>&1 || true
-    command -v pipx >/dev/null 2>&1 && pipx install protontricks >/dev/null 2>&1 || true
-  elif command -v pipx >/dev/null 2>&1; then
-    pipx install protontricks >/dev/null 2>&1 || true
-  fi
-  export PATH="$HOME/.local/bin:$PATH"
-  command -v protontricks >/dev/null 2>&1 && { printf 'protontricks'; return 0; }
-  if command -v flatpak >/dev/null 2>&1 && flatpak info com.github.Matoking.protontricks >/dev/null 2>&1; then
-    printf 'flatpak run com.github.Matoking.protontricks'; return 0
-  fi
-  return 1
-}
-
-apply_fo76_cursor_lock() {
-  if ps -A -o comm= 2>/dev/null | grep -qix 'Fallout76.exe'; then
-    warn "In-game cursor lock: Fallout 76 is running. Close it and re-run this installer, or use the tray button."
-    print_cursor_manual_steps; return 0
-  fi
-  local PT
-  PT="$(ensure_protontricks)" || {
-    warn "In-game cursor lock: protontricks isn't installed (and couldn't be auto-installed)."
-    print_cursor_manual_steps; return 0
-  }
-  say "Enabling the in-game cursor lock via protontricks (grabfullscreen)…"
-  local out=""
-  if [ -n "${DISPLAY:-}" ]; then
-    out="$($PT "$FO76_APPID" grabfullscreen=y 2>&1)" || true
-  elif command -v xvfb-run >/dev/null 2>&1; then
-    out="$(xvfb-run -a $PT "$FO76_APPID" grabfullscreen=y 2>&1)" || true
-  else
-    out="__nodisplay__"
-  fi
-  if printf '%s' "$out" | grep -qiE 'No Proton|not found|No installed|Steam is not|could not find'; then
-    warn "In-game cursor lock: couldn't reach Fallout 76's Proton prefix — launch the game once via Steam,"
-    warn "then re-run this installer (or use the overlay tray -> \"Fix in-game cursor lock (Wayland)\")."
-    print_cursor_manual_steps; return 0
-  fi
-  if [ "$out" = "__nodisplay__" ]; then
-    warn "In-game cursor lock: no display available to run protontricks from this context."
-    print_cursor_manual_steps; return 0
-  fi
-  # Also set GrabPointer so the lock holds in Borderless-Windowed (no winetricks verb
-  # exists for it). `wineserver -w` forces user.reg to flush before wine lingers.
-  local ptr='wine reg add "HKCU\Software\Wine\X11 Driver" /v GrabPointer /t REG_SZ /d Y /f && wineserver -w'
-  if [ -n "${DISPLAY:-}" ]; then
-    $PT -c "$ptr" "$FO76_APPID" >/dev/null 2>&1 || true
-  elif command -v xvfb-run >/dev/null 2>&1; then
-    xvfb-run -a $PT -c "$ptr" "$FO76_APPID" >/dev/null 2>&1 || true
-  fi
-  say "Enabled the in-game cursor lock for Fallout 76 (protontricks: GrabFullscreen + GrabPointer). Works in Fullscreen and Borderless — relaunch FO76."
 }
 
 command -v curl >/dev/null 2>&1 || die "curl is required."
@@ -304,17 +246,18 @@ KDE Plasma (Wayland) — automatic
   Or use the app tray menu -> "KDE: keep overlay above game".
 - The uninstaller removes these KWin rules (restores FO76's fullscreen stacking).
 
-In-game cursor lock (Wayland)
+In-game cursor lock (Wayland) — manual, self-service step
 - On Wayland the compositor drops Fallout 76's mouse-lock when the overlay sits on
-  top, so the cursor can drift off the game. THIS INSTALLER enables it via protontricks:
-  the "grabfullscreen=y" winetricks verb (Fullscreen) PLUS a GrabPointer reg add
-  (Borderless-Windowed), so the cursor stays locked in either display mode. No Wine
-  config is hand-edited. protontricks is auto-installed if missing.
-- It can only do this if Fallout 76's Proton prefix already exists (you've launched
-  the game at least once) and FO76 is closed. If not, the installer prints the manual
-  steps -- or just use the overlay tray -> "Fix in-game cursor lock (Wayland)" after
-  you've run FO76 once. X11 sessions don't need any of this.
-- Manual method: protontricks 1151340 grabfullscreen=y  and  protontricks 1151340 -c
+  top, so the cursor can drift off the game. This mod never modifies FO76's
+  Proton/Wine prefix, so enabling Wine's own mouse capture is a step you apply
+  yourself via protontricks (community-standard method) -- X11 sessions don't
+  need it.
+- Recommended: run FO76 on the latest Proton 11.x in Steam (Properties ->
+  Compatibility -> Force the use of a specific Steam Play compatibility tool),
+  or a well-maintained build like Proton-CachyOS or GE-Proton.
+- Install protontricks: pacman -S protontricks (Arch/CachyOS) / dnf install
+  protontricks (Fedora) / pipx install protontricks (Debian/Ubuntu).
+- Then run: protontricks 1151340 grabfullscreen=y  and  protontricks 1151340 -c
   'wine reg add "HKCU\Software\Wine\X11 Driver" /v GrabPointer /t REG_SZ /d Y /f &&
   wineserver -w'  (GUI equivalent of the first: protontricks 1151340 winecfg -> "Input"
   tab -> tick "Automatically capture the mouse in full-screen windows"). Then run FO76.
@@ -383,10 +326,11 @@ if printf '%s' "$DESKTOP_ENV" | grep -q 'kde\|plasma' && [ "$SESSION_TYPE" = "wa
   say "(or tray -> \"KDE: keep overlay above game\" to re-apply the rules)."
 fi
 
-# In-game cursor lock — any Wayland session (X11 doesn't need it).
+# In-game cursor lock is a Proton/Wine concern this installer never automates —
+# print the manual steps once as a tip, on Wayland sessions only (X11 doesn't need it).
 if [ "$SESSION_TYPE" = "wayland" ]; then
   echo
-  apply_fo76_cursor_lock
+  print_cursor_manual_steps
 fi
 
 echo

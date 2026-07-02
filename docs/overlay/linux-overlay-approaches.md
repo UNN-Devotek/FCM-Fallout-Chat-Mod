@@ -23,26 +23,38 @@ Three parts, all shippable from the installer:
    Neither affects the cursor lock — stacking only. (Empirically: a matched window jumps from
    `layer=2` to `layer=9`; an earlier "layer/layerrule ignored by KWin 6" note was never actually
    tested with this rule and is wrong.)
-3. **Enable Wine's own mouse capture via protontricks** — run the winetricks verb
-   `protontricks 1151340 grabfullscreen=y` (the winecfg "Automatically capture the mouse in
-   full-screen windows" setting; internally `HKCU\Software\Wine\X11 Driver` `GrabFullscreen`=`Y`)
-   for Fullscreen, PLUS `GrabPointer`=`Y` for Borderless-Windowed via
-   `protontricks 1151340 -c 'wine reg add "HKCU\Software\Wine\X11 Driver" /v GrabPointer /t REG_SZ /d Y /f && wineserver -w'`
-   (no winetricks verb exists for GrabPointer; `wineserver -w` flushes `user.reg` — Wine only
-   persists the registry on shutdown). Both keys are set by the installer and the tray action.
-   **Wine** then confines the cursor to the game whenever FO76 is focused and releases it when focus
-   leaves (overlay stays usable). Confirmed: cursor held on fast flicks, free movement in menus,
-   frees for the overlay — all by Wine, independent of KWin's broken pointer constraint. **No Wine
-   config is hand-edited** — protontricks does it. **Applied by the Linux installer**
-   (`Packaging/linux/install.sh` → `apply_fo76_cursor_lock`, which auto-installs protontricks if
-   missing) on any Wayland session, and re-applied any time via the tray "Fix in-game cursor lock
-   (Wayland)" (`main.js` `applyFo76Grab` → `findProtontricks`, native or flatpak). Best-effort:
-   needs protontricks + FO76's prefix to exist (launch the game once) + FO76 closed + a display
-   (the overlay runs under XWayland, so `DISPLAY` is set; the installer falls back to `xvfb-run`).
-   X11 doesn't need it. (History: earlier builds hand-edited `user.reg`, then auto-applied on
-   overlay launch; both were replaced by the protontricks `grabfullscreen` verb — the
-   community-standard method.) The KWin rules in step 2 handle stacking and are NOT foldable into
-   protontricks (Wine virtual-desktop mode could, but costs VRR/HDR + has FO76 stutter — rejected).
+3. **Enable Wine's own mouse capture via protontricks — an explicit, user-initiated step,
+   never automatic.** The overlay never writes to the FO76 Proton/Wine prefix on its own (not on
+   install, not on launch) — see [README.md](README.md) — EULA-safe overlay scope: no
+   game-memory reading, no game-file modification, no code injection, no network/port scanning;
+   writing `GrabFullscreen`/`GrabPointer` is a Wine/Proton *compatibility-layer* registry setting,
+   not a game-file modification. Two ways to apply it, both user-initiated:
+   - **Tray → "Fix FO76 cursor lock (Wayland)"** (`main.js` `fixFo76CursorLock` /
+     `applyFo76Grab`, needs FO76 closed) — one click runs the same commands below and reports
+     the result (`applied` / `fo76-running` / `no-prefix` / `no-protontricks` / `error`) via a
+     dialog. This is the recommended path.
+   - **Manual**, for anyone who prefers to run it themselves: the winetricks verb
+     `protontricks 1151340 grabfullscreen=y` (the winecfg "Automatically capture the mouse in
+     full-screen windows" setting; internally `HKCU\Software\Wine\X11 Driver` `GrabFullscreen`=`Y`)
+     for Fullscreen, PLUS `GrabPointer`=`Y` for Borderless-Windowed via
+     `protontricks 1151340 -c 'wine reg add "HKCU\Software\Wine\X11 Driver" /v GrabPointer /t REG_SZ /d Y /f && wineserver -w'`
+     (no winetricks verb exists for GrabPointer; `wineserver -w` flushes `user.reg` — Wine only
+     persists the registry on shutdown). The manual steps are printed by
+     `Packaging/linux/install.sh` (`print_cursor_manual_steps`) and documented in
+     `INSTALL-LINUX.txt` — the installer itself still never applies them automatically.
+
+   **Wine** then confines the cursor to the game whenever FO76 is focused and releases it when
+   focus leaves (overlay stays usable). Confirmed: cursor held on fast flicks, free movement in
+   menus, frees for the overlay — all by Wine, independent of KWin's broken pointer constraint.
+   **Recommended:** run FO76 on the latest **Proton 11.x** available in Steam (Properties →
+   Compatibility → Force the use of a specific Steam Play compatibility tool), or a
+   well-maintained community build like **Proton-CachyOS** or **GE-Proton** — newer Wine/DXVK
+   builds are more reliable at persisting these settings. X11 doesn't need it. (History: earlier
+   builds hand-edited `user.reg`, then auto-applied via protontricks unconditionally from the
+   installer; that install-time auto-apply and the tray button were both removed for mutating the
+   prefix without an explicit per-use action; the tray button was reinstated as an
+   explicit/on-demand-only action, while the installer stays manual-instructions-only.) The KWin
+   rules in step 2 handle stacking and are unrelated to this step.
 
 ### What did NOT work (dead ends, for the record)
 - **Patched KWin** — works but a forked compositor is unshippable (reverted).

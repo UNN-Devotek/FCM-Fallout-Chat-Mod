@@ -79,6 +79,30 @@ run), import the bundled rule by hand, or use the app's tray menu ->
 
 Uninstalling removes these KWin rules and restores FO76's fullscreen stacking.
 
+In-game cursor lock (Wayland) — explicit, on-demand step
+------------------------------------------------------------
+On Wayland the compositor drops Fallout 76's mouse-lock while the overlay sits
+on top. Fallout Chat Mod never modifies the FO76 Proton/Wine prefix
+automatically (not during install, not on launch) -- this is a step you apply
+yourself, on your command:
+  Easiest: open the overlay's tray menu -> "Fix in-game cursor lock
+  (Wayland)". Quit Fallout 76 first, then click it; it runs the same
+  protontricks commands below and shows the result.
+
+  Manual (community-standard method), if you'd rather run it yourself:
+  1. Recommended: run FO76 on the latest Proton 11.x in Steam (Properties ->
+     Compatibility -> Force the use of a specific Steam Play compatibility
+     tool), or a well-maintained build like Proton-CachyOS or GE-Proton.
+  2. Install protontricks: pacman -S protontricks (Arch/CachyOS) / dnf
+     install protontricks (Fedora) / pipx install protontricks (Debian/Ubuntu).
+  3. Run:  protontricks 1151340 grabfullscreen=y
+     (GUI equivalent: protontricks 1151340 winecfg -> Input tab -> tick
+      "Automatically capture the mouse in full-screen windows".)
+  4. For Borderless-Windowed too, also run:
+     protontricks 1151340 -c 'wine reg add "HKCU\Software\Wine\X11 Driver" /v GrabPointer /t REG_SZ /d Y /f && wineserver -w'
+  5. Launch Fallout 76 (Fullscreen or Borderless-Windowed).
+X11 sessions don't need this.
+
 Do NOT run the game inside gamescope for overlay purposes — its nested
 compositor isolates the game and no external overlay can draw over it. In
 particular, the launch flags "-f" (fullscreen) and "--force-grab-cursor" make
