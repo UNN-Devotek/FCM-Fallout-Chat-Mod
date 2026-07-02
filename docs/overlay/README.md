@@ -76,7 +76,7 @@ honestly labelled desktop-only because Scaleform cannot render them safely.
 
 The overlay window uses `setAlwaysOnTop(true, 'screen-saver')` — the highest standard level — and `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })`. This only works reliably when Fallout 76 runs in **Windowed Borderless** mode. Exclusive Fullscreen gives the game exclusive GPU output; no window on any OS can render above it.
 
-On **KDE Plasma (Wayland)** the overlay forces the XWayland backend and installs two KWin rules automatically on first launch — see the dedicated section below and **[window-management.md](window-management.md#kde-plasma--wayland--keep-above-the-game-kwin-layer-rule)** for the full mechanism.
+On **KDE Plasma (Wayland)** the overlay forces the XWayland backend and installs one KWin rule automatically on first launch — see the dedicated section below and **[window-management.md](window-management.md#kde-plasma--wayland--keep-above-the-game-kwin-layer-rule)** for the full mechanism.
 
 ---
 
@@ -87,11 +87,10 @@ On **KDE Plasma (Wayland)** the overlay forces the XWayland backend and installs
 On KDE+Wayland the overlay configures itself on first launch — **no manual steps**. It:
 
 1. **Forces the XWayland Ozone backend** via a one-time argv relaunch (`--ozone-platform=x11`) — `appendSwitch` is too late on Electron 39, so it re-execs once with the flag. Without XWayland the overlay can't stack over the game *and* breaks KWin direct scanout (game lag). See [window-management.md](window-management.md).
-2. **Installs two KWin rules** into `~/.config/kwinrulesrc` (`setupKdeKeepAbove` → `overlayCore.buildKwinKeepAboveScript`, then `qdbus org.kde.KWin /KWin reconfigure`):
-   - `fcm-keepabove` — keeps the overlay window above others.
-   - `fcm-game-demote` — forces `fullscreen=false` on the game (`steam_app_1151340`) so KWin doesn't promote the focused game to the active-fullscreen layer, which is what actually keeps the overlay on top **while you play**. (On KWin 6 the old `layer=8` override is ignored, so this demote rule — not a layer override — is the fix.)
+2. **Installs one KWin rule** into `~/.config/kwinrulesrc` (`setupKdeKeepAbove` → `overlayCore.buildKwinKeepAboveScript`, then `qdbus org.kde.KWin /KWin reconfigure`):
+   - `fcm-keepabove` — on the overlay (`wmclass=fallout-chat-mod`), combining `above=true` (keeps it above other windows) with a force-Layer `layer=overlay`/`layerrule=2` property, which is what actually keeps the overlay on top of a **focused fullscreen** FO76 **while you play** (KWin 6's sanctioned "stay above fullscreen" mechanism, KDE Bug 441074). The game itself is never demoted — FO76 keeps its normal fullscreen stacking above the panel.
 
-The install is idempotent and self-healing (cleans stale FCM rules from older builds, preserves the user's own rules). **Uninstalling removes both rules** (`buildKwinRemoveRulesScript` / `Packaging/linux/uninstall.sh`), restoring FO76's fullscreen stacking.
+The install is idempotent and self-healing (cleans stale FCM rules from older builds, preserves the user's own rules). **Uninstalling removes the rule** (`buildKwinRemoveRulesScript` / `Packaging/linux/uninstall.sh`), restoring FO76's fullscreen stacking.
 
 **Fallback** if the auto-apply couldn't run: tray → **KDE: keep overlay above game**, or import `~/.config/Fallout Chat Mod/fallout-chatmod-keepabove.kwinrule` via System Settings → Window Rules → Import, then `qdbus org.kde.KWin /KWin reconfigure`.
 

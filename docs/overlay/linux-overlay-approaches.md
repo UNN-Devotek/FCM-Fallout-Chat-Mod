@@ -13,13 +13,16 @@ Three parts, all shippable from the installer:
 1. **Force the FCM overlay into XWayland** (`ELECTRON_OZONE_PLATFORM_HINT=x11` + `--ozone-platform=x11`;
    the overlay already relaunches into XWayland on KDE-Wayland). It then displays on top of FO76
    correctly (transparent, always-on-top, click-through).
-2. **KWin force-Layer window rule (the fix — verified on KWin 6.7.1):** `fcm-overlay-layer`
+2. **KWin force-Layer window rule (the fix — verified on KWin 6.7.1):** `fcm-keepabove`
    (`wmclass=fallout-chat-mod`, `layer=overlay`, `layerrule=2`=Force) puts the overlay in KWin's
    `OverlayLayer(9)`, ABOVE the active-fullscreen game, WITHOUT demoting the game — so FO76 keeps
    normal fullscreen stacking (above the panel) and the overlay keeps keyboard focus (window type
-   stays Normal). Added in KWin 6.0 (KDE Bug 441074). Applied alongside a plain `fcm-keepabove`
-   (`above=true`) belt-and-suspenders. The old `fcm-game-below` (`below=true` on the game) is now
-   an **opt-in fallback (default off)** — it worked but also dropped the game under the taskbar.
+   stays Normal). Added in KWin 6.0 (KDE Bug 441074). Combined into the SAME rule as a plain
+   `above=true` belt-and-suspenders property (both always target the overlay window, so one KWin
+   rule carries both — earlier builds split them into `fcm-keepabove` + `fcm-overlay-layer`; now
+   merged). The old `fcm-game-below` (`below=true` on the game) has been **removed entirely** — it
+   worked but also dropped the game under the taskbar and every other window; the install script
+   still strips a stale copy from old opted-in installs.
    Neither affects the cursor lock — stacking only. (Empirically: a matched window jumps from
    `layer=2` to `layer=9`; an earlier "layer/layerrule ignored by KWin 6" note was never actually
    tested with this rule and is wrong.)

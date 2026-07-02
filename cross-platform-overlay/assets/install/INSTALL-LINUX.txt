@@ -57,17 +57,24 @@ Using the overlay
 KDE Plasma (Wayland) — automatic, just run Borderless
 -----------------------------------------------------
 On KDE+Wayland the overlay sets itself up on first launch — there is normally
-NOTHING to do. It forces the XWayland backend and installs two KWin window rules
-so it stays above Fallout 76 even while the game is focused:
+NOTHING to do. It forces the XWayland backend and installs one KWin window rule
+("keep above games") so it stays above Fallout 76 even while the game is
+focused. The rule combines two properties on the overlay window:
 
-  - "keep above games"            -> keeps the overlay window on top.
-  - "demote game from fullscreen" -> stops KWin promoting FO76 to the active-
-                                     fullscreen layer (which would cover the overlay).
+  - keeps the overlay window on top, AND
+  - forces the OVERLAY into KWin's Overlay layer, so it stays visible even
+    while the game is focused fullscreen. The game is NOT demoted — FO76
+    keeps its normal fullscreen stacking (above the panel).
 
 Just run Fallout 76 in BORDERLESS WINDOWED (in-game: Settings -> Display ->
-Window Mode = Borderless). The game still fills the screen — only its KWin
-stacking layer changes. Loading screens and the in-game (Scaleform) UI work
+Window Mode = Borderless). Loading screens and the in-game (Scaleform) UI work
 normally with these rules.
+
+Optional: install kdotool (Arch/CachyOS: paru -S kdotool [AUR]; Fedora:
+sudo dnf install kdotool) so the overlay releases its hotkeys (Insert/Delete/
+Home...) when you tab to another app while the game runs. xdotool also works,
+but it cannot see native-Wayland windows (keys may stay captured in Konsole/
+Firefox). Without either tool, hotkeys stay held for the whole game session.
 
 If the overlay ever ends up BEHIND the game (e.g. the automatic setup couldn't
 run), import the bundled rule by hand, or use the app's tray menu ->

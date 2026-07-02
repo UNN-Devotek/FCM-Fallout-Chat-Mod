@@ -212,8 +212,8 @@ aboverule=3
 # Force the OVERLAY to KWin's Overlay layer - the fix for "overlay hidden behind a focused
 # fullscreen game" (KWin 6.0+). It sits above the active-fullscreen game WITHOUT demoting
 # the game, so FO76 keeps normal fullscreen stacking (above the panel) and the overlay
-# keeps keyboard focus. No game "keep below" rule by default (that also dropped the game
-# under the taskbar); the app has an opt-in fallback toggle if this rule doesn't take.
+# keeps keyboard focus. The game itself is never demoted or "kept below" (that would also
+# drop it under the taskbar).
 [Fallout Chat Mod - overlay layer]
 Description=Fallout Chat Mod - overlay layer
 wmclass=fallout-chat-mod
@@ -278,9 +278,11 @@ Troubleshooting — "it launched once, now the shortcut does nothing"
       sudo apt install ./'Fallout Chat Mod'*.deb   (or: sudo dnf install ./*.deb)
 
 Optional — release hotkeys when you tab out (KDE Wayland)
-- Install kdotool (recommended on Wayland) or xdotool so the overlay's hotkeys
-  (Insert/Delete/Home) are released when you switch to Konsole/Discord. Without
-  it they stay registered for the whole game session (still works fine).
+- Install kdotool (Arch/CachyOS: paru -S kdotool [AUR]; Fedora: sudo dnf install
+  kdotool) so the overlay's hotkeys (Insert/Delete/Home) are released when you
+  switch to Konsole/Discord. xdotool also works, but it cannot see native-Wayland
+  windows, so keys may stay captured in those apps while the game runs. Without
+  either tool they stay registered for the whole game session (still works fine).
 
 Uninstall:  curl -fsSL https://falloutchatmod.com/uninstall.sh | bash
 Support:    https://falloutchatmod.com
@@ -320,10 +322,13 @@ if printf '%s' "$DESKTOP_ENV" | grep -q 'kde\|plasma' && [ "$SESSION_TYPE" = "wa
   say "KDE Plasma on Wayland detected — the overlay configures itself on first launch"
   say "(forces XWayland + installs a KWin force-Layer rule so it sits above the game)."
   say "The overlay is placed in KWin's Overlay layer, so it shows above Fallout 76 WITHOUT"
-  say "demoting the game — FO76 keeps normal fullscreen stacking (above the panel). No 'keep"
-  say "game below' rule is applied by default. If chat ever shows BEHIND the game on your"
-  say "setup, enable the fallback in the tray menu -> \"Fallback: force game below overlay\""
-  say "(or tray -> \"KDE: keep overlay above game\" to re-apply the rules)."
+  say "demoting the game — FO76 keeps normal fullscreen stacking (above the panel). If chat"
+  say "ever shows BEHIND the game, use tray -> \"KDE: keep overlay above game\" to re-apply"
+  say "the rules (or import the bundled .kwinrule by hand)."
+  say ""
+  say "TIP: install kdotool (AUR: paru -S kdotool) so the overlay releases its hotkeys"
+  say "when you tab to another app while the game runs. xdotool also works, but it"
+  say "cannot see native-Wayland windows (keys may stay captured in Konsole/Firefox)."
 fi
 
 # In-game cursor lock is a Proton/Wine concern this installer never automates —
