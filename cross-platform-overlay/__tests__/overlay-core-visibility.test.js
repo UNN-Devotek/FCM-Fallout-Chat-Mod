@@ -12,7 +12,6 @@ const {
   visibilityDecision,
   emitVisibilityDecision,
   desiredTopmost,
-  shouldForceGameBelow,
   nextPresenceState,
   shouldHidePanelInGame,
   buildPanelHidingSaveScript,
@@ -269,28 +268,6 @@ describe('desiredTopmost — focus-aware mode', () => {
 
   it('nothing foreground / not focused -> false', () => {
     expect(desiredTopmost(base)).toBe(false);
-  });
-});
-
-// shouldForceGameBelow: the KWin "keep game below" rule only applies while the overlay is
-// actually visible over a running game (and the user hasn't opted out). Hiding the overlay
-// must drop it so FO76 returns above the panel.
-describe('shouldForceGameBelow', () => {
-  it('game running + overlay visible + enabled -> true', () => {
-    expect(shouldForceGameBelow({ gameRunning: true, overlayVisible: true, gameBelowEnabled: true })).toBe(true);
-  });
-  it('overlay hidden -> false (game reclaims normal stacking, panel visible again)', () => {
-    expect(shouldForceGameBelow({ gameRunning: true, overlayVisible: false, gameBelowEnabled: true })).toBe(false);
-  });
-  it('game not running -> false', () => {
-    expect(shouldForceGameBelow({ gameRunning: false, overlayVisible: true, gameBelowEnabled: true })).toBe(false);
-  });
-  it('user opted out -> false even when visible + running', () => {
-    expect(shouldForceGameBelow({ gameRunning: true, overlayVisible: true, gameBelowEnabled: false })).toBe(false);
-  });
-  it('missing/empty state -> false', () => {
-    expect(shouldForceGameBelow()).toBe(false);
-    expect(shouldForceGameBelow({})).toBe(false);
   });
 });
 

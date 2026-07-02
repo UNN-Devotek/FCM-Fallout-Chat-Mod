@@ -5,9 +5,14 @@
 #   System Settings -> Window Management -> Window Rules -> Import...  (pick this file)
 #   then:  qdbus org.kde.KWin /KWin reconfigure   (or log out / in)
 #
-# TWO rules on Plasma 6 (KWin 6):
+# ONE rule on the OVERLAY window (wmclass=fallout-chat-mod), combining two KWin
+# properties:
 #
-# 1) Keep the OVERLAY above other windows (above=true).
+# 1) Keep the OVERLAY above other windows (above=true) — belt-and-suspenders.
+# 2) Force the OVERLAY into KWin's Overlay layer (layer=overlay, Force) — the
+#    sanctioned KWin-6 way (KDE Bug 441074) to stay above a FOCUSED fullscreen game.
+#    The game is NOT demoted: FO76 keeps its normal fullscreen stacking (above the
+#    panel), and the overlay stays a normal, focusable, alt-tab-able window.
 [Fallout Chat Mod - keep above games]
 Description=Fallout Chat Mod - keep above games
 wmclass=fallout-chat-mod
@@ -15,17 +20,5 @@ wmclassmatch=2
 wmclasscomplete=false
 above=true
 aboverule=3
-
-# 2) Keep the GAME below — the no-flicker fix for "overlay hidden behind a focused
-#    fullscreen game". KWin evaluates keepBelow BEFORE the active-fullscreen promotion,
-#    so the overlay (rule 1) stays above a focused fullscreen FO76 with NO flicker.
-#    (Replaces the old fullscreen-demote rule, which forced the game's fullscreen=false
-#    and fought the game -> endless flicker.) Side effect: the game can be covered by the
-#    panel / other windows. Turn it off via the app tray -> "Keep game below overlay".
-[Fallout Chat Mod - keep game below]
-Description=Fallout Chat Mod - keep game below
-wmclass=steam_app_1151340
-wmclassmatch=2
-wmclasscomplete=false
-below=true
-belowrule=2
+layer=overlay
+layerrule=2
