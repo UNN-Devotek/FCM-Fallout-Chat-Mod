@@ -547,8 +547,11 @@ function syncPanelHideInGame(reason) {
   else if (!want && (_panelHidingActive || readSavedPanelHiding())) { diag('[panel-hide] restore (' + (reason || '') + ')'); restorePanelHiding(); }
 }
 
-// Discover Steam library roots (default install dirs + any libraryfolders.vdf paths),
-// so we can locate the FO76 Proton prefix wherever the game is installed.
+// FO76 in-game cursor lock (Wayland) — explicit, tray-triggered only (see
+// overlay-core.js FO76 comment block). The overlay never writes to FO76's
+// Proton/Wine prefix automatically; this only runs when the user presses the
+// tray's "Fix in-game cursor lock" action. Detects if FO76 is running so we
+// don't fight a live Wine session.
 function fo76IsRunning() {
   try {
     const { execSync } = require('child_process');
@@ -572,56 +575,44 @@ function findProtontricks() {
 // (the winecfg "Automatically capture the mouse in full-screen windows" setting) — no
 // hand-editing of Wine config. Needs protontricks + FO76's prefix (game launched once) +
 // FO76 closed + a display (the overlay runs under XWayland, so DISPLAY is set). Surfaced
-// via the tray. Returns { status }: 'applied'|'fo76-running'|'no-prefix'|'no-protontricks'|'error'.
+// via the tray only — never automatic. Returns { status }:
+// 'applied'|'fo76-running'|'no-prefix'|'no-protontricks'|'error'.
 function applyFo76Grab() {
   if (fo76IsRunning()) return { status: 'fo76-running' };
   const pt = findProtontricks();
   if (!pt) return { status: 'no-protontricks' };
   const { execFileSync } = require('child_process');
-  const noPrefix = (s) => /No Proton|not found|No installed|could not find|Steam is not/i.test(s || '');
   const run = (args) => execFileSync(pt[0], [...pt.slice(1), ...args],
     { timeout: 120000, encoding: 'utf8', env: { ...process.env } });
   try {
     // GrabFullscreen via the winetricks verb (locks the cursor in Fullscreen mode).
-    const out = run(['1151340', 'grabfullscreen=y']);
-    if (noPrefix(out)) return { status: 'no-prefix' };
+    const out = run([overlayCore.FO76_APPID, 'grabfullscreen=y']);
+    if (overlayCore.protontricksIndicatesNoPrefix(out)) return { status: 'no-prefix' };
     // GrabPointer via a raw reg add so the lock ALSO holds in Borderless-Windowed (no
-    // winetricks verb exists for it). `wineserver -w` forces user.reg to flush to disk
-    // before the wine session lingers (Wine only persists the registry on shutdown).
-    run(['-c', 'wine reg add "HKCU\\Software\\Wine\\X11 Driver" /v GrabPointer /t REG_SZ /d Y /f && wineserver -w', '1151340']);
+    // winetricks verb exists for it). See overlay-core.js buildFo76GrabPointerRegArgs.
+    run(overlayCore.buildFo76GrabPointerRegArgs());
     diag('[cursor-fix] protontricks grabfullscreen=y + GrabPointer=Y applied for FO76');
     return { status: 'applied' };
   } catch (e) {
     const msg = String((e && (e.stdout || e.message)) || e);
-    if (noPrefix(msg)) return { status: 'no-prefix' };
+    if (overlayCore.protontricksIndicatesNoPrefix(msg)) return { status: 'no-prefix' };
     diag('[cursor-fix] protontricks failed: ' + msg.slice(0, 200));
     return { status: 'error', error: e };
   }
 }
 
-// NOTE: the in-game cursor-lock (Wine GrabFullscreen/GrabPointer in the FO76 prefix) is applied
-// by the INSTALLER at install time (Packaging/linux/install.sh) — the community-standard
-// protontricks/winecfg "Automatically capture the mouse in full-screen windows" setting. The
-// overlay no longer auto-applies it on launch; the tray action below is the manual re-apply for
-// anyone who runs FO76 after installing (or after a Proton prefix reset). See applyFo76Grab.
-
-// Tray (interactive): same core, with explicit dialog feedback per status.
+// Tray action: same core, with explicit dialog feedback per status. This is the ONLY
+// way the cursor lock gets applied — never on install, never on launch (installer
+// only prints the manual steps; see Packaging/linux/install.sh).
 function fixFo76CursorLock() {
   if (!IS_LINUX) return;
   const { dialog } = require('electron');
-  const notify = (type, message, detail) => {
-    try { dialog.showMessageBox({ type, title: 'Fallout Chat Mod — in-game cursor lock', message, detail: detail || '', buttons: ['OK'] }); }
-    catch { diag('[cursor-fix] ' + message + (detail ? ' — ' + detail : '')); }
-  };
   const r = applyFo76Grab();
-  switch (r.status) {
-    case 'no-protontricks': notify('warning', 'protontricks is required.', 'Install it (Arch/CachyOS: sudo pacman -S protontricks · Fedora: sudo dnf install protontricks · Debian/Ubuntu: pipx install protontricks), then try again.'); break;
-    case 'no-prefix': notify('warning', 'Could not reach the Fallout 76 Proton prefix.', 'Launch FO76 once via Steam/Proton so its prefix is created, then try again.'); break;
-    case 'fo76-running': notify('warning', 'Fallout 76 is running.', 'Fully quit FO76 first, then run this again.'); break;
-    case 'applied': notify('info', 'In-game cursor lock enabled for Fallout 76.', 'Applied via protontricks (GrabFullscreen + GrabPointer). Relaunch Fallout 76 — the cursor stays locked to the game in both Fullscreen and Borderless-Windowed while the overlay is on top.'); break;
-    default: notify('error', 'protontricks could not enable the cursor lock.', String((r.error && r.error.message) || r.error || 'unknown error'));
-  }
+  const { type, message, detail } = overlayCore.cursorLockStatusMessage(r.status, r.error && r.error.message);
+  try { dialog.showMessageBox({ type, title: 'Fallout Chat Mod — in-game cursor lock', message, detail: detail || '', buttons: ['OK'] }); }
+  catch { diag('[cursor-fix] ' + message + (detail ? ' — ' + detail : '')); }
 }
+
 const http = require('http');
 const { URL } = require('url');
 // Helper: pick http or https module based on the relay URL protocol.
@@ -3818,6 +3809,12 @@ function rebuildTrayMenu() {
         syncKwinGameBelow('toggle');       // re-apply rules with/without game-below (gated on visibility)
         rebuildTrayMenu();
       } },
+      // Cursor-lock fix: enable Wine's own mouse capture in the FO76 prefix so the cursor
+      // stays locked to the game on KWin Wayland (KWin revokes the game's pointer constraint
+      // when the overlay is on top). Explicit, on-demand only — never automatic (installer
+      // only prints the manual steps). One-click, idempotent; needs FO76 closed (implicit —
+      // this is a Proton-prefix fix, so it only makes sense between game sessions).
+      { label: 'Fix FO76 cursor lock (Wayland)', click: () => fixFo76CursorLock() },
       // Optional: hide the KDE taskbar/panel while in-game so it can't cover a BORDERLESS
       // game (the force-Layer rule already keeps the OVERLAY above; this is about the panel).
       // Restores your exact panel modes when the game exits / overlay hides / app quits.
@@ -3826,10 +3823,6 @@ function rebuildTrayMenu() {
         syncPanelHideInGame('toggle');     // hide now if in-game, or restore if turned off
         rebuildTrayMenu();
       } },
-      // Cursor-lock fix: enable Wine's own mouse capture in the FO76 prefix so the cursor
-      // stays locked to the game on KWin Wayland (KWin revokes the game's pointer constraint
-      // when the overlay is on top). One-click, idempotent; needs FO76 closed.
-      { label: 'Fix in-game cursor lock (Wayland) — needs FO76 closed', click: () => fixFo76CursorLock() },
     ] : []),
     // Diagnostics: surface the log for bug reports + let users enable verbose
     // (per-tick) logging without a relaunch. The toggle persists to settings so it
@@ -4240,7 +4233,6 @@ app.whenReady().then(() => {
   // skips if already installed (see setupKdeKeepAbove). Other Linux setups just get
   // the helper files written (setupKdeKeepAbove writes them on its first line too).
   if (KDE_WAYLAND) setupKdeKeepAbove({ interactive: false });
-  // In-game cursor lock is applied by the installer now (not auto on launch) — tray → "Fix in-game cursor lock" re-applies.
   else writeLinuxHelperFiles();
   // Crash recovery: if a previous run set panels to autohide and died before restoring, the
   // saved-modes file still exists — restore the user's panels now (before the game-gate runs).

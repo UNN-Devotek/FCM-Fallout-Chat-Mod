@@ -895,9 +895,71 @@ function syntheticDevDiscordId(installToken) {
   return '9' + dec.slice(-17).padStart(17, '0'); // always an 18-digit string
 }
 
-// NOTE: the in-game cursor lock is applied via protontricks' `grabfullscreen=y` verb
-// (installer + tray, see main.js applyFo76Grab) — no user.reg editing — so the former
-// buildFo76GrabUserReg / fo76UserRegCandidates / fo76GrabStatus helpers were removed.
+// ── FO76 in-game cursor lock (Wayland) — explicit, tray-triggered only ─────────
+// The overlay never writes to FO76's Proton/Wine prefix automatically (install
+// time or on launch); this is only invoked when the user presses the tray's
+// "Fix in-game cursor lock" action. It runs protontricks to set two Wine/Proton
+// compatibility-layer registry values under HKCU\Software\Wine\X11 Driver:
+// GrabFullscreen (winetricks verb `grabfullscreen=y`) and GrabPointer (no verb
+// exists, so it's a raw `wine reg add`). Neither reads game memory, modifies
+// game files, injects code, or touches the network — see main.js applyFo76Grab.
+const FO76_APPID = '1151340';
+
+// The protontricks argv that raw-adds GrabPointer so the cursor lock also holds
+// in Borderless-Windowed (grabfullscreen=y only covers Fullscreen). `wineserver
+// -w` forces user.reg to flush to disk before the wine session lingers — Wine
+// only persists the registry on clean shutdown.
+function buildFo76GrabPointerRegArgs() {
+  return [
+    '-c',
+    'wine reg add "HKCU\\Software\\Wine\\X11 Driver" /v GrabPointer /t REG_SZ /d Y /f && wineserver -w',
+    FO76_APPID,
+  ];
+}
+
+// True when protontricks output indicates it couldn't reach FO76's Proton
+// prefix (game never launched, or Steam/Proton not set up) rather than a real
+// failure. Pure so the detection regex is unit-testable without spawning.
+function protontricksIndicatesNoPrefix(output) {
+  return /No Proton|not found|No installed|could not find|Steam is not/i.test(output || '');
+}
+
+// Map an applyFo76Grab() result status to the tray dialog's { type, message,
+// detail }. Pure so the copy is unit-testable without electron.dialog.
+function cursorLockStatusMessage(status, errorDetail) {
+  switch (status) {
+    case 'no-protontricks':
+      return {
+        type: 'warning',
+        message: 'protontricks is required.',
+        detail: 'Install it (Arch/CachyOS: sudo pacman -S protontricks · Fedora: sudo dnf install protontricks · Debian/Ubuntu: pipx install protontricks), then try again.',
+      };
+    case 'no-prefix':
+      return {
+        type: 'warning',
+        message: 'Could not reach the Fallout 76 Proton prefix.',
+        detail: 'Launch FO76 once via Steam/Proton so its prefix is created, then try again.',
+      };
+    case 'fo76-running':
+      return {
+        type: 'warning',
+        message: 'Fallout 76 is running.',
+        detail: 'Fully quit FO76 first, then run this again.',
+      };
+    case 'applied':
+      return {
+        type: 'info',
+        message: 'In-game cursor lock enabled for Fallout 76.',
+        detail: 'Applied via protontricks (GrabFullscreen + GrabPointer). Relaunch Fallout 76 — the cursor stays locked to the game in both Fullscreen and Borderless-Windowed while the overlay is on top.',
+      };
+    default:
+      return {
+        type: 'error',
+        message: 'protontricks could not enable the cursor lock.',
+        detail: String(errorDetail || 'unknown error'),
+      };
+  }
+}
 
 module.exports = {
   DEFAULT_APP_CLIENT_KEY,
@@ -953,4 +1015,8 @@ module.exports = {
   syntheticDevDiscordId,
   filterProxyHeaders,
   resolveRelayProxyUrl,
+  FO76_APPID,
+  buildFo76GrabPointerRegArgs,
+  protontricksIndicatesNoPrefix,
+  cursorLockStatusMessage,
 };
