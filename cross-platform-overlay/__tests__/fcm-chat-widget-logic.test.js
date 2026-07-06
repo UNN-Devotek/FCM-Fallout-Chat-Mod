@@ -13,6 +13,8 @@ const {
   isOwnEcho,
   sendErrorMessage,
   switchChannelBySlash,
+  tabOrder,
+  isChannelSelectable,
   parseInputSubmit,
   emptyFeedNotice,
   chatVerbFailed,
@@ -153,6 +155,7 @@ describe('switchChannelBySlash', () => {
     ['e', 2], ['event', 2], ['events', 2],
     ['i', 3], ['inf', 3], ['infests', 3],
     ['r', 4], ['raid', 4], ['raids', 4],
+    ['s', 5], ['server', 5],
   ])('"%s" → index %i', (cmd, idx) => {
     expect(switchChannelBySlash(cmd)).toBe(idx);
   });
@@ -162,6 +165,32 @@ describe('switchChannelBySlash', () => {
   });
   it('is case-insensitive', () => {
     expect(switchChannelBySlash('GENERAL')).toBe(0);
+  });
+});
+
+describe('tabOrder (SERVER tab display order + in-world gating)', () => {
+  it('out of a world → 5 community channels, no SERVER', () => {
+    expect(tabOrder(false)).toEqual([0, 1, 2, 3, 4]);
+  });
+  it('in a world → SERVER (5) sits immediately right of GENERAL (0)', () => {
+    expect(tabOrder(true)).toEqual([0, 5, 1, 2, 3, 4]);
+    expect(tabOrder(true)[1]).toBe(5); // right of GENERAL
+  });
+  it('SERVER is selectable only while in a world', () => {
+    expect(isChannelSelectable(5, true)).toBe(true);
+    expect(isChannelSelectable(5, false)).toBe(false);
+  });
+  it('community channels are always selectable', () => {
+    for (const idx of [0, 1, 2, 3, 4]) {
+      expect(isChannelSelectable(idx, false)).toBe(true);
+      expect(isChannelSelectable(idx, true)).toBe(true);
+    }
+  });
+  it('/server resolves to the SERVER slug index but is gated by in-world', () => {
+    const idx = switchChannelBySlash('server');
+    expect(idx).toBe(5);
+    expect(isChannelSelectable(idx, false)).toBe(false); // ignored out of a world
+    expect(isChannelSelectable(idx, true)).toBe(true);
   });
 });
 

@@ -105,7 +105,19 @@ function switchChannelBySlash(cmd) {
   if (cmd === 'e' || cmd === 'event' || cmd === 'events')  return 2;
   if (cmd === 'i' || cmd === 'inf'   || cmd === 'infests') return 3;
   if (cmd === 'r' || cmd === 'raid'  || cmd === 'raids')   return 4;
+  if (cmd === 's' || cmd === 'server')                     return 5;
   return -1;
+}
+
+// ── Channel tab display order (FCMChatWidget.tabOrder) ──────────────────────────
+// Slug-indices in DISPLAY order. SERVER (slug index 5) is shown immediately right of
+// GENERAL (0) but ONLY while the player is in a world (inWorld). A channel is
+// selectable iff its slug-index is in the current display order.
+function tabOrder(inWorld) {
+  return inWorld ? [0, 5, 1, 2, 3, 4] : [0, 1, 2, 3, 4];
+}
+function isChannelSelectable(idx, inWorld) {
+  return tabOrder(inWorld).indexOf(idx) >= 0;
 }
 
 // ── Slash parse + consume (FCMChatWidget.onInputSubmit) ─────────────────────────
@@ -269,6 +281,8 @@ module.exports = {
   removePendingMatch,
   sendErrorMessage,
   switchChannelBySlash,
+  tabOrder,
+  isChannelSelectable,
   parseInputSubmit,
   emptyFeedNotice,
   extractJsonString,

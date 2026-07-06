@@ -636,7 +636,9 @@ class FCMBridge extends MovieClip {
         // Format: "\x00fcm.world.v1\x00<worldId>|<relayUserId>|<timestamp>|<hmac>"
         // The relay intercepts any body that starts with WORLD_CTRL_PREFIX,
         // verifies the HMAC, stores worldId for room binding, and never broadcasts.
-        var ts:String = Std.string(Std.int(flash.Lib.getTimer() / 1000));
+        // unix SECONDS — must match the relay's Date.now()/1000 freshness clock.
+        // (flash.Lib.getTimer() is SWF uptime, NOT unix time — the relay would reject it.)
+        var ts:String = Std.string(Std.int(Date.now().getTime() / 1000));
         var sigData:String = worldId + _relayUserId + ts;
         var hmac:String = hmacSha256Hex(WORLD_HMAC_SECRET, sigData);
         var body:String = WORLD_CTRL_PREFIX + worldId + "|" + _relayUserId + "|" + ts + "|" + hmac;
