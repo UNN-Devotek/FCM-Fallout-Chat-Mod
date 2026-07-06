@@ -51,6 +51,17 @@ function makeRedisStore(prefix: string): RedisStore {
 }
 
 /**
+ * SECURITY: rate-limit bucket key. Always the client IP, never a client-supplied
+ * header. Several of these limiters run on unauthenticated code paths (the global
+ * `/api/` mount, `channelsLimiter`, `playerListLimiter` before `requireClientAuth`,
+ * the public `/api/parties/public` routes), so `x-auth-token` is attacker-controlled
+ * and NOT yet validated when the limiter runs. Keying on it let a caller mint a fresh
+ * bucket per request by rotating a random token, defeating the limit entirely. IP-only
+ * matches the security-critical `authLimiter` / `debugReportLimiter` / registration keys.
+ */
+const ipKey = (req: any) => clientIp(req);
+
+/**
  * REST API rate limiter: 100 req / 15 min per session token (authenticated)
  * or 500 req / 15 min per IP (unauthenticated).
  *
@@ -63,7 +74,7 @@ const apiLimiter = rateLimit({
   max: (req: any) => (req.headers['x-auth-token'] ? 100 : 500),
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_api:'),
   // Skip endpoints that have their own dedicated limiter (player-list) or that
   // are read-mostly with their own caching and are called on every WS reconnect
@@ -91,7 +102,7 @@ const channelsLimiter = rateLimit({
   max: (req: any) => (req.headers['x-auth-token'] ? 500 : 500),
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_chans:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
@@ -113,7 +124,7 @@ const playerListLimiter = rateLimit({
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_plist:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
@@ -266,7 +277,7 @@ const partiesListLimiter = rateLimit({
   max: 120,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_parties_list:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
@@ -282,7 +293,7 @@ const partyCreateLimiter = rateLimit({
   max: 4,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_parties_create:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
@@ -298,7 +309,7 @@ const partyJoinLimiter = rateLimit({
   max: 8,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_parties_join:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
@@ -314,7 +325,7 @@ const partyInviteLimiter = rateLimit({
   max: 15,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_parties_invite:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
@@ -334,7 +345,7 @@ const wikiSearchLimiter = rateLimit({
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_wiki_search:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
@@ -353,7 +364,7 @@ const campSearchLimiter = rateLimit({
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_camp_search:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
@@ -389,7 +400,7 @@ const partyImageUploadLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_party_img:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
