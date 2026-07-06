@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.7.8";  // FIX never-connect: never send empty displayName (relay rejects invalid_display_name); keep "Wanderer" default + re-read name each attempt; + backspace fix (2.7.7)
+    static inline var VERSION:String  = "2.8.0";  // SERVER tab: worldId-scoped server chat right of GENERAL, shown only in-world; join/leave controls (unix-ts fix) + /server slash
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -148,7 +148,10 @@ class FCMChatWidget extends MovieClip {
     // ── HMAC-SHA256 shared secret (worldId control message) ───────────────────
     // Matches WORLD_HMAC_SECRET in FCMBridge.hx and the relay.
     static inline var WORLD_HMAC_SECRET:String = "fcm-world-v1-dev-placeholder";
-    static inline var WORLD_CTRL_PREFIX:String = "\x00fcm.world.v1\x00";
+    static inline var WORLD_CTRL_PREFIX:String  = "\x00fcm.world.v1\x00";
+    // LEAVE control: sent when the player leaves a world (worldId cleared).
+    // Body: WORLD_LEAVE_PREFIX + "<relayUserId>|<ts>|<hmac>", hmac over "leave|<userId>|<ts>".
+    static inline var WORLD_LEAVE_PREFIX:String = "\x00fcm.world.leave.v1\x00";
 
     // ── Config (FcmConfig — parsed from Data/FCMChat.ini; see FcmConfig.hx) ─────
     var _cfg:FcmConfig = new FcmConfig();
@@ -193,6 +196,7 @@ class FCMChatWidget extends MovieClip {
     var _connectTimer:Timer      = null;
     var _worldTimer:Timer        = null;
     var _lastWorldId:String      = "";
+    var _inWorld:Bool            = false;  // true while worldId is non-empty (SERVER tab visible)
 
     // ── ZFE search retry ──────────────────────────────────────────────────────
     var _zfeSearchTimer:Timer    = null;
@@ -231,7 +235,8 @@ class FCMChatWidget extends MovieClip {
 
     // ── HUDButton interactive channel tabs ────────────────────────────────────
     var _btnCls:Dynamic          = null;   // resolved HUDButton class (null → text-strip fallback)
-    var _chanBtns:Array<Dynamic> = [];     // the 5 channel-tab HUDButton instances
+    var _chanBtns:Array<Dynamic> = [];     // channel-tab HUDButton instances (display order)
+    var _chanBtnSlugs:Array<Int> = [];     // slug-index for each button in _chanBtns (display order)
 
     // ── Optimistic-echo dedup (our just-sent messages) ────────────────────────
     var _pendingEchoes:Array<{key:String, ts:Float}> = [];
@@ -392,6 +397,20 @@ class FCMChatWidget extends MovieClip {
         return tf;
     }
 
+    /**
+     * Channel slug-indices in DISPLAY order. SERVER (slug index 5) is shown
+     * immediately to the right of GENERAL (0), but ONLY while the player is in a
+     * world (_inWorld). Out of a world it collapses back to the 5 community channels.
+     */
+    function tabOrder():Array<Int> {
+        return _inWorld ? [0, 5, 1, 2, 3, 4] : [0, 1, 2, 3, 4];
+    }
+
+    /** Current unix time in SECONDS (matches the relay's HMAC freshness clock). */
+    function unixSeconds():Int {
+        return Std.int(Date.now().getTime() / 1000);
+    }
+
     function renderMainTabs():Void {
         if (_tabTf == null) return;
         // #344 / CAP-015 / D-11: single main tab "FALLOUT 76" (no PARTY); the active
@@ -406,11 +425,10 @@ class FCMChatWidget extends MovieClip {
         // "FALLOUT 76" main tab): active channel = tabActiveColor (bright), inactive =
         // tabInactiveColor (dim). Per-channel colors (chat_rooms.color) are applied only to the
         // [Channel] message tags, NOT this tab row. Slash /g /t /e /i /r still switch channels.
-        var displayNames:Array<String> = ["GENERAL", "TRADING", "EVENTS", "INFESTS", "RAIDS"];
         var html:Array<String> = [];
-        for (i in 0...displayNames.length) {
-            var color:String = (i == _chanIdx) ? hx(_cfg.tabActiveColor) : hx(_cfg.tabInactiveColor);
-            html.push('<font face="' + FONT_BOLD + '" size="12" color="' + color + '"><b>' + displayNames[i] + '</b></font>');
+        for (si in tabOrder()) {
+            var color:String = (si == _chanIdx) ? hx(_cfg.tabActiveColor) : hx(_cfg.tabInactiveColor);
+            html.push('<font face="' + FONT_BOLD + '" size="12" color="' + color + '"><b>' + CHAN_NAMES[si] + '</b></font>');
         }
         _subTf.htmlText = html.join('<font face="' + FONT_BODY + '" size="12" color="' + hx(_cfg.tabInactiveColor) + '">  </font>');
     }
@@ -526,10 +544,9 @@ class FCMChatWidget extends MovieClip {
                 Reflect.callMethod(_hudTools, add, ["cz_theme",   "Color theme >", true, false, -1]);
                 return;
             }
-            // Top-level menu.
-            var names:Array<String> = ["General", "Trading", "Events", "Infests", "Raids"];
-            for (i in 0...5) {
-                Reflect.callMethod(_hudTools, add, ["chan" + i, names[i], true, false, -1]);
+            // Top-level menu — channel entries in display order (SERVER included in-world).
+            for (si in tabOrder()) {
+                Reflect.callMethod(_hudTools, add, ["chan" + si, CHAN_NAMES[si], true, false, -1]);
             }
             Reflect.callMethod(_hudTools, add, ["scrollbottom", "Scroll to newest", true, false, -1]);
             Reflect.callMethod(_hudTools, add, ["hidechat", "Hide chat", true, false, -1]);
@@ -599,20 +616,23 @@ class FCMChatWidget extends MovieClip {
      */
     function buildChannelTabs():Void {
         if (_btnCls == null) return;
-        var labels:Array<String> = ["GENERAL", "TRADING", "EVENTS", "INFESTS", "RAIDS"];
-        var cell:Int = Std.int((_cfg.width - 16) / 5);   // per-tab column width
-        var bw:Int   = cell - 2;                      // button width (gap between)
+        var order:Array<Int> = tabOrder();
+        var n:Int    = order.length;
+        var cell:Int = Std.int((_cfg.width - 16) / n);   // per-tab column width
+        var bw:Int   = cell - 2;                         // button width (gap between)
         var bh:Int   = SUB_H - 2;
-        for (i in 0...5) {
-            var ci:Int = i;   // per-iteration capture for the click closure
+        _chanBtnSlugs = [];
+        for (pos in 0...n) {
+            var si:Int = order[pos];   // slug-index at this display position
+            var ci:Int = si;           // per-iteration capture for the click closure
             try {
                 var b:Dynamic = untyped __new__(_btnCls, bw, bh);
-                Reflect.setProperty(b, "text", labels[i]);
-                b.x = 8 + i * cell;
+                Reflect.setProperty(b, "text", CHAN_NAMES[si]);
+                b.x = 8 + pos * cell;
                 b.y = TAB_H + 1;
-                // setInfo(id, isEnabled, isMenu, timeout)
+                // setInfo(id, isEnabled, isMenu, timeout) — id encodes the SLUG index.
                 try {
-                    Reflect.callMethod(b, Reflect.field(b, "setInfo"), ["chan" + i, true, false, 0]);
+                    Reflect.callMethod(b, Reflect.field(b, "setInfo"), ["chan" + si, true, false, 0]);
                 } catch (e:Dynamic) {}
                 // setColors(textColor, bgColor, bgAlpha, selectColor, selectBGColor) — hex, no '#'
                 try {
@@ -625,11 +645,26 @@ class FCMChatWidget extends MovieClip {
                 } catch (e:Dynamic) {}
                 addChild(b);
                 _chanBtns.push(b);
+                _chanBtnSlugs.push(si);
             } catch (e:Dynamic) {
                 zfeLog("warn", "ui", "HUDButton instantiate threw: " + Std.string(e));
             }
         }
         setSelectedTab(_chanIdx);
+    }
+
+    /**
+     * Rebuild the channel-tab row for the current tabOrder() — called when the
+     * player joins/leaves a world so the SERVER tab appears/disappears. Removes the
+     * existing HUDButtons by reference (crash rule #9), then rebuilds (or re-renders
+     * the text-strip fallback when HUDButton is unavailable).
+     */
+    function rebuildChannelTabs():Void {
+        for (b in _chanBtns) { try { removeChild(b); } catch (e:Dynamic) {} }
+        _chanBtns     = [];
+        _chanBtnSlugs = [];
+        if (_btnCls != null) buildChannelTabs();
+        else                 renderSubTabs();
     }
 
     /**
@@ -641,8 +676,10 @@ class FCMChatWidget extends MovieClip {
             renderSubTabs();
             return;
         }
+        // Buttons are in DISPLAY order; select the one whose slug-index matches idx.
         for (k in 0..._chanBtns.length) {
-            try { Reflect.setProperty(_chanBtns[k], "isSelected", (k == idx)); } catch (e:Dynamic) {}
+            var isSel:Bool = (k < _chanBtnSlugs.length && _chanBtnSlugs[k] == idx);
+            try { Reflect.setProperty(_chanBtns[k], "isSelected", isSel); } catch (e:Dynamic) {}
         }
     }
 
@@ -650,7 +687,9 @@ class FCMChatWidget extends MovieClip {
      * Single channel-switch entry point (tab click, slash, cycle, F12 menu).
      */
     function selectChannel(idx:Int):Void {
-        if (idx < 0 || idx > 4 || idx == _chanIdx) { setSelectedTab(idx); return; }
+        // idx is a SLUG index; only channels currently in the display order are selectable
+        // (SERVER is excluded when not in a world).
+        if (tabOrder().indexOf(idx) < 0 || idx == _chanIdx) { setSelectedTab(_chanIdx); return; }
         _chanIdx = idx;
         // Keep ALL channels' messages in _records (from the history backfill + live); renderRecords
         // filters by the active channel. Do NOT clear here, or switching a channel would blank its
@@ -663,13 +702,19 @@ class FCMChatWidget extends MovieClip {
     }
 
     function cycleChannel():Void {
-        // Cycle over the first 5 channels (skip "server" at index 5).
-        selectChannel((_chanIdx + 1) % 5);
+        // Cycle forward through the visible tabs in DISPLAY order (includes SERVER in-world).
+        var order:Array<Int> = tabOrder();
+        var pos:Int = order.indexOf(_chanIdx);
+        if (pos < 0) pos = 0;
+        selectChannel(order[(pos + 1) % order.length]);
     }
 
     function cyclePrev():Void {
-        // Reverse-cycle over the first 5 channels (skip "server" at index 5).
-        selectChannel((_chanIdx + 4) % 5);
+        // Reverse-cycle through the visible tabs in DISPLAY order.
+        var order:Array<Int> = tabOrder();
+        var pos:Int = order.indexOf(_chanIdx);
+        if (pos < 0) pos = 0;
+        selectChannel(order[(pos + order.length - 1) % order.length]);
     }
 
     // =========================================================================
@@ -785,7 +830,13 @@ class FCMChatWidget extends MovieClip {
         else if (cmd == "e" || cmd == "event"   || cmd == "events")   idx = 2;
         else if (cmd == "i" || cmd == "inf"     || cmd == "infests")  idx = 3;
         else if (cmd == "r" || cmd == "raid"    || cmd == "raids")    idx = 4;
+        else if (cmd == "s" || cmd == "server")                      idx = 5;
         if (idx < 0) return false;
+        if (idx == 5 && !_inWorld) {
+            // SERVER only exists while in a world; ignore /server out of a world.
+            zfeLog("info", "chan", "/server ignored — not in a world");
+            return true;
+        }
         selectChannel(idx);
         return true;
     }
@@ -1741,15 +1792,29 @@ class FCMChatWidget extends MovieClip {
     function checkWorldId():Void {
         if (_api == null || !_connected) return;
         var worldId:String = readWorldId();
-        if (worldId.length == 0 || worldId == _lastWorldId) return;
+        if (worldId == _lastWorldId) return;            // no change since last poll
+        var wasInWorld:Bool = _inWorld;
         _lastWorldId = worldId;
-        zfeLog("info", "world", "worldId changed; sending control message");
-        sendWorldIdControl(worldId);
+        _inWorld     = (worldId.length > 0);
+        if (_inWorld) {
+            // JOINED (or hopped to) a world → bind the server room.
+            zfeLog("info", "world", "joined world; sending JOIN control");
+            sendWorldIdControl(worldId);
+        } else if (wasInWorld) {
+            // LEFT the world (worldId cleared) → unbind the server room.
+            zfeLog("info", "world", "left world; sending LEAVE control");
+            sendWorldLeaveControl();
+        }
+        // The SERVER tab appears/disappears with world membership. If we left while it
+        // was the active tab, fall back to GENERAL before rebuilding the row.
+        if (!_inWorld && _chanIdx == 5) _chanIdx = 0;
+        rebuildChannelTabs();
+        renderRecords();
     }
 
     function sendWorldIdControl(worldId:String):Void {
-        if (_api == null || !_connected) return;
-        var ts:String = Std.string(Std.int(flash.Lib.getTimer() / 1000));
+        if (_api == null || !_connected || _relayUserId == null || _relayUserId.length == 0) return;
+        var ts:String = Std.string(unixSeconds());      // unix SECONDS (relay freshness clock)
         var sigData:String = worldId + _relayUserId + ts;
         var hmac:String = hmacSha256Hex(WORLD_HMAC_SECRET, sigData);
         var body:String = WORLD_CTRL_PREFIX + worldId + "|" + _relayUserId + "|" + ts + "|" + hmac;
@@ -1757,7 +1822,21 @@ class FCMChatWidget extends MovieClip {
         try {
             _api.call("chat.v1.sendMessage", payload);
         } catch (e:Dynamic) {
-            zfeLog("warn", "world", "sendMessage threw: " + Std.string(e));
+            zfeLog("warn", "world", "join sendMessage threw: " + Std.string(e));
+        }
+    }
+
+    function sendWorldLeaveControl():Void {
+        if (_api == null || !_connected || _relayUserId == null || _relayUserId.length == 0) return;
+        var ts:String = Std.string(unixSeconds());
+        var sigData:String = "leave|" + _relayUserId + "|" + ts;
+        var hmac:String = hmacSha256Hex(WORLD_HMAC_SECRET, sigData);
+        var body:String = WORLD_LEAVE_PREFIX + _relayUserId + "|" + ts + "|" + hmac;
+        var payload:String = '{"channel":"server","targetUserId":"","body":"' + jsonEscape(body) + '"}';
+        try {
+            _api.call("chat.v1.sendMessage", payload);
+        } catch (e:Dynamic) {
+            zfeLog("warn", "world", "leave sendMessage threw: " + Std.string(e));
         }
     }
 

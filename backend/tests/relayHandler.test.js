@@ -22,12 +22,22 @@ jest.mock('../src/config/database', () => ({
 const _worldStore   = {};
 let   _redisSeq     = 0;
 const _pubCallbacks = [];
+const _lists        = {}; // Redis list store (server-chat history)
+const _counters     = {}; // per-key INCR counters (server-chat rate limit)
 
 const redisMock = {
   get:  jest.fn().mockImplementation(async (key) => _worldStore[key] ?? null),
   set:  jest.fn().mockImplementation(async (key, val) => { _worldStore[key] = val; return 'OK'; }),
   del:  jest.fn().mockImplementation(async (key)      => { delete _worldStore[key]; return 1; }),
-  incr: jest.fn().mockImplementation(async ()         => ++_redisSeq),
+  // relay:seq keeps its dedicated monotonic counter; all other keys get per-key counters.
+  incr: jest.fn().mockImplementation(async (key) => {
+    if (key === 'relay:seq' || key === undefined) return ++_redisSeq;
+    _counters[key] = (_counters[key] || 0) + 1;
+    return _counters[key];
+  }),
+  lPush:  jest.fn().mockImplementation(async (key, val) => { (_lists[key] = _lists[key] || []).unshift(val); return _lists[key].length; }),
+  lTrim:  jest.fn().mockImplementation(async (key, start, stop) => { if (_lists[key]) _lists[key] = _lists[key].slice(start, stop + 1); return 'OK'; }),
+  lRange: jest.fn().mockImplementation(async (key, start, stop) => { const l = _lists[key] || []; return stop === -1 ? l.slice(start) : l.slice(start, stop + 1); }),
   ping: jest.fn().mockResolvedValue('PONG'),
   connect: jest.fn().mockResolvedValue(undefined),
   on:   jest.fn(),
@@ -66,6 +76,12 @@ jest.mock('rate-limit-redis', () => ({
     get:       jest.fn().mockResolvedValue({ totalHits: 1, resetTime: new Date() }),
     localKeys: true,
   })),
+}));
+
+// Automod engine — server-chat sends call engineEvaluate directly (ingestMessage
+// is separately mocked). Default: allow. A server-chat test overrides once to block.
+jest.mock('../src/services/autoModEngine', () => ({
+  engineEvaluate: jest.fn().mockResolvedValue({ block: false, matches: [] }),
 }));
 
 // Token + user state for mocked Prisma
@@ -1401,6 +1417,148 @@ describe('worldId HMAC', () => {
     // Falls through: no worldId in Redis → invalid_channel
     expect(res).toMatchObject({ success: false, error: { code: 'invalid_channel' } });
     ws.close();
+  });
+});
+
+// ── Server chat (worldId-scoped ephemeral room) ────────────────────────────────
+
+describe('server chat (worldId-scoped room)', () => {
+  const SENTINEL       = '\x00fcm.world.v1\x00';
+  const LEAVE_SENTINEL = '\x00fcm.world.leave.v1\x00';
+  const SECRET         = 'fcm-world-v1-dev-placeholder';
+
+  function makeJoinBody(worldId, userId, offsetS = 0) {
+    const ts   = Math.floor(Date.now() / 1000) + offsetS;
+    const hmac = crypto.createHmac('sha256', SECRET).update(`${worldId}${userId}${ts}`).digest('hex');
+    return `${SENTINEL}${worldId}|${userId}|${ts}|${hmac}`;
+  }
+  function makeLeaveBody(userId, offsetS = 0) {
+    const ts   = Math.floor(Date.now() / 1000) + offsetS;
+    const hmac = crypto.createHmac('sha256', SECRET).update(`leave|${userId}|${ts}`).digest('hex');
+    return `${LEAVE_SENTINEL}${userId}|${ts}|${hmac}`;
+  }
+
+  let srv;
+
+  beforeAll(async () => { srv = await makeServer(); }, 10000);
+  afterAll(async () => { await teardownServer(srv); }, 10000);
+
+  beforeEach(() => {
+    _tokenRows = [];
+    _userMap   = {};
+    Object.keys(_worldStore).forEach((k) => delete _worldStore[k]);
+    Object.keys(_lists).forEach((k) => delete _lists[k]);
+    Object.keys(_counters).forEach((k) => delete _counters[k]);
+    // The relaySeq suite reassigns redisMock.incr to a key-agnostic counter and
+    // never restores it; re-install the per-key impl this suite needs so the
+    // server-chat rate-limit key isn't polluted by the global relay:seq counter.
+    redisMock.incr.mockImplementation(async (key) => {
+      if (key === 'relay:seq' || key === undefined) return ++_redisSeq;
+      _counters[key] = (_counters[key] || 0) + 1;
+      return _counters[key];
+    });
+    const prisma = require('../src/config/prisma').default;
+    prisma.hudPairingToken.create.mockImplementation(async (args) => {
+      const row = { id: `tok-${Date.now()}-${Math.round(_redisSeq)}`, ...args.data, revokedAt: null, lastUsedAt: null };
+      _tokenRows.push(row);
+      return row;
+    });
+    prisma.hudPairingToken.findMany.mockImplementation(async (args) => {
+      const prefix = args?.where?.tokenPrefix;
+      if (!prefix) return [];
+      return _tokenRows
+        .filter((r) => r.tokenPrefix === prefix && !r.revokedAt)
+        .map((r) => ({ ...r, linkedUserId: r.linkedUserId ?? null, user: _userMap[r.linkedUserId] ?? null }));
+    });
+    prisma.user.findUnique.mockImplementation(async (args) => _userMap[args?.where?.id] ?? null);
+    require('../src/services/ingestMessage').ingestMessage.mockResolvedValue({ ok: true, messageId: 'stub' });
+    require('../src/services/autoModEngine').engineEvaluate.mockResolvedValue({ block: false, matches: [] });
+  });
+
+  // Register a relay identity and mark it linked to a fresh FCM user UUID.
+  async function registerAndLink(name, fcmId) {
+    const { ws, msgs } = await connectWs(srv.port);
+    const reg = await waitForMsg(ws, msgs, () => ws.send(JSON.stringify({ op: 'register', displayName: name })));
+    ws.close();
+    const token = reg.token;
+    const rawId = reg.userId;
+    _userMap[fcmId] = { id: fcmId, discordId: `d-${fcmId}`, steamId: null, isBanned: false, isMuted: false };
+    markTokensLinked(rawId, fcmId);
+    return { token, rawId, fcmId };
+  }
+
+  async function sendCtrl(user, body) {
+    const { ws, msgs } = await connectWs(srv.port);
+    const res = await waitForMsg(ws, msgs, () => send(ws, { op: 'send', token: user.token, channel: 'server', body }));
+    ws.close();
+    return res;
+  }
+  const sendJoin  = (user, worldId) => sendCtrl(user, makeJoinBody(worldId, user.rawId));
+  const sendLeave = (user)          => sendCtrl(user, makeLeaveBody(user.rawId));
+
+  test('server send with no active world → invalid_channel', async () => {
+    const a = await registerAndLink('Nomad', 'fcm-nomad');
+    const { ws, msgs } = await connectWs(srv.port);
+    const res = await waitForMsg(ws, msgs, () => send(ws, { op: 'send', token: a.token, channel: 'server', body: 'hi' }));
+    expect(res).toMatchObject({ success: false, error: { code: 'invalid_channel' } });
+    ws.close();
+  });
+
+  test('server chat send is ephemeral — never hits ingestMessage/Postgres', async () => {
+    const a = await registerAndLink('Ghost', 'fcm-ghost');
+    await sendJoin(a, 'world-Z');
+    const ingestMock = require('../src/services/ingestMessage').ingestMessage;
+    ingestMock.mockClear();
+    const res = await sendCtrl(a, 'ephemeral hi'); // ordinary body (not a control sentinel)
+    expect(res).toMatchObject({ success: true });
+    expect(String(res.messageId)).toMatch(/^server:world-Z:/);
+    expect(ingestMock).not.toHaveBeenCalled();
+  });
+
+  test('server messages are world-scoped — same-world subscriber receives, other-world does NOT', async () => {
+    const a = await registerAndLink('Alice', 'fcm-alice');
+    const b = await registerAndLink('Bob',   'fcm-bob');
+
+    const { ws: wsA, msgs: msgsA } = await connectWs(srv.port);
+    await waitForMsg(wsA, msgsA, () => send(wsA, { op: 'subscribe', token: a.token, cursor: 0 }));
+    const { ws: wsB, msgs: msgsB } = await connectWs(srv.port);
+    await waitForMsg(wsB, msgsB, () => send(wsB, { op: 'subscribe', token: b.token, cursor: 0 }));
+
+    await sendJoin(a, 'world-X'); // rebinds Alice's live subscriber to world-X
+    await sendJoin(b, 'world-Y');
+
+    const beforeA = msgsA.length;
+    const beforeB = msgsB.length;
+    const res = await sendCtrl(a, 'hello world X');
+    expect(res).toMatchObject({ success: true });
+
+    await new Promise((r) => setTimeout(r, 120)); // let the pub/sub fan-out land
+
+    const aEvents = msgsA.slice(beforeA).filter((m) => m.op === 'event' && m.event?.channel === 'server');
+    const bEvents = msgsB.slice(beforeB).filter((m) => m.op === 'event' && m.event?.channel === 'server');
+    expect(aEvents.length).toBeGreaterThan(0);
+    expect(aEvents[aEvents.length - 1].event.body).toBe('hello world X');
+    expect(bEvents.length).toBe(0); // Bob (world-Y) never sees world-X server chat
+
+    wsA.close();
+    wsB.close();
+  });
+
+  test('automod-blocked server message → message_blocked', async () => {
+    const a = await registerAndLink('Rude', 'fcm-rude');
+    await sendJoin(a, 'world-M');
+    require('../src/services/autoModEngine').engineEvaluate.mockResolvedValueOnce({ block: true, matches: [], customMessage: 'nope' });
+    const res = await sendCtrl(a, 'blocked content');
+    expect(res).toMatchObject({ success: false, error: { code: 'message_blocked' } });
+  });
+
+  test('LEAVE clears world membership — subsequent server send is invalid_channel', async () => {
+    const a = await registerAndLink('Leaver', 'fcm-leaver');
+    await sendJoin(a, 'world-Q');
+    expect(await sendCtrl(a, 'still here')).toMatchObject({ success: true }); // in-world → ok
+    await sendLeave(a);
+    const res = await sendCtrl(a, 'after leave');
+    expect(res).toMatchObject({ success: false, error: { code: 'invalid_channel' } });
   });
 });
 

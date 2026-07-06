@@ -604,7 +604,8 @@ Implemented on branch `feat/ingame-chatv1-relay` (2026-06-24). Key details for t
 | `backend/src/services/relay/tokenService.ts` | `mintToken` / `verifyToken` / `revokeToken` / `updateDisplayName` |
 | `backend/src/services/relay/relaySeq.ts` | `nextRelaySeq()` (Redis INCR) + `seedRelaySeq()` (seed from MAX on startup) |
 | `backend/src/services/relay/worldIdService.ts` | `setWorldId` / `getWorldId` / `clearWorldId` (Redis, 60s TTL) |
-| `backend/src/services/relay/relayHandler.ts` | Main op dispatcher; worldId HMAC intercept; subscribe pub/sub; `handleSend` attributes the send to `identity.linkedUserId` (linked `users.id` UUID, **not** the relay TEXT id) — #334 |
+| `backend/src/services/relay/serverChat.ts` | Ephemeral worldId-scoped `server:<worldId>` room: capped Redis history list (`publishServerMessage` / `getServerHistory`), cross-instance pub/sub (`SERVER_EVENTS_CHANNEL`, msg + rebind), and a per-user flood guard (`checkServerRateLimit`) |
+| `backend/src/services/relay/relayHandler.ts` | Main op dispatcher; worldId JOIN/LEAVE intercept + world-scoped `server` routing/fan-out; subscribe pub/sub; `handleSend` attributes static-channel sends to `identity.linkedUserId` (linked `users.id` UUID, **not** the relay TEXT id) — #334 |
 | `backend/tests/relayHandler.test.js` | 50 Jest tests covering all ops + channel map + token + seq + worldId |
 | `backend/prisma/migrations/20260624000000_add_relay_tokens_and_relay_seq/migration.sql` | Idempotent: adds `relay_seq BIGINT` to messages; creates `hud_pairing_tokens` |
 
@@ -624,15 +625,33 @@ Implemented on branch `feat/ingame-chatv1-relay` (2026-06-24). Key details for t
 |---|---|---|
 | `RELAY_WORLD_HMAC_SECRET` | `dev-relay-world-hmac-secret-change-me` | HMAC-SHA256 secret for worldId control messages. Set a strong random secret in production before R6. |
 
-### worldId intercept design
+### worldId + server-chat design (IMPLEMENTED)
 
-The worldId control flow triggers on `channel: 'server'` with a JSON body (`body.startsWith('{')`).
-ZFE sends this to set the player's current worldId. The HMAC is `HMAC-SHA256(secret, worldId + relayUserId + timestamp)`
-with a 30-second replay window. On valid HMAC: stored in Redis `relay:world:<userId>` (60s TTL),
-consumed silently (no ingest, no broadcast). On invalid/stale HMAC: falls through to the normal
-`server` channel path (which returns `invalid_channel` if no worldId is stored for that user). The
-`__relay_ctrl__` sentinel is defined as a constant but is rejected by the `ALL_SLUGS` check — the
-active intercept path is the `server`-channel JSON body branch.
+**Control messages (join/leave).** The SWF sends two NUL-sentinel-prefixed bodies on
+`channel: 'server'` — NOT a JSON body. Both are intercepted in `handleSend` before the
+`ALL_SLUGS` check, verified, applied to room membership, and dropped (no ingest/broadcast):
+
+- **JOIN** — `"\x00fcm.world.v1\x00<worldId>|<relayUserId>|<ts>|<hmac>"`, HMAC =
+  `HMAC-SHA256(secret, worldId + relayUserId + ts)` (raw concat). `setWorldId` + rebinds the
+  user's live subscriber(s) to `worldId` (locally + across instances via `SERVER_EVENTS_CHANNEL`)
+  + backfills that world's recent history.
+- **LEAVE** — `"\x00fcm.world.leave.v1\x00<relayUserId>|<ts>|<hmac>"`, HMAC =
+  `HMAC-SHA256(secret, "leave|<relayUserId>|<ts>")`. `clearWorldId` + unbinds the subscriber(s).
+  Sent when the player's `worldId` goes empty (left the world). The 60s Redis TTL is a passive backstop.
+
+`ts` is **unix SECONDS** and must match the relay's `Date.now()/1000` freshness clock (±30s window).
+⚠️ The SWF MUST use a real unix clock (`Date.now().getTime()/1000`) — **not** `flash.Lib.getTimer()`
+(SWF uptime), or every control message fails the freshness check. `sentUserId` must equal the
+authenticated socket's `userId`, so a caller can only set/clear worldId for their own identity.
+
+**Server chat routing.** A normal (non-sentinel) `send` on `channel: 'server'` is a **worldId-scoped
+ephemeral room** — it does NOT persist to Postgres and is NOT the Global channel. With a stored
+worldId it runs automod + a flood guard, gets a `relaySeq` cursor, is stored in a capped Redis
+history list (`server:<worldId>`, 50 msgs / 1h TTL), and is fanned out over `SERVER_EVENTS_CHANNEL`
+**only to subscribers whose current worldId matches** (tagged `channel: 'server'`). Without a stored
+worldId → `invalid_channel`. `poll` and `subscribe` merge the caller's current-world history.
+Same-world players see each other; different-world players are isolated. Worlds churn, so the room
+is intentionally ephemeral (no per-world `channels` row).
 
 ---
 

@@ -30,9 +30,19 @@ import logger from '../../config/logger';
 import env, { DEV_DEFAULT_RELAY_WORLD_HMAC_SECRET } from '../../config/environment';
 import { mintToken, verifyToken, updateDisplayName, markRelayTokenLinked } from './tokenService';
 import { slugToChannelId, channelIdToSlug, ALL_SLUGS } from './channelMap';
-import { setWorldId, getWorldId } from './worldIdService';
+import { setWorldId, getWorldId, clearWorldId } from './worldIdService';
 import { nextRelaySeq } from './relaySeq';
 import { ingestMessage } from '../ingestMessage';
+import { engineEvaluate } from '../autoModEngine';
+import {
+  publishServerMessage,
+  publishRebind,
+  getServerHistory,
+  checkServerRateLimit,
+  SERVER_EVENTS_CHANNEL,
+  type ServerRoomEvent,
+} from './serverChat';
+import type { RelayToken } from './tokenService';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -42,6 +52,9 @@ import { ingestMessage } from '../ingestMessage';
  * Wire format: "\x00fcm.world.v1\x00<worldId>|<relayUserId>|<ts>|<hmac>"
  */
 const WORLD_ID_SENTINEL_PREFIX  = '\x00fcm.world.v1\x00';
+// LEAVE control: sent when the player leaves a world (worldId cleared). Body:
+// "\x00fcm.world.leave.v1\x00<relayUserId>|<ts>|<hmac>", hmac over "leave|<userId>|<ts>".
+const WORLD_LEAVE_SENTINEL_PREFIX = '\x00fcm.world.leave.v1\x00';
 const WORLD_ID_HMAC_WINDOW_S    = 30;    // 30-second replay window (ts is unix SECONDS)
 const POLL_HISTORY_LIMIT        = 30;    // initial history window on cursor=0
 const REDIS_BROADCAST_CHANNEL   = 'chat:broadcast';
@@ -198,52 +211,67 @@ function send(ws: WebSocket, payload: object): void {
  * Returns { worldId } on success, null on any failure (wrong prefix, stale ts,
  * mismatched relayUserId, bad HMAC).
  */
+/** Freshness check — ts is a unix SECONDS decimal string, ±WORLD_ID_HMAC_WINDOW_S. */
+function tsIsFresh(tsStr: string): boolean {
+  const ts = Number(tsStr);
+  if (!Number.isFinite(ts)) return false;
+  return Math.abs(Date.now() / 1000 - ts) <= WORLD_ID_HMAC_WINDOW_S;
+}
+
+/**
+ * Constant-time compare of a client-supplied HMAC-hex against
+ * HMAC-SHA256(RELAY_WORLD_HMAC_SECRET, signedData). Fails closed when the secret
+ * is missing or still the dev placeholder in production.
+ */
+function hmacHexEquals(signedData: string, hmacHex: string): boolean {
+  const secret = env.RELAY_WORLD_HMAC_SECRET ?? '';
+  if (!secret) return false;
+  if (env.NODE_ENV === 'production' && secret === DEV_DEFAULT_RELAY_WORLD_HMAC_SECRET) {
+    logger.warn('[relayHandler] RELAY_WORLD_HMAC_SECRET is still the dev placeholder in production — worldId control messages will be rejected');
+    return false;
+  }
+  const expected = crypto.createHmac('sha256', secret).update(signedData).digest('hex');
+  try {
+    const a = Buffer.from(hmacHex, 'hex');
+    const b = Buffer.from(expected, 'hex');
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
 function verifyWorldIdHmac(body: string, socketUserId: string): { worldId: string } | null {
-  // 1. Sentinel prefix check.
   if (!body.startsWith(WORLD_ID_SENTINEL_PREFIX)) return null;
 
-  const payload = body.slice(WORLD_ID_SENTINEL_PREFIX.length);
-  const parts   = payload.split('|');
+  const parts = body.slice(WORLD_ID_SENTINEL_PREFIX.length).split('|');
   if (parts.length !== 4) return null;
 
   const [worldId, sentUserId, tsStr, hmac] = parts;
   if (!worldId || !sentUserId || !tsStr || !hmac) return null;
-
-  // 2. relayUserId must match the authenticated socket userId.
-  if (sentUserId !== socketUserId) return null;
-
-  // 3. Freshness check (ts is unix SECONDS).
-  const ts  = Number(tsStr);
-  if (!Number.isFinite(ts)) return null;
-  const nowS = Date.now() / 1000;
-  if (Math.abs(nowS - ts) > WORLD_ID_HMAC_WINDOW_S) return null;
-
-  // 4. HMAC verification.
-  const secret = env.RELAY_WORLD_HMAC_SECRET ?? '';
-  if (!secret) return null;
-
-  // Warn in production if the secret is still the dev placeholder.
-  if (env.NODE_ENV === 'production' && secret === DEV_DEFAULT_RELAY_WORLD_HMAC_SECRET) {
-    logger.warn('[relayHandler] RELAY_WORLD_HMAC_SECRET is still the dev placeholder in production — worldId control messages will be rejected');
-    return null;
-  }
+  if (sentUserId !== socketUserId) return null; // can only set worldId for own identity
+  if (!tsIsFresh(tsStr)) return null;
 
   // HMAC is over raw concatenation of the three field values (no separators).
-  const expected = crypto
-    .createHmac('sha256', secret)
-    .update(`${worldId}${sentUserId}${tsStr}`)
-    .digest('hex');
+  return hmacHexEquals(`${worldId}${sentUserId}${tsStr}`, hmac) ? { worldId } : null;
+}
 
-  // timingSafeEqual throws on length mismatch — guard against malformed hmac.
-  let valid = false;
-  try {
-    const aHmac = Buffer.from(hmac,     'hex');
-    const aExp  = Buffer.from(expected, 'hex');
-    valid = aHmac.length === aExp.length && crypto.timingSafeEqual(aHmac, aExp);
-  } catch {
-    return null;
-  }
-  return valid ? { worldId } : null;
+/**
+ * Verify a LEAVE control message (player left their world). Body:
+ *   "\x00fcm.world.leave.v1\x00<relayUserId>|<ts>|<hmac>"
+ * HMAC over "leave|<relayUserId>|<ts>". Returns true on a valid, fresh signature.
+ */
+function verifyWorldLeaveHmac(body: string, socketUserId: string): boolean {
+  if (!body.startsWith(WORLD_LEAVE_SENTINEL_PREFIX)) return false;
+
+  const parts = body.slice(WORLD_LEAVE_SENTINEL_PREFIX.length).split('|');
+  if (parts.length !== 3) return false;
+
+  const [sentUserId, tsStr, hmac] = parts;
+  if (!sentUserId || !tsStr || !hmac) return false;
+  if (sentUserId !== socketUserId) return false;
+  if (!tsIsFresh(tsStr)) return false;
+
+  return hmacHexEquals(`leave|${sentUserId}|${tsStr}`, hmac);
 }
 
 // ── Subscribe registry ────────────────────────────────────────────────────────
@@ -260,6 +288,46 @@ const subscribers = new Set<SubscriberState>();
 
 // Redis pub/sub listener — initialised once per process.
 let pubSubReady = false;
+
+// ── Server-room (worldId) membership ────────────────────────────────────────────
+
+/** Update every live subscriber for `userId` to point at `worldId` (null = left). */
+function rebindLocalSubscribers(userId: string, worldId: string | null): void {
+  for (const sub of subscribers) {
+    if (sub.userId === userId) sub.worldId = worldId;
+  }
+}
+
+/** Push a world's recent history to a user's live subscriber(s) on join. */
+async function backfillWorldToUser(userId: string, worldId: string): Promise<void> {
+  const history = await getServerHistory(worldId, 0, POLL_HISTORY_LIMIT);
+  if (history.length === 0) return;
+  for (const sub of subscribers) {
+    if (sub.userId !== userId || sub.ws.readyState !== 1) continue;
+    for (const ev of history) send(sub.ws, { op: 'event', cursor: ev.id, event: ev });
+  }
+}
+
+/**
+ * JOIN: the player entered `worldId`. Refresh the TTL always; on an actual world
+ * CHANGE, re-bind this user's subscriber(s) (locally + across instances) and
+ * backfill the new world's recent history so the SERVER tab populates on join.
+ */
+async function handleWorldJoin(identity: RelayToken, worldId: string): Promise<void> {
+  const prev = await getWorldId(identity.userId);
+  await setWorldId(identity.userId, worldId); // refresh 60s TTL (keepalive)
+  if (prev === worldId) return; // same world — just a keepalive, no membership change
+  rebindLocalSubscribers(identity.userId, worldId);
+  await publishRebind(identity.userId, worldId);
+  await backfillWorldToUser(identity.userId, worldId);
+}
+
+/** LEAVE: the player left their world. Clear membership locally + across instances. */
+async function handleWorldLeave(identity: RelayToken): Promise<void> {
+  await clearWorldId(identity.userId);
+  rebindLocalSubscribers(identity.userId, null);
+  await publishRebind(identity.userId, null);
+}
 
 async function ensurePubSub(): Promise<void> {
   if (pubSubReady) return;
@@ -311,11 +379,38 @@ async function ensurePubSub(): Promise<void> {
 
       const frame = JSON.stringify({ op: 'event', cursor: relaySeq, event: eventObj });
 
+      // Static channels only. The worldId-scoped 'server' room is fanned out via
+      // SERVER_EVENTS_CHANNEL below (server messages never hit chat:broadcast).
       for (const sub of subscribers) {
         if (sub.cursor >= relaySeq) continue; // already seen
-        // TODO R7: worldId filter for 'server' channel once worldId is tracked on subscriber
         try { sub.ws.send(frame); } catch { /* already closed */ }
         sub.cursor = relaySeq;
+      }
+    });
+
+    // Server-room events: worldId-scoped chat + membership rebinds.
+    await sub.subscribe(SERVER_EVENTS_CHANNEL, (message: string) => {
+      let parsed: Record<string, unknown>;
+      try { parsed = JSON.parse(message); } catch { return; }
+
+      if (parsed.kind === 'rebind') {
+        const userId = typeof parsed.userId === 'string' ? parsed.userId : null;
+        if (userId) rebindLocalSubscribers(userId, (parsed.worldId as string | null) ?? null);
+        return;
+      }
+
+      if (parsed.kind === 'msg') {
+        const worldId = typeof parsed.worldId === 'string' ? parsed.worldId : null;
+        const cursor  = typeof parsed.cursor === 'number' ? parsed.cursor : null;
+        if (!worldId || cursor === null) return;
+        const frame = JSON.stringify({ op: 'event', cursor, event: parsed.event });
+        for (const sub of subscribers) {
+          if (sub.worldId !== worldId) continue; // world-scoped: only same-world subscribers
+          if (sub.cursor >= cursor) continue;    // already seen
+          try { sub.ws.send(frame); } catch { /* already closed */ }
+          sub.cursor = cursor;
+        }
+        return;
       }
     });
   } catch (err) {
@@ -490,19 +585,27 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   const slug = typeof frame.channel === 'string' ? frame.channel : '';
   const body = typeof frame.body === 'string' ? frame.body : '';
 
-  // ── worldId control-message intercept (TOP of send, before ALL_SLUGS check) ──
-  // The SWF sends a NUL-sentinel-prefixed body on channel 'server' to set the
-  // player's current worldId. Intercept, verify, store, and drop (no
-  // broadcast/persist/cursor). Failures fall through silently so the 'server'
-  // channel path handles them (returns invalid_channel if no worldId stored).
+  // ── worldId JOIN/LEAVE control-message intercept (before ALL_SLUGS check) ──
+  // The SWF sends NUL-sentinel-prefixed bodies on channel 'server' to signal that
+  // the player joined (worldId set) or left (worldId cleared) a world. Both are
+  // intercepted, verified, applied to room membership, and dropped (never
+  // broadcast/persisted). Bad/stale HMACs fall through silently.
   if (slug === 'server' && body.startsWith(WORLD_ID_SENTINEL_PREFIX)) {
     const ctrl = verifyWorldIdHmac(body, identity.userId);
     if (ctrl) {
-      await setWorldId(identity.userId, ctrl.worldId);
+      await handleWorldJoin(identity, ctrl.worldId);
       send(ws, { success: true, messageId: '' });
       return;
     }
-    // Bad/stale HMAC — fall through; 'server' without a stored worldId → invalid_channel below.
+    // fall through — no stored worldId → invalid_channel below
+  }
+  if (slug === 'server' && body.startsWith(WORLD_LEAVE_SENTINEL_PREFIX)) {
+    if (verifyWorldLeaveHmac(body, identity.userId)) {
+      await handleWorldLeave(identity);
+      send(ws, { success: true, messageId: '' });
+      return;
+    }
+    // fall through
   }
 
   if (!ALL_SLUGS.includes(slug)) {
@@ -515,27 +618,54 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     return;
   }
 
-  // Discard targetUserId on all non-whisper sends (whisper is omitted).
-  // (frame.targetUserId is intentionally ignored here)
+  // Discard targetUserId on all non-whisper sends (frame.targetUserId ignored).
 
-  // Resolve channel UUID.
-  let channelId: string | null = null;
+  // ── 'server' = worldId-scoped ephemeral room (NOT persisted to Postgres) ──
+  // Same-world players share `server:<worldId>`. Messages run through automod +
+  // a flood guard, get a relaySeq cursor, and are stored in a capped Redis
+  // history + fanned out only to same-world subscribers. Deliberately bypasses
+  // ingestMessage/Postgres — FO76 worlds churn, so this room is ephemeral.
   if (slug === 'server') {
     const worldId = await getWorldId(identity.userId);
     if (!worldId) {
       send(ws, errEnvelope('invalid_channel', 'No active server session — send worldId first'));
       return;
     }
-    // Server channel is the worldId-scoped session room. FCM uses world-session
-    // scope; we route to General as a fallback until world-scope is wired in.
-    // TODO(R2+): resolve to the session-scoped room channel by worldId.
-    channelId = env.HUD_DEFAULT_CHANNEL_ID;
-  } else {
-    channelId = slugToChannelId(slug);
-    if (!channelId) {
-      send(ws, errEnvelope('invalid_channel', `Channel '${slug}' is not mapped`));
+    if (!(await checkServerRateLimit(identity.userId))) {
+      send(ws, errEnvelope('rate_limited', 'You are sending messages too quickly'));
       return;
     }
+    // Automod: no channel-exemption context for the ephemeral room (channelId undefined).
+    const mod = await engineEvaluate(body, undefined, {
+      id: identity.linkedUserId!,
+      username: identity.fo76Name,
+    });
+    if (mod.block) {
+      send(ws, errEnvelope('message_blocked', 'Message blocked by the chat filter'));
+      return;
+    }
+    const relaySeq = await nextRelaySeq();
+    const event: ServerRoomEvent = {
+      id:                relaySeq,
+      kind:              'chat.message',
+      messageId:         `server:${worldId}:${relaySeq}`,
+      channel:           'server',
+      senderUserId:      identity.userId,
+      senderDisplayName: identity.fo76Name,
+      body,
+      targetUserId:      '',
+      createdAt:         new Date().toISOString(),
+    };
+    await publishServerMessage(worldId, relaySeq, event);
+    send(ws, { success: true, messageId: event.messageId });
+    return;
+  }
+
+  // ── Static channels (global/trade/events/raids/infests) ──
+  const channelId = slugToChannelId(slug);
+  if (!channelId) {
+    send(ws, errEnvelope('invalid_channel', `Channel '${slug}' is not mapped`));
+    return;
   }
 
   // Assign relay cursor BEFORE ingestMessage so it is threaded through
@@ -547,12 +677,6 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   // ("user_"+hex), NOT a UUID — passing it makes prisma.user.findUnique throw P2023
   // ("invalid UUID"). Use the linked FCM account UUID (guaranteed set: the !isLinked
   // gate above already returned permission_denied for unlinked identities).
-  //
-  // relaySeq is passed through so finalizeMessage (1) PERSISTS it on messages.relay_seq
-  // — without which poll/history (WHERE relay_seq IS NOT NULL) never return the row —
-  // and (2) includes it in the single broadcast the relay pub/sub subscriber forwards.
-  // This replaces the old double-broadcast hack (one broadcast without relaySeq from
-  // ingest, then a second relay-only rebroadcast with relaySeq).
   const result = await ingestMessage({
     userId:    identity.linkedUserId!,
     channelId,
@@ -604,6 +728,17 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
   const max    = Math.min(typeof frame.max === 'number' ? frame.max : 64, 100);
 
   const events = await fetchHistoryEvents(cursor, max);
+
+  // Merge in the caller's current-world server-room history (ephemeral, not in SQL).
+  const worldId = await getWorldId(identity.userId);
+  if (worldId) {
+    const sHist = await getServerHistory(worldId, cursor, max);
+    if (sHist.length > 0) {
+      events.push(...(sHist as unknown as Array<Record<string, unknown>>));
+      events.sort((a, b) => (a.id as number) - (b.id as number));
+    }
+  }
+
   send(ws, { success: true, events });
 }
 
@@ -737,6 +872,17 @@ async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): P
     }
   } catch (err) {
     logger.warn({ err, userId: identity.userId }, '[relayHandler] history backfill on subscribe failed');
+  }
+
+  // Backfill the current world's server-room history too (if the player is in a world).
+  if (worldId) {
+    try {
+      const sHist = await getServerHistory(worldId, 0, POLL_HISTORY_LIMIT);
+      for (const ev of sHist) send(ws, { op: 'event', cursor: ev.id, event: ev });
+      if (sHist.length > 0) state.cursor = Math.max(state.cursor, sHist[sHist.length - 1].id);
+    } catch (err) {
+      logger.warn({ err, userId: identity.userId }, '[relayHandler] server history backfill on subscribe failed');
+    }
   }
 
   // If still LIMITED (not linked), push the link-code notice on THIS long-lived subscribe
