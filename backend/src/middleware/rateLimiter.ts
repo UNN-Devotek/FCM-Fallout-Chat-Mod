@@ -410,5 +410,7 @@ const partyImageUploadLimiter = rateLimit({
   },
 });
 
-export { apiLimiter, authLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter };
-module.exports = { apiLimiter, authLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter };
+// ipKey is exported for unit testing: it encodes the security invariant that a
+// bucket key is ALWAYS the client IP and never the spoofable x-auth-token header.
+export { ipKey, apiLimiter, authLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter };
+module.exports = { ipKey, apiLimiter, authLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter };
