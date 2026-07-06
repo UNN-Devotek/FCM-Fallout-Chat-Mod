@@ -42,9 +42,8 @@ import { canon } from '../utils/textCanon';
 
 const PRESET_LISTS: Record<string, string[]> = {
   PROFANITY: [
-    'asshole', 'bastard', 'bitch', 'bullshit', 'crap', 'cunt', 'damnit',
-    'dickhead', 'dumbass', 'fag', 'faggot', 'fuckhead', 'jackass', 'motherfucker',
-    'piss', 'pussy', 'shithead', 'twat', 'wanker', 'whore',
+    'asshole', 'bastard', 'bullshit', 'crap', 'damnit', 'dickhead', 'dumbass',
+    'fuckhead', 'jackass', 'motherfucker', 'piss', 'pussy', 'shithead', 'wanker',
   ],
   SEXUAL_CONTENT: [
     'blowjob', 'cock', 'cumshot', 'deepthroat', 'dildo', 'fingering', 'gangbang',
@@ -52,8 +51,12 @@ const PRESET_LISTS: Record<string, string[]> = {
     'sexting', 'tits', 'vagina', 'vibrator', 'xxx',
   ],
   SLURS: [
-    'chink', 'gook', 'kike', 'nigga', 'nigger', 'redskin', 'sandnigger',
-    'spic', 'towelhead', 'wetback',
+    'beaner', 'bitch', 'chink', 'coon', 'cracker', 'cunt', 'dyke', 'fag',
+    'faggot', 'gook', 'ho', 'honky', 'jigaboo', 'jungle bunny', 'kike', 'nigga',
+    'nigger', 'oreo', 'porch monkey', 'raghead', 'redskin', 'sand nigger',
+    'sandnigger', 'shemale', 'sissy', 'skank', 'slant', 'slut', 'spic', 'spick',
+    'squaw', 'towelhead', 'tranny', 'twat', 'uncle tom', 'wetback', 'whore',
+    'zipperhead',
   ],
 };
 

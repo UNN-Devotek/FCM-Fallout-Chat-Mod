@@ -77,6 +77,16 @@ describe('filterContent', () => {
     expect(result.blocked).toBe(false);
   });
 
+  it('allows common profanity that is no longer part of the chat baseline denylist', async () => {
+    const result = await filterContent('this jackass is full of bullshit');
+    expect(result.blocked).toBe(false);
+  });
+
+  it('still blocks slurs and hate speech in the chat baseline denylist', async () => {
+    const result = await filterContent('you are a nigger');
+    expect(result.blocked).toBe(true);
+  });
+
   it('blocks content matching a prohibited phrase', async () => {
     mockWordFilterRows.push({ phrase: 'badword', isRegex: false, testMode: false });
     const result = await filterContent('You said badword here');
@@ -167,6 +177,11 @@ describe('findProhibitedPhrase (names denylist)', () => {
   // ── Long slurs still caught as substrings ─────────────────────────────────
   it('blocks "nigger" embedded in a concatenated name like "nigger76"', async () => {
     const match = await findProhibitedPhrase('nigger76');
+    expect(match).toBe('nigger');
+  });
+
+  it('still rejects username slurs with an appended character', async () => {
+    const match = await findProhibitedPhrase('niggerx');
     expect(match).toBe('nigger');
   });
 
