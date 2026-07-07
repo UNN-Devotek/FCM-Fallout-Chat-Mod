@@ -322,12 +322,41 @@ class FCMBridge extends MovieClip {
     function init():Void {
         _api = findZfeApi(this);
         if (_api == null) {
-            setText("ZFE not found\nInstall dxgi.dll + zfe.ini");
-            // Leave _api null; fcmSetZfe() will drive the post-discovery boot
-            // if the host (patched HUDMenu) finds __ZFE and calls us.
+            // ZFE attaches to the in-world HUD movie AFTER we load (we boot from
+            // fcmInit at the very start of HUDMenu's construction), so a single
+            // early probe misses it. Retry every BOOT_MS up to BOOT_MAX (~60s) —
+            // same pattern as the widget's proven ZFE search loop. fcmSetZfe()
+            // (host handover) can still win the race at any point.
+            setText("searching for ZFE (" + _bootTries + "/" + BOOT_MAX + ")...");
+            if (_bootTimer == null) {
+                _bootTimer = new Timer(BOOT_MS);
+                _bootTimer.addEventListener(TimerEvent.TIMER, function(_) { bootRetry(); });
+                _bootTimer.start();
+            }
             return;
         }
         postDiscoveryInit();
+    }
+
+    function bootRetry():Void {
+        if (_api != null) { stopBootTimer(); return; } // host handover won the race
+        _bootTries++;
+        _api = findZfeApi(this);
+        if (_api != null) {
+            stopBootTimer();
+            postDiscoveryInit();
+            return;
+        }
+        if (_bootTries >= BOOT_MAX) {
+            stopBootTimer();
+            setText("ZFE not found\nInstall dxgi.dll + zfe.ini");
+            return;
+        }
+        setText("searching for ZFE (" + _bootTries + "/" + BOOT_MAX + ")...");
+    }
+
+    function stopBootTimer():Void {
+        if (_bootTimer != null) { _bootTimer.stop(); _bootTimer = null; }
     }
 
     /**

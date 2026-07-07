@@ -267,6 +267,18 @@
       public function fcmPollWorldId() : void
       {
          if(this._fcmBridge == null) { return; }
+         // Late __ZFE handover: ZFE attaches to the HUD movie AFTER fcmInit ran,
+         // so the load-time fcmPassZfeToBridge can miss it. Re-find on this tick
+         // and pass it down once found (fcmSetZfe is once-guarded bridge-side).
+         if(this._fcmZfe == null)
+         {
+            this._fcmZfe = this.fcmFindZfe(this);
+            if(this._fcmZfe != null)
+            {
+               this.fcmLog("info","zfe","late __ZFE find on world tick — passing to bridge");
+               this.fcmPassZfeToBridge();
+            }
+         }
          var wid:String = "";
          var pname:String = "";
          try
