@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.8.8";  // SERVER tab: worldId-scoped server chat right of GENERAL, shown only in-world; join/leave controls (unix-ts fix) + /server slash
+    static inline var VERSION:String  = "2.8.9";  // SERVER tab: worldId-scoped server chat right of GENERAL, shown only in-world; join/leave controls (unix-ts fix) + /server slash
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -172,6 +172,35 @@ class FCMChatWidget extends MovieClip {
     var _records:Array<{color:String, channel:String, user:String, body:String, ts:String}> = [];
     var _bScrolling:Bool         = false;
     var _scrollSnapTimer:Timer   = null;   // deferred bottom-snap after htmlText relayout
+    var _typeMirrorTimer:Timer   = null;   // mirrors the focused entry field's text into the prompt
+    var _typeMirrorLogged:Int    = 0;
+
+    /** While the SharedHUDTools edit session is open, stage.focus is HUDTools' entry
+     *  TextField. Mirror its live text into OUR prompt row — visible typing feedback
+     *  independent of how the entry box renders — and log lengths (diagnoses whether
+     *  the field holds the full text when the box shows only the last letter). */
+    function startTypeMirror():Void {
+        stopTypeMirror();
+        _typeMirrorTimer = new Timer(100);
+        _typeMirrorTimer.addEventListener(TimerEvent.TIMER, function(_) {
+            if (!_inputOpen) { stopTypeMirror(); return; }
+            try {
+                var f:Dynamic = stage.focus;
+                if (f != null && f.text != null) {
+                    var s:String = Std.string(f.text);
+                    setPrompt('<font face="' + FONT_BODY + '" size="' + _cfg.fontSize + '" color="' + hx(_cfg.tabActiveColor) + '">&#x203A; ' + FcmConfig.htmlEscape(s) + '</font>');
+                    if (_typeMirrorLogged < 3 && s.length > 1) {
+                        _typeMirrorLogged++;
+                        zfeLog("info", "typem", "focus field len=" + s.length);
+                    }
+                }
+            } catch (e:Dynamic) {}
+        });
+        _typeMirrorTimer.start();
+    }
+    function stopTypeMirror():Void {
+        if (_typeMirrorTimer != null) { _typeMirrorTimer.stop(); _typeMirrorTimer = null; }
+    }
     var _newWhileScrolled:Int    = 0;
 
     // ── Channel state ─────────────────────────────────────────────────────────
@@ -1201,6 +1230,7 @@ class FCMChatWidget extends MovieClip {
             return;
         }
         zfeLog("info", "input", "opened");
+        startTypeMirror();
     }
 
     /**
@@ -2142,14 +2172,47 @@ class FCMChatWidget extends MovieClip {
         var n:Int = 0;
         try { n = Std.int(d.length); } catch (e:Dynamic) {}
         if (n > 0) {
-            var f0:Array<String> = [];
-            try { f0 = Reflect.fields(d[0]); } catch (e:Dynamic) {}
-            zfeLog("info", "roster", key + ": array len=" + n + " fields=[" + f0.join(",") + "]");
+            zfeLog("info", "roster", key + ": " + describeEntries("entries", d));
         } else {
-            var fx:Array<String> = [];
-            try { fx = Reflect.fields(d); } catch (e:Dynamic) {}
-            zfeLog("info", "roster", key + ": fields=[" + fx.join(",") + "]");
+            // object payload — describe each field; descend into array-valued fields
+            // (e.g. VoiceChatAreaData.participants, TeamMarkers.Markers)
+            for (f in Reflect.fields(d)) {
+                var v:Dynamic = Reflect.field(d, f);
+                var isArr:Bool = false;
+                try { isArr = (v != null && v.length != null); } catch (e:Dynamic) {}
+                if (isArr) zfeLog("info", "roster", key + "." + describeEntries(f, v));
+                else zfeLog("info", "roster", key + "." + f + "=" + Std.string(v).substr(0, 40));
+            }
         }
+    }
+
+    /** Describe an array-of-objects payload: length + first-entry fields + name-ish values. */
+    function describeEntries(label:String, arr:Dynamic):String {
+        var n:Int = 0;
+        try { n = Std.int(arr.length); } catch (e:Dynamic) { return label + "=<not-array>"; }
+        if (n == 0) return label + "=[]";
+        var f0:Array<String> = [];
+        try { f0 = Reflect.fields(arr[0]); } catch (e:Dynamic) {}
+        var vals:Array<String> = [];
+        for (i in 0...n) {
+            if (i >= 6) break;
+            var e0:Dynamic = arr[i];
+            var best:String = "";
+            for (cand in ["name", "characterName", "playerName", "username", "displayName", "text"]) {
+                try {
+                    var v:Dynamic = Reflect.field(e0, cand);
+                    if (v != null) { best = cand + ":" + Std.string(v); break; }
+                } catch (e:Dynamic) {}
+            }
+            if (best == "") {
+                try {
+                    var fs = Reflect.fields(e0);
+                    if (fs.length > 0) best = fs[0] + ":" + Std.string(Reflect.field(e0, fs[0])).substr(0, 20);
+                } catch (e:Dynamic) {}
+            }
+            vals.push(best);
+        }
+        return label + " len=" + n + " fields=[" + f0.join(",") + "] vals={" + vals.join(" | ") + "}";
     }
 
     function onRosterChange(evt:Dynamic):Void {
