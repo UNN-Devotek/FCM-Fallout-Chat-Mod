@@ -146,6 +146,12 @@ const IS_KDE = _xdgDesktop.includes('kde') || _xdgDesktop.includes('plasma');
 const IS_WAYLAND = _xdgSession === 'wayland' || !!process.env.WAYLAND_DISPLAY;
 // The single switch that turns the new behavior on. KDE + Wayland only.
 const KDE_WAYLAND = IS_LINUX && IS_KDE && IS_WAYLAND;
+// Phase-0 spike opt-in (see docs/overlay/linux-overlay-approaches.md): when set, stay
+// on native Wayland instead of relaunching into XWayland. Off by default — every
+// existing user keeps the XWayland relaunch below unchanged. This exists to let us
+// empirically test the one open blocker (does FO76's Proton mouse-lock survive a
+// native-Wayland overlay above it — KDE bug 485409) before committing to a migration.
+const NATIVE_WAYLAND_OPT_IN = KDE_WAYLAND && process.env.FCM_NATIVE_WAYLAND === '1';
 
 // KDE+WAYLAND ONLY: force the XWayland (X11) Ozone backend. On a native Wayland
 // session Chromium uses the Wayland backend, where an external window cannot
@@ -175,9 +181,31 @@ const KDE_WAYLAND = IS_LINUX && IS_KDE && IS_WAYLAND;
 // under Proton is itself XWayland — sharing the XWayland root is what makes stacking work.
 // (Caveat: even under XWayland, KWin only forwards MODIFIER-bearing global keys between
 // XWayland clients, so bare keys may need follow-up — see docs.)
-if (KDE_WAYLAND) {
+if (KDE_WAYLAND && NATIVE_WAYLAND_OPT_IN) {
+  // Phase-0 spike path: skip the XWayland relaunch entirely and stay native. Enable
+  // Chromium's GlobalShortcutsPortal (fixed in Electron 42.0.0 — we're pinned to
+  // 42.5.0, see package.json) so globalShortcut has a chance of working without
+  // XGrabKey. Belt-and-suspenders ozone-platform switches are deliberately NOT set
+  // here — setting them would force XWayland, defeating the opt-in.
+  try { app.commandLine.appendSwitch('enable-features', 'GlobalShortcutsPortal'); } catch { /* ignore */ }
+  try {
+    // Electron has no public API to read back the app_id it actually sent via
+    // xdg_toplevel.set_app_id() — package.json's top-level "desktopName" (see the
+    // comment near app.setName() above) is what we PIN it to, but the only reliable
+    // ground truth is what KWin itself reports. Phase-0 tester: open System Settings
+    // -> Window Management -> Window Rules -> Add New... -> Detect Window Properties,
+    // click the overlay window, and confirm "Window class" reads fallout-chat-mod —
+    // same workflow already used to inspect Konsole/Chrome/Discord.
+    diag('[ozone] FCM_NATIVE_WAYLAND=1 — staying on native Wayland (skipping XWayland relaunch); ' +
+      'GlobalShortcutsPortal feature enabled; expected app_id=fallout-chat-mod (verify via ' +
+      'System Settings -> Window Rules -> Detect Window Properties on this window).');
+  } catch { /* logger not ready */ }
+} else if (KDE_WAYLAND) {
   // overlayCore is required further down; this runs at module load, so inline the
   // same pure logic via a local require to keep the relaunch decision testable.
+  // NATIVE_WAYLAND_OPT_IN is always false here (the branch above already handled the
+  // true case) — planOzoneRelaunch's nativeWaylandOptIn param isn't passed since this
+  // path is unconditionally the XWayland-relaunch decision.
   const _ozoneRelaunch = require('./overlay-core').planOzoneRelaunch({
     kdeWayland: KDE_WAYLAND, argv: process.argv, appImagePath: process.env.APPIMAGE || null,
     execPath: process.execPath,
@@ -247,11 +275,16 @@ if (!app.isPackaged) {
 // and continue; the relay retries on its own schedule.
 // NOTE: do NOT call app.setName() here. The app name feeds app.getPath('userData')
 // (→ ~/.config/Fallout Chat Mod), so renaming it would orphan every existing
-// user's session/settings/keybinds on all platforms. KWin matches the overlay by
-// its X11 WM_CLASS ("fallout-chat-mod", since the overlay runs under XWayland on
-// KDE) via the bundled keep-above rule's exact-name match — no app_id override is
-// needed. The electron-builder linux.desktopName only affects the installed .desktop
-// filename / native-Wayland app_id and does not change userData.
+// user's session/settings/keybinds on all platforms. On XWayland (the default KDE
+// path) KWin matches the overlay by its X11 WM_CLASS ("fallout-chat-mod") via the
+// bundled keep-above rule's exact-name match — no app_id override is needed there.
+// The top-level "desktopName" field in package.json (bundled via build.files, read
+// by Electron itself at startup — electron/electron#49988) pins the NATIVE-WAYLAND
+// app_id to the same "fallout-chat-mod" string, independently of app.getName()/
+// userData. build.linux.desktopName (electron-builder config, below in package.json)
+// is a THIRD, separate thing — it only controls the installed .desktop file's name
+// and does not affect the runtime app_id. See FCM_NATIVE_WAYLAND / NATIVE_WAYLAND_OPT_IN
+// above and docs/overlay/linux-overlay-approaches.md.
 
 process.on('uncaughtException', (err) => {
   const msg = (err && err.message) ? err.message : String(err);

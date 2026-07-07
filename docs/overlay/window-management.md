@@ -358,6 +358,16 @@ Per KWin's `Window::layer()` the layer order (KWin 6.7) low→high is `Desktop(0
 
 **KWin 6 format (verified):** the authoritative rule list is `[General] rules=`, a **comma-separated list of group NAMES** (plus a matching `count`). Writing numbered groups with only `count` is **not** enough — KWin rewrites `count` and drops the rules. We use a **stable named group** (so re-runs are idempotent and never collide with the user's own numbered rules) and **append** our name to any existing `rules=` list (preserving user rules). `buildKwinKeepAboveScript()` (unit-tested) emits exactly the one `fcm-keepabove` rule; its idempotency check matches that rule set exactly, so any stale FCM rule (numbered groups, `fcm-game-demote`, `fcm-game-below`, or a pre-merge `fcm-overlay-layer` from older builds) forces the strip + rewrite path.
 
+**Native-Wayland spike (opt-in, off by default):** everything above describes the shipped
+default — the overlay always relaunches into XWayland on KDE-Wayland first (see above), so
+`wmclass` always means the X11 property. There is a dev-only `FCM_NATIVE_WAYLAND=1` env flag
+that skips that relaunch and stays on native Wayland instead; `buildKwinKeepAboveScript()` is
+unmodified for that path because KWin's `wmclass` matcher is expected to also catch the
+Wayland `app_id` (pinned to the same `fallout-chat-mod` string via `package.json`'s top-level
+`desktopName`). This is an experimental, unverified spike, not a supported mode — see the "Phase-0 spike"
+section of [linux-overlay-approaches.md](linux-overlay-approaches.md) for the manual test
+protocol and the open blocker (KDE bug 485409, cursor-lock coexistence).
+
 - **Automatic:** on **KDE+Wayland** it runs at startup (`app.whenReady`, `interactive: false`) so the overlay sits above the game for every user with **no manual step**. **Idempotent** — it exits early when `rules=` already holds exactly the expected set, so repeated launches never duplicate rules or reconfigure needlessly.
 - **Manual retry:** tray → **"KDE: keep overlay above game"** (`interactive: true`) additionally opens the userData folder for a hand import (System Settings → Window Rules → Import) if the automatic path fails (older KWin, missing `kwriteconfig6`, non-KDE).
 
