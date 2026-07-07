@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.8.10";  // SERVER tab: worldId-scoped server chat right of GENERAL, shown only in-world; join/leave controls (unix-ts fix) + /server slash
+    static inline var VERSION:String  = "2.9.0";  // SERVER tab: worldId-scoped server chat right of GENERAL, shown only in-world; join/leave controls (unix-ts fix) + /server slash
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -152,6 +152,12 @@ class FCMChatWidget extends MovieClip {
     // LEAVE control: sent when the player leaves a world (worldId cleared).
     // Body: WORLD_LEAVE_PREFIX + "<relayUserId>|<ts>|<hmac>", hmac over "leave|<userId>|<ts>".
     static inline var WORLD_LEAVE_PREFIX:String = "\x00fcm.world.leave.v1\x00";
+    // ROSTER control: observed nearby character names (no worldId exists in the UI
+    // layer — the relay derives world rooms from sightings). Body:
+    // ROSTER_PREFIX + "<uid>|<ts>|<hmac>|<name\x1Fname...>", hmac over "roster|uid|ts|names".
+    static inline var WORLD_ROSTER_PREFIX:String = "\x00fcm.world.roster.v1\x00";
+    static inline var ROSTER_FRESH_MS:Float = 60000;   // observation freshness window
+    static inline var ROSTER_SEND_MS:Float  = 30000;   // periodic roster resend
 
     // ── Config (FcmConfig — parsed from Data/FCMChat.ini; see FcmConfig.hx) ─────
     var _cfg:FcmConfig = new FcmConfig();
@@ -993,9 +999,18 @@ class FCMChatWidget extends MovieClip {
         // while typing. The ZFE native input only captures text — it cannot block the engine
         // (our own CustomEvent dispatch fails from the overlay domain, #1065, so WASD leaks into
         // the field). Native is therefore a last-resort, no-lock fallback only.
+        // NATIVE FIRST: HUDTools' keyboard-edit path double-inserts characters and
+        // renders only the last typed letter under Proton/Steam Input (live-verified;
+        // the 4-arg PlatformChangeEvent fix engaged KB mode but its editing is broken).
+        // ZFE's native input session captures cleanly (per-char reads, proven in June
+        // logs) and our prompt row displays the in-progress text. SharedHUDTools stays
+        // as the fallback. Trade-off to verify in-game: the native session may not
+        // lock the game's own keys while typing.
+        if (_nativeInputUsable) {
+            openInputNative();
+            if (_inputOpen) return;
+        }
         openInputSharedHudTools();
-        if (_inputOpen) return;
-        if (_nativeInputUsable) openInputNative();
     }
 
     // =========================================================================
@@ -1851,10 +1866,66 @@ class FCMChatWidget extends MovieClip {
         checkWorldId();
     }
 
+    /** Fresh observed names (within ROSTER_FRESH_MS), pruning stale entries. */
+    function freshRosterNames():Array<String> {
+        var now:Float = flash.Lib.getTimer();
+        var out:Array<String> = [];
+        var stale:Array<String> = [];
+        for (nm in _seenNames.keys()) {
+            if (now - _seenNames.get(nm) <= ROSTER_FRESH_MS) out.push(nm);
+            else stale.push(nm);
+        }
+        for (s in stale) _seenNames.remove(s);
+        out.sort(function(a, b) return (a < b) ? -1 : (a > b ? 1 : 0));
+        if (out.length > 16) out = out.slice(0, 16);
+        return out;
+    }
+
+    /** Roster-derived world membership: send the signed roster control while
+     *  observations are fresh; leave the room after silence. Drives the SERVER tab. */
+    function tickRoster():Void {
+        if (_api == null || !_connected || _relayUserId.length == 0) return;
+        var now:Float = flash.Lib.getTimer();
+        var names:Array<String> = freshRosterNames();
+        var wasInWorld:Bool = _inWorld;
+        // In-world = we are observing the HUD's nearby-player surfaces. (These publish
+        // only while loaded into a world; an empty server still counts once any
+        // provider has published at least once — tracked via _worldPollCount heuristics
+        // kept simple: names OR a recent observation window.)
+        _inWorld = (names.length > 0);
+        if (_inWorld) {
+            var namesField:String = names.join("\x1F");
+            if ((now - _lastRosterSentAt) >= ROSTER_SEND_MS || namesField != _lastRosterSent) {
+                _lastRosterSentAt = now;
+                _lastRosterSent = namesField;
+                var ts:String = Std.string(unixSeconds());
+                var hmac:String = hmacSha256Hex(WORLD_HMAC_SECRET, "roster|" + _relayUserId + "|" + ts + "|" + namesField);
+                var body:String = WORLD_ROSTER_PREFIX + _relayUserId + "|" + ts + "|" + hmac + "|" + namesField;
+                var payload:String = '{"channel":"server","targetUserId":"","body":"' + jsonEscape(body) + '"}';
+                try {
+                    _api.call("chat.v1.sendMessage", payload);
+                    zfeLog("info", "world", "roster control sent names=" + names.length);
+                } catch (e:Dynamic) {
+                    zfeLog("warn", "world", "roster send threw: " + Std.string(e));
+                }
+            }
+        } else if (wasInWorld) {
+            zfeLog("info", "world", "roster went stale; sending LEAVE");
+            sendWorldLeaveControl();
+            _lastRosterSent = "";
+        }
+        if (_inWorld != wasInWorld) {
+            if (!_inWorld && _chanIdx == 5) _chanIdx = 0;
+            rebuildChannelTabs();
+            renderRecords();
+        }
+    }
+
     function checkWorldId():Void {
         if (_api == null || !_connected) return;
         _worldPollCount++;
         subscribeRoster();
+        tickRoster();
         if (!_dataInventoryDone && _worldPollCount >= 6) { _dataInventoryDone = true; dumpDataInventory(); }
         var worldId:String = readWorldId();
         if (worldId == _lastWorldId) return;            // no change since last poll
@@ -2134,6 +2205,9 @@ class FCMChatWidget extends MovieClip {
 
     var _worldDiagDone:Bool = false;
     var _rosterSubscribed:Bool = false;
+    var _seenNames:Map<String, Float> = new Map();   // bare character name -> last-seen ms
+    var _lastRosterSentAt:Float = 0;
+    var _lastRosterSent:String = "";
     var _rosterLogCount:Int = 0;
     var _lastRosterLogAt:Float = 0;
 
@@ -2166,8 +2240,47 @@ class FCMChatWidget extends MovieClip {
     }
 
     var _auxLogAt:Float = 0;
+    /** Bare character name: strip the <title decorations and wire-unsafe chars. */
+    function bareName(s:String):String {
+        if (s == null) return "";
+        var i:Int = s.indexOf("<");
+        if (i >= 0) s = s.substr(0, i);
+        s = StringTools.replace(s, "|", "");
+        s = StringTools.replace(s, "\x1F", "");
+        return StringTools.trim(s);
+    }
+
+    /** Record nearby-player observations (TeamMarkers / VoiceChat / PlayerList). */
+    function collectRoster(key:String, d:Dynamic):Void {
+        var now:Float = flash.Lib.getTimer();
+        var arr:Dynamic = null;
+        if (key == "TeamMarkers") { try { arr = d.Markers; } catch (e:Dynamic) {} }
+        else if (key == "VoiceChatAreaData") { try { arr = d.participants; } catch (e:Dynamic) {} }
+        else arr = d; // PlayerListData is the array itself
+        if (arr == null) return;
+        var n:Int = 0;
+        try { n = Std.int(arr.length); } catch (e:Dynamic) { return; }
+        for (i in 0...n) {
+            var e0:Dynamic = arr[i];
+            try { if (e0.isLocalPlayer == true || e0.isLocal == true) continue; } catch (e:Dynamic) {}
+            var nm:String = "";
+            for (cand in ["displayName", "characterName", "name", "playerName"]) {
+                try {
+                    var v:Dynamic = Reflect.field(e0, cand);
+                    if (v != null && Std.string(v).length > 0) { nm = Std.string(v); break; }
+                } catch (e:Dynamic) {}
+            }
+            nm = bareName(nm);
+            if (nm.length > 0 && nm != bareName(_displayName)) _seenNames.set(nm, now);
+        }
+    }
+
     function onAuxDataChange(key:String, evt:Dynamic):Void {
         var now:Float = flash.Lib.getTimer();
+        var dc:Dynamic = null;
+        try { dc = evt.data; } catch (e:Dynamic) {}
+        if (dc == null) { try { dc = evt.target.data; } catch (e:Dynamic) {} }
+        if (dc != null) collectRoster(key, dc);
         if ((now - _auxLogAt) < 15000) return;
         _auxLogAt = now;
         var d:Dynamic = null;
@@ -2226,6 +2339,7 @@ class FCMChatWidget extends MovieClip {
         try { d = evt.data; } catch (e:Dynamic) {}
         if (d == null) { try { d = evt.target.data; } catch (e:Dynamic) {} }
         if (d == null) return;
+        collectRoster("PlayerListData", d);
         // Throttle: first 3 updates, then at most every 30s.
         if (_rosterLogCount >= 3 && (now - _lastRosterLogAt) < 30000) return;
         _rosterLogCount++;

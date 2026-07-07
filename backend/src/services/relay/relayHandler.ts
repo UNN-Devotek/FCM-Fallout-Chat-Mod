@@ -31,6 +31,7 @@ import env, { DEV_DEFAULT_RELAY_WORLD_HMAC_SECRET } from '../../config/environme
 import { mintToken, verifyToken, updateDisplayName, markRelayTokenLinked } from './tokenService';
 import { slugToChannelId, channelIdToSlug, ALL_SLUGS } from './channelMap';
 import { setWorldId, getWorldId, clearWorldId } from './worldIdService';
+import { setRoster, clearRoster, computeRooms } from './worldRosterService';
 import { nextRelaySeq } from './relaySeq';
 import { ingestMessage } from '../ingestMessage';
 import { engineEvaluate } from '../autoModEngine';
@@ -55,6 +56,11 @@ const WORLD_ID_SENTINEL_PREFIX  = '\x00fcm.world.v1\x00';
 // LEAVE control: sent when the player leaves a world (worldId cleared). Body:
 // "\x00fcm.world.leave.v1\x00<relayUserId>|<ts>|<hmac>", hmac over "leave|<userId>|<ts>".
 const WORLD_LEAVE_SENTINEL_PREFIX = '\x00fcm.world.leave.v1\x00';
+// ROSTER control: observed nearby character names (the HUD publishes no worldId —
+// rooms are derived from sightings). Body:
+// "\x00fcm.world.roster.v1\x00<relayUserId>|<ts>|<hmac>|<name\x1Fname...>",
+// hmac over "roster|<userId>|<ts>|<namesField>".
+const WORLD_ROSTER_SENTINEL_PREFIX = '\x00fcm.world.roster.v1\x00';
 const WORLD_ID_HMAC_WINDOW_S    = 30;    // 30-second replay window (ts is unix SECONDS)
 const POLL_HISTORY_LIMIT        = 75;    // initial history window on cursor=0 — must cover ~12 msgs x 5 static channels + recent live traffic (the window is global, not per-channel)
 const REDIS_BROADCAST_CHANNEL   = 'chat:broadcast';
@@ -322,9 +328,49 @@ async function handleWorldJoin(identity: RelayToken, worldId: string): Promise<v
   await backfillWorldToUser(identity.userId, worldId);
 }
 
+/**
+ * Verify a ROSTER control message. Returns the observed names on success, null on failure.
+ * Body: "<sentinel><relayUserId>|<ts>|<hmac>|<namesField>"; namesField = \x1F-separated names.
+ */
+function verifyWorldRosterHmac(body: string, socketUserId: string): { names: string[] } | null {
+  if (!body.startsWith(WORLD_ROSTER_SENTINEL_PREFIX)) return null;
+  const payload = body.slice(WORLD_ROSTER_SENTINEL_PREFIX.length);
+  const firstThree = payload.split('|');
+  if (firstThree.length < 4) return null;
+  const [sentUserId, tsStr, hmac] = firstThree;
+  const namesField = firstThree.slice(3).join('|'); // names may not contain | (client strips) — defensive rejoin
+  if (!sentUserId || !tsStr || !hmac) return null;
+  if (sentUserId !== socketUserId) return null;
+  if (!tsIsFresh(tsStr)) return null;
+  if (!hmacHexEquals(`roster|${sentUserId}|${tsStr}|${namesField}`, hmac)) return null;
+  const names = namesField.length > 0 ? namesField.split('\x1F') : [];
+  return { names };
+}
+
+/**
+ * Recompute roster-derived rooms and apply changes: any user whose roomKey moved is
+ * re-bound exactly like a worldId change (setWorldId + subscriber rebind + backfill).
+ */
+async function applyRoomAssignments(): Promise<void> {
+  const rooms = await computeRooms();
+  for (const [userId, roomKey] of rooms) {
+    const current = await getWorldId(userId);
+    if (current === roomKey) {
+      await setWorldId(userId, roomKey); // refresh TTL
+      continue;
+    }
+    await setWorldId(userId, roomKey);
+    rebindLocalSubscribers(userId, roomKey);
+    await publishRebind(userId, roomKey);
+    await backfillWorldToUser(userId, roomKey);
+    logger.info({ userId, roomKey }, '[relayHandler] roster room assigned');
+  }
+}
+
 /** LEAVE: the player left their world. Clear membership locally + across instances. */
 async function handleWorldLeave(identity: RelayToken): Promise<void> {
   await clearWorldId(identity.userId);
+  await clearRoster(identity.userId);
   rebindLocalSubscribers(identity.userId, null);
   await publishRebind(identity.userId, null);
 }
@@ -602,6 +648,16 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   if (slug === 'server' && body.startsWith(WORLD_LEAVE_SENTINEL_PREFIX)) {
     if (verifyWorldLeaveHmac(body, identity.userId)) {
       await handleWorldLeave(identity);
+      send(ws, { success: true, messageId: '' });
+      return;
+    }
+    // fall through
+  }
+  if (slug === 'server' && body.startsWith(WORLD_ROSTER_SENTINEL_PREFIX)) {
+    const roster = verifyWorldRosterHmac(body, identity.userId);
+    if (roster) {
+      await setRoster(identity.userId, identity.fo76Name, roster.names);
+      await applyRoomAssignments();
       send(ws, { success: true, messageId: '' });
       return;
     }
