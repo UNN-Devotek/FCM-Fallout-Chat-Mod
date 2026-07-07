@@ -352,7 +352,7 @@ class FCMBridge extends MovieClip {
             setText("ZFE not found\nInstall dxgi.dll + zfe.ini");
             return;
         }
-        setText("searching for ZFE (" + _bootTries + "/" + BOOT_MAX + ")...");
+        setText("searching for ZFE (" + _bootTries + "/" + BOOT_MAX + ")...\n" + diagZfe(this));
     }
 
     function stopBootTimer():Void {
@@ -1089,30 +1089,48 @@ class FCMBridge extends MovieClip {
     // ZFE API discovery — unchanged from pre-chat.v1 build
     // =========================================================================
 
+    /** Probe one object for the ZFE bridge, modern-first. Per the ZFE modder guide,
+     *  `ZFECodeObj` must be probed AS A PROPERTY on each scope too — it is the
+     *  modern-API-backed fallback ZFE exposes "when the active UI root rejects __ZFE"
+     *  (api-reference.md), which is exactly the standalone patched-HUDMenu case. */
+    static function probeObj(o:Dynamic):Dynamic {
+        if (o == null) return null;
+        try { var z:Dynamic = untyped o["__ZFE"];      if (z != null) return z; } catch (e:Dynamic) {}
+        try { var z:Dynamic = untyped o["ZFECodeObj"]; if (z != null) return z; } catch (e:Dynamic) {}
+        return null;
+    }
+
+    /** On-screen diagnostic: one char per probe scope (Y = bridge object present). */
+    public static function diagZfe(scope:Dynamic):String {
+        var s = "";
+        s += "self:"   + (probeObj(scope) != null ? "Y" : "-");
+        try { s += " par:"  + (probeObj(scope.parent) != null ? "Y" : "-"); } catch (e:Dynamic) { s += " par:x"; }
+        try { s += " root:" + (probeObj(scope.root)   != null ? "Y" : "-"); } catch (e:Dynamic) { s += " root:x"; }
+        try { var g:Dynamic = untyped __global__["ZFECodeObj"]; s += " gZ:" + (g != null ? "Y" : "-"); } catch (e:Dynamic) { s += " gZ:x"; }
+        try { var g2:Dynamic = untyped __global__["__SFCodeObj"]; s += " gS:" + (g2 != null ? "Y" : "-"); } catch (e:Dynamic) { s += " gS:x"; }
+        try {
+            var st:Dynamic = scope.stage;
+            var hits:Int = 0;
+            if (st != null) for (i in 0...(st.numChildren : Int)) {
+                try { if (probeObj(st.getChildAt(i)) != null) hits++; } catch (e:Dynamic) {}
+            }
+            s += " stg:" + hits;
+        } catch (e:Dynamic) { s += " stg:x"; }
+        return s;
+    }
+
     static function findZfeApi(scope:Dynamic):Dynamic {
+        var z:Dynamic = probeObj(scope);
+        if (z != null) return z;
+        try { z = probeObj(scope.parent); if (z != null) return z; } catch (e:Dynamic) {}
+        try { z = probeObj(scope.root);   if (z != null) return z; } catch (e:Dynamic) {}
         try {
-            var z:Dynamic = untyped scope["__ZFE"];
-            if (z != null) return z;
+            var g:Dynamic = untyped __global__["ZFECodeObj"];
+            if (g != null) return g;
         } catch (e:Dynamic) {}
         try {
-            if (scope.parent != null) {
-                var z:Dynamic = untyped scope.parent["__ZFE"];
-                if (z != null) return z;
-            }
-        } catch (e:Dynamic) {}
-        try {
-            if (scope.root != null) {
-                var z:Dynamic = untyped scope.root["__ZFE"];
-                if (z != null) return z;
-            }
-        } catch (e:Dynamic) {}
-        try {
-            var z:Dynamic = untyped __global__["ZFECodeObj"];
-            if (z != null) return z;
-        } catch (e:Dynamic) {}
-        try {
-            var z:Dynamic = untyped __global__["__SFCodeObj"];
-            if (z != null) return z;
+            var g2:Dynamic = untyped __global__["__SFCodeObj"];
+            if (g2 != null) return g2;
         } catch (e:Dynamic) {}
         try {
             var st:Dynamic = scope.stage;
@@ -1121,13 +1139,13 @@ class FCMBridge extends MovieClip {
                 for (i in 0...n) {
                     try {
                         var child:Dynamic = st.getChildAt(i);
-                        var z:Dynamic = untyped child["__ZFE"];
+                        var z:Dynamic = probeObj(child);
                         if (z != null) return z;
                         var m:Int = child.numChildren;
                         for (j in 0...m) {
                             try {
                                 var gc:Dynamic = child.getChildAt(j);
-                                var z2:Dynamic = untyped gc["__ZFE"];
+                                var z2:Dynamic = probeObj(gc);
                                 if (z2 != null) return z2;
                             } catch (e2:Dynamic) {}
                         }
