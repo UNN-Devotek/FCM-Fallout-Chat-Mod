@@ -56,7 +56,7 @@ const WORLD_ID_SENTINEL_PREFIX  = '\x00fcm.world.v1\x00';
 // "\x00fcm.world.leave.v1\x00<relayUserId>|<ts>|<hmac>", hmac over "leave|<userId>|<ts>".
 const WORLD_LEAVE_SENTINEL_PREFIX = '\x00fcm.world.leave.v1\x00';
 const WORLD_ID_HMAC_WINDOW_S    = 30;    // 30-second replay window (ts is unix SECONDS)
-const POLL_HISTORY_LIMIT        = 30;    // initial history window on cursor=0
+const POLL_HISTORY_LIMIT        = 75;    // initial history window on cursor=0 — must cover ~12 msgs x 5 static channels + recent live traffic (the window is global, not per-channel)
 const REDIS_BROADCAST_CHANNEL   = 'chat:broadcast';
 
 /**
