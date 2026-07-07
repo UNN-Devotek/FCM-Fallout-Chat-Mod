@@ -78,4 +78,39 @@ describe('planOzoneRelaunch', () => {
     expect(plan.safe).toBe(false);
     expect(plan.execPath).toBeUndefined(); // caller falls back to process.execPath, but must NOT exit
   });
+
+  // ── native-Wayland opt-in (Phase-0 spike: FCM_NATIVE_WAYLAND=1) ──────────────
+
+  it('returns null when nativeWaylandOptIn is true, even on KDE-Wayland with a fresh argv', () => {
+    const plan = planOzoneRelaunch({ kdeWayland: true, argv: ['/app', '--no-sandbox'], nativeWaylandOptIn: true });
+    expect(plan).toBeNull();
+  });
+
+  it('nativeWaylandOptIn=true short-circuits before the argv-guard check (order does not matter)', () => {
+    // Same argv that would normally trigger a relaunch plan — opt-in still wins.
+    const plan = planOzoneRelaunch({
+      kdeWayland: true,
+      argv: ['/tmp/.mount_x/fallout-chat-mod', '--no-sandbox'],
+      appImagePath: '/home/u/Applications/Fallout Chat Mod-1.3.91.AppImage',
+      nativeWaylandOptIn: true,
+    });
+    expect(plan).toBeNull();
+  });
+
+  it('defaults nativeWaylandOptIn to false — omitting it plans the relaunch as before (no regression)', () => {
+    const plan = planOzoneRelaunch({ kdeWayland: true, argv: ['/app', '--no-sandbox'] });
+    expect(plan).not.toBeNull();
+    expect(plan.args).toEqual(['--no-sandbox', FLAG]);
+  });
+
+  it('nativeWaylandOptIn=false behaves identically to omitting it', () => {
+    const withFalse = planOzoneRelaunch({ kdeWayland: true, argv: ['/app', '--no-sandbox'], nativeWaylandOptIn: false });
+    const omitted = planOzoneRelaunch({ kdeWayland: true, argv: ['/app', '--no-sandbox'] });
+    expect(withFalse).toEqual(omitted);
+  });
+
+  it('non-KDE-Wayland still returns null regardless of nativeWaylandOptIn', () => {
+    expect(planOzoneRelaunch({ kdeWayland: false, argv: ['/app'], nativeWaylandOptIn: true })).toBeNull();
+    expect(planOzoneRelaunch({ kdeWayland: false, argv: ['/app'], nativeWaylandOptIn: false })).toBeNull();
+  });
 });

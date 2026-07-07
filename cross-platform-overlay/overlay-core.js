@@ -687,6 +687,17 @@ function awkStripFcmSectionLines() {
 // focus (its window TYPE stays Normal). Added in KWin 6.0 (KDE Bug 441074, the sanctioned
 // "stay above fullscreen" mechanism); verified on KWin 6.7.1 (a matched window jumps to
 // stackingLayer 9). Always applied alongside the plain keep-above property, on the same rule.
+//
+// NATIVE-WAYLAND NOTE (Phase-0 spike, see docs/overlay/linux-overlay-approaches.md): this
+// same wmclass/wmclassmatch matcher is expected to ALSO match a native-Wayland overlay
+// window, with NO code change here. KWin's rule engine matches `c->resourceClass()`, a
+// protocol-agnostic accessor implemented for both X11Window (X11 WM_CLASS) AND
+// XdgToplevelWindow (Wayland app_id) — the same abstraction that lets System Settings ->
+// Window Rules -> Detect Window Properties show a "Window class" for native-Wayland apps
+// like Konsole/Chrome/Discord today. As long as the overlay's native-Wayland app_id is
+// pinned to "fallout-chat-mod" (package.json's top-level "desktopName" field, see main.js
+// near app.setName()), this rule should apply unmodified under FCM_NATIVE_WAYLAND=1.
+// UNVERIFIED until the Phase-0 manual test confirms it live against a real KWin session.
 function buildKwinKeepAboveScript({ file = 'kwinrulesrc', overlayWmclass = 'fallout-chat-mod', overlayLayer = 'overlay' } = {}) {
   const RULE = 'fcm-keepabove';   // overlay keep-above + force-Layer=Overlay, one rule, same window
   const w = (grp, key, val) => `kwriteconfig6 --file ${file} --group ${grp} --key ${key} ${val}`;
@@ -805,9 +816,15 @@ function resolveRelayProxyUrl(reqPath, relayHttp) {
   return url;
 }
 
-function planOzoneRelaunch({ kdeWayland, argv = [], appImagePath = null, execPath = null } = {}) {
+function planOzoneRelaunch({ kdeWayland, argv = [], appImagePath = null, execPath = null, nativeWaylandOptIn = false } = {}) {
   const FLAG = '--ozone-platform=x11';
   if (!kdeWayland) return null;
+  // Opt-in escape hatch (FCM_NATIVE_WAYLAND=1, read by the caller): stay on native
+  // Wayland instead of relaunching into XWayland. This is the Phase-0 spike flag for
+  // evaluating a native-Wayland overlay (app_id KWin rule + GlobalShortcutsPortal) —
+  // see docs/overlay/linux-overlay-approaches.md. Default (unset) behavior is
+  // unchanged: always relaunch into XWayland on KDE+Wayland.
+  if (nativeWaylandOptIn) return null;
   if (argv.includes(FLAG)) return null;
   // The binary the child would re-exec: the persistent $APPIMAGE when known, else the
   // current process's execPath.

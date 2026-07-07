@@ -118,6 +118,83 @@ coexists with the lock. On **native Wayland** there is no easy interactive path.
   game overlays work, and it installs as a plain npm dependency — **no compositor, no sudo,
   no system changes.**
 
+## Phase-0 spike (2026-07) — re-testing the native-Wayland conclusion with `FCM_NATIVE_WAYLAND=1`
+
+The "not achievable" conclusion above was last measured before two things changed: Electron
+bumped to **42.5.0** (we were on ~39 when the XWayland-relaunch approach was built), which
+**fixed `GlobalShortcutsPortal`** (broken in the 40.x–41.x regression, electron#49806, fixed in
+42.0.0) — so native-Wayland global hotkeys are worth re-testing, not assumed dead. And KWin rule
+matching turns out to already be app_id-aware (see below) — so stacking is likely not the
+blocker people assumed either. **KDE bug 485409 (the cursor-lock issue) is still open — checked
+2026-07, status CONFIRMED, no fix version** — so that piece of the "not achievable" conclusion
+still stands until proven otherwise. This spike exists to test the *remaining* unknown
+empirically rather than re-assert the old conclusion from a stale Electron baseline.
+
+**What's implemented (code, no behavior change for existing users):**
+- `FCM_NATIVE_WAYLAND=1` (env var) — `main.js`'s `KDE_WAYLAND` relaunch block skips the
+  XWayland relaunch (`overlay-core.js: planOzoneRelaunch({ nativeWaylandOptIn: true })` returns
+  `null`) and instead enables `--enable-features=GlobalShortcutsPortal`. Unset (the default),
+  behavior is byte-for-byte unchanged — still relaunches into XWayland.
+- **app_id pinning:** `package.json`'s top-level `desktopName: "fallout-chat-mod.desktop"`
+  field (read by Electron itself at startup, electron/electron#49988, landed by our 42.5.0 pin)
+  pins the native-Wayland `app_id` to `fallout-chat-mod` — the same string as the X11 WM_CLASS
+  the existing `fcm-keepabove` KWin rule already matches. (This is a *different* field from
+  `build.linux.desktopName`, which only names the installed `.desktop` file.)
+- **KWin rule:** `buildKwinKeepAboveScript()` in `overlay-core.js` is **unmodified**. KWin's
+  rule engine matches `wmclass` against `Window::resourceClass()`, an accessor implemented for
+  both `X11Window` (X11 `WM_CLASS`) and `XdgToplevelWindow` (Wayland `app_id`) — the same
+  abstraction that lets System Settings → Window Rules → Detect Window Properties show a
+  "Window class" for native-Wayland apps (Konsole, Chrome, Discord) today. With the app_id
+  pinned to `fallout-chat-mod`, the existing rule is expected to match a native-Wayland overlay
+  window with no changes — **unverified until tested live.**
+
+**Manual test protocol (the actual GO/NO-GO gate — requires real KDE Plasma 6 Wayland + FO76
+under Proton hardware; not automatable):**
+1. Launch with `FCM_NATIVE_WAYLAND=1`; confirm the `[ozone]` diagnostic log line shows the
+   native-Wayland path was taken (not a relaunch).
+2. System Settings → Window Management → Window Rules → Add New… → Detect Window Properties →
+   click the overlay window → confirm **Window class = `fallout-chat-mod`** (same workflow used
+   for Konsole/Chrome/Discord).
+3. Run `setupKdeKeepAbove` (tray → "KDE: keep overlay above game") and confirm the overlay
+   stacks **above** a focused fullscreen/borderless FO76.
+4. **The gate:** with FO76 running and mouselook active, does the game **keep its cursor lock**
+   with the native-Wayland overlay on top (click-through)? Per KDE bug 485409 this is expected
+   to fail — confirm whether it actually does on current KWin.
+5. If the lock survives: Insert → chat → type → Escape → confirm the lock **returns cleanly**.
+6. Confirm portal-granted global hotkeys fire while FO76 has focus (expect a KDE consent
+   prompt on first use — our defaults are bare keys, which portals are typically warier about
+   granting than modifier combos; this may need a native-mode-only keybind default change).
+7. Watch for direct-scanout/game-lag regression vs. the XWayland build.
+
+**Decision:** if step 4 fails, native-Wayland interactive play is not shippable (matches the
+"not achievable" conclusion above) — this doc's XWayland-relaunch solution remains the shipped
+default, unconditionally, and the opt-in flag stays a dev-only spike tool. If step 4 holds,
+proceed to a full migration plan.
+
+**Result (2026-07-04, real KDE Plasma 6 Wayland + FO76/Proton hardware): step 4 (the gate)
+holds — the game keeps its cursor lock with the native-Wayland overlay on top.** This is a
+partial GO: the one blocker research couldn't resolve without hardware (KDE bug 485409 is
+still CONFIRMED/unfixed upstream, per the check earlier in this section) did not manifest here.
+Two things remain open before calling this a full GO for Phase 1:
+- **Mechanism unconfirmed.** It's not yet known whether this held because Wine's own
+  `GrabFullscreen`/`GrabPointer` X11-level grab (see the "SOLUTION" section above — a
+  *different* locking path than the `zwp_pointer_constraints_v1` protocol bug 485409 is about)
+  was already applied to the test prefix, or because the native-Wayland surface genuinely
+  doesn't trigger the compositor-side revocation the bug describes. These have different
+  implications: the former means native-Wayland migration is safe **only if** the install/setup
+  flow keeps steering users to the Wine grab fix (tray → "Fix in-game cursor lock"); the latter
+  would mean the bug doesn't apply to this stacking arrangement at all. Follow-up: re-test with
+  a **vanilla Proton prefix (no `GrabFullscreen`/`GrabPointer` set)** to isolate which mechanism
+  is responsible.
+- **Steps 3/5/6/7 not yet confirmed** (stacking above the fullscreen game, lock returning
+  cleanly after chat, portal-granted hotkeys firing, scanout/lag regression). Only the cursor
+  lock (step 4) has been checked so far.
+
+Given the above, treat this as **GO on the critical blocker, not yet a full GO for Phase 1** —
+the automatic-fallback design in Phase 1 should assume the mechanism is Wine-grab-dependent
+(the conservative reading) until the vanilla-prefix retest says otherwise, and stacking/hotkeys
+still need their own hardware confirmation before Phases 2–3 are built out.
+
 ## Decision — two real shippable candidates
 
 Both avoid a patched/nested compositor. The choice is a product trade-off (install ease vs
