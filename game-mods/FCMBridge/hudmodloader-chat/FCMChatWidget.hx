@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.8.6";  // SERVER tab: worldId-scoped server chat right of GENERAL, shown only in-world; join/leave controls (unix-ts fix) + /server slash
+    static inline var VERSION:String  = "2.8.7";  // SERVER tab: worldId-scoped server chat right of GENERAL, shown only in-world; join/leave controls (unix-ts fix) + /server slash
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -1803,6 +1803,7 @@ class FCMChatWidget extends MovieClip {
     function checkWorldId():Void {
         if (_api == null || !_connected) return;
         _worldPollCount++;
+        subscribeRoster();
         if (!_dataInventoryDone && _worldPollCount >= 6) { _dataInventoryDone = true; dumpDataInventory(); }
         var worldId:String = readWorldId();
         if (worldId == _lastWorldId) return;            // no change since last poll
@@ -2081,6 +2082,57 @@ class FCMChatWidget extends MovieClip {
     }
 
     var _worldDiagDone:Bool = false;
+    var _rosterSubscribed:Bool = false;
+    var _rosterLogCount:Int = 0;
+    var _lastRosterLogAt:Float = 0;
+
+    /** Subscribe to PlayerListData — the documented BSUIDataManager pull pattern
+     *  (Subscribe = GetDataFromClient + CHANGE listener; a one-shot Get only reads
+     *  the cache and is empty for providers nothing has subscribed to). The roster
+     *  is the EULA-safe UI-layer source for a server-grouping key. Logs the first
+     *  few updates + every 30s: entry count, first-entry fields, names. */
+    function subscribeRoster():Void {
+        if (_rosterSubscribed) return;
+        var mgr:Dynamic = findBSUI();
+        if (mgr == null) return;
+        try {
+            mgr.Subscribe("PlayerListData", function(evt:Dynamic):Void {
+                try { onRosterChange(evt); } catch (e:Dynamic) {}
+            });
+            _rosterSubscribed = true;
+            zfeLog("info", "roster", "subscribed to PlayerListData");
+        } catch (e:Dynamic) {
+            zfeLog("warn", "roster", "Subscribe threw: " + Std.string(e));
+        }
+    }
+
+    function onRosterChange(evt:Dynamic):Void {
+        var now:Float = flash.Lib.getTimer();
+        var d:Dynamic = null;
+        try { d = evt.data; } catch (e:Dynamic) {}
+        if (d == null) { try { d = evt.target.data; } catch (e:Dynamic) {} }
+        if (d == null) return;
+        // Throttle: first 3 updates, then at most every 30s.
+        if (_rosterLogCount >= 3 && (now - _lastRosterLogAt) < 30000) return;
+        _rosterLogCount++;
+        _lastRosterLogAt = now;
+        var n:Int = 0;
+        try { n = Std.int(d.length); } catch (e:Dynamic) {}
+        if (n > 0) {
+            var f0:Array<String> = [];
+            try { f0 = Reflect.fields(d[0]); } catch (e:Dynamic) {}
+            var names:Array<String> = [];
+            for (i in 0...n) {
+                if (i >= 8) break;
+                try { names.push(Std.string(d[i].characterName)); } catch (e:Dynamic) {}
+            }
+            zfeLog("info", "roster", "PlayerListData len=" + n + " fields=[" + f0.join(",") + "] names=" + names.join(","));
+        } else {
+            var fx:Array<String> = [];
+            try { fx = Reflect.fields(d); } catch (e:Dynamic) {}
+            zfeLog("info", "roster", "PlayerListData update: len=0 fields=[" + fx.join(",") + "]");
+        }
+    }
     var _worldPollCount:Int = 0;
     var _dataInventoryDone:Bool = false;
 
