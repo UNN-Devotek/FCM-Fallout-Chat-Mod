@@ -644,6 +644,20 @@ Implemented on branch `feat/ingame-chatv1-relay` (2026-06-24). Key details for t
 (SWF uptime), or every control message fails the freshness check. `sentUserId` must equal the
 authenticated socket's `userId`, so a caller can only set/clear worldId for their own identity.
 
+**ROSTER-derived rooms (v2 — worldId does not exist).** `AccountInfoData.worldId` was never real
+(the vanilla HUD reads only `worldType`; zero worldId refs in the decompiled game UI). World rooms
+are instead derived from SIGHTINGS: the widget observes nearby character names from the HUD's own
+`TeamMarkers.Markers` / `VoiceChatAreaData.participants` / `PlayerListData` (via `BSUIDataManager.Subscribe`
+— the documented publish pattern; one-shot `GetDataFromClient` reads an empty cache) and sends a signed
+ROSTER control every ~30s while observations are fresh:
+`"\x00fcm.world.roster.v1\x00<relayUserId>|<ts>|<hmac>|<name\x1Fname...>"`, HMAC over
+`"roster|<userId>|<ts>|<namesField>"` (unix-seconds ts, same freshness window). The relay
+(`worldRosterService.ts`) stores per-user rosters (Redis, 120s TTL) and union-finds connected users into
+rooms by sighting edges (A saw B's character name, or vice versa); a user with no edges gets a solo room.
+The computed `roomKey` (`r:<min-member-userId>`) feeds the UNCHANGED #385 room machinery
+(`setWorldId`/rebind/backfill/`server:<key>` Redis room). The JOIN worldId control remains supported for
+a future real world id; LEAVE also clears the roster.
+
 **Server chat routing.** A normal (non-sentinel) `send` on `channel: 'server'` is a **worldId-scoped
 ephemeral room** — it does NOT persist to Postgres and is NOT the Global channel. With a stored
 worldId it runs automod + a flood guard, gets a `relaySeq` cursor, is stored in a capped Redis

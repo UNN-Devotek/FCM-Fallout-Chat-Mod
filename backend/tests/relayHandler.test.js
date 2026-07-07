@@ -35,6 +35,10 @@ const redisMock = {
     _counters[key] = (_counters[key] || 0) + 1;
     return _counters[key];
   }),
+  keys: jest.fn().mockImplementation(async (pattern) => {
+    const prefix = String(pattern).replace(/\*$/, '');
+    return Object.keys(_worldStore).filter((k) => k.startsWith(prefix));
+  }),
   lPush:  jest.fn().mockImplementation(async (key, val) => { (_lists[key] = _lists[key] || []).unshift(val); return _lists[key].length; }),
   lTrim:  jest.fn().mockImplementation(async (key, start, stop) => { if (_lists[key]) _lists[key] = _lists[key].slice(start, stop + 1); return 'OK'; }),
   lRange: jest.fn().mockImplementation(async (key, start, stop) => { const l = _lists[key] || []; return stop === -1 ? l.slice(start) : l.slice(start, stop + 1); }),
@@ -1558,6 +1562,112 @@ describe('server chat (worldId-scoped room)', () => {
     expect(await sendCtrl(a, 'still here')).toMatchObject({ success: true }); // in-world → ok
     await sendLeave(a);
     const res = await sendCtrl(a, 'after leave');
+    expect(res).toMatchObject({ success: false, error: { code: 'invalid_channel' } });
+  });
+});
+
+// ── Roster-derived world rooms ─────────────────────────────────────────────────
+
+describe('roster-derived world rooms', () => {
+  const ROSTER_SENTINEL = '\x00fcm.world.roster.v1\x00';
+  const SECRET = 'fcm-world-v1-dev-placeholder';
+
+  function makeRosterBody(userId, names, offsetS = 0) {
+    const ts = Math.floor(Date.now() / 1000) + offsetS;
+    const namesField = names.join('\x1F');
+    const hmac = crypto.createHmac('sha256', SECRET)
+      .update('roster|' + userId + '|' + ts + '|' + namesField).digest('hex');
+    return ROSTER_SENTINEL + [userId, ts, hmac].join('|') + '|' + namesField;
+  }
+
+  let srv;
+  beforeAll(async () => { srv = await makeServer(); }, 10000);
+  afterAll(async () => { await teardownServer(srv); }, 10000);
+
+  beforeEach(() => {
+    _tokenRows = [];
+    _userMap   = {};
+    Object.keys(_worldStore).forEach((k) => delete _worldStore[k]);
+    Object.keys(_lists).forEach((k) => delete _lists[k]);
+    Object.keys(_counters).forEach((k) => delete _counters[k]);
+    redisMock.incr.mockImplementation(async (key) => {
+      if (key === 'relay:seq' || key === undefined) return ++_redisSeq;
+      _counters[key] = (_counters[key] || 0) + 1;
+      return _counters[key];
+    });
+    const prisma = require('../src/config/prisma').default;
+    prisma.hudPairingToken.create.mockImplementation(async (args) => {
+      const row = { id: `tok-${Date.now()}-${Math.round(_redisSeq)}`, ...args.data, revokedAt: null, lastUsedAt: null };
+      _tokenRows.push(row);
+      return row;
+    });
+    prisma.hudPairingToken.findMany.mockImplementation(async (args) => {
+      const prefix = args?.where?.tokenPrefix;
+      if (!prefix) return [];
+      return _tokenRows
+        .filter((r) => r.tokenPrefix === prefix && !r.revokedAt)
+        .map((r) => ({ ...r, linkedUserId: r.linkedUserId ?? null, user: _userMap[r.linkedUserId] ?? null }));
+    });
+    prisma.user.findUnique.mockImplementation(async (args) => _userMap[args?.where?.id] ?? null);
+    require('../src/services/ingestMessage').ingestMessage.mockResolvedValue({ ok: true, messageId: 'stub' });
+    require('../src/services/autoModEngine').engineEvaluate.mockResolvedValue({ block: false, matches: [] });
+  });
+
+  async function registerAndLink(name, fcmId) {
+    const { ws, msgs } = await connectWs(srv.port);
+    const reg = await waitForMsg(ws, msgs, () => ws.send(JSON.stringify({ op: 'register', displayName: name })));
+    ws.close();
+    _userMap[fcmId] = { id: fcmId, discordId: `d-${fcmId}`, steamId: null, isBanned: false, isMuted: false };
+    markTokensLinked(reg.userId, fcmId);
+    return { token: reg.token, rawId: reg.userId, name };
+  }
+  async function sendRaw(user, body) {
+    const { ws, msgs } = await connectWs(srv.port);
+    const res = await waitForMsg(ws, msgs, () => send(ws, { op: 'send', token: user.token, channel: 'server', body }));
+    ws.close();
+    return res;
+  }
+
+  test('mutual sighting groups users into one room; unsighted user is isolated', async () => {
+    const a = await registerAndLink('RosterAlice', 'fcm-ra');
+    const b = await registerAndLink('RosterBob',   'fcm-rb');
+    const c = await registerAndLink('RosterCarol', 'fcm-rc');
+
+    const { ws: wsA, msgs: msgsA } = await connectWs(srv.port);
+    await waitForMsg(wsA, msgsA, () => send(wsA, { op: 'subscribe', token: a.token, cursor: 0 }));
+    const { ws: wsB, msgs: msgsB } = await connectWs(srv.port);
+    await waitForMsg(wsB, msgsB, () => send(wsB, { op: 'subscribe', token: b.token, cursor: 0 }));
+    const { ws: wsC, msgs: msgsC } = await connectWs(srv.port);
+    await waitForMsg(wsC, msgsC, () => send(wsC, { op: 'subscribe', token: c.token, cursor: 0 }));
+
+    // A reports seeing Bob's character; C reports seeing nobody.
+    expect(await sendRaw(a, makeRosterBody(a.rawId, ['rosterbob']))).toMatchObject({ success: true });
+    expect(await sendRaw(b, makeRosterBody(b.rawId, []))).toMatchObject({ success: true });
+    expect(await sendRaw(c, makeRosterBody(c.rawId, []))).toMatchObject({ success: true });
+
+    const beforeB = msgsB.length; const beforeC = msgsC.length;
+    const res = await sendRaw(a, 'hello same world');
+    expect(res).toMatchObject({ success: true });
+    await new Promise((r) => setTimeout(r, 150));
+
+    const bGot = msgsB.slice(beforeB).some((m) => m.op === 'event' && m.event?.body === 'hello same world');
+    const cGot = msgsC.slice(beforeC).some((m) => m.op === 'event' && m.event?.body === 'hello same world');
+    expect(bGot).toBe(true);   // Bob shares A's roster-derived room
+    expect(cGot).toBe(false);  // Carol is in her own solo room
+
+    // Carol can still use server chat alone (solo room).
+    const solo = await sendRaw(c, 'talking to myself');
+    expect(solo).toMatchObject({ success: true });
+
+    wsA.close(); wsB.close(); wsC.close();
+  });
+
+  test('bad roster HMAC falls through (no room assignment)', async () => {
+    const a = await registerAndLink('RosterEve', 'fcm-re');
+    const ts = Math.floor(Date.now() / 1000);
+    const bad = ROSTER_SENTINEL + [a.rawId, ts, 'f'.repeat(64)].join('|') + '|somebody';
+    const res = await sendRaw(a, bad);
+    // falls through to the normal server path -> no room stored -> invalid_channel
     expect(res).toMatchObject({ success: false, error: { code: 'invalid_channel' } });
   });
 });
