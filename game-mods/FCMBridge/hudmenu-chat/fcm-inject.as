@@ -22,13 +22,28 @@
          this.fcmSelfLoadBridge();
          // Feed worldId + player name to the bridge every 5 s from HUDMenu scope
          // (server chat join/leave rides this — see fcmPollWorldId).
+         // Uses the flash.utils.Timer CLASS (proven under Scaleform/GFx — FCMBridge
+         // uses it throughout). Do NOT use flash.utils.setInterval here: it is a
+         // package-level function outside GFx's AS3 subset and verify-kills fcmInit.
          try
          {
-            flash.utils.setInterval(this.fcmPollWorldId, 5000);
+            this._fcmWorldTimer = new flash.utils.Timer(5000);
+            this._fcmWorldTimer.addEventListener("timer", this.fcmOnWorldTick);
+            this._fcmWorldTimer.start();
          }
          catch(eWt:Error)
          {
-            this.fcmLog("warn","world","setInterval threw: " + eWt.message);
+            this.fcmLog("warn","world","world timer setup threw: " + eWt.message);
+         }
+      }
+
+      // Timer tick — TimerEvent handler shape (evt:*) so no TimerEvent import is needed.
+      public function fcmOnWorldTick(evt:*) : void
+      {
+         try { this.fcmPollWorldId(); }
+         catch(eP:Error)
+         {
+            this.fcmLog("warn","world","fcmPollWorldId threw: " + eP.message);
          }
       }
 

@@ -59,7 +59,8 @@ FIELDS = ('      \n'
           '      public var _fcmIniW:int = 0;\n      \n'
           '      public var _fcmIniH:int = 0;\n      \n'
           '      public var _fcmIniFontSize:int = 0;\n      \n'
-          '      public var _fcmIniOpenKey:String = "";')
+          '      public var _fcmIniOpenKey:String = "";\n      \n'
+          '      public var _fcmWorldTimer:* = null;')
 
 # ---------------------------------------------------------------------------
 # Anchor assertions — all 6 must be present; script exits with a clear error
