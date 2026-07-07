@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.8.1";  // SERVER tab: worldId-scoped server chat right of GENERAL, shown only in-world; join/leave controls (unix-ts fix) + /server slash
+    static inline var VERSION:String  = "2.8.6";  // SERVER tab: worldId-scoped server chat right of GENERAL, shown only in-world; join/leave controls (unix-ts fix) + /server slash
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -171,6 +171,7 @@ class FCMChatWidget extends MovieClip {
     // ── Chat render state ─────────────────────────────────────────────────────
     var _records:Array<{color:String, channel:String, user:String, body:String, ts:String}> = [];
     var _bScrolling:Bool         = false;
+    var _scrollSnapTimer:Timer   = null;   // deferred bottom-snap after htmlText relayout
     var _newWhileScrolled:Int    = 0;
 
     // ── Channel state ─────────────────────────────────────────────────────────
@@ -1122,7 +1123,11 @@ class FCMChatWidget extends MovieClip {
     function forceKeyboardPlatform():Void {
         try {
             var cls:Dynamic = untyped __global__["flash.utils.getDefinitionByName"]("Shared.AS3.Events.PlatformChangeEvent");
-            var ev:Dynamic = untyped __new__(cls, 0, false, 0);
+            // Decompiled ctor: PlatformChangeEvent(auiPlatform:uint, abIsGen9:Boolean,
+            // auiController:uint, auiKeyboard:uint) — FOUR args; the old 3-arg call threw
+            // ArgumentError #1063 on every input-open (keyboard mode never engaged).
+            // 0 = PLATFORM_PC_KB_MOUSE for platform+controller; keyboard 0 = PC_KB_ENG.
+            var ev:Dynamic = untyped __new__(cls, 0, false, 0, 0);
             if (stage != null) {
                 stage.dispatchEvent(ev);
                 zfeLog("info", "input", "forced PC_KB_MOUSE platform (keyboard editing/backspace)");
@@ -1291,6 +1296,9 @@ class FCMChatWidget extends MovieClip {
                         _records.push({ color: hx(_cfg.senderColor), channel: slug, user: _displayName, body: raw, ts: "" });
                         while (_records.length > _cfg.maxMessages) _records.shift();
                         renderRecords();
+                        zfeLog("info", "echo", "pushed+rendered ch=" + slug + " records=" + _records.length);
+                    } else {
+                        zfeLog("warn", "echo", "NOT rendered: slug=" + slug + " active=" + CHAN_SLUGS[_chanIdx]);
                     }
                 }
             } else {
@@ -1578,10 +1586,10 @@ class FCMChatWidget extends MovieClip {
                 if (!_inputOpen) {
                     zfeLog("info", "nativein", "OpenChatKey edge; opening input");
                     openInput();
-                } else {
-                    zfeLog("info", "nativein", "OpenChatKey edge while open; cycling channel");
-                    cycleChannel();
                 }
+                // No cycle-on-second-press: it fired accidentally (key repeat / double-tap
+                // while typing). Channels switch via the clickable tabs, slash commands
+                // (/g /t /e /i /r), NextPage/PrevPage actions, or the F12 menu.
             }
             _lastChatKey = kp;
         } catch (e:Dynamic) {
@@ -1641,6 +1649,7 @@ class FCMChatWidget extends MovieClip {
         expirePendingEchoes();
 
         var newRecords:Bool = false;
+        var parsedCount:Int = 0;   // diagnostic: events seen this poll (logged below)
         var i:Int = evStart;
         while (i < rs.length) {
             var objStart:Int = rs.indexOf('{', i);
@@ -1673,6 +1682,7 @@ class FCMChatWidget extends MovieClip {
 
             // Always advance the cursor, even for skipped/deduped events.
             if (evId > _cursor) _cursor = evId;
+            parsedCount++;
             if (body.length == 0) continue;
 
             // System channel — link handshake. "LINK COMPLETE" means the web redeem finished
@@ -1707,6 +1717,7 @@ class FCMChatWidget extends MovieClip {
             newRecords = true;
         }
 
+        if (parsedCount > 0) zfeLog("info", "recv", "events=" + parsedCount + " cursor=" + _cursor + " newRecords=" + (newRecords ? "y" : "n"));
         if (newRecords) {
             if (_autoHideOn && _hidden) show();   // auto-hide: pop back up on a new message
             renderRecords();
@@ -1791,6 +1802,8 @@ class FCMChatWidget extends MovieClip {
 
     function checkWorldId():Void {
         if (_api == null || !_connected) return;
+        _worldPollCount++;
+        if (!_dataInventoryDone && _worldPollCount >= 6) { _dataInventoryDone = true; dumpDataInventory(); }
         var worldId:String = readWorldId();
         if (worldId == _lastWorldId) return;            // no change since last poll
         var wasInWorld:Bool = _inWorld;
@@ -1894,6 +1907,7 @@ class FCMChatWidget extends MovieClip {
         }
 
         // Authenticated with an empty feed (the unlinked / connecting cases returned above).
+        zfeLog("info", "render", "records=" + _records.length + " shown=" + html.length + " tab=" + CHAN_SLUGS[_chanIdx]);
         if (html.length == 0) {
             setLogText("No messages in " + CHAN_NAMES[_chanIdx] + " yet"); return;
         }
@@ -1907,7 +1921,20 @@ class FCMChatWidget extends MovieClip {
         _logTf.htmlText = html.join("<br/>");
 
         if (!_bScrolling) {
-            try { _logTf.setSelection(_logTf.length, _logTf.length); } catch (e:Dynamic) {}
+            // setSelection() does NOT scroll an unfocused/non-editable TextField in GFx
+            // (the old code here never scrolled at all — only unnoticed while the feed fit
+            // the box). Snap via scrollV, then re-snap one tick later: GFx recalculates
+            // maxScrollV only after the new htmlText is laid out.
+            try { _logTf.scrollV = _logTf.maxScrollV; } catch (e:Dynamic) {}
+            if (_scrollSnapTimer != null) { _scrollSnapTimer.stop(); _scrollSnapTimer = null; }
+            _scrollSnapTimer = new Timer(30, 1);
+            _scrollSnapTimer.addEventListener(TimerEvent.TIMER, function(_) {
+                _scrollSnapTimer = null;
+                if (!_bScrolling && _logTf != null) {
+                    try { _logTf.scrollV = _logTf.maxScrollV; } catch (e:Dynamic) {}
+                }
+            });
+            _scrollSnapTimer.start();
         }
     }
 
@@ -2012,8 +2039,14 @@ class FCMChatWidget extends MovieClip {
     var _bsui:Dynamic = null;
     function findBSUI():Dynamic {
         if (_bsui != null) return _bsui;
-        var names:Array<String> = ["__global__", "root", "parent", "stage", "stageChild"];
+        var names:Array<String> = ["classDef", "__global__", "root", "parent", "stage", "stageChild"];
         var cands:Array<Dynamic> = [];
+        // The manager is the packaged class Shared.AS3.Data.BSUIDataManager (public,
+        // static-style API). In HUDModLoader's shared ApplicationDomain it resolves via
+        // getDefinitionByName — same mechanism that resolves HUDButton/SharedHUDTools.
+        // (Bare lexical lookups and property probes both miss it: it's a class, not an
+        // injected root property.)
+        try { cands.push(untyped __global__["flash.utils.getDefinitionByName"]("Shared.AS3.Data.BSUIDataManager")); } catch (e:Dynamic) { cands.push(null); }
         try { cands.push(untyped __global__["BSUIDataManager"]); } catch (e:Dynamic) { cands.push(null); }
         try { cands.push(untyped root["BSUIDataManager"]); } catch (e:Dynamic) { cands.push(null); }
         try {
@@ -2047,11 +2080,62 @@ class FCMChatWidget extends MovieClip {
         return null;
     }
 
+    var _worldDiagDone:Bool = false;
+    var _worldPollCount:Int = 0;
+    var _dataInventoryDone:Bool = false;
+
+    /** One-shot in-world inventory of candidate BSUIDataManager keys — logs each
+     *  key's field names (+scalar values) so we can find a real server/world
+     *  identifier empirically (AccountInfoData.worldId proved nonexistent;
+     *  the vanilla HUD reads only worldType from it). */
+    function dumpDataInventory():Void {
+        var mgr:Dynamic = findBSUI();
+        if (mgr == null) return;
+        for (key in ["AccountInfoData", "CharacterInfoData", "PlayerListData", "HUDModeData", "MenuStackData"]) {
+            try {
+                var r:Dynamic = mgr.GetDataFromClient(key);
+                if (r == null || r.data == null) { zfeLog("info", "inv", key + ": <no data>"); continue; }
+                var d:Dynamic = r.data;
+                // PlayerListData is an Array of entries — dump count + first entry's fields.
+                var isArr:Bool = false;
+                try { isArr = (d.length != null && d[0] != null); } catch (e:Dynamic) {}
+                if (isArr) {
+                    var n:Int = Std.int(d.length);
+                    var f0:Array<String> = [];
+                    try { f0 = Reflect.fields(d[0]); } catch (e:Dynamic) {}
+                    zfeLog("info", "inv", key + ": array len=" + n + " entryFields=[" + f0.join(",") + "]");
+                } else {
+                    var parts:Array<String> = [];
+                    for (f in Reflect.fields(d)) {
+                        var v:Dynamic = Reflect.field(d, f);
+                        var vs:String = "";
+                        try {
+                            var tn:String = Std.string(v);
+                            vs = (tn.length > 24) ? "<obj>" : tn;
+                        } catch (e:Dynamic) { vs = "<?>"; }
+                        parts.push(f + "=" + vs);
+                    }
+                    zfeLog("info", "inv", key + ": {" + parts.join(" ") + "}");
+                }
+            } catch (e:Dynamic) {
+                zfeLog("warn", "inv", key + " threw: " + Std.string(e));
+            }
+        }
+    }
     function readWorldId():String {
         try {
             var mgr:Dynamic = findBSUI();
             if (mgr == null) return "";
             var a:Dynamic = mgr.GetDataFromClient("AccountInfoData");
+            // One-shot diagnostic: what does AccountInfoData actually carry in-world?
+            if (!_worldDiagDone && a != null && a.data != null) {
+                _worldDiagDone = true;
+                var w:String = "";
+                try { w = (a.data.worldId != null) ? Std.string(a.data.worldId) : "<null>"; } catch (e:Dynamic) { w = "<err>"; }
+                var nm:String = "";
+                try { nm = (a.data.name != null) ? "set" : "<null>"; } catch (e:Dynamic) { nm = "<err>"; }
+                zfeLog("info", "world", "AccountInfoData: worldId=" + w + " name=" + nm);
+            }
             if (a != null && a.data != null && a.data.worldId != null) {
                 var w:String = Std.string(a.data.worldId);
                 if (w.length > 0) return w;
