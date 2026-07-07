@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.8.7";  // SERVER tab: worldId-scoped server chat right of GENERAL, shown only in-world; join/leave controls (unix-ts fix) + /server slash
+    static inline var VERSION:String  = "2.8.8";  // SERVER tab: worldId-scoped server chat right of GENERAL, shown only in-world; join/leave controls (unix-ts fix) + /server slash
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -1232,6 +1232,22 @@ class FCMChatWidget extends MovieClip {
         // Slash-command channel switch: "/g /t /e /i /r" (or ".g" alias).
         // If the whole input IS a slash command (bare or with trailing content),
         // consume it — never let it leak through as a chat message.
+        // The engine EATS leading "/" and "." keystrokes in keyboard-edit mode, so
+        // "/t" reaches us as "t". Treat a bare channel token as the ENTIRE message
+        // as a switch — restores slash-command UX. (Cost: a literal one-word "t"/
+        // "trade" can't be sent as chat; acceptable.)
+        var bare:String = s.toLowerCase();
+        if (bare == "g" || bare == "gen" || bare == "general"
+            || bare == "t" || bare == "trade" || bare == "trading"
+            || bare == "e" || bare == "event" || bare == "events"
+            || bare == "i" || bare == "inf" || bare == "infests"
+            || bare == "r" || bare == "raid" || bare == "raids"
+            || bare == "s" || bare == "server") {
+            if (switchChannelBySlash(bare)) {
+                zfeLog("info", "chan", "bare-token switch: " + bare);
+                return;
+            }
+        }
         if (s.length > 1 && (s.charAt(0) == "/" || s.charAt(0) == ".")) {
             var spaceIdx:Int = s.indexOf(" ");
             var slashCmd:String = (spaceIdx > 0) ? s.substr(1, spaceIdx - 1) : s.substr(1);
@@ -2099,10 +2115,40 @@ class FCMChatWidget extends MovieClip {
             mgr.Subscribe("PlayerListData", function(evt:Dynamic):Void {
                 try { onRosterChange(evt); } catch (e:Dynamic) {}
             });
+            for (k in ["TeamMarkers", "PartyMenuList", "VoiceChatAreaData"]) {
+                var key:String = k;
+                try {
+                    mgr.Subscribe(key, function(evt:Dynamic):Void {
+                        try { onAuxDataChange(key, evt); } catch (e:Dynamic) {}
+                    });
+                } catch (e:Dynamic) {}
+            }
             _rosterSubscribed = true;
-            zfeLog("info", "roster", "subscribed to PlayerListData");
+            zfeLog("info", "roster", "subscribed to PlayerListData + TeamMarkers/PartyMenuList/VoiceChatAreaData");
         } catch (e:Dynamic) {
             zfeLog("warn", "roster", "Subscribe threw: " + Std.string(e));
+        }
+    }
+
+    var _auxLogAt:Float = 0;
+    function onAuxDataChange(key:String, evt:Dynamic):Void {
+        var now:Float = flash.Lib.getTimer();
+        if ((now - _auxLogAt) < 15000) return;
+        _auxLogAt = now;
+        var d:Dynamic = null;
+        try { d = evt.data; } catch (e:Dynamic) {}
+        if (d == null) { try { d = evt.target.data; } catch (e:Dynamic) {} }
+        if (d == null) { zfeLog("info", "roster", key + ": <null>"); return; }
+        var n:Int = 0;
+        try { n = Std.int(d.length); } catch (e:Dynamic) {}
+        if (n > 0) {
+            var f0:Array<String> = [];
+            try { f0 = Reflect.fields(d[0]); } catch (e:Dynamic) {}
+            zfeLog("info", "roster", key + ": array len=" + n + " fields=[" + f0.join(",") + "]");
+        } else {
+            var fx:Array<String> = [];
+            try { fx = Reflect.fields(d); } catch (e:Dynamic) {}
+            zfeLog("info", "roster", key + ": fields=[" + fx.join(",") + "]");
         }
     }
 
