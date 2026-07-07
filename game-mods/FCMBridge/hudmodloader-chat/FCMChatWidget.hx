@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.8.9";  // SERVER tab: worldId-scoped server chat right of GENERAL, shown only in-world; join/leave controls (unix-ts fix) + /server slash
+    static inline var VERSION:String  = "2.8.10";  // SERVER tab: worldId-scoped server chat right of GENERAL, shown only in-world; join/leave controls (unix-ts fix) + /server slash
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -200,6 +200,9 @@ class FCMChatWidget extends MovieClip {
     }
     function stopTypeMirror():Void {
         if (_typeMirrorTimer != null) { _typeMirrorTimer.stop(); _typeMirrorTimer = null; }
+        // Clear the mirrored text — otherwise the last frame (or a stray focused
+        // field's text) stays stuck in the prompt row after the edit session ends.
+        setPrompt(idlePrompt());
     }
     var _newWhileScrolled:Int    = 0;
 
@@ -1753,9 +1756,11 @@ class FCMChatWidget extends MovieClip {
                 continue;
             }
 
-            // Filter to active channel (server channel always passes through).
-            var activeSlug:String = CHAN_SLUGS[_chanIdx];
-            if (channel != activeSlug && channel != "server") continue;
+            // Store ALL known channels (renderRecords filters to the active tab).
+            // The old active-channel ingest filter silently discarded every other
+            // channel's one-shot subscribe backfill — history looked empty on
+            // Trading/Events/Raids/Infests forever after connect.
+            if (CHAN_SLUGS.indexOf(channel) < 0) continue;
 
             _records.push({ color: hx(_cfg.senderColor), channel: channel, user: displayName, body: body, ts: createdAt });
             while (_records.length > _cfg.maxMessages) _records.shift();
