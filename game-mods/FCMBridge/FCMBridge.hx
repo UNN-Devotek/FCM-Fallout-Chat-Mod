@@ -104,6 +104,8 @@ class FCMBridge extends MovieClip {
     var _cursor:Int           = 0;
     // worldId last reported to the relay; send the control message only on change.
     var _lastWorldId:String   = "";
+    // true while the player is in a world (worldId non-empty) — gates the SERVER tab.
+    var _inWorld:Bool         = false;
     // Display name (character name) — read from AccountInfoData on first connect.
     var _displayName:String   = "Wanderer";
 
@@ -145,6 +147,9 @@ class FCMBridge extends MovieClip {
     // Sentinel prefix that the relay uses to recognise a worldId control message.
     // MUST match the relay's intercept check. Never broadcast, never persisted.
     static inline var WORLD_CTRL_PREFIX:String = "\x00fcm.world.v1\x00";
+    // LEAVE control (player left their world). Body:
+    // "\x00fcm.world.leave.v1\x00<relayUserId>|<ts>|<hmac>", hmac over "leave|<userId>|<ts>".
+    static inline var WORLD_LEAVE_PREFIX:String = "\x00fcm.world.leave.v1\x00";
 
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -289,17 +294,23 @@ class FCMBridge extends MovieClip {
     }
 
     /**
-     * Render sub-tab row: GENERAL TRADING EVENTS INFESTS RAIDS
-     * Matches the dashboard ChatOverlay channel order (server tab hidden in HUD).
+     * Channel slug-indices in DISPLAY order. SERVER (slug index 5) is shown
+     * immediately right of GENERAL, but ONLY while the player is in a world.
+     */
+    function tabOrder():Array<Int> {
+        return _inWorld ? [0, 5, 1, 2, 3, 4] : [0, 1, 2, 3, 4];
+    }
+
+    /**
+     * Render sub-tab row: GENERAL [SERVER] TRADING EVENTS INFESTS RAIDS
+     * SERVER appears right of GENERAL only while in a world (worldId-bound room).
      */
     function renderSubTabs():Void {
         if (_subTf == null) return;
-        // Show the first 5 (non-server) channels in the tab strip.
-        var displayNames:Array<String> = ["GENERAL", "TRADING", "EVENTS", "INFESTS", "RAIDS"];
         var html:Array<String> = [];
-        for (i in 0...displayNames.length) {
-            var color = (i == _activeChannelIdx) ? PRIMARY_HEX : INACTIVE_HEX;
-            html.push('<font face="$$MAIN_Font" size="13" color="' + color + '"><b>' + displayNames[i] + '</b></font>');
+        for (si in tabOrder()) {
+            var color = (si == _activeChannelIdx) ? PRIMARY_HEX : INACTIVE_HEX;
+            html.push('<font face="$$MAIN_Font" size="13" color="' + color + '"><b>' + CHANNEL_NAMES[si] + '</b></font>');
         }
         _subTf.htmlText = html.join('<font face="$$MAIN_Font" size="13" color="' + INACTIVE_HEX + '">  </font>');
     }
@@ -362,8 +373,12 @@ class FCMBridge extends MovieClip {
             zfeLog("warn", "startup", "getRuntimeInfo threw: " + Std.string(e));
         }
 
-        // Read the character / account display name for the connect call.
-        _displayName = readDisplayName();
+        // Read the character / account display name for the connect call. Only
+        // overwrite when the SELF-read succeeds: in the standalone build the host
+        // (patched HUDMenu) may already have fed the real name via fcmSetPlayerName,
+        // and the child-SWF read can fail -> "Wanderer" (must not clobber the feed).
+        var selfName:String = readDisplayName();
+        if (selfName != null && selfName.length > 0 && selfName != "Wanderer") _displayName = selfName;
 
         startConnect();
     }
@@ -586,9 +601,10 @@ class FCMBridge extends MovieClip {
                 continue;
             }
 
-            // Filter to active channel (or server channel always shows).
-            var activeSlug:String = CHANNEL_SLUGS[_activeChannelIdx];
-            if (channel != activeSlug && channel != "server") continue;
+            // Store ALL known channels (channel-tagged); renderRecords filters to the
+            // active tab. This replaces the old ingest-time filter (which leaked
+            // 'server' into every tab and lost other channels' history on switch).
+            if (CHANNEL_SLUGS.indexOf(channel) < 0) continue;
 
             // Record format: "slug|displayName|body" (no tildes — safe for htmlText)
             _records.push(channel + "|" + displayName + "|" + body);
@@ -621,13 +637,80 @@ class FCMBridge extends MovieClip {
 
     function checkWorldId():Void {
         if (_api == null || !_connected) return;
-        // Read worldId from BSUIDataManager — the same sanctioned UI-layer data
-        // source the game itself uses for HUD display. EULA §4(F)-safe.
+        // Fallback self-read from BSUIDataManager — the same sanctioned UI-layer
+        // data source the game itself uses for HUD display. EULA §4(F)-safe.
+        // NOTE: in the standalone build the AUTHORITATIVE feed is the patched
+        // HUDMenu calling fcmSetWorldId() (HUDMenu scope, where BSUIDataManager is
+        // guaranteed reachable — a child-SWF read can fail with ReferenceError).
+        // This fallback therefore only ever signals JOIN (non-empty reads): an
+        // empty read here is indistinguishable from "can't read in this scope",
+        // so it must NOT be treated as a world-leave.
         var worldId:String = readWorldId();
-        if (worldId.length == 0 || worldId == _lastWorldId) return;
+        if (worldId.length == 0) return;
+        applyWorldId(worldId);
+    }
+
+    /**
+     * AUTHORITATIVE worldId feed from the patched HUDMenu (fcm-inject.as polls
+     * BSUIDataManager in HUDMenu scope and pushes the value here, the same way
+     * __ZFE is handed over). Empty string = the player LEFT their world.
+     */
+    public function fcmSetWorldId(worldId:String):Void {
+        if (worldId == null) worldId = "";
+        applyWorldId(worldId);
+    }
+
+    /** True while the player is in a world — the patched HUDMenu gates /server on this. */
+    public function fcmInWorld():Bool {
+        return _inWorld;
+    }
+
+    /**
+     * HUDMenu-scope player-name feed (AccountInfoData.name). The bridge's own
+     * child-SWF read can fail (-> "Wanderer"); the host feed fixes the sender name.
+     * Used at (re)connect time — chat.v1.connect passes displayName to the relay.
+     */
+    public function fcmSetPlayerName(name:String):Void {
+        if (name == null) return;
+        name = StringTools.trim(name);
+        if (name.length == 0 || name == _displayName) return;
+        _displayName = name;
+        zfeLog("info", "world", "player name fed from HUDMenu scope");
+        // If we already connected (as the "Wanderer" fallback), re-issue
+        // chat.v1.connect with the corrected name: ZFE reuses its stored token and
+        // re-hellos, and the relay's hello handler updates the identity's fo76Name
+        // (and the linked account's fo76_account_name) — fixing the sender name on
+        // all subsequent messages without a game restart.
+        if (_connected && _api != null) {
+            var payload:String = '{"displayName":"' + jsonEscape(_displayName) + '","autoRegister":true}';
+            try {
+                _api.call("chat.v1.connect", payload);
+                zfeLog("info", "world", "re-connect issued with corrected player name");
+            } catch (e:Dynamic) {
+                zfeLog("warn", "world", "name re-connect threw: " + Std.string(e));
+            }
+        }
+    }
+
+    /** worldId change detection + JOIN/LEAVE control dispatch + SERVER tab gating. */
+    function applyWorldId(worldId:String):Void {
+        if (worldId == _lastWorldId) return;   // no change
+        var wasInWorld:Bool = _inWorld;
         _lastWorldId = worldId;
-        zfeLog("info", "world", "worldId changed; sending control message");
-        sendWorldIdControl(worldId);
+        _inWorld     = (worldId.length > 0);
+        if (_api != null && _connected) {
+            if (_inWorld) {
+                zfeLog("info", "world", "joined world; sending JOIN control");
+                sendWorldIdControl(worldId);
+            } else if (wasInWorld) {
+                zfeLog("info", "world", "left world; sending LEAVE control");
+                sendWorldLeaveControl();
+            }
+        }
+        // SERVER tab appears/disappears with world membership; snap off it on leave.
+        if (!_inWorld && _activeChannelIdx == 5) _activeChannelIdx = 0;
+        renderSubTabs();
+        renderRecords(_records);
     }
 
     function sendWorldIdControl(worldId:String):Void {
@@ -647,6 +730,20 @@ class FCMBridge extends MovieClip {
             _api.call("chat.v1.sendMessage", payload);
         } catch (e:Dynamic) {
             zfeLog("warn", "world", "sendMessage threw: " + Std.string(e));
+        }
+    }
+
+    /** LEAVE control — unbinds this identity from its world room on the relay. */
+    function sendWorldLeaveControl():Void {
+        if (_api == null || !_connected || _relayUserId.length == 0) return;
+        var ts:String = Std.string(Std.int(Date.now().getTime() / 1000));   // unix SECONDS
+        var hmac:String = hmacSha256Hex(WORLD_HMAC_SECRET, "leave|" + _relayUserId + "|" + ts);
+        var body:String = WORLD_LEAVE_PREFIX + _relayUserId + "|" + ts + "|" + hmac;
+        var payload:String = '{"channel":"server","targetUserId":"","body":"' + jsonEscape(body) + '"}';
+        try {
+            _api.call("chat.v1.sendMessage", payload);
+        } catch (e:Dynamic) {
+            zfeLog("warn", "world", "leave sendMessage threw: " + Std.string(e));
         }
     }
 
@@ -688,10 +785,13 @@ class FCMBridge extends MovieClip {
     // =========================================================================
 
     public function fcmSwitchChannelTo(idx:Int):Void {
-        if (idx < 0 || idx >= CHANNEL_SLUGS.length - 1) idx = 0; // don't expose "server" as selectable
+        // SERVER (idx 5) is selectable only while in a world; anything else invalid -> GENERAL.
+        if (idx < 0 || idx > 5 || (idx == 5 && !_inWorld)) idx = 0;
         _activeChannelIdx = idx;
-        _records = []; // clear feed on channel switch
+        // Records are channel-tagged and kept across switches; renderRecords filters
+        // to the active tab (clearing here would discard history the poll already drained).
         renderSubTabs();
+        renderRecords(_records);
         fcmWake();
         zfeLog("info", "chan", "switched to " + CHANNEL_SLUGS[idx]);
     }
@@ -714,15 +814,18 @@ class FCMBridge extends MovieClip {
             lines.push("** " + _pinnedSystemBody + " **");
         }
 
+        // Filter to the ACTIVE channel tab (records are channel-tagged).
+        var activeSlug:String = CHANNEL_SLUGS[_activeChannelIdx];
         for (rec in records) {
             var f = rec.split("|");
             if (f.length < 3) continue;
             var slug:String = f[0];
+            if (slug != activeSlug) continue;
             var name:String = f[1];
             var body:String = f.slice(2).join("|");
             lines.push("[" + slug + "] " + name + ": " + body);
         }
-        if (lines.length == 0) { setText("no messages yet"); return; }
+        if (lines.length == 0) { setText("no messages in " + CHANNEL_NAMES[_activeChannelIdx] + " yet"); return; }
         setText(lines.join("\n"));
         try { _tf.scrollV = _tf.maxScrollV; } catch (e:Dynamic) {}
     }

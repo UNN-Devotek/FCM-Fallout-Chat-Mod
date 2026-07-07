@@ -20,6 +20,16 @@
          // present (HUDModLoader loaded it) before issuing a Loader.load so the SAME
          // HUDMenu.swf works under both the WITH-HUDModLoader and standalone builds.
          this.fcmSelfLoadBridge();
+         // Feed worldId + player name to the bridge every 5 s from HUDMenu scope
+         // (server chat join/leave rides this — see fcmPollWorldId).
+         try
+         {
+            flash.utils.setInterval(this.fcmPollWorldId, 5000);
+         }
+         catch(eWt:Error)
+         {
+            this.fcmLog("warn","world","setInterval threw: " + eWt.message);
+         }
       }
 
       // Pass the __ZFE reference we hold at the HUDMenu (parent) level down to
@@ -200,8 +210,8 @@
          this._fcmChannelSlug = "global";
       }
 
-      // Channel slug table — indices 0-4 map GENERAL/TRADING/EVENTS/INFESTS/RAIDS.
-      // "server" (index 5) is not directly selectable via the tab UI.
+      // Channel slug table — 0-4 map GENERAL/TRADING/EVENTS/INFESTS/RAIDS;
+      // 5 = "server" (the worldId-bound room), selectable ONLY while in a world.
       // Slugs MUST match AllowedChannels in Data/ZFE/TextChat/fragments/FCM.ini.
       public function fcmChannelSlug(idx:int) : String
       {
@@ -209,6 +219,7 @@
          if(idx == 2) { return "events"; }
          if(idx == 3) { return "infests"; }
          if(idx == 4) { return "raids"; }
+         if(idx == 5) { return "server"; }
          return "global";
       }
 
@@ -218,7 +229,51 @@
          if(idx == 2) { return "Events"; }
          if(idx == 3) { return "Infests"; }
          if(idx == 4) { return "Raids"; }
+         if(idx == 5) { return "Server"; }
          return "General";
+      }
+
+      // True while the player is in a world — FCMBridge tracks it off the worldId
+      // this file feeds it (fcmPollWorldId). Gates the SERVER channel (index 5).
+      public function fcmInWorldNow() : Boolean
+      {
+         if(this._fcmBridge == null) { return false; }
+         try { return Boolean(this._fcmBridge.fcmInWorld()); }
+         catch(eIw:Error) {}
+         return false;
+      }
+
+      // Poll worldId + player name from BSUIDataManager IN HUDMENU SCOPE and feed
+      // them to FCMBridge. This is the authoritative read: BSUIDataManager is
+      // guaranteed reachable here (vanilla HUDMenu itself subscribes to it), while
+      // a child-SWF read can fail with ReferenceError (the widget variant proved
+      // this — it always fell back to "Wanderer" and an empty worldId).
+      // Stateless on purpose: FCMBridge dedupes; empty worldId = "left the world".
+      public function fcmPollWorldId() : void
+      {
+         if(this._fcmBridge == null) { return; }
+         var wid:String = "";
+         var pname:String = "";
+         try
+         {
+            var a:* = BSUIDataManager.GetDataFromClient("AccountInfoData");
+            if(a != null && a.data != null)
+            {
+               try { if(a.data.worldId != null) { wid = String(a.data.worldId); } } catch(eW:Error) {}
+               try { if(a.data.name != null) { pname = String(a.data.name); } } catch(eN:Error) {}
+            }
+         }
+         catch(eAcc:Error) {}
+         try { if(pname.length > 0) { this._fcmBridge.fcmSetPlayerName(pname); } } catch(eSetN:Error) {}
+         try { this._fcmBridge.fcmSetWorldId(wid); } catch(eSetW:Error) {}
+         // If we left the world while the SERVER tab was active, fall back to GENERAL
+         // (the bridge already snapped its own index; keep this side in sync).
+         if(wid.length == 0 && this._fcmChannelIdx == 5)
+         {
+            this._fcmChannelIdx = 0;
+            this._fcmChannelSlug = "global";
+            this.fcmPublishChannel();
+         }
       }
 
       // Switch the active channel and notify FCMBridge.
@@ -252,11 +307,16 @@
          this.fcmLog("info","chan","channel=" + name + " slug=" + this._fcmChannelSlug);
       }
 
-      // Cycle the active channel: General -> Trading -> Events -> Infests -> Raids -> General.
+      // Cycle the active channel in DISPLAY order. In a world, SERVER sits right
+      // of GENERAL: General -> Server -> Trading -> Events -> Infests -> Raids.
+      // Out of a world SERVER is skipped entirely.
       // Triggered by the NextPage control-map action (Page Down key — dead in FO76 HUD).
       public function fcmSwitchChannel() : void
       {
-         this._fcmChannelIdx = (this._fcmChannelIdx + 1) % 5;
+         var order:Array = this.fcmInWorldNow() ? [0,5,1,2,3,4] : [0,1,2,3,4];
+         var pos:int = order.indexOf(this._fcmChannelIdx);
+         if(pos < 0) { pos = 0; }
+         this._fcmChannelIdx = int(order[(pos + 1) % order.length]);
          this._fcmChannelSlug = this.fcmChannelSlug(this._fcmChannelIdx);
          this.fcmPublishChannel();
       }
@@ -500,6 +560,14 @@
          else if(tok == "/events"  || tok == "/event" || tok == "/e")    { slashTarget = 2; }
          else if(tok == "/infests" || tok == "/infest" || tok == "/inf" || tok == "/i") { slashTarget = 3; }
          else if(tok == "/raids"   || tok == "/raid"  || tok == "/r")    { slashTarget = 4; }
+         else if(tok == "/server"  || tok == "/s")                       { slashTarget = 5; }
+         // SERVER exists only while in a world — refuse the switch (consume the input).
+         if(slashTarget == 5 && !this.fcmInWorldNow())
+         {
+            this.fcmLog("info","chan","/server refused — not in a world");
+            this.fcmShowAuthHint("Server chat is only available while in a world");
+            return;
+         }
          if(slashTarget >= 0)
          {
             this._fcmChannelIdx  = slashTarget;

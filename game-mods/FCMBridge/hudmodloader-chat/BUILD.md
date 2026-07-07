@@ -360,6 +360,14 @@ so a hot-reload button is available without restarting.
 
 ## Known gaps / follow-ups
 
+- **BSUIDataManager is UNREACHABLE from this widget (worldId / displayName) — server chat
+  does NOT work in the widget variant.** The widget is a child SWF in HUDModLoader's
+  ApplicationDomain, where `BSUIDataManager.GetDataFromClient` fails (same scope problem as
+  the v2.1.x `ReferenceError #1065`). Confirmed empirically 2026-07-06: every session connects
+  as the "Wanderer" fallback and no worldId read ever succeeds, so the SERVER tab (v2.8.0)
+  never activates here. **The standalone track (`FCMBridge.hx` + patched HUDMenu) is the
+  server-chat surface** — its `fcm-inject.as` polls BSUIDataManager in HUDMenu scope (where
+  vanilla HUDMenu itself uses it) and feeds worldId + player name to the bridge.
 - **Real displayName / worldId.** BSUIDataManager reads are attempted but fall back to
   "Wanderer" / empty if AccountInfoData is not available at connect time. This is a
   timing issue (widget loads before player is fully in-world). The connect-time fallback
