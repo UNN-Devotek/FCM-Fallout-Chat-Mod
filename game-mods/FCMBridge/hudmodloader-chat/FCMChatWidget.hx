@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.8.0";  // SERVER tab: worldId-scoped server chat right of GENERAL, shown only in-world; join/leave controls (unix-ts fix) + /server slash
+    static inline var VERSION:String  = "2.8.1";  // SERVER tab: worldId-scoped server chat right of GENERAL, shown only in-world; join/leave controls (unix-ts fix) + /server slash
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -1993,7 +1993,9 @@ class FCMChatWidget extends MovieClip {
     // Callers must treat "" as "not ready yet" and keep waiting, not as a name.
     function readDisplayName():String {
         try {
-            var a:Dynamic = untyped __global__["BSUIDataManager"].GetDataFromClient("AccountInfoData");
+            var mgr:Dynamic = findBSUI();
+            if (mgr == null) return "";
+            var a:Dynamic = mgr.GetDataFromClient("AccountInfoData");
             if (a != null && a.data != null && a.data.name != null) {
                 var n:String = Std.string(a.data.name);
                 if (n.length > 0) return jsonEscape(n.substr(0, 64));
@@ -2002,9 +2004,54 @@ class FCMChatWidget extends MovieClip {
         return "";
     }
 
+    // BSUIDataManager discovery — the engine injects it as a PROPERTY on the HUD
+    // movie root (not a lexical global in the widget's domain — the v2.1.x
+    // ReferenceError #1065 and the 2.8.0 "Wanderer" fallback were both lexical
+    // lookups). Probe property scopes like the ZFECodeObj fix: global, root,
+    // parent chain, stage, stage children. Cached after first hit; logs the scope.
+    var _bsui:Dynamic = null;
+    function findBSUI():Dynamic {
+        if (_bsui != null) return _bsui;
+        var names:Array<String> = ["__global__", "root", "parent", "stage", "stageChild"];
+        var cands:Array<Dynamic> = [];
+        try { cands.push(untyped __global__["BSUIDataManager"]); } catch (e:Dynamic) { cands.push(null); }
+        try { cands.push(untyped root["BSUIDataManager"]); } catch (e:Dynamic) { cands.push(null); }
+        try {
+            var pr:Dynamic = null;
+            var p:Dynamic = parent;
+            while (p != null && pr == null) {
+                try { pr = untyped p["BSUIDataManager"]; } catch (e:Dynamic) {}
+                p = p.parent;
+            }
+            cands.push(pr);
+        } catch (e:Dynamic) { cands.push(null); }
+        try { cands.push(untyped stage["BSUIDataManager"]); } catch (e:Dynamic) { cands.push(null); }
+        try {
+            var hit:Dynamic = null;
+            if (stage != null) for (i in 0...(stage.numChildren : Int)) {
+                try {
+                    var c:Dynamic = stage.getChildAt(i);
+                    var b:Dynamic = untyped c["BSUIDataManager"];
+                    if (b != null) { hit = b; break; }
+                } catch (e:Dynamic) {}
+            }
+            cands.push(hit);
+        } catch (e:Dynamic) { cands.push(null); }
+        for (k in 0...cands.length) {
+            if (cands[k] != null) {
+                _bsui = cands[k];
+                zfeLog("info", "world", "BSUIDataManager found via " + names[k]);
+                return _bsui;
+            }
+        }
+        return null;
+    }
+
     function readWorldId():String {
         try {
-            var a:Dynamic = untyped __global__["BSUIDataManager"].GetDataFromClient("AccountInfoData");
+            var mgr:Dynamic = findBSUI();
+            if (mgr == null) return "";
+            var a:Dynamic = mgr.GetDataFromClient("AccountInfoData");
             if (a != null && a.data != null && a.data.worldId != null) {
                 var w:String = Std.string(a.data.worldId);
                 if (w.length > 0) return w;
