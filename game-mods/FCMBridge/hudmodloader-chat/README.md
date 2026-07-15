@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-07-15):** v2.9.1 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-07-15):** v2.9.2 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -38,10 +38,13 @@ Text entry uses ZFE's **native chat-input API** — **top-level / bare** ZFE com
 | `consumeChatInputSubmitted` | `"{}"` | bool | `true` = Enter pressed (NOT the text) |
 | `clearChatInput` | `"{}"` | `true` | reset the buffer |
 
-The flow is **open → read → consume → send → clear → deactivate**: `setChatInputActive("true")`,
+The flow is **open → lock game input → read → consume → send → clear → deactivate → unlock**:
+`setChatInputActive("true")`,
 poll `readChatInput` (show in-progress) + `consumeChatInputSubmitted` (Enter) + `isChatInputActive`
 (Esc), on submit `chat.v1.sendMessage` the `readChatInput` text, then `clearChatInput("{}")` +
-`setChatInputActive("false")`. `sendMessage` is the one command that stays `chat.v1.`-prefixed —
+`setChatInputActive("false")`. The native path proceeds only when it can dispatch the engine's
+balanced `ControlMap::StartEditText` / `EndEditText` pair; otherwise it closes the native session
+and uses HUDModLoader's `SharedHUDTools.TextEdit` fallback. `sendMessage` is the one command that stays `chat.v1.`-prefixed —
 called bare it hits the legacy bridge and returns literal `false`. A low-rate `isChatKeyPressed`
 edge poll opens chat on INSERT. Full contract: [BUILD.md](BUILD.md).
 
@@ -78,7 +81,11 @@ absent, the widget degrades to receive-only and shows an explanatory prompt.
 
 The channel-tab row is one static text strip. It must not create HUDButton instances:
 HUDButton labels share the same coordinates and would overlap the strip. Switch channels using
-the configured control-map actions or slash commands.
+the configured control-map actions or slash commands. `SERVER` appears only after the relay
+acknowledges the player's roster/world binding; observing nearby players alone never enables it.
+While input is open, forwarded `NextPage` / `PrevPage` actions switch channels without closing
+the input or clearing the draft; verify the active loader forwards those actions during the edit
+lock in the in-game acceptance checklist.
 
 ### isReloadable
 

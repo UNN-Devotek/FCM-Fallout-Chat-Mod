@@ -15,6 +15,14 @@ const {
   switchChannelBySlash,
   tabOrder,
   isChannelSelectable,
+  serverSessionResult,
+  serverSendDecision,
+  shouldSendRosterControl,
+  nativeLockAdmission,
+  nativeLockRelease,
+  shouldRebindWorldId,
+  shouldIgnoreBlankWorldId,
+  inputChannelAction,
   parseInputSubmit,
   emptyFeedNotice,
   chatVerbFailed,
@@ -169,15 +177,15 @@ describe('switchChannelBySlash', () => {
   });
 });
 
-describe('tabOrder (SERVER tab display order + in-world gating)', () => {
-  it('out of a world → 5 community channels, no SERVER', () => {
+describe('tabOrder (SERVER tab display order + relay-session gating)', () => {
+  it('before the relay accepts a server control → 5 community channels, no SERVER', () => {
     expect(tabOrder(false)).toEqual([0, 1, 2, 3, 4]);
   });
-  it('in a world → SERVER (5) sits immediately right of GENERAL (0)', () => {
+  it('after a server control is acknowledged → SERVER (5) sits immediately right of GENERAL (0)', () => {
     expect(tabOrder(true)).toEqual([0, 5, 1, 2, 3, 4]);
     expect(tabOrder(true)[1]).toBe(5); // right of GENERAL
   });
-  it('SERVER is selectable only while in a world', () => {
+  it('SERVER is selectable only after a relay session is ready', () => {
     expect(isChannelSelectable(5, true)).toBe(true);
     expect(isChannelSelectable(5, false)).toBe(false);
   });
@@ -187,11 +195,91 @@ describe('tabOrder (SERVER tab display order + in-world gating)', () => {
       expect(isChannelSelectable(idx, true)).toBe(true);
     }
   });
-  it('/server resolves to the SERVER slug index but is gated by in-world', () => {
+  it('/server resolves to the SERVER slug index but is gated by relay readiness', () => {
     const idx = switchChannelBySlash('server');
     expect(idx).toBe(5);
     expect(isChannelSelectable(idx, false)).toBe(false); // ignored out of a world
     expect(isChannelSelectable(idx, true)).toBe(true);
+  });
+});
+
+describe('server-room acknowledgement gating', () => {
+  it('keeps SERVER hidden when the relay rejects a roster/world control', () => {
+    const state = serverSessionResult('{"success":false,"error":{"code":"invalid_channel","message":"Message channel is not supported by the relay"}}');
+    expect(state).toEqual({ ready: false, error: 'Message channel is not supported by the relay' });
+    expect(tabOrder(state.ready)).toEqual([0, 1, 2, 3, 4]);
+  });
+  it('enables SERVER only after a successful control acknowledgement', () => {
+    const state = serverSessionResult('{"success":true,"messageId":""}');
+    expect(state).toEqual({ ready: true, error: '' });
+    expect(isChannelSelectable(5, state.ready)).toBe(true);
+  });
+  it('clears readiness after a successful leave control', () => {
+    expect(serverSessionResult('{"success":true,"messageId":""}', false)).toEqual({ ready: false, error: '' });
+  });
+  it('blocks an ordinary SERVER send until bind succeeds with an actionable message', () => {
+    expect(serverSendDecision(false, '')).toEqual({ send: false, text: 'Server chat is initializing...' });
+    expect(serverSendDecision(false, 'relay unavailable')).toEqual({ send: false, text: 'Server chat is unavailable: relay unavailable' });
+    expect(serverSendDecision(true, '')).toEqual({ send: true, text: '' });
+  });
+  it('binds a valid solo/empty roster and rebinds immediately after reconnect', () => {
+    expect(shouldSendRosterControl({
+      rosterObserved: true, serverSessionReady: false, now: 5_000, lastSentAt: 4_000,
+      lastSentNames: '', names: [],
+    })).toBe(true);
+    expect(shouldSendRosterControl({
+      rosterObserved: true, serverSessionReady: true, now: 5_000, lastSentAt: 4_000,
+      lastSentNames: '', names: [],
+    })).toBe(false);
+    expect(shouldSendRosterControl({
+      rosterObserved: false, serverSessionReady: false, now: 5_000, lastSentAt: 0,
+      lastSentNames: '', names: [],
+    })).toBe(false);
+  });
+  it('forces the legacy worldId fallback to rebind after reconnect', () => {
+    expect(shouldRebindWorldId('', 'world-42')).toBe(true);
+    expect(shouldRebindWorldId('world-42', 'world-42')).toBe(false);
+  });
+  it('keeps a fresh roster-derived room when the legacy worldId becomes blank', () => {
+    expect(shouldIgnoreBlankWorldId({
+      lastWorldId: 'legacy-world', currentWorldId: '', freshRosterObservation: true,
+    })).toBe(true);
+    expect(shouldIgnoreBlankWorldId({
+      lastWorldId: 'legacy-world', currentWorldId: '', freshRosterObservation: false,
+    })).toBe(false);
+  });
+});
+
+describe('native input requires a balanced game-input lock', () => {
+  it('opens native input only when activation and StartEditText both succeed', () => {
+    expect(nativeLockAdmission(true, true)).toEqual({ nativeOpen: true, fallback: false, deactivate: false, ownsLock: true });
+  });
+  it('closes the half-open native session and falls back when StartEditText fails', () => {
+    expect(nativeLockAdmission(true, false)).toEqual({ nativeOpen: false, fallback: true, deactivate: true, ownsLock: false });
+  });
+  it('falls back without deactivation when native activation itself fails', () => {
+    expect(nativeLockAdmission(false, false)).toEqual({ nativeOpen: false, fallback: true, deactivate: false, ownsLock: false });
+  });
+  it('emits EndEditText exactly once only for a lock owned by this widget', () => {
+    expect(nativeLockRelease(true)).toEqual({ dispatchEndEditText: true, ownsLockAfter: false, retry: false });
+    expect(nativeLockRelease(false)).toEqual({ dispatchEndEditText: false, ownsLockAfter: false, retry: false });
+  });
+  it('retains lock ownership and schedules recovery when EndEditText fails', () => {
+    expect(nativeLockRelease(true, false)).toEqual({ dispatchEndEditText: true, ownsLockAfter: true, retry: true });
+    // A later successful retry is the only transition that clears ownership.
+    expect(nativeLockRelease(true, true)).toEqual({ dispatchEndEditText: true, ownsLockAfter: false, retry: false });
+  });
+});
+
+describe('in-session channel actions', () => {
+  const base = { inputOpen: true, isKeyDown: false, nextAction: 'NextPage', prevAction: 'PrevPage' };
+  it('cycles next/previous while keeping the input session open', () => {
+    expect(inputChannelAction({ ...base, action: 'NextPage' })).toBe('next');
+    expect(inputChannelAction({ ...base, action: 'PrevPage' })).toBe('prev');
+  });
+  it('ignores key-down and closed-input actions, preserving the draft/session', () => {
+    expect(inputChannelAction({ ...base, isKeyDown: true, action: 'NextPage' })).toBe('none');
+    expect(inputChannelAction({ ...base, inputOpen: false, action: 'NextPage' })).toBe('none');
   });
 });
 

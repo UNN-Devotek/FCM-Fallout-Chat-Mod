@@ -309,6 +309,23 @@ if widget_src:
           "FCMChatWidget does not ship a forgeable relay-control HMAC secret")
     check("jsonObjectEnd" in widget_src,
           "FCMChatWidget uses string-aware JSON object boundaries")
+    check("findBSUI()" in widget_src,
+          "FCMChatWidget resolves BSUIDataManager through the HUDModLoader-safe finder")
+    check("_editTextLockOwned" in widget_src,
+          "FCMChatWidget tracks ownership of the game-input edit lock")
+    check("if (!start && !_editTextLockOwned)" in widget_src,
+          "FCMChatWidget never sends EndEditText without owning StartEditText")
+    check("function releaseEditTextLock" in widget_src
+          and "if (_editTextLockOwned) releaseEditTextLock()" in widget_src,
+          "FCMChatWidget retries a failed EndEditText until the owned lock is released")
+    check("action == _cfg.channelNextKey" in widget_src
+          and "action == _cfg.channelPrevKey" in widget_src,
+          "FCMChatWidget handles configured next/previous actions while input is open")
+    check("applyServerControlResult" in widget_src
+          and "_serverSessionReady" in widget_src,
+          "FCMChatWidget gates SERVER on an acknowledged relay control")
+    check("blank worldId ignored; fresh roster session remains authoritative" in widget_src,
+          "FCMChatWidget keeps a fresh roster room when legacy worldId is blank")
 
 try:
     widget_ini_src = open(WIDGET_INI, encoding="utf-8").read()

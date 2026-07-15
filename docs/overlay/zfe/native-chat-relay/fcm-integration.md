@@ -75,6 +75,14 @@ messages are delivered only to subscribers bound to the same current room.
 The roster scan uses Redis `SCAN`, not `KEYS`, caps active roster processing, and
 normalizes input lengths before it participates in room calculation.
 
+The widget treats the relay response to a roster/world control as the membership
+acknowledgement. It does not expose or send to the `server` tab merely because
+the game HUD reports nearby players: it waits for `{ "success": true }`. A
+rejected control keeps `server` unavailable, records the relay error, and retries
+on the normal world timer. An empty but received roster is valid for a solo world,
+so it is also acknowledged and bound. This prevents a stale or mismatched relay deployment
+from presenting a selectable but unusable Server channel.
+
 ## Widget resilience rules
 
 The widget performs low-rate cursor polling. Three consecutive poll failures

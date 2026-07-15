@@ -13,7 +13,7 @@ read game memory, inject code, alter game state, or scan local ports/networks.
 The widget's community tabs are deliberately a **single static text strip**. They
 are navigated with the configured control-map actions and slash commands; do not
 add HUDButton instances over that strip. Doing so creates the overlapping labels
-that v2.9.1 removes.
+that v2.9.2 removes.
 
 The `SERVER` room uses an authenticated relay session. The widget sends a bounded
 nearby-player roster control from HUD UI data; the backend derives a short-lived
@@ -61,7 +61,9 @@ Endpoint=wss://dev.falloutchatmod.com/relay
 
 The included `FCMChat.ini` controls position, colors, size, polling cadence and
 key bindings. Its open-key setting is separate from ZFE's authoritative
-`OpenChatKey`; keep both settings aligned.
+`OpenChatKey`; keep both settings aligned. ZFE reads Text Chat fragments at game
+startup, so restart Fallout 76 after replacing the BA2 or fragment; hot-reloading
+the widget cannot reload native relay configuration.
 
 ## Build the archive
 
@@ -116,13 +118,16 @@ leave the flag off and do not distribute a production-configured build.
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.9.1`.
+1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.9.2`.
 2. The tab row contains one label for each visible channel—no boxed duplicate labels.
 3. Switch channels, join/leave a world, and switch again; the tab row remains single-rendered.
 4. Send a body containing `{`, `}`, quotes, and backslashes; later events still render.
 5. Temporarily disconnect the relay. After three failed polls the widget shows reconnecting,
    then reconnects once the relay returns.
-6. Confirm `SERVER` remains isolated to its derived room and static channels still work.
+6. Confirm `SERVER` remains hidden until the relay acknowledges the roster/world control,
+   then remains isolated to its derived room while static channels still work.
+7. While typing, confirm game movement/actions are locked; Page Down/Page Up switch channels
+   without closing the input or losing its draft; Enter/Esc restore game input.
 
 Do not copy the new BA2 into a live game installation or publish it until these
 checks have passed on the intended environment.

@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.9.1";  // static tab lifecycle + resilient poll/parser + authenticated server-room controls
+    static inline var VERSION:String  = "2.9.2";  // acknowledged server rooms + balanced native input lock
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -237,7 +237,12 @@ class FCMChatWidget extends MovieClip {
     var _connectTimer:Timer      = null;
     var _worldTimer:Timer        = null;
     var _lastWorldId:String      = "";
-    var _inWorld:Bool            = false;  // true while worldId is non-empty (SERVER tab visible)
+    // Observation and relay membership are deliberately separate. Nearby-player HUD data only
+    // means a server-room bind *can* be requested; SERVER becomes selectable only after the
+    // relay acknowledges that request.
+    var _inWorld:Bool            = false;
+    var _serverSessionReady:Bool = false;
+    var _serverSessionError:String = "";
 
     // ── ZFE search retry ──────────────────────────────────────────────────────
     var _zfeSearchTimer:Timer    = null;
@@ -254,6 +259,11 @@ class FCMChatWidget extends MovieClip {
 
     // ── Input state ───────────────────────────────────────────────────────────
     var _inputOpen:Bool          = false;
+    // True only after this widget successfully dispatched StartEditText. It prevents an
+    // unmatched EndEditText from releasing a different HUD editor and lets release retry if
+    // the HUD domain briefly rejects the first EndEditText dispatch.
+    var _editTextLockOwned:Bool  = false;
+    var _editTextUnlockRetry:flash.utils.Timer = null;
     // v2.5.3: DECODED native chat-input API — bare-value payloads ("true"/"false"),
     // consume=boolean, text from readChatInput. Native is the primary path when usable.
     var _nativeInput:Bool        = false;          // true while a native session owns input
@@ -434,11 +444,11 @@ class FCMChatWidget extends MovieClip {
 
     /**
      * Channel slug-indices in DISPLAY order. SERVER (slug index 5) is shown
-     * immediately to the right of GENERAL (0), but ONLY while the player is in a
-     * world (_inWorld). Out of a world it collapses back to the 5 community channels.
+     * immediately to the right of GENERAL (0), but ONLY after the relay has accepted this
+     * player's server-room control. Nearby-player observations alone are not membership.
      */
     function tabOrder():Array<Int> {
-        return _inWorld ? [0, 5, 1, 2, 3, 4] : [0, 1, 2, 3, 4];
+        return _serverSessionReady ? [0, 5, 1, 2, 3, 4] : [0, 1, 2, 3, 4];
     }
 
     function renderMainTabs():Void {
@@ -607,8 +617,9 @@ class FCMChatWidget extends MovieClip {
      * (INSERT, Page Up/Down, Delete, …) to "Unmapped" with no key info, so this path is reliable
      * ONLY for real named actions. It is just a secondary open-chat trigger for when OpenChatKey
      * is a real action (Console / TeamChat). The primary open AND the channel cycle run off the
-     * native isChatKeyPressed poll (pollOpenKey); channel jumps are slash commands (/g /t /e /i /r);
-     * hide is /hide. event.EventName (String), event.IsKeyDown (Boolean) per HUDModUserEvent.as.
+     * native isChatKeyPressed poll (pollOpenKey); channel jumps are slash commands or the
+     * configured NextPage/PrevPage actions. event.EventName (String), event.IsKeyDown (Boolean)
+     * per HUDModUserEvent.as.
      */
     function onUserEvent(e:Dynamic):Void {
         var action:String = "";
@@ -616,6 +627,13 @@ class FCMChatWidget extends MovieClip {
         try { action = Std.string(e.EventName); }  catch (_:Dynamic) {}
         try { isDown = (e.IsKeyDown == true); }    catch (_:Dynamic) {}
         if (isDown) return;
+
+        // Keep the active input session and its buffer intact while changing the destination
+        // channel. This is the HUDModLoader equivalent of the legacy Text Chat mod's Tab switch.
+        if (_inputOpen) {
+            if (action == _cfg.channelNextKey) { cycleChannel(); return; }
+            if (action == _cfg.channelPrevKey) { cyclePrev(); return; }
+        }
 
         // Open only on a real action used as the open key (never on "Unmapped", which would
         // open on ANY unbound key). INSERT etc. open via the native poll, not here.
@@ -787,9 +805,9 @@ class FCMChatWidget extends MovieClip {
         else if (cmd == "r" || cmd == "raid"    || cmd == "raids")    idx = 4;
         else if (cmd == "s" || cmd == "server")                      idx = 5;
         if (idx < 0) return false;
-        if (idx == 5 && !_inWorld) {
-            // SERVER only exists while in a world; ignore /server out of a world.
-            zfeLog("info", "chan", "/server ignored — not in a world");
+        if (idx == 5 && !_serverSessionReady) {
+            // SERVER only exists after the relay accepted a current room binding.
+            zfeLog("info", "chan", "/server ignored — session not ready");
             return true;
         }
         selectChannel(idx);
@@ -907,21 +925,24 @@ class FCMChatWidget extends MovieClip {
 
     function openInput():Void {
         if (_inputOpen) return;
+        // If a previous EndEditText is still being retried, do not start another editor on
+        // top of a possibly locked game control map. The retry is short and self-clearing.
+        if (_editTextLockOwned) {
+            setPrompt("Restoring game input...");
+            zfeLog("warn", "input", "open blocked while EndEditText is pending");
+            return;
+        }
         // The open key both restores a hidden panel AND opens input (CAP-011, guaranteed).
         if (_hidden) show();
         bumpAutoHide();   // opening input = activity (the timer also never hides while input is open)
-        // PRIMARY: SharedHUDTools text-entry. HUDModLoader's HUDTools dispatches the engine's
-        // StartEditText/EndEditText (in the correct domain), so it LOCKS OUT the game's own keys
-        // while typing. The ZFE native input only captures text — it cannot block the engine
-        // (our own CustomEvent dispatch fails from the overlay domain, #1065, so WASD leaks into
-        // the field). Native is therefore a last-resort, no-lock fallback only.
-        // NATIVE FIRST: HUDTools' keyboard-edit path double-inserts characters and
+        // NATIVE FIRST, but only with a verified ControlMap edit-text lock. HUDTools' keyboard-edit path double-inserts characters and
         // renders only the last typed letter under Proton/Steam Input (live-verified;
         // the 4-arg PlatformChangeEvent fix engaged KB mode but its editing is broken).
         // ZFE's native input session captures cleanly (per-char reads, proven in June
         // logs) and our prompt row displays the in-progress text. SharedHUDTools stays
         // as the fallback. Trade-off to verify in-game: the native session may not
-        // lock the game's own keys while typing.
+        // lock the game's own keys while typing, so a native session falls back to HUDTools if
+        // StartEditText cannot be dispatched in the engine domain.
         if (_nativeInputUsable) {
             openInputNative();
             if (_inputOpen) return;
@@ -953,23 +974,50 @@ class FCMChatWidget extends MovieClip {
      * surface we already read for worldId — EULA §4(F)-safe). Best-effort + fully guarded: if the
      * class/dispatch isn't available it logs and continues (no worse than today).
      */
-    function dispatchEditText(start:Bool):Void {
+    function dispatchEditText(start:Bool):Bool {
         var type:String = start ? "ControlMap::StartEditText" : "ControlMap::EndEditText";
+        if (!start && !_editTextLockOwned) return true;
         try {
-            var bsui:Dynamic = untyped __global__["BSUIDataManager"];
-            if (bsui == null) { zfeLog("warn", "input", "BSUIDataManager null; cannot " + type); return; }
-            var ev:Dynamic;
+            // HUDModLoader widgets do not resolve the manager from __global__; findBSUI()
+            // discovers Shared.AS3.Data.BSUIDataManager in the engine domain.
+            var bsui:Dynamic = findBSUI();
+            if (bsui == null) { zfeLog("warn", "input", "BSUIDataManager null; cannot " + type); return false; }
+            var ev:Dynamic = null;
             try {
                 var ceCls:Dynamic = untyped __global__["flash.utils.getDefinitionByName"]("CustomEvent");
-                ev = untyped __new__(ceCls, type, { tag: "Chat" });
+                if (ceCls != null) ev = untyped __new__(ceCls, type, { tag: "Chat" });
             } catch (ce:Dynamic) {
-                ev = new flash.events.Event(type);   // fallback: engine may key off event.type alone
+                zfeLog("warn", "input", "CustomEvent unavailable; cannot " + type);
             }
+            // The engine's ControlMap contract requires the legacy CustomEvent payload
+            // (`{tag:"Chat"}`). A generic Event is not evidence that game input was locked.
+            if (ev == null) return false;
             bsui.dispatchEvent(ev);
+            if (start) _editTextLockOwned = true;
+            else _editTextLockOwned = false;
             zfeLog("info", "input", type + " dispatched (game input " + (start ? "suspended" : "restored") + ")");
+            return true;
         } catch (e:Dynamic) {
             zfeLog("warn", "input", type + " dispatch threw: " + Std.string(e));
+            return false;
         }
+    }
+
+    /**
+     * Release only this widget's edit lock. A HUD-domain transition can reject an End event for
+     * a frame; keep retrying with a small delay until it is accepted rather than abandoning the
+     * ownership flag and leaving the game control map locked.
+     */
+    function releaseEditTextLock():Void {
+        if (!_editTextLockOwned) return;
+        if (dispatchEditText(false) || !_editTextLockOwned) return;
+        if (_editTextUnlockRetry != null) { _editTextUnlockRetry.stop(); _editTextUnlockRetry = null; }
+        _editTextUnlockRetry = new flash.utils.Timer(250, 1);
+        _editTextUnlockRetry.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
+            _editTextUnlockRetry = null;
+            if (_editTextLockOwned) releaseEditTextLock();
+        });
+        _editTextUnlockRetry.start();
     }
 
     function openInputNative():Bool {
@@ -989,15 +1037,23 @@ class FCMChatWidget extends MovieClip {
             return false;
         }
 
+        // The user requirement is strict: do not accept a native input session unless the
+        // corresponding engine edit lock was acquired. If that lock is unavailable, close the
+        // half-open native session and use SharedHUDTools, which owns this lifecycle itself.
+        if (!dispatchEditText(true)) {
+            var clearRaw:String = callTop("clearChatInput", "{}");
+            var closeRaw:String = callTop("setChatInputActive", "false");
+            zfeLog("warn", "nativein", "game-input lock unavailable; native closed clear="
+                + clip200(clearRaw) + " deactivate=" + clip200(closeRaw));
+            return false;
+        }
+
         _inputOpen   = true;
         _nativeInput = true;
         _inProgress  = "";
         _lastReadRaw = "";
         setPrompt(typingPrompt());
         zfeLog("info", "input path", "native-chat-input");
-        // Lock out the game's own keys while typing (ZFE captures text but doesn't block the engine).
-        dispatchEditText(true);
-
         if (_inputTimer != null) { _inputTimer.stop(); _inputTimer = null; }
         _inputTimer = new flash.utils.Timer(INPUT_POLL_MS);
         _inputTimer.addEventListener(TimerEvent.TIMER, function(_) { pollNativeInput(); });
@@ -1052,8 +1108,9 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
         } catch (e:Dynamic) {
-            // Never let a parse error stop the timer.
             zfeLog("warn", "nativein", "pollNativeInput threw: " + Std.string(e));
+            // The lock must never survive a terminal native-input failure.
+            closeInputNative();
         }
     }
 
@@ -1063,12 +1120,17 @@ class FCMChatWidget extends MovieClip {
      */
     function closeInputNative():Void {
         if (_inputTimer != null) { _inputTimer.stop(); _inputTimer = null; }
-        var c1:String = callTop("clearChatInput", "{}");
-        zfeLog("info", "nativein", "clearChatInput raw=" + clip200(c1));
-        var c2:String = callTop("setChatInputActive", "false");   // bare "false", NOT JSON
-        zfeLog("info", "nativein", "setChatInputActive(false) raw=" + clip200(c2));
-        // Restore the game's own key routing.
-        dispatchEditText(false);
+        try {
+            var c1:String = callTop("clearChatInput", "{}");
+            zfeLog("info", "nativein", "clearChatInput raw=" + clip200(c1));
+            var c2:String = callTop("setChatInputActive", "false");   // bare "false", NOT JSON
+            zfeLog("info", "nativein", "setChatInputActive(false) raw=" + clip200(c2));
+        } catch (e:Dynamic) {
+            zfeLog("warn", "nativein", "native close threw: " + Std.string(e));
+        }
+        // Restore game routing only when this widget owns the lock; keep retrying if the HUD
+        // domain is temporarily unavailable rather than silently forgetting the ownership.
+        releaseEditTextLock();
         _inputOpen   = false;
         _nativeInput = false;
         _inProgress  = "";
@@ -1246,6 +1308,16 @@ class FCMChatWidget extends MovieClip {
         if (raw.length == 0) return;
 
         var slug:String = CHAN_SLUGS[_chanIdx];
+        if (slug == "server" && !_serverSessionReady) {
+            // Never send ordinary server traffic until the same relay has acknowledged the
+            // roster/world control. This avoids presenting a selectable dead tab during a
+            // delayed deploy, reconnect, or rejected control.
+            setLogText(_serverSessionError.length > 0
+                ? ("Server chat is unavailable: " + _serverSessionError)
+                : "Server chat is initializing...");
+            zfeLog("warn", "server", "ordinary send blocked; session not ready");
+            return;
+        }
         var payload:String = '{"channel":"' + jsonEscape(slug) + '","targetUserId":"","body":"' + jsonEscape(raw) + '"}';
         zfeLog("info", "send", "payload ch=" + slug + " len=" + raw.length);
         try {
@@ -1301,11 +1373,20 @@ class FCMChatWidget extends MovieClip {
                     case "rate_limited":
                         setLogText("Sending too fast - slow down.");
                     case "invalid_channel":
-                        setLogText("That channel is not available.");
+                        if (slug == "server") {
+                            setServerSessionReady(false, extractJsonString(rs, "message"));
+                            setLogText(_serverSessionError.length > 0
+                                ? ("Server chat is unavailable: " + _serverSessionError)
+                                : "Server chat is initializing...");
+                        } else {
+                            setLogText("That channel is not available.");
+                        }
                     case "message_too_long":
                         setLogText("Message too long (max " + _cfg.maxSendLen + ").");
                     case "auth_token_invalid", "auth_token_revoked", "user_banned":
                         setLogText("Chat session ended - reconnecting...");
+                        if (_nativeInput) closeInputNative();
+                        setServerSessionReady(false, "");
                         _connected = false;
                         stopPollTimer();
                         scheduleConnectRetry();
@@ -1367,7 +1448,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.9.1");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.9.2");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
@@ -1415,6 +1496,12 @@ class FCMChatWidget extends MovieClip {
         }
 
         _connected = true;
+        // A new relay connection has no room membership until the fresh control below is
+        // acknowledged. Force a roster send even when the observed names did not change.
+        setServerSessionReady(false, "");
+        _lastRosterSentAt = 0;
+        _lastRosterSent = "";
+        _lastWorldId = ""; // force the legacy worldId fallback to rebind after reconnect
         _connectDelay = CONNECT_RETRY_MS;
         // Reset the link gate on every (re)connect: if still limited, the relay re-sends the
         // link-required notice (via pollEvents) and we re-raise it; if now LINKED, no notice
@@ -1477,6 +1564,8 @@ class FCMChatWidget extends MovieClip {
             }
             if (_authState != "authenticated" && _connected) {
                 zfeLog("warn", "auth", "state not authenticated; reconnecting");
+                if (_nativeInput) closeInputNative();
+                setServerSessionReady(false, "");
                 _connected = false;
                 stopPollTimer();
                 scheduleConnectRetry();
@@ -1610,6 +1699,8 @@ class FCMChatWidget extends MovieClip {
             if (rs.indexOf('auth_token_invalid') >= 0 || rs.indexOf('auth_token_revoked') >= 0
                     || rs.indexOf('user_banned') >= 0) {
                 zfeLog("warn", "poll", "auth error; reconnecting");
+                if (_nativeInput) closeInputNative();
+                setServerSessionReady(false, "");
                 _connected = false;
                 stopPollTimer();
                 scheduleConnectRetry();
@@ -1629,6 +1720,8 @@ class FCMChatWidget extends MovieClip {
         zfeLog("warn", "poll", "failure=" + _consecutivePollFailures + " reason=" + reason);
         if (_consecutivePollFailures < 3) return;
         zfeLog("warn", "poll", "failure threshold reached; reconnecting");
+        if (_nativeInput) closeInputNative();
+        setServerSessionReady(false, "");
         _connected = false;
         stopPollTimer();
         scheduleConnectRetry();
@@ -1810,12 +1903,47 @@ class FCMChatWidget extends MovieClip {
     // Server-room controls: roster is primary; legacy worldId is a guarded fallback.
     // =========================================================================
 
+    /**
+     * Apply the synchronous result from a server-room control. The native bridge returns the
+     * relay's response directly, so this is the acknowledgement boundary for exposing SERVER.
+     */
+    function applyServerControlResult(raw:String, source:String, readyOnSuccess:Bool = true):Bool {
+        var ok:Bool = raw != null && (raw.indexOf('"success":true') >= 0 || raw.indexOf('success:true') >= 0);
+        if (ok) {
+            setServerSessionReady(readyOnSuccess, "");
+            zfeLog("info", "world", source + " control acknowledged");
+            return true;
+        }
+        var message:String = extractJsonString(raw, "message");
+        if (message.length == 0) message = extractJsonString(raw, "code");
+        if (message.length == 0) message = "relay did not accept the server session";
+        setServerSessionReady(false, message);
+        zfeLog("warn", "world", source + " control rejected raw=" + clip200(raw));
+        return false;
+    }
+
+    /** Keep the tab strip, active channel, and user-facing state in sync with relay membership. */
+    function setServerSessionReady(ready:Bool, error:String):Void {
+        var changed:Bool = (_serverSessionReady != ready);
+        _serverSessionReady = ready;
+        _serverSessionError = ready ? "" : ((error == null) ? "" : error);
+        if (!ready && _chanIdx == 5) _chanIdx = 0;
+        if (changed) {
+            rebuildChannelTabs();
+            renderRecords();
+        }
+    }
+
     function startWorldTimer():Void {
         if (_worldTimer != null) { _worldTimer.stop(); _worldTimer = null; }
         _worldTimer = new Timer(WORLD_POLL_MS);
         _worldTimer.addEventListener(TimerEvent.TIMER, function(_) { checkWorldId(); });
         _worldTimer.start();
         checkWorldId();
+    }
+
+    function hasFreshRosterObservation(now:Float):Bool {
+        return (now - _lastRosterObservationAt) <= ROSTER_FRESH_MS;
     }
 
     /** Fresh observed names (within ROSTER_FRESH_MS), pruning stale entries. */
@@ -1833,8 +1961,8 @@ class FCMChatWidget extends MovieClip {
         return out;
     }
 
-    /** Roster-derived world membership: send the authenticated roster control while
-     *  observations are fresh; leave the room after silence. Drives the SERVER tab. */
+    /** Roster-derived world membership: send while observations are fresh. The SERVER tab is
+     *  driven by the relay acknowledgement, not by this local observation. */
     function tickRoster():Void {
         if (_api == null || !_connected || _relayUserId.length == 0) return;
         var now:Float = flash.Lib.getTimer();
@@ -1844,30 +1972,32 @@ class FCMChatWidget extends MovieClip {
         // only while loaded into a world; an empty server still counts once any
         // provider has published at least once — tracked via _worldPollCount heuristics
         // kept simple: names OR a recent observation window.)
-        _inWorld = (names.length > 0);
+        // A received PlayerListData update is an approved HUD-layer indication that the
+        // world roster surface is live, even for a solo/empty world. It expires with the
+        // same freshness window as names, so menu/stale data cannot keep SERVER alive.
+        var rosterObserved:Bool = hasFreshRosterObservation(now);
+        _inWorld = (names.length > 0 || rosterObserved);
         if (_inWorld) {
             var namesField:String = names.join("\x1F");
-            if ((now - _lastRosterSentAt) >= ROSTER_SEND_MS || namesField != _lastRosterSent) {
+            if (!_serverSessionReady || (now - _lastRosterSentAt) >= ROSTER_SEND_MS || namesField != _lastRosterSent) {
                 _lastRosterSentAt = now;
                 _lastRosterSent = namesField;
                 var body:String = WORLD_ROSTER_PREFIX + namesField;
                 var payload:String = '{"channel":"server","targetUserId":"","body":"' + jsonEscape(body) + '"}';
                 try {
-                    _api.call("chat.v1.sendMessage", payload);
+                    var raw:String = Std.string(_api.call("chat.v1.sendMessage", payload));
+                    applyServerControlResult(raw, "roster");
                     zfeLog("info", "world", "roster control sent names=" + names.length);
                 } catch (e:Dynamic) {
+                    setServerSessionReady(false, "relay unavailable");
                     zfeLog("warn", "world", "roster send threw: " + Std.string(e));
                 }
             }
         } else if (wasInWorld) {
             zfeLog("info", "world", "roster went stale; sending LEAVE");
+            setServerSessionReady(false, "");
             sendWorldLeaveControl();
             _lastRosterSent = "";
-        }
-        if (_inWorld != wasInWorld) {
-            if (!_inWorld && _chanIdx == 5) _chanIdx = 0;
-            rebuildChannelTabs();
-            renderRecords();
         }
     }
 
@@ -1879,6 +2009,13 @@ class FCMChatWidget extends MovieClip {
         if (!_dataInventoryDone && _worldPollCount >= 6) { _dataInventoryDone = true; dumpDataInventory(); }
         var worldId:String = readWorldId();
         if (worldId == _lastWorldId) return;            // no change since last poll
+        // worldId is a compatibility fallback. Some HUD builds leave it blank even while the
+        // roster provider is fresh, so a blank fallback value must not tear down a successful
+        // roster-derived room. tickRoster() owns leave semantics when that observation expires.
+        if (worldId.length == 0 && hasFreshRosterObservation(flash.Lib.getTimer())) {
+            zfeLog("info", "world", "blank worldId ignored; fresh roster session remains authoritative");
+            return;
+        }
         var wasInWorld:Bool = _inWorld;
         _lastWorldId = worldId;
         _inWorld     = (worldId.length > 0);
@@ -1890,12 +2027,8 @@ class FCMChatWidget extends MovieClip {
             // LEFT the world (worldId cleared) → unbind the server room.
             zfeLog("info", "world", "left world; sending LEAVE control");
             sendWorldLeaveControl();
+            setServerSessionReady(false, "");
         }
-        // The SERVER tab appears/disappears with world membership. If we left while it
-        // was the active tab, fall back to GENERAL before rebuilding the row.
-        if (!_inWorld && _chanIdx == 5) _chanIdx = 0;
-        rebuildChannelTabs();
-        renderRecords();
     }
 
     function sendWorldIdControl(worldId:String):Void {
@@ -1903,8 +2036,9 @@ class FCMChatWidget extends MovieClip {
         var body:String = WORLD_CTRL_PREFIX + worldId;
         var payload:String = '{"channel":"server","targetUserId":"","body":"' + jsonEscape(body) + '"}';
         try {
-            _api.call("chat.v1.sendMessage", payload);
+            applyServerControlResult(Std.string(_api.call("chat.v1.sendMessage", payload)), "worldId");
         } catch (e:Dynamic) {
+            setServerSessionReady(false, "relay unavailable");
             zfeLog("warn", "world", "join sendMessage threw: " + Std.string(e));
         }
     }
@@ -1914,7 +2048,7 @@ class FCMChatWidget extends MovieClip {
         var body:String = WORLD_LEAVE_PREFIX;
         var payload:String = '{"channel":"server","targetUserId":"","body":"' + jsonEscape(body) + '"}';
         try {
-            _api.call("chat.v1.sendMessage", payload);
+            applyServerControlResult(Std.string(_api.call("chat.v1.sendMessage", payload)), "leave", false);
         } catch (e:Dynamic) {
             zfeLog("warn", "world", "leave sendMessage threw: " + Std.string(e));
         }
@@ -2150,6 +2284,7 @@ class FCMChatWidget extends MovieClip {
     var _worldDiagDone:Bool = false;
     var _rosterSubscribed:Bool = false;
     var _seenNames:Map<String, Float> = new Map();   // bare character name -> last-seen ms
+    var _lastRosterObservationAt:Float = -ROSTER_FRESH_MS;
     var _lastRosterSentAt:Float = 0;
     var _lastRosterSent:String = "";
     var _rosterLogCount:Int = 0;
@@ -2204,6 +2339,8 @@ class FCMChatWidget extends MovieClip {
         if (arr == null) return;
         var n:Int = 0;
         try { n = Std.int(arr.length); } catch (e:Dynamic) { return; }
+        // An empty update is meaningful: it represents a valid solo world roster.
+        _lastRosterObservationAt = now;
         for (i in 0...n) {
             var e0:Dynamic = arr[i];
             try { if (e0.isLocalPlayer == true || e0.isLocal == true) continue; } catch (e:Dynamic) {}

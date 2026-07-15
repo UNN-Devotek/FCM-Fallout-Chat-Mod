@@ -1498,14 +1498,21 @@ describe('server chat (worldId-scoped room)', () => {
   });
 
   test('world controls are rate-limited per authenticated relay identity', async () => {
-    const a = await registerAndLink('ControlBurst', 'fcm-control-burst');
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      await expect(sendJoin(a, 'world-rate')).resolves.toMatchObject({ success: true });
+    // The limiter keys by a 10-second wall-clock bucket. Pin time so this test cannot
+    // flake when its seven WebSocket requests straddle a real bucket boundary.
+    const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_700_000_000_000);
+    try {
+      const a = await registerAndLink('ControlBurst', 'fcm-control-burst');
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        await expect(sendJoin(a, 'world-rate')).resolves.toMatchObject({ success: true });
+      }
+      await expect(sendJoin(a, 'world-rate')).resolves.toMatchObject({
+        success: false,
+        error: { code: 'rate_limited' },
+      });
+    } finally {
+      nowSpy.mockRestore();
     }
-    await expect(sendJoin(a, 'world-rate')).resolves.toMatchObject({
-      success: false,
-      error: { code: 'rate_limited' },
-    });
   });
 
   test('server chat send is ephemeral — never hits ingestMessage/Postgres', async () => {

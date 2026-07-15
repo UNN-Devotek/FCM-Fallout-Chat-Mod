@@ -113,11 +113,71 @@ function switchChannelBySlash(cmd) {
 // Slug-indices in DISPLAY order. SERVER (slug index 5) is shown immediately right of
 // GENERAL (0) but ONLY while the player is in a world (inWorld). A channel is
 // selectable iff its slug-index is in the current display order.
-function tabOrder(inWorld) {
-  return inWorld ? [0, 5, 1, 2, 3, 4] : [0, 1, 2, 3, 4];
+function tabOrder(serverSessionReady) {
+  return serverSessionReady ? [0, 5, 1, 2, 3, 4] : [0, 1, 2, 3, 4];
 }
-function isChannelSelectable(idx, inWorld) {
-  return tabOrder(inWorld).indexOf(idx) >= 0;
+function isChannelSelectable(idx, serverSessionReady) {
+  return tabOrder(serverSessionReady).indexOf(idx) >= 0;
+}
+
+// ── Server-room control acknowledgement (FCMChatWidget.applyServerControlResult) ─
+// Observing nearby players only requests a bind; SERVER is selectable only after the
+// relay synchronously acknowledges the roster/world control.
+function serverSessionResult(raw, readyOnSuccess = true) {
+  raw = String(raw == null ? '' : raw);
+  const success = raw.includes('"success":true') || raw.includes('success:true');
+  if (success) return { ready: readyOnSuccess, error: '' };
+  const errorMatch = raw.match(/"message":"([^"\\]*(?:\\.[^"\\]*)*)"/);
+  const codeMatch = raw.match(/"code":"([^"\\]*(?:\\.[^"\\]*)*)"/);
+  return { ready: false, error: (errorMatch && errorMatch[1]) || (codeMatch && codeMatch[1]) || 'relay did not accept the server session' };
+}
+
+function serverSendDecision(serverSessionReady, serverSessionError) {
+  if (serverSessionReady) return { send: true, text: '' };
+  return {
+    send: false,
+    text: serverSessionError
+      ? 'Server chat is unavailable: ' + serverSessionError
+      : 'Server chat is initializing...',
+  };
+}
+
+function shouldSendRosterControl({ rosterObserved, serverSessionReady, now, lastSentAt, lastSentNames, names }) {
+  if (!rosterObserved) return false;
+  const namesField = names.join('\x1F');
+  return !serverSessionReady || now - lastSentAt >= 30000 || namesField !== lastSentNames;
+}
+
+// ── Native-input lock lifecycle (FCMChatWidget.open/closeInputNative) ──────────
+function nativeLockAdmission(nativeActivated, startEditTextDispatched) {
+  if (!nativeActivated) return { nativeOpen: false, fallback: true, deactivate: false, ownsLock: false };
+  if (!startEditTextDispatched) return { nativeOpen: false, fallback: true, deactivate: true, ownsLock: false };
+  return { nativeOpen: true, fallback: false, deactivate: false, ownsLock: true };
+}
+
+function nativeLockRelease(ownsLock, endDispatched = true) {
+  if (!ownsLock) return { dispatchEndEditText: false, ownsLockAfter: false, retry: false };
+  return {
+    dispatchEndEditText: true,
+    ownsLockAfter: !endDispatched,
+    retry: !endDispatched,
+  };
+}
+
+function shouldRebindWorldId(lastWorldIdAfterReconnect, currentWorldId) {
+  return currentWorldId !== lastWorldIdAfterReconnect;
+}
+
+function shouldIgnoreBlankWorldId({ lastWorldId, currentWorldId, freshRosterObservation }) {
+  return currentWorldId === '' && currentWorldId !== lastWorldId && freshRosterObservation;
+}
+
+// ── In-session channel action routing (FCMChatWidget.onUserEvent) ──────────────
+function inputChannelAction({ inputOpen, isKeyDown, action, nextAction, prevAction }) {
+  if (!inputOpen || isKeyDown) return 'none';
+  if (action === nextAction) return 'next';
+  if (action === prevAction) return 'prev';
+  return 'none';
 }
 
 // ── Slash parse + consume (FCMChatWidget.onInputSubmit) ─────────────────────────
@@ -308,6 +368,14 @@ module.exports = {
   switchChannelBySlash,
   tabOrder,
   isChannelSelectable,
+  serverSessionResult,
+  serverSendDecision,
+  shouldSendRosterControl,
+  nativeLockAdmission,
+  nativeLockRelease,
+  shouldRebindWorldId,
+  shouldIgnoreBlankWorldId,
+  inputChannelAction,
   parseInputSubmit,
   emptyFeedNotice,
   extractJsonString,
