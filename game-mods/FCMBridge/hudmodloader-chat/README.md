@@ -2,17 +2,16 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-06-26):** v2.5.3 — works end-to-end on **native Windows** with **ZFE 0.9.9+**;
-> merged to `dev` (PR #330). **BLOCKED under Proton/Wine** (Linux / Steam Deck) by an upstream Zig
-> TLS bug (tracked in #326). Full build/install/verify steps + the Proton/Wine details are in
-> [BUILD.md](BUILD.md).
+> **Status (2026-07-15):** v2.9.1 — source, relay, and packaged BA2 are kept together. The
+> in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
+> rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
 ## What it does
 
 - Displays the FCM community feed (General / Trading / Events / Infests / Raids) as a scrolling
   amber-themed message log, sourced over the ZFE **chat.v1** native API (`chat.v1.connect` +
   `chat.v1.pollEvents` cursor poll), not the legacy text-chat socket.
-- Lets the player send messages. Press the configured open key (default: `PAGE_DOWN`) to open the
+- Lets the player send messages. Press the configured open key (default: `INSERT`) to open the
   chat input, type a message, and press Enter to send (`chat.v1.sendMessage`, slug-based channels).
 - Echos the player's own message immediately as a dim pending record before the server round-trip
   confirms it (dedup'd against the server's echo by `messageId`).
@@ -34,7 +33,7 @@ Text entry uses ZFE's **native chat-input API** — **top-level / bare** ZFE com
 |------|---------|---------|------|
 | `setChatInputActive` | `"true"` / `"false"` | `true` | open / close the native input session |
 | `isChatInputActive` | `"{}"` | bool | session still active? (Esc detection) |
-| `isChatKeyPressed` | `"{}"` | bool | the configured `OpenChatKey` (PAGE_DOWN) is down |
+| `isChatKeyPressed` | `"{}"` | bool | the configured `OpenChatKey` (INSERT) is down |
 | `readChatInput` | `"{}"` | string | the in-progress buffer — **this is the message text** |
 | `consumeChatInputSubmitted` | `"{}"` | bool | `true` = Enter pressed (NOT the text) |
 | `clearChatInput` | `"{}"` | `true` | reset the buffer |
@@ -44,7 +43,7 @@ poll `readChatInput` (show in-progress) + `consumeChatInputSubmitted` (Enter) + 
 (Esc), on submit `chat.v1.sendMessage` the `readChatInput` text, then `clearChatInput("{}")` +
 `setChatInputActive("false")`. `sendMessage` is the one command that stays `chat.v1.`-prefixed —
 called bare it hits the legacy bridge and returns literal `false`. A low-rate `isChatKeyPressed`
-edge poll opens chat on PAGE_DOWN. Full contract: [BUILD.md](BUILD.md) → "Native chat input (v2.5.3)".
+edge poll opens chat on INSERT. Full contract: [BUILD.md](BUILD.md).
 
 ## HUDModLoader APIs used
 
@@ -75,10 +74,11 @@ an empty string on cancel. `SharedHUDTools` is resolved at runtime via
 `flash.utils.getDefinitionByName` so the widget needs no compile-time stub. If HUDModLoader is
 absent, the widget degrades to receive-only and shows an explanatory prompt.
 
-### HUDButton (channel tabs)
+### Channel tabs
 
-The channel-tab row renders as interactive HUDButtons when HUDButton is available
-(gamepad-focusable + clickable) and falls back to a static text strip otherwise.
+The channel-tab row is one static text strip. It must not create HUDButton instances:
+HUDButton labels share the same coordinates and would overlap the strip. Switch channels using
+the configured control-map actions or slash commands.
 
 ### isReloadable
 
@@ -92,7 +92,7 @@ No TTF is embedded. Text renders via HUDModLoader's **engine-registered GFx font
 `$MAIN_Font_Light` (body / feed / prompts) and `$MAIN_Font_Bold` (channel tabs, sender names,
 headers). These resolve inside a child widget SWF (unlike HUDMenu's per-movie `$$MAIN_Font` and
 unlike a Flash-embedded TTF, which GFx ignores for child SWFs); `embedFonts=true` is kept on every
-TextField. Details + the tofu root cause: [BUILD.md](BUILD.md) → "Fonts (v2.5.3 - engine aliases)".
+TextField. Details are in [BUILD.md](BUILD.md).
 
 ## Customization (`Data/FCMChat.ini`)
 

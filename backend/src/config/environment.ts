@@ -90,6 +90,8 @@ export interface Environment {
   HUD_PUSH_DIAG_LOG: boolean;
   // HUD push — WebSocket front-end (Path B)
   HUD_PUSH_WS_ENABLED: boolean;
+  // chat.v1 relay is default-off in production; a reviewed rollout must enable it.
+  RELAY_PRODUCTION_ENABLED: boolean;
   // M7 two-way chat: HMAC-SHA256 key used to derive identityHash from FO76 accountName.
   // Required when HUD_PUSH_TCP_ENABLED=true and inbound parsing is active.
   // Dev default is allowed here; must be a strong secret in production.
@@ -134,12 +136,6 @@ export interface Environment {
   DEVELOPER_ROLE_ID: string;
   // Role @-pinged in bug/suggestion ticket threads (support team).
   SUPPORT_ROLE_ID: string;
-  // chat.v1 relay HMAC secret for worldId control messages (#293).
-  // HMAC-SHA256(secret, worldId + relayUserId + timestamp) — prevents spoofed worldId
-  // control frames from unbounded clients. Ships in the .ba2; signs but does not
-  // fully authenticate (the signing key is embedded in the mod). Dev default is
-  // allowed here; must be a strong secret in production.
-  RELAY_WORLD_HMAC_SECRET: string;
   // Nexus OAuth 2.0 + PKCE (feature-flagged: disabled when creds are absent)
   // Confidential client: client_secret required at token endpoint alongside PKCE.
   // Registration: email Nexus support (https://nexusmods.com/users/myaccount?tab=api).
@@ -254,6 +250,7 @@ const env: Environment = {
   HUD_PUSH_DIAG_LOG: (process.env.HUD_PUSH_DIAG_LOG || 'false').toLowerCase() === 'true',
   // HUD push — WebSocket front-end (Path B)
   HUD_PUSH_WS_ENABLED: (process.env.HUD_PUSH_WS_ENABLED || 'false').toLowerCase() === 'true',
+  RELAY_PRODUCTION_ENABLED: (process.env.RELAY_PRODUCTION_ENABLED || 'false').toLowerCase() === 'true',
   // HUD default send channel (General leaf channel)
   HUD_DEFAULT_CHANNEL_ID: process.env.HUD_DEFAULT_CHANNEL_ID || '00000000-0000-0000-0000-000000000005',
   // M7 two-way chat identity secret (HMAC-SHA256 key for identityHash derivation)
@@ -279,9 +276,6 @@ const env: Environment = {
   GITHUB_WEBHOOK_SECRET: process.env.GITHUB_WEBHOOK_SECRET || '',
   DEVELOPER_ROLE_ID: process.env.DEVELOPER_ROLE_ID || '',
   SUPPORT_ROLE_ID: process.env.SUPPORT_ROLE_ID || '',
-  // chat.v1 relay worldId HMAC secret — mirrors the value the .ba2 mod ships.
-  // Dev default is allowed here; production guard warns if still the placeholder.
-  RELAY_WORLD_HMAC_SECRET: process.env.RELAY_WORLD_HMAC_SECRET || 'fcm-world-v1-dev-placeholder',
   // Nexus OAuth 2.0 + PKCE (feature-flagged: disabled when creds are absent)
   NEXUS_OAUTH_CLIENT_ID: process.env.NEXUS_OAUTH_CLIENT_ID || '',
   NEXUS_OAUTH_CLIENT_SECRET: process.env.NEXUS_OAUTH_CLIENT_SECRET || '',
@@ -298,11 +292,6 @@ const env: Environment = {
 // startup guard below and hudIdentityService share this same literal, and
 // environmentStartupGuard.test.js asserts the two never drift.
 export const DEV_DEFAULT_HUD_IDENTITY_SECRET = 'dev-hud-identity-secret-change-me';
-
-// The dev placeholder value shipped in the .ba2 for worldId HMAC signing.
-// Exported so the relay handler can warn when production sees this value.
-// Must stay in sync with the default assigned to RELAY_WORLD_HMAC_SECRET above.
-export const DEV_DEFAULT_RELAY_WORLD_HMAC_SECRET = 'fcm-world-v1-dev-placeholder';
 
 /**
  * Pure predicate: would the production startup guard refuse to boot for this

@@ -20,6 +20,8 @@ Run without arguments to test fcm-inject.as alone (anchor checks are skipped).
 import sys, re, os
 HERE = os.path.dirname(os.path.abspath(__file__))
 INJECT_AS = os.path.join(HERE, 'fcm-inject.as')
+WIDGET_HX = os.path.join(HERE, '..', 'hudmodloader-chat', 'FCMChatWidget.hx')
+WIDGET_INI = os.path.join(HERE, '..', 'hudmodloader-chat', 'FCMChatWidget.ini')
 
 errors = []
 warnings = []
@@ -274,6 +276,55 @@ if bridge_src:
           "FCMBridge.hx has postDiscoveryInit() helper (shared by self-discovery and host-inject paths)")
     check("_zfeInjectedByHost" in bridge_src,
           "FCMBridge.hx tracks _zfeInjectedByHost to guard against double-init")
+
+# ---------------------------------------------------------------------------
+# 4c. Verify FCMChatWidget tab renderer lifecycle
+# ---------------------------------------------------------------------------
+# The widget previously rendered the borderless TextField tab strip at startup,
+# then added HUDButton tabs in the exact same row on a SERVER-tab transition.
+# This source-level guard keeps the mutually-exclusive renderer invariant in the
+# CI job that already validates game-mod sources.
+try:
+    widget_src = open(WIDGET_HX, encoding="utf-8").read()
+except FileNotFoundError:
+    errors.append("FAIL: FCMChatWidget.hx not found at " + os.path.normpath(WIDGET_HX))
+    widget_src = ""
+
+if widget_src:
+    rebuild_match = re.search(
+        r"function rebuildChannelTabs\(\):Void \{(.*?)\n    \}",
+        widget_src,
+        re.DOTALL,
+    )
+    check(rebuild_match is not None,
+          "FCMChatWidget defines rebuildChannelTabs")
+    if rebuild_match is not None:
+        rebuild_body = rebuild_match.group(1)
+        check("buildChannelTabs()" not in rebuild_body,
+              "FCMChatWidget never overlays HUDButtons on the static tab strip")
+        check("renderSubTabs()" in rebuild_body,
+              "FCMChatWidget rebuilds the static tab strip on world changes")
+
+    check("hmacSha256Hex" not in widget_src,
+          "FCMChatWidget does not ship a forgeable relay-control HMAC secret")
+    check("jsonObjectEnd" in widget_src,
+          "FCMChatWidget uses string-aware JSON object boundaries")
+
+try:
+    widget_ini_src = open(WIDGET_INI, encoding="utf-8").read()
+except FileNotFoundError:
+    errors.append("FAIL: FCMChatWidget.ini not found at " + os.path.normpath(WIDGET_INI))
+    widget_ini_src = ""
+
+if widget_ini_src:
+    check("OpenChatKey=INSERT" in widget_ini_src,
+          "FCMChatWidget.ini uses INSERT as the native open-chat key")
+    check("Endpoint=wss://falloutchatmod.com/relay" in widget_ini_src,
+          "FCMChatWidget.ini targets the production /relay endpoint")
+    endpoint_lines = [line.strip() for line in widget_ini_src.splitlines()
+                      if line.strip().startswith("Endpoint=")]
+    check(all("/zfe-relay" not in line for line in endpoint_lines),
+          "FCMChatWidget.ini does not configure the obsolete /zfe-relay path")
 
 # ---------------------------------------------------------------------------
 # 4b. Verify fcm-inject.as auth gate additions

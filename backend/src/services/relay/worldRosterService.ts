@@ -21,6 +21,8 @@ import logger from '../../config/logger';
 const KEY_PREFIX = 'relay:roster:';
 const TTL_SECONDS = 120;
 const MAX_NAMES = 24;
+const MAX_NAME_LENGTH = 64;
+const MAX_ACTIVE_ROSTERS = 500;
 
 export interface RosterEntry {
   userId: string;
@@ -31,8 +33,12 @@ export interface RosterEntry {
 export async function setRoster(relayUserId: string, ownName: string, seenNames: string[]): Promise<void> {
   try {
     const redis = await getRedisClient();
-    const seen = [...new Set(seenNames.map((n) => n.trim().toLowerCase()).filter((n) => n.length > 0))].slice(0, MAX_NAMES);
-    const value = JSON.stringify({ name: (ownName || '').trim().toLowerCase(), seen });
+    const seen = [...new Set(seenNames
+      .map((n) => n.trim().toLowerCase())
+      .filter((n) => n.length > 0 && n.length <= MAX_NAME_LENGTH))]
+      .slice(0, MAX_NAMES);
+    const name = (ownName || '').trim().toLowerCase().slice(0, MAX_NAME_LENGTH);
+    const value = JSON.stringify({ name, seen });
     await redis.set(`${KEY_PREFIX}${relayUserId}`, value, { EX: TTL_SECONDS });
   } catch (err) {
     logger.warn({ err, relayUserId }, '[worldRoster] setRoster failed');
@@ -51,19 +57,42 @@ export async function clearRoster(relayUserId: string): Promise<void> {
 /** All live rosters (TTL-pruned by Redis). */
 async function getAllRosters(): Promise<RosterEntry[]> {
   const redis = await getRedisClient();
-  const keys: string[] = await redis.keys(`${KEY_PREFIX}*`);
   const out: RosterEntry[] = [];
-  for (const k of keys) {
-    try {
-      const raw = await redis.get(k);
-      if (!raw) continue;
-      const parsed = JSON.parse(raw);
-      out.push({ userId: k.slice(KEY_PREFIX.length), name: parsed.name ?? '', seen: parsed.seen ?? [] });
-    } catch {
-      /* skip corrupt */
+  for await (const scanResult of redis.scanIterator({ MATCH: `${KEY_PREFIX}*`, COUNT: 100 })) {
+    for (const key of scanKeys(scanResult)) {
+      if (out.length >= MAX_ACTIVE_ROSTERS) {
+        logger.warn({ maxActiveRosters: MAX_ACTIVE_ROSTERS }, '[worldRoster] roster scan capped');
+        return out;
+      }
+      try {
+        const raw = await redis.get(key);
+        if (!raw) continue;
+        const parsed: unknown = JSON.parse(raw);
+        if (!isRosterPayload(parsed)) continue;
+        out.push({
+          userId: key.slice(KEY_PREFIX.length),
+          name: parsed.name,
+          seen: parsed.seen,
+        });
+      } catch {
+        /* skip corrupt */
+      }
     }
   }
   return out;
+}
+
+function scanKeys(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.filter((entry): entry is string => typeof entry === 'string');
+  return [];
+}
+
+function isRosterPayload(value: unknown): value is { name: string; seen: string[] } {
+  if (!value || typeof value !== 'object' || !('name' in value) || !('seen' in value)) return false;
+  return typeof value.name === 'string'
+    && Array.isArray(value.seen)
+    && value.seen.every((name) => typeof name === 'string');
 }
 
 /**
@@ -72,6 +101,7 @@ async function getAllRosters(): Promise<RosterEntry[]> {
  * server chat still works when alone on a world.
  */
 export async function computeRooms(): Promise<Map<string, string>> {
+  const startedAt = Date.now();
   const rosters = await getAllRosters();
   const parent = new Map<string, string>();
   const find = (x: string): string => {
@@ -99,5 +129,6 @@ export async function computeRooms(): Promise<Map<string, string>> {
 
   const rooms = new Map<string, string>();
   for (const r of rosters) rooms.set(r.userId, `r:${find(r.userId)}`);
+  logger.debug({ rosterCount: rosters.length, elapsedMs: Date.now() - startedAt }, '[worldRoster] rooms recomputed');
   return rooms;
 }

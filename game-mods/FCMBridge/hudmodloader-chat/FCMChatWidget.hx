@@ -38,7 +38,7 @@ import flash.events.IOErrorEvent;
  *       the MESSAGE TEXT comes from readChatInput, NOT from the consume result.
  *     readChatInput -> the in-progress text buffer (bare string).
  *     isChatInputActive -> true/false ; isChatKeyPressed -> true when OpenChatKey
- *       (PAGE_DOWN) pressed ; clearChatInput -> true.
+ *       (INSERT by default) pressed ; clearChatInput -> true.
  *   nativeTruthy(raw): trimmed/lowercased == "true" OR == "1" OR contains "success":true.
  *   FLOW (openInputNative): setChatInputActive("true") -> _inputTimer (~100 ms)
  *     pollNativeInput(): readChatInput (show in-progress) ; if consume truthy => SUBMIT
@@ -46,7 +46,7 @@ import flash.events.IOErrorEvent;
  *       chat.v1.sendMessage, log full raw) ; else if !isChatInputActive => cancel (Esc).
  *     closeInputNative(): clearChatInput + setChatInputActive("false").
  *   OPEN triggers: HUDMod::UserEvent open key, AND a low-rate (~150 ms) pollOpenKey()
- *     that opens on an isChatKeyPressed false->true edge (so PAGE_DOWN opens chat).
+ *     that opens on an isChatKeyPressed false->true edge (so the configured key opens chat).
  *   _nativeInputUsable is set by a CLEAN self-resetting startup probe (activate, test,
  *     deactivate+clear). If not usable, openInput() falls back to SharedHUDTools so the
  *     user can still type. NEVER run both. sendMessage stays chat.v1.sendMessage ONLY.
@@ -68,10 +68,10 @@ import flash.events.IOErrorEvent;
  *   global, trade, events, infests, raids, server
  * DefaultChannel: global
  *
- * worldId self-read (#293, EULA §4(F)-safe — UI layer only, no memory reads):
- * BSUIDataManager.GetDataFromClient("AccountInfoData") exposes worldId.
- * A control message (sentinel prefix + worldId + HMAC-SHA256) is sent over
- * chat.v1.sendMessage (channel "server") and intercepted by the relay.
+ * Server-room membership (EULA §4(F)-safe — HUD UI data only, no memory reads):
+ * the widget sends an observed roster from BSUIDataManager on the reserved
+ * "server" channel. The authenticated relay derives a shared ephemeral room
+ * from that roster. Legacy worldId data is only a best-effort fallback.
  *
  * Auth state:
  *   "authenticated" — player may send.
@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.9.0";  // SERVER tab: worldId-scoped server chat right of GENERAL, shown only in-world; join/leave controls (unix-ts fix) + /server slash
+    static inline var VERSION:String  = "2.9.1";  // static tab lifecycle + resilient poll/parser + authenticated server-room controls
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -145,16 +145,17 @@ class FCMChatWidget extends MovieClip {
     // from Data/FCMChat.ini. Derive "#RRGGBB" / "RRGGBB" strings from the Int colors
     // via hx() / nh(). Defaults in FcmConfig reproduce the amber Pip-Boy theme.
 
-    // ── HMAC-SHA256 shared secret (worldId control message) ───────────────────
-    // Matches WORLD_HMAC_SECRET in FCMBridge.hx and the relay.
-    static inline var WORLD_HMAC_SECRET:String = "fcm-world-v1-dev-placeholder";
+    // ── Authenticated relay control messages ───────────────────────────────────
+    // The relay authenticates every frame with the ZFE-held relay token. Do NOT put
+    // a shared secret in this distributable SWF: it cannot authenticate a client
+    // and creates a production configuration foot-gun. These NUL-prefixed controls
+    // are bounded, untrusted HUD metadata and are consumed by the authenticated relay.
     static inline var WORLD_CTRL_PREFIX:String  = "\x00fcm.world.v1\x00";
     // LEAVE control: sent when the player leaves a world (worldId cleared).
-    // Body: WORLD_LEAVE_PREFIX + "<relayUserId>|<ts>|<hmac>", hmac over "leave|<userId>|<ts>".
     static inline var WORLD_LEAVE_PREFIX:String = "\x00fcm.world.leave.v1\x00";
     // ROSTER control: observed nearby character names (no worldId exists in the UI
-    // layer — the relay derives world rooms from sightings). Body:
-    // ROSTER_PREFIX + "<uid>|<ts>|<hmac>|<name\x1Fname...>", hmac over "roster|uid|ts|names".
+    // layer — the relay derives world rooms from sightings). Body is the bounded
+    // US-separated name list; actor identity comes only from the authenticated frame.
     static inline var WORLD_ROSTER_PREFIX:String = "\x00fcm.world.roster.v1\x00";
     static inline var ROSTER_FRESH_MS:Float = 60000;   // observation freshness window
     static inline var ROSTER_SEND_MS:Float  = 30000;   // periodic roster resend
@@ -231,6 +232,7 @@ class FCMChatWidget extends MovieClip {
     var _connectDelay:Int        = CONNECT_RETRY_MS;
     var _connectAttempts:Int     = 0;
     var _cursor:Int              = 0;
+    var _consecutivePollFailures:Int = 0;
     var _pollTimer:Timer         = null;
     var _connectTimer:Timer      = null;
     var _worldTimer:Timer        = null;
@@ -264,18 +266,13 @@ class FCMChatWidget extends MovieClip {
     var _nativeInputUsable:Bool  = false;          // native chat-input session works (probe result)
     var _probeSent:Bool          = false;          // one-shot startup probe guard
     static inline var INPUT_POLL_MS:Int  = 100;    // in-session native input-poll interval
-    // ── Open-key poll (v2.5.3) — open chat on the ZFE OpenChatKey (PAGE_DOWN) edge ─────
+    // ── Open-key poll — open chat on the configured ZFE OpenChatKey edge ───────────────
     var _openKeyTimer:flash.utils.Timer = null;    // low-rate (~150 ms) open-trigger poll
     static inline var OPEN_KEY_MS:Int = 150;       // open-key poll interval
     var _lastChatKey:Bool        = false;          // last isChatKeyPressed truthiness (edge detect)
 
     // ── SharedHUDTools (HUDModLoader text-entry + F12 menu integration) ───────
     var _hudTools:Dynamic        = null;
-
-    // ── HUDButton interactive channel tabs ────────────────────────────────────
-    var _btnCls:Dynamic          = null;   // resolved HUDButton class (null → text-strip fallback)
-    var _chanBtns:Array<Dynamic> = [];     // channel-tab HUDButton instances (display order)
-    var _chanBtnSlugs:Array<Int> = [];     // slug-index for each button in _chanBtns (display order)
 
     // ── Optimistic-echo dedup (our just-sent messages) ────────────────────────
     var _pendingEchoes:Array<{key:String, ts:Float}> = [];
@@ -319,8 +316,7 @@ class FCMChatWidget extends MovieClip {
 
     function afterConfig():Void {
         _autoHideOn = (_cfg != null && _cfg.autoHideSec > 0);   // default from config (60s)
-        // attachHUDModListeners → constructHudTools resolves _btnCls (HUDButton),
-        // which buildPanel needs to decide tabs-vs-text-strip. Order matters.
+        // Register HUDModLoader listeners before building the static panel.
         attachHUDModListeners();
         buildPanel();
         // Delay ZFE init 3 s — ZFE API may not be ready at SWF load time.
@@ -445,11 +441,6 @@ class FCMChatWidget extends MovieClip {
         return _inWorld ? [0, 5, 1, 2, 3, 4] : [0, 1, 2, 3, 4];
     }
 
-    /** Current unix time in SECONDS (matches the relay's HMAC freshness clock). */
-    function unixSeconds():Int {
-        return Std.int(Date.now().getTime() / 1000);
-    }
-
     function renderMainTabs():Void {
         if (_tabTf == null) return;
         // #344 / CAP-015 / D-11: single main tab "FALLOUT 76" (no PARTY); the active
@@ -516,8 +507,7 @@ class FCMChatWidget extends MovieClip {
      * RegisterMenu(build, select) adds us to the F12 HUDTools menu.
      */
     function constructHudTools():Void {
-        // Extensions.enabled is REQUIRED before any scaleform.gfx.* use AND before
-        // instantiating HUDButton (it uses TextFieldEx internally).
+        // Extensions.enabled is required before any scaleform.gfx.* use.
         try {
             var ext:Dynamic = untyped __global__["scaleform.gfx.Extensions"];
             if (ext != null) ext.enabled = true;
@@ -543,14 +533,6 @@ class FCMChatWidget extends MovieClip {
             zfeLog("warn", "hud", "SharedHUDToolsMissing: " + Std.string(e));
         }
 
-        // Resolve HUDButton once; null → text-strip fallback for channel tabs.
-        try {
-            _btnCls = untyped __global__["flash.utils.getDefinitionByName"]("HUDButton");
-        } catch (e:Dynamic) {
-            _btnCls = null;
-            zfeLog("warn", "ui", "HUDButton missing");
-        }
-        if (_btnCls == null) zfeLog("warn", "ui", "HUDButton missing");
     }
 
     function onHudMessage(sender:String, msg:String):Void {
@@ -648,78 +630,14 @@ class FCMChatWidget extends MovieClip {
     // Channel switching
     // =========================================================================
 
-    /**
-     * Build the interactive channel-tab row from HUDButton instances.
-     * Called from buildPanel() only when _btnCls (HUDButton) resolved.
-     * Replaces the _subTf text strip with 5 clickable, gamepad-focusable tabs.
-     */
-    function buildChannelTabs():Void {
-        if (_btnCls == null) return;
-        var order:Array<Int> = tabOrder();
-        var n:Int    = order.length;
-        var cell:Int = Std.int((_cfg.width - 16) / n);   // per-tab column width
-        var bw:Int   = cell - 2;                         // button width (gap between)
-        var bh:Int   = SUB_H - 2;
-        _chanBtnSlugs = [];
-        for (pos in 0...n) {
-            var si:Int = order[pos];   // slug-index at this display position
-            var ci:Int = si;           // per-iteration capture for the click closure
-            try {
-                var b:Dynamic = untyped __new__(_btnCls, bw, bh);
-                Reflect.setProperty(b, "text", CHAN_NAMES[si]);
-                b.x = 8 + pos * cell;
-                b.y = TAB_H + 1;
-                // setInfo(id, isEnabled, isMenu, timeout) — id encodes the SLUG index.
-                try {
-                    Reflect.callMethod(b, Reflect.field(b, "setInfo"), ["chan" + si, true, false, 0]);
-                } catch (e:Dynamic) {}
-                // setColors(textColor, bgColor, bgAlpha, selectColor, selectBGColor) — hex, no '#'
-                try {
-                    Reflect.callMethod(b, Reflect.field(b, "setColors"),
-                        [nh(_cfg.tabInactiveColor), nh(_cfg.tabRowColor), 0.85, nh(_cfg.tabRowColor), nh(_cfg.tabActiveColor)]);
-                } catch (e:Dynamic) {}
-                try {
-                    b.addEventListener(flash.events.MouseEvent.CLICK,
-                        function(_) { selectChannel(ci); });
-                } catch (e:Dynamic) {}
-                addChild(b);
-                _chanBtns.push(b);
-                _chanBtnSlugs.push(si);
-            } catch (e:Dynamic) {
-                zfeLog("warn", "ui", "HUDButton instantiate threw: " + Std.string(e));
-            }
-        }
-        setSelectedTab(_chanIdx);
-    }
-
-    /**
-     * Rebuild the channel-tab row for the current tabOrder() — called when the
-     * player joins/leaves a world so the SERVER tab appears/disappears. Removes the
-     * existing HUDButtons by reference (crash rule #9), then rebuilds (or re-renders
-     * the text-strip fallback when HUDButton is unavailable).
-     */
+    /** Re-render the single static tab row when the visible tab order changes. */
     function rebuildChannelTabs():Void {
-        for (b in _chanBtns) { try { removeChild(b); } catch (e:Dynamic) {} }
-        _chanBtns     = [];
-        _chanBtnSlugs = [];
-        if (_btnCls != null) buildChannelTabs();
-        else                 renderSubTabs();
+        renderSubTabs();
     }
 
-    /**
-     * Reflect the active channel in the tab row.
-     * HUDButton has an isSelected setter; the text-strip fallback re-renders.
-     */
+    /** Reflect the active channel in the static tab row. */
     function setSelectedTab(idx:Int):Void {
-        if (_chanBtns.length == 0) {
-            renderSubTabs();
-            return;
-        }
-        // Buttons are in DISPLAY order; select the one whose slug-index matches idx.
-        for (k in 0..._chanBtns.length) {
-            var isSel:Bool = (k < _chanBtnSlugs.length && _chanBtnSlugs[k] == idx);
-            try { Reflect.setProperty(_chanBtns[k], "isSelected", isSel); } catch (e:Dynamic) {}
-        }
+        renderSubTabs();
     }
 
     /**
@@ -799,11 +717,9 @@ class FCMChatWidget extends MovieClip {
     // =========================================================================
 
     // Live re-layout after a Customize change. Removes children BY REFERENCE only — NEVER
-    // numChildren/getChildAt (Scaleform VM crash, rule #9). buildPanel re-adds everything,
-    // re-applies x/y from _cfg, and repopulates _chanBtns.
+    // numChildren/getChildAt (Scaleform VM crash, rule #9). buildPanel re-adds everything
+    // and re-applies x/y from _cfg.
     function rebuildPanel():Void {
-        if (_chanBtns != null) { for (b in _chanBtns) { try { removeChild(b); } catch (e:Dynamic) {} } }
-        _chanBtns = [];
         var kids:Array<flash.display.DisplayObject> = [_bg, _tabTf, _subTf, _logTf, _promptTf];
         for (c in kids) { try { if (c != null) removeChild(c); } catch (e:Dynamic) {} }
         buildPanel();
@@ -1451,7 +1367,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.7.8");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.9.1");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
@@ -1616,7 +1532,7 @@ class FCMChatWidget extends MovieClip {
     }
 
     // =========================================================================
-    // Open-key poll (v2.5.3) — open chat on the ZFE OpenChatKey (PAGE_DOWN) edge
+    // Open-key poll — open chat on the configured ZFE OpenChatKey edge
     //
     // Replaces the v2.5.2 always-on watcher. Low-rate (~150 ms), runs only while
     // connected AND no input is open. On a false->true edge of isChatKeyPressed it
@@ -1636,7 +1552,7 @@ class FCMChatWidget extends MovieClip {
         if (_openKeyTimer != null) { _openKeyTimer.stop(); _openKeyTimer = null; }
     }
 
-    /** Open chat on a false->true edge of isChatKeyPressed (ZFE OpenChatKey = PAGE_DOWN). */
+    /** Open chat on a false->true edge of isChatKeyPressed. */
     function pollOpenKey():Void {
         if (_api == null || !_connected) return;
         try {
@@ -1685,6 +1601,7 @@ class FCMChatWidget extends MovieClip {
             result = _api.call("chat.v1.pollEvents", payload);
         } catch (e:Dynamic) {
             zfeLog("warn", "poll", "call threw: " + Std.string(e));
+            notePollFailure("call threw");
             return;
         }
 
@@ -1696,11 +1613,25 @@ class FCMChatWidget extends MovieClip {
                 _connected = false;
                 stopPollTimer();
                 scheduleConnectRetry();
+            } else {
+                notePollFailure("relay returned an unsuccessful response");
             }
             return;
         }
 
+        _consecutivePollFailures = 0;
         parseAndRenderEvents(rs);
+    }
+
+    /** Reconnect instead of leaving the HUD in a permanently stale "connected" state. */
+    function notePollFailure(reason:String):Void {
+        _consecutivePollFailures++;
+        zfeLog("warn", "poll", "failure=" + _consecutivePollFailures + " reason=" + reason);
+        if (_consecutivePollFailures < 3) return;
+        zfeLog("warn", "poll", "failure threshold reached; reconnecting");
+        _connected = false;
+        stopPollTimer();
+        scheduleConnectRetry();
     }
 
     function parseAndRenderEvents(rs:String):Void {
@@ -1718,14 +1649,7 @@ class FCMChatWidget extends MovieClip {
         while (i < rs.length) {
             var objStart:Int = rs.indexOf('{', i);
             if (objStart < 0) break;
-            var depth:Int = 0;
-            var j:Int = objStart;
-            while (j < rs.length) {
-                var c:String = rs.charAt(j);
-                if (c == '{') depth++;
-                else if (c == '}') { depth--; if (depth == 0) break; }
-                j++;
-            }
+            var j:Int = jsonObjectEnd(rs, objStart);
             if (j >= rs.length) break;
             var obj:String = rs.substring(objStart, j + 1);
             i = j + 1;
@@ -1792,6 +1716,34 @@ class FCMChatWidget extends MovieClip {
     }
 
     /**
+     * Return the closing brace for an object beginning at `start`, honoring JSON
+     * strings and escapes. Chat bodies may legitimately contain {, }, \", and \\.
+     */
+    static function jsonObjectEnd(s:String, start:Int):Int {
+        var depth:Int = 0;
+        var inString:Bool = false;
+        var escaped:Bool = false;
+        var j:Int = start;
+        while (j < s.length) {
+            var c:String = s.charAt(j);
+            if (inString) {
+                if (escaped) escaped = false;
+                else if (c == "\\") escaped = true;
+                else if (c == "\"") inString = false;
+            } else if (c == "\"") {
+                inString = true;
+            } else if (c == "{") {
+                depth++;
+            } else if (c == "}") {
+                depth--;
+                if (depth == 0) return j;
+            }
+            j++;
+        }
+        return s.length;
+    }
+
+    /**
      * Dedup keys for optimistic echo.
      * id key  = "id:" + messageId  (server-assigned id, when present).
      * sb key  = "sb:" + senderUserId + "|" + channel + "|" + body.
@@ -1855,7 +1807,7 @@ class FCMChatWidget extends MovieClip {
     }
 
     // =========================================================================
-    // worldId self-read + HMAC control message (#293)
+    // Server-room controls: roster is primary; legacy worldId is a guarded fallback.
     // =========================================================================
 
     function startWorldTimer():Void {
@@ -1881,7 +1833,7 @@ class FCMChatWidget extends MovieClip {
         return out;
     }
 
-    /** Roster-derived world membership: send the signed roster control while
+    /** Roster-derived world membership: send the authenticated roster control while
      *  observations are fresh; leave the room after silence. Drives the SERVER tab. */
     function tickRoster():Void {
         if (_api == null || !_connected || _relayUserId.length == 0) return;
@@ -1898,9 +1850,7 @@ class FCMChatWidget extends MovieClip {
             if ((now - _lastRosterSentAt) >= ROSTER_SEND_MS || namesField != _lastRosterSent) {
                 _lastRosterSentAt = now;
                 _lastRosterSent = namesField;
-                var ts:String = Std.string(unixSeconds());
-                var hmac:String = hmacSha256Hex(WORLD_HMAC_SECRET, "roster|" + _relayUserId + "|" + ts + "|" + namesField);
-                var body:String = WORLD_ROSTER_PREFIX + _relayUserId + "|" + ts + "|" + hmac + "|" + namesField;
+                var body:String = WORLD_ROSTER_PREFIX + namesField;
                 var payload:String = '{"channel":"server","targetUserId":"","body":"' + jsonEscape(body) + '"}';
                 try {
                     _api.call("chat.v1.sendMessage", payload);
@@ -1949,11 +1899,8 @@ class FCMChatWidget extends MovieClip {
     }
 
     function sendWorldIdControl(worldId:String):Void {
-        if (_api == null || !_connected || _relayUserId == null || _relayUserId.length == 0) return;
-        var ts:String = Std.string(unixSeconds());      // unix SECONDS (relay freshness clock)
-        var sigData:String = worldId + _relayUserId + ts;
-        var hmac:String = hmacSha256Hex(WORLD_HMAC_SECRET, sigData);
-        var body:String = WORLD_CTRL_PREFIX + worldId + "|" + _relayUserId + "|" + ts + "|" + hmac;
+        if (_api == null || !_connected) return;
+        var body:String = WORLD_CTRL_PREFIX + worldId;
         var payload:String = '{"channel":"server","targetUserId":"","body":"' + jsonEscape(body) + '"}';
         try {
             _api.call("chat.v1.sendMessage", payload);
@@ -1963,11 +1910,8 @@ class FCMChatWidget extends MovieClip {
     }
 
     function sendWorldLeaveControl():Void {
-        if (_api == null || !_connected || _relayUserId == null || _relayUserId.length == 0) return;
-        var ts:String = Std.string(unixSeconds());
-        var sigData:String = "leave|" + _relayUserId + "|" + ts;
-        var hmac:String = hmacSha256Hex(WORLD_HMAC_SECRET, sigData);
-        var body:String = WORLD_LEAVE_PREFIX + _relayUserId + "|" + ts + "|" + hmac;
+        if (_api == null || !_connected) return;
+        var body:String = WORLD_LEAVE_PREFIX;
         var payload:String = '{"channel":"server","targetUserId":"","body":"' + jsonEscape(body) + '"}';
         try {
             _api.call("chat.v1.sendMessage", payload);
@@ -2166,7 +2110,7 @@ class FCMChatWidget extends MovieClip {
         var cands:Array<Dynamic> = [];
         // The manager is the packaged class Shared.AS3.Data.BSUIDataManager (public,
         // static-style API). In HUDModLoader's shared ApplicationDomain it resolves via
-        // getDefinitionByName — same mechanism that resolves HUDButton/SharedHUDTools.
+        // getDefinitionByName — the same mechanism used for SharedHUDTools.
         // (Bare lexical lookups and property probes both miss it: it's a class, not an
         // injected root property.)
         try { cands.push(untyped __global__["flash.utils.getDefinitionByName"]("Shared.AS3.Data.BSUIDataManager")); } catch (e:Dynamic) { cands.push(null); }
@@ -2422,114 +2366,6 @@ class FCMChatWidget extends MovieClip {
             }
         } catch (e:Dynamic) {}
         return "";
-    }
-
-    // =========================================================================
-    // HMAC-SHA256 — same implementation as FCMBridge.hx
-    // =========================================================================
-
-    static function hmacSha256Hex(key:String, data:String):String {
-        var keyBytes:Array<Int>  = stringToBytes(key);
-        var dataBytes:Array<Int> = stringToBytes(data);
-        if (keyBytes.length > 64) keyBytes = sha256(keyBytes);
-        while (keyBytes.length < 64) keyBytes.push(0);
-        var ipad:Array<Int> = [];
-        var opad:Array<Int> = [];
-        for (i in 0...64) { ipad.push(keyBytes[i] ^ 0x36); opad.push(keyBytes[i] ^ 0x5c); }
-        var inner:Array<Int> = sha256(ipad.concat(dataBytes));
-        var outer:Array<Int> = sha256(opad.concat(inner));
-        return bytesToHex(outer);
-    }
-
-    static var K:Array<Int> = [
-        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-        0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-        0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-        0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-        0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-        0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-        0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
-    ];
-
-    static function sha256(bytes:Array<Int>):Array<Int> {
-        var msg:Array<Int> = bytes.copy();
-        var len:Int = msg.length;
-        msg.push(0x80);
-        while ((msg.length % 64) != 56) msg.push(0);
-        var bits:Float = len * 8;
-        msg.push(0); msg.push(0); msg.push(0); msg.push(0);
-        msg.push(Std.int(bits / 0x1000000) & 0xff);
-        msg.push(Std.int(bits / 0x10000)   & 0xff);
-        msg.push(Std.int(bits / 0x100)     & 0xff);
-        msg.push(Std.int(bits)             & 0xff);
-
-        var h0:Int = 0x6a09e667; var h1:Int = 0xbb67ae85;
-        var h2:Int = 0x3c6ef372; var h3:Int = 0xa54ff53a;
-        var h4:Int = 0x510e527f; var h5:Int = 0x9b05688c;
-        var h6:Int = 0x1f83d9ab; var h7:Int = 0x5be0cd19;
-
-        var chunk:Int = 0;
-        while (chunk < msg.length) {
-            var w:Array<Int> = [];
-            for (i in 0...16) {
-                w.push((msg[chunk+i*4]<<24)|(msg[chunk+i*4+1]<<16)|(msg[chunk+i*4+2]<<8)|msg[chunk+i*4+3]);
-            }
-            for (i in 16...64) {
-                var s0:Int = ror32(w[i-15],7)  ^ ror32(w[i-15],18) ^ (w[i-15]>>>3);
-                var s1:Int = ror32(w[i-2],17)  ^ ror32(w[i-2],19)  ^ (w[i-2]>>>10);
-                w.push(add32(add32(add32(w[i-16], s0), w[i-7]), s1));
-            }
-            var a=h0; var b=h1; var c=h2; var d=h3;
-            var e=h4; var f=h5; var g=h6; var h=h7;
-            for (i in 0...64) {
-                var S1:Int  = ror32(e,6)  ^ ror32(e,11) ^ ror32(e,25);
-                var ch:Int  = (e & f) ^ ((~e) & g);
-                var temp1:Int = add32(add32(add32(add32(h, S1), ch), K[i]), w[i]);
-                var S0:Int  = ror32(a,2)  ^ ror32(a,13) ^ ror32(a,22);
-                var maj:Int = (a & b) ^ (a & c) ^ (b & c);
-                var temp2:Int = add32(S0, maj);
-                h=g; g=f; f=e; e=add32(d,temp1);
-                d=c; c=b; b=a; a=add32(temp1,temp2);
-            }
-            h0=add32(h0,a); h1=add32(h1,b); h2=add32(h2,c); h3=add32(h3,d);
-            h4=add32(h4,e); h5=add32(h5,f); h6=add32(h6,g); h7=add32(h7,h);
-            chunk += 64;
-        }
-        var out:Array<Int> = [];
-        for (v in [h0,h1,h2,h3,h4,h5,h6,h7]) {
-            out.push((v>>>24)&0xff); out.push((v>>>16)&0xff);
-            out.push((v>>>8)&0xff);  out.push(v&0xff);
-        }
-        return out;
-    }
-
-    static inline function add32(a:Int, b:Int):Int { return untyped (a + b) | 0; }
-    static inline function ror32(x:Int, n:Int):Int { return (x >>> n) | (x << (32 - n)); }
-
-    static function stringToBytes(s:String):Array<Int> {
-        var out:Array<Int> = [];
-        for (i in 0...s.length) {
-            var c:Int = s.charCodeAt(i);
-            if (c < 0x80) {
-                out.push(c);
-            } else if (c < 0x800) {
-                out.push(0xc0 | (c >> 6));
-                out.push(0x80 | (c & 0x3f));
-            } else {
-                out.push(0xe0 | (c >> 12));
-                out.push(0x80 | ((c >> 6) & 0x3f));
-                out.push(0x80 | (c & 0x3f));
-            }
-        }
-        return out;
-    }
-
-    static function bytesToHex(bytes:Array<Int>):String {
-        var hex:String = "0123456789abcdef";
-        var out:String = "";
-        for (b in bytes) { out += hex.charAt((b >> 4) & 0xf); out += hex.charAt(b & 0xf); }
-        return out;
     }
 
     // =========================================================================

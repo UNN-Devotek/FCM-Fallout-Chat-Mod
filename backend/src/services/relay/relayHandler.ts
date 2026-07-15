@@ -13,21 +13,20 @@
  *   - hello: token re-auth; may update displayName. Never returns the token.
  *   - Every subsequent op re-validates the token per frame.
  *
- * worldId intercept (#293):
- *   A reserved control message is intercepted BEFORE ingestMessage when the body
- *   matches the signed worldId sentinel. It is consumed, never broadcast or persisted.
+ * World/roster controls:
+ *   Reserved control messages are intercepted before ingestMessage. The authenticated
+ *   relay token supplies the actor identity; payloads are bounded HUD metadata and
+ *   are never broadcast or persisted as chat.
  *
- * Dev-only guard: refuses to accept connections when NODE_ENV==='production'
- * (mirrors hudPushTcp.ts pattern). Lifted explicitly at R6 rollout.
+ * Production guard: default-off until RELAY_PRODUCTION_ENABLED is explicitly enabled.
  */
 
-import * as crypto from 'crypto';
 import type WebSocket from 'ws';
 import type http from 'http';
 import { getRedisClient, getSubscriberClient } from '../../config/redis';
 import prisma from '../../config/prisma';
 import logger from '../../config/logger';
-import env, { DEV_DEFAULT_RELAY_WORLD_HMAC_SECRET } from '../../config/environment';
+import env from '../../config/environment';
 import { mintToken, verifyToken, updateDisplayName, markRelayTokenLinked } from './tokenService';
 import { slugToChannelId, channelIdToSlug, ALL_SLUGS } from './channelMap';
 import { setWorldId, getWorldId, clearWorldId } from './worldIdService';
@@ -50,18 +49,19 @@ import type { RelayToken } from './tokenService';
 /**
  * NUL-delimited sentinel that the SWF prepends to worldId control messages
  * when it sends on channel 'server'.
- * Wire format: "\x00fcm.world.v1\x00<worldId>|<relayUserId>|<ts>|<hmac>"
+ * Wire format: "\x00fcm.world.v1\x00<worldId>".
  */
 const WORLD_ID_SENTINEL_PREFIX  = '\x00fcm.world.v1\x00';
-// LEAVE control: sent when the player leaves a world (worldId cleared). Body:
-// "\x00fcm.world.leave.v1\x00<relayUserId>|<ts>|<hmac>", hmac over "leave|<userId>|<ts>".
+// LEAVE control: sent when the player leaves a world (worldId cleared). Body is
+// exactly the sentinel; identity comes from the authenticated relay frame.
 const WORLD_LEAVE_SENTINEL_PREFIX = '\x00fcm.world.leave.v1\x00';
 // ROSTER control: observed nearby character names (the HUD publishes no worldId —
-// rooms are derived from sightings). Body:
-// "\x00fcm.world.roster.v1\x00<relayUserId>|<ts>|<hmac>|<name\x1Fname...>",
-// hmac over "roster|<userId>|<ts>|<namesField>".
+// rooms are derived from sightings). Body is a US-separated bounded name list.
 const WORLD_ROSTER_SENTINEL_PREFIX = '\x00fcm.world.roster.v1\x00';
-const WORLD_ID_HMAC_WINDOW_S    = 30;    // 30-second replay window (ts is unix SECONDS)
+const MAX_WORLD_ID_LENGTH       = 128;
+const MAX_ROSTER_CONTROL_BYTES  = 2048;
+const WORLD_CONTROL_WINDOW_SECONDS = 10;
+const MAX_WORLD_CONTROLS_PER_WINDOW = 6;
 const POLL_HISTORY_LIMIT        = 75;    // initial history window on cursor=0 — must cover ~12 msgs x 5 static channels + recent live traffic (the window is global, not per-channel)
 const REDIS_BROADCAST_CHANNEL   = 'chat:broadcast';
 
@@ -199,85 +199,39 @@ function send(ws: WebSocket, payload: object): void {
   } catch { /* already closed */ }
 }
 
-// ── worldId HMAC verification ─────────────────────────────────────────────────
+// ── Authenticated world/roster control parsing ────────────────────────────────
 
-/**
- * Verify a worldId control message sent by the SWF on channel 'server'.
- *
- * Wire format (body):
- *   "\x00fcm.world.v1\x00<worldId>|<relayUserId>|<ts>|<hmac>"
- *
- * Fields (pipe-delimited, after stripping the sentinel prefix):
- *   worldId     — the player's current server WorldId from BSUIDataManager
- *   relayUserId — must match the authenticated socket's userId
- *   ts          — unix SECONDS (decimal string); freshness window ±30 s
- *   hmac        — HMAC-SHA256(RELAY_WORLD_HMAC_SECRET, worldId + relayUserId + ts)
- *                 over the raw concatenation of the three field values, no separators
- *
- * Returns { worldId } on success, null on any failure (wrong prefix, stale ts,
- * mismatched relayUserId, bad HMAC).
- */
-/** Freshness check — ts is a unix SECONDS decimal string, ±WORLD_ID_HMAC_WINDOW_S. */
-function tsIsFresh(tsStr: string): boolean {
-  const ts = Number(tsStr);
-  if (!Number.isFinite(ts)) return false;
-  return Math.abs(Date.now() / 1000 - ts) <= WORLD_ID_HMAC_WINDOW_S;
-}
-
-/**
- * Constant-time compare of a client-supplied HMAC-hex against
- * HMAC-SHA256(RELAY_WORLD_HMAC_SECRET, signedData). Fails closed when the secret
- * is missing or still the dev placeholder in production.
- */
-function hmacHexEquals(signedData: string, hmacHex: string): boolean {
-  const secret = env.RELAY_WORLD_HMAC_SECRET ?? '';
-  if (!secret) return false;
-  if (env.NODE_ENV === 'production' && secret === DEV_DEFAULT_RELAY_WORLD_HMAC_SECRET) {
-    logger.warn('[relayHandler] RELAY_WORLD_HMAC_SECRET is still the dev placeholder in production — worldId control messages will be rejected');
-    return false;
-  }
-  const expected = crypto.createHmac('sha256', secret).update(signedData).digest('hex');
-  try {
-    const a = Buffer.from(hmacHex, 'hex');
-    const b = Buffer.from(expected, 'hex');
-    return a.length === b.length && crypto.timingSafeEqual(a, b);
-  } catch {
-    return false;
-  }
-}
-
-function verifyWorldIdHmac(body: string, socketUserId: string): { worldId: string } | null {
+function parseWorldIdControl(body: string): string | null {
   if (!body.startsWith(WORLD_ID_SENTINEL_PREFIX)) return null;
-
-  const parts = body.slice(WORLD_ID_SENTINEL_PREFIX.length).split('|');
-  if (parts.length !== 4) return null;
-
-  const [worldId, sentUserId, tsStr, hmac] = parts;
-  if (!worldId || !sentUserId || !tsStr || !hmac) return null;
-  if (sentUserId !== socketUserId) return null; // can only set worldId for own identity
-  if (!tsIsFresh(tsStr)) return null;
-
-  // HMAC is over raw concatenation of the three field values (no separators).
-  return hmacHexEquals(`${worldId}${sentUserId}${tsStr}`, hmac) ? { worldId } : null;
+  const worldId = body.slice(WORLD_ID_SENTINEL_PREFIX.length);
+  if (!worldId || worldId.length > MAX_WORLD_ID_LENGTH || worldId.includes('|')) return null;
+  return worldId;
 }
 
-/**
- * Verify a LEAVE control message (player left their world). Body:
- *   "\x00fcm.world.leave.v1\x00<relayUserId>|<ts>|<hmac>"
- * HMAC over "leave|<relayUserId>|<ts>". Returns true on a valid, fresh signature.
- */
-function verifyWorldLeaveHmac(body: string, socketUserId: string): boolean {
-  if (!body.startsWith(WORLD_LEAVE_SENTINEL_PREFIX)) return false;
+function isWorldLeaveControl(body: string): boolean {
+  return body === WORLD_LEAVE_SENTINEL_PREFIX;
+}
 
-  const parts = body.slice(WORLD_LEAVE_SENTINEL_PREFIX.length).split('|');
-  if (parts.length !== 3) return false;
+function parseWorldRosterControl(body: string): string[] | null {
+  if (!body.startsWith(WORLD_ROSTER_SENTINEL_PREFIX)) return null;
+  const namesField = body.slice(WORLD_ROSTER_SENTINEL_PREFIX.length);
+  if (namesField.length > MAX_ROSTER_CONTROL_BYTES) return null;
+  return namesField.length > 0 ? namesField.split('\x1F') : [];
+}
 
-  const [sentUserId, tsStr, hmac] = parts;
-  if (!sentUserId || !tsStr || !hmac) return false;
-  if (sentUserId !== socketUserId) return false;
-  if (!tsIsFresh(tsStr)) return false;
-
-  return hmacHexEquals(`leave|${sentUserId}|${tsStr}`, hmac);
+/** Per-identity limit prevents a modified client from forcing room recomputation. */
+async function checkWorldControlRateLimit(userId: string): Promise<boolean> {
+  try {
+    const redis = await getRedisClient();
+    const bucket = Math.floor(Date.now() / 1000 / WORLD_CONTROL_WINDOW_SECONDS);
+    const key = `relay:world-control:${userId}:${bucket}`;
+    const count = await redis.incr(key);
+    if (count === 1) await redis.expire(key, WORLD_CONTROL_WINDOW_SECONDS + 1);
+    return count <= MAX_WORLD_CONTROLS_PER_WINDOW;
+  } catch (err) {
+    logger.warn({ err, userId }, '[relayHandler] world-control rate limit unavailable');
+    return false;
+  }
 }
 
 // ── Subscribe registry ────────────────────────────────────────────────────────
@@ -326,25 +280,6 @@ async function handleWorldJoin(identity: RelayToken, worldId: string): Promise<v
   rebindLocalSubscribers(identity.userId, worldId);
   await publishRebind(identity.userId, worldId);
   await backfillWorldToUser(identity.userId, worldId);
-}
-
-/**
- * Verify a ROSTER control message. Returns the observed names on success, null on failure.
- * Body: "<sentinel><relayUserId>|<ts>|<hmac>|<namesField>"; namesField = \x1F-separated names.
- */
-function verifyWorldRosterHmac(body: string, socketUserId: string): { names: string[] } | null {
-  if (!body.startsWith(WORLD_ROSTER_SENTINEL_PREFIX)) return null;
-  const payload = body.slice(WORLD_ROSTER_SENTINEL_PREFIX.length);
-  const firstThree = payload.split('|');
-  if (firstThree.length < 4) return null;
-  const [sentUserId, tsStr, hmac] = firstThree;
-  const namesField = firstThree.slice(3).join('|'); // names may not contain | (client strips) — defensive rejoin
-  if (!sentUserId || !tsStr || !hmac) return null;
-  if (sentUserId !== socketUserId) return null;
-  if (!tsIsFresh(tsStr)) return null;
-  if (!hmacHexEquals(`roster|${sentUserId}|${tsStr}|${namesField}`, hmac)) return null;
-  const names = namesField.length > 0 ? namesField.split('\x1F') : [];
-  return { names };
 }
 
 /**
@@ -561,7 +496,7 @@ async function handleHello(ws: WebSocket, frame: Record<string, unknown>): Promi
  * Response shape:
  *   { success: true, userId, state: 'authenticated'|'limited', permissions: { canReport, canSend } }
  *
- * userId is always populated (the SWF needs it for the worldId HMAC even while limited).
+ * userId is always populated so the widget can correlate its authenticated relay session.
  * state='authenticated' only when linked_user_id is set; otherwise 'limited'.
  * permissions.canSend reflects isLinked (same gate as handleSend).
  * permissions.canReport: false for now (R4 wires this); always false until R4 merges.
@@ -631,37 +566,44 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   const slug = typeof frame.channel === 'string' ? frame.channel : '';
   const body = typeof frame.body === 'string' ? frame.body : '';
 
-  // ── worldId JOIN/LEAVE control-message intercept (before ALL_SLUGS check) ──
-  // The SWF sends NUL-sentinel-prefixed bodies on channel 'server' to signal that
-  // the player joined (worldId set) or left (worldId cleared) a world. Both are
-  // intercepted, verified, applied to room membership, and dropped (never
-  // broadcast/persisted). Bad/stale HMACs fall through silently.
+  // ── Authenticated world/roster control intercept (before ALL_SLUGS check) ──
+  // Actor identity comes only from `identity`, derived from the relay token above.
+  // Controls are bounded, applied to membership, and never broadcast/persisted.
   if (slug === 'server' && body.startsWith(WORLD_ID_SENTINEL_PREFIX)) {
-    const ctrl = verifyWorldIdHmac(body, identity.userId);
-    if (ctrl) {
-      await handleWorldJoin(identity, ctrl.worldId);
+    const worldId = parseWorldIdControl(body);
+    if (worldId) {
+      if (!(await checkWorldControlRateLimit(identity.userId))) {
+        send(ws, errEnvelope('rate_limited', 'World controls are temporarily rate limited'));
+        return;
+      }
+      await handleWorldJoin(identity, worldId);
       send(ws, { success: true, messageId: '' });
       return;
     }
-    // fall through — no stored worldId → invalid_channel below
   }
   if (slug === 'server' && body.startsWith(WORLD_LEAVE_SENTINEL_PREFIX)) {
-    if (verifyWorldLeaveHmac(body, identity.userId)) {
+    if (isWorldLeaveControl(body)) {
+      if (!(await checkWorldControlRateLimit(identity.userId))) {
+        send(ws, errEnvelope('rate_limited', 'World controls are temporarily rate limited'));
+        return;
+      }
       await handleWorldLeave(identity);
       send(ws, { success: true, messageId: '' });
       return;
     }
-    // fall through
   }
   if (slug === 'server' && body.startsWith(WORLD_ROSTER_SENTINEL_PREFIX)) {
-    const roster = verifyWorldRosterHmac(body, identity.userId);
-    if (roster) {
-      await setRoster(identity.userId, identity.fo76Name, roster.names);
+    const names = parseWorldRosterControl(body);
+    if (names) {
+      if (!(await checkWorldControlRateLimit(identity.userId))) {
+        send(ws, errEnvelope('rate_limited', 'World controls are temporarily rate limited'));
+        return;
+      }
+      await setRoster(identity.userId, identity.fo76Name, names);
       await applyRoomAssignments();
       send(ws, { success: true, messageId: '' });
       return;
     }
-    // fall through
   }
 
   if (!ALL_SLUGS.includes(slug)) {
@@ -978,10 +920,13 @@ async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): P
  * Dispatches JSON frames by op field. The connection may be short-lived (RPC)
  * or long-lived (subscribe). All errors return the stable error envelope.
  */
+export function isRelayAvailable(opts: { nodeEnv: string; productionEnabled: boolean }): boolean {
+  return opts.nodeEnv !== 'production' || opts.productionEnabled;
+}
+
 export function handleRelayConnection(ws: WebSocket, _req: http.IncomingMessage): void {
-  // Dev-only guard — mirrors hudPushTcp.ts initHudPushTcp pattern.
-  if (env.NODE_ENV === 'production') {
-    logger.warn('[relayHandler] /relay connection refused: not yet exposed in production (R6 lifts this guard)');
+  if (!isRelayAvailable({ nodeEnv: env.NODE_ENV, productionEnabled: env.RELAY_PRODUCTION_ENABLED })) {
+    logger.warn('[relayHandler] /relay connection refused: RELAY_PRODUCTION_ENABLED is false');
     ws.close(1008, 'relay not available in production');
     return;
   }

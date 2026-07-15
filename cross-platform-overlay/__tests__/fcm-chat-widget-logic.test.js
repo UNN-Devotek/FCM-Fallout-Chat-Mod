@@ -26,6 +26,7 @@ const {
   nativeTruthy,
   probeUsable,
   parseInputText,
+  jsonObjectEnd,
 } = require('./fcm-chat-widget-logic.js');
 
 describe('normChannel', () => {
@@ -386,5 +387,27 @@ describe('parseInputText (readChatInput buffer; bare string / quoted / json / fa
   });
   it('trims surrounding whitespace of a bare string', () => {
     expect(parseInputText('  hi  ')).toBe('hi');
+  });
+});
+
+describe('jsonObjectEnd (relay event framing)', () => {
+  it('finds a normal object boundary', () => {
+    const raw = '{"id":1}{"id":2}';
+    expect(jsonObjectEnd(raw, 0)).toBe(7);
+  });
+
+  it('ignores braces inside a message body', () => {
+    const raw = '{"body":"use { and } safely","id":1} trailing';
+    expect(jsonObjectEnd(raw, 0)).toBe(raw.indexOf('} trailing'));
+  });
+
+  it('honors escaped quotes and backslashes in a message body', () => {
+    const raw = '{"body":"say \\"{\\" then \\\\ ok","id":1}';
+    expect(jsonObjectEnd(raw, 0)).toBe(raw.length - 1);
+  });
+
+  it('fails closed on an incomplete object', () => {
+    const raw = '{"body":"unfinished"';
+    expect(jsonObjectEnd(raw, 0)).toBe(raw.length);
   });
 });

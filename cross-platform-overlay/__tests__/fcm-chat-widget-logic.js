@@ -269,6 +269,31 @@ function parseInputText(raw) {
   return t;
 }
 
+// jsonObjectEnd mirrors FCMChatWidget.jsonObjectEnd. Event payloads are JSON and
+// message bodies may contain braces, quotes, and escaped backslashes; a simple
+// brace counter would split a valid event at the wrong position.
+function jsonObjectEnd(text, start) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text.charAt(i);
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+    } else if (ch === '"') {
+      inString = true;
+    } else if (ch === '{') {
+      depth += 1;
+    } else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return i;
+    }
+  }
+  return text.length;
+}
+
 module.exports = {
   MAX_SEND_LEN,
   LINK_HINT,
@@ -295,4 +320,5 @@ module.exports = {
   nativeTruthy,
   probeUsable,
   parseInputText,
+  jsonObjectEnd,
 };

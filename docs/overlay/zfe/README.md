@@ -1,22 +1,22 @@
-# ZFE (Zeroed Fallout Extender) — FCMBridge Integration
+# ZFE (Zeroed Fallout Extender) — FCM in-game integration
 
-ZFE is a `dxgi.dll` proxy for Fallout 76 that injects `__ZFE` into the Scaleform VM, giving HUD mods outbound communication and persistent storage. FCMBridge uses it to display the chat feed inside the game HUD.
+ZFE is a `dxgi.dll` proxy for Fallout 76 that exposes `__ZFE` to the Scaleform
+HUD. FCM's optional `FCMChatWidget` HUDModLoader mod uses its sanctioned
+`chat.v1` surface to display chat in game.
 
-> **chat.v1 in-game chat status (2026-06-26):** the ZFE `chat.v1` native chat relay works end-to-end
-> on **native Windows** (ZFE 0.9.9+) — a message typed in-game round-trips through FCM's `/relay` and
-> broadcasts to every surface. It is **BLOCKED under Proton/Wine** (Linux / Steam Deck) by an upstream
-> Zig TLS bug; the fix is ZFE rebuilt on Zig >= 0.14.0 (tracked in **#326**). On Linux the native
-> desktop overlay remains the chat path. Full writeup:
-> [native-chat-relay/proton-status.md](native-chat-relay/proton-status.md).
+> **Current widget (2026-07-15):** `FCMChatWidget` v2.9.1 targets `/relay` through
+> ZFE `chat.v1`. The backend keeps production relay access fail-closed until
+> `RELAY_PRODUCTION_ENABLED=true` is deliberately rolled out. The desktop overlay
+> remains independent of this optional mod path.
 
 ## Guides
 
 | Guide | What it covers |
 |---|---|
 | [**FCMBridge Data Pattern**](fcmbridge-data-pattern.md) | **START HERE — the working end-to-end pipeline + every pitfall (quote-free payload, `yes`/`on` booleans, build/deploy steps)** |
-| [**Native Chat Relay (`chat.v1`)**](native-chat-relay/README.md) | **The path forward** — ZFE's standardized native chat client + the plan to make the FCM relay speak its JSON contract. **Supersedes FCMHUD/1.** |
-| [Real-Time Socket (FCMHUD/1)](realtime-socket.md) | **ACTIVE transport** — the live push bridge we ship the HUD mod on now (#302 / prod exposure #139); `chat.v1` supersedes it **later**. Wire protocol, env vars, backend architecture, probe tooling. |
-| [Two-Way Chat — Implemented](two-way-chat-implemented.md) | **ACTIVE** — the FCMHUD/1 in-game input (M7) pattern; shipping path now, `chat.v1` is the later swap. |
+| [**Native Chat Relay (`chat.v1`)**](native-chat-relay/README.md) | Current adapter and protocol for the `FCMChatWidget` HUD mod. |
+| [Real-Time Socket (FCMHUD/1)](realtime-socket.md) | Legacy bridge reference; not the `FCMChatWidget` transport. |
+| [Two-Way Chat — Implemented](two-way-chat-implemented.md) | Legacy FCMHUD/1 reference; keep separate from the chat.v1 widget. |
 | [Modder Guide](modder-guide.md) | Bridge discovery, `findZfeApi`, `getRuntimeInfo`, logging, safety boundary |
 | [ZFE API Reference](api-reference.md) | Remote Data, Storage, Events, Imports, and Legacy Compatibility — full API call reference |
 | [Environment Variables](env-vars.md) | Dev/testing only — normal users never need these |

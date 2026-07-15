@@ -39,6 +39,12 @@ const redisMock = {
     const prefix = String(pattern).replace(/\*$/, '');
     return Object.keys(_worldStore).filter((k) => k.startsWith(prefix));
   }),
+  scanIterator: jest.fn().mockImplementation(async function* ({ MATCH }) {
+    const prefix = String(MATCH).replace(/\*$/, '');
+    for (const key of Object.keys(_worldStore)) {
+      if (key.startsWith(prefix)) yield key;
+    }
+  }),
   lPush:  jest.fn().mockImplementation(async (key, val) => { (_lists[key] = _lists[key] || []).unshift(val); return _lists[key].length; }),
   lTrim:  jest.fn().mockImplementation(async (key, start, stop) => { if (_lists[key]) _lists[key] = _lists[key].slice(start, stop + 1); return 'OK'; }),
   lRange: jest.fn().mockImplementation(async (key, start, stop) => { const l = _lists[key] || []; return stop === -1 ? l.slice(start) : l.slice(start, stop + 1); }),
@@ -107,6 +113,10 @@ jest.mock('../src/config/prisma', () => ({
       updateMany:  jest.fn().mockResolvedValue({ count: 1 }),
     },
     hudPairingToken: {
+      findFirst: jest.fn().mockImplementation(async (args) => {
+        const userId = args?.where?.userId;
+        return _tokenRows.find((row) => row.userId === userId) ?? null;
+      }),
       findMany: jest.fn().mockImplementation(async (args) => {
         const prefix = args?.where?.tokenPrefix;
         if (!prefix) return [];
@@ -206,7 +216,6 @@ jest.mock('../src/services/linkCodeService', () => ({
 
 const http           = require('http');
 const { WebSocket, WebSocketServer } = require('ws');
-const crypto         = require('crypto');
 const argon2         = require('argon2');
 
 const {
@@ -233,7 +242,19 @@ const {
   _resetRelayWss,
 } = require('../src/websocket/upgradeRouter');
 
-const { deriveLinkUrl } = require('../src/services/relay/relayHandler');
+const { deriveLinkUrl, isRelayAvailable } = require('../src/services/relay/relayHandler');
+
+describe('relay production rollout gate', () => {
+  test('keeps the relay available in development and test', () => {
+    expect(isRelayAvailable({ nodeEnv: 'development', productionEnabled: false })).toBe(true);
+    expect(isRelayAvailable({ nodeEnv: 'test', productionEnabled: false })).toBe(true);
+  });
+
+  test('fails closed in production until explicitly enabled', () => {
+    expect(isRelayAvailable({ nodeEnv: 'production', productionEnabled: false })).toBe(false);
+    expect(isRelayAvailable({ nodeEnv: 'production', productionEnabled: true })).toBe(true);
+  });
+});
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -1284,29 +1305,10 @@ describe('relay WebSocket ops', () => {
   });
 });
 
-// ── worldId HMAC tests ────────────────────────────────────────────────────────
+// ── authenticated world-control tests ─────────────────────────────────────────
 
-describe('worldId HMAC', () => {
-  // Test verifyWorldIdHmac logic by sending a worldId control message to /relay.
-  //
-  // Canonical wire format (WT3-sourced, 2026-06-24):
-  //   channel: 'server'
-  //   body: "\x00fcm.world.v1\x00<worldId>|<relayUserId>|<ts>|<hmac>"
-  //   ts = unix SECONDS (decimal string)
-  //   hmac = HMAC-SHA256(secret, worldId + relayUserId + ts)  [raw concat, no separators]
-  //
-  // NOTE: the environment module reads process.env at import time, so we must use
-  // the default fallback value that is already baked into the singleton.
+describe('authenticated world controls', () => {
   const SENTINEL = '\x00fcm.world.v1\x00';
-  const SECRET   = 'fcm-world-v1-dev-placeholder';
-
-  function makeCtrlBody(worldId, relayUserId, offsetS = 0) {
-    const ts   = Math.floor(Date.now() / 1000) + offsetS; // unix SECONDS
-    const hmac = crypto.createHmac('sha256', SECRET)
-      .update(`${worldId}${relayUserId}${ts}`)
-      .digest('hex');
-    return `${SENTINEL}${worldId}|${relayUserId}|${ts}|${hmac}`;
-  }
 
   let srv2;
 
@@ -1363,9 +1365,9 @@ describe('worldId HMAC', () => {
     const ingestMock = require('../src/services/ingestMessage').ingestMessage;
     ingestMock.mockClear();
 
-    // HMAC body must use raw UUID (the identity.userId that the handler checks against).
-    // Wire format: NUL-sentinel-prefix + pipe-delimited fields on channel='server'.
-    const body = makeCtrlBody('world-001', rawId);
+    // The authenticated relay token, not a SWF-embedded secret, binds the control
+    // to this identity. The wire format carries only bounded HUD metadata.
+    const body = `${SENTINEL}world-001`;
 
     const { ws, msgs } = await connectWs(srv2.port);
     const res = await waitForMsg(ws, msgs, () =>
@@ -1378,7 +1380,7 @@ describe('worldId HMAC', () => {
     ws.close();
   });
 
-  test('worldId with missing/invalid HMAC on server channel → falls through to no worldId error', async () => {
+  test('malformed worldId control falls through to the normal server-channel guard', async () => {
     const { ws: wsReg, msgs: msgsReg } = await connectWs(srv2.port);
     const regRes = await waitForMsg(wsReg, msgsReg, () =>
       wsReg.send(JSON.stringify({ op: 'register', displayName: 'HmacFail' })),
@@ -1388,10 +1390,7 @@ describe('worldId HMAC', () => {
     const rawId = lastRawUserId();
     _userMap[rawId] = { id: rawId, discordId: 'disc-hf', steamId: null, isBanned: false, isMuted: false };
 
-    // Sentinel prefix matches (intercept fires) but HMAC is wrong — verify fails,
-    // falls through to getWorldId → null → invalid_channel.
-    const ts = Math.floor(Date.now() / 1000);
-    const badBody = `${SENTINEL}world-x|${rawId}|${ts}|${'a'.repeat(64)}`;
+    const badBody = `${SENTINEL}world-x|unexpected-field`;
     const { ws, msgs } = await connectWs(srv2.port);
     const res = await waitForMsg(ws, msgs, () =>
       ws.send(JSON.stringify({ op: 'send', token, channel: 'server', body: badBody })),
@@ -1401,7 +1400,7 @@ describe('worldId HMAC', () => {
     ws.close();
   });
 
-  test('worldId with stale timestamp → not intercepted (invalid_channel via server channel)', async () => {
+  test('oversized worldId control is rejected', async () => {
     const { ws: wsReg, msgs: msgsReg } = await connectWs(srv2.port);
     const regRes = await waitForMsg(wsReg, msgsReg, () =>
       wsReg.send(JSON.stringify({ op: 'register', displayName: 'StalePlayer' })),
@@ -1411,8 +1410,7 @@ describe('worldId HMAC', () => {
     const rawId = lastRawUserId();
     _userMap[rawId] = { id: rawId, discordId: 'disc-stale', steamId: null, isBanned: false, isMuted: false };
 
-    // 60s in the past → outside 30s replay window → ts freshness check fails
-    const staleBody = makeCtrlBody('world-stale', rawId, -60);
+    const staleBody = `${SENTINEL}${'x'.repeat(129)}`;
 
     const { ws, msgs } = await connectWs(srv2.port);
     const res = await waitForMsg(ws, msgs, () =>
@@ -1429,18 +1427,9 @@ describe('worldId HMAC', () => {
 describe('server chat (worldId-scoped room)', () => {
   const SENTINEL       = '\x00fcm.world.v1\x00';
   const LEAVE_SENTINEL = '\x00fcm.world.leave.v1\x00';
-  const SECRET         = 'fcm-world-v1-dev-placeholder';
 
-  function makeJoinBody(worldId, userId, offsetS = 0) {
-    const ts   = Math.floor(Date.now() / 1000) + offsetS;
-    const hmac = crypto.createHmac('sha256', SECRET).update(`${worldId}${userId}${ts}`).digest('hex');
-    return `${SENTINEL}${worldId}|${userId}|${ts}|${hmac}`;
-  }
-  function makeLeaveBody(userId, offsetS = 0) {
-    const ts   = Math.floor(Date.now() / 1000) + offsetS;
-    const hmac = crypto.createHmac('sha256', SECRET).update(`leave|${userId}|${ts}`).digest('hex');
-    return `${LEAVE_SENTINEL}${userId}|${ts}|${hmac}`;
-  }
+  const makeJoinBody = (worldId) => `${SENTINEL}${worldId}`;
+  const makeLeaveBody = () => LEAVE_SENTINEL;
 
   let srv;
 
@@ -1497,8 +1486,8 @@ describe('server chat (worldId-scoped room)', () => {
     ws.close();
     return res;
   }
-  const sendJoin  = (user, worldId) => sendCtrl(user, makeJoinBody(worldId, user.rawId));
-  const sendLeave = (user)          => sendCtrl(user, makeLeaveBody(user.rawId));
+  const sendJoin  = (user, worldId) => sendCtrl(user, makeJoinBody(worldId));
+  const sendLeave = (user)          => sendCtrl(user, makeLeaveBody());
 
   test('server send with no active world → invalid_channel', async () => {
     const a = await registerAndLink('Nomad', 'fcm-nomad');
@@ -1506,6 +1495,17 @@ describe('server chat (worldId-scoped room)', () => {
     const res = await waitForMsg(ws, msgs, () => send(ws, { op: 'send', token: a.token, channel: 'server', body: 'hi' }));
     expect(res).toMatchObject({ success: false, error: { code: 'invalid_channel' } });
     ws.close();
+  });
+
+  test('world controls are rate-limited per authenticated relay identity', async () => {
+    const a = await registerAndLink('ControlBurst', 'fcm-control-burst');
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await expect(sendJoin(a, 'world-rate')).resolves.toMatchObject({ success: true });
+    }
+    await expect(sendJoin(a, 'world-rate')).resolves.toMatchObject({
+      success: false,
+      error: { code: 'rate_limited' },
+    });
   });
 
   test('server chat send is ephemeral — never hits ingestMessage/Postgres', async () => {
@@ -1570,15 +1570,8 @@ describe('server chat (worldId-scoped room)', () => {
 
 describe('roster-derived world rooms', () => {
   const ROSTER_SENTINEL = '\x00fcm.world.roster.v1\x00';
-  const SECRET = 'fcm-world-v1-dev-placeholder';
 
-  function makeRosterBody(userId, names, offsetS = 0) {
-    const ts = Math.floor(Date.now() / 1000) + offsetS;
-    const namesField = names.join('\x1F');
-    const hmac = crypto.createHmac('sha256', SECRET)
-      .update('roster|' + userId + '|' + ts + '|' + namesField).digest('hex');
-    return ROSTER_SENTINEL + [userId, ts, hmac].join('|') + '|' + namesField;
-  }
+  const makeRosterBody = (_userId, names) => ROSTER_SENTINEL + names.join('\x1F');
 
   let srv;
   beforeAll(async () => { srv = await makeServer(); }, 10000);
@@ -1662,13 +1655,11 @@ describe('roster-derived world rooms', () => {
     wsA.close(); wsB.close(); wsC.close();
   });
 
-  test('bad roster HMAC falls through (no room assignment)', async () => {
+  test('oversized roster control is rejected before it can create a room assignment', async () => {
     const a = await registerAndLink('RosterEve', 'fcm-re');
-    const ts = Math.floor(Date.now() / 1000);
-    const bad = ROSTER_SENTINEL + [a.rawId, ts, 'f'.repeat(64)].join('|') + '|somebody';
+    const bad = ROSTER_SENTINEL + 'x'.repeat(2049);
     const res = await sendRaw(a, bad);
-    // falls through to the normal server path -> no room stored -> invalid_channel
-    expect(res).toMatchObject({ success: false, error: { code: 'invalid_channel' } });
+    expect(res).toMatchObject({ success: false, error: { code: 'message_too_long' } });
   });
 });
 
