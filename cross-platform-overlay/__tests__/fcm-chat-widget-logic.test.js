@@ -23,6 +23,10 @@ const {
   shouldRebindWorldId,
   shouldIgnoreBlankWorldId,
   inputChannelAction,
+  worldControlBody,
+  sharedHudPromptMode,
+  hudMenuAction,
+  customEventDefinitionNames,
   parseInputSubmit,
   emptyFeedNotice,
   chatVerbFailed,
@@ -248,6 +252,12 @@ describe('server-room acknowledgement gating', () => {
       lastWorldId: 'legacy-world', currentWorldId: '', freshRosterObservation: false,
     })).toBe(false);
   });
+  it('uses an ASCII-only control body so ZFE cannot truncate it at a leading NUL', () => {
+    const body = worldControlBody('roster', ['Ada', 'Beck']);
+    expect(body).toBe('FCMCTL/1/ROSTER:Ada|Beck');
+    expect(body.includes('\x00')).toBe(false);
+    expect(body.includes('\x1F')).toBe(false);
+  });
 });
 
 describe('native input requires a balanced game-input lock', () => {
@@ -280,6 +290,19 @@ describe('in-session channel actions', () => {
   it('ignores key-down and closed-input actions, preserving the draft/session', () => {
     expect(inputChannelAction({ ...base, isKeyDown: true, action: 'NextPage' })).toBe('none');
     expect(inputChannelAction({ ...base, inputOpen: false, action: 'NextPage' })).toBe('none');
+  });
+});
+
+describe('HUDModLoader fallback presentation and menu routing', () => {
+  it('does not mirror a SharedHUDTools field into the widget prompt', () => {
+    expect(sharedHudPromptMode()).toBe('label-only');
+  });
+  it('routes the F12/DynamicSnapshot action to the registered HUDTools menu', () => {
+    expect(hudMenuAction({ isKeyDown: false, action: 'DiagnosticSnapshot' })).toBe('show-menu');
+    expect(hudMenuAction({ isKeyDown: true, action: 'DiagnosticSnapshot' })).toBe('none');
+  });
+  it('prefers the game-qualified CustomEvent class required by ControlMap', () => {
+    expect(customEventDefinitionNames()[0]).toBe('Shared.AS3.Events.CustomEvent');
   });
 });
 

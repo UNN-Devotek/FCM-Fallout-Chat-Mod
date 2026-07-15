@@ -47,17 +47,17 @@ normal database channel.
 ## Ephemeral `server` rooms
 
 The widget periodically observes nearby names from approved HUD data sources and
-sends a NUL-prefixed roster control on `channel: 'server'`:
+sends a printable roster control on `channel: 'server'`:
 
 ```text
-\x00fcm.world.roster.v1\x00<name>\x1F<name>...
+FCMCTL/1/ROSTER:<name>|<name>...
 ```
 
 It can also send the compatibility controls:
 
 ```text
-\x00fcm.world.v1\x00<worldId>
-\x00fcm.world.leave.v1\x00
+FCMCTL/1/WORLD:<worldId>
+FCMCTL/1/LEAVE
 ```
 
 Controls are intercepted before ordinary channel validation and are never stored

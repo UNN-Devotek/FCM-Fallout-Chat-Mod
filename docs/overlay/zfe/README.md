@@ -4,7 +4,7 @@ ZFE is a `dxgi.dll` proxy for Fallout 76 that exposes `__ZFE` to the Scaleform
 HUD. FCM's optional `FCMChatWidget` HUDModLoader mod uses its sanctioned
 `chat.v1` surface to display chat in game.
 
-> **Current widget (2026-07-15):** `FCMChatWidget` v2.9.1 targets `/relay` through
+> **Current widget (2026-07-15):** `FCMChatWidget` v2.9.3 targets `/relay` through
 > ZFE `chat.v1`. The backend keeps production relay access fail-closed until
 > `RELAY_PRODUCTION_ENABLED=true` is deliberately rolled out. The desktop overlay
 > remains independent of this optional mod path.

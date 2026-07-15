@@ -148,6 +148,24 @@ function shouldSendRosterControl({ rosterObserved, serverSessionReady, now, last
   return !serverSessionReady || now - lastSentAt >= 30000 || namesField !== lastSentNames;
 }
 
+// ── Printable relay-control framing (FCMChatWidget world controls) ─────────────
+// ZFE's native chat bridge treats leading NUL/control bytes as an empty message.
+// Keep all control bytes printable before the body reaches chat.v1.
+const WORLD_CONTROL_PREFIXES = {
+  world: 'FCMCTL/1/WORLD:',
+  leave: 'FCMCTL/1/LEAVE',
+  roster: 'FCMCTL/1/ROSTER:',
+};
+
+function worldControlBody(kind, namesOrWorldId = []) {
+  switch (kind) {
+    case 'world': return WORLD_CONTROL_PREFIXES.world + String(namesOrWorldId);
+    case 'leave': return WORLD_CONTROL_PREFIXES.leave;
+    case 'roster': return WORLD_CONTROL_PREFIXES.roster + namesOrWorldId.join('|');
+    default: return '';
+  }
+}
+
 // ── Native-input lock lifecycle (FCMChatWidget.open/closeInputNative) ──────────
 function nativeLockAdmission(nativeActivated, startEditTextDispatched) {
   if (!nativeActivated) return { nativeOpen: false, fallback: true, deactivate: false, ownsLock: false };
@@ -178,6 +196,22 @@ function inputChannelAction({ inputOpen, isKeyDown, action, nextAction, prevActi
   if (action === nextAction) return 'next';
   if (action === prevAction) return 'prev';
   return 'none';
+}
+
+// SharedHUDTools owns and renders the fallback TextField, so the widget must leave
+// its overlapping prompt as a label rather than mirroring the same typed string.
+function sharedHudPromptMode() {
+  return 'label-only';
+}
+
+// HUDModLoader maps F12 to DiagnosticSnapshot. Explicitly invoking the registered
+// SharedHUDTools menu is a fallback when its automatic dispatch is unavailable.
+function hudMenuAction({ isKeyDown, action }) {
+  return !isKeyDown && action === 'DiagnosticSnapshot' ? 'show-menu' : 'none';
+}
+
+function customEventDefinitionNames() {
+  return ['Shared.AS3.Events.CustomEvent', 'CustomEvent'];
 }
 
 // ── Slash parse + consume (FCMChatWidget.onInputSubmit) ─────────────────────────
@@ -371,11 +405,16 @@ module.exports = {
   serverSessionResult,
   serverSendDecision,
   shouldSendRosterControl,
+  WORLD_CONTROL_PREFIXES,
+  worldControlBody,
   nativeLockAdmission,
   nativeLockRelease,
   shouldRebindWorldId,
   shouldIgnoreBlankWorldId,
   inputChannelAction,
+  sharedHudPromptMode,
+  hudMenuAction,
+  customEventDefinitionNames,
   parseInputSubmit,
   emptyFeedNotice,
   extractJsonString,

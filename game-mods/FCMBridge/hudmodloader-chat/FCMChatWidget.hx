@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.9.2";  // acknowledged server rooms + balanced native input lock
+    static inline var VERSION:String  = "2.9.3";  // printable server controls + single fallback input renderer
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -148,15 +148,16 @@ class FCMChatWidget extends MovieClip {
     // ── Authenticated relay control messages ───────────────────────────────────
     // The relay authenticates every frame with the ZFE-held relay token. Do NOT put
     // a shared secret in this distributable SWF: it cannot authenticate a client
-    // and creates a production configuration foot-gun. These NUL-prefixed controls
-    // are bounded, untrusted HUD metadata and are consumed by the authenticated relay.
-    static inline var WORLD_CTRL_PREFIX:String  = "\x00fcm.world.v1\x00";
+    // and creates a production configuration foot-gun. These printable controls are
+    // bounded, untrusted HUD metadata and are consumed by the authenticated relay.
+    // ZFE's chat bridge treats leading NUL/control bytes as an empty message.
+    static inline var WORLD_CTRL_PREFIX:String  = "FCMCTL/1/WORLD:";
     // LEAVE control: sent when the player leaves a world (worldId cleared).
-    static inline var WORLD_LEAVE_PREFIX:String = "\x00fcm.world.leave.v1\x00";
+    static inline var WORLD_LEAVE_PREFIX:String = "FCMCTL/1/LEAVE";
     // ROSTER control: observed nearby character names (no worldId exists in the UI
     // layer — the relay derives world rooms from sightings). Body is the bounded
     // US-separated name list; actor identity comes only from the authenticated frame.
-    static inline var WORLD_ROSTER_PREFIX:String = "\x00fcm.world.roster.v1\x00";
+    static inline var WORLD_ROSTER_PREFIX:String = "FCMCTL/1/ROSTER:";
     static inline var ROSTER_FRESH_MS:Float = 60000;   // observation freshness window
     static inline var ROSTER_SEND_MS:Float  = 30000;   // periodic roster resend
 
@@ -179,38 +180,6 @@ class FCMChatWidget extends MovieClip {
     var _records:Array<{color:String, channel:String, user:String, body:String, ts:String}> = [];
     var _bScrolling:Bool         = false;
     var _scrollSnapTimer:Timer   = null;   // deferred bottom-snap after htmlText relayout
-    var _typeMirrorTimer:Timer   = null;   // mirrors the focused entry field's text into the prompt
-    var _typeMirrorLogged:Int    = 0;
-
-    /** While the SharedHUDTools edit session is open, stage.focus is HUDTools' entry
-     *  TextField. Mirror its live text into OUR prompt row — visible typing feedback
-     *  independent of how the entry box renders — and log lengths (diagnoses whether
-     *  the field holds the full text when the box shows only the last letter). */
-    function startTypeMirror():Void {
-        stopTypeMirror();
-        _typeMirrorTimer = new Timer(100);
-        _typeMirrorTimer.addEventListener(TimerEvent.TIMER, function(_) {
-            if (!_inputOpen) { stopTypeMirror(); return; }
-            try {
-                var f:Dynamic = stage.focus;
-                if (f != null && f.text != null) {
-                    var s:String = Std.string(f.text);
-                    setPrompt('<font face="' + FONT_BODY + '" size="' + _cfg.fontSize + '" color="' + hx(_cfg.tabActiveColor) + '">&#x203A; ' + FcmConfig.htmlEscape(s) + '</font>');
-                    if (_typeMirrorLogged < 3 && s.length > 1) {
-                        _typeMirrorLogged++;
-                        zfeLog("info", "typem", "focus field len=" + s.length);
-                    }
-                }
-            } catch (e:Dynamic) {}
-        });
-        _typeMirrorTimer.start();
-    }
-    function stopTypeMirror():Void {
-        if (_typeMirrorTimer != null) { _typeMirrorTimer.stop(); _typeMirrorTimer = null; }
-        // Clear the mirrored text — otherwise the last frame (or a stray focused
-        // field's text) stays stuck in the prompt row after the edit session ends.
-        setPrompt(idlePrompt());
-    }
     var _newWhileScrolled:Int    = 0;
 
     // ── Channel state ─────────────────────────────────────────────────────────
@@ -628,6 +597,13 @@ class FCMChatWidget extends MovieClip {
         try { isDown = (e.IsKeyDown == true); }    catch (_:Dynamic) {}
         if (isDown) return;
 
+        // HUDModLoader maps F12 to DiagnosticSnapshot. Request the registered menu
+        // explicitly so it remains usable if automatic dispatch is unavailable.
+        if (action == "DiagnosticSnapshot") {
+            showHudMenu();
+            return;
+        }
+
         // Keep the active input session and its buffer intact while changing the destination
         // channel. This is the HUDModLoader equivalent of the legacy Text Chat mod's Tab switch.
         if (_inputOpen) {
@@ -641,6 +617,25 @@ class FCMChatWidget extends MovieClip {
                 || (action == _cfg.openKey && action != "Unmapped")) {
             if (_inputOpen && _nativeInput) return;
             if (!_inputOpen) openInput();   // openInput() restores from hidden first (CAP-011)
+        }
+    }
+
+    function showHudMenu():Void {
+        if (_hudTools == null) constructHudTools();
+        if (_hudTools == null) {
+            zfeLog("warn", "menu", "F12 ignored: SharedHUDTools unavailable");
+            return;
+        }
+        try {
+            var show:Dynamic = Reflect.field(_hudTools, "ShowMenu");
+            if (show == null) {
+                zfeLog("warn", "menu", "F12 ignored: ShowMenu unavailable");
+                return;
+            }
+            Reflect.callMethod(_hudTools, show, []);
+            zfeLog("info", "menu", "F12 ShowMenu requested");
+        } catch (ex:Dynamic) {
+            zfeLog("warn", "menu", "F12 ShowMenu threw: " + Std.string(ex));
         }
     }
 
@@ -983,12 +978,15 @@ class FCMChatWidget extends MovieClip {
             var bsui:Dynamic = findBSUI();
             if (bsui == null) { zfeLog("warn", "input", "BSUIDataManager null; cannot " + type); return false; }
             var ev:Dynamic = null;
-            try {
-                var ceCls:Dynamic = untyped __global__["flash.utils.getDefinitionByName"]("CustomEvent");
-                if (ceCls != null) ev = untyped __new__(ceCls, type, { tag: "Chat" });
-            } catch (ce:Dynamic) {
-                zfeLog("warn", "input", "CustomEvent unavailable; cannot " + type);
+            var ceCls:Dynamic = null;
+            for (className in ["Shared.AS3.Events.CustomEvent", "CustomEvent"]) {
+                try {
+                    ceCls = untyped __global__["flash.utils.getDefinitionByName"](className);
+                    if (ceCls != null) break;
+                } catch (ce:Dynamic) {}
             }
+            if (ceCls != null) ev = untyped __new__(ceCls, type, { tag: "Chat" });
+            else zfeLog("warn", "input", "CustomEvent unavailable; cannot " + type);
             // The engine's ControlMap contract requires the legacy CustomEvent payload
             // (`{tag:"Chat"}`). A generic Event is not evidence that game input was locked.
             if (ev == null) return false;
@@ -1225,8 +1223,10 @@ class FCMChatWidget extends MovieClip {
             setPrompt(idlePrompt());
             return;
         }
+        // HUDTools renders its own focused entry field at this exact input position.
+        // Do not mirror that same field into _promptTf, or every character appears twice.
+        setPrompt(typingPrompt());
         zfeLog("info", "input", "opened");
-        startTypeMirror();
     }
 
     /**
@@ -1448,7 +1448,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.9.2");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.9.3");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
@@ -1978,7 +1978,7 @@ class FCMChatWidget extends MovieClip {
         var rosterObserved:Bool = hasFreshRosterObservation(now);
         _inWorld = (names.length > 0 || rosterObserved);
         if (_inWorld) {
-            var namesField:String = names.join("\x1F");
+            var namesField:String = names.join("|");
             if (!_serverSessionReady || (now - _lastRosterSentAt) >= ROSTER_SEND_MS || namesField != _lastRosterSent) {
                 _lastRosterSentAt = now;
                 _lastRosterSent = namesField;

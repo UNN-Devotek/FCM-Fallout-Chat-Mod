@@ -47,17 +47,22 @@ import type { RelayToken } from './tokenService';
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 /**
- * NUL-delimited sentinel that the SWF prepends to worldId control messages
- * when it sends on channel 'server'.
- * Wire format: "\x00fcm.world.v1\x00<worldId>".
+ * Printable sentinel that the SWF prepends to worldId control messages when it
+ * sends on channel 'server'. ZFE rejects/truncates NUL-prefixed chat bodies.
+ * Wire format: "FCMCTL/1/WORLD:<worldId>".
  */
-const WORLD_ID_SENTINEL_PREFIX  = '\x00fcm.world.v1\x00';
+const WORLD_ID_SENTINEL_PREFIX  = 'FCMCTL/1/WORLD:';
 // LEAVE control: sent when the player leaves a world (worldId cleared). Body is
 // exactly the sentinel; identity comes from the authenticated relay frame.
-const WORLD_LEAVE_SENTINEL_PREFIX = '\x00fcm.world.leave.v1\x00';
+const WORLD_LEAVE_SENTINEL_PREFIX = 'FCMCTL/1/LEAVE';
 // ROSTER control: observed nearby character names (the HUD publishes no worldId —
-// rooms are derived from sightings). Body is a US-separated bounded name list.
-const WORLD_ROSTER_SENTINEL_PREFIX = '\x00fcm.world.roster.v1\x00';
+// rooms are derived from sightings). Body is a pipe-separated bounded name list.
+const WORLD_ROSTER_SENTINEL_PREFIX = 'FCMCTL/1/ROSTER:';
+// v2.9.2 and earlier emitted NUL-prefixed controls. Retain acceptance for clients
+// already in a session, but all new widget requests use printable framing.
+const LEGACY_WORLD_ID_SENTINEL_PREFIX = '\x00fcm.world.v1\x00';
+const LEGACY_WORLD_LEAVE_SENTINEL_PREFIX = '\x00fcm.world.leave.v1\x00';
+const LEGACY_WORLD_ROSTER_SENTINEL_PREFIX = '\x00fcm.world.roster.v1\x00';
 const MAX_WORLD_ID_LENGTH       = 128;
 const MAX_ROSTER_CONTROL_BYTES  = 2048;
 const WORLD_CONTROL_WINDOW_SECONDS = 10;
@@ -202,21 +207,27 @@ function send(ws: WebSocket, payload: object): void {
 // ── Authenticated world/roster control parsing ────────────────────────────────
 
 function parseWorldIdControl(body: string): string | null {
-  if (!body.startsWith(WORLD_ID_SENTINEL_PREFIX)) return null;
-  const worldId = body.slice(WORLD_ID_SENTINEL_PREFIX.length);
+  const prefix = body.startsWith(WORLD_ID_SENTINEL_PREFIX)
+    ? WORLD_ID_SENTINEL_PREFIX
+    : (body.startsWith(LEGACY_WORLD_ID_SENTINEL_PREFIX) ? LEGACY_WORLD_ID_SENTINEL_PREFIX : null);
+  if (!prefix) return null;
+  const worldId = body.slice(prefix.length);
   if (!worldId || worldId.length > MAX_WORLD_ID_LENGTH || worldId.includes('|')) return null;
   return worldId;
 }
 
 function isWorldLeaveControl(body: string): boolean {
-  return body === WORLD_LEAVE_SENTINEL_PREFIX;
+  return body === WORLD_LEAVE_SENTINEL_PREFIX || body === LEGACY_WORLD_LEAVE_SENTINEL_PREFIX;
 }
 
 function parseWorldRosterControl(body: string): string[] | null {
-  if (!body.startsWith(WORLD_ROSTER_SENTINEL_PREFIX)) return null;
-  const namesField = body.slice(WORLD_ROSTER_SENTINEL_PREFIX.length);
+  const prefix = body.startsWith(WORLD_ROSTER_SENTINEL_PREFIX)
+    ? WORLD_ROSTER_SENTINEL_PREFIX
+    : (body.startsWith(LEGACY_WORLD_ROSTER_SENTINEL_PREFIX) ? LEGACY_WORLD_ROSTER_SENTINEL_PREFIX : null);
+  if (!prefix) return null;
+  const namesField = body.slice(prefix.length);
   if (namesField.length > MAX_ROSTER_CONTROL_BYTES) return null;
-  return namesField.length > 0 ? namesField.split('\x1F') : [];
+  return namesField.length > 0 ? namesField.split(prefix === WORLD_ROSTER_SENTINEL_PREFIX ? '|' : '\x1F') : [];
 }
 
 /** Per-identity limit prevents a modified client from forcing room recomputation. */
@@ -569,7 +580,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   // ── Authenticated world/roster control intercept (before ALL_SLUGS check) ──
   // Actor identity comes only from `identity`, derived from the relay token above.
   // Controls are bounded, applied to membership, and never broadcast/persisted.
-  if (slug === 'server' && body.startsWith(WORLD_ID_SENTINEL_PREFIX)) {
+  if (slug === 'server' && (body.startsWith(WORLD_ID_SENTINEL_PREFIX) || body.startsWith(LEGACY_WORLD_ID_SENTINEL_PREFIX))) {
     const worldId = parseWorldIdControl(body);
     if (worldId) {
       if (!(await checkWorldControlRateLimit(identity.userId))) {
@@ -581,7 +592,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       return;
     }
   }
-  if (slug === 'server' && body.startsWith(WORLD_LEAVE_SENTINEL_PREFIX)) {
+  if (slug === 'server' && (body.startsWith(WORLD_LEAVE_SENTINEL_PREFIX) || body.startsWith(LEGACY_WORLD_LEAVE_SENTINEL_PREFIX))) {
     if (isWorldLeaveControl(body)) {
       if (!(await checkWorldControlRateLimit(identity.userId))) {
         send(ws, errEnvelope('rate_limited', 'World controls are temporarily rate limited'));
@@ -592,7 +603,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       return;
     }
   }
-  if (slug === 'server' && body.startsWith(WORLD_ROSTER_SENTINEL_PREFIX)) {
+  if (slug === 'server' && (body.startsWith(WORLD_ROSTER_SENTINEL_PREFIX) || body.startsWith(LEGACY_WORLD_ROSTER_SENTINEL_PREFIX))) {
     const names = parseWorldRosterControl(body);
     if (names) {
       if (!(await checkWorldControlRateLimit(identity.userId))) {

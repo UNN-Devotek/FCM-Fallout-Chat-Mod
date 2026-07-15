@@ -1308,7 +1308,7 @@ describe('relay WebSocket ops', () => {
 // ── authenticated world-control tests ─────────────────────────────────────────
 
 describe('authenticated world controls', () => {
-  const SENTINEL = '\x00fcm.world.v1\x00';
+  const SENTINEL = 'FCMCTL/1/WORLD:';
 
   let srv2;
 
@@ -1425,8 +1425,8 @@ describe('authenticated world controls', () => {
 // ── Server chat (worldId-scoped ephemeral room) ────────────────────────────────
 
 describe('server chat (worldId-scoped room)', () => {
-  const SENTINEL       = '\x00fcm.world.v1\x00';
-  const LEAVE_SENTINEL = '\x00fcm.world.leave.v1\x00';
+  const SENTINEL       = 'FCMCTL/1/WORLD:';
+  const LEAVE_SENTINEL = 'FCMCTL/1/LEAVE';
 
   const makeJoinBody = (worldId) => `${SENTINEL}${worldId}`;
   const makeLeaveBody = () => LEAVE_SENTINEL;
@@ -1576,9 +1576,9 @@ describe('server chat (worldId-scoped room)', () => {
 // ── Roster-derived world rooms ─────────────────────────────────────────────────
 
 describe('roster-derived world rooms', () => {
-  const ROSTER_SENTINEL = '\x00fcm.world.roster.v1\x00';
+  const ROSTER_SENTINEL = 'FCMCTL/1/ROSTER:';
 
-  const makeRosterBody = (_userId, names) => ROSTER_SENTINEL + names.join('\x1F');
+  const makeRosterBody = (_userId, names) => ROSTER_SENTINEL + names.join('|');
 
   let srv;
   beforeAll(async () => { srv = await makeServer(); }, 10000);

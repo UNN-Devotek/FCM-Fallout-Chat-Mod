@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-07-15):** v2.9.2 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-07-15):** v2.9.3 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -44,7 +44,8 @@ poll `readChatInput` (show in-progress) + `consumeChatInputSubmitted` (Enter) + 
 (Esc), on submit `chat.v1.sendMessage` the `readChatInput` text, then `clearChatInput("{}")` +
 `setChatInputActive("false")`. The native path proceeds only when it can dispatch the engine's
 balanced `ControlMap::StartEditText` / `EndEditText` pair; otherwise it closes the native session
-and uses HUDModLoader's `SharedHUDTools.TextEdit` fallback. `sendMessage` is the one command that stays `chat.v1.`-prefixed —
+and uses HUDModLoader's `SharedHUDTools.TextEdit` fallback. The fallback owns the only visible
+text field; the widget never mirrors it into the prompt. `sendMessage` is the one command that stays `chat.v1.`-prefixed —
 called bare it hits the legacy bridge and returns literal `false`. A low-rate `isChatKeyPressed`
 edge poll opens chat on INSERT. Full contract: [BUILD.md](BUILD.md).
 
@@ -60,7 +61,9 @@ HUDModLoader dispatches a bubbling `HUDMod::UserEvent` on the stage before
 `HUDMenu.ProcessUserEvent` native handling. The event carries `actionName` (e.g.
 `"Console"`, `"TeamChat"`) and `isDown`. This is the only reliable input channel for
 a HUD-layer SWF — `stage.addEventListener(KeyboardEvent.KEY_DOWN)` does not fire on
-the HUD layer (documented in `docs/overlay/zfe/scaleform-ui-guide.md §5`).
+the HUD layer (documented in `docs/overlay/zfe/scaleform-ui-guide.md §5`). F12 is
+`DiagnosticSnapshot`; the widget explicitly requests `SharedHUDTools.ShowMenu()` on key-up and
+logs the result as a fallback for loader builds where automatic dispatch fails.
 
 ### SharedHUDTools.TextEdit / FormatTextEdit (fallback)
 
