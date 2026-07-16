@@ -119,6 +119,22 @@ deploy the matching backend, run its relay tests, and perform an authenticated
 WebSocket handshake against the production endpoint. If that handshake fails,
 leave the flag off and do not distribute a production-configured build.
 
+## Hosted-dev tester handoff (2026-07-16)
+
+`dev` commit `f1fa864` is deployed to `dev.falloutchatmod.com` and its direct
+relay endpoint. The deployed relay accepts both control formats during the
+transition: the printable `FCMCTL/1/*` frame emitted by v2.9.3 and the legacy
+frame emitted by v2.9.4 after JSON decoding. This means a player already running
+v2.9.3 can obtain the `SERVER` tab after the relay reconnects and the next roster
+update; they do not need to replace game files to test the backend deployment.
+
+The v2.9.4 BA2 is required for the client-side JSON-escaped legacy framing. Copy
+it into `Fallout 76/Data` only after Fallout 76 has fully exited, then restart the
+game so ZFE reloads the archive and fragment. Never overwrite an in-use BA2.
+
+HUDModLoader's upstream menu hotkey is **F11**, outside the Pip-Boy. F12 is the
+game's `DiagnosticSnapshot` action and is not a reliable route to the loader menu.
+
 ## In-game acceptance checklist
 
 1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.9.4`.
