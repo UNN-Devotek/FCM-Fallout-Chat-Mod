@@ -100,7 +100,7 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.9.3";  // printable server controls + single fallback input renderer
+    static inline var VERSION:String  = "2.9.4";  // JSON-escaped legacy server controls + single fallback input renderer
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -148,16 +148,17 @@ class FCMChatWidget extends MovieClip {
     // ── Authenticated relay control messages ───────────────────────────────────
     // The relay authenticates every frame with the ZFE-held relay token. Do NOT put
     // a shared secret in this distributable SWF: it cannot authenticate a client
-    // and creates a production configuration foot-gun. These printable controls are
-    // bounded, untrusted HUD metadata and are consumed by the authenticated relay.
-    // ZFE's chat bridge treats leading NUL/control bytes as an empty message.
-    static inline var WORLD_CTRL_PREFIX:String  = "FCMCTL/1/WORLD:";
+    // and creates a production configuration foot-gun. These bounded, untrusted HUD
+    // metadata controls are consumed by the authenticated relay. The relay deployed
+    // before v2.9.3 recognises this legacy frame; jsonEscape serializes its control
+    // bytes as JSON \u escapes, so ZFE never sees a raw leading NUL.
+    static inline var WORLD_CTRL_PREFIX:String  = "\x00fcm.world.v1\x00";
     // LEAVE control: sent when the player leaves a world (worldId cleared).
-    static inline var WORLD_LEAVE_PREFIX:String = "FCMCTL/1/LEAVE";
+    static inline var WORLD_LEAVE_PREFIX:String = "\x00fcm.world.leave.v1\x00";
     // ROSTER control: observed nearby character names (no worldId exists in the UI
     // layer — the relay derives world rooms from sightings). Body is the bounded
     // US-separated name list; actor identity comes only from the authenticated frame.
-    static inline var WORLD_ROSTER_PREFIX:String = "FCMCTL/1/ROSTER:";
+    static inline var WORLD_ROSTER_PREFIX:String = "\x00fcm.world.roster.v1\x00";
     static inline var ROSTER_FRESH_MS:Float = 60000;   // observation freshness window
     static inline var ROSTER_SEND_MS:Float  = 30000;   // periodic roster resend
 
@@ -186,11 +187,11 @@ class FCMChatWidget extends MovieClip {
     var _chanIdx:Int             = 0;   // 0=global
 
     // ── Hide state (CAP-011) ────────────────────────────────────────────────────
-    var _hidden:Bool             = false;   // true while the panel is hidden (/hide, F12, hideKey)
-    // Auto-hide: hide after _cfg.autoHideSec of no activity; reveal on a new message. F12-toggleable.
+    var _hidden:Bool             = false;   // true while the panel is hidden (/hide, F11 menu, hideKey)
+    // Auto-hide: hide after _cfg.autoHideSec of no activity; reveal on a new message. F11-menu toggleable.
     var _autoHideOn:Bool         = false;
     var _autoHideTimer:Timer     = null;
-    var _themeIdx:Int            = 0;       // F12 Customize → cycle color theme
+    var _themeIdx:Int            = 0;       // F11 Customize → cycle color theme
 
     // ── chat.v1 session state ─────────────────────────────────────────────────
     var _api:Dynamic             = null;
@@ -250,7 +251,7 @@ class FCMChatWidget extends MovieClip {
     static inline var OPEN_KEY_MS:Int = 150;       // open-key poll interval
     var _lastChatKey:Bool        = false;          // last isChatKeyPressed truthiness (edge detect)
 
-    // ── SharedHUDTools (HUDModLoader text-entry + F12 menu integration) ───────
+    // ── SharedHUDTools (HUDModLoader text-entry + F11 menu integration) ───────
     var _hudTools:Dynamic        = null;
 
     // ── Optimistic-echo dedup (our just-sent messages) ────────────────────────
@@ -381,7 +382,7 @@ class FCMChatWidget extends MovieClip {
         addChild(_logTf);
 
         // Mouse-wheel over the log scrolls history (CAP-008, VER-2). HUD-availability
-        // unverified; F12 "Scroll to newest" + auto-scroll stay the fallback.
+        // unverified; F11 "Scroll to newest" + auto-scroll stay the fallback.
         try {
             _logTf.addEventListener(flash.events.MouseEvent.MOUSE_WHEEL, onLogWheel);
         } catch (e:Dynamic) {}
@@ -479,11 +480,11 @@ class FCMChatWidget extends MovieClip {
     }
 
     /**
-     * Construct a SharedHUDTools instance for text-entry + F12 menu.
+     * Construct a SharedHUDTools instance for text-entry + HUDModLoader menu.
      *
      * Register(callback) subscribes to the HUDTools IPC bus (required before
      * TextEdit/FormatTextEdit will work).
-     * RegisterMenu(build, select) adds us to the F12 HUDTools menu.
+     * RegisterMenu(build, select) adds us to the HUDModLoader menu (F11 upstream).
      */
     function constructHudTools():Void {
         // Extensions.enabled is required before any scaleform.gfx.* use.
@@ -501,7 +502,7 @@ class FCMChatWidget extends MovieClip {
                 Reflect.callMethod(_hudTools, Reflect.field(_hudTools, "RegisterMenu"),
                     [function(parentItem:String):Void { onBuildMenu(parentItem); },
                      function(item:String):Void { onSelectMenu(item); }]);
-                // Position the F12 HUDTools menu just under the channel-tab row.
+                // Position the HUDModLoader menu just under the channel-tab row.
                 try {
                     Reflect.callMethod(_hudTools, Reflect.field(_hudTools, "FormatMenu"),
                         [_cfg.x, _cfg.y + TAB_H, "down"]);
@@ -519,7 +520,7 @@ class FCMChatWidget extends MovieClip {
     }
 
     /**
-     * F12 HUDTools menu build callback.
+     * HUDModLoader menu build callback.
      * Adds channel-switch entries, a scroll-to-newest action, and a link action
      * (enabled only while auth is limited).
      * AddMenuItem(id, text, isEnabled=true, isMenu=false, timeout=-1).
@@ -559,7 +560,7 @@ class FCMChatWidget extends MovieClip {
     }
 
     /**
-     * F12 HUDTools menu select callback. id is the AddMenuItem id string.
+     * HUDModLoader menu select callback. id is the AddMenuItem id string.
      */
     function onSelectMenu(item:Dynamic):Void {
         var id:String = Std.string(item);
@@ -597,13 +598,6 @@ class FCMChatWidget extends MovieClip {
         try { isDown = (e.IsKeyDown == true); }    catch (_:Dynamic) {}
         if (isDown) return;
 
-        // HUDModLoader maps F12 to DiagnosticSnapshot. Request the registered menu
-        // explicitly so it remains usable if automatic dispatch is unavailable.
-        if (action == "DiagnosticSnapshot") {
-            showHudMenu();
-            return;
-        }
-
         // Keep the active input session and its buffer intact while changing the destination
         // channel. This is the HUDModLoader equivalent of the legacy Text Chat mod's Tab switch.
         if (_inputOpen) {
@@ -617,25 +611,6 @@ class FCMChatWidget extends MovieClip {
                 || (action == _cfg.openKey && action != "Unmapped")) {
             if (_inputOpen && _nativeInput) return;
             if (!_inputOpen) openInput();   // openInput() restores from hidden first (CAP-011)
-        }
-    }
-
-    function showHudMenu():Void {
-        if (_hudTools == null) constructHudTools();
-        if (_hudTools == null) {
-            zfeLog("warn", "menu", "F12 ignored: SharedHUDTools unavailable");
-            return;
-        }
-        try {
-            var show:Dynamic = Reflect.field(_hudTools, "ShowMenu");
-            if (show == null) {
-                zfeLog("warn", "menu", "F12 ignored: ShowMenu unavailable");
-                return;
-            }
-            Reflect.callMethod(_hudTools, show, []);
-            zfeLog("info", "menu", "F12 ShowMenu requested");
-        } catch (ex:Dynamic) {
-            zfeLog("warn", "menu", "F12 ShowMenu threw: " + Std.string(ex));
         }
     }
 
@@ -654,7 +629,7 @@ class FCMChatWidget extends MovieClip {
     }
 
     /**
-     * Single channel-switch entry point (tab click, slash, cycle, F12 menu).
+     * Single channel-switch entry point (tab click, slash, cycle, F11 menu).
      */
     function selectChannel(idx:Int):Void {
         // idx is a SLUG index; only channels currently in the display order are selectable
@@ -691,7 +666,7 @@ class FCMChatWidget extends MovieClip {
     // Hide / restore (CAP-011)
     //
     // hide() sets this.visible=false; show() sets it back. Timers + listeners keep
-    // running while hidden so the feed stays current. Triggers: /hide, F12 "Hide chat",
+    // running while hidden so the feed stays current. Triggers: /hide, F11 "Hide chat",
     // optional hideKey action. Restore: the open key (INSERT) via openInput() -> show().
     // =========================================================================
 
@@ -712,7 +687,7 @@ class FCMChatWidget extends MovieClip {
     /**
      * Restart the auto-hide countdown (called on any activity: show, open input, channel switch,
      * new message). When it elapses with no further activity — and the input isn't open — the
-     * panel hides. A new message reveals it again (see parseAndRenderEvents). F12-toggleable.
+     * panel hides. A new message reveals it again (see parseAndRenderEvents). F11-menu toggleable.
      */
     function bumpAutoHide():Void {
         if (_autoHideTimer != null) { _autoHideTimer.stop(); _autoHideTimer = null; }
@@ -726,7 +701,7 @@ class FCMChatWidget extends MovieClip {
     }
 
     // =========================================================================
-    // F12 Customize — live resize / move / opacity / color theme (+ best-effort persist)
+    // F11 Customize — live resize / move / opacity / color theme (+ best-effort persist)
     // =========================================================================
 
     // Live re-layout after a Customize change. Removes children BY REFERENCE only — NEVER
@@ -1448,7 +1423,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.9.3");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.9.4");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
@@ -1658,7 +1633,7 @@ class FCMChatWidget extends MovieClip {
                 }
                 // No cycle-on-second-press: it fired accidentally (key repeat / double-tap
                 // while typing). Channels switch via the clickable tabs, slash commands
-                // (/g /t /e /i /r), NextPage/PrevPage actions, or the F12 menu.
+                // (/g /t /e /i /r), NextPage/PrevPage actions, or the F11 menu.
             }
             _lastChatKey = kp;
         } catch (e:Dynamic) {
@@ -1978,7 +1953,7 @@ class FCMChatWidget extends MovieClip {
         var rosterObserved:Bool = hasFreshRosterObservation(now);
         _inWorld = (names.length > 0 || rosterObserved);
         if (_inWorld) {
-            var namesField:String = names.join("|");
+            var namesField:String = names.join("\x1F");
             if (!_serverSessionReady || (now - _lastRosterSentAt) >= ROSTER_SEND_MS || namesField != _lastRosterSent) {
                 _lastRosterSentAt = now;
                 _lastRosterSent = namesField;
@@ -2116,7 +2091,7 @@ class FCMChatWidget extends MovieClip {
         // "v N new" hint when scrolled up and new messages arrived below.
         if (_bScrolling && _newWhileScrolled > 0) {
             html.push('<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + hx(_cfg.tabActiveColor)
-                + '">v ' + _newWhileScrolled + ' new - wheel down or F12 Scroll to newest</font>');
+                + '">v ' + _newWhileScrolled + ' new - wheel down or F11 Scroll to newest</font>');
         }
 
         _logTf.htmlText = html.join("<br/>");
@@ -2565,6 +2540,8 @@ class FCMChatWidget extends MovieClip {
         if (s == null) return "";
         s = s.split("\\").join("\\\\");
         s = s.split('"').join('\\"');
+        s = s.split("\x00").join("\\u0000");
+        s = s.split("\x1F").join("\\u001F");
         s = s.split("\r").join("\\r");
         s = s.split("\n").join("\\n");
         s = s.split("\t").join("\\t");

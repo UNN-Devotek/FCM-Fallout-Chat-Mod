@@ -148,22 +148,33 @@ function shouldSendRosterControl({ rosterObserved, serverSessionReady, now, last
   return !serverSessionReady || now - lastSentAt >= 30000 || namesField !== lastSentNames;
 }
 
-// ── Printable relay-control framing (FCMChatWidget world controls) ─────────────
-// ZFE's native chat bridge treats leading NUL/control bytes as an empty message.
-// Keep all control bytes printable before the body reaches chat.v1.
+// ── Relay-control framing (FCMChatWidget world controls) ───────────────────────
+// The live relay accepts the legacy NUL frame. jsonEscape serializes its control
+// bytes as JSON escapes so ZFE's native chat bridge does not reject raw NUL input.
 const WORLD_CONTROL_PREFIXES = {
-  world: 'FCMCTL/1/WORLD:',
-  leave: 'FCMCTL/1/LEAVE',
-  roster: 'FCMCTL/1/ROSTER:',
+  world: '\x00fcm.world.v1\x00',
+  leave: '\x00fcm.world.leave.v1\x00',
+  roster: '\x00fcm.world.roster.v1\x00',
 };
 
 function worldControlBody(kind, namesOrWorldId = []) {
   switch (kind) {
     case 'world': return WORLD_CONTROL_PREFIXES.world + String(namesOrWorldId);
     case 'leave': return WORLD_CONTROL_PREFIXES.leave;
-    case 'roster': return WORLD_CONTROL_PREFIXES.roster + namesOrWorldId.join('|');
+    case 'roster': return WORLD_CONTROL_PREFIXES.roster + namesOrWorldId.join('\x1F');
     default: return '';
   }
+}
+
+function jsonEscape(s) {
+  return String(s == null ? '' : s)
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\x00/g, '\\u0000')
+    .replace(/\x1F/g, '\\u001F')
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n')
+    .replace(/\t/g, '\\t');
 }
 
 // ── Native-input lock lifecycle (FCMChatWidget.open/closeInputNative) ──────────
@@ -202,12 +213,6 @@ function inputChannelAction({ inputOpen, isKeyDown, action, nextAction, prevActi
 // its overlapping prompt as a label rather than mirroring the same typed string.
 function sharedHudPromptMode() {
   return 'label-only';
-}
-
-// HUDModLoader maps F12 to DiagnosticSnapshot. Explicitly invoking the registered
-// SharedHUDTools menu is a fallback when its automatic dispatch is unavailable.
-function hudMenuAction({ isKeyDown, action }) {
-  return !isKeyDown && action === 'DiagnosticSnapshot' ? 'show-menu' : 'none';
 }
 
 function customEventDefinitionNames() {
@@ -407,13 +412,13 @@ module.exports = {
   shouldSendRosterControl,
   WORLD_CONTROL_PREFIXES,
   worldControlBody,
+  jsonEscape,
   nativeLockAdmission,
   nativeLockRelease,
   shouldRebindWorldId,
   shouldIgnoreBlankWorldId,
   inputChannelAction,
   sharedHudPromptMode,
-  hudMenuAction,
   customEventDefinitionNames,
   parseInputSubmit,
   emptyFeedNotice,

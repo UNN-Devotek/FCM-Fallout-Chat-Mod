@@ -24,8 +24,8 @@ const {
   shouldIgnoreBlankWorldId,
   inputChannelAction,
   worldControlBody,
+  jsonEscape,
   sharedHudPromptMode,
-  hudMenuAction,
   customEventDefinitionNames,
   parseInputSubmit,
   emptyFeedNotice,
@@ -252,11 +252,10 @@ describe('server-room acknowledgement gating', () => {
       lastWorldId: 'legacy-world', currentWorldId: '', freshRosterObservation: false,
     })).toBe(false);
   });
-  it('uses an ASCII-only control body so ZFE cannot truncate it at a leading NUL', () => {
+  it('preserves the relay legacy control frame while JSON-escaping control bytes for ZFE', () => {
     const body = worldControlBody('roster', ['Ada', 'Beck']);
-    expect(body).toBe('FCMCTL/1/ROSTER:Ada|Beck');
-    expect(body.includes('\x00')).toBe(false);
-    expect(body.includes('\x1F')).toBe(false);
+    expect(body).toBe('\x00fcm.world.roster.v1\x00Ada\x1FBeck');
+    expect(jsonEscape(body)).toBe('\\u0000fcm.world.roster.v1\\u0000Ada\\u001FBeck');
   });
 });
 
@@ -296,10 +295,6 @@ describe('in-session channel actions', () => {
 describe('HUDModLoader fallback presentation and menu routing', () => {
   it('does not mirror a SharedHUDTools field into the widget prompt', () => {
     expect(sharedHudPromptMode()).toBe('label-only');
-  });
-  it('routes the F12/DynamicSnapshot action to the registered HUDTools menu', () => {
-    expect(hudMenuAction({ isKeyDown: false, action: 'DiagnosticSnapshot' })).toBe('show-menu');
-    expect(hudMenuAction({ isKeyDown: true, action: 'DiagnosticSnapshot' })).toBe('none');
   });
   it('prefers the game-qualified CustomEvent class required by ControlMap', () => {
     expect(customEventDefinitionNames()[0]).toBe('Shared.AS3.Events.CustomEvent');

@@ -1,6 +1,6 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.9.3. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.9.4. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
@@ -17,9 +17,10 @@ that v2.9.2 removed.
 
 The `SERVER` room uses an authenticated relay session. The widget sends a bounded
 nearby-player roster control from HUD UI data; the backend derives a short-lived
-room from it. The control body is printable ASCII because ZFE rejects leading
-NUL/control bytes as an empty message. There is no client-side relay-control HMAC
-or shared secret in the distributed SWF. Legacy `worldId` controls are a guarded
+room from it. The control uses the relay's legacy NUL framing, but JSON-escapes
+each NUL/unit-separator byte before it crosses ZFE, so ZFE never receives a raw
+control byte or rejects the message as empty. There is no client-side relay-control
+HMAC or shared secret in the distributed SWF. `worldId` controls are a guarded
 compatibility fallback.
 
 ## Requirements
@@ -120,18 +121,18 @@ leave the flag off and do not distribute a production-configured build.
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.9.3`.
+1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.9.4`.
 2. The tab row contains one label for each visible channel—no boxed duplicate labels.
 3. Switch channels, join/leave a world, and switch again; the tab row remains single-rendered.
 4. Send a body containing `{`, `}`, quotes, and backslashes; later events still render.
 5. Temporarily disconnect the relay. After three failed polls the widget shows reconnecting,
    then reconnects once the relay returns.
-6. Confirm `SERVER` remains hidden until the relay acknowledges the printable roster/world control,
+6. Confirm `SERVER` remains hidden until the relay acknowledges the JSON-escaped legacy roster/world control,
    then remains isolated to its derived room while static channels still work.
 7. While typing, confirm the fallback has only one visible text renderer; game movement/actions
    are locked; Page Down/Page Up switch channels without closing the input or losing its draft;
    Enter/Esc restore game input.
-8. Press F12 and confirm the HUDTools menu opens; its log should include `F12 ShowMenu requested`.
+8. Outside the Pip-Boy, press F11 and confirm the HUDModLoader menu lists FCMChatWidget.
 
 Do not copy the new BA2 into a live game installation or publish it until these
 checks have passed on the intended environment.

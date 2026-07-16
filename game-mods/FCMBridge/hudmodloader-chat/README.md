@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-07-15):** v2.9.3 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-07-16):** v2.9.4 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -61,9 +61,9 @@ HUDModLoader dispatches a bubbling `HUDMod::UserEvent` on the stage before
 `HUDMenu.ProcessUserEvent` native handling. The event carries `actionName` (e.g.
 `"Console"`, `"TeamChat"`) and `isDown`. This is the only reliable input channel for
 a HUD-layer SWF — `stage.addEventListener(KeyboardEvent.KEY_DOWN)` does not fire on
-the HUD layer (documented in `docs/overlay/zfe/scaleform-ui-guide.md §5`). F12 is
-`DiagnosticSnapshot`; the widget explicitly requests `SharedHUDTools.ShowMenu()` on key-up and
-logs the result as a fallback for loader builds where automatic dispatch fails.
+the HUD layer (documented in `docs/overlay/zfe/scaleform-ui-guide.md §5`). The
+HUDModLoader menu itself is opened with **F11** (outside the Pip-Boy); the widget
+registers its build/select callbacks with that upstream menu.
 
 ### SharedHUDTools.TextEdit / FormatTextEdit (fallback)
 
@@ -93,7 +93,7 @@ lock in the in-game acceptance checklist.
 ### isReloadable
 
 `public var isReloadable:Bool = true` — HUDModLoader checks this field on the widget's
-main class and exposes a hot-reload button in the F12 HUDTools menu when it is `true`.
+main class and exposes a hot-reload button in the F11 HUDModLoader menu when it is `true`.
 This lets you iterate on the SWF without restarting the game.
 
 ## Fonts
@@ -114,7 +114,7 @@ Editable keys (defaults reproduce the amber Pip-Boy theme): position `x`/`y`, `w
 `maxMessages`/`maxSendLen`; toggles `showChannelTag`/`showTimestamps`/`showHints`; keybinds
 `openKey`/`channelNextKey`/`channelPrevKey`/`hideKey`. Colors accept `#RRGGBB`, `RRGGBB`, or
 `0xRRGGBB`. Every value is validated + clamped — a bad edit falls back to its default, never
-crashes, never goes off-screen. Edit, then reload via the F12 HUDTools menu. Full catalog with
+crashes, never goes off-screen. Edit, then reload via the F11 HUDModLoader menu. Full catalog with
 ranges: the comments in `FCMChat.ini`. Design + decisions: `docs/roadmap/hud-widget-customization-spec.md`.
 
 ## Files

@@ -121,9 +121,9 @@ key polled by ZFE and (2) named Fallout 76 control-map **actions** the loader fo
 | `Insert` | `openKey` (native ZFE key) | **Open / restore.** Opens the native chat input; if the panel is hidden, restores it first. The only freely-choosable physical key (ZFE `isChatKeyPressed`). `PAGE_DOWN` is the known-good fallback if `INSERT` does not fire in-game. |
 | `Page Down` | `channelNextKey` = `NextPage` | Advance to the next channel. When HUDModLoader forwards the action during input, it keeps the draft/session open. |
 | `Page Up` | `channelPrevKey` = `PrevPage` | Go to the previous channel. When HUDModLoader forwards the action during input, it keeps the draft/session open. |
-| `/hide` + `F12` | (`/hide` slash command; F12 "Hide chat" menu) | Hide the panel. Feed keeps running in the background; restore with the open key (`Insert`). |
-| (optional) `hideKey` | `hideKey` = `<action>` | Optional power-user hide bind; default **UNSET**. Accepts a forwarded action only; hide is always available via `/hide` + F12 regardless. |
-| Mouse-wheel | (not a keybind) | Scroll the feed history. F12 "Scroll to newest" + auto-scroll are the menu fallbacks. |
+| `/hide` + `F11` | (`/hide` slash command; F11 HUDModLoader menu) | Hide the panel. Feed keeps running in the background; restore with the open key (`Insert`). |
+| (optional) `hideKey` | `hideKey` = `<action>` | Optional power-user hide bind; default **UNSET**. Accepts a forwarded action only; hide is always available via `/hide` + the F11 menu regardless. |
+| Mouse-wheel | (not a keybind) | Scroll the feed history. F11 "Scroll to newest" + auto-scroll are the menu fallbacks. |
 
 `Enter` (send) and `Esc` (cancel) stay native to the game's chat input session and are **not**
 rebindable. While a native session is active, the widget requires the engine's edit-text lock;
@@ -131,8 +131,7 @@ game movement/actions are restored on Enter, Esc, or a terminal relay/input fail
 
 **Deliverable action set** — the only values `channelNextKey` / `channelPrevKey` / `hideKey`
 accept (forwarded by the loader as `HUDMod::UserEvent`): `NextPage` (Page Down), `PrevPage`
-(Page Up), `Console` (`~`), `TeamChat` (`T`), `DiagnosticSnapshot` (F12 — collides with the
-HUDTools menu, avoid as `hideKey`). Any other physical key must be remapped to one of these
+(Page Up), `Console` (`~`), `TeamChat` (`T`), `DiagnosticSnapshot` (F12). Any other physical key must be remapped to one of these
 actions in Fallout 76's control settings, then set the matching action name here.
 
 Two open-key bindings must agree: `Data/ZFE/TextChat/fragments/FCMChatWidget.ini` `OpenChatKey`

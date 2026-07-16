@@ -184,7 +184,7 @@ unless we need row interactivity.
   own text-entry machinery that handles gamepad OSK + the StartEditText/EndEditText cycle for you. A
   cleaner path than re-skinning the native green box, IF the user runs HUDModLoader.
 - **HUD-mode filtering** (`HUDModes.All`, suppress in `VATS`/`ScopeMenu`), **`isReloadable=true`**
-  (hot-reload from the F12 HUDTools menu during dev). Coordinate space is **always 1920×1080**.
+  (hot-reload from the F11 HUDModLoader menu during dev). Coordinate space is **always 1920×1080**.
 - **Position config convention:** a per-widget `Data/<Widget>.ini` read via `URLLoader("../X.ini")` —
   the established way users reposition HUD mods by editing a text file (HUD-editor style).
 

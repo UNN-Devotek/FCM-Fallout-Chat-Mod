@@ -47,17 +47,19 @@ normal database channel.
 ## Ephemeral `server` rooms
 
 The widget periodically observes nearby names from approved HUD data sources and
-sends a printable roster control on `channel: 'server'`:
+sends a roster control on `channel: 'server'`. Its wire body uses legacy relay
+control bytes, but the widget serializes those bytes as JSON `\u0000` / `\u001F`
+escapes before calling ZFE, so ZFE does not receive a raw leading NUL:
 
 ```text
-FCMCTL/1/ROSTER:<name>|<name>...
+\x00fcm.world.roster.v1\x00<name>\x1F<name>...
 ```
 
 It can also send the compatibility controls:
 
 ```text
-FCMCTL/1/WORLD:<worldId>
-FCMCTL/1/LEAVE
+\x00fcm.world.v1\x00<worldId>
+\x00fcm.world.leave.v1\x00
 ```
 
 Controls are intercepted before ordinary channel validation and are never stored

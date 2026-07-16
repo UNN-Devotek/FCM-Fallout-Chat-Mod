@@ -60,7 +60,7 @@ class FcmConfig {
     public var pollMs:Int       = 5000;
 
     // Auto-hide: hide the panel after this many seconds of no activity; reveal on a new message.
-    // 0 disables auto-hide (always visible). Toggled live from the F12 menu.
+    // 0 disables auto-hide (always visible). Toggled live from the F11 menu.
     public var autoHideSec:Int  = 60;
 
     // ── Keybinds ───────────────────────────────────────────────────────────────
@@ -69,7 +69,7 @@ class FcmConfig {
     public var openKey:String        = "INSERT";
     public var channelNextKey:String = "NextPage";
     public var channelPrevKey:String = "PrevPage";
-    public var hideKey:String        = "";        // unset = use /hide + F12 only
+    public var hideKey:String        = "";        // unset = use /hide or the F11 menu
 
     // ── Feed toggles ───────────────────────────────────────────────────────────
     public var showChannelTag:Bool  = true;
@@ -310,7 +310,7 @@ class FcmConfig {
         autoHideSec = clampInt(autoHideSec, 0, 600);    // 0 = off, else 1s..10min
     }
 
-    /** Serialize back to the [FCMChat] INI (for F12 Customize persistence via writeChatConfigFile).
+    /** Serialize back to the [FCMChat] INI (for F11 Customize persistence via writeChatConfigFile).
         Outputs EVERY field so a round-trip never drops settings (linkUrl, keys, per-channel colors). */
     public function toIni():String {
         var h = function(c:Int):String return StringTools.hex(c & 0xFFFFFF, 6);

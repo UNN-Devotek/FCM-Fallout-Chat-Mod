@@ -1427,6 +1427,7 @@ describe('authenticated world controls', () => {
 describe('server chat (worldId-scoped room)', () => {
   const SENTINEL       = 'FCMCTL/1/WORLD:';
   const LEAVE_SENTINEL = 'FCMCTL/1/LEAVE';
+  const LEGACY_SENTINEL = '\x00fcm.world.v1\x00';
 
   const makeJoinBody = (worldId) => `${SENTINEL}${worldId}`;
   const makeLeaveBody = () => LEAVE_SENTINEL;
@@ -1524,6 +1525,15 @@ describe('server chat (worldId-scoped room)', () => {
     expect(res).toMatchObject({ success: true });
     expect(String(res.messageId)).toMatch(/^server:world-Z:/);
     expect(ingestMock).not.toHaveBeenCalled();
+  });
+
+  test('accepts a legacy JSON-decoded world control for deployed-widget compatibility', async () => {
+    const a = await registerAndLink('Legacy', 'fcm-legacy');
+    expect(await sendCtrl(a, `${LEGACY_SENTINEL}world-legacy`)).toMatchObject({ success: true });
+    expect(await sendCtrl(a, 'legacy session is active')).toMatchObject({
+      success: true,
+      messageId: expect.stringMatching(/^server:world-legacy:/),
+    });
   });
 
   test('server messages are world-scoped — same-world subscriber receives, other-world does NOT', async () => {

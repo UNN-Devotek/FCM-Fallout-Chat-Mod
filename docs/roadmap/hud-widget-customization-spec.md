@@ -21,7 +21,7 @@
 > v0.3: added rendering polish — CAP-012 (proper-cased channel tags), CAP-013 (timestamps),
 > CAP-014 (blank idle input prompt).
 > v0.2: config home locked to `FCMChat.ini` (D-01). Keybinds locked (D-05): `INSERT` =
-> open/restore, `PgUp`/`PgDn` = channels, `/hide` + F12 = hide, mouse-wheel = scroll. Added
+> open/restore, `PgUp`/`PgDn` = channels, `/hide` + F11 menu = hide, mouse-wheel = scroll. Added
 > CAP-011 (hide/restore). Default open key `PAGE_DOWN` -> `INSERT` (D-07).
 
 > Scope note: #303/#231 text references the OLD `FCMBridge.hx` (FCMHUD/1, `MAX_MSGS=8`,
@@ -146,7 +146,7 @@ confirmation step; not a code blocker.
 SS-1: A user changes position, size, all listed colors, opacity, font size, message retention, and the open + channel keys by editing one config file and reloading — zero rebuild.
 SS-2: 100% of malformed / out-of-range / missing values load at default with no crash and no off-screen or zero-size panel.
 SS-3: With default config (or none present), appearance + every binding are byte-for-behavior identical to the pre-change build.
-SS-4: User can hide the panel (`/hide` or F12) and restore it (open key) in-game without reload.
+SS-4: User can hide the panel (`/hide` or the F11 menu) and restore it (open key) in-game without reload.
 SS-5: Every visible message shows a proper-cased channel tag matching the active tab and (when timestamps on) a clock time; the idle input prompt shows no hint text.
 
 ---
@@ -157,8 +157,8 @@ SS-5: Every visible message shows a proper-cased channel tag matching the active
 - D-02 (locked 2026-06-25): color value format accepts `#RRGGBB`, `RRGGBB`, or `0xRRGGBB`; invalid → key default.
 - D-03 (locked 2026-06-25): channel-key config values use the deliverable action-name set (`NextPage`, `PrevPage`, `Console`, `TeamChat`, `DiagnosticSnapshot`); invalid → key default.
 - D-04 (locked 2026-06-25): v1 layout exposes geometry + font size + retention; row-heights + leading stay fixed (advanced, deferred to v2).
-- D-05 (locked 2026-06-25): keymap — `INSERT` = open AND restore-from-hidden (the one native ZFE key, `OpenChatKey=INSERT`); `Page Down`/`Page Up` (`NextPage`/`PrevPage`) = channel next/prev; `/hide` slash command + F12 "Hide chat" = hide; mouse-wheel + F12 "Scroll to newest" + auto-scroll = scroll (no scroll keybind).
-- D-06 (locked 2026-06-25): optional `hideKey=<action>` config (default UNSET) lets power users bind a key by remapping it to a free action in FO76 controls. Hide always available via `/hide` + F12 regardless.
+- D-05 (revised 2026-07-16): keymap — `INSERT` = open AND restore-from-hidden (the one native ZFE key, `OpenChatKey=INSERT`); `Page Down`/`Page Up` (`NextPage`/`PrevPage`) = channel next/prev; `/hide` slash command + F11 HUDModLoader menu = hide; mouse-wheel + F11 "Scroll to newest" + auto-scroll = scroll (no scroll keybind).
+- D-06 (revised 2026-07-16): optional `hideKey=<action>` config (default UNSET) lets power users bind a key by remapping it to a free action in FO76 controls. Hide is always available via `/hide` + the F11 menu.
 - D-07 (locked 2026-06-25): default open key changes `PAGE_DOWN` → `INSERT` (`FCMChatWidget.ini` `OpenChatKey`, `FCMChat.ini` `openKey`, `_cfgOpenKey`). VM-verify ZFE accepts `INSERT` (Text Chat mod default = INSERT, so expected); `PAGE_DOWN` is the known-good fallback.
 - D-08 (locked 2026-06-25): timestamps come from the relay forwarding `createdAt` in the chat.v1 `chat.message` event (data already exists, `fcm-integration.md:358`; event omits it today, `protocol-spec.md:315`). Accurate for live AND history. NO client-receipt-time fallback — the widget renders the event `ts` only. Relay change tracked as its own backend issue (paired dependency, under #289/#288). Widget timestamps land once the relay ships `createdAt`.
 - D-09 (locked 2026-06-25): channel tag renders the proper-cased name via a `slug -> label` map (`CHAN_SLUGS`->Title-Case of `CHAN_NAMES`, `server`->"Server"); unknown slug -> title-cased slug.
@@ -173,7 +173,7 @@ None blocking — all locked (D-01..D-10).
 Verify on the Windows VM during implementation (not design blockers):
 - VER-1: ZFE accepts `OpenChatKey=INSERT` and `isChatKeyPressed` fires for it (D-07).
 - VER-2: mouse-wheel events reach the widget during normal gameplay (no free cursor). If not,
-  scroll falls back to F12 "Scroll to newest" + auto-scroll only (CAP-008 still met via menu).
+  scroll falls back to F11 "Scroll to newest" + auto-scroll only (CAP-008 still met via menu).
 
 Cross-cutting dependency (paired issue, not in this widget's scope): the relay/backend including
 `createdAt` in the chat.v1 `chat.message` event (D-08). CAP-013 (widget timestamps) lands once
@@ -238,17 +238,17 @@ them = independent keys (more usage sites to thread).
 | `openKey` * | open input; **restore if hidden** | `INSERT` (native ZFE key) | `_cfgOpenKey` :175, `onUserEvent` :560, `pollOpenKey` :1304 | `INSERT` (D-07) |
 | `channelNextKey` + | next channel | `Page Down` | `NextPage`→`cycleChannel` :569 | `NextPage` |
 | `channelPrevKey` + | prev channel (NEW `cyclePrev`) | `Page Up` | none yet (cycle forward-only :652) | `PrevPage` |
-| `hideKey` + | hide panel (optional) | user-mapped action | none yet | UNSET (use `/hide` + F12) |
+| `hideKey` + | hide panel (optional) | user-mapped action | none yet | UNSET (use `/hide` + F11 menu) |
 
 **Deliverable action set** (the only values `channelNextKey`/`channelPrevKey`/`hideKey` accept):
 `NextPage` (Page Down), `PrevPage` (Page Up), `Console` (`~`, dead-safe), `TeamChat` (`T`,
-overrides team chat), `DiagnosticSnapshot` (F12 — collides with HUDTools menu). Everything else
+overrides team chat), `DiagnosticSnapshot` (F12). Everything else
 is gameplay-critical and not bindable. For any other physical key, the user maps key→action in
 FO76 controls, then sets the matching action here.
 
-- **Scroll:** NOT a keybind. Mouse-wheel over the panel (VER-2) + F12 "Scroll to newest" :528
+- **Scroll:** NOT a keybind. Mouse-wheel over the panel (VER-2) + F11 "Scroll to newest" :528
   + auto-scroll/"N new" indicator. `Page Up` is now `channelPrevKey`, so it no longer scrolls.
-- **Hide / restore:** `/hide` (slash command) or F12 "Hide chat" hides (`this.visible=false`,
+- **Hide / restore:** `/hide` (slash command) or F11 "Hide chat" hides (`this.visible=false`,
   timers + listeners keep running so the feed stays current). `openKey` (`INSERT`) restores +
   opens — guaranteed, it is the one natively-polled key.
 - **Two open-key bindings must agree:** `FCMChatWidget.ini` `OpenChatKey` + `zfe.ini [TextChat]`
@@ -336,13 +336,13 @@ Order minimizes risk; each step independently testable.
    - `_hidden:Bool`; `hide()` sets `this.visible=false`; `show()` sets `true`. Timers/listeners
      keep running while hidden (feed stays current).
    - `/hide` branch in `handleSubmittedText` :984 (consume, do not send).
-   - F12 "Hide chat" entry in `onBuildMenu` :519 / `onSelectMenu` :538.
+   - F11 "Hide chat" entry in `onBuildMenu` :519 / `onSelectMenu` :538.
    - `openInput()` :783 + `onUserEvent`/`pollOpenKey` open path: if `_hidden`, `show()` first,
      then open — so `INSERT` restores. Optional `hideKey` action also toggles hide.
 
 5. **Mouse-wheel scroll (VER-2).** Add `MouseEvent.MOUSE_WHEEL` listener on the panel/`_logTf`
    (flip `_logTf.mouseEnabled` :375) → `scrollUp`/`scrollDown`. Guard: if wheel never fires
-   in-game, scroll stays on F12 + auto (CAP-008 still met). HUDButton already proves
+   in-game, scroll stays on F11 + auto (CAP-008 still met). HUDButton already proves
    `MouseEvent.CLICK` is wired (:613) — wheel is the unknown.
 
    **Feed polish (CAP-012..014) — group with the above:**
@@ -396,14 +396,13 @@ Order minimizes risk; each step independently testable.
   accepts `INSERT` (Text Chat mod default = INSERT, so expected). VM-verify; `PAGE_DOWN` is the
   fallback if not.
 - **Mouse-wheel in gameplay (VER-2):** no free cursor in normal play — wheel may not reach the
-  widget. Fallback = F12 "Scroll to newest" + auto-scroll (CAP-008 still met). VM-verify.
-- **F12 collision:** `DiagnosticSnapshot`=F12 also opens the HUDTools menu — don't default
-  `hideKey` to it; document the overlap if a user picks it.
+  widget. Fallback = F11 "Scroll to newest" + auto-scroll (CAP-008 still met). VM-verify.
+- **F11 menu:** HUDModLoader owns the F11 menu; do not depend on `DiagnosticSnapshot`/F12 to open it.
 - **Native vs HUDMod open-key duality:** `openKey` (HUDMod path) must stay in sync with
   `OpenChatKey` (ZFE `isChatKeyPressed` path) — both `INSERT`. A `gamemod-anchors` test asserts agreement.
 - **Proton/Wine:** widget send is blocked under Wine (#326); customization is render/parse only,
   testable on Linux for appearance, but full send-path QA needs the native Windows rig (`msi`).
-- **No live reload:** config applies on widget reload (F12 `isReloadable`) — set expectation in docs.
+- **No live reload:** config applies on widget reload (F11 `isReloadable`) — set expectation in docs.
 - **Timestamp dependency (D-08):** CAP-013 (widget timestamps) is BLOCKED on the paired relay
   `createdAt` issue. Sequence: ship the relay change first (or together), else the widget has no
   time to render. No client-side fallback by decision.

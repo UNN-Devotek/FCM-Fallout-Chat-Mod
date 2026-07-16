@@ -326,14 +326,15 @@ if widget_src:
           "FCMChatWidget gates SERVER on an acknowledged relay control")
     check("blank worldId ignored; fresh roster session remains authoritative" in widget_src,
           "FCMChatWidget keeps a fresh roster room when legacy worldId is blank")
-    check('"FCMCTL/1/ROSTER:"' in widget_src and 'names.join("|")' in widget_src,
-          "FCMChatWidget sends printable server controls that ZFE accepts")
+    check('"\\x00fcm.world.roster.v1\\x00"' in widget_src and 'names.join("\\x1F")' in widget_src,
+          "FCMChatWidget sends legacy roster controls")
+    check('s = s.split("\\x00").join("\\\\u0000");' in widget_src
+          and 's = s.split("\\x1F").join("\\\\u001F");' in widget_src,
+          "FCMChatWidget JSON-escapes legacy control bytes before ZFE receives them")
     check("Shared.AS3.Events.CustomEvent" in widget_src,
           "FCMChatWidget resolves the game-qualified CustomEvent for the edit lock")
     check("startTypeMirror" not in widget_src,
           "FCMChatWidget does not overlap the HUDTools entry with a duplicate typing mirror")
-    check('action == "DiagnosticSnapshot"' in widget_src and "showHudMenu()" in widget_src,
-          "FCMChatWidget explicitly routes F12 to the HUDTools menu")
 
 try:
     widget_ini_src = open(WIDGET_INI, encoding="utf-8").read()
