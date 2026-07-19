@@ -67,6 +67,10 @@ or broadcast as chat. The backend associates them with the authenticated relay
 token, rejects oversized or malformed bodies, and applies a short Redis-backed
 per-user control limit. There is deliberately no client HMAC: any secret placed
 inside the distributable SWF is forgeable and cannot authenticate the sender.
+Each accepted control returns a non-empty, synthetic UUID in `messageId`. ZFE's
+`chat.v1.sendMessage` contract requires a message ID for every successful send;
+the UUID acknowledges the operation only and does not represent a persisted chat
+message.
 
 `worldRosterService` stores short-lived rosters and builds connected components
 from mutually observed names. The stable room key feeds the existing Redis

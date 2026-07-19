@@ -23,6 +23,7 @@
 
 import type WebSocket from 'ws';
 import type http from 'http';
+import { v4 as uuidv4 } from 'uuid';
 import { getRedisClient, getSubscriberClient } from '../../config/redis';
 import prisma from '../../config/prisma';
 import logger from '../../config/logger';
@@ -202,6 +203,15 @@ function send(ws: WebSocket, payload: object): void {
   try {
     ws.send(JSON.stringify(payload));
   } catch { /* already closed */ }
+}
+
+/**
+ * A consumed server control is still a successful chat.v1 `send` operation.
+ * ZFE requires every successful send response to carry a non-empty messageId,
+ * even though controls are intentionally not persisted as chat messages.
+ */
+function sendControlAck(ws: WebSocket): void {
+  send(ws, { success: true, messageId: uuidv4() });
 }
 
 // ── Authenticated world/roster control parsing ────────────────────────────────
@@ -588,7 +598,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
         return;
       }
       await handleWorldJoin(identity, worldId);
-      send(ws, { success: true, messageId: '' });
+      sendControlAck(ws);
       return;
     }
   }
@@ -599,7 +609,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
         return;
       }
       await handleWorldLeave(identity);
-      send(ws, { success: true, messageId: '' });
+      sendControlAck(ws);
       return;
     }
   }
@@ -612,7 +622,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       }
       await setRoster(identity.userId, identity.fo76Name, names);
       await applyRoomAssignments();
-      send(ws, { success: true, messageId: '' });
+      sendControlAck(ws);
       return;
     }
   }

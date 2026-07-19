@@ -1374,8 +1374,9 @@ describe('authenticated world controls', () => {
       ws.send(JSON.stringify({ op: 'send', token, channel: 'server', body })),
     );
 
-    // worldId control is consumed — returns success with empty messageId, no ingest
-    expect(res).toMatchObject({ success: true, messageId: '' });
+    // worldId control is consumed — returns a chat.v1-compliant synthetic ack, no ingest
+    expect(res).toMatchObject({ success: true, messageId: expect.any(String) });
+    expect(res.messageId).not.toBe('');
     expect(ingestMock).not.toHaveBeenCalled();
     ws.close();
   });
@@ -1496,6 +1497,17 @@ describe('server chat (worldId-scoped room)', () => {
     const res = await waitForMsg(ws, msgs, () => send(ws, { op: 'send', token: a.token, channel: 'server', body: 'hi' }));
     expect(res).toMatchObject({ success: false, error: { code: 'invalid_channel' } });
     ws.close();
+  });
+
+  test('JOIN and LEAVE controls return protocol-compliant non-empty message IDs', async () => {
+    const a = await registerAndLink('ControlAck', 'fcm-control-ack');
+    const join = await sendJoin(a, 'world-ack');
+    expect(join).toMatchObject({ success: true, messageId: expect.any(String) });
+    expect(join.messageId).not.toBe('');
+
+    const leave = await sendLeave(a);
+    expect(leave).toMatchObject({ success: true, messageId: expect.any(String) });
+    expect(leave.messageId).not.toBe('');
   });
 
   test('world controls are rate-limited per authenticated relay identity', async () => {
@@ -1637,6 +1649,13 @@ describe('roster-derived world rooms', () => {
     ws.close();
     return res;
   }
+
+  test('roster controls return a protocol-compliant non-empty message ID', async () => {
+    const a = await registerAndLink('RosterAck', 'fcm-roster-ack');
+    const res = await sendRaw(a, makeRosterBody(a.rawId, []));
+    expect(res).toMatchObject({ success: true, messageId: expect.any(String) });
+    expect(res.messageId).not.toBe('');
+  });
 
   test('mutual sighting groups users into one room; unsighted user is isolated', async () => {
     const a = await registerAndLink('RosterAlice', 'fcm-ra');
