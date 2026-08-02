@@ -371,7 +371,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
     let dbBlacklistHit: { pattern: string; matchType: string } | null = null;
     if (typeof username === 'string') {
       try {
-        const { findBlacklistMatch } = await import('../services/nameBlacklistService');
+        const { findBlacklistMatch } = await import('../services/nameBlacklistService.js');
         const m = findBlacklistMatch(username);
         if (m) dbBlacklistHit = { pattern: m.pattern, matchType: m.matchType };
       } catch { /* non-fatal — predicate returns false on init failure */ }
@@ -400,7 +400,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
         // user, so the desktop can react even when register is just a
         // periodic refresh (not a fresh connect).
         try {
-          const { pushToUser } = await import('../websocket/handlers');
+          const { pushToUser } = await import('../websocket/handlers.js');
           const userRow = await prisma.user.findUnique({ where: { installToken }, select: { id: true } });
           if (userRow?.id) {
             pushToUser(userRow.id, {
