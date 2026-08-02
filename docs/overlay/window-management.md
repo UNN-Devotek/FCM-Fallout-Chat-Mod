@@ -34,6 +34,42 @@ Bounds are **persisted** (debounced) to `overlay-state.json` on every move/resiz
 
 ---
 
+## Modal-fit growth (temporary resize for settings / onboarding)
+
+The shell settings (`#shell-settings`) and onboarding (`#shell-onboarding`) panels are
+plain DOM rendered **inside the overlay's own BrowserWindow**, so their CSS caps
+(`max-width: 96vw`, `max-height: 90vh` in `index.html`) resolve against the *overlay*, not
+the screen. An overlay kept compact for gameplay — it can go down to
+`MIN_WIDTH` x `MIN_HEIGHT` (320x280) — squeezes the settings panel to roughly 307x252,
+which made settings impractical to use without first resizing the overlay
+([#374](https://github.com/UNN-Devotek/FCM-Fallout-Chat-Mod/issues/374)).
+
+Portalling cannot fix this: nothing rendered in the renderer can paint outside its own OS
+window. So the main process grows the window while a modal is open and restores the
+user's size on close, riding the existing `overlay:set-modal` signal:
+
+| Behavior | Detail |
+| --- | --- |
+| Trigger | `overlay:set-modal` — the same IPC that drives the modal-interactive pin |
+| Target size | `MODAL_FIT_WIDTH` x `MODAL_FIT_HEIGHT` = 560x720 (`overlay-core.js`) |
+| Grow only | Never shrinks a window the user already made large enough, per axis |
+| Clamped | Result passes through `clampToWorkArea`, so it stays on-screen |
+| Restore | Size only — live x/y is kept, so a window moved while the modal was open is not teleported back |
+| Explicit size wins | A **position-preset hotkey** (`window:set-bounds`, Shift+F1..F8) is global and still fires while a modal is open; it carries its own width/height, so it drops the restore snapshot and the preset sticks. `overlay:resize-bounds` clears the snapshot too, though the shell already disables the edge-resize zones while a modal is open (`rzVisible = !collapsed && !modalOpen`), so that path is defensive only |
+| Never persisted | While inflated, `persistBounds()` writes the **pre-modal** size, so the temporary size can't leak into `overlay-state.json` via the debounced save or the before-quit save |
+| Collapsed / animating | Skipped while idle-collapsed **and** while a collapse/expand animation is running. `animateHeightTo()` freezes the width at animation start and re-applies it every frame, so growing mid-flight would be fought and reverted — and the snapshot would capture a meaningless interim size that we would then "restore" |
+
+The sizing decision is the pure `modalFitBounds(current, workArea, need)` in
+`overlay-core.js` (returns `null` when no growth is needed or possible, meaning there is
+nothing to restore); `main.js` holds the snapshot in `modalFitPrevBounds` and does the
+Electron wiring. Covered by `__tests__/overlay-modal-fit.test.js`.
+
+Note this affects the **Electron shell** panels only. On the website/dashboard the React
+`SettingsModal` in `ChatOverlay.tsx` sizes against the browser viewport, which is already
+large, so no change was needed there.
+
+---
+
 ## Idle-collapse (auto-hide to header strip)
 
 After a configurable idle delay (default 25 s, range 5–120 s) with no mouse, keyboard, or scroll activity the overlay collapses to the header/tab strip height. It expands again on any interaction, when a new message arrives in the active channel, or when any @mention of the user arrives (see Mention auto-appear below).
@@ -200,7 +236,7 @@ Two modes:
 
 Manual click-through (`End` key or tray item) overrides the automatic logic and forces click-through until the user toggles it off.
 
-A **modal-interactive pin** (`overlay:set-modal` IPC) forces full interactivity while the settings or onboarding panel is open, so slider drags work regardless of click-through state (`main.js:1125`).
+A **modal-interactive pin** (`overlay:set-modal` IPC) forces full interactivity while the settings or onboarding panel is open, so slider drags work regardless of click-through state (`main.js:1125`). The same signal also drives [modal-fit growth](#modal-fit-growth-temporary-resize-for-settings--onboarding).
 
 An 800ms focus guard (`FOCUS_GUARD_MS`) prevents the ~300ms foreground poll from flipping the overlay back to click-through immediately after the user presses Insert (`main.js:484`).
 
