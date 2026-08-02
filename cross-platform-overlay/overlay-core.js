@@ -310,6 +310,52 @@ function clampToWorkArea(desired, workArea) {
   return { x, y, width, height };
 }
 
+// ── Modal fit sizing (issue #374) ─────────────────────────────────────────────
+// The shell settings / onboarding panels are plain DOM rendered INSIDE the
+// overlay's own BrowserWindow, so their CSS caps (`max-width: 96vw`,
+// `max-height: 90vh` on #shell-settings / #shell-onboarding) resolve against the
+// OVERLAY WINDOW rather than the screen. A user who keeps the overlay compact
+// during gameplay — it can go as small as MIN_WIDTH x MIN_HEIGHT (320x280) —
+// gets the settings panel squeezed to roughly 307x252, which is what #374
+// reports as "cramped, have to resize the overlay to use settings".
+//
+// Portalling cannot fix this: nothing rendered in the renderer can paint outside
+// its own OS window. So instead the main process grows the window just enough to
+// show the panel while it is open, and restores the user's size on close.
+//
+// Size a modal needs to render at its designed width. #shell-settings is 520px
+// wide capped at 96vw, so the window must be at least 520/0.96 ~= 542px to show
+// it un-squeezed; 560 leaves margin. 720 tall gives the settings list real room
+// (90vh of 720 = 648px of panel).
+const MODAL_FIT_WIDTH = 560;
+const MODAL_FIT_HEIGHT = 720;
+
+// Pure sizing decision for the temporary modal growth.
+//   current  = live window bounds { x, y, width, height }
+//   workArea = display work area  { x, y, width, height }
+//   need     = { width, height } the modal wants (defaults to MODAL_FIT_*)
+//
+// GROWS ONLY — never shrinks a window the user already made large enough.
+// Returns null when no growth is needed or possible, which the caller treats as
+// "nothing was changed, so there is nothing to restore". Otherwise returns the
+// grown rect, already clamped to the work area.
+function modalFitBounds(current, workArea, need) {
+  if (!current || !workArea) return null;
+  const wantW = Math.max(Number(current.width) || 0, need?.width ?? MODAL_FIT_WIDTH);
+  const wantH = Math.max(Number(current.height) || 0, need?.height ?? MODAL_FIT_HEIGHT);
+  // Already big enough in both axes — leave the user's window alone.
+  if (wantW <= current.width && wantH <= current.height) return null;
+
+  const grown = clampToWorkArea(
+    { x: current.x, y: current.y, width: wantW, height: wantH },
+    workArea,
+  );
+  // A small work area can clamp the request straight back to the current size;
+  // treat that as "no change" so we never record a pointless restore snapshot.
+  if (grown.width === current.width && grown.height === current.height) return null;
+  return grown;
+}
+
 // ── KDE-Wayland active-window (xdotool/kdotool) helpers ───────────────────────
 
 // XWayland WM_CLASS values that FO76/Proton is known to use.  Under Steam Proton
@@ -836,6 +882,9 @@ module.exports = {
   isPrivilegedRole,
   canShowOverlay,
   clampToWorkArea,
+  MODAL_FIT_WIDTH,
+  MODAL_FIT_HEIGHT,
+  modalFitBounds,
   buildKeybindMap,
   accelToAction,
   visibilityDecision,
