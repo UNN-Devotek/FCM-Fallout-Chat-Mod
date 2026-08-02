@@ -202,7 +202,7 @@ router.post('/redeem', requireLinkAuth, redemptionIpLimiter, async (req: Request
       // NOTE: '../services/...' (NOT '../../src/...') so this resolves in the COMPILED build
       // (dist/routes -> dist/services), not just under tsx dev. The old path threw
       // MODULE_NOT_FOUND in prod, so the token was never actually linked (code marked used only).
-      const relayService: any = await import('../services/relay/relayIdentityService');
+      const relayService: any = await import('../services/relay/relayIdentityService.js');
       await relayService.markRelayTokenLinked(relayUserId, actorId);
       logger.info({ relayUserId, actorId }, 'Relay identity upgraded to linked');
       // Handshake: tell the user's live in-game subscriber it's now linked, so an

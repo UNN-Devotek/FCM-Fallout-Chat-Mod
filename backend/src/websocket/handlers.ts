@@ -2095,7 +2095,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
         // Party typing: broadcast only to party members.
         if (typingPartyId && typeof typingPartyId === 'string' && UUID_RE.test(typingPartyId)) {
           try {
-            const { PARTIES_ENABLED } = await import('../config/features');
+            const { PARTIES_ENABLED } = await import('../config/features.js');
             if (PARTIES_ENABLED) {
               const ptMembers = await prisma.partyMember.findMany({
                 where: { partyId: typingPartyId, leftAt: null },
@@ -2180,7 +2180,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       // ── Party chat frames ──────────────────────────────────────────────────
 
       case 'party:send': {
-        const { PARTIES_ENABLED } = await import('../config/features');
+        const { PARTIES_ENABLED } = await import('../config/features.js');
         if (!PARTIES_ENABLED) { sendWsError(ws, 'Party feature is disabled.'); break; }
 
         const { partyId: psSendPartyId, content: psRawContent, clientCreatedAt: psClientTs } = frame.payload || {};
@@ -2333,7 +2333,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       }
 
       case 'party:history': {
-        const { PARTIES_ENABLED: phEnabled } = await import('../config/features');
+        const { PARTIES_ENABLED: phEnabled } = await import('../config/features.js');
         if (!phEnabled) { ws.send(JSON.stringify({ type: 'chat:history', payload: { channelId: null, messages: [] } })); break; }
 
         const { partyId: phPartyId, limit: phLimit = 300, offset: phOffset = 0 } = frame.payload || {};

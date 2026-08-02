@@ -1062,7 +1062,7 @@ app.get('/auth/ws-ticket', apiLimiter, async (req: Request, res: Response) => {
 
   const discordUser = (req.session as any).discordUser;
   // Role gate: only privileged staff may open admin-observer sockets.
-  const { isPrivilegedRole } = await import('./services/userRoleService').then(m => m.default ?? m);
+  const { isPrivilegedRole } = await import('./services/userRoleService.js').then(m => m.default ?? m);
   if (!isPrivilegedRole(discordUser.role)) {
     res.status(403).json({ data: null });
     return;
@@ -1388,7 +1388,7 @@ app.get('/admin/debug/presence-audit', apiLimiter, requireAdminKey, async (req: 
       return;
     }
     const limit = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? '20', 10) || 20));
-    const { getRedisClient } = await import('./config/redis');
+    const { getRedisClient } = await import('./config/redis.js');
     const redis = await getRedisClient();
     const raws = await redis.lRange(`presence:audit:${userId}`, 0, limit - 1);
     const items = raws.map(r => { try { return JSON.parse(r); } catch { return { parseError: true, raw: r }; } });
@@ -1402,7 +1402,7 @@ app.get('/admin/debug/presence-audit', apiLimiter, requireAdminKey, async (req: 
 //   POST /admin/debug/clear-rate-limit?key=<...>  — clears a specific key
 app.post('/admin/debug/clear-rate-limit', apiLimiter, requireAdminKey, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { getRedisClient } = await import('./config/redis');
+    const { getRedisClient } = await import('./config/redis.js');
     const redis = await getRedisClient();
     const specificKey = (req.query.key as string | undefined)?.trim();
     let cleared = 0;
