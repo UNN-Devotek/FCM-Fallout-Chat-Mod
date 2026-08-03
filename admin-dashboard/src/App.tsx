@@ -1,5 +1,9 @@
 import React from 'react';
-import { createBrowserRouter, RouterProvider, Navigate, Outlet, useRouteError } from 'react-router-dom';
+// react-router v8 removed the `react-router-dom` package entirely. Everything now
+// comes from `react-router`, except the DOM-specific entrypoints — `RouterProvider`
+// lives in `react-router/dom`.
+import { createBrowserRouter, Navigate, Outlet, useRouteError } from 'react-router';
+import { RouterProvider } from 'react-router/dom';
 import { useAuth } from './contexts/AuthContext';
 
 function RouteErrorDisplay() {

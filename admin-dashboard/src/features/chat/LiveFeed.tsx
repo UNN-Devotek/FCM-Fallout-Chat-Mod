@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useOutletContext } from 'react-router-dom';
+import { Link, useOutletContext } from 'react-router';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';

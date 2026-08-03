@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { NavLink, useNavigate, useLocation, Link } from 'react-router-dom';
+import { NavLink, useNavigate, useLocation, Link } from 'react-router';
 
 // Maps each admin route to its Title-Case browser-tab name. The tab title is
 // `${name}.FCM` (e.g. "Chat.FCM"). For sub-paths or unknown routes we fall back
