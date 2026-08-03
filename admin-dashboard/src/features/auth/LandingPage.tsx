@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { Player } from '@remotion/player';
 import { ChatFeedGif } from '@promo/ChatFeedGif';
 import { WikiFlowGif } from '@promo/WikiFlowVideo';

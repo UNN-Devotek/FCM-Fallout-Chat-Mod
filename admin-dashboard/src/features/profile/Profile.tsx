@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import ApiTokensPanel from './ApiTokensPanel';
-import { useParams, useOutletContext, Link } from 'react-router-dom';
+import { useParams, useOutletContext, Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import type { AuthUser } from '../../contexts/AuthContext';

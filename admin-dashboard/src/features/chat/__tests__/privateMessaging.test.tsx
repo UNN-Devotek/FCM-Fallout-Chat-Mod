@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter, Outlet, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Outlet, Route, Routes } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import React from 'react';
 

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useOutletContext, Link } from 'react-router-dom';
+import { useOutletContext, Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import type { AuthUser } from '../../contexts/AuthContext';

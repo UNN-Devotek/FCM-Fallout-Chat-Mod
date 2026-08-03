@@ -207,7 +207,7 @@ npx electron-builder --win    # produces dist-electron/Fallout Chat Mod Setup X.
 ```bash
 # 1. Stage BOTH projects on native ext4 ($HOME), preserving the sibling layout.
 #    The overlay's vite `@dashboard` alias resolves to ../admin-dashboard/src and
-#    dedupes react / react-dom / react-router-dom / @tanstack/react-query, so BOTH
+#    dedupes react / react-dom / react-router / @tanstack/react-query, so BOTH
 #    node_modules trees must exist, installed for Linux.
 mkdir -p ~/fcm-lxbuild
 rsync -a --exclude node_modules --exclude dist --exclude dist-electron \

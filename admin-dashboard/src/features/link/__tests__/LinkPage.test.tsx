@@ -1,6 +1,6 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter } from 'react-router';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import LinkPage from '../LinkPage';
 
