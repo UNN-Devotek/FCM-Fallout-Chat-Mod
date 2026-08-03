@@ -438,6 +438,7 @@ describe('shellToWebSettings (mirror)', () => {
     showTimestamps: true,
     timestampFormat: '24h' as const,
     channelFilters: ['Trading', 'Events'],
+    notifyKeywords: ['nuke'],
   };
   it('carries the message-timestamp prefs into the mirror (regression: were dropped on reload)', () => {
     const w = shellToWebSettings(input);
