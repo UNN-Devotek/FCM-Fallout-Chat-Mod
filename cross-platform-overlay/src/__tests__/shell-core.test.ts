@@ -450,10 +450,11 @@ describe('shellToWebSettings (mirror)', () => {
     const w = shellToWebSettings(input);
     expect(w.showTypingWhenCollapsed).toBe(true);
   });
-  it('defaults showTypingWhenCollapsed to true when the shell value is missing', () => {
-    // Older persisted settings have no such key — it must not read as "off".
+  it('defaults showTypingWhenCollapsed to FALSE when the shell value is missing', () => {
+    // Opt-in feature: settings persisted before it existed have no such key and
+    // must stay off, not silently switch on for every existing install.
     const w = shellToWebSettings({ ...input, showTypingWhenCollapsed: undefined as unknown as boolean });
-    expect(w.showTypingWhenCollapsed).toBe(true);
+    expect(w.showTypingWhenCollapsed).toBe(false);
   });
   it('respects an explicit showTypingWhenCollapsed=false', () => {
     const w = shellToWebSettings({ ...input, showTypingWhenCollapsed: false });

@@ -365,7 +365,10 @@ export function shellToWebSettings(s: WebMirrorInput): WebMirrorSettings {
     // the array can't alias back into shell state.
     notifyKeywords: Array.isArray(s.notifyKeywords) ? s.notifyKeywords.slice() : [],
     // Keep the typing indicator in the tab strip while collapsed (#420).
-    showTypingWhenCollapsed: s.showTypingWhenCollapsed !== false,
+    // Opt-in: `=== true` so a MISSING key (settings persisted before this
+    // existed) resolves to false and matches the default. Using `!== false`
+    // here would silently switch the feature ON for every existing install.
+    showTypingWhenCollapsed: s.showTypingWhenCollapsed === true,
   };
 }
 

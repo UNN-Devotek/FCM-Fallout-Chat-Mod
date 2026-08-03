@@ -65,7 +65,7 @@ export interface ShellSettings {
   backgroundOpacity: number; // 0..1 extra background dim
   scanlineIntensity: number; // 0..1 (default 0.08)
   fadeWhenIdle: boolean;     // default true
-  showTypingWhenCollapsed: boolean; // default true — see issue #420
+  showTypingWhenCollapsed: boolean; // default FALSE — opt in; see issue #420
   // Seconds of inactivity before collapsing to the header strip (5..120, default 25).
   idleCollapseSeconds: number;
   // Per-message timestamps rendered in the viewer's local time. Mirrored to WEB_SETTINGS_KEY.
@@ -136,7 +136,7 @@ export const DEFAULT_SHELL_SETTINGS: ShellSettings = {
   // CRT texture rather than heavy bars.
   scanlineIntensity: 0.08,
   fadeWhenIdle: true,
-  showTypingWhenCollapsed: true,
+  showTypingWhenCollapsed: false,
   idleCollapseSeconds: IDLE_COLLAPSE_SECONDS_DEFAULT,
   showTimestamps: false,
   timestampFormat: '12h',
