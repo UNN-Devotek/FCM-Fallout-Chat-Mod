@@ -735,6 +735,10 @@ interface WebOverlaySettings {
   // boundaries. Empty by default: @mentions of your own names always trigger
   // regardless of this list.
   notifyKeywords: string[];
+  // Keep the typing indicator visible in the tab strip while the overlay is
+  // idle-collapsed (#420). Electron shell only — on the website nothing
+  // collapses, so this is inert there.
+  showTypingWhenCollapsed: boolean;
 }
 
 const DEFAULT_SETTINGS: WebOverlaySettings = {
@@ -747,6 +751,7 @@ const DEFAULT_SETTINGS: WebOverlaySettings = {
   timestampFormat: '12h',
   channelFilters: [],
   notifyKeywords: [],
+  showTypingWhenCollapsed: true,
 };
 
 const SETTINGS_KEY = 'fcm_web_overlay_settings';
@@ -3528,6 +3533,18 @@ export default function ChatOverlay() {
   // open it would hang over the collapsed header strip during auto-hide. It can
   // be reopened after the user expands again. Also close ALL context menus +
   // popovers so none float over the collapsed strip (item 4b).
+  // Live collapsed state (#420). The shell emits this on BOTH transitions, unlike
+  // 'fcm-overlay-collapsed' below which is a one-way "close floating panels" signal.
+  const [shellCollapsed, setShellCollapsed] = useState(false);
+  useEffect(() => {
+    const onState = (e: Event) => {
+      const detail = (e as CustomEvent<{ collapsed?: boolean }>).detail;
+      setShellCollapsed(!!detail?.collapsed);
+    };
+    window.addEventListener('fcm-overlay-collapse-state', onState);
+    return () => window.removeEventListener('fcm-overlay-collapse-state', onState);
+  }, []);
+
   useEffect(() => {
     const onCollapsed = () => {
       setMemberPanelOpen(false);
@@ -8397,6 +8414,27 @@ export default function ChatOverlay() {
             // The sub-tab row's empty space is also a window-drag handle.
             ...(overlayShell ? { WebkitAppRegion: 'drag' } as React.CSSProperties : {}),
           }}>
+            {/* Collapsed typing indicator (#420). The normal indicator is a sibling
+                BELOW the message list, so applyCollapsedHidden() hides it along with
+                everything after the sub-tab row. Rendering a compact one INSIDE this
+                row means it survives collapse with no change to the collapsed-height
+                math — deliberately avoiding headerStripHeight(), which has a history
+                of zoom double-apply bugs. Shell-only, opt-out via settings. */}
+            {overlayShell && shellCollapsed && settings.showTypingWhenCollapsed && typingVisibleForScope && (
+              <span
+                data-fcm-collapsed-typing="1"
+                title="Someone is typing"
+                style={{
+                  marginRight: '8px', flexShrink: 0, lineHeight: 1,
+                  fontSize: '11px', color: hexAlpha(primaryColor, 0.85),
+                  // Not a drag handle — the row itself is, and inheriting that here
+                  // would make the indicator swallow drags oddly.
+                  ...(overlayShell ? { WebkitAppRegion: 'no-drag' } as React.CSSProperties : {}),
+                }}
+              >
+                ●●●
+              </span>
+            )}
             {subChannels.filter(sub => !hiddenChannelIds.has(sub.id)).map(sub => {
               const isActive = sub.id === activeSubId;
               const unread = unreadMentions[sub.id] || 0;

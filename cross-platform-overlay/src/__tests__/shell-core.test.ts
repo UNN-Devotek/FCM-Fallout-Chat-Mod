@@ -439,11 +439,25 @@ describe('shellToWebSettings (mirror)', () => {
     timestampFormat: '24h' as const,
     channelFilters: ['Trading', 'Events'],
     notifyKeywords: ['nuke'],
+    showTypingWhenCollapsed: true,
   };
   it('carries the message-timestamp prefs into the mirror (regression: were dropped on reload)', () => {
     const w = shellToWebSettings(input);
     expect(w.showTimestamps).toBe(true);
     expect(w.timestampFormat).toBe('24h');
+  });
+  it('carries showTypingWhenCollapsed into the mirror (#420)', () => {
+    const w = shellToWebSettings(input);
+    expect(w.showTypingWhenCollapsed).toBe(true);
+  });
+  it('defaults showTypingWhenCollapsed to true when the shell value is missing', () => {
+    // Older persisted settings have no such key — it must not read as "off".
+    const w = shellToWebSettings({ ...input, showTypingWhenCollapsed: undefined as unknown as boolean });
+    expect(w.showTypingWhenCollapsed).toBe(true);
+  });
+  it('respects an explicit showTypingWhenCollapsed=false', () => {
+    const w = shellToWebSettings({ ...input, showTypingWhenCollapsed: false });
+    expect(w.showTypingWhenCollapsed).toBe(false);
   });
   it('carries (a copy of) channelFilters into the mirror', () => {
     const w = shellToWebSettings(input);

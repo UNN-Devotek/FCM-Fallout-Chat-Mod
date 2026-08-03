@@ -242,6 +242,7 @@ describe('loadSettings / saveSettings', () => {
       timestampFormat: '12h',
       channelFilters: [],
       notifyKeywords: [],
+      showTypingWhenCollapsed: true,
     });
   });
 
@@ -256,6 +257,7 @@ describe('loadSettings / saveSettings', () => {
       timestampFormat: '24h' as const,
       channelFilters: ['Trading'],
       notifyKeywords: ['fixer'],
+      showTypingWhenCollapsed: false,
     };
     saveSettings(custom);
     expect(loadSettings()).toEqual(custom);

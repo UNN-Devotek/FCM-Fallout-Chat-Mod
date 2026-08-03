@@ -65,6 +65,7 @@ export interface ShellSettings {
   backgroundOpacity: number; // 0..1 extra background dim
   scanlineIntensity: number; // 0..1 (default 0.08)
   fadeWhenIdle: boolean;     // default true
+  showTypingWhenCollapsed: boolean; // default true — see issue #420
   // Seconds of inactivity before collapsing to the header strip (5..120, default 25).
   idleCollapseSeconds: number;
   // Per-message timestamps rendered in the viewer's local time. Mirrored to WEB_SETTINGS_KEY.
@@ -135,6 +136,7 @@ export const DEFAULT_SHELL_SETTINGS: ShellSettings = {
   // CRT texture rather than heavy bars.
   scanlineIntensity: 0.08,
   fadeWhenIdle: true,
+  showTypingWhenCollapsed: true,
   idleCollapseSeconds: IDLE_COLLAPSE_SECONDS_DEFAULT,
   showTimestamps: false,
   timestampFormat: '12h',
@@ -426,6 +428,14 @@ function applyCollapsedHidden() {
   }
 }
 
+function emitCollapseState(isCollapsed: boolean): void {
+  try {
+    window.dispatchEvent(new CustomEvent('fcm-overlay-collapse-state', {
+      detail: { collapsed: isCollapsed },
+    }));
+  } catch { /* non-fatal */ }
+}
+
 function setCollapsed(next: boolean, focusInput = false) {
   if (collapsed === next) return;
   lastTransitionMs = Date.now();
@@ -442,8 +452,14 @@ function setCollapsed(next: boolean, focusInput = false) {
     // absolutely-positioned floating UI (e.g. the party member panel) that
     // would otherwise hang over the collapsed header strip.
     try { window.dispatchEvent(new CustomEvent('fcm-overlay-collapsed')); } catch { /* non-fatal */ }
+    // Separate STATE event (fires both directions). Kept distinct from
+    // 'fcm-overlay-collapsed' above, which existing listeners treat as a
+    // one-way 'close your floating panels' signal — firing that on expand too
+    // would start closing panels when the user comes back.
+    emitCollapseState(true);
   } else {
     collapsed = false;
+    emitCollapseState(false);
     // Keep 'collapsed' on root through the 240ms expand animation — removing it
     // immediately flashes the header from dark to transparent while the window
     // is still at header height. Strip it only after the window is full-size.
@@ -1486,6 +1502,8 @@ function buildSettingsPanel() {
 
     toggle(s, 'Show footer hints (keybind bar at the bottom)', () => currentSettings.showHints, v => commit({ showHints: v }));
     toggle(s, 'Auto-hide chat when idle (collapse to header)', () => currentSettings.fadeWhenIdle, v => commit({ fadeWhenIdle: v }));
+    toggle(s, 'Show typing indicator while collapsed', () => currentSettings.showTypingWhenCollapsed, v => commit({ showTypingWhenCollapsed: v }));
+    hint(s, 'Keeps "X is typing…" visible in the tab strip while the chat is collapsed, so you can tell someone is replying without expanding it.');
     slider(
       s, 'Auto-hide delay', IDLE_COLLAPSE_SECONDS_MIN, IDLE_COLLAPSE_SECONDS_MAX, 1,
       () => currentSettings.idleCollapseSeconds,
