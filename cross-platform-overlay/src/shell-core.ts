@@ -332,6 +332,8 @@ export interface WebMirrorInput {
   channelFilters: string[];
   notifyKeywords: string[];
   showTypingWhenCollapsed: boolean;
+  notifySoundEnabled: boolean;
+  notifySoundVolume: number;
 }
 export interface WebMirrorSettings {
   themeId: string;
@@ -344,6 +346,8 @@ export interface WebMirrorSettings {
   channelFilters: string[];
   notifyKeywords: string[];
   showTypingWhenCollapsed: boolean;
+  notifySoundEnabled: boolean;
+  notifySoundVolume: number;
 }
 export function shellToWebSettings(s: WebMirrorInput): WebMirrorSettings {
   return {
@@ -369,6 +373,12 @@ export function shellToWebSettings(s: WebMirrorInput): WebMirrorSettings {
     // existed) resolves to false and matches the default. Using `!== false`
     // here would silently switch the feature ON for every existing install.
     showTypingWhenCollapsed: s.showTypingWhenCollapsed === true,
+    // Opt-in like the typing indicator: a MISSING key must read as off, so
+    // existing installs never start making noise after an update (#437).
+    notifySoundEnabled: s.notifySoundEnabled === true,
+    notifySoundVolume: typeof s.notifySoundVolume === 'number'
+      ? Math.max(0, Math.min(1, s.notifySoundVolume))
+      : 0.5,
   };
 }
 

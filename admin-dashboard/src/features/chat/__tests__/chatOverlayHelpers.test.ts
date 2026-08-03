@@ -16,6 +16,8 @@ import {
   splitMentions,
   contentMentionsName,
   contentMatchesKeyword,
+  shouldPlayNotifySound,
+  NOTIFY_SOUND_MIN_GAP_MS,
   messageTriggersNotify,
   backoffDelay,
   nextTicketRetryDelay,
@@ -243,6 +245,8 @@ describe('loadSettings / saveSettings', () => {
       channelFilters: [],
       notifyKeywords: [],
       showTypingWhenCollapsed: false,
+      notifySoundEnabled: false,
+      notifySoundVolume: 0.5,
     });
   });
 
@@ -258,6 +262,8 @@ describe('loadSettings / saveSettings', () => {
       channelFilters: ['Trading'],
       notifyKeywords: ['fixer'],
       showTypingWhenCollapsed: false,
+      notifySoundEnabled: true,
+      notifySoundVolume: 0.8,
     };
     saveSettings(custom);
     expect(loadSettings()).toEqual(custom);
@@ -1048,5 +1054,45 @@ describe('messageTriggersNotify', () => {
 
   it('matches any one of several keywords', () => {
     expect(messageTriggersNotify('raid starting', [], ['nuke', 'raid', 'fixer'])).toBe(true);
+  });
+});
+
+// ── shouldPlayNotifySound (#437) ─────────────────────────────────────────────
+// A busy Trading channel with a common keyword can trigger many times a second.
+// Without a floor the overlay would machine-gun the ping, which is worse than no
+// sound at all.
+describe('shouldPlayNotifySound', () => {
+  it('plays the very first time (no previous ping)', () => {
+    expect(shouldPlayNotifySound(1_000_000, null)).toBe(true);
+  });
+
+  it('suppresses a second ping inside the gap', () => {
+    const t = 1_000_000;
+    expect(shouldPlayNotifySound(t + NOTIFY_SOUND_MIN_GAP_MS - 1, t)).toBe(false);
+  });
+
+  it('allows a ping exactly at the gap boundary', () => {
+    const t = 1_000_000;
+    expect(shouldPlayNotifySound(t + NOTIFY_SOUND_MIN_GAP_MS, t)).toBe(true);
+  });
+
+  it('allows a ping well after the gap', () => {
+    expect(shouldPlayNotifySound(2_000_000, 1_000_000)).toBe(true);
+  });
+
+  it('honours a custom gap', () => {
+    expect(shouldPlayNotifySound(1500, 1000, 1000)).toBe(false);
+    expect(shouldPlayNotifySound(2000, 1000, 1000)).toBe(true);
+  });
+
+  // A burst of 50 messages in one second must produce exactly one ping.
+  it('collapses a rapid burst to a single ping', () => {
+    let last: number | null = null;
+    let plays = 0;
+    for (let i = 0; i < 50; i++) {
+      const now = 1_000_000 + i * 20; // 50 messages over 1s
+      if (shouldPlayNotifySound(now, last)) { plays++; last = now; }
+    }
+    expect(plays).toBe(1);
   });
 });

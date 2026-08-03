@@ -66,6 +66,8 @@ export interface ShellSettings {
   scanlineIntensity: number; // 0..1 (default 0.08)
   fadeWhenIdle: boolean;     // default true
   showTypingWhenCollapsed: boolean; // default FALSE — opt in; see issue #420
+  notifySoundEnabled: boolean;      // default FALSE — opt in; see issue #437
+  notifySoundVolume: number;        // 0..1
   // Seconds of inactivity before collapsing to the header strip (5..120, default 25).
   idleCollapseSeconds: number;
   // Per-message timestamps rendered in the viewer's local time. Mirrored to WEB_SETTINGS_KEY.
@@ -137,6 +139,8 @@ export const DEFAULT_SHELL_SETTINGS: ShellSettings = {
   scanlineIntensity: 0.08,
   fadeWhenIdle: true,
   showTypingWhenCollapsed: false,
+  notifySoundEnabled: false,
+  notifySoundVolume: 0.5,
   idleCollapseSeconds: IDLE_COLLAPSE_SECONDS_DEFAULT,
   showTimestamps: false,
   timestampFormat: '12h',
@@ -1408,6 +1412,13 @@ function buildSettingsPanel() {
       allowCustom: true,
     }));
     hint(s, 'Messages containing one of these words are highlighted like an @mention of you, and badge the channel. Your own names always trigger, whatever is listed here. Click ✕ on a chip to remove one.');
+
+    toggle(s, 'Play a sound on mentions and keywords', () => currentSettings.notifySoundEnabled, v => commit({ notifySoundEnabled: v }));
+    hint(s, 'Plays a short ping when a message @mentions you or matches one of your notify keywords. Rate-limited to once every few seconds so a busy channel cannot spam it.');
+    slider(s, 'Notification volume', 0, 1, 0.01,
+      () => currentSettings.notifySoundVolume,
+      v => commit({ notifySoundVolume: v }),
+      v => `${Math.round(v * 100)}%`);
 
     // ── POSITION PRESETS (desktop SettingsForm.cs parity) ──
     heading(s, 'POSITION PRESETS');
