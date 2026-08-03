@@ -1,5 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+// Notification ping (#437). Imported as a module asset so Vite fingerprints it
+// into dist-renderer for BOTH the website and the Electron renderer builds — no
+// electron-builder `files` entry needed, and no risk of the v1.3.82-style
+// missing-asset failure.
+import notifySoundUrl from './assets/notify.wav';
 import { useOutletContext, Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
@@ -739,6 +744,12 @@ interface WebOverlaySettings {
   // idle-collapsed (#420). Electron shell only — on the website nothing
   // collapses, so this is inert there.
   showTypingWhenCollapsed: boolean;
+  // Audible ping when a message triggers a notification (@mention of you or one
+  // of your notify keywords) — issue #437. Off by default: audio is intrusive and
+  // an unsolicited sound from a game overlay is a bad first impression.
+  notifySoundEnabled: boolean;
+  // 0..1. Applied to the HTMLAudioElement's volume.
+  notifySoundVolume: number;
 }
 
 const DEFAULT_SETTINGS: WebOverlaySettings = {
@@ -752,6 +763,8 @@ const DEFAULT_SETTINGS: WebOverlaySettings = {
   channelFilters: [],
   notifyKeywords: [],
   showTypingWhenCollapsed: false,
+  notifySoundEnabled: false,
+  notifySoundVolume: 0.5,
 };
 
 const SETTINGS_KEY = 'fcm_web_overlay_settings';
@@ -1852,6 +1865,26 @@ export function contentMatchesKeyword(content: string, keyword: string): boolean
     idx = lc.indexOf(kw, idx + kw.length);
   }
   return false;
+}
+
+/**
+ * Rate-limit the notification ping (#437).
+ *
+ * A busy Trading channel with a common keyword ("fixer") can trigger many times a
+ * second. Without a floor the overlay would machine-gun the sound, which is worse
+ * than no sound at all. Pure so the policy is testable without an audio device.
+ *
+ * Returns true when enough time has passed since the last ping.
+ */
+export const NOTIFY_SOUND_MIN_GAP_MS = 3000;
+
+export function shouldPlayNotifySound(
+  nowMs: number,
+  lastPlayedMs: number | null,
+  minGapMs: number = NOTIFY_SOUND_MIN_GAP_MS,
+): boolean {
+  if (lastPlayedMs == null) return true;
+  return nowMs - lastPlayedMs >= minGapMs;
 }
 
 /**
@@ -3417,8 +3450,39 @@ export default function ChatOverlay() {
   // Notification keywords (#422), read by msgMentionsMe through a ref so the
   // callback identity stays stable while the list stays live.
   const notifyKeywordsRef = useRef<string[]>([]);
+  // Notification ping (#437). Settings read through refs so the WS handler does
+  // not need rebuilding when they change. lastNotifySoundAtRef enforces the
+  // rate limit across messages.
+  const notifySoundRef = useRef<{ enabled: boolean; volume: number }>({ enabled: false, volume: 0.5 });
+  const lastNotifySoundAtRef = useRef<number | null>(null);
+  const notifyAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Play the ping, subject to the enabled flag and the rate limit. Never throws:
+  // browsers reject play() without a prior user gesture, and on the website that
+  // rejection is expected until the user has clicked something.
+  const playNotifySound = useCallback(() => {
+    const { enabled, volume } = notifySoundRef.current;
+    if (!enabled) return;
+    const now = Date.now();
+    if (!shouldPlayNotifySound(now, lastNotifySoundAtRef.current)) return;
+    lastNotifySoundAtRef.current = now;
+    try {
+      let el = notifyAudioRef.current;
+      if (!el) { el = new Audio(notifySoundUrl); notifyAudioRef.current = el; }
+      el.volume = volume;
+      el.currentTime = 0;
+      void el.play().catch(() => { /* autoplay blocked — not fatal */ });
+    } catch { /* no audio device / jsdom — not fatal */ }
+  }, []);
+
   useEffect(() => { notifyKeywordsRef.current = settings.notifyKeywords ?? []; },
     [settings.notifyKeywords]);
+  useEffect(() => {
+    notifySoundRef.current = {
+      enabled: !!settings.notifySoundEnabled,
+      volume: Math.max(0, Math.min(1, settings.notifySoundVolume ?? 0.5)),
+    };
+  }, [settings.notifySoundEnabled, settings.notifySoundVolume]);
   const myUserIdRef = useRef<string>('');
   const viewCtxRef  = useRef<{ activeSubId: string; feedId: string | null; feedChildIds: string[]; activePartyId: string | null }>({ activeSubId: '', feedId: null, feedChildIds: [], activePartyId: null });
   const jumpIdxRef  = useRef(0);
@@ -4857,6 +4921,7 @@ export default function ChatOverlay() {
                     // no-op (idle-timer reset only; no focus steal). The unread badge +
                     // jump button stay gated on !inView below.
                     window.dispatchEvent(new CustomEvent('fcm-mention-appear', { detail: { chId } }));
+                    playNotifySound();
                     if (!inView) {
                       setUnreadMentions(prev => ({ ...prev, [chId]: (prev[chId] || 0) + 1 }));
                     }

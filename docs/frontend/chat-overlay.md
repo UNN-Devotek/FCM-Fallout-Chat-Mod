@@ -315,9 +315,31 @@ still catch `"nukes"` / `"nuked"`. Keywords shorter than 2 characters are ignore
 The viewer's own `@mentions` always trigger regardless of the keyword list — the feature can never
 switch mention notifications off.
 
-> **Visual only for now.** There is no audio in the overlay at all (no `Audio`, no `AudioContext`,
-> no sound assets), and the in-game HUD widget has no highlight concept. Both are tracked
-> separately.
+### Notification sound (issue #437)
+
+An optional audible ping fires from the same trigger as the highlight — the live-WS branch that
+already dispatches `fcm-mention-appear`, so it is gated to live messages that are not your own
+(history never pings).
+
+| Setting | Default | Notes |
+| --- | --- | --- |
+| `notifySoundEnabled` | **false** | Opt-in. An unsolicited sound from a game overlay is a bad first impression, and the mirror reads a *missing* key as off so existing installs stay silent after an update. |
+| `notifySoundVolume` | `0.5` | 0..1, applied to the `HTMLAudioElement`. |
+
+**Rate-limited** by the pure `shouldPlayNotifySound(now, lastPlayed, minGap)` — `NOTIFY_SOUND_MIN_GAP_MS`
+is 3000. A busy Trading channel with a common keyword can trigger many times a second; without a
+floor the overlay machine-guns the ping, which is worse than no sound. A 50-message burst collapses
+to exactly one ping (unit-tested).
+
+The asset lives at `src/features/chat/assets/notify.wav` and is imported as a **module asset**, so
+Vite fingerprints it into `dist` for the website *and* `dist-renderer` for the Electron build. That
+deliberately avoids an `electron-builder` `files` entry — `dist-renderer` is already listed, so the
+v1.3.82 class of "asset missing from the package" failure cannot happen here.
+
+`play()` rejection is swallowed: browsers block autoplay before a user gesture, which is expected on
+the website and harmless.
+
+> **In-game HUD widget** still has no highlight concept — tracked separately in #438.
 
 ### Unread badges
 
