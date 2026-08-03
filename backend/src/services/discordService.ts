@@ -9,6 +9,7 @@ import reactionRoleService from './reactionRoleService';
 import ticketService from './ticketService';
 import { getEntry, bestMatch } from './wikiCatalogService';
 import { canon } from '../utils/textCanon';
+import { buildOverLengthDm } from '../utils/overLengthDm';
 import {
   RELEASE_PING,
   downloadPageUrl,
@@ -397,6 +398,7 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
 
     if (!channelId) return;
 
+    // (see buildOverLengthDm above for the DM copy-back behaviour)
     // Hard length cap for the bridged channel. Messages of MORE than
     // MAX_RELAY_CHARS characters are deleted and NOT relayed to the in-game
     // overlay — long posts flood the small transparent overlay window and bypass
@@ -407,16 +409,17 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
     // the **Manage Messages** permission in this channel.
     const MAX_RELAY_CHARS = 255;
     if (msg.content && msg.content.length > MAX_RELAY_CHARS) {
+      // Capture the content BEFORE deleting. discord.js keeps `content` on the
+      // local object after delete(), but reading it first makes that explicit
+      // rather than load-bearing on library behaviour.
+      const originalContent = msg.content;
       try {
         await msg.delete();
       } catch (err) {
         logger.warn({ err, channelId: msg.channelId }, 'Over-length relay message: delete failed (bot missing Manage Messages?)');
       }
       try {
-        await msg.author.send(
-          `Your message in the in-game chat channel was too long and was not posted. ` +
-          `Please keep it to ${MAX_RELAY_CHARS} characters or fewer (yours was ${msg.content.length}).`,
-        );
+        await msg.author.send(buildOverLengthDm(originalContent, MAX_RELAY_CHARS));
       } catch (err) {
         logger.warn({ err, userId: msg.author.id }, 'Over-length relay message: DM to author failed (DMs likely closed)');
       }

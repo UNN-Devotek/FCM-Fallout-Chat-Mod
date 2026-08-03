@@ -60,7 +60,15 @@ Handled by the `messageCreate` listener at `discordService.ts:348`.
    channel, the message falls back to the `DISCORD_CHANNEL_ID` env var mapped
    to the General channel.
 4. Messages longer than 255 characters are **deleted** from Discord and the
-   author is notified by DM.
+   author is notified by DM. The DM **echoes the original text back** so the
+   author can copy-paste and trim instead of retyping it. The echo is wrapped in
+   a fenced code block so mentions inside it cannot ping a second time, and the
+   fence is widened past any backtick run in the content so it can't be escaped.
+   If notice + content would exceed Discord's 2000-character message cap the
+   echo is truncated with an explicit marker (never split across multiple DMs —
+   a burst reads as spam). Built by `buildOverLengthDm` in
+   `backend/src/utils/overLengthDm.ts`, unit-tested in
+   `backend/src/services/__tests__/overLengthDm.test.ts`.
 5. Images are never relayed to main channels. GIFs are allowed only if the
    destination channel has `allowGifs = true`.
 6. User-mention tokens (`<@id>`) are resolved to readable names: FO76 name from
