@@ -310,6 +310,50 @@ function clampToWorkArea(desired, workArea) {
   return { x, y, width, height };
 }
 
+// ── Window-bounds drift suppression (issue #427) ──────────────────────────────
+// On a fractionally-scaled display the DIP -> physical -> DIP round-trip does not
+// return the value we asked for: commanding 560x720 comes back as 562x722.
+// persistBounds() then writes that back to overlay-state.json, which becomes the
+// input to the next setBounds — so the window grows ~1px per axis per cycle,
+// forever, and never shrinks. Measured on a 1.247x display: 536x480 at session
+// start, 552x498 after ~27 setBounds events.
+//
+// The loop is closed at the PERSIST boundary rather than at the 11 setBounds call
+// sites (several of which are per-frame collapse-animation writes that must not be
+// treated as user intent). If the observed size differs from what we last persisted
+// by no more than the tolerance, it is drift, not a resize — keep the old value and
+// the error can never accumulate.
+//
+// Tradeoff: a deliberate resize of <= tolerance px is also ignored. At a fractional
+// scale factor that is smaller than one physical pixel step on the resize handle,
+// so it is not reachable by dragging; unbounded growth is the worse failure.
+const BOUNDS_DRIFT_TOLERANCE_PX = 2;
+
+/**
+ * Decide what size to persist.
+ *   observed      — what getBounds() reports right now
+ *   lastPersisted — the size we last wrote (null on first ever save)
+ * Returns { width, height }.
+ */
+function resolvePersistedSize(observed, lastPersisted, tolerance = BOUNDS_DRIFT_TOLERANCE_PX) {
+  const obs = {
+    width: Math.round(Number(observed?.width) || 0),
+    height: Math.round(Number(observed?.height) || 0),
+  };
+  if (!lastPersisted) return obs;
+  const prev = {
+    width: Math.round(Number(lastPersisted.width) || 0),
+    height: Math.round(Number(lastPersisted.height) || 0),
+  };
+  if (!prev.width || !prev.height) return obs;
+
+  const dw = Math.abs(obs.width - prev.width);
+  const dh = Math.abs(obs.height - prev.height);
+  // Within tolerance on BOTH axes → indistinguishable from rounding drift.
+  if (dw <= tolerance && dh <= tolerance) return prev;
+  return obs;
+}
+
 // ── Modal fit sizing (issue #374) ─────────────────────────────────────────────
 // The shell settings / onboarding panels are plain DOM rendered INSIDE the
 // overlay's own BrowserWindow, so their CSS caps (`max-width: 96vw`,
@@ -882,6 +926,8 @@ module.exports = {
   isPrivilegedRole,
   canShowOverlay,
   clampToWorkArea,
+  BOUNDS_DRIFT_TOLERANCE_PX,
+  resolvePersistedSize,
   MODAL_FIT_WIDTH,
   MODAL_FIT_HEIGHT,
   modalFitBounds,

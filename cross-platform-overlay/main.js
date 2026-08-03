@@ -1381,13 +1381,30 @@ let modalFitPrevBounds = null;
 // resize save (and the before-quit save) would bake the temporary size in as the
 // user's window size. x/y still track live so moving the window while a modal is
 // open is kept.
+// Last size actually written to overlay-state.json. Seeded from the loaded state
+// at startup so the very first save after launch already has a reference point —
+// otherwise the launch-time setBounds would bank one drift step per run.
+let lastPersistedSize = null;
+
 function persistBounds() {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized()) return;
   const b = mainWindow.getBounds();
   const width = modalFitPrevBounds ? modalFitPrevBounds.width : b.width;
   const baseHeight = modalFitPrevBounds ? modalFitPrevBounds.height : b.height;
   const height = collapsed ? (expandedHeight || baseHeight) : baseHeight;
-  saveState({ bounds: { x: b.x, y: b.y, width, height } });
+
+  // Suppress fractional-scaling round-trip drift (#427): a size within a couple of
+  // px of what we last wrote is rounding noise, not a resize. Persisting it would
+  // feed the next setBounds and grow the window ~1px per cycle, forever. Skipped
+  // while collapsed / modal-inflated, where the value above is already a remembered
+  // size rather than a live measurement.
+  const usingRememberedSize = collapsed || !!modalFitPrevBounds;
+  const size = usingRememberedSize
+    ? { width, height }
+    : overlayCore.resolvePersistedSize({ width, height }, lastPersistedSize);
+
+  lastPersistedSize = { width: size.width, height: size.height };
+  saveState({ bounds: { x: b.x, y: b.y, width: size.width, height: size.height } });
 }
 
 // Clamp a desired bounds rect to the work area of whatever display it lands on,
@@ -3837,6 +3854,10 @@ function createTray() {
 function createWindow() {
   const state = loadState();
   const bounds = clampToWorkArea(state.bounds || { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT });
+  // Seed the drift reference (#427) with the size we are about to open at, so the
+  // first save of the session compares against a real value instead of banking one
+  // drift step per launch.
+  lastPersistedSize = { width: bounds.width, height: bounds.height };
 
   mainWindow = new BrowserWindow({
     width: bounds.width, height: bounds.height, x: bounds.x, y: bounds.y,
