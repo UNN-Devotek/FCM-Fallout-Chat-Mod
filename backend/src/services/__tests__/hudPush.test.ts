@@ -41,9 +41,48 @@ function makeClient(sends: string[], channelId: string = GENERAL_CHANNEL_ID): Hu
   };
 }
 
-/** Drain microtask / setImmediate queue so async-void paths in hudPush complete. */
+/**
+ * Drain microtask / setImmediate queue so async-void paths in hudPush complete.
+ *
+ * Only sound for "let whatever is pending settle, then clear the buffer" and for
+ * NEGATIVE assertions (nothing must arrive). It is NOT sound for asserting that
+ * something DID arrive — use waitFor() for that. See the comment on waitFor().
+ */
 function drainAsync(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
+}
+
+/**
+ * Poll until `predicate()` is true, or fail after `timeoutMs`.
+ *
+ * hudPushNotify() / registerClient() / switchClientChannel() are all
+ * fire-and-forget: they kick off `void (async () => { ... })()` and return
+ * synchronously, awaiting a channel resolve (and sometimes a feed fetch) before
+ * anything is written to the client. The number of async hops before a line
+ * lands is therefore NOT fixed, so a single drainAsync() is not a guarantee —
+ * it just happens to be enough most of the time on an idle machine.
+ *
+ * Worse, hudPushNotify() fans out by iterating the LIVE `clients` set after its
+ * await. A test that drains once and then unregisters its clients can pull them
+ * out of the registry before the fan-out runs, so the message is delivered to
+ * nobody and the assertion fails. That is what made this suite fail ~50% of runs
+ * under load (issue #430) — a test-harness race, not a product bug: nothing in
+ * production unregisters a client one tick after a message.
+ *
+ * Waiting on the observable condition removes the timing assumption entirely.
+ */
+async function waitFor(
+  predicate: () => boolean,
+  description: string,
+  timeoutMs = 2000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      assert.fail(`timed out after ${timeoutMs}ms waiting for: ${description}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 // ── isHudEligibleChannel ──────────────────────────────────────────────────────
@@ -240,7 +279,24 @@ test('getClientCount returns a non-negative number', () => {
 // ── Per-connection channel filtering ─────────────────────────────────────────
 
 describe('hudPushNotify: per-connection channel filter', () => {
-  afterEach(() => { _setChannelResolver(null); });
+  afterEach(() => {
+    _setChannelResolver(null);
+    _setChannelFeedFetcher(null);
+    _setAggregateFeedFetcher(null);
+  });
+
+  /**
+   * registerClient() kicks off an async backfill. Without injected feed fetchers
+   * that backfill calls REAL Prisma against a database that does not exist in the
+   * unit env, and the resulting connection/engine-startup latency is what made
+   * this block time out under CPU load (issue #430) — the sibling describe blocks
+   * already inject these for exactly that reason. Keep every test in here on the
+   * no-DB fetchers so the suite never touches Prisma.
+   */
+  function injectNoDbFetchers(): void {
+    _setChannelFeedFetcher(async () => []);
+    _setAggregateFeedFetcher(async () => []);
+  }
 
   test('General message is pushed to General-active client but NOT to Trading-active client', async () => {
     _setChannelResolver(async (id) => {
@@ -248,6 +304,7 @@ describe('hudPushNotify: per-connection channel filter', () => {
       if (id === TRADING_CHANNEL_ID) return { name: 'Trading', color: '#4A9FE0', parentId: ROOT_CONTAINER_ID, isArchived: false };
       return null;
     });
+    injectNoDbFetchers();
 
     const generalSends: string[] = [];
     const tradingSends: string[] = [];
@@ -261,17 +318,27 @@ describe('hudPushNotify: per-connection channel filter', () => {
     generalSends.length = 0;
     tradingSends.length = 0;
 
-    hudPushNotify({
-      type: 'chat:message',
-      payload: { channelId: GENERAL_CHANNEL_ID, content: 'hello general', username: 'Dev', isPrivate: false },
-    });
-    await drainAsync();
+    try {
+      hudPushNotify({
+        type: 'chat:message',
+        payload: { channelId: GENERAL_CHANNEL_ID, content: 'hello general', username: 'Dev', isPrivate: false },
+      });
+      // Wait for the delivery instead of assuming one drain is enough. The
+      // negative assertion below is safe once this resolves: hudPushNotify fans
+      // out to every client in ONE synchronous loop, so if Trading were going to
+      // receive this message it would already have it by now.
+      await waitFor(
+        () => generalSends.some(l => l.includes('hello general')),
+        'General client to receive the General message',
+      );
 
-    unregisterClientPublic(generalClient);
-    unregisterClientPublic(tradingClient);
-
-    assert.ok(generalSends.some(l => l.includes('hello general')), 'General client must receive General message');
-    assert.ok(!tradingSends.some(l => l.includes('hello general')), 'Trading client must NOT receive General message');
+      assert.ok(generalSends.some(l => l.includes('hello general')), 'General client must receive General message');
+      assert.ok(!tradingSends.some(l => l.includes('hello general')), 'Trading client must NOT receive General message');
+    } finally {
+      // In a finally so a timeout can't leak registered clients into later tests.
+      unregisterClientPublic(generalClient);
+      unregisterClientPublic(tradingClient);
+    }
   });
 
   test('Trading message is pushed to Trading-active client AND to the aggregate General client', async () => {
@@ -280,6 +347,7 @@ describe('hudPushNotify: per-connection channel filter', () => {
       if (id === TRADING_CHANNEL_ID) return { name: 'Trading', color: '#4A9FE0', parentId: ROOT_CONTAINER_ID, isArchived: false };
       return null;
     });
+    injectNoDbFetchers();
 
     const generalSends: string[] = [];
     const tradingSends: string[] = [];
@@ -291,17 +359,28 @@ describe('hudPushNotify: per-connection channel filter', () => {
     generalSends.length = 0;
     tradingSends.length = 0;
 
-    hudPushNotify({
-      type: 'chat:message',
-      payload: { channelId: TRADING_CHANNEL_ID, content: 'WTS plans', username: 'Seller', isPrivate: false },
-    });
-    await drainAsync();
+    try {
+      hudPushNotify({
+        type: 'chat:message',
+        payload: { channelId: TRADING_CHANNEL_ID, content: 'WTS plans', username: 'Seller', isPrivate: false },
+      });
+      // Both clients are expected to receive this one (Trading directly, General
+      // as the aggregate feed), so wait on each rather than draining once.
+      await waitFor(
+        () => tradingSends.some(l => l.includes('WTS plans')),
+        'Trading client to receive the Trading message',
+      );
+      await waitFor(
+        () => generalSends.some(l => l.includes('WTS plans')),
+        'General (aggregate) client to receive the Trading message',
+      );
 
-    unregisterClientPublic(generalClient);
-    unregisterClientPublic(tradingClient);
-
-    assert.ok(tradingSends.some(l => l.includes('WTS plans')), 'Trading client must receive Trading message');
-    assert.ok(generalSends.some(l => l.includes('WTS plans')), 'General (aggregate) client MUST receive Trading message');
+      assert.ok(tradingSends.some(l => l.includes('WTS plans')), 'Trading client must receive Trading message');
+      assert.ok(generalSends.some(l => l.includes('WTS plans')), 'General (aggregate) client MUST receive Trading message');
+    } finally {
+      unregisterClientPublic(generalClient);
+      unregisterClientPublic(tradingClient);
+    }
   });
 });
 
@@ -326,12 +405,18 @@ describe('registerClient: ACTIVECHAN on connect', () => {
 
     const sends: string[] = [];
     const client = makeClient(sends, GENERAL_CHANNEL_ID);
-    registerClient(client);
-    await drainAsync();
-    unregisterClientPublic(client);
+    try {
+      registerClient(client);
+      await waitFor(
+        () => sends.some(l => l === 'ACTIVECHAN~General\n'),
+        'ACTIVECHAN~General to be sent on connect',
+      );
 
-    assert.ok(sends[0]?.startsWith('HELLO~1~'), `Expected HELLO first, got: ${sends[0]}`);
-    assert.ok(sends.some(l => l === 'ACTIVECHAN~General\n'), `Expected ACTIVECHAN~General, got: ${JSON.stringify(sends)}`);
+      assert.ok(sends[0]?.startsWith('HELLO~1~'), `Expected HELLO first, got: ${sends[0]}`);
+      assert.ok(sends.some(l => l === 'ACTIVECHAN~General\n'), `Expected ACTIVECHAN~General, got: ${JSON.stringify(sends)}`);
+    } finally {
+      unregisterClientPublic(client);
+    }
   });
 });
 
@@ -354,7 +439,10 @@ describe('switchClientChannel', () => {
     const sends: string[] = [];
     const client = makeClient(sends, GENERAL_CHANNEL_ID);
     switchClientChannel(client, TRADING_CHANNEL_ID);
-    await drainAsync();
+    await waitFor(
+      () => sends.some(l => l === 'ACTIVECHAN~Trading\n'),
+      'ACTIVECHAN~Trading to be sent after the channel switch',
+    );
 
     assert.equal(client.activeChannelId, TRADING_CHANNEL_ID, 'activeChannelId must be updated to Trading');
     assert.ok(sends.some(l => l === 'ACTIVECHAN~Trading\n'), `Expected ACTIVECHAN~Trading, got: ${JSON.stringify(sends)}`);
