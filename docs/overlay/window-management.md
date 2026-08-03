@@ -32,6 +32,33 @@ A `isDragging` flag suppresses the z-order heartbeat during drags. `setAlwaysOnT
 
 Bounds are **persisted** (debounced) to `overlay-state.json` on every move/resize, and on quit (`persistBounds`, `main.js:785`).
 
+**Drift suppression on fractional scaling (issue #427).** On a fractionally-scaled display the
+DIP -> physical -> DIP round-trip does not return the value we asked for: commanding `560x720`
+reads back as `562x722`. Persisting that made it the input to the next `setBounds`, so the window
+grew about **1px per axis per cycle, forever, and never shrank** — measured on a 1.247x display,
+`536x480` at session start became `552x498` after ~27 `setBounds` events. Relaunches compounded it
+too, since startup clamps the persisted value and commands it again.
+
+`persistBounds()` now runs the size through `resolvePersistedSize(observed, lastPersisted)`
+(`overlay-core.js`): if the observation is within `BOUNDS_DRIFT_TOLERANCE_PX` (2) of the last
+persisted size on **both** axes, it is rounding noise and the previous value is kept, so the error
+can never accumulate. A change beyond the tolerance on *either* axis is a real resize and is stored
+normally.
+
+Two deliberate choices:
+
+- **The loop is closed at the persist boundary, not at the 11 `setBounds` call sites.** Several of
+  those are per-frame collapse-animation writes that must not be mistaken for user intent.
+- **`lastPersistedSize` is seeded in `createWindow()`** from the size the window actually opens at.
+  Without that seed the first save of each session has no reference and banks one drift step per
+  launch.
+
+Skipped while collapsed or modal-inflated, where the persisted value is already a *remembered* size
+rather than a live measurement. Tradeoff: a deliberate resize of <=2px is also ignored — at a
+fractional scale factor that is under one physical pixel of handle movement, and unbounded growth is
+the worse failure. Covered by `__tests__/bounds-drift.test.js`, including a 200-iteration
+feedback-loop test that fails if accumulation returns.
+
 ---
 
 ## Modal-fit growth (temporary resize for settings / onboarding)
