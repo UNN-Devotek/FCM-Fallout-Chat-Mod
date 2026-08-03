@@ -87,6 +87,47 @@ describe('filterContent', () => {
     expect(result.blocked).toBe(true);
   });
 
+  // ── Context-ambiguous terms no longer block CHAT ──────────────────────────
+  // These are slurs when aimed at a person but ordinary words in almost all game
+  // chat. Hard-blocking them produced the "triggers on way too light of context"
+  // false positives. They remain blocked for identifiers — see the
+  // findProhibitedPhrase describe below.
+  it.each([
+    ['graham cracker for the campfire', 'cracker'],
+    ['the wall is slanted', 'slant'],
+    ['redskin potatoes drop here', 'redskin'],
+    ['heave ho, pulling this cart', 'ho'],
+    ['this quest is a bitch', 'bitch'],
+    ['oreo cookies in the vault', 'oreo'],
+  ])('allows context-ambiguous %j in ordinary chat (%s)', async (content) => {
+    const result = await filterContent(content);
+    expect(result.blocked).toBe(false);
+  });
+
+  // Ordinary cussing is allowed — the policy is "cussing is fine, targeting
+  // people is not".
+  it.each([
+    'what the fuck was that spawn',
+    'this shit is broken again',
+    'damn, nuke launched already',
+    'get your ass to Whitespring',
+  ])('allows ordinary cussing: %j', async (content) => {
+    const result = await filterContent(content);
+    expect(result.blocked).toBe(false);
+  });
+
+  // Unambiguous hate terms must stay blocked across every category.
+  it.each([
+    ['racial', 'go away chink'],
+    ['homophobic', 'stop being a faggot'],
+    ['transphobic', 'what a tranny'],
+    ['misogynistic', 'you absolute cunt'],
+    ['severe abuse', 'that is straight up rape'],
+  ])('still blocks %s hate speech in chat', async (_kind, content) => {
+    const result = await filterContent(content);
+    expect(result.blocked).toBe(true);
+  });
+
   it('blocks content matching a prohibited phrase', async () => {
     mockWordFilterRows.push({ phrase: 'badword', isRegex: false, testMode: false });
     const result = await filterContent('You said badword here');
@@ -172,6 +213,31 @@ describe('findProhibitedPhrase (names denylist)', () => {
   it('blocks "coon" as a standalone word', async () => {
     const match = await findProhibitedPhrase('dirty coon clan');
     expect(match).toBe('coon');
+  });
+
+  // ── Identifiers stay STRICT even though chat was relaxed ──────────────────
+  // Relaxing the chat denylist must not leak into usernames / party names: a
+  // username has no conversational context to be innocent in. These terms were
+  // moved to CONTEXT_AMBIGUOUS_PHRASES, which the identifier list still includes.
+  // Regression guard — if someone deletes that spread, these fail.
+  it.each([
+    ['cracker', 'cracker crew'],
+    ['slant', 'slant eyes clan'],
+    ['redskin', 'redskin raiders'],
+    ['sissy', 'sissy squad'],
+  ])('still blocks context-ambiguous %s in an identifier', async (phrase, name) => {
+    const match = await findProhibitedPhrase(name);
+    expect(match).toBe(phrase);
+  });
+
+  it('still blocks "bitch" embedded in a username (5+ chars → substring match)', async () => {
+    const match = await findProhibitedPhrase('bitchqueen76');
+    expect(match).toBe('bitch');
+  });
+
+  it('still blocks "oreo" as a standalone identifier word', async () => {
+    const match = await findProhibitedPhrase('oreo squad');
+    expect(match).toBe('oreo');
   });
 
   // ── Long slurs still caught as substrings ─────────────────────────────────
