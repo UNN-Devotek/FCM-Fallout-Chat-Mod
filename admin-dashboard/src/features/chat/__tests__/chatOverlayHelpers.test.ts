@@ -242,7 +242,7 @@ describe('loadSettings / saveSettings', () => {
       timestampFormat: '12h',
       channelFilters: [],
       notifyKeywords: [],
-      showTypingWhenCollapsed: true,
+      showTypingWhenCollapsed: false,
     });
   });
 

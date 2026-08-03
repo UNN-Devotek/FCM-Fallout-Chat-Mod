@@ -751,7 +751,7 @@ const DEFAULT_SETTINGS: WebOverlaySettings = {
   timestampFormat: '12h',
   channelFilters: [],
   notifyKeywords: [],
-  showTypingWhenCollapsed: true,
+  showTypingWhenCollapsed: false,
 };
 
 const SETTINGS_KEY = 'fcm_web_overlay_settings';
