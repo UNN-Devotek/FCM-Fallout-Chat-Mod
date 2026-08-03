@@ -101,6 +101,30 @@ The channel row is rendered once as static text. Rebuilding it on room changes
 must call `renderSubTabs()` only; HUDButton overlays at the same coordinates are
 forbidden because they duplicate and overlap the visible labels.
 
+## Configuration — `FCM_PUBLIC_BASE_URL`
+
+The in-game **link-required** system notice tells the player where to go to link their account:
+
+```
+LINK REQUIRED - visit <host>/link, sign in, and enter code: XXXX-XXXX (expires 10m)
+```
+
+That host is **not hardcoded**. It comes from `FCM_PUBLIC_BASE_URL` via `deriveLinkUrl()` in
+`backend/src/services/relay/relayHandler.ts`, which strips the scheme and any trailing slash and
+appends `/link` — so the notice shows a bare host, matching the in-game format.
+
+| Var | Default | Purpose |
+| --- | --- | --- |
+| `FCM_PUBLIC_BASE_URL` | `https://falloutchatmod.com` | Canonical public base URL for this deployment. Controls the host shown in the device-link notice. **No trailing slash.** |
+
+**Set it to `https://dev.falloutchatmod.com` on the hosted dev stack** (already wired in
+`deploy/dev/docker-compose.yml`). Without it a dev-stack player is told to visit the *production*
+site, where their dev link code does not exist — the code is issued against the dev backend.
+
+Existing production deploys need no change: the default is the production site.
+
+Covered by `deriveLinkUrl` unit tests in `backend/tests/relayHandler.test.js`.
+
 ## Production gate
 
 `RELAY_PRODUCTION_ENABLED=false` is the default. In `NODE_ENV=production`, the
