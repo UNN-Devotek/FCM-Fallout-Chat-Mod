@@ -13,22 +13,44 @@ import { canon } from '../utils/textCanon';
 //
 // Categories: racial/ethnic slurs, sexist/misogynistic terms, homophobic slurs,
 // explicit sexual terms that have no legitimate use in party/user names.
+// Unambiguous hate terms. These have no ordinary-conversation use, so they hard-
+// block in chat AND in identifiers. Ordinary profanity (fuck/shit/damn/ass) is
+// deliberately NOT here — the policy is "cussing is fine, targeting people is not".
 const BASELINE_CHAT_DENYLIST_PHRASES = [
   // Racial / ethnic slurs
   'nigger', 'nigga', 'chink', 'spic', 'spick', 'kike', 'wetback', 'gook',
   'towelhead', 'raghead', 'coon', 'jigaboo', 'porch monkey', 'jungle bunny',
-  'beaner', 'cracker', 'honky', 'zipperhead', 'slant', 'squaw', 'redskin',
-  'sandnigger', 'sand nigger', 'uncle tom', 'oreo',
+  'beaner', 'honky', 'zipperhead', 'squaw',
+  'sandnigger', 'sand nigger', 'uncle tom',
   // Sexist / misogynistic slurs
-  'cunt', 'twat', 'bitch', 'whore', 'slut', 'skank', 'ho',
+  'cunt', 'twat', 'whore', 'slut', 'skank',
   // Homophobic / transphobic slurs
-  'faggot', 'fag', 'dyke', 'tranny', 'shemale', 'sissy',
+  'faggot', 'fag', 'dyke', 'tranny', 'shemale',
   // Severe abuse terms that should still hard-block outside optional presets
   'pedo', 'pedophile', 'rape', 'rapist',
 ] as const;
 
+// Context-ambiguous terms: a slur when aimed at someone, but an ordinary word in
+// the overwhelming majority of game chat — "graham cracker" (a real Fallout food
+// item), "slanted", "redskin potatoes", "heave ho", "this quest is a bitch".
+// Word-boundary matching cannot tell those apart from a targeted insult, and
+// hard-blocking them was the main source of the "triggers on way too light of
+// context" complaint, so they no longer block CHAT.
+//
+// They DO still block IDENTIFIERS. A username or party name has no conversational
+// context to be innocent in — picking one of these deliberately is exactly what
+// the identifier check exists to catch.
+//
+// Targeted harassment using these words is still actionable through reports and
+// normal moderation; it is just no longer auto-blocked on the word alone.
+const CONTEXT_AMBIGUOUS_PHRASES = [
+  'cracker', 'oreo', 'slant', 'redskin', 'ho', 'sissy', 'bitch',
+] as const;
+
 const BASELINE_IDENTIFIER_DENYLIST_PHRASES = [
   ...BASELINE_CHAT_DENYLIST_PHRASES,
+  // Ambiguous-in-chat terms are NOT ambiguous in a username — keep them blocked.
+  ...CONTEXT_AMBIGUOUS_PHRASES,
   // Identifiers stay stricter than normal chat.
   'cock', 'dick', 'pussy', 'asshole', 'motherfucker', 'fucker', 'fuck',
   'shit', 'bastard',
