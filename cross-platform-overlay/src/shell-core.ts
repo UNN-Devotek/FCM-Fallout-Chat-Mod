@@ -330,6 +330,7 @@ export interface WebMirrorInput {
   showTimestamps: boolean;
   timestampFormat: '12h' | '24h';
   channelFilters: string[];
+  notifyKeywords: string[];
 }
 export interface WebMirrorSettings {
   themeId: string;
@@ -340,6 +341,7 @@ export interface WebMirrorSettings {
   showTimestamps: boolean;
   timestampFormat: '12h' | '24h';
   channelFilters: string[];
+  notifyKeywords: string[];
 }
 export function shellToWebSettings(s: WebMirrorInput): WebMirrorSettings {
   return {
@@ -357,6 +359,9 @@ export function shellToWebSettings(s: WebMirrorInput): WebMirrorSettings {
     // Hidden-channel names — the component filters these out of the feed and
     // per-channel views (case-insensitive). Copied so the array can't alias.
     channelFilters: Array.isArray(s.channelFilters) ? s.channelFilters.slice() : [],
+    // Words that highlight a message like an @mention of you (#422). Copied so
+    // the array can't alias back into shell state.
+    notifyKeywords: Array.isArray(s.notifyKeywords) ? s.notifyKeywords.slice() : [],
   };
 }
 

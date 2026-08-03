@@ -730,6 +730,11 @@ interface WebOverlaySettings {
   // "Hidden channels" filter, mirrored here). Their messages are excluded from
   // the feed AND per-channel views. Case-insensitive match on channel name.
   channelFilters: string[];
+  // Extra words that highlight a message the same way an @mention of you does
+  // (issue #422). Bare words — no leading @ — matched case-insensitively on word
+  // boundaries. Empty by default: @mentions of your own names always trigger
+  // regardless of this list.
+  notifyKeywords: string[];
 }
 
 const DEFAULT_SETTINGS: WebOverlaySettings = {
@@ -741,6 +746,7 @@ const DEFAULT_SETTINGS: WebOverlaySettings = {
   showTimestamps: false,
   timestampFormat: '12h',
   channelFilters: [],
+  notifyKeywords: [],
 };
 
 const SETTINGS_KEY = 'fcm_web_overlay_settings';
@@ -1805,6 +1811,56 @@ export function contentMentionsName(content: string, name: string): boolean {
     idx = lc.indexOf(needle, after);
   }
   return false;
+}
+
+/**
+ * Does `content` contain the user-configured notification keyword `keyword`?
+ * (issue #422)
+ *
+ * Deliberately NOT contentMentionsName: that one hard-codes an '@' prefix, so it
+ * can never match a bare word like "nuke" or "WTS". This is its sibling for
+ * plain keywords.
+ *
+ * Matching rules, chosen to avoid the false positives an over-eager filter
+ * causes:
+ *   - case-insensitive
+ *   - bounded on BOTH sides by a non-alphanumeric, so "ore" does not fire on
+ *     "before" and "nuke" does not fire on "nukes"... except that trailing
+ *     boundary would also miss the plural the user almost certainly wants, so
+ *     the trailing edge allows a word character ONLY when the keyword is a
+ *     prefix of a longer word the user typed — see below.
+ *   - a keyword shorter than 2 chars is ignored (too noisy to be useful)
+ *
+ * Concretely we require a leading boundary and allow the match to be followed by
+ * letters (so "nuke" hits "nukes"/"nuked") but not preceded by them (so "ore"
+ * does not hit "before"). That asymmetry is what people actually expect from a
+ * keyword watch list.
+ */
+export function contentMatchesKeyword(content: string, keyword: string): boolean {
+  const kw = keyword.trim().toLowerCase();
+  if (!content || kw.length < 2) return false;
+  const lc = content.toLowerCase();
+  let idx = lc.indexOf(kw);
+  while (idx >= 0) {
+    const before = idx === 0 ? '' : content[idx - 1];
+    if (!before || !/[A-Za-z0-9]/.test(before)) return true;
+    idx = lc.indexOf(kw, idx + kw.length);
+  }
+  return false;
+}
+
+/**
+ * Should this message be highlighted / badged for the viewer? True when it
+ * @mentions one of the viewer's own names OR contains one of their configured
+ * notification keywords (#422). Own messages never trigger.
+ */
+export function messageTriggersNotify(
+  content: string,
+  myNames: string[],
+  keywords: string[],
+): boolean {
+  if (myNames.some(n => contentMentionsName(content, n))) return true;
+  return keywords.some(k => contentMatchesKeyword(content, k));
 }
 
 /**
@@ -3353,6 +3409,11 @@ export default function ChatOverlay() {
   // ── @mention: unread badges + jump-to-mention ──
   const [unreadMentions, setUnreadMentions] = useState<Record<string, number>>({});
   const myNamesRef  = useRef<string[]>([]);
+  // Notification keywords (#422), read by msgMentionsMe through a ref so the
+  // callback identity stays stable while the list stays live.
+  const notifyKeywordsRef = useRef<string[]>([]);
+  useEffect(() => { notifyKeywordsRef.current = settings.notifyKeywords ?? []; },
+    [settings.notifyKeywords]);
   const myUserIdRef = useRef<string>('');
   const viewCtxRef  = useRef<{ activeSubId: string; feedId: string | null; feedChildIds: string[]; activePartyId: string | null }>({ activeSubId: '', feedId: null, feedChildIds: [], activePartyId: null });
   const jumpIdxRef  = useRef(0);
@@ -4765,7 +4826,7 @@ export default function ChatOverlay() {
                   const content: string = frame.payload.content || '';
                   const chId: string = frame.payload.channelId;
                   const mentionsMe = frame.payload.userId !== myUserIdRef.current
-                    && myNamesRef.current.some(n => contentMentionsName(content, n));
+                    && messageTriggersNotify(content, myNamesRef.current, notifyKeywordsRef.current);
                   if (mentionsMe && chId) {
                     const v = viewCtxRef.current;
                     const inView = v.feedId
@@ -6312,8 +6373,13 @@ export default function ChatOverlay() {
   }, [visibleMessages, activeSubId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Which visible messages mention me (for jump-to-mention).
+  // Also fires on the viewer's configured notification keywords (#422), so the
+  // existing highlight / unread-badge / jump-to-mention pipeline covers them with
+  // no extra wiring. Read through a ref so changing the keyword list takes effect
+  // immediately without rebuilding this callback (and re-rendering the feed).
   const msgMentionsMe = useCallback((m: ChatMessage) =>
-    m.userId !== myUserIdRef.current && myNamesRef.current.some(n => contentMentionsName(m.content, n)),
+    m.userId !== myUserIdRef.current
+      && messageTriggersNotify(m.content, myNamesRef.current, notifyKeywordsRef.current),
   []);
   // Show the jump button only when there is at least one visible mention whose
   // message id has NOT yet been dismissed. dismissedMentionEpoch is bumped each

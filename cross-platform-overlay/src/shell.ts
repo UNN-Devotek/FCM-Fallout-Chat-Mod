@@ -72,6 +72,7 @@ export interface ShellSettings {
   timestampFormat: '12h' | '24h';
   blockedUsers: string[];
   channelFilters: string[];
+  notifyKeywords: string[];
   // Electron globalShortcut accelerator strings.
   keybinds: {
     toggle: string;
@@ -139,6 +140,7 @@ export const DEFAULT_SHELL_SETTINGS: ShellSettings = {
   timestampFormat: '12h',
   blockedUsers: [],
   channelFilters: [],
+  notifyKeywords: [],
   // Single-key defaults from the nav cluster (not used by FO76 gameplay binds).
   // Global single keys are intercepted before the game sees them.
   keybinds: {
@@ -1380,6 +1382,16 @@ function buildSettingsPanel() {
       allowCustom: false,
     }));
     hint(s, 'Pick channels to hide from the feed. Click ✕ on a chip to show it again.');
+
+    s.append(chipField({
+      label: 'Notify keywords',
+      placeholder: 'Add a word to watch for…',
+      get: () => currentSettings.notifyKeywords,
+      set: (v) => commit({ notifyKeywords: v }),
+      candidates: () => [],
+      allowCustom: true,
+    }));
+    hint(s, 'Messages containing one of these words are highlighted like an @mention of you, and badge the channel. Your own names always trigger, whatever is listed here. Click ✕ on a chip to remove one.');
 
     // ── POSITION PRESETS (desktop SettingsForm.cs parity) ──
     heading(s, 'POSITION PRESETS');

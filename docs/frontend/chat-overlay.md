@@ -292,6 +292,33 @@ dual-socket reconnect from evicting an id and allowing a duplicate render.
 
 ## @Mention System
 
+### Notification keywords (issue #422)
+
+Beyond `@mentions` of the viewer's own names, users can list arbitrary **notify keywords**
+(`WebOverlaySettings.notifyKeywords`, edited via the overlay shell's "Notify keywords" chip
+field). A message containing one is treated exactly like an `@mention` of the viewer — same
+highlight, same unread badge, same jump-to-mention, same pop-the-overlay-from-tray. No separate
+pipeline.
+
+The matching lives in two exported helpers in `ChatOverlay.tsx`:
+
+| Helper | Purpose |
+| --- | --- |
+| `contentMentionsName(content, name)` | Existing. Hard-codes an `@` prefix, so it can never match a bare word. |
+| `contentMatchesKeyword(content, keyword)` | New. Bare words, case-insensitive. |
+| `messageTriggersNotify(content, myNames, keywords)` | Combines both — this is what the feed and the live WS path call. |
+
+`contentMatchesKeyword` requires a **leading** word boundary but allows trailing word characters.
+That asymmetry is deliberate: `"ore"` must not fire on `"before"`, but a watch on `"nuke"` should
+still catch `"nukes"` / `"nuked"`. Keywords shorter than 2 characters are ignored as too noisy.
+
+The viewer's own `@mentions` always trigger regardless of the keyword list — the feature can never
+switch mention notifications off.
+
+> **Visual only for now.** There is no audio in the overlay at all (no `Audio`, no `AudioContext`,
+> no sound assets), and the in-game HUD widget has no highlight concept. Both are tracked
+> separately.
+
 ### Unread badges
 
 `unreadMentions: Record<channelId, number>` is incremented in the WS `chat:message`
