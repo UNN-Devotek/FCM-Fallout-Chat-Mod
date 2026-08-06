@@ -694,3 +694,27 @@ Giveaway announcements and winner results arrive as standard `chat:message` fram
 ```
 
 `winnerName` is `null` when the giveaway ended with no entries. `cancelled: true` when stopped early.
+
+## ZFE wire repair (in-game HUD clients)
+
+ZFE 0.9.12–0.12.1 corrupt every **string value a mod passes through `chat.v1.*`**: each
+character is emitted followed by the literal text `u0000` — the escape for the 0x00 high byte of
+the UTF-16 code unit, with the backslash lost. ZFE's own values (relay token, cursors) are clean,
+and ZFE parses the mod's JSON envelope correctly, so only the extracted values are damaged.
+
+Proven on dev 2026-08-06 with widget v2.9.8: the widget logged `displayName=Abderaan` (8 clean
+ASCII characters) and the relay stored `Au0000bu0000du0000eu0000ru0000au0000au0000n` (43). The
+same transform hits `channel`, so `global` arrived as `gu0000lu0000ou0000bu0000au0000lu0000`,
+failed `ALL_SLUGS.includes(slug)`, and **every in-game send was rejected `invalid_channel`**. The
+`server` slug was mangled identically, so the world/roster control intercept never fired and
+SERVER chat could never bind.
+
+The widget cannot work around this — a clean string goes in and a mangled one comes out — so the
+relay repairs it on receipt. `readWireString()`
+([`wireSanitize.ts`](../../backend/src/services/relay/wireSanitize.ts)) is applied to the
+mod-supplied `channel`, `body`, and `displayName` frame fields.
+
+**It only repairs a string mangled end to end** (every character padded, final character bare).
+Ordinary text that merely contains `u0000` is returned untouched, so message bodies are never
+silently rewritten. Remove this once ZFE ships a fix *and* the affected builds are out of
+circulation.
