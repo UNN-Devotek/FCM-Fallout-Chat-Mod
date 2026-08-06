@@ -1616,11 +1616,12 @@ const SYNTHETIC_HELP: SlashCommand = {
 };
 
 // Built-in relay shortcuts — trigger → (seeded channel UUID, fallback color if DB has none)
-const BUILTIN_RELAYS: { cmd: SlashCommand; channelId: string | null; fallbackColor: string }[] = [
+export const BUILTIN_RELAYS: { cmd: SlashCommand; channelId: string | null; fallbackColor: string }[] = [
   { cmd: { trigger: '/g',    description: 'Send to General',             requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000005', fallbackColor: '#C8A840' },
   { cmd: { trigger: '/t',    description: 'Send to Trading',             requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000002', fallbackColor: '#4A9FE0' },
   { cmd: { trigger: '/e',    description: 'Send to Events',              requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000003', fallbackColor: '#50C878' },
   { cmd: { trigger: '/r',    description: 'Send to Raids',               requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000004', fallbackColor: '#FF6644' },
+  { cmd: { trigger: '/raid', description: 'Send to Raids (alias of /r)', requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000004', fallbackColor: '#FF6644' },
   { cmd: { trigger: '/i',    description: 'Send to Infests',             requiresArgs: true, actionType: 'relay' }, channelId: '983995c1-f9ab-44c0-9b78-8b4cbf497273', fallbackColor: '#CC44FF' },
   // /s omitted — server chat is pending re-enable (tracked in the server-scoped-chat
   // epic). A typed "/s ..." falls through to the backend, which returns a disabled notice.
@@ -1641,6 +1642,7 @@ export const BUILTIN_FORMS: SlashCommand[] = [
   { trigger: '/camp',         description: 'Look up a CAMP item — category, sub-category, budget cost, and plan requirement',       requiresArgs: true,  actionType: 'message' },
   // Party shortcuts — resolved dynamically at send time; listed here for autocomplete only.
   { trigger: '/recent',  description: 'Send to most-recent party',                                    requiresArgs: true,  actionType: 'message' },
+  { trigger: '/rp',      description: 'Send to most-recent party (alias of /recent)',                 requiresArgs: true,  actionType: 'message' },
   { trigger: '/p1',      description: 'Send to 1st joined party',                                     requiresArgs: true,  actionType: 'message' },
   { trigger: '/p2',      description: 'Send to 2nd joined party',                                     requiresArgs: true,  actionType: 'message' },
   { trigger: '/p3',      description: 'Send to 3rd joined party',                                     requiresArgs: true,  actionType: 'message' },
