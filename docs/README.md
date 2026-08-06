@@ -99,6 +99,10 @@ These were surfaced by the code while documenting and have since been reconciled
 ## Reference documents (existing)
 
 - [TERMS.md](TERMS.md) — terms of service
+- [PRIVACY.md](PRIVACY.md) — privacy policy
+- [product/supporter-tier.md](product/supporter-tier.md) — supporter tier + chat cosmetics design record
+- [legal/monetization-policy.md](legal/monetization-policy.md) — binding rules for what may and may not be monetized
+- [legal/nexus-disclosure-supporter-tier.md](legal/nexus-disclosure-supporter-tier.md) — proactive Nexus Mods disclosure (draft)
 
 ---
 
