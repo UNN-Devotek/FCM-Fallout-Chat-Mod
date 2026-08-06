@@ -731,6 +731,11 @@ interface WebOverlaySettings {
   // formatMessageTimestamp), so everyone sees their own local time with no extra
   // wire data. `timestampFormat` only matters when showTimestamps is true.
   showTimestamps: boolean;
+  // Viewer opt-out for OTHER users' animated supporter name effects. Nothing to do
+  // with your own tier — it exists for anyone who finds motion in the feed distracting
+  // without wanting system-wide reduced motion. Applied as a single root class so the
+  // collapse is one CSS toggle rather than per-message JS.
+  disableNameMotion?: boolean;
   timestampFormat: TimestampFormat;
   // Channel NAMES the viewer has chosen to hide (set via the overlay shell's
   // "Hidden channels" filter, mirrored here). Their messages are excluded from
@@ -760,6 +765,7 @@ const DEFAULT_SETTINGS: WebOverlaySettings = {
   showHints: true,
   fontSize: 14,
   showTimestamps: false,
+  disableNameMotion: false,
   timestampFormat: '12h',
   channelFilters: [],
   notifyKeywords: [],
@@ -8177,7 +8183,13 @@ export default function ChatOverlay() {
                         );
                       })()}
                       {(() => {
+                        // `fcm-no-name-motion` collapses every animated effect to its
+                        // static sibling (see nameEffects.css). Applied per-name rather
+                        // than on a shared ancestor because the feed rows are the only
+                        // element this component reliably owns on all three surfaces.
+                        const motionOff = settings.disableNameMotion ? ' fcm-no-name-motion' : '';
                         const fx = nameCosmeticProps(msg, { primaryText, primaryColor, textAlpha, textOutline, glowEnabled }, displayName);
+                        fx.className = fx.className ? fx.className + motionOff : fx.className;
                         const tagEl = msg.tag ? <span className="fcm-name-tag" style={{ color: msg.nameColor || primaryText }}>[{msg.tag}]</span> : null;
                         const badgeEl = msg.badges?.length
                           ? <span className={`fcm-name-badge fcm-name-badge--${msg.badges[0]}`}>{msg.badges[0] === 'overseer' ? 'OC' : 'SUP'}</span>

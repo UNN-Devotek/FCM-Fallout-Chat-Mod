@@ -142,8 +142,32 @@ and silently flatten every effect to a plain name.
 | --- | --- |
 | `SUPPORTER_ROLE_ID` | Discord role for the Supporter tier |
 | `OVERSEER_CIRCLE_ROLE_ID` | Discord role for Overseer's Circle |
-| `SUPPORTER_TIER_ENABLED` | Master switch. Keep `false` until go-live |
+| `SUPPORTER_TIER_ENABLED` | **Master kill switch. Defaults to `false`, including in production.** |
 | `DISCORD_SERVER_SHOP_URL` | Web purchase URL for the CTA |
+
+### The kill switch
+
+`SUPPORTER_TIER_ENABLED` gates the WHOLE feature, not just the purchase CTA. With it
+off — the default everywhere, including production — the feature is completely inert:
+
+- no cosmetics are attached to any chat message (chat renders byte-identically to
+  before the feature existed), and `resolveCosmetics` returns without touching Redis
+  or Postgres, so it costs nothing
+- `applyCosmetics` refuses writes
+- every `/api/cosmetics/*` and `/api/supporter/*` route 404s
+- the `/cosmetics` Discord command is never registered and its listener never attaches
+- the supporter role-sync listeners and the reconcile job never start
+- the Profile editor and the Appearance guide render nothing (the catalog fetch 404s)
+
+Stored rows are never touched while off, so flipping it on restores everyone's previous
+look exactly. This means the branch can be merged and deployed to production with zero
+observable change, and the commercial launch is a separate, deliberate act.
+
+`supporterKillSwitch.test.js` asserts all of the above, plus one regression: the route
+guard must be applied PER ROUTE, never as `router.use()`. This router is mounted at
+`/api` because it owns several unrelated sub-paths, so a router-level guard ran for
+every request under `/api` and 404'd the entire API whenever the tier was off. The
+integration suites caught it (23 failures across health, mcp and wiki).
 
 Production **refuses to boot** if the tier is enabled while the role IDs or shop URL are
 unset — otherwise Discord would take a subscriber's money while no role could ever

@@ -16,9 +16,10 @@
  * without that halo — dropping it to "let the effect show" makes chat unusable.
  *
  * Reduced motion: each animated effect collapses to its static sibling, mirroring
- * REDUCED_MOTION_FALLBACK in the backend catalog. The viewer opt-out applies the
- * same collapse by putting .fcm-no-name-motion on a root element, so it is one class
- * toggle rather than per-element JS.
+ * REDUCED_MOTION_FALLBACK in the backend catalog. The viewer opt-out applies the same
+ * collapse via .fcm-no-name-motion, which ChatOverlay adds ALONGSIDE the effect class
+ * on the same element — so those rules are compound selectors (.a.b), not descendant
+ * ones. Either way it stays a class toggle rather than per-element JS.
  *
  * None of these render in-game. Scaleform crashes the game outright on any .filters
  * assignment (FCMChatWidget.hx crash rule #1) and bans StyleSheet, so glow, gradient
@@ -241,40 +242,42 @@
   }
 }
 
-/* Viewer opt-out — identical collapse, driven by a single root class rather than a
-   media query, so a user who wants motion off in FCM but not system-wide can have it. */
-.fcm-no-name-motion .fcm-name-fx--glow-pulse,
-.fcm-no-name-motion .fcm-name-fx--crt-phosphor,
-.fcm-no-name-motion .fcm-name-fx--glitch,
-.fcm-no-name-motion .fcm-name-fx--shimmer {
+/* Viewer opt-out — identical collapse, driven by a class the component adds ALONGSIDE
+   the effect class on the same element (not an ancestor), so these are compound
+   selectors (`.a.b`), not descendant ones. Kept separate from the media query so a
+   user can turn motion off inside FCM without turning it off system-wide. */
+.fcm-name-fx--glow-pulse.fcm-no-name-motion,
+.fcm-name-fx--crt-phosphor.fcm-no-name-motion,
+.fcm-name-fx--glitch.fcm-no-name-motion,
+.fcm-name-fx--shimmer.fcm-no-name-motion {
   animation: none !important;
 }
 
-.fcm-no-name-motion .fcm-name-fx--glow-pulse,
-.fcm-no-name-motion .fcm-name-fx--shimmer {
+.fcm-name-fx--glow-pulse.fcm-no-name-motion,
+.fcm-name-fx--shimmer.fcm-no-name-motion {
   text-shadow:
     0 0 4px color-mix(in srgb, var(--fcm-fx-color) 70%, transparent),
     0 0 9px color-mix(in srgb, var(--fcm-fx-color) 40%, transparent),
     var(--fcm-fx-outline);
 }
 
-.fcm-no-name-motion .fcm-name-fx--crt-phosphor,
-.fcm-no-name-motion .fcm-name-fx--glitch {
+.fcm-name-fx--crt-phosphor.fcm-no-name-motion,
+.fcm-name-fx--glitch.fcm-no-name-motion {
   text-shadow:
     -1px 0 0 rgba(255, 0, 64, 0.55),
     1px 0 0 rgba(0, 224, 255, 0.55),
     var(--fcm-fx-outline);
 }
 
-.fcm-no-name-motion .fcm-name-fx--shimmer {
+.fcm-name-fx--shimmer.fcm-no-name-motion {
   background-image: none;
   color: var(--fcm-fx-color);
   -webkit-text-fill-color: var(--fcm-fx-color);
 }
 
-.fcm-no-name-motion .fcm-name-fx--glitch::before,
-.fcm-no-name-motion .fcm-name-fx--glitch::after,
-.fcm-no-name-motion .fcm-name-fx--crt-phosphor::after {
+.fcm-name-fx--glitch.fcm-no-name-motion::before,
+.fcm-name-fx--glitch.fcm-no-name-motion::after,
+.fcm-name-fx--crt-phosphor.fcm-no-name-motion::after {
   display: none;
 }
 

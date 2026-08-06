@@ -136,6 +136,11 @@ export default function CosmeticsPanel({ userId }: { userId: string }) {
     paidColors: (catalog?.colors ?? []).filter(c => c.tier !== 'none'),
   }), [catalog]);
 
+  // Also the kill switch: when SUPPORTER_TIER_ENABLED is false the whole
+  // /api/cosmetics + /api/supporter router 404s, the catalog query fails, and the panel
+  // renders nothing at all. No separate feature flag is threaded through the client —
+  // the server simply does not offer the feature, which is the harder thing to get
+  // wrong. Same reason the panel does not render a "coming soon" placeholder.
   if (!catalog) return null;
 
   const nameTooLong = currentName.length > catalog.nameRules.maxLength;

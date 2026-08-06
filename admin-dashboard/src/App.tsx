@@ -37,6 +37,7 @@ import Evidence from './features/moderation/Evidence';
 import Voice from './features/moderation/Voice';
 import EmbedBuilder from './features/moderation/EmbedBuilder';
 import HelpPage from './features/system/HelpPage';
+import CosmeticsGuide from './features/system/CosmeticsGuide';
 import KeybindsPage from './features/system/KeybindsPage';
 import AuditLog from './features/system/AuditLog';
 import ServerHealth from './features/system/ServerHealth';
@@ -116,6 +117,7 @@ const router = createBrowserRouter([
       { path: '/voice', element: <RoleGuard allowedRoles={MOD_ROLES}><Voice /></RoleGuard> },
       { path: '/discord-embeds', element: <RoleGuard allowedRoles={MOD_ROLES}><EmbedBuilder /></RoleGuard> },
       { path: '/help', element: <HelpPage /> },
+      { path: '/appearance', element: <CosmeticsGuide /> },
       { path: '/audit-log', element: <RoleGuard allowedRoles={MOD_ROLES}><AuditLog /></RoleGuard> },
       { path: '/server-health', element: <RoleGuard allowedRoles={MOD_ROLES}><ServerHealth /></RoleGuard> },
       { path: '/devices', element: <RoleGuard allowedRoles={MOD_ROLES}><Devices /></RoleGuard> },

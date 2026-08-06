@@ -378,6 +378,13 @@ async function registerCommands(client: Client): Promise<void> {
 }
 
 export function register(client: Client): void {
+  // Master kill switch. With the tier off (the default, including in production) the
+  // command is never registered and the listener never attaches, so the feature is
+  // completely invisible until it is deliberately switched on.
+  if (!env.SUPPORTER_TIER_ENABLED) {
+    logger.info('[cosmetics] SUPPORTER_TIER_ENABLED is false — /cosmetics not registered');
+    return;
+  }
   client.on('interactionCreate', (i) => void onInteraction(i));
   client.once('ready', () => { void registerCommands(client); });
 }

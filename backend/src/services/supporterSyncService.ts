@@ -41,8 +41,15 @@ let firstRunHandle: ReturnType<typeof setTimeout> | null = null;
 
 const track = makeJobTracker('supporterReconcile');
 
-/** True when at least one tier role is configured — otherwise there is nothing to sync. */
+/**
+ * True when the tier is switched ON and at least one tier role is configured.
+ *
+ * SUPPORTER_TIER_ENABLED is the master kill switch: with it off (the default, including
+ * in production) no listener attaches and no sweep runs, so the feature costs nothing
+ * and grants nothing until it is deliberately enabled.
+ */
 function configured(): boolean {
+  if (!env.SUPPORTER_TIER_ENABLED) return false;
   return Boolean(env.SUPPORTER_ROLE_ID || env.OVERSEER_CIRCLE_ROLE_ID);
 }
 
@@ -167,7 +174,10 @@ export function register(client: Client): void {
   clientRef = client;
 
   if (!configured()) {
-    logger.info('[supporterSync] no tier roles configured — supporter sync disabled');
+    logger.info(
+      { tierEnabled: env.SUPPORTER_TIER_ENABLED },
+      '[supporterSync] disabled (tier switched off, or no tier roles configured)',
+    );
     return;
   }
 

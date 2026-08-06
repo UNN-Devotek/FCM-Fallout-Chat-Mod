@@ -14,6 +14,7 @@
 import prisma from '../../config/prisma';
 import { getRedisClient } from '../../config/redis';
 import logger from '../../config/logger';
+import env from '../../config/environment';
 import { SupporterTier, nameCooldownRemainingMs, tierAtLeast } from '../../utils/supporterTier';
 import { getSupporterTierByUserId } from '../supporterService';
 import { findColorPreset, findEffectPreset, REDUCED_MOTION_FALLBACK } from './presets';
@@ -106,6 +107,9 @@ export async function bustCosmeticsCache(userId: string): Promise<void> {
  */
 export async function resolveCosmetics(userId: string): Promise<ResolvedCosmetics> {
   if (!userId) return EMPTY_COSMETICS(userId);
+  // Kill switch: return defaults without touching Redis or the DB, so the feature
+  // costs literally nothing while it is off.
+  if (!cosmeticsEnabled()) return EMPTY_COSMETICS(userId);
 
   try {
     const redis = await getRedisClient();
@@ -161,6 +165,29 @@ export async function resolveCosmetics(userId: string): Promise<ResolvedCosmetic
   return resolved;
 }
 
+/**
+ * MASTER KILL SWITCH for the entire cosmetics + supporter surface.
+ *
+ * When `SUPPORTER_TIER_ENABLED` is false — which is the DEFAULT, including in
+ * production — the feature is fully inert:
+ *   - no cosmetics are attached to any chat message (chat renders exactly as it did
+ *     before this feature existed, byte for byte)
+ *   - the cosmetics/supporter REST routes 404
+ *   - the `/cosmetics` Discord command is not registered
+ *   - the supporter role-sync listeners and reconcile job do not start
+ *   - the Profile editor and pricing surfaces are hidden
+ *
+ * This is deliberately a whole-feature switch rather than a purchase-CTA switch, so
+ * the branch can be merged and deployed to production with zero observable change and
+ * the commercial launch is a separate, explicit act.
+ *
+ * Stored rows are never touched when the flag is off, so flipping it back on restores
+ * everyone's previous look exactly.
+ */
+export function cosmeticsEnabled(): boolean {
+  return env.SUPPORTER_TIER_ENABLED === true;
+}
+
 /** Static effect to substitute under reduced motion / viewer opt-out. */
 export function reducedMotionEffect(effectId: string | null): string | null {
   if (!effectId) return null;
@@ -181,6 +208,7 @@ export function reducedMotionEffect(effectId: string | null): string | null {
 export async function attachCosmetics(
   payload: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
+  if (!cosmeticsEnabled()) return payload;
   const userId = typeof payload.userId === 'string' ? payload.userId : null;
   if (!userId) return payload;
 
@@ -253,6 +281,10 @@ export async function applyCosmetics(input: {
 }): Promise<ApplyResult> {
   const { userId, patch, actor } = input;
   const now = input.now ?? Date.now();
+
+  if (!cosmeticsEnabled()) {
+    return { ok: false, reason: 'not_found', detail: { message: 'Chat appearance customisation is not enabled.' } };
+  }
 
   const user = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, discordId: true } });
   if (!user) return { ok: false, reason: 'not_found', detail: { message: 'No such user.' } };
@@ -446,6 +478,7 @@ export default {
   resolveCosmetics,
   resetCosmetics,
   attachCosmetics,
+  cosmeticsEnabled,
   bustCosmeticsCache,
   pushCosmeticsUpdate,
   reducedMotionEffect,
@@ -456,6 +489,7 @@ module.exports = {
   resolveCosmetics,
   resetCosmetics,
   attachCosmetics,
+  cosmeticsEnabled,
   bustCosmeticsCache,
   pushCosmeticsUpdate,
   reducedMotionEffect,
