@@ -16,6 +16,7 @@ import EmojiPicker, {
   saveRecentEmojiTokens,
 } from './EmojiPicker';
 import GifPicker from './GifPicker';
+import './nameEffects.css';
 import { usePickerInsert } from './usePickerInsert';
 import { useDebouncedSearch } from './useDebouncedSearch';
 import { ChatEmbedCard } from './components/ChatEmbedCard';
@@ -1453,6 +1454,70 @@ interface ChatMessage {
   responseColor?: string | null;
   avatarUrl?: string | null;
   metadata?: ChatMessageMetadata;
+  // ── Supporter cosmetics, resolved server-side in ingestMessage.attachCosmetics ──
+  /** Per-user name colour, `#rrggbb`. Absent for the vast majority of users. */
+  nameColor?: string | null;
+  /** Effect preset id — rendered as a `.fcm-name-fx--<id>` class (see nameEffects.css). */
+  effectId?: string | null;
+  /** Overseer tag rendered before the name. */
+  tag?: string | null;
+  /** e.g. ['supporter'] — rendered as a pill after the name. */
+  badges?: string[];
+}
+
+/**
+ * Build the className / style / data attributes for a username span.
+ *
+ * Effects are pure CSS (nameEffects.css) driven by two custom properties. When an
+ * effect is present the class owns `text-shadow` entirely — the outline is handed
+ * over via `--fcm-name-outline` so the effect can compose with it rather than an
+ * inline `textShadow` silently winning over the stylesheet.
+ *
+ * `data-fcm-name` is required by the glitch effect, whose ::before/::after copies
+ * read it with `content: attr(...)`.
+ *
+ * Exported for unit tests.
+ */
+export function nameCosmeticProps(
+  msg: { nameColor?: string | null; effectId?: string | null },
+  theme: {
+    primaryText: string;
+    primaryColor: string;
+    textAlpha: number;
+    textOutline: string;
+    glowEnabled: boolean;
+  },
+  displayName: string,
+): { className: string; style: React.CSSProperties; dataName?: string } {
+  const color = msg.nameColor || theme.primaryText;
+  const effect = msg.effectId || null;
+
+  if (!effect) {
+    // Unchanged from before cosmetics existed, so users without a colour render
+    // byte-identically to how they always have.
+    return {
+      className: '',
+      style: {
+        fontWeight: 'bold',
+        color,
+        textShadow: theme.glowEnabled
+          ? `0 0 3px ${hexAlpha(theme.primaryColor, 0.5 * theme.textAlpha)}, ${theme.textOutline}`
+          : theme.textOutline,
+      },
+    };
+  }
+
+  return {
+    className: `fcm-name-fx--${effect}`,
+    style: {
+      fontWeight: 'bold',
+      color,
+      // No inline textShadow — the effect class composes it with the outline below.
+      ['--fcm-name-color' as string]: color,
+      ['--fcm-name-outline' as string]: theme.textOutline,
+    } as React.CSSProperties,
+    dataName: displayName,
+  };
 }
 
 interface PrivateConversationSummary {
@@ -3897,6 +3962,11 @@ export default function ChatOverlay() {
   // carried a stale or login-only username (e.g. "devotek" → "Devotek")
   // and to re-resolve names when the backend broadcasts a fresh identity.
   const knownDisplayNames = useRef<Map<string, string>>(new Map());
+  // Parallel to knownDisplayNames: the latest cosmetics seen for a user, so a
+  // colour/effect change back-applies to rendered history the same way a rename does.
+  const knownCosmetics = useRef<Map<string, {
+    nameColor?: string | null; effectId?: string | null; tag?: string | null; badges?: string[];
+  }>>(new Map());
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContRef = useRef<HTMLDivElement>(null);
@@ -5172,16 +5242,32 @@ export default function ChatOverlay() {
                 // history messages that may have carried a stale login-only name
                 // (e.g. "devotek" instead of "Devotek"). Parity with the desktop
                 // _knownDisplayNames + history correction in ChatOverlayWindow.cs.
-                const { userId, displayName } = frame.payload ?? {};
-                if (userId && displayName && typeof displayName === 'string') {
+                // The same frame also carries supporter cosmetics (colour, effect,
+                // tag, badges) so a cosmetics change re-styles already-rendered
+                // history without a reconnect — one handler covers both cases.
+                // `displayName` is absent when only cosmetics changed, so the two
+                // are applied independently rather than gated on each other.
+                const { userId, displayName, nameColor, effectId, tag, badges } = frame.payload ?? {};
+                const hasCosmetics = 'nameColor' in (frame.payload ?? {});
+                if (userId && typeof displayName === 'string' && displayName) {
                   knownDisplayNames.current.set(userId, displayName);
+                }
+                if (userId && (displayName || hasCosmetics)) {
+                  knownCosmetics.current.set(userId, { nameColor, effectId, tag, badges });
                   // Back-apply to already-stored messages so they show the
                   // correct name immediately without requiring a reconnect.
-                  setMessages(prev => prev.map(m =>
-                    m.userId === userId && m.source !== 'bot' && m.username !== '[Vault-Tec]'
-                      ? { ...m, username: displayName }
-                      : m
-                  ));
+                  setMessages(prev => prev.map(m => {
+                    if (m.userId !== userId || m.source === 'bot' || m.username === '[Vault-Tec]') return m;
+                    const next = { ...m };
+                    if (typeof displayName === 'string' && displayName) next.username = displayName;
+                    if (hasCosmetics) {
+                      next.nameColor = nameColor ?? null;
+                      next.effectId = effectId ?? null;
+                      next.tag = tag ?? null;
+                      next.badges = badges ?? [];
+                    }
+                    return next;
+                  }));
                 }
               } else if (frame.type === 'giveaway:update') {
                 const { giveawayId, shortId, entryCount, status, winnerName } = frame.payload ?? {};
@@ -8090,26 +8176,40 @@ export default function ChatOverlay() {
                           </span>
                         );
                       })()}
-                      {msg.userId && msg.userId !== 'system' ? (
-                        isPublicMode ? (
-                          <Link to={`/profile/${msg.userId}`} className="username-chip" style={{
-                            fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline,
-                          }}>
-                            {displayName}:{' '}
-                          </Link>
+                      {(() => {
+                        const fx = nameCosmeticProps(msg, { primaryText, primaryColor, textAlpha, textOutline, glowEnabled }, displayName);
+                        const tagEl = msg.tag ? <span className="fcm-name-tag" style={{ color: msg.nameColor || primaryText }}>[{msg.tag}]</span> : null;
+                        const badgeEl = msg.badges?.length
+                          ? <span className={`fcm-name-badge fcm-name-badge--${msg.badges[0]}`}>{msg.badges[0] === 'overseer' ? 'OC' : 'SUP'}</span>
+                          : null;
+                        // Tag and badge render BEFORE the name, which keeps the name
+                        // element's text node exactly `${displayName}: ` as it has
+                        // always been. Splitting the colon into its own element broke
+                        // getByText(/Name:/) queries and made the bare name match twice.
+                        return msg.userId && msg.userId !== 'system' ? (
+                          isPublicMode ? (
+                            <>
+                              {tagEl}{badgeEl}
+                              <Link to={`/profile/${msg.userId}`} className={`username-chip ${fx.className}`} style={fx.style} data-fcm-name={fx.dataName}>
+                                {displayName}:{' '}
+                              </Link>
+                            </>
+                          ) : (
+                            <>
+                              {tagEl}{badgeEl}
+                              <span role="button" tabIndex={0} className={`username-chip username-chip--mention ${fx.className}`}
+                                style={{ ...fx.style, cursor: 'pointer' }} data-fcm-name={fx.dataName}
+                                onClick={() => insertMentionFromClick(displayName)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') insertMentionFromClick(displayName); }}>
+                                {displayName}:{' '}
+                              </span>
+                            </>
+                          )
                         ) : (
-                          <span role="button" tabIndex={0} className="username-chip username-chip--mention" style={{
-                            fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline,
-                            cursor: 'pointer',
-                          }} onClick={() => insertMentionFromClick(displayName)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') insertMentionFromClick(displayName); }}>
+                          <span style={fx.style} className={fx.className} data-fcm-name={fx.dataName}>
                             {displayName}:{' '}
                           </span>
-                        )
-                      ) : (
-                        <span style={{ fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline }}>
-                          {displayName}:{' '}
-                        </span>
-                      )}
+                        );
+                      })()}
                       <span style={{
                         color: contentColor,
                         fontWeight: 600,
