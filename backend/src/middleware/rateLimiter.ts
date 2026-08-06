@@ -527,7 +527,32 @@ const partyImageUploadLimiter = rateLimit({
   },
 });
 
+/**
+ * Cosmetics writes: 20 / 5 min per IP.
+ *
+ * Not really about load — a cosmetics PATCH runs the candidate name through the name
+ * blacklist and the automod prohibited-phrase filter, and the response says only
+ * "not allowed" without naming the matched pattern. Without a limit, an attacker could
+ * still binary-search the filters by submitting thousands of candidates and watching
+ * which are rejected. The cap makes that impractical (#232). Generous enough that a
+ * user experimenting with the picker never notices.
+ */
+const cosmeticsWriteLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: (req: any) => devCap(req, 20, 200),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: ipKey,
+  store: makeRedisStore('rl_cosmetics:'),
+  message: {
+    type: 'https://fo76chat.app/errors/429',
+    title: 'Too Many Requests',
+    status: 429,
+    detail: 'Too many cosmetics changes. Please wait a few minutes.',
+  },
+});
+
 // ipKey is exported for unit testing: it encodes the security invariant that a
 // bucket key is ALWAYS the client IP and never the spoofable x-auth-token header.
-export { ipKey, apiLimiter, authLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter };
-module.exports = { ipKey, apiLimiter, authLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter };
+export { ipKey, apiLimiter, authLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter, cosmeticsWriteLimiter };
+module.exports = { ipKey, apiLimiter, authLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter, cosmeticsWriteLimiter };
