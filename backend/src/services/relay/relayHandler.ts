@@ -30,6 +30,7 @@ import logger from '../../config/logger';
 import env from '../../config/environment';
 import { mintToken, verifyToken, updateDisplayName, markRelayTokenLinked } from './tokenService';
 import { slugToChannelId, channelIdToSlug, ALL_SLUGS } from './channelMap';
+import { readWireString } from './wireSanitize';
 import { setWorldId, getWorldId, clearWorldId } from './worldIdService';
 import { setRoster, clearRoster, computeRooms } from './worldRosterService';
 import { nextRelaySeq } from './relaySeq';
@@ -424,7 +425,7 @@ async function ensurePubSub(): Promise<void> {
 // ── Op handlers ───────────────────────────────────────────────────────────────
 
 async function handleRegister(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
-  const displayName = typeof frame.displayName === 'string' ? frame.displayName.trim() : '';
+  const displayName = readWireString(frame.displayName).trim();
   if (!displayName) {
     send(ws, errEnvelope('invalid_request', 'displayName is required'));
     return;
@@ -477,7 +478,7 @@ async function handleHello(ws: WebSocket, frame: Record<string, unknown>): Promi
   }
 
   // Update displayName if provided and different.
-  const newName = typeof frame.displayName === 'string' ? frame.displayName.trim() : '';
+  const newName = readWireString(frame.displayName).trim();
   if (newName && newName !== identity.fo76Name) {
     await updateDisplayName(identity.userId, newName);
     // Keep the linked account's fo76_account_name in sync so chat HISTORY (which derives the
@@ -584,8 +585,10 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     return;
   }
 
-  const slug = typeof frame.channel === 'string' ? frame.channel : '';
-  const body = typeof frame.body === 'string' ? frame.body : '';
+  // ZFE mangles mod-supplied string values on the way out (see wireSanitize.ts) — repair the
+  // slug and body before any routing decision, or in-game sends can never match a channel.
+  const slug = readWireString(frame.channel);
+  const body = readWireString(frame.body);
 
   // ── Authenticated world/roster control intercept (before ALL_SLUGS check) ──
   // Actor identity comes only from `identity`, derived from the relay token above.
