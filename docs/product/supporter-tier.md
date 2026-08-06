@@ -176,6 +176,14 @@ match. Guard: `collectSupporterTierProductionErrors()`.
 Requires the **`GuildMembers` privileged intent**, enabled per Discord application —
 dev and prod are separate apps, so twice.
 
+## Enabling on dev
+
+See [docs/deployment/supporter-tier-dev-setup.md](../deployment/supporter-tier-dev-setup.md)
+for the runbook and full test matrix. The short version: Server Subscriptions cannot be
+enabled on the throwaway dev guild, so the roles are assigned by hand — and because the
+entitlement is role-derived, every downstream path is identical to the paid one. **No
+money has to move to test this feature.**
+
 ## Go-live checklist
 
 1. Dev sign-off across website, Discord, overlay, and in-game.

@@ -94,3 +94,4 @@ If the tunnel goes down:
 - Overlay internals: `../overlay/README.md`
 - Update notification runbook: `../overlay/auto-update.md`
 - Code signing detail: `../CODE-SIGNING.md` and `../AZURE-CODE-SIGNING-SETUP.md`
+- [supporter-tier-dev-setup.md](supporter-tier-dev-setup.md) — enabling the supporter cosmetics tier on the hosted dev environment (roles, privileged intent, env, test matrix)
