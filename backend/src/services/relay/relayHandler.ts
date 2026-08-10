@@ -764,8 +764,8 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
 /**
  * Recent chat history as chat.message events. cursor=0 → the initial window (latest
  * POLL_HISTORY_LIMIT, oldest-first); otherwise everything with relay_seq > cursor.
- * Shared by handlePoll AND the subscribe-time backfill so history reaches the in-game
- * widget over the live subscribe connection (the path it actually drains via pollEvents).
+ * History is returned only by handlePoll. A subscription is reserved for events that
+ * become visible after its supplied cursor.
  */
 async function fetchHistoryEvents(cursor: number, max: number): Promise<Array<Record<string, unknown>>> {
   let rows: Array<{
@@ -875,34 +875,6 @@ async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): P
     displayName: identity.fo76Name,
     role:        identity.role,
   });
-
-  // Backfill recent history on THIS long-lived subscribe connection. The in-game widget drains
-  // events via pollEvents off the subscribe stream; ZFE doesn't re-issue a cursor=0 poll, so the
-  // standalone handlePoll history never reaches it. Push the initial window here as op:event
-  // frames (same shape as live broadcasts) so the feed loads on connect. Advance the subscriber
-  // cursor past them so the live path doesn't immediately re-send the same rows.
-  try {
-    const history = await fetchHistoryEvents(0, POLL_HISTORY_LIMIT);
-    for (const ev of history) {
-      send(ws, { op: 'event', cursor: ev.id as number, event: ev });
-    }
-    if (history.length > 0) {
-      state.cursor = Math.max(state.cursor, Number(history[history.length - 1].id));
-    }
-  } catch (err) {
-    logger.warn({ err, userId: identity.userId }, '[relayHandler] history backfill on subscribe failed');
-  }
-
-  // Backfill the current world's server-room history too (if the player is in a world).
-  if (worldId) {
-    try {
-      const sHist = await getServerHistory(worldId, 0, POLL_HISTORY_LIMIT);
-      for (const ev of sHist) send(ws, { op: 'event', cursor: ev.id, event: ev });
-      if (sHist.length > 0) state.cursor = Math.max(state.cursor, sHist[sHist.length - 1].id);
-    } catch (err) {
-      logger.warn({ err, userId: identity.userId }, '[relayHandler] server history backfill on subscribe failed');
-    }
-  }
 
   // If still LIMITED (not linked), push the link-code notice on THIS long-lived subscribe
   // connection. The register/hello pushes land on a transient connection the client's

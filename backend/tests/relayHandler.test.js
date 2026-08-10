@@ -1271,8 +1271,8 @@ describe('relay WebSocket ops', () => {
   });
 
   test('subscribe does not drain poll history', async () => {
-    // The subscribe ack returns cursor, not events. Polling after subscribe
-    // with the same cursor returns the full history.
+    // The subscribe path must never emit stored history as live events. Polling
+    // with the same cursor remains responsible for returning that history.
     const { ws: wsReg, msgs: msgsReg } = await conn();
     const regRes = await waitForMsg(wsReg, msgsReg, () =>
       send(wsReg, { op: 'register', displayName: 'NoDrainPlayer' }),
@@ -1282,26 +1282,70 @@ describe('relay WebSocket ops', () => {
     const rawId = lastRawUserId();
     _userMap[rawId] = { id: rawId, discordId: 'disc-nd', steamId: null, isBanned: false, isMuted: false };
 
+    const historyRow = {
+      id: 'msg-nd', relay_seq: BigInt(1), content: 'hist', user_id: 'u1',
+      channel_id: '00000000-0000-0000-0000-000000000005', username: 'NoDrainPlayer', fo76_account_name: null,
+    };
+    require('../src/config/prisma').default.$queryRaw.mockResolvedValueOnce([historyRow]);
+
     const { ws: wsSub, msgs: msgsSub } = await conn();
     const subRes = await waitForMsg(wsSub, msgsSub, () =>
       send(wsSub, { op: 'subscribe', token, cursor: 0 }),
     );
-    // subscribe ack has no events array
+    // Give any incorrectly queued post-ack event frame a chance to arrive.
+    await new Promise((resolve) => setTimeout(resolve, 100));
     expect(subRes).not.toHaveProperty('events');
-    wsSub.close();
+    expect(msgsSub).toEqual([expect.objectContaining({ success: true, op: 'subscribed', cursor: 0 })]);
 
     // Now poll with cursor=0 — history should still be available
-    require('../src/config/prisma').default.$queryRaw.mockResolvedValueOnce([
-      { id: 'msg-nd', relay_seq: BigInt(1), content: 'hist', user_id: 'u1',
-        channel_id: '00000000-0000-0000-0000-000000000005', username: 'NoDrainPlayer', fo76_account_name: null },
-    ]);
-
     const { ws: wsPoll, msgs: msgsPoll } = await conn();
     const pollRes = await waitForMsg(wsPoll, msgsPoll, () =>
       send(wsPoll, { op: 'poll', token, cursor: 0, max: 10 }),
     );
     expect(pollRes.events).toHaveLength(1);
     wsPoll.close();
+    wsSub.close();
+  });
+
+  test('subscribe does not drain current-world history', async () => {
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'WorldHistoryPlayer' }),
+    );
+    wsReg.close();
+    const { token } = regRes;
+    const rawId = lastRawUserId();
+    _userMap[rawId] = { id: rawId, discordId: 'disc-world-history', steamId: null, isBanned: false, isMuted: false };
+
+    const worldId = 'world-subscription-history';
+    const worldEvent = {
+      id: 2,
+      kind: 'chat.message',
+      messageId: 'server:world-subscription-history:2',
+      channel: 'server',
+      senderUserId: 'u1',
+      senderDisplayName: 'WorldHistoryPlayer',
+      body: 'world history',
+      targetUserId: '',
+      createdAt: '2026-08-10T00:00:00.000Z',
+    };
+    await setWorldId(rawId, worldId);
+    _lists[`relay:serverchat:${worldId}`] = [JSON.stringify(worldEvent)];
+
+    const { ws: wsSub, msgs: msgsSub } = await conn();
+    await waitForMsg(wsSub, msgsSub, () =>
+      send(wsSub, { op: 'subscribe', token, cursor: 0 }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(msgsSub).toEqual([expect.objectContaining({ success: true, op: 'subscribed', cursor: 0 })]);
+
+    const { ws: wsPoll, msgs: msgsPoll } = await conn();
+    const pollRes = await waitForMsg(wsPoll, msgsPoll, () =>
+      send(wsPoll, { op: 'poll', token, cursor: 0, max: 10 }),
+    );
+    expect(pollRes.events).toEqual(expect.arrayContaining([expect.objectContaining({ id: 2, channel: 'server' })]));
+    wsPoll.close();
+    wsSub.close();
   });
 });
 

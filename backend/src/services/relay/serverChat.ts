@@ -86,7 +86,7 @@ export async function publishRebind(userId: string, worldId: string | null): Pro
 
 /**
  * Recent history for a world, oldest-first, only events newer than `sinceCursor`.
- * Used for the subscribe-time backfill, world-join backfill, and poll merge.
+ * Used for world-join backfill and poll merge.
  */
 export async function getServerHistory(
   worldId: string,
