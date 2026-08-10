@@ -14,7 +14,7 @@
     "test:coverage": "jest --coverage --runInBand --forceExit"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1090.0",
+    "@aws-sdk/client-s3": "^3.1105.0",
     "@prisma/client": "^5.22.0",
     "@types/tar-stream": "^3.1.4",
     "argon2": "^0.45.0",
@@ -24,7 +24,7 @@
     "discord.js": "^14.27.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "express-rate-limit": "^8.6.0",
+    "express-rate-limit": "^8.6.2",
     "express-session": "^1.18.1",
     "file-type": "^21.3.4",
     "helmet": "^8.3.0",
@@ -38,7 +38,7 @@
     "redis": "^6.1.0",
     "tar-stream": "^3.2.0",
     "uuid": "^11.1.1",
-    "ws": "^8.21.1",
+    "ws": "^8.21.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -49,7 +49,7 @@
     "@types/multer": "^2.2.0",
     "@types/node": "^26.1.1",
     "@types/node-cron": "^3.0.11",
-    "@types/pg": "^8.20.0",
+    "@types/pg": "^8.20.4",
     "@types/pino": "^7.0.5",
     "@types/uuid": "^10.0.0",
     "@types/ws": "^8.18.1",
@@ -57,7 +57,7 @@
     "nodemon": "^3.1.9",
     "prisma": "^5.22.0",
     "supertest": "^7.0.0",
-    "tsx": "^4.23.1",
+    "tsx": "^4.23.10",
     "typescript": "^7.0.2"
   },
   "overrides": {
