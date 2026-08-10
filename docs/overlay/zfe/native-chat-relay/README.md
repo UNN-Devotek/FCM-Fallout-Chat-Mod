@@ -35,6 +35,7 @@ it.
 |---|---|
 | [**protocol-spec.md**](protocol-spec.md) | The upstream ZFE `chat.v1` relay contract — SWF flow, packaged config, the full WebSocket op set (`register`/`hello`/`send`/`poll`/`subscribe`/`report`/`moderationAction`), channels, limits, identity/bans, the loopback test |
 | [**fcm-integration.md**](fcm-integration.md) | How FCM's backend would expose a compliant `/relay` endpoint — op→service mapping, identity/token bridge, channel mapping, the net-new monotonic cursor, error-code mapping, permissions, phased rollout, tests, open questions |
+| [**reconnect-history-recovery-spec.md**](reconnect-history-recovery-spec.md) | Required reconnect and world-transition history behavior, boundaries, and acceptance signals for the in-game chat feeds |
 
 ## How this differs from the existing FCMHUD/1 bridge
 

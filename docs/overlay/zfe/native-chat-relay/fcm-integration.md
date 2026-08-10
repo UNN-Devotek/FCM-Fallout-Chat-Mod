@@ -34,7 +34,7 @@ the normal relay event flow then refreshes the widget state.
 | `chat.v1.getRuntimeInfo` | Capability check (`zfe-chat-online-v1`) before use |
 | `chat.v1.connect` | Register/resume and get initial state |
 | `chat.v1.pollEvents` | Cursor-based event polling |
-| `chat.v1.subscribe` | Register a live subscriber and initial cursor/history |
+| `chat.v1.subscribe` | Register a live subscriber from its initial cursor; history remains available through polling |
 | `chat.v1.sendMessage` | Send a static-channel message or a reserved server control |
 | `chat.v1.getAuthState` | Refresh linked/limited state |
 
