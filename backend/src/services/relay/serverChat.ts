@@ -45,7 +45,8 @@ export interface ServerRoomEvent {
 /** Envelope published on SERVER_EVENTS_CHANNEL. */
 export type ServerEventEnvelope =
   | { kind: 'msg'; worldId: string; cursor: number; event: ServerRoomEvent }
-  | { kind: 'rebind'; userId: string; worldId: string | null };
+  | { kind: 'rebind'; userId: string; worldId: string | null }
+  | { kind: 'history-resync'; userId: string; sourceInstanceId: string };
 
 /**
  * Store a message in a world's capped history and fan it out live to same-world
@@ -81,6 +82,21 @@ export async function publishRebind(userId: string, worldId: string | null): Pro
     await redis.publish(SERVER_EVENTS_CHANNEL, JSON.stringify(envelope));
   } catch (err) {
     logger.warn({ err, userId }, '[serverChat] publishRebind failed');
+  }
+}
+
+/**
+ * Ask every backend instance to replay static history to this user's local live
+ * subscriber(s). The HUD can reload while ZFE keeps its native subscription alive,
+ * so a fresh subscribe-time backfill is not guaranteed on a world transition.
+ */
+export async function publishHistoryResync(userId: string, sourceInstanceId: string): Promise<void> {
+  try {
+    const redis = await getRedisClient();
+    const envelope: ServerEventEnvelope = { kind: 'history-resync', userId, sourceInstanceId };
+    await redis.publish(SERVER_EVENTS_CHANNEL, JSON.stringify(envelope));
+  } catch (err) {
+    logger.warn({ err, userId }, '[serverChat] publishHistoryResync failed');
   }
 }
 

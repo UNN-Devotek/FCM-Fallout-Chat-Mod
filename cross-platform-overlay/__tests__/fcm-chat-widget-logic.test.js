@@ -22,6 +22,8 @@ const {
   nativeLockRelease,
   shouldRebindWorldId,
   shouldIgnoreBlankWorldId,
+  historyResyncControlBody,
+  shouldRenderReplayMessage,
   inputChannelAction,
   worldControlBody,
   jsonEscape,
@@ -123,6 +125,19 @@ describe('dedup keys + pending-echo matching', () => {
   it('keeps an entry exactly at the 15s boundary', () => {
     const kept = expirePendingEchoes([{ key: 'x', ts: 0 }], 15000);
     expect(kept.length).toBe(1);
+  });
+});
+
+describe('history reload replay controls', () => {
+  it('uses the printable authenticated resync sentinel', () => {
+    expect(historyResyncControlBody()).toBe('FCMCTL/1/RESYNC');
+  });
+
+  it('renders a replayed message ID only once per widget instance', () => {
+    const seen = {};
+    expect(shouldRenderReplayMessage(seen, 'message-1')).toBe(true);
+    expect(shouldRenderReplayMessage(seen, 'message-1')).toBe(false);
+    expect(shouldRenderReplayMessage(seen, '')).toBe(true);
   });
 });
 
@@ -252,10 +267,10 @@ describe('server-room acknowledgement gating', () => {
       lastWorldId: 'legacy-world', currentWorldId: '', freshRosterObservation: false,
     })).toBe(false);
   });
-  it('preserves the relay legacy control frame while JSON-escaping control bytes for ZFE', () => {
+  it('uses printable relay controls that survive the ZFE string boundary', () => {
     const body = worldControlBody('roster', ['Ada', 'Beck']);
-    expect(body).toBe('\x00fcm.world.roster.v1\x00Ada\x1FBeck');
-    expect(jsonEscape(body)).toBe('\\u0000fcm.world.roster.v1\\u0000Ada\\u001FBeck');
+    expect(body).toBe('FCMCTL/1/ROSTER:Ada\x1FBeck');
+    expect(jsonEscape(body)).toBe('FCMCTL/1/ROSTER:Ada\\u001FBeck');
   });
 });
 

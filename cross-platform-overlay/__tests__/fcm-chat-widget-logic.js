@@ -149,12 +149,11 @@ function shouldSendRosterControl({ rosterObserved, serverSessionReady, now, last
 }
 
 // ── Relay-control framing (FCMChatWidget world controls) ───────────────────────
-// The live relay accepts the legacy NUL frame. jsonEscape serializes its control
-// bytes as JSON escapes so ZFE's native chat bridge does not reject raw NUL input.
+// New widgets use printable controls; the relay retains legacy NUL compatibility.
 const WORLD_CONTROL_PREFIXES = {
-  world: '\x00fcm.world.v1\x00',
-  leave: '\x00fcm.world.leave.v1\x00',
-  roster: '\x00fcm.world.roster.v1\x00',
+  world: 'FCMCTL/1/WORLD:',
+  leave: 'FCMCTL/1/LEAVE',
+  roster: 'FCMCTL/1/ROSTER:',
 };
 
 function worldControlBody(kind, namesOrWorldId = []) {
@@ -164,6 +163,17 @@ function worldControlBody(kind, namesOrWorldId = []) {
     case 'roster': return WORLD_CONTROL_PREFIXES.roster + namesOrWorldId.join('\x1F');
     default: return '';
   }
+}
+
+function historyResyncControlBody() {
+  return 'FCMCTL/1/RESYNC';
+}
+
+function shouldRenderReplayMessage(seen, messageId) {
+  if (!messageId) return true;
+  if (seen[messageId]) return false;
+  seen[messageId] = true;
+  return true;
 }
 
 function jsonEscape(s) {
@@ -412,6 +422,8 @@ module.exports = {
   shouldSendRosterControl,
   WORLD_CONTROL_PREFIXES,
   worldControlBody,
+  historyResyncControlBody,
+  shouldRenderReplayMessage,
   jsonEscape,
   nativeLockAdmission,
   nativeLockRelease,

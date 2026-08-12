@@ -40,6 +40,7 @@ import { engineEvaluate } from '../autoModEngine';
 import {
   publishServerMessage,
   publishRebind,
+  publishHistoryResync,
   getServerHistory,
   checkServerRateLimit,
   SERVER_EVENTS_CHANNEL,
@@ -61,6 +62,9 @@ const WORLD_LEAVE_SENTINEL_PREFIX = 'FCMCTL/1/LEAVE';
 // ROSTER control: observed nearby character names (the HUD publishes no worldId —
 // rooms are derived from sightings). Body is a pipe-separated bounded name list.
 const WORLD_ROSTER_SENTINEL_PREFIX = 'FCMCTL/1/ROSTER:';
+// Explicit UI-reload recovery. Static history is replayed immediately; server-room
+// history is held until the next authenticated roster/world bind confirms the room.
+const HISTORY_RESYNC_SENTINEL = 'FCMCTL/1/RESYNC';
 // v2.9.2 and earlier emitted NUL-prefixed controls. Retain acceptance for clients
 // already in a session, but all new widget requests use printable framing.
 const LEGACY_WORLD_ID_SENTINEL_PREFIX = '\x00fcm.world.v1\x00';
@@ -72,6 +76,8 @@ const WORLD_CONTROL_WINDOW_SECONDS = 10;
 const MAX_WORLD_CONTROLS_PER_WINDOW = 6;
 const POLL_HISTORY_LIMIT        = 75;    // initial history window on cursor=0 — must cover ~12 msgs x 5 static channels + recent live traffic (the window is global, not per-channel)
 const REDIS_BROADCAST_CHANNEL   = 'chat:broadcast';
+const HISTORY_RESYNC_BIND_WINDOW_MS = 60_000;
+const relayInstanceId = uuidv4();
 
 /**
  * Build the human-facing link-flow URL (bare host + /link) from the public base URL.
@@ -268,6 +274,23 @@ interface SubscriberState {
 
 // Module-level subscriber set — cleared on disconnect.
 const subscribers = new Set<SubscriberState>();
+// A resync may arrive while a player is hopping worlds. Never replay the previous
+// room: consume this marker only when the next bind confirms the current room.
+const pendingServerHistoryResyncs = new Map<string, number>();
+
+function markServerHistoryResyncPending(userId: string): void {
+  const now = Date.now();
+  for (const [pendingUserId, expiresAt] of pendingServerHistoryResyncs) {
+    if (expiresAt <= now) pendingServerHistoryResyncs.delete(pendingUserId);
+  }
+  pendingServerHistoryResyncs.set(userId, now + HISTORY_RESYNC_BIND_WINDOW_MS);
+}
+
+function consumeServerHistoryResyncPending(userId: string): boolean {
+  const expiresAt = pendingServerHistoryResyncs.get(userId);
+  pendingServerHistoryResyncs.delete(userId);
+  return expiresAt !== undefined && expiresAt > Date.now();
+}
 
 // Redis pub/sub listener — initialised once per process.
 let pubSubReady = false;
@@ -291,6 +314,16 @@ async function backfillWorldToUser(userId: string, worldId: string): Promise<voi
   }
 }
 
+/** Replay the bounded SQL-backed history to every local native subscriber for a user. */
+async function backfillStaticHistoryToUser(userId: string): Promise<void> {
+  const history = await fetchHistoryEvents(0, POLL_HISTORY_LIMIT);
+  if (history.length === 0) return;
+  for (const sub of subscribers) {
+    if (sub.userId !== userId || sub.ws.readyState !== 1) continue;
+    for (const ev of history) send(sub.ws, { op: 'event', cursor: ev.id as number, event: ev });
+  }
+}
+
 /**
  * JOIN: the player entered `worldId`. Refresh the TTL always; on an actual world
  * CHANGE, re-bind this user's subscriber(s) (locally + across instances) and
@@ -298,8 +331,9 @@ async function backfillWorldToUser(userId: string, worldId: string): Promise<voi
  */
 async function handleWorldJoin(identity: RelayToken, worldId: string): Promise<void> {
   const prev = await getWorldId(identity.userId);
+  const shouldBackfillResync = consumeServerHistoryResyncPending(identity.userId);
   await setWorldId(identity.userId, worldId); // refresh 60s TTL (keepalive)
-  if (prev === worldId) return; // same world — just a keepalive, no membership change
+  if (prev === worldId && !shouldBackfillResync) return; // same world — just a keepalive, no membership change
   rebindLocalSubscribers(identity.userId, worldId);
   await publishRebind(identity.userId, worldId);
   await backfillWorldToUser(identity.userId, worldId);
@@ -313,8 +347,14 @@ async function applyRoomAssignments(): Promise<void> {
   const rooms = await computeRooms();
   for (const [userId, roomKey] of rooms) {
     const current = await getWorldId(userId);
+    const shouldBackfillResync = consumeServerHistoryResyncPending(userId);
     if (current === roomKey) {
       await setWorldId(userId, roomKey); // refresh TTL
+      if (shouldBackfillResync) {
+        rebindLocalSubscribers(userId, roomKey);
+        await publishRebind(userId, roomKey);
+        await backfillWorldToUser(userId, roomKey);
+      }
       continue;
     }
     await setWorldId(userId, roomKey);
@@ -327,6 +367,7 @@ async function applyRoomAssignments(): Promise<void> {
 
 /** LEAVE: the player left their world. Clear membership locally + across instances. */
 async function handleWorldLeave(identity: RelayToken): Promise<void> {
+  pendingServerHistoryResyncs.delete(identity.userId);
   await clearWorldId(identity.userId);
   await clearRoster(identity.userId);
   rebindLocalSubscribers(identity.userId, null);
@@ -393,13 +434,37 @@ async function ensurePubSub(): Promise<void> {
     });
 
     // Server-room events: worldId-scoped chat + membership rebinds.
-    await sub.subscribe(SERVER_EVENTS_CHANNEL, (message: string) => {
+    await sub.subscribe(SERVER_EVENTS_CHANNEL, async (message: string) => {
       let parsed: Record<string, unknown>;
       try { parsed = JSON.parse(message); } catch { return; }
 
       if (parsed.kind === 'rebind') {
         const userId = typeof parsed.userId === 'string' ? parsed.userId : null;
-        if (userId) rebindLocalSubscribers(userId, (parsed.worldId as string | null) ?? null);
+        const worldId = typeof parsed.worldId === 'string' ? parsed.worldId : null;
+        if (userId) {
+          const shouldBackfillResync = consumeServerHistoryResyncPending(userId);
+          rebindLocalSubscribers(userId, worldId);
+          if (shouldBackfillResync && worldId) {
+            try {
+              await backfillWorldToUser(userId, worldId);
+            } catch (err) {
+              logger.warn({ err, userId, worldId }, '[relayHandler] server history backfill on resync rebind failed');
+            }
+          }
+        }
+        return;
+      }
+
+      if (parsed.kind === 'history-resync') {
+        const userId = typeof parsed.userId === 'string' ? parsed.userId : null;
+        if (!userId) return;
+        if (parsed.sourceInstanceId === relayInstanceId) return;
+        markServerHistoryResyncPending(userId);
+        try {
+          await backfillStaticHistoryToUser(userId);
+        } catch (err) {
+          logger.warn({ err, userId }, '[relayHandler] static history backfill on resync failed');
+        }
         return;
       }
 
@@ -634,6 +699,25 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       sendControlAck(ws);
       return;
     }
+  }
+  if (slug === 'server' && body === HISTORY_RESYNC_SENTINEL) {
+    if (!(await checkWorldControlRateLimit(identity.userId))) {
+      send(ws, errEnvelope('rate_limited', 'World controls are temporarily rate limited'));
+      return;
+    }
+    markServerHistoryResyncPending(identity.userId);
+    try {
+      // Serve this process directly so recovery is not dependent on pub/sub loopback,
+      // then fan out to whichever backend owns the long-lived native subscriber.
+      await backfillStaticHistoryToUser(identity.userId);
+      await publishHistoryResync(identity.userId, relayInstanceId);
+    } catch (err) {
+      logger.warn({ err, userId: identity.userId }, '[relayHandler] history resync failed');
+      send(ws, errEnvelope('history_unavailable', 'Chat history is temporarily unavailable'));
+      return;
+    }
+    sendControlAck(ws);
+    return;
   }
 
   if (!ALL_SLUGS.includes(slug)) {

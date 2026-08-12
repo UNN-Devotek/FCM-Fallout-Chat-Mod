@@ -35,7 +35,7 @@ the normal relay event flow then refreshes the widget state.
 | `chat.v1.connect` | Register/resume and get initial state |
 | `chat.v1.pollEvents` | Cursor-based event polling |
 | `chat.v1.subscribe` | Register a live subscriber and enqueue bounded static/current-world history after its initial cursor |
-| `chat.v1.sendMessage` | Send a static-channel message or a reserved server control |
+| `chat.v1.sendMessage` | Send a static-channel message or an authenticated reserved server control |
 | `chat.v1.getAuthState` | Refresh linked/limited state |
 
 Static FCM channels use the slugs `global`, `trade`, `events`, `infests`, and
@@ -47,19 +47,18 @@ normal database channel.
 ## Ephemeral `server` rooms
 
 The widget periodically observes nearby names from approved HUD data sources and
-sends a roster control on `channel: 'server'`. Its wire body uses legacy relay
-control bytes, but the widget serializes those bytes as JSON `\u0000` / `\u001F`
-escapes before calling ZFE, so ZFE does not receive a raw leading NUL:
+sends a printable roster control on `channel: 'server'`:
 
 ```text
-\x00fcm.world.roster.v1\x00<name>\x1F<name>...
+FCMCTL/1/ROSTER:<name>|<name>...
 ```
 
-It can also send the compatibility controls:
+It can also send these controls:
 
 ```text
-\x00fcm.world.v1\x00<worldId>
-\x00fcm.world.leave.v1\x00
+FCMCTL/1/WORLD:<worldId>
+FCMCTL/1/LEAVE
+FCMCTL/1/RESYNC
 ```
 
 Controls are intercepted before ordinary channel validation and are never stored
@@ -71,6 +70,13 @@ Each accepted control returns a non-empty, synthetic UUID in `messageId`. ZFE's
 `chat.v1.sendMessage` contract requires a message ID for every successful send;
 the UUID acknowledges the operation only and does not represent a persisted chat
 message.
+
+`RESYNC` is emitted once after widget initialization. It replays the bounded static
+history to the long-lived native subscriber, including when the SWF was recreated but
+ZFE retained and drained that subscriber. The relay marks server-room history pending
+and releases it only after the next accepted roster/world bind. This keeps the previous
+world's ephemeral messages out of a newly joined world. Replay records are deduplicated
+by `messageId` in the widget.
 
 `worldRosterService` stores short-lived rosters and builds connected components
 from mutually observed names. The stable room key feeds the existing Redis

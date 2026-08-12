@@ -165,6 +165,11 @@ var events:String = __ZFE.call("chat.v1.pollEvents", "{\"max\":64}");
 The SWF **still polls ZFE** even when production push is active. ZFE's private native subscriber
 normalizes pushed relay events into the same `pollEvents` queue.
 
+If a HUD widget is recreated while that native subscriber remains connected, `pollEvents` can be
+empty because its queue was already drained. FCM's optional widget uses an authenticated reserved
+`chat.v1.sendMessage` control (`FCMCTL/1/RESYNC`) to request a bounded replay from the relay; it is
+not a new public `chat.v1` operation.
+
 Send:
 
 ```actionscript

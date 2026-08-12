@@ -326,11 +326,12 @@ if widget_src:
           "FCMChatWidget gates SERVER on an acknowledged relay control")
     check("blank worldId ignored; fresh roster session remains authoritative" in widget_src,
           "FCMChatWidget keeps a fresh roster room when legacy worldId is blank")
-    check('"\\x00fcm.world.roster.v1\\x00"' in widget_src and 'names.join("\\x1F")' in widget_src,
-          "FCMChatWidget sends legacy roster controls")
-    check('s = s.split("\\x00").join("\\\\u0000");' in widget_src
-          and 's = s.split("\\x1F").join("\\\\u001F");' in widget_src,
-          "FCMChatWidget JSON-escapes legacy control bytes before ZFE receives them")
+    check('"FCMCTL/1/ROSTER:"' in widget_src and 'names.join("\\x1F")' in widget_src,
+          "FCMChatWidget sends printable roster controls")
+    check('"FCMCTL/1/RESYNC"' in widget_src and 'function requestHistoryResync' in widget_src,
+          "FCMChatWidget requests history replay after HUD reload")
+    check('function shouldRenderReplayMessage' in widget_src and '_seenMessageIds' in widget_src,
+          "FCMChatWidget deduplicates replayed history records")
     check("Shared.AS3.Events.CustomEvent" in widget_src,
           "FCMChatWidget resolves the game-qualified CustomEvent for the edit lock")
     check("startTypeMirror" not in widget_src,

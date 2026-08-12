@@ -1,6 +1,6 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.0. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.1. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
@@ -17,11 +17,15 @@ that v2.9.2 removed.
 
 The `SERVER` room uses an authenticated relay session. The widget sends a bounded
 nearby-player roster control from HUD UI data; the backend derives a short-lived
-room from it. The control uses the relay's legacy NUL framing, but JSON-escapes
-each NUL/unit-separator byte before it crosses ZFE, so ZFE never receives a raw
-control byte or rejects the message as empty. There is no client-side relay-control
-HMAC or shared secret in the distributed SWF. `worldId` controls are a guarded
+room from it. New controls use printable `FCMCTL/1/*` framing; the relay retains
+legacy NUL framing for deployed widgets. There is no client-side relay-control HMAC
+or shared secret in the distributed SWF. `worldId` controls are a guarded
 compatibility fallback.
+
+On every widget initialization, v2.10.1 sends the authenticated `FCMCTL/1/RESYNC`
+control. This restores static-feed history even if HUDModLoader recreated the SWF while
+ZFE kept its native subscriber alive. Server-room history waits for the next confirmed
+roster/world bind, so history from the previous world cannot leak into the new one.
 
 ## Requirements
 
@@ -142,14 +146,15 @@ game's `DiagnosticSnapshot` action and is not a reliable route to the loader men
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.10.0`.
+1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.10.1`.
 2. The tab row contains one label for each visible channel—no boxed duplicate labels.
 3. Switch channels, join/leave a world, and switch again; the tab row remains single-rendered.
 4. Send a body containing `{`, `}`, quotes, and backslashes; later events still render.
 5. Temporarily disconnect the relay. After three failed polls the widget shows reconnecting,
    then reconnects once the relay returns.
-6. Confirm `SERVER` remains hidden until the relay acknowledges the JSON-escaped legacy roster/world control,
-   then remains isolated to its derived room while static channels still work.
+6. Confirm `SERVER` remains hidden until the relay acknowledges the printable roster/world control,
+   then remains isolated to its derived room while static channels still work. Change worlds and confirm
+   static history returns while only the newly bound server-room history appears.
 7. While typing, confirm the fallback has only one visible text renderer; game movement/actions
    are locked; Page Down/Page Up switch channels without closing the input or losing its draft;
    Enter/Esc restore game input.

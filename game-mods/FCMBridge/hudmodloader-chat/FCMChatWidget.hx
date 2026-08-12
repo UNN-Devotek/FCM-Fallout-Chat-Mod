@@ -104,7 +104,7 @@ class FCMChatWidget extends MovieClip {
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal — see
     // backend/src/services/relay/clientCapability.ts (MIN_COSMETICS_VERSION).
-    static inline var VERSION:String  = "2.10.0";  // clientVersion handshake (relay capability gating)
+    static inline var VERSION:String  = "2.10.1";  // clientVersion handshake (relay capability gating)
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -153,16 +153,18 @@ class FCMChatWidget extends MovieClip {
     // The relay authenticates every frame with the ZFE-held relay token. Do NOT put
     // a shared secret in this distributable SWF: it cannot authenticate a client
     // and creates a production configuration foot-gun. These bounded, untrusted HUD
-    // metadata controls are consumed by the authenticated relay. The relay deployed
-    // before v2.9.3 recognises this legacy frame; jsonEscape serializes its control
-    // bytes as JSON \u escapes, so ZFE never sees a raw leading NUL.
-    static inline var WORLD_CTRL_PREFIX:String  = "\x00fcm.world.v1\x00";
+    // metadata controls are consumed by the authenticated relay. Printable framing
+    // survives ZFE's string boundary; the relay still accepts legacy NUL controls.
+    static inline var WORLD_CTRL_PREFIX:String  = "FCMCTL/1/WORLD:";
     // LEAVE control: sent when the player leaves a world (worldId cleared).
-    static inline var WORLD_LEAVE_PREFIX:String = "\x00fcm.world.leave.v1\x00";
+    static inline var WORLD_LEAVE_PREFIX:String = "FCMCTL/1/LEAVE";
     // ROSTER control: observed nearby character names (no worldId exists in the UI
     // layer — the relay derives world rooms from sightings). Body is the bounded
     // US-separated name list; actor identity comes only from the authenticated frame.
-    static inline var WORLD_ROSTER_PREFIX:String = "\x00fcm.world.roster.v1\x00";
+    static inline var WORLD_ROSTER_PREFIX:String = "FCMCTL/1/ROSTER:";
+    // Replays static history after a HUD reload. Server history stays deferred until
+    // the next authenticated roster/world bind confirms the new room.
+    static inline var HISTORY_RESYNC_PREFIX:String = "FCMCTL/1/RESYNC";
     static inline var ROSTER_FRESH_MS:Float = 60000;   // observation freshness window
     static inline var ROSTER_SEND_MS:Float  = 30000;   // periodic roster resend
 
@@ -183,6 +185,8 @@ class FCMChatWidget extends MovieClip {
 
     // ── Chat render state ─────────────────────────────────────────────────────
     var _records:Array<{color:String, channel:String, user:String, body:String, ts:String}> = [];
+    var _seenMessageIds:Map<String,Bool> = new Map();
+    var _seenMessageOrder:Array<String> = [];
     var _bScrolling:Bool         = false;
     var _scrollSnapTimer:Timer   = null;   // deferred bottom-snap after htmlText relayout
     var _newWhileScrolled:Int    = 0;
@@ -1427,7 +1431,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.10.0");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.10.1");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
@@ -1502,6 +1506,7 @@ class FCMChatWidget extends MovieClip {
         refreshAuthState();
         _cursor = 0;
         startPollTimer();
+        requestHistoryResync();
         startWorldTimer();
         startOpenKeyTimer();
     }
@@ -1669,6 +1674,26 @@ class FCMChatWidget extends MovieClip {
         if (_pollTimer != null) { _pollTimer.stop(); _pollTimer = null; }
     }
 
+    /**
+     * HUDModLoader can recreate this SWF while ZFE retains its native subscriber.
+     * That subscriber's queue is already drained, so request static history before
+     * submitting a fresh roster/world bind for the new game server.
+     */
+    function requestHistoryResync():Void {
+        if (_api == null || !_connected) return;
+        var payload:String = '{"channel":"server","targetUserId":"","body":"' + HISTORY_RESYNC_PREFIX + '"}';
+        try {
+            var raw:String = Std.string(_api.call("chat.v1.sendMessage", payload));
+            if (raw.indexOf('"success":true') >= 0 || raw.indexOf('success:true') >= 0) {
+                zfeLog("info", "history", "resync requested");
+            } else {
+                zfeLog("warn", "history", "resync rejected raw=" + clip200(raw));
+            }
+        } catch (e:Dynamic) {
+            zfeLog("warn", "history", "resync threw: " + Std.string(e));
+        }
+    }
+
     function pollEvents():Void {
         if (_api == null || !_connected) return;
         var payload:String = '{"max":64,"cursor":' + _cursor + '}';
@@ -1780,6 +1805,7 @@ class FCMChatWidget extends MovieClip {
             // channel's one-shot subscribe backfill — history looked empty on
             // Trading/Events/Raids/Infests forever after connect.
             if (CHAN_SLUGS.indexOf(channel) < 0) continue;
+            if (!shouldRenderReplayMessage(messageId)) continue;
 
             _records.push({ color: hx(_cfg.senderColor), channel: channel, user: displayName, body: body, ts: createdAt });
             while (_records.length > _cfg.maxMessages) _records.shift();
@@ -1793,6 +1819,20 @@ class FCMChatWidget extends MovieClip {
             renderRecords();
             bumpAutoHide();                        // any new message counts as activity
         }
+    }
+
+    /** Keep replayed history from duplicating records when ZFE also makes a fresh subscribe. */
+    function shouldRenderReplayMessage(messageId:String):Bool {
+        if (messageId == null || messageId.length == 0) return true;
+        if (_seenMessageIds.exists(messageId)) return false;
+        _seenMessageIds.set(messageId, true);
+        _seenMessageOrder.push(messageId);
+        var cap:Int = Std.int(Math.max(256, _cfg.maxMessages * 2));
+        while (_seenMessageOrder.length > cap) {
+            var oldest:String = _seenMessageOrder.shift();
+            _seenMessageIds.remove(oldest);
+        }
+        return true;
     }
 
     /**

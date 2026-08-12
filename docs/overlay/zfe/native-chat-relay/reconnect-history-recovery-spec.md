@@ -1,8 +1,8 @@
 # Reconnect History Recovery — Specification
 
-**Status:** Corrected — hosted validation pending
-**Version:** 0.1
-**Date:** 2026-08-10
+**Status:** Implemented — hosted validation pending
+**Version:** 0.2
+**Date:** 2026-08-12
 
 ## Why
 
@@ -41,9 +41,12 @@ copy of each expected record and each world feed contains only its own records.
 
 ## Constraints
 
-- The long-lived subscription enqueues bounded static-feed and current-world history after its
+- A fresh long-lived subscription enqueues bounded static-feed and current-world history after its
   supplied cursor. ZFE's `pollEvents` drains that native queue rather than issuing a separate
   relay poll request at HUD startup.
+- A widget reload with an already-live ZFE subscriber sends authenticated `FCMCTL/1/RESYNC`.
+  Static history is replayed immediately; server-room history is released only after the next
+  authenticated roster/world bind, preventing old-world history from crossing a transition.
 - History retrieval with an initial cursor returns the bounded recent history for static feeds;
   a later cursor returns only records newer than that cursor.
 - Cursors must move forward monotonically and a record must never be displayed more than once for a
