@@ -70,6 +70,10 @@ DISCORD_SERVER_SHOP_URL=
 Note the production boot guard (`collectSupporterTierProductionErrors`) only fires when
 `NODE_ENV=production`, so an empty shop URL is fine on dev.
 
+`backend-dev` deliberately does not use `env_file`; `deploy/dev/docker-compose.yml`
+explicitly forwards these four Dokploy stack variables. Keep that wiring with any future
+compose refactor, or the dev stack will silently fall back to the disabled defaults.
+
 ## Step 4 — Deploy
 
 The dev stack tracks the `dev` branch and **auto-deploys on push**, so merging the
