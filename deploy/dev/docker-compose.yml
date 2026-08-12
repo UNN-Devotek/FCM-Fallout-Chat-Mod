@@ -182,6 +182,15 @@ services:
       DEVELOPER_ROLE_ID: ${DEVELOPER_ROLE_ID}
       SUPPORT_ROLE_ID: ${SUPPORT_ROLE_ID}
 
+      # --- Supporter cosmetics (dev-only; roles are assigned by hand) ---
+      # This compose service intentionally does not use env_file, so every supporter
+      # variable must be passed through explicitly. Keep the master switch false by
+      # default; the isolated dev Dokploy stack sets it true only for QA.
+      SUPPORTER_TIER_ENABLED: ${SUPPORTER_TIER_ENABLED:-false}
+      SUPPORTER_ROLE_ID: ${SUPPORTER_ROLE_ID:-}
+      OVERSEER_CIRCLE_ROLE_ID: ${OVERSEER_CIRCLE_ROLE_ID:-}
+      DISCORD_SERVER_SHOP_URL: ${DISCORD_SERVER_SHOP_URL:-}
+
       # --- QA golden-build flow (dev-only) ---
       # This service does NOT use env_file, so the QA vars (present in the Dokploy stack env)
       # must be listed explicitly or they never reach the container — without DEV_QA_ROLE_ID the
