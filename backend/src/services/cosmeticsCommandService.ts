@@ -2,7 +2,7 @@
  * Discord `/cosmetics` command.
  *
  * This layer ONLY marshals interactions. Every rule — validation, tier gating,
- * cooldown, blacklist, cache busting, live push, audit — lives in
+ * blacklist, cache busting, live push, audit — lives in
  * cosmeticsService.applyCosmetics, which the web PATCH endpoint calls too. That is
  * what makes the two surfaces structurally incapable of drifting; a change made here
  * appears instantly in the overlay and vice versa, through the same code.
@@ -29,7 +29,7 @@ import { getUserByDiscordId } from './userLookup';
 import { getSupporterStatus } from './supporterService';
 import { applyCosmetics, resolveCosmetics, type CosmeticPatch } from './cosmetics/cosmeticsService';
 import { COLOR_PRESETS, EFFECT_PRESETS, findColorPreset, findEffectPreset } from './cosmetics/presets';
-import { NAME_MAX_LENGTH, NAME_MIN_LENGTH, TAG_MAX_LENGTH } from './cosmetics/validation';
+import { TAG_MAX_LENGTH } from './cosmetics/validation';
 import { tierLabel } from '../utils/supporterTier';
 import {
   buildCosmeticId,
@@ -102,12 +102,12 @@ async function handleShow(interaction: any): Promise<void> {
   ]);
 
   const embed = new EmbedBuilder()
-    .setTitle(`${cosmetics.displayName ?? user.username} — chat appearance`)
+    .setTitle(`${user.chatName ?? user.username} — chat appearance`)
     // The embed's colour strip is a real swatch, so this doubles as a live preview.
     .setColor(cosmetics.nameColor ? Number.parseInt(cosmetics.nameColor.replace('#', ''), 16) : BRAND_EMBED_COLOR)
     .addFields(
       { name: 'Tier', value: tierLabel(status.tier), inline: true },
-      { name: 'Name', value: cosmetics.displayName ?? '_default_', inline: true },
+      { name: 'Chat name', value: user.chatName ?? '_default_', inline: true },
       { name: 'Colour', value: cosmetics.nameColor ?? '_default_', inline: true },
       { name: 'Effect', value: findEffectPreset(cosmetics.effectId)?.label ?? '_none_', inline: true },
       { name: 'Tag', value: cosmetics.tag ?? '_none_', inline: true },
@@ -147,24 +147,6 @@ async function handleColorOrEffect(interaction: any, kind: 'color' | 'effect'): 
   }
 }
 
-async function showNameModal(interaction: any): Promise<void> {
-  const modal = new ModalBuilder()
-    .setCustomId(buildCosmeticId('name'))
-    .setTitle('Change your chat display name');
-  modal.addComponents(
-    new ActionRowBuilder<TextInputBuilder>().addComponents(
-      new TextInputBuilder()
-        .setCustomId('value')
-        .setLabel(`Display name (${NAME_MIN_LENGTH}-${NAME_MAX_LENGTH} characters)`)
-        .setStyle(TextInputStyle.Short)
-        .setMinLength(NAME_MIN_LENGTH)
-        .setMaxLength(NAME_MAX_LENGTH)
-        .setRequired(true),
-    ),
-  );
-  await interaction.showModal(modal);
-}
-
 async function showTagModal(interaction: any): Promise<void> {
   const modal = new ModalBuilder()
     .setCustomId(buildCosmeticId('tag'))
@@ -182,12 +164,12 @@ async function showTagModal(interaction: any): Promise<void> {
   await interaction.showModal(modal);
 }
 
-async function handleModalSubmit(interaction: any, field: 'name' | 'tag'): Promise<void> {
+async function handleTagModalSubmit(interaction: any): Promise<void> {
   const caller = await requireLinkedUser(interaction);
   if (!caller) return;
 
   const value = interaction.fields.getTextInputValue('value');
-  const patch = field === 'name' ? { displayName: value } : { customTag: value };
+  const patch = { customTag: value };
 
   // Re-check the tier at SUBMIT, not just when the modal was opened — the tier could
   // have lapsed in between. Fail closed.
@@ -199,9 +181,7 @@ async function handleModalSubmit(interaction: any, field: 'name' | 'tag'): Promi
 
   await ephem(
     interaction,
-    field === 'name'
-      ? `Your chat display name is now **${result.cosmetics.displayName}**.`
-      : `Your chat tag is now **${result.cosmetics.tag}**.`,
+    `Your chat tag is now **${result.cosmetics.tag}**.`,
   );
 }
 
@@ -211,14 +191,13 @@ async function handleClear(interaction: any): Promise<void> {
 
   const field: string = interaction.options.getString('field') ?? 'all';
   const BY_FIELD: Record<string, CosmeticPatch> = {
-    name: { displayName: null },
     color: { colorPresetId: null, customColorHex: null },
     effect: { effectId: null },
     tag: { customTag: null },
   };
   const patch: CosmeticPatch =
     field === 'all'
-      ? { displayName: null, colorPresetId: null, customColorHex: null, effectId: null, customTag: null }
+      ? { colorPresetId: null, customColorHex: null, effectId: null, customTag: null }
       : BY_FIELD[field] ?? {};
 
   const result = await applyCosmetics({ userId: caller.userId, patch, actor: { kind: 'self', discordId: caller.discordId } });
@@ -239,7 +218,7 @@ async function handleHelp(interaction: any): Promise<void> {
         'Customise how your name looks in Fallout Chat Mod. You can do all of this here, or on your profile on the website — both use the same settings.',
         '',
         '**Everyone**',
-        `\`/cosmetics name\` — set a display name (${NAME_MIN_LENGTH}-${NAME_MAX_LENGTH} characters)`,
+        '`/name` — set your free chat name (also available on your website profile)',
         '`/cosmetics color` — pick a name colour',
         '`/cosmetics show` — see your current look',
         '`/cosmetics clear` — go back to default',
@@ -300,7 +279,6 @@ async function onInteraction(interaction: Interaction): Promise<void> {
         case 'show': return await handleShow(i);
         case 'color': return await handleColorOrEffect(i, 'color');
         case 'effect': return await handleColorOrEffect(i, 'effect');
-        case 'name': return await showNameModal(i);
         case 'tag': return await showTagModal(i);
         case 'clear': return await handleClear(i);
         case 'help': return await handleHelp(i);
@@ -313,8 +291,7 @@ async function onInteraction(interaction: Interaction): Promise<void> {
     if (!parsed.isOurs) return;
 
     if (i.isModalSubmit?.()) {
-      if (parsed.action === 'name') return await handleModalSubmit(i, 'name');
-      if (parsed.action === 'tag') return await handleModalSubmit(i, 'tag');
+      if (parsed.action === 'tag') return await handleTagModalSubmit(i);
     }
   } catch (err) {
     logger.error({ err }, '[cosmetics] interaction handler error');
@@ -342,7 +319,6 @@ function buildCommand() {
       .setName('effect')
       .setDescription('Pick a name effect (supporters)')
       .addStringOption((o) => o.setName('preset').setDescription('Effect').setRequired(true).setAutocomplete(true)))
-    .addSubcommand((s) => s.setName('name').setDescription('Change your chat display name'))
     .addSubcommand((s) => s.setName('tag').setDescription("Set a tag beside your name (Overseer's Circle)"))
     .addSubcommand((s) => s
       .setName('clear')
@@ -353,7 +329,6 @@ function buildCommand() {
         .setRequired(false)
         .addChoices(
           { name: 'everything', value: 'all' },
-          { name: 'name', value: 'name' },
           { name: 'colour', value: 'color' },
           { name: 'effect', value: 'effect' },
           { name: 'tag', value: 'tag' },

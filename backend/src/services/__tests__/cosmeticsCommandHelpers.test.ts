@@ -12,7 +12,6 @@ import {
   parseCosmeticId,
   buildColorChoices,
   buildEffectChoices,
-  formatRetryAfter,
   reasonToMessage,
   AUTOCOMPLETE_LIMIT,
 } from '../cosmeticsCommandHelpers';
@@ -95,21 +94,6 @@ describe('autocomplete choices', () => {
   });
 });
 
-describe('formatRetryAfter', () => {
-  const MIN = 60_000;
-  test('renders minutes, hours and days', () => {
-    assert.equal(formatRetryAfter(1 * MIN), '1 minute');
-    assert.equal(formatRetryAfter(30 * MIN), '30 minutes');
-    assert.equal(formatRetryAfter(90 * MIN), '2 hours');
-    assert.equal(formatRetryAfter(72 * 60 * MIN), '3 days');
-  });
-
-  test('never renders zero or a negative remainder', () => {
-    assert.equal(formatRetryAfter(0), '0 minutes');
-    assert.equal(formatRetryAfter(1), '1 minute');
-  });
-});
-
 describe('reasonToMessage', () => {
   // The CTA values below are opaque sentinels rather than real URLs on purpose. It
   // makes the assertion stronger (it proves the EXACT value we passed is what gets
@@ -145,10 +129,6 @@ describe('reasonToMessage', () => {
     assert.ok(!/pattern|regex|blacklist/i.test(msg));
   });
 
-  test('cooldown humanises the remaining time', () => {
-    assert.ok(reasonToMessage('cooldown', { retryAfterMs: 90 * 60_000 }, {}).includes('2 hours'));
-  });
-
   test('not_linked points at the link page when known', () => {
     assert.ok(reasonToMessage('not_linked', {}, { linkUrl: LINK_SENTINEL }).includes(LINK_SENTINEL));
     assert.ok(reasonToMessage('not_linked', {}, {}).length > 0);
@@ -156,16 +136,11 @@ describe('reasonToMessage', () => {
 
   test('every known reason produces non-empty copy', () => {
     for (const reason of [
-      'tier_locked', 'cooldown', 'blacklisted', 'invalid_name',
+      'tier_locked', 'blacklisted',
       'invalid_color', 'invalid_tag', 'not_linked', 'not_found', 'rate_limited', 'wat',
     ]) {
       assert.ok(reasonToMessage(reason, {}, {}).length > 0, `${reason} produced empty copy`);
     }
   });
 
-  test('name codes map to specific guidance', () => {
-    assert.ok(reasonToMessage('invalid_name', { code: 'too_short' }, {}).includes('short'));
-    assert.ok(reasonToMessage('invalid_name', { code: 'too_long' }, {}).includes('long'));
-    assert.ok(reasonToMessage('invalid_name', { code: 'empty_after_sanitize' }, {}).includes('empty'));
-  });
 });

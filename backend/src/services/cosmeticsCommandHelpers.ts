@@ -85,15 +85,6 @@ export function buildEffectChoices(
   return decorated.slice(0, AUTOCOMPLETE_LIMIT).map(({ name, value }) => ({ name, value }));
 }
 
-/** Humanise a cooldown remainder for an ephemeral reply. */
-export function formatRetryAfter(ms: number): string {
-  const totalMinutes = Math.ceil(ms / 60000);
-  if (totalMinutes < 60) return `${totalMinutes} minute${totalMinutes === 1 ? '' : 's'}`;
-  const hours = Math.ceil(totalMinutes / 60);
-  if (hours < 48) return `${hours} hour${hours === 1 ? '' : 's'}`;
-  return `${Math.ceil(hours / 24)} days`;
-}
-
 export interface ReplyContext {
   shopUrl?: string | null;
   linkUrl?: string | null;
@@ -108,7 +99,7 @@ export interface ReplyContext {
  */
 export function reasonToMessage(
   reason: string,
-  detail: { requiredTier?: SupporterTier; retryAfterMs?: number; message?: string; field?: string; code?: string },
+  detail: { requiredTier?: SupporterTier; message?: string; field?: string; code?: string },
   ctx: ReplyContext = {},
 ): string {
   switch (reason) {
@@ -117,12 +108,8 @@ export function reasonToMessage(
       const cta = ctx.shopUrl ? ` You can support the project here: ${ctx.shopUrl}` : '';
       return `That option is part of **${need}**.${cta}`;
     }
-    case 'cooldown':
-      return `You changed your name recently. You can change it again in **${formatRetryAfter(detail.retryAfterMs ?? 0)}**.`;
     case 'blacklisted':
       return detail.message ?? 'That is not allowed. Please choose something else.';
-    case 'invalid_name':
-      return nameCodeMessage(detail.code);
     case 'invalid_tag':
       return detail.code === 'too_long'
         ? 'That tag is too long.'
@@ -142,16 +129,6 @@ export function reasonToMessage(
   }
 }
 
-function nameCodeMessage(code: string | undefined): string {
-  switch (code) {
-    case 'too_short': return 'That name is too short.';
-    case 'too_long': return 'That name is too long (32 characters max).';
-    case 'empty_after_sanitize':
-      return 'That name is empty once unsupported characters are removed. Try letters and numbers.';
-    default: return 'That name is not usable.';
-  }
-}
-
 export default {
   CUSTOM_ID_PREFIX,
   AUTOCOMPLETE_LIMIT,
@@ -159,7 +136,6 @@ export default {
   parseCosmeticId,
   buildColorChoices,
   buildEffectChoices,
-  formatRetryAfter,
   reasonToMessage,
 };
 module.exports = {
@@ -169,7 +145,6 @@ module.exports = {
   parseCosmeticId,
   buildColorChoices,
   buildEffectChoices,
-  formatRetryAfter,
   reasonToMessage,
 };
 module.exports.default = module.exports;

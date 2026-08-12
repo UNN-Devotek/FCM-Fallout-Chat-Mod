@@ -9,6 +9,7 @@ import reactionRoleService from './reactionRoleService';
 import ticketService from './ticketService';
 import supporterSyncService from './supporterSyncService';
 import cosmeticsCommandService from './cosmeticsCommandService';
+import chatNameCommandService from './chatNameCommandService';
 import { getEntry, bestMatch } from './wikiCatalogService';
 import { canon } from '../utils/textCanon';
 import { buildOverLengthDm } from '../utils/overLengthDm';
@@ -353,6 +354,7 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
   ticketService.register(discordClient);
   supporterSyncService.register(discordClient);
   cosmeticsCommandService.register(discordClient);
+  chatNameCommandService.register(discordClient);
 
   // Invalidate the emoji cache whenever the guild's emoji set changes.
   // Lazy-require to avoid circular deps (discordEmojisController imports us too).
@@ -618,14 +620,14 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
     try {
       const linked = await prisma.user.findFirst({
         where: { discordId: msg.author.id },
-        select: { id: true, username: true },
+        select: { id: true, username: true, chatName: true },
       });
       const hasFo76Name =
         !!linked?.username && linked.username !== 'Wanderer' && !linked.username.startsWith('pending-');
 
-      if (linked && hasFo76Name) {
+      if (linked && (hasFo76Name || linked.chatName)) {
         relayUserId = linked.id;
-        relayUsername = linked.username; // FO76 name
+        relayUsername = linked.chatName ?? linked.username;
       } else {
         // Synthetic Discord-relay user. username = `pending-discord-<id>` so
         // resolveDisplayName() skips it and falls through to discordDisplayName.

@@ -10,8 +10,6 @@ import {
   normalizeTier,
   tierAtLeast,
   tierLabel,
-  nameCooldownMs,
-  nameCooldownRemainingMs,
   privilegesActive,
   TIER_ORDER,
 } from '../supporterTier';
@@ -97,48 +95,6 @@ describe('tierLabel', () => {
     assert.equal(tierLabel('none'), 'Vault Dweller');
     assert.equal(tierLabel('supporter'), 'Supporter');
     assert.equal(tierLabel('overseer'), "Overseer's Circle");
-  });
-});
-
-describe('name change cooldown', () => {
-  const DAY = 24 * 60 * 60 * 1000;
-
-  test('is 30d free, 7d supporter, 24h overseer', () => {
-    assert.equal(nameCooldownMs('none'), 30 * DAY);
-    assert.equal(nameCooldownMs('supporter'), 7 * DAY);
-    assert.equal(nameCooldownMs('overseer'), DAY);
-  });
-
-  test('a user who never changed their name is not on cooldown', () => {
-    assert.equal(nameCooldownRemainingMs(null, 'none', 1_000_000), 0);
-    assert.equal(nameCooldownRemainingMs(undefined, 'none', 1_000_000), 0);
-  });
-
-  test('reports the remaining time mid-cooldown', () => {
-    const now = 100 * DAY;
-    const changedAt = new Date(now - 2 * DAY);
-    assert.equal(nameCooldownRemainingMs(changedAt, 'supporter', now), 5 * DAY);
-    // Overseer's 24h window has already elapsed for the same timestamp.
-    assert.equal(nameCooldownRemainingMs(changedAt, 'overseer', now), 0);
-  });
-
-  test('returns 0 exactly at the boundary', () => {
-    const now = 100 * DAY;
-    assert.equal(nameCooldownRemainingMs(new Date(now - 7 * DAY), 'supporter', now), 0);
-  });
-
-  test('accepts an ISO string and ignores an unparseable value', () => {
-    const now = Date.parse('2026-08-06T00:00:00.000Z');
-    const changed = '2026-08-05T00:00:00.000Z';
-    assert.equal(nameCooldownRemainingMs(changed, 'overseer', now), 0);
-    assert.equal(nameCooldownRemainingMs('not-a-date', 'none', now), 0);
-  });
-
-  test('upgrading tier shortens an in-flight cooldown', () => {
-    const now = 100 * DAY;
-    const changedAt = new Date(now - 10 * DAY);
-    assert.ok(nameCooldownRemainingMs(changedAt, 'none', now) > 0); // still waiting on free
-    assert.equal(nameCooldownRemainingMs(changedAt, 'supporter', now), 0); // supporter is free to change
   });
 });
 

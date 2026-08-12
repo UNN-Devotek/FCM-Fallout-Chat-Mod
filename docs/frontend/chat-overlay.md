@@ -576,7 +576,7 @@ a `proxy:ws:close` event).
 `sock.close()` so the upstream relay connection is always torn down when the renderer's logical
 socket closes.
 
-## Supporter name cosmetics
+## Supporter chat cosmetics
 
 `ChatMessage` carries `nameColor`, `effectId`, `tag` and `badges`, resolved server-side
 in `ingestMessage.attachCosmetics()`. Absent for the vast majority of users, who render

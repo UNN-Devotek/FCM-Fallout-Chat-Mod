@@ -99,7 +99,9 @@ Work through all four surfaces before promoting to prod.
 ### Website — `dev.falloutchatmod.com`
 
 1. Profile → **Chat appearance** panel is visible.
-2. Set a display name; confirm the counter, validation, and the three preview rows.
+2. Set a free **Chat name** in the panel above it; confirm it immediately updates the
+   three appearance preview rows. Clear it and confirm FCM returns to the Fallout 76 /
+   Discord-derived name.
 3. Pick a free colour; confirm it applies immediately in chat.
 4. Supporter and Overseer colours/effects are **visible but frosted**, not hidden.
 5. Clicking a locked one is rejected and names the required tier.
@@ -109,7 +111,7 @@ Work through all four surfaces before promoting to prod.
 
 7. `/cosmetics help` returns an ephemeral embed.
 8. `/cosmetics color` autocomplete lists free colours first, locked ones marked.
-9. `/cosmetics name` opens a modal; submitting applies.
+9. `/name` opens a modal; submitting applies the same free chat name as the website.
 10. `/cosmetics show` embed's colour strip matches the chosen colour.
 11. Locked preset → ephemeral reply naming the tier.
 12. A name that trips the blacklist is rejected **without naming the pattern**.

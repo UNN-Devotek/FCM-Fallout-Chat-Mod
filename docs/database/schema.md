@@ -14,6 +14,7 @@ Central user record created at first overlay registration.
 |---|---|---|
 | `id` | UUID PK | `gen_random_uuid()` |
 | `username` | TEXT UNIQUE | FO76 in-game name; validated against `name_blacklist` |
+| `chat_name` | TEXT nullable | Optional free FCM chat name. Set from Profile → **Chat name** or Discord `/name`; null falls back to the ordinary resolved identity. |
 | `install_token` | TEXT UNIQUE | Per-install anonymous identity token (24h ephemeral sessions in Redis) |
 | `discord_id_link` | TEXT UNIQUE | Discord user ID after OAuth link |
 | `discord_username` / `discord_display_name` / `discord_avatar` | TEXT | Updated on every Discord OAuth callback |
@@ -26,7 +27,8 @@ Central user record created at first overlay registration.
 | `saved_discord_roles` | JSON | Role IDs stripped at ban time; restored on unban |
 | `created_at` / `updated_at` | TIMESTAMPTZ | Standard audit fields |
 
-Display-name priority (applied in code, not a DB column): `username` if set and not `'Wanderer'`, then `discord_display_name`, then `discord_username`.
+Display-name priority (applied in code): `chat_name` when set, then `username` if set
+and not `'Wanderer'`, then `discord_display_name`, then `discord_username`.
 
 ### `sessions` (`Session`)
 
@@ -435,13 +437,13 @@ users have no row at all**, which is the default-identity state.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `user_id` | UUID PK/FK | → `users.id`, `ON DELETE CASCADE` |
-| `custom_display_name` | TEXT | Null = use the resolved FO76/Discord name |
+| `custom_display_name` | TEXT | **Deprecated.** Backfilled into `users.chat_name` by `20260812193000_free_chat_name`; retained temporarily for safe rollout and no longer read or written. |
 | `color_preset_id` | TEXT | Catalog preset id; wins over `custom_color_hex` |
 | `custom_color_hex` | TEXT | From the bounded HSL picker |
 | `effect_id` | TEXT | Desktop-only render effect |
 | `custom_tag` | TEXT | Overseer tier |
 | `cosmetics_enabled` | BOOLEAN | User-facing master switch; also what a moderator reset flips |
-| `display_name_changed_at` | TIMESTAMPTZ | Drives the per-tier name cooldown |
+| `display_name_changed_at` | TIMESTAMPTZ | **Deprecated** with `custom_display_name`; no runtime cooldown exists. |
 
 ## `supporter_entitlements`
 

@@ -2,7 +2,7 @@
  * Cosmetics REST surface.
  *
  * These handlers deliberately contain NO business logic. Every rule — validation,
- * tier gating, cooldown, blacklist, cache busting, live push, audit — lives in
+ * tier gating, blacklist, cache busting, live push, audit — lives in
  * cosmeticsService.applyCosmetics, which the Discord `/cosmetics` commands call too.
  * All this layer does is marshal HTTP and translate the service's `reason` into an
  * RFC 7807 status. That is what keeps the web and Discord surfaces from drifting.
@@ -23,19 +23,18 @@ import {
 import { COLOR_PRESETS, EFFECT_PRESETS, REDUCED_MOTION_FALLBACK, CUSTOM_COLOR_BOUNDS } from '../services/cosmetics/presets';
 import { RESERVED_COLORS, RESERVED_MIN_DISTANCE } from '../services/cosmetics/reservedColors';
 import { MIN_CONTRAST, CONTRAST_BACKGROUNDS } from '../utils/colorContrast';
-import { NAME_MIN_LENGTH, NAME_MAX_LENGTH, TAG_MAX_LENGTH } from '../services/cosmetics/validation';
+import { TAG_MAX_LENGTH } from '../services/cosmetics/validation';
 import { getSupporterStatus } from '../services/supporterService';
-import { tierLabel, nameCooldownMs } from '../utils/supporterTier';
+import { tierLabel } from '../utils/supporterTier';
 
 /** Map a service rejection onto an HTTP status. */
 function statusForReason(reason: Extract<ApplyResult, { ok: false }>['reason']): number {
   switch (reason) {
     case 'tier_locked': return 403;
-    case 'cooldown': return 429;
     case 'rate_limited': return 429;
     case 'not_found': return 404;
     case 'not_linked': return 409;
-    default: return 400; // invalid_name | invalid_color | invalid_tag | blacklisted
+    default: return 400; // invalid_color | invalid_tag | blacklisted
   }
 }
 
@@ -66,12 +65,7 @@ export async function getCatalog(_req: Request, res: Response, next: NextFunctio
         reservedColors: RESERVED_COLORS,
         reservedMinDistance: RESERVED_MIN_DISTANCE,
         contrast: { min: MIN_CONTRAST, backgrounds: CONTRAST_BACKGROUNDS },
-        nameRules: { minLength: NAME_MIN_LENGTH, maxLength: NAME_MAX_LENGTH, tagMaxLength: TAG_MAX_LENGTH },
-        cooldownMs: {
-          none: nameCooldownMs('none'),
-          supporter: nameCooldownMs('supporter'),
-          overseer: nameCooldownMs('overseer'),
-        },
+        tagRules: { tagMaxLength: TAG_MAX_LENGTH },
         // Effects never render in-game (Scaleform bans filters). Surfaced so the UI can
         // label them honestly rather than selling a cosmetic that does nothing in game.
         inGameSupports: { colors: true, tag: true, effects: false },
@@ -109,13 +103,11 @@ export async function getUserCosmetics(req: Request, res: Response, next: NextFu
         // actually chose even while a preset is gated off by a lapsed entitlement.
         stored: row
           ? {
-              customDisplayName: row.customDisplayName,
               colorPresetId: row.colorPresetId,
               customColorHex: row.customColorHex,
               effectId: row.effectId,
               customTag: row.customTag,
               cosmeticsEnabled: row.cosmeticsEnabled,
-              displayNameChangedAt: row.displayNameChangedAt,
             }
           : null,
       },
@@ -141,7 +133,6 @@ export async function patchUserCosmetics(req: Request, res: Response, next: Next
     const patch: CosmeticPatch = {};
     // Only forward keys that were actually present — `undefined` means "leave alone"
     // while an explicit `null` means "clear", and the service relies on that distinction.
-    if ('displayName' in body) patch.displayName = body.displayName as string | null;
     if ('colorPresetId' in body) patch.colorPresetId = body.colorPresetId as string | null;
     if ('customColorHex' in body) patch.customColorHex = body.customColorHex as string | null;
     if ('effectId' in body) patch.effectId = body.effectId as string | null;
@@ -156,9 +147,6 @@ export async function patchUserCosmetics(req: Request, res: Response, next: Next
 
     if (!result.ok) {
       const status = statusForReason(result.reason);
-      if (result.detail.retryAfterMs) {
-        res.setHeader('Retry-After', String(Math.ceil(result.detail.retryAfterMs / 1000)));
-      }
       return next(createError(status, result.detail.message ?? result.reason, {
         code: result.reason,
         detail: result.detail,

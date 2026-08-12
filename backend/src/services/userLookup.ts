@@ -15,6 +15,7 @@ import prisma from '../config/prisma';
 export interface LookedUpUser {
   id: string;
   username: string;
+  chatName: string | null;
   discordId: string | null;
   discordUsername: string | null;
   discordDisplayName: string | null;
@@ -32,6 +33,7 @@ export interface LookedUpUser {
 const SELECT = {
   id: true,
   username: true,
+  chatName: true,
   discordId: true,
   discordUsername: true,
   discordDisplayName: true,

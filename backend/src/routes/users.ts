@@ -1,7 +1,7 @@
 import express from 'express';
-import { requireAuth, requireDiscordRole } from '../middleware/auth';
+import { requireAuth, requireDashboardAuth, requireDiscordRole } from '../middleware/auth';
 import { validate, schemas } from '../middleware/validation';
-import { authLimiter, registerLimiter, registerIpFloodLimiter } from '../middleware/rateLimiter';
+import { authLimiter, cosmeticsWriteLimiter, registerLimiter, registerIpFloodLimiter } from '../middleware/rateLimiter';
 import env from '../config/environment';
 import {
   listUsers,
@@ -9,6 +9,7 @@ import {
   deleteSession,
   getUser,
   getUserProfile,
+  updateChatName,
   getUserMessages,
   muteUser,
   unmuteUser,
@@ -31,6 +32,9 @@ router.delete('/session', requireAuth, deleteSession);
 // steam_id, install_token). Must be declared before /:id so Express matches the
 // literal "profile" segment rather than treating it as a UUID.
 router.get('/:id/profile', getUserProfile);
+// Free account identity, intentionally outside the supporter/cosmetics feature flag.
+// Keep a modest anti-probing rate limit but no calendar cooldown.
+router.patch('/:id/chat-name', requireDashboardAuth, cosmeticsWriteLimiter, updateChatName);
 router.get('/:id', requireDiscordRole(env.OWNER_ROLE_ID, env.ADMIN_ROLE_ID, env.MODERATOR_ROLE_ID), getUser);
 router.get('/:id/aliases', requireDiscordRole(env.OWNER_ROLE_ID, env.ADMIN_ROLE_ID, env.MODERATOR_ROLE_ID), getUserAliases);
 router.get('/:id/messages', requireDiscordRole(env.OWNER_ROLE_ID, env.ADMIN_ROLE_ID, env.MODERATOR_ROLE_ID), getUserMessages);

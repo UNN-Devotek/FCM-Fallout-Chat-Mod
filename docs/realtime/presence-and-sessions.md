@@ -43,10 +43,11 @@ const clients = new Map<string, ClientEntry>();
 
 Priority order (highest wins):
 
-1. `users.username` if set and not a placeholder (`Wanderer`, `pending-*`, `Overlay<digits>`, `discord:*`)
-2. `users.discordDisplayName` (Discord display/global name, e.g. "Devotek")
-3. `users.discordUsername` (Discord @handle, e.g. "devotek")
-4. Fallback: `"Wanderer"`
+1. `users.chat_name` when set (the free account chat name)
+2. `users.username` if set and not a placeholder (`Wanderer`, `pending-*`, `Overlay<digits>`, `discord:*`)
+3. `users.discordDisplayName` (Discord display/global name, e.g. "Devotek")
+4. `users.discordUsername` (Discord @handle, e.g. "devotek")
+5. Fallback: `"Wanderer"`
 
 `handlers.ts:22–54` — `resolveDisplayName()`
 

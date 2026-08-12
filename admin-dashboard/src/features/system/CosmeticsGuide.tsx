@@ -69,25 +69,27 @@ export default function CosmeticsGuide({ variant = 'dashboard' }: Props) {
         change anything or not.
       </p>
 
-      <p style={sSection}>TWO WAYS TO CHANGE IT</p>
+      <p style={sSection}>TWO WAYS TO CHANGE YOUR APPEARANCE</p>
       <p style={p}>
         Both use the same settings — change something in one place and it updates
         everywhere immediately, including in messages already on screen.
       </p>
       <p style={p}>
         <strong style={{ color: gold }}>On the website:</strong> go to your Profile and
-        find the <em>Chat appearance</em> panel.
+        find the <em>Chat appearance</em> panel. The separate <em>Chat name</em> panel
+        above it is free for everyone.
       </p>
       <p style={p}>
         <strong style={{ color: gold }}>In Discord:</strong> use{' '}
-        <code style={sCode}>/cosmetics</code>. Replies are only visible to you.
+        <code style={sCode}>/cosmetics</code> for colours, effects and tags, or{' '}
+        <code style={sCode}>/name</code> for your free chat name. Replies are only visible to you.
       </p>
       <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '6px' }}>
         <thead><tr><th style={{ ...sTh, width: '210px' }}>Command</th><th style={sTh}>What it does</th></tr></thead>
         <tbody>
           {[
             ['/cosmetics show', 'See what your name currently looks like'],
-            ['/cosmetics name', 'Change your display name'],
+            ['/name', 'Change your free chat name (no supporter tier or cooldown)'],
             ['/cosmetics color', 'Pick a name colour'],
             ['/cosmetics effect', 'Pick a name effect (supporters)'],
             ['/cosmetics tag', "Set a tag beside your name (Overseer's Circle)"],

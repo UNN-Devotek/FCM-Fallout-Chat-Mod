@@ -375,13 +375,15 @@ record; this is the service-level map.
 
 | Service | Role |
 | --- | --- |
-| `cosmetics/cosmeticsService.ts` | **The single write path.** `applyCosmetics()` owns all validation, tier gating, cooldown, blacklist, cache busting, live push and audit logging. Both the REST endpoint and the Discord `/cosmetics` command call it, so the two surfaces cannot drift. Also `resolveCosmetics()` (read, Redis-cached 60s) and `attachCosmetics()` (decorates outgoing `chat:message` payloads). |
+| `cosmetics/cosmeticsService.ts` | **The single cosmetic write path.** `applyCosmetics()` owns colour/effect/tag validation, tier gating, blacklist, cache busting, live push and audit logging. Both the REST endpoint and the Discord `/cosmetics` command call it, so the two surfaces cannot drift. Also `resolveCosmetics()` (read, Redis-cached 60s) and `attachCosmetics()` (decorates outgoing `chat:message` payloads). |
 | `cosmetics/presets.ts` | Colour + effect catalog, served over `GET /api/cosmetics/catalog` as the single source of truth for every surface. |
 | `cosmetics/reservedColors.ts` | Colours users may not pick, with the reason (impersonation vs ambiguity). |
 | `cosmetics/validation.ts` | Pure input validation, reused by the frontend picker's live feedback. |
 | `supporterService.ts` | Entitlement read/write, Redis-cached tier lookup, and the entitlement-vs-privileges split. |
 | `supporterSyncService.ts` | Keeps entitlements in lockstep with Discord tier roles: `guildMemberUpdate` / `guildMemberRemove` for the fast path, plus a 15-minute reconcile backstop. |
 | `cosmeticsCommandService.ts` | The Discord `/cosmetics` command. Marshals interactions only — no business logic. |
+| `chatNameService.ts` | Free account-level chat-name write path. Validates 2–32 characters, checks the blacklist/automod, persists `users.chat_name`, audits, and refreshes connected clients. It has no supporter gate or calendar cooldown. |
+| `chatNameCommandService.ts` | The Discord `/name` modal. Calls `chatNameService.setChatName()`; it is registered even when supporter cosmetics are disabled. |
 | `userLookup.ts` | Shared `getUserByDiscordId()`. Replaces a lookup that was copy-pasted ~15 times. |
 
 `cosmeticsEnabled()` is the master kill switch (`SUPPORTER_TIER_ENABLED`, default
