@@ -68,37 +68,6 @@ export function tierLabel(tier: SupporterTier): string {
 }
 
 /**
- * Per-tier display-name change cooldown, in milliseconds.
- * Free 30d / Supporter 7d / Overseer 24h.
- */
-export function nameCooldownMs(tier: SupporterTier): number {
-  const DAY = 24 * 60 * 60 * 1000;
-  switch (tier) {
-    case 'overseer': return DAY;
-    case 'supporter': return 7 * DAY;
-    default: return 30 * DAY;
-  }
-}
-
-/**
- * Milliseconds remaining before the next name change is allowed (0 = allowed now).
- * `now` is injected rather than read from Date.now() so this stays deterministic
- * under test.
- */
-export function nameCooldownRemainingMs(
-  lastChangedAt: Date | string | null | undefined,
-  tier: SupporterTier,
-  now: number,
-): number {
-  if (!lastChangedAt) return 0;
-  const last = lastChangedAt instanceof Date ? lastChangedAt.getTime() : Date.parse(String(lastChangedAt));
-  if (!Number.isFinite(last)) return 0;
-  const elapsed = now - last;
-  const required = nameCooldownMs(tier);
-  return elapsed >= required ? 0 : required - elapsed;
-}
-
-/**
  * Whether privileges are currently ACTIVE, as distinct from whether an entitlement
  * EXISTS (issue #230's hard rule).
  *
@@ -118,8 +87,6 @@ export default {
   normalizeTier,
   tierAtLeast,
   tierLabel,
-  nameCooldownMs,
-  nameCooldownRemainingMs,
   privilegesActive,
 };
 module.exports = {
@@ -129,8 +96,6 @@ module.exports = {
   normalizeTier,
   tierAtLeast,
   tierLabel,
-  nameCooldownMs,
-  nameCooldownRemainingMs,
   privilegesActive,
 };
 module.exports.default = module.exports;

@@ -31,12 +31,6 @@ const label: React.CSSProperties = {
   letterSpacing: '1px', marginBottom: '6px',
 };
 
-const input: React.CSSProperties = {
-  width: '100%', maxWidth: '340px', padding: '8px 10px',
-  background: 'var(--bg-dark)', border: '1px solid var(--border-color)',
-  borderRadius: '4px', color: 'var(--text-primary)', fontFamily: 'var(--font-mono)',
-};
-
 const btn: React.CSSProperties = {
   padding: '7px 14px', borderRadius: '4px', cursor: 'pointer',
   border: '1px solid var(--phosphor-color)', background: 'rgba(212,176,64,0.08)',
@@ -53,8 +47,6 @@ interface EffectPreset { id: string; label: string; tier: Tier; description: str
 interface Catalog {
   colors: ColorPreset[];
   effects: EffectPreset[];
-  nameRules: { minLength: number; maxLength: number; tagMaxLength: number };
-  cooldownMs: Record<Tier, number>;
   inGameSupports: { colors: boolean; tag: boolean; effects: boolean };
 }
 
@@ -70,17 +62,14 @@ interface SupporterStatus {
 }
 
 interface Cosmetics {
-  displayName: string | null;
   nameColor: string | null;
   effectId: string | null;
   tag: string | null;
   badges: string[];
   stored: {
-    customDisplayName: string | null;
     colorPresetId: string | null;
     effectId: string | null;
     customTag: string | null;
-    displayNameChangedAt: string | null;
   } | null;
 }
 
@@ -90,9 +79,8 @@ const TIER_NAME: Record<Tier, string> = { none: 'Free', supporter: 'Supporter', 
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export default function CosmeticsPanel({ userId }: { userId: string }) {
+export default function CosmeticsPanel({ userId, previewName }: { userId: string; previewName: string }) {
   const qc = useQueryClient();
-  const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
 
@@ -127,7 +115,6 @@ export default function CosmeticsPanel({ userId }: { userId: string }) {
     },
   });
 
-  const currentName = nameDraft ?? cosmetics?.stored?.customDisplayName ?? '';
   const currentColor = cosmetics?.nameColor ?? null;
   const currentEffect = cosmetics?.effectId ?? null;
 
@@ -142,8 +129,6 @@ export default function CosmeticsPanel({ userId }: { userId: string }) {
   // the server simply does not offer the feature, which is the harder thing to get
   // wrong. Same reason the panel does not render a "coming soon" placeholder.
   if (!catalog) return null;
-
-  const nameTooLong = currentName.length > catalog.nameRules.maxLength;
 
   return (
     <section style={card}>
@@ -177,41 +162,13 @@ export default function CosmeticsPanel({ userId }: { userId: string }) {
       <div style={{ ...label }}>Preview</div>
       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '20px' }}>
         <PreviewRow bg="#1e1908" caption="Website / dashboard"
-          name={currentName || 'YourName'} color={currentColor} effect={currentEffect} tag={cosmetics?.tag ?? null} />
+          name={previewName || 'YourName'} color={currentColor} effect={currentEffect} tag={cosmetics?.tag ?? null} />
         <PreviewRow bg="rgba(10,10,10,0.55)" caption="Overlay (translucent)"
-          name={currentName || 'YourName'} color={currentColor} effect={currentEffect} tag={cosmetics?.tag ?? null} />
+          name={previewName || 'YourName'} color={currentColor} effect={currentEffect} tag={cosmetics?.tag ?? null} />
         {/* In-game deliberately previews WITHOUT the effect — Scaleform cannot render
             glow/animation, so showing it here would misrepresent what users get. */}
         <PreviewRow bg="#0a0a0a" caption="In-game HUD"
-          name={currentName || 'YourName'} color={currentColor} effect={null} tag={cosmetics?.tag ?? null} />
-      </div>
-
-      {/* ── Display name ───────────────────────────────────────────────── */}
-      <div style={{ marginBottom: '20px' }}>
-        <div style={label}>Display name</div>
-        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <input
-            style={{ ...input, borderColor: nameTooLong ? 'var(--danger)' : 'var(--border-color)' }}
-            value={currentName}
-            maxLength={catalog.nameRules.maxLength + 8}
-            placeholder="Leave empty to use your default name"
-            onChange={e => setNameDraft(e.target.value)}
-          />
-          <span style={{ fontSize: '12px', color: nameTooLong ? 'var(--danger)' : 'var(--text-muted)' }}>
-            {currentName.length}/{catalog.nameRules.maxLength}
-          </span>
-          <button
-            style={{ ...btn, opacity: nameTooLong || save.isPending ? 0.5 : 1 }}
-            disabled={nameTooLong || save.isPending}
-            onClick={() => save.mutate({ displayName: currentName.trim() || null })}
-          >
-            Save name
-          </button>
-        </div>
-        <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '6px' }}>
-          You can change your name once every{' '}
-          {Math.round((catalog.cooldownMs[tier] ?? 0) / 86_400_000)} days on your current tier.
-        </p>
+          name={previewName || 'YourName'} color={currentColor} effect={null} tag={cosmetics?.tag ?? null} />
       </div>
 
       {/* ── Colours ────────────────────────────────────────────────────── */}

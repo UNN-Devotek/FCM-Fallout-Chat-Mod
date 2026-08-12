@@ -151,7 +151,7 @@ export async function ingestMessage(opts: {
   // ── 1. Mute check ─────────────────────────────────────────────────────────
   const dbUser = await prisma.user.findUnique({
     where: { id: userId },
-    select: { isMuted: true, muteExpiresAt: true, username: true, discordUsername: true, discordDisplayName: true, fo76AccountName: true, fo76CharacterName: true },
+    select: { isMuted: true, muteExpiresAt: true, username: true, chatName: true, discordUsername: true, discordDisplayName: true, fo76AccountName: true, fo76CharacterName: true },
   });
 
   if (!dbUser) {
@@ -234,7 +234,9 @@ export async function ingestMessage(opts: {
   // name is the social/player name shown in-game; fall back to character name,
   // then the generic chain. WS (dashboard) messages keep the Discord display name.
   const displayName =
-    (opts.displayName && opts.displayName.trim())
+    dbUser.chatName
+      ? dbUser.chatName
+      : (opts.displayName && opts.displayName.trim())
       ? opts.displayName.trim()
       : source === 'hud'
         ? (dbUser.fo76AccountName || dbUser.fo76CharacterName || dbUser.discordDisplayName || dbUser.discordUsername || dbUser.username)
@@ -303,7 +305,7 @@ export async function finalizeMessage(opts: {
   if (hasMetadata) payload.metadata = opts.metadata ?? null;
   payload.relaySeq = relaySeq;
 
-  // Resolve the author's cosmetics (custom name, colour, effect, tag, badges) onto the
+  // Resolve the author's cosmetics (colour, effect, tag, badges) onto the
   // payload. Redis-cached ~60s and non-throwing, so it costs nothing for the vast
   // majority of users who have no cosmetics row and can never block delivery.
   await attachCosmetics(payload);

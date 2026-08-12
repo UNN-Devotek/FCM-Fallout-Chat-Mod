@@ -3,7 +3,7 @@
  *
  * Every surface that can change a user's cosmetics goes through `applyCosmetics`:
  * the web Profile panel (PATCH /api/users/:id/cosmetics) and every Discord
- * `/cosmetics` interaction. All validation, tier-gating, cooldown, blacklist, cache
+ * `/cosmetics` interaction. All validation, tier-gating, blacklist, cache
  * busting, live push and audit logging live HERE. The transports only marshal input
  * and translate the returned `reason` into their own idiom (RFC 7807 status vs
  * ephemeral Discord copy).
@@ -15,11 +15,10 @@ import prisma from '../../config/prisma';
 import { getRedisClient } from '../../config/redis';
 import logger from '../../config/logger';
 import env from '../../config/environment';
-import { SupporterTier, nameCooldownRemainingMs, tierAtLeast } from '../../utils/supporterTier';
+import { SupporterTier, tierAtLeast } from '../../utils/supporterTier';
 import { getSupporterTierByUserId } from '../supporterService';
 import { findColorPreset, findEffectPreset, REDUCED_MOTION_FALLBACK } from './presets';
 import {
-  validateDisplayName,
   validateTag,
   validateColorPreset,
   validateEffect,
@@ -30,8 +29,6 @@ import {
 /** Resolved cosmetics as they appear on the wire and in the UI. */
 export interface ResolvedCosmetics {
   userId: string;
-  /** Null when the user has no custom name — callers fall back to the normal display name. */
-  displayName: string | null;
   /** Final `#rrggbb`, or null for the default theme colour. */
   nameColor: string | null;
   /** Effect id, or null. Always null when the user is not entitled. */
@@ -44,11 +41,11 @@ export interface ResolvedCosmetics {
 }
 
 export const EMPTY_COSMETICS = (userId: string): ResolvedCosmetics => ({
-  userId, displayName: null, nameColor: null, effectId: null, tag: null, badges: [], tier: 'none',
+  userId, nameColor: null, effectId: null, tag: null, badges: [], tier: 'none',
 });
 
 export type ApplyReason =
-  | 'tier_locked' | 'cooldown' | 'blacklisted' | 'invalid_name'
+  | 'tier_locked' | 'blacklisted'
   | 'invalid_color' | 'invalid_tag' | 'not_linked' | 'not_found' | 'rate_limited';
 
 export type ApplyResult =
@@ -60,15 +57,12 @@ export type ApplyResult =
         field?: string;
         code?: string;
         requiredTier?: SupporterTier;
-        /** Milliseconds until the next name change is allowed. */
-        retryAfterMs?: number;
         /** Human-readable explanation safe to show the user. */
         message?: string;
       };
     };
 
 export interface CosmeticPatch {
-  displayName?: string | null;
   colorPresetId?: string | null;
   customColorHex?: string | null;
   effectId?: string | null;
@@ -131,8 +125,6 @@ export async function resolveCosmetics(userId: string): Promise<ResolvedCosmetic
     if (tier !== 'none') resolved.badges = [tier];
 
     if (row && row.cosmeticsEnabled) {
-      resolved.displayName = row.customDisplayName ?? null;
-
       // Preset wins over a custom hex when both are stored.
       const preset = findColorPreset(row.colorPresetId);
       if (preset && tierAtLeast(tier, preset.tier)) {
@@ -216,7 +208,6 @@ export async function attachCosmetics(
     const c = await resolveCosmetics(userId);
     // Only set fields that are actually in play, so payloads for the overwhelming
     // majority of users (no cosmetics row at all) stay byte-identical to today.
-    if (c.displayName) payload.username = c.displayName;
     if (c.nameColor) payload.nameColor = c.nameColor;
     if (c.effectId) payload.effectId = c.effectId;
     if (c.tag) payload.tag = c.tag;
@@ -255,7 +246,9 @@ function rejectionToResult(r: CosmeticRejection): ApplyResult {
   if (r.field === 'colorPresetId' || r.field === 'effectId') {
     return { ok: false, reason: 'invalid_color', detail: { field: r.field, code: r.code } };
   }
-  return { ok: false, reason: 'invalid_name', detail: { field: r.field, code: r.code } };
+  // CosmeticRejection is exhaustive above. Keep a safe fallback for future union
+  // members without lying to TypeScript about an impossible field/code pair.
+  return { ok: false, reason: 'invalid_tag', detail: {} };
 }
 
 /** Non-fatal audit write. */
@@ -268,19 +261,15 @@ function audit(action: string, userId: string, metadata: Record<string, string |
 /**
  * Apply a cosmetics patch. The single write path for every surface.
  *
- * `actor.kind === 'moderator'` skips the cooldown (a moderator resetting an abusive
- * name must not be blocked by the offender's own cooldown) but NOT the tier gate — a
- * moderator cannot hand out paid cosmetics.
+ * A moderator cannot hand out paid cosmetics: read-time tier gating remains the
+ * authority even when a moderator resets a row.
  */
 export async function applyCosmetics(input: {
   userId: string;
   patch: CosmeticPatch;
   actor: { kind: 'self' | 'moderator'; discordId?: string | null };
-  /** Injected for deterministic tests. */
-  now?: number;
 }): Promise<ApplyResult> {
   const { userId, patch, actor } = input;
-  const now = input.now ?? Date.now();
 
   if (!cosmeticsEnabled()) {
     return { ok: false, reason: 'not_found', detail: { message: 'Chat appearance customisation is not enabled.' } };
@@ -294,44 +283,6 @@ export async function applyCosmetics(input: {
 
   const data: Record<string, unknown> = {};
   const changed: string[] = [];
-
-  // ── Display name ────────────────────────────────────────────────────────────
-  if (patch.displayName !== undefined) {
-    if (patch.displayName === null) {
-      data.customDisplayName = null;
-      changed.push('displayName');
-    } else {
-      const result = validateDisplayName(patch.displayName);
-      if (!result.ok) return rejectionToResult(result.rejection);
-
-      // Only charge a cooldown when the name actually changes.
-      if (result.value !== existing?.customDisplayName) {
-        if (actor.kind !== 'moderator') {
-          const remaining = nameCooldownRemainingMs(existing?.displayNameChangedAt ?? null, tier, now);
-          if (remaining > 0) {
-            return { ok: false, reason: 'cooldown', detail: { field: 'displayName', retryAfterMs: remaining } };
-          }
-        }
-
-        const blocked = await isNameBlocked(result.value);
-        if (blocked) {
-          // Deliberately does NOT say which pattern matched. Echoing it would turn
-          // this endpoint into an oracle for probing the blacklist.
-          logger.warn({ userId, reason: blocked }, '[cosmetics] display name rejected by moderation');
-          audit('cosmetic_name_rejected', userId, { reason: blocked });
-          return {
-            ok: false,
-            reason: 'blacklisted',
-            detail: { field: 'displayName', message: 'That name is not allowed. Please choose another.' },
-          };
-        }
-
-        data.customDisplayName = result.value;
-        data.displayNameChangedAt = new Date(now);
-        changed.push('displayName');
-      }
-    }
-  }
 
   // ── Colour ──────────────────────────────────────────────────────────────────
   if (patch.colorPresetId !== undefined) {
@@ -468,7 +419,7 @@ async function isNameBlocked(name: string): Promise<string | null> {
 export async function resetCosmetics(userId: string, actorDiscordId: string | null): Promise<ApplyResult> {
   return applyCosmetics({
     userId,
-    patch: { displayName: null, colorPresetId: null, customColorHex: null, effectId: null, customTag: null },
+    patch: { colorPresetId: null, customColorHex: null, effectId: null, customTag: null },
     actor: { kind: 'moderator', discordId: actorDiscordId },
   });
 }

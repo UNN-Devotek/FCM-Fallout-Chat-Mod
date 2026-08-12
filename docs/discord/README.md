@@ -133,6 +133,10 @@ twice. Without it the gateway connection is rejected outright.
 Both are gated on `SUPPORTER_TIER_ENABLED` (default `false`): with the tier off the
 command is never registered and no listener attaches.
 
+`chatNameCommandService` separately registers `/name`, a free account setting that is
+available whether supporter cosmetics are enabled or not. It opens an ephemeral modal;
+leaving it blank restores the ordinary Fallout 76 / Discord-derived name.
+
 Full design record: [docs/product/supporter-tier.md](../product/supporter-tier.md).
 
 ## Related docs

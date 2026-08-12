@@ -255,11 +255,11 @@ Chat appearance personalisation and the paid supporter entitlement. Design recor
 | Method | Path | Auth | Description |
 | ------ | ---- | ---- | ----------- |
 | GET | `/api/supporter/tiers` | public | Pricing data for the marketing page (tier labels, prices, option counts) |
-| GET | `/api/cosmetics/catalog` | requireDashboardAuth | Colour + effect catalog, reserved colours, picker bounds, contrast floor, name rules, per-tier cooldowns. **Single source of truth** — the web picker, the Discord `/cosmetics` autocomplete and the user guide all render from this rather than re-declaring it |
+| GET | `/api/cosmetics/catalog` | requireDashboardAuth | Colour + effect catalog, reserved colours, picker bounds and contrast floor. **Single source of truth** — the web picker, the Discord `/cosmetics` autocomplete and the user guide all render from this rather than re-declaring it |
 | GET | `/api/supporter/status` | requireDashboardAuth | Caller's tier, entitled tier, whether privileges are active, and whether they need to rejoin the Discord |
 | GET | `/api/users/:id/cosmetics` | requireDashboardAuth | Resolved + stored cosmetics. Self, or moderator+ |
 | PATCH | `/api/users/:id/cosmetics` | requireDashboardAuth + rate limit | Self only. Applies a partial patch |
-| POST | `/api/admin/users/:id/cosmetics/reset` | requireDiscordRole(owner/admin/moderator) | Reset an abusive display name to defaults (#232) |
+| POST | `/api/admin/users/:id/cosmetics/reset` | requireDiscordRole(owner/admin/moderator) | Reset an abusive colour, effect or tag to defaults (#232) |
 
 ### PATCH semantics
 
@@ -267,7 +267,7 @@ An **absent** key means "leave unchanged"; an explicit **`null`** means "clear".
 are distinct and the service relies on that.
 
 ```json
-{ "displayName": "Wanderer", "colorPresetId": "cryo", "effectId": null }
+{ "colorPresetId": "cryo", "effectId": null }
 ```
 
 `colorPresetId` and `customColorHex` are mutually exclusive — setting one clears the other.
@@ -279,14 +279,19 @@ RFC 7807 as usual, with a machine-readable `code` matching the service's rejecti
 | Reason | Status | Meaning |
 | --- | --- | --- |
 | `tier_locked` | 403 | Option requires a higher supporter tier |
-| `cooldown` | 429 | Name changed too recently. Sends `Retry-After` |
 | `blacklisted` | 400 | Name/tag rejected by the blacklist or automod. **Deliberately does not say which pattern matched** — that would make the endpoint an oracle for probing the filters |
-| `invalid_name` / `invalid_tag` | 400 | Length or charset |
+| `invalid_tag` | 400 | Length or charset |
 | `invalid_color` | 400 | Unparseable, below the contrast floor, or too close to a reserved colour |
 | `not_found` | 404 | No such user |
 
 The PATCH is rate-limited (20 / 5 min per IP, `cosmeticsWriteLimiter`) for the same
 oracle reason.
+
+## Free chat name (`/api/users/:id/chat-name`)
+
+| Method | Path | Auth | Description |
+| ------ | ---- | ---- | ----------- |
+| PATCH | `/api/users/:id/chat-name` | `requireDashboardAuth` + write rate limit | Self only. Sets the user's free account chat name; `{ "chatName": null }` clears it and restores the Fallout 76 / Discord-derived name. No supporter tier or calendar cooldown applies. Names are 2–32 characters after sanitisation and pass the same blacklist/automod checks as other visible identity fields. |
 
 ### Note on ownership
 

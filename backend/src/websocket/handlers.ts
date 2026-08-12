@@ -44,19 +44,25 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /**
  * Resolve the best display name for a user.
- *   1. FO76 in-game name (if set and not the default placeholder)
- *   2. Discord username (fallback)
- *   3. Raw username
+ *   1. Free user-selected chat name
+ *   2. FO76 in-game name (if set and not the default placeholder)
+ *   3. Discord username (fallback)
+ *   4. Raw username
  *
  * NO #XXXX discriminator suffix — uniqueness is guaranteed by the
  * unique constraint on users.username and the Discord link.
  */
 export function resolveDisplayName(user: {
   username: string;
+  chatName?: string | null;
   discordUsername: string | null;
   discordDisplayName?: string | null;
   installToken: string;
 }): string {
+  // A chat name is an account identity setting, not a paid cosmetic. It is already
+  // validated on write, but trim defensively for rows created before that contract.
+  if (user.chatName && user.chatName.trim()) return user.chatName.trim();
+
   // 1. Real FO76 name (skip Wanderer, pending-*, Overlay<digits> auto-handles,
   //    and discord:/pending-discord- synthetic relay usernames).
   const isPlaceholderUsername = (u: string) =>
@@ -323,8 +329,9 @@ export function refreshClientIdentity(
   discordUsername: string | null,
   discordDisplayName: string | null,
   installToken: string,
+  chatName: string | null = null,
 ): number {
-  const displayName = resolveDisplayName({ username, discordUsername, discordDisplayName, installToken });
+  const displayName = resolveDisplayName({ username, chatName, discordUsername, discordDisplayName, installToken });
   let touched = 0;
   for (const c of clients.values()) {
     if (c.userId === userId) {
@@ -375,7 +382,7 @@ export function refreshClientIdentity(
  */
 export function refreshClientCosmetics(
   userId: string,
-  cosmetics: { displayName?: string | null; nameColor?: string | null; effectId?: string | null; tag?: string | null; badges?: string[] },
+  cosmetics: { nameColor?: string | null; effectId?: string | null; tag?: string | null; badges?: string[] },
 ): void {
   try {
     if (typeof broadcast !== 'function') return;
@@ -383,9 +390,6 @@ export function refreshClientCosmetics(
       type: 'user:identity_updated',
       payload: {
         userId,
-        // `displayName` is omitted when the user has no custom name — viewers keep
-        // whatever name they already had rather than blanking it.
-        ...(cosmetics.displayName ? { displayName: cosmetics.displayName } : {}),
         nameColor: cosmetics.nameColor ?? null,
         effectId: cosmetics.effectId ?? null,
         tag: cosmetics.tag ?? null,
@@ -793,16 +797,16 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
           if (!channelId || !UUID_RE.test(channelId)) break;
           try {
             const result = await dbQuery(
-              `SELECT m.id, m.content, u.username, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at
+              `SELECT m.id, m.content, u.username, u.chat_name, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at
                FROM messages m JOIN users u ON u.id = m.user_id
                WHERE m.channel_id = $1 AND NOT m.is_deleted
                ORDER BY m.created_at DESC LIMIT $2 OFFSET $3`,
               [channelId, safeLimit, safeOffset]
             );
             const messages = result.rows.map((row: any) => {
-              const dn = resolveDisplayName({ username: row.username, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, installToken: row.install_token });
+              const dn = resolveDisplayName({ username: row.username, chatName: row.chat_name, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, installToken: row.install_token });
               const avatarUrl = buildAvatarUrl(row.discord_id);
-              const { install_token, username, discord_username, discord_display_name, discord_id, metadata, ...rest } = row;
+              const { install_token, username, chat_name, discord_username, discord_display_name, discord_id, metadata, ...rest } = row;
               return { ...rest, username: dn, avatarUrl, metadata: metadata ?? null };
             });
             ws.send(JSON.stringify({ type: 'chat:history', payload: { messages: messages.reverse() } }));
@@ -2172,7 +2176,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
         const safeOffset = Math.min(Math.max(parseInt(offset, 10) || 0, 0), 10000);
         try {
           const result = await dbQuery(
-            `SELECT m.id, m.content, u.username, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at
+            `SELECT m.id, m.content, u.username, u.chat_name, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at
              FROM messages m JOIN users u ON u.id = m.user_id
              WHERE m.channel_id = $1 AND NOT m.is_deleted
              ORDER BY m.created_at DESC LIMIT $2 OFFSET $3`,
@@ -2190,9 +2194,9 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
           const messages = result.rows
             .filter((row: any) => !histBlocked.has(row.user_id))
             .map((row: any) => {
-              const dn = resolveDisplayName({ username: row.username, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, installToken: row.install_token });
+              const dn = resolveDisplayName({ username: row.username, chatName: row.chat_name, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, installToken: row.install_token });
               const avatarUrl = buildAvatarUrl(row.discord_id);
-              const { install_token, username, discord_username, discord_display_name, discord_id, metadata, ...rest } = row;
+              const { install_token, username, chat_name, discord_username, discord_display_name, discord_id, metadata, ...rest } = row;
               return { ...rest, username: dn, avatarUrl, metadata: metadata ?? null };
             });
           ws.send(JSON.stringify({ type: 'chat:history', payload: { messages: messages.reverse() } }));
@@ -2407,7 +2411,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
             select: {
               id: true, content: true, username: true, userId: true,
               partyId: true, source: true, createdAt: true,
-              user: { select: { username: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true } },
+              user: { select: { username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true } },
             },
           });
 

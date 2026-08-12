@@ -1,21 +1,21 @@
 /**
  * Pure validation for cosmetic input — no Prisma, no Redis, no network.
  *
- * The impure checks (name blacklist, automod, cooldown against stored state) live in
- * cosmeticsService; everything decidable from the input alone lives here so it can be
- * unit-tested exhaustively and reused by the frontend picker's live feedback.
+ * The impure checks (tag blacklist and automod checks) live in cosmeticsService;
+ * everything decidable from the input alone lives here so it can be unit-tested
+ * exhaustively and reused by the frontend picker.
  */
 import { SupporterTier, tierAtLeast } from '../../utils/supporterTier';
 import { normalizeHex, meetsContrastFloor, worstCaseContrast, MIN_CONTRAST } from '../../utils/colorContrast';
 import { findReservedConflict, ReservedColor } from './reservedColors';
 import { findColorPreset, findEffectPreset } from './presets';
+import { sanitizeChatName } from '../../utils/chatName';
 
-export const NAME_MIN_LENGTH = 2;
-export const NAME_MAX_LENGTH = 32;
 export const TAG_MAX_LENGTH = 12;
 
 /**
- * Characters stripped from any user-supplied display name or tag.
+ * Characters stripped from a user-supplied tag. Chat names use the same shared
+ * normalization in utils/chatName.
  *
  * `~` and `|` are field separators in the in-game HUD wire format; `<`, `>`, `&` and
  * `"` are escaped into HTML entities by the widget's htmlEscape() (FcmConfig.hx) and
@@ -25,53 +25,19 @@ export const TAG_MAX_LENGTH = 12;
  *
  * Control characters are removed separately — they poison the ZFE string pool.
  */
-// eslint-disable-next-line no-control-regex
-const UNSAFE_CHARS = /[~|"\\<>&\u0000-\u001F\u007F]/g;
-
-/** Zero-width and bidi-override characters: invisible, and usable to spoof a name. */
-const INVISIBLE_CHARS = /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/g;
-
 export type CosmeticRejection =
-  | { field: 'displayName'; code: 'too_short' | 'too_long' | 'empty_after_sanitize' }
   | { field: 'customTag'; code: 'too_long' | 'empty_after_sanitize' }
   | { field: 'colorPresetId'; code: 'unknown_preset' }
   | { field: 'effectId'; code: 'unknown_preset' }
   | { field: 'customColorHex'; code: 'unparseable' | 'low_contrast' | 'reserved'; detail?: string; ratio?: number; reserved?: ReservedColor }
   | { field: 'colorPresetId' | 'effectId' | 'customTag'; code: 'tier_locked'; requiredTier: SupporterTier };
 
-/**
- * Strip unsafe and invisible characters and collapse whitespace.
- * Returns the cleaned string, which may be empty — callers must check.
- */
-export function sanitizeName(raw: string): string {
-  return raw
-    .replace(UNSAFE_CHARS, '')
-    .replace(INVISIBLE_CHARS, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/** Validate a display name's shape. Blacklist/automod checks happen in the service. */
-export function validateDisplayName(raw: string): { ok: true; value: string } | { ok: false; rejection: CosmeticRejection } {
-  const cleaned = sanitizeName(raw);
-  if (cleaned.length === 0) {
-    return { ok: false, rejection: { field: 'displayName', code: 'empty_after_sanitize' } };
-  }
-  if (cleaned.length < NAME_MIN_LENGTH) {
-    return { ok: false, rejection: { field: 'displayName', code: 'too_short' } };
-  }
-  if (cleaned.length > NAME_MAX_LENGTH) {
-    return { ok: false, rejection: { field: 'displayName', code: 'too_long' } };
-  }
-  return { ok: true, value: cleaned };
-}
-
 /** Validate the Overseer-tier custom tag. */
 export function validateTag(raw: string, tier: SupporterTier): { ok: true; value: string } | { ok: false; rejection: CosmeticRejection } {
   if (!tierAtLeast(tier, 'overseer')) {
     return { ok: false, rejection: { field: 'customTag', code: 'tier_locked', requiredTier: 'overseer' } };
   }
-  const cleaned = sanitizeName(raw);
+  const cleaned = sanitizeChatName(raw);
   if (cleaned.length === 0) {
     return { ok: false, rejection: { field: 'customTag', code: 'empty_after_sanitize' } };
   }
@@ -128,22 +94,14 @@ export function validateCustomColor(raw: string): { ok: true; value: string } | 
 }
 
 export default {
-  NAME_MIN_LENGTH,
-  NAME_MAX_LENGTH,
   TAG_MAX_LENGTH,
-  sanitizeName,
-  validateDisplayName,
   validateTag,
   validateColorPreset,
   validateEffect,
   validateCustomColor,
 };
 module.exports = {
-  NAME_MIN_LENGTH,
-  NAME_MAX_LENGTH,
   TAG_MAX_LENGTH,
-  sanitizeName,
-  validateDisplayName,
   validateTag,
   validateColorPreset,
   validateEffect,

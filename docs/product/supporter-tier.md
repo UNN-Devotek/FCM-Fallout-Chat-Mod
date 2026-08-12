@@ -13,10 +13,8 @@ in the website's Cosmetics guide and in `/cosmetics help`, not here.
 | | Vault Dweller (free) | Supporter | Overseer's Circle |
 | --- | --- | --- | --- |
 | Price (web) | $0 | $4/mo | $10/mo |
-| Custom display name | yes | yes | yes |
 | Curated palette | 12 colours | 12 + 11 | 12 + 11 |
 | Bounded HSL picker | yes | yes | yes |
-| Name-change cooldown | 30 days | 7 days | 24 hours |
 | Static effects | — | Soft/Hard Glow, Heavy Outline, Chroma Split | same |
 | Chat badge | — | yes | yes |
 | Animated effects | — | — | Pulse Glow, CRT Phosphor, Glitch, Shimmer |
@@ -32,7 +30,7 @@ channel chrome, so the slot is left empty rather than filled badly.
 
 | | Dashboard | Overlay | In-game |
 | --- | --- | --- | --- |
-| Display name | yes | yes | yes |
+| Free chat name | yes | yes | yes |
 | Name colour | yes | yes | yes |
 | Tag | yes | yes | yes |
 | Badge | yes | yes | as a text prefix |
@@ -71,10 +69,15 @@ stop being served, so re-subscribing restores their exact previous look.
 
 ### One write path
 
-Every surface calls `cosmeticsService.applyCosmetics()`. All validation, tier gating,
-cooldown, blacklist, cache busting, live push and audit logging live inside it; the REST
+Every cosmetic surface calls `cosmeticsService.applyCosmetics()`. All validation, tier gating,
+blacklist, cache busting, live push and audit logging live inside it; the REST
 controller and the Discord command only marshal input and translate the returned
 `reason`. The two surfaces are structurally incapable of drifting.
+
+The chat name is deliberately not a cosmetic or a supporter feature. It lives on
+`users.chat_name`, has no tier gate or calendar cooldown, and is changed through
+`chatNameService.setChatName()` from Profile → **Chat name** or the Discord `/name`
+modal. `null` restores the normal Fallout 76 / Discord-derived name.
 
 ### Payment provider
 
@@ -98,6 +101,8 @@ future provider change an adapter rather than a rewrite.
 | Entitlements | `backend/src/services/supporterService.ts` |
 | Discord role sync | `backend/src/services/supporterSyncService.ts` |
 | `/cosmetics` command | `backend/src/services/cosmeticsCommandService.ts` |
+| Free `/name` command | `backend/src/services/chatNameCommandService.ts` |
+| Free chat-name write path | `backend/src/services/chatNameService.ts` |
 | REST | `backend/src/routes/cosmetics.ts`, `controllers/cosmeticsController.ts` |
 | Effect CSS | `admin-dashboard/src/features/chat/nameEffects.css` |
 | Editor UI | `admin-dashboard/src/features/profile/CosmeticsPanel.tsx` |

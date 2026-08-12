@@ -17,6 +17,9 @@ datasource db {
 model User {
   id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   username           String    @unique
+  // Free account-level chat identity. Unlike supporter cosmetics, this remains
+  // available when the supporter tier is disabled and has no tier cooldown.
+  chatName           String?   @map("chat_name")
   steamId            String?   @map("steam_id")
   installToken       String    @unique @map("install_token")
   discordId          String?   @unique @map("discord_id_link")
@@ -252,7 +255,7 @@ model DiscordRelayMapping {
 }
 
 // =============================================================================
-// User Cosmetics (opt-in chat display customization — name, colour, effect, tag)
+// User Cosmetics (opt-in chat appearance — colour, effect, tag)
 // =============================================================================
 // Deliberately a separate 1:1 table rather than columns on `users`: cosmetics are
 // read rarely (resolved once per message and Redis-cached) while `users` is on the
@@ -260,7 +263,8 @@ model DiscordRelayMapping {
 // row at all, which is the "default identity" state.
 model UserCosmetic {
   userId               String    @id @map("user_id") @db.Uuid
-  // Free tier. Falls back to the resolved FO76/Discord display name when null.
+  // Deprecated after the free chat-name move (20260812). Retained in the Prisma
+  // model for a safe, idempotent backfill; no UI or runtime path reads/writes it.
   customDisplayName    String?   @map("custom_display_name")
   // Either a catalog preset id OR a bounded custom hex from the HSL picker.
   // colorPresetId wins when both are set; validation lives in cosmeticsService.
@@ -274,7 +278,7 @@ model UserCosmetic {
   // User-facing master switch: keeps the row (and the entitlement) while rendering
   // as a default identity. Also what a moderator reset flips.
   cosmeticsEnabled     Boolean   @default(true) @map("cosmetics_enabled")
-  // Drives the per-tier name-change cooldown (30d free / 7d supporter / 24h overseer).
+  // Deprecated with customDisplayName; retained until a later cleanup migration.
   displayNameChangedAt DateTime? @map("display_name_changed_at") @db.Timestamptz(6)
   createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)

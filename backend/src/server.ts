@@ -658,7 +658,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
     // discordId is now the canonical identity anchor — if ANY row owns it we merge into it.
     const existingAccount = await prisma.user.findFirst({
       where: { discordId: discordUser.id, NOT: { installToken } },
-      select: { id: true, username: true },
+      select: { id: true, username: true, chatName: true },
     });
 
     if (existingAccount) {
@@ -686,6 +686,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
           discordUser.username,
           discordDisplayName,
           installToken,
+          existingAccount.chatName,
         );
       } catch (err) {
         logger.warn({ err, userId: existingAccount.id }, 'Discord link reclaim: refreshClientIdentity failed (non-fatal)');
@@ -759,7 +760,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
         discordDisplayName,
         discordAuthedAt: new Date(),
       },
-      select: { id: true, username: true },
+      select: { id: true, username: true, chatName: true },
     });
 
     // Push updated identity to any open WS sessions so rendered names update live.
@@ -770,6 +771,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
         discordUser.username,
         discordDisplayName,
         installToken,
+        linkedUser.chatName,
       );
     } catch (err) {
       logger.warn({ err, userId: linkedUser.id }, 'Discord link: refreshClientIdentity failed (non-fatal)');
@@ -823,7 +825,7 @@ app.get('/api/auth/discord-status/:installToken', async (req: Request, res: Resp
     // clobbering it with a stale local placeholder name.
     const user = await prisma.user.findUnique({
       where: { installToken },
-      select: { username: true, discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true, installToken: true },
+      select: { username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true, installToken: true },
     });
     const isPlaceholder = (u?: string | null) => !u || u === 'Wanderer' || u.startsWith('pending-');
     const fo76Username = user && !isPlaceholder(user.username) ? user.username : null;
@@ -1479,14 +1481,14 @@ app.post('/admin/debug/set-username', apiLimiter, requireAdminKey, async (req: R
     const updated = await prisma.user.update({
       where: { id: userId },
       data: { username: trimmed },
-      select: { id: true, username: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true },
+      select: { id: true, username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true },
     });
     // Refresh any live WS session's cached displayName so chat renders the
     // new name instantly without requiring the overlay to reconnect.
     try {
       const { refreshClientIdentity } = require('./websocket/handlers');
       if (typeof refreshClientIdentity === 'function') {
-        refreshClientIdentity(updated.id, updated.username, updated.discordUsername, updated.discordDisplayName, updated.installToken);
+        refreshClientIdentity(updated.id, updated.username, updated.discordUsername, updated.discordDisplayName, updated.installToken, updated.chatName);
       }
     } catch { /* non-fatal */ }
     res.json({ data: updated });
