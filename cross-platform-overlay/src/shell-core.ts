@@ -329,6 +329,7 @@ export interface WebMirrorInput {
   showHints: boolean;
   showTimestamps: boolean;
   timestampFormat: '12h' | '24h';
+  disableNameMotion: boolean;
   channelFilters: string[];
   notifyKeywords: string[];
   showTypingWhenCollapsed: boolean;
@@ -343,6 +344,7 @@ export interface WebMirrorSettings {
   showHints: boolean;
   showTimestamps: boolean;
   timestampFormat: '12h' | '24h';
+  disableNameMotion: boolean;
   channelFilters: string[];
   notifyKeywords: string[];
   showTypingWhenCollapsed: boolean;
@@ -362,6 +364,11 @@ export function shellToWebSettings(s: WebMirrorInput): WebMirrorSettings {
     showHints: s.showHints,
     showTimestamps: s.showTimestamps,
     timestampFormat: s.timestampFormat,
+    // Viewer opt-out for animated supporter name effects. MUST be carried here — a
+    // field that exists in ShellSettings but is missing from the mirror persists fine
+    // and never reaches ChatOverlay, which is the classic silent failure for this
+    // pattern (see the mirror-completeness test below).
+    disableNameMotion: s.disableNameMotion,
     // Hidden-channel names — the component filters these out of the feed and
     // per-channel views (case-insensitive). Copied so the array can't alias.
     channelFilters: Array.isArray(s.channelFilters) ? s.channelFilters.slice() : [],

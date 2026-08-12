@@ -117,12 +117,20 @@ function substituteTemplate(
 function buildHelpResponse(commands: ChatCommand[]): string {
   const lines: string[] = ['◈ VAULT-TEC COMMAND REFERENCE'];
 
-  lines.push('', '— CHANNEL RELAY —');
+  // PUBLIC channels — these also relay to Discord. Never describe one as a party
+  // command; the private party shortcuts are listed separately below.
+  lines.push('', '— CHANNEL RELAY (public — also posts to Discord) —');
   lines.push('/g <message> — Send to General');
   lines.push('/t <message> — Send to Trading');
   lines.push('/e <message> — Send to Events');
-  lines.push('/r <message> — Send to Raids');
+  lines.push('/r (/raid) <message> — Send to Raids');
   lines.push('/i <message> — Send to Infests');
+
+  lines.push('', '— PARTY (private — only your party sees these) —');
+  lines.push('/recent (/rp) <message> — Send to your most recent party');
+  lines.push('/p1 <message> — Send to your 1st joined party (Party-tab order, left to right)');
+  lines.push('/p2 <message> — Send to your 2nd joined party');
+  lines.push('/p3 <message> — Send to your 3rd joined party');
 
   lines.push('', '— MODERATION —');
   lines.push('/report bug <description> — Report a bug to the team');
@@ -132,7 +140,8 @@ function buildHelpResponse(commands: ChatCommand[]): string {
   lines.push('', '— FALLOUT 76 —');
   lines.push('/online — Show total users online in chat');
   lines.push('/serverstatus — Show Fallout 76 server status (up/down)');
-  lines.push('/nukecodes — Show this week\'s nuke launch codes (Alpha/Bravo/Charlie)');
+  lines.push('/nukecodes (/codes) — Show this week\'s nuke launch codes (Alpha/Bravo/Charlie)');
+  lines.push('/minerva — Show Minerva\'s current or next Big Sale (location, list number, dates)');
   lines.push('/wiki <name> — Look up a Fallout 76 item, weapon, creature, perk, or location');
   lines.push('/camp <item name> — Look up a CAMP item (budget cost, required plan, category)');
 
@@ -554,12 +563,18 @@ export async function tryHandleCommand(
     };
   }
 
-  // Built-in channel relay shortcuts — first letter of each seeded sub/main channel
+  // Built-in channel relay shortcuts — first letter of each seeded sub/main channel.
+  // These are PUBLIC channels and relay to Discord (relayToDiscord: true below). The
+  // private party shortcuts are `/recent` / `/rp` / `/p1..3`, resolved client-side —
+  // never document a shortcut here as a party command.
+  // `/raid` is an alias for `/r`: it was listed in RESERVED_BUILTINS and in the user-facing
+  // help but had no handler, so it fell through and posted as literal text.
   const CHANNEL_SHORTCUTS: Record<string, { id: string; name: string }> = {
     '/g': { id: '00000000-0000-0000-0000-000000000005', name: 'General' },
     '/t': { id: '00000000-0000-0000-0000-000000000002', name: 'Trading' },
     '/e': { id: '00000000-0000-0000-0000-000000000003', name: 'Events' },
     '/r': { id: '00000000-0000-0000-0000-000000000004', name: 'Raids' },
+    '/raid': { id: '00000000-0000-0000-0000-000000000004', name: 'Raids' },
     '/i': { id: '983995c1-f9ab-44c0-9b78-8b4cbf497273', name: 'Infests' },
   };
   if (trigger in CHANNEL_SHORTCUTS) {

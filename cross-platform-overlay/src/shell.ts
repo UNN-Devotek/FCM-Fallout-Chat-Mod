@@ -73,6 +73,12 @@ export interface ShellSettings {
   // Per-message timestamps rendered in the viewer's local time. Mirrored to WEB_SETTINGS_KEY.
   showTimestamps: boolean;
   timestampFormat: '12h' | '24h';
+  // VIEWER-side opt-out for animated supporter name effects (pulse/CRT/glitch/shimmer).
+  // Nothing to do with your own tier — it controls what YOU see from other people, for
+  // anyone who finds motion in the feed distracting while playing but does not want to
+  // turn on system-wide reduced motion. Collapses each animated effect to its static
+  // sibling via a single root class, so supporters still look distinct.
+  disableNameMotion: boolean;
   blockedUsers: string[];
   channelFilters: string[];
   notifyKeywords: string[];
@@ -144,6 +150,7 @@ export const DEFAULT_SHELL_SETTINGS: ShellSettings = {
   idleCollapseSeconds: IDLE_COLLAPSE_SECONDS_DEFAULT,
   showTimestamps: false,
   timestampFormat: '12h',
+  disableNameMotion: false,
   blockedUsers: [],
   channelFilters: [],
   notifyKeywords: [],
@@ -1550,6 +1557,15 @@ function buildSettingsPanel() {
       fmtRow.style.display = v ? '' : 'none';
     });
     s.append(fmtRow);
+
+    // Viewer-side control over OTHER people's animated name effects. Independent of
+    // your own tier — it exists for anyone who finds motion in the feed distracting
+    // mid-game but does not want system-wide reduced motion turned on. Animated
+    // effects collapse to their static equivalent, so supporters still look distinct.
+    toggle(s, 'Disable animated name effects', () => currentSettings.disableNameMotion, v => {
+      commit({ disableNameMotion: v });
+    });
+    hint(s, 'Supporter names with moving effects render as a static version instead.');
   }
 
   // ── Footer ──

@@ -41,6 +41,7 @@ import { emojifyShortcodes } from '../utils/emoji';
 import { broadcast } from '../websocket/handlers';
 import { nextRelaySeq } from './relay/relaySeq';
 import { incrementMessageCount } from '../controllers/healthController';
+import { attachCosmetics } from './cosmetics/cosmeticsService';
 import { shadowMute } from './autoModService';
 import { getActiveBlock } from './hudIdentityService';
 
@@ -301,6 +302,11 @@ export async function finalizeMessage(opts: {
   if (opts.avatarUrl !== undefined) payload.avatarUrl = opts.avatarUrl;
   if (hasMetadata) payload.metadata = opts.metadata ?? null;
   payload.relaySeq = relaySeq;
+
+  // Resolve the author's cosmetics (custom name, colour, effect, tag, badges) onto the
+  // payload. Redis-cached ~60s and non-throwing, so it costs nothing for the vast
+  // majority of users who have no cosmetics row and can never block delivery.
+  await attachCosmetics(payload);
 
   broadcast({ type: 'chat:message', payload });
   incrementMessageCount();

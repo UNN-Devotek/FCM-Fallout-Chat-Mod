@@ -68,7 +68,26 @@ export function refreshClientIdentity(
 ): number
 ```
 
-After updating all `ClientEntry.username`/`displayName` fields it broadcasts `user:identity_updated` to all instances via Redis pub/sub so other overlays see the new name immediately.
+After updating the **local instance's** `ClientEntry.username`/`displayName` fields it
+broadcasts `user:identity_updated`, which `broadcast()` fans out to all instances via
+Redis pub/sub so other overlays see the new name immediately.
+
+Two limitations worth knowing, because this paragraph previously overstated the
+guarantee:
+
+- The pub/sub subscriber relays **frames, not state**. Remote instances update the
+  rendered message history their clients hold, but their own `ClientEntry.username` /
+  `displayName` fields are not refreshed — those are re-derived on reconnect. Today the
+  backend runs single-instance (`dokploy-standby.yml` is a cold failover, not a second
+  replica), so this is latent rather than live.
+- The broadcast used to be gated on `touched > 0`, where `touched` counts local sockets
+  only. That silently dropped the frame whenever the acting instance held no socket for
+  the user — precisely the multi-instance case the pub/sub fan-out exists to serve. The
+  gate has been removed; the frame is now emitted unconditionally.
+
+The same frame also carries supporter cosmetics (`nameColor`, `effectId`, `tag`,
+`badges`) via `refreshClientCosmetics()`, so a cosmetics change re-styles already
+rendered history without a reconnect. See [Supporter cosmetics](../product/supporter-tier.md).
 
 `handlers.ts:389–421`
 

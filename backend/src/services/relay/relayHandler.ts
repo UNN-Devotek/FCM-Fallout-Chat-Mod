@@ -34,6 +34,7 @@ import { readWireString } from './wireSanitize';
 import { setWorldId, getWorldId, clearWorldId } from './worldIdService';
 import { setRoster, clearRoster, computeRooms } from './worldRosterService';
 import { nextRelaySeq } from './relaySeq';
+import { rememberClientVersion } from './clientCapability';
 import { ingestMessage } from '../ingestMessage';
 import { engineEvaluate } from '../autoModEngine';
 import {
@@ -425,6 +426,10 @@ async function ensurePubSub(): Promise<void> {
 // ── Op handlers ───────────────────────────────────────────────────────────────
 
 async function handleRegister(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
+  // Record the widget build so any future wire-format addition can be gated on it.
+  // Old builds send nothing, which reads as "assume the oldest client" — see
+  // clientCapability.ts for why that matters when the .ba2 is a manual file copy.
+  rememberClientVersion(ws, frame.clientVersion);
   const displayName = readWireString(frame.displayName).trim();
   if (!displayName) {
     send(ws, errEnvelope('invalid_request', 'displayName is required'));
@@ -452,6 +457,7 @@ async function handleRegister(ws: WebSocket, frame: Record<string, unknown>): Pr
 }
 
 async function handleHello(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
+  rememberClientVersion(ws, frame.clientVersion);
   const rawToken = typeof frame.token === 'string' ? frame.token : null;
   if (!rawToken) {
     send(ws, errEnvelope('auth_token_invalid', 'token is required'));

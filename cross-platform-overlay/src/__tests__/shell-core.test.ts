@@ -442,6 +442,7 @@ describe('shellToWebSettings (mirror)', () => {
     showTypingWhenCollapsed: true,
     notifySoundEnabled: true,
     notifySoundVolume: 0.5,
+    disableNameMotion: false,
   };
   it('carries the message-timestamp prefs into the mirror (regression: were dropped on reload)', () => {
     const w = shellToWebSettings(input);

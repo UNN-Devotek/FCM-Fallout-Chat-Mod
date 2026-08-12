@@ -333,22 +333,68 @@ export function refreshClientIdentity(
       touched++;
     }
   }
-  // Only broadcast when at least one connected session was touched — no
-  // point waking every overlay for a phantom update. Wrapped in try/catch
-  // so a broadcast failure never breaks the register-path caller.
-  if (touched > 0) {
-    try {
-      if (typeof broadcast === 'function') {
-        broadcast({
-          type: 'user:identity_updated',
-          payload: { userId, username, displayName },
-        });
-      }
-    } catch (err) {
-      logger.warn({ err, userId }, 'refreshClientIdentity: broadcast failed (non-fatal)');
+  // Broadcast unconditionally, NOT gated on `touched > 0`.
+  //
+  // `touched` counts sockets on THIS instance only. The old `if (touched > 0)` guard
+  // looked like a sensible "don't wake everyone for a phantom update" optimization,
+  // but it silently dropped the frame whenever the user's socket lived on a different
+  // instance from the one handling their register/link request — and since broadcast()
+  // fans out over Redis pub/sub, that frame is exactly how the other instance (and
+  // every other viewer's rendered history) learns about the rename. Single-instance
+  // today, so this is latent rather than live, but it breaks the moment replicas > 1.
+  //
+  // The frame is cheap and viewers ignore unknown userIds, so unconditional is both
+  // correct and inexpensive. Wrapped in try/catch so a broadcast failure never breaks
+  // the register-path caller.
+  try {
+    if (typeof broadcast === 'function') {
+      broadcast({
+        type: 'user:identity_updated',
+        payload: { userId, username, displayName },
+      });
     }
+  } catch (err) {
+    logger.warn({ err, userId }, 'refreshClientIdentity: broadcast failed (non-fatal)');
   }
   return touched;
+}
+
+/**
+ * Push updated cosmetics (name colour, effect, tag, badges) to every viewer so
+ * already-rendered messages re-style without anyone reconnecting.
+ *
+ * Rides the same `user:identity_updated` frame the rename path uses, because
+ * ChatOverlay's handler for it already back-applies to message history — adding the
+ * cosmetic fields there means one handler covers both cases.
+ *
+ * Note what this deliberately does NOT do: mutate any per-socket cached state.
+ * Cosmetics are resolved server-side at message-finalize time from a Redis cache, so a
+ * tier change only needs that cache busted (cosmeticsService does it) plus this frame
+ * for history. `ClientEntry.role` is frozen at connect and stays that way — supporter
+ * tier is resolved fresh per message, never read off the socket.
+ */
+export function refreshClientCosmetics(
+  userId: string,
+  cosmetics: { displayName?: string | null; nameColor?: string | null; effectId?: string | null; tag?: string | null; badges?: string[] },
+): void {
+  try {
+    if (typeof broadcast !== 'function') return;
+    broadcast({
+      type: 'user:identity_updated',
+      payload: {
+        userId,
+        // `displayName` is omitted when the user has no custom name — viewers keep
+        // whatever name they already had rather than blanking it.
+        ...(cosmetics.displayName ? { displayName: cosmetics.displayName } : {}),
+        nameColor: cosmetics.nameColor ?? null,
+        effectId: cosmetics.effectId ?? null,
+        tag: cosmetics.tag ?? null,
+        badges: cosmetics.badges ?? [],
+      },
+    });
+  } catch (err) {
+    logger.warn({ err, userId }, 'refreshClientCosmetics: broadcast failed (non-fatal)');
+  }
 }
 
 /**
@@ -2560,7 +2606,7 @@ module.exports = {
   broadcastMessageDeletion, broadcastReportAlert, broadcastChannelUpdate,
   broadcastCommandsUpdate, getClientCount, initPubSub,
   disconnectByUserId, markClientMuted, notifyAndDisconnect,
-  snapshotActiveClients, refreshClientIdentity,
+  snapshotActiveClients, refreshClientIdentity, refreshClientCosmetics,
   pushToUser, getConnectedUserIds, refreshClientBlocks,
   updateClientEndpoint,
   broadcastToSession,

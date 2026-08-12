@@ -47,6 +47,7 @@ import nameBlacklistRouter from './routes/nameBlacklist';
 import { loadBlacklist, subscribeBlacklistUpdates } from './services/nameBlacklistService';
 import adminStatusRouter from './routes/adminStatus';
 import commandsRouter from './routes/commands';
+import cosmeticsRouter from './routes/cosmetics';
 import wikiRouter from './routes/wiki';
 import campRouter from './routes/camp';
 import playerReportsRouter from './routes/playerReports';
@@ -1259,6 +1260,9 @@ app.use('/api/releases', releasesRouter);
 app.use('/api/admin/name-blacklist', nameBlacklistRouter);
 app.use('/api/admin/status', adminStatusRouter);
 app.use('/api/commands', commandsRouter);
+// Cosmetics + supporter tier. Mounted at /api so the router owns its own sub-paths
+// (/cosmetics/catalog, /users/:id/cosmetics, /supporter/*, /admin/users/:id/...).
+app.use('/api', cosmeticsRouter);
 // MCP token self-service (Discord OAuth session auth — dashboard users manage their own tokens)
 app.use('/api/me/mcp-tokens', mcpTokensRouter);
 // MCP tool API (dev env) — protected by MCP token auth, NOT behind Cloudflare Access

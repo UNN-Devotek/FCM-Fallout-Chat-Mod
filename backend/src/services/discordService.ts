@@ -7,6 +7,8 @@ import logger from '../config/logger';
 import voiceService from './voiceService';
 import reactionRoleService from './reactionRoleService';
 import ticketService from './ticketService';
+import supporterSyncService from './supporterSyncService';
+import cosmeticsCommandService from './cosmeticsCommandService';
 import { getEntry, bestMatch } from './wikiCatalogService';
 import { canon } from '../utils/textCanon';
 import { buildOverLengthDm } from '../utils/overLengthDm';
@@ -332,6 +334,12 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.GuildVoiceStates, // temp "join-to-create" voice channels
       GatewayIntentBits.GuildMessageReactions, // reaction roles
+      // PRIVILEGED intent. Required for guildMemberUpdate/guildMemberRemove, which is
+      // how supporterSyncService learns that Discord granted or removed a Server
+      // Subscription tier role. Must be enabled in the Discord Developer Portal for
+      // EACH application — dev and prod are separate apps, so this is done twice.
+      // Without it the gateway connection is rejected outright, not silently degraded.
+      GatewayIntentBits.GuildMembers,
     ],
     // Partials let reaction events fire for messages posted before the last
     // restart (uncached) — required for reaction roles to survive a redeploy.
@@ -343,6 +351,8 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
   voiceService.register(discordClient);
   reactionRoleService.register(discordClient);
   ticketService.register(discordClient);
+  supporterSyncService.register(discordClient);
+  cosmeticsCommandService.register(discordClient);
 
   // Invalidate the emoji cache whenever the guild's emoji set changes.
   // Lazy-require to avoid circular deps (discordEmojisController imports us too).

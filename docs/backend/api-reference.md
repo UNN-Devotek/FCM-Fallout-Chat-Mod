@@ -247,6 +247,54 @@ Player reports and bug reports submitted via the web form.
 
 ---
 
+## Cosmetics & Supporter tier (`/api/cosmetics`, `/api/supporter`)
+
+Chat appearance personalisation and the paid supporter entitlement. Design record:
+[docs/product/supporter-tier.md](../product/supporter-tier.md).
+
+| Method | Path | Auth | Description |
+| ------ | ---- | ---- | ----------- |
+| GET | `/api/supporter/tiers` | public | Pricing data for the marketing page (tier labels, prices, option counts) |
+| GET | `/api/cosmetics/catalog` | requireDashboardAuth | Colour + effect catalog, reserved colours, picker bounds, contrast floor, name rules, per-tier cooldowns. **Single source of truth** — the web picker, the Discord `/cosmetics` autocomplete and the user guide all render from this rather than re-declaring it |
+| GET | `/api/supporter/status` | requireDashboardAuth | Caller's tier, entitled tier, whether privileges are active, and whether they need to rejoin the Discord |
+| GET | `/api/users/:id/cosmetics` | requireDashboardAuth | Resolved + stored cosmetics. Self, or moderator+ |
+| PATCH | `/api/users/:id/cosmetics` | requireDashboardAuth + rate limit | Self only. Applies a partial patch |
+| POST | `/api/admin/users/:id/cosmetics/reset` | requireDiscordRole(owner/admin/moderator) | Reset an abusive display name to defaults (#232) |
+
+### PATCH semantics
+
+An **absent** key means "leave unchanged"; an explicit **`null`** means "clear". The two
+are distinct and the service relies on that.
+
+```json
+{ "displayName": "Wanderer", "colorPresetId": "cryo", "effectId": null }
+```
+
+`colorPresetId` and `customColorHex` are mutually exclusive — setting one clears the other.
+
+### Error responses
+
+RFC 7807 as usual, with a machine-readable `code` matching the service's rejection reason:
+
+| Reason | Status | Meaning |
+| --- | --- | --- |
+| `tier_locked` | 403 | Option requires a higher supporter tier |
+| `cooldown` | 429 | Name changed too recently. Sends `Retry-After` |
+| `blacklisted` | 400 | Name/tag rejected by the blacklist or automod. **Deliberately does not say which pattern matched** — that would make the endpoint an oracle for probing the filters |
+| `invalid_name` / `invalid_tag` | 400 | Length or charset |
+| `invalid_color` | 400 | Unparseable, below the contrast floor, or too close to a reserved colour |
+| `not_found` | 404 | No such user |
+
+The PATCH is rate-limited (20 / 5 min per IP, `cosmeticsWriteLimiter`) for the same
+oracle reason.
+
+### Note on ownership
+
+`requireDashboardAuth` does **not** enforce ownership, so these controllers scope by the
+caller's `discordId` themselves.
+
+---
+
 ## Commands (`/api/commands`)
 
 | Method | Path | Auth | Description |

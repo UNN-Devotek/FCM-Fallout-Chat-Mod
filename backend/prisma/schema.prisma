@@ -80,6 +80,7 @@ model User {
   hudPairingTokensLinked  HudPairingToken[] @relation("HudPairingTokenLinkedUser")
   linkedIdentities        LinkedIdentity[]
   redeemedLinkCodes       HudLinkCode[]     @relation("RedeemedLinkCodes")
+  cosmetics               UserCosmetic?     @relation("UserCosmetics")
 
   @@index([installToken])
   @@index([steamId])
@@ -248,6 +249,78 @@ model DiscordRelayMapping {
 
   @@unique([inGameChannelId, discordChannelId])
   @@map("discord_relay_mappings")
+}
+
+// =============================================================================
+// User Cosmetics (opt-in chat display customization — name, colour, effect, tag)
+// =============================================================================
+// Deliberately a separate 1:1 table rather than columns on `users`: cosmetics are
+// read rarely (resolved once per message and Redis-cached) while `users` is on the
+// hot path for every auth check, so this keeps that row lean. Most users have no
+// row at all, which is the "default identity" state.
+model UserCosmetic {
+  userId               String    @id @map("user_id") @db.Uuid
+  // Free tier. Falls back to the resolved FO76/Discord display name when null.
+  customDisplayName    String?   @map("custom_display_name")
+  // Either a catalog preset id OR a bounded custom hex from the HSL picker.
+  // colorPresetId wins when both are set; validation lives in cosmeticsService.
+  colorPresetId        String?   @map("color_preset_id")
+  customColorHex       String?   @map("custom_color_hex")
+  // Supporter+ (static) and Overseer (animated) render effects. Desktop-only —
+  // Scaleform cannot render them in-game (crash rule #1 bans .filters).
+  effectId             String?   @map("effect_id")
+  // Overseer-only short tag rendered beside the name. Renders in-game too.
+  customTag            String?   @map("custom_tag")
+  // User-facing master switch: keeps the row (and the entitlement) while rendering
+  // as a default identity. Also what a moderator reset flips.
+  cosmeticsEnabled     Boolean   @default(true) @map("cosmetics_enabled")
+  // Drives the per-tier name-change cooldown (30d free / 7d supporter / 24h overseer).
+  displayNameChangedAt DateTime? @map("display_name_changed_at") @db.Timestamptz(6)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation("UserCosmetics", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_cosmetics")
+}
+
+// =============================================================================
+// Supporter Entitlements (paid tier — Discord Server Subscriptions)
+// =============================================================================
+// Keyed by discord_id (like admin_users, and unlike most tables) because the
+// entitlement signal arrives from Discord and may exist before — or without — a
+// linked FCM User row.
+//
+// Deliberately NOT stored in admin_users: that table is reserved for elevated staff
+// identities (see server.ts OAuth upsert), and isPrivilegedRole() must keep returning
+// false for supporters. Supporter tier is an axis orthogonal to EffectiveRole and
+// never grants moderation power.
+//
+// Entitlement vs privileges: this row is the ENTITLEMENT and survives the user
+// leaving the Discord. PRIVILEGES additionally require currently holding the tier
+// role in the guild, so cosmetics revert on departure and restore on rejoin.
+model SupporterEntitlement {
+  id             Int       @id @default(autoincrement())
+  discordId      String    @unique @map("discord_id")
+  // 'supporter' | 'overseer'
+  tier           String
+  // 'discord_sub' | 'patreon' | 'stripe' | 'manual' — keeps the provider swappable
+  // (a migration becomes a new adapter, not a rewrite).
+  source         String    @default("manual")
+  // Provider-side reference (Discord SKU/entitlement id, Stripe subscription, …).
+  externalId     String?   @map("external_id")
+  // 'active' | 'lapsed' | 'cancelled'. Lapsed rows are RETAINED so privileges can
+  // restore without the user re-purchasing.
+  status         String    @default("active")
+  grantedAt      DateTime  @default(now()) @map("granted_at") @db.Timestamptz(6)
+  lastVerifiedAt DateTime? @map("last_verified_at") @db.Timestamptz(6)
+  expiresAt      DateTime? @map("expires_at") @db.Timestamptz(6)
+  notes          String?
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status])
+  @@map("supporter_entitlements")
 }
 
 // =============================================================================

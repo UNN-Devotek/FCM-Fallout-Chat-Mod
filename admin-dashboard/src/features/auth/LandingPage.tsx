@@ -10,6 +10,7 @@ import ChatOverlay from '../chat/ChatOverlay';
 import { ModerationTab, MODERATION_SUBTABS } from './ModerationTab';
 import CrtLineChart from '../system/components/CrtLineChart';
 import PublicCommandsKeybindsPage from './PublicCommandsKeybindsPage';
+import CosmeticsGuide from '../system/CosmeticsGuide';
 
 // ── Pip-Boy nav bar (matches authed AdminLayout style) ───────────────────────
 function PipboyNav({ activeTab = 'SYSTEM', subTabs = ['HOME'], activeSubTab = 'HOME', onTabClick, onSubTabClick }: {
@@ -1011,7 +1012,7 @@ function AboutFeaturesPanel() {
 // ── Main landing page ─────────────────────────────────────────────────────────
 export default function LandingPage() {
   const [mainTab, setMainTab] = useState<'SYSTEM' | 'CHAT' | 'MODERATION' | 'ABOUT'>('SYSTEM');
-  const [subTab, setSubTab] = useState<'HOME' | 'INSTALL' | 'PATCH NOTES' | 'CONTACT US' | 'FEATURES' | 'KEYBINDS'>('HOME');
+  const [subTab, setSubTab] = useState<'HOME' | 'INSTALL' | 'PATCH NOTES' | 'CONTACT US' | 'FEATURES' | 'KEYBINDS' | 'APPEARANCE'>('HOME');
   const [moderationSubTab, setModerationSubTab] = useState<string>(MODERATION_SUBTABS[0]);
   const [activeFeature, setActiveFeature] = useState(FEATURES[0].id);
   const [liveVersion, setLiveVersion] = useState<string>('—');
@@ -1089,7 +1090,7 @@ export default function LandingPage() {
         <PipboyNav
           activeTab={mainTab}
           subTabs={
-            mainTab === 'SYSTEM' ? ['HOME', 'INSTALL', 'PATCH NOTES', 'CONTACT US', 'KEYBINDS'] :
+            mainTab === 'SYSTEM' ? ['HOME', 'INSTALL', 'PATCH NOTES', 'CONTACT US', 'KEYBINDS', 'APPEARANCE'] :
             mainTab === 'ABOUT' ? ['FEATURES'] :
             mainTab === 'MODERATION' ? MODERATION_SUBTABS :
             []
@@ -1103,7 +1104,7 @@ export default function LandingPage() {
           }}
           onSubTabClick={(s) => {
             if (mainTab === 'MODERATION') setModerationSubTab(s);
-            else setSubTab(s as 'HOME' | 'INSTALL' | 'PATCH NOTES' | 'CONTACT US' | 'FEATURES' | 'KEYBINDS');
+            else setSubTab(s as 'HOME' | 'INSTALL' | 'PATCH NOTES' | 'CONTACT US' | 'FEATURES' | 'KEYBINDS' | 'APPEARANCE');
           }}
         />
 
@@ -1120,6 +1121,7 @@ export default function LandingPage() {
           {mainTab === 'SYSTEM' && subTab === 'PATCH NOTES' && <PatchNotesPanel />}
           {mainTab === 'SYSTEM' && subTab === 'CONTACT US' && <ContactUsPanel />}
           {mainTab === 'SYSTEM' && subTab === 'KEYBINDS' && <PublicCommandsKeybindsPage />}
+          {mainTab === 'SYSTEM' && subTab === 'APPEARANCE' && <CosmeticsGuide variant="public" />}
 
           {mainTab === 'SYSTEM' && subTab === 'HOME' && <>
           {/* ── Left panel: title + features ─────────────────────────────────── */}

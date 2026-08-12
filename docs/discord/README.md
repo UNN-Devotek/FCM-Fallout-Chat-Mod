@@ -119,6 +119,22 @@ discordClient created (intents + partials)
 
 ---
 
+## Supporter tier + `/cosmetics`
+
+`supporterSyncService` keeps supporter entitlements in lockstep with Discord tier roles
+(Discord Server Subscriptions grant/revoke the role on purchase/cancellation, so the
+role IS the entitlement signal and no payment webhook exists). `cosmeticsCommandService`
+registers the guild-scoped `/cosmetics` command.
+
+**Requires the `GuildMembers` PRIVILEGED intent**, enabled per Discord application in
+the Developer Portal — dev and prod are separate applications, so this must be done
+twice. Without it the gateway connection is rejected outright.
+
+Both are gated on `SUPPORTER_TIER_ENABLED` (default `false`): with the tier off the
+command is never registered and no listener attaches.
+
+Full design record: [docs/product/supporter-tier.md](../product/supporter-tier.md).
+
 ## Related docs
 
 - [voice-channels.md](./voice-channels.md) — Join-to-Create temp voice channels

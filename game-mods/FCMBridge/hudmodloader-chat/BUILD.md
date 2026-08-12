@@ -1,6 +1,6 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.9.4. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.0. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
@@ -142,7 +142,7 @@ game's `DiagnosticSnapshot` action and is not a reliable route to the loader men
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.9.4`.
+1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.10.0`.
 2. The tab row contains one label for each visible channel—no boxed duplicate labels.
 3. Switch channels, join/leave a world, and switch again; the tab row remains single-rendered.
 4. Send a body containing `{`, `}`, quotes, and backslashes; later events still render.

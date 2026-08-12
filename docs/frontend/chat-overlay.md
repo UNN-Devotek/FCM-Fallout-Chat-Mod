@@ -576,6 +576,44 @@ a `proxy:ws:close` event).
 `sock.close()` so the upstream relay connection is always torn down when the renderer's logical
 socket closes.
 
+## Supporter name cosmetics
+
+`ChatMessage` carries `nameColor`, `effectId`, `tag` and `badges`, resolved server-side
+in `ingestMessage.attachCosmetics()`. Absent for the vast majority of users, who render
+byte-identically to before the feature existed.
+
+**Render contract** (`nameCosmeticProps()`, exported and unit-tested):
+
+- No effect → inline `color` + `textShadow`, exactly as before.
+- With an effect → a static `.fcm-name-fx--<id>` class plus two CSS custom properties
+  set inline: `--fcm-name-color` and `--fcm-name-outline`. **No inline `textShadow`** —
+  the class owns it, and an inline one would win the cascade and silently flatten every
+  effect to a plain name.
+- `data-fcm-name` carries the rendered name for the glitch effect's `::before`/`::after`
+  copies (`content: attr(...)`).
+
+Effects live in `nameEffects.css` as **pure CSS**. No JS animation library may enter
+this component's import graph — the feed is virtualized and memoized, and the Electron
+overlay draws on top of a running game. `noMotionInOverlay.test.ts` walks the import
+graph transitively and fails CI if Motion ever becomes reachable from ChatOverlay.
+Motion IS used in `CosmeticsPanel`, which the overlay never loads.
+
+Every effect **composes with** the existing multi-layer `textOutline` rather than
+replacing it — names sit over arbitrary game content and are unreadable without it.
+
+Animated effects collapse to a static sibling under `prefers-reduced-motion` and under
+the viewer opt-out (`settings.disableNameMotion` → `fcm-no-name-motion`, applied on the
+same element, hence compound selectors in the CSS).
+
+Tag and badge render **before** the name so the name element's text node stays exactly
+`Name: `. Splitting the colon out broke `getByText(/Name:/)` queries in the existing
+private-messaging tests.
+
+Cosmetics updates arrive on the existing `user:identity_updated` frame, so the handler
+that back-applies renames to rendered history covers colour changes too.
+
+Full design record: [docs/product/supporter-tier.md](../product/supporter-tier.md).
+
 ## Related
 
 - [theming.md](./theming.md) — theme system and CSS variable details

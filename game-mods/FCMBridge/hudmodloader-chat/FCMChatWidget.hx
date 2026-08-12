@@ -100,7 +100,11 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.9.4";  // JSON-escaped legacy server controls + single fallback input renderer
+    // 2.10.0 is the first build that reports clientVersion to the relay. The relay
+    // treats "no version reported" as "oldest possible client" and gates any new wire
+    // field on this, so the version bump IS the capability signal — see
+    // backend/src/services/relay/clientCapability.ts (MIN_COSMETICS_VERSION).
+    static inline var VERSION:String  = "2.10.0";  // clientVersion handshake (relay capability gating)
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -1423,7 +1427,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.9.4");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.10.0");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
@@ -1453,7 +1457,15 @@ class FCMChatWidget extends MovieClip {
         zfeLog("info", "connect", "attempt=" + _connectAttempts + " displayName=" + _displayName);
         setLogText("connecting...");
 
-        var payload:String = '{"displayName":"' + jsonEscape(_displayName) + '","autoRegister":true}';
+        // clientVersion lets the relay tell which widget build it is talking to, so any
+        // future wire-format addition can be gated on capability instead of shipped
+        // blind. Before this, VERSION only ever reached the local ZFE log.
+        //
+        // This matters because the .ba2 is a MANUAL file copy — no auto-update, no way
+        // to retire an old build — so older widgets stay in circulation indefinitely.
+        // Without the handshake, a relay that started emitting a new field would render
+        // it as visible garbage inside usernames on every stale client, permanently.
+        var payload:String = '{"displayName":"' + jsonEscape(_displayName) + '","autoRegister":true,"clientVersion":"' + VERSION + '"}';
         var result:Dynamic = null;
         try {
             result = _api.call("chat.v1.connect", payload);
