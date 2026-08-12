@@ -1427,7 +1427,7 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.9.4");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.10.0");
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
