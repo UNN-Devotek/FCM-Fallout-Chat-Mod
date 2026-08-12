@@ -11,7 +11,7 @@
  * the Electron overlay runs on top of Fallout 76, where JS animation frames are taken
  * from the game. A CI guard (noMotionInOverlay.test.ts) enforces that split.
  */
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'motion/react';
 import { api } from '../../services/api';
@@ -83,6 +83,7 @@ export default function CosmeticsPanel({ userId, previewName }: { userId: string
   const qc = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
+  const [tagDraft, setTagDraft] = useState('');
 
   const { data: catalog } = useQuery({
     queryKey: ['cosmetics-catalog'],
@@ -117,6 +118,13 @@ export default function CosmeticsPanel({ userId, previewName }: { userId: string
 
   const currentColor = cosmetics?.nameColor ?? null;
   const currentEffect = cosmetics?.effectId ?? null;
+
+  // The same stored tag is editable in the overlay's Settings → Appearance panel.
+  // Sync only when the server value changes (initial load or another surface update),
+  // never by deriving the input value on every render and erasing in-progress typing.
+  useEffect(() => {
+    setTagDraft(cosmetics?.stored?.customTag ?? '');
+  }, [cosmetics?.stored?.customTag]);
 
   const { freeColors, paidColors } = useMemo(() => ({
     freeColors: (catalog?.colors ?? []).filter(c => c.tier === 'none'),
@@ -214,6 +222,39 @@ export default function CosmeticsPanel({ userId, previewName }: { userId: string
               </motion.button>
             );
           })}
+        </div>
+      </div>
+
+      {/* ── Overseer tag ─────────────────────────────────────────────────── */}
+      <div style={{ marginBottom: '12px' }}>
+        <div style={label}>Custom tag — shows everywhere, including in-game</div>
+        <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '10px' }}>
+          Overseer's Circle can add a short tag before the name. The game HUD renders
+          the plain text tag even though it cannot render desktop visual effects.
+        </p>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'stretch', maxWidth: '360px' }}>
+          <input
+            aria-label="Custom tag"
+            value={tagDraft}
+            maxLength={16}
+            disabled={!tierAtLeast(tier, 'overseer') || save.isPending}
+            placeholder={tierAtLeast(tier, 'overseer') ? 'e.g. VAULT 76' : "Overseer's Circle required"}
+            onChange={e => setTagDraft(e.target.value)}
+            style={{
+              flex: 1, minWidth: 0, padding: '7px 9px', borderRadius: '4px',
+              border: '1px solid var(--border-color)', background: 'var(--bg-secondary)',
+              color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', fontSize: '13px',
+              opacity: tierAtLeast(tier, 'overseer') ? 1 : 0.45,
+            }}
+          />
+          <button
+            type="button"
+            disabled={!tierAtLeast(tier, 'overseer') || save.isPending}
+            onClick={() => save.mutate({ customTag: tagDraft.trim() || null })}
+            style={{ ...btn, opacity: tierAtLeast(tier, 'overseer') ? 1 : 0.45 }}
+          >
+            Save tag
+          </button>
         </div>
       </div>
 

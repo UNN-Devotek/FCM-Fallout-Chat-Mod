@@ -323,6 +323,47 @@
       #shell-settings .ss-kbbtn:hover { border-color: color-mix(in srgb, var(--shell-primary, #C8A840) 60%, transparent); }
       #shell-settings .ss-kbbtn.listening { background: rgba(51,34,0,0.9); color: var(--shell-primary, #C8A840); }
       #shell-settings .ss-note { font-size: 10px; opacity: 0.5; margin-top: 6px; line-height: 1.5; }
+      /* ── Supporter chat appearance (Settings → Appearance) ─────────────── */
+      #shell-settings .ss-cosmetics { margin-top: 18px; padding-top: 1px; border-top: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 25%, transparent); }
+      #shell-settings .ss-cosmetics-loading, #shell-settings .ss-cosmetics-error {
+        padding: 8px 0; font-size: 11px; opacity: 0.7; line-height: 1.5;
+      }
+      #shell-settings .ss-cosmetics-error { color: #FF9B7A; opacity: 1; }
+      #shell-settings .ss-cosmetics-tier { display: flex; flex-wrap: wrap; gap: 7px 10px; align-items: center; margin: 10px 0; font-size: 11px; }
+      #shell-settings .ss-cosmetics-tier-label { color: var(--shell-primary, #C8A840); font-weight: bold; }
+      #shell-settings .ss-cosmetics-active { color: #8CDB57; }
+      #shell-settings .ss-cosmetics-paused { color: #F8D47A; }
+      #shell-settings .ss-cosmetics-subtle { opacity: 0.62; }
+      #shell-settings .ss-cosmetics-refresh { margin-left: auto; padding: 2px 7px; font-size: 9px; }
+      #shell-settings .ss-cosmetics-caption, #shell-settings .ss-cosmetics-label {
+        font-size: 10px; letter-spacing: 0.1em; opacity: 0.7; margin: 12px 0 5px;
+      }
+      #shell-settings .ss-cosmetics-preview {
+        padding: 8px 10px; background: rgba(0,0,0,0.48); border: 1px solid rgba(255,255,255,0.12);
+        font-size: 12px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      }
+      #shell-settings .ss-cosmetics-tag { color: var(--shell-primary, #C8A840); margin-right: 3px; }
+      #shell-settings .ss-cosmetics-swatches { display: flex; flex-wrap: wrap; gap: 6px; }
+      #shell-settings .ss-cosmetics-swatch {
+        position: relative; width: 27px; height: 27px; box-sizing: border-box; border: 1px solid rgba(255,255,255,0.22);
+        border-radius: 3px; cursor: pointer; padding: 0; box-shadow: inset 0 0 0 1px rgba(0,0,0,0.2);
+      }
+      #shell-settings .ss-cosmetics-swatch:hover:not(:disabled) { transform: scale(1.1); border-color: #fff; z-index: 1; }
+      #shell-settings .ss-cosmetics-swatch.selected { border: 2px solid #fff; box-shadow: 0 0 0 1px var(--shell-primary, #C8A840); }
+      #shell-settings .ss-cosmetics-swatch.locked, #shell-settings .ss-cosmetics-effect.locked { opacity: 0.38; filter: grayscale(0.85); cursor: not-allowed; }
+      #shell-settings .ss-cosmetics-lock { position: absolute; inset: 0; display: grid; place-items: center; font-size: 11px; text-shadow: 0 1px 2px #000; }
+      #shell-settings .ss-cosmetics-effects { display: flex; flex-wrap: wrap; gap: 6px; }
+      #shell-settings .ss-cosmetics-effect {
+        padding: 4px 7px; background: rgba(20,32,20,0.9); border: 1px solid color-mix(in srgb, var(--shell-primary, #C8A840) 32%, transparent);
+        color: var(--shell-text, #E8DFC0); font: 11px "Courier New", monospace; cursor: pointer;
+      }
+      #shell-settings .ss-cosmetics-effect:hover:not(:disabled), #shell-settings .ss-cosmetics-effect.selected { border-color: var(--shell-primary, #C8A840); background: color-mix(in srgb, var(--shell-primary, #C8A840) 15%, transparent); }
+      #shell-settings .ss-cosmetics-tag-row { display: flex; gap: 7px; align-items: stretch; }
+      #shell-settings input.ss-cosmetics-tag-input { flex: 1; min-width: 0; }
+      #shell-settings .ss-cosmetics-tag-row .ss-fbtn { white-space: nowrap; }
+      #shell-settings .ss-cosmetics-support { display: inline-block; margin-top: 12px; font-size: 10px; color: var(--shell-primary, #C8A840); letter-spacing: 0.07em; }
+      #shell-settings .ss-cosmetics-status { min-height: 16px; margin-top: 8px; color: #8CDB57; font-size: 10px; line-height: 1.4; }
+      #shell-settings .ss-cosmetics-status.error { color: #FF9B7A; }
       /* Footer */
       #shell-settings .ss-footer {
         display: flex; align-items: center; gap: 10px;

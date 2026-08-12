@@ -38,6 +38,63 @@ function statusForReason(reason: Extract<ApplyResult, { ok: false }>['reason']):
   }
 }
 
+/** Preserve the undefined-vs-null distinction the shared write service relies on. */
+export function parseCosmeticPatch(body: unknown): CosmeticPatch {
+  const source = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+  const patch: CosmeticPatch = {};
+  if ('colorPresetId' in source) patch.colorPresetId = source.colorPresetId as string | null;
+  if ('customColorHex' in source) patch.customColorHex = source.customColorHex as string | null;
+  if ('effectId' in source) patch.effectId = source.effectId as string | null;
+  if ('customTag' in source) patch.customTag = source.customTag as string | null;
+  if ('cosmeticsEnabled' in source) patch.cosmeticsEnabled = Boolean(source.cosmeticsEnabled);
+  return patch;
+}
+
+function catalogPayload() {
+  return {
+    colors: COLOR_PRESETS,
+    effects: EFFECT_PRESETS,
+    reducedMotionFallback: REDUCED_MOTION_FALLBACK,
+    customColorBounds: CUSTOM_COLOR_BOUNDS,
+    reservedColors: RESERVED_COLORS,
+    reservedMinDistance: RESERVED_MIN_DISTANCE,
+    contrast: { min: MIN_CONTRAST, backgrounds: CONTRAST_BACKGROUNDS },
+    tagRules: { tagMaxLength: TAG_MAX_LENGTH },
+    // Effects never render in-game (Scaleform bans filters). Surfaced so the UI can
+    // label them honestly rather than selling a cosmetic that does nothing in game.
+    inGameSupports: { colors: true, tag: true, effects: false },
+  };
+}
+
+function supporterStatusPayload(status: Awaited<ReturnType<typeof getSupporterStatus>>) {
+  return {
+    ...status,
+    tierLabel: tierLabel(status.tier),
+    entitledTierLabel: tierLabel(status.entitledTier),
+    needsDiscordRejoin: status.hasEntitlement && !status.privilegesActive,
+    shopUrl: env.SUPPORTER_TIER_ENABLED ? env.DISCORD_SERVER_SHOP_URL || null : null,
+    tierEnabled: env.SUPPORTER_TIER_ENABLED,
+  };
+}
+
+function storedCosmetics(row: {
+  colorPresetId: string | null;
+  customColorHex: string | null;
+  effectId: string | null;
+  customTag: string | null;
+  cosmeticsEnabled: boolean;
+} | null) {
+  return row
+    ? {
+        colorPresetId: row.colorPresetId,
+        customColorHex: row.customColorHex,
+        effectId: row.effectId,
+        customTag: row.customTag,
+        cosmeticsEnabled: row.cosmeticsEnabled,
+      }
+    : null;
+}
+
 /** Resolve the dashboard caller's FCM user id. */
 async function callerUserId(req: Request): Promise<{ userId: string; discordId: string } | null> {
   const discordId = (req as unknown as { dashboardUser?: { discordId?: string } }).dashboardUser?.discordId;
@@ -56,21 +113,7 @@ async function callerUserId(req: Request): Promise<{ userId: string; discordId: 
  */
 export async function getCatalog(_req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    res.json({
-      data: {
-        colors: COLOR_PRESETS,
-        effects: EFFECT_PRESETS,
-        reducedMotionFallback: REDUCED_MOTION_FALLBACK,
-        customColorBounds: CUSTOM_COLOR_BOUNDS,
-        reservedColors: RESERVED_COLORS,
-        reservedMinDistance: RESERVED_MIN_DISTANCE,
-        contrast: { min: MIN_CONTRAST, backgrounds: CONTRAST_BACKGROUNDS },
-        tagRules: { tagMaxLength: TAG_MAX_LENGTH },
-        // Effects never render in-game (Scaleform bans filters). Surfaced so the UI can
-        // label them honestly rather than selling a cosmetic that does nothing in game.
-        inGameSupports: { colors: true, tag: true, effects: false },
-      },
-    });
+    res.json({ data: catalogPayload() });
   } catch (err) {
     next(err);
   }
@@ -101,15 +144,7 @@ export async function getUserCosmetics(req: Request, res: Response, next: NextFu
         ...cosmetics,
         // Stored (as opposed to resolved) values, so the editor shows what the user
         // actually chose even while a preset is gated off by a lapsed entitlement.
-        stored: row
-          ? {
-              colorPresetId: row.colorPresetId,
-              customColorHex: row.customColorHex,
-              effectId: row.effectId,
-              customTag: row.customTag,
-              cosmeticsEnabled: row.cosmeticsEnabled,
-            }
-          : null,
+        stored: storedCosmetics(row),
       },
     });
   } catch (err) {
@@ -129,15 +164,7 @@ export async function patchUserCosmetics(req: Request, res: Response, next: Next
       return next(createError(403, 'You can only change your own cosmetics'));
     }
 
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    const patch: CosmeticPatch = {};
-    // Only forward keys that were actually present — `undefined` means "leave alone"
-    // while an explicit `null` means "clear", and the service relies on that distinction.
-    if ('colorPresetId' in body) patch.colorPresetId = body.colorPresetId as string | null;
-    if ('customColorHex' in body) patch.customColorHex = body.customColorHex as string | null;
-    if ('effectId' in body) patch.effectId = body.effectId as string | null;
-    if ('customTag' in body) patch.customTag = body.customTag as string | null;
-    if ('cosmeticsEnabled' in body) patch.cosmeticsEnabled = Boolean(body.cosmeticsEnabled);
+    const patch = parseCosmeticPatch(req.body);
 
     const result = await applyCosmetics({
       userId: targetId,
@@ -187,18 +214,67 @@ export async function getSupporterStatusHandler(req: Request, res: Response, nex
     if (!discordId) return next(createError(401, 'No linked account'));
 
     const status = await getSupporterStatus(discordId);
-    res.json({
-      data: {
-        ...status,
-        tierLabel: tierLabel(status.tier),
-        entitledTierLabel: tierLabel(status.entitledTier),
-        // True when the user is entitled but privileges are suspended — the UI uses
-        // this to prompt them to rejoin the Discord rather than to re-purchase.
-        needsDiscordRejoin: status.hasEntitlement && !status.privilegesActive,
-        shopUrl: env.SUPPORTER_TIER_ENABLED ? env.DISCORD_SERVER_SHOP_URL || null : null,
-        tierEnabled: env.SUPPORTER_TIER_ENABLED,
-      },
+    res.json({ data: supporterStatusPayload(status) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** Resolve the caller for the install-bound Electron overlay session. */
+async function overlayCaller(req: Request): Promise<{ userId: string; discordId: string | null; displayName: string } | null> {
+  if (!req.user?.id) return null;
+  const user = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { id: true, discordId: true, chatName: true, username: true },
+  });
+  if (!user) return null;
+  return { userId: user.id, discordId: user.discordId, displayName: user.chatName || user.username };
+}
+
+async function overlayPayload(caller: { userId: string; discordId: string | null; displayName: string }) {
+  const [cosmetics, row, status] = await Promise.all([
+    resolveCosmetics(caller.userId),
+    prisma.userCosmetic.findUnique({ where: { userId: caller.userId } }),
+    getSupporterStatus(caller.discordId),
+  ]);
+  return {
+    catalog: catalogPayload(),
+    supporter: supporterStatusPayload(status),
+    cosmetics: { ...cosmetics, stored: storedCosmetics(row) },
+    displayName: caller.displayName,
+  };
+}
+
+/** GET /api/overlay/cosmetics — Electron-only self view, authenticated by X-Auth-Token. */
+export async function getOverlayCosmetics(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const caller = await overlayCaller(req);
+    if (!caller) return next(createError(401, 'No linked account'));
+    res.json({ data: await overlayPayload(caller) });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/** PATCH /api/overlay/cosmetics — Electron-only self update; never accepts a target id. */
+export async function patchOverlayCosmetics(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const caller = await overlayCaller(req);
+    if (!caller) return next(createError(401, 'No linked account'));
+
+    const result = await applyCosmetics({
+      userId: caller.userId,
+      patch: parseCosmeticPatch(req.body),
+      actor: { kind: 'self', discordId: caller.discordId ?? undefined },
     });
+    if (!result.ok) {
+      return next(createError(statusForReason(result.reason), result.detail.message ?? result.reason, {
+        code: result.reason,
+        detail: result.detail,
+      }));
+    }
+
+    res.json({ data: { ...(await overlayPayload(caller)), changed: result.changed } });
   } catch (err) {
     next(err);
   }
@@ -252,6 +328,9 @@ export default {
   adminResetCosmetics,
   getSupporterStatusHandler,
   getSupporterTiers,
+  getOverlayCosmetics,
+  patchOverlayCosmetics,
+  parseCosmeticPatch,
 };
 module.exports = {
   getCatalog,
@@ -260,5 +339,8 @@ module.exports = {
   adminResetCosmetics,
   getSupporterStatusHandler,
   getSupporterTiers,
+  getOverlayCosmetics,
+  patchOverlayCosmetics,
+  parseCosmeticPatch,
 };
 module.exports.default = module.exports;

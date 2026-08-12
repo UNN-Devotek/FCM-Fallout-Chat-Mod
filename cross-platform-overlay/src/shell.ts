@@ -41,6 +41,7 @@ import {
   mergeKeybindDefaults,
   type ResizeEdge,
 } from './shell-core';
+import { mountSupporterAppearance } from './supporterAppearance';
 
 // ── Settings model (desktop-parity superset) ──────────────────────────────────
 
@@ -1566,6 +1567,11 @@ function buildSettingsPanel() {
       commit({ disableNameMotion: v });
     });
     hint(s, 'Supporter names with moving effects render as a static version instead.');
+
+    // The native desktop settings are a first-class cosmetics surface, not a link
+    // back to the website. It reads the exact catalog + Discord entitlement state
+    // and writes through the same backend service as the Profile panel and bot.
+    mountSupporterAppearance(s);
   }
 
   // ── Footer ──

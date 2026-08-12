@@ -15,6 +15,7 @@ cross-platform-overlay/
 ├── src/
 │   ├── main.tsx     — Renderer entry: mounts ChatOverlay with required React providers
 │   ├── shell.ts     — ShellSettings model + defaults; idle-collapse logic; settings parity
+│   ├── supporterAppearance.ts — Settings → Appearance cosmetics editor; reads the signed-in overlay account only
 │   ├── bridge.ts    — Renderer-side shims: patches global fetch + WebSocket to route
 │   │                   through IPC proxy; sets window.__FCM_OVERLAY_SHELL__ flag
 │   └── onboarding.ts — Onboarding UI component and notifyOnboardingComplete() IPC call
@@ -57,6 +58,16 @@ import '@dashboard/index.css';
 The `@dashboard` alias in `vite.config.ts` resolves to `../admin-dashboard/src`. The component runs unmodified, wrapped in the same React providers the dashboard gives it (`QueryClientProvider`, `MemoryRouter`, outlet context). Any change to `ChatOverlay.tsx` is automatically reflected in the Electron overlay.
 
 The global `window.__FCM_OVERLAY_SHELL__` (set in `bridge.ts`) gates desktop-only header chrome (refresh/min/close icons, amber main-tab style). On the website that global is absent, so the header keeps its original appearance.
+
+## Chat appearance in Settings
+
+**Settings → Appearance → Chat appearance** is the desktop equivalent of Profile →
+**Chat appearance** and the Discord `/cosmetics` command. It loads the catalog and the
+signed-in account's active Discord tier through the overlay's install-token proxy; it
+does not accept a user id from the renderer. Free swatches remain usable by everyone,
+while Supporter and Overseer's Circle choices stay visible but locked until the matching
+Discord role is active. Colour and tag render in the in-game HUD; visual effects are
+honestly labelled desktop-only because Scaleform cannot render them safely.
 
 ---
 
