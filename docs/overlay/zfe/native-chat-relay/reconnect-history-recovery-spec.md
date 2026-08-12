@@ -1,6 +1,6 @@
 # Reconnect History Recovery — Specification
 
-**Status:** Implemented — hosted validation pending
+**Status:** Corrected — hosted validation pending
 **Version:** 0.1
 **Date:** 2026-08-10
 
@@ -41,10 +41,11 @@ copy of each expected record and each world feed contains only its own records.
 
 ## Constraints
 
-- A subscription acknowledgement is followed only by messages that become available after the
-  supplied cursor; it must not consume, reclassify, or replace history retrieval.
-- History retrieval with an initial cursor returns the bounded recent history for static feeds.
-  Retrieval with a later cursor returns only records newer than that cursor.
+- The long-lived subscription enqueues bounded static-feed and current-world history after its
+  supplied cursor. ZFE's `pollEvents` drains that native queue rather than issuing a separate
+  relay poll request at HUD startup.
+- History retrieval with an initial cursor returns the bounded recent history for static feeds;
+  a later cursor returns only records newer than that cursor.
 - Cursors must move forward monotonically and a record must never be displayed more than once for a
   given feed.
 - World-feed history remains scoped to the active derived world room; no record from a prior world

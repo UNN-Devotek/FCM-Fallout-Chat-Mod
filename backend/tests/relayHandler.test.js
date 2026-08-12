@@ -1270,9 +1270,9 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
-  test('subscribe does not drain poll history', async () => {
-    // The subscribe path must never emit stored history as live events. Polling
-    // with the same cursor remains responsible for returning that history.
+  test('subscribe streams initial static history into the native event queue', async () => {
+    // ZFE's pollEvents drains the queue populated by the long-lived subscribe
+    // transport; it does not issue a separate relay poll request on startup.
     const { ws: wsReg, msgs: msgsReg } = await conn();
     const regRes = await waitForMsg(wsReg, msgsReg, () =>
       send(wsReg, { op: 'register', displayName: 'NoDrainPlayer' }),
@@ -1289,25 +1289,22 @@ describe('relay WebSocket ops', () => {
     require('../src/config/prisma').default.$queryRaw.mockResolvedValueOnce([historyRow]);
 
     const { ws: wsSub, msgs: msgsSub } = await conn();
-    const subRes = await waitForMsg(wsSub, msgsSub, () =>
+    await waitForMsg(wsSub, msgsSub, () =>
       send(wsSub, { op: 'subscribe', token, cursor: 0 }),
     );
-    // Give any incorrectly queued post-ack event frame a chance to arrive.
     await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(subRes).not.toHaveProperty('events');
-    expect(msgsSub).toEqual([expect.objectContaining({ success: true, op: 'subscribed', cursor: 0 })]);
-
-    // Now poll with cursor=0 — history should still be available
-    const { ws: wsPoll, msgs: msgsPoll } = await conn();
-    const pollRes = await waitForMsg(wsPoll, msgsPoll, () =>
-      send(wsPoll, { op: 'poll', token, cursor: 0, max: 10 }),
+    const historyEvent = msgsSub.find((msg) =>
+      msg.op === 'event' && msg.event?.messageId === historyRow.id,
     );
-    expect(pollRes.events).toHaveLength(1);
-    wsPoll.close();
+    expect(historyEvent).toMatchObject({
+      op: 'event',
+      cursor: 1,
+      event: { id: 1, channel: 'global', body: 'hist' },
+    });
     wsSub.close();
   });
 
-  test('subscribe does not drain current-world history', async () => {
+  test('subscribe streams current-world history into the native event queue', async () => {
     const { ws: wsReg, msgs: msgsReg } = await conn();
     const regRes = await waitForMsg(wsReg, msgsReg, () =>
       send(wsReg, { op: 'register', displayName: 'WorldHistoryPlayer' }),
@@ -1337,14 +1334,14 @@ describe('relay WebSocket ops', () => {
       send(wsSub, { op: 'subscribe', token, cursor: 0 }),
     );
     await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(msgsSub).toEqual([expect.objectContaining({ success: true, op: 'subscribed', cursor: 0 })]);
-
-    const { ws: wsPoll, msgs: msgsPoll } = await conn();
-    const pollRes = await waitForMsg(wsPoll, msgsPoll, () =>
-      send(wsPoll, { op: 'poll', token, cursor: 0, max: 10 }),
+    const historyEvent = msgsSub.find((msg) =>
+      msg.op === 'event' && msg.event?.messageId === worldEvent.messageId,
     );
-    expect(pollRes.events).toEqual(expect.arrayContaining([expect.objectContaining({ id: 2, channel: 'server' })]));
-    wsPoll.close();
+    expect(historyEvent).toMatchObject({
+      op: 'event',
+      cursor: 2,
+      event: { id: 2, channel: 'server', body: 'world history' },
+    });
     wsSub.close();
   });
 });
