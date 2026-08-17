@@ -4,7 +4,7 @@
  * Thin by design — all logic lives in cosmeticsService (see cosmeticsController).
  */
 import express from 'express';
-import { requireDashboardAuth, requireDiscordRole } from '../middleware/auth';
+import { requireAuth, requireDashboardAuth, requireDiscordRole } from '../middleware/auth';
 import env from '../config/environment';
 import createError from 'http-errors';
 import { cosmeticsWriteLimiter } from '../middleware/rateLimiter';
@@ -15,6 +15,8 @@ import {
   adminResetCosmetics,
   getSupporterStatusHandler,
   getSupporterTiers,
+  getOverlayCosmetics,
+  patchOverlayCosmetics,
 } from '../controllers/cosmeticsController';
 
 const router = express.Router();
@@ -45,6 +47,12 @@ router.get('/supporter/tiers', requireTierEnabled, getSupporterTiers);
 router.get('/cosmetics/catalog', requireTierEnabled, requireDashboardAuth, getCatalog);
 
 router.get('/supporter/status', requireTierEnabled, requireDashboardAuth, getSupporterStatusHandler);
+
+// The Electron overlay authenticates with its install-bound X-Auth-Token, not the
+// browser dashboard cookie.  These self-only routes deliberately derive the user
+// from that token; no renderer-supplied user id can select somebody else's profile.
+router.get('/overlay/cosmetics', requireTierEnabled, requireAuth, getOverlayCosmetics);
+router.patch('/overlay/cosmetics', requireTierEnabled, requireAuth, cosmeticsWriteLimiter, patchOverlayCosmetics);
 
 router.get('/users/:id/cosmetics', requireTierEnabled, requireDashboardAuth, getUserCosmetics);
 // Rate-limited: the PATCH runs names through the blacklist + automod, so without a

@@ -72,7 +72,10 @@ stop being served, so re-subscribing restores their exact previous look.
 Every cosmetic surface calls `cosmeticsService.applyCosmetics()`. All validation, tier gating,
 blacklist, cache busting, live push and audit logging live inside it; the REST
 controller and the Discord command only marshal input and translate the returned
-`reason`. The two surfaces are structurally incapable of drifting.
+`reason`. The website Profile → **Chat appearance** panel and the native overlay
+Settings → **Appearance** editor are equivalent self-service surfaces. The overlay
+uses its install-bound `X-Auth-Token` and a self-only `/api/overlay/cosmetics` route;
+it never sends a target user id. The two surfaces are structurally incapable of drifting.
 
 The chat name is deliberately not a cosmetic or a supporter feature. It lives on
 `users.chat_name`, has no tier gate or calendar cooldown, and is changed through
@@ -106,6 +109,7 @@ future provider change an adapter rather than a rewrite.
 | REST | `backend/src/routes/cosmetics.ts`, `controllers/cosmeticsController.ts` |
 | Effect CSS | `admin-dashboard/src/features/chat/nameEffects.css` |
 | Editor UI | `admin-dashboard/src/features/profile/CosmeticsPanel.tsx` |
+| Native overlay editor | `cross-platform-overlay/src/supporterAppearance.ts` (mounted in Settings → Appearance) |
 
 ## Catalog gates (enforced in CI)
 

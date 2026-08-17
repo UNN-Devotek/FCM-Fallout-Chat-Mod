@@ -257,6 +257,8 @@ Chat appearance personalisation and the paid supporter entitlement. Design recor
 | GET | `/api/supporter/tiers` | public | Pricing data for the marketing page (tier labels, prices, option counts) |
 | GET | `/api/cosmetics/catalog` | requireDashboardAuth | Colour + effect catalog, reserved colours, picker bounds and contrast floor. **Single source of truth** — the web picker, the Discord `/cosmetics` autocomplete and the user guide all render from this rather than re-declaring it |
 | GET | `/api/supporter/status` | requireDashboardAuth | Caller's tier, entitled tier, whether privileges are active, and whether they need to rejoin the Discord |
+| GET | `/api/overlay/cosmetics` | requireAuth (`X-Auth-Token`) | Electron overlay's self-only appearance payload: catalog, resolved/stored cosmetics and active Discord tier. The target comes solely from the install session, never from a renderer-supplied user id. |
+| PATCH | `/api/overlay/cosmetics` | requireAuth (`X-Auth-Token`) + rate limit | Electron overlay's self-only cosmetic update. Uses the same `applyCosmetics()` service and PATCH semantics as the profile and Discord bot. |
 | GET | `/api/users/:id/cosmetics` | requireDashboardAuth | Resolved + stored cosmetics. Self, or moderator+ |
 | PATCH | `/api/users/:id/cosmetics` | requireDashboardAuth + rate limit | Self only. Applies a partial patch |
 | POST | `/api/admin/users/:id/cosmetics/reset` | requireDiscordRole(owner/admin/moderator) | Reset an abusive colour, effect or tag to defaults (#232) |
@@ -284,8 +286,8 @@ RFC 7807 as usual, with a machine-readable `code` matching the service's rejecti
 | `invalid_color` | 400 | Unparseable, below the contrast floor, or too close to a reserved colour |
 | `not_found` | 404 | No such user |
 
-The PATCH is rate-limited (20 / 5 min per IP, `cosmeticsWriteLimiter`) for the same
-oracle reason.
+Both cosmetic PATCH routes are rate-limited (20 / 5 min per IP, `cosmeticsWriteLimiter`)
+for the same oracle reason.
 
 ## Free chat name (`/api/users/:id/chat-name`)
 
