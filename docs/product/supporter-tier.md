@@ -16,7 +16,7 @@ in the website's Cosmetics guide and in `/cosmetics help`, not here.
 | Curated palette | 12 colours | 12 + 11 | 12 + 11 |
 | Bounded HSL picker | yes | yes | yes |
 | Static effects | — | Soft/Hard Glow, Heavy Outline, Chroma Split | same |
-| Chat badge | — | yes | yes |
+| Chat badge | — | gold `✦` (hover: Supporter) | gold `◆` (hover: Overseer's Circle) |
 | Animated effects | — | — | Pulse Glow, CRT Phosphor, Glitch, Shimmer |
 | Custom tag | — | — | yes |
 | **Every functional feature** | yes | yes | yes |
@@ -81,6 +81,10 @@ The chat name is deliberately not a cosmetic or a supporter feature. It lives on
 `users.chat_name`, has no tier gate or calendar cooldown, and is changed through
 `chatNameService.setChatName()` from Profile → **Chat name** or the Discord `/name`
 modal. `null` restores the normal Fallout 76 / Discord-derived name.
+
+Historical messages resolve the current appearance at delivery time rather than storing a
+cosmetic snapshot. That makes a colour/effect selection persist across channel switches,
+reconnects and history reloads, while keeping the original message content unchanged.
 
 ### Payment provider
 

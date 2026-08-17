@@ -286,8 +286,10 @@ RFC 7807 as usual, with a machine-readable `code` matching the service's rejecti
 | `invalid_color` | 400 | Unparseable, below the contrast floor, or too close to a reserved colour |
 | `not_found` | 404 | No such user |
 
-Both cosmetic PATCH routes are rate-limited (20 / 5 min per IP, `cosmeticsWriteLimiter`)
-for the same oracle reason.
+The cosmetic appearance PATCH routes are rate-limited at **120 / 5 min per IP**
+(`cosmeticsAppearanceLimiter`; 500 for an unpackaged dev overlay). They do not submit
+candidate display names to blacklist/automod matching, so the free chat-name endpoint
+retains its separate, stricter 20 / 5 min anti-probing bucket.
 
 ## Free chat name (`/api/users/:id/chat-name`)
 

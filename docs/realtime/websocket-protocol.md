@@ -170,7 +170,11 @@ Broadcast to all clients (or session members for server-channel messages) when a
     "source": "game",
     "timestamp": "2026-06-04T12:00:00.000Z",
     "avatarUrl": "https://cdn.discordapp.com/...",
-    "metadata": null
+    "metadata": null,
+    "nameColor": "#57DBDB",
+    "effectId": "glow-soft",
+    "tag": null,
+    "badges": ["supporter"]
   }
 }
 ```
@@ -217,7 +221,7 @@ Request historical messages for a channel.
   }
 }
 ```
-Response uses the same `type: 'chat:history'` with `payload.messages` (array, chronological). Limit is capped at 300, offset at 10000.
+Response uses the same `type: 'chat:history'` with `payload.messages` (array, chronological). Limit is capped at 300, offset at 10000. Each row is decorated with the author's **current** resolved `nameColor`, `effectId`, `tag`, and `badges`, just like a live `chat:message`; cosmetics are not frozen into the message row, so changing an appearance remains visible after a tab/history reload.
 
 For server channels (`server:<UUID>`): user must be a member of that session; history is bounded to the session's `createdAt`. `handlers.ts:2510–2688`
 

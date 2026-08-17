@@ -80,6 +80,25 @@ export function problemText(problem: unknown): string {
   return 'Could not save that change. Please try again.';
 }
 
+/** One native-settings request at a time. Prevents rapid swatch clicks from
+ * producing overlapping PATCHes whose completion order would be ambiguous. */
+export function createAppearanceRequestGate(): {
+  tryStart: () => boolean;
+  finish: () => void;
+  readonly busy: boolean;
+} {
+  let busy = false;
+  return {
+    tryStart: () => {
+      if (busy) return false;
+      busy = true;
+      return true;
+    },
+    finish: () => { busy = false; },
+    get busy() { return busy; },
+  };
+}
+
 function node<K extends keyof HTMLElementTagNameMap>(
   tag: K,
   className?: string,
@@ -124,6 +143,16 @@ async function saveCosmetics(patch: Record<string, unknown>): Promise<OverlayCos
 export function mountSupporterAppearance(parent: HTMLElement): HTMLElement {
   const root = node('div', 'ss-cosmetics');
   parent.append(root);
+  const requestGate = createAppearanceRequestGate();
+
+  // Only unlocked controls get this marker. On an error we can safely restore
+  // them without accidentally enabling tier-locked controls.
+  const setRequestBusy = (busy: boolean) => {
+    root.dataset.saving = busy ? 'true' : 'false';
+    root.setAttribute('aria-busy', busy ? 'true' : 'false');
+    root.querySelectorAll<HTMLButtonElement | HTMLInputElement>('[data-cosmetics-interactive="true"]')
+      .forEach(control => { control.disabled = busy; });
+  };
 
   const renderLoading = () => {
     root.replaceChildren(node('div', 'ss-cosmetics-loading', 'Checking chat appearance…'));
@@ -164,11 +193,20 @@ export function mountSupporterAppearance(parent: HTMLElement): HTMLElement {
     }
     const refresh = node('button', 'ss-fbtn ss-cosmetics-refresh', 'REFRESH') as HTMLButtonElement;
     refresh.type = 'button';
+    refresh.dataset.cosmeticsInteractive = 'true';
     refresh.title = 'Recheck your signed-in Discord account and role status';
     refresh.addEventListener('click', async () => {
-      refresh.disabled = true;
-      try { render(await loadCosmetics(), 'Role status refreshed.'); }
-      catch (err) { renderError(err); }
+      if (!requestGate.tryStart()) return;
+      setRequestBusy(true);
+      try {
+        const fresh = await loadCosmetics();
+        requestGate.finish();
+        render(fresh, 'Role status refreshed.');
+      } catch (err) {
+        requestGate.finish();
+        setRequestBusy(false);
+        renderError(err);
+      }
     });
     tierLine.append(refresh);
     root.append(tierLine);
@@ -188,14 +226,18 @@ export function mountSupporterAppearance(parent: HTMLElement): HTMLElement {
     const state = node('div', feedback ? 'ss-cosmetics-status saved' : 'ss-cosmetics-status');
     state.textContent = feedback;
 
-    const mutate = async (patch: Record<string, unknown>, control?: HTMLButtonElement) => {
-      if (control) control.disabled = true;
+    const mutate = async (patch: Record<string, unknown>) => {
+      if (!requestGate.tryStart()) return;
+      setRequestBusy(true);
       state.className = 'ss-cosmetics-status';
       state.textContent = 'Saving…';
       try {
-        render(await saveCosmetics(patch), 'Saved. The chat updates without reconnecting.');
+        const saved = await saveCosmetics(patch);
+        requestGate.finish();
+        render(saved, 'Saved. The chat updates without reconnecting.');
       } catch (err) {
-        if (control) control.disabled = false;
+        requestGate.finish();
+        setRequestBusy(false);
         state.className = 'ss-cosmetics-status error';
         state.textContent = problemText(err);
       }
@@ -215,7 +257,8 @@ export function mountSupporterAppearance(parent: HTMLElement): HTMLElement {
           button.disabled = true;
           button.append(node('span', 'ss-cosmetics-lock', '🔒'));
         } else {
-          button.addEventListener('click', () => void mutate({ colorPresetId: preset.id }, button));
+          button.dataset.cosmeticsInteractive = 'true';
+          button.addEventListener('click', () => void mutate({ colorPresetId: preset.id }));
         }
         list.append(button);
       });
@@ -237,7 +280,8 @@ export function mountSupporterAppearance(parent: HTMLElement): HTMLElement {
         button.disabled = true;
         button.append(document.createTextNode(` · ${TIER_NAME[effect.tier]}`));
       } else {
-        button.addEventListener('click', () => void mutate({ effectId: effect.id }, button));
+        button.dataset.cosmeticsInteractive = 'true';
+        button.addEventListener('click', () => void mutate({ effectId: effect.id }));
       }
       effects.append(button);
     });
@@ -251,10 +295,12 @@ export function mountSupporterAppearance(parent: HTMLElement): HTMLElement {
     tagInput.value = stored?.customTag || '';
     tagInput.placeholder = isLocked(tier, 'overseer') ? "Overseer's Circle required" : 'e.g. VAULT 76';
     tagInput.disabled = isLocked(tier, 'overseer');
+    if (!tagInput.disabled) tagInput.dataset.cosmeticsInteractive = 'true';
     const tagSave = node('button', 'ss-fbtn', 'SAVE TAG') as HTMLButtonElement;
     tagSave.type = 'button';
     tagSave.disabled = isLocked(tier, 'overseer');
-    tagSave.addEventListener('click', () => void mutate({ customTag: tagInput.value.trim() || null }, tagSave));
+    if (!tagSave.disabled) tagSave.dataset.cosmeticsInteractive = 'true';
+    tagSave.addEventListener('click', () => void mutate({ customTag: tagInput.value.trim() || null }));
     tagRow.append(tagInput, tagSave);
     root.append(tagRow);
 

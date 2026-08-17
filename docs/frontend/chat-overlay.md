@@ -579,8 +579,11 @@ socket closes.
 ## Supporter chat cosmetics
 
 `ChatMessage` carries `nameColor`, `effectId`, `tag` and `badges`, resolved server-side
-in `ingestMessage.attachCosmetics()`. Absent for the vast majority of users, who render
-byte-identically to before the feature existed.
+in `ingestMessage.attachCosmetics()`. Channel and party `chat:history` batches resolve the
+same fields per distinct author before they are sent, and the frontend preserves those
+additive fields while normalising both live and history frames. Switching tabs or reloading
+history therefore cannot flatten a selected appearance. Absent for the vast majority of
+users, who render byte-identically to before the feature existed.
 
 **Render contract** (`nameCosmeticProps()`, exported and unit-tested):
 
@@ -606,8 +609,9 @@ the viewer opt-out (`settings.disableNameMotion` → `fcm-no-name-motion`, appli
 same element, hence compound selectors in the CSS).
 
 Tag and badge render **before** the name so the name element's text node stays exactly
-`Name: `. Splitting the colon out broke `getByText(/Name:/)` queries in the existing
-private-messaging tests.
+`Name: `. The badge is a compact glyph (`✦` for Supporter, `◆` for Overseer's Circle)
+with an accessible hover label, rather than an unexplained text abbreviation. Splitting the
+colon out broke `getByText(/Name:/)` queries in the existing private-messaging tests.
 
 Cosmetics updates arrive on the existing `user:identity_updated` frame, so the handler
 that back-applies renames to rendered history covers colour changes too.

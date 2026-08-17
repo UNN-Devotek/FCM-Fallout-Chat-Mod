@@ -200,22 +200,62 @@ export function reducedMotionEffect(effectId: string | null): string | null {
 export async function attachCosmetics(
   payload: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-  if (!cosmeticsEnabled()) return payload;
-  const userId = typeof payload.userId === 'string' ? payload.userId : null;
-  if (!userId) return payload;
-
-  try {
-    const c = await resolveCosmetics(userId);
-    // Only set fields that are actually in play, so payloads for the overwhelming
-    // majority of users (no cosmetics row at all) stay byte-identical to today.
-    if (c.nameColor) payload.nameColor = c.nameColor;
-    if (c.effectId) payload.effectId = c.effectId;
-    if (c.tag) payload.tag = c.tag;
-    if (c.badges.length > 0) payload.badges = c.badges;
-  } catch (err) {
-    logger.warn({ err, userId }, '[cosmetics] attach failed (non-fatal, message still sent)');
-  }
+  await attachCosmeticsToHistory([payload]);
   return payload;
+}
+
+/**
+ * Attach current cosmetics to a batch of historical messages.
+ *
+ * History rows deliberately store the author's identity, not a frozen cosmetic
+ * snapshot: a user changing their appearance should update all of their visible
+ * history. Resolve each distinct user only once, then decorate every row. This
+ * makes tab/history reloads visually identical to live chat frames without a
+ * Redis round-trip per message.
+ */
+export async function attachCosmeticsToHistory<T extends Record<string, unknown>>(
+  payloads: T[],
+): Promise<T[]> {
+  if (!cosmeticsEnabled() || payloads.length === 0) return payloads;
+
+  const userIds = new Set<string>();
+  for (const payload of payloads) {
+    const userId = typeof payload.userId === 'string'
+      ? payload.userId
+      : typeof payload.user_id === 'string'
+        ? payload.user_id
+        : null;
+    if (userId) userIds.add(userId);
+  }
+
+  const resolved = new Map<string, ResolvedCosmetics>();
+  await Promise.all([...userIds].map(async (userId) => {
+    try {
+      resolved.set(userId, await resolveCosmetics(userId));
+    } catch (err) {
+      logger.warn({ err, userId }, '[cosmetics] history resolve failed (non-fatal)');
+    }
+  }));
+
+  for (const payload of payloads) {
+    const userId = typeof payload.userId === 'string'
+      ? payload.userId
+      : typeof payload.user_id === 'string'
+        ? payload.user_id
+        : null;
+    const cosmetics = userId ? resolved.get(userId) : undefined;
+    if (!cosmetics) continue;
+    // Keep no-cosmetics rows byte-identical. This is also how the live message
+    // path behaves, so older clients safely ignore the additive fields.
+    const fields: Record<string, unknown> = {};
+    if (cosmetics.nameColor) fields.nameColor = cosmetics.nameColor;
+    if (cosmetics.effectId) fields.effectId = cosmetics.effectId;
+    if (cosmetics.tag) fields.tag = cosmetics.tag;
+    if (cosmetics.badges.length > 0) fields.badges = cosmetics.badges;
+    Object.assign(payload, fields);
+  }
+
+  return payloads;
 }
 
 // ── Write path ────────────────────────────────────────────────────────────────
@@ -429,6 +469,7 @@ export default {
   resolveCosmetics,
   resetCosmetics,
   attachCosmetics,
+  attachCosmeticsToHistory,
   cosmeticsEnabled,
   bustCosmeticsCache,
   pushCosmeticsUpdate,
@@ -440,6 +481,7 @@ module.exports = {
   resolveCosmetics,
   resetCosmetics,
   attachCosmetics,
+  attachCosmeticsToHistory,
   cosmeticsEnabled,
   bustCosmeticsCache,
   pushCosmeticsUpdate,
