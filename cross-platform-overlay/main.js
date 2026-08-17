@@ -1607,6 +1607,12 @@ ipcMain.handle('proxy:http', async (_evt, reqDesc) => {
     outHeaders['X-Client-Version'] = APP_VERSION;
     outHeaders['User-Agent'] = APP_UA;
     outHeaders['Origin'] = RELAY_HTTP;
+    // Keep every proxied request from an unpackaged overlay in the same bounded
+    // dev allowance as registration. The native Appearance panel issues a PATCH
+    // for each deliberate picker choice; without this header only registration
+    // received the dev allowance and normal cosmetic testing could trip the
+    // production-sized API/cosmetics buckets. Packaged builds never send it.
+    if (!app.isPackaged) outHeaders['X-Overlay-Dev'] = '1';
     // cookie is never in the allowlist, but delete defensively in case the
     // allowlist is widened in future without re-auditing this call site.
     delete outHeaders['cookie'];
@@ -1618,9 +1624,18 @@ ipcMain.handle('proxy:http', async (_evt, reqDesc) => {
         let data = '';
         res.on('data', (c) => (data += c));
         res.on('end', () => {
-          // Surface CF/edge transient conditions to the renderer's error path so
-          // they route to the retry UI rather than rendering an HTML challenge body.
+          // Keep an RFC 7807 429 from our backend intact. The old implementation
+          // rewrote *every* 429 as an "edge" failure, which hid the actual limiter
+          // and made a normal cosmetics-write cap look like a Cloudflare problem.
+          // Non-JSON 429s are still an edge/proxy condition, so keep their safe
+          // generic message rather than passing an HTML response into the renderer.
           if (res.statusCode === 429) {
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed && typeof parsed === 'object') {
+                return resolve({ status: 429, body: data });
+              }
+            } catch { /* edge response was not JSON */ }
             return resolve({ status: 429, body: JSON.stringify({ detail: 'Rate-limited by edge — please wait a moment before retrying.' }), cfTransient: true });
           }
           if (isCfChallenge(res.statusCode, res.headers, data)) {

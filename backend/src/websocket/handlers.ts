@@ -14,6 +14,7 @@ import { engineEvaluate } from '../services/autoModEngine';
 import { relayToDiscord, invalidateRelayMappingsCache } from '../services/discordService';
 import { persistMessage } from '../services/messageService';
 import { finalizeMessage } from '../services/ingestMessage';
+import { attachCosmeticsToHistory } from '../services/cosmetics/cosmeticsService';
 import messageQueue from '../queues/messagePersist';
 import logger from '../config/logger';
 import { incrementMessageCount, setFullscreenStatus, removeFullscreenClient } from '../controllers/healthController';
@@ -809,6 +810,7 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
               const { install_token, username, chat_name, discord_username, discord_display_name, discord_id, metadata, ...rest } = row;
               return { ...rest, username: dn, avatarUrl, metadata: metadata ?? null };
             });
+            await attachCosmeticsToHistory(messages);
             ws.send(JSON.stringify({ type: 'chat:history', payload: { messages: messages.reverse() } }));
           } catch (err) {
             logger.error({ err }, 'Admin observer: failed to load history');
@@ -2199,6 +2201,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
               const { install_token, username, chat_name, discord_username, discord_display_name, discord_id, metadata, ...rest } = row;
               return { ...rest, username: dn, avatarUrl, metadata: metadata ?? null };
             });
+          await attachCosmeticsToHistory(messages);
           ws.send(JSON.stringify({ type: 'chat:history', payload: { messages: messages.reverse() } }));
         } catch (err) {
           logger.error({ err }, 'Failed to load history');
@@ -2438,6 +2441,8 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
               created_at: r.createdAt.toISOString(),
               avatarUrl: buildAvatarUrl(r.user?.discordId ?? null),
             }));
+
+          await attachCosmeticsToHistory(phMessages);
 
           ws.send(JSON.stringify({ type: 'chat:history', payload: { channelId: phPartyId, messages: phMessages } }));
         } catch (err) {

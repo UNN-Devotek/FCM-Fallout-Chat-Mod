@@ -18,13 +18,16 @@ jest.mock('../src/config/logger', () => {
   return { __esModule: true, default: log, ...log };
 });
 
-const { ipKey } = require('../src/middleware/rateLimiter');
+const { apiLimitCap, cosmeticsAppearanceCap, ipKey } = require('../src/middleware/rateLimiter');
 
 // Minimal express-like req. No proxy headers, so clientIp() resolves to the TCP
 // peer (socket.remoteAddress) regardless of the TRUST_PROXY setting.
-function makeReq({ token, ip } = {}) {
+function makeReq({ token, ip, overlayDev = false } = {}) {
   return {
-    headers: token ? { 'x-auth-token': token } : {},
+    headers: {
+      ...(token ? { 'x-auth-token': token } : {}),
+      ...(overlayDev ? { 'x-overlay-dev': '1' } : {}),
+    },
     socket: { remoteAddress: ip },
   };
 }
@@ -51,5 +54,18 @@ describe('rate limiter bucket key (ipKey) — anti-spoof invariant', () => {
       ['r1', 'r2', 'r3', 'r4', 'r5'].map((t) => ipKey(makeReq({ token: t, ip: '203.0.113.7' }))),
     );
     expect(keys.size).toBe(1);
+  });
+});
+
+describe('picker allowances', () => {
+  it('keeps the production cosmetic picker generous while retaining a bounded dev allowance', () => {
+    expect(cosmeticsAppearanceCap(makeReq())).toBe(120);
+    expect(cosmeticsAppearanceCap(makeReq({ overlayDev: true }))).toBe(500);
+  });
+
+  it('raises only the unpackaged overlay API allowance', () => {
+    expect(apiLimitCap(makeReq({ token: 'session' }))).toBe(100);
+    expect(apiLimitCap(makeReq({ token: 'session', overlayDev: true }))).toBe(500);
+    expect(apiLimitCap(makeReq({ overlayDev: true }))).toBe(1000);
   });
 });

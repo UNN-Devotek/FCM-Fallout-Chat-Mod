@@ -142,6 +142,20 @@ describe('kill switch ON — the feature works', () => {
     expect(after.username).toBe('Wanderer');
     expect(after.nameColor).toBe('#57DBDB');
   });
+
+  it('decorates all history rows while resolving a repeated author only once', async () => {
+    const rows = [
+      { id: 'm1', user_id: 'user-1' },
+      { id: 'm2', user_id: 'user-1' },
+    ];
+    await svc.attachCosmeticsToHistory(rows);
+    expect(rows).toEqual([
+      { id: 'm1', user_id: 'user-1', nameColor: '#57DBDB' },
+      { id: 'm2', user_id: 'user-1', nameColor: '#57DBDB' },
+    ]);
+    // First resolve populates the cache; both history rows then share it.
+    expect(prismaMock.userCosmetic.findUnique).toHaveBeenCalledTimes(1);
+  });
 });
 
 /**

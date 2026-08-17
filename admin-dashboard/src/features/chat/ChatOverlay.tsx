@@ -4937,6 +4937,13 @@ export default function ChatOverlay() {
                   responseColor: frame.payload.responseColor ?? null,
                   avatarUrl: frame.payload.avatarUrl ?? null,
                   metadata: frame.payload.metadata ?? null,
+                  // Preserve the server-resolved appearance fields. Dropping these
+                  // here made a freshly sent message look correct only until a
+                  // tab/history refresh rebuilt the row from the plain message.
+                  nameColor: frame.payload.nameColor ?? null,
+                  effectId: frame.payload.effectId ?? null,
+                  tag: frame.payload.tag ?? null,
+                  badges: frame.payload.badges ?? [],
                 }]);
 
                 // Track active giveaways from broadcast metadata.
@@ -5022,6 +5029,10 @@ export default function ChatOverlay() {
                     source: m.source || 'game', timestamp: m.created_at ?? m.createdAt,
                     avatarUrl: av,
                     metadata: m.metadata ?? null,
+                    nameColor: m.nameColor ?? null,
+                    effectId: m.effectId ?? null,
+                    tag: m.tag ?? null,
+                    badges: m.badges ?? [],
                   };
                 });
                 // ── Lazy-load branch ─────────────────────────────────────────
@@ -8191,8 +8202,12 @@ export default function ChatOverlay() {
                         const fx = nameCosmeticProps(msg, { primaryText, primaryColor, textAlpha, textOutline, glowEnabled }, displayName);
                         fx.className = fx.className ? fx.className + motionOff : fx.className;
                         const tagEl = msg.tag ? <span className="fcm-name-tag" style={{ color: msg.nameColor || primaryText }}>[{msg.tag}]</span> : null;
-                        const badgeEl = msg.badges?.length
-                          ? <span className={`fcm-name-badge fcm-name-badge--${msg.badges[0]}`}>{msg.badges[0] === 'overseer' ? 'OC' : 'SUP'}</span>
+                        const badge = msg.badges?.[0];
+                        const badgeLabel = badge === 'overseer' ? "Overseer's Circle" : 'Supporter';
+                        // A compact glyph keeps the paid badge recognisable without
+                        // putting the unexplained abbreviation “SUP” beside names.
+                        const badgeEl = badge
+                          ? <span className={`fcm-name-badge fcm-name-badge--${badge}`} title={badgeLabel} aria-label={badgeLabel}>{badge === 'overseer' ? '◆' : '✦'}</span>
                           : null;
                         // Tag and badge render BEFORE the name, which keeps the name
                         // element's text node exactly `${displayName}: ` as it has

@@ -37,15 +37,17 @@
 
 .fcm-name-fx--glow-soft {
   text-shadow:
-    0 0 4px color-mix(in srgb, var(--fcm-fx-color) 70%, transparent),
-    0 0 9px color-mix(in srgb, var(--fcm-fx-color) 40%, transparent),
+    0 0 5px color-mix(in srgb, var(--fcm-fx-color) 90%, transparent),
+    0 0 13px color-mix(in srgb, var(--fcm-fx-color) 63%, transparent),
+    0 0 22px color-mix(in srgb, var(--fcm-fx-color) 32%, transparent),
     var(--fcm-fx-outline);
 }
 
 .fcm-name-fx--glow-hard {
   text-shadow:
-    0 0 2px var(--fcm-fx-color),
-    0 0 6px color-mix(in srgb, var(--fcm-fx-color) 75%, transparent),
+    0 0 3px var(--fcm-fx-color),
+    0 0 8px color-mix(in srgb, var(--fcm-fx-color) 90%, transparent),
+    0 0 16px color-mix(in srgb, var(--fcm-fx-color) 50%, transparent),
     var(--fcm-fx-outline);
 }
 
@@ -57,11 +59,14 @@
     var(--fcm-fx-outline);
 }
 
-/* Static CRT colour fringing — the classic red/cyan misconvergence. */
+/* Static CRT colour fringing. The selected base colour stays explicit and
+   dominant; the red/cyan offsets are a fringe, not a replacement palette. */
 .fcm-name-fx--chroma-split {
+  color: var(--fcm-fx-color);
   text-shadow:
-    -1px 0 0 rgba(255, 0, 64, 0.55),
-    1px 0 0 rgba(0, 224, 255, 0.55),
+    0 0 3px color-mix(in srgb, var(--fcm-fx-color) 68%, transparent),
+    -1px 0 0 rgba(255, 0, 64, 0.32),
+    1px 0 0 rgba(0, 224, 255, 0.32),
     var(--fcm-fx-outline);
 }
 
@@ -70,21 +75,23 @@
 @keyframes fcm-glow-pulse {
   from {
     text-shadow:
-      0 0 3px color-mix(in srgb, var(--fcm-fx-color) 45%, transparent),
-      0 0 6px color-mix(in srgb, var(--fcm-fx-color) 20%, transparent),
+      0 0 4px color-mix(in srgb, var(--fcm-fx-color) 60%, transparent),
+      0 0 10px color-mix(in srgb, var(--fcm-fx-color) 35%, transparent),
       var(--fcm-fx-outline);
   }
   to {
     text-shadow:
-      0 0 6px color-mix(in srgb, var(--fcm-fx-color) 95%, transparent),
-      0 0 14px color-mix(in srgb, var(--fcm-fx-color) 55%, transparent),
+      0 0 8px color-mix(in srgb, var(--fcm-fx-color) 100%, transparent),
+      0 0 18px color-mix(in srgb, var(--fcm-fx-color) 68%, transparent),
+      0 0 28px color-mix(in srgb, var(--fcm-fx-color) 34%, transparent),
       var(--fcm-fx-outline);
   }
 }
 
 .fcm-name-fx--glow-pulse {
   text-shadow:
-    0 0 4px color-mix(in srgb, var(--fcm-fx-color) 70%, transparent),
+    0 0 5px color-mix(in srgb, var(--fcm-fx-color) 82%, transparent),
+    0 0 11px color-mix(in srgb, var(--fcm-fx-color) 48%, transparent),
     var(--fcm-fx-outline);
   animation: fcm-glow-pulse 2.4s ease-in-out infinite alternate;
 }
@@ -101,10 +108,11 @@
 
 .fcm-name-fx--crt-phosphor {
   position: relative;
+  color: var(--fcm-fx-color);
   text-shadow:
-    -1px 0 0 rgba(255, 0, 64, 0.5),
-    1px 0 0 rgba(0, 224, 255, 0.5),
-    0 0 5px color-mix(in srgb, var(--fcm-fx-color) 45%, transparent),
+    -1px 0 0 rgba(255, 0, 64, 0.32),
+    1px 0 0 rgba(0, 224, 255, 0.32),
+    0 0 6px color-mix(in srgb, var(--fcm-fx-color) 58%, transparent),
     var(--fcm-fx-outline);
   animation: fcm-crt-flicker 6s steps(1, end) infinite;
 }
@@ -216,16 +224,18 @@
   .fcm-name-fx--glow-pulse,
   .fcm-name-fx--shimmer {
     text-shadow:
-      0 0 4px color-mix(in srgb, var(--fcm-fx-color) 70%, transparent),
-      0 0 9px color-mix(in srgb, var(--fcm-fx-color) 40%, transparent),
+      0 0 5px color-mix(in srgb, var(--fcm-fx-color) 90%, transparent),
+      0 0 13px color-mix(in srgb, var(--fcm-fx-color) 63%, transparent),
+      0 0 22px color-mix(in srgb, var(--fcm-fx-color) 32%, transparent),
       var(--fcm-fx-outline);
   }
 
   .fcm-name-fx--crt-phosphor,
   .fcm-name-fx--glitch {
     text-shadow:
-      -1px 0 0 rgba(255, 0, 64, 0.55),
-      1px 0 0 rgba(0, 224, 255, 0.55),
+      0 0 3px color-mix(in srgb, var(--fcm-fx-color) 68%, transparent),
+      -1px 0 0 rgba(255, 0, 64, 0.32),
+      1px 0 0 rgba(0, 224, 255, 0.32),
       var(--fcm-fx-outline);
   }
 
@@ -256,16 +266,18 @@
 .fcm-name-fx--glow-pulse.fcm-no-name-motion,
 .fcm-name-fx--shimmer.fcm-no-name-motion {
   text-shadow:
-    0 0 4px color-mix(in srgb, var(--fcm-fx-color) 70%, transparent),
-    0 0 9px color-mix(in srgb, var(--fcm-fx-color) 40%, transparent),
+    0 0 5px color-mix(in srgb, var(--fcm-fx-color) 90%, transparent),
+    0 0 13px color-mix(in srgb, var(--fcm-fx-color) 63%, transparent),
+    0 0 22px color-mix(in srgb, var(--fcm-fx-color) 32%, transparent),
     var(--fcm-fx-outline);
 }
 
 .fcm-name-fx--crt-phosphor.fcm-no-name-motion,
 .fcm-name-fx--glitch.fcm-no-name-motion {
   text-shadow:
-    -1px 0 0 rgba(255, 0, 64, 0.55),
-    1px 0 0 rgba(0, 224, 255, 0.55),
+    0 0 3px color-mix(in srgb, var(--fcm-fx-color) 68%, transparent),
+    -1px 0 0 rgba(255, 0, 64, 0.32),
+    1px 0 0 rgba(0, 224, 255, 0.32),
     var(--fcm-fx-outline);
 }
 

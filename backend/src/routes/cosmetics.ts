@@ -7,7 +7,7 @@ import express from 'express';
 import { requireAuth, requireDashboardAuth, requireDiscordRole } from '../middleware/auth';
 import env from '../config/environment';
 import createError from 'http-errors';
-import { cosmeticsWriteLimiter } from '../middleware/rateLimiter';
+import { cosmeticsAppearanceLimiter } from '../middleware/rateLimiter';
 import {
   getCatalog,
   getUserCosmetics,
@@ -52,12 +52,13 @@ router.get('/supporter/status', requireTierEnabled, requireDashboardAuth, getSup
 // browser dashboard cookie.  These self-only routes deliberately derive the user
 // from that token; no renderer-supplied user id can select somebody else's profile.
 router.get('/overlay/cosmetics', requireTierEnabled, requireAuth, getOverlayCosmetics);
-router.patch('/overlay/cosmetics', requireTierEnabled, requireAuth, cosmeticsWriteLimiter, patchOverlayCosmetics);
+router.patch('/overlay/cosmetics', requireTierEnabled, requireAuth, cosmeticsAppearanceLimiter, patchOverlayCosmetics);
 
 router.get('/users/:id/cosmetics', requireTierEnabled, requireDashboardAuth, getUserCosmetics);
-// Rate-limited: the PATCH runs names through the blacklist + automod, so without a
-// limit it becomes an oracle for probing what the filters block (#232).
-router.patch('/users/:id/cosmetics', requireTierEnabled, requireDashboardAuth, cosmeticsWriteLimiter, patchUserCosmetics);
+// Appearance values do not run candidate display names through blacklist/automod,
+// so they use a generous dedicated picker allowance. The free chat-name endpoint
+// stays on the stricter cosmeticsWriteLimiter anti-probing bucket.
+router.patch('/users/:id/cosmetics', requireTierEnabled, requireDashboardAuth, cosmeticsAppearanceLimiter, patchUserCosmetics);
 
 // Moderator action: wipe an abusive display name back to defaults.
 router.post(
