@@ -1646,6 +1646,13 @@ ipcMain.handle('proxy:http', async (_evt, reqDesc) => {
       }
     );
     req.on('error', (err) => resolve({ status: 599, body: JSON.stringify({ detail: err.message }) }));
+    // A TCP connection can be established yet never produce a response (for
+    // example a stalled edge connection). Without a deadline the renderer's
+    // Appearance picker awaits this IPC promise forever and remains disabled.
+    // Keep the proxy aligned with registerRelay's established 15s deadline.
+    req.setTimeout(15_000, () => {
+      req.destroy(new Error('Request timed out: the relay did not respond within 15 seconds.'));
+    });
     if (payload) req.write(payload);
     req.end();
   });

@@ -51,11 +51,18 @@
     var(--fcm-fx-outline);
 }
 
-/* Readability-first option: no glow at all, just a heavier halo. The one to pick if
-   you play with a bright HUD and find glows noisy. */
+/* Readability-first option: no glow at all, a heavier face, and a clearly defined
+   dark outline. The one to pick if you play with a bright HUD and find glows noisy. */
 .fcm-name-fx--outline-heavy {
+  font-weight: 900;
+  /* A true solid contour, not a glow. Chromium paints this around the glyph
+     before the fill, so the selected name colour remains unchanged. */
+  -webkit-text-stroke: 1px #000;
+  paint-order: stroke fill;
   text-shadow:
-    0 0 1px #000, 0 0 2px #000, 0 0 3px #000, 0 0 4px #000,
+    -2px -2px 0 #000, 0 -2px 0 #000, 2px -2px 0 #000,
+    -2px  0   0 #000,                 2px  0   0 #000,
+    -2px  2px 0 #000, 0  2px 0 #000, 2px  2px 0 #000,
     var(--fcm-fx-outline);
 }
 
@@ -297,18 +304,18 @@
 
 .fcm-name-badge {
   display: inline-block;
-  margin-left: 4px;
-  padding: 0 4px;
-  border-radius: 3px;
-  font-size: 0.72em;
+  /* Match the custom tag's trailing gap so the badge never touches a name. */
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  font-size: 0.95em;
   font-weight: bold;
-  line-height: 1.5;
+  line-height: 1;
   vertical-align: middle;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  text-shadow: none;
-  border: 1px solid currentColor;
-  opacity: 0.85;
+  letter-spacing: normal;
+  text-transform: none;
+  text-shadow: var(--fcm-name-outline, 0 0 2px #000);
+  opacity: 0.95;
 }
 
 .fcm-name-badge--supporter { color: #7ea8f7; }

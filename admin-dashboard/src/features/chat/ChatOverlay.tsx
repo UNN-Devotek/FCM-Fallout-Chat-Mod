@@ -1516,7 +1516,9 @@ export function nameCosmeticProps(
   return {
     className: `fcm-name-fx--${effect}`,
     style: {
-      fontWeight: 'bold',
+      // Heavy Outline is intentionally a visibly heavier face, not merely a
+      // regular-bold name with a blur around it.
+      fontWeight: effect === 'outline-heavy' ? 900 : 'bold',
       color,
       // No inline textShadow — the effect class composes it with the outline below.
       ['--fcm-name-color' as string]: color,
@@ -1524,6 +1526,19 @@ export function nameCosmeticProps(
     } as React.CSSProperties,
     dataName: displayName,
   };
+}
+
+/** Compact, accessible tier icon displayed immediately before a player's name. */
+export function supporterBadge(
+  badges?: readonly string[] | null,
+): { tier: 'supporter' | 'overseer'; glyph: string; label: string } | null {
+  if (badges?.includes('overseer')) {
+    return { tier: 'overseer', glyph: '◆', label: "Overseer's Circle" };
+  }
+  if (badges?.includes('supporter')) {
+    return { tier: 'supporter', glyph: '★', label: 'Supporter' };
+  }
+  return null;
 }
 
 interface PrivateConversationSummary {
@@ -8202,12 +8217,11 @@ export default function ChatOverlay() {
                         const fx = nameCosmeticProps(msg, { primaryText, primaryColor, textAlpha, textOutline, glowEnabled }, displayName);
                         fx.className = fx.className ? fx.className + motionOff : fx.className;
                         const tagEl = msg.tag ? <span className="fcm-name-tag" style={{ color: msg.nameColor || primaryText }}>[{msg.tag}]</span> : null;
-                        const badge = msg.badges?.[0];
-                        const badgeLabel = badge === 'overseer' ? "Overseer's Circle" : 'Supporter';
-                        // A compact glyph keeps the paid badge recognisable without
-                        // putting the unexplained abbreviation “SUP” beside names.
+                        const badge = supporterBadge(msg.badges);
+                        // The icon is intentionally before the name. Its CSS uses the
+                        // same 4px trailing space as a custom tag, never a text pill.
                         const badgeEl = badge
-                          ? <span className={`fcm-name-badge fcm-name-badge--${badge}`} title={badgeLabel} aria-label={badgeLabel}>{badge === 'overseer' ? '◆' : '✦'}</span>
+                          ? <span className={`fcm-name-badge fcm-name-badge--${badge.tier}`} role="img" title={badge.label} aria-label={badge.label}>{badge.glyph}</span>
                           : null;
                         // Tag and badge render BEFORE the name, which keeps the name
                         // element's text node exactly `${displayName}: ` as it has

@@ -119,7 +119,7 @@ export const EFFECT_PRESETS: readonly EffectPreset[] = [
   },
   {
     id: 'outline-heavy', label: 'Heavy Outline', tier: 'supporter',
-    description: 'A thicker dark outline. The most readable option over busy scenes.',
+    description: 'A bold face with a thick dark outline. The most readable option over busy scenes.',
     inGameSupported: false, animated: false,
   },
   {

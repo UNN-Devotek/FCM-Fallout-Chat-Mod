@@ -336,7 +336,7 @@ function PreviewRow({ bg, caption, name, color, effect, tag }: {
           className={effect ? `fcm-name-fx--${effect}` : undefined}
           data-fcm-name={name}
           style={{
-            fontWeight: 'bold',
+            fontWeight: effect === 'outline-heavy' ? 900 : 'bold',
             color: color ?? '#f0e8cc',
             ['--fcm-name-color' as string]: color ?? '#f0e8cc',
             ['--fcm-name-outline' as string]: '0 0 2px #000, 0 0 3px #000',

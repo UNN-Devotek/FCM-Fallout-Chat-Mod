@@ -16,7 +16,7 @@ in the website's Cosmetics guide and in `/cosmetics help`, not here.
 | Curated palette | 12 colours | 12 + 11 | 12 + 11 |
 | Bounded HSL picker | yes | yes | yes |
 | Static effects | — | Soft/Hard Glow, Heavy Outline, Chroma Split | same |
-| Chat badge | — | gold `✦` (hover: Supporter) | gold `◆` (hover: Overseer's Circle) |
+| Chat badge | — | gold `★` (hover: Supporter) | gold `◆` (hover: Overseer's Circle) |
 | Animated effects | — | — | Pulse Glow, CRT Phosphor, Glitch, Shimmer |
 | Custom tag | — | — | yes |
 | **Every functional feature** | yes | yes | yes |

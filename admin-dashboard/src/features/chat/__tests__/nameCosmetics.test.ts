@@ -10,7 +10,7 @@
  *      win over the stylesheet and every effect would render as a plain name.
  */
 import { describe, it, expect } from 'vitest';
-import { nameCosmeticProps } from '../ChatOverlay';
+import { nameCosmeticProps, supporterBadge } from '../ChatOverlay';
 
 const THEME = {
   primaryText: 'rgba(245,203,91,0.9)',
@@ -87,5 +87,29 @@ describe('nameCosmeticProps — with an effect', () => {
     for (const id of ['glow-soft', 'glow-hard', 'outline-heavy', 'chroma-split', 'glow-pulse', 'crt-phosphor', 'glitch', 'shimmer']) {
       expect(nameCosmeticProps({ effectId: id }, THEME, 'A').className).toBe(`fcm-name-fx--${id}`);
     }
+  });
+
+  it('renders Heavy Outline as a visibly heavier face with a real dark stroke', () => {
+    expect(nameCosmeticProps({ effectId: 'outline-heavy' }, THEME, 'A').style.fontWeight).toBe(900);
+    expect(nameCosmeticProps({ effectId: 'glow-soft' }, THEME, 'A').style.fontWeight).toBe('bold');
+  });
+});
+
+describe('supporterBadge', () => {
+  it('uses a compact star rather than the old SUP text pill', () => {
+    expect(supporterBadge(['supporter'])).toEqual({
+      tier: 'supporter', glyph: '★', label: 'Supporter',
+    });
+  });
+
+  it('uses the Overseer diamond and gives it precedence during a role transition', () => {
+    expect(supporterBadge(['supporter', 'overseer'])).toEqual({
+      tier: 'overseer', glyph: '◆', label: "Overseer's Circle",
+    });
+  });
+
+  it('does not render unknown or absent badges', () => {
+    expect(supporterBadge(['moderator'])).toBeNull();
+    expect(supporterBadge()).toBeNull();
   });
 });

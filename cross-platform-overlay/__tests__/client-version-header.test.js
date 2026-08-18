@@ -14,4 +14,13 @@ describe('overlay transmits X-Client-Version', () => {
   it('sets X-Client-Version on proxied relay HTTP requests', () => {
     expect(main).toMatch(/outHeaders\['X-Client-Version'\]\s*=\s*APP_VERSION/);
   });
+
+  it('times out a stalled proxied request so an Appearance save cannot stay busy forever', () => {
+    const proxyBlock = main.slice(
+      main.indexOf("ipcMain.handle('proxy:http'"),
+      main.indexOf('// ─── WebSocket proxy'),
+    );
+    expect(proxyBlock).toMatch(/req\.setTimeout\(\s*15_000/);
+    expect(proxyBlock).toMatch(/req\.destroy\(/);
+  });
 });
