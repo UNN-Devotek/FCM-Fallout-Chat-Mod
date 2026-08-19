@@ -412,6 +412,16 @@ export async function applyCosmetics(input: {
 
   await pushCosmeticsUpdate(userId, cosmetics);
 
+  // The Discord server nickname mirrors the same star/tag presentation. Do not
+  // await a remote Discord REST call in this write path: saving in the website or a
+  // slash command must remain successful even if the bot lacks nickname permission.
+  if (user.discordId) {
+    const discordId = user.discordId;
+    void import('../supporterNicknameService.js')
+      .then(({ syncSupporterNickname }) => syncSupporterNickname(discordId))
+      .catch((err: unknown) => logger.warn({ err, userId, discordId }, '[cosmetics] Discord nickname sync failed (non-fatal)'));
+  }
+
   return { ok: true, cosmetics, changed };
 }
 

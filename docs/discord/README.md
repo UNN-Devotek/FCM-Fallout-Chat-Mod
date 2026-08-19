@@ -137,6 +137,19 @@ command is never registered and no listener attaches.
 available whether supporter cosmetics are enabled or not. It opens an ephemeral modal;
 leaving it blank restores the ordinary Fallout 76 / Discord-derived name.
 
+### Supporter guild nicknames
+
+For an active Supporter or Overseer's Circle member, the bot mirrors their resolved FCM
+appearance into the **FCM server nickname** as `★ Name` or `★ [TAG] Name`. The tag is
+the same moderated four-character Overseer tag configured through the website or
+`/cosmetics tag`; changes from either surface update the nickname. The bot cannot and
+does not change a member's global Discord username.
+
+The star/tag is added on an entitlement transition, name/tag edit, and reconciliation;
+it is removed when the tier role is removed. A missing **Manage Nicknames** permission,
+server ownership, or Discord role hierarchy only skips the nickname update — it never
+blocks a cosmetic save or entitlement change.
+
 Full design record: [docs/product/supporter-tier.md](../product/supporter-tier.md).
 
 ## Related docs

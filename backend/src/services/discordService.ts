@@ -205,7 +205,12 @@ async function resolveAppMentions(text: string): Promise<string> {
     for (const n of [u.username, u.discordUsername, u.discordDisplayName]) {
       if (!n) continue;
       const trimmed = n.trim();
-      if (trimmed.length < 2 || trimmed === 'Wanderer' || trimmed.startsWith('pending-')) continue;
+      if (
+        trimmed.length < 2
+        || trimmed === 'Wanderer'
+        || trimmed.startsWith('pending-')
+        || trimmed.startsWith('discord:')
+      ) continue;
       candidates.push({ name: trimmed, id: u.discordId });
     }
   }
@@ -623,7 +628,10 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
         select: { id: true, username: true, chatName: true },
       });
       const hasFo76Name =
-        !!linked?.username && linked.username !== 'Wanderer' && !linked.username.startsWith('pending-');
+        !!linked?.username
+        && linked.username !== 'Wanderer'
+        && !linked.username.startsWith('pending-')
+        && !linked.username.startsWith('discord:');
 
       if (linked && (hasFo76Name || linked.chatName)) {
         relayUserId = linked.id;
@@ -1222,7 +1230,11 @@ async function postModAlert(embed: EmbedData): Promise<void> {
  *   - If nickname is null/empty, the member's nickname is CLEARED (reverts to
  *     their Discord username). We pass the FO76 name, so this is intentional.
  */
-async function setMemberNickname(discordId: string, nickname: string): Promise<boolean> {
+async function setMemberNickname(
+  discordId: string,
+  nickname: string,
+  reason = 'FO76 character name sync',
+): Promise<boolean> {
   if (!discordClient || discordStatus !== 'connected') {
     logger.debug({ discordId }, '[nickname-sync] bot not connected, skipping nickname set');
     return false;
@@ -1234,10 +1246,20 @@ async function setMemberNickname(discordId: string, nickname: string): Promise<b
   }
   try {
     const guild = await discordClient.guilds.fetch(guildId);
+    // Discord never lets a bot rename the guild owner, even when the bot has every
+    // relevant permission. Treat it as an expected no-op rather than a 50013 error.
+    if (guild.ownerId === discordId) {
+      logger.debug({ discordId }, '[nickname-sync] skipped — Discord does not permit renaming the guild owner');
+      return false;
+    }
     const member = await guild.members.fetch(discordId);
-    // Truncate to Discord's 32-char nickname limit.
-    const truncated = nickname.slice(0, 32);
-    await member.setNickname(truncated, 'FO76 character name sync');
+    // Discord's 32-character cap applies to Unicode characters, not UTF-16 units.
+    const truncated = Array.from(nickname).slice(0, 32).join('');
+    if ((member.nickname ?? '') === truncated) {
+      logger.debug({ discordId, nickname: truncated }, '[nickname-sync] nickname already current');
+      return true;
+    }
+    await member.setNickname(truncated || null, reason);
     logger.info({ discordId, nickname: truncated }, '[nickname-sync] set guild member nickname');
     return true;
   } catch (err: any) {

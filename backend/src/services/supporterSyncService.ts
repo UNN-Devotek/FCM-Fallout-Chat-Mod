@@ -25,10 +25,11 @@ import logger from '../config/logger';
 import env from '../config/environment';
 import { makeJobTracker } from '../jobs/jobTracker';
 import {
-  syncFromDiscordRoles,
+  syncFromDiscordRolesWithResult,
   tierFromDiscordRoles,
   lapseEntitlement,
 } from './supporterService';
+import { refreshSupporterPresentation } from './supporterNicknameService';
 
 /** 15 minutes. The gateway listener covers the fast path; this is the backstop. */
 const RECONCILE_INTERVAL_MS = 15 * 60 * 1000;
@@ -73,7 +74,8 @@ async function onGuildMemberUpdate(
     const tierAfter = tierFromDiscordRoles(after);
     if (tierBefore === tierAfter) return;
 
-    await syncFromDiscordRoles(newMember.id, after, 'discord_sub');
+    const result = await syncFromDiscordRolesWithResult(newMember.id, after, 'discord_sub');
+    if (result.changed) await refreshSupporterPresentation(newMember.id);
     logger.info(
       { discordId: newMember.id, from: tierBefore, to: tierAfter },
       '[supporterSync] tier changed via GuildMemberUpdate',
@@ -92,7 +94,10 @@ async function onGuildMemberRemove(member: GuildMember | PartialGuildMember): Pr
   try {
     if (!configured()) return;
     if (env.DISCORD_SERVER_ID && member.guild?.id !== env.DISCORD_SERVER_ID) return;
-    await lapseEntitlement({ discordId: member.id, reason: 'left the guild' });
+    const changed = await lapseEntitlement({ discordId: member.id, reason: 'left the guild' });
+    // The member is already gone, so there is no guild nickname to update. The
+    // cache bust + live FCM refresh still matters for their open sessions.
+    if (changed) await refreshSupporterPresentation(member.id, { syncNickname: false });
   } catch (err) {
     logger.warn({ err }, '[supporterSync] GuildMemberRemove handler failed (non-fatal)');
   }
@@ -126,8 +131,11 @@ export async function runReconcile(deps?: {
   for (const [discordId, roles] of roleMembers) {
     const tier = tierFromDiscordRoles(roles);
     if (tier === 'none') continue;
-    await syncFromDiscordRoles(discordId, roles, 'discord_sub');
-    granted++;
+    const result = await syncFromDiscordRolesWithResult(discordId, roles, 'discord_sub');
+    if (result.changed) {
+      await refreshSupporterPresentation(discordId);
+      granted++;
+    }
   }
 
   // Anyone marked active who no longer holds a role: lapse. This is the path that
@@ -138,8 +146,11 @@ export async function runReconcile(deps?: {
       const tier = tierFromDiscordRoles(roleMembers.get(row.discordId) ?? []);
       if (tier !== 'none') continue;
     }
-    await lapseEntitlement({ discordId: row.discordId, reason: 'reconcile: tier role not held' });
-    lapsed++;
+    const changed = await lapseEntitlement({ discordId: row.discordId, reason: 'reconcile: tier role not held' });
+    if (changed) {
+      await refreshSupporterPresentation(row.discordId);
+      lapsed++;
+    }
   }
 
   logger.info({ granted, lapsed, checked: roleMembers.size }, '[supporterSync] reconcile complete');
