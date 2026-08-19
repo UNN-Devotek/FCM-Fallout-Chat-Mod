@@ -7,8 +7,8 @@ the EULA-safe desktop overlay.
 ## Boundaries
 
 - The widget uses ZFE's sanctioned outbound API only: `chat.v1.connect`,
-  `chat.v1.pollEvents`, `chat.v1.sendMessage`, `chat.v1.subscribe`, and
-  `chat.v1.getAuthState`.
+  `chat.v1.pollEvents`, `chat.v1.sendMessage`, `chat.v1.subscribe`,
+  `chat.v1.report`, and `chat.v1.getAuthState`.
 - It reads only data already published to the game HUD by `BSUIDataManager`.
   It does not read game memory, inject code, modify game files at runtime, or
   scan networks/ports.
@@ -42,6 +42,12 @@ token in logs or cache keys.
 | `chat.v1.subscribe` | Register a live subscriber and enqueue bounded static/current-world history after its initial cursor |
 | `chat.v1.sendMessage` | Send a static-channel message or a reserved server control |
 | `chat.v1.getAuthState` | Refresh linked/limited state |
+| `chat.v1.report` | Submit a report for a persisted chat message |
+
+`chat.v1.report` requires a linked relay identity, a valid persisted message UUID,
+and a non-empty reason. The backend derives the reported user from the message,
+rejects self-reports and deleted messages, persists the report in `reports`, writes
+an audit record, and sends moderation notifications only after persistence succeeds.
 
 Static FCM channels use the slugs `global`, `trade`, `events`, `infests`, and
 `raids`. The backend maps them to the owned channel IDs, applies normal auth,

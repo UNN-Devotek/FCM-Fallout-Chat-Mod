@@ -15,10 +15,11 @@
  * ──────────────────────────────────────────
  * When `ai_moderation_enabled` is on and the OpenAI Moderation API responds, the
  * hand-maintained keyword layers (the legacy word_filter AND KEYWORD_PRESET
- * rules) are SKIPPED — the classifier supersedes them. They run only as an
- * offline fallback when the AI verdict is unavailable (disabled, timeout, non-200,
- * circuit breaker open). This is fail-open: a degraded classifier hands
- * enforcement back to the target-gated built-ins plus explicit admin rules.
+ * rules) are SKIPPED only while the classifier is healthy and enforcing. They
+ * remain active in shadow mode and when the AI verdict is unavailable (disabled,
+ * timeout, non-200, circuit breaker open). This is fail-open: a degraded or
+ * shadow classifier leaves enforcement with the target-gated built-ins plus
+ * explicit admin rules.
  *
  * NOTE the classifier only understands *harmful content*. Spam floods, mention
  * spam, and links are outside its remit, so the Redis sliding-window and the
@@ -403,7 +404,7 @@ async function executeActions(
  *   0. Staff exemption — short-circuits BEFORE classification, so staff content
  *      is never transmitted to OpenAI
  *   1. AI classification (OpenAI Moderation API) — the primary content check
- *   2. Legacy word_filter — FALLBACK ONLY, skipped while the AI verdict is healthy
+ *   2. Legacy word_filter — fallback or shadow mode; skipped only while AI enforces
  *   3. Legacy Redis spam sliding-window — always runs (AI does not detect spam)
  *   4. automod_rules (AI_MODERATION, KEYWORD, KEYWORD_PRESET, MENTION_SPAM, SPAM, LINK)
  *
@@ -457,11 +458,12 @@ export async function engineEvaluate(
     }
   }
 
-  // While the classifier is healthy it SUPERSEDES the hand-maintained keyword
-  // layers. They come back automatically the moment it degrades.
-  const useKeywordFallback = aiVerdict === null;
+  // While the classifier is healthy and enforcing it SUPERSEDES the curated
+  // preset lists. Shadow mode must leave the existing enforcement path intact:
+  // AI records shadow matches, but it must not change what the legacy rules do.
+  const useKeywordFallback = aiVerdict === null || aiSettings.mode !== 'enforce';
 
-  // ── 2. Legacy word_filter (FALLBACK ONLY) ─────────────────────────────────
+  // ── 2. Legacy word_filter (FALLBACK OR SHADOW) ─────────────────────────────
   // filterContent handles the word_filter table + test_mode logging. Pass the
   // ORIGINAL content — filterContent canon()s internally for matching but logs
   // the original, so its test-mode audit evidence stays faithful.
@@ -531,8 +533,10 @@ export async function engineEvaluate(
         matchResult = evalKeyword(matchContent, rule.triggerMetadata);
         break;
       case 'KEYWORD_PRESET':
-        // Retired while the classifier is healthy — this is the curated
-        // PROFANITY / SEXUAL_CONTENT / SLURS list the AI replaces.
+        // Superseded only while the classifier is healthy AND enforcing — this
+        // is the curated PROFANITY / SEXUAL_CONTENT / SLURS list the AI replaces.
+        // Shadow mode keeps these rules active so calibration cannot weaken
+        // the protections already in production.
         if (!useKeywordFallback) continue;
         matchResult = evalKeywordPreset(matchContent, rule.triggerMetadata);
         break;

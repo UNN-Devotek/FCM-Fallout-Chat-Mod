@@ -4,8 +4,8 @@
  * engineEvaluate — AI moderation path.
  *
  * The two invariants that matter most here:
- *   1. A healthy AI verdict SUPERSEDES the keyword layers; a degraded one hands
- *      enforcement straight back to them (fail open, never fail silent).
+ *   1. A healthy AI verdict supersedes the curated keyword layers only while
+ *      enforcing; shadow mode leaves the existing enforcement path intact.
  *   2. Shadow mode is strictly side-effect-free — no block, no mute, no alert.
  */
 
@@ -150,7 +150,7 @@ describe('AI supersedes the keyword layers when healthy', () => {
     expect(res.block).toBe(true);
   });
 
-  test('KEYWORD_PRESET rules are skipped while AI is healthy', async () => {
+  test('KEYWORD_PRESET rules are skipped while AI is healthy and enforcing', async () => {
     mockClassifyContent.mockResolvedValue(verdict({ hate: 0.01 }, false));
     mockAutoModRuleRows.push({
       id: 'preset-rule',
@@ -166,6 +166,26 @@ describe('AI supersedes the keyword layers when healthy', () => {
 
     const res = await engineEvaluate('you are a whore', 'chan-1', USER);
     expect(res.block).toBe(false);
+  });
+
+  test('KEYWORD_PRESET rules remain active while AI is healthy and shadowing', async () => {
+    mockGetSettings.mockResolvedValue(settings({ mode: 'shadow' }));
+    mockClassifyContent.mockResolvedValue(verdict({ hate: 0.01 }, false));
+    mockAutoModRuleRows.push({
+      id: 'preset-rule',
+      name: 'Block flagged words',
+      enabled: true,
+      triggerType: 'KEYWORD_PRESET',
+      triggerMetadata: { presets: ['SLURS'] },
+      actions: [{ type: 'BLOCK' }],
+      exemptChannelIds: [],
+      exemptRoles: [],
+    });
+    invalidateRulesCache();
+
+    const res = await engineEvaluate('you are a whore', 'chan-1', USER);
+    expect(res.block).toBe(true);
+    expect(res.matches[0].triggerType).toBe('KEYWORD_PRESET');
   });
 
   test('KEYWORD_PRESET rules come back when AI is degraded', async () => {

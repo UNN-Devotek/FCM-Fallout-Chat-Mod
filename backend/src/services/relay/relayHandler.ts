@@ -76,6 +76,7 @@ const RELAY_FIRST_FRAME_TIMEOUT_MS = 10_000;
 const POLL_HISTORY_LIMIT        = 75;    // initial history window on cursor=0 — must cover ~12 msgs x 5 static channels + recent live traffic (the window is global, not per-channel)
 const REDIS_BROADCAST_CHANNEL   = 'chat:broadcast';
 const MAX_SOCKET_BUFFER_BYTES    = 1_048_576;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 /**
  * Build the human-facing link-flow URL (bare host + /link) from the public base URL.
@@ -207,6 +208,18 @@ export async function notifyLinkComplete(relayUserId: string): Promise<void> {
  */
 function errEnvelope(code: string, message: string): object {
   return { success: false, error: { code, message } };
+}
+
+class RelayReportInputError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'RelayReportInputError';
+  }
+}
+
+interface RelayReportMessage {
+  targetUserId: string;
+  targetDisplayName: string | null;
 }
 
 function sendRaw(ws: WebSocket, frame: string): boolean {
@@ -606,7 +619,7 @@ async function handleHello(ws: WebSocket, frame: Record<string, unknown>): Promi
  * userId is always populated so the widget can correlate its authenticated relay session.
  * state='authenticated' only when linked_user_id is set; otherwise 'limited'.
  * permissions.canSend reflects isLinked (same gate as handleSend).
- * permissions.canReport: false for now (R4 wires this); always false until R4 merges.
+ * permissions.canReport reflects the same linked-account gate as handleReport.
  */
 async function handleGetAuthState(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
   const rawToken = typeof frame.token === 'string' ? frame.token : null;
@@ -630,7 +643,7 @@ async function handleGetAuthState(ws: WebSocket, frame: Record<string, unknown>)
     state,
     permissions: {
       canSend:   identity.isLinked,
-      canReport: false, // R4: wired when report op is fully implemented
+      canReport: identity.isLinked,
     },
   });
 }
@@ -819,6 +832,156 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   }
 
   send(ws, { success: true, messageId: result.messageId });
+}
+
+/**
+ * Submit a report for a persisted chat message. Relay identities are deliberately
+ * resolved to their linked FCM user before the report is written; the message
+ * itself supplies the target user so the client cannot forge either party.
+ */
+async function handleReport(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
+  const rawToken = typeof frame.token === 'string' ? frame.token : null;
+  if (!rawToken) {
+    send(ws, errEnvelope('auth_token_invalid', 'token is required'));
+    return;
+  }
+
+  const identity = await verifyToken(rawToken);
+  if (!identity) {
+    send(ws, errEnvelope('auth_token_invalid', 'Token not found or invalid'));
+    return;
+  }
+  if (!identity.isLinked || !identity.linkedUserId) {
+    send(ws, errEnvelope('permission_denied', `Account not linked — complete the link flow at ${LINK_URL}`));
+    return;
+  }
+
+  const user = await prisma.user.findUnique({
+    where: { id: identity.linkedUserId },
+    select: { isBanned: true },
+  });
+  if (user?.isBanned) {
+    send(ws, errEnvelope('user_banned', 'This account is banned'));
+    return;
+  }
+
+  const messageId = typeof frame.messageId === 'string' ? frame.messageId.trim() : '';
+  if (!UUID_RE.test(messageId)) {
+    send(ws, errEnvelope('invalid_request', 'messageId must be a valid message UUID'));
+    return;
+  }
+
+  const reason = typeof frame.reason === 'string' ? frame.reason.trim() : '';
+  if (!reason || reason.length > 500) {
+    send(ws, errEnvelope('invalid_request', 'reason is required and must be 500 characters or fewer'));
+    return;
+  }
+
+  if (frame.details !== undefined && frame.details !== null && typeof frame.details !== 'string') {
+    send(ws, errEnvelope('invalid_request', 'details must be a string'));
+    return;
+  }
+  const details = typeof frame.details === 'string' ? frame.details.trim() : '';
+  if (details.length > 1000) {
+    send(ws, errEnvelope('invalid_request', 'details must be 1000 characters or fewer'));
+    return;
+  }
+
+  let submitted: {
+    report: { id: string; createdAt: Date };
+    targetUserId: string;
+    targetDisplayName: string | null;
+  };
+  try {
+    submitted = await prisma.$transaction(async (tx) => {
+      const rows = await tx.$queryRaw<RelayReportMessage[]>`
+        SELECT m.user_id AS "targetUserId",
+               COALESCE(u.fo76_account_name, u.discord_display_name, u.username) AS "targetDisplayName"
+        FROM messages m
+        JOIN users u ON u.id = m.user_id
+        WHERE m.id = ${messageId}::uuid AND NOT m.is_deleted
+        FOR SHARE
+      `;
+      const message = rows[0];
+      if (!message) throw new RelayReportInputError('Message not found or already deleted');
+      if (message.targetUserId.toLowerCase() === identity.linkedUserId!.toLowerCase()) {
+        throw new RelayReportInputError('You cannot report your own message');
+      }
+
+      const report = await tx.report.create({
+        data: {
+          reporterUserId: identity.linkedUserId!,
+          targetUserId: message.targetUserId,
+          messageId,
+          reason,
+          notes: details || null,
+        },
+        select: { id: true, createdAt: true },
+      });
+      return { report, targetUserId: message.targetUserId, targetDisplayName: message.targetDisplayName };
+    });
+  } catch (err) {
+    if (err instanceof RelayReportInputError) {
+      send(ws, errEnvelope('invalid_request', err.message));
+      return;
+    }
+    logger.error({ err, messageId, relayUserId: identity.userId }, '[relayHandler] report persistence failed');
+    send(ws, errEnvelope('internal_error', 'Unable to submit report'));
+    return;
+  }
+
+  await prisma.auditLog.create({
+    data: {
+      actorId: identity.linkedUserId,
+      action: 'submit_report',
+      targetId: messageId,
+      targetType: 'message',
+      reason,
+      metadata: {
+        reportId: submitted.report.id,
+        targetUserId: submitted.targetUserId,
+        ...(details ? { details } : {}),
+      },
+    },
+  }).catch((err) => logger.warn({ err, reportId: submitted.report.id }, '[relayHandler] report audit write failed'));
+
+  if (typeof (global as any).broadcastReportAlert === 'function') {
+    (global as any).broadcastReportAlert({
+      id: submitted.report.id,
+      createdAt: submitted.report.createdAt,
+      reason,
+      messageId,
+      targetUserId: submitted.targetUserId,
+      reporterUserId: identity.linkedUserId,
+    });
+  }
+
+  // Keep Discord notification best-effort, matching the existing HTTP report path.
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const { postModAlert } = require('../discordService') as {
+      postModAlert?: (embed: Record<string, unknown>) => Promise<void>;
+    };
+    if (typeof postModAlert === 'function') {
+      await postModAlert({
+        title: '🚩 In-game Message Report Submitted',
+        color: '#FF8C00',
+        fields: [
+          { name: 'Reporter', value: identity.fo76Name, inline: true },
+          { name: 'Reported User', value: submitted.targetDisplayName || submitted.targetUserId, inline: true },
+          { name: 'Reason', value: reason.slice(0, 1024) },
+          { name: 'Message ID', value: messageId, inline: true },
+          ...(details ? [{ name: 'Details', value: details.slice(0, 1024) }] : []),
+        ],
+        timestamp: true,
+        footerText: `Report ID: ${submitted.report.id}`,
+      });
+    }
+  } catch (err) {
+    logger.warn({ err, reportId: submitted.report.id }, '[relayHandler] report Discord notification failed');
+  }
+
+  send(ws, { success: true, status: 'reported' });
 }
 
 async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
@@ -1097,10 +1260,7 @@ export function handleRelayConnection(ws: WebSocket, req: http.IncomingMessage):
         case 'send':            await handleSend(ws, frame); break;
         case 'poll':            await handlePoll(ws, frame); break;
         case 'subscribe':       await handleSubscribe(ws, frame); break;
-        case 'report':
-          // R4: placeholder — returns success for now; full implementation in R4
-          send(ws, { success: true, status: 'reported' });
-          break;
+        case 'report':          await handleReport(ws, frame); break;
         case 'moderationAction':
           // R5: placeholder — returns permission_denied for non-staff
           send(ws, errEnvelope('permission_denied', 'Moderation actions require a linked staff account'));

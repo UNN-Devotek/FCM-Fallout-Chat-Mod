@@ -2,7 +2,7 @@
 
 All content moderation on `chat:send` goes through a single entry point: `engineEvaluate()` in `backend/src/services/autoModEngine.ts`. This consolidates the AI classifier, the legacy word filter, the Redis spam detector, and the database-driven rule engine into one call so the WS handler never double-blocks.
 
-> **The AI classifier is the primary targeted-attack check.** When AI moderation is enabled and reachable, the hand-maintained keyword layers below (the legacy `word_filter` **and** `KEYWORD_PRESET` rules) are **skipped** — they run only as an offline fallback. Ordinary Fallout profanity and gameplay violence are outside the chat AI policy. Full detail: **[ai-moderation.md](ai-moderation.md)**.
+> **The AI classifier is the primary targeted-attack check.** When AI moderation is enabled, reachable, and enforcing, the hand-maintained keyword layers below (the legacy `word_filter` **and** `KEYWORD_PRESET` rules) are **skipped** — they run only as an offline fallback. In `shadow` mode they remain active while AI only records calibration data. Ordinary Fallout profanity and gameplay violence are outside the chat AI policy. Full detail: **[ai-moderation.md](ai-moderation.md)**.
 
 ## Evaluation Order
 
@@ -12,7 +12,7 @@ All content moderation on `chat:send` goes through a single entry point: `engine
 
 1. **AI classification** — calls `classifyContent()` from `aiModerationService.ts` (OpenAI Moderation API, `omni-moderation-latest`, 800 ms timeout). The verdict is computed once here and reused by the `AI_MODERATION` rule at step 4 — never a second API call. A `null` verdict means **degraded** and is never read as "clean".
 
-2. **Legacy word filter** — **fallback only, skipped while step 1 is healthy.** Calls `filterContent(content, userId)` from `autoModService.ts`. Checks the hardcoded chat baseline denylist first (target-gated), then the `word_filter` DB table (an explicit admin override).
+2. **Legacy word filter** — **fallback or shadow mode.** Calls `filterContent(content, userId)` from `autoModService.ts`. Checks the hardcoded chat baseline denylist first (target-gated), then the `word_filter` DB table (an explicit admin override).
 
 3. **Legacy spam detection** — calls `detectSpam(userId)` from `autoModService.ts`. Uses a Redis sorted-set sliding window. **Always runs** — the classifier has no concept of message rate.
 
@@ -22,10 +22,10 @@ Any match at step 4 writes an `automod_violations` row and an `audit_logs` row (
 
 ### What the AI supersedes, and what it does not
 
-| Layer | While AI is healthy |
+| Layer | AI mode behavior |
 |---|---|
-| Legacy `word_filter` + baseline denylist (chat) | **skipped** |
-| `KEYWORD_PRESET` rules (`PROFANITY`/`SEXUAL_CONTENT`/`SLURS`) | **skipped** |
+| Legacy `word_filter` + baseline denylist (chat) | **skipped in enforce; active in shadow** |
+| `KEYWORD_PRESET` rules (`PROFANITY`/`SEXUAL_CONTENT`/`SLURS`) | **skipped in enforce; active in shadow** |
 | `KEYWORD` rules (admin-authored) | still run — a moderator's escape hatch for terms the classifier misses |
 | `SPAM`, `MENTION_SPAM`, `LINK` | still run — outside the classifier's remit |
 | Identifier denylist (`findProhibitedPhrase`) | still runs — the AI screen is **additive** there, not superseding |

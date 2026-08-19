@@ -6,7 +6,9 @@ FCM classifies chat messages, usernames, and party names with the
 content check**, but chat enforcement is deliberately narrow: only high-confidence
 targeted attacks are eligible. Ordinary profanity, sexual discussion, self-harm,
 violence, and Fallout gameplay language are not chat violations by themselves.
-The hand-maintained keyword denylists are demoted to an offline fallback.
+The hand-maintained keyword denylists are demoted to an offline fallback while AI
+is enforcing; shadow mode keeps them active so calibration cannot weaken existing
+moderation.
 
 Service: `backend/src/services/aiModerationService.ts`.
 Wiring: `engineEvaluate()` in `backend/src/services/autoModEngine.ts`.
@@ -28,7 +30,7 @@ returns 13 categories each with a 0–1 confidence score, and is free to use.
 |---|---|---|
 | 0 | Staff exemption (`isProtectedTarget`) | always, **first** |
 | 1 | AI classification | `ai_moderation_enabled = true` |
-| 2 | Legacy `word_filter` + baseline denylist | **only when step 1 is degraded** |
+| 2 | Legacy `word_filter` + baseline denylist | when step 1 is degraded or AI is shadowing |
 | 3 | Redis spam sliding-window | always |
 | 4 | `automod_rules` loop | always |
 
@@ -38,9 +40,10 @@ Within step 4:
   Only flagged, threshold-breaching categories in the targeted-attack policy
   can match. A below-threshold flag or a category outside that policy produces
   no violation and no alert.
-- `KEYWORD_PRESET` rules are **skipped while the AI verdict is healthy**. These
-  are the curated `PROFANITY` / `SEXUAL_CONTENT` / `SLURS` lists the classifier
-  replaces. In fallback mode they require an explicit target by default.
+- `KEYWORD_PRESET` rules are **skipped only while the AI verdict is healthy and
+  mode is `enforce`**. These are the curated `PROFANITY` / `SEXUAL_CONTENT` /
+  `SLURS` lists the classifier replaces. In degraded or `shadow` mode they remain
+  active and require an explicit target by default.
 - `KEYWORD` rules **always run**. Admin-authored keyword rules are a moderator's
   escape hatch for terms the classifier misses (a specific troll, targeted
   harassment of a named player), so they are deliberately not superseded.
@@ -154,7 +157,8 @@ column does not change identifier moderation.
 
 ## Identifiers are additive, not superseding
 
-On chat, a healthy AI verdict supersedes the built-in keyword layers.
+On chat, a healthy AI verdict in `enforce` mode supersedes the built-in keyword
+layers; `shadow` mode keeps those layers active while recording AI calibration data.
 `findProhibitedPhrase()`
 (`autoModService.ts`) does **not** work that way — `BASELINE_IDENTIFIER_DENYLIST_PHRASES`
 keeps running regardless, with the AI screen appended after it. Registration and
@@ -233,7 +237,7 @@ in a row.
 |---|---|
 | `backend/tests/aiModerationService.test.js` | response parsing, threshold boundaries, timeout/non-200/malformed → null, disabled → no fetch, cache hit, canonical cache key, circuit breaker, identifier screening |
 | `backend/tests/autoModEngineAi.test.js` | targeted-category boundary, explicit-target harassment, ignored game/profanity categories, AI supersedes/falls back, staff never transmitted, shadow side-effect-freedom, violation fields, exemptions, spam unaffected |
-| `backend/tests/autoModEnginePresetBoundary.test.js` | target-gated preset fallback, targeted sexual/slur cases, and preset stand-down when AI is healthy |
+| `backend/tests/autoModEnginePresetBoundary.test.js` | target-gated preset fallback, targeted sexual/slur cases, preset stand-down when AI is healthy and enforcing, and preservation during shadow mode |
 
 ## EULA
 

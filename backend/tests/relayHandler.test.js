@@ -156,6 +156,12 @@ jest.mock('../src/config/prisma', () => ({
       findFirst: jest.fn().mockResolvedValue({ id: 'ch1', isArchived: false }),
       findMany:  jest.fn().mockResolvedValue([]),
     },
+    report: {
+      create: jest.fn().mockResolvedValue({ id: 'report-stub', createdAt: new Date('2026-01-01T00:00:00.000Z') }),
+    },
+    auditLog: {
+      create: jest.fn().mockResolvedValue({}),
+    },
     $queryRaw:    jest.fn().mockResolvedValue([]),
     $executeRaw:  jest.fn().mockResolvedValue(0),
     $transaction: jest.fn(async (arg) =>
@@ -170,9 +176,10 @@ jest.mock('../src/config/storage', () => ({
 }));
 
 jest.mock('../src/services/discordService', () => ({
-  relayToDiscord:  jest.fn().mockResolvedValue(undefined),
-  initDiscord:     jest.fn().mockResolvedValue(undefined),
+  relayToDiscord:   jest.fn().mockResolvedValue(undefined),
+  initDiscord:      jest.fn().mockResolvedValue(undefined),
   sendNotification: jest.fn().mockResolvedValue(undefined),
+  postModAlert:     jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock('../src/services/autoModEngine', () => ({
@@ -655,6 +662,7 @@ describe('relay WebSocket ops', () => {
     _tokenRows = [];
     _userMap   = {};
     _redisSeq  = 0;
+    jest.clearAllMocks();
     resetRedisIncrMock();
     redisMock.get.mockImplementation(async (key) => _worldStore[key] ?? null);
     redisMock.set.mockImplementation(async (key, val) => { _worldStore[key] = val; return 'OK'; });
@@ -686,6 +694,16 @@ describe('relay WebSocket ops', () => {
     require('../src/config/prisma').default.user.findUnique.mockImplementation(
       async (args) => _userMap[args?.where?.id] ?? null,
     );
+    const prisma = require('../src/config/prisma').default;
+    prisma.$transaction.mockImplementation(async (arg) =>
+      typeof arg === 'function' ? arg(prisma) : Promise.all(arg),
+    );
+    prisma.$queryRaw.mockResolvedValue([]);
+    prisma.report.create.mockResolvedValue({
+      id: 'report-stub',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    });
+    prisma.auditLog.create.mockResolvedValue({});
     require('../src/config/prisma').default.$queryRaw.mockResolvedValue([]);
     require('../src/services/ingestMessage').ingestMessage.mockResolvedValue(
       { ok: true, messageId: 'msg-stub' },
@@ -918,6 +936,104 @@ describe('relay WebSocket ops', () => {
     );
     expect(res).toMatchObject({ success: true });
     expect(typeof res.messageId).toBe('string');
+    ws.close();
+  });
+
+  test('report without a token is rejected instead of acknowledged', async () => {
+    const { ws, msgs } = await conn();
+    const res = await waitForMsg(ws, msgs, () => send(ws, {
+      op: 'report',
+      messageId: '11111111-1111-4111-8111-111111111111',
+      reason: 'spam',
+    }));
+    expect(res).toMatchObject({ success: false, error: { code: 'auth_token_invalid' } });
+    ws.close();
+  });
+
+  test('report validates and persists a linked user message report', async () => {
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'ReportPlayer' }),
+    );
+    wsReg.close();
+
+    const rawId = lastRawUserId();
+    const reporterId = 'fcm-report-reporter-001';
+    const targetId = 'fcm-report-target-001';
+    _userMap[reporterId] = { id: reporterId, isBanned: false, isMuted: false };
+    markTokensLinked(rawId, reporterId);
+
+    const prisma = require('../src/config/prisma').default;
+    const report = {
+      id: 'report-created-001',
+      createdAt: new Date('2026-01-01T00:00:00.000Z'),
+    };
+    prisma.$queryRaw.mockResolvedValueOnce([{ targetUserId: targetId, targetDisplayName: 'TargetDweller' }]);
+    prisma.report.create.mockResolvedValueOnce(report);
+    const broadcastReportAlert = jest.fn();
+    const previousBroadcast = global.broadcastReportAlert;
+    global.broadcastReportAlert = broadcastReportAlert;
+
+    try {
+      const { ws, msgs } = await conn();
+      const res = await waitForMsg(ws, msgs, () => send(ws, {
+        op: 'report',
+        token: regRes.token,
+        messageId: '22222222-2222-4222-8222-222222222222',
+        reason: 'Harassment in chat',
+        details: 'Targeted insults during the event.',
+      }));
+
+      expect(res).toEqual({ success: true, status: 'reported' });
+      expect(prisma.report.create).toHaveBeenCalledWith({
+        data: {
+          reporterUserId: reporterId,
+          targetUserId: targetId,
+          messageId: '22222222-2222-4222-8222-222222222222',
+          reason: 'Harassment in chat',
+          notes: 'Targeted insults during the event.',
+        },
+        select: { id: true, createdAt: true },
+      });
+      expect(prisma.auditLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          actorId: reporterId,
+          action: 'submit_report',
+          targetId: '22222222-2222-4222-8222-222222222222',
+          targetType: 'message',
+        }),
+      });
+      expect(broadcastReportAlert).toHaveBeenCalledWith(expect.objectContaining({
+        id: report.id,
+        messageId: '22222222-2222-4222-8222-222222222222',
+        targetUserId: targetId,
+      }));
+      expect(require('../src/services/discordService').postModAlert).toHaveBeenCalled();
+      ws.close();
+    } finally {
+      if (previousBroadcast) global.broadcastReportAlert = previousBroadcast;
+      else delete global.broadcastReportAlert;
+    }
+  });
+
+  test('report rejects an invalid message ID before touching persistence', async () => {
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'InvalidReportPlayer' }),
+    );
+    wsReg.close();
+    const rawId = lastRawUserId();
+    const reporterId = 'fcm-invalid-report-001';
+    _userMap[reporterId] = { id: reporterId, isBanned: false, isMuted: false };
+    markTokensLinked(rawId, reporterId);
+
+    const prisma = require('../src/config/prisma').default;
+    const { ws, msgs } = await conn();
+    const res = await waitForMsg(ws, msgs, () => send(ws, {
+      op: 'report', token: regRes.token, messageId: 'msg_1', reason: 'spam',
+    }));
+    expect(res).toMatchObject({ success: false, error: { code: 'invalid_request' } });
+    expect(prisma.report.create).not.toHaveBeenCalled();
     ws.close();
   });
 
@@ -2170,7 +2286,7 @@ describe('auth gate integration', () => {
     expect(res).toMatchObject({
       success:     true,
       state:       'authenticated',
-      permissions: { canSend: true, canReport: false },
+      permissions: { canSend: true, canReport: true },
     });
     ws.close();
   });

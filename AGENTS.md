@@ -59,19 +59,19 @@ DB/Redis/MinIO, dedicated Cloudflare tunnel, **never** prod data (real wiki/camp
 **fake** users/chat). It tracks the `dev` branch. Full runbook:
 [docs/deployment/hosted-dev-environment.md](docs/deployment/hosted-dev-environment.md).
 
-**Access = dual Discord role gate + Cloudflare Access.** To onboard a developer (maintainer steps):
+**Access = dual Discord role gate (app-level).** The Cloudflare Access edge gate on the dev website
+was removed 2026-06-29; only the raw DB/object-store endpoints remain CF-Access gated. To onboard a
+developer (maintainer steps):
 
 1. Assign the **`developer`** role in the **prod** Discord server.
 2. Assign the **`developer`** role in the **dev** Discord server. *(BOTH required — the app's
    dual-role gate denies anyone missing either; the prod-guild check goes through
    `GET /api/internal/verify-dev-role` since the dev bot can't read the prod guild.)*
-3. Add their email to the **"FCM Developers"** Cloudflare Access group (gates `dev.falloutchatmod.com`;
-   login via One-time PIN).
-4. Only if they need direct DB/object-store access: share the CF Access **service token** for
+3. Only if they need direct DB/object-store access: share the CF Access **service token** for
    `cloudflared access tcp` to `dev-db`/`dev-s3`.
 
-Revoke by removing the `developer` role in either server and/or the email from the Access group.
-Most contributors never need this — they run the local stack and PR against `dev`.
+Revoke by removing the `developer` role in either server. Most contributors never need this —
+they run the local stack and PR against `dev`.
 
 **QA testers — a lighter, separate path (NOT the developer onboarding above).** Vetted
 end-users run a packaged "golden" QA build against dev, gated by a dev-guild **`QA`** Discord

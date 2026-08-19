@@ -167,7 +167,7 @@ describe('autoModEngine KEYWORD_PRESET profanity/slur boundary', () => {
   // ── Fallback-mode guarantees ───────────────────────────────────────────────
   // The presets are now a fallback rather than the primary check. These pin that
   // the boundary above still holds in the two ways fallback is entered — and
-  // that it correctly stands down when the classifier is healthy.
+  // that it correctly stands down when the classifier is healthy and enforcing.
 
   it('still holds when AI is ENABLED but degraded (null verdict)', async () => {
     mockAiSettings = { enabled: true, mode: 'enforce', thresholds: {}, identifierThresholds: {} };
@@ -201,5 +201,16 @@ describe('autoModEngine KEYWORD_PRESET profanity/slur boundary', () => {
     // unflagged verdict there is nothing to enforce, so the preset does not fire.
     expect(result.block).toBe(false);
     expect(mockViolationCreate).not.toHaveBeenCalled();
+  });
+
+  it('keeps enforcing the preset while AI is healthy but shadowing', async () => {
+    mockAiSettings = { enabled: true, mode: 'shadow', thresholds: {}, identifierThresholds: {} };
+    mockAiVerdict = { flagged: false, categories: {}, scores: { hate: 0.01 }, maxScore: 0.01, topCategory: 'hate' };
+    pushPresetRule(['SLURS']);
+
+    const result = await engineEvaluate('you nigger', 'channel-1', user);
+
+    expect(result.block).toBe(true);
+    expect(result.matches[0].triggerType).toBe('KEYWORD_PRESET');
   });
 });

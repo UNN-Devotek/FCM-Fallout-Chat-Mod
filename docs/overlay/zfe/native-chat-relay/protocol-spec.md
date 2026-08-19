@@ -397,6 +397,10 @@ Response:
 { "success": true, "status": "reported" }
 ```
 
+The server validates the linked relay token, message UUID, message visibility, and
+report reason/details. It derives the target user from the persisted message, rejects
+self-reports, and returns success only after the report has been stored.
+
 ### Moderation action
 
 ```json
