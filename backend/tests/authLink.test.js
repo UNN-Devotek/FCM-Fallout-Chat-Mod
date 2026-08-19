@@ -135,6 +135,7 @@ describe('redeemLinkCode unit tests', () => {
       hudLinkCode: {
         findUnique: jest.fn().mockResolvedValue(null),
         update: jest.fn(),
+        updateMany: jest.fn(),
         deleteMany: jest.fn(),
         create: jest.fn(),
       },
@@ -158,6 +159,7 @@ describe('redeemLinkCode unit tests', () => {
           attempts: 0,
         }),
         update: jest.fn(),
+        updateMany: jest.fn(),
       },
     }));
     const { redeemLinkCode } = require('../src/services/linkCodeService');
@@ -178,6 +180,7 @@ describe('redeemLinkCode unit tests', () => {
           attempts: 0,
         }),
         update: jest.fn(),
+        updateMany: jest.fn(),
       },
     }));
     const { redeemLinkCode } = require('../src/services/linkCodeService');
@@ -198,6 +201,7 @@ describe('redeemLinkCode unit tests', () => {
           attempts: 5,
         }),
         update: jest.fn(),
+        updateMany: jest.fn(),
       },
     }));
     const { redeemLinkCode } = require('../src/services/linkCodeService');
@@ -207,10 +211,7 @@ describe('redeemLinkCode unit tests', () => {
   });
 
   it('happy path: returns ok with relayUserId and marks used with redeemedByUserId', async () => {
-    const mockUpdate = jest
-      .fn()
-      .mockResolvedValueOnce({ attempts: 1 })
-      .mockResolvedValueOnce({ usedAt: new Date(), redeemedByUserId: FCM_USER_ID });
+    const mockUpdateMany = jest.fn().mockResolvedValue({ count: 1 });
     jest.mock('../src/config/prisma', () => ({
       hudLinkCode: {
         findUnique: jest.fn().mockResolvedValue({
@@ -221,7 +222,8 @@ describe('redeemLinkCode unit tests', () => {
           usedAt: null,
           attempts: 0,
         }),
-        update: mockUpdate,
+        update: jest.fn(),
+        updateMany: mockUpdateMany,
       },
     }));
     const { redeemLinkCode } = require('../src/services/linkCodeService');
@@ -230,11 +232,45 @@ describe('redeemLinkCode unit tests', () => {
     if (result.ok) {
       expect(result.relayUserId).toBe('relay-user-1');
     }
-    expect(mockUpdate).toHaveBeenCalledTimes(2);
-    // Second update must set redeemedByUserId
-    expect(mockUpdate.mock.calls[1][0]).toMatchObject({
-      data: { usedAt: expect.any(Date), redeemedByUserId: FCM_USER_ID },
+    expect(mockUpdateMany).toHaveBeenCalledTimes(1);
+    expect(mockUpdateMany.mock.calls[0][0]).toMatchObject({
+      where: {
+        id: 'uuid',
+        usedAt: null,
+        attempts: { lt: 5 },
+        expiresAt: { gt: expect.any(Date) },
+      },
+      data: {
+        attempts: { increment: 1 },
+        usedAt: expect.any(Date),
+        redeemedByUserId: FCM_USER_ID,
+      },
     });
+  });
+
+  it('reports already_used when a concurrent redeemer wins the conditional update', async () => {
+    const live = {
+      id: 'uuid',
+      code: 'ABCDEFGH',
+      relayUserId: 'relay-user-1',
+      expiresAt: new Date(Date.now() + 60000),
+      usedAt: null,
+      attempts: 0,
+    };
+    const used = { ...live, usedAt: new Date(), redeemedByUserId: 'other-user' };
+    const mockFindUnique = jest.fn()
+      .mockResolvedValueOnce(live)
+      .mockResolvedValueOnce(used);
+    jest.mock('../src/config/prisma', () => ({
+      hudLinkCode: {
+        findUnique: mockFindUnique,
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      },
+    }));
+
+    const { redeemLinkCode } = require('../src/services/linkCodeService');
+    const result = await redeemLinkCode('ABCDEFGH', FCM_USER_ID);
+    expect(result).toEqual({ ok: false, reason: 'already_used' });
   });
 });
 

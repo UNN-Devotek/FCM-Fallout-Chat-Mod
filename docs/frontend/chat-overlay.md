@@ -30,7 +30,8 @@ everywhere simultaneously.
   (`ChatOverlay.tsx:2340`).
 - Channel messages fetched from `GET /api/messages/public?channelId=<id>&limit=300`.
 - Public party messages fetched from `GET /api/parties/public/<id>/messages?limit=200`
-  at 4-second intervals (`ChatOverlay.tsx:2764–2817`).
+  at 4-second intervals (`ChatOverlay.tsx:5200+`). The public-party poll is capped at 50 party
+  IDs, never overlaps a previous poll, and ignores results that arrive after the view is unmounted.
 - All write actions and party join/invite actions are disabled (see Public Mode
   Lockdown below).
 

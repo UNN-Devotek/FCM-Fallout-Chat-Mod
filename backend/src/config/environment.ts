@@ -49,6 +49,8 @@ export interface Environment {
   VIRUSTOTAL_URL: string;
   // Tenor GIF search proxy
   TENOR_API_KEY: string;
+  // OpenAI Moderation API (optional — absent key degrades to the keyword filter)
+  OPENAI_API_KEY: string;
   // Dev-only fake personas
   DEV_USER_ROLE: string;
   DEV_MOD_ROLE: string;
@@ -230,6 +232,11 @@ const env: Environment = {
   // Tenor GIF search proxy (optional — without it, /api/tenor-search returns 503)
   TENOR_API_KEY: process.env.TENOR_API_KEY || '',
 
+  // OpenAI Moderation API key. DELIBERATELY NOT in the production `missing[]`
+  // startup guard below: AI moderation is fail-open by design, so an absent key
+  // must degrade to the keyword denylists rather than refuse to boot.
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
+
   // Dev-only fake personas — only used when NODE_ENV !== 'production'
   DEV_USER_ROLE: process.env.DEV_USER_ROLE || 'user',
   DEV_MOD_ROLE: process.env.DEV_MOD_ROLE || 'moderator',
@@ -279,7 +286,9 @@ const env: Environment = {
   // Nexus OAuth 2.0 + PKCE (feature-flagged: disabled when creds are absent)
   NEXUS_OAUTH_CLIENT_ID: process.env.NEXUS_OAUTH_CLIENT_ID || '',
   NEXUS_OAUTH_CLIENT_SECRET: process.env.NEXUS_OAUTH_CLIENT_SECRET || '',
-  NEXUS_OAUTH_REDIRECT_URI: process.env.NEXUS_OAUTH_REDIRECT_URI || 'http://localhost:7177/auth/nexus/callback',
+  // Empty means derive the callback from the forwarded request host. A
+  // localhost default can send production users back to a developer machine.
+  NEXUS_OAUTH_REDIRECT_URI: process.env.NEXUS_OAUTH_REDIRECT_URI || '',
   HUD_IDENTITY_HASH_SECRET: process.env.HUD_IDENTITY_HASH_SECRET || '',
 };
 

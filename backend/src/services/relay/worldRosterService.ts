@@ -57,29 +57,30 @@ export async function clearRoster(relayUserId: string): Promise<void> {
 /** All live rosters (TTL-pruned by Redis). */
 async function getAllRosters(): Promise<RosterEntry[]> {
   const redis = await getRedisClient();
-  const out: RosterEntry[] = [];
+  const keys: string[] = [];
   for await (const scanResult of redis.scanIterator({ MATCH: `${KEY_PREFIX}*`, COUNT: 100 })) {
     for (const key of scanKeys(scanResult)) {
-      if (out.length >= MAX_ACTIVE_ROSTERS) {
+      if (keys.length >= MAX_ACTIVE_ROSTERS) {
         logger.warn({ maxActiveRosters: MAX_ACTIVE_ROSTERS }, '[worldRoster] roster scan capped');
-        return out;
+        break;
       }
-      try {
-        const raw = await redis.get(key);
-        if (!raw) continue;
-        const parsed: unknown = JSON.parse(raw);
-        if (!isRosterPayload(parsed)) continue;
-        out.push({
-          userId: key.slice(KEY_PREFIX.length),
-          name: parsed.name,
-          seen: parsed.seen,
-        });
-      } catch {
-        /* skip corrupt */
-      }
+      keys.push(key);
     }
+    if (keys.length >= MAX_ACTIVE_ROSTERS) break;
   }
-  return out;
+
+  const entries = await Promise.all(keys.map(async (key): Promise<RosterEntry | null> => {
+    try {
+      const raw = await redis.get(key);
+      if (!raw) return null;
+      const parsed: unknown = JSON.parse(raw);
+      if (!isRosterPayload(parsed)) return null;
+      return { userId: key.slice(KEY_PREFIX.length), name: parsed.name, seen: parsed.seen };
+    } catch {
+      return null;
+    }
+  }));
+  return entries.filter((entry): entry is RosterEntry => entry !== null);
 }
 
 function scanKeys(value: unknown): string[] {
@@ -117,13 +118,23 @@ export async function computeRooms(): Promise<Map<string, string>> {
   };
   for (const r of rosters) parent.set(r.userId, r.userId);
 
-  // Sighting edges: A saw B's character name, or B saw A's.
+  // Require mutual sightings. A single client can lie about its outgoing
+  // roster, so one-sided edges are not enough to merge two private rooms.
+  // Index owners by character name to keep this O(N * MAX_NAMES) instead of
+  // comparing every roster pair.
+  const byName = new Map<string, RosterEntry[]>();
+  for (const roster of rosters) {
+    if (!roster.name) continue;
+    const owners = byName.get(roster.name) ?? [];
+    owners.push(roster);
+    byName.set(roster.name, owners);
+  }
   for (const a of rosters) {
-    for (const b of rosters) {
-      if (a.userId >= b.userId) continue;
-      const aSeesB = b.name.length > 0 && a.seen.includes(b.name);
-      const bSeesA = a.name.length > 0 && b.seen.includes(a.name);
-      if (aSeesB || bSeesA) union(a.userId, b.userId);
+    for (const seenName of a.seen) {
+      for (const b of byName.get(seenName) ?? []) {
+        if (a.userId === b.userId || !b.seen.includes(a.name)) continue;
+        union(a.userId, b.userId);
+      }
     }
   }
 

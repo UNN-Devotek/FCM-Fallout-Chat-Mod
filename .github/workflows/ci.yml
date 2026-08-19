@@ -269,24 +269,57 @@ jobs:
 
   # ── Game-mod SWF anchor tests (Python) — REQUIRED gate ───────────────────────
   # The in-game HUD .ba2 build patches Bethesda's HUDMenu via apply-patch.py against
-  # fixed anchors in fcm-inject.as; test_anchors.py asserts the chat.v1 API surface,
-  # FCMHUD/1 removal, the TextChat fragment, and the worldId/link-code wiring are all
-  # present so a future edit can't silently break the patch. Pure stdlib — uses the
-  # runner's system python3, no extra action.
+  # fixed anchors in fcm-inject.as. CI checks the source/config contract and the
+  # stdlib BA2 packer fixture; the fresh Bethesda HUDMenu anchor check runs in
+  # build.sh after ffdec decompiles the current live archive (CI cannot legally
+  # redistribute that decompiled input). Pure stdlib — uses system python3.
   gamemod-anchors:
     name: Game-mod SWF anchors + config (Python + Haxe)
     needs: authorize
     runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Verify promotion-critical sources are tracked
+        run: |
+          set -euo pipefail
+          required=(
+            backend/prisma/migrations/20260803120000_ai_moderation/migration.sql
+            backend/prisma/migrations/20260818120000_relay_persistence_contract/migration.sql
+            backend/prisma/migrations/20260818123000_relax_chat_profanity_word_filters/migration.sql
+            backend/src/services/aiModerationService.ts
+            backend/src/scripts/applyPostPushPatches.ts
+            backend/src/services/relay/wireSanitize.ts
+            backend/src/utils/resolveActorId.ts
+            backend/src/utils/targetedAttack.ts
+            backend/src/utils/oauthState.ts
+            backend/tests/aiModerationService.test.js
+            backend/tests/autoModEngineAi.test.js
+            backend/tests/autoModRulesController.test.js
+            backend/tests/wireSanitize.test.js
+            backend/src/utils/__tests__/oauthState.test.ts
+            game-mods/EasyFishing/test-install.sh
+            game-mods/FCMBridge/hudmenu-chat/test_ba2tool.py
+          )
+          for path in "${required[@]}"; do
+            test -f "$path" || { echo "Missing required source: $path" >&2; exit 1; }
+            git ls-files --error-unmatch "$path" >/dev/null || {
+              echo "Required source is present but not tracked: $path" >&2
+              exit 1
+            }
+          done
+          echo "All promotion-critical sources are tracked."
       - name: Run FCMBridge anchor tests
-        run: python3 game-mods/FCMBridge/hudmenu-chat/test_anchors.py
+        run: |
+          python3 game-mods/FCMBridge/hudmenu-chat/test_anchors.py
+          python3 game-mods/FCMBridge/hudmenu-chat/test_ba2tool.py
       # FcmConfig parser/clamp unit tests (CAP-001..005, #303/#304) — pure Haxe, --interp.
       - name: Install Haxe
         run: sudo apt-get update && sudo apt-get install -y haxe
       - name: Run FcmConfig unit tests
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe test-config.hxml
+      - name: Run EasyFishing installer tests
+        run: bash game-mods/EasyFishing/test-install.sh
 
   # ── Overlay launch smoke (Linux) — REQUIRED gate ─────────────────────────────
   # Builds the packaged overlay and asserts a clean startup. Catches crash-on-launch

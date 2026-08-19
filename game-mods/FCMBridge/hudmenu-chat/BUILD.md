@@ -94,7 +94,8 @@ The script:
 - Recompiles the patched `HUDMenu.as` with ffdec and patches version byte to 32.
 - Stamps the endpoint into `Data/ZFE/TextChat/fragments/FCM.ini` by target.
 - Packs `FCM-standalone.ba2` via `ba2tool.py blobswap` (reuses vanilla archive
-  record headers, swaps in both SWFs and the stamped FCM.ini).
+  record headers, swaps in both SWFs, and inserts the stamped FCM.ini when the
+  vanilla archive does not already contain that entry).
 - Writes `Data/configuration/zfe.ini` `[TextChat] Endpoint=...` alongside the
   fragment. **This is the reliable endpoint config for the standalone path**: the
   TextChat fragment (`Data/ZFE/TextChat/fragments/FCM.ini`) is only loaded by ZFE
@@ -103,8 +104,10 @@ The script:
   so it is the only reliable config vector for the no-HUDModLoader standalone.
 - If the game is not running, installs directly into `$GAME/Data/`.
 
-Tool paths are picked up from the staged buildtools directory or from env vars
-`HAXE`, `JAVA`, `FFDEC`. Override `GAME` to point to a non-default FO76 install.
+Tool paths are picked up from `$BUILDTOOLS_ROOT` (default: a `buildtools/`
+directory next to `build.sh`) or from env vars `HAXE`, `JAVA`, `FFDEC`. The
+default is repository-relative; it does not depend on a temporary agent path.
+Override `GAME` to point to a non-default FO76 install.
 
 ---
 
@@ -117,6 +120,7 @@ all 6 injection points are intact:
 cd game-mods/FCMBridge/hudmenu-chat
 python3 test_anchors.py        # tests fcm-inject.as, FCMBridge.hx, FCM.ini
 python3 test_anchors.py "<work>/HUDMenu.as"  # also checks all HUDMenu anchors
+python3 test_ba2tool.py        # verifies swaps plus insertion of a missing archive entry
 ```
 
 If any anchor check fails, the anchor moved in a Bethesda patch — fix it in

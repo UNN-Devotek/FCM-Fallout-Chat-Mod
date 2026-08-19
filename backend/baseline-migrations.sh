@@ -26,6 +26,9 @@
 echo "=== prisma db push (authoritative schema sync) ==="
 npx prisma db push --skip-generate --accept-data-loss 2>&1 | tail -3 || true
 
+echo "=== apply post-push compatibility patches (required) ==="
+node dist/scripts/applyPostPushPatches.js
+
 echo "=== reconcile migration history (record pending as applied; non-fatal) ==="
 node dist/scripts/reconcileMigrations.js || true
 

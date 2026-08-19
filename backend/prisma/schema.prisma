@@ -140,10 +140,10 @@ model Message {
   userId          String   @map("user_id") @db.Uuid
   channelId       String   @map("channel_id") @db.Uuid
   parentChannelId String?  @map("parent_channel_id") @db.Uuid
-  source          String   @default("game") // 'game' | 'discord' | 'hud' | 'relay'
+  source          String   @default("game") // 'game' | 'discord' | 'hud' | 'relay' | 'mcp' | 'ws'
   isDeleted       Boolean  @default(false) @map("is_deleted")
   metadata        Json?    // optional structured payload (e.g. party_invite embed)
-  relaySeq        BigInt?  @map("relay_seq") // monotonic relay cursor (relay source only)
+  relaySeq        BigInt?  @map("relay_seq") // monotonic cursor when a healthy relay sequence is available
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   // Relations
@@ -516,16 +516,16 @@ model UserAlias {
 // =============================================================================
 // AutoMod Rules — admin-configured auto-moderation rules (mirrors Discord's
 // Auto-Moderation surface with overlay-specific extensions).
-// triggerType: 'KEYWORD' | 'SPAM' | 'KEYWORD_PRESET' | 'MENTION_SPAM' | 'LINK'
-// triggerMetadata: { keyword_filter, regex_patterns, allow_list, mention_total_limit, presets }
+// triggerType: 'AI_MODERATION' | 'KEYWORD' | 'SPAM' | 'KEYWORD_PRESET' | 'MENTION_SPAM' | 'LINK'
+// triggerMetadata: { thresholds, keyword_filter, regex_patterns, allow_list, mention_total_limit, presets, require_target }
 // actions: [{ type: 'BLOCK'|'ALERT'|'TIMEOUT'|'MUTE_OVERLAY', metadata: {...} }]
 // =============================================================================
 model AutoModRule {
   id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name             String
   enabled          Boolean  @default(true)
-  triggerType      String   @map("trigger_type") // 'KEYWORD' | 'SPAM' | 'KEYWORD_PRESET' | 'MENTION_SPAM' | 'LINK'
-  triggerMetadata  Json     @map("trigger_metadata") // { keyword_filter[], regex_patterns[], allow_list[], mention_total_limit, presets }
+  triggerType      String   @map("trigger_type") // 'AI_MODERATION' | 'KEYWORD' | 'SPAM' | 'KEYWORD_PRESET' | 'MENTION_SPAM' | 'LINK'
+  triggerMetadata  Json     @map("trigger_metadata") // { thresholds?, keyword_filter[], regex_patterns[], allow_list[], mention_total_limit, presets[], require_target? }
   actions          Json // [{ type: 'BLOCK'|'ALERT'|'TIMEOUT'|'MUTE_OVERLAY', metadata: {...} }]
   exemptChannelIds String[] @default([]) @map("exempt_channel_ids") // overlay channel UUIDs
   exemptRoles      String[] @default([]) @map("exempt_roles") // Discord role IDs
@@ -552,6 +552,10 @@ model AutoModViolation {
   matchedKeyword String?  @map("matched_keyword")
   matchedSubstr  String?  @map("matched_substr")
   actionsTaken   Json     @map("actions_taken") // [{ type, success, detail }]
+  // AI_MODERATION rules only — full category→score map from the OpenAI
+  // Moderation API, plus the peak score as a sortable severity.
+  aiCategories   Json?    @map("ai_categories")
+  aiMaxScore     Float?   @map("ai_max_score")
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   rule AutoModRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)

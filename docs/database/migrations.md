@@ -4,14 +4,26 @@
 
 ## Why Idempotency Is Required
 
-`backend/baseline-migrations.sh` runs two steps on every container startup:
+`backend/baseline-migrations.sh` runs the schema sync, compatibility patches, and history
+reconciliation on every container startup:
 
 ```sh
 npx prisma db push --skip-generate --accept-data-loss   # authoritative schema sync
+node dist/scripts/applyPostPushPatches.js              # raw constraints + safe data defaults
 node dist/scripts/reconcileMigrations.js                # record pending migrations as applied (non-fatal)
 ```
 
 `prisma db push` is the authoritative step — it diffs `schema.prisma` against the live DB and applies the difference directly, so the schema is already correct before the second step runs.
+
+Some compatibility changes are not represented by Prisma's schema diff: raw `CHECK` constraints
+and data-only repairs. After `db push`, `baseline-migrations.sh` runs
+[`src/scripts/applyPostPushPatches.ts`](../../backend/src/scripts/applyPostPushPatches.ts), and
+the server applies the same patch set during startup. These patches are static, idempotent, and
+fail-closed. The current set keeps `messages.source` aligned with all producers (`game`,
+`discord`, `hud`, `relay`, `mcp`, `ws`), repairs only the untouched stock automod rule to
+target-gated slur protection, removes only the four exact legacy chat-profanity literal rows
+(`fuck`, `shit`, `bastard`, `assh`) once (tracked by a dedicated cleanup marker), and inserts
+disabled/shadow AI moderation defaults.
 
 **The second step reconciles migration *history*, it does NOT re-apply migrations.** Because db push already created every object, the old `prisma migrate deploy` would try to replay each migration's SQL, fail with `42P07` (`already exists`), record a *failed* row, and surface `P3009` ("failed migrations") on every subsequent boot. Instead, [`src/scripts/reconcileMigrations.ts`](../../backend/src/scripts/reconcileMigrations.ts) records each pending or previously-failed migration as **applied** (`prisma migrate resolve --applied`) — history bookkeeping only, no schema change. It resolves *only* the pending ones (steady state = 0), so it is a no-op on normal boots and never reintroduces the ~150s cold-start that a resolve-every-migration loop once caused.
 

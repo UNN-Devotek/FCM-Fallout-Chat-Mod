@@ -32,7 +32,7 @@ interface Channel {
   name: string;
 }
 
-type TriggerType = 'KEYWORD' | 'SPAM' | 'KEYWORD_PRESET' | 'MENTION_SPAM' | 'LINK';
+type TriggerType = 'AI_MODERATION' | 'KEYWORD' | 'SPAM' | 'KEYWORD_PRESET' | 'MENTION_SPAM' | 'LINK';
 type ActionType = 'BLOCK' | 'ALERT' | 'TIMEOUT' | 'MUTE_OVERLAY';
 
 interface AutoModAction {
@@ -54,6 +54,56 @@ interface TriggerMetadata {
   dupe_window_ms?: number;
   rate_limit?: number;
   rate_window_ms?: number;
+  // AI_MODERATION
+  thresholds?: Record<string, number>;
+  // Targeted-attack policy for preset slur rules
+  require_target?: boolean;
+}
+
+function splitLines(s: string): string[] {
+  return s.split('\n').map((line) => line.trim()).filter(Boolean);
+}
+
+/**
+ * Build the metadata payload without dropping server-owned policy fields.
+ * In particular, require_target is what keeps the default slur rule scoped
+ * to targeted attacks instead of ordinary game profanity.
+ */
+export function buildTriggerMetadata(
+  triggerType: TriggerType,
+  current: TriggerMetadata,
+  fields: {
+    keywords?: string;
+    regexPatterns?: string;
+    allowList?: string;
+    linkAllowList?: string;
+  },
+): TriggerMetadata {
+  if (triggerType === 'KEYWORD') {
+    const meta: TriggerMetadata = {};
+    const keywords = splitLines(fields.keywords ?? '');
+    const regexPatterns = splitLines(fields.regexPatterns ?? '');
+    const allowList = splitLines(fields.allowList ?? '');
+    if (keywords.length) meta.keyword_filter = keywords;
+    if (regexPatterns.length) meta.regex_patterns = regexPatterns;
+    if (allowList.length) meta.allow_list = allowList;
+    return meta;
+  }
+
+  if (triggerType === 'KEYWORD_PRESET') {
+    const allowList = splitLines(fields.allowList ?? '');
+    return {
+      ...current,
+      presets: current.presets ?? [],
+      allow_list: allowList.length ? allowList : undefined,
+    };
+  }
+
+  if (triggerType === 'LINK') {
+    return { allow_list: splitLines(fields.linkAllowList ?? '') };
+  }
+
+  return { ...current };
 }
 
 interface AutoModRule {
@@ -79,7 +129,8 @@ function actionsSummary(actions: AutoModAction[]): string {
   return actions.map((a) => a.type).join(', ') || '—';
 }
 
-const TRIGGER_LABELS: Record<TriggerType, string> = {
+export const TRIGGER_LABELS: Record<TriggerType, string> = {
+  AI_MODERATION: 'AI Moderation',
   KEYWORD: 'Keyword',
   SPAM: 'Spam (global)',
   KEYWORD_PRESET: 'Keyword Preset',
@@ -88,7 +139,7 @@ const TRIGGER_LABELS: Record<TriggerType, string> = {
 };
 
 const ACTION_OPTS: ActionType[] = ['BLOCK', 'ALERT', 'TIMEOUT', 'MUTE_OVERLAY'];
-const TRIGGER_OPTS: TriggerType[] = ['KEYWORD', 'KEYWORD_PRESET', 'MENTION_SPAM', 'LINK', 'SPAM'];
+export const TRIGGER_OPTS: TriggerType[] = ['AI_MODERATION', 'KEYWORD', 'KEYWORD_PRESET', 'MENTION_SPAM', 'LINK', 'SPAM'];
 const PRESET_OPTS: ('PROFANITY' | 'SEXUAL_CONTENT' | 'SLURS')[] = ['PROFANITY', 'SEXUAL_CONTENT', 'SLURS'];
 
 // ─── Empty rule form state ─────────────────────────────────────────────────────
@@ -132,10 +183,6 @@ function RuleModal({ rule, channels, discordRoles, onClose, onSaved }: RuleModal
   const [timeoutDuration, setTimeoutDuration] = useState<string>(
     form.actions.find(a => a.type === 'TIMEOUT')?.metadata?.durationSeconds?.toString() ?? '60'
   );
-
-  function splitLines(s: string) {
-    return s.split('\n').map(l => l.trim()).filter(Boolean);
-  }
 
   function setTriggerType(t: TriggerType) {
     setForm(f => ({ ...f, triggerType: t, triggerMetadata: {} }));
@@ -183,23 +230,12 @@ function RuleModal({ rule, channels, discordRoles, onClose, onSaved }: RuleModal
     setSaving(true);
     setError(null);
 
-    // Build triggerMetadata from scratch inputs
-    let meta: TriggerMetadata = { ...form.triggerMetadata };
-    if (form.triggerType === 'KEYWORD') {
-      meta = {};
-      const kws = splitLines(kwKeywords);
-      const rxs = splitLines(kwRegex);
-      const al = splitLines(kwAllowList);
-      if (kws.length) meta.keyword_filter = kws;
-      if (rxs.length) meta.regex_patterns = rxs;
-      if (al.length) meta.allow_list = al;
-    }
-    if (form.triggerType === 'KEYWORD_PRESET') {
-      meta = { presets: meta.presets ?? [], allow_list: splitLines(kwAllowList) || undefined };
-    }
-    if (form.triggerType === 'LINK') {
-      meta = { allow_list: splitLines(linkAllowList) };
-    }
+    const meta = buildTriggerMetadata(form.triggerType, form.triggerMetadata, {
+      keywords: kwKeywords,
+      regexPatterns: kwRegex,
+      allowList: kwAllowList,
+      linkAllowList,
+    });
 
     // Inject TIMEOUT duration
     const actions = form.actions.map(a => {
@@ -312,6 +348,12 @@ function RuleModal({ rule, channels, discordRoles, onClose, onSaved }: RuleModal
         {form.triggerType === 'SPAM' && (
           <div style={{ marginBottom: '16px', padding: '12px', background: 'var(--bg-panel)', border: '1px solid var(--border-color)', fontSize: '12px', color: 'var(--text-muted)' }}>
             This rule type reuses the global spam threshold settings configured in the <strong style={{ color: 'var(--text-secondary)' }}>SPAM</strong> tab.
+          </div>
+        )}
+
+        {form.triggerType === 'AI_MODERATION' && (
+          <div style={{ marginBottom: '16px', padding: '12px', background: 'var(--bg-panel)', border: '1px solid var(--border-color)', fontSize: '12px', color: 'var(--text-muted)' }}>
+            This rule consumes the shared OpenAI moderation verdict. Enable the global AI moderation kill switch and configure thresholds in the SETTINGS tab before enabling this rule.
           </div>
         )}
 
@@ -767,6 +809,125 @@ function SpamTab() {
   );
 }
 
+// ─── AI Moderation Settings ───────────────────────────────────────────────────
+
+const AI_KEYS = {
+  enabled: 'ai_moderation_enabled',
+  mode: 'ai_moderation_mode',
+  thresholds: 'ai_moderation_thresholds',
+  identifierThresholds: 'ai_moderation_identifier_thresholds',
+} as const;
+
+/**
+ * Kill switch + rollout controls for the OpenAI Moderation API integration.
+ *
+ * While enabled AND healthy, the classifier supersedes the keyword layers (the
+ * WORD FILTER tab and any KEYWORD_PRESET rule). Turning this off — or the API
+ * going down — hands enforcement straight back to them.
+ */
+function AiModerationSettings({ settings, isLoading }: { settings: SpamSetting[] | undefined; isLoading: boolean }) {
+  const [enabled, setEnabled] = useState(false);
+  const [mode, setMode] = useState<'shadow' | 'enforce'>('shadow');
+  const [thresholds, setThresholds] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!settings) return;
+    const get = (key: string) => settings.find((s) => s.key === key)?.value;
+    setEnabled(get(AI_KEYS.enabled) === 'true');
+    setMode(get(AI_KEYS.mode) === 'enforce' ? 'enforce' : 'shadow');
+    setThresholds(get(AI_KEYS.thresholds) ?? '');
+  }, [settings]);
+
+  async function handleSave() {
+    setSaving(true);
+    setFeedback(null);
+    try {
+      // Validate locally before the round-trip so a typo doesn't 422.
+      if (thresholds.trim()) {
+        const parsed = JSON.parse(thresholds);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          throw new Error('Thresholds must be a JSON object of category -> score');
+        }
+      }
+      await api.patch('/api/moderation/settings', { key: AI_KEYS.enabled, value: enabled ? 'true' : 'false' });
+      await api.patch('/api/moderation/settings', { key: AI_KEYS.mode, value: mode });
+      if (thresholds.trim()) {
+        await api.patch('/api/moderation/settings', { key: AI_KEYS.thresholds, value: thresholds.trim() });
+      }
+      setFeedback('AI moderation settings saved.');
+    } catch (err: any) {
+      setFeedback(`Error: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ padding: '12px', background: 'var(--bg-panel)', border: '1px solid var(--border-color)', maxWidth: '520px', marginTop: '20px' }}>
+      <h3 style={{ fontSize: '13px', marginTop: 0, color: 'var(--text-secondary)' }}>AI CONTENT MODERATION</h3>
+      <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginBottom: '16px' }}>
+        Classifies chat, usernames, and party names with the OpenAI Moderation API.
+        While enabled and reachable it <strong>replaces</strong> the keyword presets and the
+        WORD FILTER tab; those return automatically if the API is unreachable.
+        Message text is sent to OpenAI &mdash; no username, user ID, or channel.
+      </p>
+
+      {isLoading ? (
+        <div className="loading">Loading...</div>
+      ) : (
+        <>
+          <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', marginBottom: '12px' }}>
+            <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+            <span>Enabled (kill switch)</span>
+          </label>
+
+          <div style={{ marginBottom: '12px' }}>
+            <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>MODE</label>
+            <select value={mode} onChange={(e) => setMode(e.target.value as 'shadow' | 'enforce')} style={{ width: '100%' }}>
+              <option value="shadow">Shadow &mdash; log only, never blocks</option>
+              <option value="enforce">Enforce &mdash; block at or above threshold</option>
+            </select>
+            <p style={{ color: 'var(--text-muted)', fontSize: '11px', marginTop: '4px' }}>
+              Run in shadow first and review the scores in VIOLATIONS before enforcing.
+            </p>
+          </div>
+
+          <div style={{ marginBottom: '12px' }}>
+            <label style={{ display: 'block', fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '4px' }}>
+              THRESHOLD OVERRIDES (JSON, optional)
+            </label>
+            <textarea
+              value={thresholds}
+              onChange={(e) => setThresholds(e.target.value)}
+              rows={5}
+              spellCheck={false}
+              placeholder={'{\n  "sexual/minors": 0.5,\n  "hate/threatening": 0.7\n}'}
+              style={{ width: '100%', fontFamily: 'monospace', fontSize: '11px' }}
+            />
+            <p style={{ color: 'var(--text-muted)', fontSize: '11px', marginTop: '4px' }}>
+              Leave blank for the defaults. A category listed here blocks at or above its score;
+              any category <em>not</em> listed is alert-only. Violence and illicit are deliberately
+              omitted by default &mdash; normal Fallout chat scores high on both.
+            </p>
+          </div>
+
+          <button onClick={handleSave} disabled={saving}>
+            {saving ? 'SAVING...' : 'SAVE'}
+          </button>
+        </>
+      )}
+
+      {feedback && (
+        <div style={{ marginTop: '8px', fontSize: '12px', color: feedback.startsWith('Error') ? 'var(--error)' : 'var(--success)' }}>
+          {feedback}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Settings Tab ─────────────────────────────────────────────────────────────
 
 function SettingsTab() {
@@ -808,6 +969,7 @@ function SettingsTab() {
   const isLoading = channelsLoading || settingsLoading;
 
   return (
+    <>
     <div style={{ padding: '12px', background: 'var(--bg-panel)', border: '1px solid var(--border-color)', maxWidth: '520px' }}>
       <h3 style={{ fontSize: '13px', marginTop: 0, color: 'var(--text-secondary)' }}>MOD LOG CHANNEL</h3>
       <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginBottom: '16px' }}>
@@ -839,6 +1001,9 @@ function SettingsTab() {
         </div>
       )}
     </div>
+
+    <AiModerationSettings settings={settings as SpamSetting[] | undefined} isLoading={settingsLoading} />
+    </>
   );
 }
 

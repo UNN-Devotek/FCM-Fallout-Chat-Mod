@@ -1,6 +1,15 @@
 # Moderation Subsystem Overview
 
-The moderation subsystem covers: role-based access control, content filtering (word filter + automod rules), spam detection, user reports, ban management with evidence storage, audit logging, and name validation.
+The moderation subsystem covers: role-based access control, content filtering (AI classifier + word filter + automod rules), spam detection, user reports, ban management with evidence storage, audit logging, and name validation.
+
+> **AI content moderation:** chat, usernames, and party names are classified by the
+> [OpenAI Moderation API](https://developers.openai.com/api/docs/guides/moderation). While enabled
+> and reachable it is the **primary** content check, but chat enforcement is limited to
+> high-confidence targeted attacks; ordinary Fallout profanity and gameplay violence are not
+> chat violations by themselves. The keyword denylists become an offline fallback. This sends
+> message text to a third party — see
+> [ai-moderation.md](ai-moderation.md) for the privacy disclosure, the admin kill switch, and the
+> shadow-mode rollout procedure.
 
 > **Multi-surface chat moderation (kick / mute / ban):** for how these actions work across the
 > dashboard, overlay, and the new in-game **chat.v1** `.ba2` under the Nexus/Discord auth lockdown —

@@ -50,7 +50,8 @@ const redemptionIpLimiter = rateLimit({
 
 /**
  * Link-flow auth: resolves req.user from EITHER the overlay install session (X-Auth-Token)
- * OR a signed-in dashboard/web Discord cookie session (resolved to the FCM user by discordId).
+ * OR a signed-in dashboard/web Discord or Nexus cookie session (resolved server-side to the
+ * FCM user by provider identity).
  * The web /link page authenticates by COOKIE, so the token-only requireAuth would 401 it into a
  * sign-in loop and the code-entry screen would never show. This implements the routes' documented
  * "X-Auth-Token or Discord session" contract. Mirrors requireAuth's ban auto-lift + reject.
@@ -65,13 +66,29 @@ async function requireLinkAuth(req: Request, _res: Response, next: NextFunction)
       userId = await redis.get(`session:${token}`);
     }
 
-    // Fall back to the dashboard/web Discord cookie session.
+    // Fall back to the dashboard/web provider cookie session.
     if (!userId) {
       const sess = req.session as any;
       const discordId: string | undefined = sess?.discordUser?.id ?? sess?.publicUser?.discordId;
       if (discordId) {
         const u = await prisma.user.findFirst({ where: { discordId }, select: { id: true } });
         userId = u?.id ?? null;
+      }
+
+      // Nexus-only sessions are backed by a linked identity created during the
+      // OAuth callback. Resolve the provider UID server-side; never trust a
+      // client-supplied user ID from the session payload.
+      if (!userId && sess?.nexusUser?.providerUid) {
+        const identity = await prisma.linkedIdentity.findUnique({
+          where: {
+            provider_providerUid: {
+              provider: 'nexus',
+              providerUid: String(sess.nexusUser.providerUid),
+            },
+          },
+          select: { userId: true },
+        });
+        userId = identity?.userId ?? null;
       }
     }
 

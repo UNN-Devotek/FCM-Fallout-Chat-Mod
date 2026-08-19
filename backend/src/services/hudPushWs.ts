@@ -19,11 +19,9 @@
  * Per-IP connection cap: 3 concurrent connections (mirrors hudPushTcp.ts and
  * wsConnsByIp in server.ts).
  *
- * Upgrade handler coexistence: the existing `{server, path:'/ws'}` WebSocketServer
- * has its own built-in upgrade handler that fires only for the '/ws' path.  We
- * attach a separate server.on('upgrade') listener that handles ONLY '/ws/hud'
- * upgrades via hudWss.handleUpgrade().  For any other pathname we do NOTHING —
- * we must NOT destroy the socket or we would race the '/ws' server's own handler.
+ * Upgrade handler coexistence: the chat WebSocketServer runs in noServer mode
+ * behind upgradeRouter.ts. We attach a separate server.on('upgrade') listener
+ * that handles ONLY '/ws/hud' upgrades via hudWss.handleUpgrade().
  */
 
 import http from 'http';
@@ -40,6 +38,11 @@ const PER_IP_CAP        = 3;   // max concurrent WS /ws/hud connections per IP
 // ── State ─────────────────────────────────────────────────────────────────────
 
 const wsHudConnsByIp = new Map<string, number>();
+
+/** True exactly when initHudPushWs will attach the /ws/hud upgrade listener. */
+export function isHudPushWsEnabled(): boolean {
+  return env.NODE_ENV !== 'production' && env.HUD_PUSH_WS_ENABLED;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -122,8 +125,8 @@ hudWss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
 
 /**
  * Attach a server.on('upgrade') listener that routes only /ws/hud upgrades
- * to our hudWss.  All other pathnames are left alone (DO NOT destroy) so the
- * existing path-bound '/ws' WebSocketServer can handle them without racing.
+ * to our hudWss. The shared upgrade router owns /ws and rejects unknown paths;
+ * this listener simply leaves non-HUD requests for that router.
  *
  * Wire into server.ts start() next to initHudPushTcp().
  */
@@ -140,7 +143,7 @@ export function initHudPushWs(server: http.Server): void {
     }
     return;
   }
-  if (!env.HUD_PUSH_WS_ENABLED) {
+  if (!isHudPushWsEnabled()) {
     logger.info('[hudPushWs] disabled (HUD_PUSH_WS_ENABLED=false)');
     return;
   }
@@ -150,10 +153,7 @@ export function initHudPushWs(server: http.Server): void {
       try { return new URL(req.url ?? '', 'http://x').pathname; } catch { return req.url ?? ''; }
     })();
 
-    if (pathname !== '/ws/hud') {
-      // Not our path — leave socket untouched so the main /ws server can handle it.
-      return;
-    }
+    if (pathname !== '/ws/hud') return;
 
     hudWss.handleUpgrade(req, socket, head, (ws) => {
       hudWss.emit('connection', ws, req);

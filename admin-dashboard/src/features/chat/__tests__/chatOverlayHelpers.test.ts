@@ -8,6 +8,7 @@ import {
   hexToRgba,
   hexAlpha,
   menuBgColor,
+  boundedPublicPartyIds,
   loadSettings,
   saveSettings,
   truncateUrl,
@@ -38,6 +39,16 @@ import {
   buildMentionInsert,
   BUILTIN_FORMS,
 } from '../ChatOverlay';
+
+describe('boundedPublicPartyIds', () => {
+  it('caps and removes empty party IDs', () => {
+    expect(boundedPublicPartyIds('party-a,,party-b,party-c', 2)).toEqual(['party-a', 'party-b']);
+  });
+
+  it('fails closed for non-positive limits', () => {
+    expect(boundedPublicPartyIds('party-a', 0)).toEqual([]);
+  });
+});
 
 // ── isProdRelayHost (drives the footer [DEV] indicator) ──────────────────────
 describe('isProdRelayHost', () => {

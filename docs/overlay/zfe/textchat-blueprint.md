@@ -18,8 +18,9 @@ architecture. See [two-way-chat-implemented.md](two-way-chat-implemented.md) for
   direct reference and drives TextChat's display list (`TextChat.TextChatBase_mc.…`).
 - **Native bridge `__SFCodeObj`** — the SFE/ZFE code object exposed to Flash. Provides the socket
   (`register`/`connect`/`writeUTFBytes`/`readUTFBytes`) and key helpers (`isChatKeyPressed`,
-  `updateChatHotkey`, `isEmergencyClosePressed`, `writeChatConfigFile`). **Our FCMBridge already uses
-  this same bridge for the socket and has proven `writeUTFBytes`/`readUTFBytes` work.**
+  `updateChatHotkey`, `isEmergencyClosePressed`, `writeChatConfigFile`). The current
+  `FCMChatWidget` uses ZFE's `chat.v1` transport and vendor-scoped `readStorage`/`writeStorage`;
+  these legacy calls remain historical reference only.
 
 ## 1. Opening chat — key capture (two paths, both → `enterChatMode()`)
 

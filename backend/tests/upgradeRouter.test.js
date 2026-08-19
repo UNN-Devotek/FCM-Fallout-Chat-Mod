@@ -64,7 +64,7 @@ describe('attachChatUpgradeRouter — /ws routing + /ws/hud coexistence', () => 
       },
     });
     chatWss.on('connection', (ws) => ws.send('CHAT_OK'));
-    attachChatUpgradeRouter(server, chatWss);
+    attachChatUpgradeRouter(server, chatWss, { hudPathEnabled: true });
 
     // Stub hudPushWs: a second upgrade listener claiming ONLY '/ws/hud'.
     hudWss = new WebSocketServer({ noServer: true });
@@ -122,4 +122,17 @@ describe('attachChatUpgradeRouter — /ws routing + /ws/hud coexistence', () => 
     expect(r.ok).toBe(false);
     if (r.status !== undefined) expect(r.status).toBe(403);
   });
+});
+
+test('disabled /ws/hud upgrades are rejected by the shared router', () => {
+  const server = http.createServer();
+  const chatWss = { handleUpgrade: jest.fn() };
+  const socket = { destroy: jest.fn() };
+
+  attachChatUpgradeRouter(server, chatWss, { hudPathEnabled: false });
+  server.emit('upgrade', { url: HUD_WS_PATH }, socket, Buffer.alloc(0));
+
+  expect(socket.destroy).toHaveBeenCalledTimes(1);
+  expect(chatWss.handleUpgrade).not.toHaveBeenCalled();
+  server.close();
 });

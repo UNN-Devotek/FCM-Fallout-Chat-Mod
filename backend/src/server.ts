@@ -101,11 +101,13 @@ import {
 } from './controllers/partiesController';
 import { requireDiscordRole } from './middleware/auth';
 import { initHudPushTcp } from './services/hudPushTcp';
-import { initHudPushWs } from './services/hudPushWs';
+import { initHudPushWs, isHudPushWsEnabled } from './services/hudPushWs';
 import { seedRelaySeq } from './services/relay/relaySeq';
+import { applyPostPushPatches } from './scripts/applyPostPushPatches';
 import { attachChatUpgradeRouter } from './websocket/upgradeRouter';
 import { initLatestVersion } from './services/latestReleaseVersion';
 import { initActiveQaVersion } from './services/activeQaVersion';
+import { parseBoundOAuthState, serializeBoundOAuthState } from './utils/oauthState';
 import { setQaActiveVersion, getQaActiveVersion } from './controllers/qaVersionController';
 import { qaStart, makeQaCallbackHandler, defaultQaCallbackDeps } from './controllers/qaOAuthController';
 import { makeQaStatusHandler, defaultQaStatusDeps } from './controllers/qaStatusController';
@@ -297,14 +299,29 @@ if (env.NODE_ENV === 'development') {
 }
 
 app.get('/auth/discord', authLimiter, async (req: Request, res: Response) => {
-  // CSRF protection: store state token in Redis (session cookies unreliable behind reverse proxies)
+  // CSRF protection: store state token in Redis and bind it to the initiating
+  // browser session. A random state alone does not stop a callback captured
+  // from one browser being replayed into another browser's session.
   const intent = (req.query.intent as string) || 'admin';
   const state = uuidv4();
   try {
     const redis = await getRedisClient();
-    await redis.set(`oauth_state:${state}`, JSON.stringify({ intent }), { EX: 300 }); // 5 min TTL
+    await redis.set(
+      `oauth_state:${state}`,
+      serializeBoundOAuthState({ intent, sessionId: req.sessionID }),
+      { EX: 300 },
+    ); // 5 min TTL
   } catch (err) {
     logger.error({ err }, 'Failed to store OAuth state in Redis');
+    res.status(500).send('Internal error');
+    return;
+  }
+  try {
+    await new Promise<void>((resolve, reject) => {
+      req.session.save((err) => (err ? reject(err) : resolve()));
+    });
+  } catch (err) {
+    logger.error({ err }, 'Failed to persist Discord OAuth browser session');
     res.status(500).send('Internal error');
     return;
   }
@@ -323,7 +340,7 @@ app.get('/auth/discord/callback', authLimiter, async (req: Request, res: Respons
   if (!code) { res.status(400).send('Missing code'); return; }
 
   // Validate CSRF state token from Redis
-  let stateData: { intent: string } = { intent: 'admin' };
+  let stateData: { intent: string; sessionId: string };
   try {
     const redis = await getRedisClient();
     const valid = await redis.get(`oauth_state:${state}`); await redis.del(`oauth_state:${state}`);
@@ -331,7 +348,12 @@ app.get('/auth/discord/callback', authLimiter, async (req: Request, res: Respons
       res.status(403).send('Invalid OAuth state -- possible CSRF. Please try logging in again.');
       return;
     }
-    try { stateData = JSON.parse(valid); } catch { stateData = { intent: 'admin' }; }
+    const parsedState = parseBoundOAuthState(valid, req.sessionID);
+    if (!parsedState) {
+      res.status(403).send('Invalid OAuth state -- session mismatch. Please try logging in again.');
+      return;
+    }
+    stateData = { intent: parsedState.intent || 'admin', sessionId: parsedState.sessionId };
   } catch (err) {
     logger.error({ err }, 'Failed to validate OAuth state');
     res.status(500).send('Internal error');
@@ -882,9 +904,28 @@ app.get('/auth/nexus', authLimiter, async (req: Request, res: Response) => {
 
   try {
     const redis = await getRedisClient();
-    await redis.set(`nexus_oauth_state:${state}`, JSON.stringify({ codeVerifier }), { EX: 600 });
+    // Bind the one-time OAuth state to the initiating browser session. The
+    // state value is still random, but a stolen callback URL cannot be replayed
+    // into a different user's session.
+    await redis.set(
+      `nexus_oauth_state:${state}`,
+      serializeBoundOAuthState({ codeVerifier, sessionId: req.sessionID }),
+      { EX: 600 },
+    );
   } catch (err) {
     logger.error({ err }, 'Failed to store Nexus OAuth state');
+    res.status(500).send('Internal error');
+    return;
+  }
+
+  // saveUninitialized=false means an untouched session would otherwise not
+  // receive a cookie, making the callback look like a different browser.
+  try {
+    await new Promise<void>((resolve, reject) => {
+      req.session.save((err) => (err ? reject(err) : resolve()));
+    });
+  } catch (err) {
+    logger.error({ err }, 'Failed to persist Nexus OAuth browser session');
     res.status(500).send('Internal error');
     return;
   }
@@ -940,7 +981,12 @@ app.get('/auth/nexus/callback', authLimiter, async (req: Request, res: Response)
       res.redirect('/link?error=nexus_state');
       return;
     }
-    ({ codeVerifier } = JSON.parse(stored));
+    const stateData = parseBoundOAuthState(stored, req.sessionID);
+    if (!stateData?.codeVerifier) {
+      res.redirect('/link?error=nexus_state');
+      return;
+    }
+    codeVerifier = stateData.codeVerifier;
   } catch (err) {
     logger.error({ err }, 'Failed to validate Nexus OAuth state');
     res.status(500).send('Internal error');
@@ -1021,8 +1067,52 @@ app.get('/auth/nexus/callback', authLimiter, async (req: Request, res: Response)
       }
     }
 
-    // No existing session: store Nexus identity in session for the /link page
-    sess.nexusUser = { providerUid, name: nexusUser.name };
+    // Nexus is a first-class provider for the overlay/in-game path. Provision a
+    // lightweight FCM user on first Nexus login, then bind the provider row to
+    // that user so the cookie session can pass /api/link auth without requiring
+    // a Discord account.
+    let nexusUserId: string | undefined;
+    const existingNexusIdentity = await prisma.linkedIdentity.findUnique({
+      where: { provider_providerUid: { provider: 'nexus', providerUid } },
+      select: { userId: true },
+    });
+    nexusUserId = existingNexusIdentity?.userId;
+
+    if (!nexusUserId) {
+      const safeProviderUid = providerUid.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24) || uuidv4().slice(0, 12);
+      const provisioned = await prisma.user.create({
+        data: {
+          username: `nexus-${safeProviderUid}-${uuidv4().slice(0, 8)}`,
+          installToken: `nexus-${uuidv4()}`,
+        },
+        select: { id: true },
+      });
+
+      try {
+        await linkProviderIdentity({
+          userId: provisioned.id,
+          provider: 'nexus',
+          providerUid,
+          username: nexusUser.name,
+        });
+        nexusUserId = provisioned.id;
+      } catch (linkErr) {
+        // A concurrent callback may have won the provider unique constraint.
+        // Reuse that account and remove only our unlinked provisional row.
+        const winner = await prisma.linkedIdentity.findUnique({
+          where: { provider_providerUid: { provider: 'nexus', providerUid } },
+          select: { userId: true },
+        });
+        if (!winner) throw linkErr;
+        nexusUserId = winner.userId;
+        await prisma.user.delete({ where: { id: provisioned.id } }).catch(() => {});
+      }
+    }
+
+    sess.nexusUser = { providerUid, name: nexusUser.name, userId: nexusUserId };
+    await new Promise<void>((resolve, reject) => {
+      req.session.save((err) => (err ? reject(err) : resolve()));
+    });
     res.redirect('/link?provider=nexus');
   } catch (err) {
     logger.error({ err }, 'Nexus OAuth callback error');
@@ -1832,10 +1922,10 @@ const wsHeartbeat = setInterval(() => {
 }, 30_000);
 wss.on('close', () => clearInterval(wsHeartbeat));
 
-// Route HTTP upgrades: '/ws' → this chat server; '/ws/hud' is left for
-// initHudPushWs(); unknown paths are rejected. Required because `wss` is now in
-// noServer mode (see the WebSocketServer comment above).
-attachChatUpgradeRouter(server, wss);
+// Route HTTP upgrades: '/ws' → this chat server; enabled '/ws/hud' is left for
+// initHudPushWs(); disabled/unknown paths are rejected. Required because `wss`
+// is now in noServer mode (see the WebSocketServer comment above).
+attachChatUpgradeRouter(server, wss, { hudPathEnabled: isHudPushWsEnabled() });
 
 // Expose broadcast fns to routes and Discord service
 (global as any).broadcast = broadcast;
@@ -1965,6 +2055,10 @@ async function start(): Promise<void> {
     await initHudPushTcp();
     initHudPushWs(server);
 
+    // db push does not replay raw SQL/data-only migrations. Apply the small,
+    // idempotent compatibility set before any relay message can be persisted.
+    await applyPostPushPatches(prisma);
+
     // chat.v1 relay: seed the monotonic relay sequence counter from DB high-water mark.
     // Must run after Redis is connected and before the first relay send.
     await seedRelaySeq();
@@ -2017,13 +2111,24 @@ async function start(): Promise<void> {
           id: 'a0000000-0000-0000-0000-000000000002',
           name: 'Block flagged words',
           triggerType: 'KEYWORD_PRESET',
-          triggerMetadata: { presets: ['SEXUAL_CONTENT', 'SLURS'] },
+          triggerMetadata: { presets: ['SLURS'], require_target: true },
         },
         {
           id: 'a0000000-0000-0000-0000-000000000003',
           name: 'Block mention spam',
           triggerType: 'MENTION_SPAM',
           triggerMetadata: { mention_total_limit: 20 },
+        },
+        {
+          // AI content moderation (OpenAI Moderation API). Thresholds live in
+          // the moderation_settings key/value rows, not here, so they can be
+          // tuned globally; an empty triggerMetadata means "use the global set".
+          // Like the others this ships DISABLED — enabling it is deliberate, and
+          // ai_moderation_enabled must be turned on too.
+          id: 'a0000000-0000-0000-0000-000000000004',
+          name: 'AI content moderation',
+          triggerType: 'AI_MODERATION',
+          triggerMetadata: {},
         },
       ];
       for (const r of automodDefaults) {

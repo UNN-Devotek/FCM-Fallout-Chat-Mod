@@ -108,6 +108,30 @@ jobs:
             "-c.win.azureSignOptions.certificateProfileName=fcm-public-trust" `
             "-c.win.azureSignOptions.codeSigningAccountName=fcm-trusted-signing"
 
+      - name: Verify Windows artifact contract
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          $dist = Resolve-Path cross-platform-overlay\dist-electron
+          $artifacts = @(Get-ChildItem $dist -File -Filter *.exe)
+          if ($artifacts.Count -eq 0) {
+            throw "Windows build produced no .exe artifacts in $dist"
+          }
+          foreach ($artifact in $artifacts) {
+            if ($artifact.Length -lt 1MB) {
+              throw "Windows artifact is unexpectedly small: $($artifact.FullName) ($($artifact.Length) bytes)"
+            }
+            Write-Host "Windows artifact: $($artifact.Name) ($($artifact.Length) bytes)"
+            if ($artifact.Name -notlike "*$($env:EXPECTED_VERSION)*") {
+              throw "Requested version $($env:EXPECTED_VERSION) is absent from $($artifact.Name)"
+            }
+          }
+          $feedFiles = @(Get-ChildItem $dist -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^(latest.*\.yml|app-update\.yml|.*\.blockmap)$' })
+          if ($feedFiles.Count -gt 0) {
+            throw "Build emitted retired auto-update files: $($feedFiles.Name -join ', ')"
+          }
+
       - name: Compute SHA-512 (base64) of NSIS installer
         id: sha512
         run: |
@@ -138,3 +162,4 @@ jobs:
           path: |
             cross-platform-overlay/dist-electron/*.exe
           retention-days: 90
+          if-no-files-found: error

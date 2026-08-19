@@ -41,9 +41,30 @@ function makeClient(sends: string[], channelId: string = GENERAL_CHANNEL_ID): Hu
   };
 }
 
-/** Drain microtask / setImmediate queue so async-void paths in hudPush complete. */
+/**
+ * Drain microtask / setImmediate queue so async-void paths in hudPush complete.
+ *
+ * A single drain is not sufficient for positive delivery assertions: the
+ * production functions intentionally launch async work without awaiting it,
+ * and the number of async hops can vary with cache and feed state. Use
+ * waitFor() for assertions that require a message to have arrived.
+ */
 function drainAsync(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
+}
+
+async function waitFor(
+  predicate: () => boolean,
+  description: string,
+  timeoutMs = 2000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) {
+      assert.fail(`timed out after ${timeoutMs}ms waiting for: ${description}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 // ── isHudEligibleChannel ──────────────────────────────────────────────────────
@@ -240,7 +261,16 @@ test('getClientCount returns a non-negative number', () => {
 // ── Per-connection channel filtering ─────────────────────────────────────────
 
 describe('hudPushNotify: per-connection channel filter', () => {
-  afterEach(() => { _setChannelResolver(null); });
+  afterEach(() => {
+    _setChannelResolver(null);
+    _setChannelFeedFetcher(null);
+    _setAggregateFeedFetcher(null);
+  });
+
+  function injectNoDbFetchers(): void {
+    _setChannelFeedFetcher(async () => []);
+    _setAggregateFeedFetcher(async () => []);
+  }
 
   test('General message is pushed to General-active client but NOT to Trading-active client', async () => {
     _setChannelResolver(async (id) => {
@@ -248,6 +278,7 @@ describe('hudPushNotify: per-connection channel filter', () => {
       if (id === TRADING_CHANNEL_ID) return { name: 'Trading', color: '#4A9FE0', parentId: ROOT_CONTAINER_ID, isArchived: false };
       return null;
     });
+    injectNoDbFetchers();
 
     const generalSends: string[] = [];
     const tradingSends: string[] = [];
@@ -261,17 +292,22 @@ describe('hudPushNotify: per-connection channel filter', () => {
     generalSends.length = 0;
     tradingSends.length = 0;
 
-    hudPushNotify({
-      type: 'chat:message',
-      payload: { channelId: GENERAL_CHANNEL_ID, content: 'hello general', username: 'Dev', isPrivate: false },
-    });
-    await drainAsync();
+    try {
+      hudPushNotify({
+        type: 'chat:message',
+        payload: { channelId: GENERAL_CHANNEL_ID, content: 'hello general', username: 'Dev', isPrivate: false },
+      });
+      await waitFor(
+        () => generalSends.some(l => l.includes('hello general')),
+        'General client to receive the General message',
+      );
 
-    unregisterClientPublic(generalClient);
-    unregisterClientPublic(tradingClient);
-
-    assert.ok(generalSends.some(l => l.includes('hello general')), 'General client must receive General message');
-    assert.ok(!tradingSends.some(l => l.includes('hello general')), 'Trading client must NOT receive General message');
+      assert.ok(generalSends.some(l => l.includes('hello general')), 'General client must receive General message');
+      assert.ok(!tradingSends.some(l => l.includes('hello general')), 'Trading client must NOT receive General message');
+    } finally {
+      unregisterClientPublic(generalClient);
+      unregisterClientPublic(tradingClient);
+    }
   });
 
   test('Trading message is pushed to Trading-active client AND to the aggregate General client', async () => {
@@ -280,6 +316,7 @@ describe('hudPushNotify: per-connection channel filter', () => {
       if (id === TRADING_CHANNEL_ID) return { name: 'Trading', color: '#4A9FE0', parentId: ROOT_CONTAINER_ID, isArchived: false };
       return null;
     });
+    injectNoDbFetchers();
 
     const generalSends: string[] = [];
     const tradingSends: string[] = [];
@@ -291,17 +328,26 @@ describe('hudPushNotify: per-connection channel filter', () => {
     generalSends.length = 0;
     tradingSends.length = 0;
 
-    hudPushNotify({
-      type: 'chat:message',
-      payload: { channelId: TRADING_CHANNEL_ID, content: 'WTS plans', username: 'Seller', isPrivate: false },
-    });
-    await drainAsync();
+    try {
+      hudPushNotify({
+        type: 'chat:message',
+        payload: { channelId: TRADING_CHANNEL_ID, content: 'WTS plans', username: 'Seller', isPrivate: false },
+      });
+      await waitFor(
+        () => tradingSends.some(l => l.includes('WTS plans')),
+        'Trading client to receive the Trading message',
+      );
+      await waitFor(
+        () => generalSends.some(l => l.includes('WTS plans')),
+        'General (aggregate) client to receive the Trading message',
+      );
 
-    unregisterClientPublic(generalClient);
-    unregisterClientPublic(tradingClient);
-
-    assert.ok(tradingSends.some(l => l.includes('WTS plans')), 'Trading client must receive Trading message');
-    assert.ok(generalSends.some(l => l.includes('WTS plans')), 'General (aggregate) client MUST receive Trading message');
+      assert.ok(tradingSends.some(l => l.includes('WTS plans')), 'Trading client must receive Trading message');
+      assert.ok(generalSends.some(l => l.includes('WTS plans')), 'General (aggregate) client MUST receive Trading message');
+    } finally {
+      unregisterClientPublic(generalClient);
+      unregisterClientPublic(tradingClient);
+    }
   });
 });
 
@@ -326,12 +372,18 @@ describe('registerClient: ACTIVECHAN on connect', () => {
 
     const sends: string[] = [];
     const client = makeClient(sends, GENERAL_CHANNEL_ID);
-    registerClient(client);
-    await drainAsync();
-    unregisterClientPublic(client);
+    try {
+      registerClient(client);
+      await waitFor(
+        () => sends.some(l => l === 'ACTIVECHAN~General\n'),
+        'ACTIVECHAN~General to be sent on connect',
+      );
 
-    assert.ok(sends[0]?.startsWith('HELLO~1~'), `Expected HELLO first, got: ${sends[0]}`);
-    assert.ok(sends.some(l => l === 'ACTIVECHAN~General\n'), `Expected ACTIVECHAN~General, got: ${JSON.stringify(sends)}`);
+      assert.ok(sends[0]?.startsWith('HELLO~1~'), `Expected HELLO first, got: ${sends[0]}`);
+      assert.ok(sends.some(l => l === 'ACTIVECHAN~General\n'), `Expected ACTIVECHAN~General, got: ${JSON.stringify(sends)}`);
+    } finally {
+      unregisterClientPublic(client);
+    }
   });
 });
 
@@ -354,7 +406,10 @@ describe('switchClientChannel', () => {
     const sends: string[] = [];
     const client = makeClient(sends, GENERAL_CHANNEL_ID);
     switchClientChannel(client, TRADING_CHANNEL_ID);
-    await drainAsync();
+    await waitFor(
+      () => sends.some(l => l === 'ACTIVECHAN~Trading\n'),
+      'ACTIVECHAN~Trading to be sent after the channel switch',
+    );
 
     assert.equal(client.activeChannelId, TRADING_CHANNEL_ID, 'activeChannelId must be updated to Trading');
     assert.ok(sends.some(l => l === 'ACTIVECHAN~Trading\n'), `Expected ACTIVECHAN~Trading, got: ${JSON.stringify(sends)}`);

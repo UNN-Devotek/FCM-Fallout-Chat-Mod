@@ -821,6 +821,12 @@ export function menuBgColor(theme: WebTheme, chromeBgAlpha: number, mult = 1.4):
   return hexToRgba(theme.chromeColor, Math.max(0.9, Math.min(1, theme.chromeAlpha * mult * chromeBgAlpha)));
 }
 
+/** Bound public-party fan-out for both polling and the aggregated feed. */
+export function boundedPublicPartyIds(key: string, max = 50): string[] {
+  if (!Number.isFinite(max) || max <= 0) return [];
+  return key ? key.split(',').filter(Boolean).slice(0, Math.floor(max)) : [];
+}
+
 /**
  * openUrl — open a URL via the Electron relay bridge (if present) or window.open.
  * Centralises the openExternal / window.open pattern used throughout the component.
@@ -5200,10 +5206,16 @@ export default function ChatOverlay() {
   // side. ONLY public parties are ever fetched (the endpoint rejects private).
   useEffect(() => {
     if (!isPublicMode) return;
-    const ids = publicPartyIdKey ? publicPartyIdKey.split(',') : [];
+    // A public session can discover many parties. Keep the poll bounded so a
+    // stale URL cannot fan out an unbounded number of unauthenticated reads.
+    const ids = boundedPublicPartyIds(publicPartyIdKey);
     if (ids.length === 0) return;
+    let inFlight = false;
+    let cancelled = false;
 
     async function loadPartyMsgs() {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const results = await Promise.all(
           ids.map(id =>
@@ -5224,8 +5236,9 @@ export default function ChatOverlay() {
           )
         );
         const all = results.flat();
-        if (all.length === 0) return;
+        if (cancelled || all.length === 0) return;
         setMessages(prev => {
+          if (cancelled) return prev;
           const incomingIds = new Set(all.map(m => m.id));
           const partyIdSet = new Set(ids);
           // Drop prior party messages for these parties (refresh) but keep
@@ -5235,12 +5248,18 @@ export default function ChatOverlay() {
           merged.sort((a, b) => ((a.timestamp ?? '') < (b.timestamp ?? '') ? -1 : 1));
           return merged.slice(-800);
         });
-      } catch { /* ignore poll failure */ }
+      } catch { /* ignore poll failure */
+      } finally {
+        inFlight = false;
+      }
     }
 
     loadPartyMsgs();
     const t = setInterval(loadPartyMsgs, 4000);
-    return () => clearInterval(t);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
   }, [isPublicMode, publicPartyIdKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { activeSubIdRef.current = activeSubId; }, [activeSubId]);
@@ -6280,7 +6299,7 @@ export default function ChatOverlay() {
       // Privileged mods (isMod && !isPublicMode) also see foreign-party messages
       // here inline via shouldShowInMainFeed — server-enforced, never in public mode.
       const feedPartyIds = isPublicMode
-        ? (publicPartyIdKey ? publicPartyIdKey.split(',') : [])
+        ? boundedPublicPartyIds(publicPartyIdKey)
         : joinedParties.map(p => p.id);
       return messages
         .filter(m =>

@@ -4,9 +4,11 @@ import prisma from '../config/prisma';
 import { query as dbQuery } from '../config/database';
 import { createError } from '../middleware/errorHandler';
 import { resetCache, invalidateSettingsCache } from '../services/autoModService';
+import { invalidateAiModerationCache } from '../services/aiModerationService';
 import { invalidateVoiceCache } from '../services/voiceService';
 import { postEmbed, listTextChannels, listAssignableRoles, invalidateModLogCache, type EmbedData } from '../services/discordService';
 import reactionRoleService, { type ReactionRoleInput } from '../services/reactionRoleService';
+import { resolveInternalActorId } from '../utils/resolveActorId';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function validateUuid(id: string): boolean { return UUID_RE.test(id); }
@@ -215,26 +217,40 @@ async function getSettings(_req: Request, res: Response, next: NextFunction): Pr
 
 const SNOWFLAKE_RE_SETTINGS = /^\d{17,20}$/;
 
+/** moderation_settings keys owned by the AI moderation integration. */
+const AI_SETTING_KEYS = new Set([
+  'ai_moderation_enabled',
+  'ai_moderation_mode',
+  'ai_moderation_thresholds',
+  'ai_moderation_identifier_thresholds',
+]);
+
 /**
- * AuditLog.actorId is @db.Uuid (the internal users.id), but a Discord-OAuth
- * admin's `req.adminUser.id` is the Discord SNOWFLAKE, not a UUID — writing it
- * straight into actorId throws P2023 ("invalid length: expected 32, found 18")
- * and 500s the whole request (this is what broke saving the mod-log channel).
- * Resolve the internal user UUID from the Discord id (same lookup the ban gate
- * uses), returning null when it can't be mapped (e.g. the 'api-key' actor or a
- * Discord account with no linked game user) so the audit write always succeeds.
+ * Validate a thresholds payload: a flat JSON object of OpenAI category name →
+ * score in (0, 1]. Returns an error message, or null when the value is valid.
+ * An empty object is legal and means "no category is enforceable".
  */
-async function resolveActorId(req: Request): Promise<string | null> {
-  const actor = req.adminUser?.id;
-  if (!actor) return null;
-  if (UUID_RE.test(actor)) return actor; // already an internal UUID
-  if (!SNOWFLAKE_RE_SETTINGS.test(actor)) return null; // e.g. 'api-key'
+function validateThresholdsJson(raw: string): string | null {
+  let parsed: unknown;
   try {
-    const linked = await prisma.user.findFirst({ where: { discordId: actor }, select: { id: true } });
-    return linked?.id ?? null;
+    parsed = JSON.parse(raw);
   } catch {
-    return null;
+    return 'Thresholds must be valid JSON';
   }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return 'Thresholds must be a JSON object of category -> score';
+  }
+  for (const [category, score] of Object.entries(parsed as Record<string, unknown>)) {
+    const n = typeof score === 'number' ? score : Number(score);
+    if (!Number.isFinite(n) || n <= 0 || n > 1) {
+      return `Threshold for "${category}" must be a number greater than 0 and at most 1`;
+    }
+  }
+  return null;
+}
+
+async function resolveActorId(req: Request): Promise<string | null> {
+  return resolveInternalActorId(req.adminUser?.id);
 }
 
 /**
@@ -268,6 +284,43 @@ async function updateSettings(req: Request, res: Response, next: NextFunction): 
           metadata: { key, value: strVal },
         },
       });
+      res.json({ data: { key, value: strVal } });
+    } catch (err) { next(err); }
+    return;
+  }
+
+  // AI moderation keys: booleans, an enum, and threshold JSON — none of which
+  // survive the positive-integer path below.
+  if (AI_SETTING_KEYS.has(key)) {
+    const strVal = String(value).trim();
+
+    if (key === 'ai_moderation_enabled' && strVal !== 'true' && strVal !== 'false') {
+      return next(createError(422, "ai_moderation_enabled must be 'true' or 'false'"));
+    }
+    if (key === 'ai_moderation_mode' && strVal !== 'shadow' && strVal !== 'enforce') {
+      return next(createError(422, "ai_moderation_mode must be 'shadow' or 'enforce'"));
+    }
+    if (key.endsWith('_thresholds')) {
+      const invalid = validateThresholdsJson(strVal);
+      if (invalid) return next(createError(422, invalid));
+    }
+
+    try {
+      await prisma.moderationSetting.upsert({
+        where: { key },
+        update: { value: strVal },
+        create: { key, value: strVal },
+      });
+      invalidateAiModerationCache();
+      await prisma.auditLog.create({
+        data: {
+          actorId: await resolveActorId(req),
+          action: 'update_setting',
+          targetType: 'moderation_setting',
+          reason: `Updated ${key} to ${strVal.slice(0, 200)}`,
+          metadata: { key, value: strVal.slice(0, 1000) },
+        },
+      }).catch(() => {});
       res.json({ data: { key, value: strVal } });
     } catch (err) { next(err); }
     return;

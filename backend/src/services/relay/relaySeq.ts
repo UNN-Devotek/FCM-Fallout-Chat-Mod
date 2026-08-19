@@ -59,3 +59,20 @@ export async function nextRelaySeq(): Promise<number> {
   const next  = await redis.incr(RELAY_SEQ_KEY);
   return next;
 }
+
+/**
+ * Best-effort cursor allocation for ordinary chat producers.
+ *
+ * Relay-originated frames call nextRelaySeq() directly and therefore fail
+ * closed when Redis cannot provide a globally ordered cursor. Dashboard/HUD
+ * chat must remain available during a Redis incident, so those callers use
+ * this wrapper and simply omit the relay cursor when allocation is unavailable.
+ */
+export async function tryNextRelaySeq(): Promise<number | undefined> {
+  try {
+    return await nextRelaySeq();
+  } catch (err) {
+    logger.warn({ err }, '[relaySeq] optional cursor allocation failed; continuing without relaySeq');
+    return undefined;
+  }
+}

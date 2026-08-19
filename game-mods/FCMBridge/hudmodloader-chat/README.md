@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-07-16):** v2.9.4 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-08-10):** v2.9.14 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -116,6 +116,11 @@ Editable keys (defaults reproduce the amber Pip-Boy theme): position `x`/`y`, `w
 `0xRRGGBB`. Every value is validated + clamped — a bad edit falls back to its default, never
 crashes, never goes off-screen. Edit, then reload via the F11 HUDModLoader menu. Full catalog with
 ranges: the comments in `FCMChat.ini`. Design + decisions: `docs/roadmap/hud-widget-customization-spec.md`.
+
+The F11 menu's **FCM → Customize → Reset all settings** action restores all user-facing values to
+the `FcmConfig` defaults immediately and persists them with the other Customize actions in
+vendor-scoped ZFE storage (`FCMChatWidget/settings.ini`). It retains the environment-owned
+account-link URL so a hosted-dev build continues to link against dev rather than production.
 
 ## Files
 

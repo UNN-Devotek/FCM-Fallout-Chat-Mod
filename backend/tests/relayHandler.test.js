@@ -25,6 +25,15 @@ const _pubCallbacks = [];
 const _lists        = {}; // Redis list store (server-chat history)
 const _counters     = {}; // per-key INCR counters (server-chat rate limit)
 
+function resetRedisIncrMock() {
+  Object.keys(_counters).forEach((key) => delete _counters[key]);
+  redisMock.incr.mockImplementation(async (key) => {
+    if (key === 'relay:seq' || key === undefined) return ++_redisSeq;
+    _counters[key] = (_counters[key] || 0) + 1;
+    return _counters[key];
+  });
+}
+
 const redisMock = {
   get:  jest.fn().mockImplementation(async (key) => _worldStore[key] ?? null),
   set:  jest.fn().mockImplementation(async (key, val) => { _worldStore[key] = val; return 'OK'; }),
@@ -224,7 +233,7 @@ const {
 } = require('../src/services/relay/channelMap');
 
 const {
-  mintToken, verifyToken, revokeToken, updateDisplayName,
+  mintToken, verifyToken, revokeToken, updateDisplayName, clearVerificationCache,
 } = require('../src/services/relay/tokenService');
 
 const {
@@ -420,6 +429,7 @@ describe('tokenService', () => {
     _tokenRows = [];
     _userMap   = {};
     jest.clearAllMocks();
+    clearVerificationCache();
     // Re-setup redis mock after clearAllMocks
     require('../src/config/redis').getRedisClient.mockResolvedValue(redisMock);
     require('../src/config/prisma').default.user.create.mockImplementation(async (args) => {
@@ -486,6 +496,16 @@ describe('tokenService', () => {
     expect(identity.role).toBe('user');
     expect(identity.isLinked).toBe(true);      // linkedUserId is set
     expect(identity.linkedUserId).toBe('fcm-user-uuid-123');
+  });
+
+  test('verifyToken caches successful Argon2 verification for a short interval', async () => {
+    const { token } = await mintToken('CachedPlayer');
+    const findMany = require('../src/config/prisma').default.hudPairingToken.findMany;
+    const first = await verifyToken(token);
+    const callsAfterFirst = findMany.mock.calls.length;
+    const second = await verifyToken(token);
+    expect(first).toEqual(second);
+    expect(findMany.mock.calls.length).toBe(callsAfterFirst);
   });
 
   test('verifyToken returns null for wrong token value', async () => {
@@ -635,7 +655,7 @@ describe('relay WebSocket ops', () => {
     _tokenRows = [];
     _userMap   = {};
     _redisSeq  = 0;
-    redisMock.incr.mockImplementation(async () => ++_redisSeq);
+    resetRedisIncrMock();
     redisMock.get.mockImplementation(async (key) => _worldStore[key] ?? null);
     redisMock.set.mockImplementation(async (key, val) => { _worldStore[key] = val; return 'OK'; });
     require('../src/config/prisma').default.user.create.mockImplementation(async (args) => {
@@ -675,10 +695,30 @@ describe('relay WebSocket ops', () => {
   // Helper: connect a WS to this suite's server
   function conn() { return connectWs(srv.port); }
 
+  test('/relay caps concurrent connections from one IP', async () => {
+    const results = await Promise.all(Array.from({ length: 6 }, () => conn()));
+    const accepted = results.filter((result) => result.ok);
+    expect(accepted).toHaveLength(5);
+    expect(results.filter((result) => !result.ok)).toHaveLength(1);
+
+    await Promise.all(accepted.map(({ ws }) => new Promise((resolve) => {
+      ws.once('close', resolve);
+      ws.close();
+    })));
+  });
+
   test('/relay WebSocket accepts connections in test env', async () => {
     const { ok, ws } = await conn();
     expect(ok).toBe(true);
     ws.close();
+  });
+
+  test('/relay rejects frames larger than 8 KiB before JSON parsing', async () => {
+    const { ok, ws } = await conn();
+    expect(ok).toBe(true);
+    const closed = new Promise((resolve) => ws.once('close', resolve));
+    ws.send(Buffer.alloc(8 * 1024 + 1, 0x61));
+    expect(await closed).toBe(1009);
   });
 
   test('unknown op → error envelope with invalid_request', async () => {
@@ -710,6 +750,20 @@ describe('relay WebSocket ops', () => {
     expect(res).toMatchObject({ success: true, role: 'user' });
     expect(typeof res.userId).toBe('string');
     expect(typeof res.token).toBe('string');
+    ws.close();
+  });
+
+  test('register is rate-limited before token hashing', async () => {
+    for (let i = 0; i < 3; i += 1) {
+      const { ws, msgs } = await conn();
+      const res = await waitForMsg(ws, msgs, () => send(ws, { op: 'register', displayName: `RatePlayer${i}` }));
+      expect(res).toMatchObject({ success: true, role: 'user' });
+      ws.close();
+    }
+
+    const { ws, msgs } = await conn();
+    const limited = await waitForMsg(ws, msgs, () => send(ws, { op: 'register', displayName: 'RatePlayer4' }));
+    expect(limited).toMatchObject({ success: false, error: { code: 'rate_limited' } });
     ws.close();
   });
 
@@ -1270,9 +1324,26 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
-  test('subscribe does not drain poll history', async () => {
-    // The subscribe path must never emit stored history as live events. Polling
-    // with the same cursor remains responsible for returning that history.
+  test('duplicate subscribe on one connection is rejected', async () => {
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'DuplicateSubPlayer' }),
+    );
+    wsReg.close();
+    const { token } = regRes;
+    const rawId = lastRawUserId();
+    _userMap[rawId] = { id: rawId, discordId: 'disc-duplicate-sub', steamId: null, isBanned: false, isMuted: false };
+
+    const { ws, msgs } = await conn();
+    await waitForMsg(ws, msgs, () => send(ws, { op: 'subscribe', token, cursor: 0 }));
+    const duplicate = await waitForMsg(ws, msgs, () => send(ws, { op: 'subscribe', token, cursor: 0 }));
+    expect(duplicate).toMatchObject({ success: false, error: { code: 'already_subscribed' } });
+    ws.close();
+  });
+
+  test('subscribe streams initial static history into the native event queue', async () => {
+    // ZFE's pollEvents drains the queue populated by the long-lived subscribe
+    // transport; it does not issue a separate relay poll request on startup.
     const { ws: wsReg, msgs: msgsReg } = await conn();
     const regRes = await waitForMsg(wsReg, msgsReg, () =>
       send(wsReg, { op: 'register', displayName: 'NoDrainPlayer' }),
@@ -1289,25 +1360,22 @@ describe('relay WebSocket ops', () => {
     require('../src/config/prisma').default.$queryRaw.mockResolvedValueOnce([historyRow]);
 
     const { ws: wsSub, msgs: msgsSub } = await conn();
-    const subRes = await waitForMsg(wsSub, msgsSub, () =>
+    await waitForMsg(wsSub, msgsSub, () =>
       send(wsSub, { op: 'subscribe', token, cursor: 0 }),
     );
-    // Give any incorrectly queued post-ack event frame a chance to arrive.
     await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(subRes).not.toHaveProperty('events');
-    expect(msgsSub).toEqual([expect.objectContaining({ success: true, op: 'subscribed', cursor: 0 })]);
-
-    // Now poll with cursor=0 — history should still be available
-    const { ws: wsPoll, msgs: msgsPoll } = await conn();
-    const pollRes = await waitForMsg(wsPoll, msgsPoll, () =>
-      send(wsPoll, { op: 'poll', token, cursor: 0, max: 10 }),
+    const historyEvent = msgsSub.find((msg) =>
+      msg.op === 'event' && msg.event?.messageId === historyRow.id,
     );
-    expect(pollRes.events).toHaveLength(1);
-    wsPoll.close();
+    expect(historyEvent).toMatchObject({
+      op: 'event',
+      cursor: 1,
+      event: { id: 1, channel: 'global', body: 'hist' },
+    });
     wsSub.close();
   });
 
-  test('subscribe does not drain current-world history', async () => {
+  test('subscribe streams current-world history into the native event queue', async () => {
     const { ws: wsReg, msgs: msgsReg } = await conn();
     const regRes = await waitForMsg(wsReg, msgsReg, () =>
       send(wsReg, { op: 'register', displayName: 'WorldHistoryPlayer' }),
@@ -1337,14 +1405,14 @@ describe('relay WebSocket ops', () => {
       send(wsSub, { op: 'subscribe', token, cursor: 0 }),
     );
     await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(msgsSub).toEqual([expect.objectContaining({ success: true, op: 'subscribed', cursor: 0 })]);
-
-    const { ws: wsPoll, msgs: msgsPoll } = await conn();
-    const pollRes = await waitForMsg(wsPoll, msgsPoll, () =>
-      send(wsPoll, { op: 'poll', token, cursor: 0, max: 10 }),
+    const historyEvent = msgsSub.find((msg) =>
+      msg.op === 'event' && msg.event?.messageId === worldEvent.messageId,
     );
-    expect(pollRes.events).toEqual(expect.arrayContaining([expect.objectContaining({ id: 2, channel: 'server' })]));
-    wsPoll.close();
+    expect(historyEvent).toMatchObject({
+      op: 'event',
+      cursor: 2,
+      event: { id: 2, channel: 'server', body: 'world history' },
+    });
     wsSub.close();
   });
 });
@@ -1367,6 +1435,7 @@ describe('authenticated world controls', () => {
   beforeEach(() => {
     _tokenRows = [];
     _userMap   = {};
+    resetRedisIncrMock();
     require('../src/config/prisma').default.user.create.mockImplementation(async (args) => {
       const u = { id: args.data.id || 'uid-stub', ...args.data };
       _userMap[u.id] = u;
@@ -1487,15 +1556,8 @@ describe('server chat (worldId-scoped room)', () => {
     _userMap   = {};
     Object.keys(_worldStore).forEach((k) => delete _worldStore[k]);
     Object.keys(_lists).forEach((k) => delete _lists[k]);
-    Object.keys(_counters).forEach((k) => delete _counters[k]);
-    // The relaySeq suite reassigns redisMock.incr to a key-agnostic counter and
-    // never restores it; re-install the per-key impl this suite needs so the
-    // server-chat rate-limit key isn't polluted by the global relay:seq counter.
-    redisMock.incr.mockImplementation(async (key) => {
-      if (key === 'relay:seq' || key === undefined) return ++_redisSeq;
-      _counters[key] = (_counters[key] || 0) + 1;
-      return _counters[key];
-    });
+    // Restore the per-key limits after the relaySeq suite's key-agnostic mock.
+    resetRedisIncrMock();
     const prisma = require('../src/config/prisma').default;
     prisma.hudPairingToken.create.mockImplementation(async (args) => {
       const row = { id: `tok-${Date.now()}-${Math.round(_redisSeq)}`, ...args.data, revokedAt: null, lastUsedAt: null };
@@ -1592,6 +1654,20 @@ describe('server chat (worldId-scoped room)', () => {
     });
   });
 
+  test('accepts the standalone legacy world control only for the authenticated relay identity', async () => {
+    const a = await registerAndLink('LegacyHmac', 'fcm-legacy-hmac');
+    const ts = Math.floor(Date.now() / 1000);
+    const valid = `${LEGACY_SENTINEL}world-legacy-hmac|${a.rawId}|${ts}|${'a'.repeat(64)}`;
+    expect(await sendCtrl(a, valid)).toMatchObject({ success: true, messageId: expect.any(String) });
+
+    await sendLeave(a);
+    const spoofed = `${LEGACY_SENTINEL}world-spoof|other-relay-user|${ts}|${'a'.repeat(64)}`;
+    expect(await sendCtrl(a, spoofed)).toMatchObject({
+      success: false,
+      error: { code: 'invalid_channel' },
+    });
+  });
+
   test('server messages are world-scoped — same-world subscriber receives, other-world does NOT', async () => {
     const a = await registerAndLink('Alice', 'fcm-alice');
     const b = await registerAndLink('Bob',   'fcm-bob');
@@ -1655,12 +1731,7 @@ describe('roster-derived world rooms', () => {
     _userMap   = {};
     Object.keys(_worldStore).forEach((k) => delete _worldStore[k]);
     Object.keys(_lists).forEach((k) => delete _lists[k]);
-    Object.keys(_counters).forEach((k) => delete _counters[k]);
-    redisMock.incr.mockImplementation(async (key) => {
-      if (key === 'relay:seq' || key === undefined) return ++_redisSeq;
-      _counters[key] = (_counters[key] || 0) + 1;
-      return _counters[key];
-    });
+    resetRedisIncrMock();
     const prisma = require('../src/config/prisma').default;
     prisma.hudPairingToken.create.mockImplementation(async (args) => {
       const row = { id: `tok-${Date.now()}-${Math.round(_redisSeq)}`, ...args.data, revokedAt: null, lastUsedAt: null };
@@ -1713,9 +1784,9 @@ describe('roster-derived world rooms', () => {
     const { ws: wsC, msgs: msgsC } = await connectWs(srv.port);
     await waitForMsg(wsC, msgsC, () => send(wsC, { op: 'subscribe', token: c.token, cursor: 0 }));
 
-    // A reports seeing Bob's character; C reports seeing nobody.
+    // A and B mutually report each other's character; C reports seeing nobody.
     expect(await sendRaw(a, makeRosterBody(a.rawId, ['rosterbob']))).toMatchObject({ success: true });
-    expect(await sendRaw(b, makeRosterBody(b.rawId, []))).toMatchObject({ success: true });
+    expect(await sendRaw(b, makeRosterBody(b.rawId, ['rosteralice']))).toMatchObject({ success: true });
     expect(await sendRaw(c, makeRosterBody(c.rawId, []))).toMatchObject({ success: true });
 
     const beforeB = msgsB.length; const beforeC = msgsC.length;
@@ -1778,7 +1849,7 @@ describe('loopback: register → subscribe → send → poll', () => {
     _tokenRows = [];
     _userMap   = {};
     _redisSeq  = 0;
-    redisMock.incr.mockImplementation(async () => ++_redisSeq);
+    resetRedisIncrMock();
     require('../src/config/prisma').default.user.create.mockImplementation(async (args) => {
       const u = { id: args.data.id || 'uid-stub', ...args.data };
       _userMap[u.id] = u;
@@ -1895,7 +1966,7 @@ describe('auth gate integration', () => {
     _tokenRows = [];
     _userMap   = {};
     _redisSeq  = 0;
-    redisMock.incr.mockImplementation(async () => ++_redisSeq);
+    resetRedisIncrMock();
     redisMock.get.mockImplementation(async (key) => _worldStore[key] ?? null);
     redisMock.set.mockImplementation(async (key, val) => { _worldStore[key] = val; return 'OK'; });
     require('../src/config/prisma').default.user.create.mockImplementation(async (args) => {

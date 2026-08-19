@@ -1,5 +1,5 @@
 // Pure logic ported from game-mods/FCMBridge/hudmodloader-chat/FCMChatWidget.hx
-// (FCMChatWidget v2.5.3). The .hx (Haxe → SWF) is not unit-tested directly; per the
+// (FCMChatWidget v2.9.8). The .hx (Haxe → SWF) is not unit-tested directly; per the
 // repo HARD RULE the pure algorithms are mirrored here in JS and covered by Vitest
 // (fcm-chat-widget-logic.test.js). Keep these in lockstep with the .hx — they are the
 // same algorithms, not a re-design.
@@ -144,24 +144,26 @@ function serverSendDecision(serverSessionReady, serverSessionError) {
 
 function shouldSendRosterControl({ rosterObserved, serverSessionReady, now, lastSentAt, lastSentNames, names }) {
   if (!rosterObserved) return false;
-  const namesField = names.join('\x1F');
+  const namesField = names.join('|');
   return !serverSessionReady || now - lastSentAt >= 30000 || namesField !== lastSentNames;
 }
 
 // ── Relay-control framing (FCMChatWidget world controls) ───────────────────────
-// The live relay accepts the legacy NUL frame. jsonEscape serializes its control
-// bytes as JSON escapes so ZFE's native chat bridge does not reject raw NUL input.
+// PRINTABLE frames (v2.9.6+). The NUL-delimited legacy form is gone: control bytes must never
+// appear in this SWF at all. A NUL cannot even be split() on under GFx (see stripControlChars),
+// and a NUL-bearing constant is what produced the 2026-08 send outage. The relay accepts both
+// forms; printable is the only safe one to emit.
 const WORLD_CONTROL_PREFIXES = {
-  world: '\x00fcm.world.v1\x00',
-  leave: '\x00fcm.world.leave.v1\x00',
-  roster: '\x00fcm.world.roster.v1\x00',
+  world: 'FCMCTL/1/WORLD:',
+  leave: 'FCMCTL/1/LEAVE',
+  roster: 'FCMCTL/1/ROSTER:',
 };
 
 function worldControlBody(kind, namesOrWorldId = []) {
   switch (kind) {
     case 'world': return WORLD_CONTROL_PREFIXES.world + String(namesOrWorldId);
     case 'leave': return WORLD_CONTROL_PREFIXES.leave;
-    case 'roster': return WORLD_CONTROL_PREFIXES.roster + namesOrWorldId.join('\x1F');
+    case 'roster': return WORLD_CONTROL_PREFIXES.roster + namesOrWorldId.join('|');
     default: return '';
   }
 }
@@ -249,6 +251,156 @@ function emptyFeedNotice({ connected, authState, pinnedSystemBody, chanIdx }) {
     return pinnedSystemBody && pinnedSystemBody.length > 0 ? pinnedSystemBody : LINK_HINT;
   }
   return 'No messages in ' + CHAN_NAMES[chanIdx] + ' yet';
+}
+
+// ── Link gate (FCMChatWidget v2.9.7) ────────────────────────────────────────────
+// The relay pushes its link-code notice as a ONE-SHOT frame on register/hello/subscribe
+// (relayHandler.pushLinkNotice) — nothing replays it. So "no notice on this connect" must
+// NOT be read as "linked", or a missed push strands the player in the chat feed with no way
+// back to the link screen. The gate is sticky and only PROOF of linking clears it.
+const LINK_CODE_REFRESH_MS = 540000; // 9 min; relay codes expire at 10
+
+// linkGateOnReconnect (FCMChatWidget.startConnect success path): the gate carries over.
+// v2.9.6 and earlier returned false here unconditionally — that was the bug.
+function linkGateOnReconnect(prevNeedsLink) {
+  return prevNeedsLink === true;
+}
+
+// clearLinkGate (FCMChatWidget.clearLinkGate): the only transition to "linked".
+function clearLinkGate() {
+  return { needsLink: false, pinnedSystemBody: '', linkNoticeAt: 0, refreshPending: false };
+}
+
+// linkGateOnSystemNotice (FCMChatWidget.parseAndRenderEvents system branch): a
+// "LINK COMPLETE" body clears the gate; anything else is a link-code notice that raises it
+// and (re)stamps the code's arrival time.
+function linkGateOnSystemNotice(body, now) {
+  body = String(body == null ? '' : body);
+  if (body.indexOf('LINK COMPLETE') >= 0) return clearLinkGate();
+  return { needsLink: true, pinnedSystemBody: body, linkNoticeAt: now, refreshPending: false };
+}
+
+// linkCodeStale (FCMChatWidget.linkCodeStale): a pinned code past its usable lifetime.
+function linkCodeStale({ needsLink, linkNoticeAt, now }) {
+  if (!needsLink || !(linkNoticeAt > 0)) return false;
+  return now - linkNoticeAt >= LINK_CODE_REFRESH_MS;
+}
+
+// shouldRefreshLinkCode (FCMChatWidget.maybeRefreshLinkCode): reconnect exactly once per
+// stale code — the relay re-pushes a fresh notice on the next subscribe while still limited.
+function shouldRefreshLinkCode({ needsLink, linkNoticeAt, now, refreshPending }) {
+  if (refreshPending) return false;
+  return linkCodeStale({ needsLink, linkNoticeAt, now });
+}
+
+// linkHintStatus (FCMChatWidget.linkHint): which of the three line endings the link screen
+// shows — the code itself, the first-notice wait, or the post-expiry refresh.
+function linkHintStatus({ pinnedSystemBody, refreshPending }) {
+  const code = extractLinkCode(pinnedSystemBody);
+  if (code.length > 0) return { status: 'code', code };
+  return { status: refreshPending ? 'expired' : 'waiting', code: '' };
+}
+
+// extractLinkCode (FCMChatWidget.extractLinkCode): pull "XXXX-XXXX" out of the relay notice.
+function extractLinkCode(body) {
+  if (body == null) return '';
+  body = String(body);
+  const i = body.indexOf('code: ');
+  if (i < 0) return '';
+  const rest = body.substr(i + 6).trim();
+  let out = '';
+  for (let j = 0; j < rest.length; j++) {
+    if (/[0-9A-Za-z-]/.test(rest.charAt(j))) out += rest.charAt(j);
+    else break;
+  }
+  return out;
+}
+
+// linkGateRender (FCMChatWidget.renderRecords gate order): connecting beats the link screen,
+// which beats the feed.
+function linkGateRender({ connected, needsLink }) {
+  if (!connected) return 'connecting';
+  if (needsLink) return 'link-screen';
+  return 'feed';
+}
+
+// ── Game-UI string sanitization (FCMChatWidget.fcmClean / readDisplayName) ──────
+// BSUIDataManager hands names back carrying UTF-16 NULs, and ZFE sometimes pre-escapes them
+// to the text " " (or, when its encoding is off, a bare "u0000"). readDisplayName used to
+// jsonEscape() the raw value and startConnect escaped it AGAIN when building the payload, so the
+// relay stored 337 characters instead of 8. Sanitize on read; escape only when serializing.
+const NUL = String.fromCharCode(0);
+const UNIT_SEP = String.fromCharCode(31);
+
+function fcmClean(s) {
+  if (s == null) return '';
+  s = String(s)
+    .split('~').join(' ')
+    .split('\r').join(' ')
+    .split('\n').join(' ')
+    .split(NUL).join('')
+    .split(UNIT_SEP).join('')
+    .split('\\u0000').join('')
+    .split('u0000').join('');
+  return s.trim();
+}
+
+// readDisplayName: sanitize + truncate. Must NOT escape — the payload builder does that once.
+function readDisplayName(raw) {
+  const clean = fcmClean(raw);
+  return clean.length > 0 ? clean.slice(0, 64) : '';
+}
+
+// bareName: strip the "<title" decorations after sanitizing.
+function bareName(s) {
+  if (s == null) return '';
+  s = fcmClean(s);
+  const i = s.indexOf('<');
+  if (i >= 0) s = s.slice(0, i);
+  return s.split('|').join('').trim();
+}
+
+
+// -- replaceIfPresent (FCMChatWidget v2.9.11) -----------------------------------
+// ROOT CAUSE of "That channel is not available" (2026-08-06). Scaleform GFx returns "" from
+// String.fromCharCode(0), and a "\x00" literal in the SWF string pool collapses to "" too.
+// Splitting on "" does not strip anything -- it EXPLODES the string, inserting the escape
+// between every character. A clean slug "global" left the widget NUL-escaped and ZFE
+// correctly rejected it as invalid_channel.
+function replaceIfPresent(s, needle, rep) {
+  if (s == null) return '';
+  if (needle == null || needle.length === 0) return String(s);
+  // A CONTROL-CHARACTER needle is equally unusable: GFx's split() is C-string based, so a NUL
+  // separator reads as an empty one and explodes the string just as '' does. Confirmed in-game
+  // 2026-08-07 -- v2.9.11 added only the length guard and the payload was byte-identical.
+  if (needle.charCodeAt(0) < 32) return String(s);
+  return String(s).split(needle).join(rep);
+}
+
+// stripControlChars: remove control characters WITHOUT split() -- the only way to strip a NUL
+// on GFx. Keeps CR/LF/TAB so jsonEscape can still escape them.
+function stripControlChars(s) {
+  if (s == null) return '';
+  let out = '';
+  const str = String(s);
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    if (c >= 32 || c === 9 || c === 10 || c === 13) out += str.charAt(i);
+  }
+  return out;
+}
+
+// Mirrors the FIXED FCMChatWidget.jsonEscape: control-byte substitutions go through
+// replaceIfPresent, so an empty constant is a no-op instead of an explosion.
+function jsonEscapeGuarded(s) {
+  s = String(s == null ? '' : s);
+  s = s.split('\\').join('\\\\');
+  s = s.split('"').join('\\"');
+  s = stripControlChars(s);
+  s = s.split('\r').join('\\r');
+  s = s.split('\n').join('\\n');
+  s = s.split('\t').join('\\t');
+  return s;
 }
 
 // ── Minimal JSON string scan (FCMChatWidget.extractJsonString) ──────────────────
@@ -422,6 +574,21 @@ module.exports = {
   customEventDefinitionNames,
   parseInputSubmit,
   emptyFeedNotice,
+  LINK_CODE_REFRESH_MS,
+  linkGateOnReconnect,
+  clearLinkGate,
+  linkGateOnSystemNotice,
+  linkCodeStale,
+  shouldRefreshLinkCode,
+  linkHintStatus,
+  extractLinkCode,
+  linkGateRender,
+  fcmClean,
+  readDisplayName,
+  bareName,
+  replaceIfPresent,
+  stripControlChars,
+  jsonEscapeGuarded,
   extractJsonString,
   chatVerbFailed,
   NATIVE_INPUT_VERBS,

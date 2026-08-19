@@ -48,7 +48,7 @@ is an explicit step of the M6 production-exposure milestone. Guard tests:
 > wraps **every** endpoint (including `host:port`) in Schannel TLS and does not
 > validate the cert (self-signed is fine).
 | Prod TCP | `tcp.falloutchatmod.com:4001` | direct host port, unproxied DNS |
-| Prod WS | `wss://falloutchatmod.com/ws/hud` | existing cloudflared tunnel, `HUD_PUSH_WS_ENABLED=true` |
+| Prod WS | `wss://falloutchatmod.com/ws/hud` | disabled by the production guard until the M6 exposure decision; do not enable by env flag alone |
 
 Switching transport requires only a `ZFE_TEXT_CHAT_ENDPOINT` change + Steam restart.
 The backend runs both front-ends simultaneously; no backend change needed to switch.
@@ -240,7 +240,7 @@ The SWF default send target must be a leaf channel (see `HUD_DEFAULT_CHANNEL_ID`
 ### hudPushWs.ts (Path B)
 
 - `noServer: true` WebSocketServer; manual `server.on('upgrade')` handling
-- Routes only `pathname === '/ws/hud'`; leaves all other paths untouched so the chat `/ws` router can claim them
+- Routes only `pathname === '/ws/hud'`; the shared upgrade router rejects `/ws/hud` too when the HUD listener is disabled
 
 > **Upgrade routing (fixed 2026-06-21).** The main chat server was
 > `new WebSocketServer({ server, path: '/ws' })`, whose auto-attached upgrade
@@ -249,8 +249,8 @@ The SWF default send target must be a leaf channel (see `HUD_DEFAULT_CHANNEL_ID`
 > claimed. Path B was therefore never reachable end-to-end (hence the earlier
 > "ws:// UNVERIFIED" note). Fix: the chat server is now `noServer: true` behind
 > `backend/src/websocket/upgradeRouter.ts` (`attachChatUpgradeRouter`) — `/ws` →
-> chat (`verifyClient` still runs inside `handleUpgrade`), `/ws/hud` is left for
-> hudPushWs, all other paths are rejected. Tests:
+> chat (`verifyClient` still runs inside `handleUpgrade`), enabled `/ws/hud` is left for
+> hudPushWs, and disabled/unknown paths are rejected. Tests:
 > `backend/tests/upgradeRouter.test.js`.
 
 - Enabled only when `HUD_PUSH_WS_ENABLED=true`

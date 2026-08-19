@@ -1,7 +1,9 @@
 import prisma from '../config/prisma';
+import { Prisma } from '@prisma/client';
 import { getBlockedIds, getBlockerIds } from './blockService';
 
 export const PRIVATE_MESSAGE_MAX_LENGTH = 255;
+export const PRIVATE_CONVERSATION_LIST_MAX = 50;
 
 export class PrivateMessageUnavailableError extends Error {
   statusCode = 403;
@@ -144,7 +146,39 @@ export async function getOrCreatePrivateConversation(requesterId: string, target
   });
 }
 
-export async function listPrivateConversations(userId: string) {
+async function getUnreadCounts(userId: string, conversationIds: string[]): Promise<Map<string, number>> {
+  if (conversationIds.length === 0) return new Map();
+
+  // Keep this as one aggregate query. The old implementation issued one
+  // COUNT per conversation, which made a busy inbox an avoidable N+1 query
+  // burst. The per-user read timestamp still lives on the conversation, so
+  // the database can apply the exact same unread semantics in one pass.
+  const rows = await prisma.$queryRaw<Array<{ conversation_id: string; unread_count: number | bigint }>>`
+    SELECT pm.conversation_id, COUNT(*)::int AS unread_count
+    FROM private_messages pm
+    JOIN private_conversations pc ON pc.id = pm.conversation_id
+    WHERE pm.conversation_id IN (${Prisma.join(conversationIds)})
+      AND pm.is_deleted = false
+      AND pm.sender_id <> ${userId}
+      AND (
+        (pc.user_a_id = ${userId}
+          AND (pc.user_a_last_read_at IS NULL OR pm.created_at > pc.user_a_last_read_at))
+        OR
+        (pc.user_b_id = ${userId}
+          AND (pc.user_b_last_read_at IS NULL OR pm.created_at > pc.user_b_last_read_at))
+      )
+    GROUP BY pm.conversation_id
+  `;
+
+  return new Map(rows.map((row) => [row.conversation_id, Number(row.unread_count)]));
+}
+
+export async function listPrivateConversations(userId: string, limit = PRIVATE_CONVERSATION_LIST_MAX) {
+  const parsedLimit = Number.parseInt(String(limit), 10);
+  const safeLimit = Math.min(
+    Math.max(Number.isFinite(parsedLimit) ? parsedLimit : PRIVATE_CONVERSATION_LIST_MAX, 1),
+    PRIVATE_CONVERSATION_LIST_MAX,
+  );
   const [blockedIds, blockerIds, conversations] = await Promise.all([
     getBlockedIds(userId),
     getBlockerIds(userId),
@@ -153,6 +187,7 @@ export async function listPrivateConversations(userId: string) {
         OR: [{ userAId: userId }, { userBId: userId }],
       },
       orderBy: [{ lastMessageAt: 'desc' }, { createdAt: 'desc' }],
+      take: safeLimit,
       include: {
         userA: {
           select: {
@@ -189,19 +224,12 @@ export async function listPrivateConversations(userId: string) {
     return !blockedIds.has(otherUserId) && !blockerIds.has(otherUserId);
   });
 
-  return Promise.all(visible.map(async (conversation) => {
-    const lastReadAt = conversation.userAId === userId ? conversation.userALastReadAt : conversation.userBLastReadAt;
-    const unreadCount = await prisma.privateMessage.count({
-      where: {
-        conversationId: conversation.id,
-        isDeleted: false,
-        senderId: { not: userId },
-        ...(lastReadAt ? { createdAt: { gt: lastReadAt } } : {}),
-      },
-    });
-
-    return conversationSummaryForUser(userId, conversation, unreadCount);
-  }));
+  const unreadCounts = await getUnreadCounts(userId, visible.map((conversation) => conversation.id));
+  return visible.map((conversation) => conversationSummaryForUser(
+    userId,
+    conversation,
+    unreadCounts.get(conversation.id) ?? 0,
+  ));
 }
 
 export async function getPrivateHistory(userId: string, conversationId: string, limit = 100, offset = 0) {
@@ -338,6 +366,7 @@ export async function markPrivateConversationRead(userId: string, conversationId
 
 module.exports = {
   PRIVATE_MESSAGE_MAX_LENGTH,
+  PRIVATE_CONVERSATION_LIST_MAX,
   PrivateMessageUnavailableError,
   PrivateConversationAccessError,
   getOrCreatePrivateConversation,

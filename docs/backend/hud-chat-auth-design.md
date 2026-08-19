@@ -560,7 +560,7 @@ Prisma models: `LinkedIdentity`, `HudLinkCode`, `BannedIdentity`. `User` gains `
 | `DELETE` | `/api/link/pairing-token` | requireAuth | Revoke active pairing token. (503 until relay WT1 merges.) |
 | `DELETE` | `/api/link/provider/:provider` | requireAuth | Unlink a non-Discord provider (refuses if last remaining, 409). |
 | `GET` | `/auth/nexus` | none | Nexus OAuth2+PKCE initiation. `scope=openid public`, S256, `client_secret_post`. 503 when `NEXUS_OAUTH_CLIENT_ID`/`NEXUS_OAUTH_CLIENT_SECRET` absent. |
-| `GET` | `/auth/nexus/callback` | none | Nexus OAuth2+PKCE callback. Token endpoint: `https://users.nexusmods.com/oauth/token`. Userinfo: `https://users.nexusmods.com/oauth/userinfo` (`sub` = stable providerUid). Links identity or stores in session for `/link`. |
+| `GET` | `/auth/nexus/callback` | none | Nexus OAuth2+PKCE callback. Token endpoint: `https://users.nexusmods.com/oauth/token`. Userinfo: `https://users.nexusmods.com/oauth/userinfo` (`sub` = stable providerUid). Binds state to the initiating session, provisions/links a lightweight FCM user, and stores only the provider UID in the session for `/link`. |
 | `DELETE` | `/auth/nexus` | requireAuth | Unlink Nexus identity (refuses if last provider). |
 
 Note: `POST /api/link/code` does **not exist**. Code issuance is relay-driven — the relay calls `issueLinkCode(relayUserId)` from `linkCodeService.ts` directly. There is no HTTP issuance endpoint.

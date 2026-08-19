@@ -83,6 +83,21 @@ class TestFcmConfig {
         eqs("linkUrl unsafe->default",
             FcmConfig.parse("[FCMChat]\nlinkUrl=<b>&x\n").linkUrl, "falloutchatmod.com/link");
 
+        // Reset restores the authoritative defaults, retaining only the environment-owned link URL.
+        var customized = FcmConfig.parse("[FCMChat]\n"
+            + "x=900\ny=500\nwidth=800\nheight=500\nfontSize=20\nbgAlpha=0.25\n"
+            + "borderColor=123456\nmaxMessages=250\nautoHideSec=0\nshowHints=true\n"
+            + "linkUrl=dev.falloutchatmod.com/link\n");
+        var reset = FcmConfig.resetToDefaults(customized);
+        var expectedReset = new FcmConfig();
+        expectedReset.linkUrl = "dev.falloutchatmod.com/link";
+        eqs("reset all settings to defaults", reset.toIni(), expectedReset.toIni());
+        check("reset returns a new config", reset != customized);
+        eqs("decode storage JSON text",
+            FcmConfig.decodeJsonText("[FCMChat]\\nx=42\\nlinkUrl=dev.falloutchatmod.com/link\\n"),
+            "[FCMChat]\nx=42\nlinkUrl=dev.falloutchatmod.com/link\n");
+        eqs("decode storage escaped quote and slash", FcmConfig.decodeJsonText("a\\\"b\\\\c"), "a\"b\\c");
+
         // ── full parse ──
         var ini = "[FCMChat]\n"
             + "x=50\ny=60\nwidth=600\nheight=400\nfontSize=18\n"
@@ -150,6 +165,7 @@ class TestFcmConfig {
         eqi("chanColor case-insensitive",  d.channelColor("  RAIDS "), 0xCE0909);
         eqi("chanColor INI override",
             FcmConfig.parse("[FCMChat]\ncolorRaids=#123456\n").channelColor("raids"), 0x123456);
+        eqs("config serialization round-trip", FcmConfig.parse(c.toIni()).toIni(), c.toIni());
 
         // ── dimColor: scales a color toward black (inactive sub-tabs) ──
         eqi("dimColor 0.5",      FcmConfig.dimColor(0xFFFFFF, 0.5), 0x7F7F7F);

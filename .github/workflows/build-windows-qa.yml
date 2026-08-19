@@ -67,9 +67,34 @@ jobs:
       - name: Build QA artifact (BUILD_CHANNEL=qa, targets dev)
         env:
           FCM_BUILD_VERSION: ${{ inputs.version }}
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: |
           cd cross-platform-overlay
           npm run dist:qa
+
+      - name: Verify QA artifact contract
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          $dist = Resolve-Path cross-platform-overlay\dist-electron
+          $artifacts = @(Get-ChildItem $dist -File -Filter *.exe)
+          if ($artifacts.Count -eq 0) {
+            throw "QA build produced no .exe artifacts in $dist"
+          }
+          foreach ($artifact in $artifacts) {
+            if ($artifact.Length -lt 1MB) {
+              throw "QA artifact is unexpectedly small: $($artifact.FullName) ($($artifact.Length) bytes)"
+            }
+            Write-Host "QA artifact: $($artifact.Name) ($($artifact.Length) bytes)"
+            if ($env:EXPECTED_VERSION -and $artifact.Name -notlike "*$($env:EXPECTED_VERSION)*") {
+              throw "Pinned QA version $($env:EXPECTED_VERSION) is absent from $($artifact.Name)"
+            }
+          }
+          $feedFiles = @(Get-ChildItem $dist -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^(latest.*\.yml|app-update\.yml|.*\.blockmap)$' })
+          if ($feedFiles.Count -gt 0) {
+            throw "QA build emitted retired auto-update files: $($feedFiles.Name -join ', ')"
+          }
 
       - name: Upload QA installer artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

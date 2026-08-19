@@ -28,8 +28,10 @@ import { getRedisClient, getSubscriberClient } from '../../config/redis';
 import prisma from '../../config/prisma';
 import logger from '../../config/logger';
 import env from '../../config/environment';
+import { clientIp } from '../../utils/clientIp';
 import { mintToken, verifyToken, updateDisplayName, markRelayTokenLinked } from './tokenService';
 import { slugToChannelId, channelIdToSlug, ALL_SLUGS } from './channelMap';
+import { repairChannel, repairBody, readWireDisplayName } from './wireSanitize';
 import { setWorldId, getWorldId, clearWorldId } from './worldIdService';
 import { setRoster, clearRoster, computeRooms } from './worldRosterService';
 import { nextRelaySeq } from './relaySeq';
@@ -68,8 +70,12 @@ const MAX_WORLD_ID_LENGTH       = 128;
 const MAX_ROSTER_CONTROL_BYTES  = 2048;
 const WORLD_CONTROL_WINDOW_SECONDS = 10;
 const MAX_WORLD_CONTROLS_PER_WINDOW = 6;
+const REGISTER_WINDOW_SECONDS = 60;
+const MAX_REGISTRATIONS_PER_IP = 3;
+const RELAY_FIRST_FRAME_TIMEOUT_MS = 10_000;
 const POLL_HISTORY_LIMIT        = 75;    // initial history window on cursor=0 — must cover ~12 msgs x 5 static channels + recent live traffic (the window is global, not per-channel)
 const REDIS_BROADCAST_CHANNEL   = 'chat:broadcast';
+const MAX_SOCKET_BUFFER_BYTES    = 1_048_576;
 
 /**
  * Build the human-facing link-flow URL (bare host + /link) from the public base URL.
@@ -170,8 +176,12 @@ export async function notifyLinkComplete(relayUserId: string): Promise<void> {
   let pushed = 0;
   for (const sub of subscribers) {
     if (sub.userId === relayUserId && sub.ws.readyState === 1) {
-      send(sub.ws, { op: 'event', cursor, event });
-      pushed++;
+      if (sendRaw(sub.ws, JSON.stringify({ op: 'event', cursor, event }))) {
+        sub.cursor = Math.max(sub.cursor, cursor);
+        pushed++;
+      } else {
+        subscribers.delete(sub);
+      }
     }
   }
   logger.info({ relayUserId, pushed }, '[relayHandler] notifyLinkComplete pushed');
@@ -199,10 +209,21 @@ function errEnvelope(code: string, message: string): object {
   return { success: false, error: { code, message } };
 }
 
-function send(ws: WebSocket, payload: object): void {
+function sendRaw(ws: WebSocket, frame: string): boolean {
+  if (ws.readyState !== 1) return false;
+  if (ws.bufferedAmount > MAX_SOCKET_BUFFER_BYTES) {
+    logger.warn({ bufferedAmount: ws.bufferedAmount }, '[relayHandler] closing slow subscriber');
+    try { ws.close(1013, 'subscriber too slow'); } catch { /* already closed */ }
+    return false;
+  }
   try {
-    ws.send(JSON.stringify(payload));
-  } catch { /* already closed */ }
+    ws.send(frame);
+    return true;
+  } catch { return false; }
+}
+
+function send(ws: WebSocket, payload: object): void {
+  sendRaw(ws, JSON.stringify(payload));
 }
 
 /**
@@ -216,18 +237,45 @@ function sendControlAck(ws: WebSocket): void {
 
 // ── Authenticated world/roster control parsing ────────────────────────────────
 
-function parseWorldIdControl(body: string): string | null {
-  const prefix = body.startsWith(WORLD_ID_SENTINEL_PREFIX)
-    ? WORLD_ID_SENTINEL_PREFIX
-    : (body.startsWith(LEGACY_WORLD_ID_SENTINEL_PREFIX) ? LEGACY_WORLD_ID_SENTINEL_PREFIX : null);
-  if (!prefix) return null;
-  const worldId = body.slice(prefix.length);
+function validWorldId(value: string): string | null {
+  const worldId = value.trim();
   if (!worldId || worldId.length > MAX_WORLD_ID_LENGTH || worldId.includes('|')) return null;
   return worldId;
 }
 
-function isWorldLeaveControl(body: string): boolean {
-  return body === WORLD_LEAVE_SENTINEL_PREFIX || body === LEGACY_WORLD_LEAVE_SENTINEL_PREFIX;
+function validLegacyTimestamp(value: string): boolean {
+  if (!/^\d{1,12}$/.test(value)) return false;
+  const timestamp = Number(value);
+  return Number.isFinite(timestamp) && Math.abs(Math.floor(Date.now() / 1000) - timestamp) <= 300;
+}
+
+function parseWorldIdControl(body: string, actorUserId: string): string | null {
+  const prefix = body.startsWith(WORLD_ID_SENTINEL_PREFIX)
+    ? WORLD_ID_SENTINEL_PREFIX
+    : (body.startsWith(LEGACY_WORLD_ID_SENTINEL_PREFIX) ? LEGACY_WORLD_ID_SENTINEL_PREFIX : null);
+  if (!prefix) return null;
+  const suffix = body.slice(prefix.length);
+  if (prefix === WORLD_ID_SENTINEL_PREFIX || !suffix.includes('|')) return validWorldId(suffix);
+
+  // Standalone FCMBridge legacy format:
+  // <worldId>|<relayUserId>|<unixSeconds>|<hmacHex>
+  // The relay token is the real authority. The embedded id must match it and
+  // the timestamp/signature fields are structural freshness guards; the old
+  // client embeds a build-time secret that cannot be treated as a server secret.
+  const fields = suffix.split('|');
+  if (fields.length !== 4 || fields[1] !== actorUserId || !validLegacyTimestamp(fields[2])) return null;
+  if (!/^[0-9a-f]{64}$/i.test(fields[3])) return null;
+  return validWorldId(fields[0]);
+}
+
+function isWorldLeaveControl(body: string, actorUserId: string): boolean {
+  if (body === WORLD_LEAVE_SENTINEL_PREFIX) return true;
+  if (!body.startsWith(LEGACY_WORLD_LEAVE_SENTINEL_PREFIX)) return false;
+  const fields = body.slice(LEGACY_WORLD_LEAVE_SENTINEL_PREFIX.length).split('|');
+  return fields.length === 3
+    && fields[0] === actorUserId
+    && validLegacyTimestamp(fields[1])
+    && /^[0-9a-f]{64}$/i.test(fields[2]);
 }
 
 function parseWorldRosterControl(body: string): string[] | null {
@@ -255,6 +303,25 @@ async function checkWorldControlRateLimit(userId: string): Promise<boolean> {
   }
 }
 
+/**
+ * Registration is intentionally anonymous, but each request performs a 64 MiB
+ * Argon2id hash and inserts a token row. Bound it before minting so a public
+ * relay cannot be used as an expensive hashing or database-write oracle.
+ */
+async function checkRegisterRateLimit(ip: string): Promise<boolean> {
+  try {
+    const redis = await getRedisClient();
+    const bucket = Math.floor(Date.now() / 1000 / REGISTER_WINDOW_SECONDS);
+    const key = `relay:register:${ip}:${bucket}`;
+    const count = await redis.incr(key);
+    if (count === 1) await redis.expire(key, REGISTER_WINDOW_SECONDS + 1);
+    return count <= MAX_REGISTRATIONS_PER_IP;
+  } catch (err) {
+    logger.warn({ err, ip }, '[relayHandler] registration rate limit unavailable');
+    return false;
+  }
+}
+
 // ── Subscribe registry ────────────────────────────────────────────────────────
 
 interface SubscriberState {
@@ -266,6 +333,7 @@ interface SubscriberState {
 
 // Module-level subscriber set — cleared on disconnect.
 const subscribers = new Set<SubscriberState>();
+const pendingSubscriptions = new WeakSet<WebSocket>();
 
 // Redis pub/sub listener — initialised once per process.
 let pubSubReady = false;
@@ -285,7 +353,13 @@ async function backfillWorldToUser(userId: string, worldId: string): Promise<voi
   if (history.length === 0) return;
   for (const sub of subscribers) {
     if (sub.userId !== userId || sub.ws.readyState !== 1) continue;
-    for (const ev of history) send(sub.ws, { op: 'event', cursor: ev.id, event: ev });
+    for (const ev of history) {
+      if (!sendRaw(sub.ws, JSON.stringify({ op: 'event', cursor: ev.id, event: ev }))) {
+        subscribers.delete(sub);
+        break;
+      }
+      sub.cursor = Math.max(sub.cursor, ev.id);
+    }
   }
 }
 
@@ -385,8 +459,11 @@ async function ensurePubSub(): Promise<void> {
       // SERVER_EVENTS_CHANNEL below (server messages never hit chat:broadcast).
       for (const sub of subscribers) {
         if (sub.cursor >= relaySeq) continue; // already seen
-        try { sub.ws.send(frame); } catch { /* already closed */ }
-        sub.cursor = relaySeq;
+        if (sendRaw(sub.ws, frame)) {
+          sub.cursor = relaySeq;
+        } else {
+          subscribers.delete(sub);
+        }
       }
     });
 
@@ -409,8 +486,11 @@ async function ensurePubSub(): Promise<void> {
         for (const sub of subscribers) {
           if (sub.worldId !== worldId) continue; // world-scoped: only same-world subscribers
           if (sub.cursor >= cursor) continue;    // already seen
-          try { sub.ws.send(frame); } catch { /* already closed */ }
-          sub.cursor = cursor;
+          if (sendRaw(sub.ws, frame)) {
+            sub.cursor = cursor;
+          } else {
+            subscribers.delete(sub);
+          }
         }
         return;
       }
@@ -423,10 +503,16 @@ async function ensurePubSub(): Promise<void> {
 
 // ── Op handlers ───────────────────────────────────────────────────────────────
 
-async function handleRegister(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
-  const displayName = typeof frame.displayName === 'string' ? frame.displayName.trim() : '';
+async function handleRegister(ws: WebSocket, frame: Record<string, unknown>, ip: string): Promise<void> {
+  const displayName = readWireDisplayName(frame.displayName).trim();
   if (!displayName) {
     send(ws, errEnvelope('invalid_request', 'displayName is required'));
+    return;
+  }
+
+  if (!(await checkRegisterRateLimit(ip))) {
+    logger.warn({ ip }, '[relayHandler] registration rate limit exceeded');
+    send(ws, errEnvelope('rate_limited', 'Too many registrations; try again shortly'));
     return;
   }
 
@@ -477,7 +563,7 @@ async function handleHello(ws: WebSocket, frame: Record<string, unknown>): Promi
   }
 
   // Update displayName if provided and different.
-  const newName = typeof frame.displayName === 'string' ? frame.displayName.trim() : '';
+  const newName = readWireDisplayName(frame.displayName).trim();
   if (newName && newName !== identity.fo76Name) {
     await updateDisplayName(identity.userId, newName);
     // Keep the linked account's fo76_account_name in sync so chat HISTORY (which derives the
@@ -584,14 +670,19 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     return;
   }
 
-  const slug = typeof frame.channel === 'string' ? frame.channel : '';
-  const body = typeof frame.body === 'string' ? frame.body : '';
+  // ZFE mangles mod-supplied string values on the way out (see wireSanitize.ts). Detect that
+  // on the CHANNEL, where a repair is positively verifiable against the known slug set, and
+  // only then repair this frame's body. A body must never be de-interleaved on its own
+  // evidence: a legitimate `au0000bu0000c` matches the pattern and would be rewritten.
+  const channelRepair = repairChannel(frame.channel, (s) => ALL_SLUGS.includes(s));
+  const slug = channelRepair.slug;
+  const body = repairBody(frame.body, channelRepair.mangled);
 
   // ── Authenticated world/roster control intercept (before ALL_SLUGS check) ──
   // Actor identity comes only from `identity`, derived from the relay token above.
   // Controls are bounded, applied to membership, and never broadcast/persisted.
   if (slug === 'server' && (body.startsWith(WORLD_ID_SENTINEL_PREFIX) || body.startsWith(LEGACY_WORLD_ID_SENTINEL_PREFIX))) {
-    const worldId = parseWorldIdControl(body);
+    const worldId = parseWorldIdControl(body, identity.userId);
     if (worldId) {
       if (!(await checkWorldControlRateLimit(identity.userId))) {
         send(ws, errEnvelope('rate_limited', 'World controls are temporarily rate limited'));
@@ -603,7 +694,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     }
   }
   if (slug === 'server' && (body.startsWith(WORLD_LEAVE_SENTINEL_PREFIX) || body.startsWith(LEGACY_WORLD_LEAVE_SENTINEL_PREFIX))) {
-    if (isWorldLeaveControl(body)) {
+    if (isWorldLeaveControl(body, identity.userId)) {
       if (!(await checkWorldControlRateLimit(identity.userId))) {
         send(ws, errEnvelope('rate_limited', 'World controls are temporarily rate limited'));
         return;
@@ -764,8 +855,9 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
 /**
  * Recent chat history as chat.message events. cursor=0 → the initial window (latest
  * POLL_HISTORY_LIMIT, oldest-first); otherwise everything with relay_seq > cursor.
- * History is returned only by handlePoll. A subscription is reserved for events that
- * become visible after its supplied cursor.
+ * Shared by handlePoll and subscribe-time backfill. ZFE's pollEvents drains the native
+ * queue supplied by the long-lived subscription; it does not issue a relay poll request
+ * when the HUD initializes.
  */
 async function fetchHistoryEvents(cursor: number, max: number): Promise<Array<Record<string, unknown>>> {
   let rows: Array<{
@@ -827,7 +919,7 @@ async function fetchHistoryEvents(cursor: number, max: number): Promise<Array<Re
   }));
 }
 
-async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
+async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
   const rawToken = typeof frame.token === 'string' ? frame.token : null;
   if (!rawToken) {
     send(ws, errEnvelope('auth_token_invalid', 'token is required'));
@@ -876,6 +968,40 @@ async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): P
     role:        identity.role,
   });
 
+  // Backfill on THIS long-lived connection. The in-game widget consumes events from
+  // ZFE's native subscriber queue, so history returned only from handlePoll cannot
+  // reach the HUD on initial load. Respect the supplied cursor for non-ZFE clients
+  // that resume an already-established position.
+  try {
+    const history = await fetchHistoryEvents(cursor, POLL_HISTORY_LIMIT);
+    for (const ev of history) {
+      if (!sendRaw(ws, JSON.stringify({ op: 'event', cursor: ev.id as number, event: ev }))) {
+        subscribers.delete(state);
+        return;
+      }
+      state.cursor = Math.max(state.cursor, Number(ev.id));
+    }
+  } catch (err) {
+    logger.warn({ err, userId: identity.userId }, '[relayHandler] history backfill on subscribe failed');
+  }
+
+  // The server tab is an ephemeral room and is not represented in the SQL history
+  // query above. Backfill only the subscriber's current room using the same cursor.
+  if (worldId) {
+    try {
+      const serverHistory = await getServerHistory(worldId, cursor, POLL_HISTORY_LIMIT);
+      for (const ev of serverHistory) {
+        if (!sendRaw(ws, JSON.stringify({ op: 'event', cursor: ev.id, event: ev }))) {
+          subscribers.delete(state);
+          return;
+        }
+        state.cursor = Math.max(state.cursor, ev.id);
+      }
+    } catch (err) {
+      logger.warn({ err, userId: identity.userId }, '[relayHandler] server history backfill on subscribe failed');
+    }
+  }
+
   // If still LIMITED (not linked), push the link-code notice on THIS long-lived subscribe
   // connection. The register/hello pushes land on a transient connection the client's
   // pollEvents/liveSubscriber never reads, so the code never reached the in-game widget; the
@@ -906,6 +1032,20 @@ async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): P
   });
 }
 
+/** Serialize subscription setup so duplicate frames cannot create duplicate timers. */
+async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
+  if (pendingSubscriptions.has(ws) || [...subscribers].some((sub) => sub.ws === ws)) {
+    send(ws, errEnvelope('already_subscribed', 'This connection already has a subscription'));
+    return;
+  }
+  pendingSubscriptions.add(ws);
+  try {
+    await handleSubscribeInternal(ws, frame);
+  } finally {
+    pendingSubscriptions.delete(ws);
+  }
+}
+
 // ── Main entry point ──────────────────────────────────────────────────────────
 
 /**
@@ -917,14 +1057,28 @@ export function isRelayAvailable(opts: { nodeEnv: string; productionEnabled: boo
   return opts.nodeEnv !== 'production' || opts.productionEnabled;
 }
 
-export function handleRelayConnection(ws: WebSocket, _req: http.IncomingMessage): void {
+export function handleRelayConnection(ws: WebSocket, req: http.IncomingMessage): void {
   if (!isRelayAvailable({ nodeEnv: env.NODE_ENV, productionEnabled: env.RELAY_PRODUCTION_ENABLED })) {
     logger.warn('[relayHandler] /relay connection refused: RELAY_PRODUCTION_ENABLED is false');
     ws.close(1008, 'relay not available in production');
     return;
   }
 
+  const ip = clientIp(req);
+  let receivedFirstFrame = false;
+  const firstFrameTimer = setTimeout(() => {
+    if (!receivedFirstFrame) {
+      logger.warn({ ip }, '[relayHandler] closing idle connection before first frame');
+      ws.close(1008, 'Initial relay frame required');
+    }
+  }, RELAY_FIRST_FRAME_TIMEOUT_MS);
+  ws.once('close', () => clearTimeout(firstFrameTimer));
+
   ws.on('message', async (data) => {
+    if (!receivedFirstFrame) {
+      receivedFirstFrame = true;
+      clearTimeout(firstFrameTimer);
+    }
     let frame: Record<string, unknown>;
     try {
       frame = JSON.parse(data.toString());
@@ -937,7 +1091,7 @@ export function handleRelayConnection(ws: WebSocket, _req: http.IncomingMessage)
 
     try {
       switch (op) {
-        case 'register':        await handleRegister(ws, frame); break;
+        case 'register':        await handleRegister(ws, frame, ip); break;
         case 'hello':           await handleHello(ws, frame); break;
         case 'getAuthState':    await handleGetAuthState(ws, frame); break;
         case 'send':            await handleSend(ws, frame); break;

@@ -24,6 +24,7 @@ Full architecture and how the pieces connect: **[docs/README.md](docs/README.md)
 | Discord bot: bridge, voice, embeds, reaction roles | [docs/discord/](docs/discord/README.md) |
 | Prisma schema, migrations, Redis usage | [docs/database/](docs/database/README.md) |
 | Automod, reports/evidence, role model | [docs/moderation/](docs/moderation/README.md) |
+| AI content moderation (OpenAI), thresholds, kill switch, privacy | [docs/moderation/ai-moderation.md](docs/moderation/ai-moderation.md) |
 | Local dev, release pipeline, packaging, code signing, deploy | [docs/deployment/](docs/deployment/README.md) |
 | QA-tester builds: golden-build lock, build/bless/distribute runbook | [docs/deployment/qa-builds.md](docs/deployment/qa-builds.md) |
 | Marketing assets (Remotion GIFs/stills), re-export commands | [docs/marketing/](docs/marketing/README.md) |

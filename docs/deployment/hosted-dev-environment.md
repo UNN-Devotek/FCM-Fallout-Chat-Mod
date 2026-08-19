@@ -555,6 +555,28 @@ next login attempt will fail the role check. Existing sessions expire at their n
 These vars are dev-only. The QA endpoints are only mounted when `NODE_ENV=development`
 (see [dev-only endpoints](#dev-only-endpoints-nodeenvdevelopment) in the backend docs).
 
+### AI moderation on dev — shadow-mode calibration
+
+Dev is where AI moderation thresholds get tuned before prod ever sees them, using
+QA-tester traffic against fake users and fake chat.
+
+| Var | Purpose |
+|-----|---------|
+| `OPENAI_API_KEY` | OpenAI key for the Moderation API. Optional — absent means the keyword filters run as before. Dev and prod should use **separate** keys so dev traffic can be revoked independently. |
+
+Then, in the dev dashboard under **Auto-Moderation → SETTINGS**:
+
+1. Set `ai_moderation_enabled` = `true`, `ai_moderation_mode` = `shadow`.
+2. Let QA testers generate traffic for about a week.
+3. Review `GET /api/moderation/automod-violations` sorted by `ai_max_score`. Look
+   specifically for ordinary raid, PvP, and trading talk that would have blocked.
+4. Tune `ai_moderation_thresholds`, then flip to `enforce` on dev.
+5. Only after dev enforces cleanly, repeat the same shadow → review → enforce
+   sequence on prod.
+
+Full detail, including the privacy disclosure and the kill switch:
+[docs/moderation/ai-moderation.md](../moderation/ai-moderation.md).
+
 ### Registering the QA OAuth redirect URI
 
 In the Discord developer portal, add `https://dev.falloutchatmod.com/auth/discord/qa/callback`

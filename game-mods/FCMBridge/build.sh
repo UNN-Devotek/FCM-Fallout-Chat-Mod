@@ -6,6 +6,7 @@
 #   ./build.sh --target prod      # wss://falloutchatmod.com/relay
 #
 # Tool-path overrides (env or staged defaults):
+#   BUILDTOOLS_ROOT directory containing the staged compiler/runtime tools
 #   HAXE      path to the haxe binary   (default: staged buildtools haxe_*)
 #   JAVA      path to java binary        (default: staged buildtools jdk-17*/bin/java)
 #   FFDEC     path to ffdec.jar          (default: staged buildtools ffdec/ffdec.jar)
@@ -34,7 +35,8 @@ fi
 # ---------------------------------------------------------------------------
 # Tool paths — prefer env overrides, fall back to staged buildtools
 # ---------------------------------------------------------------------------
-BUILDTOOLS_ROOT=/tmp/claude-1000/-home-devotek-Documents-Projects-Unnamed-FCM/6d235fab-f61c-4242-8e1a-ae4f70e8455a/scratchpad/buildtools
+SRC_DIR="$(cd "$(dirname "$0")" && pwd)"   # game-mods/FCMBridge/
+BUILDTOOLS_ROOT="${BUILDTOOLS_ROOT:-$SRC_DIR/buildtools}"
 
 if [[ -z "${HAXE:-}" ]]; then
     HX_DIR=$(ls -d "$BUILDTOOLS_ROOT"/haxe_* 2>/dev/null | head -1)
@@ -55,7 +57,6 @@ if [[ -z "${FFDEC:-}" ]]; then
 fi
 
 GAME="${GAME:-$HOME/.local/share/Steam/steamapps/common/Fallout76}"
-SRC_DIR="$(cd "$(dirname "$0")" && pwd)"   # game-mods/FCMBridge/
 
 # ---------------------------------------------------------------------------
 # Endpoint by target

@@ -276,6 +276,10 @@ Requests the caller's private-message inbox. The server responds with `payload.c
 
 `lastMessageSenderId` is the user id of the most recent non-deleted private message in the conversation, or `null` when the conversation exists but has no messages yet.
 
+The server returns at most 50 inbox rows, ordered by most recent activity. Unread counts are
+computed in one database aggregate using each participant's read watermark; clients must not
+assume that an omitted conversation is deleted.
+
 `pm:open` reuses the same response frame and adds `openedConversationId` when the server creates or finds the target conversation.
 
 ### `pm:open` (C→S)

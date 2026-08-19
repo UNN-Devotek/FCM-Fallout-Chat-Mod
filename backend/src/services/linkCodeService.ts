@@ -60,25 +60,38 @@ export async function redeemLinkCode(rawCode: string, redeemedByUserId: string):
 
   const row = await prisma.hudLinkCode.findUnique({ where: { code } });
   if (!row) return { ok: false, reason: 'not_found' };
+  const now = new Date();
   if (row.usedAt) return { ok: false, reason: 'already_used' };
-  if (new Date() > row.expiresAt) return { ok: false, reason: 'expired' };
+  if (now > row.expiresAt) return { ok: false, reason: 'expired' };
   if (row.attempts >= MAX_ATTEMPTS) return { ok: false, reason: 'max_attempts' };
 
-  // Increment attempts first (counts even on success to prevent retry loops)
-  const updated = await prisma.hudLinkCode.update({
-    where: { id: row.id },
-    data: { attempts: { increment: 1 } },
+  // Consume the code with one conditional UPDATE. The initial read is only
+  // used for the friendly error mapping/relayUserId; the WHERE clause is the
+  // concurrency guard. Two simultaneous redeems can therefore produce at
+  // most one successful update.
+  const updated = await prisma.hudLinkCode.updateMany({
+    where: {
+      id: row.id,
+      usedAt: null,
+      expiresAt: { gt: now },
+      attempts: { lt: MAX_ATTEMPTS },
+    },
+    data: {
+      attempts: { increment: 1 },
+      usedAt: now,
+      redeemedByUserId,
+    },
   });
 
-  if (updated.attempts > MAX_ATTEMPTS) {
+  if (updated.count !== 1) {
+    // Another request may have won the race. Re-read only to report the
+    // stable public reason; never retry the mutation here.
+    const current = await prisma.hudLinkCode.findUnique({ where: { id: row.id } });
+    if (!current) return { ok: false, reason: 'not_found' };
+    if (current.usedAt) return { ok: false, reason: 'already_used' };
+    if (now > current.expiresAt) return { ok: false, reason: 'expired' };
     return { ok: false, reason: 'max_attempts' };
   }
-
-  // Mark as used and bind to the authed FCM user
-  await prisma.hudLinkCode.update({
-    where: { id: row.id },
-    data: { usedAt: new Date(), redeemedByUserId },
-  });
 
   return { ok: true, relayUserId: row.relayUserId };
 }

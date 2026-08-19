@@ -96,7 +96,8 @@ TimescaleDB hypertable (`init.sql:94`). Composite PK `(id, created_at)` required
 |---|---|
 | `channel_id` FK → `channels` | RESTRICT on delete |
 | `parent_channel_id` | Denormalized for combined-feed queries |
-| `source` | `'game'` \| `'discord'` |
+| `source` | `'game'` \| `'discord'` \| `'hud'` \| `'relay'` \| `'mcp'` \| `'ws'` |
+| `relay_seq` | Optional monotonic relay cursor used to join push and poll/history; ordinary chat may omit it during degraded Redis availability |
 | `is_deleted` | Soft delete; message content retained for moderation |
 | `metadata` | Optional JSON payload (e.g. party invite embeds) |
 
@@ -137,7 +138,7 @@ Both FKs are **CASCADE on delete**: `party_id` → `parties` (a deleted party ta
 
 ### `private_conversations` (`PrivateConversation`)
 
-One row per sorted user pair (`user_a_id`, `user_b_id`) for overlay private messages. `last_message_at` drives inbox ordering. `user_a_last_read_at` / `user_b_last_read_at` track unread counts per participant. Unique `(user_a_id, user_b_id)` guarantees exactly one conversation per pair.
+One row per sorted user pair (`user_a_id`, `user_b_id`) for overlay private messages. `last_message_at` drives inbox ordering. `user_a_last_read_at` / `user_b_last_read_at` track unread counts per participant. Unique `(user_a_id, user_b_id)` guarantees exactly one conversation per pair. Inbox responses are capped at 50 conversations and unread counts are returned by one aggregate query rather than one count query per row.
 
 ### `private_messages` (`PrivateMessage`)
 
@@ -217,7 +218,7 @@ Key-value store for admin-configurable thresholds. Seeded defaults:
 
 ### `word_filter` (`WordFilter`)
 
-Admin-configurable phrase/regex denylist for chat content. `test_mode=true` rows log matches but do not block. The baseline hardcoded denylist in `autoModService.ts:15-31` always runs regardless of whether this table has rows.
+Admin-configurable phrase/regex denylist for chat content. `test_mode=true` rows log matches but do not block. The baseline hardcoded denylist in `autoModService.ts:17-29` is always available; chat baseline matches require an explicit target, while identifier checks remain strict.
 
 ### `name_blacklist` (`NameBlacklistEntry`)
 
@@ -236,8 +237,8 @@ Admin-configured auto-moderation rules.
 
 | Column | Notes |
 |---|---|
-| `trigger_type` | `KEYWORD` \| `SPAM` \| `KEYWORD_PRESET` \| `MENTION_SPAM` \| `LINK` |
-| `trigger_metadata` | JSON: `{ keyword_filter[], regex_patterns[], allow_list[], mention_total_limit, presets[] }` |
+| `trigger_type` | `AI_MODERATION` \| `KEYWORD` \| `SPAM` \| `KEYWORD_PRESET` \| `MENTION_SPAM` \| `LINK` |
+| `trigger_metadata` | JSON: `{ thresholds?, keyword_filter[], regex_patterns[], allow_list[], mention_total_limit, presets[], require_target? }` |
 | `actions` | JSON array: `[{ type: 'BLOCK'\|'ALERT'\|'TIMEOUT'\|'MUTE_OVERLAY', metadata: {...} }]` |
 | `exempt_channel_ids` | Overlay channel UUIDs exempt from this rule |
 | `exempt_roles` | Discord role IDs exempt from this rule |

@@ -126,6 +126,12 @@ admin-dashboard/.env.development
 # FO76 HUDMenu build workspace (Bethesda IP base SWF + build artifacts -- never commit)
 game-mods/FCMBridge/hudmenu-chat/.build/
 
+# Local QA installers and Python bytecode are generated artifacts, not release
+# source. Keeping them out of the worktree makes the promotion diff auditable.
+_dev-test-builds/
+**/__pycache__/
+*.pyc
+
 # HUD mod loader build artifacts -- never commit
 game-mods/FCMBridge/hudmodloader-chat/.build/
 

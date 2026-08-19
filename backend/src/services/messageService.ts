@@ -12,9 +12,9 @@ interface PersistMessageData {
   /** Optional structured payload stored in messages.metadata (e.g. party_invite embed). */
   metadata?: unknown;
   /**
-   * Optional monotonic relay cursor (relay source ONLY). When provided, it is
-   * persisted to messages.relay_seq so poll/history (which filter on
-   * relay_seq IS NOT NULL) return the message. Omitted (NULL) for all other sources.
+   * Optional monotonic cursor. Healthy Redis-backed ingest paths attach one so
+   * relay history and push share the same cursor; ordinary chat remains
+   * available without one during a degraded Redis outage.
    */
   relaySeq?: number;
 }

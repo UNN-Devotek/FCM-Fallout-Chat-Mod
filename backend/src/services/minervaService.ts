@@ -28,7 +28,6 @@ export interface MinervaWindow {
   startUtc: Date;
   endUtc: Date;
 }
-
 export interface MinervaStatus {
   active: MinervaWindow | null;
   next: MinervaWindow;
@@ -101,4 +100,3 @@ export function getMinervaStatus(now: Date = new Date()): MinervaStatus {
     next:   windowForAbsoluteSlot((blockIndex + 1) * 4),
   };
 }
-

@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 186 110" width="186" height="110">
+  <defs>
+    <filter id="glow" x="-25%" y="-30%" width="150%" height="160%">
+      <feGaussianBlur stdDeviation="1.9" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- FCM -->
+  <text x="93" y="57"
+        text-anchor="middle"
+        font-family="Noto Serif"
+        font-weight="900"
+        font-size="48"
+        fill="#D4B040"
+        filter="url(#glow)">FCM</text>
+
+  <!-- divider -->
+  <line x1="36" y1="72" x2="150" y2="72" stroke="#D4B040" stroke-width="0.9" opacity="0.40"/>
+
+  <!-- DEV -->
+  <text x="93" y="95"
+        text-anchor="middle"
+        font-family="Noto Serif"
+        font-weight="700"
+        font-size="15"
+        fill="#D4B040"
+        letter-spacing="6"
+        opacity="0.9"
+        filter="url(#glow)">DEV</text>
+</svg>

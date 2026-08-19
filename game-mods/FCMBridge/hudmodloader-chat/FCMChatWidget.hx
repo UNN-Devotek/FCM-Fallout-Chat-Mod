@@ -77,6 +77,16 @@ import flash.events.IOErrorEvent;
  *   "authenticated" — player may send.
  *   "limited"       — account not yet linked; receive only; pinned link-code notice shown.
  *
+ * Link gate (_needsLink) — STICKY across reconnects (v2.9.7):
+ *   The relay pushes the link-code notice as a ONE-SHOT frame on register/hello/subscribe
+ *   (relayHandler.pushLinkNotice) — it is not replayable, so a notice missed on a reconnect
+ *   is gone for good. v2.9.6 and earlier cleared _needsLink on every (re)connect and waited
+ *   for a fresh notice to re-raise it; when none arrived the widget silently fell through to
+ *   the chat feed and the player could never reach the link screen again without deleting
+ *   Data/ZFE/chat-auth.bin. The gate now persists until something PROVES the account is
+ *   linked — a "LINK COMPLETE" notice or a successful send — and a pinned code older than
+ *   LINK_CODE_REFRESH_MS forces a reconnect so the relay issues a fresh one.
+ *
  * SWF CRASH HARD RULES (violations crashed the game in production):
  *   1. NO GlowFilter / DropShadow or any .filters assignment on MovieClip/Sprite.
  *   2. NO raw HTML entities (&amp; etc.) in htmlText — use numeric refs only.
@@ -100,7 +110,8 @@ class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
     static inline var VENDOR:String   = "FCMChatWidget";
-    static inline var VERSION:String  = "2.9.4";  // JSON-escaped legacy server controls + single fallback input renderer
+    static inline var VERSION:String  = "2.9.14"; // privacy-hardened diagnostics
+    static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -125,6 +136,9 @@ class FCMChatWidget extends MovieClip {
     static inline var CONNECT_MAX_MS:Int   = 30000;
     // worldId re-read interval (ms)
     static inline var WORLD_POLL_MS:Int    = 5000;
+    // Link codes expire 10 min after the relay issues them (pushLinkNotice: "expires 10m").
+    // Refresh a minute early so the code on screen is always redeemable.
+    static inline var LINK_CODE_REFRESH_MS:Float = 540000;
 
     // ── Chat UX ───────────────────────────────────────────────────────────────
     // ring-buffer cap + send-length cap now live in FcmConfig (_cfg.maxMessages/maxSendLen)
@@ -148,17 +162,78 @@ class FCMChatWidget extends MovieClip {
     // ── Authenticated relay control messages ───────────────────────────────────
     // The relay authenticates every frame with the ZFE-held relay token. Do NOT put
     // a shared secret in this distributable SWF: it cannot authenticate a client
-    // and creates a production configuration foot-gun. These bounded, untrusted HUD
-    // metadata controls are consumed by the authenticated relay. The relay deployed
-    // before v2.9.3 recognises this legacy frame; jsonEscape serializes its control
-    // bytes as JSON \u escapes, so ZFE never sees a raw leading NUL.
-    static inline var WORLD_CTRL_PREFIX:String  = "\x00fcm.world.v1\x00";
+    // and creates a production configuration foot-gun. These printable controls are
+    // bounded, untrusted HUD metadata and are consumed by the authenticated relay.
+    // ZFE's chat bridge treats leading NUL/control bytes as an empty message, and the
+    // NUL-delimited legacy framing introduced in v2.9.4 corrupted every string crossing
+    // the ZFE boundary on native Windows (v2.9.5 shipped NUL-bearing string constants;
+    // logs rendered as "Bu0000Uu0000Iu0000..."). The relay accepts BOTH frames, so the
+    // printable form is the safe one — keep control bytes out of this SWF entirely.
+    // Control bytes are built at RUNTIME and never appear as string literals. A NUL-bearing
+    // string constant anywhere in this SWF poisons EVERY string crossing the ZFE boundary on
+    // native Windows — each character comes out NUL-padded. v2.9.6 removed the NUL control
+    // prefixes but left "\x00"/"\x1F" literals in jsonEscape/fcmClean/bareName, so the poison
+    // survived: the relay received the channel slug as "g\0l\0o\0b\0a\0l", failed its
+    // ALL_SLUGS check and rejected every send with invalid_channel, and the world/roster
+    // controls (slug "server") never matched either — so SERVER chat could never bind.
+    // Observed 2026-08-05: fo76_name stored on the relay as 337 chars of NUL-escaped garbage.
+    // These MUST go through the non-inline ctrlChar() below: a direct
+    // `String.fromCharCode(0)` is constant-folded by Haxe straight back into a NUL literal
+    // (verified — the compiled SWF then contains no `fromCharCode` at all). Routing the
+    // codepoint through a function parameter is what actually keeps the byte out of the
+    // string pool. Do not "simplify" this, and do not mark it `inline`.
+    static var NUL:String      = ctrlChar(0);
+    static var UNIT_SEP:String = ctrlChar(31);
+
+    static function ctrlChar(code:Int):String {
+        return String.fromCharCode(code);
+    }
+
+    /**
+     * Replace `needle` with `rep`, but NEVER split on an empty needle.
+     *
+     * THE BUG THIS EXISTS FOR (root cause of "That channel is not available", 2026-08-06):
+     * Scaleform GFx returns "" from String.fromCharCode(0), and a NUL escape literal in the SWF
+     * string pool collapses to "" as well. `"test".split("").join("\\u0000")` does not strip
+     * anything — it EXPLODES the string, inserting the escape between every character. That is
+     * how a clean slug became `g l o b a l` on the wire and how a clean
+     * body became `t e s t`, with ZFE then correctly rejecting the malformed
+     * channel as `invalid_channel`. It also explains the log mangling seen since 2026-07-20.
+     * Every split on a control-byte constant MUST go through here.
+     */
+    static function replaceIfPresent(s:String, needle:String, rep:String):String {
+        if (s == null) return "";
+        if (needle == null || needle.length == 0) return s;
+        // A control-character needle is ALSO unusable: GFx's split() is C-string based, so a NUL
+        // separator reads as an empty one and explodes the string exactly as "" does. The length
+        // guard above cannot see that. Confirmed in-game 2026-08-07 — v2.9.11 added the length
+        // guard and the payload came back byte-identical. Use stripControlChars() instead.
+        if (needle.charCodeAt(0) < 32) return s;
+        return s.split(needle).join(rep);
+    }
+
+    /**
+     * Remove control characters WITHOUT calling split() — the only way to strip a NUL on GFx.
+     * Keeps CR/LF/TAB so jsonEscape can still escape them properly.
+     */
+    static function stripControlChars(s:String):String {
+        if (s == null) return "";
+        var out:StringBuf = new StringBuf();
+        for (i in 0...s.length) {
+            var c:Null<Int> = s.charCodeAt(i);
+            if (c == null) continue;
+            if (c >= 32 || c == 9 || c == 10 || c == 13) out.add(s.charAt(i));
+        }
+        return out.toString();
+    }
+
+    static inline var WORLD_CTRL_PREFIX:String  = "FCMCTL/1/WORLD:";
     // LEAVE control: sent when the player leaves a world (worldId cleared).
-    static inline var WORLD_LEAVE_PREFIX:String = "\x00fcm.world.leave.v1\x00";
+    static inline var WORLD_LEAVE_PREFIX:String = "FCMCTL/1/LEAVE";
     // ROSTER control: observed nearby character names (no worldId exists in the UI
     // layer — the relay derives world rooms from sightings). Body is the bounded
-    // US-separated name list; actor identity comes only from the authenticated frame.
-    static inline var WORLD_ROSTER_PREFIX:String = "\x00fcm.world.roster.v1\x00";
+    // pipe-separated name list; actor identity comes only from the authenticated frame.
+    static inline var WORLD_ROSTER_PREFIX:String = "FCMCTL/1/ROSTER:";
     static inline var ROSTER_FRESH_MS:Float = 60000;   // observation freshness window
     static inline var ROSTER_SEND_MS:Float  = 30000;   // periodic roster resend
 
@@ -225,7 +300,14 @@ class FCMChatWidget extends MovieClip {
     var _pinnedSystemBody:String = "";
     // True once the relay has sent a system link-code notice (sent ONLY to limited/unlinked
     // identities) — the authoritative "not linked" signal (ZFE getAuthState can't tell us).
+    // STICKY: survives reconnects; only a "LINK COMPLETE" notice or a successful send clears
+    // it (see the "Link gate" note in the file header).
     var _needsLink:Bool = false;
+    // getTimer() stamp of the pinned notice, so a code that outlived its 10-minute TTL can be
+    // refreshed instead of sitting on screen unredeemable. 0 = no pinned code.
+    var _linkNoticeAt:Float = 0;
+    // Guards one reconnect per stale code — cleared once a fresh notice lands.
+    var _linkRefreshPending:Bool = false;
 
     // ── Input state ───────────────────────────────────────────────────────────
     var _inputOpen:Bool          = false;
@@ -516,7 +598,10 @@ class FCMChatWidget extends MovieClip {
     }
 
     function onHudMessage(sender:String, msg:String):Void {
-        zfeLog("info", "hud", "msg from=" + sender + " body=" + msg.substr(0, 80));
+        // HUDTools messages can contain player-entered text. Keep a useful breadcrumb
+        // without persisting message content or identity data in zfe.log.
+        var bodyLen:Int = (msg == null) ? 0 : msg.length;
+        zfeLog("info", "hud", "HUDTools message received bodyLen=" + bodyLen);
     }
 
     /**
@@ -543,6 +628,7 @@ class FCMChatWidget extends MovieClip {
                 Reflect.callMethod(_hudTools, add, ["cz_opac_up", "Opacity +",     true, false, -1]);
                 Reflect.callMethod(_hudTools, add, ["cz_opac_dn", "Opacity -",     true, false, -1]);
                 Reflect.callMethod(_hudTools, add, ["cz_theme",   "Color theme >", true, false, -1]);
+                Reflect.callMethod(_hudTools, add, ["cz_reset",   "Reset all settings", true, false, -1]);
                 return;
             }
             // Top-level menu — channel entries in display order (SERVER included in-world).
@@ -701,7 +787,7 @@ class FCMChatWidget extends MovieClip {
     }
 
     // =========================================================================
-    // F11 Customize — live resize / move / opacity / color theme (+ best-effort persist)
+    // F11 Customize — live resize / move / opacity / color theme (+ ZFE storage persistence)
     // =========================================================================
 
     // Live re-layout after a Customize change. Removes children BY REFERENCE only — NEVER
@@ -731,6 +817,17 @@ class FCMChatWidget extends MovieClip {
     }
 
     function doCustomize(id:String):Void {
+        if (id == "cz_reset") {
+            _cfg = FcmConfig.resetToDefaults(_cfg);
+            _themeIdx = 0;
+            if (_autoHideTimer != null) { _autoHideTimer.stop(); _autoHideTimer = null; }
+            _autoHideOn = (_cfg.autoHideSec > 0);
+            rebuildPanel();
+            if (_autoHideOn) bumpAutoHide();
+            persistConfig();
+            zfeLog("info", "customize", "all settings reset to defaults");
+            return;
+        }
         switch (id) {
             case "cz_bigger":  _cfg.width += 30; _cfg.height += 20;
             case "cz_smaller": _cfg.width -= 30; _cfg.height -= 20;
@@ -750,14 +847,35 @@ class FCMChatWidget extends MovieClip {
         persistConfig();
     }
 
-    // Best-effort persist so customizations survive relaunch. writeChatConfigFile is a ZFE native
-    // call; if unavailable the change is still applied live this session (guarded, no-op on failure).
+    // Best-effort persist so customizations survive relaunch. ZFE storage is scoped to this vendor;
+    // if unavailable the change is still applied live this session (guarded, no-op on failure).
     function persistConfig():Void {
         try {
-            var raw:String = callTop("writeChatConfigFile", _cfg.toIni());
+            var payload:String = '{"vendor":"' + VENDOR + '","path":"' + SETTINGS_PATH
+                + '","text":"' + jsonEscape(_cfg.toIni()) + '"}';
+            var raw:String = callTop("writeStorage", payload);
             zfeLog("info", "customize", "persist raw=" + clip200(raw));
         } catch (e:Dynamic) {
             zfeLog("warn", "customize", "persist threw: " + Std.string(e));
+        }
+    }
+
+    /** Apply persisted Customize values over the packaged environment config. */
+    function loadPersistedConfig():Void {
+        var environmentLinkUrl:String = _cfg.linkUrl;
+        try {
+            var payload:String = '{"vendor":"' + VENDOR + '","path":"' + SETTINGS_PATH + '"}';
+            var raw:String = callTop("readStorage", payload);
+            if (raw.indexOf('"success":true') < 0 || raw.indexOf('"found":true') < 0) return;
+            var stored:String = FcmConfig.decodeJsonText(extractJsonString(raw, "text"));
+            if (stored.indexOf("[FCMChat]") < 0) return;
+            _cfg = FcmConfig.parse(stored);
+            _cfg.linkUrl = environmentLinkUrl;
+            _autoHideOn = (_cfg.autoHideSec > 0);
+            rebuildPanel();
+            zfeLog("info", "customize", "persisted settings loaded");
+        } catch (e:Dynamic) {
+            zfeLog("warn", "customize", "load persisted settings threw: " + Std.string(e));
         }
     }
 
@@ -1299,6 +1417,11 @@ class FCMChatWidget extends MovieClip {
             // sendMessage is chat.v1.sendMessage ONLY — never bare. Bare hits the
             // useless legacy bridge (returns literal `false`) → false "Send failed."
             var rs:String = Std.string(_api.call("chat.v1.sendMessage", payload));
+            // Diagnostics deliberately do NOT log the payload: it carries the player's message
+            // text, and `[send] payload ch=/len=` above already records channel + length. The
+            // response is logged only on FAILURE (below) — it holds the relay/ZFE error, never
+            // user content. logSafe() is what makes either readable: zfeLog jsonEscapes its
+            // message, a quote becomes an escape, and ZFE's writer truncates at the backslash.
             // v2.5.3 diagnostic: when this send is from a just-closed native session,
             // log the FULL raw result so we learn whether send works in that context.
             if (_nativeSubmitInFlight) {
@@ -1309,7 +1432,7 @@ class FCMChatWidget extends MovieClip {
             if (success) {
                 zfeLog("info", "send", "sent ch=" + slug + " len=" + raw.length);
                 // A successful send proves this identity is LINKED — clear the link gate.
-                if (_needsLink) { _needsLink = false; _pinnedSystemBody = ""; }
+                if (_needsLink) { clearLinkGate("successful send"); }
                 // Optimistic local echo on CONFIRMED send (only when we know our id).
                 if (_relayUserId.length > 0) {
                     var messageId:String = extractJsonString(rs, "messageId");
@@ -1331,7 +1454,14 @@ class FCMChatWidget extends MovieClip {
             } else {
                 // Surface the relay error code to the user.
                 var code:String = extractJsonString(rs, "code");
-                zfeLog("warn", "send", "relay rejected code=" + code + " raw=" + rs.substr(0, 200));
+                // Failure only: the untruncated response. This is the line that finally exposed
+                // the v2.9.12 root cause after days of unreadable `raw={\` output.
+                zfeLog("warn", "diag", "RSLEN=" + rs.length + " RSSAFE=" + logSafe(rs).substr(0, 300));
+                // "send rejected" — NOT "relay rejected". A 1 ms rejection with no relay-side
+                // ingress proves ZFE can reject locally without the frame ever leaving the
+                // machine (2026-08-06). Do not re-attribute this to the relay without
+                // ingress evidence.
+                zfeLog("warn", "send", "send rejected code=" + code + " raw=" + rs.substr(0, 200));
                 switch (code) {
                     case "permission_denied":
                         // Genuine not-linked / insufficient-role only (automod + slash now have
@@ -1423,13 +1553,14 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v2.9.4");
+            zfeLog("info", "startup", "BUILD=chatv1-widget-v" + VERSION);
             zfeLog("info", "startup", "zfe-chat-online-v1 OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
             zfeLog("warn", "startup", "getRuntimeInfo threw: " + Std.string(e));
         }
 
+        loadPersistedConfig();
         var nm0:String = readDisplayName();
         if (nm0 != null && nm0.length > 0) _displayName = nm0;  // keep "Wanderer" default until a real name is available
         startConnect();
@@ -1450,7 +1581,7 @@ class FCMChatWidget extends MovieClip {
             if (nm != null && nm.length > 0) _displayName = nm;
             if (_displayName == null || _displayName.length == 0) _displayName = "Wanderer";
         }
-        zfeLog("info", "connect", "attempt=" + _connectAttempts + " displayName=" + _displayName);
+        zfeLog("info", "connect", "attempt=" + _connectAttempts);
         setLogText("connecting...");
 
         var payload:String = '{"displayName":"' + jsonEscape(_displayName) + '","autoRegister":true}';
@@ -1478,13 +1609,14 @@ class FCMChatWidget extends MovieClip {
         _lastRosterSent = "";
         _lastWorldId = ""; // force the legacy worldId fallback to rebind after reconnect
         _connectDelay = CONNECT_RETRY_MS;
-        // Reset the link gate on every (re)connect: if still limited, the relay re-sends the
-        // link-required notice (via pollEvents) and we re-raise it; if now LINKED, no notice
-        // arrives and we stay in chat. This recovers cleanly after a drop/"relay unreachable"
-        // once the account has been linked on the web.
-        _needsLink = false;
-        zfeLog("info", "connect", "connected");
-        setLogText("connected. loading...");
+        // The link gate is NOT cleared here (v2.9.7). The relay's link notice is a one-shot
+        // push, so "no notice arrived on this connect" does not mean "linked" — it usually
+        // means the push was missed. Staying unlinked until proven otherwise keeps the link
+        // screen reachable; a "LINK COMPLETE" notice or a successful send clears it, and the
+        // relay re-pushes a fresh code on subscribe while the identity is still limited.
+        zfeLog("info", "connect", "connected"
+            + (_needsLink ? " (link gate still up)" : ""));
+        setLogText(_needsLink ? linkHint() : "connected. loading...");
 
         bumpAutoHide();   // start the idle countdown (hides after autoHideSec if nothing happens)
         refreshAuthState();
@@ -1492,6 +1624,47 @@ class FCMChatWidget extends MovieClip {
         startPollTimer();
         startWorldTimer();
         startOpenKeyTimer();
+    }
+
+    /**
+     * Tear down the live session and schedule a reconnect. Every caller previously inlined
+     * this same four-step sequence; keeping it in one place stops the paths from drifting.
+     */
+    function forceReconnect(reason:String):Void {
+        zfeLog("warn", "connect", "reconnecting: " + reason);
+        if (_nativeInput) closeInputNative();
+        setServerSessionReady(false, "");
+        _connected = false;
+        stopPollTimer();
+        scheduleConnectRetry();
+    }
+
+    /** Clear the link gate — only ever called with PROOF the identity is linked. */
+    function clearLinkGate(reason:String):Void {
+        _needsLink          = false;
+        _pinnedSystemBody   = "";
+        _linkNoticeAt       = 0;
+        _linkRefreshPending = false;
+        zfeLog("info", "system", "link gate cleared: " + reason);
+    }
+
+    /** True when a pinned link code has outlived its usable lifetime. */
+    function linkCodeStale(now:Float):Bool {
+        if (!_needsLink || _linkNoticeAt <= 0) return false;
+        return (now - _linkNoticeAt) >= LINK_CODE_REFRESH_MS;
+    }
+
+    /**
+     * Drop the connection once when the on-screen code goes stale. The relay pushes a fresh
+     * link notice on the next subscribe while the identity is still limited
+     * (relayHandler.ts handleSubscribe), so a reconnect is how the widget asks for a new code.
+     */
+    function maybeRefreshLinkCode():Void {
+        if (_linkRefreshPending || !linkCodeStale(flash.Lib.getTimer())) return;
+        _linkRefreshPending = true;
+        _pinnedSystemBody   = "";
+        setLogText(linkHint());
+        forceReconnect("link code expired; requesting a fresh one");
     }
 
     function scheduleConnectRetry():Void {
@@ -1518,7 +1691,7 @@ class FCMChatWidget extends MovieClip {
             if (uid.length > 0) {
                 _userId = uid;
                 _relayUserId = uid;
-                zfeLog("info", "auth", "userId=" + uid.substr(0, 16) + "...");
+                zfeLog("info", "auth", "relay identity available");
             }
             var prevAuth:String = _authState;
             if (state.indexOf('"state":"authenticated"') >= 0 || state.indexOf('state:"authenticated"') >= 0) {
@@ -1538,12 +1711,7 @@ class FCMChatWidget extends MovieClip {
                 runStartupProbe();
             }
             if (_authState != "authenticated" && _connected) {
-                zfeLog("warn", "auth", "state not authenticated; reconnecting");
-                if (_nativeInput) closeInputNative();
-                setServerSessionReady(false, "");
-                _connected = false;
-                stopPollTimer();
-                scheduleConnectRetry();
+                forceReconnect("ZFE auth state not authenticated");
             }
         } catch (e:Dynamic) {
             zfeLog("warn", "auth", "getAuthState threw: " + Std.string(e));
@@ -1567,7 +1735,17 @@ class FCMChatWidget extends MovieClip {
         } catch (e:Dynamic) {
             raw = "<threw: " + Std.string(e) + ">";
         }
-        zfeLog("info", "probe", label + " (" + verb + ") raw=" + clip(raw, max));
+        // Auth-state responses include stable relay IDs and display names. They do not
+        // currently include the raw token, but keep release diagnostics minimal so a
+        // future response-shape change cannot turn zfe.log into a credential store.
+        if (verb == "chat.v1.getAuthState") {
+            var state:String = extractJsonString(raw, "state");
+            var connected:Bool = raw.indexOf('"connected":true') >= 0 || raw.indexOf('connected:true') >= 0;
+            zfeLog("info", "probe", label + " (" + verb + ") state="
+                + (state.length > 0 ? state : "unknown") + " connected=" + connected);
+        } else {
+            zfeLog("info", "probe", label + " (" + verb + ") raw=" + clip(raw, max));
+        }
         return raw;
     }
 
@@ -1659,6 +1837,10 @@ class FCMChatWidget extends MovieClip {
 
     function pollEvents():Void {
         if (_api == null || !_connected) return;
+        // Swap an expired link code for a fresh one before doing anything else — the reconnect
+        // this may trigger tears down the poll timer we are running on.
+        maybeRefreshLinkCode();
+        if (!_connected) return;
         var payload:String = '{"max":64,"cursor":' + _cursor + '}';
         var result:Dynamic = null;
         try {
@@ -1673,12 +1855,7 @@ class FCMChatWidget extends MovieClip {
         if (rs.indexOf('"success":false') >= 0 || rs.indexOf('success:false') >= 0) {
             if (rs.indexOf('auth_token_invalid') >= 0 || rs.indexOf('auth_token_revoked') >= 0
                     || rs.indexOf('user_banned') >= 0) {
-                zfeLog("warn", "poll", "auth error; reconnecting");
-                if (_nativeInput) closeInputNative();
-                setServerSessionReady(false, "");
-                _connected = false;
-                stopPollTimer();
-                scheduleConnectRetry();
+                forceReconnect("relay returned an auth error on poll");
             } else {
                 notePollFailure("relay returned an unsuccessful response");
             }
@@ -1694,12 +1871,7 @@ class FCMChatWidget extends MovieClip {
         _consecutivePollFailures++;
         zfeLog("warn", "poll", "failure=" + _consecutivePollFailures + " reason=" + reason);
         if (_consecutivePollFailures < 3) return;
-        zfeLog("warn", "poll", "failure threshold reached; reconnecting");
-        if (_nativeInput) closeInputNative();
-        setServerSessionReady(false, "");
-        _connected = false;
-        stopPollTimer();
-        scheduleConnectRetry();
+        forceReconnect("poll failure threshold reached");
     }
 
     function parseAndRenderEvents(rs:String):Void {
@@ -1746,12 +1918,12 @@ class FCMChatWidget extends MovieClip {
             // else is the link-required code notice (relay sends it ONLY to limited identities).
             if (rawChannel == "system" || senderUserId == "system") {
                 if (body.indexOf("LINK COMPLETE") >= 0) {
-                    _needsLink = false;
-                    _pinnedSystemBody = "";
-                    zfeLog("info", "system", "link complete -> chat activated");
+                    clearLinkGate("LINK COMPLETE notice");
                 } else {
-                    _pinnedSystemBody = body;
-                    _needsLink = true;
+                    _pinnedSystemBody    = body;
+                    _needsLink           = true;
+                    _linkNoticeAt        = flash.Lib.getTimer();
+                    _linkRefreshPending  = false;
                     zfeLog("info", "system", "link notice received -> needsLink");
                 }
                 newRecords = true;
@@ -1953,7 +2125,7 @@ class FCMChatWidget extends MovieClip {
         var rosterObserved:Bool = hasFreshRosterObservation(now);
         _inWorld = (names.length > 0 || rosterObserved);
         if (_inWorld) {
-            var namesField:String = names.join("\x1F");
+            var namesField:String = names.join("|");
             if (!_serverSessionReady || (now - _lastRosterSentAt) >= ROSTER_SEND_MS || namesField != _lastRosterSent) {
                 _lastRosterSentAt = now;
                 _lastRosterSent = namesField;
@@ -2047,8 +2219,9 @@ class FCMChatWidget extends MovieClip {
         // Link gate. ZFE's getAuthState.state is ALWAYS "authenticated" when merely CONNECTED
         // (it does NOT reflect the relay's linked/limited state), so we must NOT use it here.
         // The relay sends a system link-code notice ONLY to limited (unlinked) identities; its
-        // arrival (_needsLink) is the authoritative "not linked" signal. Cleared on a successful
-        // send (which only a linked identity can do).
+        // arrival (_needsLink) is the authoritative "not linked" signal. It is STICKY across
+        // reconnects and cleared only by clearLinkGate() — a "LINK COMPLETE" notice or a
+        // successful send, both of which only a linked identity can produce.
         if (_needsLink) { setLogText(linkHint()); return; }
 
         var html:Array<String> = [];
@@ -2132,7 +2305,11 @@ class FCMChatWidget extends MovieClip {
             s += '<font face="' + FONT_BOLD + '" size="' + (_cfg.fontSize + 2)
                 + '" color="' + hx(_cfg.tabActiveColor) + '"><b>' + FcmConfig.htmlEscape(code) + '</b></font>';
         } else {
-            s += '<font color="' + hx(_cfg.promptColor) + '">(waiting for your code...)</font>';
+            // No code pinned: either we have not received the first notice yet, or the last one
+            // expired and maybeRefreshLinkCode() is reconnecting to fetch a replacement.
+            s += '<font color="' + hx(_cfg.promptColor) + '">'
+                + (_linkRefreshPending ? '(your code expired - getting a new one...)' : '(waiting for your code...)')
+                + '</font>';
         }
         return s;
     }
@@ -2200,8 +2377,15 @@ class FCMChatWidget extends MovieClip {
             if (mgr == null) return "";
             var a:Dynamic = mgr.GetDataFromClient("AccountInfoData");
             if (a != null && a.data != null && a.data.name != null) {
+                // SANITIZE, never escape. This used to return jsonEscape(...), but the caller
+                // (startConnect) escapes again when it builds the payload — so a name carrying
+                // the UTF-16 NULs BSUIDataManager hands back became "A b d..." at read
+                // and "A\\u0000b\\u0000d..." on the wire. The relay stored exactly that: 337
+                // characters instead of 8 (dev, 2026-08-05). fcmClean strips the control bytes;
+                // escaping belongs to whoever builds the JSON.
                 var n:String = Std.string(a.data.name);
-                if (n.length > 0) return jsonEscape(n.substr(0, 64));
+                var clean:String = fcmClean(n);
+                if (clean.length > 0) return clean.substr(0, 64);
             }
         } catch (e:Dynamic) {}
         return "";
@@ -2297,10 +2481,13 @@ class FCMChatWidget extends MovieClip {
     /** Bare character name: strip the <title decorations and wire-unsafe chars. */
     function bareName(s:String):String {
         if (s == null) return "";
+        // fcmClean first: roster names come from the same BSUIDataManager surface as the
+        // display name, so they carry the same NUL/escaped-NUL baggage. An unsanitized name
+        // here corrupts the ROSTER control body and the relay cannot bind a world room.
+        s = fcmClean(s);
         var i:Int = s.indexOf("<");
         if (i >= 0) s = s.substr(0, i);
         s = StringTools.replace(s, "|", "");
-        s = StringTools.replace(s, "\x1F", "");
         return StringTools.trim(s);
     }
 
@@ -2342,21 +2529,13 @@ class FCMChatWidget extends MovieClip {
         var d:Dynamic = null;
         try { d = evt.data; } catch (e:Dynamic) {}
         if (d == null) { try { d = evt.target.data; } catch (e:Dynamic) {} }
-        if (d == null) { zfeLog("info", "roster", key + ": <null>"); return; }
+        if (d == null) { zfeLog("info", "roster", key + " update: no data"); return; }
         var n:Int = 0;
         try { n = Std.int(d.length); } catch (e:Dynamic) {}
         if (n > 0) {
-            zfeLog("info", "roster", key + ": " + describeEntries("entries", d));
+            zfeLog("info", "roster", key + " update entries=" + n);
         } else {
-            // object payload — describe each field; descend into array-valued fields
-            // (e.g. VoiceChatAreaData.participants, TeamMarkers.Markers)
-            for (f in Reflect.fields(d)) {
-                var v:Dynamic = Reflect.field(d, f);
-                var isArr:Bool = false;
-                try { isArr = (v != null && v.length != null); } catch (e:Dynamic) {}
-                if (isArr) zfeLog("info", "roster", key + "." + describeEntries(f, v));
-                else zfeLog("info", "roster", key + "." + f + "=" + Std.string(v).substr(0, 40));
-            }
+            zfeLog("info", "roster", key + " update received");
         }
     }
 
@@ -2405,12 +2584,7 @@ class FCMChatWidget extends MovieClip {
         if (n > 0) {
             var f0:Array<String> = [];
             try { f0 = Reflect.fields(d[0]); } catch (e:Dynamic) {}
-            var names:Array<String> = [];
-            for (i in 0...n) {
-                if (i >= 8) break;
-                try { names.push(Std.string(d[i].characterName)); } catch (e:Dynamic) {}
-            }
-            zfeLog("info", "roster", "PlayerListData len=" + n + " fields=[" + f0.join(",") + "] names=" + names.join(","));
+            zfeLog("info", "roster", "PlayerListData len=" + n + " fields=[" + f0.join(",") + "]");
         } else {
             var fx:Array<String> = [];
             try { fx = Reflect.fields(d); } catch (e:Dynamic) {}
@@ -2441,17 +2615,9 @@ class FCMChatWidget extends MovieClip {
                     try { f0 = Reflect.fields(d[0]); } catch (e:Dynamic) {}
                     zfeLog("info", "inv", key + ": array len=" + n + " entryFields=[" + f0.join(",") + "]");
                 } else {
-                    var parts:Array<String> = [];
-                    for (f in Reflect.fields(d)) {
-                        var v:Dynamic = Reflect.field(d, f);
-                        var vs:String = "";
-                        try {
-                            var tn:String = Std.string(v);
-                            vs = (tn.length > 24) ? "<obj>" : tn;
-                        } catch (e:Dynamic) { vs = "<?>"; }
-                        parts.push(f + "=" + vs);
-                    }
-                    zfeLog("info", "inv", key + ": {" + parts.join(" ") + "}");
+                    var fields:Array<String> = [];
+                    try { fields = Reflect.fields(d); } catch (e:Dynamic) {}
+                    zfeLog("info", "inv", key + ": fields=[" + fields.join(",") + "]");
                 }
             } catch (e:Dynamic) {
                 zfeLog("warn", "inv", key + " threw: " + Std.string(e));
@@ -2466,11 +2632,9 @@ class FCMChatWidget extends MovieClip {
             // One-shot diagnostic: what does AccountInfoData actually carry in-world?
             if (!_worldDiagDone && a != null && a.data != null) {
                 _worldDiagDone = true;
-                var w:String = "";
-                try { w = (a.data.worldId != null) ? Std.string(a.data.worldId) : "<null>"; } catch (e:Dynamic) { w = "<err>"; }
-                var nm:String = "";
-                try { nm = (a.data.name != null) ? "set" : "<null>"; } catch (e:Dynamic) { nm = "<err>"; }
-                zfeLog("info", "world", "AccountInfoData: worldId=" + w + " name=" + nm);
+                var hasWorldId:Bool = false;
+                try { hasWorldId = a.data.worldId != null; } catch (e:Dynamic) {}
+                zfeLog("info", "world", "AccountInfoData inspected hasWorldId=" + hasWorldId);
             }
             if (a != null && a.data != null && a.data.worldId != null) {
                 var w:String = Std.string(a.data.worldId);
@@ -2540,11 +2704,28 @@ class FCMChatWidget extends MovieClip {
         if (s == null) return "";
         s = s.split("\\").join("\\\\");
         s = s.split('"').join('\\"');
-        s = s.split("\x00").join("\\u0000");
-        s = s.split("\x1F").join("\\u001F");
+        // Control bytes cannot be split() on under GFx, and printable control frames mean they
+        // should never reach the wire anyway - drop them before escaping the rest.
+        s = stripControlChars(s);
         s = s.split("\r").join("\\r");
         s = s.split("\n").join("\\n");
         s = s.split("\t").join("\\t");
+        return s;
+    }
+
+    /**
+     * Render a string so ZFE's logger will actually print all of it.
+     *
+     * zfeLog() jsonEscapes its message, so a `"` becomes `\"` — and ZFE's log writer truncates
+     * the line at the first backslash it emits. Every JSON payload and response starts `{"`,
+     * which is why `raw=` never showed more than `{\`. Quotes, backslashes and NULs are all
+     * substituted here; the result is not valid JSON, it is only meant to be readable.
+     */
+    static function logSafe(s:String):String {
+        if (s == null) return "";
+        s = stripControlChars(s);
+        s = s.split("\\").join("/");
+        s = s.split("\"").join("'");
         return s;
     }
 
@@ -2553,7 +2734,14 @@ class FCMChatWidget extends MovieClip {
         s = s.split("~").join(" ");
         s = s.split("\r").join(" ");
         s = s.split("\n").join(" ");
-        s = s.split("\x00").join("");
+        s = stripControlChars(s);
+        // Also drop ALREADY-ESCAPED NUL text. Game-UI strings reach us via ZFE, which hands
+        // some values back with their NULs pre-escaped as the six-character text " "
+        // (and, when its own encoding is off, as a bare "u0000"). Those are not control bytes
+        // any more, so the NUL split above cannot see them — strip both forms explicitly or
+        // they ride out onto the wire and corrupt names and channel slugs alike.
+        s = s.split("\\u0000").join("");
+        s = s.split("u0000").join("");
         s = StringTools.trim(s);
         return s;
     }

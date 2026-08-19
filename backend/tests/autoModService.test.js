@@ -82,6 +82,13 @@ describe('filterContent', () => {
     expect(result.blocked).toBe(false);
   });
 
+  it('allows standalone cussing but blocks the same terms when directly targeted', async () => {
+    await expect(filterContent('fuck')).resolves.toMatchObject({ blocked: false });
+    await expect(filterContent('this game is shit')).resolves.toMatchObject({ blocked: false });
+    await expect(filterContent('fuck you')).resolves.toMatchObject({ blocked: true });
+    await expect(filterContent('you bastard')).resolves.toMatchObject({ blocked: true });
+  });
+
   it('still blocks slurs and hate speech in the chat baseline denylist', async () => {
     const result = await filterContent('you are a nigger');
     expect(result.blocked).toBe(true);

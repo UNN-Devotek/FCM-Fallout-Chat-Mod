@@ -1,6 +1,6 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.9.4. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.9.14. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
@@ -15,13 +15,11 @@ are navigated with the configured control-map actions and slash commands; do not
 add HUDButton instances over that strip. Doing so creates the overlapping labels
 that v2.9.2 removed.
 
-The `SERVER` room uses an authenticated relay session. The widget sends a bounded
-nearby-player roster control from HUD UI data; the backend derives a short-lived
-room from it. The control uses the relay's legacy NUL framing, but JSON-escapes
-each NUL/unit-separator byte before it crosses ZFE, so ZFE never receives a raw
-control byte or rejects the message as empty. There is no client-side relay-control
-HMAC or shared secret in the distributed SWF. `worldId` controls are a guarded
-compatibility fallback.
+The `SERVER` room uses an authenticated relay session. The widget sends a bounded,
+printable `FCMCTL/1/ROSTER:` control from HUD UI data; the backend derives a
+short-lived room from it. There is no client-side relay-control HMAC or shared
+secret in the distributed SWF. Legacy NUL-framed controls are accepted only for
+backward compatibility; `worldId` controls are a guarded fallback.
 
 ## Requirements
 
@@ -68,6 +66,10 @@ key bindings. Its open-key setting is separate from ZFE's authoritative
 startup, so restart Fallout 76 after replacing the BA2 or fragment; hot-reloading
 the widget cannot reload native relay configuration.
 
+HUDModLoader's F11 menu exposes **FCM → Customize → Reset all settings**. The action
+restores the `FcmConfig` defaults live, saves them in vendor-scoped ZFE storage
+(`FCMChatWidget/settings.ini`), and retains the environment-owned link URL.
+
 ## Build the archive
 
 Run from this directory.
@@ -105,8 +107,9 @@ npm run build
 npm test -- --runTestsByPath tests/relayHandler.test.js
 ```
 
-The source-level anchor test prevents the tab-renderer regression and rejects a
-compiled relay-control HMAC. The JavaScript test covers JSON event boundaries,
+The source-level anchor test prevents the tab-renderer regression, rejects a
+compiled relay-control HMAC, and ensures release diagnostics do not log chat text
+or relay identities. The JavaScript test covers JSON event boundaries,
 including braces and escaped quotes in message bodies. Backend tests cover relay
 availability, authenticated controls, validation, and roster membership.
 
@@ -122,38 +125,39 @@ leave the flag off and do not distribute a production-configured build.
 ## Hosted-dev tester handoff (verified 2026-07-19)
 
 The hosted-dev stack tracks `dev` at `dev.falloutchatmod.com` and its direct
-relay endpoint. The relay accepts both control formats during the
-transition: the printable `FCMCTL/1/*` frame emitted by v2.9.3 and the legacy
-frame emitted by v2.9.4 after JSON decoding. This means a player already running
-v2.9.3 can obtain the `SERVER` tab after the relay reconnects and the next roster
-update; they do not need to replace game files to test the backend deployment.
+relay endpoint. The relay accepts both control formats during the transition.
+Current widgets emit printable `FCMCTL/1/*` frames; legacy NUL-framed controls
+remain accepted for older installations. A player with an older build can obtain
+the `SERVER` tab after reconnecting and the next roster update.
 
 The relay must acknowledge every accepted control with a non-empty synthetic
 `messageId`; an empty ID violates ZFE's send-response contract and is surfaced to
 the widget as `relay_rejected`, leaving `SERVER` hidden even though membership was
 updated successfully.
 
-The v2.9.4 BA2 is required for the client-side JSON-escaped legacy framing. Copy
-it into `Fallout 76/Data` only after Fallout 76 has fully exited, then restart the
-game so ZFE reloads the archive and fragment. Never overwrite an in-use BA2.
+Copy the matching BA2 into `Fallout 76/Data` only after Fallout 76 has fully
+exited, then restart the game so ZFE reloads the archive and fragment. Never
+overwrite an in-use BA2.
 
 HUDModLoader's upstream menu hotkey is **F11**, outside the Pip-Boy. F12 is the
 game's `DiagnosticSnapshot` action and is not a reliable route to the loader menu.
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.9.4`.
+1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.9.14`.
 2. The tab row contains one label for each visible channel—no boxed duplicate labels.
 3. Switch channels, join/leave a world, and switch again; the tab row remains single-rendered.
 4. Send a body containing `{`, `}`, quotes, and backslashes; later events still render.
 5. Temporarily disconnect the relay. After three failed polls the widget shows reconnecting,
    then reconnects once the relay returns.
-6. Confirm `SERVER` remains hidden until the relay acknowledges the JSON-escaped legacy roster/world control,
+6. Confirm `SERVER` remains hidden until the relay acknowledges the printable roster/world control,
    then remains isolated to its derived room while static channels still work.
 7. While typing, confirm the fallback has only one visible text renderer; game movement/actions
    are locked; Page Down/Page Up switch channels without closing the input or losing its draft;
    Enter/Esc restore game input.
 8. Outside the Pip-Boy, press F11 and confirm the HUDModLoader menu lists FCMChatWidget.
+9. Open **FCM → Customize → Reset all settings**; confirm the default size, position, opacity,
+   amber theme, and auto-hide behavior return immediately and remain after restarting the game.
 
 Do not copy the new BA2 into a live game installation or publish it until these
 checks have passed on the intended environment.

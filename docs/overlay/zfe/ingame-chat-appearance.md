@@ -15,6 +15,10 @@ Sources: `game-mods/FCMBridge/FCMBridge.hx` (all lines), `admin-dashboard/src/fe
 > `maxSendLen`, `pollMs`), **toggles** (`showChannelTag`, `showTimestamps`, `showHints`), and **keybinds**
 > (`openKey`, `channelNextKey`, `channelPrevKey`, `hideKey`) — lives in the commented
 > `Data/FCMChat.ini` (every value validated/clamped, invalid falls back to default).
+> HUDModLoader's F11 **FCM → Customize** submenu also provides **Reset all settings**,
+> which restores these values live from the authoritative `FcmConfig` defaults and persists
+> them in vendor-scoped ZFE storage (`FCMChatWidget/settings.ini`) while retaining the
+> environment-specific account-link URL.
 > Keybinds: [../keybinds.md](../keybinds.md) (in-game HUD section). Two feed-polish defaults
 > that differ from the table below: each message now carries an `HH:MM` **timestamp** (sourced
 > from the relay's `createdAt`, `showTimestamps` on by default) and the channel tag renders the
@@ -69,16 +73,68 @@ Sources: `game-mods/FCMBridge/FCMBridge.hx` (all lines), `admin-dashboard/src/fe
 >
 > **Post-link handshake + game-input lockout (v2.7.0 / v2.7.1).**
 > - **v2.7.0 handshake:** after the web redeem, the relay pushes a `LINK COMPLETE` system event to
->   the user's live subscriber and the widget resets its link gate on every (re)connect, so it hands
->   off from the link screen to chat after activation (and recovers after a drop). See also the relay
->   redeem path — the dynamic import must be `../services/...` (resolves in the compiled build), not
->   `../../src/...` (tsx-only), or `markRelayTokenLinked` silently no-ops and the token never links.
+>   the user's live subscriber, and the widget hands off from the link screen to chat on that event.
+>   See also the relay redeem path — the dynamic import must be `../services/...` (resolves in the
+>   compiled build), not `../../src/...` (tsx-only), or `markRelayTokenLinked` silently no-ops and
+>   the token never links. *(v2.7.0 also cleared the link gate on every reconnect; v2.9.7 removed
+>   that — see below.)*
 > - **v2.7.1 game-input lockout:** while the chat input is active the widget dispatches the engine
 >   event `ControlMap::StartEditText` on `BSUIDataManager` (and `EndEditText` on close) — this is what
 >   makes the engine suspend its own keyboard/gamepad routing (WASD/hotkeys stop firing while typing).
 >   ZFE's native input captures the text but does NOT block the engine, so we dispatch the edit-text
 >   events ourselves (the original FO76 Text Chat mod's mechanism — see
 >   [textchat-blueprint.md](textchat-blueprint.md) §2). Best-effort + guarded.
+>
+> **Sticky link gate + automatic code refresh (v2.9.7).**
+> The relay's link-code notice is a **one-shot push** on register/hello/subscribe
+> (`relayHandler.pushLinkNotice`) — nothing replays it. v2.7.0–v2.9.6 cleared the link gate
+> (`_needsLink`) on every (re)connect and waited for a fresh notice to re-raise it, so a notice that
+> was never delivered read as "this account is linked": the widget fell through to the chat feed and
+> the player could not reach the link screen again without deleting `Data/ZFE/chat-auth.bin`.
+> Observed in the wild on 2026-08-05 (skip the prompt on first boot → reconnect ~95 min later → no
+> prompt, and sends rejected). Now:
+> - **The gate is sticky.** It survives reconnects and is cleared only by `clearLinkGate()`, which
+>   runs on proof the account is linked — a `LINK COMPLETE` notice, or a successful send.
+> - **Stale codes refresh themselves.** Codes expire 10 minutes after issue. The widget stamps each
+>   notice's arrival; once a pinned code passes `LINK_CODE_REFRESH_MS` (9 min) it drops the
+>   connection once, and the relay issues a fresh code on the next subscribe (it re-pushes while the
+>   identity is still limited). The link screen shows "(your code expired - getting a new one...)"
+>   during the swap.
+> - A `permission_denied` send rejection still re-raises the gate, unchanged.
+>
+> **"That channel is not available" + SERVER never binds — a DOUBLE-ESCAPED display name (v2.9.8).**
+> Symptom: every send is rejected `invalid_channel`, and the world/roster controls are rejected on
+> every tick so the SERVER tab never appears.
+>
+> Root cause, proven on dev 2026-08-06 by probing the relay with a clean Node `ws` client:
+> - A clean **linked** client sending `channel:"global"` **succeeds**, and a printable
+>   `FCMCTL/1/ROSTER:` control on slug `server` is **acknowledged**. So the relay, the channel row,
+>   and the deployed slug map are all fine — the corruption is on the client side.
+> - Replaying a NUL-interleaved slug reproduces the symptom exactly:
+>   `invalid_channel: "Unknown channel: g l o b a l "`.
+> - `readDisplayName()` called `jsonEscape()` on the raw `BSUIDataManager` value, and
+>   `startConnect()` escaped it **again** when building the payload. The game returns names with
+>   UTF-16 NUL padding, so `Abderaan` became `A b d…` at read and `A\\u0000b\\u0000d…`
+>   on the wire. `hud_pairing_tokens.fo76_name` on dev stored **337 characters** instead of 8.
+>
+> Fix: **sanitize on read, escape exactly once at serialization.** `readDisplayName()` now returns
+> `fcmClean(n)`; `fcmClean` strips real NULs/unit separators *and* the already-escaped ` ` and
+> bare `u0000` text forms; `bareName()` sanitizes roster names the same way before they reach the
+> ROSTER control body.
+>
+> **Superseded diagnosis (kept as a warning).** v2.9.7 attributed this to NUL-bearing string
+> constants in the SWF poisoning the ZFE boundary — the v2.9.4/2.9.5 failure described above. That
+> was **wrong**: v2.9.7 removed every control-byte literal and the mangling persisted unchanged.
+> The log mangling (`cu0000ou0000nu0000…`) is a separate, cosmetic ZFE logging defect — ZFE parses
+> our JSON envelope correctly and only mis-encodes the extracted value when writing it. Do not read
+> mangled log output as evidence that the wire is corrupt; check
+> `hud_pairing_tokens.fo76_name` or probe the relay directly instead.
+>
+> The v2.9.7 changes were kept anyway as hygiene: control bytes are built at runtime via a
+> **non-inline** `ctrlChar(code:Int)` helper, because a direct `String.fromCharCode(0)` is
+> constant-folded by Haxe straight back into a NUL literal (verified — the compiled SWF then
+> contains no `fromCharCode` at all). A Vitest guard greps the `.hx` for control-byte literals and
+> for the `inline` regression, since the pure-logic mirror cannot see a string-pool defect.
 
 ---
 

@@ -21,6 +21,9 @@ These routes are outside `/api/` and not subject to `apiLimiter`.
 |--------|------|------|-------------|
 | GET | `/auth/discord` | public | Initiate Discord OAuth2 (admin dashboard) |
 | GET | `/auth/discord/callback` | public | OAuth2 callback; sets session |
+| GET | `/auth/nexus` | public | Initiate Nexus OAuth2 + PKCE (feature-flagged) |
+| GET | `/auth/nexus/callback` | public | Validate Nexus OAuth2 state, provision/link identity, set session |
+| DELETE | `/auth/nexus` | requireAuth | Unlink Nexus identity unless it is the last provider |
 | GET | `/auth/discord/link` | public | Initiate Discord link for desktop client (`?installToken=`) |
 | GET | `/auth/discord/link/callback` | public | OAuth2 callback for desktop link |
 | GET | `/auth/logout` | public | Destroy session |
@@ -316,6 +319,13 @@ See [../moderation/](../moderation/) for full moderation documentation.
 Documented in [../moderation/](../moderation/). Covers:
 - Bans, kicks, mutes (`/api/moderation/kicks`, `/mutes`, `/bans`, `/evidence`, `/users/lookup`)
 - AutoMod rules (`/api/moderation/automod-rules`, `/automod-violations`)
+- Settings (`GET`/`PATCH /api/moderation/settings`) — the key/value `moderation_settings` store.
+  `PATCH` has three validation paths: `mod_log_channel_id` (Discord snowflake),
+  the AI moderation keys (`ai_moderation_enabled` boolean string,
+  `ai_moderation_mode` = `shadow`|`enforce`, `ai_moderation_thresholds` /
+  `ai_moderation_identifier_thresholds` JSON of category → score in `(0,1]`),
+  and everything else (positive integers). See
+  [../moderation/ai-moderation.md](../moderation/ai-moderation.md).
 - Voice settings, embed builder, reaction-role panels — see [../discord/](../discord/)
 
 ---
@@ -630,6 +640,8 @@ core (`hudPush.ts`). Both are **off by default** and must be explicitly enabled.
 
 None. No `Origin` check on `/ws/hud`. The game client sends no/odd `Origin` headers; this is a
 public read-only feed. Per-IP connection cap: **3** concurrent connections on each transport.
+The production guard currently refuses to attach this unauthenticated WebSocket listener in
+`NODE_ENV=production`, and disabled/unknown upgrade paths are rejected by the shared router.
 
 ### FCMHUD/1 line protocol
 
@@ -665,8 +677,9 @@ await initHudPushTcp();
 initHudPushWs(server);
 ```
 
-The `/ws/hud` upgrade handler coexists with the `/ws` WebSocketServer. It leaves all non-`/ws/hud`
-upgrade requests untouched so the two servers do not race.
+The `/ws/hud` upgrade handler coexists with the `/ws` WebSocketServer. The shared upgrade router
+leaves `/ws/hud` untouched only when `HUD_PUSH_WS_ENABLED=true` in a non-production process;
+disabled and unknown upgrade paths are destroyed promptly.
 
 **M7 identity env var:** `HUD_IDENTITY_SECRET` — HMAC-SHA256 key for deriving `identityHash` from FO76 `accountName`. Dev default in `.env.example`; must be a strong random secret before production use.
 

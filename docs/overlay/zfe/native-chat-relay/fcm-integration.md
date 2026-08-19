@@ -27,6 +27,11 @@ its actor from this verified token, never from a client-supplied ID.
 receive-only linking state. The token can be linked after a web device-code flow;
 the normal relay event flow then refreshes the widget state.
 
+Successful relay-token verification uses a short-lived in-process cache keyed by a one-way token
+digest, while repeated invalid-token Argon2 checks are throttled. The cache is invalidated on
+token link, revoke, or display-name update. This reduces reconnect load without exposing the raw
+token in logs or cache keys.
+
 ## Operations
 
 | Operation | Purpose |
@@ -34,7 +39,7 @@ the normal relay event flow then refreshes the widget state.
 | `chat.v1.getRuntimeInfo` | Capability check (`zfe-chat-online-v1`) before use |
 | `chat.v1.connect` | Register/resume and get initial state |
 | `chat.v1.pollEvents` | Cursor-based event polling |
-| `chat.v1.subscribe` | Register a live subscriber from its initial cursor; history remains available through polling |
+| `chat.v1.subscribe` | Register a live subscriber and enqueue bounded static/current-world history after its initial cursor |
 | `chat.v1.sendMessage` | Send a static-channel message or a reserved server control |
 | `chat.v1.getAuthState` | Refresh linked/limited state |
 
@@ -47,20 +52,21 @@ normal database channel.
 ## Ephemeral `server` rooms
 
 The widget periodically observes nearby names from approved HUD data sources and
-sends a roster control on `channel: 'server'`. Its wire body uses legacy relay
-control bytes, but the widget serializes those bytes as JSON `\u0000` / `\u001F`
-escapes before calling ZFE, so ZFE does not receive a raw leading NUL:
+sends a printable roster control on `channel: 'server'`:
 
 ```text
-\x00fcm.world.roster.v1\x00<name>\x1F<name>...
+FCMCTL/1/ROSTER:<name>|<name>...
 ```
 
-It can also send the compatibility controls:
+It can also send printable compatibility controls:
 
 ```text
-\x00fcm.world.v1\x00<worldId>
-\x00fcm.world.leave.v1\x00
+FCMCTL/1/WORLD:<worldId>
+FCMCTL/1/LEAVE
 ```
+
+The relay continues to accept legacy NUL-framed controls from older widget
+builds, but current builds never place control bytes in the distributable SWF.
 
 Controls are intercepted before ordinary channel validation and are never stored
 or broadcast as chat. The backend associates them with the authenticated relay
@@ -80,6 +86,12 @@ messages are delivered only to subscribers bound to the same current room.
 
 The roster scan uses Redis `SCAN`, not `KEYS`, caps active roster processing, and
 normalizes input lengths before it participates in room calculation.
+
+Roster-derived rooms require mutual sightings: A must report B and B must report A. This prevents
+one stale or malicious roster from placing an unrelated player into a shared server room. Live
+subscriber fan-out is backpressure-aware; a socket with more than 1 MiB buffered is closed with
+WebSocket status 1013 and removed from the subscriber set. Duplicate or concurrent `subscribe`
+frames on one connection receive `already_subscribed`.
 
 The widget treats the relay response to a roster/world control as the membership
 acknowledgement. It does not expose or send to the `server` tab merely because
@@ -107,6 +119,9 @@ forbidden because they duplicate and overlap the visible labels.
 relay rejects connections until that setting is explicitly `true`. This makes a
 reviewed backend deploy and an authenticated production handshake a prerequisite
 to exposing the production endpoint; building a BA2 does not enable production.
+When enabled, the relay caps frames at 8 KiB, allows at most five concurrent
+connections per client IP, requires a first frame within 10 seconds, and limits
+anonymous registrations to three per IP per minute.
 
 ## Verification
 

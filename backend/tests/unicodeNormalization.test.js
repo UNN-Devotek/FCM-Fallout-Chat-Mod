@@ -227,6 +227,11 @@ describe('filterContent — canonical (NFD + strip-marks) matching', () => {
     expect(result.blocked).toBe(true);
   });
 
+  it('allows an unaddressed baseline term so chat moderation can focus on targeted attacks', async () => {
+    const result = await filterContent('fa' + ACUTE + 'g');
+    expect(result.blocked).toBe(false);
+  });
+
   it('cache does not bleed: a phrase from a prior test is gone after resetCache', async () => {
     // No rows pushed this test; with resetCache() in beforeEach the "test"/"café"
     // phrases from earlier tests must not still be cached.

@@ -54,6 +54,11 @@ line to bless, e.g. `QA_ACTIVE_VERSION=1.3.91-qa.20260626014530`.
 `dist:qa` and uploads the unsigned-by-intent NSIS installer + portable `.exe` as the
 artifact `fcm-overlay-qa-windows`.
 
+Before upload, the workflow disables certificate auto-discovery, requires at least one
+non-trivial `.exe`, checks a pinned input version in every filename, and rejects retired
+auto-update files (`latest*.yml`, `app-update.yml`, or blockmaps). This is an artifact-integrity
+gate, not a substitute for installing and smoke-testing the build with a QA tester.
+
 ```bash
 gh workflow run build-windows-qa.yml --ref dev -f version=<optional-pinned-version>
 ```

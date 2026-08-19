@@ -23,6 +23,10 @@ interface AutoModViolation {
   matchedKeyword: string | null;
   matchedSubstr: string | null;
   actionsTaken: ViolationActionResult[];
+  /** AI_MODERATION rules only — full OpenAI category -> score map. */
+  aiCategories: Record<string, number> | null;
+  /** AI_MODERATION rules only — peak score, used as a sortable severity. */
+  aiMaxScore: number | null;
   createdAt: string;
   rule: { name: string; triggerType: string };
 }
@@ -57,6 +61,38 @@ function actionsBadges(actions: ViolationActionResult[]) {
       {a.type}
     </span>
   ));
+}
+
+/**
+ * Severity cell for AI violations. Keyword rules have no score — they only ever
+ * had a boolean "matched" — so those rows render a dash.
+ *
+ * The tooltip carries every category above a nominal floor so a moderator can
+ * see exactly why the classifier fired, not just the headline number.
+ */
+function severityCell(v: AutoModViolation) {
+  if (typeof v.aiMaxScore !== 'number') {
+    return <span style={{ color: 'var(--text-muted)' }}>—</span>;
+  }
+
+  const pct = Math.round(v.aiMaxScore * 100);
+  // Colour tracks the shipped enforce thresholds: 0.70+ is where the strictest
+  // categories start blocking, 0.50+ is worth a look.
+  const color = v.aiMaxScore >= 0.7 ? 'var(--error)' : v.aiMaxScore >= 0.5 ? '#f59e0b' : 'var(--text-muted)';
+
+  const breakdown = v.aiCategories
+    ? Object.entries(v.aiCategories)
+      .filter(([, score]) => score >= 0.01)
+      .sort((a, b) => b[1] - a[1])
+      .map(([cat, score]) => `${cat}: ${score.toFixed(3)}`)
+      .join('\n')
+    : undefined;
+
+  return (
+    <span title={breakdown} style={{ color, fontFamily: 'monospace', fontSize: '11px', fontWeight: 'bold' }}>
+      {pct}%
+    </span>
+  );
 }
 
 export default function AutoModViolations() {
@@ -167,6 +203,7 @@ export default function AutoModViolations() {
                 <th>User</th>
                 <th>Rule</th>
                 <th>Trigger</th>
+                <th title="AI confidence — hover a value for the full category breakdown">Score</th>
                 <th>Matched</th>
                 <th>Content</th>
                 <th>Actions Taken</th>
@@ -183,6 +220,7 @@ export default function AutoModViolations() {
                   </td>
                   <td style={{ fontWeight: 'bold', fontSize: '12px' }}>{v.rule.name}</td>
                   <td style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>{v.rule.triggerType}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>{severityCell(v)}</td>
                   <td style={{ fontSize: '11px', fontFamily: 'monospace', color: '#f59e0b' }}>
                     {v.matchedKeyword ?? v.matchedSubstr ?? '—'}
                   </td>
@@ -193,7 +231,7 @@ export default function AutoModViolations() {
                 </tr>
               ))}
               {violations.length === 0 && (
-                <tr><td colSpan={7} style={{ color: 'var(--text-muted)' }}>No violations found.</td></tr>
+                <tr><td colSpan={8} style={{ color: 'var(--text-muted)' }}>No violations found.</td></tr>
               )}
             </tbody>
           </table>

@@ -250,11 +250,9 @@ describe('ingestMessage — relaySeq threading (relay source)', () => {
     }));
   });
 
-  it('assigns a fresh relaySeq (via nextRelaySeq) for non-relay sources so all surfaces unify', async () => {
-    // Cross-surface fix: EVERY message gets a relaySeq. When the caller does not pass one
-    // (hud/ws/mcp), finalizeMessage falls back to nextRelaySeq() (mocked incr -> 1) so the
-    // overlay relay pub/sub subscriber and the in-game `relay_seq IS NOT NULL` history query
-    // both see the message.
+  it('best-effort assigns a relaySeq for non-relay sources when Redis is healthy', async () => {
+    // Ordinary chat participates in relay history when the cursor is available,
+    // but cursor allocation is deliberately not a hard dependency.
     const result = await ingestMessage({
       userId: 'hud-user-1',
       channelId: VALID_CHANNEL_ID,
@@ -265,13 +263,42 @@ describe('ingestMessage — relaySeq threading (relay source)', () => {
 
     expect(result.ok).toBe(true);
 
-    // Broadcast payload carries the fallback relaySeq.
+    // Broadcast payload carries the optional cursor.
     const broadcastArg = broadcast.mock.calls[0][0];
     expect(broadcastArg.payload).toHaveProperty('relaySeq', 1);
 
-    // Persist record carries the fallback relaySeq -> messages.relay_seq is written.
+    // Persist record carries the optional cursor.
     const recordArg = messageQueue.add.mock.calls[0][0];
     expect(recordArg).toHaveProperty('relaySeq', 1);
+  });
+
+  it('keeps ordinary chat available when optional cursor allocation fails', async () => {
+    const rateRedis = {
+      multi: jest.fn().mockReturnValue({
+        zRemRangeByScore: jest.fn().mockReturnThis(),
+        zAdd: jest.fn().mockReturnThis(),
+        zCard: jest.fn().mockReturnThis(),
+        expire: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue([0, 1, 1, 1]),
+      }),
+    };
+    const cursorRedis = {
+      incr: jest.fn().mockRejectedValue(new Error('redis unavailable')),
+    };
+    getRedisClient
+      .mockResolvedValueOnce(rateRedis)
+      .mockResolvedValueOnce(cursorRedis);
+
+    const result = await ingestMessage({
+      userId: 'hud-user-redis-down',
+      channelId: VALID_CHANNEL_ID,
+      rawContent: 'still available',
+      source: 'hud',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(broadcast.mock.calls[0][0].payload).not.toHaveProperty('relaySeq');
+    expect(messageQueue.add.mock.calls[0][0]).not.toHaveProperty('relaySeq');
   });
 });
 

@@ -28,7 +28,7 @@
  */
 
 import * as argon2 from 'argon2';
-import { randomBytes } from 'crypto';
+import { createHash, randomBytes } from 'crypto';
 import prisma from '../../config/prisma';
 import logger from '../../config/logger';
 
@@ -38,6 +38,44 @@ const ARGON2_OPTIONS: argon2.Options = {
   timeCost: 3,
   parallelism: 1,
 };
+
+// Argon2id remains the source of truth, but re-running a 64 MiB verification
+// for every frame lets one authenticated socket become a CPU/memory DoS. Cache
+// successful verification results briefly; link/revoke/name mutations below
+// explicitly invalidate the affected relay identity.
+const VERIFY_CACHE_TTL_MS = 5_000;
+const MAX_VERIFY_CACHE_ENTRIES = 10_000;
+const VERIFY_FAILURE_WINDOW_MS = 10_000;
+const MAX_VERIFY_FAILURES_PER_PREFIX = 10;
+
+const verificationCache = new Map<string, { identity: RelayToken; expiresAt: number }>();
+const failedVerifications = new Map<string, { windowStartedAt: number; count: number }>();
+
+function tokenCacheKey(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+function invalidateVerificationCache(userId?: string): void {
+  if (!userId) {
+    verificationCache.clear();
+    return;
+  }
+  for (const [key, entry] of verificationCache) {
+    if (entry.identity.userId === userId) verificationCache.delete(key);
+  }
+}
+
+function allowArgonVerification(prefix: string): boolean {
+  const now = Date.now();
+  const prior = failedVerifications.get(prefix);
+  if (!prior || now - prior.windowStartedAt >= VERIFY_FAILURE_WINDOW_MS) {
+    failedVerifications.set(prefix, { windowStartedAt: now, count: 1 });
+    return true;
+  }
+  if (prior.count >= MAX_VERIFY_FAILURES_PER_PREFIX) return false;
+  prior.count += 1;
+  return true;
+}
 
 /** Identity returned from a successful verifyToken call. */
 export interface RelayToken {
@@ -103,6 +141,12 @@ export async function verifyToken(token: string): Promise<RelayToken | null> {
   if (typeof token !== 'string' || token.length < 8) return null;
 
   const prefix = token.slice(0, 8);
+  const cacheKey = tokenCacheKey(token);
+  const cached = verificationCache.get(cacheKey);
+  if (cached) {
+    if (cached.expiresAt > Date.now()) return cached.identity;
+    verificationCache.delete(cacheKey);
+  }
 
   const rows = await prisma.hudPairingToken.findMany({
     where: {
@@ -110,6 +154,11 @@ export async function verifyToken(token: string): Promise<RelayToken | null> {
       revokedAt: null,
     },
   });
+
+  if (rows.length > 0 && !allowArgonVerification(prefix)) {
+    logger.warn({ prefix }, '[tokenService] throttling repeated failed token verification');
+    return null;
+  }
 
   for (const row of rows) {
     let matches = false;
@@ -134,13 +183,21 @@ export async function verifyToken(token: string): Promise<RelayToken | null> {
     const linkedUserId = (row as any).linkedUserId ?? null;
     const isLinked     = linkedUserId !== null;
 
-    return {
+    const identity: RelayToken = {
       userId:    row.userId,
       fo76Name:  row.fo76Name,
       role:      'user',
       isLinked,
       linkedUserId,
     };
+
+    failedVerifications.delete(prefix);
+    if (verificationCache.size >= MAX_VERIFY_CACHE_ENTRIES) {
+      const oldest = verificationCache.keys().next().value;
+      if (oldest) verificationCache.delete(oldest);
+    }
+    verificationCache.set(cacheKey, { identity, expiresAt: Date.now() + VERIFY_CACHE_TTL_MS });
+    return identity;
   }
 
   return null;
@@ -161,6 +218,7 @@ export async function markRelayTokenLinked(relayUserId: string, fcmUserId: strin
     data:   { linkedUserId: fcmUserId },
   });
   logger.info({ relayUserId, fcmUserId, count: result.count }, '[tokenService] relay token linked');
+  invalidateVerificationCache(relayUserId);
 
   // Propagate the in-game CHARACTER name onto the linked FCM account so chat HISTORY (which
   // derives the sender from the user row, not per-message) shows the character, not the Discord
@@ -187,6 +245,7 @@ export async function revokeToken(userId: string): Promise<void> {
     where: { userId, revokedAt: null },
     data:  { revokedAt: new Date() },
   });
+  invalidateVerificationCache(userId);
   logger.info({ userId }, '[tokenService] revoked relay tokens');
 }
 
@@ -200,4 +259,11 @@ export async function updateDisplayName(userId: string, fo76Name: string): Promi
     where: { userId, revokedAt: null },
     data:  { fo76Name },
   });
+  invalidateVerificationCache(userId);
+}
+
+/** Test/maintenance seam: clear process-local auth state between isolated runs. */
+export function clearVerificationCache(): void {
+  invalidateVerificationCache();
+  failedVerifications.clear();
 }

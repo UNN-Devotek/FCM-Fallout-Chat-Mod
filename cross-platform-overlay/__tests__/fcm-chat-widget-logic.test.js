@@ -1,5 +1,5 @@
 // Vitest coverage for the pure logic of the in-game HUD chat widget
-// (game-mods/FCMBridge/hudmodloader-chat/FCMChatWidget.hx, v2.5.3). The .hx compiles
+// (game-mods/FCMBridge/hudmodloader-chat/FCMChatWidget.hx, v2.9.8). The .hx compiles
 // to a SWF and is not testable in-process; the pure algorithms are mirrored in
 // fcm-chat-widget-logic.js and asserted here. Keep both in lockstep with the .hx.
 
@@ -23,6 +23,21 @@ const {
   shouldRebindWorldId,
   shouldIgnoreBlankWorldId,
   inputChannelAction,
+  LINK_CODE_REFRESH_MS,
+  linkGateOnReconnect,
+  clearLinkGate,
+  linkGateOnSystemNotice,
+  linkCodeStale,
+  shouldRefreshLinkCode,
+  linkHintStatus,
+  extractLinkCode,
+  linkGateRender,
+  fcmClean,
+  readDisplayName,
+  bareName,
+  replaceIfPresent,
+  stripControlChars,
+  jsonEscapeGuarded,
   worldControlBody,
   jsonEscape,
   sharedHudPromptMode,
@@ -252,10 +267,26 @@ describe('server-room acknowledgement gating', () => {
       lastWorldId: 'legacy-world', currentWorldId: '', freshRosterObservation: false,
     })).toBe(false);
   });
-  it('preserves the relay legacy control frame while JSON-escaping control bytes for ZFE', () => {
+  it('emits a PRINTABLE control frame that needs no escaping at all', () => {
+    // Retired the NUL-delimited legacy frame. Control bytes must never appear in the SWF:
+    // a NUL constant cannot be split() on under GFx, and that is what caused the 2026-08
+    // send outage. The frame now survives serialisation untouched.
     const body = worldControlBody('roster', ['Ada', 'Beck']);
-    expect(body).toBe('\x00fcm.world.roster.v1\x00Ada\x1FBeck');
-    expect(jsonEscape(body)).toBe('\\u0000fcm.world.roster.v1\\u0000Ada\\u001FBeck');
+    expect(body).toBe('FCMCTL/1/ROSTER:Ada|Beck');
+    expect(jsonEscapeGuarded(body)).toBe('FCMCTL/1/ROSTER:Ada|Beck');
+  });
+
+  it('world and leave frames are printable too', () => {
+    expect(worldControlBody('world', 'w123')).toBe('FCMCTL/1/WORLD:w123');
+    expect(worldControlBody('leave')).toBe('FCMCTL/1/LEAVE');
+    expect(jsonEscapeGuarded(worldControlBody('leave'))).toBe('FCMCTL/1/LEAVE');
+  });
+
+  it('no control frame contains a control byte', () => {
+    for (const b of [worldControlBody('world', 'w1'), worldControlBody('leave'),
+                     worldControlBody('roster', ['A', 'B'])]) {
+      for (let i = 0; i < b.length; i++) expect(b.charCodeAt(i)).toBeGreaterThanOrEqual(32);
+    }
   });
 });
 
@@ -515,5 +546,343 @@ describe('jsonObjectEnd (relay event framing)', () => {
   it('fails closed on an incomplete object', () => {
     const raw = '{"body":"unfinished"';
     expect(jsonObjectEnd(raw, 0)).toBe(raw.length);
+  });
+});
+
+// The regression this suite exists for: on 2026-08-05 a player skipped the link prompt on
+// first boot, the widget reconnected ~95 min later, and the link screen never came back —
+// the gate was cleared on every reconnect and the relay's one-shot notice never repeated.
+describe('link gate (v2.9.7)', () => {
+  const NOTICE = 'LINK REQUIRED - visit falloutchatmod.com/link, sign in, and enter code: 4F2A-9C31 (expires 10m)';
+
+  describe('linkGateOnReconnect', () => {
+    it('keeps the gate up across a reconnect when the account is still unlinked', () => {
+      expect(linkGateOnReconnect(true)).toBe(true);
+    });
+
+    it('stays down for an already-linked session', () => {
+      expect(linkGateOnReconnect(false)).toBe(false);
+    });
+  });
+
+  describe('linkGateOnSystemNotice', () => {
+    it('raises the gate and stamps the code on a LINK REQUIRED notice', () => {
+      expect(linkGateOnSystemNotice(NOTICE, 1000)).toEqual({
+        needsLink: true, pinnedSystemBody: NOTICE, linkNoticeAt: 1000, refreshPending: false,
+      });
+    });
+
+    it('clears the gate on LINK COMPLETE', () => {
+      expect(linkGateOnSystemNotice('LINK COMPLETE - account linked. Chat activated.', 1000))
+        .toEqual({ needsLink: false, pinnedSystemBody: '', linkNoticeAt: 0, refreshPending: false });
+    });
+
+    it('re-stamps arrival time when a fresh code replaces an old one', () => {
+      const first = linkGateOnSystemNotice(NOTICE, 1000);
+      const second = linkGateOnSystemNotice(NOTICE, 600000);
+      expect(first.linkNoticeAt).toBe(1000);
+      expect(second.linkNoticeAt).toBe(600000);
+    });
+  });
+
+  describe('clearLinkGate', () => {
+    it('drops the pinned code along with the gate', () => {
+      expect(clearLinkGate()).toEqual({
+        needsLink: false, pinnedSystemBody: '', linkNoticeAt: 0, refreshPending: false,
+      });
+    });
+  });
+
+  describe('linkCodeStale', () => {
+    it('is false for a code inside its usable window', () => {
+      expect(linkCodeStale({ needsLink: true, linkNoticeAt: 0 + 1, now: LINK_CODE_REFRESH_MS - 1 }))
+        .toBe(false);
+    });
+
+    it('is true once the refresh threshold is reached', () => {
+      expect(linkCodeStale({ needsLink: true, linkNoticeAt: 1, now: 1 + LINK_CODE_REFRESH_MS }))
+        .toBe(true);
+    });
+
+    it('never fires while the account is linked', () => {
+      expect(linkCodeStale({ needsLink: false, linkNoticeAt: 1, now: 1 + LINK_CODE_REFRESH_MS }))
+        .toBe(false);
+    });
+
+    it('never fires before any code has arrived', () => {
+      expect(linkCodeStale({ needsLink: true, linkNoticeAt: 0, now: 9999999 })).toBe(false);
+    });
+  });
+
+  describe('shouldRefreshLinkCode', () => {
+    const stale = { needsLink: true, linkNoticeAt: 1, now: 1 + LINK_CODE_REFRESH_MS };
+
+    it('reconnects once when the on-screen code has expired', () => {
+      expect(shouldRefreshLinkCode({ ...stale, refreshPending: false })).toBe(true);
+    });
+
+    it('does not stack reconnects while one is already in flight', () => {
+      expect(shouldRefreshLinkCode({ ...stale, refreshPending: true })).toBe(false);
+    });
+
+    it('leaves a fresh code alone', () => {
+      expect(shouldRefreshLinkCode({
+        needsLink: true, linkNoticeAt: 1, now: 2, refreshPending: false,
+      })).toBe(false);
+    });
+  });
+
+  describe('extractLinkCode', () => {
+    it('pulls the code out of the relay notice and stops at the expiry text', () => {
+      expect(extractLinkCode(NOTICE)).toBe('4F2A-9C31');
+    });
+
+    it('returns empty for a body with no code', () => {
+      expect(extractLinkCode('LINK COMPLETE - account linked. Chat activated.')).toBe('');
+      expect(extractLinkCode('')).toBe('');
+      expect(extractLinkCode(null)).toBe('');
+    });
+  });
+
+  describe('linkHintStatus', () => {
+    it('shows the code when one is pinned', () => {
+      expect(linkHintStatus({ pinnedSystemBody: NOTICE, refreshPending: false }))
+        .toEqual({ status: 'code', code: '4F2A-9C31' });
+    });
+
+    it('shows the first-notice wait before any code arrives', () => {
+      expect(linkHintStatus({ pinnedSystemBody: '', refreshPending: false }).status).toBe('waiting');
+    });
+
+    it('tells the player a new code is coming after expiry', () => {
+      expect(linkHintStatus({ pinnedSystemBody: '', refreshPending: true }).status).toBe('expired');
+    });
+  });
+
+  describe('linkGateRender', () => {
+    it('shows the link screen instead of the feed while unlinked', () => {
+      expect(linkGateRender({ connected: true, needsLink: true })).toBe('link-screen');
+    });
+
+    it('shows the feed once linked', () => {
+      expect(linkGateRender({ connected: true, needsLink: false })).toBe('feed');
+    });
+
+    it('connecting outranks the link screen', () => {
+      expect(linkGateRender({ connected: false, needsLink: true })).toBe('connecting');
+    });
+  });
+
+  it('end to end: skip the prompt, reconnect much later, still get a redeemable code', () => {
+    // 14:17 — first boot, notice arrives, player ignores it. (getTimer() is already past 0 by
+    // the time a notice lands; 0 is the "no code pinned" sentinel.)
+    let gate = linkGateOnSystemNotice(NOTICE, 1000);
+    expect(linkGateRender({ connected: true, needsLink: gate.needsLink })).toBe('link-screen');
+
+    // 15:51 — reconnect. Pre-2.9.7 this cleared the gate and dropped the player into the feed.
+    gate = { ...gate, needsLink: linkGateOnReconnect(gate.needsLink) };
+    expect(linkGateRender({ connected: true, needsLink: gate.needsLink })).toBe('link-screen');
+
+    // The 14:17 code is long dead, so the widget asks the relay for a replacement.
+    const now = 95 * 60 * 1000;
+    expect(shouldRefreshLinkCode({ ...gate, now })).toBe(true);
+    gate = { ...gate, pinnedSystemBody: '', refreshPending: true };
+    expect(linkHintStatus(gate).status).toBe('expired');
+
+    // Relay re-pushes on subscribe; the player redeems it and chat opens.
+    gate = linkGateOnSystemNotice(NOTICE, now);
+    expect(linkHintStatus(gate)).toEqual({ status: 'code', code: '4F2A-9C31' });
+    gate = linkGateOnSystemNotice('LINK COMPLETE - account linked. Chat activated.', now + 5000);
+    expect(linkGateRender({ connected: true, needsLink: gate.needsLink })).toBe('feed');
+  });
+});
+
+// Source-level guard. This bug class is invisible to the pure-logic mirror above: it is not a
+// logic error at all, but a *string-pool* error. A NUL-bearing string constant anywhere in the
+// widget SWF poisons every string crossing the ZFE boundary on native Windows — each character
+// arrives NUL-padded. On 2026-08-05 that made the relay see the channel slug as "g\0l\0o\0b\0a\0l",
+// fail its ALL_SLUGS check and reject every send with invalid_channel, and made the "server"
+// world/roster controls unmatchable so SERVER chat could never bind. v2.9.5 introduced it,
+// v2.9.6 removed only the NUL control *prefixes* and left the literals in the escape helpers.
+describe('FCMChatWidget.hx contains no control-byte string literals', () => {
+  const fs = require('fs');
+  const path = require('path');
+  const HX = path.join(
+    __dirname, '..', '..', 'game-mods', 'FCMBridge', 'hudmodloader-chat', 'FCMChatWidget.hx',
+  );
+  const src = fs.readFileSync(HX, 'utf8');
+
+  // Strip line comments so the explanatory notes above the constants don't trip the guard.
+  const code = src.split('\n').map((l) => l.replace(/\/\/.*$/, '')).join('\n');
+
+  it('has no "\\x00" NUL literal', () => {
+    expect(code).not.toMatch(/"\\x00"/);
+  });
+
+  it('has no "\\x1F" unit-separator literal', () => {
+    expect(code).not.toMatch(/"\\x1F"/i);
+  });
+
+  it('builds control bytes through the non-inline ctrlChar() helper instead', () => {
+    expect(code).toMatch(/static\s+var\s+NUL:String\s*=\s*ctrlChar\(0\)/);
+    expect(code).toMatch(/static\s+var\s+UNIT_SEP:String\s*=\s*ctrlChar\(31\)/);
+    expect(code).toMatch(/static\s+function\s+ctrlChar\(code:Int\):String/);
+  });
+
+  it('never marks ctrlChar inline — inlining lets Haxe constant-fold the NUL back in', () => {
+    expect(code).not.toMatch(/static\s+inline\s+function\s+ctrlChar/);
+    expect(code).not.toMatch(/static\s+inline\s+var\s+(NUL|UNIT_SEP)/);
+  });
+
+  it('keeps the world/roster control prefixes printable', () => {
+    expect(code).toMatch(/WORLD_CTRL_PREFIX:String\s*=\s*"FCMCTL\/1\/WORLD:"/);
+    expect(code).toMatch(/WORLD_LEAVE_PREFIX:String\s*=\s*"FCMCTL\/1\/LEAVE"/);
+    expect(code).toMatch(/WORLD_ROSTER_PREFIX:String\s*=\s*"FCMCTL\/1\/ROSTER:"/);
+  });
+
+  it('joins roster names with a printable separator, not the unit separator', () => {
+    expect(code).toMatch(/names\.join\("\|"\)/);
+  });
+});
+
+// Regression for the 2026-08-06 "channel isn't available / never joins server chat" report.
+// readDisplayName() used to jsonEscape() the raw BSUIDataManager value, and startConnect()
+// escaped it AGAIN when building the payload — so a name carrying the UTF-16 NULs the game
+// hands back was stored on the relay as 337 characters instead of 8. Sanitize on read;
+// escape exactly once, at serialization.
+describe('game-UI string sanitization (v2.9.8)', () => {
+  const NUL = String.fromCharCode(0);
+  const UTF16_NAME = 'A' + NUL + 'b' + NUL + 'd' + NUL + 'e' + NUL + 'r' + NUL + 'a' + NUL + 'a' + NUL + 'n';
+
+  it('strips the UTF-16 NUL padding the game returns', () => {
+    expect(readDisplayName(UTF16_NAME)).toBe('Abderaan');
+  });
+
+  it('strips NULs that arrive already escaped as text', () => {
+    expect(readDisplayName('A\\u0000b\\u0000d\\u0000e\\u0000r\\u0000a\\u0000a\\u0000n')).toBe('Abderaan');
+  });
+
+  it('strips the bare u0000 form ZFE emits when its encoding is off', () => {
+    expect(readDisplayName('Au0000bu0000du0000eu0000ru0000au0000au0000n')).toBe('Abderaan');
+  });
+
+  it('leaves an already-clean name untouched', () => {
+    expect(readDisplayName('Abderaan')).toBe('Abderaan');
+  });
+
+  it('never returns an escape sequence — that is the double-escape bug', () => {
+    const out = readDisplayName(UTF16_NAME);
+    expect(out).not.toContain('\\u0000');
+    expect(out).not.toContain('u0000');
+    expect(out).not.toContain(NUL);
+  });
+
+  it('a sanitized name survives one jsonEscape pass unchanged', () => {
+    expect(jsonEscape(readDisplayName(UTF16_NAME))).toBe('Abderaan');
+  });
+
+  it('caps the name at 64 characters', () => {
+    expect(readDisplayName('x'.repeat(200)).length).toBe(64);
+  });
+
+  it('returns empty for a name the game has not populated yet', () => {
+    expect(readDisplayName('')).toBe('');
+    expect(readDisplayName(null)).toBe('');
+    expect(readDisplayName(NUL + NUL)).toBe('');
+  });
+
+  it('bareName sanitizes before stripping the <title decorations', () => {
+    expect(bareName('J' + NUL + 'm' + NUL + 's' + NUL + '<Squeaky-Clean<Floater')).toBe('Jms');
+  });
+
+  it('bareName still removes the roster separator', () => {
+    expect(bareName('Ann|Mandys')).toBe('AnnMandys');
+  });
+
+  it('fcmClean removes control bytes that would corrupt a control frame body', () => {
+    expect(fcmClean('AAA' + NUL + String.fromCharCode(31) + 'BBB')).toBe('AAABBB');
+  });
+});
+
+// The bug that broke in-game sending (v2.9.11 fix). Scaleform GFx returns "" from
+// String.fromCharCode(0). Splitting on "" does not strip -- it explodes the string, inserting
+// the escape between every character. That is what put an escaped slug on the wire.
+describe('replaceIfPresent -- never split on an empty needle (v2.9.11)', () => {
+  const NUL = String.fromCharCode(0);
+  const UNIT_SEP = String.fromCharCode(31);
+
+  it('THE BUG: splitting on an empty needle explodes the string', () => {
+    expect('test'.split('').join('\\u0000')).toBe('t\\u0000e\\u0000s\\u0000t');
+    expect('global'.split('').join('\\u0000')).toBe('g\\u0000l\\u0000o\\u0000b\\u0000a\\u0000l');
+  });
+
+  it('an empty needle is a no-op, not an explosion', () => {
+    expect(replaceIfPresent('test', '', '\\u0000')).toBe('test');
+    expect(replaceIfPresent('global', '', '\\u0000')).toBe('global');
+  });
+
+  it('an ordinary printable needle still replaces normally', () => {
+    expect(replaceIfPresent('a-b', '-', '')).toBe('ab');
+    expect(replaceIfPresent('a|b', '|', '/')).toBe('a/b');
+  });
+
+  it('a control-char needle is refused (v2.9.12) - use stripControlChars for those', () => {
+    expect(replaceIfPresent('a' + NUL + 'b', NUL, '')).toBe('a' + NUL + 'b');
+    expect(replaceIfPresent('a' + UNIT_SEP + 'b', UNIT_SEP, '')).toBe('a' + UNIT_SEP + 'b');
+    expect(stripControlChars('a' + NUL + 'b')).toBe('ab');
+  });
+
+  it('handles a null needle and null input', () => {
+    expect(replaceIfPresent('test', null, 'X')).toBe('test');
+    expect(replaceIfPresent(null, NUL, '')).toBe('');
+  });
+});
+
+describe('control-byte stripping without split() (v2.9.12)', () => {
+  const NUL = String.fromCharCode(0);
+  const UNIT_SEP = String.fromCharCode(31);
+
+  it('a control-character needle is refused, because GFx split() explodes on it', () => {
+    // v2.9.11 only guarded length, so a real NUL still reached split() and nothing changed.
+    expect(replaceIfPresent('global', NUL, '\\u0000')).toBe('global');
+    expect(replaceIfPresent('test', UNIT_SEP, '\\u001F')).toBe('test');
+  });
+
+  it('stripControlChars removes NUL and unit separator', () => {
+    expect(stripControlChars('a' + NUL + 'b' + UNIT_SEP + 'c')).toBe('abc');
+    expect(stripControlChars(NUL + NUL)).toBe('');
+  });
+
+  it('stripControlChars keeps CR/LF/TAB so jsonEscape can still escape them', () => {
+    expect(stripControlChars('a\r\n\tb')).toBe('a\r\n\tb');
+  });
+
+  it('stripControlChars leaves clean text alone', () => {
+    expect(stripControlChars('global')).toBe('global');
+    expect(stripControlChars('hey want to run a raid')).toBe('hey want to run a raid');
+  });
+
+  it('THE FIX: clean slug and body serialise verbatim', () => {
+    expect(jsonEscapeGuarded('global')).toBe('global');
+    expect(jsonEscapeGuarded('events')).toBe('events');
+    expect(jsonEscapeGuarded('test')).toBe('test');
+  });
+
+  it('the exact payload that failed in-game is now correct', () => {
+    const slug = jsonEscapeGuarded('global');
+    const body = jsonEscapeGuarded('test');
+    expect('{"channel":"' + slug + '","targetUserId":"","body":"' + body + '"}')
+      .toBe('{"channel":"global","targetUserId":"","body":"test"}');
+  });
+
+  it('a slug carrying real NULs is stripped, never exploded', () => {
+    expect(jsonEscapeGuarded('g' + NUL + 'l' + NUL + 'o' + NUL + 'b' + NUL + 'a' + NUL + 'l'))
+      .toBe('global');
+  });
+
+  it('still escapes quotes, backslashes and newlines', () => {
+    expect(jsonEscapeGuarded('say "hi"')).toBe('say \\"hi\\"');
+    expect(jsonEscapeGuarded('a\\b')).toBe('a\\\\b');
+    expect(jsonEscapeGuarded('a\nb')).toBe('a\\nb');
   });
 });

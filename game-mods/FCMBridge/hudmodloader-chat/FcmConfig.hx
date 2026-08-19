@@ -88,6 +88,39 @@ class FcmConfig {
 
     public function new() {}
 
+    /** Restore every user setting while retaining the build environment's link destination. */
+    public static function resetToDefaults(current:FcmConfig):FcmConfig {
+        var defaults:FcmConfig = new FcmConfig();
+        if (current != null) defaults.linkUrl = current.linkUrl;
+        return defaults;
+    }
+
+    /** Decode the escaped `text` member returned by ZFE readStorage. */
+    public static function decodeJsonText(s:String):String {
+        if (s == null) return "";
+        var out:StringBuf = new StringBuf();
+        var i:Int = 0;
+        while (i < s.length) {
+            var c:String = s.charAt(i);
+            if (c != "\\" || i + 1 >= s.length) {
+                out.add(c);
+                i++;
+                continue;
+            }
+            var n:String = s.charAt(i + 1);
+            switch (n) {
+                case "n": out.add("\n");
+                case "r": out.add("\r");
+                case "t": out.add("\t");
+                case "\"": out.add("\"");
+                case "\\": out.add("\\");
+                default: out.add("\\" + n);
+            }
+            i += 2;
+        }
+        return out.toString();
+    }
+
     /**
      * Per-channel tag/sub-tab color, mirroring the website's chat_rooms.color.
      * Unknown/empty slug -> channelTagColor (generic fallback). Option A will set the
@@ -310,7 +343,7 @@ class FcmConfig {
         autoHideSec = clampInt(autoHideSec, 0, 600);    // 0 = off, else 1s..10min
     }
 
-    /** Serialize back to the [FCMChat] INI (for F11 Customize persistence via writeChatConfigFile).
+    /** Serialize back to the [FCMChat] INI (for F11 Customize persistence via ZFE storage).
         Outputs EVERY field so a round-trip never drops settings (linkUrl, keys, per-channel colors). */
     public function toIni():String {
         var h = function(c:Int):String return StringTools.hex(c & 0xFFFFFF, 6);
@@ -330,12 +363,12 @@ class FcmConfig {
         s.add("promptColor=" + h(promptColor) + "\n");
         s.add("tabRowColor=" + h(tabRowColor) + "\n");
         s.add("timestampColor=" + h(timestampColor) + "\n");
-        s.add("chanColorGlobal=" + h(chanColorGlobal) + "\n");
-        s.add("chanColorTrade=" + h(chanColorTrade) + "\n");
-        s.add("chanColorEvents=" + h(chanColorEvents) + "\n");
-        s.add("chanColorInfests=" + h(chanColorInfests) + "\n");
-        s.add("chanColorRaids=" + h(chanColorRaids) + "\n");
-        s.add("chanColorServer=" + h(chanColorServer) + "\n");
+        s.add("colorGeneral=" + h(chanColorGlobal) + "\n");
+        s.add("colorTrading=" + h(chanColorTrade) + "\n");
+        s.add("colorEvents=" + h(chanColorEvents) + "\n");
+        s.add("colorInfests=" + h(chanColorInfests) + "\n");
+        s.add("colorRaids=" + h(chanColorRaids) + "\n");
+        s.add("colorServer=" + h(chanColorServer) + "\n");
         s.add("maxMessages=" + maxMessages + "\n");
         s.add("maxSendLen=" + maxSendLen + "\n");
         s.add("pollMs=" + pollMs + "\n");

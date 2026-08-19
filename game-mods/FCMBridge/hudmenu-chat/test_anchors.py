@@ -326,15 +326,28 @@ if widget_src:
           "FCMChatWidget gates SERVER on an acknowledged relay control")
     check("blank worldId ignored; fresh roster session remains authoritative" in widget_src,
           "FCMChatWidget keeps a fresh roster room when legacy worldId is blank")
-    check('"\\x00fcm.world.roster.v1\\x00"' in widget_src and 'names.join("\\x1F")' in widget_src,
-          "FCMChatWidget sends legacy roster controls")
-    check('s = s.split("\\x00").join("\\\\u0000");' in widget_src
-          and 's = s.split("\\x1F").join("\\\\u001F");' in widget_src,
-          "FCMChatWidget JSON-escapes legacy control bytes before ZFE receives them")
+    check('WORLD_ROSTER_PREFIX:String = "FCMCTL/1/ROSTER:"' in widget_src
+          and 'var body:String = WORLD_ROSTER_PREFIX + namesField;' in widget_src,
+          "FCMChatWidget sends printable roster controls")
+    check('NUL:String      = ctrlChar(0)' in widget_src
+          and 'UNIT_SEP:String = ctrlChar(31)' in widget_src,
+          "FCMChatWidget builds compatibility control bytes at runtime, not in the SWF string pool")
+    check('"HUDTools message received bodyLen=" + bodyLen' in widget_src
+          and '"msg from=" + sender + " body="' not in widget_src
+          and '"relay identity available"' in widget_src,
+          "FCMChatWidget diagnostics avoid logging HUD text and relay identifiers")
     check("Shared.AS3.Events.CustomEvent" in widget_src,
           "FCMChatWidget resolves the game-qualified CustomEvent for the edit lock")
     check("startTypeMirror" not in widget_src,
           "FCMChatWidget does not overlap the HUDTools entry with a duplicate typing mirror")
+    check('["cz_reset",   "Reset all settings"' in widget_src,
+          "FCMChatWidget exposes Reset all settings in the Customize submenu")
+    check("_cfg = FcmConfig.resetToDefaults(_cfg);" in widget_src
+          and 'if (id == "cz_reset")' in widget_src,
+          "FCMChatWidget applies the authoritative defaults for the reset action")
+    check('callTop("writeStorage", payload)' in widget_src
+          and 'callTop("readStorage", payload)' in widget_src,
+          "FCMChatWidget persists Customize settings in vendor-scoped ZFE storage")
 
 try:
     widget_ini_src = open(WIDGET_INI, encoding="utf-8").read()

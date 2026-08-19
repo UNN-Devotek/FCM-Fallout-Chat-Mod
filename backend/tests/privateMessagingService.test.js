@@ -24,6 +24,7 @@ const prismaMock = {
   privateConversation: modelStub(),
   privateMessage: modelStub(),
   message: modelStub(),
+  $queryRaw: jest.fn().mockResolvedValue([]),
   $transaction: jest.fn(async (cb) => cb(prismaMock)),
 };
 
@@ -81,6 +82,7 @@ describe('privateMessagingService', () => {
       createdAt: new Date('2026-06-25T15:10:00.000Z'),
     });
     prismaMock.privateMessage.findMany.mockResolvedValue([]);
+    prismaMock.$queryRaw.mockResolvedValue([]);
   });
 
   it('rejects blocked private messages with a generic error', async () => {
@@ -175,11 +177,15 @@ describe('privateMessagingService', () => {
         messages: [],
       },
     ]);
-    prismaMock.privateMessage.count
-      .mockResolvedValueOnce(1)
-      .mockResolvedValueOnce(0);
+    prismaMock.$queryRaw.mockResolvedValue([
+      { conversation_id: 'conv-1', unread_count: 1 },
+    ]);
 
     const conversations = await listPrivateConversations('user-a');
+
+    expect(prismaMock.privateConversation.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 50 }));
+    expect(prismaMock.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(prismaMock.privateMessage.count).not.toHaveBeenCalled();
 
     expect(conversations).toEqual([
       {
@@ -201,6 +207,15 @@ describe('privateMessagingService', () => {
         unreadCount: 0,
       },
     ]);
+  });
+
+  it('caps inbox rows even when a caller requests an excessive limit', async () => {
+    prismaMock.privateConversation.findMany.mockResolvedValue([]);
+
+    await listPrivateConversations('user-a', 5000);
+
+    expect(prismaMock.privateConversation.findMany).toHaveBeenCalledWith(expect.objectContaining({ take: 50 }));
+    expect(prismaMock.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('stores private messages separately from public channel messages', async () => {

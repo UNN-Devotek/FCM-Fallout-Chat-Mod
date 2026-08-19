@@ -178,7 +178,7 @@ const FEATURES = [
   {
     id: 3,
     title: 'COMMUNITY GOVERNED · OPEN MODERATION',
-    body: 'Admins moderate via a browser-based terminal — no client needed. Every message, channel, and report is visible and actionable, with audit logs, auto-mod filters, and role-based access built in.',
+    body: 'Admins moderate via a browser-based terminal — no client needed. Every message, channel, and report is visible and actionable, with audit logs, auto-mod filters, and role-based access built in. To catch hate speech and harassment that word lists miss, message text is screened by OpenAI\'s content-moderation service — the text only, never your username, account, or which channel you posted in.',
   },
   {
     id: 5,

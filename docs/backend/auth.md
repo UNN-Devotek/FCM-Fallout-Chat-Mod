@@ -54,7 +54,7 @@ Every subsequent request from the desktop client includes `X-Auth-Token: <sessio
 
 ### OAuth2 Flow
 
-1. **`GET /auth/discord`** — stores a CSRF state token in Redis (`oauth_state:<state>` → intent JSON, 5-min TTL) and redirects to Discord with scopes `identify guilds.members.read`.
+1. **`GET /auth/discord`** — stores a CSRF state token in Redis (`oauth_state:<state>` → `{ intent, sessionId }`, 5-min TTL), persists the initiating session cookie, and redirects to Discord with scopes `identify guilds.members.read`.
 
 2. **`GET /auth/discord/callback`** — validates the state token (deleted from Redis on use), exchanges the authorization code for an access token, fetches Discord identity and guild membership. Determines the user's role:
    - Compares the user's guild roles against `OWNER_ROLE_ID`, `ADMIN_ROLE_ID`, `MODERATOR_ROLE_ID` environment variables.
@@ -108,7 +108,22 @@ The overlay polls `GET /api/auth/discord-status/:installToken` to check whether 
 
 ---
 
-## 4. Device Keypair Auth (ECDSA P-256)
+## 4. Nexus OAuth2 — Web Link Alternative
+
+`GET /auth/nexus` and `/auth/nexus/callback` implement the optional Nexus OAuth2 + PKCE
+alternative for users who do not use Discord. The one-time Redis state stores both the PKCE
+verifier and the initiating Express session ID; the callback deletes the state and rejects a
+different or missing session. A first Nexus login provisions a lightweight FCM user and a
+`linked_identities(provider='nexus')` row. `/api/link/*` resolves that provider UID server-side,
+so the browser session never supplies an authoritative user ID.
+
+Nexus is feature-flagged: both `NEXUS_OAUTH_CLIENT_ID` and `NEXUS_OAUTH_CLIENT_SECRET` must be set.
+The redirect URI is `NEXUS_OAUTH_REDIRECT_URI` when configured, otherwise it is derived from the
+forwarded request host.
+
+---
+
+## 5. Device Keypair Auth (ECDSA P-256)
 
 **Files:** `services/deviceAuthService.ts`, `middleware/auth.ts` (`requireSignedDevice`), `routes/devices.ts`
 
@@ -126,13 +141,13 @@ The `.NET` client signs in ASN.1 DER format (`DSASignatureFormat.Rfc3279DerSeque
 
 ---
 
-## 5. Admin API Key (`requireAdminKey`)
+## 6. Admin API Key (`requireAdminKey`)
 
 **File:** `middleware/requireAdminKey.ts`
 
 Reads `X-Admin-API-Key` and compares it to `env.ADMIN_API_KEY` using constant-time equality (`utils/constantTimeEquals.ts`). Used exclusively on `/admin/debug/*` endpoints and as a `requireDiscordRole` bypass for CLI tooling. Every use is audit-logged.
 
-## 6. Migration Key (`requireMigrationKey`)
+## 7. Migration Key (`requireMigrationKey`)
 
 **File:** `middleware/requireMigrationKey.ts`
 
@@ -145,7 +160,8 @@ Reads `X-Migration-Key` and gates `/admin/migration/*` (ad-hoc SQL, `pg_dump`, `
 | Key | Value | TTL |
 |-----|-------|-----|
 | `session:<token>` | userId | 24h |
-| `oauth_state:<state>` | JSON `{ intent }` | 5 min |
+| `oauth_state:<state>` | JSON `{ intent, sessionId }` | 5 min |
+| `nexus_oauth_state:<state>` | JSON `{ codeVerifier, sessionId }` | 10 min |
 | `oauth_link_state:<state>` | installToken | 5 min |
 | `discord_link:<installToken>` | JSON Discord identity | 10 min |
 | `ws_ticket:<ticket>` | JSON `{ type, discordId, username }` | 60 s |
@@ -154,7 +170,7 @@ Reads `X-Migration-Key` and gates `/admin/migration/*` (ad-hoc SQL, `pg_dump`, `
 
 ---
 
-## 7. Dual Discord Role Gate (Hosted Dev Environment)
+## 8. Dual Discord Role Gate (Hosted Dev Environment)
 
 **Files:** `services/devAuthService.ts`, `routes/verifyDevRole.ts`, `controllers/verifyDevRoleController.ts`
 

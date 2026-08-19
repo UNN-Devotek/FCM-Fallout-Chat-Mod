@@ -82,7 +82,7 @@
     },
     "coverageDirectory": "coverage",
     "collectCoverageFrom": [
-      "src/**/*.js"
+      "src/**/*.{js,ts}"
     ]
   },
   "allowScripts": {

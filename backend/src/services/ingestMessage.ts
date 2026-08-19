@@ -39,7 +39,7 @@ import { persistMessage } from './messageService';
 import messageQueue from '../queues/messagePersist';
 import { emojifyShortcodes } from '../utils/emoji';
 import { broadcast } from '../websocket/handlers';
-import { nextRelaySeq } from './relay/relaySeq';
+import { tryNextRelaySeq } from './relay/relaySeq';
 import { incrementMessageCount } from '../controllers/healthController';
 import { shadowMute } from './autoModService';
 import { getActiveBlock } from './hudIdentityService';
@@ -122,9 +122,9 @@ export interface IngestResult {
  * @param identityHash - (HUD only) identityHash for block lookup; undefined for WS path.
  * @param relaySeq    - (relay ONLY) pre-computed monotonic cursor from nextRelaySeq().
  *                      Threaded through to finalizeMessage so the persisted row carries
- *                      relay_seq and the single broadcast carries relaySeq. Omitted (and
- *                      therefore NULL) for all non-relay sources — their behavior is
- *                      unchanged.
+ *                      relay_seq and the single broadcast carries relaySeq. When an
+ *                      ordinary producer does not supply one, finalizeMessage makes a
+ *                      best-effort allocation; chat remains available if Redis is down.
  */
 export async function ingestMessage(opts: {
   userId: string;
@@ -244,8 +244,8 @@ export async function ingestMessage(opts: {
     content: content.trim(),
     displayName,
     source,
-    // relaySeq is relay-only — undefined for hud/ws/mcp so finalizeMessage leaves
-    // relay_seq NULL and the broadcast payload omits it (unchanged behavior).
+    // A supplied relay cursor is authoritative. For ordinary producers the
+    // finalizer makes a best-effort allocation without making chat depend on Redis.
     relaySeq,
   });
 
@@ -283,11 +283,12 @@ export async function finalizeMessage(opts: {
   const messageId   = opts.messageId ?? uuidv4();
   const createdAt   = opts.createdAt ?? new Date().toISOString();
   const hasMetadata = 'metadata' in opts;
-  // Assign a relay cursor to EVERY message (was relay/in-game only). The relay pub/sub only forwards
-  // messages carrying a relaySeq, and in-game history filters `relay_seq IS NOT NULL` — so without
-  // this, overlay/web/Discord messages never reach the in-game feed OR history. This unifies all
-  // surfaces (overlay <-> in-game <-> Discord) onto the same channels.
-  const relaySeq = opts.relaySeq ?? await nextRelaySeq();
+  // Ordinary chat gets a cursor when Redis is healthy so it can flow through
+  // the in-game relay. During a Redis incident, omit the optional cursor rather
+  // than turning the dashboard/HUD send path into a hard dependency.
+  const relaySeq = opts.relaySeq !== undefined
+    ? opts.relaySeq
+    : await tryNextRelaySeq();
 
   const payload: Record<string, unknown> = {
     id: messageId,
@@ -300,7 +301,7 @@ export async function finalizeMessage(opts: {
   };
   if (opts.avatarUrl !== undefined) payload.avatarUrl = opts.avatarUrl;
   if (hasMetadata) payload.metadata = opts.metadata ?? null;
-  payload.relaySeq = relaySeq;
+  if (relaySeq !== undefined) payload.relaySeq = relaySeq;
 
   broadcast({ type: 'chat:message', payload });
   incrementMessageCount();
@@ -317,7 +318,7 @@ export async function finalizeMessage(opts: {
     createdAt,
   };
   if (hasMetadata) record.metadata = opts.metadata ?? null;
-  record.relaySeq = relaySeq;
+  if (relaySeq !== undefined) record.relaySeq = relaySeq;
 
   Promise.resolve(messageQueue.add(record as any)).catch((qErr) => {
     logger.warn({ err: qErr, messageId }, '[finalizeMessage] queue failed — falling back to direct persist');

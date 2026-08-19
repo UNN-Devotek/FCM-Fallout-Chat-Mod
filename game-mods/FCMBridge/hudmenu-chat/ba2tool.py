@@ -10,8 +10,9 @@ Pure stdlib; no BSArch/Archive2/Wine needed. Three commands:
   blobswap <old_ba2> <out_ba2> name1=file1 [name2=file2 ...]
       Rebuild a GNRL .ba2 reusing the original records (name/dir hashes,
       ext, name table) but replacing the data blob of each named entry with
-      the given file. Entries not named keep their original data. New blobs
-      are stored uncompressed.
+      the given file. Entries not named keep their original data. If a
+      requested path is absent, a new GNRL record is appended for it. New
+      blobs are stored uncompressed.
 
   create <out_ba2> name1=file1 [name2=file2 ...]
       Create a NEW GNRL .ba2 from scratch containing the given files.
@@ -81,17 +82,53 @@ def _norm(n):
     return n.lower().replace('\\', '/')
 
 
+def _raw_blob(d, record):
+    """Return an archive record as uncompressed bytes."""
+    _, _, _, _, foff, packed, unpacked, _ = record
+    blob = d[foff:foff + (packed if packed else unpacked)]
+    raw = zlib.decompress(blob) if packed else blob
+    if len(raw) != unpacked:
+        raise SystemExit(f'size mismatch in archive record: {len(raw)} != {unpacked}')
+    return raw
+
+
+def _entry_metadata(archive_path):
+    """Return the GNRL metadata for a new archive path."""
+    DEFAULT_FLAGS = 0x00100100
+    SENTINEL = 0xBAADF00D
+    archive_path = archive_path.replace('\\', '/')
+    parts = archive_path.rsplit('/', 1)
+    if len(parts) == 2:
+        dir_part, file_part = parts
+    else:
+        dir_part, file_part = '', parts[0]
+    stem, _, ext_str = file_part.rpartition('.')
+    if not stem:
+        stem = file_part
+        ext_str = ''
+    ext_bytes = (ext_str.lower() + '\x00')[:4].ljust(4, '\x00').encode('latin1')
+    return (
+        _btdx_hash(stem),
+        ext_bytes,
+        _btdx_hash(dir_part) if dir_part else 0,
+        DEFAULT_FLAGS,
+        SENTINEL,
+    )
+
+
+def _empty_record(archive_path):
+    name_hash, ext_bytes, dir_hash, flags, sentinel = _entry_metadata(archive_path)
+    return [name_hash, ext_bytes, dir_hash, flags, 0, 0, 0, sentinel]
+
+
 def extract(ba2, name, out):
     d, ver, typ, recs, names = _read(ba2)
     target = _norm(name)
     for r, nm in zip(recs, names):
         if _norm(nm) == target:
-            _, _, _, _, foff, packed, unpacked, _ = r
-            blob = d[foff:foff + (packed if packed else unpacked)]
-            raw = zlib.decompress(blob) if packed else blob
-            if len(raw) != unpacked:
-                raise SystemExit(f'size mismatch {len(raw)} != {unpacked}')
+            raw = _raw_blob(d, r)
             open(out, 'wb').write(raw)
+            _, _, _, _, _, packed, _, _ = r
             print(f'extracted {nm} -> {out} ({len(raw)} bytes, {"zlib" if packed else "stored"})')
             return
     raise SystemExit(f'not found: {name}. candidates: ' +
@@ -103,7 +140,22 @@ def blobswap(old_ba2, out_ba2, swaps):
     new = {}
     for kv in swaps:
         k, _, v = kv.partition('=')
-        new[_norm(k)] = open(v, 'rb').read()
+        if not k or not v or '=' not in kv:
+            raise SystemExit(f'invalid swap (expected archive/path=file): {kv!r}')
+        key = _norm(k)
+        if key in new:
+            raise SystemExit(f'duplicate swap path: {k}')
+        try:
+            new[key] = open(v, 'rb').read()
+        except OSError as exc:
+            raise SystemExit(f'cannot read swap file {v!r}: {exc}')
+
+    existing = {_norm(name): name for name in names}
+    missing = [(key, blob) for key, blob in new.items() if key not in existing]
+    if missing:
+        names.extend(key for key, _ in missing)
+        recs.extend(_empty_record(name) for name, _ in missing)
+
     fcount = len(recs)
     blobs = []
     for r, nm in zip(recs, names):
@@ -111,8 +163,7 @@ def blobswap(old_ba2, out_ba2, swaps):
         if key in new:
             blobs.append(new[key])
         else:
-            _, _, _, _, foff, packed, unpacked, _ = r
-            blobs.append(d[foff:foff + (packed if packed else unpacked)])
+            blobs.append(_raw_blob(d, r))
     cur = 24 + 36 * fcount
     recbytes, databytes = b'', b''
     for r, blob in zip(recs, blobs):
@@ -124,7 +175,8 @@ def blobswap(old_ba2, out_ba2, swaps):
     out = struct.pack(HDR, b'BTDX', ver, typ, fcount, nameoff_new) + recbytes + databytes + nt
     open(out_ba2, 'wb').write(out)
     swapped = ', '.join(sorted(new.keys()))
-    print(f'wrote {out_ba2} ({len(out)} bytes, {fcount} files; swapped: {swapped})')
+    added = ', '.join(sorted(key for key, _ in missing)) or 'none'
+    print(f'wrote {out_ba2} ({len(out)} bytes, {fcount} files; swapped: {swapped}; added: {added})')
 
 
 def create(out_ba2, entries):
@@ -134,29 +186,17 @@ def create(out_ba2, entries):
     The archive path is used to compute nameHash (stem) and dirHash (directory).
     Flags default to 0x00100100 (standard interface SWF flags from HUDModLoader.ba2).
     """
-    DEFAULT_FLAGS = 0x00100100
-    SENTINEL      = 0xBAADF00D
-
     recs, blobs, names = [], [], []
     for kv in entries:
         archive_path, _, local_file = kv.partition('=')
+        if not archive_path or not local_file or '=' not in kv:
+            raise SystemExit(f'invalid entry (expected archive/path=file): {kv!r}')
         archive_path = archive_path.replace('\\', '/')
-        parts = archive_path.rsplit('/', 1)
-        if len(parts) == 2:
-            dir_part, file_part = parts
-        else:
-            dir_part, file_part = '', parts[0]
-        stem, _, ext_str = file_part.rpartition('.')
-        if not stem:
-            stem = file_part; ext_str = ''
-
-        name_hash = _btdx_hash(stem)
-        dir_hash  = _btdx_hash(dir_part) if dir_part else 0
-        ext_bytes = (ext_str.lower() + '\x00')[:4].ljust(4, '\x00').encode('latin1')
+        name_hash, ext_bytes, dir_hash, default_flags, sentinel = _entry_metadata(archive_path)
 
         blob = open(local_file, 'rb').read()
         blobs.append(blob)
-        recs.append((name_hash, ext_bytes, dir_hash, DEFAULT_FLAGS, SENTINEL))
+        recs.append((name_hash, ext_bytes, dir_hash, default_flags, sentinel))
         names.append(archive_path)
         print(f'  adding {archive_path!r}  nameHash={name_hash:#010x}  dirHash={dir_hash:#010x}  size={len(blob)}')
 
