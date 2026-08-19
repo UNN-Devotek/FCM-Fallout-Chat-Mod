@@ -54,6 +54,17 @@ rejected outright**, not silently degraded — the bot will fail to start.
 Dev and prod are **separate Discord applications**, so this has to be done twice. Doing
 it on dev now does nothing for prod later.
 
+## Step 2b — Enable nickname mirroring for the bot
+
+The supporter star/tag is mirrored into the FCM **guild nickname** as `★ Name` or
+`★ [TAG] Name`. In the dev guild, give the bot role **Manage Nicknames** and place that
+role above `Supporter`, `Overseer's Circle`, and every non-owner account whose nickname
+should be changed. This is independent from Manage Roles.
+
+Discord never permits a bot to rename the **guild owner**, regardless of permission or
+role position. Test this behavior with a non-owner dev supporter account; an owner will
+continue to have the correct chat badge/tag but keeps their Discord nickname unchanged.
+
 ## Step 3 — Set the dev environment variables
 
 In the Dokploy `fcm-dev` compose stack environment:
@@ -123,27 +134,30 @@ Work through all four surfaces before promoting to prod.
 15. Supporter colours and effects unlock — **without reconnecting**.
 16. The supporter badge renders in chat.
 17. Assign `Overseer's Circle`; animated effects and the tag unlock.
+18. On a **non-owner** test supporter, set a tag through `/cosmetics tag` and confirm
+    their dev-guild nickname becomes `★ [TAG] Name`. Edit the tag on the website and
+    confirm it changes there too. Clearing/removing the tier role restores the bare name.
 
 ### Lapse and restore (#230's hard rule)
 
-18. Remove the tier role. Cosmetics revert to default within one reconcile cycle
+19. Remove the tier role. Cosmetics revert to default within one reconcile cycle
     (15 min) or immediately via the gateway event.
-19. The `supporter_entitlements` row still exists with `status='lapsed'` — **not
+20. The `supporter_entitlements` row still exists with `status='lapsed'` — **not
     deleted**.
-20. Re-add the role. The user's **exact previous look** returns with no reconfiguration.
+21. Re-add the role. The user's **exact previous look** returns with no reconfiguration.
 
 ### Overlay
 
-21. Point the DEV overlay at dev (`npm run dev:local` → `electron`). Never touch the
+22. Point the DEV overlay at dev (`npm run dev:local` → `electron`). Never touch the
     packaged `Fallout Chat Mod` process, and never `Fallout76`.
-22. Colours, effects, tags and badges render.
-23. Settings → Appearance → **Disable animated name effects** collapses animated
+23. Colours, effects, tags and badges render.
+24. Settings → Appearance → **Disable animated name effects** collapses animated
     effects to their static form.
 
 ### Regression
 
-24. A user with no `user_cosmetics` row renders exactly as before.
-25. Public-mode chat still leaks no private data.
+25. A user with no `user_cosmetics` row renders exactly as before.
+26. Public-mode chat still leaks no private data.
 
 ### In-game
 
@@ -162,7 +176,8 @@ look exactly.
 
 ## Before prod
 
-Do not carry the dev config across. Prod needs its own roles, its own intent toggle, and
+Do not carry the dev config across. Prod needs its own roles, its own intent toggle, its
+own **Manage Nicknames** permission and role hierarchy for the bot, and
 the full go-live checklist at the bottom of
 [docs/product/supporter-tier.md](../product/supporter-tier.md) — including Discord
 monetization eligibility, payout/tax onboarding, publishing the rewritten Terms and

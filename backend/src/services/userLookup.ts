@@ -24,8 +24,9 @@ export interface LookedUpUser {
   /**
    * True when `username` is a real FO76 character name the user supplied, rather than
    * a placeholder. Mirrors the checks in discordService: 'Wanderer' is the default for
-   * an unlinked account, `pending-*` is assigned when a name fails moderation, and
-   * `Overlay<digits>` is the desktop client's auto-generated fallback.
+ * an unlinked account, `pending-*` is assigned when a name fails moderation,
+ * `discord:<id>` is created by the Discord-link flow, and `Overlay<digits>` is the
+ * desktop client's auto-generated fallback.
    */
   hasRealFo76Name: boolean;
 }
@@ -46,6 +47,7 @@ export function isRealFo76Name(username: string | null | undefined): boolean {
   if (!username) return false;
   if (username === 'Wanderer') return false;
   if (username.startsWith('pending-')) return false;
+  if (username.startsWith('discord:')) return false;
   if (/^Overlay\d+$/.test(username)) return false;
   return true;
 }

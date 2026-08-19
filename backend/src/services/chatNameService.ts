@@ -51,6 +51,7 @@ export async function setChatName(input: {
       discordUsername: true,
       discordDisplayName: true,
       installToken: true,
+      discordId: true,
     },
   });
   if (!user) return { ok: false, reason: 'not_found', message: 'No such user.' };
@@ -81,6 +82,7 @@ export async function setChatName(input: {
       discordUsername: true,
       discordDisplayName: true,
       installToken: true,
+      discordId: true,
     },
   });
 
@@ -111,6 +113,15 @@ export async function setChatName(input: {
     );
   } catch (err) {
     logger.warn({ err, userId: updated.id }, '[chatName] live identity push failed (non-fatal)');
+  }
+
+  // Keep an active supporter's FCM guild nickname in sync with their free chat
+  // name while preserving the supporter star and any validated Overseer tag.
+  if (updated.discordId) {
+    const discordId = updated.discordId;
+    void import('./supporterNicknameService.js')
+      .then(({ syncSupporterNickname }) => syncSupporterNickname(discordId))
+      .catch((err: unknown) => logger.warn({ err, userId: updated.id }, '[chatName] Discord nickname sync failed (non-fatal)'));
   }
 
   return { ok: true, chatName: updated.chatName, changed: true };

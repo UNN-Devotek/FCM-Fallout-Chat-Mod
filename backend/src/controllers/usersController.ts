@@ -524,8 +524,8 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
 
     if (user.discordId && isGenuineFo76Name) {
       try {
-        const { setMemberNickname } = require('../services/discordService');
-        setMemberNickname(user.discordId, effectiveUsername).catch((err: Error) => {
+        const { syncSupporterNickname } = require('../services/supporterNicknameService');
+        syncSupporterNickname(user.discordId).catch((err: Error) => {
           logger.warn({ err, userId: user.id, discordId: user.discordId }, '[register] setMemberNickname fire-and-forget error (non-fatal)');
         });
       } catch (err) {

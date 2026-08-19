@@ -191,7 +191,7 @@ export async function grantEntitlement(opts: {
   source?: EntitlementSource;
   externalId?: string | null;
   notes?: string | null;
-}): Promise<void> {
+}): Promise<boolean> {
   const tier = normalizeTier(opts.tier);
   if (tier === 'none') return lapseEntitlement({ discordId: opts.discordId, reason: 'tier resolved to none' });
 
@@ -236,6 +236,7 @@ export async function grantEntitlement(opts: {
     });
     logger.info({ discordId: opts.discordId, tier, source }, '[supporter] entitlement granted');
   }
+  return changed;
 }
 
 /**
@@ -247,14 +248,14 @@ export async function lapseEntitlement(opts: {
   reason?: string;
   /** 'cancelled' marks a deliberate end; default 'lapsed' is recoverable. */
   status?: Extract<EntitlementStatus, 'lapsed' | 'cancelled'>;
-}): Promise<void> {
+}): Promise<boolean> {
   const nextStatus = opts.status ?? 'lapsed';
   const existing = await prisma.supporterEntitlement.findUnique({
     where: { discordId: opts.discordId },
     select: { tier: true, status: true },
   });
-  if (!existing) return;
-  if (existing.status === nextStatus) return;
+  if (!existing) return false;
+  if (existing.status === nextStatus) return false;
 
   await prisma.supporterEntitlement.update({
     where: { discordId: opts.discordId },
@@ -270,6 +271,29 @@ export async function lapseEntitlement(opts: {
     { discordId: opts.discordId, tier: existing.tier, status: nextStatus, reason: opts.reason },
     '[supporter] entitlement privileges suspended (entitlement retained)',
   );
+  return true;
+}
+
+export interface DiscordRoleSyncResult {
+  tier: SupporterTier;
+  changed: boolean;
+}
+
+/**
+ * Reconcile a member's Discord roles and report whether the effective entitlement
+ * changed. Consumers that update downstream presentation should use this variant so
+ * a 15-minute reconcile does not make needless Discord nickname API calls.
+ */
+export async function syncFromDiscordRolesWithResult(
+  discordId: string,
+  discordRoles: readonly string[] | null | undefined,
+  source: EntitlementSource = 'discord_sub',
+): Promise<DiscordRoleSyncResult> {
+  const tier = tierFromDiscordRoles(discordRoles);
+  const changed = tier === 'none'
+    ? await lapseEntitlement({ discordId, reason: 'tier role no longer held' })
+    : await grantEntitlement({ discordId, tier, source });
+  return { tier, changed };
 }
 
 /**
@@ -282,13 +306,7 @@ export async function syncFromDiscordRoles(
   discordRoles: readonly string[] | null | undefined,
   source: EntitlementSource = 'discord_sub',
 ): Promise<SupporterTier> {
-  const tier = tierFromDiscordRoles(discordRoles);
-  if (tier === 'none') {
-    await lapseEntitlement({ discordId, reason: 'tier role no longer held' });
-  } else {
-    await grantEntitlement({ discordId, tier, source });
-  }
-  return tier;
+  return (await syncFromDiscordRolesWithResult(discordId, discordRoles, source)).tier;
 }
 
 export default {
@@ -298,6 +316,7 @@ export default {
   grantEntitlement,
   lapseEntitlement,
   syncFromDiscordRoles,
+  syncFromDiscordRolesWithResult,
   bustTierCache,
   tierFromDiscordRoles,
   tierRoleIds,
@@ -310,6 +329,7 @@ module.exports = {
   grantEntitlement,
   lapseEntitlement,
   syncFromDiscordRoles,
+  syncFromDiscordRolesWithResult,
   bustTierCache,
   tierFromDiscordRoles,
   tierRoleIds,
