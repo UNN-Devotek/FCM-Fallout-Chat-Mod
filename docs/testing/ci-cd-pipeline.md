@@ -166,6 +166,40 @@ enabled separately under repo **Settings → Security → Dependabot alerts** �
 new advisories land. Note: a Dependabot PR does **not** auto-run CI — like a fork PR it needs a maintainer
 to apply the `ci-approved` label.
 
+### Transitive advisories — `overrides` in `package.json`
+
+Dependabot only opens PRs for **direct** dependencies. When an advisory lands on a *nested transitive*
+(something pulled in by `nodemon`, `glob`, `@electron/asar`, `dir-compare`, `test-exclude`, …) no version
+bump reaches it, and the alert sits open indefinitely. Those are pinned with an npm
+[`overrides`](https://docs.npmjs.com/cli/v11/configuring-npm/package-json#overrides) block in the owning
+workspace's `package.json`.
+
+Use the **version-selector form** (`"pkg@<major>": "<range>"`) whenever a package has several majors live
+in one tree — a blanket `"pkg": "^5"` would force consumers pinned to `^1` onto an incompatible major:
+
+```jsonc
+// cross-platform-overlay/package.json
+"overrides": {
+  "brace-expansion@1": "^1.1.16",   // GHSA-3jxr-9vmj-r5cp — under glob / @electron/asar / dir-compare
+  "brace-expansion@2": "^2.1.4",    // second advisory, range 2.0.0 - 2.1.2
+  "brace-expansion@5": "^5.0.7",    // root resolution
+  "js-yaml@4": "^4.3.0"             // GHSA-52cp-r559-cp3m
+}
+```
+
+> **Do not delete these entries** during dependency cleanups. Each one is holding a transitive off a known
+> advisory; removing it silently reopens the alert. Drop an entry only once the parent package's own
+> resolution has moved past the patched version on its own.
+
+**Prefer bumping the parent when it can reach the fix.** `@hono/node-server` (GHSA-frvp-7c67-39w9, patched
+in 2.0.5) was pinned by `@modelcontextprotocol/sdk@1.29.0` at `^1.19.9`; an override would have violated
+that contract. SDK `1.30.0` widened to `^1.19.9 || ^2.0.5`, so bumping the SDK was the correct fix and no
+override was needed.
+
+**Verify with `npm audit`, not just the GitHub alert list.** The two are not equivalent — the alert feed
+listed only the `<1.1.16` and `>=3.0.0,<5.0.7` `brace-expansion` ranges, while `npm audit` also surfaced a
+second advisory covering `2.0.0 - 2.1.2`. Run `npm audit` in each workspace after any override change.
+
 ## `ci-summary` — no false greens on skipped jobs
 
 ```yaml

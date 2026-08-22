@@ -44,15 +44,33 @@ function makeClient(sends: string[], channelId: string = GENERAL_CHANNEL_ID): Hu
 /**
  * Drain microtask / setImmediate queue so async-void paths in hudPush complete.
  *
- * A single drain is not sufficient for positive delivery assertions: the
- * production functions intentionally launch async work without awaiting it,
- * and the number of async hops can vary with cache and feed state. Use
- * waitFor() for assertions that require a message to have arrived.
+ * Only sound for "let whatever is pending settle, then clear the buffer" and for
+ * NEGATIVE assertions (nothing must arrive). It is NOT sound for asserting that
+ * something DID arrive — use waitFor() for that. See the comment on waitFor().
  */
 function drainAsync(): Promise<void> {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+/**
+ * Poll until `predicate()` is true, or fail after `timeoutMs`.
+ *
+ * hudPushNotify() / registerClient() / switchClientChannel() are all
+ * fire-and-forget: they kick off `void (async () => { ... })()` and return
+ * synchronously, awaiting a channel resolve (and sometimes a feed fetch) before
+ * anything is written to the client. The number of async hops before a line
+ * lands is therefore NOT fixed, so a single drainAsync() is not a guarantee —
+ * it just happens to be enough most of the time on an idle machine.
+ *
+ * Worse, hudPushNotify() fans out by iterating the LIVE `clients` set after its
+ * await. A test that drains once and then unregisters its clients can pull them
+ * out of the registry before the fan-out runs, so the message is delivered to
+ * nobody and the assertion fails. That is what made this suite fail ~50% of runs
+ * under load (issue #430) — a test-harness race, not a product bug: nothing in
+ * production unregisters a client one tick after a message.
+ *
+ * Waiting on the observable condition removes the timing assumption entirely.
+ */
 async function waitFor(
   predicate: () => boolean,
   description: string,
@@ -267,6 +285,14 @@ describe('hudPushNotify: per-connection channel filter', () => {
     _setAggregateFeedFetcher(null);
   });
 
+  /**
+   * registerClient() kicks off an async backfill. Without injected feed fetchers
+   * that backfill calls REAL Prisma against a database that does not exist in the
+   * unit env, and the resulting connection/engine-startup latency is what made
+   * this block time out under CPU load (issue #430) — the sibling describe blocks
+   * already inject these for exactly that reason. Keep every test in here on the
+   * no-DB fetchers so the suite never touches Prisma.
+   */
   function injectNoDbFetchers(): void {
     _setChannelFeedFetcher(async () => []);
     _setAggregateFeedFetcher(async () => []);
@@ -297,6 +323,10 @@ describe('hudPushNotify: per-connection channel filter', () => {
         type: 'chat:message',
         payload: { channelId: GENERAL_CHANNEL_ID, content: 'hello general', username: 'Dev', isPrivate: false },
       });
+      // Wait for the delivery instead of assuming one drain is enough. The
+      // negative assertion below is safe once this resolves: hudPushNotify fans
+      // out to every client in ONE synchronous loop, so if Trading were going to
+      // receive this message it would already have it by now.
       await waitFor(
         () => generalSends.some(l => l.includes('hello general')),
         'General client to receive the General message',
@@ -305,6 +335,7 @@ describe('hudPushNotify: per-connection channel filter', () => {
       assert.ok(generalSends.some(l => l.includes('hello general')), 'General client must receive General message');
       assert.ok(!tradingSends.some(l => l.includes('hello general')), 'Trading client must NOT receive General message');
     } finally {
+      // In a finally so a timeout can't leak registered clients into later tests.
       unregisterClientPublic(generalClient);
       unregisterClientPublic(tradingClient);
     }
@@ -333,6 +364,8 @@ describe('hudPushNotify: per-connection channel filter', () => {
         type: 'chat:message',
         payload: { channelId: TRADING_CHANNEL_ID, content: 'WTS plans', username: 'Seller', isPrivate: false },
       });
+      // Both clients are expected to receive this one (Trading directly, General
+      // as the aggregate feed), so wait on each rather than draining once.
       await waitFor(
         () => tradingSends.some(l => l.includes('WTS plans')),
         'Trading client to receive the Trading message',

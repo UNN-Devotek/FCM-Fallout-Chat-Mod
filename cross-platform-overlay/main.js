@@ -1371,11 +1371,40 @@ function migrateLegacyUserData() {
 // While COLLAPSED (idle-faded), persist the remembered EXPANDED height instead
 // of the shrunken header height — otherwise a reopen / next launch would be
 // stuck at header height. x/y/width still track live.
+// Modal-fit restore snapshot — see the "Temporary modal-fit growth" block below.
+// Declared up here because persistBounds() reads it. Non-null ONLY while we are
+// holding the window inflated for a modal.
+let modalFitPrevBounds = null;
+
+// While temporarily grown to fit a modal (see modalFitPrevBounds), persist the
+// user's real PRE-MODAL size — never the inflated one. Without this the debounced
+// resize save (and the before-quit save) would bake the temporary size in as the
+// user's window size. x/y still track live so moving the window while a modal is
+// open is kept.
+// Last size actually written to overlay-state.json. Seeded from the loaded state
+// at startup so the very first save after launch already has a reference point —
+// otherwise the launch-time setBounds would bank one drift step per run.
+let lastPersistedSize = null;
+
 function persistBounds() {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized()) return;
   const b = mainWindow.getBounds();
-  const height = collapsed ? (expandedHeight || b.height) : b.height;
-  saveState({ bounds: { x: b.x, y: b.y, width: b.width, height } });
+  const width = modalFitPrevBounds ? modalFitPrevBounds.width : b.width;
+  const baseHeight = modalFitPrevBounds ? modalFitPrevBounds.height : b.height;
+  const height = collapsed ? (expandedHeight || baseHeight) : baseHeight;
+
+  // Suppress fractional-scaling round-trip drift (#427): a size within a couple of
+  // px of what we last wrote is rounding noise, not a resize. Persisting it would
+  // feed the next setBounds and grow the window ~1px per cycle, forever. Skipped
+  // while collapsed / modal-inflated, where the value above is already a remembered
+  // size rather than a live measurement.
+  const usingRememberedSize = collapsed || !!modalFitPrevBounds;
+  const size = usingRememberedSize
+    ? { width, height }
+    : overlayCore.resolvePersistedSize({ width, height }, lastPersistedSize);
+
+  lastPersistedSize = { width: size.width, height: size.height };
+  saveState({ bounds: { x: b.x, y: b.y, width: size.width, height: size.height } });
 }
 
 // Clamp a desired bounds rect to the work area of whatever display it lands on,
@@ -1387,6 +1416,54 @@ function clampToWorkArea(desired) {
   const display = screen.getDisplayNearestPoint(point) || screen.getPrimaryDisplay();
   // Pure clamping math lives in overlay-core.js; inject the resolved work area.
   return overlayCore.clampToWorkArea(desired, display.workArea);
+}
+
+// ─── Temporary modal-fit growth (issue #374) ──────────────────────────────────
+// The shell settings / onboarding panels live inside this window, so their
+// `max-width: 96vw` / `max-height: 90vh` caps are relative to the OVERLAY, not
+// the screen. Kept compact for gameplay (down to 320x280) the settings panel is
+// squeezed to ~307x252 and becomes impractical to use. Nothing in the renderer
+// can paint outside its own OS window, so the fix has to happen here: grow the
+// window while a modal is open, then put the user's size back.
+//
+// State lives in `modalFitPrevBounds` (declared above persistBounds, which reads
+// it): it doubles as the restore snapshot and as the "don't persist this size"
+// flag.
+function growWindowForModal() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (modalFitPrevBounds) return;  // already grown — don't stack snapshots
+  // Idle-collapse owns the height while collapsed; opening a modal marks
+  // activity and expands first, so leave the collapsed case alone entirely.
+  if (collapsed) return;
+  // Also stay out of the way of a running collapse/expand animation.
+  // animateHeightTo() freezes the width at animation start and re-applies it on
+  // every frame, so growing mid-flight would be fought and reverted — and worse,
+  // the snapshot we took would be a meaningless interim size that we'd then
+  // "restore" on close. Skipping just means no growth for this one open.
+  if (collapseAnim) return;
+  const cur = mainWindow.getBounds();
+  const point = { x: cur.x, y: cur.y };
+  const display = screen.getDisplayNearestPoint(point) || screen.getPrimaryDisplay();
+  const grown = overlayCore.modalFitBounds(cur, display.workArea);
+  if (!grown) return;  // already big enough (or the display can't fit more)
+  modalFitPrevBounds = { x: cur.x, y: cur.y, width: cur.width, height: cur.height };
+  diag('[modal-fit] growing ' + cur.width + 'x' + cur.height
+    + ' -> ' + grown.width + 'x' + grown.height + ' for modal');
+  try { mainWindow.setBounds(grown); } catch { /* ignore */ }
+}
+
+function restoreWindowAfterModal() {
+  const prev = modalFitPrevBounds;
+  modalFitPrevBounds = null;
+  if (!prev) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  // Restore the SIZE only — keep the live x/y, since the user may have dragged
+  // the window while the modal was open and we must not teleport it back.
+  const cur = mainWindow.getBounds();
+  const target = clampToWorkArea({ x: cur.x, y: cur.y, width: prev.width, height: prev.height });
+  diag('[modal-fit] restoring ' + cur.width + 'x' + cur.height
+    + ' -> ' + target.width + 'x' + target.height + ' after modal');
+  try { mainWindow.setBounds(target); } catch { /* ignore */ }
 }
 
 // ─── Register: POST /api/users → session token ────────────────────────────────
@@ -1530,6 +1607,12 @@ ipcMain.handle('proxy:http', async (_evt, reqDesc) => {
     outHeaders['X-Client-Version'] = APP_VERSION;
     outHeaders['User-Agent'] = APP_UA;
     outHeaders['Origin'] = RELAY_HTTP;
+    // Keep every proxied request from an unpackaged overlay in the same bounded
+    // dev allowance as registration. The native Appearance panel issues a PATCH
+    // for each deliberate picker choice; without this header only registration
+    // received the dev allowance and normal cosmetic testing could trip the
+    // production-sized API/cosmetics buckets. Packaged builds never send it.
+    if (!app.isPackaged) outHeaders['X-Overlay-Dev'] = '1';
     // cookie is never in the allowlist, but delete defensively in case the
     // allowlist is widened in future without re-auditing this call site.
     delete outHeaders['cookie'];
@@ -1541,9 +1624,18 @@ ipcMain.handle('proxy:http', async (_evt, reqDesc) => {
         let data = '';
         res.on('data', (c) => (data += c));
         res.on('end', () => {
-          // Surface CF/edge transient conditions to the renderer's error path so
-          // they route to the retry UI rather than rendering an HTML challenge body.
+          // Keep an RFC 7807 429 from our backend intact. The old implementation
+          // rewrote *every* 429 as an "edge" failure, which hid the actual limiter
+          // and made a normal cosmetics-write cap look like a Cloudflare problem.
+          // Non-JSON 429s are still an edge/proxy condition, so keep their safe
+          // generic message rather than passing an HTML response into the renderer.
           if (res.statusCode === 429) {
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed && typeof parsed === 'object') {
+                return resolve({ status: 429, body: data });
+              }
+            } catch { /* edge response was not JSON */ }
             return resolve({ status: 429, body: JSON.stringify({ detail: 'Rate-limited by edge — please wait a moment before retrying.' }), cfTransient: true });
           }
           if (isCfChallenge(res.statusCode, res.headers, data)) {
@@ -1554,6 +1646,13 @@ ipcMain.handle('proxy:http', async (_evt, reqDesc) => {
       }
     );
     req.on('error', (err) => resolve({ status: 599, body: JSON.stringify({ detail: err.message }) }));
+    // A TCP connection can be established yet never produce a response (for
+    // example a stalled edge connection). Without a deadline the renderer's
+    // Appearance picker awaits this IPC promise forever and remains disabled.
+    // Keep the proxy aligned with registerRelay's established 15s deadline.
+    req.setTimeout(15_000, () => {
+      req.destroy(new Error('Request timed out: the relay did not respond within 15 seconds.'));
+    });
     if (payload) req.write(payload);
     req.end();
   });
@@ -1791,12 +1890,21 @@ ipcMain.on('overlay:set-interactive', (_evt, interactive) => {
 // case) and the window stays in whatever ignore-state click-through left it in,
 // so slider drags never reach the renderer. On close we restore the click-
 // through state. The set-interactive + reassert + blur paths all respect this.
+// Also drives the temporary modal-fit growth (#374): the same signal that pins
+// interactivity tells us a full-size panel is on screen, so grow the window to
+// fit it and restore the user's size on close.
 ipcMain.on('overlay:set-modal', (_evt, open) => {
   modalInteractive = !!open;
   if (!mainWindow || mainWindow.isDestroyed()) return;
   try {
     if (open) setMouseIgnore(false, false);
     else setMouseIgnore(clickThrough, true);
+  } catch { /* ignore */ }
+  // Outside the try above so a setMouseIgnore throw can't strand the window
+  // inflated with no restore.
+  try {
+    if (open) growWindowForModal();
+    else restoreWindowAfterModal();
   } catch { /* ignore */ }
 });
 
@@ -1830,6 +1938,11 @@ ipcMain.on('overlay:show-for-mention', () => {
 ipcMain.handle('window:get-bounds', () => (mainWindow && !mainWindow.isDestroyed()) ? mainWindow.getBounds() : null);
 ipcMain.on('window:set-bounds', (_evt, b) => {
   if (!mainWindow || mainWindow.isDestroyed() || !b) return;
+  // Preset hotkeys are global, so they still fire while a modal is open (unlike
+  // the edge-resize zones, which the shell disables then). A preset carries its
+  // own width/height, so it supersedes our temporary growth: drop the restore
+  // snapshot or closing the modal would undo the preset the user just snapped to.
+  modalFitPrevBounds = null;
   const wa = clampToWorkArea({ x: b.x, y: b.y, width: b.width, height: b.height });
   try { mainWindow.setBounds(wa); } catch { /* ignore */ }
 });
@@ -1842,6 +1955,10 @@ ipcMain.on('window:set-bounds', (_evt, b) => {
 // via the will-resize / resized events, but belt-and-suspenders here too).
 ipcMain.on('overlay:resize-bounds', (_evt, b) => {
   if (!mainWindow || mainWindow.isDestroyed() || !b) return;
+  // A deliberate resize while a modal is open supersedes our temporary growth:
+  // drop the restore snapshot so closing the modal keeps the size the user just
+  // chose instead of snapping back to the pre-modal one.
+  modalFitPrevBounds = null;
   const wa = clampToWorkArea({
     x: typeof b.x === 'number' ? b.x : mainWindow.getBounds().x,
     y: typeof b.y === 'number' ? b.y : mainWindow.getBounds().y,
@@ -3759,6 +3876,10 @@ function createTray() {
 function createWindow() {
   const state = loadState();
   const bounds = clampToWorkArea(state.bounds || { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT });
+  // Seed the drift reference (#427) with the size we are about to open at, so the
+  // first save of the session compares against a real value instead of banking one
+  // drift step per launch.
+  lastPersistedSize = { width: bounds.width, height: bounds.height };
 
   mainWindow = new BrowserWindow({
     width: bounds.width, height: bounds.height, x: bounds.x, y: bounds.y,

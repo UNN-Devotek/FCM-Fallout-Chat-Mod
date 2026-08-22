@@ -148,6 +148,22 @@ export interface Environment {
   // HUD identity hash secret (M6+): HMAC-SHA256 key for identityHash = HMAC(secret, userId)
   // Replaces HUD_IDENTITY_SECRET for account-derived (unforgeable) identity hashes.
   HUD_IDENTITY_HASH_SECRET: string;
+  // ── Supporter tier (cosmetics entitlement) ────────────────────────────────
+  // Discord Server Subscription tier roles. Discord assigns these automatically on
+  // purchase and removes them on cancellation, so the ROLE is the entitlement signal
+  // (see supporterService.resolveSupporterTier). Deliberately NOT part of the
+  // owner/admin/moderator cascade in roleVerificationService — supporter is an
+  // orthogonal axis to EffectiveRole and must never grant moderation privileges.
+  SUPPORTER_ROLE_ID: string;
+  OVERSEER_CIRCLE_ROLE_ID: string;
+  // Master switch for the commercial tier. When false the cosmetics system still runs
+  // (free presets, admin-granted entitlements) but no purchase CTA is surfaced. Lets the
+  // code ship to prod well ahead of the commercial switch-on.
+  SUPPORTER_TIER_ENABLED: boolean;
+  // Public URL of the Discord server shop / subscription page, used by the pricing CTA
+  // and the /cosmetics upsell copy. Point at the WEB purchase path — mobile purchases
+  // net materially less after the app-store cut.
+  DISCORD_SERVER_SHOP_URL: string;
 }
 
 const env: Environment = {
@@ -203,6 +219,10 @@ const env: Environment = {
   OWNER_ROLE_ID: process.env.OWNER_ROLE_ID || '',
   ADMIN_ROLE_ID: process.env.ADMIN_ROLE_ID || '',
   MODERATOR_ROLE_ID: process.env.MODERATOR_ROLE_ID || '',
+  SUPPORTER_ROLE_ID: process.env.SUPPORTER_ROLE_ID || '',
+  OVERSEER_CIRCLE_ROLE_ID: process.env.OVERSEER_CIRCLE_ROLE_ID || '',
+  SUPPORTER_TIER_ENABLED: (process.env.SUPPORTER_TIER_ENABLED || 'false').toLowerCase() === 'true',
+  DISCORD_SERVER_SHOP_URL: process.env.DISCORD_SERVER_SHOP_URL || '',
 
   SESSION_SECRET: process.env.SESSION_SECRET || '',
 
@@ -320,6 +340,36 @@ export function hudIdentitySecretGuardFails(opts: {
   return !opts.hudIdentitySecret || opts.hudIdentitySecret === DEV_DEFAULT_HUD_IDENTITY_SECRET;
 }
 
+/**
+ * Pure predicate: collect the reasons the production startup guard would refuse to
+ * boot the supporter tier (empty array = OK). Exported (and re-attached to
+ * module.exports below) so the unit test asserts the REAL guard rather than a copy.
+ *
+ * The tier is a PAID product: if SUPPORTER_TIER_ENABLED is true but the tier role IDs
+ * are missing, Discord would happily take a subscriber's money while
+ * resolveSupporterTier could never match a role — the buyer pays and receives nothing,
+ * silently and indefinitely. Refuse to boot instead. Same reasoning for the shop URL:
+ * without it the purchase CTA has nowhere to send anyone.
+ *
+ * Only fires when the tier is actually switched on, so the code can ship to production
+ * with SUPPORTER_TIER_ENABLED=false long before the roles exist.
+ */
+export function collectSupporterTierProductionErrors(opts: {
+  nodeEnv: string;
+  supporterTierEnabled: boolean;
+  supporterRoleId: string | undefined | null;
+  overseerCircleRoleId: string | undefined | null;
+  discordServerShopUrl: string | undefined | null;
+}): string[] {
+  if (opts.nodeEnv !== 'production') return [];
+  if (!opts.supporterTierEnabled) return [];
+  const errors: string[] = [];
+  if (!opts.supporterRoleId) errors.push('SUPPORTER_ROLE_ID');
+  if (!opts.overseerCircleRoleId) errors.push('OVERSEER_CIRCLE_ROLE_ID');
+  if (!opts.discordServerShopUrl) errors.push('DISCORD_SERVER_SHOP_URL');
+  return errors;
+}
+
 // Insecure/dev defaults the production MinIO guard rejects. Hoisted to single
 // constants so the guard and any future drift-assertion test share one source of
 // truth (mirrors the DEV_DEFAULT_HUD_IDENTITY_SECRET pattern above).
@@ -385,6 +435,13 @@ if (env.NODE_ENV === 'production') {
   if (!env.DISCORD_CLIENT_SECRET) missing.push('DISCORD_CLIENT_SECRET');
   if (!env.REDIS_PASSWORD && !env.REDIS_URL) missing.push('REDIS_PASSWORD');
   missing.push(...collectMinioProductionErrors(env));
+  missing.push(...collectSupporterTierProductionErrors({
+    nodeEnv: env.NODE_ENV,
+    supporterTierEnabled: env.SUPPORTER_TIER_ENABLED,
+    supporterRoleId: env.SUPPORTER_ROLE_ID,
+    overseerCircleRoleId: env.OVERSEER_CIRCLE_ROLE_ID,
+    discordServerShopUrl: env.DISCORD_SERVER_SHOP_URL,
+  }));
   if (missing.length > 0) {
     console.error(`FATAL: Missing required env vars in production: ${missing.join(', ')}`);
     process.exit(1);
@@ -444,4 +501,5 @@ export default env;
 (env as unknown as Record<string, unknown>).hudIdentitySecretGuardFails = hudIdentitySecretGuardFails;
 (env as unknown as Record<string, unknown>).DEV_DEFAULT_HUD_IDENTITY_SECRET = DEV_DEFAULT_HUD_IDENTITY_SECRET;
 (env as unknown as Record<string, unknown>).collectMinioProductionErrors = collectMinioProductionErrors;
+(env as unknown as Record<string, unknown>).collectSupporterTierProductionErrors = collectSupporterTierProductionErrors;
 module.exports = env;

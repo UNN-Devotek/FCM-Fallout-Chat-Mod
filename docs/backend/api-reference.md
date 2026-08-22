@@ -250,6 +250,63 @@ Player reports and bug reports submitted via the web form.
 
 ---
 
+## Cosmetics & Supporter tier (`/api/cosmetics`, `/api/supporter`)
+
+Chat appearance personalisation and the paid supporter entitlement. Design record:
+[docs/product/supporter-tier.md](../product/supporter-tier.md).
+
+| Method | Path | Auth | Description |
+| ------ | ---- | ---- | ----------- |
+| GET | `/api/supporter/tiers` | public | Pricing data for the marketing page (tier labels, prices, option counts) |
+| GET | `/api/cosmetics/catalog` | requireDashboardAuth | Colour + effect catalog, reserved colours, picker bounds and contrast floor. **Single source of truth** — the web picker, the Discord `/cosmetics` autocomplete and the user guide all render from this rather than re-declaring it |
+| GET | `/api/supporter/status` | requireDashboardAuth | Caller's tier, entitled tier, whether privileges are active, and whether they need to rejoin the Discord |
+| GET | `/api/overlay/cosmetics` | requireAuth (`X-Auth-Token`) | Electron overlay's self-only appearance payload: catalog, resolved/stored cosmetics and active Discord tier. The target comes solely from the install session, never from a renderer-supplied user id. |
+| PATCH | `/api/overlay/cosmetics` | requireAuth (`X-Auth-Token`) + rate limit | Electron overlay's self-only cosmetic update. Uses the same `applyCosmetics()` service and PATCH semantics as the profile and Discord bot. |
+| GET | `/api/users/:id/cosmetics` | requireDashboardAuth | Resolved + stored cosmetics. Self, or moderator+ |
+| PATCH | `/api/users/:id/cosmetics` | requireDashboardAuth + rate limit | Self only. Applies a partial patch |
+| POST | `/api/admin/users/:id/cosmetics/reset` | requireDiscordRole(owner/admin/moderator) | Reset an abusive colour, effect or tag to defaults (#232) |
+
+### PATCH semantics
+
+An **absent** key means "leave unchanged"; an explicit **`null`** means "clear". The two
+are distinct and the service relies on that.
+
+```json
+{ "colorPresetId": "cryo", "effectId": null }
+```
+
+`colorPresetId` and `customColorHex` are mutually exclusive — setting one clears the other.
+
+### Error responses
+
+RFC 7807 as usual, with a machine-readable `code` matching the service's rejection reason:
+
+| Reason | Status | Meaning |
+| --- | --- | --- |
+| `tier_locked` | 403 | Option requires a higher supporter tier |
+| `blacklisted` | 400 | Name/tag rejected by the blacklist or automod. **Deliberately does not say which pattern matched** — that would make the endpoint an oracle for probing the filters |
+| `invalid_tag` | 400 | Length or charset |
+| `invalid_color` | 400 | Unparseable, below the contrast floor, or too close to a reserved colour |
+| `not_found` | 404 | No such user |
+
+The cosmetic appearance PATCH routes are rate-limited at **120 / 5 min per IP**
+(`cosmeticsAppearanceLimiter`; 500 for an unpackaged dev overlay). They do not submit
+candidate display names to blacklist/automod matching, so the free chat-name endpoint
+retains its separate, stricter 20 / 5 min anti-probing bucket.
+
+## Free chat name (`/api/users/:id/chat-name`)
+
+| Method | Path | Auth | Description |
+| ------ | ---- | ---- | ----------- |
+| PATCH | `/api/users/:id/chat-name` | `requireDashboardAuth` + write rate limit | Self only. Sets the user's free account chat name; `{ "chatName": null }` clears it and restores the Fallout 76 / Discord-derived name. No supporter tier or calendar cooldown applies. Names are 2–32 characters after sanitisation and pass the same blacklist/automod checks as other visible identity fields. |
+
+### Note on ownership
+
+`requireDashboardAuth` does **not** enforce ownership, so these controllers scope by the
+caller's `discordId` themselves.
+
+---
+
 ## Commands (`/api/commands`)
 
 | Method | Path | Auth | Description |

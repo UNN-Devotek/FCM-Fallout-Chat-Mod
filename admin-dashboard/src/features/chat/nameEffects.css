@@ -1,0 +1,331 @@
+/* ============================================================================
+ * Supporter name effects.
+ *
+ * Pure CSS on purpose. The chat feed is virtualized and memoized, and the Electron
+ * overlay renders transparently ON TOP of Fallout 76 — every frame of JS animation
+ * work is taken from the game. Driving these from a JS animation library would cost
+ * a per-name animation loop and break the feed's memoization for no visual gain.
+ *
+ * Contract with ChatOverlay:
+ *   --fcm-name-color    the user's resolved colour (inline, per element)
+ *   --fcm-name-outline  the existing multi-layer black halo (inline, per element)
+ *   data-fcm-name       the rendered name, needed by ::before/::after for glitch
+ *
+ * EVERY effect composes with var(--fcm-name-outline) rather than replacing it.
+ * Names sit on a transparent overlay over arbitrary game content and are unreadable
+ * without that halo — dropping it to "let the effect show" makes chat unusable.
+ *
+ * Reduced motion: each animated effect collapses to its static sibling, mirroring
+ * REDUCED_MOTION_FALLBACK in the backend catalog. The viewer opt-out applies the same
+ * collapse via .fcm-no-name-motion, which ChatOverlay adds ALONGSIDE the effect class
+ * on the same element — so those rules are compound selectors (.a.b), not descendant
+ * ones. Either way it stays a class toggle rather than per-element JS.
+ *
+ * None of these render in-game. Scaleform crashes the game outright on any .filters
+ * assignment (FCMChatWidget.hx crash rule #1) and bans StyleSheet, so glow, gradient
+ * and animation are permanently desktop-only. In-game gets solid colour + tag.
+ * ========================================================================== */
+
+/* Shared: effect classes own text-shadow entirely, so ChatOverlay omits its inline
+   textShadow when one is present and passes the outline through the variable. */
+[class*='fcm-name-fx--'] {
+  --fcm-fx-color: var(--fcm-name-color, currentColor);
+  --fcm-fx-outline: var(--fcm-name-outline, 0 0 2px #000);
+}
+
+/* ── Supporter: static ───────────────────────────────────────────────────── */
+
+.fcm-name-fx--glow-soft {
+  text-shadow:
+    0 0 5px color-mix(in srgb, var(--fcm-fx-color) 90%, transparent),
+    0 0 13px color-mix(in srgb, var(--fcm-fx-color) 63%, transparent),
+    0 0 22px color-mix(in srgb, var(--fcm-fx-color) 32%, transparent),
+    var(--fcm-fx-outline);
+}
+
+.fcm-name-fx--glow-hard {
+  text-shadow:
+    0 0 3px var(--fcm-fx-color),
+    0 0 8px color-mix(in srgb, var(--fcm-fx-color) 90%, transparent),
+    0 0 16px color-mix(in srgb, var(--fcm-fx-color) 50%, transparent),
+    var(--fcm-fx-outline);
+}
+
+/* Readability-first option: no glow at all, a heavier face, and a clearly defined
+   dark outline. The one to pick if you play with a bright HUD and find glows noisy. */
+.fcm-name-fx--outline-heavy {
+  font-weight: 900;
+  /* A true solid contour, not a glow. Chromium paints this around the glyph
+     before the fill, so the selected name colour remains unchanged. */
+  -webkit-text-stroke: 1px #000;
+  paint-order: stroke fill;
+  text-shadow:
+    -2px -2px 0 #000, 0 -2px 0 #000, 2px -2px 0 #000,
+    -2px  0   0 #000,                 2px  0   0 #000,
+    -2px  2px 0 #000, 0  2px 0 #000, 2px  2px 0 #000,
+    var(--fcm-fx-outline);
+}
+
+/* Static CRT colour fringing. The selected base colour stays explicit and
+   dominant; the red/cyan offsets are a fringe, not a replacement palette. */
+.fcm-name-fx--chroma-split {
+  color: var(--fcm-fx-color);
+  text-shadow:
+    0 0 3px color-mix(in srgb, var(--fcm-fx-color) 68%, transparent),
+    -1px 0 0 rgba(255, 0, 64, 0.32),
+    1px 0 0 rgba(0, 224, 255, 0.32),
+    var(--fcm-fx-outline);
+}
+
+/* ── Overseer: animated ──────────────────────────────────────────────────── */
+
+@keyframes fcm-glow-pulse {
+  from {
+    text-shadow:
+      0 0 4px color-mix(in srgb, var(--fcm-fx-color) 60%, transparent),
+      0 0 10px color-mix(in srgb, var(--fcm-fx-color) 35%, transparent),
+      var(--fcm-fx-outline);
+  }
+  to {
+    text-shadow:
+      0 0 8px color-mix(in srgb, var(--fcm-fx-color) 100%, transparent),
+      0 0 18px color-mix(in srgb, var(--fcm-fx-color) 68%, transparent),
+      0 0 28px color-mix(in srgb, var(--fcm-fx-color) 34%, transparent),
+      var(--fcm-fx-outline);
+  }
+}
+
+.fcm-name-fx--glow-pulse {
+  text-shadow:
+    0 0 5px color-mix(in srgb, var(--fcm-fx-color) 82%, transparent),
+    0 0 11px color-mix(in srgb, var(--fcm-fx-color) 48%, transparent),
+    var(--fcm-fx-outline);
+  animation: fcm-glow-pulse 2.4s ease-in-out infinite alternate;
+}
+
+/* CRT phosphor: chroma fringing + scanlines + a slow flicker.
+   The flicker animates opacity, which is compositor-friendly, rather than a paint
+   property — it is the one animated part that costs essentially nothing. */
+@keyframes fcm-crt-flicker {
+  0%, 96%, 100% { opacity: 1; }
+  97% { opacity: 0.82; }
+  98% { opacity: 1; }
+  99% { opacity: 0.9; }
+}
+
+.fcm-name-fx--crt-phosphor {
+  position: relative;
+  color: var(--fcm-fx-color);
+  text-shadow:
+    -1px 0 0 rgba(255, 0, 64, 0.32),
+    1px 0 0 rgba(0, 224, 255, 0.32),
+    0 0 6px color-mix(in srgb, var(--fcm-fx-color) 58%, transparent),
+    var(--fcm-fx-outline);
+  animation: fcm-crt-flicker 6s steps(1, end) infinite;
+}
+
+/* Scanlines are drawn as an overlay clipped to the glyphs. pointer-events:none keeps
+   the username click-to-mention affordance working. */
+.fcm-name-fx--crt-phosphor::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 0.28) 0 1px,
+    transparent 1px 3px
+  );
+  mix-blend-mode: multiply;
+}
+
+/* Glitch.
+   A BURST, not a loop: ~250ms of tearing on a 7s cycle. A permanently glitching name
+   in a live chat feed is unreadable and genuinely irritating to sit next to, which
+   defeats the point of buying it. */
+@keyframes fcm-glitch-r {
+  0%, 92%, 100% { clip-path: inset(0 0 0 0); transform: translate(0); opacity: 0; }
+  93% { clip-path: inset(10% 0 62% 0); transform: translate(-2px, -1px); opacity: 0.85; }
+  95% { clip-path: inset(52% 0 22% 0); transform: translate(2px, 1px); opacity: 0.85; }
+  97% { clip-path: inset(28% 0 44% 0); transform: translate(-1px, 1px); opacity: 0.85; }
+  99% { clip-path: inset(0 0 0 0); transform: translate(0); opacity: 0; }
+}
+
+@keyframes fcm-glitch-c {
+  0%, 92%, 100% { clip-path: inset(0 0 0 0); transform: translate(0); opacity: 0; }
+  93% { clip-path: inset(58% 0 18% 0); transform: translate(2px, 1px); opacity: 0.85; }
+  95% { clip-path: inset(14% 0 58% 0); transform: translate(-2px, -1px); opacity: 0.85; }
+  97% { clip-path: inset(38% 0 34% 0); transform: translate(1px, -1px); opacity: 0.85; }
+  99% { clip-path: inset(0 0 0 0); transform: translate(0); opacity: 0; }
+}
+
+.fcm-name-fx--glitch {
+  position: relative;
+  text-shadow: var(--fcm-fx-outline);
+}
+
+.fcm-name-fx--glitch::before,
+.fcm-name-fx--glitch::after {
+  content: attr(data-fcm-name);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  /* Inherit weight/size so the ghost copies register exactly over the real glyphs. */
+  font: inherit;
+  letter-spacing: inherit;
+  white-space: pre;
+  opacity: 0;
+}
+
+.fcm-name-fx--glitch::before {
+  color: rgba(255, 0, 64, 0.9);
+  animation: fcm-glitch-r 7s steps(1, end) infinite;
+}
+
+.fcm-name-fx--glitch::after {
+  color: rgba(0, 224, 255, 0.9);
+  animation: fcm-glitch-c 7s steps(1, end) infinite;
+}
+
+/* Shimmer: a highlight sweeps across the name.
+   background-clip:text needs a transparent fill, so the glyph itself carries no
+   colour — but text-shadow is painted from the glyph GEOMETRY, not its fill, so the
+   outline still renders and the name stays readable. */
+@keyframes fcm-shimmer {
+  from { background-position: -150% 0; }
+  to   { background-position: 250% 0; }
+}
+
+.fcm-name-fx--shimmer {
+  background-image: linear-gradient(
+    100deg,
+    var(--fcm-fx-color) 0%,
+    var(--fcm-fx-color) 38%,
+    #ffffff 50%,
+    var(--fcm-fx-color) 62%,
+    var(--fcm-fx-color) 100%
+  );
+  background-size: 250% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  text-shadow: var(--fcm-fx-outline);
+  animation: fcm-shimmer 3.6s linear infinite;
+}
+
+/* ── Reduced motion / viewer opt-out ─────────────────────────────────────── */
+
+/* Collapse every animated effect to its static sibling. Kept in one place and
+   mirroring REDUCED_MOTION_FALLBACK in backend presets.ts — if one changes, change
+   both. An Overseer under reduced motion still gets a distinctly styled name; they
+   are not silently downgraded to plain text. */
+@media (prefers-reduced-motion: reduce) {
+  .fcm-name-fx--glow-pulse,
+  .fcm-name-fx--crt-phosphor,
+  .fcm-name-fx--glitch,
+  .fcm-name-fx--shimmer {
+    animation: none !important;
+  }
+
+  .fcm-name-fx--glow-pulse,
+  .fcm-name-fx--shimmer {
+    text-shadow:
+      0 0 5px color-mix(in srgb, var(--fcm-fx-color) 90%, transparent),
+      0 0 13px color-mix(in srgb, var(--fcm-fx-color) 63%, transparent),
+      0 0 22px color-mix(in srgb, var(--fcm-fx-color) 32%, transparent),
+      var(--fcm-fx-outline);
+  }
+
+  .fcm-name-fx--crt-phosphor,
+  .fcm-name-fx--glitch {
+    text-shadow:
+      0 0 3px color-mix(in srgb, var(--fcm-fx-color) 68%, transparent),
+      -1px 0 0 rgba(255, 0, 64, 0.32),
+      1px 0 0 rgba(0, 224, 255, 0.32),
+      var(--fcm-fx-outline);
+  }
+
+  .fcm-name-fx--shimmer {
+    background-image: none;
+    color: var(--fcm-fx-color);
+    -webkit-text-fill-color: var(--fcm-fx-color);
+  }
+
+  .fcm-name-fx--glitch::before,
+  .fcm-name-fx--glitch::after,
+  .fcm-name-fx--crt-phosphor::after {
+    display: none;
+  }
+}
+
+/* Viewer opt-out — identical collapse, driven by a class the component adds ALONGSIDE
+   the effect class on the same element (not an ancestor), so these are compound
+   selectors (`.a.b`), not descendant ones. Kept separate from the media query so a
+   user can turn motion off inside FCM without turning it off system-wide. */
+.fcm-name-fx--glow-pulse.fcm-no-name-motion,
+.fcm-name-fx--crt-phosphor.fcm-no-name-motion,
+.fcm-name-fx--glitch.fcm-no-name-motion,
+.fcm-name-fx--shimmer.fcm-no-name-motion {
+  animation: none !important;
+}
+
+.fcm-name-fx--glow-pulse.fcm-no-name-motion,
+.fcm-name-fx--shimmer.fcm-no-name-motion {
+  text-shadow:
+    0 0 5px color-mix(in srgb, var(--fcm-fx-color) 90%, transparent),
+    0 0 13px color-mix(in srgb, var(--fcm-fx-color) 63%, transparent),
+    0 0 22px color-mix(in srgb, var(--fcm-fx-color) 32%, transparent),
+    var(--fcm-fx-outline);
+}
+
+.fcm-name-fx--crt-phosphor.fcm-no-name-motion,
+.fcm-name-fx--glitch.fcm-no-name-motion {
+  text-shadow:
+    0 0 3px color-mix(in srgb, var(--fcm-fx-color) 68%, transparent),
+    -1px 0 0 rgba(255, 0, 64, 0.32),
+    1px 0 0 rgba(0, 224, 255, 0.32),
+    var(--fcm-fx-outline);
+}
+
+.fcm-name-fx--shimmer.fcm-no-name-motion {
+  background-image: none;
+  color: var(--fcm-fx-color);
+  -webkit-text-fill-color: var(--fcm-fx-color);
+}
+
+.fcm-name-fx--glitch.fcm-no-name-motion::before,
+.fcm-name-fx--glitch.fcm-no-name-motion::after,
+.fcm-name-fx--crt-phosphor.fcm-no-name-motion::after {
+  display: none;
+}
+
+/* ── Supporter badge ─────────────────────────────────────────────────────── */
+
+.fcm-name-badge {
+  display: inline-block;
+  /* Match the custom tag's trailing gap so the badge never touches a name. */
+  margin-right: 4px;
+  padding: 0;
+  border: 0;
+  font-size: 0.95em;
+  font-weight: bold;
+  line-height: 1;
+  vertical-align: middle;
+  letter-spacing: normal;
+  text-transform: none;
+  text-shadow: var(--fcm-name-outline, 0 0 2px #000);
+  opacity: 0.95;
+}
+
+.fcm-name-badge--supporter { color: #7ea8f7; }
+.fcm-name-badge--overseer  { color: #fd4da6; }
+
+/* Overseer custom tag, rendered before the name. */
+.fcm-name-tag {
+  margin-right: 4px;
+  font-size: 0.82em;
+  font-weight: bold;
+  opacity: 0.9;
+  text-shadow: var(--fcm-name-outline, 0 0 2px #000);
+}

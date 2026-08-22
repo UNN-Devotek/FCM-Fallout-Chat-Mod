@@ -7,8 +7,12 @@ import logger from '../config/logger';
 import voiceService from './voiceService';
 import reactionRoleService from './reactionRoleService';
 import ticketService from './ticketService';
+import supporterSyncService from './supporterSyncService';
+import cosmeticsCommandService from './cosmeticsCommandService';
+import chatNameCommandService from './chatNameCommandService';
 import { getEntry, bestMatch } from './wikiCatalogService';
 import { canon } from '../utils/textCanon';
+import { buildOverLengthDm } from '../utils/overLengthDm';
 import {
   RELEASE_PING,
   downloadPageUrl,
@@ -201,7 +205,12 @@ async function resolveAppMentions(text: string): Promise<string> {
     for (const n of [u.username, u.discordUsername, u.discordDisplayName]) {
       if (!n) continue;
       const trimmed = n.trim();
-      if (trimmed.length < 2 || trimmed === 'Wanderer' || trimmed.startsWith('pending-')) continue;
+      if (
+        trimmed.length < 2
+        || trimmed === 'Wanderer'
+        || trimmed.startsWith('pending-')
+        || trimmed.startsWith('discord:')
+      ) continue;
       candidates.push({ name: trimmed, id: u.discordId });
     }
   }
@@ -331,6 +340,12 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.GuildVoiceStates, // temp "join-to-create" voice channels
       GatewayIntentBits.GuildMessageReactions, // reaction roles
+      // PRIVILEGED intent. Required for guildMemberUpdate/guildMemberRemove, which is
+      // how supporterSyncService learns that Discord granted or removed a Server
+      // Subscription tier role. Must be enabled in the Discord Developer Portal for
+      // EACH application — dev and prod are separate apps, so this is done twice.
+      // Without it the gateway connection is rejected outright, not silently degraded.
+      GatewayIntentBits.GuildMembers,
     ],
     // Partials let reaction events fire for messages posted before the last
     // restart (uncached) — required for reaction roles to survive a redeploy.
@@ -342,6 +357,9 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
   voiceService.register(discordClient);
   reactionRoleService.register(discordClient);
   ticketService.register(discordClient);
+  supporterSyncService.register(discordClient);
+  cosmeticsCommandService.register(discordClient);
+  chatNameCommandService.register(discordClient);
 
   // Invalidate the emoji cache whenever the guild's emoji set changes.
   // Lazy-require to avoid circular deps (discordEmojisController imports us too).
@@ -397,6 +415,7 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
 
     if (!channelId) return;
 
+    // (see buildOverLengthDm above for the DM copy-back behaviour)
     // Hard length cap for the bridged channel. Messages of MORE than
     // MAX_RELAY_CHARS characters are deleted and NOT relayed to the in-game
     // overlay — long posts flood the small transparent overlay window and bypass
@@ -407,16 +426,17 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
     // the **Manage Messages** permission in this channel.
     const MAX_RELAY_CHARS = 255;
     if (msg.content && msg.content.length > MAX_RELAY_CHARS) {
+      // Capture the content BEFORE deleting. discord.js keeps `content` on the
+      // local object after delete(), but reading it first makes that explicit
+      // rather than load-bearing on library behaviour.
+      const originalContent = msg.content;
       try {
         await msg.delete();
       } catch (err) {
         logger.warn({ err, channelId: msg.channelId }, 'Over-length relay message: delete failed (bot missing Manage Messages?)');
       }
       try {
-        await msg.author.send(
-          `Your message in the in-game chat channel was too long and was not posted. ` +
-          `Please keep it to ${MAX_RELAY_CHARS} characters or fewer (yours was ${msg.content.length}).`,
-        );
+        await msg.author.send(buildOverLengthDm(originalContent, MAX_RELAY_CHARS));
       } catch (err) {
         logger.warn({ err, userId: msg.author.id }, 'Over-length relay message: DM to author failed (DMs likely closed)');
       }
@@ -605,14 +625,17 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
     try {
       const linked = await prisma.user.findFirst({
         where: { discordId: msg.author.id },
-        select: { id: true, username: true },
+        select: { id: true, username: true, chatName: true },
       });
       const hasFo76Name =
-        !!linked?.username && linked.username !== 'Wanderer' && !linked.username.startsWith('pending-');
+        !!linked?.username
+        && linked.username !== 'Wanderer'
+        && !linked.username.startsWith('pending-')
+        && !linked.username.startsWith('discord:');
 
-      if (linked && hasFo76Name) {
+      if (linked && (hasFo76Name || linked.chatName)) {
         relayUserId = linked.id;
-        relayUsername = linked.username; // FO76 name
+        relayUsername = linked.chatName ?? linked.username;
       } else {
         // Synthetic Discord-relay user. username = `pending-discord-<id>` so
         // resolveDisplayName() skips it and falls through to discordDisplayName.
@@ -1207,7 +1230,11 @@ async function postModAlert(embed: EmbedData): Promise<void> {
  *   - If nickname is null/empty, the member's nickname is CLEARED (reverts to
  *     their Discord username). We pass the FO76 name, so this is intentional.
  */
-async function setMemberNickname(discordId: string, nickname: string): Promise<boolean> {
+async function setMemberNickname(
+  discordId: string,
+  nickname: string,
+  reason = 'FO76 character name sync',
+): Promise<boolean> {
   if (!discordClient || discordStatus !== 'connected') {
     logger.debug({ discordId }, '[nickname-sync] bot not connected, skipping nickname set');
     return false;
@@ -1219,10 +1246,20 @@ async function setMemberNickname(discordId: string, nickname: string): Promise<b
   }
   try {
     const guild = await discordClient.guilds.fetch(guildId);
+    // Discord never lets a bot rename the guild owner, even when the bot has every
+    // relevant permission. Treat it as an expected no-op rather than a 50013 error.
+    if (guild.ownerId === discordId) {
+      logger.debug({ discordId }, '[nickname-sync] skipped — Discord does not permit renaming the guild owner');
+      return false;
+    }
     const member = await guild.members.fetch(discordId);
-    // Truncate to Discord's 32-char nickname limit.
-    const truncated = nickname.slice(0, 32);
-    await member.setNickname(truncated, 'FO76 character name sync');
+    // Discord's 32-character cap applies to Unicode characters, not UTF-16 units.
+    const truncated = Array.from(nickname).slice(0, 32).join('');
+    if ((member.nickname ?? '') === truncated) {
+      logger.debug({ discordId, nickname: truncated }, '[nickname-sync] nickname already current');
+      return true;
+    }
+    await member.setNickname(truncated || null, reason);
     logger.info({ discordId, nickname: truncated }, '[nickname-sync] set guild member nickname');
     return true;
   } catch (err: any) {

@@ -14,6 +14,7 @@ const {
   repairChannel,
   repairBody,
   readWireDisplayName,
+  readWireString,
 } = require('../dist/services/relay/wireSanitize');
 
 const NUL = String.fromCharCode(0);
@@ -149,5 +150,18 @@ describe('short bodies on a corroborated frame', () => {
 
   it('still leaves a short body alone when the channel was clean', () => {
     expect(repairBody('hu0000i', false)).toBe('hu0000i');
+  });
+});
+
+describe('readWireString', () => {
+  it('repairs a mangled value', () => {
+    expect(readWireString(pad('global', 'u0000'))).toBe('global');
+  });
+
+  it('returns empty for non-strings', () => {
+    expect(readWireString(undefined)).toBe('');
+    expect(readWireString(null)).toBe('');
+    expect(readWireString(42)).toBe('');
+    expect(readWireString({})).toBe('');
   });
 });

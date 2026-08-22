@@ -41,6 +41,7 @@ import {
   mergeKeybindDefaults,
   type ResizeEdge,
 } from './shell-core';
+import { mountSupporterAppearance } from './supporterAppearance';
 
 // ── Settings model (desktop-parity superset) ──────────────────────────────────
 
@@ -65,13 +66,23 @@ export interface ShellSettings {
   backgroundOpacity: number; // 0..1 extra background dim
   scanlineIntensity: number; // 0..1 (default 0.08)
   fadeWhenIdle: boolean;     // default true
+  showTypingWhenCollapsed: boolean; // default FALSE — opt in; see issue #420
+  notifySoundEnabled: boolean;      // default FALSE — opt in; see issue #437
+  notifySoundVolume: number;        // 0..1
   // Seconds of inactivity before collapsing to the header strip (5..120, default 25).
   idleCollapseSeconds: number;
   // Per-message timestamps rendered in the viewer's local time. Mirrored to WEB_SETTINGS_KEY.
   showTimestamps: boolean;
   timestampFormat: '12h' | '24h';
+  // VIEWER-side opt-out for animated supporter name effects (pulse/CRT/glitch/shimmer).
+  // Nothing to do with your own tier — it controls what YOU see from other people, for
+  // anyone who finds motion in the feed distracting while playing but does not want to
+  // turn on system-wide reduced motion. Collapses each animated effect to its static
+  // sibling via a single root class, so supporters still look distinct.
+  disableNameMotion: boolean;
   blockedUsers: string[];
   channelFilters: string[];
+  notifyKeywords: string[];
   // Electron globalShortcut accelerator strings.
   keybinds: {
     toggle: string;
@@ -134,11 +145,16 @@ export const DEFAULT_SHELL_SETTINGS: ShellSettings = {
   // CRT texture rather than heavy bars.
   scanlineIntensity: 0.08,
   fadeWhenIdle: true,
+  showTypingWhenCollapsed: false,
+  notifySoundEnabled: false,
+  notifySoundVolume: 0.5,
   idleCollapseSeconds: IDLE_COLLAPSE_SECONDS_DEFAULT,
   showTimestamps: false,
   timestampFormat: '12h',
+  disableNameMotion: false,
   blockedUsers: [],
   channelFilters: [],
+  notifyKeywords: [],
   // Single-key defaults from the nav cluster (not used by FO76 gameplay binds).
   // Global single keys are intercepted before the game sees them.
   keybinds: {
@@ -424,6 +440,14 @@ function applyCollapsedHidden() {
   }
 }
 
+function emitCollapseState(isCollapsed: boolean): void {
+  try {
+    window.dispatchEvent(new CustomEvent('fcm-overlay-collapse-state', {
+      detail: { collapsed: isCollapsed },
+    }));
+  } catch { /* non-fatal */ }
+}
+
 function setCollapsed(next: boolean, focusInput = false) {
   if (collapsed === next) return;
   lastTransitionMs = Date.now();
@@ -440,8 +464,14 @@ function setCollapsed(next: boolean, focusInput = false) {
     // absolutely-positioned floating UI (e.g. the party member panel) that
     // would otherwise hang over the collapsed header strip.
     try { window.dispatchEvent(new CustomEvent('fcm-overlay-collapsed')); } catch { /* non-fatal */ }
+    // Separate STATE event (fires both directions). Kept distinct from
+    // 'fcm-overlay-collapsed' above, which existing listeners treat as a
+    // one-way 'close your floating panels' signal — firing that on expand too
+    // would start closing panels when the user comes back.
+    emitCollapseState(true);
   } else {
     collapsed = false;
+    emitCollapseState(false);
     // Keep 'collapsed' on root through the 240ms expand animation — removing it
     // immediately flashes the header from dark to transparent while the window
     // is still at header height. Strip it only after the window is full-size.
@@ -1381,6 +1411,23 @@ function buildSettingsPanel() {
     }));
     hint(s, 'Pick channels to hide from the feed. Click ✕ on a chip to show it again.');
 
+    s.append(chipField({
+      label: 'Notify keywords',
+      placeholder: 'Add a word to watch for…',
+      get: () => currentSettings.notifyKeywords,
+      set: (v) => commit({ notifyKeywords: v }),
+      candidates: () => [],
+      allowCustom: true,
+    }));
+    hint(s, 'Messages containing one of these words are highlighted like an @mention of you, and badge the channel. Your own names always trigger, whatever is listed here. Click ✕ on a chip to remove one.');
+
+    toggle(s, 'Play a sound on mentions and keywords', () => currentSettings.notifySoundEnabled, v => commit({ notifySoundEnabled: v }));
+    hint(s, 'Plays a short ping when a message @mentions you or matches one of your notify keywords. Rate-limited to once every few seconds so a busy channel cannot spam it.');
+    slider(s, 'Notification volume', 0, 1, 0.01,
+      () => currentSettings.notifySoundVolume,
+      v => commit({ notifySoundVolume: v }),
+      v => `${Math.round(v * 100)}%`);
+
     // ── POSITION PRESETS (desktop SettingsForm.cs parity) ──
     heading(s, 'POSITION PRESETS');
     hint(s, 'Move + size the overlay, then click SET POS to capture it into a preset. Press the preset’s hotkey to snap the overlay back to that position.');
@@ -1474,6 +1521,8 @@ function buildSettingsPanel() {
 
     toggle(s, 'Show footer hints (keybind bar at the bottom)', () => currentSettings.showHints, v => commit({ showHints: v }));
     toggle(s, 'Auto-hide chat when idle (collapse to header)', () => currentSettings.fadeWhenIdle, v => commit({ fadeWhenIdle: v }));
+    toggle(s, 'Show typing indicator while collapsed', () => currentSettings.showTypingWhenCollapsed, v => commit({ showTypingWhenCollapsed: v }));
+    hint(s, 'Keeps "X is typing…" visible in the tab strip while the chat is collapsed, so you can tell someone is replying without expanding it.');
     slider(
       s, 'Auto-hide delay', IDLE_COLLAPSE_SECONDS_MIN, IDLE_COLLAPSE_SECONDS_MAX, 1,
       () => currentSettings.idleCollapseSeconds,
@@ -1509,6 +1558,20 @@ function buildSettingsPanel() {
       fmtRow.style.display = v ? '' : 'none';
     });
     s.append(fmtRow);
+
+    // Viewer-side control over OTHER people's animated name effects. Independent of
+    // your own tier — it exists for anyone who finds motion in the feed distracting
+    // mid-game but does not want system-wide reduced motion turned on. Animated
+    // effects collapse to their static equivalent, so supporters still look distinct.
+    toggle(s, 'Disable animated name effects', () => currentSettings.disableNameMotion, v => {
+      commit({ disableNameMotion: v });
+    });
+    hint(s, 'Supporter names with moving effects render as a static version instead.');
+
+    // The native desktop settings are a first-class cosmetics surface, not a link
+    // back to the website. It reads the exact catalog + Discord entitlement state
+    // and writes through the same backend service as the Profile panel and bot.
+    mountSupporterAppearance(s);
   }
 
   // ── Footer ──

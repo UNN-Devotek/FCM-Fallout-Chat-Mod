@@ -47,6 +47,7 @@ import nameBlacklistRouter from './routes/nameBlacklist';
 import { loadBlacklist, subscribeBlacklistUpdates } from './services/nameBlacklistService';
 import adminStatusRouter from './routes/adminStatus';
 import commandsRouter from './routes/commands';
+import cosmeticsRouter from './routes/cosmetics';
 import wikiRouter from './routes/wiki';
 import campRouter from './routes/camp';
 import playerReportsRouter from './routes/playerReports';
@@ -679,7 +680,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
     // discordId is now the canonical identity anchor — if ANY row owns it we merge into it.
     const existingAccount = await prisma.user.findFirst({
       where: { discordId: discordUser.id, NOT: { installToken } },
-      select: { id: true, username: true },
+      select: { id: true, username: true, chatName: true },
     });
 
     if (existingAccount) {
@@ -707,6 +708,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
           discordUser.username,
           discordDisplayName,
           installToken,
+          existingAccount.chatName,
         );
       } catch (err) {
         logger.warn({ err, userId: existingAccount.id }, 'Discord link reclaim: refreshClientIdentity failed (non-fatal)');
@@ -780,7 +782,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
         discordDisplayName,
         discordAuthedAt: new Date(),
       },
-      select: { id: true, username: true },
+      select: { id: true, username: true, chatName: true },
     });
 
     // Push updated identity to any open WS sessions so rendered names update live.
@@ -791,6 +793,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
         discordUser.username,
         discordDisplayName,
         installToken,
+        linkedUser.chatName,
       );
     } catch (err) {
       logger.warn({ err, userId: linkedUser.id }, 'Discord link: refreshClientIdentity failed (non-fatal)');
@@ -844,7 +847,7 @@ app.get('/api/auth/discord-status/:installToken', async (req: Request, res: Resp
     // clobbering it with a stale local placeholder name.
     const user = await prisma.user.findUnique({
       where: { installToken },
-      select: { username: true, discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true, installToken: true },
+      select: { username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true, installToken: true },
     });
     const isPlaceholder = (u?: string | null) => !u || u === 'Wanderer' || u.startsWith('pending-');
     const fo76Username = user && !isPlaceholder(user.username) ? user.username : null;
@@ -1152,7 +1155,7 @@ app.get('/auth/ws-ticket', apiLimiter, async (req: Request, res: Response) => {
 
   const discordUser = (req.session as any).discordUser;
   // Role gate: only privileged staff may open admin-observer sockets.
-  const { isPrivilegedRole } = await import('./services/userRoleService').then(m => m.default ?? m);
+  const { isPrivilegedRole } = await import('./services/userRoleService.js').then(m => m.default ?? m);
   if (!isPrivilegedRole(discordUser.role)) {
     res.status(403).json({ data: null });
     return;
@@ -1349,6 +1352,9 @@ app.use('/api/releases', releasesRouter);
 app.use('/api/admin/name-blacklist', nameBlacklistRouter);
 app.use('/api/admin/status', adminStatusRouter);
 app.use('/api/commands', commandsRouter);
+// Cosmetics + supporter tier. Mounted at /api so the router owns its own sub-paths
+// (/cosmetics/catalog, /users/:id/cosmetics, /supporter/*, /admin/users/:id/...).
+app.use('/api', cosmeticsRouter);
 // MCP token self-service (Discord OAuth session auth — dashboard users manage their own tokens)
 app.use('/api/me/mcp-tokens', mcpTokensRouter);
 // MCP tool API (dev env) — protected by MCP token auth, NOT behind Cloudflare Access
@@ -1478,7 +1484,7 @@ app.get('/admin/debug/presence-audit', apiLimiter, requireAdminKey, async (req: 
       return;
     }
     const limit = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? '20', 10) || 20));
-    const { getRedisClient } = await import('./config/redis');
+    const { getRedisClient } = await import('./config/redis.js');
     const redis = await getRedisClient();
     const raws = await redis.lRange(`presence:audit:${userId}`, 0, limit - 1);
     const items = raws.map(r => { try { return JSON.parse(r); } catch { return { parseError: true, raw: r }; } });
@@ -1492,7 +1498,7 @@ app.get('/admin/debug/presence-audit', apiLimiter, requireAdminKey, async (req: 
 //   POST /admin/debug/clear-rate-limit?key=<...>  — clears a specific key
 app.post('/admin/debug/clear-rate-limit', apiLimiter, requireAdminKey, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { getRedisClient } = await import('./config/redis');
+    const { getRedisClient } = await import('./config/redis.js');
     const redis = await getRedisClient();
     const specificKey = (req.query.key as string | undefined)?.trim();
     let cleared = 0;
@@ -1565,14 +1571,14 @@ app.post('/admin/debug/set-username', apiLimiter, requireAdminKey, async (req: R
     const updated = await prisma.user.update({
       where: { id: userId },
       data: { username: trimmed },
-      select: { id: true, username: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true },
+      select: { id: true, username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true },
     });
     // Refresh any live WS session's cached displayName so chat renders the
     // new name instantly without requiring the overlay to reconnect.
     try {
       const { refreshClientIdentity } = require('./websocket/handlers');
       if (typeof refreshClientIdentity === 'function') {
-        refreshClientIdentity(updated.id, updated.username, updated.discordUsername, updated.discordDisplayName, updated.installToken);
+        refreshClientIdentity(updated.id, updated.username, updated.discordUsername, updated.discordDisplayName, updated.installToken, updated.chatName);
       }
     } catch { /* non-fatal */ }
     res.json({ data: updated });

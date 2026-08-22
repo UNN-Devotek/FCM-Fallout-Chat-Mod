@@ -62,15 +62,22 @@ Baseline-denylist, `word_filter`, and name-blacklist regexes are compiled with t
 
 ### Baseline Denylists
 
-`autoModService.ts` now keeps two hardcoded baseline lists:
+`autoModService.ts` keeps three hardcoded baseline lists:
 
-- `BASELINE_CHAT_DENYLIST_PHRASES` — blocks hate speech / slurs plus a small set of severe abuse terms (`pedo`, `pedophile`, `rape`, `rapist`) in chat when an explicit target is present. Identifiers use the same terms context-free.
-- `BASELINE_IDENTIFIER_DENYLIST_PHRASES` — used by `findProhibitedPhrase()` for usernames / party names and stays stricter than chat by also rejecting explicit profanity terms there.
+- `BASELINE_CHAT_DENYLIST_PHRASES` — **unambiguous** hate speech / slurs plus a small set of severe abuse terms (`pedo`, `pedophile`, `rape`, `rapist`). Always blocks, in chat **and** in identifiers.
+- `TARGETED_ATTACK_DENYLIST_PHRASES` — ordinary profanity (`fuck`, `shit`, `bastard`, and related terms) blocks chat only when the message explicitly targets a person.
+- `CONTEXT_AMBIGUOUS_PHRASES` — terms that are slurs when aimed at a person but ordinary words in almost all game chat: `cracker`, `oreo`, `slant`, `redskin`, `ho`, `sissy`, `bitch`. These **do not block chat**, but they **do** block identifiers.
+- `BASELINE_IDENTIFIER_DENYLIST_PHRASES` — used by `findProhibitedPhrase()` for usernames / party names. Spreads in *both* lists above, then adds explicit profanity (`fuck`, `shit`, `cock`, …) that chat allows.
 
-Ordinary profanity such as `fuck`, `shit`, or `bastard` is intentionally **not** in the chat baseline anymore, so common cussing is no longer hard-blocked before the rule engine runs.
-Listed/base terms without an explicit target are allowed in chat so ordinary
-cussing and discussion do not become violations. This change does not try to
-solve every deliberate slur-evasion variant. The identifier path remains strict.
+**The governing policy: cussing is fine, targeting people is not.**
+
+Ordinary profanity (`fuck`, `shit`, `damn`, `ass`, `bastard`) is intentionally **not** in the chat baseline, so common cussing is never hard-blocked before the rule engine runs.
+
+Context-ambiguous terms were moved out of the chat baseline because word-boundary matching cannot distinguish `graham cracker` (a real Fallout food item), `the wall is slanted`, `redskin potatoes`, `heave ho`, or `this quest is a bitch` from a targeted insult — and hard-blocking them was the dominant source of false positives. Targeted harassment using those words is still actionable through reports and normal moderation; it is simply no longer auto-blocked on the word alone.
+
+> **Do not "simplify" `BASELINE_IDENTIFIER_DENYLIST_PHRASES` by dropping the `...CONTEXT_AMBIGUOUS_PHRASES` spread.** That spread is the only thing keeping those terms blocked in usernames and party names, where there is no innocent context. `tests/autoModService.test.js` has regression cases that fail if it is removed.
+
+Listed slur and hate-speech terms still block normally. This does not try to solve every deliberate slur-evasion variant.
 
 ### `word_filter` Table
 

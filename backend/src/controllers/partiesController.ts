@@ -1488,7 +1488,7 @@ export async function adminDeletePartyMessage(req: Request, res: Response, next:
 
 async function checkIsStaff(userId: string): Promise<boolean> {
   try {
-    const { getEffectiveRole } = await import('../services/userRoleService');
+    const { getEffectiveRole } = await import('../services/userRoleService.js');
     const role = await getEffectiveRole(userId);
     return ['owner', 'admin', 'moderator'].includes(role);
   } catch {

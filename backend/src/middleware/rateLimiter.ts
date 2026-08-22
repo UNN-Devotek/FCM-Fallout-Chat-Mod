@@ -31,6 +31,16 @@ function devCap(req: any, normal: number, dev: number): number {
   return isDevOverlay(req) ? dev : normal;
 }
 
+/**
+ * Global API allowance. The dev value is deliberately still bounded: the
+ * X-Overlay-Dev header is convenient for an unpackaged test client but is not a
+ * credential. It just prevents a local/dev overlay from exhausting its small
+ * normal bucket while exercising a settings picker.
+ */
+function apiLimitCap(req: any): number {
+  return devCap(req, req.headers['x-auth-token'] ? 100 : 500, req.headers['x-auth-token'] ? 500 : 1000);
+}
+
 // Shared Redis store -- ensures rate limit counts are consistent across multiple
 // backend replicas (NFR-SCAL: Multi-instance readiness, Fix #9).
 function makeRedisStore(prefix: string): RedisStore {
@@ -182,7 +192,7 @@ const ipKey = (req: any) => clientIp(req);
  */
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: (req: any) => (req.headers['x-auth-token'] ? 100 : 500),
+  max: apiLimitCap,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: ipKey,
@@ -527,7 +537,58 @@ const partyImageUploadLimiter = rateLimit({
   },
 });
 
+/**
+ * Cosmetics writes: 20 / 5 min per IP.
+ *
+ * Not really about load — a cosmetics PATCH runs the candidate name through the name
+ * blacklist and the automod prohibited-phrase filter, and the response says only
+ * "not allowed" without naming the matched pattern. Without a limit, an attacker could
+ * still binary-search the filters by submitting thousands of candidates and watching
+ * which are rejected. The cap makes that impractical (#232). Generous enough that a
+ * user experimenting with the picker never notices.
+ */
+const cosmeticsWriteLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: (req: any) => devCap(req, 20, 200),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: ipKey,
+  store: makeRedisStore('rl_cosmetics:'),
+  message: {
+    type: 'https://fo76chat.app/errors/429',
+    title: 'Too Many Requests',
+    status: 429,
+    detail: 'Too many cosmetics changes. Please wait a few minutes.',
+  },
+});
+
+/**
+ * Appearance-only writes: 120 / 5 min per IP (500 for an unpackaged dev
+ * overlay). Unlike the free chat-name endpoint, this route does not run a
+ * candidate name through blacklist/automod matching, so it is not a blacklist
+ * oracle. A larger allowance lets people compare colours and effects normally
+ * without weakening the stricter identity-write protection above.
+ */
+function cosmeticsAppearanceCap(req: any): number {
+  return devCap(req, 120, 500);
+}
+
+const cosmeticsAppearanceLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: cosmeticsAppearanceCap,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: ipKey,
+  store: makeRedisStore('rl_cosmetics_appearance:'),
+  message: {
+    type: 'https://fo76chat.app/errors/429',
+    title: 'Too Many Requests',
+    status: 429,
+    detail: 'Too many appearance changes. Please wait a few minutes.',
+  },
+});
+
 // ipKey is exported for unit testing: it encodes the security invariant that a
 // bucket key is ALWAYS the client IP and never the spoofable x-auth-token header.
-export { ipKey, apiLimiter, authLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter };
-module.exports = { ipKey, apiLimiter, authLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter };
+export { ipKey, apiLimitCap, cosmeticsAppearanceCap, apiLimiter, authLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter, cosmeticsWriteLimiter, cosmeticsAppearanceLimiter };
+module.exports = { ipKey, apiLimitCap, cosmeticsAppearanceCap, apiLimiter, authLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter, cosmeticsWriteLimiter, cosmeticsAppearanceLimiter };

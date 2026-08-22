@@ -1,6 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useOutletContext, Link } from 'react-router-dom';
+// Notification ping (#437). Imported as a module asset so Vite fingerprints it
+// into dist-renderer for BOTH the website and the Electron renderer builds — no
+// electron-builder `files` entry needed, and no risk of the v1.3.82-style
+// missing-asset failure.
+import notifySoundUrl from './assets/notify.wav';
+import { useOutletContext, Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import type { AuthUser } from '../../contexts/AuthContext';
@@ -11,6 +16,7 @@ import EmojiPicker, {
   saveRecentEmojiTokens,
 } from './EmojiPicker';
 import GifPicker from './GifPicker';
+import './nameEffects.css';
 import { usePickerInsert } from './usePickerInsert';
 import { useDebouncedSearch } from './useDebouncedSearch';
 import { ChatEmbedCard } from './components/ChatEmbedCard';
@@ -725,11 +731,31 @@ interface WebOverlaySettings {
   // formatMessageTimestamp), so everyone sees their own local time with no extra
   // wire data. `timestampFormat` only matters when showTimestamps is true.
   showTimestamps: boolean;
+  // Viewer opt-out for OTHER users' animated supporter name effects. Nothing to do
+  // with your own tier — it exists for anyone who finds motion in the feed distracting
+  // without wanting system-wide reduced motion. Applied as a single root class so the
+  // collapse is one CSS toggle rather than per-message JS.
+  disableNameMotion?: boolean;
   timestampFormat: TimestampFormat;
   // Channel NAMES the viewer has chosen to hide (set via the overlay shell's
   // "Hidden channels" filter, mirrored here). Their messages are excluded from
   // the feed AND per-channel views. Case-insensitive match on channel name.
   channelFilters: string[];
+  // Extra words that highlight a message the same way an @mention of you does
+  // (issue #422). Bare words — no leading @ — matched case-insensitively on word
+  // boundaries. Empty by default: @mentions of your own names always trigger
+  // regardless of this list.
+  notifyKeywords: string[];
+  // Keep the typing indicator visible in the tab strip while the overlay is
+  // idle-collapsed (#420). Electron shell only — on the website nothing
+  // collapses, so this is inert there.
+  showTypingWhenCollapsed: boolean;
+  // Audible ping when a message triggers a notification (@mention of you or one
+  // of your notify keywords) — issue #437. Off by default: audio is intrusive and
+  // an unsolicited sound from a game overlay is a bad first impression.
+  notifySoundEnabled: boolean;
+  // 0..1. Applied to the HTMLAudioElement's volume.
+  notifySoundVolume: number;
 }
 
 const DEFAULT_SETTINGS: WebOverlaySettings = {
@@ -739,8 +765,13 @@ const DEFAULT_SETTINGS: WebOverlaySettings = {
   showHints: true,
   fontSize: 14,
   showTimestamps: false,
+  disableNameMotion: false,
   timestampFormat: '12h',
   channelFilters: [],
+  notifyKeywords: [],
+  showTypingWhenCollapsed: false,
+  notifySoundEnabled: false,
+  notifySoundVolume: 0.5,
 };
 
 const SETTINGS_KEY = 'fcm_web_overlay_settings';
@@ -1435,6 +1466,85 @@ interface ChatMessage {
   responseColor?: string | null;
   avatarUrl?: string | null;
   metadata?: ChatMessageMetadata;
+  // ── Supporter cosmetics, resolved server-side in ingestMessage.attachCosmetics ──
+  /** Per-user name colour, `#rrggbb`. Absent for the vast majority of users. */
+  nameColor?: string | null;
+  /** Effect preset id — rendered as a `.fcm-name-fx--<id>` class (see nameEffects.css). */
+  effectId?: string | null;
+  /** Overseer tag rendered before the name. */
+  tag?: string | null;
+  /** e.g. ['supporter'] — rendered as a pill after the name. */
+  badges?: string[];
+}
+
+/**
+ * Build the className / style / data attributes for a username span.
+ *
+ * Effects are pure CSS (nameEffects.css) driven by two custom properties. When an
+ * effect is present the class owns `text-shadow` entirely — the outline is handed
+ * over via `--fcm-name-outline` so the effect can compose with it rather than an
+ * inline `textShadow` silently winning over the stylesheet.
+ *
+ * `data-fcm-name` is required by the glitch effect, whose ::before/::after copies
+ * read it with `content: attr(...)`.
+ *
+ * Exported for unit tests.
+ */
+export function nameCosmeticProps(
+  msg: { nameColor?: string | null; effectId?: string | null },
+  theme: {
+    primaryText: string;
+    primaryColor: string;
+    textAlpha: number;
+    textOutline: string;
+    glowEnabled: boolean;
+  },
+  displayName: string,
+): { className: string; style: React.CSSProperties; dataName?: string } {
+  const color = msg.nameColor || theme.primaryText;
+  const effect = msg.effectId || null;
+
+  if (!effect) {
+    // Unchanged from before cosmetics existed, so users without a colour render
+    // byte-identically to how they always have.
+    return {
+      className: '',
+      style: {
+        fontWeight: 'bold',
+        color,
+        textShadow: theme.glowEnabled
+          ? `0 0 3px ${hexAlpha(theme.primaryColor, 0.5 * theme.textAlpha)}, ${theme.textOutline}`
+          : theme.textOutline,
+      },
+    };
+  }
+
+  return {
+    className: `fcm-name-fx--${effect}`,
+    style: {
+      // Heavy Outline is intentionally a visibly heavier face, not merely a
+      // regular-bold name with a blur around it.
+      fontWeight: effect === 'outline-heavy' ? 900 : 'bold',
+      color,
+      // No inline textShadow — the effect class composes it with the outline below.
+      ['--fcm-name-color' as string]: color,
+      ['--fcm-name-outline' as string]: theme.textOutline,
+    } as React.CSSProperties,
+    dataName: displayName,
+  };
+}
+
+/** Compact, accessible tier icon displayed immediately before a player's name. */
+export function supporterBadge(
+  badges?: readonly string[] | null,
+): { tier: 'supporter' | 'overseer'; glyph: string; label: string } | null {
+  if (badges?.includes('overseer')) {
+    return { tier: 'overseer', glyph: '◆', label: "Overseer's Circle" };
+  }
+  if (badges?.includes('supporter')) {
+    return { tier: 'supporter', glyph: '★', label: 'Supporter' };
+  }
+  return null;
 }
 
 interface PrivateConversationSummary {
@@ -1598,11 +1708,12 @@ const SYNTHETIC_HELP: SlashCommand = {
 };
 
 // Built-in relay shortcuts — trigger → (seeded channel UUID, fallback color if DB has none)
-const BUILTIN_RELAYS: { cmd: SlashCommand; channelId: string | null; fallbackColor: string }[] = [
+export const BUILTIN_RELAYS: { cmd: SlashCommand; channelId: string | null; fallbackColor: string }[] = [
   { cmd: { trigger: '/g',    description: 'Send to General',             requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000005', fallbackColor: '#C8A840' },
   { cmd: { trigger: '/t',    description: 'Send to Trading',             requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000002', fallbackColor: '#4A9FE0' },
   { cmd: { trigger: '/e',    description: 'Send to Events',              requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000003', fallbackColor: '#50C878' },
   { cmd: { trigger: '/r',    description: 'Send to Raids',               requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000004', fallbackColor: '#FF6644' },
+  { cmd: { trigger: '/raid', description: 'Send to Raids (alias of /r)', requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000004', fallbackColor: '#FF6644' },
   { cmd: { trigger: '/i',    description: 'Send to Infests',             requiresArgs: true, actionType: 'relay' }, channelId: '983995c1-f9ab-44c0-9b78-8b4cbf497273', fallbackColor: '#CC44FF' },
   // /s omitted — server chat is pending re-enable (tracked in the server-scoped-chat
   // epic). A typed "/s ..." falls through to the backend, which returns a disabled notice.
@@ -1623,6 +1734,7 @@ export const BUILTIN_FORMS: SlashCommand[] = [
   { trigger: '/camp',         description: 'Look up a CAMP item — category, sub-category, budget cost, and plan requirement',       requiresArgs: true,  actionType: 'message' },
   // Party shortcuts — resolved dynamically at send time; listed here for autocomplete only.
   { trigger: '/recent',  description: 'Send to most-recent party',                                    requiresArgs: true,  actionType: 'message' },
+  { trigger: '/rp',      description: 'Send to most-recent party (alias of /recent)',                 requiresArgs: true,  actionType: 'message' },
   { trigger: '/p1',      description: 'Send to 1st joined party',                                     requiresArgs: true,  actionType: 'message' },
   { trigger: '/p2',      description: 'Send to 2nd joined party',                                     requiresArgs: true,  actionType: 'message' },
   { trigger: '/p3',      description: 'Send to 3rd joined party',                                     requiresArgs: true,  actionType: 'message' },
@@ -1811,6 +1923,76 @@ export function contentMentionsName(content: string, name: string): boolean {
     idx = lc.indexOf(needle, after);
   }
   return false;
+}
+
+/**
+ * Does `content` contain the user-configured notification keyword `keyword`?
+ * (issue #422)
+ *
+ * Deliberately NOT contentMentionsName: that one hard-codes an '@' prefix, so it
+ * can never match a bare word like "nuke" or "WTS". This is its sibling for
+ * plain keywords.
+ *
+ * Matching rules, chosen to avoid the false positives an over-eager filter
+ * causes:
+ *   - case-insensitive
+ *   - bounded on BOTH sides by a non-alphanumeric, so "ore" does not fire on
+ *     "before" and "nuke" does not fire on "nukes"... except that trailing
+ *     boundary would also miss the plural the user almost certainly wants, so
+ *     the trailing edge allows a word character ONLY when the keyword is a
+ *     prefix of a longer word the user typed — see below.
+ *   - a keyword shorter than 2 chars is ignored (too noisy to be useful)
+ *
+ * Concretely we require a leading boundary and allow the match to be followed by
+ * letters (so "nuke" hits "nukes"/"nuked") but not preceded by them (so "ore"
+ * does not hit "before"). That asymmetry is what people actually expect from a
+ * keyword watch list.
+ */
+export function contentMatchesKeyword(content: string, keyword: string): boolean {
+  const kw = keyword.trim().toLowerCase();
+  if (!content || kw.length < 2) return false;
+  const lc = content.toLowerCase();
+  let idx = lc.indexOf(kw);
+  while (idx >= 0) {
+    const before = idx === 0 ? '' : content[idx - 1];
+    if (!before || !/[A-Za-z0-9]/.test(before)) return true;
+    idx = lc.indexOf(kw, idx + kw.length);
+  }
+  return false;
+}
+
+/**
+ * Rate-limit the notification ping (#437).
+ *
+ * A busy Trading channel with a common keyword ("fixer") can trigger many times a
+ * second. Without a floor the overlay would machine-gun the sound, which is worse
+ * than no sound at all. Pure so the policy is testable without an audio device.
+ *
+ * Returns true when enough time has passed since the last ping.
+ */
+export const NOTIFY_SOUND_MIN_GAP_MS = 3000;
+
+export function shouldPlayNotifySound(
+  nowMs: number,
+  lastPlayedMs: number | null,
+  minGapMs: number = NOTIFY_SOUND_MIN_GAP_MS,
+): boolean {
+  if (lastPlayedMs == null) return true;
+  return nowMs - lastPlayedMs >= minGapMs;
+}
+
+/**
+ * Should this message be highlighted / badged for the viewer? True when it
+ * @mentions one of the viewer's own names OR contains one of their configured
+ * notification keywords (#422). Own messages never trigger.
+ */
+export function messageTriggersNotify(
+  content: string,
+  myNames: string[],
+  keywords: string[],
+): boolean {
+  if (myNames.some(n => contentMentionsName(content, n))) return true;
+  return keywords.some(k => contentMatchesKeyword(content, k));
 }
 
 /**
@@ -3359,6 +3541,42 @@ export default function ChatOverlay() {
   // ── @mention: unread badges + jump-to-mention ──
   const [unreadMentions, setUnreadMentions] = useState<Record<string, number>>({});
   const myNamesRef  = useRef<string[]>([]);
+  // Notification keywords (#422), read by msgMentionsMe through a ref so the
+  // callback identity stays stable while the list stays live.
+  const notifyKeywordsRef = useRef<string[]>([]);
+  // Notification ping (#437). Settings read through refs so the WS handler does
+  // not need rebuilding when they change. lastNotifySoundAtRef enforces the
+  // rate limit across messages.
+  const notifySoundRef = useRef<{ enabled: boolean; volume: number }>({ enabled: false, volume: 0.5 });
+  const lastNotifySoundAtRef = useRef<number | null>(null);
+  const notifyAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Play the ping, subject to the enabled flag and the rate limit. Never throws:
+  // browsers reject play() without a prior user gesture, and on the website that
+  // rejection is expected until the user has clicked something.
+  const playNotifySound = useCallback(() => {
+    const { enabled, volume } = notifySoundRef.current;
+    if (!enabled) return;
+    const now = Date.now();
+    if (!shouldPlayNotifySound(now, lastNotifySoundAtRef.current)) return;
+    lastNotifySoundAtRef.current = now;
+    try {
+      let el = notifyAudioRef.current;
+      if (!el) { el = new Audio(notifySoundUrl); notifyAudioRef.current = el; }
+      el.volume = volume;
+      el.currentTime = 0;
+      void el.play().catch(() => { /* autoplay blocked — not fatal */ });
+    } catch { /* no audio device / jsdom — not fatal */ }
+  }, []);
+
+  useEffect(() => { notifyKeywordsRef.current = settings.notifyKeywords ?? []; },
+    [settings.notifyKeywords]);
+  useEffect(() => {
+    notifySoundRef.current = {
+      enabled: !!settings.notifySoundEnabled,
+      volume: Math.max(0, Math.min(1, settings.notifySoundVolume ?? 0.5)),
+    };
+  }, [settings.notifySoundEnabled, settings.notifySoundVolume]);
   const myUserIdRef = useRef<string>('');
   const viewCtxRef  = useRef<{ activeSubId: string; feedId: string | null; feedChildIds: string[]; activePartyId: string | null }>({ activeSubId: '', feedId: null, feedChildIds: [], activePartyId: null });
   const jumpIdxRef  = useRef(0);
@@ -3473,6 +3691,18 @@ export default function ChatOverlay() {
   // open it would hang over the collapsed header strip during auto-hide. It can
   // be reopened after the user expands again. Also close ALL context menus +
   // popovers so none float over the collapsed strip (item 4b).
+  // Live collapsed state (#420). The shell emits this on BOTH transitions, unlike
+  // 'fcm-overlay-collapsed' below which is a one-way "close floating panels" signal.
+  const [shellCollapsed, setShellCollapsed] = useState(false);
+  useEffect(() => {
+    const onState = (e: Event) => {
+      const detail = (e as CustomEvent<{ collapsed?: boolean }>).detail;
+      setShellCollapsed(!!detail?.collapsed);
+    };
+    window.addEventListener('fcm-overlay-collapse-state', onState);
+    return () => window.removeEventListener('fcm-overlay-collapse-state', onState);
+  }, []);
+
   useEffect(() => {
     const onCollapsed = () => {
       setMemberPanelOpen(false);
@@ -3759,6 +3989,11 @@ export default function ChatOverlay() {
   // carried a stale or login-only username (e.g. "devotek" → "Devotek")
   // and to re-resolve names when the backend broadcasts a fresh identity.
   const knownDisplayNames = useRef<Map<string, string>>(new Map());
+  // Parallel to knownDisplayNames: the latest cosmetics seen for a user, so a
+  // colour/effect change back-applies to rendered history the same way a rename does.
+  const knownCosmetics = useRef<Map<string, {
+    nameColor?: string | null; effectId?: string | null; tag?: string | null; badges?: string[];
+  }>>(new Map());
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContRef = useRef<HTMLDivElement>(null);
@@ -4723,6 +4958,13 @@ export default function ChatOverlay() {
                   responseColor: frame.payload.responseColor ?? null,
                   avatarUrl: frame.payload.avatarUrl ?? null,
                   metadata: frame.payload.metadata ?? null,
+                  // Preserve the server-resolved appearance fields. Dropping these
+                  // here made a freshly sent message look correct only until a
+                  // tab/history refresh rebuilt the row from the plain message.
+                  nameColor: frame.payload.nameColor ?? null,
+                  effectId: frame.payload.effectId ?? null,
+                  tag: frame.payload.tag ?? null,
+                  badges: frame.payload.badges ?? [],
                 }]);
 
                 // Track active giveaways from broadcast metadata.
@@ -4771,7 +5013,7 @@ export default function ChatOverlay() {
                   const content: string = frame.payload.content || '';
                   const chId: string = frame.payload.channelId;
                   const mentionsMe = frame.payload.userId !== myUserIdRef.current
-                    && myNamesRef.current.some(n => contentMentionsName(content, n));
+                    && messageTriggersNotify(content, myNamesRef.current, notifyKeywordsRef.current);
                   if (mentionsMe && chId) {
                     const v = viewCtxRef.current;
                     const inView = v.feedId
@@ -4785,6 +5027,7 @@ export default function ChatOverlay() {
                     // no-op (idle-timer reset only; no focus steal). The unread badge +
                     // jump button stay gated on !inView below.
                     window.dispatchEvent(new CustomEvent('fcm-mention-appear', { detail: { chId } }));
+                    playNotifySound();
                     if (!inView) {
                       setUnreadMentions(prev => ({ ...prev, [chId]: (prev[chId] || 0) + 1 }));
                     }
@@ -4807,6 +5050,10 @@ export default function ChatOverlay() {
                     source: m.source || 'game', timestamp: m.created_at ?? m.createdAt,
                     avatarUrl: av,
                     metadata: m.metadata ?? null,
+                    nameColor: m.nameColor ?? null,
+                    effectId: m.effectId ?? null,
+                    tag: m.tag ?? null,
+                    badges: m.badges ?? [],
                   };
                 });
                 // ── Lazy-load branch ─────────────────────────────────────────
@@ -5033,16 +5280,32 @@ export default function ChatOverlay() {
                 // history messages that may have carried a stale login-only name
                 // (e.g. "devotek" instead of "Devotek"). Parity with the desktop
                 // _knownDisplayNames + history correction in ChatOverlayWindow.cs.
-                const { userId, displayName } = frame.payload ?? {};
-                if (userId && displayName && typeof displayName === 'string') {
+                // The same frame also carries supporter cosmetics (colour, effect,
+                // tag, badges) so a cosmetics change re-styles already-rendered
+                // history without a reconnect — one handler covers both cases.
+                // `displayName` is absent when only cosmetics changed, so the two
+                // are applied independently rather than gated on each other.
+                const { userId, displayName, nameColor, effectId, tag, badges } = frame.payload ?? {};
+                const hasCosmetics = 'nameColor' in (frame.payload ?? {});
+                if (userId && typeof displayName === 'string' && displayName) {
                   knownDisplayNames.current.set(userId, displayName);
+                }
+                if (userId && (displayName || hasCosmetics)) {
+                  knownCosmetics.current.set(userId, { nameColor, effectId, tag, badges });
                   // Back-apply to already-stored messages so they show the
                   // correct name immediately without requiring a reconnect.
-                  setMessages(prev => prev.map(m =>
-                    m.userId === userId && m.source !== 'bot' && m.username !== '[Vault-Tec]'
-                      ? { ...m, username: displayName }
-                      : m
-                  ));
+                  setMessages(prev => prev.map(m => {
+                    if (m.userId !== userId || m.source === 'bot' || m.username === '[Vault-Tec]') return m;
+                    const next = { ...m };
+                    if (typeof displayName === 'string' && displayName) next.username = displayName;
+                    if (hasCosmetics) {
+                      next.nameColor = nameColor ?? null;
+                      next.effectId = effectId ?? null;
+                      next.tag = tag ?? null;
+                      next.badges = badges ?? [];
+                    }
+                    return next;
+                  }));
                 }
               } else if (frame.type === 'giveaway:update') {
                 const { giveawayId, shortId, entryCount, status, winnerName } = frame.payload ?? {};
@@ -6331,8 +6594,13 @@ export default function ChatOverlay() {
   }, [visibleMessages, activeSubId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Which visible messages mention me (for jump-to-mention).
+  // Also fires on the viewer's configured notification keywords (#422), so the
+  // existing highlight / unread-badge / jump-to-mention pipeline covers them with
+  // no extra wiring. Read through a ref so changing the keyword list takes effect
+  // immediately without rebuilding this callback (and re-rendering the feed).
   const msgMentionsMe = useCallback((m: ChatMessage) =>
-    m.userId !== myUserIdRef.current && myNamesRef.current.some(n => contentMentionsName(m.content, n)),
+    m.userId !== myUserIdRef.current
+      && messageTriggersNotify(m.content, myNamesRef.current, notifyKeywordsRef.current),
   []);
   // Show the jump button only when there is at least one visible mention whose
   // message id has NOT yet been dismissed. dismissedMentionEpoch is bumped each
@@ -7959,26 +8227,49 @@ export default function ChatOverlay() {
                           </span>
                         );
                       })()}
-                      {msg.userId && msg.userId !== 'system' ? (
-                        isPublicMode ? (
-                          <Link to={`/profile/${msg.userId}`} className="username-chip" style={{
-                            fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline,
-                          }}>
-                            {displayName}:{' '}
-                          </Link>
+                      {(() => {
+                        // `fcm-no-name-motion` collapses every animated effect to its
+                        // static sibling (see nameEffects.css). Applied per-name rather
+                        // than on a shared ancestor because the feed rows are the only
+                        // element this component reliably owns on all three surfaces.
+                        const motionOff = settings.disableNameMotion ? ' fcm-no-name-motion' : '';
+                        const fx = nameCosmeticProps(msg, { primaryText, primaryColor, textAlpha, textOutline, glowEnabled }, displayName);
+                        fx.className = fx.className ? fx.className + motionOff : fx.className;
+                        const tagEl = msg.tag ? <span className="fcm-name-tag" style={{ color: msg.nameColor || primaryText }}>[{msg.tag}]</span> : null;
+                        const badge = supporterBadge(msg.badges);
+                        // The icon is intentionally before the name. Its CSS uses the
+                        // same 4px trailing space as a custom tag, never a text pill.
+                        const badgeEl = badge
+                          ? <span className={`fcm-name-badge fcm-name-badge--${badge.tier}`} role="img" title={badge.label} aria-label={badge.label}>{badge.glyph}</span>
+                          : null;
+                        // Tag and badge render BEFORE the name, which keeps the name
+                        // element's text node exactly `${displayName}: ` as it has
+                        // always been. Splitting the colon into its own element broke
+                        // getByText(/Name:/) queries and made the bare name match twice.
+                        return msg.userId && msg.userId !== 'system' ? (
+                          isPublicMode ? (
+                            <>
+                              {tagEl}{badgeEl}
+                              <Link to={`/profile/${msg.userId}`} className={`username-chip ${fx.className}`} style={fx.style} data-fcm-name={fx.dataName}>
+                                {displayName}:{' '}
+                              </Link>
+                            </>
+                          ) : (
+                            <>
+                              {tagEl}{badgeEl}
+                              <span role="button" tabIndex={0} className={`username-chip username-chip--mention ${fx.className}`}
+                                style={{ ...fx.style, cursor: 'pointer' }} data-fcm-name={fx.dataName}
+                                onClick={() => insertMentionFromClick(displayName)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') insertMentionFromClick(displayName); }}>
+                                {displayName}:{' '}
+                              </span>
+                            </>
+                          )
                         ) : (
-                          <span role="button" tabIndex={0} className="username-chip username-chip--mention" style={{
-                            fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline,
-                            cursor: 'pointer',
-                          }} onClick={() => insertMentionFromClick(displayName)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') insertMentionFromClick(displayName); }}>
+                          <span style={fx.style} className={fx.className} data-fcm-name={fx.dataName}>
                             {displayName}:{' '}
                           </span>
-                        )
-                      ) : (
-                        <span style={{ fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline }}>
-                          {displayName}:{' '}
-                        </span>
-                      )}
+                        );
+                      })()}
                       <span style={{
                         color: contentColor,
                         fontWeight: 600,
@@ -8350,6 +8641,27 @@ export default function ChatOverlay() {
             // The sub-tab row's empty space is also a window-drag handle.
             ...(overlayShell ? { WebkitAppRegion: 'drag' } as React.CSSProperties : {}),
           }}>
+            {/* Collapsed typing indicator (#420). The normal indicator is a sibling
+                BELOW the message list, so applyCollapsedHidden() hides it along with
+                everything after the sub-tab row. Rendering a compact one INSIDE this
+                row means it survives collapse with no change to the collapsed-height
+                math — deliberately avoiding headerStripHeight(), which has a history
+                of zoom double-apply bugs. Shell-only, opt-out via settings. */}
+            {overlayShell && shellCollapsed && settings.showTypingWhenCollapsed && typingVisibleForScope && (
+              <span
+                data-fcm-collapsed-typing="1"
+                title="Someone is typing"
+                style={{
+                  marginRight: '8px', flexShrink: 0, lineHeight: 1,
+                  fontSize: '11px', color: hexAlpha(primaryColor, 0.85),
+                  // Not a drag handle — the row itself is, and inheriting that here
+                  // would make the indicator swallow drags oddly.
+                  ...(overlayShell ? { WebkitAppRegion: 'no-drag' } as React.CSSProperties : {}),
+                }}
+              >
+                ●●●
+              </span>
+            )}
             {subChannels.filter(sub => !hiddenChannelIds.has(sub.id)).map(sub => {
               const isActive = sub.id === activeSubId;
               const unread = unreadMentions[sub.id] || 0;

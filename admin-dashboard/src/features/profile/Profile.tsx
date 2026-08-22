@@ -1,6 +1,8 @@
 import React, { useMemo } from 'react';
 import ApiTokensPanel from './ApiTokensPanel';
-import { useParams, useOutletContext, Link } from 'react-router-dom';
+import CosmeticsPanel from './CosmeticsPanel';
+import ChatNamePanel from './ChatNamePanel';
+import { useParams, useOutletContext, Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import type { AuthUser } from '../../contexts/AuthContext';
@@ -8,6 +10,7 @@ import type { AuthUser } from '../../contexts/AuthContext';
 interface ProfileData {
   id: string;
   username: string;
+  chatName: string | null;
   createdAt: string;
   discordId: string | null;
   discordUsername: string | null;
@@ -181,9 +184,9 @@ export default function Profile() {
   }
 
   const avatarUrl = formatAvatarUrl(profile);
-  const displayName = (profile.username && profile.username !== 'Wanderer' && !profile.username.startsWith('pending-'))
+  const displayName = profile.chatName || ((profile.username && profile.username !== 'Wanderer' && !profile.username.startsWith('pending-'))
     ? profile.username
-    : (profile.discordDisplayName || profile.discordUsername || profile.username);
+    : (profile.discordDisplayName || profile.discordUsername || profile.username));
 
   const roleColor = ROLE_COLORS[profile.role] ?? ROLE_COLORS.user;
   const statusTxt = profile.isBanned
@@ -279,6 +282,8 @@ export default function Profile() {
       {isMod && <MessageHistoryCard userId={profile.id} channelMap={channelMap} />}
 
       {/* API Tokens — self-service panel shown only to the signed-in user */}
+      {isSelf && userId && <ChatNamePanel userId={userId} chatName={profile.chatName} />}
+      {isSelf && userId && <CosmeticsPanel userId={userId} previewName={displayName} />}
       {isSelf && <ApiTokensPanel />}
     </div>
   );

@@ -168,6 +168,17 @@ function worldControlBody(kind, namesOrWorldId = []) {
   }
 }
 
+function historyResyncControlBody() {
+  return 'FCMCTL/1/RESYNC';
+}
+
+function shouldRenderReplayMessage(seen, messageId) {
+  if (!messageId) return true;
+  if (seen[messageId]) return false;
+  seen[messageId] = true;
+  return true;
+}
+
 function jsonEscape(s) {
   return String(s == null ? '' : s)
     .replace(/\\/g, '\\\\')
@@ -564,6 +575,8 @@ module.exports = {
   shouldSendRosterControl,
   WORLD_CONTROL_PREFIXES,
   worldControlBody,
+  historyResyncControlBody,
+  shouldRenderReplayMessage,
   jsonEscape,
   nativeLockAdmission,
   nativeLockRelease,

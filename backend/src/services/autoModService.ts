@@ -7,11 +7,14 @@ import { hasDirectTarget } from '../utils/targetedAttack';
 
 // ── Baseline hardcoded denylist ──────────────────────────────────────────────
 // These terms are recognized regardless of whether the DB word_filter table is
-// empty. In chat they block only when explicitly addressed at a person; the
-// identifier path below remains strict and context-free.
+// empty. Unambiguous hate terms block in chat; ordinary profanity is handled by
+// the targeted-attack extension below. The identifier path remains strict.
 // The list uses whole-word regex matching (case-insensitive, word boundaries).
 // IMPORTANT: Keep terms here; do not remove. Prod DB rules are additive on top.
 //
+// Unambiguous hate terms. These have no ordinary-conversation use, so they hard-
+// block in chat AND in identifiers. Ordinary profanity (fuck/shit/damn/ass) is
+// deliberately NOT here — the policy is "cussing is fine, targeting people is not".
 // Categories: racial/ethnic slurs, sexist/misogynistic terms, homophobic slurs,
 // and severe abuse terms. Ordinary profanity is handled by the targeted-attack
 // extension below, not as a context-free chat block.
@@ -19,12 +22,12 @@ const BASELINE_CHAT_DENYLIST_PHRASES = [
   // Racial / ethnic slurs
   'nigger', 'nigga', 'chink', 'spic', 'spick', 'kike', 'wetback', 'gook',
   'towelhead', 'raghead', 'coon', 'jigaboo', 'porch monkey', 'jungle bunny',
-  'beaner', 'cracker', 'honky', 'zipperhead', 'slant', 'squaw', 'redskin',
-  'sandnigger', 'sand nigger', 'uncle tom', 'oreo',
+  'beaner', 'honky', 'zipperhead', 'squaw',
+  'sandnigger', 'sand nigger', 'uncle tom',
   // Sexist / misogynistic slurs
-  'cunt', 'twat', 'bitch', 'whore', 'slut', 'skank', 'ho',
+  'cunt', 'twat', 'whore', 'slut', 'skank',
   // Homophobic / transphobic slurs
-  'faggot', 'fag', 'dyke', 'tranny', 'shemale', 'sissy',
+  'faggot', 'fag', 'dyke', 'tranny', 'shemale',
   // Severe abuse terms that should still hard-block outside optional presets
   'pedo', 'pedophile', 'rape', 'rapist',
 ] as const;
@@ -37,8 +40,27 @@ const TARGETED_ATTACK_DENYLIST_PHRASES = [
   'shit', 'bastard',
 ] as const;
 
+// Context-ambiguous terms: a slur when aimed at someone, but an ordinary word in
+// the overwhelming majority of game chat — "graham cracker" (a real Fallout food
+// item), "slanted", "redskin potatoes", "heave ho", "this quest is a bitch".
+// Word-boundary matching cannot tell those apart from a targeted insult, and
+// hard-blocking them was the main source of the "triggers on way too light of
+// context" complaint, so they no longer block CHAT.
+//
+// They DO still block IDENTIFIERS. A username or party name has no conversational
+// context to be innocent in — picking one of these deliberately is exactly what
+// the identifier check exists to catch.
+//
+// Targeted harassment using these words is still actionable through reports and
+// normal moderation; it is just no longer auto-blocked on the word alone.
+const CONTEXT_AMBIGUOUS_PHRASES = [
+  'cracker', 'oreo', 'slant', 'redskin', 'ho', 'sissy', 'bitch',
+] as const;
+
 const BASELINE_IDENTIFIER_DENYLIST_PHRASES = [
   ...BASELINE_CHAT_DENYLIST_PHRASES,
+  // Ambiguous-in-chat terms are NOT ambiguous in a username — keep them blocked.
+  ...CONTEXT_AMBIGUOUS_PHRASES,
   // Identifiers stay stricter than normal chat.
   'cock', 'dick', 'pussy', 'asshole', 'motherfucker', 'fucker', 'fuck',
   'shit', 'bastard',
@@ -55,10 +77,9 @@ function compileBoundaryPhraseList(phrases: readonly string[]) {
 }
 
 const BASELINE_DENYLIST: ReadonlyArray<{ phrase: string; compiled: RegExp }> =
-  compileBoundaryPhraseList([
-    ...BASELINE_CHAT_DENYLIST_PHRASES,
-    ...TARGETED_ATTACK_DENYLIST_PHRASES,
-  ]);
+  compileBoundaryPhraseList(BASELINE_CHAT_DENYLIST_PHRASES);
+const TARGETED_ATTACK_DENYLIST: ReadonlyArray<{ phrase: string; compiled: RegExp }> =
+  compileBoundaryPhraseList(TARGETED_ATTACK_DENYLIST_PHRASES);
 
 // Substring variant — used for party names and usernames (identifiers) where slurs
 // may be embedded in concatenated strings without spaces (e.g. "nigger76", "slutqueen").
@@ -187,8 +208,13 @@ async function filterContent(content: string, userId?: string): Promise<{ blocke
   const normalized = canon(content);
   // Always check baseline denylist first — independent of DB state.
   for (const entry of BASELINE_DENYLIST) {
-    if (entry.compiled.test(normalized) && hasDirectTarget(content)) {
+    if (entry.compiled.test(normalized)) {
       return { blocked: true, reason: 'Matched prohibited phrase' };
+    }
+  }
+  for (const entry of TARGETED_ATTACK_DENYLIST) {
+    if (entry.compiled.test(normalized) && hasDirectTarget(content)) {
+      return { blocked: true, reason: 'Matched targeted prohibited phrase' };
     }
   }
 

@@ -664,3 +664,20 @@ Manual (maintainer) — **all done as of 2026-06-11:**
 
 To revoke access: remove the role in either Discord server (blocks the next login/re-verify)
 **and** remove the email from the CF Access group (blocks the overlay/dashboard immediately).
+
+## Backend image build constraints (`backend/Dockerfile`)
+
+The dev and prod stacks build from `backend/Dockerfile`. Two constraints are load-bearing; both
+broke the dev deploy once already:
+
+- **Node 22+ on every stage.** `react-router` v8 requires Node >= 22.22.0, so a Node 20 base fails
+  the `dashboard-builder` stage. `node:22-alpine` currently ships 22.23.x.
+- **`argon2` has no musl prebuild.** On Alpine, npm falls back to a node-gyp **source build**, which
+  needs `python3` + a C++ toolchain. Without them the build dies with `gyp ERR! find Python` and
+  Dokploy leaves the PREVIOUS container running — so the site silently keeps serving a stale build
+  while the deploy is red. The toolchain is installed as an `apk --virtual .build-deps` package and
+  deleted in the same layer, so it never ships in the runtime image.
+
+A failed compose deploy in Dokploy does **not** roll the site back or take it down — it just leaves
+the old container up. Check `composeStatus` (or `/etc/dokploy/logs/<compose>/`) rather than trusting
+that the site responding means the deploy worked.

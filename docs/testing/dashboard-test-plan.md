@@ -110,7 +110,7 @@ Most dashboard components need this wrapper to mount without errors:
 ```tsx
 import { render } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, Outlet } from 'react-router';
 
 function renderWithProviders(ui: React.ReactElement, { user } = {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });

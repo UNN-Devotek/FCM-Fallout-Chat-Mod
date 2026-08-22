@@ -4,7 +4,7 @@ ZFE is a `dxgi.dll` proxy for Fallout 76 that exposes `__ZFE` to the Scaleform
 HUD. FCM's optional `FCMChatWidget` HUDModLoader mod uses its sanctioned
 `chat.v1` surface to display chat in game.
 
-> **Current widget (2026-08-10):** `FCMChatWidget` v2.9.14 targets `/relay` through
+> **Current widget (2026-08-12):** `FCMChatWidget` v2.10.1 targets `/relay` through
 > ZFE `chat.v1`. The backend keeps production relay access fail-closed until
 > `RELAY_PRODUCTION_ENABLED=true` is deliberately rolled out. The desktop overlay
 > remains independent of this optional mod path.
@@ -90,3 +90,48 @@ See [fcmbridge-data-pattern.md](fcmbridge-data-pattern.md) for the full dev
 loop (build, version-byte patch, cache clearing). Localhost requires
 `ZFE_REMOTE_DATA_ALLOW_LOCALHOST_DEVELOPMENT=1` as a Windows User env var AND
 `AllowLocalhostDevelopment=yes` in `zfe.ini`, then a FULL Steam exit/relaunch.
+
+
+---
+
+## Client version handshake (`clientVersion`)
+
+The widget reports its `VERSION` to the relay in the register/hello payload, and the
+relay records it per connection (`backend/src/services/relay/clientCapability.ts`).
+
+**Why it exists.** The `.ba2` is distributed as a manual file copy — download, fully
+exit the game, drop into `Data/`, restart. There is no auto-update and no way to retire
+an old build, and BUILD.md already documents older widgets coexisting with newer relays.
+So any field the relay starts emitting reaches clients that do not understand it,
+indefinitely. Before this, `VERSION` only ever reached the local ZFE log, so the relay
+had no way to tell what it was talking to.
+
+Any future change to the shape of what the widget receives — starting with per-user
+name colours — **must** be gated on this. `supportsCosmetics()` fails closed: an
+unknown, missing or unparseable version means no. Being wrong that way means a
+supporter's colour does not show in-game until they update (invisible and harmless);
+being wrong the other way is permanent visible garbage in usernames for everyone on an
+old build.
+
+Version comparison is numeric per component, not string: `'2.10.0' < '2.9.4'`
+lexicographically, so a string compare would silently lock every updated client out.
+
+`MIN_COSMETICS_VERSION` is **2.10.0**, the first build that reports a version at all —
+the bump IS the capability signal.
+
+### Still to do for in-game cosmetics
+
+The relay-side encoding is deliberately **not** enabled yet, pending a ~30 minute probe
+that needs the game running: does ZFE forward unknown top-level event fields verbatim,
+or normalise them away? `protocol-spec.md` says ZFE "normalizes" pushed relay events,
+which implies re-serialization against a fixed struct.
+
+- If fields **survive**: add a clean `nameColor` field to the 5 emission sites in
+  `relayHandler.ts` and skip the sentinel tunnel (#300) entirely. The widget's
+  `extractJsonString()` is a substring scanner and will find any key present.
+- If they **do not**: implement #300's `senderDisplayName` sentinel tunnel, using a
+  printable ASCII sentinel (control bytes poison the ZFE string pool) and avoiding
+  `& < > "` which `htmlEscape()` would turn into visible mojibake.
+
+Either way, ship the **decoder-only** widget build first and only then enable
+relay-side encoding, gated on `clientVersion`.

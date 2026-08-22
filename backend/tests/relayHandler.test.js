@@ -1827,6 +1827,7 @@ describe('authenticated world controls', () => {
 describe('server chat (worldId-scoped room)', () => {
   const SENTINEL       = 'FCMCTL/1/WORLD:';
   const LEAVE_SENTINEL = 'FCMCTL/1/LEAVE';
+  const RESYNC_SENTINEL = 'FCMCTL/1/RESYNC';
   const LEGACY_SENTINEL = '\x00fcm.world.v1\x00';
 
   const makeJoinBody = (worldId) => `${SENTINEL}${worldId}`;
@@ -1900,6 +1901,49 @@ describe('server chat (worldId-scoped room)', () => {
     const leave = await sendLeave(a);
     expect(leave).toMatchObject({ success: true, messageId: expect.any(String) });
     expect(leave.messageId).not.toBe('');
+  });
+
+  test('history resync replays static history but defers server history until a fresh world bind', async () => {
+    const a = await registerAndLink('HistoryReload', 'fcm-history-reload');
+    const staticHistory = {
+      id: 'static-history', relay_seq: BigInt(7), content: 'static replay', user_id: 'u-static',
+      channel_id: '00000000-0000-0000-0000-000000000005', username: 'HistoryReload', fo76_account_name: null,
+    };
+    const worldId = 'world-after-reload';
+    const worldHistory = {
+      id: 8,
+      kind: 'chat.message',
+      messageId: 'server:world-after-reload:8',
+      channel: 'server',
+      senderUserId: 'u-server',
+      senderDisplayName: 'HistoryReload',
+      body: 'new-world replay',
+      targetUserId: '',
+      createdAt: '2026-08-12T00:00:00.000Z',
+    };
+    _lists[`relay:serverchat:${worldId}`] = [JSON.stringify(worldHistory)];
+    require('../src/config/prisma').default.$queryRaw.mockResolvedValue([staticHistory]);
+
+    const { ws: wsSub, msgs: msgsSub } = await connectWs(srv.port);
+    await waitForMsg(wsSub, msgsSub, () => send(wsSub, { op: 'subscribe', token: a.token, cursor: 0 }));
+    const beforeResync = msgsSub.length;
+
+    expect(await sendCtrl(a, RESYNC_SENTINEL)).toMatchObject({ success: true, messageId: expect.any(String) });
+    await new Promise((r) => setTimeout(r, 100));
+
+    const replayedStatic = msgsSub.slice(beforeResync).some((m) =>
+      m.op === 'event' && m.event?.messageId === staticHistory.id,
+    );
+    const replayedServerBeforeBind = msgsSub.slice(beforeResync).some((m) =>
+      m.op === 'event' && m.event?.channel === 'server',
+    );
+    expect(replayedStatic).toBe(true);
+    expect(replayedServerBeforeBind).toBe(false);
+
+    expect(await sendJoin(a, worldId)).toMatchObject({ success: true });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(msgsSub.some((m) => m.op === 'event' && m.event?.messageId === worldHistory.messageId)).toBe(true);
+    wsSub.close();
   });
 
   test('world controls are rate-limited per authenticated relay identity', async () => {

@@ -14,6 +14,7 @@ import { engineEvaluate } from '../services/autoModEngine';
 import { relayToDiscord, invalidateRelayMappingsCache } from '../services/discordService';
 import { persistMessage } from '../services/messageService';
 import { finalizeMessage } from '../services/ingestMessage';
+import { attachCosmeticsToHistory } from '../services/cosmetics/cosmeticsService';
 import messageQueue from '../queues/messagePersist';
 import logger from '../config/logger';
 import { incrementMessageCount, setFullscreenStatus, removeFullscreenClient } from '../controllers/healthController';
@@ -44,19 +45,25 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 /**
  * Resolve the best display name for a user.
- *   1. FO76 in-game name (if set and not the default placeholder)
- *   2. Discord username (fallback)
- *   3. Raw username
+ *   1. Free user-selected chat name
+ *   2. FO76 in-game name (if set and not the default placeholder)
+ *   3. Discord username (fallback)
+ *   4. Raw username
  *
  * NO #XXXX discriminator suffix — uniqueness is guaranteed by the
  * unique constraint on users.username and the Discord link.
  */
 export function resolveDisplayName(user: {
   username: string;
+  chatName?: string | null;
   discordUsername: string | null;
   discordDisplayName?: string | null;
   installToken: string;
 }): string {
+  // A chat name is an account identity setting, not a paid cosmetic. It is already
+  // validated on write, but trim defensively for rows created before that contract.
+  if (user.chatName && user.chatName.trim()) return user.chatName.trim();
+
   // 1. Real FO76 name (skip Wanderer, pending-*, Overlay<digits> auto-handles,
   //    and discord:/pending-discord- synthetic relay usernames).
   const isPlaceholderUsername = (u: string) =>
@@ -323,8 +330,9 @@ export function refreshClientIdentity(
   discordUsername: string | null,
   discordDisplayName: string | null,
   installToken: string,
+  chatName: string | null = null,
 ): number {
-  const displayName = resolveDisplayName({ username, discordUsername, discordDisplayName, installToken });
+  const displayName = resolveDisplayName({ username, chatName, discordUsername, discordDisplayName, installToken });
   let touched = 0;
   for (const c of clients.values()) {
     if (c.userId === userId) {
@@ -333,22 +341,65 @@ export function refreshClientIdentity(
       touched++;
     }
   }
-  // Only broadcast when at least one connected session was touched — no
-  // point waking every overlay for a phantom update. Wrapped in try/catch
-  // so a broadcast failure never breaks the register-path caller.
-  if (touched > 0) {
-    try {
-      if (typeof broadcast === 'function') {
-        broadcast({
-          type: 'user:identity_updated',
-          payload: { userId, username, displayName },
-        });
-      }
-    } catch (err) {
-      logger.warn({ err, userId }, 'refreshClientIdentity: broadcast failed (non-fatal)');
+  // Broadcast unconditionally, NOT gated on `touched > 0`.
+  //
+  // `touched` counts sockets on THIS instance only. The old `if (touched > 0)` guard
+  // looked like a sensible "don't wake everyone for a phantom update" optimization,
+  // but it silently dropped the frame whenever the user's socket lived on a different
+  // instance from the one handling their register/link request — and since broadcast()
+  // fans out over Redis pub/sub, that frame is exactly how the other instance (and
+  // every other viewer's rendered history) learns about the rename. Single-instance
+  // today, so this is latent rather than live, but it breaks the moment replicas > 1.
+  //
+  // The frame is cheap and viewers ignore unknown userIds, so unconditional is both
+  // correct and inexpensive. Wrapped in try/catch so a broadcast failure never breaks
+  // the register-path caller.
+  try {
+    if (typeof broadcast === 'function') {
+      broadcast({
+        type: 'user:identity_updated',
+        payload: { userId, username, displayName },
+      });
     }
+  } catch (err) {
+    logger.warn({ err, userId }, 'refreshClientIdentity: broadcast failed (non-fatal)');
   }
   return touched;
+}
+
+/**
+ * Push updated cosmetics (name colour, effect, tag, badges) to every viewer so
+ * already-rendered messages re-style without anyone reconnecting.
+ *
+ * Rides the same `user:identity_updated` frame the rename path uses, because
+ * ChatOverlay's handler for it already back-applies to message history — adding the
+ * cosmetic fields there means one handler covers both cases.
+ *
+ * Note what this deliberately does NOT do: mutate any per-socket cached state.
+ * Cosmetics are resolved server-side at message-finalize time from a Redis cache, so a
+ * tier change only needs that cache busted (cosmeticsService does it) plus this frame
+ * for history. `ClientEntry.role` is frozen at connect and stays that way — supporter
+ * tier is resolved fresh per message, never read off the socket.
+ */
+export function refreshClientCosmetics(
+  userId: string,
+  cosmetics: { nameColor?: string | null; effectId?: string | null; tag?: string | null; badges?: string[] },
+): void {
+  try {
+    if (typeof broadcast !== 'function') return;
+    broadcast({
+      type: 'user:identity_updated',
+      payload: {
+        userId,
+        nameColor: cosmetics.nameColor ?? null,
+        effectId: cosmetics.effectId ?? null,
+        tag: cosmetics.tag ?? null,
+        badges: cosmetics.badges ?? [],
+      },
+    });
+  } catch (err) {
+    logger.warn({ err, userId }, 'refreshClientCosmetics: broadcast failed (non-fatal)');
+  }
 }
 
 /**
@@ -747,18 +798,19 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
           if (!channelId || !UUID_RE.test(channelId)) break;
           try {
             const result = await dbQuery(
-              `SELECT m.id, m.content, u.username, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at
+              `SELECT m.id, m.content, u.username, u.chat_name, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at
                FROM messages m JOIN users u ON u.id = m.user_id
                WHERE m.channel_id = $1 AND NOT m.is_deleted
                ORDER BY m.created_at DESC LIMIT $2 OFFSET $3`,
               [channelId, safeLimit, safeOffset]
             );
             const messages = result.rows.map((row: any) => {
-              const dn = resolveDisplayName({ username: row.username, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, installToken: row.install_token });
+              const dn = resolveDisplayName({ username: row.username, chatName: row.chat_name, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, installToken: row.install_token });
               const avatarUrl = buildAvatarUrl(row.discord_id);
-              const { install_token, username, discord_username, discord_display_name, discord_id, metadata, ...rest } = row;
+              const { install_token, username, chat_name, discord_username, discord_display_name, discord_id, metadata, ...rest } = row;
               return { ...rest, username: dn, avatarUrl, metadata: metadata ?? null };
             });
+            await attachCosmeticsToHistory(messages);
             ws.send(JSON.stringify({ type: 'chat:history', payload: { messages: messages.reverse() } }));
           } catch (err) {
             logger.error({ err }, 'Admin observer: failed to load history');
@@ -2095,7 +2147,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
         // Party typing: broadcast only to party members.
         if (typingPartyId && typeof typingPartyId === 'string' && UUID_RE.test(typingPartyId)) {
           try {
-            const { PARTIES_ENABLED } = await import('../config/features');
+            const { PARTIES_ENABLED } = await import('../config/features.js');
             if (PARTIES_ENABLED) {
               const ptMembers = await prisma.partyMember.findMany({
                 where: { partyId: typingPartyId, leftAt: null },
@@ -2126,7 +2178,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
         const safeOffset = Math.min(Math.max(parseInt(offset, 10) || 0, 0), 10000);
         try {
           const result = await dbQuery(
-            `SELECT m.id, m.content, u.username, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at
+            `SELECT m.id, m.content, u.username, u.chat_name, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at
              FROM messages m JOIN users u ON u.id = m.user_id
              WHERE m.channel_id = $1 AND NOT m.is_deleted
              ORDER BY m.created_at DESC LIMIT $2 OFFSET $3`,
@@ -2144,11 +2196,12 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
           const messages = result.rows
             .filter((row: any) => !histBlocked.has(row.user_id))
             .map((row: any) => {
-              const dn = resolveDisplayName({ username: row.username, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, installToken: row.install_token });
+              const dn = resolveDisplayName({ username: row.username, chatName: row.chat_name, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, installToken: row.install_token });
               const avatarUrl = buildAvatarUrl(row.discord_id);
-              const { install_token, username, discord_username, discord_display_name, discord_id, metadata, ...rest } = row;
+              const { install_token, username, chat_name, discord_username, discord_display_name, discord_id, metadata, ...rest } = row;
               return { ...rest, username: dn, avatarUrl, metadata: metadata ?? null };
             });
+          await attachCosmeticsToHistory(messages);
           ws.send(JSON.stringify({ type: 'chat:history', payload: { messages: messages.reverse() } }));
         } catch (err) {
           logger.error({ err }, 'Failed to load history');
@@ -2180,7 +2233,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       // ── Party chat frames ──────────────────────────────────────────────────
 
       case 'party:send': {
-        const { PARTIES_ENABLED } = await import('../config/features');
+        const { PARTIES_ENABLED } = await import('../config/features.js');
         if (!PARTIES_ENABLED) { sendWsError(ws, 'Party feature is disabled.'); break; }
 
         const { partyId: psSendPartyId, content: psRawContent, clientCreatedAt: psClientTs } = frame.payload || {};
@@ -2333,7 +2386,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       }
 
       case 'party:history': {
-        const { PARTIES_ENABLED: phEnabled } = await import('../config/features');
+        const { PARTIES_ENABLED: phEnabled } = await import('../config/features.js');
         if (!phEnabled) { ws.send(JSON.stringify({ type: 'chat:history', payload: { channelId: null, messages: [] } })); break; }
 
         const { partyId: phPartyId, limit: phLimit = 300, offset: phOffset = 0 } = frame.payload || {};
@@ -2361,7 +2414,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
             select: {
               id: true, content: true, username: true, userId: true,
               partyId: true, source: true, createdAt: true,
-              user: { select: { username: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true } },
+              user: { select: { username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true } },
             },
           });
 
@@ -2388,6 +2441,8 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
               created_at: r.createdAt.toISOString(),
               avatarUrl: buildAvatarUrl(r.user?.discordId ?? null),
             }));
+
+          await attachCosmeticsToHistory(phMessages);
 
           ws.send(JSON.stringify({ type: 'chat:history', payload: { channelId: phPartyId, messages: phMessages } }));
         } catch (err) {
@@ -2560,7 +2615,7 @@ module.exports = {
   broadcastMessageDeletion, broadcastReportAlert, broadcastChannelUpdate,
   broadcastCommandsUpdate, getClientCount, initPubSub,
   disconnectByUserId, markClientMuted, notifyAndDisconnect,
-  snapshotActiveClients, refreshClientIdentity,
+  snapshotActiveClients, refreshClientIdentity, refreshClientCosmetics,
   pushToUser, getConnectedUserIds, refreshClientBlocks,
   updateClientEndpoint,
   broadcastToSession,

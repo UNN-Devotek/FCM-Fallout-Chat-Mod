@@ -11,8 +11,8 @@
  *   OVERLAY_BIN=/path/to/linux-unpacked/fallout-chat-mod \
  *     node cross-platform-overlay/scripts/ci-launch-smoke.mjs
  *
- * Designed to run under `xvfb-run -a` in CI (Ubuntu), but also works without
- * Xvfb when Electron --headless is available (Electron ≥ 29, which this project uses).
+ * Designed to run under `xvfb-run -a` in CI (Ubuntu). Do not add Electron's
+ * `--headless` flag here: Electron 43 rejects it before the app main process starts.
  *
  * EXIT 0 = PASS  (process alive after WAIT_MS, startup marker found, no fatal errors)
  * EXIT 1 = FAIL  (early crash, "Cannot find module", uncaughtException, missing marker)
@@ -77,15 +77,29 @@ const env = {
   DISPLAY: process.env.DISPLAY || ':99',
 };
 
+// The smoke binary must execute as Electron, even when this script is itself
+// launched from an Electron-hosted development environment. AppImage variables
+// would also make the KDE/Wayland relaunch code target the host app instead of
+// the packaged overlay.
+for (const key of [
+  'ELECTRON_RUN_AS_NODE',
+  'APPIMAGE',
+  'APPDIR',
+  'OWD',
+  'APPIMAGELAUNCHER_DISABLE',
+  'REDIRECT_APPIMAGE',
+  'TARGET_APPIMAGE',
+  'WAYLAND_DISPLAY',
+]) delete env[key];
+env.XDG_CURRENT_DESKTOP = '';
+env.XDG_SESSION_DESKTOP = '';
+env.XDG_SESSION_TYPE = 'x11';
+
 // ── Launch args ──────────────────────────────────────────────────────────────
-// --headless          → Electron 29+ headless shell mode; no real display needed.
-//                       Works both with and without xvfb-run. The main process
-//                       still runs to completion, logs are written as normal.
 // --no-sandbox        → Required in most CI environments (no user namespace).
 // --disable-gpu       → Avoid GPU init failures in headless CI.
 // --disable-dev-shm-usage → /dev/shm is often tiny in CI; prevents OOM crashes.
 const args = [
-  '--headless',
   '--no-sandbox',
   '--disable-gpu',
   '--disable-dev-shm-usage',

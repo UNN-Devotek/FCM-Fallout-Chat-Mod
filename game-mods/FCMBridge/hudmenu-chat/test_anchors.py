@@ -336,6 +336,10 @@ if widget_src:
           and '"msg from=" + sender + " body="' not in widget_src
           and '"relay identity available"' in widget_src,
           "FCMChatWidget diagnostics avoid logging HUD text and relay identifiers")
+    check('"FCMCTL/1/RESYNC"' in widget_src and 'function requestHistoryResync' in widget_src,
+          "FCMChatWidget requests history replay after HUD reload")
+    check('function shouldRenderReplayMessage' in widget_src and '_seenMessageIds' in widget_src,
+          "FCMChatWidget deduplicates replayed history records")
     check("Shared.AS3.Events.CustomEvent" in widget_src,
           "FCMChatWidget resolves the game-qualified CustomEvent for the edit lock")
     check("startTypeMirror" not in widget_src,

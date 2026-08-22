@@ -143,3 +143,35 @@ prompt and reinstall. No separate de-list step.
 | GET | `/auth/discord/qa/callback` | Discord OAuth | Role check + mint session + store grant |
 | GET | `/api/auth/qa-status/:installToken` | `x-client-version` | Poll for the session grant (426 if stale) |
 | POST/GET | `/api/admin/qa/active-version` | `x-admin-api-key` | Flip / read the active golden version |
+
+## Local dev build (`npm run dist:dev`) — replace your own dev install
+
+`dist:qa` is for **blessed QA releases**. To rebuild the overlay you run locally against
+`dev.falloutchatmod.com`, use `dist:dev` instead. The three channels differ in ways that are easy
+to get wrong (issue #428):
+
+| Script | `fcmChannel` | Relay | `productName` | `userData` |
+| --- | --- | --- | --- | --- |
+| `dist:linux` / `dist:win` / `dist:mac` | *(unset)* -> `stable` | **production** | `Fallout Chat Mod` | preserved |
+| `dist:qa` | `qa` | dev | **`Fallout Chat Mod QA`** | **moves** to `…/Fallout Chat Mod QA` |
+| **`dist:dev`** | `qa` | dev | `Fallout Chat Mod` | preserved |
+
+Two traps this avoids:
+
+- **`dist:linux` silently targets production.** The artifact looks healthy and passes the packaged
+  launch smoke test; the only signal is one line in `main.log`
+  (`relayHost=falloutchatmod.com`). Installed over a dev install, your stored dev session is
+  rejected and you land on a login wall that can never reach dev chat.
+- **`dist:qa` relocates your config.** `productName` feeds `app.getPath('userData')` (main.js
+  deliberately never calls `app.setName()`), so the QA build starts from an empty profile —
+  session, keybinds and window bounds all left behind. It also auto-stamps
+  `<base>-qa.<timestamp>`, which the golden-build lock rejects until blessed.
+
+**Always verify the packaged metadata BEFORE installing over your own install:**
+
+```bash
+node -e 'const a=require("@electron/asar");
+const d=JSON.parse(a.extractFile("dist-electron/linux-unpacked/resources/app.asar","package.json"));
+console.log(d.productName, d.version, d.fcmChannel)'
+# Expect: "Fallout Chat Mod" <version> qa   — productName MUST NOT say "QA".
+```

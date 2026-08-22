@@ -60,7 +60,15 @@ Handled by the `messageCreate` listener at `discordService.ts:348`.
    channel, the message falls back to the `DISCORD_CHANNEL_ID` env var mapped
    to the General channel.
 4. Messages longer than 255 characters are **deleted** from Discord and the
-   author is notified by DM.
+   author is notified by DM. The DM **echoes the original text back** so the
+   author can copy-paste and trim instead of retyping it. The echo is wrapped in
+   a fenced code block so mentions inside it cannot ping a second time, and the
+   fence is widened past any backtick run in the content so it can't be escaped.
+   If notice + content would exceed Discord's 2000-character message cap the
+   echo is truncated with an explicit marker (never split across multiple DMs —
+   a burst reads as spam). Built by `buildOverLengthDm` in
+   `backend/src/utils/overLengthDm.ts`, unit-tested in
+   `backend/src/services/__tests__/overLengthDm.test.ts`.
 5. Images are never relayed to main channels. GIFs are allowed only if the
    destination channel has `allowGifs = true`.
 6. User-mention tokens (`<@id>`) are resolved to readable names: FO76 name from
@@ -110,6 +118,39 @@ discordClient created (intents + partials)
 | `DISCORD_UPDATES_CHANNEL_ID` | Release announcement channel (default `1479531502567166066`) |
 
 ---
+
+## Supporter tier + `/cosmetics`
+
+`supporterSyncService` keeps supporter entitlements in lockstep with Discord tier roles
+(Discord Server Subscriptions grant/revoke the role on purchase/cancellation, so the
+role IS the entitlement signal and no payment webhook exists). `cosmeticsCommandService`
+registers the guild-scoped `/cosmetics` command.
+
+**Requires the `GuildMembers` PRIVILEGED intent**, enabled per Discord application in
+the Developer Portal — dev and prod are separate applications, so this must be done
+twice. Without it the gateway connection is rejected outright.
+
+Both are gated on `SUPPORTER_TIER_ENABLED` (default `false`): with the tier off the
+command is never registered and no listener attaches.
+
+`chatNameCommandService` separately registers `/name`, a free account setting that is
+available whether supporter cosmetics are enabled or not. It opens an ephemeral modal;
+leaving it blank restores the ordinary Fallout 76 / Discord-derived name.
+
+### Supporter guild nicknames
+
+For an active Supporter or Overseer's Circle member, the bot mirrors their resolved FCM
+appearance into the **FCM server nickname** as `★ Name` or `★ [TAG] Name`. The tag is
+the same moderated four-character Overseer tag configured through the website or
+`/cosmetics tag`; changes from either surface update the nickname. The bot cannot and
+does not change a member's global Discord username.
+
+The star/tag is added on an entitlement transition, name/tag edit, and reconciliation;
+it is removed when the tier role is removed. A missing **Manage Nicknames** permission,
+server ownership, or Discord role hierarchy only skips the nickname update — it never
+blocks a cosmetic save or entitlement change.
+
+Full design record: [docs/product/supporter-tier.md](../product/supporter-tier.md).
 
 ## Related docs
 

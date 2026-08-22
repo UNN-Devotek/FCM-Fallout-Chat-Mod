@@ -61,7 +61,11 @@ export default defineConfig({
     // admin-dashboard/node_modules. We MUST force a single instance of each, or
     // React context (QueryClientProvider, Router, hooks) breaks across the two
     // module trees ("No QueryClient set" / "Invalid hook call").
-    dedupe: ['react', 'react-dom', 'react-router-dom', '@tanstack/react-query'],
+    // react-router v8 removed react-router-dom; dedupe the real package instead.
+    // This matters here: the renderer pulls ChatOverlay from ../admin-dashboard/src,
+    // so two node_modules trees are in play and a duplicated router would mean two
+    // separate router contexts.
+    dedupe: ['react', 'react-dom', 'react-router', '@tanstack/react-query'],
     preserveSymlinks: false,
   },
   build: {

@@ -57,27 +57,40 @@ describe('package-lock.json stays in sync with package.json (npm ci is fail-clos
     ).toEqual([]);
   });
 
-  // react-router-dom is the dependency PR #96 bumped to v7. Pin the assertion
-  // explicitly so a silent regression to the v6 lockfile is caught even if the
-  // package.json range were also (incorrectly) reverted.
-  it('react-router-dom resolves to the v7 major in both package.json and the lockfile', () => {
-    const declaredRange = declared['react-router-dom'];
-    expect(declaredRange, 'react-router-dom missing from package.json dependencies').toBeTruthy();
+  // The router is the dependency PR #96 caught drifting (package.json said
+  // react-router-dom ^7.17.0 while the lockfile still pinned 6.30.x). Pin the
+  // assertion explicitly so a silent regression to an older lockfile major is
+  // caught even if the package.json range were also (incorrectly) reverted.
+  //
+  // The package changed with react-router v8, which REMOVED `react-router-dom`
+  // and moved everything to `react-router` (+ `react-router/dom` for the DOM
+  // entrypoints). The guard follows the package; the intent is unchanged.
+  it('react-router resolves to the v8 major in both package.json and the lockfile', () => {
+    const declaredRange = declared['react-router'];
+    expect(declaredRange, 'react-router missing from package.json dependencies').toBeTruthy();
     expect(
       major(minVersion(declaredRange)),
-      `package.json declares react-router-dom "${declaredRange}" — expected the v7 major`
-    ).toBe(7);
+      `package.json declares react-router "${declaredRange}" — expected the v8 major`
+    ).toBe(8);
 
-    const locked = resolvedVersion('react-router-dom');
-    expect(locked, 'react-router-dom absent from package-lock.json').toBeTruthy();
+    const locked = resolvedVersion('react-router');
+    expect(locked, 'react-router absent from package-lock.json').toBeTruthy();
     expect(
       major(locked),
-      `package-lock.json resolved react-router-dom ${locked} — expected v7 (the bump). ` +
-        'A v6 lock means the lockfile was not regenerated and `npm ci` will fail.'
-    ).toBe(7);
+      `package-lock.json resolved react-router ${locked} — expected v8 (the migration). ` +
+        'An older lock means the lockfile was not regenerated and `npm ci` will fail.'
+    ).toBe(8);
     expect(
       satisfies(locked, declaredRange),
-      `locked react-router-dom ${locked} does not satisfy declared "${declaredRange}"`
+      `locked react-router ${locked} does not satisfy declared "${declaredRange}"`
     ).toBe(true);
+  });
+
+  // react-router v8 removed the react-router-dom package outright. If it ever
+  // reappears, something has re-added a package that no longer exists upstream
+  // past v7 — and it would drag the GHSA-qwww-vcr4-c8h2 advisory back in.
+  it('react-router-dom is gone (removed upstream in react-router v8)', () => {
+    expect(declared['react-router-dom'], 'react-router-dom must not be a declared dependency').toBeFalsy();
+    expect(resolvedVersion('react-router-dom'), 'react-router-dom must not be in package-lock.json').toBeFalsy();
   });
 });

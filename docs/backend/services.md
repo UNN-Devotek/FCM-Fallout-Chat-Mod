@@ -74,11 +74,11 @@ Accepts a `StatsRange` (`all | 90d | 60d | 30d | 7d | 1d`). Returns daily bucket
 **Role:** Slash-command dispatch for in-chat commands (`/bug`, `/report`, `/help`, etc.).
 
 - `getCommands()` — fetches command definitions from DB with a 60s in-memory cache.
-- `handleCommand(trigger, args, userId, channelId)` — matches the trigger, enforces per-user cooldowns (Redis), and returns a typed `CommandResult` describing the action to take (post a bot message, relay, private notice, trigger a report, server-broadcast).
+- `tryHandleCommand(content, userId, username, channelId, channelName, serverEndpoint?, playerCount?, parentChannelId?)` — matches the trigger, enforces per-user cooldowns (in-memory, not Redis), and returns a typed `CommandResult` describing the action to take (post a bot message, relay, private notice, trigger a report). *(This doc previously named a `handleCommand(trigger, args, userId, channelId)` signature that does not exist.)*
 
-Commands are configured via `GET/POST/PATCH/DELETE /api/commands`. The WS handler calls `handleCommand` when a message starts with `/`.
+Commands are configured via `GET/POST/PATCH/DELETE /api/commands`. The WS handler calls `tryHandleCommand` when a message starts with `/`.
 
-**Code-constant built-ins** (handled before any DB lookup, never stored in `chat_commands`): `/help`, `/s` (disabled), the channel relays `/g /t /e /r`, `/report`, `/apply`, and the Fallout 76 lookups **`/online`**, **`/serverstatus`** (alias `/server-status`), **`/nukecodes`** (alias `/codes`), and **`/camp <item name>`**. `/online` replies privately with plain text in the form `N users online in chat.` and, when the requester has a fresh world snapshot, `N users online in chat. M players in your world.` All built-in triggers are reserved in `commandsController` (`RESERVED_BUILTINS`) so admins can't shadow them with DB rows.
+**Code-constant built-ins** (handled before any DB lookup, never stored in `chat_commands`): `/help`, `/s` (disabled), the channel relays `/g /t /e /r` (alias `/raid`) `/i`, `/report`, `/apply`, and the Fallout 76 lookups **`/online`**, **`/serverstatus`** (alias `/server-status`), **`/nukecodes`** (alias `/codes`), and **`/camp <item name>`**. `/online` replies privately with plain text in the form `N users online in chat.` and, when the requester has a fresh world snapshot, `N users online in chat. M players in your world.` All built-in triggers are reserved in `commandsController` (`RESERVED_BUILTINS`) so admins can't shadow them with DB rows.
 
 ---
 
@@ -364,3 +364,27 @@ The following services are documented by other agents:
 - **reactionRoleService.ts** — reaction-role panels → [../discord/](../discord/)
 - **autoModService.ts** / **autoModEngine.ts** — content moderation rules → [../moderation/](../moderation/)
 - **moderationActionsService.ts** — ban/mute/kick execution → [../moderation/](../moderation/)
+
+
+---
+
+## Cosmetics + supporter services
+
+See [docs/product/supporter-tier.md](../product/supporter-tier.md) for the full design
+record; this is the service-level map.
+
+| Service | Role |
+| --- | --- |
+| `cosmetics/cosmeticsService.ts` | **The single cosmetic write path.** `applyCosmetics()` owns colour/effect/tag validation, tier gating, blacklist, cache busting, live push and audit logging. Both the REST endpoint and the Discord `/cosmetics` command call it, so the two surfaces cannot drift. Also `resolveCosmetics()` (read, Redis-cached 60s) and `attachCosmetics()` (decorates outgoing `chat:message` payloads). |
+| `cosmetics/presets.ts` | Colour + effect catalog, served over `GET /api/cosmetics/catalog` as the single source of truth for every surface. |
+| `cosmetics/reservedColors.ts` | Colours users may not pick, with the reason (impersonation vs ambiguity). |
+| `cosmetics/validation.ts` | Pure input validation, reused by the frontend picker's live feedback. |
+| `supporterService.ts` | Entitlement read/write, Redis-cached tier lookup, and the entitlement-vs-privileges split. |
+| `supporterSyncService.ts` | Keeps entitlements in lockstep with Discord tier roles: `guildMemberUpdate` / `guildMemberRemove` for the fast path, plus a 15-minute reconcile backstop. |
+| `cosmeticsCommandService.ts` | The Discord `/cosmetics` command. Marshals interactions only — no business logic. |
+| `chatNameService.ts` | Free account-level chat-name write path. Validates 2–32 characters, checks the blacklist/automod, persists `users.chat_name`, audits, and refreshes connected clients. It has no supporter gate or calendar cooldown. |
+| `chatNameCommandService.ts` | The Discord `/name` modal. Calls `chatNameService.setChatName()`; it is registered even when supporter cosmetics are disabled. |
+| `userLookup.ts` | Shared `getUserByDiscordId()`. Replaces a lookup that was copy-pasted ~15 times. |
+
+`cosmeticsEnabled()` is the master kill switch (`SUPPORTER_TIER_ENABLED`, default
+`false`). With it off the entire surface is inert — see the supporter-tier doc.

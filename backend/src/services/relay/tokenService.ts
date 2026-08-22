@@ -32,7 +32,10 @@ import { createHash, randomBytes } from 'crypto';
 import prisma from '../../config/prisma';
 import logger from '../../config/logger';
 
-const ARGON2_OPTIONS: argon2.Options = {
+// argon2 0.45 split the old `Options` type into `HashOptions` / `VerifyOptions`.
+// These feed argon2.hash() only, so HashOptions is the correct one. The values
+// are unchanged — argon2id is still numeric 2 — so stored hashes stay valid.
+const ARGON2_OPTIONS: argon2.HashOptions = {
   type: argon2.argon2id,
   memoryCost: 65536,  // 64 MiB
   timeCost: 3,

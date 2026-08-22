@@ -14,6 +14,7 @@ import { setSpamImmunity, findProhibitedPhrase } from '../services/autoModServic
 import { buildAvatarUrl } from '../services/avatarService';
 import { refreshClientIdentity } from '../websocket/handlers';
 import { mergeUserInto } from '../utils/mergeUser';
+import { setChatName } from '../services/chatNameService';
 
 // 24 hours — ephemeral overlay session; the overlay silently re-registers via its install
 // token on reconnect. Discord re-auth enforced separately by the 30-day window (discordAuthedAt).
@@ -97,13 +98,14 @@ export async function mentionSearch(req: Request, res: Response, next: NextFunct
         isBanned: false,
         ...(q.length > 0 && {
           OR: [
+            { chatName: { contains: q, mode: 'insensitive' } },
             { username: { contains: q, mode: 'insensitive' } },
             { discordUsername: { contains: q, mode: 'insensitive' } },
             { discordDisplayName: { contains: q, mode: 'insensitive' } },
           ],
         }),
       },
-      select: { username: true, discordUsername: true, discordDisplayName: true, discordId: true },
+      select: { chatName: true, username: true, discordUsername: true, discordDisplayName: true, discordId: true },
       take: 8,
     });
     const seen = new Set<string>();
@@ -113,9 +115,9 @@ export async function mentionSearch(req: Request, res: Response, next: NextFunct
         && !u.username.startsWith('discord:')
         && !u.username.startsWith('pending-')
         && !/^overlay\d+$/i.test(u.username);
-      const name = isFo76Name
+      const name = u.chatName ?? (isFo76Name
         ? u.username!
-        : (u.discordDisplayName ?? u.discordUsername ?? null);
+        : (u.discordDisplayName ?? u.discordUsername ?? null));
       if (!name) continue;
       if (!seen.has(name)) { seen.add(name); data.push({ displayName: name, discordId: u.discordId ?? null }); }
     }
@@ -304,7 +306,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
     }
 
     // Decide what Discord fields to apply safely. Rules:
-    //  - Cosmetic fields (username/avatar/displayName) always sync from the overlay.
+    //  - Discord profile fields (username/avatar/displayName) always sync from the overlay.
     //  - discordId is the identity anchor and only gets set if (a) this row has no
     //    discordId yet AND (b) no other row already claims that discordId.
     //    This prevents client-provided payloads from overwriting Discord links
@@ -371,7 +373,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
     let dbBlacklistHit: { pattern: string; matchType: string } | null = null;
     if (typeof username === 'string') {
       try {
-        const { findBlacklistMatch } = await import('../services/nameBlacklistService');
+        const { findBlacklistMatch } = await import('../services/nameBlacklistService.js');
         const m = findBlacklistMatch(username);
         if (m) dbBlacklistHit = { pattern: m.pattern, matchType: m.matchType };
       } catch { /* non-fatal — predicate returns false on init failure */ }
@@ -400,7 +402,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
         // user, so the desktop can react even when register is just a
         // periodic refresh (not a fresh connect).
         try {
-          const { pushToUser } = await import('../websocket/handlers');
+          const { pushToUser } = await import('../websocket/handlers.js');
           const userRow = await prisma.user.findUnique({ where: { installToken }, select: { id: true } });
           if (userRow?.id) {
             pushToUser(userRow.id, {
@@ -462,7 +464,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
         installToken,
         ...safePatch,
       },
-      select: { id: true, username: true, isBanned: true, discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true },
+      select: { id: true, username: true, chatName: true, isBanned: true, discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true },
     });
 
     // Record previous username in alias history when it changes to a new real name.
@@ -522,8 +524,8 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
 
     if (user.discordId && isGenuineFo76Name) {
       try {
-        const { setMemberNickname } = require('../services/discordService');
-        setMemberNickname(user.discordId, effectiveUsername).catch((err: Error) => {
+        const { syncSupporterNickname } = require('../services/supporterNicknameService');
+        syncSupporterNickname(user.discordId).catch((err: Error) => {
           logger.warn({ err, userId: user.id, discordId: user.discordId }, '[register] setMemberNickname fire-and-forget error (non-fatal)');
         });
       } catch (err) {
@@ -552,7 +554,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
     // register call — the WS refresh is a nice-to-have, not a hard dep.
     try {
       if (typeof refreshClientIdentity === 'function') {
-        const touched = refreshClientIdentity(user.id, user.username, user.discordUsername, user.discordDisplayName, installToken);
+        const touched = refreshClientIdentity(user.id, user.username, user.discordUsername, user.discordDisplayName, installToken, user.chatName);
         if (touched > 0) {
           logger.info({ userId: user.id, username: user.username, touched }, '[register] refreshed WS identity cache');
         }
@@ -680,7 +682,7 @@ async function getUserProfile(req: Request, res: Response, next: NextFunction): 
     const user = await prisma.user.findFirst({
       where,
       select: {
-        id: true, username: true, createdAt: true,
+        id: true, username: true, chatName: true, createdAt: true,
         discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true,
         isBanned: true, isMuted: true, muteExpiresAt: true,
       },
@@ -697,6 +699,42 @@ async function getUserProfile(req: Request, res: Response, next: NextFunction): 
     }
 
     res.json({ data: { ...user, role } });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
+ * PATCH /api/users/:id/chat-name -- self only
+ *
+ * This is an account identity setting, deliberately outside the supporter feature
+ * flag and cosmetics table. `null` restores the normal FO76/Discord-derived name.
+ */
+export async function updateChatName(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const targetId = paramStr(req, 'id');
+  if (!validateUuid(targetId)) return next(createError(400, 'Invalid user ID format'));
+
+  const discordId = req.dashboardUser?.discordId;
+  if (!discordId) return next(createError(401, 'Sign in with Discord first.'));
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(body, 'chatName')) {
+    return next(createError(400, 'Body must include chatName.'));
+  }
+  const chatName = body.chatName;
+  if (chatName !== null && typeof chatName !== 'string') {
+    return next(createError(400, 'chatName must be a string or null.'));
+  }
+
+  try {
+    const caller = await prisma.user.findFirst({ where: { discordId }, select: { id: true } });
+    if (!caller || caller.id !== targetId) {
+      return next(createError(403, 'You can only change your own chat name.'));
+    }
+
+    const result = await setChatName({ userId: targetId, chatName, source: 'website' });
+    if (!result.ok) return next(createError(result.reason === 'not_found' ? 404 : 400, result.message, { code: result.reason, detail: result.code }));
+    res.json({ data: { chatName: result.chatName, changed: result.changed } });
   } catch (err) {
     next(err);
   }
@@ -985,6 +1023,7 @@ module.exports = {
   deleteSession,
   getUser,
   getUserProfile,
+  updateChatName,
   getUserMessages,
   muteUser,
   unmuteUser,

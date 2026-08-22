@@ -14,10 +14,9 @@
     "strict": false,
     "allowJs": true,
     "esModuleInterop": true,
-    // TypeScript 6 deprecates `baseUrl` (removed in 7.0). Silence the deprecation
-    // error for now; the `@dashboard/*` path mapping still resolves via baseUrl.
-    "ignoreDeprecations": "6.0",
-    "baseUrl": ".",
+    // TypeScript 7 removed `baseUrl`. Since TS 5 `paths` entries resolve relative
+    // to this tsconfig.json's own directory, so the `@dashboard/*` mapping below
+    // works unchanged without it.
     "paths": {
       "@dashboard/*": ["../admin-dashboard/src/*"]
     }

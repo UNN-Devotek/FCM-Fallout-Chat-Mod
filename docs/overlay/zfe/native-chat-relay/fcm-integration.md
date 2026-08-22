@@ -40,7 +40,7 @@ token in logs or cache keys.
 | `chat.v1.connect` | Register/resume and get initial state |
 | `chat.v1.pollEvents` | Cursor-based event polling |
 | `chat.v1.subscribe` | Register a live subscriber and enqueue bounded static/current-world history after its initial cursor |
-| `chat.v1.sendMessage` | Send a static-channel message or a reserved server control |
+| `chat.v1.sendMessage` | Send a static-channel message or an authenticated reserved server control |
 | `chat.v1.getAuthState` | Refresh linked/limited state |
 | `chat.v1.report` | Submit a report for a persisted chat message |
 | `chat.v1.moderationAction` | Submit a staff-gated delete, mute, unmute, ban, or unban |
@@ -73,11 +73,12 @@ sends a printable roster control on `channel: 'server'`:
 FCMCTL/1/ROSTER:<name>|<name>...
 ```
 
-It can also send printable compatibility controls:
+It can also send these controls:
 
 ```text
 FCMCTL/1/WORLD:<worldId>
 FCMCTL/1/LEAVE
+FCMCTL/1/RESYNC
 ```
 
 The relay continues to accept legacy NUL-framed controls from older widget
@@ -92,6 +93,13 @@ Each accepted control returns a non-empty, synthetic UUID in `messageId`. ZFE's
 `chat.v1.sendMessage` contract requires a message ID for every successful send;
 the UUID acknowledges the operation only and does not represent a persisted chat
 message.
+
+`RESYNC` is emitted once after widget initialization. It replays the bounded static
+history to the long-lived native subscriber, including when the SWF was recreated but
+ZFE retained and drained that subscriber. The relay marks server-room history pending
+and releases it only after the next accepted roster/world bind. This keeps the previous
+world's ephemeral messages out of a newly joined world. Replay records are deduplicated
+by `messageId` in the widget.
 
 `worldRosterService` stores short-lived rosters and builds connected components
 from mutually observed names. The stable room key feeds the existing Redis
@@ -127,6 +135,30 @@ subsequent events incorrectly.
 The channel row is rendered once as static text. Rebuilding it on room changes
 must call `renderSubTabs()` only; HUDButton overlays at the same coordinates are
 forbidden because they duplicate and overlap the visible labels.
+
+## Configuration — `FCM_PUBLIC_BASE_URL`
+
+The in-game **link-required** system notice tells the player where to go to link their account:
+
+```
+LINK REQUIRED - visit <host>/link, sign in, and enter code: XXXX-XXXX (expires 10m)
+```
+
+That host is **not hardcoded**. It comes from `FCM_PUBLIC_BASE_URL` via `deriveLinkUrl()` in
+`backend/src/services/relay/relayHandler.ts`, which strips the scheme and any trailing slash and
+appends `/link` — so the notice shows a bare host, matching the in-game format.
+
+| Var | Default | Purpose |
+| --- | --- | --- |
+| `FCM_PUBLIC_BASE_URL` | `https://falloutchatmod.com` | Canonical public base URL for this deployment. Controls the host shown in the device-link notice. **No trailing slash.** |
+
+**Set it to `https://dev.falloutchatmod.com` on the hosted dev stack** (already wired in
+`deploy/dev/docker-compose.yml`). Without it a dev-stack player is told to visit the *production*
+site, where their dev link code does not exist — the code is issued against the dev backend.
+
+Existing production deploys need no change: the default is the production site.
+
+Covered by `deriveLinkUrl` unit tests in `backend/tests/relayHandler.test.js`.
 
 ## Production gate
 

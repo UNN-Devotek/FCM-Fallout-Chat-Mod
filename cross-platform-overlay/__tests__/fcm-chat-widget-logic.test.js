@@ -22,6 +22,8 @@ const {
   nativeLockRelease,
   shouldRebindWorldId,
   shouldIgnoreBlankWorldId,
+  historyResyncControlBody,
+  shouldRenderReplayMessage,
   inputChannelAction,
   LINK_CODE_REFRESH_MS,
   linkGateOnReconnect,
@@ -138,6 +140,19 @@ describe('dedup keys + pending-echo matching', () => {
   it('keeps an entry exactly at the 15s boundary', () => {
     const kept = expirePendingEchoes([{ key: 'x', ts: 0 }], 15000);
     expect(kept.length).toBe(1);
+  });
+});
+
+describe('history reload replay controls', () => {
+  it('uses the printable authenticated resync sentinel', () => {
+    expect(historyResyncControlBody()).toBe('FCMCTL/1/RESYNC');
+  });
+
+  it('renders a replayed message ID only once per widget instance', () => {
+    const seen = {};
+    expect(shouldRenderReplayMessage(seen, 'message-1')).toBe(true);
+    expect(shouldRenderReplayMessage(seen, 'message-1')).toBe(false);
+    expect(shouldRenderReplayMessage(seen, '')).toBe(true);
   });
 });
 

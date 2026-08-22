@@ -32,6 +32,69 @@ A `isDragging` flag suppresses the z-order heartbeat during drags. `setAlwaysOnT
 
 Bounds are **persisted** (debounced) to `overlay-state.json` on every move/resize, and on quit (`persistBounds`, `main.js:785`).
 
+**Drift suppression on fractional scaling (issue #427).** On a fractionally-scaled display the
+DIP -> physical -> DIP round-trip does not return the value we asked for: commanding `560x720`
+reads back as `562x722`. Persisting that made it the input to the next `setBounds`, so the window
+grew about **1px per axis per cycle, forever, and never shrank** — measured on a 1.247x display,
+`536x480` at session start became `552x498` after ~27 `setBounds` events. Relaunches compounded it
+too, since startup clamps the persisted value and commands it again.
+
+`persistBounds()` now runs the size through `resolvePersistedSize(observed, lastPersisted)`
+(`overlay-core.js`): if the observation is within `BOUNDS_DRIFT_TOLERANCE_PX` (2) of the last
+persisted size on **both** axes, it is rounding noise and the previous value is kept, so the error
+can never accumulate. A change beyond the tolerance on *either* axis is a real resize and is stored
+normally.
+
+Two deliberate choices:
+
+- **The loop is closed at the persist boundary, not at the 11 `setBounds` call sites.** Several of
+  those are per-frame collapse-animation writes that must not be mistaken for user intent.
+- **`lastPersistedSize` is seeded in `createWindow()`** from the size the window actually opens at.
+  Without that seed the first save of each session has no reference and banks one drift step per
+  launch.
+
+Skipped while collapsed or modal-inflated, where the persisted value is already a *remembered* size
+rather than a live measurement. Tradeoff: a deliberate resize of <=2px is also ignored — at a
+fractional scale factor that is under one physical pixel of handle movement, and unbounded growth is
+the worse failure. Covered by `__tests__/bounds-drift.test.js`, including a 200-iteration
+feedback-loop test that fails if accumulation returns.
+
+---
+
+## Modal-fit growth (temporary resize for settings / onboarding)
+
+The shell settings (`#shell-settings`) and onboarding (`#shell-onboarding`) panels are
+plain DOM rendered **inside the overlay's own BrowserWindow**, so their CSS caps
+(`max-width: 96vw`, `max-height: 90vh` in `index.html`) resolve against the *overlay*, not
+the screen. An overlay kept compact for gameplay — it can go down to
+`MIN_WIDTH` x `MIN_HEIGHT` (320x280) — squeezes the settings panel to roughly 307x252,
+which made settings impractical to use without first resizing the overlay
+([#374](https://github.com/UNN-Devotek/FCM-Fallout-Chat-Mod/issues/374)).
+
+Portalling cannot fix this: nothing rendered in the renderer can paint outside its own OS
+window. So the main process grows the window while a modal is open and restores the
+user's size on close, riding the existing `overlay:set-modal` signal:
+
+| Behavior | Detail |
+| --- | --- |
+| Trigger | `overlay:set-modal` — the same IPC that drives the modal-interactive pin |
+| Target size | `MODAL_FIT_WIDTH` x `MODAL_FIT_HEIGHT` = 560x720 (`overlay-core.js`) |
+| Grow only | Never shrinks a window the user already made large enough, per axis |
+| Clamped | Result passes through `clampToWorkArea`, so it stays on-screen |
+| Restore | Size only — live x/y is kept, so a window moved while the modal was open is not teleported back |
+| Explicit size wins | A **position-preset hotkey** (`window:set-bounds`, Shift+F1..F8) is global and still fires while a modal is open; it carries its own width/height, so it drops the restore snapshot and the preset sticks. `overlay:resize-bounds` clears the snapshot too, though the shell already disables the edge-resize zones while a modal is open (`rzVisible = !collapsed && !modalOpen`), so that path is defensive only |
+| Never persisted | While inflated, `persistBounds()` writes the **pre-modal** size, so the temporary size can't leak into `overlay-state.json` via the debounced save or the before-quit save |
+| Collapsed / animating | Skipped while idle-collapsed **and** while a collapse/expand animation is running. `animateHeightTo()` freezes the width at animation start and re-applies it every frame, so growing mid-flight would be fought and reverted — and the snapshot would capture a meaningless interim size that we would then "restore" |
+
+The sizing decision is the pure `modalFitBounds(current, workArea, need)` in
+`overlay-core.js` (returns `null` when no growth is needed or possible, meaning there is
+nothing to restore); `main.js` holds the snapshot in `modalFitPrevBounds` and does the
+Electron wiring. Covered by `__tests__/overlay-modal-fit.test.js`.
+
+Note this affects the **Electron shell** panels only. On the website/dashboard the React
+`SettingsModal` in `ChatOverlay.tsx` sizes against the browser viewport, which is already
+large, so no change was needed there.
+
 ---
 
 ## Idle-collapse (auto-hide to header strip)
@@ -54,6 +117,8 @@ Controlled by a JS idle timer in `shell.ts` that sends `overlay:collapse` / `ove
 When **collapsed**, `persistBounds()` stores `expandedHeight` (not the shrunken height) so a restart opens at the correct full size.
 
 If a move or scroll-to-bottom command arrives while collapsed, the main process expands instantly (no animation) before processing the move, preventing the "window dances while dragging" bug (`main.js:1199`).
+
+**Typing indicator while collapsed (issue #420).** The normal typing indicator is a `flexShrink:0` sibling *below* the message list, so `applyCollapsedHidden()` hides it along with everything after the sub-tab row. A compact indicator is therefore also rendered **inside** the sub-tab row itself (`[data-fcm-subtab-row]`), which survives collapse by construction — no change to `headerStripHeight()`, deliberately, since that function has a history of zoom double-apply bugs (see above). It is gated on `ShellSettings.showTypingWhenCollapsed` (default **off** — opt in via Settings → "Show typing indicator while collapsed") and is Electron-shell-only; nothing collapses on the website. The shell emits `fcm-overlay-collapse-state` with `{ collapsed }` on **both** transitions for this — kept separate from the older one-way `fcm-overlay-collapsed` signal, which existing listeners treat as "close your floating panels" and which must not fire on expand.
 
 The "Auto-hide chat when idle" setting (`ShellSettings.fadeWhenIdle`, default `true`) toggles this behavior and maps to `OverlayConfig.FadeWhenIdle` in the WinForms desktop overlay.
 
@@ -200,7 +265,7 @@ Two modes:
 
 Manual click-through (`End` key or tray item) overrides the automatic logic and forces click-through until the user toggles it off.
 
-A **modal-interactive pin** (`overlay:set-modal` IPC) forces full interactivity while the settings or onboarding panel is open, so slider drags work regardless of click-through state (`main.js:1125`).
+A **modal-interactive pin** (`overlay:set-modal` IPC) forces full interactivity while the settings or onboarding panel is open, so slider drags work regardless of click-through state (`main.js:1125`). The same signal also drives [modal-fit growth](#modal-fit-growth-temporary-resize-for-settings--onboarding).
 
 An 800ms focus guard (`FOCUS_GUARD_MS`) prevents the ~300ms foreground poll from flipping the overlay back to click-through immediately after the user presses Insert (`main.js:484`).
 

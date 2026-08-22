@@ -293,6 +293,55 @@ dual-socket reconnect from evicting an id and allowing a duplicate render.
 
 ## @Mention System
 
+### Notification keywords (issue #422)
+
+Beyond `@mentions` of the viewer's own names, users can list arbitrary **notify keywords**
+(`WebOverlaySettings.notifyKeywords`, edited via the overlay shell's "Notify keywords" chip
+field). A message containing one is treated exactly like an `@mention` of the viewer — same
+highlight, same unread badge, same jump-to-mention, same pop-the-overlay-from-tray. No separate
+pipeline.
+
+The matching lives in two exported helpers in `ChatOverlay.tsx`:
+
+| Helper | Purpose |
+| --- | --- |
+| `contentMentionsName(content, name)` | Existing. Hard-codes an `@` prefix, so it can never match a bare word. |
+| `contentMatchesKeyword(content, keyword)` | New. Bare words, case-insensitive. |
+| `messageTriggersNotify(content, myNames, keywords)` | Combines both — this is what the feed and the live WS path call. |
+
+`contentMatchesKeyword` requires a **leading** word boundary but allows trailing word characters.
+That asymmetry is deliberate: `"ore"` must not fire on `"before"`, but a watch on `"nuke"` should
+still catch `"nukes"` / `"nuked"`. Keywords shorter than 2 characters are ignored as too noisy.
+
+The viewer's own `@mentions` always trigger regardless of the keyword list — the feature can never
+switch mention notifications off.
+
+### Notification sound (issue #437)
+
+An optional audible ping fires from the same trigger as the highlight — the live-WS branch that
+already dispatches `fcm-mention-appear`, so it is gated to live messages that are not your own
+(history never pings).
+
+| Setting | Default | Notes |
+| --- | --- | --- |
+| `notifySoundEnabled` | **false** | Opt-in. An unsolicited sound from a game overlay is a bad first impression, and the mirror reads a *missing* key as off so existing installs stay silent after an update. |
+| `notifySoundVolume` | `0.5` | 0..1, applied to the `HTMLAudioElement`. |
+
+**Rate-limited** by the pure `shouldPlayNotifySound(now, lastPlayed, minGap)` — `NOTIFY_SOUND_MIN_GAP_MS`
+is 3000. A busy Trading channel with a common keyword can trigger many times a second; without a
+floor the overlay machine-guns the ping, which is worse than no sound. A 50-message burst collapses
+to exactly one ping (unit-tested).
+
+The asset lives at `src/features/chat/assets/notify.wav` and is imported as a **module asset**, so
+Vite fingerprints it into `dist` for the website *and* `dist-renderer` for the Electron build. That
+deliberately avoids an `electron-builder` `files` entry — `dist-renderer` is already listed, so the
+v1.3.82 class of "asset missing from the package" failure cannot happen here.
+
+`play()` rejection is swallowed: browsers block autoplay before a user gesture, which is expected on
+the website and harmless.
+
+> **In-game HUD widget** still has no highlight concept — tracked separately in #438.
+
 ### Unread badges
 
 `unreadMentions: Record<channelId, number>` is incremented in the WS `chat:message`
@@ -527,6 +576,48 @@ a `proxy:ws:close` event).
 `proxy:ws:close` removes the socket from both `relaySockets` and `relaySendBuffers` and calls
 `sock.close()` so the upstream relay connection is always torn down when the renderer's logical
 socket closes.
+
+## Supporter chat cosmetics
+
+`ChatMessage` carries `nameColor`, `effectId`, `tag` and `badges`, resolved server-side
+in `ingestMessage.attachCosmetics()`. Channel and party `chat:history` batches resolve the
+same fields per distinct author before they are sent, and the frontend preserves those
+additive fields while normalising both live and history frames. Switching tabs or reloading
+history therefore cannot flatten a selected appearance. Absent for the vast majority of
+users, who render byte-identically to before the feature existed.
+
+**Render contract** (`nameCosmeticProps()`, exported and unit-tested):
+
+- No effect → inline `color` + `textShadow`, exactly as before.
+- With an effect → a static `.fcm-name-fx--<id>` class plus two CSS custom properties
+  set inline: `--fcm-name-color` and `--fcm-name-outline`. **No inline `textShadow`** —
+  the class owns it, and an inline one would win the cascade and silently flatten every
+  effect to a plain name.
+- `data-fcm-name` carries the rendered name for the glitch effect's `::before`/`::after`
+  copies (`content: attr(...)`).
+
+Effects live in `nameEffects.css` as **pure CSS**. No JS animation library may enter
+this component's import graph — the feed is virtualized and memoized, and the Electron
+overlay draws on top of a running game. `noMotionInOverlay.test.ts` walks the import
+graph transitively and fails CI if Motion ever becomes reachable from ChatOverlay.
+Motion IS used in `CosmeticsPanel`, which the overlay never loads.
+
+Every effect **composes with** the existing multi-layer `textOutline` rather than
+replacing it — names sit over arbitrary game content and are unreadable without it.
+
+Animated effects collapse to a static sibling under `prefers-reduced-motion` and under
+the viewer opt-out (`settings.disableNameMotion` → `fcm-no-name-motion`, applied on the
+same element, hence compound selectors in the CSS).
+
+Tag and badge render **before** the name so the name element's text node stays exactly
+`Name: `. The badge is a compact glyph (`✦` for Supporter, `◆` for Overseer's Circle)
+with an accessible hover label, rather than an unexplained text abbreviation. Splitting the
+colon out broke `getByText(/Name:/)` queries in the existing private-messaging tests.
+
+Cosmetics updates arrive on the existing `user:identity_updated` frame, so the handler
+that back-applies renames to rendered history covers colour changes too.
+
+Full design record: [docs/product/supporter-tier.md](../product/supporter-tier.md).
 
 ## Related
 

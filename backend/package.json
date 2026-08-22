@@ -14,31 +14,31 @@
     "test:coverage": "jest --coverage --runInBand --forceExit"
   },
   "dependencies": {
-    "@aws-sdk/client-s3": "^3.1079.0",
+    "@aws-sdk/client-s3": "^3.1090.0",
     "@prisma/client": "^5.22.0",
     "@types/tar-stream": "^3.1.4",
-    "argon2": "^0.44.0",
+    "argon2": "^0.45.0",
     "bull": "^4.16.5",
-    "connect-redis": "^9.0.0",
+    "connect-redis": "^10.0.0",
     "cors": "^2.8.5",
-    "discord.js": "^14.18.0",
+    "discord.js": "^14.27.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "express-rate-limit": "^8.5.0",
+    "express-rate-limit": "^8.6.0",
     "express-session": "^1.18.1",
     "file-type": "^21.3.4",
-    "helmet": "^8.0.0",
+    "helmet": "^8.3.0",
     "joi": "^18.2.3",
     "multer": "^2.2.0",
     "node-cron": "^4.6.0",
     "node-emoji": "^2.2.0",
     "pg": "^8.22.0",
     "pino": "^10.3.1",
-    "rate-limit-redis": "^5.0.0",
+    "rate-limit-redis": "^6.0.0",
     "redis": "^6.1.0",
     "tar-stream": "^3.2.0",
     "uuid": "^11.1.1",
-    "ws": "^8.18.0",
+    "ws": "^8.21.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -47,7 +47,7 @@
     "@types/express": "^5.0.6",
     "@types/express-session": "^1.18.2",
     "@types/multer": "^2.2.0",
-    "@types/node": "^26.1.0",
+    "@types/node": "^26.1.1",
     "@types/node-cron": "^3.0.11",
     "@types/pg": "^8.20.0",
     "@types/pino": "^7.0.5",
@@ -57,13 +57,16 @@
     "nodemon": "^3.1.9",
     "prisma": "^5.22.0",
     "supertest": "^7.0.0",
-    "tsx": "^4.23.0",
-    "typescript": "^6.0.2"
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2"
   },
   "overrides": {
     "uuid": "^11.1.1",
     "undici": "^6.27.0",
-    "js-yaml": "^3.15.0"
+    "js-yaml": "^3.15.0",
+    "brace-expansion@1": "^1.1.16",
+    "brace-expansion@2": "^2.1.4",
+    "brace-expansion@5": "^5.0.7"
   },
   "jest": {
     "testEnvironment": "node",
@@ -82,7 +85,7 @@
     },
     "coverageDirectory": "coverage",
     "collectCoverageFrom": [
-      "src/**/*.{js,ts}"
+      "src/**/*.js"
     ]
   },
   "allowScripts": {

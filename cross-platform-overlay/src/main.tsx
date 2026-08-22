@@ -9,7 +9,7 @@ import '@dashboard/index.css';
 import React, { useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, Outlet } from 'react-router';
 
 // Desktop-overlay parity shell: settings panel, idle auto-collapse, channel-nav
 // commands, click-through hover reporting. (cross-platform-overlay-only.)

@@ -16,6 +16,10 @@ import {
   splitParts,
   splitMentions,
   contentMentionsName,
+  contentMatchesKeyword,
+  shouldPlayNotifySound,
+  NOTIFY_SOUND_MIN_GAP_MS,
+  messageTriggersNotify,
   backoffDelay,
   nextTicketRetryDelay,
   isAuthTerminal,
@@ -248,8 +252,13 @@ describe('loadSettings / saveSettings', () => {
       showHints: true,
       fontSize: 14,
       showTimestamps: false,
+      disableNameMotion: false,
       timestampFormat: '12h',
       channelFilters: [],
+      notifyKeywords: [],
+      showTypingWhenCollapsed: false,
+      notifySoundEnabled: false,
+      notifySoundVolume: 0.5,
     });
   });
 
@@ -261,8 +270,13 @@ describe('loadSettings / saveSettings', () => {
       showHints: false,
       fontSize: 18,
       showTimestamps: true,
+      disableNameMotion: false,
       timestampFormat: '24h' as const,
       channelFilters: ['Trading'],
+      notifyKeywords: ['fixer'],
+      showTypingWhenCollapsed: false,
+      notifySoundEnabled: true,
+      notifySoundVolume: 0.8,
     };
     saveSettings(custom);
     expect(loadSettings()).toEqual(custom);
@@ -986,5 +1000,112 @@ describe('isNearBottom (#313 stick-to-bottom intent)', () => {
 
   it('exposes a sane default threshold', () => {
     expect(STICK_TO_BOTTOM_THRESHOLD).toBe(80);
+  });
+});
+
+// ── contentMatchesKeyword / messageTriggersNotify (#422) ─────────────────────
+//
+// Keyword triggers reuse the whole existing @mention pipeline (highlight, unread
+// badge, jump-to-mention, overlay pop-from-tray). The ONLY new logic is the
+// matcher, because contentMentionsName hard-codes an '@' prefix and can never
+// match a bare word.
+describe('contentMatchesKeyword', () => {
+  it('matches a bare keyword anywhere in the message', () => {
+    expect(contentMatchesKeyword('anyone selling a fixer?', 'fixer')).toBe(true);
+  });
+
+  it('is case-insensitive both ways', () => {
+    expect(contentMatchesKeyword('WTS FIXER', 'fixer')).toBe(true);
+    expect(contentMatchesKeyword('wts fixer', 'FIXER')).toBe(true);
+  });
+
+  // The whole point of the boundary rule: "ore" must not fire on "before".
+  it('does NOT match mid-word (no false positive on a substring)', () => {
+    expect(contentMatchesKeyword('this happened before the raid', 'ore')).toBe(false);
+    expect(contentMatchesKeyword('scoreboard update', 'core')).toBe(false);
+  });
+
+  // Trailing letters ARE allowed, so a watch on "nuke" still catches the plural.
+  it('matches a trailing inflection (nuke -> nukes/nuked)', () => {
+    expect(contentMatchesKeyword('two nukes incoming', 'nuke')).toBe(true);
+    expect(contentMatchesKeyword('they nuked whitespring', 'nuke')).toBe(true);
+  });
+
+  it('matches after punctuation and at the start of the message', () => {
+    expect(contentMatchesKeyword('raid! nuke?', 'nuke')).toBe(true);
+    expect(contentMatchesKeyword('nuke launched', 'nuke')).toBe(true);
+  });
+
+  it('ignores keywords shorter than 2 characters (too noisy)', () => {
+    expect(contentMatchesKeyword('a quick message', 'a')).toBe(false);
+    expect(contentMatchesKeyword('', 'nuke')).toBe(false);
+  });
+
+  it('trims surrounding whitespace on the keyword', () => {
+    expect(contentMatchesKeyword('selling a fixer', '  fixer  ')).toBe(true);
+  });
+});
+
+describe('messageTriggersNotify', () => {
+  it('still triggers on an @mention of one of my names', () => {
+    expect(messageTriggersNotify('hey @devotek look', ['devotek'], [])).toBe(true);
+  });
+
+  it('triggers on a configured keyword with no @ anywhere', () => {
+    expect(messageTriggersNotify('WTS fixer 5k', [], ['fixer'])).toBe(true);
+  });
+
+  it('does not trigger on unrelated chatter', () => {
+    expect(messageTriggersNotify('good morning wasteland', ['devotek'], ['fixer'])).toBe(false);
+  });
+
+  // @mentions of the viewer must keep working even with an empty keyword list —
+  // the keyword feature must never be able to disable mention notifications.
+  it('mentions work with an empty keyword list', () => {
+    expect(messageTriggersNotify('@devotek ping', ['devotek'], [])).toBe(true);
+  });
+
+  it('matches any one of several keywords', () => {
+    expect(messageTriggersNotify('raid starting', [], ['nuke', 'raid', 'fixer'])).toBe(true);
+  });
+});
+
+// ── shouldPlayNotifySound (#437) ─────────────────────────────────────────────
+// A busy Trading channel with a common keyword can trigger many times a second.
+// Without a floor the overlay would machine-gun the ping, which is worse than no
+// sound at all.
+describe('shouldPlayNotifySound', () => {
+  it('plays the very first time (no previous ping)', () => {
+    expect(shouldPlayNotifySound(1_000_000, null)).toBe(true);
+  });
+
+  it('suppresses a second ping inside the gap', () => {
+    const t = 1_000_000;
+    expect(shouldPlayNotifySound(t + NOTIFY_SOUND_MIN_GAP_MS - 1, t)).toBe(false);
+  });
+
+  it('allows a ping exactly at the gap boundary', () => {
+    const t = 1_000_000;
+    expect(shouldPlayNotifySound(t + NOTIFY_SOUND_MIN_GAP_MS, t)).toBe(true);
+  });
+
+  it('allows a ping well after the gap', () => {
+    expect(shouldPlayNotifySound(2_000_000, 1_000_000)).toBe(true);
+  });
+
+  it('honours a custom gap', () => {
+    expect(shouldPlayNotifySound(1500, 1000, 1000)).toBe(false);
+    expect(shouldPlayNotifySound(2000, 1000, 1000)).toBe(true);
+  });
+
+  // A burst of 50 messages in one second must produce exactly one ping.
+  it('collapses a rapid burst to a single ping', () => {
+    let last: number | null = null;
+    let plays = 0;
+    for (let i = 0; i < 50; i++) {
+      const now = 1_000_000 + i * 20; // 50 messages over 1s
+      if (shouldPlayNotifySound(now, last)) { plays++; last = now; }
+    }
+    expect(plays).toBe(1);
   });
 });

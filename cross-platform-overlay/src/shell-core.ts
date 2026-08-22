@@ -329,7 +329,12 @@ export interface WebMirrorInput {
   showHints: boolean;
   showTimestamps: boolean;
   timestampFormat: '12h' | '24h';
+  disableNameMotion: boolean;
   channelFilters: string[];
+  notifyKeywords: string[];
+  showTypingWhenCollapsed: boolean;
+  notifySoundEnabled: boolean;
+  notifySoundVolume: number;
 }
 export interface WebMirrorSettings {
   themeId: string;
@@ -339,7 +344,12 @@ export interface WebMirrorSettings {
   showHints: boolean;
   showTimestamps: boolean;
   timestampFormat: '12h' | '24h';
+  disableNameMotion: boolean;
   channelFilters: string[];
+  notifyKeywords: string[];
+  showTypingWhenCollapsed: boolean;
+  notifySoundEnabled: boolean;
+  notifySoundVolume: number;
 }
 export function shellToWebSettings(s: WebMirrorInput): WebMirrorSettings {
   return {
@@ -354,9 +364,28 @@ export function shellToWebSettings(s: WebMirrorInput): WebMirrorSettings {
     showHints: s.showHints,
     showTimestamps: s.showTimestamps,
     timestampFormat: s.timestampFormat,
+    // Viewer opt-out for animated supporter name effects. MUST be carried here — a
+    // field that exists in ShellSettings but is missing from the mirror persists fine
+    // and never reaches ChatOverlay, which is the classic silent failure for this
+    // pattern (see the mirror-completeness test below).
+    disableNameMotion: s.disableNameMotion,
     // Hidden-channel names — the component filters these out of the feed and
     // per-channel views (case-insensitive). Copied so the array can't alias.
     channelFilters: Array.isArray(s.channelFilters) ? s.channelFilters.slice() : [],
+    // Words that highlight a message like an @mention of you (#422). Copied so
+    // the array can't alias back into shell state.
+    notifyKeywords: Array.isArray(s.notifyKeywords) ? s.notifyKeywords.slice() : [],
+    // Keep the typing indicator in the tab strip while collapsed (#420).
+    // Opt-in: `=== true` so a MISSING key (settings persisted before this
+    // existed) resolves to false and matches the default. Using `!== false`
+    // here would silently switch the feature ON for every existing install.
+    showTypingWhenCollapsed: s.showTypingWhenCollapsed === true,
+    // Opt-in like the typing indicator: a MISSING key must read as off, so
+    // existing installs never start making noise after an update (#437).
+    notifySoundEnabled: s.notifySoundEnabled === true,
+    notifySoundVolume: typeof s.notifySoundVolume === 'number'
+      ? Math.max(0, Math.min(1, s.notifySoundVolume))
+      : 0.5,
   };
 }
 
