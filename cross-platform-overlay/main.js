@@ -147,6 +147,12 @@ const IS_WAYLAND = _xdgSession === 'wayland' || !!process.env.WAYLAND_DISPLAY;
 const IS_X11 = IS_LINUX && !IS_WAYLAND;
 // The single switch that turns the new behavior on. KDE + Wayland only.
 const KDE_WAYLAND = IS_LINUX && IS_KDE && IS_WAYLAND;
+// Hyprland is a wlroots compositor, not KWin. HYPRLAND_INSTANCE_SIGNATURE is
+// Hyprland's own env var (always set inside a Hyprland session, the most
+// reliable signal); XDG_CURRENT_DESKTOP is a secondary fallback. Mutually
+// exclusive with KDE_WAYLAND / IS_X11 in practice.
+const IS_HYPRLAND = IS_LINUX && IS_WAYLAND &&
+  (!!process.env.HYPRLAND_INSTANCE_SIGNATURE || _xdgDesktop.includes('hyprland'));
 // Phase-0 spike opt-in (see docs/overlay/linux-overlay-approaches.md): when set, stay
 // on native Wayland instead of relaunching into XWayland. Off by default — every
 // existing user keeps the XWayland relaunch below unchanged. This exists to let us
@@ -843,13 +849,13 @@ function isPrivileged() {
 // A fully-set-up regular user with the game closed → false (overlay hides). This
 // is intentional: onboarding stays visible (chatActive=false), then the overlay
 // closes the instant onboarding completes (chatActive=true) if FO76 isn't running.
-// focusAware/gameFocused (KDE-Wayland or X11 w/ live foreground probe): hides
-// the overlay when the game isn't focused, but only on the SAME output as the
-// game, same reasoning as syncKwinKeepAboveRule. There's no stacking contest
-// to win elsewhere. Without this, alt-tab would hide the overlay even on a
-// monitor the game isn't on.
+// focusAware/gameFocused (KDE-Wayland, X11, or Hyprland w/ live foreground
+// probe): hides the overlay when the game isn't focused, but only on the SAME
+// output as the game, same reasoning as syncKwinKeepAboveRule / syncHyprlandPin.
+// There's no stacking contest to win elsewhere. Without this, alt-tab would
+// hide the overlay even on a monitor the game isn't on.
 function canShowOverlay() {
-  const focusAware = (KDE_WAYLAND || IS_X11) && foregroundDetect && isOverlaySameOutputAsGame();
+  const focusAware = (KDE_WAYLAND || IS_X11 || IS_HYPRLAND) && foregroundDetect && isOverlaySameOutputAsGame();
   return overlayCore.canShowOverlay({ forceVisible, role: userRole, gameRunning, chatActive, focusAware, gameFocused });
 }
 
@@ -877,9 +883,9 @@ function notifyGameRequired() {
 const { spawn, exec } = require('child_process');
 const { GAME_PROCESSES, isGameProcess, isGameClass } = overlayCore;
 let zorderProc = null;            // long-lived PowerShell foreground poller (win32)
-let fgPoller = null;              // active-window poller child (KDE-Wayland / X11)
+let fgPoller = null;              // active-window poller child (KDE-Wayland / X11 / Hyprland)
 let fgPollTimer = null;           // setInterval driving the active-window poll
-let fgTool = null;                // resolved tool name: 'xdotool' | 'kdotool'
+let fgTool = null;                // resolved tool name: 'xdotool' | 'kdotool' | 'hyprctl'
 let foregroundDetect = false;     // true once a foreground tool is confirmed present (any Linux session type)
 let zorderTimer = null;           // fallback JS timer (re-applies desired state)
 let lastForegroundProc = '';      // last reported foreground process name (lower)
@@ -907,7 +913,7 @@ let gameFocused = false;           // committed focus state: game or overlay has
 let _focusCandidate = null;        // pending gameFocused value (hysteresis)
 let _focusStableCount = 0;         // consecutive samples agreeing on _focusCandidate
 let _cachedGameDisplayId = null;   // FO76's Electron display id (null = assume same output)
-let _lastRuleInstalled = null;     // last want-value passed to the KWin installer
+let _lastRuleInstalled = null;     // last want-value passed to the KWin / Hyprland pin installer
 let gameScanTimer = null;          // interval handle for the process scanner
 let _scanCount = 0;                // diagnostic: number of game scans run
 let _lastDiagFound = null;         // diagnostic: last logged detection state
@@ -1032,11 +1038,13 @@ function onGamePresenceChanged(found) {
     userHidden = false;
     // Sync now (cache is usually null -> assumes same output), then probe the
     // game's display async so a different-monitor layout drops it later.
-    syncKwinKeepAboveRule('game-launch');
+    if (KDE_WAYLAND) syncKwinKeepAboveRule('game-launch');
+    else if (IS_HYPRLAND) syncHyprlandPin('game-launch');
     probeGameDisplay();
   } else if (!gameRunning && wasRunning) {
     _cachedGameDisplayId = null;
-    syncKwinKeepAboveRule('game-exit');
+    if (KDE_WAYLAND) syncKwinKeepAboveRule('game-exit');
+    else if (IS_HYPRLAND) syncHyprlandPin('game-exit');
   }
   // Re-evaluate keybind registration: on non-win32 the keys are gated on game-
   // RUNNING (no foreground API), so they must (un)register when the game launches
@@ -1069,22 +1077,50 @@ function onGamePresenceChanged(found) {
 // installs only when the overlay shares that output. Fail-open: any miss leaves
 // _cachedGameDisplayId=null, treated as "assume same output".
 function probeGameDisplay() {
-  if (!IS_LINUX || !fgTool) { _cachedGameDisplayId = null; syncKwinKeepAboveRule('probe-skip'); return; }
+  if (!IS_LINUX || !fgTool) {
+    _cachedGameDisplayId = null;
+    if (KDE_WAYLAND) syncKwinKeepAboveRule('probe-skip');
+    else if (IS_HYPRLAND) syncHyprlandPin('probe-skip');
+    return;
+  }
   const pattern = (GAME_PROCESSES || []).concat(['steam_app_1151340']).join('|');
-  exec(fgTool + " search --class '" + pattern + "' getwindowgeometry", { timeout: 2000, shell: '/bin/sh' }, (err, stdout) => {
-    if (err || !stdout) { _cachedGameDisplayId = null; syncKwinKeepAboveRule('probe-empty'); return; }
-    // Verified (kdotool 0.2.3 + xdotool): both print `Position: X,Y`; xdotool
-    // adds ` (screen: N)`. Anchor on the label so xdotool's `Window 12345` id
-    // isn't mistaken for a coordinate.
-    const m = String(stdout).match(/Position:\s*(-?\d+)\s*,\s*(-?\d+)/);
-    if (!m) { _cachedGameDisplayId = null; syncKwinKeepAboveRule('probe-unparsed'); return; }
+  const applyGamePos = (x, y) => {
     try {
-      const x = parseInt(m[1], 10), y = parseInt(m[2], 10);
       const d = screen.getDisplayMatching({ x, y, width: 1, height: 1 });
       _cachedGameDisplayId = d ? d.id : null;
       diag('[output] game display probed id=' + _cachedGameDisplayId + ' at ' + x + ',' + y);
     } catch { _cachedGameDisplayId = null; }
-    syncKwinKeepAboveRule('probe');
+    if (KDE_WAYLAND) syncKwinKeepAboveRule('probe');
+    else if (IS_HYPRLAND) syncHyprlandPin('probe');
+  };
+  const onProbeFail = (reason) => {
+    _cachedGameDisplayId = null;
+    if (KDE_WAYLAND) syncKwinKeepAboveRule(reason);
+    else if (IS_HYPRLAND) syncHyprlandPin(reason);
+  };
+  if (fgTool === 'hyprctl') {
+    try {
+      exec('hyprctl clients -j', { timeout: 2000, shell: '/bin/sh' }, (err, stdout) => {
+        if (err || !stdout) { onProbeFail('probe-empty'); return; }
+        let client = null;
+        try { client = overlayCore.findHyprctlClient(stdout, pattern); } catch { client = null; }
+        if (!client || !Array.isArray(client.at) || client.at.length < 2) { onProbeFail('probe-unparsed'); return; }
+        applyGamePos(client.at[0], client.at[1]);
+      });
+    } catch (e) {
+      diag('[hyprland] clients probe threw: ' + String((e && e.message) || e));
+      onProbeFail('probe-empty');
+    }
+    return;
+  }
+  exec(fgTool + " search --class '" + pattern + "' getwindowgeometry", { timeout: 2000, shell: '/bin/sh' }, (err, stdout) => {
+    if (err || !stdout) { onProbeFail('probe-empty'); return; }
+    // Verified (kdotool 0.2.3 + xdotool): both print `Position: X,Y`; xdotool
+    // adds ` (screen: N)`. Anchor on the label so xdotool's `Window 12345` id
+    // isn't mistaken for a coordinate.
+    const m = String(stdout).match(/Position:\s*(-?\d+)\s*,\s*(-?\d+)/);
+    if (!m) { onProbeFail('probe-unparsed'); return; }
+    applyGamePos(parseInt(m[1], 10), parseInt(m[2], 10));
   });
 }
 
@@ -1140,6 +1176,59 @@ function syncKwinKeepAboveRule(reason) {
       });
     } catch (e) { diag('[kwin] remove-rule threw: ' + String(e && e.message || e)); onDone(); }
   }
+}
+
+// Hyprland stacking: pin the overlay above the workspace while the game runs
+// AND shares this output. hyprctl dispatch pin toggles, so we only dispatch
+// on an actual want-transition (same _lastRuleInstalled short-circuit as
+// syncKwinKeepAboveRule). Shares the KWin in-flight/queued/last-installed
+// state: Hyprland and KWin are mutually exclusive session types. Best-effort
+// - missing or failing hyprctl logs a diagnostic and never leaves in-flight
+// stuck. pin has not been verified on real Hyprland hardware.
+function syncHyprlandPin(reason) {
+  if (!IS_LINUX || !IS_HYPRLAND) return;
+  if (_kwinSyncInFlight) { _kwinSyncQueued = true; return; }
+  const sameOutput = isOverlaySameOutputAsGame();
+  const want = overlayCore.shouldInstallKeepAboveRule({ gameRunning, sameOutput });
+  if (want === _lastRuleInstalled) return;
+  _lastRuleInstalled = want;
+  _kwinSyncInFlight = true;
+  diag('[hyprland] pin -> ' + want + ' (sameOutput=' + sameOutput + ' reason=' + reason + ')');
+  const onDone = () => {
+    _kwinSyncInFlight = false;
+    if (_kwinSyncQueued) { _kwinSyncQueued = false; syncHyprlandPin('queued-recheck'); }
+  };
+  try {
+    exec('hyprctl clients -j', { timeout: 2000, shell: '/bin/sh' }, (err, stdout) => {
+      if (err || !stdout) {
+        diag('[hyprland] clients lookup failed: ' + String((err && err.message) || err || 'empty'));
+        onDone();
+        return;
+      }
+      let client = null;
+      try { client = overlayCore.findHyprctlClient(stdout, 'fallout-chat-mod'); } catch (e) {
+        diag('[hyprland] clients parse threw: ' + String((e && e.message) || e));
+        onDone();
+        return;
+      }
+      const address = client && typeof client.address === 'string' ? client.address : null;
+      if (!address) {
+        diag('[hyprland] overlay window not found in hyprctl clients');
+        onDone();
+        return;
+      }
+      // Fail-closed: only interpolate a hex window address into the shell.
+      if (!/^0x[0-9a-fA-F]+$/.test(address)) {
+        diag('[hyprland] unexpected window address, skipping pin');
+        onDone();
+        return;
+      }
+      exec('hyprctl dispatch pin address:' + address, { timeout: 2000, shell: '/bin/sh' }, (err2) => {
+        if (err2) diag('[hyprland] pin dispatch failed: ' + String((err2 && err2.message) || err2));
+        onDone();
+      });
+    });
+  } catch (e) { diag('[hyprland] pin sync threw: ' + String((e && e.message) || e)); onDone(); }
 }
 
 function startGameScan() {
@@ -2164,7 +2253,10 @@ ipcMain.on('overlay:move-end', () => {
     const b = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : null;
     diag('[move] end bounds=' + JSON.stringify(b ? { x: b.x, y: b.y } : null));
   } catch { /* ignore */ }
-  if (gameRunning) syncKwinKeepAboveRule('move-end');
+  if (gameRunning) {
+    if (KDE_WAYLAND) syncKwinKeepAboveRule('move-end');
+    else if (IS_HYPRLAND) syncHyprlandPin('move-end');
+  }
 });
 
 // Chrome Opacity — sends --fcm-chrome-bg-alpha CSS variable to the renderer so
@@ -3324,6 +3416,9 @@ function desiredTopmost() {
 // instead (plus a DWM-flash constraint that rules out frequent forced re-apply).
 // Skipped on KDE-Wayland: the KWin Force-layer rule (syncKwinKeepAboveRule)
 // self-heals on window-raise, making the heartbeat redundant there.
+// Not skipped on Hyprland: pin has not been verified on real hardware to beat
+// a fullscreen Proton game the way KWin's Force-Layer rule was, so the
+// setAlwaysOnTop heartbeat stays as belt-and-suspenders until verified.
 let _linuxZOrderTimer = null;
 function _startLinuxZOrderHeartbeat() {
   if (!IS_LINUX || KDE_WAYLAND) return;
@@ -3402,9 +3497,10 @@ function applyZOrder(opts) {
   } catch (e) { if (IS_LINUX) diag('[zorder] setAlwaysOnTop failed:', String(e && e.message || e)); }
 }
 
-// Linux active-window poller using kdotool / xdotool. KDE-Wayland prefers
-// kdotool (KWin D-Bus, sees native-Wayland windows). Plain X11 prefers
-// xdotool (the native X11 tool); kdotool is only a fallback there.
+// Linux active-window poller using kdotool / xdotool / hyprctl. KDE-Wayland
+// prefers kdotool (KWin D-Bus, sees native-Wayland windows). Plain X11 prefers
+// xdotool (the native X11 tool); kdotool is only a fallback there. Hyprland
+// uses hyprctl (activewindow -j), its own compositor IPC, not KWin.
 //
 // `kdotool` (https://github.com/jinliu/kdotool) talks to KWin over D-Bus, so it
 // sees EVERY window — native-Wayland (Konsole, Wayland Firefox) AND XWayland
@@ -3430,20 +3526,27 @@ function applyZOrder(opts) {
 // leave foregroundDetect=false so refreshShortcuts falls back to the
 // pre-existing "game running → keys active" behavior (no regression).
 function _startForegroundPoller() {
-  if (!KDE_WAYLAND && !IS_X11) return; // KDE-Wayland or any X11 session
-  // Resolve which tools are available. Order is session-dependent (kdotool first
-  // on KDE-Wayland, xdotool first on X11). We detect BOTH (not just the first) so
-  // the crash circuit-breaker below can auto-switch to the alternate tool if the
-  // primary keeps aborting. `;` (not `||`) runs both probes; `command -v` prints
-  // the path when found.
-  exec('command -v kdotool; command -v xdotool', { shell: '/bin/sh' }, (_err, stdout) => {
+  if (!KDE_WAYLAND && !IS_X11 && !IS_HYPRLAND) return; // KDE-Wayland, X11, or Hyprland
+  // Resolve which tools are available. Order is session-dependent (hyprctl on
+  // Hyprland, kdotool first on KDE-Wayland, xdotool first on X11). We detect
+  // all three so the crash circuit-breaker below can auto-switch to the
+  // alternate tool if the primary keeps aborting. `;` (not `||`) runs every
+  // probe; `command -v` prints the path when found.
+  exec('command -v kdotool; command -v xdotool; command -v hyprctl', { shell: '/bin/sh' }, (_err, stdout) => {
     const found = (stdout || '').split('\n').map((s) => s.trim().split('/').pop()).filter(Boolean);
-    const available = overlayCore.preferredForegroundTools({ kdeWayland: KDE_WAYLAND, x11: IS_X11 }).filter((t) => found.includes(t));
+    const available = overlayCore.preferredForegroundTools({
+      hyprland: IS_HYPRLAND, kdeWayland: KDE_WAYLAND, x11: IS_X11,
+    }).filter((t) => found.includes(t));
     if (available.length === 0) {
-      // Neither tool installed — log once and leave detection disabled.
-      diag('[foreground] kdotool/xdotool not found on PATH — active-window detection disabled.');
-      diag('[foreground] Install kdotool (recommended — Arch: AUR, Fedora: dnf install kdotool) for precise hotkey-release support; xdotool also works with caveats.');
-      diag('[foreground] Falling back to game-running detection (hotkeys stay registered while FO76 is open).');
+      // Preferred tool not installed — log once and leave detection disabled.
+      if (IS_HYPRLAND) {
+        diag('[foreground] hyprctl not found on PATH — active-window detection disabled.');
+        diag('[foreground] Falling back to game-running detection (hotkeys stay registered while FO76 is open).');
+      } else {
+        diag('[foreground] kdotool/xdotool not found on PATH — active-window detection disabled.');
+        diag('[foreground] Install kdotool (recommended — Arch: AUR, Fedora: dnf install kdotool) for precise hotkey-release support; xdotool also works with caveats.');
+        diag('[foreground] Falling back to game-running detection (hotkeys stay registered while FO76 is open).');
+      }
       return;
     }
     fgTool = available[0];
@@ -3473,7 +3576,8 @@ function _runForegroundPoll(available, tried) {
     let done = false;
     let out = '';
     try {
-      fgPoller = spawn(fgTool, ['getactivewindow', 'getwindowclassname']);
+      const { cmd, args } = overlayCore.buildForegroundProbe(fgTool);
+      fgPoller = spawn(cmd, args);
       fgPoller.stdout.on('data', (d) => { out += d.toString(); });
       // Drain stderr: a crashing xdotool prints a libc backtrace to stderr, and the
       // default piped-but-unread stderr could fill and block the child before our
@@ -3493,18 +3597,23 @@ function _runForegroundPoll(available, tried) {
           const action = overlayCore.decideForegroundPollerAction({
             crashed: true, consecutiveCrashes, maxCrashes: MAX_CONSEC_CRASHES, hasAltTool: untried.length > 0,
           });
+          const libxdoNote = (fgTool === 'kdotool' || fgTool === 'xdotool')
+            ? ', likely libxdo getwindowclassname double-free' : '';
           if (action === 'switch-tool') {
             const alt = untried[0];
             diag('[foreground] ' + fgTool + ' crashed ' + consecutiveCrashes + 'x (' + signal +
-              ', likely libxdo getwindowclassname double-free) — switching to ' + alt + '.');
+              libxdoNote + ') — switching to ' + alt + '.');
             if (fgPollTimer) { clearInterval(fgPollTimer); fgPollTimer = null; }
             fgTool = alt;
             tried.add(alt);
             _runForegroundPoll(available, tried);
           } else if (action === 'disable') {
             diag('[foreground] ' + fgTool + ' crashed ' + consecutiveCrashes + 'x (' + signal +
-              ', likely libxdo getwindowclassname double-free) — disabling active-window detection to stop coredump spam.');
-            diag('[foreground] Install the alternate tool to restore precise hotkey-release — kdotool preferred (Arch: AUR, Fedora: dnf): https://github.com/jinliu/kdotool');
+              libxdoNote + ') — disabling active-window detection' +
+              (libxdoNote ? ' to stop coredump spam.' : '.'));
+            if (fgTool === 'kdotool' || fgTool === 'xdotool') {
+              diag('[foreground] Install the alternate tool to restore precise hotkey-release — kdotool preferred (Arch: AUR, Fedora: dnf): https://github.com/jinliu/kdotool');
+            }
             diag('[foreground] Falling back to game-running detection (hotkeys stay registered while FO76 is open).');
             if (fgPollTimer) { clearInterval(fgPollTimer); fgPollTimer = null; }
             foregroundDetect = false;
@@ -3521,7 +3630,7 @@ function _runForegroundPoll(available, tried) {
         // can't see those) or when a fullscreen game exposes no WM_CLASS — the
         // "(null)" heuristic in shouldRegisterShortcuts handles that ambiguity.
         consecutiveCrashes = 0;
-        const line = out.trim().toLowerCase();
+        const line = overlayCore.parseForegroundOutput(fgTool, out);
         // Feed every sample into the focus hysteresis (a class-changed-only call
         // would never commit if enterScans/leaveScans > 1). The block below still
         // drives z-order/click-through/shortcuts on actual class changes.
@@ -3709,10 +3818,10 @@ function startForegroundZOrder() {
     }
     applyZOrder();
     startGameScan();
-    // KDE-Wayland and plain X11: start the xdotool/kdotool poller for
-    // active-window detection so refreshShortcuts() can release hotkeys when
-    // the user switches to Konsole, Discord, etc. Other Wayland compositors
-    // still no-op inside the helper.
+    // KDE-Wayland, plain X11, and Hyprland: start the active-window poller
+    // so refreshShortcuts() can release hotkeys when the user switches to
+    // Konsole, Discord, etc. Other Wayland compositors still no-op inside
+    // the helper.
     _startForegroundPoller();
     return;
   }
@@ -4337,6 +4446,7 @@ app.whenReady().then(() => {
         ' ozoneX11Arg=' + process.argv.includes('--ozone-platform=x11') +
         ' (KDE_WAYLAND true + ozoneX11Arg true → running XWayland via argv relaunch; ' +
         'ozoneX11Arg false on KDE_WAYLAND → still native Wayland, relaunch failed)');
+      if (IS_HYPRLAND) diag('[startup] Hyprland session detected, using hyprctl for foreground detection + pin-based stacking (unverified on hardware, best-effort)');
       diag('[startup] appimage=' + (process.env.APPIMAGE || '(unset)'),
         'appdir=' + (process.env.APPDIR || '(unset)'),
         'argv0=' + (process.env.ARGV0 || '(unset)'),
@@ -4364,6 +4474,7 @@ app.whenReady().then(() => {
   // (syncKwinKeepAboveRule). At startup the game isn't running yet, so no
   // rule installs until launch. Other Linux setups just get the helper files.
   if (KDE_WAYLAND) syncKwinKeepAboveRule('startup');
+  else if (IS_HYPRLAND) syncHyprlandPin('startup');
   else writeLinuxHelperFiles();
   // Crash recovery: if a previous run set panels to autohide and died before restoring, the
   // saved-modes file still exists — restore the user's panels now (before the game-gate runs).
@@ -4430,6 +4541,9 @@ app.on('before-quit', () => {
   isQuitting = true;
   persistBounds();
   if (IS_LINUX) restorePanelHiding();
+  // Hyprland's pin is a live attribute of the window object, not a persisted
+  // config file like kwinrulesrc, so it needs no equivalent before-quit
+  // teardown: it disappears with the window on exit.
   if (IS_LINUX && KDE_WAYLAND) {
     try { exec(overlayCore.buildKwinRemoveRulesScript({}), { timeout: 5000, shell: '/bin/sh' }, () => {}); } catch { /* ignore */ }
   }

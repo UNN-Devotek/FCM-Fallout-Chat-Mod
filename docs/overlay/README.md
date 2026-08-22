@@ -96,6 +96,10 @@ The install is idempotent and self-healing (cleans stale FCM rules from older bu
 
 **Run FO76 in Windowed Borderless** — Exclusive Fullscreen blocks any overlay on any OS. **Do NOT** run the game inside **gamescope** — its nested compositor isolates the game and the overlay cannot render over it.
 
+### Hyprland — automatic (pin-based, unverified on hardware)
+
+On Hyprland the overlay configures itself: `hyprctl activewindow -j` for focus, `hyprctl clients -j` for the same-output probe, and `hyprctl dispatch pin address:<addr>` to keep the overlay above the workspace while FO76 runs on the same display (un-pin otherwise). **Not verified on real Hyprland hardware.** No machine was available to confirm that `pin` beats a fullscreen Proton game the way KWin's Force-Layer rule was empirically confirmed to. The Linux z-order heartbeat (`setAlwaysOnTop`) stays active under Hyprland as a fallback until that is verified. Missing `hyprctl` logs a diagnostic and no-ops.
+
 ### GNOME / non-KDE compositors — conditional Steam launch option
 
 On GNOME or other non-KDE compositors, if the overlay won't stay on top, set this Steam Launch Option for Fallout 76 (**Steam → Fallout 76 → Properties → General → Launch Options**):
