@@ -5,10 +5,11 @@ relay-agnostic JSON-over-WebSocket contract** — **live as of ZFE 0.9.8** (2026
 captures (1) that contract verbatim-in-substance, and (2) a design plan for making FCM's relay speak
 it.
 
-> **Status: protocol SHIPPED (ZFE 0.9.8) + R1–R4 + worldId implemented in FCM backend.**
+> **Status: protocol SHIPPED (ZFE 0.9.8) + R1–R5 + worldId implemented in FCM backend.**
 > Verified from the `dxgi.dll` binary. The FCM `/relay` adapter implements registration,
-> authentication, send/poll/subscribe, message reports, and worldId controls. R5
-> (`moderationAction`) and R6 (production guard lift) remain as follow-on work.
+> authentication, send/poll/subscribe, message reports, staff-gated moderation actions, and
+> worldId controls. R6 (production guard lift) remains follow-on work. `setSlowMode` is
+> intentionally advertised as unavailable because FCM has no per-channel slow-mode primitive.
 
 > **Status (2026-06-26): chat.v1 in-game send WORKS end-to-end on native Windows (ZFE 0.9.9+).**
 > The earlier 0.9.8 `chat.v1.sendMessage` → `dispatch_failed` was an upstream ZFE bug, fixed in

@@ -37,6 +37,7 @@ import { setRoster, clearRoster, computeRooms } from './worldRosterService';
 import { nextRelaySeq } from './relaySeq';
 import { ingestMessage } from '../ingestMessage';
 import { engineEvaluate } from '../autoModEngine';
+import { getEffectiveRole, isPrivilegedRole } from '../userRoleService';
 import {
   publishServerMessage,
   publishRebind,
@@ -72,9 +73,12 @@ const WORLD_CONTROL_WINDOW_SECONDS = 10;
 const MAX_WORLD_CONTROLS_PER_WINDOW = 6;
 const REGISTER_WINDOW_SECONDS = 60;
 const MAX_REGISTRATIONS_PER_IP = 3;
+const REPORT_WINDOW_SECONDS = 10 * 60;
+const MAX_REPORTS_PER_WINDOW = 5;
 const RELAY_FIRST_FRAME_TIMEOUT_MS = 10_000;
 const POLL_HISTORY_LIMIT        = 75;    // initial history window on cursor=0 — must cover ~12 msgs x 5 static channels + recent live traffic (the window is global, not per-channel)
 const REDIS_BROADCAST_CHANNEL   = 'chat:broadcast';
+const RELAY_CONTROL_CHANNEL     = 'relay:control';
 const MAX_SOCKET_BUFFER_BYTES    = 1_048_576;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -335,11 +339,44 @@ async function checkRegisterRateLimit(ip: string): Promise<boolean> {
   }
 }
 
+/** Reports are a moderation queue write and therefore fail closed if Redis is unavailable. */
+async function checkReportRateLimit(userId: string): Promise<boolean> {
+  try {
+    const redis = await getRedisClient();
+    const bucket = Math.floor(Date.now() / 1000 / REPORT_WINDOW_SECONDS);
+    const key = `relay:report:${userId}:${bucket}`;
+    const count = await redis.incr(key);
+    if (count === 1) await redis.expire(key, REPORT_WINDOW_SECONDS + 1);
+    return count <= MAX_REPORTS_PER_WINDOW;
+  } catch (err) {
+    logger.error({ err, userId }, '[relayHandler] report rate limit unavailable');
+    return false;
+  }
+}
+
+async function accountBlockReason(linkedUserId: string): Promise<'user_banned' | 'user_kicked' | null> {
+  const user = await prisma.user.findUnique({
+    where: { id: linkedUserId },
+    select: { isBanned: true, kickedUntil: true },
+  });
+  if (user?.isBanned) return 'user_banned';
+  if (user?.kickedUntil && new Date(user.kickedUntil).getTime() > Date.now()) return 'user_kicked';
+  return null;
+}
+
+async function rejectBlockedAccount(ws: WebSocket, linkedUserId: string): Promise<boolean> {
+  const reason = await accountBlockReason(linkedUserId);
+  if (!reason) return false;
+  send(ws, errEnvelope(reason, reason === 'user_banned' ? 'This account is banned' : 'This account is temporarily kicked'));
+  return true;
+}
+
 // ── Subscribe registry ────────────────────────────────────────────────────────
 
 interface SubscriberState {
   ws: WebSocket;
   userId: string;
+  linkedUserId: string | null;
   cursor: number;
   worldId: string | null;
 }
@@ -347,6 +384,39 @@ interface SubscriberState {
 // Module-level subscriber set — cleared on disconnect.
 const subscribers = new Set<SubscriberState>();
 const pendingSubscriptions = new WeakSet<WebSocket>();
+
+function evictLocalRelayUser(linkedUserId: string, code: string, message: string): number {
+  let evicted = 0;
+  for (const sub of subscribers) {
+    if (sub.linkedUserId !== linkedUserId) continue;
+    send(sub.ws, errEnvelope(code, message));
+    try { sub.ws.close(4002, code === 'user_kicked' ? 'Kicked' : 'Banned'); } catch { /* closing */ }
+    subscribers.delete(sub);
+    evicted++;
+  }
+  return evicted;
+}
+
+/**
+ * Evict all live chat.v1 sessions for an FCM account, including subscribers on
+ * other backend instances. The local close is immediate; Redis carries the
+ * same control event to the other instances.
+ */
+export async function evictRelayUser(
+  linkedUserId: string,
+  options: { code: string; message: string },
+): Promise<number> {
+  const evicted = evictLocalRelayUser(linkedUserId, options.code, options.message);
+  try {
+    const redis = await getRedisClient();
+    await redis.publish(RELAY_CONTROL_CHANNEL, JSON.stringify({
+      kind: 'evict', linkedUserId, code: options.code, message: options.message,
+    }));
+  } catch (err) {
+    logger.warn({ err, linkedUserId }, '[relayHandler] cross-instance relay eviction publish failed');
+  }
+  return evicted;
+}
 
 // Redis pub/sub listener — initialised once per process.
 let pubSubReady = false;
@@ -480,6 +550,17 @@ async function ensurePubSub(): Promise<void> {
       }
     });
 
+    await sub.subscribe(RELAY_CONTROL_CHANNEL, (message: string) => {
+      let parsed: Record<string, unknown>;
+      try { parsed = JSON.parse(message); } catch { return; }
+      if (parsed.kind !== 'evict' || typeof parsed.linkedUserId !== 'string') return;
+      evictLocalRelayUser(
+        parsed.linkedUserId,
+        typeof parsed.code === 'string' ? parsed.code : 'user_banned',
+        typeof parsed.message === 'string' ? parsed.message : 'This account is banned',
+      );
+    });
+
     // Server-room events: worldId-scoped chat + membership rebinds.
     await sub.subscribe(SERVER_EVENTS_CHANNEL, (message: string) => {
       let parsed: Record<string, unknown>;
@@ -562,18 +643,9 @@ async function handleHello(ws: WebSocket, frame: Record<string, unknown>): Promi
     return;
   }
 
-  // Check if the linked FCM account is banned.
-  // identity.userId is a relay TEXT id — ban state lives on the linked FCM users row.
-  const user = identity.linkedUserId
-    ? await prisma.user.findUnique({
-        where: { id: identity.linkedUserId },
-        select: { isBanned: true },
-      })
-    : null;
-  if (user?.isBanned) {
-    send(ws, errEnvelope('user_banned', 'This account is banned'));
-    return;
-  }
+  // Check the linked FCM account. identity.userId is a relay TEXT id; account
+  // moderation state lives on linkedUserId.
+  if (identity.linkedUserId && await rejectBlockedAccount(ws, identity.linkedUserId)) return;
 
   // Update displayName if provided and different.
   const newName = readWireDisplayName(frame.displayName).trim();
@@ -634,6 +706,9 @@ async function handleGetAuthState(ws: WebSocket, frame: Record<string, unknown>)
     return;
   }
 
+  if (identity.linkedUserId && await rejectBlockedAccount(ws, identity.linkedUserId)) return;
+  const role = identity.linkedUserId ? await getEffectiveRole(identity.linkedUserId) : 'user';
+  const privileged = isPrivilegedRole(role);
   const state = identity.isLinked ? 'authenticated' : 'limited';
 
   send(ws, {
@@ -644,7 +719,15 @@ async function handleGetAuthState(ws: WebSocket, frame: Record<string, unknown>)
     permissions: {
       canSend:   identity.isLinked,
       canReport: identity.isLinked,
+      canDeleteMessage: identity.isLinked && privileged,
+      canMuteUser:      identity.isLinked && privileged,
+      canUnmuteUser:    identity.isLinked && privileged,
+      canBanUser:       identity.isLinked && privileged,
+      canUnbanUser:     identity.isLinked && privileged,
+      canSetSlowMode:   false,
     },
+    role,
+    roles: [role],
   });
 }
 
@@ -672,10 +755,14 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   // identity.userId is relay TEXT — ban state lives on the FCM account (linkedUserId).
   const user = await prisma.user.findUnique({
     where: { id: identity.linkedUserId! },
-    select: { isBanned: true, isMuted: true },
+    select: { isBanned: true, isMuted: true, kickedUntil: true },
   });
   if (user?.isBanned) {
     send(ws, errEnvelope('user_banned', 'This account is banned'));
+    return;
+  }
+  if (user?.kickedUntil && new Date(user.kickedUntil).getTime() > Date.now()) {
+    send(ws, errEnvelope('user_kicked', 'This account is temporarily kicked'));
     return;
   }
   if (user?.isMuted) {
@@ -856,14 +943,7 @@ async function handleReport(ws: WebSocket, frame: Record<string, unknown>): Prom
     return;
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: identity.linkedUserId },
-    select: { isBanned: true },
-  });
-  if (user?.isBanned) {
-    send(ws, errEnvelope('user_banned', 'This account is banned'));
-    return;
-  }
+  if (await rejectBlockedAccount(ws, identity.linkedUserId)) return;
 
   const messageId = typeof frame.messageId === 'string' ? frame.messageId.trim() : '';
   if (!UUID_RE.test(messageId)) {
@@ -887,6 +967,11 @@ async function handleReport(ws: WebSocket, frame: Record<string, unknown>): Prom
     return;
   }
 
+  if (!(await checkReportRateLimit(identity.linkedUserId))) {
+    send(ws, errEnvelope('rate_limited', 'Too many reports; try again later'));
+    return;
+  }
+
   let submitted: {
     report: { id: string; createdAt: Date };
     targetUserId: string;
@@ -894,6 +979,17 @@ async function handleReport(ws: WebSocket, frame: Record<string, unknown>): Prom
   };
   try {
     submitted = await prisma.$transaction(async (tx) => {
+      // Serialize reports for this exact reporter/message pair. This closes the
+      // concurrent double-submit window without relying on a client-generated
+      // idempotency key or a second report table.
+      await tx.$executeRaw`
+        SELECT pg_advisory_xact_lock(hashtextextended(${`relay-report:${identity.linkedUserId}:${messageId}`}, 0))`;
+      const duplicate = await tx.report.findFirst({
+        where: { reporterUserId: identity.linkedUserId!, messageId },
+        select: { id: true },
+      });
+      if (duplicate) throw new RelayReportInputError('You already reported this message');
+
       const rows = await tx.$queryRaw<RelayReportMessage[]>`
         SELECT m.user_id AS "targetUserId",
                COALESCE(u.fo76_account_name, u.discord_display_name, u.username) AS "targetDisplayName"
@@ -997,6 +1093,8 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
     return;
   }
 
+  if (identity.linkedUserId && await rejectBlockedAccount(ws, identity.linkedUserId)) return;
+
   const cursor = typeof frame.cursor === 'number' ? frame.cursor : 0;
   const max    = Math.min(typeof frame.max === 'number' ? frame.max : 64, 100);
 
@@ -1013,6 +1111,148 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
   }
 
   send(ws, { success: true, events });
+}
+
+const RELAY_MODERATION_ACTIONS = new Set([
+  'deleteMessage', 'muteUser', 'unmuteUser', 'banUser', 'unbanUser', 'setSlowMode',
+]);
+
+function boundedReason(frame: Record<string, unknown>): string {
+  return typeof frame.reason === 'string' ? frame.reason.trim().slice(0, 500) : '';
+}
+
+function positiveDurationMinutes(frame: Record<string, unknown>, fallback: number): number {
+  const raw = frame.durationMinutes ?? (
+    typeof frame.durationHours === 'number' ? frame.durationHours * 60 : undefined
+  );
+  if (raw === undefined) return fallback;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.min(value, 30 * 24 * 60) : 0;
+}
+
+async function handleModerationAction(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
+  const rawToken = typeof frame.token === 'string' ? frame.token : null;
+  if (!rawToken) {
+    send(ws, errEnvelope('auth_token_invalid', 'token is required'));
+    return;
+  }
+
+  const identity = await verifyToken(rawToken);
+  if (!identity) {
+    send(ws, errEnvelope('auth_token_invalid', 'Token not found or invalid'));
+    return;
+  }
+  if (!identity.isLinked || !identity.linkedUserId) {
+    send(ws, errEnvelope('permission_denied', `Account not linked — complete the link flow at ${LINK_URL}`));
+    return;
+  }
+  if (await rejectBlockedAccount(ws, identity.linkedUserId)) return;
+
+  const action = typeof frame.action === 'string' ? frame.action : '';
+  if (!RELAY_MODERATION_ACTIONS.has(action)) {
+    send(ws, errEnvelope('invalid_action', `Unsupported moderation action: ${action || '(missing)'}`));
+    return;
+  }
+
+  const role = await getEffectiveRole(identity.linkedUserId);
+  if (!isPrivilegedRole(role)) {
+    send(ws, errEnvelope('permission_denied', 'Moderation actions require a linked staff account'));
+    return;
+  }
+
+  // FCM has no per-channel slow-mode primitive yet. Keep this explicit so the
+  // client can distinguish a known-but-unsupported feature from bad auth.
+  if (action === 'setSlowMode') {
+    send(ws, errEnvelope('invalid_action', 'Slow mode is not available on this relay'));
+    return;
+  }
+
+  const reason = boundedReason(frame);
+  if (!reason) {
+    send(ws, errEnvelope('invalid_request', 'reason is required'));
+    return;
+  }
+
+  const targetUserId = typeof frame.targetUserId === 'string' ? frame.targetUserId.trim() : '';
+  const service = require('../moderationActionsService') as {
+    deleteMessageById: (messageId: string, actorId: string, reason?: string) => Promise<void>;
+    muteUser: (targetId: string, actorId: string, durationMs: number, category: string, reason: string) => Promise<unknown>;
+    unmuteUser: (targetId: string, actorId: string, reason: string) => Promise<void>;
+    createBan: (targetId: string, actorId: string, category: string, reason: string, bannedUntil: Date | null, evidence: Array<{ type: 'text'; textContent: string }>) => Promise<unknown>;
+    reverseBan: (banId: string, actorId: string, reason: string) => Promise<void>;
+    REASON_CATEGORIES?: readonly string[];
+  };
+
+  try {
+    if (action === 'deleteMessage') {
+      const messageId = typeof frame.messageId === 'string' ? frame.messageId.trim() : '';
+      if (!UUID_RE.test(messageId)) {
+        send(ws, errEnvelope('invalid_request', 'messageId must be a valid message UUID'));
+        return;
+      }
+      await service.deleteMessageById(messageId, identity.linkedUserId, reason);
+    } else {
+      if (!UUID_RE.test(targetUserId)) {
+        send(ws, errEnvelope('invalid_request', 'targetUserId must be a valid user UUID'));
+        return;
+      }
+
+      if (action === 'muteUser') {
+        const minutes = positiveDurationMinutes(frame, 10);
+        if (!minutes) {
+          send(ws, errEnvelope('invalid_request', 'durationMinutes must be a positive number'));
+          return;
+        }
+        const category = typeof frame.category === 'string' ? frame.category.trim() : 'Other';
+        if (service.REASON_CATEGORIES && !service.REASON_CATEGORIES.includes(category)) {
+          send(ws, errEnvelope('invalid_request', 'category is invalid'));
+          return;
+        }
+        await service.muteUser(targetUserId, identity.linkedUserId, minutes * 60_000, category, reason);
+      } else if (action === 'unmuteUser') {
+        await service.unmuteUser(targetUserId, identity.linkedUserId, reason);
+      } else if (action === 'banUser') {
+        const category = typeof frame.category === 'string' ? frame.category.trim() : 'Other';
+        if (service.REASON_CATEGORIES && !service.REASON_CATEGORIES.includes(category)) {
+          send(ws, errEnvelope('invalid_request', 'category is invalid'));
+          return;
+        }
+        const minutes = positiveDurationMinutes(frame, 0);
+        const bannedUntil = minutes > 0 ? new Date(Date.now() + minutes * 60_000) : null;
+        await service.createBan(
+          targetUserId,
+          identity.linkedUserId,
+          category,
+          reason,
+          bannedUntil,
+          [{ type: 'text', textContent: `In-game moderation action: ${reason}` }],
+        );
+      } else if (action === 'unbanUser') {
+        const activeBan = await prisma.ban.findFirst({
+          where: { userId: targetUserId, reversedAt: null },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true },
+        });
+        if (!activeBan) {
+          send(ws, errEnvelope('invalid_request', 'No active ban found for targetUserId'));
+          return;
+        }
+        await service.reverseBan(activeBan.id, identity.linkedUserId, reason);
+      }
+    }
+  } catch (err: any) {
+    if (err?.name === 'ProtectedTargetError') {
+      send(ws, errEnvelope('permission_denied', 'Protected staff accounts must be moderated in Discord'));
+      return;
+    }
+    if (err?.message === 'Message not found' || err?.message === 'Ban not found' || err?.message === 'Ban already reversed') {
+      send(ws, errEnvelope('invalid_request', err.message));
+      return;
+    }
+    throw err;
+  }
+
+  send(ws, { success: true, status: 'submitted', action });
 }
 
 /**
@@ -1095,15 +1335,19 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
     return;
   }
 
-  // Check ban on the linked FCM account (if linked; subscribers can be limited).
+  // Check ban/kick on the linked FCM account (if linked; subscribers can be limited).
   const banUser = identity.linkedUserId
     ? await prisma.user.findUnique({
         where: { id: identity.linkedUserId },
-        select: { isBanned: true },
+        select: { isBanned: true, kickedUntil: true },
       })
     : null;
   if (banUser?.isBanned) {
     send(ws, errEnvelope('user_banned', 'This account is banned'));
+    return;
+  }
+  if (banUser?.kickedUntil && new Date(banUser.kickedUntil).getTime() > Date.now()) {
+    send(ws, errEnvelope('user_kicked', 'This account is temporarily kicked'));
     return;
   }
 
@@ -1113,6 +1357,7 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
   const state: SubscriberState = {
     ws,
     userId: identity.userId,
+    linkedUserId: identity.linkedUserId,
     cursor,
     worldId,
   };
@@ -1181,10 +1426,27 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
   // traffic before its idle timeout fires. Tunable via RELAY_PING_INTERVAL_MS
   // (default 4000ms; 0 disables).
   const pingMs = Number(process.env.RELAY_PING_INTERVAL_MS ?? 4000);
+  let checkingAccess = false;
   const pingTimer = pingMs > 0
     ? setInterval(() => {
         if (ws.readyState !== 1) return;       // 1 = OPEN
-        try { ws.ping(); } catch { /* socket closing */ }
+        if (checkingAccess) return;
+        checkingAccess = true;
+        const check = state.linkedUserId
+          ? accountBlockReason(state.linkedUserId)
+          : Promise.resolve(null);
+        check.then((blocked) => {
+          if (blocked) {
+            evictLocalRelayUser(
+              state.linkedUserId!,
+              blocked,
+              blocked === 'user_banned' ? 'This account is banned' : 'This account is temporarily kicked',
+            );
+            return;
+          }
+          try { ws.ping(); } catch { /* socket closing */ }
+        }).catch((err) => logger.warn({ err, userId: state.userId }, '[relayHandler] subscriber access check failed'))
+          .finally(() => { checkingAccess = false; });
       }, pingMs)
     : null;
 
@@ -1261,10 +1523,7 @@ export function handleRelayConnection(ws: WebSocket, req: http.IncomingMessage):
         case 'poll':            await handlePoll(ws, frame); break;
         case 'subscribe':       await handleSubscribe(ws, frame); break;
         case 'report':          await handleReport(ws, frame); break;
-        case 'moderationAction':
-          // R5: placeholder — returns permission_denied for non-staff
-          send(ws, errEnvelope('permission_denied', 'Moderation actions require a linked staff account'));
-          break;
+        case 'moderationAction': await handleModerationAction(ws, frame); break;
         default:
           send(ws, errEnvelope('invalid_request', `Unknown op: ${op}`));
       }

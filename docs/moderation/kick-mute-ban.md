@@ -83,29 +83,22 @@ With the [mandatory Nexus/Discord gate](../overlay/zfe/native-chat-relay/fcm-int
 
 The chat.v1 relay is a **separate front-end** (`/relay`) from the overlay's `/ws`, and the backend
 runs multiple instances — so a dashboard action must reach the offender's in-game socket on any
-instance. The simplest mechanism that does this needs **no dedicated cross-instance signal** (#296):
+instance. Relay sessions use a dedicated Redis control signal so the close reaches every instance:
 
-**1. Cached status re-check (the backbone).** The relay re-checks `isBanned` / `kickedUntil` /
-`isMuted` from a **short-TTL cache** (Redis `relay:status:<userId>`, ~10–15s) on every `hello` and
-`send`. A dashboard action propagates to every instance within the TTL. This blocks **sending**
-immediately and **reconnect** outright, and **auto-expires** — a temp ban/kick/mute resumes with no
-re-link. Rejections: `user_banned` / `user_muted` / kick-cooldown.
+**1. Immediate relay eviction.** A ban or kick updates account state, closes local linked
+subscribers, and publishes an `evict` message on `relay:control` so subscribers on other instances
+also receive `user_banned` or `user_kicked` before their socket closes. The subscriber keepalive
+re-checks the account as a fallback if a control message is missed.
 
-**2. Token revocation — permanent ban / account deletion only.** Additionally clear/rotate the relay
+**2. Per-operation state checks.** `hello`, `getAuthState`, `send`, `poll`, `report`, and
+`subscribe` re-check `isBanned` / `kickedUntil` on the linked account. This blocks sending and
+reconnect immediately, while temporary bans and kicks auto-expire without a re-link. Mutes remain
+send-only restrictions and return `user_muted`.
+
+**3. Token revocation — permanent ban / account deletion only.** Additionally clear/rotate the relay
 token so the saved DPAPI token is dead (`hello` → `auth_token_revoked`; ZFE won't auto-register around
 it). **Do NOT revoke for temp ban/kick/mute** — those must auto-resume via the existing device-code
 link, not force a re-link. (Mute is never a revocation — the user stays authed, just can't `send`.)
-
-**3. Live read stream.** A long-lived `subscribe` socket is authed once, so revocation alone doesn't
-stop it reading. The relay checks the cached flag **before each pushed `event` and on each ~10 s
-keepalive ping**; if banned/kicked it closes the socket → read is cut within ~one keepalive interval.
-Public channels are readable by anyone anyway (a banned user briefly reading `global` ≈ an anonymous
-website visitor), so sub-second read-cutoff isn't worth extra infra at v1.
-
-> **Why not a dedicated `moderation:evict` pub/sub signal?** It would give *sub-second* active
-> disconnect, but the cached-flag re-check above already cuts send (per-op) and read (per-keepalive,
-> ~10 s) cross-instance with far less machinery. The pub/sub signal is **deferred** (#296) — worth it
-> only once **private channels (party/clan, #182)** need instant read-cutoff, or for polished kick UX.
 
 **Action → chat.v1 mapping:**
 
@@ -115,7 +108,7 @@ website visitor), so sub-second read-cutoff isn't worth extra infra at v1.
 | Mute | `send` → `user_muted` until `muteExpiresAt` | `muteUser`, `ingestMessage` mute check |
 | Ban (temp/perm) | close socket; `register`/`hello`/`send` → `user_banned` | `createBan`, `requireAuth` ban check |
 | Unban / unmute | normal access resumes on next op / reconnect | `reverseBan`, `unmuteUser` |
-| Delete message | relay should **omit** the message from `poll`/history (already filtered `isDeleted=false`); live in-game removal needs a ZFE `chat.delete` event (gap, see fcm-integration) | `messagesController.deleteMessage` |
+| Delete message | relay omits the message from `poll`/history (already filtered `isDeleted=false`) and broadcasts the existing deletion event to connected overlay clients | shared message-deletion service |
 
 ---
 
@@ -130,15 +123,12 @@ website visitor), so sub-second read-cutoff isn't worth extra infra at v1.
   Discord account; an unlinked/basic identity gets `permission_denied`. It maps to the same
   `moderationActionsService` calls. Realistically a convenience for staff who are in-game; the
   authoritative surface stays the dashboard.
-- **In-game `banUser` = pending-evidence ban (decided).** An in-game ban (from a staff-Discord-linked
-  identity) **applies immediately** — the offender is banned the same way a dashboard ban works — but
-  the `bans` row is flagged **`pendingEvidence`** (the chat.v1 path can't carry evidence files). The
-  ban appears in the dashboard's **pending-evidence queue**; the issuing admin **must upload evidence
-  on the site to finalize** it. This keeps the "every ban has evidence" rule without blocking
-  in-the-moment in-game enforcement. (Policy knob: flag-only vs. auto-reverse if no evidence within a
-  window — default flag-only + dashboard nag.) Tracked in #288.
-- **Reports** flow in from any surface: chat.v1 `report` op → `reportsController.createReport`
-  → the same moderation queue.
+- **In-game `banUser` carries text evidence.** An in-game ban (from a staff-Discord-linked identity)
+  applies immediately through the same ban service and stores the bounded reason as a text evidence
+  item. The dashboard remains the authoritative place to add richer evidence or reverse the ban.
+- **Reports** flow in from any surface: chat.v1 `report` and the HTTP report path persist into the
+  same `reports` moderation queue; the relay also enforces its own per-account rate and duplicate
+  guards before writing.
 
 ---
 
@@ -195,10 +185,9 @@ chat.v1 moderation issue #288).
 
 1. **Reuse the account-level machinery** (kick/mute/ban + evidence + audit + Discord propagation) —
    don't fork it for chat.v1.
-2. **Enforce on chat.v1 via a cached status re-check** (per-op + per-keepalive, short Redis TTL) +
-   **token revocation for permanent bans/deletion only** (#296). A dedicated `moderation:evict`
-   pub/sub signal is **deferred** — the cached check already cuts send (per-op) and read (~10 s)
-   cross-instance without it; revisit when private channels (party/clan) need instant read-cutoff.
+2. **Enforce on chat.v1 via account-state re-checks** (per-op + subscriber keepalive), a
+   cross-instance `relay:control` eviction signal, and **token revocation for permanent
+   bans/deletion only** (#296).
 3. **Keep the ban target = account `userId`**; rekey `identityHash` to `userId`; retire
    `HudIdentityBlock` as a separate gate.
 4. **Gate in-game `moderationAction` on a staff Discord link**; dashboard stays the authoritative

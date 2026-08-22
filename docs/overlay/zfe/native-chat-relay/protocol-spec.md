@@ -200,7 +200,9 @@ Use `chat.v1.getAuthState` to show connection and push health:
     "canReport": true,
     "canDeleteMessage": false,
     "canMuteUser": false,
+    "canUnmuteUser": false,
     "canBanUser": false,
+    "canUnbanUser": false,
     "canSetSlowMode": false
   },
   "liveSubscriber": {
@@ -399,7 +401,9 @@ Response:
 
 The server validates the linked relay token, message UUID, message visibility, and
 report reason/details. It derives the target user from the persisted message, rejects
-self-reports, and returns success only after the report has been stored.
+self-reports, allows at most five reports per linked account in a ten-minute window,
+rejects a second report for the same message by the same account, and returns success
+only after the report has been stored.
 
 ### Moderation action
 
@@ -416,7 +420,11 @@ Response:
 Supported actions: `deleteMessage`, `muteUser`, `unmuteUser`, `banUser`, `unbanUser`, `setSlowMode`.
 
 The **server is authoritative**. ZFE only **pre-checks** the permissions it received from auth
-state so the UI can fail quickly.
+Only linked Discord-backed `moderator`, `admin`, and `owner` accounts may submit these actions.
+The relay routes delete, mute, unmute, ban, and unban through the shared moderation service, audit
+log, and live-session enforcement. In-game bans use the supplied reason as text evidence because
+the relay cannot upload evidence files. `setSlowMode` is currently rejected with `invalid_action`
+and `canSetSlowMode` remains `false`.
 
 ---
 

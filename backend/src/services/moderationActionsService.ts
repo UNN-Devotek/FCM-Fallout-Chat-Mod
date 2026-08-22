@@ -14,9 +14,10 @@ import { v4 as uuidv4 } from 'uuid';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
 import env from '../config/environment';
-import { broadcast, disconnectByUserId, markClientMuted, notifyAndDisconnect } from '../websocket/handlers';
+import { broadcast, broadcastMessageDeletion, disconnectByUserId, markClientMuted, notifyAndDisconnect } from '../websocket/handlers';
 import { getDiscordClient, postModAlert } from './discordService';
 import { isProtectedTarget } from './userRoleService';
+import { revokeTokensForLinkedUser } from './relay/tokenService';
 import type { GuildMember } from 'discord.js';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -25,6 +26,27 @@ const MAX_MUTE_MS      = 30 * 24 * 60 * 60 * 1000; // 30 d (hard cap)
 const DISCORD_TIMEOUT_CAP_MS = 28 * 24 * 60 * 60 * 1000; // Discord API ceiling
 const GENERAL_CHANNEL_ID = '00000000-0000-0000-0000-000000000001';
 const WS_CLOSE_BANNED = 4002;
+
+async function evictRelaySessions(targetId: string, reason: 'banned' | 'kicked'): Promise<void> {
+  try {
+    // Keep this import dynamic: relayHandler dispatches moderationAction through
+    // this service, so a static import would create a module initialization cycle.
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const relay = require('./relay/relayHandler') as {
+      evictRelayUser?: (linkedUserId: string, options: { code: string; message: string }) => Promise<number>;
+    };
+    if (typeof relay.evictRelayUser === 'function') {
+      await relay.evictRelayUser(targetId, {
+        code: reason === 'banned' ? 'user_banned' : 'user_kicked',
+        message: reason === 'banned' ? 'This account is banned' : 'This account is temporarily kicked',
+      });
+    }
+  } catch (err) {
+    // The primary account-state write and the main /ws eviction remain valid if
+    // the optional relay eviction path is unavailable during startup/shutdown.
+    logger.warn({ err, targetId, reason }, 'failed to evict relay sessions');
+  }
+}
 
 // ── Categories (kept loose; UI enforces, server only checks "present") ───────
 export const REASON_CATEGORIES = [
@@ -253,6 +275,7 @@ export async function kickUser(targetId: string, actorId: string, reason: string
     WS_CLOSE_BANNED,
     `KICK_COOLDOWN:${Math.ceil(KICK_COOLDOWN_MS / 1000)}`,
   );
+  await evictRelaySessions(targetId, 'kicked');
   await audit(actorId, 'kick', targetId, reason, { until: until.toISOString(), disconnected });
   const [actorName, targetName] = await Promise.all([displayNameOf(actorId), displayNameOf(targetId)]);
   await announceInGeneral(`${actorName} kicked ${targetName} for 5 minutes — ${reason}`);
@@ -405,6 +428,11 @@ export async function createBan(
     } catch (err) {
       logger.warn({ err, targetId }, 'failed to revoke device key on permanent ban');
     }
+    try {
+      await revokeTokensForLinkedUser(targetId);
+    } catch (err) {
+      logger.warn({ err, targetId }, 'failed to revoke relay token on permanent ban');
+    }
   }
 
   // Notify before close — the overlay can render "You were banned (perm/until X): <reason>"
@@ -414,6 +442,7 @@ export async function createBan(
     WS_CLOSE_BANNED,
     'Banned',
   );
+  await evictRelaySessions(targetId, 'banned');
   await audit(actorId, 'ban', targetId, `${category}: ${reasonText}`, {
     banId: ban.id, until: bannedUntil?.toISOString() ?? null,
     evidenceCount: evidence.length,
@@ -441,6 +470,29 @@ export async function createBan(
     footerText: `Ban ID: ${ban.id} | Target ID: ${targetId}`,
   }).catch(() => {});
   return { banId: ban.id, disconnected, discordLockdown: lockdown };
+}
+
+/**
+ * Delete a persisted public message through the same soft-delete and live
+ * broadcast path used by the dashboard. Message IDs are globally unique in
+ * the API even though the database table has a composite primary key.
+ */
+export async function deleteMessageById(messageId: string, actorId: string, reason = ''): Promise<void> {
+  const result = await prisma.$executeRaw`
+    UPDATE messages SET is_deleted = TRUE
+    WHERE id = ${messageId}::uuid AND NOT is_deleted`;
+  if (result === 0) throw new Error('Message not found');
+
+  await prisma.auditLog.create({
+    data: {
+      actorId,
+      action: 'delete_message',
+      targetId: messageId,
+      targetType: 'message',
+      reason: reason.slice(0, 500) || null,
+    },
+  }).catch((err) => logger.warn({ err, messageId }, 'message deletion audit write failed'));
+  broadcastMessageDeletion(messageId);
 }
 
 export async function reverseBan(banId: string, actorId: string, reverseReason: string): Promise<void> {
@@ -541,5 +593,5 @@ function formatDuration(ms: number): string {
   return `${Math.round(ms / 86_400_000)} days`;
 }
 
-export default { kickUser, muteUser, unmuteUser, createBan, reverseBan, sweepExpired, REASON_CATEGORIES, ProtectedTargetError };
-module.exports = { kickUser, muteUser, unmuteUser, createBan, reverseBan, sweepExpired, REASON_CATEGORIES, ProtectedTargetError };
+export default { kickUser, muteUser, unmuteUser, createBan, reverseBan, deleteMessageById, sweepExpired, REASON_CATEGORIES, ProtectedTargetError };
+module.exports = { kickUser, muteUser, unmuteUser, createBan, reverseBan, deleteMessageById, sweepExpired, REASON_CATEGORIES, ProtectedTargetError };

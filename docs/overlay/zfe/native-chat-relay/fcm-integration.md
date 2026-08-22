@@ -43,11 +43,20 @@ token in logs or cache keys.
 | `chat.v1.sendMessage` | Send a static-channel message or a reserved server control |
 | `chat.v1.getAuthState` | Refresh linked/limited state |
 | `chat.v1.report` | Submit a report for a persisted chat message |
+| `chat.v1.moderationAction` | Submit a staff-gated delete, mute, unmute, ban, or unban |
 
 `chat.v1.report` requires a linked relay identity, a valid persisted message UUID,
 and a non-empty reason. The backend derives the reported user from the message,
 rejects self-reports and deleted messages, persists the report in `reports`, writes
-an audit record, and sends moderation notifications only after persistence succeeds.
+an audit record, and sends moderation notifications only after persistence succeeds. Each linked
+account is limited to five reports per ten minutes, and repeated reports for the same message are
+rejected idempotently.
+
+`chat.v1.moderationAction` requires a linked account whose verified Discord role is `moderator`,
+`admin`, or `owner`. Delete, mute, unmute, ban, and unban reuse
+`moderationActionsService`, including its protection checks, audit entries, and live notifications.
+In-game bans attach the bounded reason as text evidence. `setSlowMode` is intentionally unavailable
+until FCM has a per-channel slow-mode primitive; auth state reports `canSetSlowMode: false`.
 
 Static FCM channels use the slugs `global`, `trade`, `events`, `infests`, and
 `raids`. The backend maps them to the owned channel IDs, applies normal auth,

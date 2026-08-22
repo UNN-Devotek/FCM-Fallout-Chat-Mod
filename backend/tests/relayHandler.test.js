@@ -158,6 +158,13 @@ jest.mock('../src/config/prisma', () => ({
     },
     report: {
       create: jest.fn().mockResolvedValue({ id: 'report-stub', createdAt: new Date('2026-01-01T00:00:00.000Z') }),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+    ban: {
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+    adminUser: {
+      findUnique: jest.fn().mockResolvedValue(null),
     },
     auditLog: {
       create: jest.fn().mockResolvedValue({}),
@@ -180,6 +187,21 @@ jest.mock('../src/services/discordService', () => ({
   initDiscord:      jest.fn().mockResolvedValue(undefined),
   sendNotification: jest.fn().mockResolvedValue(undefined),
   postModAlert:     jest.fn().mockResolvedValue(undefined),
+}));
+
+jest.mock('../src/services/userRoleService', () => ({
+  getEffectiveRole: jest.fn().mockResolvedValue('user'),
+  isPrivilegedRole: jest.fn((role) => ['moderator', 'admin', 'owner'].includes(role)),
+  isProtectedTarget: jest.fn().mockResolvedValue(false),
+}));
+
+jest.mock('../src/services/moderationActionsService', () => ({
+  deleteMessageById: jest.fn().mockResolvedValue(undefined),
+  muteUser:          jest.fn().mockResolvedValue({ until: new Date(), discordPropagated: false }),
+  unmuteUser:        jest.fn().mockResolvedValue(undefined),
+  createBan:         jest.fn().mockResolvedValue({ banId: 'ban-stub' }),
+  reverseBan:        jest.fn().mockResolvedValue(undefined),
+  REASON_CATEGORIES: ['Harassment', 'HateSpeech', 'Spam', 'Cheating', 'NSFW', 'Threats', 'Doxxing', 'Other'],
 }));
 
 jest.mock('../src/services/autoModEngine', () => ({
@@ -240,7 +262,7 @@ const {
 } = require('../src/services/relay/channelMap');
 
 const {
-  mintToken, verifyToken, revokeToken, updateDisplayName, clearVerificationCache,
+  mintToken, verifyToken, revokeToken, revokeTokensForLinkedUser, updateDisplayName, clearVerificationCache,
 } = require('../src/services/relay/tokenService');
 
 const {
@@ -258,7 +280,7 @@ const {
   _resetRelayWss,
 } = require('../src/websocket/upgradeRouter');
 
-const { deriveLinkUrl, isRelayAvailable } = require('../src/services/relay/relayHandler');
+const { deriveLinkUrl, isRelayAvailable, evictRelayUser } = require('../src/services/relay/relayHandler');
 
 describe('relay production rollout gate', () => {
   test('keeps the relay available in development and test', () => {
@@ -547,6 +569,14 @@ describe('tokenService', () => {
     expect(require('../src/config/prisma').default.hudPairingToken.updateMany)
       .toHaveBeenCalledWith(expect.objectContaining({
         where: expect.objectContaining({ userId, revokedAt: null }),
+      }));
+  });
+
+  test('revokeTokensForLinkedUser revokes every token bound to an FCM account', async () => {
+    await revokeTokensForLinkedUser('fcm-user-001');
+    expect(require('../src/config/prisma').default.hudPairingToken.updateMany)
+      .toHaveBeenCalledWith(expect.objectContaining({
+        where: { linkedUserId: 'fcm-user-001', revokedAt: null },
       }));
   });
 
@@ -1037,6 +1067,125 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
+  test('report rejects a duplicate report from the same linked account', async () => {
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'DuplicateReporter' }),
+    );
+    wsReg.close();
+    const rawId = lastRawUserId();
+    const reporterId = 'fcm-report-duplicate-001';
+    _userMap[reporterId] = { id: reporterId, isBanned: false, isMuted: false };
+    markTokensLinked(rawId, reporterId);
+
+    const prisma = require('../src/config/prisma').default;
+    prisma.$queryRaw.mockResolvedValue([{ targetUserId: 'fcm-report-target-002', targetDisplayName: 'Target' }]);
+    const { ws, msgs } = await conn();
+    const messageId = '33333333-3333-4333-8333-333333333333';
+    const first = await waitForMsg(ws, msgs, () => send(ws, {
+      op: 'report', token: regRes.token, messageId, reason: 'spam',
+    }));
+    expect(first).toMatchObject({ success: true, status: 'reported' });
+
+    prisma.report.findFirst.mockResolvedValueOnce({ id: 'existing-report' });
+    const duplicate = await waitForMsg(ws, msgs, () => send(ws, {
+      op: 'report', token: regRes.token, messageId, reason: 'spam again',
+    }));
+    expect(duplicate).toMatchObject({ success: false, error: { code: 'invalid_request' } });
+    expect(duplicate.error.message).toMatch(/already reported/i);
+    ws.close();
+  });
+
+  test('report rate limits a linked account before the sixth queue write', async () => {
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'ReportFlooder' }),
+    );
+    wsReg.close();
+    const rawId = lastRawUserId();
+    const reporterId = 'fcm-report-flood-001';
+    _userMap[reporterId] = { id: reporterId, isBanned: false, isMuted: false };
+    markTokensLinked(rawId, reporterId);
+
+    const prisma = require('../src/config/prisma').default;
+    prisma.$queryRaw.mockResolvedValue([{ targetUserId: 'fcm-report-target-003', targetDisplayName: 'Target' }]);
+    const { ws, msgs } = await conn();
+    for (let i = 0; i < 5; i++) {
+      const id = `44444444-4444-4444-8444-${String(i + 1).padStart(12, '0')}`;
+      const res = await waitForMsg(ws, msgs, () => send(ws, {
+        op: 'report', token: regRes.token, messageId: id, reason: `spam ${i}`,
+      }));
+      expect(res).toMatchObject({ success: true, status: 'reported' });
+    }
+    const limited = await waitForMsg(ws, msgs, () => send(ws, {
+      op: 'report', token: regRes.token,
+      messageId: '44444444-4444-4444-8444-000000000006', reason: 'spam 6',
+    }));
+    expect(limited).toMatchObject({ success: false, error: { code: 'rate_limited' } });
+    expect(prisma.report.create).toHaveBeenCalledTimes(5);
+    ws.close();
+  });
+
+  test('moderationAction requires staff and dispatches deleteMessage for staff', async () => {
+    const roleService = require('../src/services/userRoleService');
+    const moderation = require('../src/services/moderationActionsService');
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'InGameModerator' }),
+    );
+    wsReg.close();
+    const rawId = lastRawUserId();
+    const actorId = '55555555-5555-4555-8555-555555555555';
+    _userMap[actorId] = { id: actorId, discordId: 'discord-mod', isBanned: false, isMuted: false };
+    markTokensLinked(rawId, actorId);
+
+    roleService.getEffectiveRole.mockResolvedValueOnce('user');
+    const { ws: wsBasic, msgs: msgsBasic } = await conn();
+    const denied = await waitForMsg(wsBasic, msgsBasic, () => send(wsBasic, {
+      op: 'moderationAction', token: regRes.token, action: 'deleteMessage',
+      messageId: '66666666-6666-4666-8666-666666666666', reason: 'spam',
+    }));
+    expect(denied).toMatchObject({ success: false, error: { code: 'permission_denied' } });
+    wsBasic.close();
+
+    roleService.getEffectiveRole.mockResolvedValueOnce('moderator');
+    const { ws, msgs } = await conn();
+    const accepted = await waitForMsg(ws, msgs, () => send(ws, {
+      op: 'moderationAction', token: regRes.token, action: 'deleteMessage',
+      messageId: '66666666-6666-4666-8666-666666666666', reason: 'spam',
+    }));
+    expect(accepted).toMatchObject({ success: true, status: 'submitted', action: 'deleteMessage' });
+    expect(moderation.deleteMessageById).toHaveBeenCalledWith(
+      '66666666-6666-4666-8666-666666666666', actorId, 'spam',
+    );
+    ws.close();
+  });
+
+  test('moderationAction exposes staff permissions and rejects unsupported slow mode', async () => {
+    const roleService = require('../src/services/userRoleService');
+    roleService.getEffectiveRole.mockResolvedValueOnce('admin').mockResolvedValueOnce('admin');
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'InGameAdmin' }),
+    );
+    wsReg.close();
+    const rawId = lastRawUserId();
+    const actorId = '77777777-7777-4777-8777-777777777777';
+    _userMap[actorId] = { id: actorId, discordId: 'discord-admin', isBanned: false, isMuted: false };
+    markTokensLinked(rawId, actorId);
+
+    const { ws, msgs } = await conn();
+    const auth = await waitForMsg(ws, msgs, () => send(ws, { op: 'getAuthState', token: regRes.token }));
+    expect(auth.permissions).toMatchObject({
+      canDeleteMessage: true, canMuteUser: true, canBanUser: true, canSetSlowMode: false,
+    });
+    const slow = await waitForMsg(ws, msgs, () => send(ws, {
+      op: 'moderationAction', token: regRes.token, action: 'setSlowMode', reason: 'too much spam',
+    }));
+    expect(slow).toMatchObject({ success: false, error: { code: 'invalid_action' } });
+    ws.close();
+  });
+
   test('send forwards the linked FCM user UUID to ingestMessage, not the relay TEXT id', async () => {
     // Regression: handleSend used to pass identity.userId (the relay "user_"+hex TEXT
     // id) to ingestMessage, which runs prisma.user.findUnique({ id }) expecting a UUID
@@ -1438,6 +1587,27 @@ describe('relay WebSocket ops', () => {
     );
     expect(res).toMatchObject({ success: true, op: 'subscribed', cursor: 0, role: 'user' });
     ws.close();
+  });
+
+  test('evictRelayUser closes an active linked subscriber with a ban error', async () => {
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'EvictionPlayer' }),
+    );
+    wsReg.close();
+    const rawId = lastRawUserId();
+    const linkedId = 'fcm-eviction-target-001';
+    _userMap[linkedId] = { id: linkedId, discordId: null, isBanned: false, isMuted: false };
+    markTokensLinked(rawId, linkedId);
+
+    const { ws, msgs } = await conn();
+    await waitForMsg(ws, msgs, () => send(ws, { op: 'subscribe', token: regRes.token, cursor: 0 }));
+    const closed = new Promise((resolve) => ws.once('close', resolve));
+    await expect(evictRelayUser(linkedId, { code: 'user_banned', message: 'This account is banned' }))
+      .resolves.toBe(1);
+    expect(await closed).toBe(4002);
+    expect(msgs).toContainEqual({ success: false, error: { code: 'user_banned', message: 'This account is banned' } });
+    expect(redisMock.publish).toHaveBeenCalledWith('relay:control', expect.stringContaining(linkedId));
   });
 
   test('duplicate subscribe on one connection is rejected', async () => {

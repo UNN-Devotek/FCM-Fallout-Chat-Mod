@@ -65,6 +65,12 @@ function invalidateVerificationCache(userId?: string): void {
   }
 }
 
+function invalidateVerificationCacheByLinkedUserId(linkedUserId: string): void {
+  for (const [key, entry] of verificationCache) {
+    if (entry.identity.linkedUserId === linkedUserId) verificationCache.delete(key);
+  }
+}
+
 function allowArgonVerification(prefix: string): boolean {
   const now = Date.now();
   const prior = failedVerifications.get(prefix);
@@ -247,6 +253,22 @@ export async function revokeToken(userId: string): Promise<void> {
   });
   invalidateVerificationCache(userId);
   logger.info({ userId }, '[tokenService] revoked relay tokens');
+}
+
+/**
+ * Revoke every active relay token linked to an FCM account.
+ * Permanent account bans use this because one account may have tokens minted
+ * by more than one game installation. The linked-user cache entries must be
+ * invalidated as well, otherwise a recent successful verify could survive the
+ * database revocation for the cache TTL.
+ */
+export async function revokeTokensForLinkedUser(linkedUserId: string): Promise<void> {
+  await prisma.hudPairingToken.updateMany({
+    where: { linkedUserId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  });
+  invalidateVerificationCacheByLinkedUserId(linkedUserId);
+  logger.info({ linkedUserId }, '[tokenService] revoked linked relay tokens');
 }
 
 /**
