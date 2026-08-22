@@ -95,7 +95,9 @@ In-game cursor lock (Wayland) — explicit, on-demand step
 On Wayland the compositor drops Fallout 76's mouse-lock while the overlay sits
 on top. Fallout Chat Mod never modifies the FO76 Proton/Wine prefix
 automatically (not during install, not on launch) -- this is a step you apply
-yourself, on your command:
+yourself, on your command. The overlay detects this automatically after you
+exit FO76 and prompts once via a system notification, so you don't have to
+remember to check the tray menu proactively.
   Easiest: open the overlay's tray menu -> "Fix in-game cursor lock
   (Wayland)". Quit Fallout 76 first, then click it; it runs the same
   protontricks commands below and shows the result.
