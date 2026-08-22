@@ -19,6 +19,9 @@ const {
   buildPanelHidingSetScript,
   buildPanelHidingRestoreScript,
   isSinglePrintableChar,
+  canShowOverlay,
+  showModeFor,
+  ACTIVATING_REASONS,
 } = core;
 
 // The main.js *_SHORTCUT defaults (only the relationships matter here).
@@ -362,5 +365,96 @@ describe('panel auto-hide helpers', () => {
     const restore = buildPanelHidingRestoreScript(map);
     expect(restore).toContain('panelById(424).hiding="autohide"');
     expect(restore).toContain('panelById(99).hiding="none"');
+  });
+});
+
+describe('canShowOverlay, focusAware / gameFocused gate', () => {
+  it('forceVisible:true wins over everything else even with gameFocused:false', () => {
+    expect(canShowOverlay({
+      forceVisible: true, focusAware: true, gameRunning: true, gameFocused: false, role: 'member',
+    })).toBe(true);
+    expect(canShowOverlay({
+      forceVisible: true, focusAware: true, gameRunning: true, gameFocused: false, role: 'admin',
+    })).toBe(true);
+  });
+
+  it('focusAware sits ABOVE the privileged bypass, so an admin gets no free pass', () => {
+    expect(canShowOverlay({
+      forceVisible: false, focusAware: true, gameRunning: true, gameFocused: false, role: 'admin',
+    })).toBe(false);
+    expect(canShowOverlay({
+      forceVisible: false, focusAware: true, gameRunning: true, gameFocused: false, role: 'moderator',
+    })).toBe(false);
+    expect(canShowOverlay({
+      forceVisible: false, focusAware: true, gameRunning: true, gameFocused: false, role: 'owner',
+    })).toBe(false);
+    expect(canShowOverlay({
+      forceVisible: false, focusAware: true, gameRunning: true, gameFocused: false, role: 'developer',
+    })).toBe(false);
+  });
+
+  it('focusAware:true, gameRunning:true, gameFocused:true → true', () => {
+    expect(canShowOverlay({
+      forceVisible: false, focusAware: true, gameRunning: true, gameFocused: true, role: 'member',
+    })).toBe(true);
+    expect(canShowOverlay({
+      forceVisible: false, focusAware: true, gameRunning: true, gameFocused: true, role: 'admin',
+    })).toBe(true);
+  });
+});
+
+// Regression: when focusAware is falsy the function is byte-identical to the
+// pre-focus-aware implementation. Re-runs the existing 4-input cartesian
+// (forceVisible × role × gameRunning × chatActive) with focusAware:false and
+// asserts the output matches the legacy expected value AND the no-flag call.
+describe('canShowOverlay, focusAware:false is byte-identical to legacy', () => {
+  const bools = [false, true];
+  const roles = ['member', '', 'moderator', 'admin', 'owner', 'developer'];
+  const privileged = new Set(['moderator', 'admin', 'owner', 'developer']);
+
+  for (const forceVisible of bools) {
+    for (const role of roles) {
+      for (const gameRunning of bools) {
+        for (const chatActive of bools) {
+          const input = { forceVisible, role, gameRunning, chatActive };
+          const expected = forceVisible || privileged.has(role) || gameRunning || !chatActive;
+          it(`fv=${forceVisible} role=${role || '<empty>'} game=${gameRunning} chat=${chatActive} -> ${expected}`, () => {
+            expect(canShowOverlay(input)).toBe(expected);
+            expect(canShowOverlay({ ...input, focusAware: false })).toBe(expected);
+            expect(canShowOverlay({ ...input, focusAware: false })).toBe(canShowOverlay(input));
+          });
+        }
+      }
+    }
+  }
+
+  it('the one false case stays false with focusAware:false', () => {
+    const input = { forceVisible: false, role: 'member', gameRunning: false, chatActive: true };
+    expect(canShowOverlay(input)).toBe(false);
+    expect(canShowOverlay({ ...input, focusAware: false })).toBe(false);
+  });
+
+  it('empty state defaults to allow with or without focusAware:false', () => {
+    expect(canShowOverlay()).toBe(true);
+    expect(canShowOverlay({ focusAware: false })).toBe(true);
+  });
+});
+
+describe('showModeFor', () => {
+  it.each([...ACTIVATING_REASONS])('%s → active (user-initiated)', (reason) => {
+    expect(showModeFor(reason)).toBe('active');
+  });
+
+  it.each([
+    'game-launch',
+    'game-focus',
+    'presence',
+    'chat-active',
+    'onboarding',
+    'privileged',
+    'did-finish-load',
+    'whatever-unlisted',
+  ])('%s → inactive (automatic / unrecognized, the safe default)', (reason) => {
+    expect(showModeFor(reason)).toBe('inactive');
   });
 });

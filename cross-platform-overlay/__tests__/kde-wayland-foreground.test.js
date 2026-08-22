@@ -152,6 +152,32 @@ describe('shouldRegisterShortcuts', () => {
     it('returns false for "(null)" foreground when the game is NOT running', () => {
       expect(shouldRegisterShortcuts({ ...base, gameRunning: false, foregroundProc: '(null)', overlayFocused: false })).toBe(false);
     });
+
+    // Optional gameFocused override: when it's a boolean, use it instead of
+    // re-deriving from foregroundProc. Omitted → legacy derivation unchanged.
+    it('gameFocused:true overrides a foregroundProc that is NOT the game', () => {
+      expect(shouldRegisterShortcuts({
+        ...base, gameRunning: true, foregroundProc: 'firefox', overlayFocused: false, gameFocused: true,
+      })).toBe(true);
+    });
+
+    it('gameFocused:false overrides a foregroundProc that IS the game', () => {
+      expect(shouldRegisterShortcuts({
+        ...base, gameRunning: true, foregroundProc: 'fallout76.exe', overlayFocused: false, gameFocused: false,
+      })).toBe(false);
+    });
+
+    it('omitting gameFocused keeps the legacy foregroundProc derivation', () => {
+      expect(shouldRegisterShortcuts({
+        ...base, gameRunning: true, foregroundProc: 'firefox', overlayFocused: false,
+      })).toBe(false);
+      expect(shouldRegisterShortcuts({
+        ...base, gameRunning: true, foregroundProc: 'fallout76.exe', overlayFocused: false,
+      })).toBe(true);
+      expect(shouldRegisterShortcuts({
+        ...base, gameRunning: true, foregroundProc: '(null)', overlayFocused: false,
+      })).toBe(true);
+    });
   });
 
   // ── isUnknownForegroundClass ────────────────────────────────────────────────

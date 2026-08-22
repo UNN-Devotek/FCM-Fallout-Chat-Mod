@@ -59,7 +59,10 @@ KDE Plasma (Wayland) — automatic, just run Borderless
 On KDE+Wayland the overlay sets itself up on first launch — there is normally
 NOTHING to do. It forces the XWayland backend and installs one KWin window rule
 ("keep above games") so it stays above Fallout 76 even while the game is
-focused. The rule combines two properties on the overlay window:
+focused, but only while FO76 runs AND the overlay is on the SAME monitor.
+Removed automatically on FO76 exit or a monitor change (on another monitor
+the overlay behaves as an ordinary window). The rule combines two properties
+on the overlay window:
 
   - keeps the overlay window on top, AND
   - forces the OVERLAY into KWin's Overlay layer, so it stays visible even
@@ -84,7 +87,7 @@ run), import the bundled rule by hand, or use the app's tray menu ->
   2. Select fallout-chatmod-keepabove.kwinrule (next to this file)
   3. Apply, then: qdbus org.kde.KWin /KWin reconfigure   (or log out / in)
 
-Uninstalling removes these KWin rules and restores FO76's fullscreen stacking.
+Uninstalling removes this KWin rule and restores FO76's fullscreen stacking.
 
 In-game cursor lock (Wayland) — explicit, on-demand step
 ------------------------------------------------------------

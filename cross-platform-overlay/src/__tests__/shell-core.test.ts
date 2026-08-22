@@ -15,6 +15,7 @@ import {
   textOpacityValue,
   scanlineOpacityValue,
   clampIdleCollapseSeconds,
+  shouldResetIdleOnVisibility,
   IDLE_COLLAPSE_SECONDS_MIN,
   IDLE_COLLAPSE_SECONDS_MAX,
   IDLE_COLLAPSE_SECONDS_DEFAULT,
@@ -427,6 +428,15 @@ describe('clampIdleCollapseSeconds', () => {
     expect(clampIdleCollapseSeconds(Infinity)).toBe(IDLE_COLLAPSE_SECONDS_DEFAULT);
     expect(clampIdleCollapseSeconds(undefined)).toBe(IDLE_COLLAPSE_SECONDS_DEFAULT);
     expect(clampIdleCollapseSeconds(null)).toBe(IDLE_COLLAPSE_SECONDS_DEFAULT);
+  });
+});
+
+describe('shouldResetIdleOnVisibility', () => {
+  it('resets idle only when the overlay becomes visible', () => {
+    expect(shouldResetIdleOnVisibility(true)).toBe(true);
+  });
+  it('does not reset idle on hide (would expand the window while hidden)', () => {
+    expect(shouldResetIdleOnVisibility(false)).toBe(false);
   });
 });
 

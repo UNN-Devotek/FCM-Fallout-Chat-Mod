@@ -20,7 +20,12 @@ Three parts, all shippable from the installer:
    stays Normal). Added in KWin 6.0 (KDE Bug 441074). Combined into the SAME rule as a plain
    `above=true` belt-and-suspenders property (both always target the overlay window, so one KWin
    rule carries both — earlier builds split them into `fcm-keepabove` + `fcm-overlay-layer`; now
-   merged). The old `fcm-game-below` (`below=true` on the game) has been **removed entirely** — it
+   merged). The rule is **session- and output-scoped**: installed only while FO76 runs and shares
+   the overlay's display, removed otherwise (game exit, or overlay dragged elsewhere), not a
+   permanent startup rule. On a different monitor the overlay is a normal window. KWin's
+   `isActiveFullScreen()` is per-output aware, so a fullscreen game stays promoted even when a
+   different-output window has focus.
+   The old `fcm-game-below` (`below=true` on the game) has been **removed entirely** — it
    worked but also dropped the game under the taskbar and every other window; the install script
    still strips a stale copy from old opted-in installs.
    Neither affects the cursor lock — stacking only. (Empirically: a matched window jumps from

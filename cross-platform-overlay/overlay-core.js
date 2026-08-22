@@ -212,6 +212,31 @@ function nextPresenceState({ found, gameRunning, candidate, stableCount, appearS
   return { candidate: null, stableCount: 0, commit: true, gameRunning: found };
 }
 
+// Hysteresis reducer for focus, mirroring nextPresenceState's accumulator (found →
+// candidate/stableCount → commit after `need` consecutive samples) but committing
+// `gameFocused`. Game-not-running commits false instantly, no debounce. There's no
+// committed-value input here, so a steady `found` recounts and recommits on every
+// call. Harmless, since enterScans defaults to 1.
+function nextGameFocusState({
+  activeClass, overlayFocused, gameRunning, candidate, stableCount,
+  enterScans = 1, leaveScans = 2,
+} = {}) {
+  if (!gameRunning) {
+    return { candidate: null, stableCount: 0, commit: true, gameFocused: false };
+  }
+  const found = overlayFocused === true
+    || isOverlayClass(activeClass)
+    || isGameClass(activeClass)
+    || (isUnknownForegroundClass(activeClass) && !!gameRunning);
+  const nextCount = (found === candidate) ? (stableCount || 0) + 1 : 1;
+  const need = found ? enterScans : leaveScans;
+  if (nextCount < need) {
+    // Not yet committed. gameFocused is provisional; callers must check `commit`.
+    return { candidate: found, stableCount: nextCount, commit: false, gameFocused: !found };
+  }
+  return { candidate: null, stableCount: 0, commit: true, gameFocused: found };
+}
+
 // ── KDE panel auto-hide while in-game (opt-in) ───────────────────────────────
 // KWin's fullscreen promotion is FOCUS-GATED: a borderless game (FO76 sets
 // _NET_WM_STATE_FULLSCREEN) is ActiveLayer — above the panel — only while it is the
@@ -269,16 +294,29 @@ function isPrivilegedRole(role) {
   return PRIVILEGED_ROLES.includes(role || '');
 }
 
-// Pure form of canShowOverlay. state = { forceVisible, role, gameRunning,
-// chatActive }. Returns true when forceVisible OR privileged role OR game
-// running OR the user is not yet chat-active (onboarding/login reachable).
+// Pure form of canShowOverlay. state = { forceVisible, focusAware, gameFocused,
+// role, gameRunning, chatActive }. True when forceVisible, OR (focusAware +
+// gameRunning: only if gameFocused), OR privileged role, OR gameRunning, OR
+// !chatActive. focusAware sits ABOVE the privileged bypass (no admin free pass
+// around hide-on-alt-tab); when falsy this is byte-identical to the pre-focus-
+// aware version (Windows / non-KDE unaffected).
 function canShowOverlay(state) {
   state = state || {};
   if (state.forceVisible) return true;
+  if (state.focusAware && state.gameRunning) return !!state.gameFocused;
   if (isPrivilegedRole(state.role)) return true;
   if (state.gameRunning) return true;
   if (!state.chatActive) return true;
   return false;
+}
+
+// Reasons that should activate/focus the window; anything else is automatic.
+const ACTIVATING_REASONS = ['tray-show', 'toggle-hotkey', 'mention', 'insert-hotkey', 'channel-nav', 'settings'];
+
+// Guards against a feedback loop: an automatic show must never activate the
+// window, or the focus poller would read "not the game" and hide it again.
+function showModeFor(reason) {
+  return ACTIVATING_REASONS.includes(reason) ? 'active' : 'inactive';
 }
 
 // Pure clamp of a desired bounds rect to a given work area. workArea =
@@ -419,6 +457,14 @@ function isGameClass(name) {
   return XWAYLAND_GAME_CLASSES.some(c => lower === c);
 }
 
+// True when the class/app_id is the overlay itself (fallout-chat-mod wmclass).
+// Needed so focusing the overlay to type counts as "still in the game" and
+// doesn't trip the hide-on-alt-tab gate.
+function isOverlayClass(name) {
+  if (!name) return false;
+  return name.toLowerCase() === 'fallout-chat-mod';
+}
+
 // True when the active-window class is UNREADABLE — empty, or the literal "(null)"
 // that some xdotool builds print when the focused window exposes no WM_CLASS. A
 // FULLSCREEN FO76 (Proton/XWayland) commonly does exactly this — confirmed on
@@ -441,21 +487,30 @@ function isUnknownForegroundClass(name) {
 //   gameRunning          : boolean — game process is alive (tasklist scanner)
 //   foregroundProc       : string  — last foreground class/proc name (lowercased)
 //   overlayFocused       : boolean — the overlay window has OS focus
+//   gameFocused          : boolean (optional), a precomputed focus result, used
+//                          directly on KDE-Wayland instead of re-deriving.
+//                          Omitted keeps the legacy derivation.
 //
 // Decision logic:
 //   win32 → game active = game is the foreground window
-//   linux + KDE-Wayland + kdotool/xdotool present → same as win32
+//   linux + KDE-Wayland + kdotool/xdotool present → same as win32 (or the
+//     precomputed gameFocused, if given)
 //   linux (fallback / no tool) → game active = game is running
 //   In all cases: keys are active when (game active) OR (overlay focused).
-function shouldRegisterShortcuts({ platform, kdeWayland, hasForegroundDetect, gameRunning, foregroundProc, overlayFocused }) {
+function shouldRegisterShortcuts({ platform, kdeWayland, hasForegroundDetect, gameRunning, foregroundProc, overlayFocused, gameFocused }) {
   let gameActive;
   if (platform === 'win32') {
     gameActive = isGameClass(foregroundProc);
   } else if (kdeWayland && hasForegroundDetect) {
-    // Same fullscreen-game caveat as desiredTopmost: a focused fullscreen FO76 reads
-    // an unreadable class ("(null)"/empty), so treat "game running + unreadable
-    // foreground" as the game being active (keeps hotkeys live in-game).
-    gameActive = isGameClass(foregroundProc) || (!!gameRunning && isUnknownForegroundClass(foregroundProc));
+    if (typeof gameFocused === 'boolean') {
+      // Caller already ran the focus hysteresis; don't second-guess foregroundProc.
+      gameActive = gameFocused;
+    } else {
+      // Same fullscreen-game caveat as desiredTopmost: a focused fullscreen FO76 reads
+      // an unreadable class ("(null)"/empty), so treat "game running + unreadable
+      // foreground" as the game being active (keeps hotkeys live in-game).
+      gameActive = isGameClass(foregroundProc) || (!!gameRunning && isUnknownForegroundClass(foregroundProc));
+    }
   } else {
     // Fallback: no reliable foreground API — treat "game running" as "game active".
     // This matches the pre-kdotool Linux behavior exactly (no regression).
@@ -673,6 +728,12 @@ function awkStripFcmSectionLines() {
     `  awk -v drop=" $FCM " '/^\\[.*\\]$/{name=$0;sub(/^\\[/,"",name);sub(/\\]$/,"",name);skip=index(drop," " name " ")>0} !skip' "$RULES" > "$RULES.fcmtmp" && mv "$RULES.fcmtmp" "$RULES"`,
     `fi`,
   ];
+}
+
+// Install the rule only while the game runs AND the overlay shares its monitor.
+// `sameOutput` must be explicitly false to block. An unresolved probe fails open.
+function shouldInstallKeepAboveRule({ gameRunning, sameOutput = true } = {}) {
+  return !!gameRunning && sameOutput !== false;
 }
 
 // Install (clean + apply) script. Removes any stale FCM rules, then writes the current
@@ -962,6 +1023,7 @@ module.exports = {
   XWAYLAND_GAME_CLASSES,
   isGameProcess,
   isGameClass,
+  isOverlayClass,
   isUnknownForegroundClass,
   shouldRegisterShortcuts,
   decideForegroundPollerAction,
@@ -977,6 +1039,8 @@ module.exports = {
   resolveAppVersion,
   isPrivilegedRole,
   canShowOverlay,
+  showModeFor,
+  ACTIVATING_REASONS,
   clampToWorkArea,
   BOUNDS_DRIFT_TOLERANCE_PX,
   resolvePersistedSize,
@@ -989,6 +1053,7 @@ module.exports = {
   emitVisibilityDecision,
   desiredTopmost,
   nextPresenceState,
+  nextGameFocusState,
   shouldHidePanelInGame,
   buildPanelHidingSaveScript,
   parsePanelHidingSave,
@@ -996,6 +1061,7 @@ module.exports = {
   buildPanelHidingRestoreScript,
   resolveRelayUrls,
   classifyInputGrab,
+  shouldInstallKeepAboveRule,
   buildKwinKeepAboveScript,
   buildKwinRemoveRulesScript,
   planOzoneRelaunch,

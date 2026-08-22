@@ -1,7 +1,10 @@
 # Fallout Chat Mod — KDE/KWin window rules (manual-import fallback)
 #
-# The overlay applies these AUTOMATICALLY on startup (KDE+Wayland). This file is a
-# fallback you can import by hand if the automatic path didn't work:
+# The overlay applies this AUTOMATICALLY (KDE+Wayland) while FO76 runs and shares
+# the overlay's display, removing it on game exit or a monitor change, not just
+# once at startup. This file is the manual-import fallback. It always applies,
+# with no game-running/same-monitor gating, since a hand-imported rule can't
+# be conditional:
 #   System Settings -> Window Management -> Window Rules -> Import...  (pick this file)
 #   then:  qdbus org.kde.KWin /KWin reconfigure   (or log out / in)
 #
