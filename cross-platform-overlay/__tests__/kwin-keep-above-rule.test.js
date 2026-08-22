@@ -9,7 +9,29 @@
 
 import core from '../overlay-core.js';
 
-const { buildKwinKeepAboveScript, buildKwinRemoveRulesScript } = core;
+const { buildKwinKeepAboveScript, buildKwinRemoveRulesScript, shouldInstallKeepAboveRule } = core;
+
+describe('shouldInstallKeepAboveRule', () => {
+  it('{gameRunning:true, sameOutput:true} → true', () => {
+    expect(shouldInstallKeepAboveRule({ gameRunning: true, sameOutput: true })).toBe(true);
+  });
+
+  it('{gameRunning:true, sameOutput:false} → false (explicit false blocks)', () => {
+    expect(shouldInstallKeepAboveRule({ gameRunning: true, sameOutput: false })).toBe(false);
+  });
+
+  it('{gameRunning:false, sameOutput:true} → false', () => {
+    expect(shouldInstallKeepAboveRule({ gameRunning: false, sameOutput: true })).toBe(false);
+  });
+
+  it('{gameRunning:true} (sameOutput omitted) → true (default)', () => {
+    expect(shouldInstallKeepAboveRule({ gameRunning: true })).toBe(true);
+  });
+
+  it('{gameRunning:false} (sameOutput omitted) → false', () => {
+    expect(shouldInstallKeepAboveRule({ gameRunning: false })).toBe(false);
+  });
+});
 
 describe('buildKwinKeepAboveScript', () => {
   const script = buildKwinKeepAboveScript();

@@ -201,6 +201,13 @@ README_PATH="$APP_DIR/INSTALL-LINUX.txt"
 KWINRULE_PATH="$APP_DIR/fallout-chatmod-keepabove.kwinrule"
 
 cat > "$KWINRULE_PATH" <<'EOF'
+# ONE rule on the OVERLAY window (wmclass=fallout-chat-mod): keep-above
+# (above=true, belt-and-suspenders) plus force-Layer (layer=overlay, Force),
+# the KWin-6 fix (KDE Bug 441074) for "overlay hidden behind a focused
+# fullscreen game". Sits above the active-fullscreen game WITHOUT demoting
+# it, so FO76 keeps normal fullscreen stacking and the overlay keeps
+# keyboard focus. The game is never "kept below" either; that would also
+# drop it under the taskbar.
 [Fallout Chat Mod - keep above games]
 Description=Fallout Chat Mod - keep above games
 wmclass=fallout-chat-mod
@@ -208,17 +215,6 @@ wmclassmatch=2
 wmclasscomplete=false
 above=true
 aboverule=3
-
-# Force the OVERLAY to KWin's Overlay layer - the fix for "overlay hidden behind a focused
-# fullscreen game" (KWin 6.0+). It sits above the active-fullscreen game WITHOUT demoting
-# the game, so FO76 keeps normal fullscreen stacking (above the panel) and the overlay
-# keeps keyboard focus. The game itself is never demoted or "kept below" (that would also
-# drop it under the taskbar).
-[Fallout Chat Mod - overlay layer]
-Description=Fallout Chat Mod - overlay layer
-wmclass=fallout-chat-mod
-wmclassmatch=2
-wmclasscomplete=false
 layer=overlay
 layerrule=2
 EOF
@@ -236,15 +232,17 @@ Using the overlay
 - Download new versions from Nexus Mods (https://www.nexusmods.com/fallout76/mods/4082) or falloutchatmod.com.
 
 KDE Plasma (Wayland) — automatic
-- On first launch the overlay forces XWayland and installs two KWin rules so it
-  stays above Fallout 76 even while the game is focused. No manual step needed.
+- On first launch the overlay forces XWayland. While FO76 runs and the overlay
+  shares its display, it installs one KWin rule (fcm-keepabove: above=true +
+  layer=overlay/layerrule=2) so it stays above Fallout 76 even while focused.
+  No manual step needed. Removed automatically on FO76 exit or a monitor change.
 - If it somehow ends up BEHIND the game, import the bundled rule (this folder):
   $KWINRULE_PATH
     1. System Settings -> Window Management -> Window Rules -> Import...
     2. Select fallout-chatmod-keepabove.kwinrule
     3. Apply, then: qdbus org.kde.KWin /KWin reconfigure   (or log out/in)
   Or use the app tray menu -> "KDE: keep overlay above game".
-- The uninstaller removes these KWin rules (restores FO76's fullscreen stacking).
+- The uninstaller removes this KWin rule (restores FO76's fullscreen stacking).
 
 In-game cursor lock (Wayland) — manual, self-service step
 - On Wayland the compositor drops Fallout 76's mouse-lock when the overlay sits on
@@ -320,11 +318,12 @@ SESSION_TYPE="$(printf '%s' "${XDG_SESSION_TYPE:-}" | tr 'A-Z' 'a-z')"
 if printf '%s' "$DESKTOP_ENV" | grep -q 'kde\|plasma' && [ "$SESSION_TYPE" = "wayland" ]; then
   echo
   say "KDE Plasma on Wayland detected — the overlay configures itself on first launch"
-  say "(forces XWayland + installs a KWin force-Layer rule so it sits above the game)."
+  say "(forces XWayland + one KWin rule, fcm-keepabove, installed while FO76 runs"
+  say "on the same display as the overlay)."
   say "The overlay is placed in KWin's Overlay layer, so it shows above Fallout 76 WITHOUT"
   say "demoting the game — FO76 keeps normal fullscreen stacking (above the panel). If chat"
   say "ever shows BEHIND the game, use tray -> \"KDE: keep overlay above game\" to re-apply"
-  say "the rules (or import the bundled .kwinrule by hand)."
+  say "the rule (or import the bundled .kwinrule by hand)."
   say ""
   say "TIP: install kdotool (AUR: paru -S kdotool) so the overlay releases its hotkeys"
   say "when you tab to another app while the game runs. xdotool also works, but it"

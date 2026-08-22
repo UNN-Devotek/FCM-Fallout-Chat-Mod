@@ -267,6 +267,16 @@ export function clampIdleCollapseSeconds(seconds: number | undefined | null): nu
   return Math.max(IDLE_COLLAPSE_SECONDS_MIN, Math.min(IDLE_COLLAPSE_SECONDS_MAX, Math.round(n)));
 }
 
+/**
+ * True when an overlay:visibility update should reset the idle-collapse timer.
+ * Only `true` (shown) resets. The idle tick keeps running while hidden, so a
+ * long tab-away would otherwise re-show already collapsed. `false` must not
+ * call markActivity, which would send overlay:expand while hiding.
+ */
+export function shouldResetIdleOnVisibility(isVisible: boolean): boolean {
+  return isVisible === true;
+}
+
 // ── Idle-collapse header-strip height math ──────────────────────────────────────
 // The overlay collapses to a window showing only the shell bar + the two tab rows.
 // The window height (visual/DIP px) is the shell-bar height plus the header strip
