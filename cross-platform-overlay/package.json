@@ -149,7 +149,7 @@
     },
     "linux": {
       "executableName": "fallout-chat-mod",
-      "desktopName": "fallout-chat-mod.desktop",
+      "syncDesktopName": true,
       "extraResources": [
         {
           "from": "assets/install/INSTALL-LINUX.txt",
