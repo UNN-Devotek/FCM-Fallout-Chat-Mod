@@ -171,7 +171,7 @@ under Proton hardware; not automatable):**
 2. System Settings → Window Management → Window Rules → Add New… → Detect Window Properties →
    click the overlay window → confirm **Window class = `fallout-chat-mod`** (same workflow used
    for Konsole/Chrome/Discord).
-3. Run `setupKdeKeepAbove` (tray → "KDE: keep overlay above game") and confirm the overlay
+3. Launch FO76 on the same display so the automatic keep-above rule installs, and confirm the overlay
    stacks **above** a focused fullscreen/borderless FO76.
 4. **The gate:** with FO76 running and mouselook active, does the game **keep its cursor lock**
    with the native-Wayland overlay on top (click-through)? Per KDE bug 485409 this is expected

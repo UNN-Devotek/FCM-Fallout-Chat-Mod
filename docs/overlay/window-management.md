@@ -376,7 +376,7 @@ On a **different monitor**, no rule installs at all. The overlay is a plain wind
 
 ### How the rule gets applied (session- and output-scoped)
 
-`setupKdeKeepAbove({ interactive })` writes the rule into `~/.config/kwinrulesrc` via `kwriteconfig6`, then `qdbus org.kde.KWin /KWin reconfigure` (falls back to `qdbus6`/`qdbus-qt6`):
+`setupKdeKeepAbove(onDone)` writes the rule into `~/.config/kwinrulesrc` via `kwriteconfig6`, then `qdbus org.kde.KWin /KWin reconfigure` (falls back to `qdbus6`/`qdbus-qt6`):
 
 - `fcm-keepabove`: ONE rule on the overlay (`wmclass=fallout-chat-mod`) combining `above=true` (belt-and-suspenders) and `layer=overlay`/`layerrule=2` (THE fix, putting the overlay above the fullscreen game without demoting it). **Installed only while FO76 runs and the overlay shares its display**; removed on game exit or a monitor change.
 
@@ -393,7 +393,7 @@ section of [linux-overlay-approaches.md](linux-overlay-approaches.md) for the ma
 protocol and the open blocker (KDE bug 485409, cursor-lock coexistence).
 
 - **Automatic:** on **KDE+Wayland** the rule installs/removes as game/output conditions change (not a one-shot at `app.whenReady`). **Idempotent**: exits early when `rules=` already matches, so repeated installs never duplicate or reconfigure needlessly. A matching remove path strips `fcm-keepabove` when the overlay should be ordinary.
-- **Manual retry:** tray → **"KDE: keep overlay above game"** (`interactive: true`) additionally opens the userData folder for a hand import (System Settings → Window Rules → Import) if the automatic path fails (older KWin, missing `kwriteconfig6`, non-KDE).
+- **Manual fallback (e.g. Plasma 5, missing `kwriteconfig6`):** the `.kwinrule` file is written to userData on every launch (`writeLinuxHelperFiles`); import it by hand via System Settings → Window Rules → Import, then `qdbus org.kde.KWin /KWin reconfigure`.
 
 All paths are best-effort and no-op gracefully when the KDE tools are absent. Non-KDE-Wayland Linux sessions only get the helper files written to userData (no `kwinrulesrc` edit).
 

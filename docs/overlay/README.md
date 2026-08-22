@@ -92,7 +92,7 @@ On KDE+Wayland the overlay configures itself on first launch — **no manual ste
 
 The install is idempotent and self-healing (cleans stale FCM rules from older builds, preserves the user's own rules). **Uninstalling removes the rule** (`buildKwinRemoveRulesScript` / `Packaging/linux/uninstall.sh`), restoring FO76's fullscreen stacking.
 
-**Fallback** if the auto-apply couldn't run: tray → **KDE: keep overlay above game**, or import `~/.config/Fallout Chat Mod/fallout-chatmod-keepabove.kwinrule` via System Settings → Window Rules → Import, then `qdbus org.kde.KWin /KWin reconfigure`.
+**Fallback** if the auto-apply couldn't run: import `~/.config/Fallout Chat Mod/fallout-chatmod-keepabove.kwinrule` via System Settings → Window Rules → Import, then `qdbus org.kde.KWin /KWin reconfigure`.
 
 **Run FO76 in Windowed Borderless** — Exclusive Fullscreen blocks any overlay on any OS. **Do NOT** run the game inside **gamescope** — its nested compositor isolates the game and the overlay cannot render over it.
 

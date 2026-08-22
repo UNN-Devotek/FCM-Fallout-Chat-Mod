@@ -82,8 +82,7 @@ Firefox). On a plain X11 session, xdotool alone now gives the same hide-on-alt-t
 hotkeys stay held for the whole game session.
 
 If the overlay ever ends up BEHIND the game (e.g. the automatic setup couldn't
-run), import the bundled rule by hand, or use the app's tray menu ->
-"KDE: keep overlay above game":
+run), import the bundled rule by hand:
 
   1. System Settings -> Window Management -> Window Rules -> Import...
   2. Select fallout-chatmod-keepabove.kwinrule (next to this file)
