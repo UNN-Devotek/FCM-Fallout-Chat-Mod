@@ -3769,6 +3769,7 @@ function rebuildTrayMenu() {
     // above the game, and opens the folder with the rule + setup note.
     ...(IS_LINUX ? [
       { type: 'separator' },
+      { label: 'Linux fixes', enabled: false },
       { label: 'KDE: keep overlay above game', click: () => setupKdeKeepAbove({ interactive: true }) },
       // Cursor-lock fix: enable Wine's own mouse capture in the FO76 prefix so the cursor
       // stays locked to the game on KWin Wayland (KWin revokes the game's pointer constraint
