@@ -123,6 +123,17 @@ coexists with the lock. On **native Wayland** there is no easy interactive path.
   game overlays work, and it installs as a plain npm dependency — **no compositor, no sudo,
   no system changes.**
 
+## Hyprland (implemented, not hardware-verified)
+
+On Hyprland the overlay uses `hyprctl` instead of kdotool/xdotool: `hyprctl activewindow -j`
+for the focused window's class, `hyprctl clients -j` to find FO76's `{x,y}` for the
+same-output probe, and `hyprctl dispatch pin address:<addr>` to pin the overlay above the
+workspace while the game is running on the same output (un-pin otherwise). This is
+best-effort and has **not been verified on real Hyprland hardware.** No machine was
+available to confirm that `pin` beats a fullscreen Proton game the way KWin's Force-Layer
+rule was empirically confirmed to. The Linux z-order heartbeat (`setAlwaysOnTop`) therefore
+stays active under Hyprland as a fallback; see `main.js` `_startLinuxZOrderHeartbeat`.
+
 ## Phase-0 spike (2026-07) — re-testing the native-Wayland conclusion with `FCM_NATIVE_WAYLAND=1`
 
 The "not achievable" conclusion above was last measured before two things changed: Electron
