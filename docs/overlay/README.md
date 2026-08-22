@@ -110,6 +110,8 @@ This strips Proton's window decoration so the desktop compositor can composit th
 
 **Windowed Borderless is still required.** `PROTON_NO_WM_DECORATION` removes window chrome but does not override Exclusive Fullscreen. FO76 must run in **Windowed Borderless** mode on all compositors.
 
+On a **plain X11** session (any window manager, not Wayland/GNOME), installing `xdotool` now gives the same hide-on-alt-tab and hotkey-release behavior KDE-Wayland users get. `PROTON_NO_WM_DECORATION` is a stacking workaround only; it is unrelated to focus detection.
+
 Both requirements are documented on the install page (SYSTEM → INSTALL).
 
 ---
