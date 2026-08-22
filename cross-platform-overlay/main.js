@@ -304,8 +304,8 @@ process.on('unhandledRejection', (reason) => {
 
 // LINUX/KDE: the importable KWin rule + setup note. Written to the stable
 // userData dir on startup (an AppImage has no install dir, and asar contents
-// aren't user-reachable) so users can import the rule and read the guide. Also
-// surfaced via the tray ("KDE: keep overlay above game"). Keep in sync with
+// aren't user-reachable) so users can import the rule and read the guide.
+// Keep in sync with
 // cross-platform-overlay/assets/fallout-chatmod-keepabove.kwinrule + docs.
 // NOTE: kept byte-consistent with assets/fallout-chatmod-keepabove.kwinrule
 // (sans comments — KWin's INI parser ignores them). ONE rule, on the OVERLAY
@@ -363,7 +363,7 @@ game's own stacking.
 Run FO76 in BORDERLESS WINDOWED (not exclusive fullscreen).
 
 If it ever ends up behind the game (e.g. the auto-apply couldn't run), import the
-bundled rule by hand, or use the tray menu -> "KDE: keep overlay above game":
+bundled rule by hand:
 
   1. System Settings -> Window Management -> Window Rules -> Import...
   2. Select: fallout-chatmod-keepabove.kwinrule  (in this same folder)
@@ -406,9 +406,6 @@ Notes
     (section 2) it also hides on alt-tab away from the game on the same
     monitor and reappears on tab-back; without the tool it stays visible
     for the whole game session.
-
-Tray menu -> "KDE: keep overlay above game" opens this folder and tries to
-import the rule for you automatically.
 `;
 
 // Write the helper files into userData (Linux only). Returns the rule path.
@@ -425,14 +422,11 @@ function writeLinuxHelperFiles() {
   } catch (e) { diag('[linux] writeLinuxHelperFiles failed:', String(e && e.message || e)); return null; }
 }
 
-// Apply the KWin keep-above layer rule. Two entry points:
-//   • Auto, at startup on KDE+Wayland (interactive=false) — so the overlay sits
-//     above the game for EVERY user with no manual step. This is the path that
-//     makes it "just work"; previously the rule was only written to disk and the
-//     user had to discover the tray item, so most installs left it behind the game.
-//   • Tray "KDE: keep overlay above game" (interactive=true) — additionally opens
-//     the helper folder so the user can import the .kwinrule by hand if the auto
-//     path failed (older KWin / missing kwriteconfig6 / non-KDE).
+// Apply the KWin keep-above layer rule. Single entry point: syncKwinKeepAboveRule
+// on KDE+Wayland when gameRunning && sameOutput — so the overlay sits above the
+// game for EVERY user with no manual step. This is the path that makes it "just
+// work"; previously the rule was only written to disk and most installs left it
+// behind the game.
 //
 // IDEMPOTENT (required now that it runs on every launch): KWin stores rules as
 // NUMBERED groups ([1], [2], …) enumerated by [General] count — NOT named groups
@@ -440,20 +434,18 @@ function writeLinuxHelperFiles() {
 // our Description and EXITS if it's already there; without that guard, each startup
 // would append a duplicate rule group and reconfigure KWin needlessly. Only when the
 // rule is missing does it append group [N+1], bump count, and reconfigure. All
-// best-effort: on GNOME / missing tools / older KWin it no-ops (the interactive path
-// still opens the folder so the manual System-Settings → Import remains available).
+// best-effort: on GNOME / missing tools / older KWin it no-ops. The .kwinrule file
+// is still written to userData (writeLinuxHelperFiles) so a hand import via
+// System Settings → Window Rules → Import remains available (e.g. Plasma 5,
+// missing kwriteconfig6).
 // The `fcm-keepabove` rule's force-Layer property (layer=overlay) keeps the overlay above a
 // focused fullscreen game WITHOUT demoting the game (so the game keeps normal fullscreen above
 // the panel) — the primary KWin-6 fix, always applied. (The old opt-in "keep game below"
 // fallback rule was removed: it dropped FO76 to BelowLayer, under EVERY window and the
 // panel. The install script still strips a stale fcm-game-below from old installs.)
-function setupKdeKeepAbove({ interactive = false } = {}, onDone) {
+function setupKdeKeepAbove(onDone) {
   if (!IS_LINUX) { if (onDone) onDone(); return; }
   const rulePath = writeLinuxHelperFiles();
-  if (interactive) {
-    const dir = (() => { try { return app.getPath('userData'); } catch { return null; } })();
-    if (dir) { try { shell.openPath(dir); } catch { /* ignore */ } }
-  }
   try {
     const { exec } = require('child_process');
     // Shared, unit-tested script builder (idempotency guard + named-group write
@@ -467,7 +459,7 @@ function setupKdeKeepAbove({ interactive = false } = {}, onDone) {
       if (onDone) onDone();
     });
   } catch (e) { diag('[kwin] setupKdeKeepAbove exec failed:', String(e && e.message || e)); if (onDone) onDone(); }
-  diag('[kwin] setupKdeKeepAbove: rule at ' + rulePath + ' (interactive=' + interactive + ')');
+  diag('[kwin] setupKdeKeepAbove: rule at ' + rulePath);
 }
 
 // Is the overlay window actually on screen right now (not hidden to tray / minimized)?
@@ -1166,7 +1158,7 @@ function syncKwinKeepAboveRule(reason) {
     if (_kwinSyncQueued) { _kwinSyncQueued = false; syncKwinKeepAboveRule('queued-recheck'); }
   };
   if (want) {
-    setupKdeKeepAbove({ interactive: false }, onDone);
+    setupKdeKeepAbove(onDone);
   } else {
     try {
       const script = overlayCore.buildKwinRemoveRulesScript({});
@@ -4044,12 +4036,9 @@ function rebuildTrayMenu() {
         },
       },
     ] : []),
-    // Linux/KDE helper: imports the "keep above" KWin rule so the overlay sits
-    // above the game, and opens the folder with the rule + setup note.
     ...(IS_LINUX ? [
       { type: 'separator' },
       { label: 'Linux fixes', enabled: false },
-      { label: 'KDE: keep overlay above game', click: () => { _lastRuleInstalled = true; setupKdeKeepAbove({ interactive: true }); } },
       // Cursor-lock fix: enable Wine's own mouse capture in the FO76 prefix so the cursor
       // stays locked to the game on KWin Wayland (KWin revokes the game's pointer constraint
       // when the overlay is on top). Explicit, on-demand only — never automatic (installer
@@ -4469,7 +4458,7 @@ app.whenReady().then(() => {
     }
   } catch { /* ignore */ }
   // Linux: drop the KWin "keep above" rule + setup note into userData so KDE
-  // users can import it manually if needed (tray → "KDE: keep overlay above game").
+  // users can import it manually if needed.
   // KDE+Wayland: the rule is gated by gameRunning && sameOutput
   // (syncKwinKeepAboveRule). At startup the game isn't running yet, so no
   // rule installs until launch. Other Linux setups just get the helper files.
