@@ -158,10 +158,13 @@ empirically rather than re-assert the old conclusion from a stale Electron basel
   `null`) and instead enables `--enable-features=GlobalShortcutsPortal`. Unset (the default),
   behavior is byte-for-byte unchanged — still relaunches into XWayland.
 - **app_id pinning:** `package.json`'s top-level `desktopName: "fallout-chat-mod.desktop"`
-  field (read by Electron itself at startup, electron/electron#49988, landed by our 42.5.0 pin)
-  pins the native-Wayland `app_id` to `fallout-chat-mod` — the same string as the X11 WM_CLASS
-  the existing `fcm-keepabove` KWin rule already matches. (This is a *different* field from
-  `build.linux.desktopName`, which only names the installed `.desktop` file.)
+  field (read by Electron itself at startup, electron/electron#49988) pins the
+  native-Wayland `app_id` to `fallout-chat-mod`. Electron's `app.setDesktopName` sets the
+  X11 `WM_CLASS` from the same value, so one string covers both backends and the existing
+  `fcm-keepabove` KWin rule matches either way. Without the field Electron falls back to
+  `${app.name}.desktop`, and `app.name` prefers `productName`, which would make the class
+  `Fallout Chat Mod` and break every `wmclass=fallout-chat-mod` match. (This is a
+  *different* field from `build.linux.executableName`, which only names the packaged binary.)
 - **KWin rule:** `buildKwinKeepAboveScript()` in `overlay-core.js` is **unmodified**. KWin's
   rule engine matches `wmclass` against `Window::resourceClass()`, an accessor implemented for
   both `X11Window` (X11 `WM_CLASS`) and `XdgToplevelWindow` (Wayland `app_id`) — the same

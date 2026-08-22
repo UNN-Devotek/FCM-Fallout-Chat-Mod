@@ -282,16 +282,17 @@ if (!app.isPackaged) {
 // and continue; the relay retries on its own schedule.
 // NOTE: do NOT call app.setName() here. The app name feeds app.getPath('userData')
 // (→ ~/.config/Fallout Chat Mod), so renaming it would orphan every existing
-// user's session/settings/keybinds on all platforms. On XWayland (the default KDE
-// path) KWin matches the overlay by its X11 WM_CLASS ("fallout-chat-mod") via the
-// bundled keep-above rule's exact-name match — no app_id override is needed there.
-// The top-level "desktopName" field in package.json (bundled via build.files, read
-// by Electron itself at startup — electron/electron#49988) pins the NATIVE-WAYLAND
-// app_id to the same "fallout-chat-mod" string, independently of app.getName()/
-// userData. build.linux.desktopName (electron-builder config, below in package.json)
-// is a THIRD, separate thing — it only controls the installed .desktop file's name
-// and does not affect the runtime app_id. See FCM_NATIVE_WAYLAND / NATIVE_WAYLAND_OPT_IN
-// above and docs/overlay/linux-overlay-approaches.md.
+// user's session/settings/keybinds on all platforms. What the KWin/Hyprland rules
+// match on instead is the top-level "desktopName" field in package.json (bundled
+// via build.files). Electron reads it at startup and calls app.setDesktopName,
+// which sets BOTH the X11 WM_CLASS and the native-Wayland app_id to
+// "fallout-chat-mod", independently of app.getName()/userData. Without it Electron
+// falls back to `${app.name}.desktop`, and app.name prefers productName, so the
+// class would become "Fallout Chat Mod" and every wmclass=fallout-chat-mod match
+// (the keep-above rule, findHyprctlClient) would silently stop matching. The
+// separate build.linux.executableName only names the packaged binary. See
+// FCM_NATIVE_WAYLAND / NATIVE_WAYLAND_OPT_IN above and
+// docs/overlay/linux-overlay-approaches.md.
 
 process.on('uncaughtException', (err) => {
   const msg = (err && err.message) ? err.message : String(err);

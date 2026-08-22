@@ -3,7 +3,7 @@
   "version": "1.3.98-dev",
   "productName": "Fallout Chat Mod",
   "desktopName": "fallout-chat-mod.desktop",
-  "//desktopName": "TOP-LEVEL field (distinct from build.linux.desktopName below, which only controls the .desktop FILE electron-builder generates at package time). Electron itself reads THIS package.json field at runtime (bundled via build.files) to compute the native-Wayland app_id via xdg_toplevel.set_app_id() (electron/electron#49988, landed by our Electron 42.5.0 pin). Without it Electron would default to the executable basename anyway (fallout-chat-mod), but pinning it here keeps the native-Wayland app_id and the X11 WM_CLASS (from build.linux.executableName) identical and intentional, so one KWin rule matcher can target both. Verify empirically during Phase-0 testing via KWin's Window Rules -> Detect Window Properties on the running overlay -- see docs/overlay/linux-overlay-approaches.md.",
+  "//desktopName": "Read by Electron at runtime (app.setDesktopName) to pin the Linux X11 WM_CLASS / native-Wayland app_id to fallout-chat-mod, matching build.linux.executableName. The KWin/Hyprland rules in main.js key off this exact string. Do not remove.",
   "description": "Cross-platform (Windows/macOS/Linux) Electron overlay that mounts the live ChatOverlay React component and feeds it data from the production relay.",
   "author": {
     "name": "Fallout Chat Mod",
@@ -149,7 +149,6 @@
     },
     "linux": {
       "executableName": "fallout-chat-mod",
-      "desktopName": "fallout-chat-mod.desktop",
       "extraResources": [
         {
           "from": "assets/install/INSTALL-LINUX.txt",
