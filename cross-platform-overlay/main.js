@@ -144,6 +144,7 @@ const _xdgDesktop = (process.env.XDG_CURRENT_DESKTOP || process.env.XDG_SESSION_
 const _xdgSession = (process.env.XDG_SESSION_TYPE || '').toLowerCase();
 const IS_KDE = _xdgDesktop.includes('kde') || _xdgDesktop.includes('plasma');
 const IS_WAYLAND = _xdgSession === 'wayland' || !!process.env.WAYLAND_DISPLAY;
+const IS_X11 = IS_LINUX && !IS_WAYLAND;
 // The single switch that turns the new behavior on. KDE + Wayland only.
 const KDE_WAYLAND = IS_LINUX && IS_KDE && IS_WAYLAND;
 // Phase-0 spike opt-in (see docs/overlay/linux-overlay-approaches.md): when set, stay
@@ -842,13 +843,13 @@ function isPrivileged() {
 // A fully-set-up regular user with the game closed → false (overlay hides). This
 // is intentional: onboarding stays visible (chatActive=false), then the overlay
 // closes the instant onboarding completes (chatActive=true) if FO76 isn't running.
-// focusAware/gameFocused (KDE-Wayland w/ live foreground probe): hides the
-// overlay when the game isn't focused, but only on the SAME output as the
+// focusAware/gameFocused (KDE-Wayland or X11 w/ live foreground probe): hides
+// the overlay when the game isn't focused, but only on the SAME output as the
 // game, same reasoning as syncKwinKeepAboveRule. There's no stacking contest
 // to win elsewhere. Without this, alt-tab would hide the overlay even on a
 // monitor the game isn't on.
 function canShowOverlay() {
-  const focusAware = KDE_WAYLAND && kdeWaylandForegroundDetect && isOverlaySameOutputAsGame();
+  const focusAware = (KDE_WAYLAND || IS_X11) && foregroundDetect && isOverlaySameOutputAsGame();
   return overlayCore.canShowOverlay({ forceVisible, role: userRole, gameRunning, chatActive, focusAware, gameFocused });
 }
 
@@ -876,10 +877,10 @@ function notifyGameRequired() {
 const { spawn, exec } = require('child_process');
 const { GAME_PROCESSES, isGameProcess, isGameClass } = overlayCore;
 let zorderProc = null;            // long-lived PowerShell foreground poller (win32)
-let fgPoller = null;              // active-window poller child (KDE-Wayland only)
+let fgPoller = null;              // active-window poller child (KDE-Wayland / X11)
 let fgPollTimer = null;           // setInterval driving the active-window poll
 let fgTool = null;                // resolved tool name: 'xdotool' | 'kdotool'
-let kdeWaylandForegroundDetect = false; // true once a foreground tool is confirmed present
+let foregroundDetect = false;     // true once a foreground tool is confirmed present (any Linux session type)
 let zorderTimer = null;           // fallback JS timer (re-applies desired state)
 let lastForegroundProc = '';      // last reported foreground process name (lower)
 // ── win32 foreground-poller self-heal + fail-safe (issue #136) ───────────────
@@ -1050,9 +1051,9 @@ function onGamePresenceChanged(found) {
   // On non-Windows where we have no foreground-window API: mirror game-running
   // state onto lastForegroundProc so the existing desiredTopmost() logic works.
   // While the game is running → act topmost; when it stops → drop back.
-  // Skip when a real KDE-Wayland probe drives lastForegroundProc. Stomping it
+  // Skip when a real foreground probe drives lastForegroundProc. Stomping it
   // on every launch/exit would fight the poller.
-  if (process.platform !== 'win32' && !kdeWaylandForegroundDetect) {
+  if (process.platform !== 'win32' && !foregroundDetect) {
     lastForegroundProc = gameRunning ? GAME_PROCESSES[0].toLowerCase() : '';
     applyZOrder();
   }
@@ -1068,7 +1069,7 @@ function onGamePresenceChanged(found) {
 // installs only when the overlay shares that output. Fail-open: any miss leaves
 // _cachedGameDisplayId=null, treated as "assume same output".
 function probeGameDisplay() {
-  if (!IS_LINUX || !KDE_WAYLAND || !fgTool) { _cachedGameDisplayId = null; syncKwinKeepAboveRule('probe-skip'); return; }
+  if (!IS_LINUX || !fgTool) { _cachedGameDisplayId = null; syncKwinKeepAboveRule('probe-skip'); return; }
   const pattern = (GAME_PROCESSES || []).concat(['steam_app_1151340']).join('|');
   exec(fgTool + " search --class '" + pattern + "' getwindowgeometry", { timeout: 2000, shell: '/bin/sh' }, (err, stdout) => {
     if (err || !stdout) { _cachedGameDisplayId = null; syncKwinKeepAboveRule('probe-empty'); return; }
@@ -3070,12 +3071,11 @@ function refreshShortcuts() {
   const overlayFocused = !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused());
   // shouldRegisterShortcuts handles all platform/detection-availability cases:
   //   win32             → game active = foreground window is the game
-  //   linux KDE-Wayland + xdotool/kdotool present → same as win32 (fgPoller running)
+  //   linux + live tool → same as win32 (fgPoller running, KDE-Wayland or X11)
   //   linux fallback    → game active = game process is running (old behavior)
   const active = overlayCore.shouldRegisterShortcuts({
     platform: process.platform,
-    kdeWayland: KDE_WAYLAND,
-    hasForegroundDetect: kdeWaylandForegroundDetect,
+    hasForegroundDetect: foregroundDetect,
     gameRunning,
     foregroundProc: lastForegroundProc,
     overlayFocused,
@@ -3375,15 +3375,18 @@ function applyZOrder(opts) {
   } catch (e) { if (IS_LINUX) diag('[zorder] setAlwaysOnTop failed:', String(e && e.message || e)); }
 }
 
-// KDE-Wayland active-window poller using kdotool (preferred) or xdotool.
+// Linux active-window poller using kdotool / xdotool. KDE-Wayland prefers
+// kdotool (KWin D-Bus, sees native-Wayland windows). Plain X11 prefers
+// xdotool (the native X11 tool); kdotool is only a fallback there.
 //
 // `kdotool` (https://github.com/jinliu/kdotool) talks to KWin over D-Bus, so it
 // sees EVERY window — native-Wayland (Konsole, Wayland Firefox) AND XWayland
-// (FO76 under Proton) — and reads the game's class reliably. It is PREFERRED.
-// `xdotool` is the X11 fallback: it only sees the XWayland side, so when a
-// native-Wayland window is focused it reports NO active window — with the game
-// running, the "(null)"-class heuristic then treats that as "probably the
-// fullscreen game" and the hotkeys stay captured in the other app. It also hits
+// (FO76 under Proton) — and reads the game's class reliably. It is PREFERRED
+// on KDE-Wayland. `xdotool` is the X11-native tool: on Wayland it only sees
+// the XWayland side, so when a native-Wayland window is focused it reports
+// NO active window. With the game running, the "(null)"-class heuristic then
+// treats that as "probably the fullscreen game" and the hotkeys stay captured
+// in the other app. It also hits
 // a libxdo double-free crash on some builds (see the circuit-breaker below).
 // Both tools share the same subcommand syntax:
 //   <tool> getactivewindow getwindowclassname
@@ -3397,29 +3400,29 @@ function applyZOrder(opts) {
 //                        overlay-focused case is covered separately via isFocused())
 //
 // Graceful degradation: if neither tool is on PATH, we log a single diagnostic and
-// leave kdeWaylandForegroundDetect=false so refreshShortcuts falls back to the
+// leave foregroundDetect=false so refreshShortcuts falls back to the
 // pre-existing "game running → keys active" behavior (no regression).
 function _startForegroundPoller() {
-  if (!KDE_WAYLAND) return; // only on KDE+Wayland
-  // Resolve which tools are available — prefer kdotool (KWin D-Bus: sees native-
-  // Wayland windows too, so hotkeys release correctly in Konsole/Firefox; no libxdo
-  // crash), then xdotool. We detect BOTH (not just the first) so the crash
-  // circuit-breaker below can auto-switch to the alternate tool if the primary keeps
-  // aborting. `;` (not `||`) runs both probes; `command -v` prints the path when found.
+  if (!KDE_WAYLAND && !IS_X11) return; // KDE-Wayland or any X11 session
+  // Resolve which tools are available. Order is session-dependent (kdotool first
+  // on KDE-Wayland, xdotool first on X11). We detect BOTH (not just the first) so
+  // the crash circuit-breaker below can auto-switch to the alternate tool if the
+  // primary keeps aborting. `;` (not `||`) runs both probes; `command -v` prints
+  // the path when found.
   exec('command -v kdotool; command -v xdotool', { shell: '/bin/sh' }, (_err, stdout) => {
     const found = (stdout || '').split('\n').map((s) => s.trim().split('/').pop()).filter(Boolean);
-    const available = ['kdotool', 'xdotool'].filter((t) => found.includes(t)); // kdotool first
+    const available = overlayCore.preferredForegroundTools({ kdeWayland: KDE_WAYLAND, x11: IS_X11 }).filter((t) => found.includes(t));
     if (available.length === 0) {
       // Neither tool installed — log once and leave detection disabled.
-      diag('[foreground] kdotool/xdotool not found on PATH — KDE-Wayland active-window detection disabled.');
+      diag('[foreground] kdotool/xdotool not found on PATH — active-window detection disabled.');
       diag('[foreground] Install kdotool (recommended — Arch: AUR, Fedora: dnf install kdotool) for precise hotkey-release support; xdotool also works with caveats.');
       diag('[foreground] Falling back to game-running detection (hotkeys stay registered while FO76 is open).');
       return;
     }
     fgTool = available[0];
-    kdeWaylandForegroundDetect = true;
+    foregroundDetect = true;
     const altNote = available.length > 1 ? ' (fallback available: ' + available.filter((t) => t !== fgTool).join(',') + ')' : '';
-    diag('[foreground] ' + fgTool + ' found — KDE-Wayland active-window detection ENABLED (~300ms poll).' + altNote);
+    diag('[foreground] ' + fgTool + ' found — active-window detection ENABLED (~300ms poll).' + altNote);
     // `tried` tracks tools we've already polled with so the breaker never ping-pongs
     // back to a tool that already crashed (xdotool→kdotool→xdotool…).
     _runForegroundPoll(available, new Set([fgTool]));
@@ -3477,7 +3480,7 @@ function _runForegroundPoll(available, tried) {
             diag('[foreground] Install the alternate tool to restore precise hotkey-release — kdotool preferred (Arch: AUR, Fedora: dnf): https://github.com/jinliu/kdotool');
             diag('[foreground] Falling back to game-running detection (hotkeys stay registered while FO76 is open).');
             if (fgPollTimer) { clearInterval(fgPollTimer); fgPollTimer = null; }
-            kdeWaylandForegroundDetect = false;
+            foregroundDetect = false;
             lastForegroundProc = '';
             refreshShortcuts();
           }
@@ -3638,8 +3641,9 @@ function startForegroundZOrder() {
     // that maps to the Windows desktop. Use the process-scan-based game detection
     // (startGameScan) to drive always-on-top: topmost while the game is running.
     // Focus/blur also flip topmost so the user can always interact with chat.
-    // KDE-Wayland exception: we additionally start a kdotool poller so we CAN
-    // detect the active window and release hotkeys when another app is foreground.
+    // KDE-Wayland / X11 exception: we additionally start a kdotool/xdotool
+    // poller so we CAN detect the active window and release hotkeys when
+    // another app is foreground.
     lastForegroundProc = '';
     if (mainWindow) {
       // CRITICAL for Linux (Wayland/Bazzite) + macOS: let the overlay float over
@@ -3678,10 +3682,10 @@ function startForegroundZOrder() {
     }
     applyZOrder();
     startGameScan();
-    // KDE-Wayland: start the xdotool/kdotool poller for active-window detection.
-    // This is the key difference from other Linux setups: it gives us a real
-    // foreground window class so refreshShortcuts() can release hotkeys when the
-    // user switches to Konsole, Discord, etc. — just like the win32 PS poller does.
+    // KDE-Wayland and plain X11: start the xdotool/kdotool poller for
+    // active-window detection so refreshShortcuts() can release hotkeys when
+    // the user switches to Konsole, Discord, etc. Other Wayland compositors
+    // still no-op inside the helper.
     _startForegroundPoller();
     return;
   }

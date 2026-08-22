@@ -477,31 +477,43 @@ function isUnknownForegroundClass(name) {
   return s === '' || s === '(null)';
 }
 
+// Ordered list of active-window tools to probe for, based on session type.
+// KDE-Wayland: kdotool first (KWin D-Bus, sees native-Wayland windows too;
+// no libxdo crash), xdotool as fallback. X11 (any WM): xdotool first (the
+// native X11 tool), kdotool as a fallback in case it happens to work.
+function preferredForegroundTools({ kdeWayland, x11 }) {
+  if (kdeWayland) return ['kdotool', 'xdotool'];
+  if (x11) return ['xdotool', 'kdotool'];
+  return [];
+}
+
 // Pure function: should global hotkeys be registered right now?
 //
 // Inputs:
 //   platform             : process.platform string ('win32', 'linux', …)
-//   kdeWayland           : boolean — true when running on KDE+Wayland
-//   hasForegroundDetect  : boolean — true when a foreground tool (kdotool preferred,
-//                          xdotool fallback) is confirmed present (Linux)
+//   hasForegroundDetect  : boolean. true only when main.js's poller confirmed a
+//                          tool and started polling (any Linux session type).
 //   gameRunning          : boolean — game process is alive (tasklist scanner)
 //   foregroundProc       : string  — last foreground class/proc name (lowercased)
 //   overlayFocused       : boolean — the overlay window has OS focus
 //   gameFocused          : boolean (optional), a precomputed focus result, used
-//                          directly on KDE-Wayland instead of re-deriving.
+//                          directly when hasForegroundDetect instead of re-deriving.
 //                          Omitted keeps the legacy derivation.
+//   kdeWayland           : removed. hasForegroundDetect is only true when the
+//                          poller actually started, so the session-type guard
+//                          was redundant.
 //
 // Decision logic:
 //   win32 → game active = game is the foreground window
-//   linux + KDE-Wayland + kdotool/xdotool present → same as win32 (or the
-//     precomputed gameFocused, if given)
-//   linux (fallback / no tool) → game active = game is running
+//   hasForegroundDetect (any Linux session with a live tool) → same as win32
+//     (or the precomputed gameFocused, if given)
+//   neither (Linux fallback / no tool) → game active = game is running
 //   In all cases: keys are active when (game active) OR (overlay focused).
-function shouldRegisterShortcuts({ platform, kdeWayland, hasForegroundDetect, gameRunning, foregroundProc, overlayFocused, gameFocused }) {
+function shouldRegisterShortcuts({ platform, hasForegroundDetect, gameRunning, foregroundProc, overlayFocused, gameFocused }) {
   let gameActive;
   if (platform === 'win32') {
     gameActive = isGameClass(foregroundProc);
-  } else if (kdeWayland && hasForegroundDetect) {
+  } else if (hasForegroundDetect) {
     if (typeof gameFocused === 'boolean') {
       // Caller already ran the focus hysteresis; don't second-guess foregroundProc.
       gameActive = gameFocused;
@@ -1025,6 +1037,7 @@ module.exports = {
   isGameClass,
   isOverlayClass,
   isUnknownForegroundClass,
+  preferredForegroundTools,
   shouldRegisterShortcuts,
   decideForegroundPollerAction,
   nextPollerBackoffMs,
