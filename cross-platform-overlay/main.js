@@ -1376,6 +1376,19 @@ function migrateLegacyUserData() {
 // holding the window inflated for a modal.
 let modalFitPrevBounds = null;
 
+// Drift-corrected pre-modal size, carried ACROSS grow/restore cycles (unlike
+// modalFitPrevBounds, which is cleared on every restore). On fractional-scaling
+// Linux sessions setBounds() doesn't return what was commanded (issue #427) — the
+// #427 fix stops that drift from being persisted to overlay-state.json, but does
+// nothing for growWindowForModal() re-reading a live, already-drifted getBounds()
+// as the baseline for the NEXT cycle. Toggling the settings modal (HOME key, which
+// calls toggleSettings() on every press) repeats this grow/restore round-trip, so
+// without a remembered baseline the ~1-2px compositor rounding compounds every
+// toggle — "spamming HOME slowly grows the window". Resolved through the same
+// tolerance-snap `resolvePersistedSize()` uses, just applied at this second,
+// in-memory boundary instead of the disk-persist one.
+let modalFitLastGoodSize = null;
+
 // While temporarily grown to fit a modal (see modalFitPrevBounds), persist the
 // user's real PRE-MODAL size — never the inflated one. Without this the debounced
 // resize save (and the before-quit save) would bake the temporary size in as the
@@ -1442,12 +1455,21 @@ function growWindowForModal() {
   // "restore" on close. Skipping just means no growth for this one open.
   if (collapseAnim) return;
   const cur = mainWindow.getBounds();
+  // Snap the live width/height back to the last known-good size if it's within
+  // rounding-noise tolerance of it (see modalFitLastGoodSize above) — otherwise a
+  // real resize since the last cycle is trusted as-is. x/y stay live either way.
+  const base = overlayCore.resolvePersistedSize(
+    { width: cur.width, height: cur.height },
+    modalFitLastGoodSize,
+  );
+  modalFitLastGoodSize = base;
+  const baseCur = { x: cur.x, y: cur.y, width: base.width, height: base.height };
   const point = { x: cur.x, y: cur.y };
   const display = screen.getDisplayNearestPoint(point) || screen.getPrimaryDisplay();
-  const grown = overlayCore.modalFitBounds(cur, display.workArea);
+  const grown = overlayCore.modalFitBounds(baseCur, display.workArea);
   if (!grown) return;  // already big enough (or the display can't fit more)
-  modalFitPrevBounds = { x: cur.x, y: cur.y, width: cur.width, height: cur.height };
-  diag('[modal-fit] growing ' + cur.width + 'x' + cur.height
+  modalFitPrevBounds = baseCur;
+  diag('[modal-fit] growing ' + baseCur.width + 'x' + baseCur.height
     + ' -> ' + grown.width + 'x' + grown.height + ' for modal');
   try { mainWindow.setBounds(grown); } catch { /* ignore */ }
 }
@@ -1942,7 +1964,10 @@ ipcMain.on('window:set-bounds', (_evt, b) => {
   // the edge-resize zones, which the shell disables then). A preset carries its
   // own width/height, so it supersedes our temporary growth: drop the restore
   // snapshot or closing the modal would undo the preset the user just snapped to.
+  // Also drop the drift baseline — a deliberate resize shouldn't get snapped back
+  // to a stale pre-preset size on the next modal open.
   modalFitPrevBounds = null;
+  modalFitLastGoodSize = null;
   const wa = clampToWorkArea({ x: b.x, y: b.y, width: b.width, height: b.height });
   try { mainWindow.setBounds(wa); } catch { /* ignore */ }
 });
@@ -1957,8 +1982,10 @@ ipcMain.on('overlay:resize-bounds', (_evt, b) => {
   if (!mainWindow || mainWindow.isDestroyed() || !b) return;
   // A deliberate resize while a modal is open supersedes our temporary growth:
   // drop the restore snapshot so closing the modal keeps the size the user just
-  // chose instead of snapping back to the pre-modal one.
+  // chose instead of snapping back to the pre-modal one. Also drop the drift
+  // baseline for the same reason as the preset handler above.
   modalFitPrevBounds = null;
+  modalFitLastGoodSize = null;
   const wa = clampToWorkArea({
     x: typeof b.x === 'number' ? b.x : mainWindow.getBounds().x,
     y: typeof b.y === 'number' ? b.y : mainWindow.getBounds().y,

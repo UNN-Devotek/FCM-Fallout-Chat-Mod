@@ -85,11 +85,36 @@ user's size on close, riding the existing `overlay:set-modal` signal:
 | Explicit size wins | A **position-preset hotkey** (`window:set-bounds`, Shift+F1..F8) is global and still fires while a modal is open; it carries its own width/height, so it drops the restore snapshot and the preset sticks. `overlay:resize-bounds` clears the snapshot too, though the shell already disables the edge-resize zones while a modal is open (`rzVisible = !collapsed && !modalOpen`), so that path is defensive only |
 | Never persisted | While inflated, `persistBounds()` writes the **pre-modal** size, so the temporary size can't leak into `overlay-state.json` via the debounced save or the before-quit save |
 | Collapsed / animating | Skipped while idle-collapsed **and** while a collapse/expand animation is running. `animateHeightTo()` freezes the width at animation start and re-applies it every frame, so growing mid-flight would be fought and reverted — and the snapshot would capture a meaningless interim size that we would then "restore" |
+| Drift-corrected baseline | `growWindowForModal()` runs the live `getBounds()` width/height through `resolvePersistedSize()` (the same tolerance-snap [drift suppression](#drag-and-resize) issue #427 uses for the disk-persist boundary) against `modalFitLastGoodSize`, a baseline that — unlike `modalFitPrevBounds` — survives across grow/restore cycles. See below. |
 
 The sizing decision is the pure `modalFitBounds(current, workArea, need)` in
 `overlay-core.js` (returns `null` when no growth is needed or possible, meaning there is
 nothing to restore); `main.js` holds the snapshot in `modalFitPrevBounds` and does the
 Electron wiring. Covered by `__tests__/overlay-modal-fit.test.js`.
+
+**Live-cycle drift suppression (HOME-key-spam regression).** The HOME key toggles the
+settings modal open/closed on every press (`toggleSettings()` in `shell.ts`), so each press
+drives one full `growWindowForModal()`/`restoreWindowAfterModal()` round-trip. On a
+fractionally-scaled Linux session `setBounds()` doesn't return what was commanded — issue
+#427's own bug report captured this happening in this exact path:
+
+```
+[modal-fit] growing   538x482 -> 560x720 for modal
+[modal-fit] restoring 562x722 -> 538x482 after modal
+```
+
+`restoreWindowAfterModal()` correctly *commanded* `538x482`, but the compositor echoed back
+`540x484` on the next read. #427's fix (`resolvePersistedSize`) only protects what gets
+*persisted* to `overlay-state.json`, not this in-memory grow/restore loop — so
+`growWindowForModal()` re-reading a live, already-drifted `getBounds()` as its baseline let
+the size creep ~1-2px **per HOME press**, forever. `growWindowForModal()` now resolves its
+live baseline through `resolvePersistedSize()` against `modalFitLastGoodSize` (a variable
+declared alongside `modalFitPrevBounds`) before deciding how much to grow, snapping out
+rounding noise the same way the persist boundary does. Both `window:set-bounds` (position
+presets) and `overlay:resize-bounds` clear `modalFitLastGoodSize` alongside
+`modalFitPrevBounds`, so a genuine mid-cycle resize isn't snapped back to a stale baseline.
+Covered by the "drift suppression across repeated open/close cycles" tests in
+`__tests__/overlay-modal-fit.test.js`.
 
 Note this affects the **Electron shell** panels only. On the website/dashboard the React
 `SettingsModal` in `ChatOverlay.tsx` sizes against the browser viewport, which is already
