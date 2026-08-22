@@ -1075,6 +1075,63 @@ function cursorLockStatusMessage(status, errorDetail) {
   }
 }
 
+// Candidate paths for FO76's Proton prefix user.reg: the two common Steam
+// library locations. $STEAM_COMPAT_DATA_PATH is set by Steam on the GAME's
+// own process tree when it launches FO76 under Proton, not on this overlay
+// (a separate process the user launches directly), so it's not a candidate.
+function fo76UserRegCandidates(homeDir, appid = FO76_APPID) {
+  // eslint-disable-next-line global-require
+  const join = require('path').join;
+  const candidates = [];
+  candidates.push(join(homeDir, '.steam', 'steam', 'steamapps', 'compatdata', appid, 'pfx', 'user.reg'));
+  candidates.push(join(homeDir, '.local', 'share', 'Steam', 'steamapps', 'compatdata', appid, 'pfx', 'user.reg'));
+  return candidates;
+}
+
+// Parses the [Software\\Wine\\X11 Driver] section of a Wine user.reg for the
+// GrabFullscreen / GrabPointer values. Wine writes section headers as
+// `[Software\\Wine\\X11 Driver] 1234567890` (trailing decimal timestamp), so
+// match on startsWith, not exact equality. A section ends at the next blank
+// line or `[` line. Returns { grabFullscreen, grabPointer } as booleans
+// (true when the value is Y or y: winetricks `grabfullscreen=y` persists
+// lowercase; `wine reg add /d Y` persists uppercase). Both false when the
+// section/keys are absent. Never throws on malformed input. Does not match
+// per-exe AppDefaults\\...\\X11 Driver sections.
+function parseWineGrabSettings(userRegText) {
+  const text = String(userRegText || '');
+  const lines = text.split('\n');
+  let inSection = false;
+  let grabFullscreen = false;
+  let grabPointer = false;
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('[')) {
+      inSection = trimmed.toLowerCase().startsWith('[software\\\\wine\\\\x11 driver]');
+      continue;
+    }
+    if (!trimmed) {
+      inSection = false;
+      continue;
+    }
+    if (!inSection) continue;
+    const m = trimmed.match(/^"([^"]+)"="([^"]*)"/);
+    if (!m) continue;
+    if (m[1] === 'GrabFullscreen') grabFullscreen = m[2] === 'Y' || m[2] === 'y';
+    if (m[1] === 'GrabPointer') grabPointer = m[2] === 'Y' || m[2] === 'y';
+  }
+  return { grabFullscreen, grabPointer };
+}
+
+// Should the one-time cursor-lock notification fire? Only on Wayland (X11
+// sessions don't need the Wine grab fix at all; see the existing
+// "X11 sessions don't need it" note in INSTALL-LINUX.txt), only when at
+// least one of the two settings is missing, and only if we haven't already
+// prompted once (persisted setting, see main.js).
+function shouldPromptCursorLock({ wayland, grabFullscreen, grabPointer, alreadyPrompted }) {
+  if (!wayland || alreadyPrompted) return false;
+  return !grabFullscreen || !grabPointer;
+}
+
 module.exports = {
   DEFAULT_APP_CLIENT_KEY,
   DEFAULT_WIDTH,
@@ -1141,4 +1198,7 @@ module.exports = {
   buildFo76GrabPointerRegArgs,
   protontricksIndicatesNoPrefix,
   cursorLockStatusMessage,
+  fo76UserRegCandidates,
+  parseWineGrabSettings,
+  shouldPromptCursorLock,
 };

@@ -51,6 +51,12 @@ Three parts, all shippable from the installer:
      `Packaging/linux/install.sh` (`print_cursor_manual_steps`) and documented in
      `INSTALL-LINUX.txt` — the installer itself still never applies them automatically.
 
+   After Fallout 76 exits, the overlay also checks (read-only) the prefix's `user.reg`
+   for those two Wine settings. If either is missing, it shows a one-time system
+   notification whose click runs the same `fixFo76CursorLock()` as the tray item.
+   Detection never writes to the prefix on its own: the click (or the tray item) is
+   still the only write path, same principle as before.
+
    **Wine** then confines the cursor to the game whenever FO76 is focused and releases it when
    focus leaves (overlay stays usable). Confirmed: cursor held on fast flicks, free movement in
    menus, frees for the overlay — all by Wine, independent of KWin's broken pointer constraint.

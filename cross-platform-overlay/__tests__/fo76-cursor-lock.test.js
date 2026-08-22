@@ -138,3 +138,40 @@ describe('main.js — tray wiring for the cursor-lock action', () => {
     expect(readyBlock).not.toContain('applyFo76Grab()');
   });
 });
+
+// ── Source-text guard: one-time detection nudge (read-only) ─────────────────
+describe('main.js — cursor-lock detection nudge', () => {
+  const ROOT = resolve(import.meta.dirname, '..');
+  const src = readFileSync(join(ROOT, 'main.js'), 'utf8');
+
+  it('defines the read-only detect + one-time prompt helpers', () => {
+    expect(src).toContain('function readFo76GrabSettings');
+    expect(src).toContain('function maybePromptCursorLockFix');
+    expect(src).toContain('fs.readFileSync(p, \'utf8\')');
+  });
+
+  it('prompts only on the game-exit transition, never while FO76 is running', () => {
+    const exitIdx = src.indexOf('} else if (!gameRunning && wasRunning) {');
+    expect(exitIdx).toBeGreaterThan(-1);
+    const exitBlock = src.slice(exitIdx, src.indexOf('refreshShortcuts();', exitIdx));
+    expect(exitBlock).toContain('maybePromptCursorLockFix()');
+    const launchIdx = src.indexOf('if (gameRunning && !wasRunning) {');
+    const launchBlock = src.slice(launchIdx, exitIdx);
+    expect(launchBlock).not.toContain('maybePromptCursorLockFix()');
+  });
+
+  it('notification click reuses fixFo76CursorLock (no second write path)', () => {
+    const fnIdx = src.indexOf('function maybePromptCursorLockFix');
+    const fnBlock = src.slice(fnIdx, src.indexOf('const http = require(\'http\')', fnIdx));
+    expect(fnBlock).toContain('() => fixFo76CursorLock()');
+    expect(fnBlock).not.toContain('applyFo76Grab(');
+    expect(fnBlock).toContain('cursorLockPrompted');
+  });
+
+  it('showSystemNotification keeps existing callers working (onClick optional)', () => {
+    expect(src).toContain('function showSystemNotification(title, body, onClick)');
+    expect(src).toContain('(onClick || focusToChat)()');
+    expect(src).toContain("showSystemNotification('Fallout Chat Mod — setup complete', 'Fallout 76 is already running. The chat overlay is active in-game.')");
+    expect(src).toContain("showSystemNotification('Fallout Chat Mod — setup complete', 'Launch Fallout 76 and the chat overlay will appear automatically.')");
+  });
+});

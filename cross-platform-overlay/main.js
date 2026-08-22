@@ -576,6 +576,22 @@ function findProtontricks() {
   return null;
 }
 
+// Read-only check of FO76's Wine prefix for the cursor-lock Wine settings.
+// No writes, no subprocess — just fs.readFileSync over the candidate
+// user.reg paths. Returns { found, grabFullscreen, grabPointer }; found is
+// false if no candidate path exists (game never launched under this prefix,
+// or a non-Steam install FCM doesn't know how to locate).
+function readFo76GrabSettings() {
+  const candidates = overlayCore.fo76UserRegCandidates(os.homedir(), overlayCore.FO76_APPID);
+  for (const p of candidates) {
+    try {
+      const text = fs.readFileSync(p, 'utf8');
+      return { found: true, ...overlayCore.parseWineGrabSettings(text) };
+    } catch { /* try next candidate */ }
+  }
+  return { found: false, grabFullscreen: false, grabPointer: false };
+}
+
 // Enable the in-game cursor lock via protontricks' winetricks verb `grabfullscreen=y`
 // (the winecfg "Automatically capture the mouse in full-screen windows" setting) — no
 // hand-editing of Wine config. Needs protontricks + FO76's prefix (game launched once) +
@@ -616,6 +632,40 @@ function fixFo76CursorLock() {
   const { type, message, detail } = overlayCore.cursorLockStatusMessage(r.status, r.error && r.error.message);
   try { dialog.showMessageBox({ type, title: 'Fallout Chat Mod — in-game cursor lock', message, detail: detail || '', buttons: ['OK'] }); }
   catch { diag('[cursor-fix] ' + message + (detail ? ' — ' + detail : '')); }
+}
+
+// Fires at most once per install: after FO76 exits on a Wayland session,
+// check (read-only) whether the Wine cursor-lock settings are missing and,
+// if so, nudge the user toward the existing one-click tray fix via a system
+// notification. Never writes to the prefix itself. See fixFo76CursorLock /
+// applyFo76Grab for the only place that happens, and only on an explicit
+// click (the notification's or the tray's). Persists cursorLockPrompted once
+// we have actually looked (prefix found): either we showed the notification,
+// or both settings were already set. Does not persist when the prefix is
+// missing; that is not an informed decision.
+function maybePromptCursorLockFix() {
+  if (!IS_LINUX || !IS_WAYLAND) return;
+  let alreadyPrompted = false;
+  try { alreadyPrompted = !!(loadState().settings || {}).cursorLockPrompted; } catch { /* default false */ }
+  if (alreadyPrompted) return;
+  const r = readFo76GrabSettings();
+  if (!r.found) return; // no prefix yet — nothing to detect, don't mark as prompted
+  const needPrompt = overlayCore.shouldPromptCursorLock({
+    wayland: IS_WAYLAND,
+    grabFullscreen: r.grabFullscreen,
+    grabPointer: r.grabPointer,
+    alreadyPrompted,
+  });
+  try {
+    const st = loadState();
+    saveState({ settings: { ...(st.settings || {}), cursorLockPrompted: true } });
+  } catch { /* non-fatal — worst case we prompt again next exit */ }
+  if (!needPrompt) return;
+  showSystemNotification(
+    'Fallout Chat Mod — cursor lock',
+    'Fallout 76\'s mouse-lock may drop while the overlay is up on Wayland. Click to apply the one-time fix.',
+    () => fixFo76CursorLock(),
+  );
 }
 
 const http = require('http');
@@ -1037,6 +1087,7 @@ function onGamePresenceChanged(found) {
     _cachedGameDisplayId = null;
     if (KDE_WAYLAND) syncKwinKeepAboveRule('game-exit');
     else if (IS_HYPRLAND) syncHyprlandPin('game-exit');
+    maybePromptCursorLockFix();
   }
   // Re-evaluate keybind registration: on non-win32 the keys are gated on game-
   // RUNNING (no foreground API), so they must (un)register when the game launches
@@ -2721,15 +2772,16 @@ ipcMain.on('overlay:chat-active', (_evt, active) => {
 
 // Show a native OS notification (Windows toast / Linux libnotify). No-op if the
 // platform doesn't support it. Used to guide the user after onboarding.
-function showSystemNotification(title, body) {
+function showSystemNotification(title, body, onClick) {
   try {
     if (!Notification || !Notification.isSupported || !Notification.isSupported()) {
       diag('[notify] not supported — skipping: ' + title);
       return;
     }
     const n = new Notification({ title, body, icon: appIcon() || undefined, silent: false });
-    // Clicking the toast brings the overlay forward (useful once the game is up).
-    n.on('click', () => { try { focusToChat(); } catch { /* non-fatal */ } });
+    // Clicking the toast brings the overlay forward (useful once the game is up),
+    // unless the caller supplied a different action.
+    n.on('click', () => { try { (onClick || focusToChat)(); } catch { /* non-fatal */ } });
     n.show();
     diag('[notify] shown: ' + title + ' — ' + body);
   } catch (e) {
