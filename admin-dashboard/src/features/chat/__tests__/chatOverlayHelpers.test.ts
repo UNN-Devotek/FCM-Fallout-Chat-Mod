@@ -25,6 +25,7 @@ import {
   isAuthTerminal,
   channelTag,
   isPrivilegedRole,
+  isPartyMutedForModerator,
   shouldShowInMainFeed,
   formatMessageTimestamp,
   hiddenChannelIdSet,
@@ -255,6 +256,7 @@ describe('loadSettings / saveSettings', () => {
       disableNameMotion: false,
       timestampFormat: '12h',
       channelFilters: [],
+      mutedPartyIds: [],
       notifyKeywords: [],
       showTypingWhenCollapsed: false,
       notifySoundEnabled: false,
@@ -273,6 +275,7 @@ describe('loadSettings / saveSettings', () => {
       disableNameMotion: false,
       timestampFormat: '24h' as const,
       channelFilters: ['Trading'],
+      mutedPartyIds: ['party-1'],
       notifyKeywords: ['fixer'],
       showTypingWhenCollapsed: false,
       notifySoundEnabled: true,
@@ -614,6 +617,21 @@ describe('shouldShowInMainFeed', () => {
     expect(shouldShowInMainFeed({ channelId: 'p-foreign', source: 'party' }, ctx)).toBe(true);
   });
 
+  it('excludes a muted joined party from the aggregate feed for a moderator', () => {
+    const ctx = { ...baseCtx, isMod: true, isPublicMode: false, mutedPartyIds: ['p-joined'] };
+    expect(shouldShowInMainFeed({ channelId: 'p-joined', source: 'party' }, ctx)).toBe(false);
+  });
+
+  it('excludes a muted foreign party from the aggregate feed for a moderator', () => {
+    const ctx = { ...baseCtx, isMod: true, isPublicMode: false, mutedPartyIds: ['p-foreign'] };
+    expect(shouldShowInMainFeed({ channelId: 'p-foreign', source: 'party' }, ctx)).toBe(false);
+  });
+
+  it('ignores party mutes outside the privileged authenticated view', () => {
+    const ctx = { ...baseCtx, isMod: false, isPublicMode: false, mutedPartyIds: ['p-joined'] };
+    expect(shouldShowInMainFeed({ channelId: 'p-joined', source: 'party' }, ctx)).toBe(true);
+  });
+
   it('excludes foreign party message for isMod && isPublicMode', () => {
     const ctx = { ...baseCtx, isMod: true, isPublicMode: true };
     expect(shouldShowInMainFeed({ channelId: 'p-foreign', source: 'party' }, ctx)).toBe(false);
@@ -632,6 +650,30 @@ describe('shouldShowInMainFeed', () => {
   it('excludes foreign non-party channel message with undefined source for mod', () => {
     const ctx = { ...baseCtx, isMod: true, isPublicMode: false };
     expect(shouldShowInMainFeed({ channelId: 'ch-foreign' }, ctx)).toBe(false);
+  });
+});
+
+describe('isPartyMutedForModerator', () => {
+  it('only matches party messages for authenticated privileged viewers', () => {
+    expect(isPartyMutedForModerator(
+      { channelId: 'p-1', source: 'party' },
+      { isMod: true, isPublicMode: false, mutedPartyIds: ['p-1'] },
+    )).toBe(true);
+    expect(isPartyMutedForModerator(
+      { channelId: 'p-1', source: 'game' },
+      { isMod: true, isPublicMode: false, mutedPartyIds: ['p-1'] },
+    )).toBe(false);
+  });
+
+  it('is inert for public mode and regular users', () => {
+    expect(isPartyMutedForModerator(
+      { channelId: 'p-1', source: 'party' },
+      { isMod: true, isPublicMode: true, mutedPartyIds: ['p-1'] },
+    )).toBe(false);
+    expect(isPartyMutedForModerator(
+      { channelId: 'p-1', source: 'party' },
+      { isMod: false, isPublicMode: false, mutedPartyIds: ['p-1'] },
+    )).toBe(false);
   });
 });
 

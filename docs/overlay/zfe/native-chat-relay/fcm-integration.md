@@ -43,7 +43,7 @@ token in logs or cache keys.
 | `chat.v1.sendMessage` | Send a static-channel message or an authenticated reserved server control |
 | `chat.v1.getAuthState` | Refresh linked/limited state |
 | `chat.v1.report` | Submit a report for a persisted chat message |
-| `chat.v1.moderationAction` | Submit a staff-gated delete, mute, unmute, ban, or unban |
+| `chat.v1.moderationAction` | Submit a staff-gated delete, kick, mute, unmute, ban, or unban |
 
 `chat.v1.report` requires a linked relay identity, a valid persisted message UUID,
 and a non-empty reason. The backend derives the reported user from the message,
@@ -53,10 +53,19 @@ account is limited to five reports per ten minutes, and repeated reports for the
 rejected idempotently.
 
 `chat.v1.moderationAction` requires a linked account whose verified Discord role is `moderator`,
-`admin`, or `owner`. Delete, mute, unmute, ban, and unban reuse
+`admin`, or `owner`. Delete, kick, mute, unmute, ban, and unban reuse
 `moderationActionsService`, including its protection checks, audit entries, and live notifications.
-In-game bans attach the bounded reason as text evidence. `setSlowMode` is intentionally unavailable
+That means HUD-originated mute, ban, and unban actions receive the same Discord timeout/lockdown/
+role-restoration behavior as dashboard actions. In-game bans attach the bounded reason as text evidence.
+`setSlowMode` is intentionally unavailable
 until FCM has a per-channel slow-mode primitive; auth state reports `canSetSlowMode: false`.
+
+The optional HUD widget exposes the actions only to a staff identity. It accepts an exact visible
+player name (quote multi-word names) or the short `[#XXXXXXXX]` reference beside visible messages,
+for example `/mod Alice mute 15 spam`. The widget resolves either input locally to the relay event's
+immutable message and account IDs; it never sends the display name as a moderation target. Duplicate
+visible names are rejected and require the reference. See the widget [build and verification guide]
+(../../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md#in-game-acceptance-checklist).
 
 Static FCM channels use the slugs `global`, `trade`, `events`, `infests`, and
 `raids`. The backend maps them to the owned channel IDs, applies normal auth,

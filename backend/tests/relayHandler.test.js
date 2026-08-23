@@ -196,6 +196,7 @@ jest.mock('../src/services/userRoleService', () => ({
 }));
 
 jest.mock('../src/services/moderationActionsService', () => ({
+  kickUser:            jest.fn().mockResolvedValue({ disconnected: 1, until: new Date() }),
   deleteMessageById: jest.fn().mockResolvedValue(undefined),
   muteUser:          jest.fn().mockResolvedValue({ until: new Date(), discordPropagated: false }),
   unmuteUser:        jest.fn().mockResolvedValue(undefined),
@@ -1177,12 +1178,63 @@ describe('relay WebSocket ops', () => {
     const { ws, msgs } = await conn();
     const auth = await waitForMsg(ws, msgs, () => send(ws, { op: 'getAuthState', token: regRes.token }));
     expect(auth.permissions).toMatchObject({
-      canDeleteMessage: true, canMuteUser: true, canBanUser: true, canSetSlowMode: false,
+      canDeleteMessage: true, canKickUser: true, canMuteUser: true, canBanUser: true, canSetSlowMode: false,
     });
     const slow = await waitForMsg(ws, msgs, () => send(ws, {
       op: 'moderationAction', token: regRes.token, action: 'setSlowMode', reason: 'too much spam',
     }));
     expect(slow).toMatchObject({ success: false, error: { code: 'invalid_action' } });
+    ws.close();
+  });
+
+  test('moderationAction dispatches every supported account-level HUD action for staff', async () => {
+    const roleService = require('../src/services/userRoleService');
+    const moderation = require('../src/services/moderationActionsService');
+    const prisma = require('../src/config/prisma').default;
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'HudActionModerator' }),
+    );
+    wsReg.close();
+
+    const actorId = '11111111-1111-4111-8111-111111111111';
+    const targetId = '22222222-2222-4222-8222-222222222222';
+    _userMap[actorId] = { id: actorId, discordId: 'discord-hud-mod', isBanned: false, isMuted: false };
+    markTokensLinked(lastRawUserId(), actorId);
+    roleService.getEffectiveRole.mockResolvedValue('moderator');
+    prisma.ban.findFirst.mockResolvedValue({ id: 'active-ban-id' });
+
+    const { ws, msgs } = await conn();
+    const submit = (frame) => waitForMsg(ws, msgs, () => send(ws, {
+      op: 'moderationAction', token: regRes.token, reason: 'HUD moderation test', ...frame,
+    }));
+
+    await expect(submit({ action: 'deleteMessage', messageId: '33333333-3333-4333-8333-333333333333' }))
+      .resolves.toMatchObject({ success: true, action: 'deleteMessage' });
+    await expect(submit({ action: 'kickUser', targetUserId: targetId }))
+      .resolves.toMatchObject({ success: true, action: 'kickUser' });
+    await expect(submit({ action: 'muteUser', targetUserId: targetId, durationMinutes: 15, category: 'Spam' }))
+      .resolves.toMatchObject({ success: true, action: 'muteUser' });
+    await expect(submit({ action: 'unmuteUser', targetUserId: targetId }))
+      .resolves.toMatchObject({ success: true, action: 'unmuteUser' });
+    await expect(submit({ action: 'banUser', targetUserId: targetId, durationMinutes: 60, category: 'Harassment' }))
+      .resolves.toMatchObject({ success: true, action: 'banUser' });
+    await expect(submit({ action: 'unbanUser', targetUserId: targetId }))
+      .resolves.toMatchObject({ success: true, action: 'unbanUser' });
+
+    expect(moderation.deleteMessageById).toHaveBeenCalledWith(
+      '33333333-3333-4333-8333-333333333333', actorId, 'HUD moderation test',
+    );
+    expect(moderation.kickUser).toHaveBeenCalledWith(targetId, actorId, 'HUD moderation test');
+    expect(moderation.muteUser).toHaveBeenCalledWith(
+      targetId, actorId, 15 * 60_000, 'Spam', 'HUD moderation test',
+    );
+    expect(moderation.unmuteUser).toHaveBeenCalledWith(targetId, actorId, 'HUD moderation test');
+    expect(moderation.createBan).toHaveBeenCalledWith(
+      targetId, actorId, 'Harassment', 'HUD moderation test', expect.any(Date),
+      [{ type: 'text', textContent: 'In-game moderation action: HUD moderation test' }],
+    );
+    expect(moderation.reverseBan).toHaveBeenCalledWith('active-ban-id', actorId, 'HUD moderation test');
     ws.close();
   });
 

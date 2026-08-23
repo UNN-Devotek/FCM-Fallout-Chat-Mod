@@ -254,6 +254,119 @@ function parseInputSubmit(s) {
   return { switchedIdx: -1, send: s };
 }
 
+// ── HUD moderation command parsing (FCMChatWidget.handleModerationCommand) ────
+// Staff may enter an exact visible name (quote multi-word names) or the short reference
+// beside a visible message. The widget resolves either input locally to the record's immutable
+// relay messageId/senderUserId; names are never sent to the relay as a target.
+function readModerationTarget(input) {
+  const s = String(input == null ? '' : input).trim();
+  if (!s) return { target: '', rest: '', valid: false, quoted: false };
+  if (s[0] === '"') {
+    const close = s.indexOf('"', 1);
+    if (close < 0) return { target: '', rest: '', valid: false, quoted: true };
+    const target = s.slice(1, close).trim();
+    return { target, rest: s.slice(close + 1).trim(), valid: target.length > 0, quoted: true };
+  }
+  const match = s.match(/^(\S+)(?:\s+([\s\S]*))?$/);
+  if (!match) return { target: '', rest: '', valid: false, quoted: false };
+  return { target: match[1], rest: (match[2] || '').trim(), valid: true, quoted: false };
+}
+
+function parseModerationCommand(input) {
+  let s = String(input == null ? '' : input).trim();
+  if (s.startsWith('/') || s.startsWith('.')) s = s.slice(1).trim();
+  const commandMatch = s.match(/^(\S+)(?:\s+([\s\S]*))?$/);
+  if (!commandMatch || commandMatch[1].toLowerCase() !== 'mod') return { handled: false };
+
+  let rest = (commandMatch[2] || '').trim();
+  if (!rest || rest.toLowerCase() === 'help') return { handled: true, help: true };
+  const targetPart = readModerationTarget(rest);
+  if (!targetPart.valid) return { handled: true, error: 'usage' };
+  const target = targetPart.target;
+  rest = targetPart.rest;
+  const actionMatch = rest.match(/^(\S+)(?:\s+([\s\S]*))?$/);
+  if (!actionMatch) return { handled: true, error: 'usage' };
+  const actionWord = actionMatch[1].toLowerCase();
+  let tail = (actionMatch[2] || '').trim();
+
+  const plain = {
+    delete: 'deleteMessage',
+    kick: 'kickUser',
+    unmute: 'unmuteUser',
+    unban: 'unbanUser',
+  };
+  if (plain[actionWord]) {
+    if (!tail) return { handled: true, error: 'reason_required' };
+    return { handled: true, request: { action: plain[actionWord], target, reason: tail.slice(0, 500) } };
+  }
+
+  if (actionWord === 'mute') {
+    const durationMatch = tail.match(/^(\d+)\s+([\s\S]+)$/);
+    const durationMinutes = durationMatch ? Number(durationMatch[1]) : 0;
+    const reason = durationMatch ? durationMatch[2].trim() : '';
+    if (!Number.isInteger(durationMinutes) || durationMinutes < 1 || durationMinutes > 43200) {
+      return { handled: true, error: 'mute_duration_required' };
+    }
+    if (!reason) return { handled: true, error: 'reason_required' };
+    return { handled: true, request: { action: 'muteUser', target, durationMinutes, reason: reason.slice(0, 500) } };
+  }
+
+  if (actionWord === 'ban') {
+    const durationMatch = tail.match(/^(\S+)(?:\s+([\s\S]*))?$/);
+    const durationWord = durationMatch ? durationMatch[1].toLowerCase() : '';
+    const reason = durationMatch && durationMatch[2] ? durationMatch[2].trim() : '';
+    const durationMinutes = durationWord === 'perm' || durationWord === 'permanent'
+      ? 0
+      : (/^\d+$/.test(durationWord) ? Number(durationWord) : -1);
+    if (!Number.isInteger(durationMinutes) || durationMinutes < 0 || durationMinutes > 43200) {
+      return { handled: true, error: 'ban_duration_required' };
+    }
+    if (!reason) return { handled: true, error: 'reason_required' };
+    return { handled: true, request: { action: 'banUser', target, durationMinutes, reason: reason.slice(0, 500) } };
+  }
+
+  return { handled: true, error: 'unknown_action' };
+}
+
+function isVisibleModerationRecord(record, activeChannel) {
+  return record.channel === activeChannel
+    && String(record.messageId || '').length >= 8
+    && String(record.senderUserId || '').length > 0;
+}
+
+function resolveModerationTarget(records, targetInput, activeChannel) {
+  const target = String(targetInput == null ? '' : targetInput).trim();
+  if (target.startsWith('#')) {
+    const ref = target.slice(1).toLowerCase();
+    if (!/^[0-9a-f]{8}$/.test(ref)) return { target: null, ambiguous: false };
+    return {
+      target: records.find((record) =>
+        isVisibleModerationRecord(record, activeChannel)
+        && String(record.messageId).slice(0, 8).toLowerCase() === ref,
+      ) || null,
+      ambiguous: false,
+    };
+  }
+
+  const normalizedName = target.toLowerCase();
+  if (!normalizedName) return { target: null, ambiguous: false };
+  let matched = null;
+  for (const record of records) {
+    if (!isVisibleModerationRecord(record, activeChannel)) continue;
+    if (String(record.user || '').trim().toLowerCase() !== normalizedName) continue;
+    if (matched && String(matched.senderUserId) !== String(record.senderUserId)) {
+      return { target: null, ambiguous: true };
+    }
+    // Records are chronological; keep the most recent message for delete-by-name.
+    matched = record;
+  }
+  return { target: matched, ambiguous: false };
+}
+
+function findModerationTarget(records, targetInput, activeChannel) {
+  return resolveModerationTarget(records, targetInput, activeChannel).target;
+}
+
 // ── Empty-feed notice priority (FCMChatWidget.renderRecords guard) ──────────────
 const CHAN_NAMES = ['GENERAL', 'TRADING', 'EVENTS', 'INFESTS', 'RAIDS', 'SERVER'];
 function emptyFeedNotice({ connected, authState, pinnedSystemBody, chanIdx }) {
@@ -613,4 +726,7 @@ module.exports = {
   probeUsable,
   parseInputText,
   jsonObjectEnd,
+  parseModerationCommand,
+  findModerationTarget,
+  resolveModerationTarget,
 };

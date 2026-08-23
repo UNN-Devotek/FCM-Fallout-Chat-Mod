@@ -17,7 +17,7 @@ import { initShell, openSettings } from './shell';
 // First-run onboarding overlay.
 import { showOnboarding } from './onboarding';
 import { focusChatInput } from './focus-chat';
-import { shouldExitTextEntryOnEscape } from './shell-core';
+import { shouldExitTextEntryOnEscape, shellToWebSettings } from './shell-core';
 
 // 3) THE REAL COMPONENT — unmodified, imported straight from the dashboard source.
 import ChatOverlay from '@dashboard/features/chat/ChatOverlay';
@@ -48,19 +48,10 @@ try {
 } catch { /* ignore */ }
 try {
   const s = loadShellSettings();
-  localStorage.setItem('fcm_web_overlay_settings', JSON.stringify({
-    themeId: s.themeId,
-    // Chrome opacity is applied as whole-window translucency by the shell
-    // (window.setOpacity), so the component renders its chrome fully opaque to
-    // avoid double-dimming. Text opacity stays native (the component fades text).
-    windowOpacity: 1,
-    textOpacity: s.textOpacity,
-    // The shell scales the whole UI live via CSS zoom (see applyScale in
-    // shell.ts), so the component always renders at a fixed BASE font; otherwise
-    // the native font size + the zoom would compound.
-    fontSize: 14,
-    showHints: s.showHints,
-  }));
+  // Keep every component-facing setting in the mirror, including the
+  // moderator party-feed mute preference. A hand-maintained subset here would
+  // silently reset new settings on every Electron boot.
+  localStorage.setItem('fcm_web_overlay_settings', JSON.stringify(shellToWebSettings(s)));
 } catch { /* ignore */ }
 
 const queryClient = new QueryClient({

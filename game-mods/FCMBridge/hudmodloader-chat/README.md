@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-08-12):** v2.10.1 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-08-21):** v2.10.3 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -18,6 +18,11 @@ A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's H
 - Supports a scrolling read-back mode: while the user scrolls up, a "N new messages below"
   indicator appears and auto-scroll is suppressed.
 - Handles the unlinked-account (limited) state: receive-only with a pinned link-code notice.
+- Gives linked moderators an in-HUD command surface for delete, kick, mute, unmute, ban, and unban.
+  Staff can enter an exact visible player name (quote multi-word names) or use the `[#XXXXXXXX]`
+  fallback next to a visible message. The widget resolves either form to immutable relay IDs; duplicate
+  visible names must use the reference. Full command syntax and DEV verification are in
+  [BUILD.md](BUILD.md#staff-moderation-commands).
 
 ## ZFE chat.v1 + native chat input (ZFE 0.9.9+)
 

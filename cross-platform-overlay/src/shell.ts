@@ -82,6 +82,9 @@ export interface ShellSettings {
   disableNameMotion: boolean;
   blockedUsers: string[];
   channelFilters: string[];
+  // Moderator-only party IDs muted from the aggregate General/feed view. This
+  // is a personal view preference; direct party views remain available.
+  mutedPartyIds: string[];
   notifyKeywords: string[];
   // Electron globalShortcut accelerator strings.
   keybinds: {
@@ -154,6 +157,7 @@ export const DEFAULT_SHELL_SETTINGS: ShellSettings = {
   disableNameMotion: false,
   blockedUsers: [],
   channelFilters: [],
+  mutedPartyIds: [],
   notifyKeywords: [],
   // Single-key defaults from the nav cluster (not used by FO76 gameplay binds).
   // Global single keys are intercepted before the game sees them.
@@ -708,6 +712,7 @@ export function openComponentSettings() {
 
 let currentSettings: ShellSettings = DEFAULT_SHELL_SETTINGS;
 let onSettingsChange: ((s: ShellSettings) => void) | null = null;
+let webSettingsSyncHandler: ((event: Event) => void) | null = null;
 /** Reference to the version span — set once the settings panel is built. */
 let verSpanEl: HTMLElement | null = null;
 /** Latched when an update signal arrives before the panel is built. */
@@ -1675,6 +1680,18 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
   // not a stale mirror left from a previous session.
   persistLocal(currentSettings);
   onSettingsChange = opts.onSettingsChange;
+  // ChatOverlay owns the party context menus and persists its web settings in
+  // WEB_SETTINGS_KEY. Keep the native shell copy in sync when a moderator
+  // mutes/unmutes a party there, otherwise the next shell slider change could
+  // overwrite the renderer's preference with a stale mirror.
+  if (webSettingsSyncHandler) window.removeEventListener('fcm-web-settings-changed', webSettingsSyncHandler);
+  webSettingsSyncHandler = (event: Event) => {
+    const detail = (event as CustomEvent<{ mutedPartyIds?: unknown }>).detail;
+    if (!Array.isArray(detail?.mutedPartyIds)) return;
+    currentSettings = { ...currentSettings, mutedPartyIds: detail.mutedPartyIds.filter((id): id is string => typeof id === 'string') };
+    persistShellSettings(currentSettings);
+  };
+  window.addEventListener('fcm-web-settings-changed', webSettingsSyncHandler);
 
   // DEV-ONLY: test hooks for the screenshot harness.
   (window as unknown as { __ovTest?: unknown }).__ovTest = {

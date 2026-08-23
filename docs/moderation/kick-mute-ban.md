@@ -1,21 +1,18 @@
 # Kick / Mute / Ban — multi-surface chat moderation
 
-> **Status: research + design.** How kick, mute, and ban work across **all three chat surfaces**
+> **Status: implemented.** Kick, mute, ban, unban, and message deletion work across **all three chat surfaces**
 > (admin dashboard, desktop overlay, and the new in-game chat.v1 `.ba2`) under the **mandatory
 > Nexus/Discord auth gate** ([auth lockdown](../backend/hud-chat-auth-design.md),
 > [chat.v1 gate](../overlay/zfe/native-chat-relay/fcm-integration.md#mandatory-auth-gate--limited-until-nexusdiscord-linked-locked)).
-> The existing dashboard/overlay machinery is **already built**; the net-new work is wiring it into
-> the chat.v1 relay and making eviction cross-surface. Existing behavior is cited by `file:line`;
-> proposed behavior is marked **(proposed)**.
+> The remaining deferred item is per-channel slow mode; it has no FCM primitive and remains unavailable.
 
 ## TL;DR
 
-FCM already has account-level **kick / mute / ban** with **immediate** enforcement, Discord
-propagation, evidence, audit, role gating, and protected-target rules. The auth lockdown makes the
-**ban target an account** (`users.id`) tied to Nexus and/or Discord — far stronger than the old
-anonymous/name-derived identity. To extend it to chat.v1 the relay just needs a **cached status
-re-check** (per-op + per-keepalive) plus **token revocation for permanent bans** (#296) — that cuts
-send and read cross-instance without new infra; a dedicated eviction pub/sub signal is **deferred**.
+FCM has account-level **kick / mute / ban** with **immediate** enforcement, Discord propagation,
+evidence, audit, role gating, and protected-target rules. The auth lockdown makes the **ban target
+an account** (`users.id`) tied to Nexus and/or Discord — far stronger than the old anonymous/name-
+derived identity. chat.v1 re-checks that account per operation and per subscriber keepalive, and
+kick/ban fan out over `relay:control` pub/sub so every in-game session is evicted immediately.
 
 ---
 
@@ -48,7 +45,8 @@ Key properties (all in `moderationActionsService.ts`):
   and a `#vault-security` Discord mod-log embed. `bans` is the source of truth for history (not the
   denormalized `users` flags).
 - **Discord propagation.** Mute → Discord timeout (≤28d cap); permanent ban → role-strip + guild
-  ban; reverse → restore roles. HUD/in-game moderation has **no** Discord propagation yet.
+  ban; reverse → restore roles. HUD/in-game moderation calls the same service, so it receives the
+  same propagation and audit behavior.
 
 The **FCMHUD/1** in-game path uses `HudIdentityBlock` (keyed on
 `identityHash = HMAC(secret, fo76AccountName)`) checked at `HELLO` (ban → destroy socket) and `SEND`
@@ -108,7 +106,7 @@ link, not force a re-link. (Mute is never a revocation — the user stays authed
 | Mute | `send` → `user_muted` until `muteExpiresAt` | `muteUser`, `ingestMessage` mute check |
 | Ban (temp/perm) | close socket; `register`/`hello`/`send` → `user_banned` | `createBan`, `requireAuth` ban check |
 | Unban / unmute | normal access resumes on next op / reconnect | `reverseBan`, `unmuteUser` |
-| Delete message | relay omits the message from `poll`/history (already filtered `isDeleted=false`) and broadcasts the existing deletion event to connected overlay clients | shared message-deletion service |
+| Delete message | relay omits the message from later `poll`/history (already filtered `isDeleted=false`); the acting HUD removes its selected row immediately and connected dashboard/overlay clients receive `chat:delete` | shared message-deletion service |
 
 ---
 
@@ -121,7 +119,9 @@ link, not force a re-link. (Mute is never a revocation — the user stays authed
   report queue). Those actions propagate to in-game via the §3 eviction signal.
 - **In-game `moderationAction` (chat.v1 op)** is honored **only** for an identity linked to a staff
   Discord account; an unlinked/basic identity gets `permission_denied`. It maps to the same
-  `moderationActionsService` calls. Realistically a convenience for staff who are in-game; the
+  `moderationActionsService` calls. The HUD lets staff type an exact visible player name (quote
+  multi-word names) or use a visible message reference. It resolves that convenience input locally
+  to immutable record IDs; duplicate visible names are rejected rather than selecting a player. The
   authoritative surface stays the dashboard.
 - **In-game `banUser` carries text evidence.** An in-game ban (from a staff-Discord-linked identity)
   applies immediately through the same ban service and stores the bounded reason as a text evidence
