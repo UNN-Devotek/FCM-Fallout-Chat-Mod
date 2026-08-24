@@ -1533,6 +1533,7 @@ interface ChatMessage {
   channelId: string;
   source: string;
   timestamp?: string;
+  editedAt?: string | null;
   responseColor?: string | null;
   avatarUrl?: string | null;
   metadata?: ChatMessageMetadata;
@@ -1617,6 +1618,21 @@ export function supporterBadge(
   return null;
 }
 
+/** Whether an authenticated user may be offered the self-edit action. */
+export function canEditOwnMessage(
+  message: { id?: string; userId?: string; source?: string },
+  userId?: string | null,
+  isPublicMode = false,
+): boolean {
+  return !isPublicMode
+    && !!message.id
+    && !!userId
+    && message.userId === userId
+    && message.source !== 'bot'
+    && message.source !== 'system'
+    && message.source !== 'server';
+}
+
 interface PrivateConversationSummary {
   conversationId: string;
   otherUserId: string;
@@ -1635,6 +1651,7 @@ interface PrivateMessagePayload {
   recipientId: string;
   content: string;
   createdAt: string;
+  editedAt?: string | null;
 }
 
 interface PrivateUserSearchResult {
@@ -1686,6 +1703,7 @@ function toPrivateChatMessage(message: PrivateMessagePayload): ChatMessage {
     channelId: message.conversationId,
     source: 'pm',
     timestamp: message.createdAt,
+    editedAt: message.editedAt ?? null,
   };
 }
 
@@ -3577,6 +3595,8 @@ export default function ChatOverlay() {
   const [modError, setModError] = useState<string | null>(null);
   const [hoveredMsg, setHoveredMsg] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; msg: ChatMessage } | null>(null);
+  const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+  const [editPending, setEditPending] = useState(false);
   // Right-click menu for a joined-party sub-tab (Open / Invite / Leave|Delete).
   const [partyTabCtx, setPartyTabCtx] = useState<{ x: number; y: number; partyId: string } | null>(null);
   // Invite modal (in-overlay, opened from the member panel "+ INVITE"). Holds
@@ -4172,6 +4192,9 @@ export default function ChatOverlay() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Rich (contentEditable) input ref — used only when overlayShell is active.
   const richInputRef = useRef<HTMLDivElement>(null);
+  const editingMessageRef = useRef<ChatMessage | null>(null);
+  const editPendingRef = useRef(false);
+  useEffect(() => { editingMessageRef.current = editingMessage; }, [editingMessage]);
   const richSelectionRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
   // One-shot flag: when an external setInputText should land the caret at the END
   // (slash-command autocomplete) rather than restoring the saved offset. Consumed
@@ -5016,6 +5039,11 @@ export default function ChatOverlay() {
           };
           ws.onclose = (ev?: { code?: number; reason?: string }) => {
             setConnected(false);
+            if (editPendingRef.current) {
+              editPendingRef.current = false;
+              setEditPending(false);
+              showActionToast('err', 'Edit could not be saved. Please retry.');
+            }
             // Log the close code + reason. Critical for diagnosing the in-game
             // reconnect storm: a 1006 (abnormal/no close frame) points at a
             // transport/proxy drop (Cloudflare idle, NIC sleep, AV), whereas a
@@ -5069,6 +5097,7 @@ export default function ChatOverlay() {
                   channelId: frame.payload.channelId,
                   source: frame.payload.source || 'game',
                   timestamp: frame.payload.createdAt || frame.payload.timestamp,
+                  editedAt: frame.payload.editedAt ?? null,
                   responseColor: frame.payload.responseColor ?? null,
                   avatarUrl: frame.payload.avatarUrl ?? null,
                   metadata: frame.payload.metadata ?? null,
@@ -5167,6 +5196,7 @@ export default function ChatOverlay() {
                     id: m.id, content: m.content, username: m.username,
                     userId: uid, channelId: m.channel_id ?? m.channelId,
                     source: m.source || 'game', timestamp: m.created_at ?? m.createdAt,
+                    editedAt: m.edited_at ?? m.editedAt ?? null,
                     avatarUrl: av,
                     metadata: m.metadata ?? null,
                     nameColor: m.nameColor ?? null,
@@ -5250,6 +5280,44 @@ export default function ChatOverlay() {
               } else if (frame.type === 'chat:delete') {
                 setMessages(prev => prev.filter(m => m.id !== frame.payload.messageId));
                 setFeedMessages(prev => prev.filter(m => m.id !== frame.payload.messageId));
+              } else if (frame.type === 'chat:edit') {
+                const payload = frame.payload ?? {};
+                const update = (message: ChatMessage): ChatMessage => message.id === payload.messageId
+                  ? { ...message, content: payload.content, editedAt: payload.editedAt ?? null }
+                  : message;
+                setMessages(prev => prev.map(update));
+                if (payload.source === 'pm' && typeof payload.conversationId === 'string') {
+                  setPrivateMessages(prev => ({
+                    ...prev,
+                    [payload.conversationId]: (prev[payload.conversationId] ?? []).map(update),
+                  }));
+                  setPrivateConversations(prev => prev.map(conversation =>
+                    conversation.conversationId === payload.conversationId
+                      ? { ...conversation, lastMessagePreview: payload.content, lastMessageAt: payload.createdAt ?? conversation.lastMessageAt }
+                      : conversation,
+                  ));
+                }
+              } else if (frame.type === 'message:edit:ack') {
+                const payload = frame.payload ?? {};
+                if (payload.messageId === editingMessageRef.current?.id) {
+                  editingMessageRef.current = null;
+                  editPendingRef.current = false;
+                  setEditingMessage(null);
+                  setEditPending(false);
+                  setInputText('');
+                  if (richInputRef.current) richInputRef.current.innerHTML = '';
+                  showActionToast('ok', 'Message edited');
+                  requestAnimationFrame(() => {
+                    if (richInputRef.current) richInputRef.current.focus();
+                    else inputRef.current?.focus();
+                  });
+                }
+              } else if (frame.type === 'error') {
+                if (editPendingRef.current) {
+                  editPendingRef.current = false;
+                  setEditPending(false);
+                }
+                if (frame.payload?.message) showActionToast('err', frame.payload.message);
               } else if (frame.type === 'mod:report') {
                 setReportAlerts(prev => [frame.payload, ...prev].slice(0, 5));
               } else if (frame.type === 'channels:refresh') {
@@ -5549,6 +5617,7 @@ export default function ChatOverlay() {
                 channelId: m.channelId ?? m.channel_id ?? id,
                 source: m.source || 'game',
                 timestamp: m.createdAt ?? m.created_at,
+                editedAt: m.editedAt ?? m.edited_at ?? null,
                 avatarUrl: m.avatarUrl ?? null,
                 metadata: m.metadata ?? null,
               } as ChatMessage)))
@@ -5611,6 +5680,7 @@ export default function ChatOverlay() {
                 channelId: m.channelId ?? m.partyId ?? id,
                 source: 'party',
                 timestamp: m.createdAt ?? m.created_at,
+                editedAt: m.editedAt ?? m.edited_at ?? null,
                 avatarUrl: null,
                 metadata: null,
               } as ChatMessage)))
@@ -6350,6 +6420,56 @@ export default function ChatOverlay() {
     }));
   }, [recordSentEmojis]);
 
+  const startEditingMessage = useCallback((message: ChatMessage) => {
+    if (!canEditOwnMessage(message, user?.id, isPublicMode)) return;
+    setEditingMessage(message);
+    editPendingRef.current = false;
+    setEditPending(false);
+    setInputText(message.content);
+    setCtxMenu(null);
+    setCtxMenuInviteSubmenu(false);
+    setOpenPicker(null);
+    requestAnimationFrame(() => {
+      if (richInputRef.current) {
+        richInputRef.current.innerHTML = buildRichHtml(message.content);
+        richInputRef.current.focus();
+        placeRichCaretAtOffset(richInputRef.current, message.content.length);
+      } else {
+        inputRef.current?.focus();
+      }
+    });
+  }, [user?.id, isPublicMode, buildRichHtml]);
+
+  const cancelEditingMessage = useCallback(() => {
+    setEditingMessage(null);
+    editPendingRef.current = false;
+    setEditPending(false);
+    setInputText('');
+    if (richInputRef.current) richInputRef.current.innerHTML = '';
+    requestAnimationFrame(() => {
+      if (richInputRef.current) richInputRef.current.focus();
+      else inputRef.current?.focus();
+    });
+  }, []);
+
+  const sendEditMessage = useCallback((message: ChatMessage, content: string): boolean => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !canEditOwnMessage(message, user?.id, isPublicMode)) return false;
+    recordSentEmojis(content);
+    ws.send(JSON.stringify({
+      type: 'chat:edit',
+      payload: {
+        messageId: message.id,
+        content,
+        source: message.source,
+        ...(message.source === 'pm'
+          ? { conversationId: message.channelId }
+          : { channelId: message.channelId }),
+      },
+    }));
+    return true;
+  }, [user?.id, isPublicMode, recordSentEmojis]);
+
   // Send a throttled chat:typing frame (once per 2s per scope).
   const sendTyping = useCallback(() => {
     const ws = wsRef.current;
@@ -6427,6 +6547,12 @@ export default function ChatOverlay() {
     setOpenPicker(null);
     const text = inputText.trim();
     if (!text) return;
+    if (editingMessage) {
+      if (editPending || !sendEditMessage(editingMessage, text)) return;
+      editPendingRef.current = true;
+      setEditPending(true);
+      return;
+    }
     // party:send paths require an active connection (party state may be stale after
     // a reconnect; never queue them). chat:send paths go through sendOrQueueChat which
     // will queue them if the WS is down.
@@ -6565,7 +6691,7 @@ export default function ChatOverlay() {
     // Electron only: signal the shell to return focus to FO76 after send.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).relayBridge?.returnToGame?.();
-  }, [inputText, activeSubId, mainChannels, joinedParties, sendChatMessage, sendPartyMessage, activeMainId, pmView, privateConversations, sendPrivateMessageFrame]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [inputText, activeSubId, mainChannels, joinedParties, sendChatMessage, sendPartyMessage, activeMainId, pmView, privateConversations, sendPrivateMessageFrame, editingMessage, editPending, sendEditMessage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Moderation actions
   async function executeModAction(body: any) {
@@ -7815,7 +7941,8 @@ export default function ChatOverlay() {
     );
   }
 
-  const inputPlaceholder = 'Type a message...';
+  const inputPlaceholder = editingMessage ? 'Edit message...' : 'Type a message...';
+  const composerMaxLength = editingMessage && editingMessage.source !== 'pm' ? 500 : 255;
   const showComposer = !isPublicMode
     && !adminFeedActive
     && (!isOnPartyTab || partyView !== 'browser')
@@ -8412,6 +8539,7 @@ export default function ChatOverlay() {
                         textShadow: glowEnabled ? `0 0 2px ${hexAlpha(primaryColor, 0.3 * textAlpha)}, ${textOutline}` : textOutline,
                       }}>
                         {inlineContent ?? renderContent(msg.content, activeMainId === PARTY_MAIN_ID && partyView !== 'browser')}
+                        {msg.editedAt && <span style={{ color: hexAlpha(dimText, 0.8), fontSize: '0.82em', fontWeight: 'normal', marginLeft: '4px' }} title="Edited">(edited)</span>}
                       </span>
                     </span>
                   </div>
@@ -9383,6 +9511,21 @@ export default function ChatOverlay() {
               {muteState.category ? `${muteState.category}: ` : ''}{muteState.reason ?? ''}
             </div>
           )}
+          {editingMessage && (
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '3px 10px', fontSize: `${Math.max(9, fontSize - 1)}px`,
+              color: hexAlpha(primaryColor, 0.9), borderBottom: `1px solid ${hexAlpha(primaryColor, 0.25)}`,
+            }}>
+              <span>EDITING MESSAGE{editPending ? ' — SAVING…' : ''}</span>
+              <button
+                type="button"
+                onMouseDown={e => { e.preventDefault(); cancelEditingMessage(); }}
+                disabled={editPending}
+                style={{ background: 'transparent', border: 'none', color: primaryColor, cursor: editPending ? 'not-allowed' : 'pointer', fontFamily: theme.fontFamily, fontSize: `${Math.max(9, fontSize - 1)}px`, fontWeight: 'bold' }}
+              >CANCEL</button>
+            </div>
+          )}
           {/* alignItems: 'center' vertically centers emoji/GIF buttons and char counter with the input caret. */}
           <div style={{ display: 'flex', alignItems: 'center', padding: '0 6px', opacity: muteState ? 0.4 : 1 }}>
             <span style={{
@@ -9426,14 +9569,14 @@ export default function ChatOverlay() {
                 )}
               <div
                 ref={richInputRef}
-                contentEditable={muteState ? 'false' : 'true'}
+                contentEditable={muteState || editPending ? 'false' : 'true'}
                 suppressContentEditableWarning
                 // data-placeholder removed — placeholder is now a sibling span
                 onInput={e => {
                   const el = e.currentTarget as HTMLDivElement;
                   const raw = serializeRichInput(el);
-                  const clamped = raw.slice(0, 255);
-                  if (raw.length > 255) {
+                  const clamped = raw.slice(0, composerMaxLength);
+                  if (raw.length > composerMaxLength) {
                     // Trim and re-render so the visual matches the clamped value
                     el.innerHTML = buildRichHtml(clamped);
                     // Move caret to end
@@ -9480,7 +9623,7 @@ export default function ChatOverlay() {
                   setMentionMeta(mention);
                   if (mention) fetchMentionSuggestions(mention.query);
                   else { setMentionOpen(false); setMentionSuggestions([]); }
-                  if (clamped.trim()) sendTyping();
+                  if (clamped.trim() && !editingMessage) sendTyping();
                 }}
                 onFocus={e => { syncRichSelectionRef(e.currentTarget); }}
                 onMouseUp={e => { syncRichSelectionRef(e.currentTarget); }}
@@ -9518,9 +9661,9 @@ export default function ChatOverlay() {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     handleSend();
-                    // Clear the rich input visually after send, then restore focus so
-                    // the user can keep typing without having to click the box again.
-                    if (richInputRef.current) richInputRef.current.innerHTML = '';
+                    // New messages clear immediately; edits stay visible while the
+                    // server validates and acknowledges the change.
+                    if (!editingMessage && richInputRef.current) richInputRef.current.innerHTML = '';
                     requestAnimationFrame(() => {
                       if (richInputRef.current) richInputRef.current.focus();
                       else inputRef.current?.focus();
@@ -9587,7 +9730,7 @@ export default function ChatOverlay() {
                     start = serializeRichInput({ childNodes: before.cloneContents().childNodes } as unknown as HTMLDivElement).length;
                     end = start;
                   }
-                  const next = (curText.slice(0, start) + text + curText.slice(end)).slice(0, 255);
+                  const next = (curText.slice(0, start) + text + curText.slice(end)).slice(0, composerMaxLength);
                   el.innerHTML = buildRichHtml(next);
                   setInputText(next);
                   // Move caret to after inserted text
@@ -9629,7 +9772,7 @@ export default function ChatOverlay() {
             ) : (
             <textarea
               ref={inputRef}
-              disabled={!!muteState}
+              disabled={!!muteState || editPending}
               value={inputText}
               onChange={e => {
                 const newVal = e.target.value;
@@ -9696,7 +9839,7 @@ export default function ChatOverlay() {
                   handleSend();
                 }
               }}
-              maxLength={255}
+              maxLength={composerMaxLength}
               rows={1}
               placeholder={inputPlaceholder}
               style={{
@@ -10023,6 +10166,9 @@ export default function ChatOverlay() {
             flexDirection: 'column',
           }}>
             {[
+              ...(!isPublicMode && canEditOwnMessage(ctxMenu.msg, user?.id, isPublicMode)
+                ? [{ label: 'Edit message', action: () => startEditingMessage(ctxMenu.msg) }]
+                : []),
               // Reply — auth only (writes to the input; public mode is read-only).
               ...(!isPublicMode && ctxMenu.msg.source !== 'bot' && ctxMenu.msg.source !== 'system' && ctxMenu.msg.username
                 ? [{ label: 'Reply', action: () => {

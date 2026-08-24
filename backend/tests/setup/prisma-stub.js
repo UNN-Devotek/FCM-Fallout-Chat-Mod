@@ -45,6 +45,7 @@ module.exports = {
     session: modelStub(),
     adminUser: modelStub(),
     message: modelStub(),
+    discordMessageLink: modelStub(),
     application: modelStub(),
     simUser: modelStub(),
     playerReport: modelStub(),

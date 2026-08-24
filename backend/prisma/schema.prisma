@@ -146,6 +146,7 @@ model Message {
   parentChannelId String?  @map("parent_channel_id") @db.Uuid
   source          String   @default("game") // 'game' | 'discord' | 'hud' | 'relay' | 'mcp' | 'ws'
   isDeleted       Boolean  @default(false) @map("is_deleted")
+  editedAt        DateTime? @map("edited_at") @db.Timestamptz(6)
   metadata        Json?    // optional structured payload (e.g. party_invite embed)
   relaySeq        BigInt?  @map("relay_seq") // monotonic cursor when a healthy relay sequence is available
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
@@ -161,6 +162,28 @@ model Message {
   @@index([isDeleted, channelId, createdAt(sort: Desc)])
   @@index([relaySeq], map: "messages_relay_seq_idx")
   @@map("messages")
+}
+
+// =============================================================================
+// Discord Relay Message Links
+// =============================================================================
+// A relay can be edited from either surface only when we retain the Discord
+// message snowflake that represents the in-app row.  This is deliberately a
+// separate table because Message uses (id, created_at) as its primary key and
+// inbound Discord messages need the same link for messageUpdate events.
+model DiscordMessageLink {
+  id               Int      @id @default(autoincrement())
+  messageId        String   @map("message_id") @db.Uuid
+  discordMessageId String   @map("discord_message_id")
+  discordChannelId String   @map("discord_channel_id")
+  discordPrefix    String   @map("discord_prefix")
+  isBotMessage     Boolean  @default(false) @map("is_bot_message")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([messageId])
+  @@unique([discordMessageId, discordChannelId])
+  @@index([discordMessageId])
+  @@map("discord_message_links")
 }
 
 // =============================================================================
@@ -732,6 +755,7 @@ model PartyMessage {
   content   String
   source    String   @default("party")
   isDeleted Boolean  @default(false) @map("is_deleted")
+  editedAt  DateTime? @map("edited_at") @db.Timestamptz(6)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   // Relations
@@ -776,6 +800,7 @@ model PrivateMessage {
   senderId       String   @map("sender_id") @db.Uuid
   content        String
   isDeleted      Boolean  @default(false) @map("is_deleted")
+  editedAt       DateTime? @map("edited_at") @db.Timestamptz(6)
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   conversation PrivateConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)

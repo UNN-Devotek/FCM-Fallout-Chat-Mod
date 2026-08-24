@@ -327,6 +327,137 @@ async function getDefaultChannelId(): Promise<string | null> {
   return defaultChannelPromise;
 }
 
+type DiscordRelayLink = {
+  messageId: string;
+  discordMessageId: string;
+  discordChannelId: string;
+  discordPrefix: string;
+  isBotMessage: boolean;
+};
+
+async function saveDiscordMessageLink(link: DiscordRelayLink): Promise<void> {
+  try {
+    await prisma.discordMessageLink.upsert({
+      where: { messageId: link.messageId },
+      update: {
+        discordMessageId: link.discordMessageId,
+        discordChannelId: link.discordChannelId,
+        discordPrefix: link.discordPrefix,
+        isBotMessage: link.isBotMessage,
+      },
+      create: link,
+    });
+  } catch (err) {
+    logger.warn({ err, messageId: link.messageId, discordMessageId: link.discordMessageId }, 'Failed to persist Discord relay message link');
+  }
+}
+
+function queueDiscordSend(
+  discordChannel: TextChannel,
+  formatted: string,
+  link?: Omit<DiscordRelayLink, 'discordMessageId'>,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    outboundQueue.push(async () => {
+      try {
+        const sent = await discordChannel.send(formatted) as Message;
+        if (link) {
+          await saveDiscordMessageLink({ ...link, discordMessageId: sent.id });
+        }
+        resolve();
+      } catch (err) {
+        reject(err);
+        throw err;
+      }
+    });
+    startDrain();
+  });
+}
+
+/**
+ * Edit the bot-authored Discord copy of an in-app message, when one exists.
+ * Discord does not allow the bot to edit a user's original Discord message,
+ * so inbound user messages are linked for reverse sync but are intentionally
+ * skipped here.
+ */
+async function editDiscordRelayMessage(
+  messageId: string,
+  content: string,
+  clientOverride?: import('discord.js').Client | null,
+): Promise<boolean> {
+  const client = clientOverride ?? discordClient;
+  if (!client || (clientOverride === undefined && discordStatus !== 'connected')) return false;
+
+  const link = await prisma.discordMessageLink.findUnique({ where: { messageId } });
+  if (!link || !link.isBotMessage) return false;
+
+  const stripped = stripMentions(content);
+  const safeContent = markdownifyLinks(await resolveAppMentions(stripped));
+  const watermarked = safeContent.length > 0 ? safeContent + ZWS : safeContent;
+  const discordChannel = await client.channels.fetch(link.discordChannelId);
+  if (!discordChannel?.isTextBased()) return false;
+  const discordMessage = await (discordChannel as TextChannel).messages.fetch(link.discordMessageId);
+  await discordMessage.edit({ content: `${link.discordPrefix}${watermarked}` });
+  return true;
+}
+
+/** Apply a human Discord message edit to its linked overlay row. */
+async function syncDiscordMessageUpdate(rawMessage: Message | any): Promise<boolean> {
+  let msg = rawMessage;
+  if (msg?.partial && typeof msg.fetch === 'function') msg = await msg.fetch();
+  if (!msg?.id || msg.author?.bot || msg.webhookId) return false;
+
+  const link = await prisma.discordMessageLink.findUnique({
+    where: {
+      discordMessageId_discordChannelId: {
+        discordMessageId: msg.id,
+        discordChannelId: msg.channelId,
+      },
+    },
+  });
+  if (!link || link.isBotMessage) return false;
+
+  let content = typeof msg.content === 'string' ? msg.content : '';
+  if (!content.trim() || content.length > 255) return false;
+  content = await resolveInboundUserMentions(content, msg);
+
+  const existing = await prisma.message.findFirst({
+    where: { id: link.messageId, isDeleted: false },
+    select: { userId: true, channelId: true },
+  });
+  if (!existing) return false;
+
+  try {
+    const { engineEvaluate } = require('./autoModEngine') as typeof import('./autoModEngine');
+    const result = await engineEvaluate(content.trim(), existing.channelId, { id: existing.userId, username: 'discord' } as any);
+    if (result.block) return false;
+  } catch (err) {
+    logger.warn({ err, messageId: link.messageId }, '[discord-relay] edit automod error — allowing edit (fail-open)');
+  }
+
+  const editedAt = new Date();
+  const updated = await prisma.$executeRaw`
+    UPDATE messages
+    SET content = ${content.trim()}, edited_at = ${editedAt}
+    WHERE id = ${link.messageId}::uuid
+      AND channel_id = ${existing.channelId}::uuid
+      AND NOT is_deleted`;
+  if (updated === 0) return false;
+
+  broadcastFn?.({
+    type: 'chat:edit',
+    payload: {
+      messageId: link.messageId,
+      userId: existing.userId,
+      content: content.trim(),
+      source: 'discord',
+      channelId: existing.channelId,
+      editedAt: editedAt.toISOString(),
+    },
+  });
+  return true;
+}
+
 async function start(onStatusChange?: (status: string) => void): Promise<void> {
   if (!env.DISCORD_TOKEN) {
     logger.warn('DISCORD_TOKEN not set -- Discord bridge disabled');
@@ -772,6 +903,29 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
       metadata: inboundMetadata,
     }).catch((err: Error) => logger.error({ err }, 'Failed to queue Discord message'));
 
+    await prisma.discordMessageLink.upsert({
+      where: {
+        discordMessageId_discordChannelId: {
+          discordMessageId: msg.id,
+          discordChannelId: msg.channelId,
+        },
+      },
+      update: { messageId, isBotMessage: false, discordPrefix: '' },
+      create: {
+        messageId,
+        discordMessageId: msg.id,
+        discordChannelId: msg.channelId,
+        discordPrefix: '',
+        isBotMessage: false,
+      },
+    }).catch((err: Error) => logger.warn({ err, discordMessageId: msg.id }, 'Failed to link inbound Discord message'));
+
+  });
+
+  discordClient.on('messageUpdate', (_oldMessage, newMessage) => {
+    syncDiscordMessageUpdate(newMessage).catch((err) => {
+      logger.warn({ err, discordMessageId: newMessage?.id }, 'Failed to sync Discord message edit to overlay');
+    });
   });
 
   discordClient.on('error', (err: Error) => {
@@ -903,7 +1057,7 @@ async function resolveWikiUrlFromContent(text: string): Promise<{
 
 // ── Outbound relay ────────────────────────────────────────────────────────────
 
-async function relayToDiscord(channelId: string, username: string, content: string, channelName?: string, mentions?: Array<{ name: string; discordId: string }>, metadata?: Record<string, unknown> | null): Promise<void> {
+async function relayToDiscord(channelId: string, username: string, content: string, channelName?: string, mentions?: Array<{ name: string; discordId: string }>, metadata?: Record<string, unknown> | null, sourceMessageId?: string): Promise<void> {
   if (!discordClient || discordStatus !== 'connected') return;
 
   // Drop synthetic relay health-check probes so test traffic never appears in the
@@ -944,7 +1098,8 @@ async function relayToDiscord(channelId: string, username: string, content: stri
     const safeContent = markdownifyLinks(await resolveAppMentions(withExplicit));
     const watermarked = safeContent.length > 0 ? safeContent + ZWS : safeContent;
     const tag = channelName ? `**[${channelName}]** ` : '';
-    const formatted = `${tag}**${stripMentions(username)}**: ${watermarked}`;
+    const discordPrefix = `${tag}**${stripMentions(username)}**: `;
+    const formatted = `${discordPrefix}${watermarked}`;
 
     const mappings = await loadRelayMappings();
     let sent = false;
@@ -956,8 +1111,12 @@ async function relayToDiscord(channelId: string, username: string, content: stri
         if (!discordChannel?.isTextBased()) {
           logger.warn({ discordChannelId }, 'Discord relay channel is not a text channel -- skipping');
         } else {
-          outboundQueue.push(async () => { await (discordChannel as TextChannel).send(formatted); });
-          startDrain();
+          await queueDiscordSend(discordChannel as TextChannel, formatted, sourceMessageId ? {
+            messageId: sourceMessageId,
+            discordChannelId,
+            discordPrefix,
+            isBotMessage: true,
+          } : undefined);
           sent = true;
         }
         break;
@@ -970,8 +1129,12 @@ async function relayToDiscord(channelId: string, username: string, content: stri
     if (!sent && env.DISCORD_CHANNEL_ID) {
       const discordChannel = await discordClient.channels.fetch(env.DISCORD_CHANNEL_ID);
       if (discordChannel?.isTextBased()) {
-        outboundQueue.push(async () => { await (discordChannel as TextChannel).send(formatted); });
-        startDrain();
+        await queueDiscordSend(discordChannel as TextChannel, formatted, sourceMessageId ? {
+          messageId: sourceMessageId,
+          discordChannelId: env.DISCORD_CHANNEL_ID,
+          discordPrefix,
+          isBotMessage: true,
+        } : undefined);
       }
     }
   } catch (err) {
@@ -1283,6 +1446,6 @@ function invalidateRelayMappingsCache(): void {
   mappingsLastLoaded = 0;
 }
 
-export { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, invalidateRelayMappingsCache, loadRelayMappings, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };
+export { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, editDiscordRelayMessage, syncDiscordMessageUpdate, invalidateRelayMappingsCache, loadRelayMappings, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };
 export type { };
-module.exports = { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, invalidateRelayMappingsCache, loadRelayMappings, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };
+module.exports = { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, editDiscordRelayMessage, syncDiscordMessageUpdate, invalidateRelayMappingsCache, loadRelayMappings, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };

@@ -43,7 +43,27 @@ import {
   STICK_TO_BOTTOM_THRESHOLD,
   buildMentionInsert,
   BUILTIN_FORMS,
+  canEditOwnMessage,
 } from '../ChatOverlay';
+
+describe('canEditOwnMessage', () => {
+  const own = { id: 'message-1', userId: 'user-1', source: 'game' };
+
+  it('allows an authenticated owner to edit ordinary, party, and private messages', () => {
+    expect(canEditOwnMessage(own, 'user-1')).toBe(true);
+    expect(canEditOwnMessage({ ...own, source: 'party' }, 'user-1')).toBe(true);
+    expect(canEditOwnMessage({ ...own, source: 'pm' }, 'user-1')).toBe(true);
+  });
+
+  it('rejects other users, read-only mode, and system-authored messages', () => {
+    expect(canEditOwnMessage(own, 'user-2')).toBe(false);
+    expect(canEditOwnMessage(own, null)).toBe(false);
+    expect(canEditOwnMessage(own, 'user-1', true)).toBe(false);
+    for (const source of ['bot', 'system', 'server']) {
+      expect(canEditOwnMessage({ ...own, source }, 'user-1')).toBe(false);
+    }
+  });
+});
 
 describe('boundedPublicPartyIds', () => {
   it('caps and removes empty party IDs', () => {

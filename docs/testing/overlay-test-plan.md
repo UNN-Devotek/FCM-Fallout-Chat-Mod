@@ -319,11 +319,12 @@ start **non-required** in branch protection; promote once green-stable (~20 runs
 18. **Public website lockdown** — no auth + no shell → no composer/member panel/party browser/mod actions; authed WS never opened (no `ws://` upgrade).
 19. **Authed dashboard happy path** — login as member → WS connects, channels load, send in General, appears with correct [Trade]/[Discord]/[Server] tags.
 20. **Mod actions visible only to mods** — moderator right-click shows mute/delete; member does not.
-21. **Reconnect resilience** — kill WS → retries with growing (≤16s) jittered backoff, resubscribes party chat without dup (ID dedup).
-22. **Block flow** — Settings → block via search → messages disappear; unblock → reappear after refresh.
-23. **Auth state machine via mocked IPC** — authenticated/discord_required/error(429)/stuck-25s → correct screen; second authenticated same identity does NOT remount, changed identity DOES.
-24. **No auto-update artifacts** — packaged build contains no `updater.js`, no `updater-ui.ts`, no `electron-updater` dep, no `app-update.yml`, no `latest*.yml` (asserted by `no-autoupdate.test.js`).
-25. **chat-smoke repointed to mock** — `/api/health` 200, `/api/channels`→`{data:[]}`, `/api/users` requires `X-App-Client-Key` (403), unknown discord token→`linked:false`.
+21. **Self-edit ownership and Discord sync** — an authenticated user can right-click and edit their own channel, party, and PM message; another user's message, bot/system/server message, and public mode do not show Edit. A bridged channel edit mirrors the bot copy in Discord, and a human Discord `messageUpdate` patches the overlay row.
+22. **Reconnect resilience** — kill WS → retries with growing (≤16s) jittered backoff, resubscribes party chat without dup (ID dedup).
+23. **Block flow** — Settings → block via search → messages disappear; unblock → reappear after refresh.
+24. **Auth state machine via mocked IPC** — authenticated/discord_required/error(429)/stuck-25s → correct screen; second authenticated same identity does NOT remount, changed identity DOES.
+25. **No auto-update artifacts** — packaged build contains no `updater.js`, no `updater-ui.ts`, no `electron-updater` dep, no `app-update.yml`, no `latest*.yml` (asserted by `no-autoupdate.test.js`).
+26. **chat-smoke repointed to mock** — `/api/health` 200, `/api/channels`→`{data:[]}`, `/api/users` requires `X-App-Client-Key` (403), unknown discord token→`linked:false`.
 
 ---
 

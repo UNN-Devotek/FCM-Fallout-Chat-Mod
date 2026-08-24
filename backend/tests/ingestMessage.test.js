@@ -202,6 +202,9 @@ describe('ingestMessage — happy path', () => {
       expect.any(String),
       'Hello vault!',
       expect.any(String),
+      undefined,
+      undefined,
+      result.messageId,
     );
   });
 

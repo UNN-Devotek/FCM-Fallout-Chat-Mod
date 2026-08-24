@@ -140,6 +140,7 @@ describe('privateMessagingService', () => {
         recipientId: 'user-b',
         content: 'meet at whitespring?',
         createdAt: '2026-06-25T15:10:00.000Z',
+        editedAt: null,
       },
     ]);
   });

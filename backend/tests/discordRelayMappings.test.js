@@ -14,6 +14,10 @@
 
 const mockChannelFindMany = jest.fn().mockResolvedValue([]);
 const mockMappingFindMany = jest.fn().mockResolvedValue([]);
+const mockDiscordMessageLinkFindUnique = jest.fn().mockResolvedValue(null);
+const mockMessageFindFirst = jest.fn().mockResolvedValue(null);
+const mockExecuteRaw = jest.fn().mockResolvedValue(1);
+const mockBroadcast = jest.fn();
 
 jest.mock('../src/config/prisma', () => ({
   channel: {
@@ -24,7 +28,11 @@ jest.mock('../src/config/prisma', () => ({
   discordRelayMapping: {
     findMany: (...args) => mockMappingFindMany(...args),
   },
-  message: { create: jest.fn() },
+  discordMessageLink: {
+    findUnique: (...args) => mockDiscordMessageLinkFindUnique(...args),
+  },
+  message: { create: jest.fn(), findFirst: (...args) => mockMessageFindFirst(...args) },
+  $executeRaw: (...args) => mockExecuteRaw(...args),
 }));
 
 // ── Other heavy dependency mocks ──────────────────────────────────────────────
@@ -58,6 +66,7 @@ jest.mock('../src/queues/messagePersist', () => ({ add: jest.fn(), process: jest
 jest.mock('../src/services/voiceService', () => ({ default: { handleVoiceStateUpdate: jest.fn() } }));
 jest.mock('../src/services/reactionRoleService', () => ({ default: { handleReactionAdd: jest.fn(), handleReactionRemove: jest.fn() } }));
 jest.mock('../src/services/wikiCatalogService', () => ({ getEntry: jest.fn(), bestMatch: jest.fn() }));
+jest.mock('../src/services/autoModEngine', () => ({ engineEvaluate: jest.fn().mockResolvedValue({ block: false, matches: [] }) }));
 
 // ── Load the module once — cache is reset via invalidateRelayMappingsCache() ──
 
@@ -68,8 +77,13 @@ const svc = require('../src/services/discordService');
 beforeEach(() => {
   mockChannelFindMany.mockClear().mockResolvedValue([]);
   mockMappingFindMany.mockClear().mockResolvedValue([]);
+  mockDiscordMessageLinkFindUnique.mockClear().mockResolvedValue(null);
+  mockMessageFindFirst.mockClear().mockResolvedValue(null);
+  mockExecuteRaw.mockClear().mockResolvedValue(1);
+  mockBroadcast.mockClear();
   // Bust the 60-second cache so each test starts with a fresh load
   svc.invalidateRelayMappingsCache();
+  svc.setBroadcast(mockBroadcast);
 });
 
 describe('loadRelayMappings — channel.discordChannelId source', () => {
@@ -173,5 +187,79 @@ describe('invalidateRelayMappingsCache', () => {
     expect(map3.get('discord-ch-updated')).toBe('game-ch-uuid');
     expect(map3.has('discord-ch-first')).toBe(false);
     expect(mockChannelFindMany.mock.calls.length).toBeGreaterThan(callsAfterFirst);
+  });
+});
+
+describe('syncDiscordMessageUpdate', () => {
+  it('updates the linked overlay row and broadcasts chat:edit for a human Discord edit', async () => {
+    mockDiscordMessageLinkFindUnique.mockResolvedValue({
+      messageId: '11111111-1111-4111-8111-111111111111',
+      isBotMessage: false,
+    });
+    mockMessageFindFirst.mockResolvedValue({
+      userId: '22222222-2222-4222-8222-222222222222',
+      channelId: '33333333-3333-4333-8333-333333333333',
+    });
+
+    const changed = await svc.syncDiscordMessageUpdate({
+      id: 'discord-message-1',
+      channelId: 'discord-channel-1',
+      content: 'edited from Discord',
+      author: { bot: false },
+      webhookId: null,
+    });
+
+    expect(changed).toBe(true);
+    expect(mockExecuteRaw).toHaveBeenCalled();
+    expect(mockBroadcast).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'chat:edit',
+      payload: expect.objectContaining({
+        messageId: '11111111-1111-4111-8111-111111111111',
+        content: 'edited from Discord',
+        source: 'discord',
+      }),
+    }));
+  });
+
+  it('ignores edits to bot-authored relay copies to prevent an echo loop', async () => {
+    mockDiscordMessageLinkFindUnique.mockResolvedValue({ isBotMessage: true });
+
+    const changed = await svc.syncDiscordMessageUpdate({
+      id: 'discord-bot-message',
+      channelId: 'discord-channel-1',
+      content: 'bot edit',
+      author: { bot: true },
+    });
+
+    expect(changed).toBe(false);
+    expect(mockMessageFindFirst).not.toHaveBeenCalled();
+    expect(mockBroadcast).not.toHaveBeenCalled();
+  });
+});
+
+describe('editDiscordRelayMessage', () => {
+  it('edits the bot-authored Discord copy using the retained prefix', async () => {
+    mockDiscordMessageLinkFindUnique.mockResolvedValue({
+      messageId: '11111111-1111-4111-8111-111111111111',
+      discordMessageId: 'discord-message-1',
+      discordChannelId: 'discord-channel-1',
+      discordPrefix: '**[General]** **VaultEller**: ',
+      isBotMessage: true,
+    });
+    const edit = jest.fn().mockResolvedValue(undefined);
+    const fakeChannel = {
+      isTextBased: () => true,
+      messages: { fetch: jest.fn().mockResolvedValue({ edit }) },
+    };
+    const fakeClient = { channels: { fetch: jest.fn().mockResolvedValue(fakeChannel) } };
+
+    const changed = await svc.editDiscordRelayMessage(
+      '11111111-1111-4111-8111-111111111111',
+      'corrected text',
+      fakeClient,
+    );
+
+    expect(changed).toBe(true);
+    expect(edit).toHaveBeenCalledWith({ content: '**[General]** **VaultEller**: corrected text\u200b' });
   });
 });

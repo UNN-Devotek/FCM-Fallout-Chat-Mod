@@ -169,6 +169,7 @@ Broadcast to all clients (or session members for server-channel messages) when a
     "channelId": "00000000-0000-0000-0000-000000000001",
     "source": "game",
     "timestamp": "2026-06-04T12:00:00.000Z",
+    "editedAt": null,
     "avatarUrl": "https://cdn.discordapp.com/...",
     "metadata": null,
     "nameColor": "#57DBDB",
@@ -191,6 +192,36 @@ Broadcast to all clients (or session members for server-channel messages) when a
 | `discord` | Relayed from Discord |
 
 `handlers.ts:2417–2429`
+
+### `chat:edit` (C→S request)
+Edit a message authored by the authenticated user. The client sends `source: "pm"` with
+`conversationId` for private messages, `source: "party"` with the party UUID in `channelId`
+for party messages, or the original source plus a regular channel UUID for channel messages.
+The server verifies ownership (and party/conversation access), rejects deleted/system/server
+messages, reruns AutoMod, and records `edited_at` before broadcasting the patch.
+
+```json
+{
+  "type": "chat:edit",
+  "payload": {
+    "messageId": "<uuid>",
+    "content": "corrected text",
+    "source": "game",
+    "channelId": "<channel-uuid>"
+  }
+}
+```
+
+Successful edits are broadcast as `chat:edit` with `messageId`, normalized `content`,
+`editedAt`, and the source-specific routing fields. The sender also receives
+`message:edit:ack` with the same payload. Invalid, unauthorized, muted, rate-limited, or
+AutoMod-blocked edits return the standard `error` frame.
+
+For bridged public channel messages, the server also retains the Discord message
+snowflake. An edit made in the overlay mirrors to the bot-authored Discord copy.
+An edit made to a human-authored Discord message updates the linked overlay row
+and emits the same `chat:edit` broadcast. The bot cannot edit a Discord user's
+original message, so overlay edits of Discord-origin messages remain local.
 
 Bot messages (source `bot`, userId `system`, username `[Vault-Tec]`) are never block-filtered. `handlers.ts:742–749`
 
@@ -327,7 +358,8 @@ Response:
         "senderName": "Stealthmog",
         "recipientId": "<uuid>",
         "content": "meet at whitespring?",
-        "createdAt": "2026-06-25T15:52:00.000Z"
+        "createdAt": "2026-06-25T15:52:00.000Z",
+        "editedAt": null
       }
     ]
   }
@@ -364,7 +396,8 @@ Delivered only to the sender and recipient.
     "senderName": "Stealthmog",
     "recipientId": "<uuid>",
     "content": "meet at whitespring?",
-    "createdAt": "2026-06-25T15:10:00.000Z"
+    "createdAt": "2026-06-25T15:10:00.000Z",
+    "editedAt": null
   }
 }
 ```

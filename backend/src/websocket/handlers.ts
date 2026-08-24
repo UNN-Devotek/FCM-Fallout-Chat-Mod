@@ -11,7 +11,7 @@ import { isSocketSuperseded } from './socketSupersession';
 import { getLatestVersion } from '../services/latestReleaseVersion';
 import { shadowMute } from '../services/autoModService';
 import { engineEvaluate } from '../services/autoModEngine';
-import { relayToDiscord, invalidateRelayMappingsCache } from '../services/discordService';
+import { relayToDiscord, editDiscordRelayMessage, invalidateRelayMappingsCache } from '../services/discordService';
 import { persistMessage } from '../services/messageService';
 import { finalizeMessage } from '../services/ingestMessage';
 import { attachCosmeticsToHistory } from '../services/cosmetics/cosmeticsService';
@@ -37,6 +37,7 @@ import {
   sendPrivateMessage,
 } from '../services/privateMessagingService';
 import { emojifyShortcodes } from '../utils/emoji';
+import { editOwnedMessage, MessageEditError } from '../services/messageEditService';
 import { evaluateBuildGate } from '../services/buildLock';
 import { getActiveQaVersion } from '../services/activeQaVersion';
 import env from '../config/environment';
@@ -798,7 +799,7 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
           if (!channelId || !UUID_RE.test(channelId)) break;
           try {
             const result = await dbQuery(
-              `SELECT m.id, m.content, u.username, u.chat_name, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at
+              `SELECT m.id, m.content, u.username, u.chat_name, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at, m.edited_at
                FROM messages m JOIN users u ON u.id = m.user_id
                WHERE m.channel_id = $1 AND NOT m.is_deleted
                ORDER BY m.created_at DESC LIMIT $2 OFFSET $3`,
@@ -1057,7 +1058,7 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
             });
           }
 
-          relayToDiscord(channelId, displayName, content.trim(), adminChannelName ?? undefined, inMentions).catch((err) => {
+          relayToDiscord(channelId, displayName, content.trim(), adminChannelName ?? undefined, inMentions, undefined, messageId).catch((err) => {
             logger.warn({ err }, 'Admin observer Discord relay failed (non-fatal)');
           });
           break;
@@ -1845,6 +1846,109 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
         break;
       }
 
+      case 'chat:edit': {
+        const editClient = clients.get(token);
+        if (!editClient) break;
+        if (editClient.isMuted) {
+          sendWsError(ws, 'You are muted.');
+          break;
+        }
+
+        const messageId = frame.payload?.messageId;
+        const content = frame.payload?.content;
+        const source = frame.payload?.source;
+        const channelId = frame.payload?.channelId;
+        const conversationId = frame.payload?.conversationId;
+
+        if (typeof messageId !== 'string' || !UUID_RE.test(messageId)) {
+          sendWsError(ws, 'Invalid messageId.');
+          break;
+        }
+        if (typeof source !== 'string' || source === 'bot' || source === 'system' || source === 'server') {
+          sendWsError(ws, 'This message cannot be edited.');
+          break;
+        }
+        if (source === 'pm') {
+          if (typeof conversationId !== 'string' || !UUID_RE.test(conversationId)) {
+            sendWsError(ws, 'Invalid conversationId.');
+            break;
+          }
+        } else if (source === 'party') {
+          if (typeof channelId !== 'string' || !UUID_RE.test(channelId)) {
+            sendWsError(ws, 'Invalid partyId.');
+            break;
+          }
+        } else if (typeof channelId !== 'string' || !UUID_RE.test(channelId)) {
+          // Virtual server feeds and non-persisted system messages are not editable.
+          sendWsError(ws, 'Invalid channelId.');
+          break;
+        }
+
+        if (await checkWsRateLimit(user.id)) {
+          ws.send(JSON.stringify({ type: 'rate:status', payload: { remaining: 0, retryAfterMs: 1000 } }));
+          sendWsError(ws, 'Rate limit exceeded. Slow down.');
+          break;
+        }
+
+        try {
+          const edited = await editOwnedMessage({
+            userId: user.id,
+            messageId,
+            content,
+            source,
+            channelId: source === 'pm' ? undefined : channelId,
+            conversationId: source === 'pm' ? conversationId : undefined,
+            user,
+          });
+          const payload = { ...edited };
+
+          if (edited.source === 'party' && edited.channelId) {
+            const members = await prisma.partyMember.findMany({
+              where: { partyId: edited.channelId },
+              select: { userId: true },
+            });
+            broadcastToPartyMembers({ type: 'chat:edit', payload }, members.map(m => m.userId));
+
+            // Keep privileged observers in sync even when they are not members
+            // of the party, matching the party:send observer fan-out.
+            try {
+              const { isPrivilegedRole } = require('../services/userRoleService') as { isPrivilegedRole: (r: string) => boolean };
+              const memberIds = new Set(members.map(m => m.userId));
+              const observerPayload = JSON.stringify({ type: 'chat:edit', payload: { ...payload, _modObserver: true } });
+              for (const [, observer] of clients) {
+                if (!isPrivilegedRole(observer.role) || memberIds.has(observer.userId)) continue;
+                safeSend(observer.ws, observerPayload, `chat:edit:party-observer:${observer.userId}`);
+              }
+            } catch (err) {
+              logger.warn({ err, partyId: edited.channelId }, '[chat:edit] party observer fan-out failed (non-fatal)');
+            }
+          } else if (edited.source === 'pm' && edited.recipientId) {
+            await broadcastToUsers({ type: 'chat:edit', payload }, [user.id, edited.recipientId]);
+          } else {
+            broadcast({ type: 'chat:edit', payload });
+          }
+
+          // The local edit is authoritative for the overlay. If this channel
+          // message has a bot-authored Discord counterpart, mirror the edit
+          // asynchronously; a Discord outage must not reject the user's edit.
+          if (edited.source !== 'party' && edited.source !== 'pm') {
+            editDiscordRelayMessage(edited.messageId, edited.content).catch((err) => {
+              logger.warn({ err, messageId: edited.messageId }, '[chat:edit] Discord mirror failed (non-fatal)');
+            });
+          }
+
+          ws.send(JSON.stringify({ type: 'message:edit:ack', payload }));
+        } catch (err: any) {
+          if (err instanceof MessageEditError) {
+            sendWsError(ws, err.message);
+          } else {
+            logger.warn({ err, userId: user.id, messageId, source }, '[chat:edit] failed');
+            sendWsError(ws, 'Could not edit message.');
+          }
+        }
+        break;
+      }
+
       case 'chat:send': {
         const client = clients.get(token);
         if (!client) return;
@@ -2024,7 +2128,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
                   createdAt: relayTs,
                 }).catch((err: unknown) => logger.warn({ err }, 'Relay message queue failed'));
                 if (cmdResult.relayToDiscord) {
-                  relayToDiscord(cmdResult.targetChannelId, displayName, cmdResult.relayContent, relayChannelName ?? undefined).catch((err) => {
+                  relayToDiscord(cmdResult.targetChannelId, displayName, cmdResult.relayContent, relayChannelName ?? undefined, undefined, undefined, relayId).catch((err) => {
                     logger.warn({ err }, 'Discord relay for command failed (non-fatal)');
                   });
                 }
@@ -2178,7 +2282,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
         const safeOffset = Math.min(Math.max(parseInt(offset, 10) || 0, 0), 10000);
         try {
           const result = await dbQuery(
-            `SELECT m.id, m.content, u.username, u.chat_name, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at
+            `SELECT m.id, m.content, u.username, u.chat_name, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at, m.edited_at
              FROM messages m JOIN users u ON u.id = m.user_id
              WHERE m.channel_id = $1 AND NOT m.is_deleted
              ORDER BY m.created_at DESC LIMIT $2 OFFSET $3`,
@@ -2439,6 +2543,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
               channel_id: phPartyId,
               source: 'party' as const,
               created_at: r.createdAt.toISOString(),
+              edited_at: r.editedAt?.toISOString() ?? null,
               avatarUrl: buildAvatarUrl(r.user?.discordId ?? null),
             }));
 

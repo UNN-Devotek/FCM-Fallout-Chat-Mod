@@ -1436,7 +1436,7 @@ export async function listPublicPartyMessages(req: Request, res: Response, next:
       take: limit,
       select: {
         id: true, content: true, username: true, userId: true, partyId: true,
-        source: true, createdAt: true,
+        source: true, createdAt: true, editedAt: true,
       },
     });
 
@@ -1448,6 +1448,7 @@ export async function listPublicPartyMessages(req: Request, res: Response, next:
       channelId: m.partyId,
       source: m.source || 'party',
       createdAt: m.createdAt,
+      editedAt: m.editedAt,
     }));
     res.json({ data: { messages: transformed } });
   } catch (err) {

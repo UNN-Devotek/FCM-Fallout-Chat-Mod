@@ -252,6 +252,7 @@ export async function getPrivateHistory(userId: string, conversationId: string, 
       senderId: true,
       content: true,
       createdAt: true,
+      editedAt: true,
       sender: {
         select: {
           username: true,
@@ -270,6 +271,7 @@ export async function getPrivateHistory(userId: string, conversationId: string, 
     recipientId: row.senderId === userId ? otherUserId : userId,
     content: row.content,
     createdAt: row.createdAt.toISOString(),
+    editedAt: row.editedAt?.toISOString() ?? null,
   }));
 }
 
@@ -313,6 +315,7 @@ export async function sendPrivateMessage(senderId: string, recipientId: string, 
         senderId: true,
         content: true,
         createdAt: true,
+        editedAt: true,
       },
     });
 
@@ -343,6 +346,7 @@ export async function sendPrivateMessage(senderId: string, recipientId: string, 
       recipientId,
       content: message.content,
       createdAt: message.createdAt.toISOString(),
+      editedAt: message.editedAt?.toISOString() ?? null,
     };
   });
 }

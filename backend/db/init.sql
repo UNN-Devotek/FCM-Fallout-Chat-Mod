@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS messages (
     channel_id  UUID            NOT NULL REFERENCES channels (id) ON DELETE RESTRICT,
     source      TEXT            NOT NULL DEFAULT 'game' CHECK (source IN ('game', 'discord')),
     is_deleted  BOOLEAN         NOT NULL DEFAULT FALSE,
+    edited_at   TIMESTAMPTZ,
     created_at  TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     PRIMARY KEY (id, created_at)
 );
@@ -104,6 +105,24 @@ CREATE INDEX IF NOT EXISTS idx_messages_channel_id ON messages (channel_id, crea
 CREATE INDEX IF NOT EXISTS idx_messages_user_id    ON messages (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_is_deleted ON messages (is_deleted) WHERE NOT is_deleted;
 CREATE INDEX IF NOT EXISTS idx_messages_id         ON messages (id);  -- point lookups by message ID (e.g. report context)
+
+-- =============================================================================
+-- Discord Relay Message Links
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS discord_message_links (
+    id                   SERIAL PRIMARY KEY,
+    message_id           UUID NOT NULL,
+    discord_message_id   TEXT NOT NULL,
+    discord_channel_id   TEXT NOT NULL,
+    discord_prefix       TEXT NOT NULL,
+    is_bot_message       BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at           TIMESTAMPTZ(6) NOT NULL DEFAULT NOW(),
+    UNIQUE (message_id),
+    UNIQUE (discord_message_id, discord_channel_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_discord_message_links_discord_message_id
+    ON discord_message_links (discord_message_id);
 
 -- =============================================================================
 -- Reports

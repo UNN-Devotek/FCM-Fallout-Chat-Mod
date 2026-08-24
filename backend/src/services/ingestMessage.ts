@@ -333,11 +333,17 @@ export async function finalizeMessage(opts: {
     persistMessage(record as any).catch((err) => logger.error({ err, messageId }, '[finalizeMessage] direct persist also failed'));
   });
 
-  // Discord relay — fire-and-forget. Pass the mentions/metadata tail only when
-  // the caller supplied them (WS path) so the lean HUD call stays 4-arg.
-  const relayPromise = (opts.mentions !== undefined || hasMetadata)
-    ? relayToDiscord(opts.channelId, opts.displayName, opts.content, channelName ?? undefined, opts.mentions, hasMetadata ? (opts.metadata ?? undefined) : undefined)
-    : relayToDiscord(opts.channelId, opts.displayName, opts.content, channelName ?? undefined);
+  // Discord relay — fire-and-forget. Carry the generated source ID so a
+  // successful bot send can be linked for later bidirectional edits.
+  const relayPromise = relayToDiscord(
+    opts.channelId,
+    opts.displayName,
+    opts.content,
+    channelName ?? undefined,
+    opts.mentions,
+    hasMetadata ? (opts.metadata ?? undefined) : undefined,
+    messageId,
+  );
   relayPromise.catch((err) => logger.warn({ err }, '[finalizeMessage] Discord relay failed (non-fatal)'));
 
   return { messageId, createdAt };

@@ -20,7 +20,7 @@ async function listMessages(req: Request, res: Response, next: NextFunction): Pr
 
   try {
     const messages = await prisma.$queryRaw<any[]>`
-      SELECT m.id, m.content, u.username, u.discord_display_name, u.discord_username, m.user_id, m.channel_id, m.source, m.created_at
+      SELECT m.id, m.content, u.username, u.discord_display_name, u.discord_username, m.user_id, m.channel_id, m.source, m.created_at, m.edited_at
       FROM messages m
       JOIN users u ON u.id = m.user_id
       WHERE m.channel_id = ${channelId}::uuid AND NOT m.is_deleted
@@ -209,7 +209,7 @@ async function listPublicMessages(req: Request, res: Response, next: NextFunctio
 
   try {
     const messages = await prisma.$queryRaw<any[]>`
-      SELECT m.id, m.content, u.username, u.discord_display_name, u.discord_username, m.source, m.created_at
+      SELECT m.id, m.content, u.username, u.discord_display_name, u.discord_username, m.source, m.created_at, m.edited_at
       FROM messages m
       JOIN users u ON u.id = m.user_id
       WHERE m.channel_id = ${channelId}::uuid AND NOT m.is_deleted
@@ -222,7 +222,7 @@ async function listPublicMessages(req: Request, res: Response, next: NextFunctio
       const displayName = !isPlaceholderPub(row.username)
         ? row.username
         : (row.discord_display_name || row.discord_username || row.username || 'Wanderer');
-      return { id: row.id, content: row.content, username: displayName, source: row.source, channelId: row.channel_id, createdAt: row.created_at };
+      return { id: row.id, content: row.content, username: displayName, source: row.source, channelId: row.channel_id, createdAt: row.created_at, editedAt: row.edited_at ?? null };
     });
     res.json({ data: transformed });
   } catch (err) {
