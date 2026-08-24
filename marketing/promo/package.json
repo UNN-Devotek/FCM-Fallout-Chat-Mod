@@ -15,7 +15,7 @@
     "render:party": "remotion render src/index.ts PartyGif out/party.gif"
   },
   "dependencies": {
-    "@remotion/cli": "^4.0.494",
+    "@remotion/cli": "^4.0.514",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "remotion": "^4.0.0"
