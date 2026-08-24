@@ -681,9 +681,8 @@ function InstallPanel() {
 
       <div style={{ ...subHeaderStyle, marginTop: '14px' }}>IF IT EVER SHOWS BEHIND THE GAME</div>
       <div style={bodyStyle}>
-        Rare — only if the automatic setup couldn&apos;t run. Right-click the tray icon and choose{' '}
-        <strong style={{ color: '#C8A840' }}>KDE: keep overlay above game</strong> (it re-applies the rules and
-        reloads KWin), or import the bundled rule by hand: System Settings → Window Management → Window
+        Rare — only if the automatic setup couldn&apos;t run. Import the bundled rule by hand:
+        System Settings → Window Management → Window
         Rules → Import →{' '}
         <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>~/.config/Fallout Chat Mod/fallout-chatmod-keepabove.kwinrule</code>{' '}
         → Apply, then run (or log out / in):

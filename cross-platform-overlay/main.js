@@ -144,8 +144,21 @@ const _xdgDesktop = (process.env.XDG_CURRENT_DESKTOP || process.env.XDG_SESSION_
 const _xdgSession = (process.env.XDG_SESSION_TYPE || '').toLowerCase();
 const IS_KDE = _xdgDesktop.includes('kde') || _xdgDesktop.includes('plasma');
 const IS_WAYLAND = _xdgSession === 'wayland' || !!process.env.WAYLAND_DISPLAY;
+const IS_X11 = IS_LINUX && !IS_WAYLAND;
 // The single switch that turns the new behavior on. KDE + Wayland only.
 const KDE_WAYLAND = IS_LINUX && IS_KDE && IS_WAYLAND;
+// Hyprland is a wlroots compositor, not KWin. HYPRLAND_INSTANCE_SIGNATURE is
+// Hyprland's own env var (always set inside a Hyprland session, the most
+// reliable signal); XDG_CURRENT_DESKTOP is a secondary fallback. Mutually
+// exclusive with KDE_WAYLAND / IS_X11 in practice.
+const IS_HYPRLAND = IS_LINUX && IS_WAYLAND &&
+  (!!process.env.HYPRLAND_INSTANCE_SIGNATURE || _xdgDesktop.includes('hyprland'));
+// Phase-0 spike opt-in (see docs/overlay/linux-overlay-approaches.md): when set, stay
+// on native Wayland instead of relaunching into XWayland. Off by default — every
+// existing user keeps the XWayland relaunch below unchanged. This exists to let us
+// empirically test the one open blocker (does FO76's Proton mouse-lock survive a
+// native-Wayland overlay above it — KDE bug 485409) before committing to a migration.
+const NATIVE_WAYLAND_OPT_IN = KDE_WAYLAND && process.env.FCM_NATIVE_WAYLAND === '1';
 
 // KDE+WAYLAND ONLY: force the XWayland (X11) Ozone backend. On a native Wayland
 // session Chromium uses the Wayland backend, where an external window cannot
@@ -175,9 +188,31 @@ const KDE_WAYLAND = IS_LINUX && IS_KDE && IS_WAYLAND;
 // under Proton is itself XWayland — sharing the XWayland root is what makes stacking work.
 // (Caveat: even under XWayland, KWin only forwards MODIFIER-bearing global keys between
 // XWayland clients, so bare keys may need follow-up — see docs.)
-if (KDE_WAYLAND) {
+if (KDE_WAYLAND && NATIVE_WAYLAND_OPT_IN) {
+  // Phase-0 spike path: skip the XWayland relaunch entirely and stay native. Enable
+  // Chromium's GlobalShortcutsPortal (fixed in Electron 42.0.0 — we're pinned to
+  // 42.5.0, see package.json) so globalShortcut has a chance of working without
+  // XGrabKey. Belt-and-suspenders ozone-platform switches are deliberately NOT set
+  // here — setting them would force XWayland, defeating the opt-in.
+  try { app.commandLine.appendSwitch('enable-features', 'GlobalShortcutsPortal'); } catch { /* ignore */ }
+  try {
+    // Electron has no public API to read back the app_id it actually sent via
+    // xdg_toplevel.set_app_id() — package.json's top-level "desktopName" (see the
+    // comment near app.setName() above) is what we PIN it to, but the only reliable
+    // ground truth is what KWin itself reports. Phase-0 tester: open System Settings
+    // -> Window Management -> Window Rules -> Add New... -> Detect Window Properties,
+    // click the overlay window, and confirm "Window class" reads fallout-chat-mod —
+    // same workflow already used to inspect Konsole/Chrome/Discord.
+    diag('[ozone] FCM_NATIVE_WAYLAND=1 — staying on native Wayland (skipping XWayland relaunch); ' +
+      'GlobalShortcutsPortal feature enabled; expected app_id=fallout-chat-mod (verify via ' +
+      'System Settings -> Window Rules -> Detect Window Properties on this window).');
+  } catch { /* logger not ready */ }
+} else if (KDE_WAYLAND) {
   // overlayCore is required further down; this runs at module load, so inline the
   // same pure logic via a local require to keep the relaunch decision testable.
+  // NATIVE_WAYLAND_OPT_IN is always false here (the branch above already handled the
+  // true case) — planOzoneRelaunch's nativeWaylandOptIn param isn't passed since this
+  // path is unconditionally the XWayland-relaunch decision.
   const _ozoneRelaunch = require('./overlay-core').planOzoneRelaunch({
     kdeWayland: KDE_WAYLAND, argv: process.argv, appImagePath: process.env.APPIMAGE || null,
     execPath: process.execPath,
@@ -247,11 +282,17 @@ if (!app.isPackaged) {
 // and continue; the relay retries on its own schedule.
 // NOTE: do NOT call app.setName() here. The app name feeds app.getPath('userData')
 // (→ ~/.config/Fallout Chat Mod), so renaming it would orphan every existing
-// user's session/settings/keybinds on all platforms. KWin matches the overlay by
-// its X11 WM_CLASS ("fallout-chat-mod", since the overlay runs under XWayland on
-// KDE) via the bundled keep-above rule's exact-name match — no app_id override is
-// needed. The electron-builder linux.desktopName only affects the installed .desktop
-// filename / native-Wayland app_id and does not change userData.
+// user's session/settings/keybinds on all platforms. What the KWin/Hyprland rules
+// match on instead is the top-level "desktopName" field in package.json (bundled
+// via build.files). Electron reads it at startup and calls app.setDesktopName,
+// which sets BOTH the X11 WM_CLASS and the native-Wayland app_id to
+// "fallout-chat-mod", independently of app.getName()/userData. Without it Electron
+// falls back to `${app.name}.desktop`, and app.name prefers productName, so the
+// class would become "Fallout Chat Mod" and every wmclass=fallout-chat-mod match
+// (the keep-above rule, findHyprctlClient) would silently stop matching. The
+// separate build.linux.executableName only names the packaged binary. See
+// FCM_NATIVE_WAYLAND / NATIVE_WAYLAND_OPT_IN above and
+// docs/overlay/linux-overlay-approaches.md.
 
 process.on('uncaughtException', (err) => {
   const msg = (err && err.message) ? err.message : String(err);
@@ -264,18 +305,19 @@ process.on('unhandledRejection', (reason) => {
 
 // LINUX/KDE: the importable KWin rule + setup note. Written to the stable
 // userData dir on startup (an AppImage has no install dir, and asar contents
-// aren't user-reachable) so users can import the rule and read the guide. Also
-// surfaced via the tray ("KDE: keep overlay above game"). Keep in sync with
+// aren't user-reachable) so users can import the rule and read the guide.
+// Keep in sync with
 // cross-platform-overlay/assets/fallout-chatmod-keepabove.kwinrule + docs.
 // NOTE: kept byte-consistent with assets/fallout-chatmod-keepabove.kwinrule
-// (sans comments — KWin's INI parser ignores them). TWO rules:
-//   1) keep-above on the OVERLAY (wmclass "fallout-chat-mod").
-//   2) keep game BELOW (wmclass "steam_app_1151340", below=true Force).
-//      KWin evaluates keepBelow() BEFORE isActiveFullScreen(), so the game never
-//      reaches ActiveLayer(6) — the overlay's keepAbove(4) wins with no flicker.
-//      (Replaces the retired fullscreen=false Force rule — issue #272.)
-// The overlay AUTO-APPLIES these on startup (setupKdeKeepAbove); this file is the
-// manual-import fallback.
+// (sans comments — KWin's INI parser ignores them). ONE rule, on the OVERLAY
+// (wmclass "fallout-chat-mod"), combining two properties:
+//   1) keep-above (above=true) — belt-and-suspenders.
+//   2) force-Layer=Overlay (layer=overlay, layerrule=2 Force) — THE KWin-6 fix
+//      (KDE Bug 441074): lifts the overlay above an active-fullscreen game WITHOUT
+//      demoting the game, so FO76 keeps normal fullscreen stacking above the panel.
+// The automatic path (syncKwinKeepAboveRule) installs/removes this dynamically
+// based on gameRunning && sameOutput. This string (and the .kwinrule asset) stay
+// the static, always-apply manual-import fallback.
 const KWINRULE_TEXT = `[Fallout Chat Mod - keep above games]
 Description=Fallout Chat Mod - keep above games
 wmclass=fallout-chat-mod
@@ -283,20 +325,8 @@ wmclassmatch=2
 wmclasscomplete=false
 above=true
 aboverule=3
-
-# Keep the GAME below — the no-flicker fix for "overlay hidden behind a focused
-# fullscreen game". KWin evaluates keepBelow BEFORE the active-fullscreen promotion, so
-# the overlay (rule above) stays above a focused fullscreen FO76 with NO flicker.
-# (Replaces the old fullscreen-demote rule, which fought the game -> endless flicker.)
-# Side effect: the game can be covered by the panel/other windows. Turn off via the app
-# tray -> "Keep game below overlay".
-[Fallout Chat Mod - keep game below]
-Description=Fallout Chat Mod - keep game below
-wmclass=steam_app_1151340
-wmclassmatch=2
-wmclasscomplete=false
-below=true
-belowrule=2
+layer=overlay
+layerrule=2
 `;
 const LINUX_README_TEXT = `Fallout Chat Mod — Linux / KDE setup
 =====================================
@@ -307,49 +337,62 @@ cases, because it's compositor behavior, not an app bug (Electron can't set wind
 stacking on Wayland — only KWin can).
 
 ----------------------------------------------------------------------
-1) KEEP THE OVERLAY ABOVE THE GAME  (automatic — two KWin rules)
+1) KEEP THE OVERLAY ABOVE THE GAME  (automatic — one KWin rule)
 ----------------------------------------------------------------------
-On first launch the overlay forces the XWayland backend and installs TWO KWin
-rules into ~/.config/kwinrulesrc, then reloads KWin — no manual steps:
+On first launch the overlay forces the XWayland backend. While Fallout 76 runs
+AND the overlay shares its monitor, it also installs ONE KWin rule into
+~/.config/kwinrulesrc (reloading KWin). No manual steps. The rule ("keep
+above games") combines two properties on the OVERLAY window:
 
-  - "keep above games"               -> keeps the overlay window above others.
-  - "demote game from fullscreen"    -> stops KWin promoting Fallout 76 to the
-                                        active-fullscreen layer, so the overlay
-                                        stays on top even while the GAME is focused.
+  - keeps the overlay window above others, AND
+  - forces the OVERLAY into KWin's Overlay layer, so it stays on top even
+    while the GAME is focused fullscreen. The game is NOT demoted — FO76
+    keeps its normal fullscreen stacking (above the panel).
 
-Why two rules: borderless games (incl. FO76) still tell KWin they are fullscreen
-(_NET_WM_STATE_FULLSCREEN), and KWin ranks a FOCUSED fullscreen window above any
-"keep above" window. On KWin 6 the old layer-override trick is ignored, so the
-demote rule is what actually keeps the overlay visible while you play. The game
-still renders full-screen-sized in Borderless — only its KWin stacking changes.
+The rule is removed automatically when FO76 exits or the overlay moves to a
+different monitor. There it's just an ordinary window, not forced above
+anything. The overlay also HIDES automatically when FO76 loses focus to
+another app on the same monitor (typing in chat still counts as "in the
+game"), so it won't sit on top of your desktop when you tab away. See
+section 2 for what enables this focus detection.
+
+Why the force-Layer property: borderless games (incl. FO76) still tell KWin
+they are fullscreen (_NET_WM_STATE_FULLSCREEN), and KWin ranks a FOCUSED
+fullscreen window above any plain "keep above" window. The force-Layer
+property (KWin 6+) is the sanctioned way to out-rank it without touching the
+game's own stacking.
 Run FO76 in BORDERLESS WINDOWED (not exclusive fullscreen).
 
 If it ever ends up behind the game (e.g. the auto-apply couldn't run), import the
-bundled rule by hand, or use the tray menu -> "KDE: keep overlay above game":
+bundled rule by hand:
 
   1. System Settings -> Window Management -> Window Rules -> Import...
   2. Select: fallout-chatmod-keepabove.kwinrule  (in this same folder)
   3. Apply, then run:  qdbus org.kde.KWin /KWin reconfigure   (or log out/in)
 
-Uninstalling? The uninstaller removes these rules; FO76's fullscreen is restored.
+Uninstalling? The uninstaller removes this rule; FO76's fullscreen is restored.
 
 ----------------------------------------------------------------------
-2) STOP THE OVERLAY STEALING KEYS IN OTHER APPS  (install xdotool)
+2) STOP THE OVERLAY STEALING KEYS IN OTHER APPS  (install kdotool)
 ----------------------------------------------------------------------
 By default the overlay's hotkeys (Insert / Delete / Home, etc.) stay registered
 the whole time Fallout 76 is running — so they get intercepted even when you tab
 to Konsole, Discord, a browser, etc. Wayland hides the active window from apps,
-so the overlay needs "xdotool" to tell when you're NOT in the game/overlay and
-release the keys. (kdotool also works as a fallback if you prefer it.)
+so the overlay needs "kdotool" to tell when you're NOT in the game/overlay and
+release the keys.
 
-  Install xdotool, then relaunch the overlay:
-    Arch / CachyOS:  sudo pacman -S xdotool   (or: paru -S xdotool)
-    Debian/Ubuntu:   sudo apt install xdotool
-    Fedora:          sudo dnf install xdotool
+  Install kdotool, then relaunch the overlay:
+    Arch / CachyOS:  paru -S kdotool       (AUR; or: yay -S kdotool)
+    Fedora:          sudo dnf install kdotool
 
-Without xdotool (or kdotool) everything still works EXCEPT this key-release
+kdotool is PREFERRED: it asks KWin directly, so it sees every window. xdotool
+also works as a fallback (sudo pacman -S xdotool / apt install xdotool), but it
+only sees XWayland windows — when you tab to a native-Wayland app (Konsole,
+Firefox) while the game runs, it can't tell and the hotkeys stay captured.
+
+Without kdotool (or xdotool) everything still works EXCEPT this key-release
 behavior — the overlay falls back to holding the hotkeys while the game runs (no
-crash, no other change). Install it for the best experience on KDE Wayland.
+crash, no other change). Install kdotool for the best experience on KDE Wayland.
 
 ----------------------------------------------------------------------
 Notes
@@ -360,10 +403,10 @@ Notes
   - Do NOT run the game inside gamescope for overlay purposes — its nested
     compositor isolates the game and no external overlay can draw over it.
   - The overlay only auto-shows while Fallout 76 is running (detected fine
-    under Proton). With the game closed it stays hidden by design.
-
-Tray menu -> "KDE: keep overlay above game" opens this folder and tries to
-import the rule for you automatically.
+    under Proton); closed game -> hidden by design. With kdotool/xdotool
+    (section 2) it also hides on alt-tab away from the game on the same
+    monitor and reappears on tab-back; without the tool it stays visible
+    for the whole game session.
 `;
 
 // Write the helper files into userData (Linux only). Returns the rule path.
@@ -380,14 +423,11 @@ function writeLinuxHelperFiles() {
   } catch (e) { diag('[linux] writeLinuxHelperFiles failed:', String(e && e.message || e)); return null; }
 }
 
-// Apply the KWin keep-above layer rule. Two entry points:
-//   • Auto, at startup on KDE+Wayland (interactive=false) — so the overlay sits
-//     above the game for EVERY user with no manual step. This is the path that
-//     makes it "just work"; previously the rule was only written to disk and the
-//     user had to discover the tray item, so most installs left it behind the game.
-//   • Tray "KDE: keep overlay above game" (interactive=true) — additionally opens
-//     the helper folder so the user can import the .kwinrule by hand if the auto
-//     path failed (older KWin / missing kwriteconfig6 / non-KDE).
+// Apply the KWin keep-above layer rule. Single entry point: syncKwinKeepAboveRule
+// on KDE+Wayland when gameRunning && sameOutput — so the overlay sits above the
+// game for EVERY user with no manual step. This is the path that makes it "just
+// work"; previously the rule was only written to disk and most installs left it
+// behind the game.
 //
 // IDEMPOTENT (required now that it runs on every launch): KWin stores rules as
 // NUMBERED groups ([1], [2], …) enumerated by [General] count — NOT named groups
@@ -395,83 +435,49 @@ function writeLinuxHelperFiles() {
 // our Description and EXITS if it's already there; without that guard, each startup
 // would append a duplicate rule group and reconfigure KWin needlessly. Only when the
 // rule is missing does it append group [N+1], bump count, and reconfigure. All
-// best-effort: on GNOME / missing tools / older KWin it no-ops (the interactive path
-// still opens the folder so the manual System-Settings → Import remains available).
-// The `fcm-overlay-layer` force-Layer rule (layer=overlay) keeps the overlay above a focused
-// fullscreen game WITHOUT demoting the game (so the game keeps normal fullscreen above the
-// panel) — the primary KWin-6 fix, always applied. The "keep game below" rule is now an OPT-IN
-// FALLBACK (default OFF) for setups where the force-Layer rule doesn't take; it drops the game
-// to BelowLayer, which also lets the panel cover it. Persisted in
-// settings.kwinGameBelow; default OFF on KDE-Wayland (the force-Layer rule handles keeping
-// the overlay above a fullscreen game). Toggled from the tray; the CLI installer also prompts.
-// Opt-in FALLBACK (default OFF): the `fcm-overlay-layer` force-Layer rule now lifts the overlay
-// above a fullscreen game without demoting it, so we no longer force the game below by default
-// (which also dropped it below the panel). Only ON if the user explicitly enabled it.
-function isKwinGameBelowEnabled() {
-  try { const s = loadState().settings; return !!(s && s.kwinGameBelow === true); } catch { return false; }
-}
-// Is the overlay window actually on screen right now (not hidden to tray / minimized)?
-// Used to gate the game-below rule + always-on-top: a hidden overlay must not hold the
-// game demoted below the panel.
-function overlayVisibleForZOrder() {
-  return !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized());
-}
-function setupKdeKeepAbove({ interactive = false } = {}) {
-  if (!IS_LINUX) return;
+// best-effort: on GNOME / missing tools / older KWin it no-ops. The .kwinrule file
+// is still written to userData (writeLinuxHelperFiles) so a hand import via
+// System Settings → Window Rules → Import remains available (e.g. Plasma 5,
+// missing kwriteconfig6).
+// The `fcm-keepabove` rule's force-Layer property (layer=overlay) keeps the overlay above a
+// focused fullscreen game WITHOUT demoting the game (so the game keeps normal fullscreen above
+// the panel) — the primary KWin-6 fix, always applied. (The old opt-in "keep game below"
+// fallback rule was removed: it dropped FO76 to BelowLayer, under EVERY window and the
+// panel. The install script still strips a stale fcm-game-below from old installs.)
+function setupKdeKeepAbove(onDone) {
+  if (!IS_LINUX) { if (onDone) onDone(); return; }
   const rulePath = writeLinuxHelperFiles();
-  if (interactive) {
-    const dir = (() => { try { return app.getPath('userData'); } catch { return null; } })();
-    if (dir) { try { shell.openPath(dir); } catch { /* ignore */ } }
-  }
-  // Only force the game BELOW while the overlay is actually visible over it. When the
-  // overlay is hidden to tray we drop the rule so FO76 reclaims normal fullscreen
-  // stacking (above the panel) — fixes "game sits under the taskbar even when hidden".
-  const includeBelow = overlayCore.shouldForceGameBelow({
-    gameRunning,
-    overlayVisible: overlayVisibleForZOrder(),
-    gameBelowEnabled: isKwinGameBelowEnabled(),
-  });
   try {
     const { exec } = require('child_process');
-    // Shared, unit-tested script builder (idempotency guard + numbered-group write
+    // Shared, unit-tested script builder (idempotency guard + named-group write
     // + count bump + KWin reconfigure). See overlay-core.buildKwinKeepAboveScript.
-    // includeBelow adds the game keep-below rule (the fix); when the user opts out,
-    // only the keep-above rule is applied (and any previously-installed below/demote
-    // rule is stripped).
-    const script = overlayCore.buildKwinKeepAboveScript({ includeBelow });
+    const script = overlayCore.buildKwinKeepAboveScript({});
     exec(script, { timeout: 8000, shell: '/bin/sh' }, (err, stdout) => {
       const out = String(stdout || '');
       if (err) diag('[kwin] keep-above auto-apply failed (use System Settings → Window Rules → Import): ' + String(err.message || err));
-      else if (out.includes('fcm-rule-present')) diag('[kwin] keep-above rule already present (gameBelow=' + includeBelow + ') — skipped');
-      else diag('[kwin] keep-above rule installed (gameBelow=' + includeBelow + ') + KWin reconfigured');
+      else if (out.includes('fcm-rule-present')) diag('[kwin] keep-above rule already present — skipped');
+      else diag('[kwin] keep-above rule installed + KWin reconfigured');
+      if (onDone) onDone(!err);
     });
-  } catch (e) { diag('[kwin] setupKdeKeepAbove exec failed:', String(e && e.message || e)); }
-  diag('[kwin] setupKdeKeepAbove: rule at ' + rulePath + ' (interactive=' + interactive + ', gameBelow=' + includeBelow + ')');
+  } catch (e) { diag('[kwin] setupKdeKeepAbove exec failed:', String(e && e.message || e)); if (onDone) onDone(false); }
+  diag('[kwin] setupKdeKeepAbove: rule at ' + rulePath);
 }
 
-// Re-apply the KWin rules ONLY when the gated game-below state actually flips (game
-// launch/exit, overlay show/hide). The install script is idempotent (no KWin reconfigure
-// when the rule set is unchanged), and this guard avoids even spawning it when nothing
-// changed — so this is safe to call on every transition, but NOT from the 3s heartbeat.
-let _lastGameBelowApplied = null;
-function syncKwinGameBelow(reason) {
-  if (!IS_LINUX) return;
-  const includeBelow = overlayCore.shouldForceGameBelow({
-    gameRunning,
-    overlayVisible: overlayVisibleForZOrder(),
-    gameBelowEnabled: isKwinGameBelowEnabled(),
-  });
-  if (includeBelow === _lastGameBelowApplied) return;
-  _lastGameBelowApplied = includeBelow;
-  diag('[kwin] game-below -> ' + includeBelow + (reason ? ' (' + reason + ')' : ''));
-  setupKdeKeepAbove({ interactive: false });
+// Is the overlay window actually on screen right now (not hidden to tray / minimized)?
+// Used to gate the panel auto-hide: a hidden overlay must not keep the panels retracted.
+function overlayVisibleForZOrder() {
+  return !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized());
 }
 
 // --- KDE panel auto-hide while in-game (opt-in, default OFF) ------------------
-// Residual to the force-Layer rule: a BORDERLESS game sits below the panel. When enabled,
-// set every Plasma panel to "autohide" while the overlay is visible over a running game, and
-// restore the user's exact per-panel modes on exit. Crash-safe: the saved modes are persisted
-// to userData, so a crash-then-relaunch restores them (see restore-on-startup + before-quit).
+// KWin's fullscreen promotion is FOCUS-GATED: a borderless FO76 is above the panel only
+// while it is the ACTIVE window; when it loses focus — e.g. the user focuses THIS overlay
+// to type in chat — it drops to NormalLayer and the taskbar pops over the game's edge.
+// When enabled, set every Plasma panel to "autohide" while the overlay is visible over a
+// running game, and restore the user's exact per-panel modes on exit. Crash-safe: the
+// saved modes are persisted to userData, so a crash-then-relaunch restores them (see
+// restore-on-startup + before-quit). (Independent of any game demotion — this is normal
+// KWin layering for an inactive fullscreen-state window.)
 let _qdbusBin = null;
 function resolveQdbusBin() {
   if (_qdbusBin !== null) return _qdbusBin;
@@ -547,8 +553,11 @@ function syncPanelHideInGame(reason) {
   else if (!want && (_panelHidingActive || readSavedPanelHiding())) { diag('[panel-hide] restore (' + (reason || '') + ')'); restorePanelHiding(); }
 }
 
-// Discover Steam library roots (default install dirs + any libraryfolders.vdf paths),
-// so we can locate the FO76 Proton prefix wherever the game is installed.
+// FO76 in-game cursor lock (Wayland) — explicit, tray-triggered only (see
+// overlay-core.js FO76 comment block). The overlay never writes to FO76's
+// Proton/Wine prefix automatically; this only runs when the user presses the
+// tray's "Fix in-game cursor lock" action. Detects if FO76 is running so we
+// don't fight a live Wine session.
 function fo76IsRunning() {
   try {
     const { execSync } = require('child_process');
@@ -568,60 +577,98 @@ function findProtontricks() {
   return null;
 }
 
+// Read-only check of FO76's Wine prefix for the cursor-lock Wine settings.
+// No writes, no subprocess — just fs.readFileSync over the candidate
+// user.reg paths. Returns { found, grabFullscreen, grabPointer }; found is
+// false if no candidate path exists (game never launched under this prefix,
+// or a non-Steam install FCM doesn't know how to locate).
+function readFo76GrabSettings() {
+  const candidates = overlayCore.fo76UserRegCandidates(os.homedir(), overlayCore.FO76_APPID);
+  for (const p of candidates) {
+    try {
+      const text = fs.readFileSync(p, 'utf8');
+      return { found: true, ...overlayCore.parseWineGrabSettings(text) };
+    } catch { /* try next candidate */ }
+  }
+  return { found: false, grabFullscreen: false, grabPointer: false };
+}
+
 // Enable the in-game cursor lock via protontricks' winetricks verb `grabfullscreen=y`
 // (the winecfg "Automatically capture the mouse in full-screen windows" setting) — no
 // hand-editing of Wine config. Needs protontricks + FO76's prefix (game launched once) +
 // FO76 closed + a display (the overlay runs under XWayland, so DISPLAY is set). Surfaced
-// via the tray. Returns { status }: 'applied'|'fo76-running'|'no-prefix'|'no-protontricks'|'error'.
+// via the tray only — never automatic. Returns { status }:
+// 'applied'|'fo76-running'|'no-prefix'|'no-protontricks'|'error'.
 function applyFo76Grab() {
   if (fo76IsRunning()) return { status: 'fo76-running' };
   const pt = findProtontricks();
   if (!pt) return { status: 'no-protontricks' };
   const { execFileSync } = require('child_process');
-  const noPrefix = (s) => /No Proton|not found|No installed|could not find|Steam is not/i.test(s || '');
   const run = (args) => execFileSync(pt[0], [...pt.slice(1), ...args],
     { timeout: 120000, encoding: 'utf8', env: { ...process.env } });
   try {
     // GrabFullscreen via the winetricks verb (locks the cursor in Fullscreen mode).
-    const out = run(['1151340', 'grabfullscreen=y']);
-    if (noPrefix(out)) return { status: 'no-prefix' };
+    const out = run([overlayCore.FO76_APPID, 'grabfullscreen=y']);
+    if (overlayCore.protontricksIndicatesNoPrefix(out)) return { status: 'no-prefix' };
     // GrabPointer via a raw reg add so the lock ALSO holds in Borderless-Windowed (no
-    // winetricks verb exists for it). `wineserver -w` forces user.reg to flush to disk
-    // before the wine session lingers (Wine only persists the registry on shutdown).
-    run(['-c', 'wine reg add "HKCU\\Software\\Wine\\X11 Driver" /v GrabPointer /t REG_SZ /d Y /f && wineserver -w', '1151340']);
+    // winetricks verb exists for it). See overlay-core.js buildFo76GrabPointerRegArgs.
+    run(overlayCore.buildFo76GrabPointerRegArgs());
     diag('[cursor-fix] protontricks grabfullscreen=y + GrabPointer=Y applied for FO76');
     return { status: 'applied' };
   } catch (e) {
     const msg = String((e && (e.stdout || e.message)) || e);
-    if (noPrefix(msg)) return { status: 'no-prefix' };
+    if (overlayCore.protontricksIndicatesNoPrefix(msg)) return { status: 'no-prefix' };
     diag('[cursor-fix] protontricks failed: ' + msg.slice(0, 200));
     return { status: 'error', error: e };
   }
 }
 
-// NOTE: the in-game cursor-lock (Wine GrabFullscreen/GrabPointer in the FO76 prefix) is applied
-// by the INSTALLER at install time (Packaging/linux/install.sh) — the community-standard
-// protontricks/winecfg "Automatically capture the mouse in full-screen windows" setting. The
-// overlay no longer auto-applies it on launch; the tray action below is the manual re-apply for
-// anyone who runs FO76 after installing (or after a Proton prefix reset). See applyFo76Grab.
-
-// Tray (interactive): same core, with explicit dialog feedback per status.
+// Tray action: same core, with explicit dialog feedback per status. This is the ONLY
+// way the cursor lock gets applied — never on install, never on launch (installer
+// only prints the manual steps; see Packaging/linux/install.sh).
 function fixFo76CursorLock() {
   if (!IS_LINUX) return;
   const { dialog } = require('electron');
-  const notify = (type, message, detail) => {
-    try { dialog.showMessageBox({ type, title: 'Fallout Chat Mod — in-game cursor lock', message, detail: detail || '', buttons: ['OK'] }); }
-    catch { diag('[cursor-fix] ' + message + (detail ? ' — ' + detail : '')); }
-  };
   const r = applyFo76Grab();
-  switch (r.status) {
-    case 'no-protontricks': notify('warning', 'protontricks is required.', 'Install it (Arch/CachyOS: sudo pacman -S protontricks · Fedora: sudo dnf install protontricks · Debian/Ubuntu: pipx install protontricks), then try again.'); break;
-    case 'no-prefix': notify('warning', 'Could not reach the Fallout 76 Proton prefix.', 'Launch FO76 once via Steam/Proton so its prefix is created, then try again.'); break;
-    case 'fo76-running': notify('warning', 'Fallout 76 is running.', 'Fully quit FO76 first, then run this again.'); break;
-    case 'applied': notify('info', 'In-game cursor lock enabled for Fallout 76.', 'Applied via protontricks (GrabFullscreen + GrabPointer). Relaunch Fallout 76 — the cursor stays locked to the game in both Fullscreen and Borderless-Windowed while the overlay is on top.'); break;
-    default: notify('error', 'protontricks could not enable the cursor lock.', String((r.error && r.error.message) || r.error || 'unknown error'));
-  }
+  const { type, message, detail } = overlayCore.cursorLockStatusMessage(r.status, r.error && r.error.message);
+  try { dialog.showMessageBox({ type, title: 'Fallout Chat Mod — in-game cursor lock', message, detail: detail || '', buttons: ['OK'] }); }
+  catch { diag('[cursor-fix] ' + message + (detail ? ' — ' + detail : '')); }
 }
+
+// Fires at most once per install: after FO76 exits on a Wayland session,
+// check (read-only) whether the Wine cursor-lock settings are missing and,
+// if so, nudge the user toward the existing one-click tray fix via a system
+// notification. Never writes to the prefix itself. See fixFo76CursorLock /
+// applyFo76Grab for the only place that happens, and only on an explicit
+// click (the notification's or the tray's). Persists cursorLockPrompted once
+// we have actually looked (prefix found): either we showed the notification,
+// or both settings were already set. Does not persist when the prefix is
+// missing; that is not an informed decision.
+function maybePromptCursorLockFix() {
+  if (!IS_LINUX || !IS_WAYLAND) return;
+  let alreadyPrompted = false;
+  try { alreadyPrompted = !!(loadState().settings || {}).cursorLockPrompted; } catch { /* default false */ }
+  if (alreadyPrompted) return;
+  const r = readFo76GrabSettings();
+  if (!r.found) return; // no prefix yet — nothing to detect, don't mark as prompted
+  const needPrompt = overlayCore.shouldPromptCursorLock({
+    wayland: IS_WAYLAND,
+    grabFullscreen: r.grabFullscreen,
+    grabPointer: r.grabPointer,
+    alreadyPrompted,
+  });
+  try {
+    const st = loadState();
+    saveState({ settings: { ...(st.settings || {}), cursorLockPrompted: true } });
+  } catch { /* non-fatal — worst case we prompt again next exit */ }
+  if (!needPrompt) return;
+  showSystemNotification(
+    'Fallout Chat Mod — cursor lock',
+    'Fallout 76\'s mouse-lock may drop while the overlay is up on Wayland. Click to apply the one-time fix.',
+    () => fixFo76CursorLock(),
+  );
+}
+
 const http = require('http');
 const { URL } = require('url');
 // Helper: pick http or https module based on the relay URL protocol.
@@ -845,8 +892,14 @@ function isPrivileged() {
 // A fully-set-up regular user with the game closed → false (overlay hides). This
 // is intentional: onboarding stays visible (chatActive=false), then the overlay
 // closes the instant onboarding completes (chatActive=true) if FO76 isn't running.
+// focusAware/gameFocused (KDE-Wayland, X11, or Hyprland w/ live foreground
+// probe): hides the overlay when the game isn't focused, but only on the SAME
+// output as the game, same reasoning as syncKwinKeepAboveRule / syncHyprlandPin.
+// There's no stacking contest to win elsewhere. Without this, alt-tab would
+// hide the overlay even on a monitor the game isn't on.
 function canShowOverlay() {
-  return overlayCore.canShowOverlay({ forceVisible, role: userRole, gameRunning, chatActive });
+  const focusAware = (KDE_WAYLAND || IS_X11 || IS_HYPRLAND) && foregroundDetect && isOverlaySameOutputAsGame() === true;
+  return overlayCore.canShowOverlay({ forceVisible, role: userRole, gameRunning, chatActive, focusAware, gameFocused });
 }
 
 // Throttled tray balloon: shown when a regular user tries to open the overlay
@@ -873,10 +926,10 @@ function notifyGameRequired() {
 const { spawn, exec } = require('child_process');
 const { GAME_PROCESSES, isGameProcess, isGameClass } = overlayCore;
 let zorderProc = null;            // long-lived PowerShell foreground poller (win32)
-let fgPoller = null;              // active-window poller child (KDE-Wayland only)
+let fgPoller = null;              // active-window poller child (KDE-Wayland / X11 / Hyprland)
 let fgPollTimer = null;           // setInterval driving the active-window poll
-let fgTool = null;                // resolved tool name: 'xdotool' | 'kdotool'
-let kdeWaylandForegroundDetect = false; // true once a foreground tool is confirmed present
+let fgTool = null;                // resolved tool name: 'xdotool' | 'kdotool' | 'hyprctl'
+let foregroundDetect = false;     // true once a foreground tool is confirmed present (any Linux session type)
 let zorderTimer = null;           // fallback JS timer (re-applies desired state)
 let lastForegroundProc = '';      // last reported foreground process name (lower)
 // ── win32 foreground-poller self-heal + fail-safe (issue #136) ───────────────
@@ -899,6 +952,12 @@ const FOCUS_GUARD_MS = 800;       // window after a user focus during which the 
 // foreground-window-process API without native modules). Standalone/no-game mode
 // always remains usable regardless of whether the game is found.
 let gameRunning = false;           // true when Fallout76.exe is in the process list
+let gameFocused = false;           // committed focus state: game or overlay has it
+let _focusCandidate = null;        // pending gameFocused value (hysteresis)
+let _focusStableCount = 0;         // consecutive samples agreeing on _focusCandidate
+let _cachedGameDisplayId = null;   // FO76's Electron display id (null = output unknown)
+let _desiredRuleInstalled = null;  // latest state requested by game/display probes
+let _appliedRuleInstalled = null;  // last state confirmed by a successful helper command
 let gameScanTimer = null;          // interval handle for the process scanner
 let _scanCount = 0;                // diagnostic: number of game scans run
 let _lastDiagFound = null;         // diagnostic: last logged detection state
@@ -1021,6 +1080,15 @@ function onGamePresenceChanged(found) {
   if (gameRunning && !wasRunning) {
     diag('[game-gate] game launched — clearing userHidden');
     userHidden = false;
+    // Probe the game's display asynchronously. Stacking stays ordinary while
+    // the output is unknown, then enables only after a confirmed same-output
+    // result.
+    probeGameDisplay();
+  } else if (!gameRunning && wasRunning) {
+    _cachedGameDisplayId = null;
+    if (KDE_WAYLAND) syncKwinKeepAboveRule('game-exit');
+    else if (IS_HYPRLAND) syncHyprlandPin('game-exit');
+    maybePromptCursorLockFix();
   }
   // Re-evaluate keybind registration: on non-win32 the keys are gated on game-
   // RUNNING (no foreground API), so they must (un)register when the game launches
@@ -1035,17 +1103,278 @@ function onGamePresenceChanged(found) {
   // On non-Windows where we have no foreground-window API: mirror game-running
   // state onto lastForegroundProc so the existing desiredTopmost() logic works.
   // While the game is running → act topmost; when it stops → drop back.
-  if (process.platform !== 'win32') {
+  // Skip when a real foreground probe drives lastForegroundProc. Stomping it
+  // on every launch/exit would fight the poller.
+  if (process.platform !== 'win32' && !foregroundDetect) {
     lastForegroundProc = gameRunning ? GAME_PROCESSES[0].toLowerCase() : '';
     applyZOrder();
   }
   // Re-evaluate overlay visibility for ALL platforms:
   //   game launched → show (now allowed for regular users)
   //   game closed   → hide if fully set up and not privileged/force-visible
-  reevaluateVisibility();
-  // Add/remove the KWin game-below rule + panel auto-hide to match the new state (Linux).
-  syncKwinGameBelow('game-' + (gameRunning ? 'launch' : 'exit'));
+  reevaluateVisibility(gameRunning ? 'game-launch' : 'game-exit');
+  // Apply/restore the panel auto-hide (opt-in) to match the new state (Linux).
   syncPanelHideInGame('game-' + (gameRunning ? 'launch' : 'exit'));
+}
+
+// Locate FO76 and cache which Electron display it's on, so the keep-above rule
+// installs only when the overlay shares that output. Every probe invalidates the
+// old result first; a miss therefore fails closed until a fresh position is known.
+function probeGameDisplay() {
+  _cachedGameDisplayId = null;
+  if (KDE_WAYLAND) syncKwinKeepAboveRule('probe-pending');
+  else if (IS_HYPRLAND) syncHyprlandPin('probe-pending');
+  if (!IS_LINUX || !fgTool) {
+    return;
+  }
+  const pattern = (GAME_PROCESSES || []).concat(['steam_app_1151340']).join('|');
+  const applyGamePos = (x, y) => {
+    try {
+      const d = screen.getDisplayMatching({ x, y, width: 1, height: 1 });
+      _cachedGameDisplayId = d ? d.id : null;
+      diag('[output] game display probed id=' + _cachedGameDisplayId + ' at ' + x + ',' + y);
+    } catch { _cachedGameDisplayId = null; }
+    if (KDE_WAYLAND) syncKwinKeepAboveRule('probe');
+    else if (IS_HYPRLAND) syncHyprlandPin('probe');
+  };
+  const onProbeFail = (reason) => {
+    _cachedGameDisplayId = null;
+    if (KDE_WAYLAND) syncKwinKeepAboveRule(reason);
+    else if (IS_HYPRLAND) syncHyprlandPin(reason);
+  };
+  if (fgTool === 'hyprctl') {
+    try {
+      exec('hyprctl clients -j', { timeout: 2000, shell: '/bin/sh' }, (err, stdout) => {
+        if (err || !stdout) { onProbeFail('probe-empty'); return; }
+        let client = null;
+        try { client = overlayCore.findHyprctlClient(stdout, pattern); } catch { client = null; }
+        if (!client || !Array.isArray(client.at) || client.at.length < 2) { onProbeFail('probe-unparsed'); return; }
+        applyGamePos(client.at[0], client.at[1]);
+      });
+    } catch (e) {
+      diag('[hyprland] clients probe threw: ' + String((e && e.message) || e));
+      onProbeFail('probe-empty');
+    }
+    return;
+  }
+  exec(fgTool + " search --class '" + pattern + "' getwindowgeometry", { timeout: 2000, shell: '/bin/sh' }, (err, stdout) => {
+    if (err || !stdout) { onProbeFail('probe-empty'); return; }
+    // Verified (kdotool 0.2.3 + xdotool): both print `Position: X,Y`; xdotool
+    // adds ` (screen: N)`. Anchor on the label so xdotool's `Window 12345` id
+    // isn't mistaken for a coordinate.
+    const m = String(stdout).match(/Position:\s*(-?\d+)\s*,\s*(-?\d+)/);
+    if (!m) { onProbeFail('probe-unparsed'); return; }
+    applyGamePos(parseInt(m[1], 10), parseInt(m[2], 10));
+  });
+}
+
+// Is the overlay on the same Electron display as FO76? Cheap, no subprocess,
+// just compares live bounds against the cached game display id. Shared by the
+// KWin rule gate AND canShowOverlay so a different-monitor overlay is an
+// ordinary window on BOTH axes. Returns "unknown" until the game display probe
+// has succeeded; unknown must never enable compositor stacking.
+function isOverlaySameOutputAsGame() {
+  if (_cachedGameDisplayId == null || !mainWindow || mainWindow.isDestroyed()) return 'unknown';
+  try {
+    const b = mainWindow.getBounds();
+    const overlayDisplay = screen.getDisplayMatching(b);
+    const result = !!overlayDisplay && overlayDisplay.id === _cachedGameDisplayId;
+    vdiag('[output] sameOutput check: cachedGameDisplayId=' + _cachedGameDisplayId +
+      ' overlayBounds=' + JSON.stringify(b) + ' overlayDisplayId=' + (overlayDisplay && overlayDisplay.id) +
+      ' -> ' + result);
+    return result;
+  } catch (e) { diag('[output] sameOutput check threw: ' + String(e && e.message || e)); return 'unknown'; }
+}
+
+// Install/remove the KWin rule: present only while the game runs AND the
+// overlay shares its output. Unknown display state fails closed.
+//
+// SERIALIZED: two kwinrulesrc-touching execs in flight race on the same file.
+// A game-launch call can race the display probe resolving false moments later
+// (which removes); whichever exec finishes last must still reflect the latest
+// desired state. Failed helpers leave the applied state unchanged so a later
+// probe retries instead of assuming the command worked.
+// While one is in flight, a new request just queues a recheck, which
+// re-derives the state fresh once the in-flight one completes.
+let _kwinSyncInFlight = false;
+let _kwinSyncQueued = false;
+let _kwinSyncRetryTimer = null;
+let _kwinSyncRetryTarget = null;
+let _kwinSyncFailureCount = 0;
+const KWIN_SYNC_RETRY_DELAYS_MS = [2500, 5000, 10000, 30000, 60000];
+
+function clearKwinSyncRetry() {
+  if (_kwinSyncRetryTimer) clearTimeout(_kwinSyncRetryTimer);
+  _kwinSyncRetryTimer = null;
+  _kwinSyncRetryTarget = null;
+  _kwinSyncFailureCount = 0;
+}
+
+function scheduleKwinSyncRetry(syncFn, attempted) {
+  if (_kwinSyncRetryTimer || _desiredRuleInstalled !== attempted) return;
+  const delay = KWIN_SYNC_RETRY_DELAYS_MS[Math.min(
+    _kwinSyncFailureCount, KWIN_SYNC_RETRY_DELAYS_MS.length - 1
+  )];
+  _kwinSyncFailureCount += 1;
+  _kwinSyncRetryTarget = attempted;
+  _kwinSyncRetryTimer = setTimeout(() => {
+    _kwinSyncRetryTimer = null;
+    _kwinSyncRetryTarget = null;
+    syncFn('retry');
+  }, delay);
+  diag('[linux-stack] helper failed; retry scheduled in ' + delay + 'ms');
+}
+
+function prepareKwinSync(want) {
+  // A new desired state supersedes a delayed retry for the old state.
+  if (_kwinSyncRetryTimer && want !== _kwinSyncRetryTarget) clearKwinSyncRetry();
+  return !_kwinSyncRetryTimer;
+}
+
+function syncKwinKeepAboveRule(reason) {
+  if (!IS_LINUX || !KDE_WAYLAND) return;
+  const sameOutput = isOverlaySameOutputAsGame();
+  const want = overlayCore.shouldInstallKeepAboveRule({ gameRunning, sameOutput });
+  _desiredRuleInstalled = want;
+  if (_kwinSyncInFlight) { _kwinSyncQueued = true; return; }
+  if (want === _appliedRuleInstalled) { clearKwinSyncRetry(); return; }
+  if (!prepareKwinSync(want)) return;
+  const attempted = want;
+  _kwinSyncInFlight = true;
+  diag('[kwin] rule -> ' + want + ' (sameOutput=' + sameOutput + ' reason=' + reason + ')');
+  const onDone = (success) => {
+    const result = overlayCore.resolveKeepAboveApply({
+      desired: _desiredRuleInstalled,
+      applied: _appliedRuleInstalled,
+      attempted,
+      success,
+    });
+    _appliedRuleInstalled = result.applied;
+    _kwinSyncInFlight = false;
+    if (result.shouldReconcile || _kwinSyncQueued) {
+      _kwinSyncQueued = false;
+      syncKwinKeepAboveRule('queued-recheck');
+    } else if (success) {
+      clearKwinSyncRetry();
+    } else {
+      scheduleKwinSyncRetry(syncKwinKeepAboveRule, attempted);
+    }
+  };
+  if (want) {
+    setupKdeKeepAbove(onDone);
+  } else {
+    try {
+      const script = overlayCore.buildKwinRemoveRulesScript({});
+      exec(script, { timeout: 8000, shell: '/bin/sh' }, (err) => {
+        if (err) diag('[kwin] remove-rule failed: ' + String(err && err.message || err));
+        onDone(!err);
+      });
+    } catch (e) { diag('[kwin] remove-rule threw: ' + String(e && e.message || e)); onDone(false); }
+  }
+}
+
+// Hyprland stacking: pin the overlay above the workspace while the game runs
+// AND shares this output. hyprctl dispatch pin toggles, so query and verify the
+// actual pinned state before dispatching. Shares the KWin in-flight/queued/state
+// state: Hyprland and KWin are mutually exclusive session types. Best-effort
+// - missing or failing hyprctl logs a diagnostic and never leaves in-flight
+// stuck. Unknown pin state is fail-closed and retried on the next probe.
+function syncHyprlandPin(reason) {
+  if (!IS_LINUX || !IS_HYPRLAND) return;
+  const sameOutput = isOverlaySameOutputAsGame();
+  const want = overlayCore.shouldInstallKeepAboveRule({ gameRunning, sameOutput });
+  _desiredRuleInstalled = want;
+  if (_kwinSyncInFlight) { _kwinSyncQueued = true; return; }
+  if (want === _appliedRuleInstalled) { clearKwinSyncRetry(); return; }
+  if (!prepareKwinSync(want)) return;
+  const attempted = want;
+  _kwinSyncInFlight = true;
+  diag('[hyprland] pin -> ' + want + ' (sameOutput=' + sameOutput + ' reason=' + reason + ')');
+  const onDone = (success) => {
+    const result = overlayCore.resolveKeepAboveApply({
+      desired: _desiredRuleInstalled,
+      applied: _appliedRuleInstalled,
+      attempted,
+      success,
+    });
+    _appliedRuleInstalled = result.applied;
+    _kwinSyncInFlight = false;
+    if (result.shouldReconcile || _kwinSyncQueued) {
+      _kwinSyncQueued = false;
+      syncHyprlandPin('queued-recheck');
+    } else if (success) {
+      clearKwinSyncRetry();
+    } else {
+      scheduleKwinSyncRetry(syncHyprlandPin, attempted);
+    }
+  };
+  const verifyPin = (address) => {
+    exec('hyprctl clients -j', { timeout: 2000, shell: '/bin/sh' }, (verifyErr, verifyStdout) => {
+      if (verifyErr || !verifyStdout) {
+        diag('[hyprland] pin verification failed: ' + String((verifyErr && verifyErr.message) || verifyErr || 'empty'));
+        onDone(false);
+        return;
+      }
+      let verified = null;
+      try {
+        verified = overlayCore.findHyprctlClient(verifyStdout, 'fallout-chat-mod', {
+          pid: process.pid, address,
+        });
+      } catch { verified = null; }
+      const state = overlayCore.getHyprlandPinState(verified);
+      if (state !== want) {
+        diag('[hyprland] pin verification mismatch (wanted=' + want + ' actual=' + state + ')');
+        onDone(false);
+        return;
+      }
+      onDone(true);
+    });
+  };
+  try {
+    exec('hyprctl clients -j', { timeout: 2000, shell: '/bin/sh' }, (err, stdout) => {
+      if (err || !stdout) {
+        diag('[hyprland] clients lookup failed: ' + String((err && err.message) || err || 'empty'));
+        onDone(false);
+        return;
+      }
+      let client = null;
+      try { client = overlayCore.findHyprctlClient(stdout, 'fallout-chat-mod', { pid: process.pid }); } catch (e) {
+        diag('[hyprland] clients parse threw: ' + String((e && e.message) || e));
+        onDone(false);
+        return;
+      }
+      const address = client && typeof client.address === 'string' ? client.address : null;
+      if (!address) {
+        diag('[hyprland] overlay window not found in hyprctl clients');
+        onDone(false);
+        return;
+      }
+      const actualPinned = overlayCore.getHyprlandPinState(client);
+      if (actualPinned === null) {
+        diag('[hyprland] overlay pin state is unknown, skipping toggle');
+        onDone(false);
+        return;
+      }
+      if (actualPinned === want) {
+        onDone(true);
+        return;
+      }
+      // Fail-closed: only interpolate a hex window address into the shell.
+      if (!/^0x[0-9a-fA-F]+$/.test(address)) {
+        diag('[hyprland] unexpected window address, skipping pin');
+        onDone(false);
+        return;
+      }
+      exec('hyprctl dispatch pin address:' + address, { timeout: 2000, shell: '/bin/sh' }, (err2) => {
+        if (err2) {
+          diag('[hyprland] pin dispatch failed: ' + String((err2 && err2.message) || err2));
+          onDone(false);
+          return;
+        }
+        verifyPin(address);
+      });
+    });
+  } catch (e) { diag('[hyprland] pin sync threw: ' + String((e && e.message) || e)); onDone(false); }
 }
 
 function startGameScan() {
@@ -2070,6 +2399,11 @@ ipcMain.on('overlay:move-end', () => {
     const b = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : null;
     diag('[move] end bounds=' + JSON.stringify(b ? { x: b.x, y: b.y } : null));
   } catch { /* ignore */ }
+  if (gameRunning) {
+    // The game may have moved to another monitor while the overlay was being
+    // dragged. Refresh the game position instead of trusting a stale display id.
+    probeGameDisplay();
+  }
 });
 
 // Chrome Opacity — sends --fcm-chrome-bg-alpha CSS variable to the renderer so
@@ -2536,21 +2870,22 @@ ipcMain.on('overlay:chat-active', (_evt, active) => {
   if (chatActive !== prev) {
     diag('[game-gate] chatActive → ' + chatActive + ' gameRunning=' + gameRunning + ' isPrivileged=' + isPrivileged());
     // If the user just finished setup and the game isn't running, apply the gate.
-    reevaluateVisibility();
+    reevaluateVisibility('chat-active');
   }
 });
 
 // Show a native OS notification (Windows toast / Linux libnotify). No-op if the
 // platform doesn't support it. Used to guide the user after onboarding.
-function showSystemNotification(title, body) {
+function showSystemNotification(title, body, onClick) {
   try {
     if (!Notification || !Notification.isSupported || !Notification.isSupported()) {
       diag('[notify] not supported — skipping: ' + title);
       return;
     }
     const n = new Notification({ title, body, icon: appIcon() || undefined, silent: false });
-    // Clicking the toast brings the overlay forward (useful once the game is up).
-    n.on('click', () => { try { focusToChat(); } catch { /* non-fatal */ } });
+    // Clicking the toast brings the overlay forward (useful once the game is up),
+    // unless the caller supplied a different action.
+    n.on('click', () => { try { (onClick || focusToChat)(); } catch { /* non-fatal */ } });
     n.show();
     diag('[notify] shown: ' + title + ' — ' + body);
   } catch (e) {
@@ -2605,7 +2940,7 @@ ipcMain.on('overlay:onboarding-complete', () => {
   const prev = chatActive;
   chatActive = true;
   diag('[onboarding] complete — chatActive=true gameRunning=' + gameRunning + ' isPrivileged=' + isPrivileged() + ' forceVisible=' + forceVisible);
-  if (prev !== true) reevaluateVisibility();
+  if (prev !== true) reevaluateVisibility('onboarding');
 
   if (isPrivileged() || forceVisible) return;
 
@@ -2659,7 +2994,7 @@ async function startRelay(retryCount = 0) {
     if (userRole !== prevRole) rebuildTray();
     // If the user is privileged, re-evaluate visibility now so they can open the
     // overlay without the game from the moment register completes.
-    if (isPrivileged()) reevaluateVisibility();
+    if (isPrivileged()) reevaluateVisibility('privileged');
     sendToRenderer('relay:status', {
       state: 'authenticated',
       displayName: displayName || '',
@@ -2826,9 +3161,33 @@ function toggleWindow() {
 // reevaluateVisibility: re-check canShowOverlay and show or hide accordingly.
 // Called after game-detection changes or after auth/setup completes.
 // NOTE: does NOT auto-show while userHidden=true (user explicitly hid with Delete/tray).
-function reevaluateVisibility() {
-  if (overlayCore.visibilityDecision(canShowOverlay(), userHidden) === 'show') _doShow();
-  else hideWindow();
+// `reason` picks the activation mode via showModeFor: 'active' -> _doShow()
+// (steals focus); else showWindowInactive(). Hide is always bare hideWindow(),
+// never hideWindowUserExplicit, so userHidden stays untouched.
+function reevaluateVisibility(reason = 'presence') {
+  if (overlayCore.visibilityDecision(canShowOverlay(), userHidden) === 'show') {
+    if (overlayCore.showModeFor(reason) === 'active') _doShow();
+    else showWindowInactive();
+  } else {
+    hideWindow(); // bare hide, NEVER hideWindowUserExplicit here; userHidden must stay untouched
+  }
+}
+
+function applyGameFocus(activeClass, overlayFocusedOverride) {
+  const overlayFocused = (typeof overlayFocusedOverride === 'boolean')
+    ? overlayFocusedOverride
+    : !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused());
+  const r = overlayCore.nextGameFocusState({
+    activeClass, overlayFocused, gameRunning,
+    candidate: _focusCandidate, stableCount: _focusStableCount,
+  });
+  _focusCandidate = r.candidate;
+  _focusStableCount = r.stableCount;
+  if (!r.commit || r.gameFocused === gameFocused) return;
+  gameFocused = r.gameFocused;
+  diag('[focus] gameFocused -> ' + gameFocused);
+  reevaluateVisibility(gameFocused ? 'game-focus' : 'game-unfocus');
+  refreshShortcuts();
 }
 
 // Focus-to-chat (the desktop overlay's "Insert opens chat input" behaviour):
@@ -2979,15 +3338,15 @@ function refreshShortcuts() {
   const overlayFocused = !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused());
   // shouldRegisterShortcuts handles all platform/detection-availability cases:
   //   win32             → game active = foreground window is the game
-  //   linux KDE-Wayland + xdotool/kdotool present → same as win32 (fgPoller running)
+  //   linux + live tool → same as win32 (fgPoller running, KDE-Wayland or X11)
   //   linux fallback    → game active = game process is running (old behavior)
   const active = overlayCore.shouldRegisterShortcuts({
     platform: process.platform,
-    kdeWayland: KDE_WAYLAND,
-    hasForegroundDetect: kdeWaylandForegroundDetect,
+    hasForegroundDetect: foregroundDetect,
     gameRunning,
     foregroundProc: lastForegroundProc,
     overlayFocused,
+    gameFocused,
   });
   const stateKey = active + '|' + overlayFocused + '|' + trayAvailable;
   if (stateKey === _shortcutState) return; // idempotent — no churn on the 300ms poll
@@ -3189,11 +3548,11 @@ function desiredTopmost() {
     windowFocused: !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()),
     foregroundIsGame: isGameClass(lastForegroundProc),
     foregroundUnknown: overlayCore.isUnknownForegroundClass(lastForegroundProc),
-    // Focus-aware lowering is DISABLED on KDE-Wayland: the overlay is a notification-
-    // type window there (sits in KWin's notification layer, above the fullscreen game),
-    // which by design can't be lowered below other apps via setAlwaysOnTop — so we use
-    // session-long "game running → topmost" (the chosen "above the game, no flicker"
-    // behavior). Hotkey gating still uses the foreground class (see shouldRegisterShortcuts).
+    // Focus-aware lowering is DISABLED on KDE-Wayland by design: the fcm-keepabove KWin
+    // rule's force-Layer property FORCES the overlay into OverlayLayer (layerrule=2),
+    // which trumps any setAlwaysOnTop(false) we could issue — so we use session-long "game running →
+    // topmost" (the chosen "above the game, no flicker" behavior; confirmed 2026-07).
+    // Hotkey gating still uses the foreground class (see shouldRegisterShortcuts).
     focusAwareTopmost: false,
   });
 }
@@ -3201,14 +3560,16 @@ function desiredTopmost() {
 // Linux always-on-top heartbeat: re-assert topmost on a short interval while
 // the game is running. On some X11 WMs and under Proton/XWayland the
 // _NET_WM_STATE_ABOVE hint can be silently dropped when the game window raises
-// itself (e.g. on game-launch or alt-tab). The heartbeat catches this by
-// forcing a re-apply every few seconds — idempotent on Windows (guarded by
-// overlayIsTopmost) but explicitly re-forced on Linux where stacking races are
-// more common. Only active on Linux; Windows has the 1500ms applyZOrder timer
-// already plus the DWM-flash constraint that prohibits frequent forced re-apply.
+// itself. Forces a re-apply every few seconds. Windows has its own 1500ms timer
+// instead (plus a DWM-flash constraint that rules out frequent forced re-apply).
+// Skipped on KDE-Wayland: the KWin Force-layer rule (syncKwinKeepAboveRule)
+// self-heals on window-raise, making the heartbeat redundant there.
+// Not skipped on Hyprland: pin has not been verified on real hardware to beat
+// a fullscreen Proton game the way KWin's Force-Layer rule was, so the
+// setAlwaysOnTop heartbeat stays as belt-and-suspenders until verified.
 let _linuxZOrderTimer = null;
 function _startLinuxZOrderHeartbeat() {
-  if (!IS_LINUX) return;
+  if (!IS_LINUX || KDE_WAYLAND) return;
   if (_linuxZOrderTimer) return;
   _linuxZOrderTimer = setInterval(() => {
     if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible() || isDragging) return;
@@ -3284,46 +3645,63 @@ function applyZOrder(opts) {
   } catch (e) { if (IS_LINUX) diag('[zorder] setAlwaysOnTop failed:', String(e && e.message || e)); }
 }
 
-// KDE-Wayland active-window poller using xdotool (preferred) or kdotool.
+// Linux active-window poller using kdotool / xdotool / hyprctl. KDE-Wayland
+// prefers kdotool (KWin D-Bus, sees native-Wayland windows). Plain X11 prefers
+// xdotool (the native X11 tool); kdotool is only a fallback there. Hyprland
+// uses hyprctl (activewindow -j), its own compositor IPC, not KWin.
 //
-// FO76 runs under Proton as an XWayland window, and the overlay itself runs under
-// XWayland on KDE (forced ozone hint), so the standard X11 tool `xdotool` CAN read
-// the active window's WM_CLASS here. `kdotool` (https://github.com/jinliu/kdotool)
-// is the pure-Wayland counterpart that talks to KWin over D-Bus; we use it as a
-// fallback when xdotool isn't installed. Both share the same subcommand syntax:
+// `kdotool` (https://github.com/jinliu/kdotool) talks to KWin over D-Bus, so it
+// sees EVERY window — native-Wayland (Konsole, Wayland Firefox) AND XWayland
+// (FO76 under Proton) — and reads the game's class reliably. It is PREFERRED
+// on KDE-Wayland. `xdotool` is the X11-native tool: on Wayland it only sees
+// the XWayland side, so when a native-Wayland window is focused it reports
+// NO active window. With the game running, the "(null)"-class heuristic then
+// treats that as "probably the fullscreen game" and the hotkeys stay captured
+// in the other app. It also hits
+// a libxdo double-free crash on some builds (see the circuit-breaker below).
+// Both tools share the same subcommand syntax:
 //   <tool> getactivewindow getwindowclassname
-// Output: the WM_CLASS of the currently active window, e.g.
+// Output: the window class of the currently active window, e.g.
 //   steam_app_1151340   (FO76 under Proton — confirmed on CachyOS)
 //   fallout76.exe       (FO76 under some Proton/Wine versions)
-//   konsole / discord   (other apps)
+//   org.kde.konsole     (kdotool reports native-Wayland apps by app-id;
+//                        xdotool would report X11-style "konsole" — neither
+//                        matches isGameClass(), which is all that matters)
 //   fallout chat mod    (our own overlay — must NOT match isGameClass(); the
 //                        overlay-focused case is covered separately via isFocused())
-// When a native-Wayland window is active, xdotool getactivewindow returns nothing
-// (no active X window) → we treat that as "not the game" and release the hotkeys.
 //
 // Graceful degradation: if neither tool is on PATH, we log a single diagnostic and
-// leave kdeWaylandForegroundDetect=false so refreshShortcuts falls back to the
+// leave foregroundDetect=false so refreshShortcuts falls back to the
 // pre-existing "game running → keys active" behavior (no regression).
 function _startForegroundPoller() {
-  if (!KDE_WAYLAND) return; // only on KDE+Wayland
-  // Resolve which tools are available — prefer xdotool (XWayland, ubiquitous on
-  // Arch/CachyOS), then kdotool. We detect BOTH (not just the first) so the crash
-  // circuit-breaker below can auto-switch to the alternate tool if the primary keeps
-  // aborting. `;` (not `||`) runs both probes; `command -v` prints the path when found.
-  exec('command -v xdotool; command -v kdotool', { shell: '/bin/sh' }, (_err, stdout) => {
+  if (!KDE_WAYLAND && !IS_X11 && !IS_HYPRLAND) return; // KDE-Wayland, X11, or Hyprland
+  // Resolve which tools are available. Order is session-dependent (hyprctl on
+  // Hyprland, kdotool first on KDE-Wayland, xdotool first on X11). We detect
+  // all three so the crash circuit-breaker below can auto-switch to the
+  // alternate tool if the primary keeps aborting. `;` (not `||`) runs every
+  // probe; `command -v` prints the path when found.
+  exec('command -v kdotool; command -v xdotool; command -v hyprctl', { shell: '/bin/sh' }, (_err, stdout) => {
     const found = (stdout || '').split('\n').map((s) => s.trim().split('/').pop()).filter(Boolean);
-    const available = ['xdotool', 'kdotool'].filter((t) => found.includes(t)); // xdotool first
+    const available = overlayCore.preferredForegroundTools({
+      hyprland: IS_HYPRLAND, kdeWayland: KDE_WAYLAND, x11: IS_X11,
+    }).filter((t) => found.includes(t));
     if (available.length === 0) {
-      // Neither tool installed — log once and leave detection disabled.
-      diag('[foreground] xdotool/kdotool not found on PATH — KDE-Wayland active-window detection disabled.');
-      diag('[foreground] Install kdotool (recommended on Wayland) or xdotool for precise hotkey-release support.');
-      diag('[foreground] Falling back to game-running detection (hotkeys stay registered while FO76 is open).');
+      // Preferred tool not installed — log once and leave detection disabled.
+      if (IS_HYPRLAND) {
+        diag('[foreground] hyprctl not found on PATH — active-window detection disabled.');
+        diag('[foreground] Falling back to game-running detection (hotkeys stay registered while FO76 is open).');
+      } else {
+        diag('[foreground] kdotool/xdotool not found on PATH — active-window detection disabled.');
+        diag('[foreground] Install kdotool (recommended — Arch: AUR, Fedora: dnf install kdotool) for precise hotkey-release support; xdotool also works with caveats.');
+        diag('[foreground] Falling back to game-running detection (hotkeys stay registered while FO76 is open).');
+      }
       return;
     }
     fgTool = available[0];
-    kdeWaylandForegroundDetect = true;
+    foregroundDetect = true;
     const altNote = available.length > 1 ? ' (fallback available: ' + available.filter((t) => t !== fgTool).join(',') + ')' : '';
-    diag('[foreground] ' + fgTool + ' found — KDE-Wayland active-window detection ENABLED (~300ms poll).' + altNote);
+    diag('[foreground] ' + fgTool + ' found — active-window detection ENABLED (~300ms poll).' + altNote);
+    if (gameRunning) probeGameDisplay();
     // `tried` tracks tools we've already polled with so the breaker never ping-pongs
     // back to a tool that already crashed (xdotool→kdotool→xdotool…).
     _runForegroundPoll(available, new Set([fgTool]));
@@ -3347,7 +3725,8 @@ function _runForegroundPoll(available, tried) {
     let done = false;
     let out = '';
     try {
-      fgPoller = spawn(fgTool, ['getactivewindow', 'getwindowclassname']);
+      const { cmd, args } = overlayCore.buildForegroundProbe(fgTool);
+      fgPoller = spawn(cmd, args);
       fgPoller.stdout.on('data', (d) => { out += d.toString(); });
       // Drain stderr: a crashing xdotool prints a libc backtrace to stderr, and the
       // default piped-but-unread stderr could fill and block the child before our
@@ -3367,21 +3746,26 @@ function _runForegroundPoll(available, tried) {
           const action = overlayCore.decideForegroundPollerAction({
             crashed: true, consecutiveCrashes, maxCrashes: MAX_CONSEC_CRASHES, hasAltTool: untried.length > 0,
           });
+          const libxdoNote = (fgTool === 'kdotool' || fgTool === 'xdotool')
+            ? ', likely libxdo getwindowclassname double-free' : '';
           if (action === 'switch-tool') {
             const alt = untried[0];
             diag('[foreground] ' + fgTool + ' crashed ' + consecutiveCrashes + 'x (' + signal +
-              ', likely libxdo getwindowclassname double-free) — switching to ' + alt + '.');
+              libxdoNote + ') — switching to ' + alt + '.');
             if (fgPollTimer) { clearInterval(fgPollTimer); fgPollTimer = null; }
             fgTool = alt;
             tried.add(alt);
             _runForegroundPoll(available, tried);
           } else if (action === 'disable') {
             diag('[foreground] ' + fgTool + ' crashed ' + consecutiveCrashes + 'x (' + signal +
-              ', likely libxdo getwindowclassname double-free) — disabling active-window detection to stop coredump spam.');
-            diag('[foreground] Install kdotool (Wayland-native, no X11 double-free) to restore precise hotkey-release: https://github.com/jinliu/kdotool');
+              libxdoNote + ') — disabling active-window detection' +
+              (libxdoNote ? ' to stop coredump spam.' : '.'));
+            if (fgTool === 'kdotool' || fgTool === 'xdotool') {
+              diag('[foreground] Install the alternate tool to restore precise hotkey-release — kdotool preferred (Arch: AUR, Fedora: dnf): https://github.com/jinliu/kdotool');
+            }
             diag('[foreground] Falling back to game-running detection (hotkeys stay registered while FO76 is open).');
             if (fgPollTimer) { clearInterval(fgPollTimer); fgPollTimer = null; }
-            kdeWaylandForegroundDetect = false;
+            foregroundDetect = false;
             lastForegroundProc = '';
             refreshShortcuts();
           }
@@ -3389,11 +3773,17 @@ function _runForegroundPoll(available, tried) {
           // this spawn's (absent) output.
           return;
         }
-        // Clean exit — reset the crash streak. Empty output (e.g. a native-Wayland
-        // window is active, so xdotool sees no active X window) is a valid signal
-        // meaning "not the game".
+        // Clean exit — reset the crash streak. Empty output is a valid signal:
+        // kdotool → genuinely no active window; xdotool → no active X window,
+        // which ALSO happens when a native-Wayland window is focused (xdotool
+        // can't see those) or when a fullscreen game exposes no WM_CLASS — the
+        // "(null)" heuristic in shouldRegisterShortcuts handles that ambiguity.
         consecutiveCrashes = 0;
-        const line = out.trim().toLowerCase();
+        const line = overlayCore.parseForegroundOutput(fgTool, out);
+        // Feed every sample into the focus hysteresis (a class-changed-only call
+        // would never commit if enterScans/leaveScans > 1). The block below still
+        // drives z-order/click-through/shortcuts on actual class changes.
+        applyGameFocus(line);
         // Only update and act when the value actually changed — avoids redundant
         // applyZOrder / refreshShortcuts churn every 300ms.
         if (line !== lastForegroundProc) {
@@ -3536,8 +3926,9 @@ function startForegroundZOrder() {
     // that maps to the Windows desktop. Use the process-scan-based game detection
     // (startGameScan) to drive always-on-top: topmost while the game is running.
     // Focus/blur also flip topmost so the user can always interact with chat.
-    // KDE-Wayland exception: we additionally start a kdotool poller so we CAN
-    // detect the active window and release hotkeys when another app is foreground.
+    // KDE-Wayland / X11 exception: we additionally start a kdotool/xdotool
+    // poller so we CAN detect the active window and release hotkeys when
+    // another app is foreground.
     lastForegroundProc = '';
     if (mainWindow) {
       // CRITICAL for Linux (Wayland/Bazzite) + macOS: let the overlay float over
@@ -3552,8 +3943,8 @@ function startForegroundZOrder() {
         mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
         diag('[zorder] non-win32: setVisibleOnAllWorkspaces(visibleOnFullScreen=true) applied');
       } catch (e) { diag('[zorder] setVisibleOnAllWorkspaces failed:', String(e && e.message || e)); }
-      mainWindow.on('focus', () => { applyZOrder(); applyFocusClickThrough(true); refreshShortcuts(); });
-      mainWindow.on('blur', () => { applyZOrder(); applyFocusClickThrough(false); refreshShortcuts(); });
+      mainWindow.on('focus', () => { applyGameFocus(lastForegroundProc, true); applyZOrder(); applyFocusClickThrough(true); refreshShortcuts(); });
+      mainWindow.on('blur', () => { applyGameFocus(lastForegroundProc, false); applyZOrder(); applyFocusClickThrough(false); refreshShortcuts(); });
       // On 'show' (restore from tray or first show), force-clear the cached
       // z-order state so applyZOrder always re-asserts the correct level.
       // This is critical on Linux/Proton: the compositor may have dropped our
@@ -3563,25 +3954,23 @@ function startForegroundZOrder() {
         overlayIsTopmost = false; // force re-apply even if state is unchanged
         applyZOrder();
         applyFocusClickThrough(mainWindow.isFocused());
-        syncKwinGameBelow('show'); // re-add game-below now that we're showing over the game
         syncPanelHideInGame('show'); // hide the taskbar (opt-in) now that we're over the game
         diag('[zorder] linux: show event — re-asserting always-on-top');
       });
-      // On hide-to-tray, drop the game-below rule (and applyZOrder releases always-on-top)
-      // so FO76 returns to normal fullscreen stacking above the panel while nothing is shown.
+      // On hide-to-tray, applyZOrder releases always-on-top and the panel auto-hide
+      // restores while nothing is shown.
       mainWindow.on('hide', () => {
         applyZOrder();
-        syncKwinGameBelow('hide');
         syncPanelHideInGame('hide'); // restore the taskbar while nothing is shown
-        diag('[zorder] linux: hide event — released game-below + always-on-top');
+        diag('[zorder] linux: hide event — released always-on-top');
       });
     }
     applyZOrder();
     startGameScan();
-    // KDE-Wayland: start the xdotool/kdotool poller for active-window detection.
-    // This is the key difference from other Linux setups: it gives us a real
-    // foreground window class so refreshShortcuts() can release hotkeys when the
-    // user switches to Konsole, Discord, etc. — just like the win32 PS poller does.
+    // KDE-Wayland, plain X11, and Hyprland: start the active-window poller
+    // so refreshShortcuts() can release hotkeys when the user switches to
+    // Konsole, Discord, etc. Other Wayland compositors still no-op inside
+    // the helper.
     _startForegroundPoller();
     return;
   }
@@ -3804,32 +4193,24 @@ function rebuildTrayMenu() {
         },
       },
     ] : []),
-    // Linux/KDE helper: imports the "keep above" KWin rule so the overlay sits
-    // above the game, and opens the folder with the rule + setup note.
     ...(IS_LINUX ? [
       { type: 'separator' },
-      { label: 'KDE: keep overlay above game', click: () => setupKdeKeepAbove({ interactive: true }) },
-      // Fallback only: the force-Layer rule (fcm-overlay-layer) already keeps the overlay above
-      // a fullscreen game WITHOUT demoting it. Enable this only if that doesn't work on your
-      // setup — it drops the game to BelowLayer, which also lets the panel cover the game.
-      { label: 'Fallback: force game below overlay (also drops it under the panel)', type: 'checkbox', checked: isKwinGameBelowEnabled(), click: (mi) => {
-        try { const st = loadState(); const settings = { ...(st.settings || {}), kwinGameBelow: !!mi.checked }; saveState({ settings }); } catch { /* ignore */ }
-        _lastGameBelowApplied = null;      // setting changed → force a re-evaluate
-        syncKwinGameBelow('toggle');       // re-apply rules with/without game-below (gated on visibility)
-        rebuildTrayMenu();
-      } },
-      // Optional: hide the KDE taskbar/panel while in-game so it can't cover a BORDERLESS
-      // game (the force-Layer rule already keeps the OVERLAY above; this is about the panel).
+      { label: 'Linux fixes', enabled: false },
+      // Cursor-lock fix: enable Wine's own mouse capture in the FO76 prefix so the cursor
+      // stays locked to the game on KWin Wayland (KWin revokes the game's pointer constraint
+      // when the overlay is on top). Explicit, on-demand only — never automatic (installer
+      // only prints the manual steps). One-click, idempotent; needs FO76 closed (implicit —
+      // this is a Proton-prefix fix, so it only makes sense between game sessions).
+      { label: 'Fix FO76 cursor lock (Wayland)', click: () => fixFo76CursorLock() },
+      // Optional: hide the KDE taskbar/panel while in-game so it can't pop over a BORDERLESS
+      // game whenever the game loses focus (e.g. while typing in the chat overlay — KWin's
+      // above-the-panel fullscreen promotion only holds while the game is ACTIVE).
       // Restores your exact panel modes when the game exits / overlay hides / app quits.
       { label: 'Hide taskbar while in-game (KDE)', type: 'checkbox', checked: isPanelHideInGameEnabled(), click: (mi) => {
         try { const st = loadState(); const settings = { ...(st.settings || {}), kdePanelHideInGame: !!mi.checked }; saveState({ settings }); } catch { /* ignore */ }
         syncPanelHideInGame('toggle');     // hide now if in-game, or restore if turned off
         rebuildTrayMenu();
       } },
-      // Cursor-lock fix: enable Wine's own mouse capture in the FO76 prefix so the cursor
-      // stays locked to the game on KWin Wayland (KWin revokes the game's pointer constraint
-      // when the overlay is on top). One-click, idempotent; needs FO76 closed.
-      { label: 'Fix in-game cursor lock (Wayland) — needs FO76 closed', click: () => fixFo76CursorLock() },
     ] : []),
     // Diagnostics: surface the log for bug reports + let users enable verbose
     // (per-tick) logging without a relaunch. The toggle persists to settings so it
@@ -3923,10 +4304,10 @@ function createWindow() {
     // actually BELOW KWin's active-fullscreen layer (so it only helped while the overlay
     // had focus) AND a notification window is excluded from Alt-Tab / the taskbar and is
     // non-focusable — users couldn't tab into the chat. The correct KWin-6 fix is the
-    // "keep game below" window rule (fcm-game-below): it drops FO76 to BelowLayer, which
-    // KWin evaluates BEFORE the active-fullscreen promotion, so a NORMAL keep-above
-    // overlay sits above the game with no flicker — and stays a normal, focusable,
-    // tab-able window. See overlay-core.buildKwinKeepAboveScript + window-management.md.
+    // force-Layer property (on the fcm-keepabove KWin rule): it lifts the OVERLAY to OverlayLayer,
+    // above the active-fullscreen game without demoting it, so a NORMAL overlay sits
+    // above the game with no flicker — and stays a normal, focusable, tab-able window.
+    // See overlay-core.buildKwinKeepAboveScript + window-management.md.
     type: undefined,
     icon: appIcon() || undefined, // real product icon for taskbar / alt-tab
     // show:false — don't flash the window open before we know whether FO76 is
@@ -4037,7 +4418,7 @@ function createWindow() {
     // For a brand-new user chatActive=false → canShowOverlay()=true → shows.
     // For a returning set-up user without the game it will show for login, then
     // hide once the renderer signals chatActive=true and FO76 is not running.
-    reevaluateVisibility();
+    reevaluateVisibility('did-finish-load');
     setClickThrough(false); // start interactive so the user can see/drag it
     // A fresh load ALWAYS starts the renderer expanded (collapsed=false in JS).
     // If the window was left collapsed (e.g. a hot-reload while idle-hidden, or a
@@ -4211,6 +4592,7 @@ app.whenReady().then(() => {
         ' ozoneX11Arg=' + process.argv.includes('--ozone-platform=x11') +
         ' (KDE_WAYLAND true + ozoneX11Arg true → running XWayland via argv relaunch; ' +
         'ozoneX11Arg false on KDE_WAYLAND → still native Wayland, relaunch failed)');
+      if (IS_HYPRLAND) diag('[startup] Hyprland session detected, using hyprctl for foreground detection + pin-based stacking (unverified on hardware, best-effort)');
       diag('[startup] appimage=' + (process.env.APPIMAGE || '(unset)'),
         'appdir=' + (process.env.APPDIR || '(unset)'),
         'argv0=' + (process.env.ARGV0 || '(unset)'),
@@ -4233,14 +4615,12 @@ app.whenReady().then(() => {
     }
   } catch { /* ignore */ }
   // Linux: drop the KWin "keep above" rule + setup note into userData so KDE
-  // users can import it manually if needed (tray → "KDE: keep overlay above game").
-  // On KDE+Wayland — the one config where the overlay renders BEHIND a fullscreen-
-  // promoted game — auto-apply the keep-above layer rule + reconfigure KWin so the
-  // overlay sits above the game for EVERYONE without any manual step. Idempotent:
-  // skips if already installed (see setupKdeKeepAbove). Other Linux setups just get
-  // the helper files written (setupKdeKeepAbove writes them on its first line too).
-  if (KDE_WAYLAND) setupKdeKeepAbove({ interactive: false });
-  // In-game cursor lock is applied by the installer now (not auto on launch) — tray → "Fix in-game cursor lock" re-applies.
+  // users can import it manually if needed.
+  // KDE+Wayland: the rule is gated by gameRunning && sameOutput
+  // (syncKwinKeepAboveRule). At startup the game isn't running yet, so no
+  // rule installs until launch. Other Linux setups just get the helper files.
+  if (KDE_WAYLAND) syncKwinKeepAboveRule('startup');
+  else if (IS_HYPRLAND) syncHyprlandPin('startup');
   else writeLinuxHelperFiles();
   // Crash recovery: if a previous run set panels to autohide and died before restoring, the
   // saved-modes file still exists — restore the user's panels now (before the game-gate runs).
@@ -4303,7 +4683,17 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
-app.on('before-quit', () => { isQuitting = true; persistBounds(); if (IS_LINUX) restorePanelHiding(); });
+app.on('before-quit', () => {
+  isQuitting = true;
+  persistBounds();
+  if (IS_LINUX) restorePanelHiding();
+  // Hyprland's pin is a live attribute of the window object, not a persisted
+  // config file like kwinrulesrc, so it needs no equivalent before-quit
+  // teardown: it disappears with the window on exit.
+  if (IS_LINUX && KDE_WAYLAND) {
+    try { exec(overlayCore.buildKwinRemoveRulesScript({}), { timeout: 5000, shell: '/bin/sh' }, () => {}); } catch { /* ignore */ }
+  }
+});
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();

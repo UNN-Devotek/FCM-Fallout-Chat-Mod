@@ -57,27 +57,64 @@ Using the overlay
 KDE Plasma (Wayland) — automatic, just run Borderless
 -----------------------------------------------------
 On KDE+Wayland the overlay sets itself up on first launch — there is normally
-NOTHING to do. It forces the XWayland backend and installs two KWin window rules
-so it stays above Fallout 76 even while the game is focused:
+NOTHING to do. It forces the XWayland backend and installs one KWin window rule
+("keep above games") so it stays above Fallout 76 even while the game is
+focused, but only while FO76 runs AND the overlay is on the SAME monitor.
+Removed automatically on FO76 exit or a monitor change (on another monitor
+the overlay behaves as an ordinary window). The rule combines two properties
+on the overlay window:
 
-  - "keep above games"            -> keeps the overlay window on top.
-  - "demote game from fullscreen" -> stops KWin promoting FO76 to the active-
-                                     fullscreen layer (which would cover the overlay).
+  - keeps the overlay window on top, AND
+  - forces the OVERLAY into KWin's Overlay layer, so it stays visible even
+    while the game is focused fullscreen. The game is NOT demoted — FO76
+    keeps its normal fullscreen stacking (above the panel).
 
 Just run Fallout 76 in BORDERLESS WINDOWED (in-game: Settings -> Display ->
-Window Mode = Borderless). The game still fills the screen — only its KWin
-stacking layer changes. Loading screens and the in-game (Scaleform) UI work
+Window Mode = Borderless). Loading screens and the in-game (Scaleform) UI work
 normally with these rules.
 
+Optional: install kdotool (Arch/CachyOS: paru -S kdotool [AUR]; Fedora:
+sudo dnf install kdotool) so the overlay releases its hotkeys (Insert/Delete/
+Home...) when you tab to another app while the game runs. xdotool also works,
+but it cannot see native-Wayland windows (keys may stay captured in Konsole/
+Firefox). On a plain X11 session, xdotool alone now gives the same hide-on-alt-tab
+/ hotkey-release behavior (kdotool is a KDE-Wayland tool). Without either tool,
+hotkeys stay held for the whole game session.
+
 If the overlay ever ends up BEHIND the game (e.g. the automatic setup couldn't
-run), import the bundled rule by hand, or use the app's tray menu ->
-"KDE: keep overlay above game":
+run), import the bundled rule by hand:
 
   1. System Settings -> Window Management -> Window Rules -> Import...
   2. Select fallout-chatmod-keepabove.kwinrule (next to this file)
   3. Apply, then: qdbus org.kde.KWin /KWin reconfigure   (or log out / in)
 
-Uninstalling removes these KWin rules and restores FO76's fullscreen stacking.
+Uninstalling removes this KWin rule and restores FO76's fullscreen stacking.
+
+In-game cursor lock (Wayland) — explicit, on-demand step
+------------------------------------------------------------
+On Wayland the compositor drops Fallout 76's mouse-lock while the overlay sits
+on top. Fallout Chat Mod never modifies the FO76 Proton/Wine prefix
+automatically (not during install, not on launch) -- this is a step you apply
+yourself, on your command. The overlay detects this automatically after you
+exit FO76 and prompts once via a system notification, so you don't have to
+remember to check the tray menu proactively.
+  Easiest: open the overlay's tray menu -> "Fix in-game cursor lock
+  (Wayland)". Quit Fallout 76 first, then click it; it runs the same
+  protontricks commands below and shows the result.
+
+  Manual (community-standard method), if you'd rather run it yourself:
+  1. Recommended: run FO76 on the latest Proton 11.x in Steam (Properties ->
+     Compatibility -> Force the use of a specific Steam Play compatibility
+     tool), or a well-maintained build like Proton-CachyOS or GE-Proton.
+  2. Install protontricks: pacman -S protontricks (Arch/CachyOS) / dnf
+     install protontricks (Fedora) / pipx install protontricks (Debian/Ubuntu).
+  3. Run:  protontricks 1151340 grabfullscreen=y
+     (GUI equivalent: protontricks 1151340 winecfg -> Input tab -> tick
+      "Automatically capture the mouse in full-screen windows".)
+  4. For Borderless-Windowed too, also run:
+     protontricks 1151340 -c 'wine reg add "HKCU\Software\Wine\X11 Driver" /v GrabPointer /t REG_SZ /d Y /f && wineserver -w'
+  5. Launch Fallout 76 (Fullscreen or Borderless-Windowed).
+X11 sessions don't need this.
 
 Do NOT run the game inside gamescope for overlay purposes — its nested
 compositor isolates the game and no external overlay can draw over it. In

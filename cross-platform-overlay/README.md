@@ -278,7 +278,7 @@ the same controls without any hotkey. See the WSLg-vs-native table above.
 - **Linux Wayland:** native Wayland can't stack over the game or do click-through
   reliably, so on **KDE+Wayland the app auto-forces XWayland** via a one-time argv
   relaunch (`--ozone-platform=x11`) — `appendSwitch` is too late on Electron 39+ — and
-  installs two KWin rules (keep-above + game fullscreen-demote). See `docs/overlay/window-management.md`.
+  installs one KWin rule on the overlay (keep-above + force-Layer, combined). See `docs/overlay/window-management.md`.
 - **Steam Deck:** Desktop-Mode / second-screen tool, **not** a Game-Mode
   (gamescope) overlay.
 - **Exclusive Fullscreen (any OS):** no window can render above a true

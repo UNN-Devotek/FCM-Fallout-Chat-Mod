@@ -28,6 +28,7 @@ import {
   textOpacityValue,
   scanlineOpacityValue,
   clampIdleCollapseSeconds,
+  shouldResetIdleOnVisibility,
   IDLE_COLLAPSE_SECONDS_MIN,
   IDLE_COLLAPSE_SECONDS_MAX,
   IDLE_COLLAPSE_SECONDS_DEFAULT,
@@ -1709,6 +1710,13 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
   // resizes the overlay when Fallout 76 launches/closes, and the old resize→
   // re-clamp path is what reset the font to ~8px on every game launch.
   startIdleLoop(currentSettings);
+
+  // Hidden→visible: reset idle so a long tab-away doesn't re-show collapsed.
+  // ChatOverlay.tsx also listens to onVisibility (WS reconnect gate). A
+  // second listener is fine; idle-collapse must stay shell-owned, not shared.
+  window.relayBridge.onVisibility?.((isVisible) => {
+    if (shouldResetIdleOnVisibility(isVisible)) markActivity();
+  });
 
   // Version update indicator: when main signals a newer version is available,
   // latch the version and apply a red dot to the settings panel version span.

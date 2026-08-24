@@ -30,6 +30,8 @@ On **Linux**, where CSS drag can drift under fractional DPI scaling, move events
 
 A `isDragging` flag suppresses the z-order heartbeat during drags. `setAlwaysOnTop` on a transparent window triggers a DWM recomposition on Windows that causes a visible flash; skipping it during the drag eliminates the flicker (`main.js:613`).
 
+**Known limitation.** On Linux, `isDragging` never becomes `true` during a drag. The JS-driven `move-start`/`move-tick`/`move-end` path doesn't trigger Electron's `will-move`/`moved` events, which are what set it. Pre-existing, unrelated to focus-gated visibility, noted here for reference rather than fixed.
+
 Bounds are **persisted** (debounced) to `overlay-state.json` on every move/resize, and on quit (`persistBounds`, `main.js:785`).
 
 **Drift suppression on fractional scaling (issue #427).** On a fractionally-scaled display the
@@ -128,6 +130,8 @@ After a configurable idle delay (default 25 s, range 5–120 s) with no mouse, k
 
 Controlled by a JS idle timer in `shell.ts` that sends `overlay:collapse` / `overlay:expand` IPC messages to the main process. The main process animates the height change, keeping the top edge anchored so the overlay grows downward.
 
+**Reset on re-show.** The idle tick keeps firing while hidden (focus-gated hide, tray, game-exit). `shell.ts` listens for `overlay:visibility` (`relayBridge.onVisibility`) and calls `markActivity()` on `true`, so a long tab-away doesn't re-show already collapsed. `false` must not call it; that would expand the window while it's hiding. Predicate: `shouldResetIdleOnVisibility` in `shell-core.ts` (unit-tested). ChatOverlay.tsx listens to the same IPC for its WS reconnect gate; idle-collapse stays shell-owned, not shared.
+
 **Collapse height + the CSS-zoom gotcha.** The collapsed window height is computed by `headerStripHeight()` (`shell.ts`) = shell-bar height + the two tab rows, clamped to a plausible band (24–160 visual px) so a bad mid-reflow measurement can never reveal the message body/input. The strip is measured with `getBoundingClientRect()` on elements inside the CSS-`zoom`ed `#root`. **Whether that rect already includes the zoom depends on the Chromium build** — Chromium ≤127 (Electron ≤31) returned UNSCALED CSS-px; Chromium 138 (Electron 39, the current pin) returns zoom-SCALED px. `rectsAreZoomScaled()` detects this once (an offscreen `zoom:2` probe), and the pure `resolveCollapsedHeight()` (in `shell-core.ts`, unit-tested both ways) applies the zoom factor **only** when rects are unscaled. The earlier code multiplied unconditionally, which after the Electron 31→39 bump **double-applied** the zoom and left the window tall enough to reveal the text input at Scale > 1 — the "collapses to the input box instead of the tabs" bug.
 
 **State variables** (`main.js:596`):
@@ -207,6 +211,8 @@ Returns true when ANY of the following is true:
 - Onboarding completion (`overlay:onboarding-complete` IPC)
 - Authentication role update (after `startRelay` or Discord link)
 
+On KDE-Wayland a **second** gate sits on top: `nextGameFocusState` hides the overlay when FO76 loses focus, even while `canShowOverlay()` is true. See [Focus-gated visibility](#focus-gated-visibility-hide--show).
+
 ---
 
 ## Game-process detection
@@ -225,22 +231,28 @@ On the **not-running → running transition**, `userHidden` is cleared automatic
 
 On **Windows**, a long-lived PowerShell process polls the foreground window via `GetForegroundWindow` + `GetWindowThreadProcessId` at ~300ms cadence. This drives z-order (topmost while the game is foreground, normal window otherwise) and click-through state.
 
-### KDE Plasma / Wayland — active-window detection (`xdotool` / `kdotool`)
+### KDE Plasma / Wayland — active-window detection (`kdotool` / `xdotool`)
 
-On **KDE Wayland**, Wayland's security model forbids clients from querying the active window, so the Windows foreground poll does not apply. Because FO76 (Proton) **and** the overlay itself run under **XWayland** on KDE, the standard X11 tool [`xdotool`](https://github.com/jordansissel/xdotool) can read the active window's WM_CLASS here; [`kdotool`](https://github.com/jinliu/kdotool) (a pure-Wayland, KWin D-Bus counterpart) is used as a fallback. Both share the syntax `<tool> getactivewindow getwindowclassname` and are polled at ~300ms intervals.
+On **KDE Wayland**, Wayland's security model forbids clients from querying the active window, so the Windows foreground poll does not apply. [`kdotool`](https://github.com/jinliu/kdotool) (KWin D-Bus) is **preferred**: it sees **every** window — native-Wayland (Konsole, Wayland Firefox) *and* XWayland (FO76 under Proton) — so hotkeys release correctly whichever kind of app you tab to. The standard X11 tool [`xdotool`](https://github.com/jordansissel/xdotool) is the fallback: because FO76 and the overlay run under XWayland it can read the *game's* WM_CLASS, but it **cannot see native-Wayland windows** — with the game running, tabbing to a native-Wayland app reads as "no active X window", which the `(null)`-class heuristic treats as "probably the fullscreen game", so **hotkeys stay captured** in that app. Both tools share the syntax `<tool> getactivewindow getwindowclassname` and are polled at ~300ms intervals.
+
+The same poller also runs on **plain X11** sessions (any window manager: i3, xfwm, openbox, KDE-X11, GNOME-X11, etc.). X11 exposes the active window without a portal, so `xdotool` is preferred there (`kdotool` is only a fallback). X11 never needed a KWin stacking rule: there is no active-fullscreen-window promotion outside KWin to fight. What is new for X11 is hide-on-alt-tab and hotkey-release once a tool is present. Without `xdotool` (or `kdotool`), X11 keeps the old `gameRunning` fallback.
+
+On **Hyprland** (Wayland, not KWin) the poller uses `hyprctl` instead: `hyprctl activewindow -j` for the focused class, `hyprctl clients -j` for FO76's `{x,y}` (same-output probe), and `hyprctl dispatch pin address:<addr>` to pin the overlay while the game runs on the same output. The display probe is fail-closed: stacking remains ordinary until the shared output is known. Before dispatching, the overlay's `pinned` state is read and the result is queried again afterward, because `dispatch pin` is toggle-like; an unknown or failed helper leaves the last confirmed state unchanged and retries on a later probe. Implemented as best-effort; **not verified on real Hyprland hardware**, so the Linux `setAlwaysOnTop` heartbeat stays active there as a fallback (see `main.js` `_startLinuxZOrderHeartbeat`). Missing or failing `hyprctl` logs a diagnostic and no-ops.
+
+This signal now also drives **overlay visibility**, not just hotkeys. `nextGameFocusState` (`overlay-core.js`) hides the overlay when FO76 loses focus to a recognized other window and shows it again when focus returns. Typing into the overlay counts as "still focused," so it never disappears mid-use.
 
 **How it works:**  
-`_startForegroundPoller()` is called from `startForegroundZOrder()` when `KDE_WAYLAND` is true. It probes for **both** tools (`command -v xdotool; command -v kdotool`) so the crash circuit-breaker (below) can fall back to the other one, preferring `xdotool` when present:
+`_startForegroundPoller()` is called from `startForegroundZOrder()` when `KDE_WAYLAND`, `IS_X11`, or `IS_HYPRLAND` is true. It probes for **all three** tools (`command -v kdotool; command -v xdotool; command -v hyprctl`) so the crash circuit-breaker (below) can fall back to an alternate when one is installed. `preferredForegroundTools()` sets the order: `hyprctl` only on Hyprland, `kdotool` first on KDE-Wayland, `xdotool` first on X11.
 
-- **tool present:** Sets `kdeWaylandForegroundDetect = true` and records `fgTool`. `_runForegroundPoll()` spawns the tool every 300ms; the printed WM_CLASS is lowercased into `lastForegroundProc`, and `applyZOrder()` / `applyFocusClickThrough()` / `refreshShortcuts()` are called on each change — mirroring the win32 PowerShell path. When a native-Wayland window is active, `xdotool getactivewindow` exits non-zero with no output (no active X window) — treated as "not the game", so the hotkeys are released.
-- **neither tool present:** Logs a single diagnostic and leaves `kdeWaylandForegroundDetect = false`. `refreshShortcuts()` falls back to `gameRunning` as the gate for hotkey registration (the pre-existing behavior — no regression).
+- **tool present:** Sets `foregroundDetect = true` and records `fgTool`. `_runForegroundPoll()` spawns the tool every 300ms. The printed WM_CLASS is lowercased into `lastForegroundProc`, and `applyZOrder()` / `applyFocusClickThrough()` / `refreshShortcuts()` (and the focus-gated visibility reducer) are called on each change, mirroring the win32 PowerShell path. Empty output on a clean exit is a valid "not the game" signal (kdotool: genuinely no active window; xdotool: no active *X* window, see the caveat above).
+- **neither tool present:** Logs a single diagnostic and leaves `foregroundDetect = false`. `refreshShortcuts()` falls back to `gameRunning` as the gate for hotkey registration (the pre-existing behavior — no regression).
 
 **Crash circuit-breaker (issue #272):**  
 On some distros (confirmed **Fedora 44**, xdotool 3.x) the chained `getactivewindow getwindowclassname` aborts **inside libxdo** — a double-free in `xdo_get_window_classname` → `XFree` → `SIGABRT` — whenever the active window's WM_CLASS can't be read cleanly (routine under XWayland when a native-Wayland window is focused). Because the overlay re-spawns the tool every 300ms, this produces a **coredump storm** (≈3/sec, plus a burst during shutdown). Our JS error-handling can't prevent the per-spawn coredump, so the breaker stops re-spawning into the crash:
 
 - The `close` handler distinguishes a **crash** (terminated by a signal) from a normal **non-zero exit** (no active X window — *not* a crash). Only signal deaths count.
-- After `MAX_CONSEC_CRASHES = 3` back-to-back crashes, `decideForegroundPollerAction()` (`overlay-core.js`, unit-tested) returns either **`switch-tool`** — switch to the alternate tool (kdotool↔xdotool) if it's installed, tracked so it never ping-pongs back — or **`disable`** — stop the poller, set `kdeWaylandForegroundDetect = false`, and fall back to `gameRunning` gating. Either way the coredump storm stops after ≤3 cores. A clean poll resets the streak.
-- On `disable`, a single diagnostic recommends installing **`kdotool`** (Wayland-native, no X11 double-free).
+- After `MAX_CONSEC_CRASHES = 3` back-to-back crashes, `decideForegroundPollerAction()` (`overlay-core.js`, unit-tested) returns either **`switch-tool`** — switch to the alternate tool (kdotool↔xdotool) if it's installed, tracked so it never ping-pongs back — or **`disable`** — stop the poller, set `foregroundDetect = false`, and fall back to `gameRunning` gating. Either way the coredump storm stops after ≤3 cores. A clean poll resets the streak.
+- On `disable`, a single diagnostic recommends installing the alternate tool (`kdotool` preferred — Wayland-native, no X11 double-free).
 
 **WM_CLASS matching:**  
 Under XWayland + Proton, FO76 reports its WM_CLASS as `steam_app_1151340` (confirmed on CachyOS; some Proton/Wine versions report `fallout76.exe`, and `project76_gamepass.exe` for the Game Pass build). `isGameClass()` in `overlay-core.js` matches all of these: `isGameProcess()` strips the `.exe` suffix for the exe-name forms, and `XWAYLAND_GAME_CLASSES` covers `steam_app_1151340`.
@@ -249,31 +261,37 @@ The overlay's own WM_CLASS (`Fallout Chat Mod` under XWayland) does **not** matc
 
 **Installing an active-window tool (KDE Wayland):**
 
-`kdotool` is **recommended on Wayland** — it talks to KWin over D-Bus and has none of the libxdo X11 double-free problem described above, so it never produces the coredump storm. `xdotool` also works (and is preferred when both are installed, for parity with the dev's verified setup), but on distros where it crashes the breaker will auto-switch to `kdotool` if present, or disable detection otherwise.
+`kdotool` is **recommended and preferred when both are installed** — it talks to KWin over D-Bus, sees native-Wayland windows (so keys release correctly in Konsole/Firefox), and has none of the libxdo X11 double-free problem described above, so it never produces the coredump storm. `xdotool` also works as the fallback, with the native-Wayland blindness caveat; on distros where it crashes, the breaker will auto-switch to `kdotool` if present, or disable detection otherwise.
 
 ```bash
-# kdotool (recommended on Wayland) — https://github.com/jinliu/kdotool
-#   Arch (AUR):  paru -S kdotool      Fedora/others: build from source (cargo)
+# kdotool (preferred) — https://github.com/jinliu/kdotool
+paru -S kdotool            # Arch / CachyOS / Manjaro (AUR; or yay -S kdotool)
+sudo dnf install kdotool   # Fedora (official repos)
+#                          # others: build from source (cargo)
 
-# xdotool (alternative)
+# xdotool (fallback — cannot see native-Wayland windows)
 sudo pacman -S xdotool     # Arch / CachyOS / Manjaro
 sudo dnf install xdotool   # Fedora / RPM-based
 sudo apt install xdotool   # Ubuntu / Debian
 ```
 
-Without either tool (or after the breaker disables a crashing `xdotool`), global hotkeys (Insert/Delete/Home) remain registered for the entire FO76 session — they work correctly but are not released when you switch to Konsole or Discord. This is a graceful degradation, not a failure.
+Without either tool (or after the breaker disables a crashing tool with no alternate), global hotkeys (Insert/Delete/Home) remain registered for the entire FO76 session — they work correctly but are not released when you switch to Konsole or Discord. This is a graceful degradation, not a failure.
+
+### Known limitation — gamescope grabs input below X11 (hotkeys/drag cannot work)
+
+Running FO76 inside **gamescope** with `--force-grab-cursor` (definitive) or `-f` fullscreen (likely) makes gamescope grab the keyboard/mouse at the **evdev level, below X11** — so while in-game the overlay can never receive its global hotkeys (Insert/Delete/Home/PgUp/PgDn) or window-drag events, no matter what the overlay does. This is a hard limitation, not a bug the overlay can work around. The overlay **detects** this (`classifyInputGrab()` in `overlay-core.js`, unit-tested, fed from the game-scan's `ps` output) and logs an actionable `[input-grab]` diagnostic: remove `--force-grab-cursor` from the FO76 launch options and/or run **borderless windowed** instead of `gamescope -f`. See also the general guidance: do **not** run the game inside gamescope for overlay purposes — its nested compositor isolates the game (README).
 
 ---
 
 ## Z-order controller
 
-`desiredTopmost()` (`overlay-core.js`, unit-tested) decides whether `setAlwaysOnTop` should be `true`: topmost while `forceVisible`, the overlay is focused, the game is the foreground process, or the game is `gameRunning` (session-long). `setAlwaysOnTop` maps to `_NET_WM_STATE_ABOVE` (KWin `AboveLayer`). On KWin 6 that alone loses to a *focused fullscreen* game, so the overlay being above the game is achieved by the **game keep-below KWin rule** (see below), not by `setAlwaysOnTop`. (`focusAwareTopmost` exists in the pure function for completeness but is **not** enabled — the overlay is a normal keep-above window above a kept-below game.)
+`desiredTopmost()` (`overlay-core.js`, unit-tested) decides whether `setAlwaysOnTop` should be `true`: topmost while `forceVisible`, the overlay is focused, the game is the foreground process, or the game is `gameRunning` (session-long). `setAlwaysOnTop` maps to `_NET_WM_STATE_ABOVE` (KWin `AboveLayer`). On KWin 6 that alone loses to a *focused fullscreen* game, so the overlay being above the game is achieved by the **`fcm-keepabove` rule's force-Layer property** (see below), not by `setAlwaysOnTop`. The Force `layer` rule still trumps any `setAlwaysOnTop(false)`, so focus-aware *lowering* isn't done by flipping always-on-top. It's done by **hiding** the overlay (see [Focus-gated visibility](#focus-gated-visibility-hide--show)). (`focusAwareTopmost` exists in the pure function for completeness but isn't the KDE-Wayland hide/show path.)
 
-`applyZOrder()` is idempotent (tracks `overlayIsTopmost`) and suppressed during drags. **When the overlay is hidden to tray, `applyZOrder()` RELEASES `setAlwaysOnTop` on Linux** (and stops the z-order heartbeat) instead of leaving the flag stuck — otherwise a hidden window kept holding the game demoted below the panel. On Windows the flag is kept while hidden (a hidden window doesn't affect stacking and re-toggling would DWM-flash on the next show). The overlay is a **NORMAL** window on all platforms (we tried `type:'notification'` for KDE stacking but reverted it — KWin's NotificationLayer is *below* the active-fullscreen layer, and notification windows are excluded from Alt-Tab/taskbar and non-focusable, so users couldn't tab into the chat).
+`applyZOrder()` is idempotent (tracks `overlayIsTopmost`) and suppressed during drags. **When the overlay is hidden to tray, `applyZOrder()` RELEASES `setAlwaysOnTop` on Linux** (and stops the z-order heartbeat) instead of leaving the flag stuck — a hidden window must not keep holding the game out of exclusive fullscreen. On Windows the flag is kept while hidden (a hidden window doesn't affect stacking and re-toggling would DWM-flash on the next show). The overlay is a **NORMAL** window on all platforms (we tried `type:'notification'` for KDE stacking but reverted it — KWin's NotificationLayer is *below* the active-fullscreen layer, and notification windows are excluded from Alt-Tab/taskbar and non-focusable, so users couldn't tab into the chat).
 
 **Windows**: calls `mainWindow.setAlwaysOnTop(want, 'screen-saver')` — the highest standard Electron level, avoids DWM recomposition flash.
 
-**Linux/Proton**: tries `'pop-up-menu'` first (a higher XWayland stacking layer than `'screen-saver'`), falling back to `'screen-saver'`. Also re-calls `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })` on every topmost assertion because some compositors reset this flag when the game window raises. A **3-second heartbeat timer** (`_linuxZOrderHeartbeat`) force-re-applies topmost while the game is running, catching cases where the X11/XWayland compositor silently drops `_NET_WM_STATE_ABOVE` on game-raise events. The heartbeat starts when `desiredTopmost()` first returns `true` and stops when it returns `false`. On the `'show'` event (restore from tray), `overlayIsTopmost` is force-cleared so `applyZOrder()` always re-asserts the correct level immediately.
+**Linux/Proton**: tries `'pop-up-menu'` first (a higher XWayland stacking layer than `'screen-saver'`), falling back to `'screen-saver'`. Also re-calls `setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })` on every topmost assertion because some compositors reset this flag when the game window raises. A **3-second heartbeat timer** (`_linuxZOrderHeartbeat`) force-re-applies topmost while the game is running, catching cases where the X11/XWayland compositor silently drops `_NET_WM_STATE_ABOVE` on game-raise events. **Skipped on KDE-Wayland**, where the Force-layer rule self-heals via KWin's window-raise and other property-change handling. Still runs on **non-KDE Linux**, which has no rule to lean on. Where it runs, it starts when `desiredTopmost()` first returns `true` and stops when it returns `false`. On the `'show'` event (restore from tray), `overlayIsTopmost` is force-cleared so `applyZOrder()` always re-asserts the correct level immediately.
 
 ---
 
@@ -365,31 +383,51 @@ On KDE+Wayland the overlay forces the XWayland Ozone backend so it shares the sa
 
 Per KWin's `Window::layer()` the layer order (KWin 6.7) low→high is `Desktop(0) < Below(1) < Normal(2) < Above(3) < Notification(4) < Active/fullscreen(5) < Popup(6) < CriticalNotification(7) < OnScreenDisplay(8) < Overlay(9)`. Panels/docks resolve to `Above(3)`. Borderless-windowed games (FO76 included) routinely still set `_NET_WM_STATE_FULLSCREEN`, so a **focused** FO76 ranks in `ActiveLayer(5)` — above any `keepAbove` overlay (`Above(3)`) **and** above a `type:'notification'` overlay (`Notification(4)`). Nothing about `keepAbove` or window *type* can beat a focused active-fullscreen window.
 
-**The fix — force the OVERLAY to the Overlay layer (`fcm-overlay-layer`).** KWin **6.0** added a Force **"Layer"** window rule (KDE Bug 441074 — the sanctioned "stay above fullscreen" mechanism for picture-in-picture). A rule of `layer=overlay` + `layerrule=2` (2 = Force) matched on `wmclass=fallout-chat-mod` puts the overlay in `OverlayLayer(9)` — **above** the active-fullscreen game — while the game **keeps its normal fullscreen stacking** (`ActiveLayer(5)`, which is above the panel), so there is **no "game below the taskbar."** The overlay also **keeps keyboard/text focus** because focusability derives from window *type* (still Normal), not layer — which is exactly why the old `type:'notification'` attempt failed. **Verified on KWin 6.7.1**: a matched window jumps from `layer=2` to `layer=9`. (An earlier code comment claimed `layer`/`layerrule` was "ignored by KWin 6" — that was never tested with this exact rule; it works.) Optionally `layer=critical-notification(7)` still beats the game while leaving system OSDs/critical notifications above the chat; we default to `overlay`.
+**The fix — force the OVERLAY to the Overlay layer (the `fcm-keepabove` rule's `layer` property).** KWin **6.0** added a Force **"Layer"** window rule (KDE Bug 441074 — the sanctioned "stay above fullscreen" mechanism for picture-in-picture). A `layer=overlay` + `layerrule=2` (2 = Force) property matched on `wmclass=fallout-chat-mod` puts the overlay in `OverlayLayer(9)` — **above** the active-fullscreen game — while the game **keeps its normal fullscreen stacking** (`ActiveLayer(5)`, which is above the panel), so there is **no "game below the taskbar."** The overlay also **keeps keyboard/text focus** because focusability derives from window *type* (still Normal), not layer — which is exactly why the old `type:'notification'` attempt failed. **Verified on KWin 6.7.1**: a matched window jumps from `layer=2` to `layer=9`. (An earlier code comment claimed `layer`/`layerrule` was "ignored by KWin 6" — that was never tested with this exact rule; it works.) Optionally `layer=critical-notification(7)` still beats the game while leaving system OSDs/critical notifications above the chat; we default to `overlay`. This force-Layer property is combined into the **same rule** as the plain keep-above property below (both always target the same overlay window, so one KWin rule is enough) — earlier builds shipped them as two separate named groups (`fcm-keepabove` + `fcm-overlay-layer`); they were merged.
 
-**`fcm-game-below` is now an OPT-IN FALLBACK (default OFF).** The old fix forced the *game* `below=true` (`BelowLayer(1)`) so a keep-above overlay out-ranked it — but `BelowLayer` is also below the panel, so the game appeared under the taskbar. The force-Layer rule makes that unnecessary, so game-below is off by default; it remains a toggle for the rare setup where the force-Layer rule doesn't take. When enabled it is **visibility-gated** (pure `overlayCore.shouldForceGameBelow({ gameRunning, overlayVisible, gameBelowEnabled })`, unit-tested): `syncKwinGameBelow()` (window `hide`/`show` + game-gate) only applies it while the overlay is visible over a running game, and `applyZOrder()` releases `setAlwaysOnTop` when the overlay hides. This replaced the retired `fcm-game-demote` (`fullscreen=false` Force) rule, which fought the game's fullscreen state and flickered (issue #272).
+**Game demotion is fully REMOVED — the game's stacking is never touched.** History, for anyone reading old logs/configs: the original fix was `fcm-game-demote` (`fullscreen=false` Force), which fought the game's fullscreen state and flickered endlessly (issue #272); it was replaced by `fcm-game-below` (`below=true`, `BelowLayer(1)`), which worked but also dropped the game below the panel *and every other window*, so it was demoted to an opt-in fallback once the force-Layer rule landed — and has now been **removed entirely** (the force-Layer rule covers all supported setups; Plasma 5 lacks `kwriteconfig6`, so the fallback could never apply there anyway). The rule-install script still **strips a stale `fcm-game-below`** from installs that had opted in, on the next launch. If a setup ever genuinely needs it, the manual System Settings → Window Rules import path remains available.
 
-### How the rules get applied (automatic on startup)
+### Focus-gated visibility (hide / show)
 
-`setupKdeKeepAbove({ interactive })` writes the rule(s) into `~/.config/kwinrulesrc` via `kwriteconfig6`, then `qdbus org.kde.KWin /KWin reconfigure` (falls back to `qdbus6`/`qdbus-qt6`):
+Visibility is **focus-gated** via a debounced reducer, `nextGameFocusState` (`overlay-core.js`):
 
-- `fcm-keepabove` — keep-above on the overlay (`wmclass=fallout-chat-mod`, `above=true`). **Always applied** (belt-and-suspenders under the force-Layer rule).
-- `fcm-overlay-layer` — **force `layer=overlay` on the overlay** (`wmclass=fallout-chat-mod`, `layerrule=2`). **Always applied** — THE fix; overlay above the fullscreen game, game not demoted.
-- `fcm-game-below` — keep-below on the game (`wmclass=steam_app_1151340`, `below=true` Force). **Opt-in fallback, default OFF** (`settings.kwinGameBelow`; tray → "Fallback: force game below overlay"; the CLI installer also prompts). When on, it is visibility-gated (`shouldForceGameBelow`) and removed when the overlay hides.
+- **Hides** when FO76 loses focus to a recognized other window; **shows** again when focus returns.
+- Typing into the overlay counts as "still focused," so it never disappears mid-use.
+- Hide/show, not `setAlwaysOnTop(false)`. The Force `layer` rule would trump any always-on-top flip.
 
-**KWin 6 format (verified):** the authoritative rule list is `[General] rules=`, a **comma-separated list of group NAMES** (plus a matching `count`). Writing numbered groups with only `count` is **not** enough — KWin rewrites `count` and drops the rules. We use **stable named groups** (so re-runs are idempotent and never collide with the user's own numbered rules) and **append** our names to any existing `rules=` list (preserving user rules). `buildKwinKeepAboveScript({ includeBelow })` (unit-tested) emits keep-above + overlay-layer always, game-below only when opted in; its idempotency check matches the expected rule set exactly so toggling the option always rewrites.
+The `fcm-keepabove` rule is no longer installed permanently at startup. It installs only while the game runs **and** the overlay shares its monitor, and is removed otherwise (game exit, or overlay dragged elsewhere).
 
-- **Automatic:** on **KDE+Wayland** it runs at startup (`app.whenReady`, `interactive: false`) so the overlay sits above the game for every user with **no manual step**. **Idempotent** — it exits early when `rules=` already holds exactly the expected set, so repeated launches never duplicate rules or reconfigure needlessly.
-- **Manual retry:** tray → **"KDE: keep overlay above game"** (`interactive: true`) additionally opens the userData folder for a hand import (System Settings → Window Rules → Import) if the automatic path fails (older KWin, missing `kwriteconfig6`, non-KDE).
+On a **different monitor**, no rule installs at all. The overlay is a plain window (default KWin stacking). This is safe because KWin's `isActiveFullScreen()` (`window.cpp`) is already **per-output aware**, so a fullscreen game stays promoted even when focus moves to a *different*-output window. There's no stacking contest to win there.
+
+### How the rule gets applied (session- and output-scoped)
+
+`setupKdeKeepAbove(onDone)` writes the rule into `~/.config/kwinrulesrc` via `kwriteconfig6`, then `qdbus org.kde.KWin /KWin reconfigure` (falls back to `qdbus6`/`qdbus-qt6`):
+
+- `fcm-keepabove`: ONE rule on the overlay (`wmclass=fallout-chat-mod`) combining `above=true` (belt-and-suspenders) and `layer=overlay`/`layerrule=2` (THE fix, putting the overlay above the fullscreen game without demoting it). **Installed only while FO76 runs and the overlay shares its display**; removed on game exit or a monitor change.
+
+**KWin 6 format (verified):** the authoritative rule list is `[General] rules=`, a **comma-separated list of group NAMES** (plus a matching `count`). Writing numbered groups with only `count` is **not** enough — KWin rewrites `count` and drops the rules. We use a **stable named group** (so re-runs are idempotent and never collide with the user's own numbered rules) and **append** our name to any existing `rules=` list (preserving user rules). `buildKwinKeepAboveScript()` (unit-tested) emits exactly the one `fcm-keepabove` rule; its idempotency check matches that rule set exactly, so any stale FCM rule (numbered groups, `fcm-game-demote`, `fcm-game-below`, or a pre-merge `fcm-overlay-layer` from older builds) forces the strip + rewrite path.
+
+**Native-Wayland spike (opt-in, off by default):** everything above describes the shipped
+default — the overlay always relaunches into XWayland on KDE-Wayland first (see above), so
+`wmclass` always means the X11 property. There is a dev-only `FCM_NATIVE_WAYLAND=1` env flag
+that skips that relaunch and stays on native Wayland instead; `buildKwinKeepAboveScript()` is
+unmodified for that path because KWin's `wmclass` matcher is expected to also catch the
+Wayland `app_id` (pinned to the same `fallout-chat-mod` string via `package.json`'s top-level
+`desktopName`). This is an experimental, unverified spike, not a supported mode — see the "Phase-0 spike"
+section of [linux-overlay-approaches.md](linux-overlay-approaches.md) for the manual test
+protocol and the open blocker (KDE bug 485409, cursor-lock coexistence).
+
+- **Automatic:** on **KDE+Wayland** the rule installs/removes as game/output conditions change (not a one-shot at `app.whenReady`). **Idempotent**: exits early when `rules=` already matches, so repeated installs never duplicate or reconfigure needlessly. A matching remove path strips `fcm-keepabove` when the overlay should be ordinary.
+- **Manual fallback (e.g. Plasma 5, missing `kwriteconfig6`):** the `.kwinrule` file is written to userData on every launch (`writeLinuxHelperFiles`); import it by hand via System Settings → Window Rules → Import, then `qdbus org.kde.KWin /KWin reconfigure`.
 
 All paths are best-effort and no-op gracefully when the KDE tools are absent. Non-KDE-Wayland Linux sessions only get the helper files written to userData (no `kwinrulesrc` edit).
 
 ### Optional: hide the taskbar while in-game (KDE)
 
-The force-Layer rule lifts the *overlay* above the game, but it doesn't move the *game* — a game run **borderless-windowed** sits in `NormalLayer(2)`, below the panel (`Above(3)`), so the taskbar's edge can still cover the game (a real-fullscreen game in `ActiveLayer(5)` is already above the panel, so this doesn't arise there). Opt-in tray toggle **"Hide taskbar while in-game (KDE)"** (`settings.kdePanelHideInGame`, **default OFF**) sets every Plasma panel to `autohide` while the overlay is visible over a running game, and restores the user's exact per-panel modes afterward.
+The force-Layer rule lifts the *overlay* above the game, but it doesn't move the *game* — and KWin's fullscreen promotion is **focus-gated**: a borderless FO76 (which still sets `_NET_WM_STATE_FULLSCREEN`) ranks in `ActiveLayer(5)` — above the panel — **only while it is the active window**. The moment it loses focus, it drops to `NormalLayer(2)`, below the panel (`Above(3)`), and the taskbar's edge pops over the game. The overlay itself triggers this constantly: **focusing the chat to type** takes active status away from the game, so the taskbar appears over the game exactly while you're typing. Opt-in tray toggle **"Hide taskbar while in-game (KDE)"** (`settings.kdePanelHideInGame`, **default OFF**) sets every Plasma panel to `autohide` while the overlay is visible over a running game, and restores the user's exact per-panel modes afterward.
 
 - Mechanism: plasmashell `evaluateScript` over D-Bus (`qdbus6`/`qdbus-qt6`/`qdbus`, probed). Pure `overlayCore.buildPanelHidingSaveScript` / `parsePanelHidingSave` / `buildPanelHidingSetScript` / `buildPanelHidingRestoreScript` (unit-tested) build/parse the JS; `main.js` runs it.
-- Gated by `overlayCore.shouldHidePanelInGame({ gameRunning, overlayVisible, enabled })` and driven by `syncPanelHideInGame()` on the same show/hide + game-gate transitions as the KWin rule (never the heartbeat).
+- Gated by `overlayCore.shouldHidePanelInGame({ gameRunning, overlayVisible, enabled })` and driven by `syncPanelHideInGame()` on window show/hide + game-gate transitions (never the heartbeat). Note: this is **independent of any game demotion** — the panel outranking an *inactive* fullscreen-state window is normal KWin layering, so this feature stands on its own.
 - **Crash-safe:** the captured original per-panel modes are written to `userData/.fcm-panel-hiding.json` *before* switching to autohide; that file's existence means "panels hidden, not yet restored." It's restored (and deleted) when the game exits / overlay hides / app quits (`before-quit`), and — if a crash skipped that — on the **next startup**. Handles multiple panels/monitors; skips gracefully if Plasma widgets are locked.
 
 > **XWayland forcing has a side effect: drag-to-move under fractional scaling.** Forcing XWayland (required for stacking) means the overlay no longer gets native-Wayland fractional scaling. On mixed-DPI KDE setups (e.g. monitors at 1.0 + 1.25 + 1.45), a frameless drive-the-move-from-JS drag that re-reads `getBounds()` each tick feeds geometry back through KWin's scale and the window **grows on every move event**. Fix: the drag handler captures the window size **once** at `overlay:move-start` and commands that exact size every `overlay:move-tick` via `setBounds` (never re-reading `getBounds` mid-drag), so the size can't compound.

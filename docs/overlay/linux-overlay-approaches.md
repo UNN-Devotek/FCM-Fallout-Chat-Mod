@@ -13,36 +13,62 @@ Three parts, all shippable from the installer:
 1. **Force the FCM overlay into XWayland** (`ELECTRON_OZONE_PLATFORM_HINT=x11` + `--ozone-platform=x11`;
    the overlay already relaunches into XWayland on KDE-Wayland). It then displays on top of FO76
    correctly (transparent, always-on-top, click-through).
-2. **KWin force-Layer window rule (the fix — verified on KWin 6.7.1):** `fcm-overlay-layer`
+2. **KWin force-Layer window rule (the fix — verified on KWin 6.7.1):** `fcm-keepabove`
    (`wmclass=fallout-chat-mod`, `layer=overlay`, `layerrule=2`=Force) puts the overlay in KWin's
    `OverlayLayer(9)`, ABOVE the active-fullscreen game, WITHOUT demoting the game — so FO76 keeps
    normal fullscreen stacking (above the panel) and the overlay keeps keyboard focus (window type
-   stays Normal). Added in KWin 6.0 (KDE Bug 441074). Applied alongside a plain `fcm-keepabove`
-   (`above=true`) belt-and-suspenders. The old `fcm-game-below` (`below=true` on the game) is now
-   an **opt-in fallback (default off)** — it worked but also dropped the game under the taskbar.
+   stays Normal). Added in KWin 6.0 (KDE Bug 441074). Combined into the SAME rule as a plain
+   `above=true` belt-and-suspenders property (both always target the overlay window, so one KWin
+   rule carries both — earlier builds split them into `fcm-keepabove` + `fcm-overlay-layer`; now
+   merged). The rule is **session- and output-scoped**: installed only while FO76 runs and shares
+   the overlay's display, removed otherwise (game exit, or overlay dragged elsewhere), not a
+   permanent startup rule. On a different monitor the overlay is a normal window. KWin's
+   `isActiveFullScreen()` is per-output aware, so a fullscreen game stays promoted even when a
+   different-output window has focus.
+   The old `fcm-game-below` (`below=true` on the game) has been **removed entirely** — it
+   worked but also dropped the game under the taskbar and every other window; the install script
+   still strips a stale copy from old opted-in installs.
    Neither affects the cursor lock — stacking only. (Empirically: a matched window jumps from
    `layer=2` to `layer=9`; an earlier "layer/layerrule ignored by KWin 6" note was never actually
    tested with this rule and is wrong.)
-3. **Enable Wine's own mouse capture via protontricks** — run the winetricks verb
-   `protontricks 1151340 grabfullscreen=y` (the winecfg "Automatically capture the mouse in
-   full-screen windows" setting; internally `HKCU\Software\Wine\X11 Driver` `GrabFullscreen`=`Y`)
-   for Fullscreen, PLUS `GrabPointer`=`Y` for Borderless-Windowed via
-   `protontricks 1151340 -c 'wine reg add "HKCU\Software\Wine\X11 Driver" /v GrabPointer /t REG_SZ /d Y /f && wineserver -w'`
-   (no winetricks verb exists for GrabPointer; `wineserver -w` flushes `user.reg` — Wine only
-   persists the registry on shutdown). Both keys are set by the installer and the tray action.
-   **Wine** then confines the cursor to the game whenever FO76 is focused and releases it when focus
-   leaves (overlay stays usable). Confirmed: cursor held on fast flicks, free movement in menus,
-   frees for the overlay — all by Wine, independent of KWin's broken pointer constraint. **No Wine
-   config is hand-edited** — protontricks does it. **Applied by the Linux installer**
-   (`Packaging/linux/install.sh` → `apply_fo76_cursor_lock`, which auto-installs protontricks if
-   missing) on any Wayland session, and re-applied any time via the tray "Fix in-game cursor lock
-   (Wayland)" (`main.js` `applyFo76Grab` → `findProtontricks`, native or flatpak). Best-effort:
-   needs protontricks + FO76's prefix to exist (launch the game once) + FO76 closed + a display
-   (the overlay runs under XWayland, so `DISPLAY` is set; the installer falls back to `xvfb-run`).
-   X11 doesn't need it. (History: earlier builds hand-edited `user.reg`, then auto-applied on
-   overlay launch; both were replaced by the protontricks `grabfullscreen` verb — the
-   community-standard method.) The KWin rules in step 2 handle stacking and are NOT foldable into
-   protontricks (Wine virtual-desktop mode could, but costs VRR/HDR + has FO76 stutter — rejected).
+3. **Enable Wine's own mouse capture via protontricks — an explicit, user-initiated step,
+   never automatic.** The overlay never writes to the FO76 Proton/Wine prefix on its own (not on
+   install, not on launch) — see [README.md](README.md) — EULA-safe overlay scope: no
+   game-memory reading, no game-file modification, no code injection, no network/port scanning;
+   writing `GrabFullscreen`/`GrabPointer` is a Wine/Proton *compatibility-layer* registry setting,
+   not a game-file modification. Two ways to apply it, both user-initiated:
+   - **Tray → "Fix FO76 cursor lock (Wayland)"** (`main.js` `fixFo76CursorLock` /
+     `applyFo76Grab`, needs FO76 closed) — one click runs the same commands below and reports
+     the result (`applied` / `fo76-running` / `no-prefix` / `no-protontricks` / `error`) via a
+     dialog. This is the recommended path.
+   - **Manual**, for anyone who prefers to run it themselves: the winetricks verb
+     `protontricks 1151340 grabfullscreen=y` (the winecfg "Automatically capture the mouse in
+     full-screen windows" setting; internally `HKCU\Software\Wine\X11 Driver` `GrabFullscreen`=`Y`)
+     for Fullscreen, PLUS `GrabPointer`=`Y` for Borderless-Windowed via
+     `protontricks 1151340 -c 'wine reg add "HKCU\Software\Wine\X11 Driver" /v GrabPointer /t REG_SZ /d Y /f && wineserver -w'`
+     (no winetricks verb exists for GrabPointer; `wineserver -w` flushes `user.reg` — Wine only
+     persists the registry on shutdown). The manual steps are printed by
+     `Packaging/linux/install.sh` (`print_cursor_manual_steps`) and documented in
+     `INSTALL-LINUX.txt` — the installer itself still never applies them automatically.
+
+   After Fallout 76 exits, the overlay also checks (read-only) the prefix's `user.reg`
+   for those two Wine settings. If either is missing, it shows a one-time system
+   notification whose click runs the same `fixFo76CursorLock()` as the tray item.
+   Detection never writes to the prefix on its own: the click (or the tray item) is
+   still the only write path, same principle as before.
+
+   **Wine** then confines the cursor to the game whenever FO76 is focused and releases it when
+   focus leaves (overlay stays usable). Confirmed: cursor held on fast flicks, free movement in
+   menus, frees for the overlay — all by Wine, independent of KWin's broken pointer constraint.
+   **Recommended:** run FO76 on the latest **Proton 11.x** available in Steam (Properties →
+   Compatibility → Force the use of a specific Steam Play compatibility tool), or a
+   well-maintained community build like **Proton-CachyOS** or **GE-Proton** — newer Wine/DXVK
+   builds are more reliable at persisting these settings. X11 doesn't need it. (History: earlier
+   builds hand-edited `user.reg`, then auto-applied via protontricks unconditionally from the
+   installer; that install-time auto-apply and the tray button were both removed for mutating the
+   prefix without an explicit per-use action; the tray button was reinstated as an
+   explicit/on-demand-only action, while the installer stays manual-instructions-only.) The KWin
+   rules in step 2 handle stacking and are unrelated to this step.
 
 ### What did NOT work (dead ends, for the record)
 - **Patched KWin** — works but a forked compositor is unshippable (reverted).
@@ -102,6 +128,99 @@ coexists with the lock. On **native Wayland** there is no easy interactive path.
   interactivity is toggled by grabbing/releasing input. This is exactly how shipping Electron
   game overlays work, and it installs as a plain npm dependency — **no compositor, no sudo,
   no system changes.**
+
+## Hyprland (implemented, not hardware-verified)
+
+On Hyprland the overlay uses `hyprctl` instead of kdotool/xdotool: `hyprctl activewindow -j`
+for the focused window's class, `hyprctl clients -j` to find FO76's `{x,y}` for the
+same-output probe, and `hyprctl dispatch pin address:<addr>` to pin the overlay above the
+workspace while the game is running on the same output (un-pin otherwise). The display
+probe is fail-closed, and the client `pinned` state is read before and verified after the
+toggle so helper failures do not suppress retries or accidentally invert the pin. This is
+best-effort and has **not been verified on real Hyprland hardware.** No machine was
+available to confirm that `pin` beats a fullscreen Proton game the way KWin's Force-Layer
+rule was empirically confirmed to. The Linux z-order heartbeat (`setAlwaysOnTop`) therefore
+stays active under Hyprland as a fallback; see `main.js` `_startLinuxZOrderHeartbeat`.
+
+## Phase-0 spike (2026-07) — re-testing the native-Wayland conclusion with `FCM_NATIVE_WAYLAND=1`
+
+The "not achievable" conclusion above was last measured before two things changed: Electron
+bumped to **42.5.0** (we were on ~39 when the XWayland-relaunch approach was built), which
+**fixed `GlobalShortcutsPortal`** (broken in the 40.x–41.x regression, electron#49806, fixed in
+42.0.0) — so native-Wayland global hotkeys are worth re-testing, not assumed dead. And KWin rule
+matching turns out to already be app_id-aware (see below) — so stacking is likely not the
+blocker people assumed either. **KDE bug 485409 (the cursor-lock issue) is still open — checked
+2026-07, status CONFIRMED, no fix version** — so that piece of the "not achievable" conclusion
+still stands until proven otherwise. This spike exists to test the *remaining* unknown
+empirically rather than re-assert the old conclusion from a stale Electron baseline.
+
+**What's implemented (code, no behavior change for existing users):**
+- `FCM_NATIVE_WAYLAND=1` (env var) — `main.js`'s `KDE_WAYLAND` relaunch block skips the
+  XWayland relaunch (`overlay-core.js: planOzoneRelaunch({ nativeWaylandOptIn: true })` returns
+  `null`) and instead enables `--enable-features=GlobalShortcutsPortal`. Unset (the default),
+  behavior is byte-for-byte unchanged — still relaunches into XWayland.
+- **app_id pinning:** `package.json`'s top-level `desktopName: "fallout-chat-mod.desktop"`
+  field (read by Electron itself at startup, electron/electron#49988) pins the
+  native-Wayland `app_id` to `fallout-chat-mod`. Electron's `app.setDesktopName` sets the
+  X11 `WM_CLASS` from the same value, so one string covers both backends and the existing
+  `fcm-keepabove` KWin rule matches either way. Without the field Electron falls back to
+  `${app.name}.desktop`, and `app.name` prefers `productName`, which would make the class
+  `Fallout Chat Mod` and break every `wmclass=fallout-chat-mod` match. (This is a
+  *different* field from `build.linux.executableName`, which only names the packaged binary.)
+- **KWin rule:** `buildKwinKeepAboveScript()` in `overlay-core.js` is **unmodified**. KWin's
+  rule engine matches `wmclass` against `Window::resourceClass()`, an accessor implemented for
+  both `X11Window` (X11 `WM_CLASS`) and `XdgToplevelWindow` (Wayland `app_id`) — the same
+  abstraction that lets System Settings → Window Rules → Detect Window Properties show a
+  "Window class" for native-Wayland apps (Konsole, Chrome, Discord) today. With the app_id
+  pinned to `fallout-chat-mod`, the existing rule is expected to match a native-Wayland overlay
+  window with no changes — **unverified until tested live.**
+
+**Manual test protocol (the actual GO/NO-GO gate — requires real KDE Plasma 6 Wayland + FO76
+under Proton hardware; not automatable):**
+1. Launch with `FCM_NATIVE_WAYLAND=1`; confirm the `[ozone]` diagnostic log line shows the
+   native-Wayland path was taken (not a relaunch).
+2. System Settings → Window Management → Window Rules → Add New… → Detect Window Properties →
+   click the overlay window → confirm **Window class = `fallout-chat-mod`** (same workflow used
+   for Konsole/Chrome/Discord).
+3. Launch FO76 on the same display so the automatic keep-above rule installs, and confirm the overlay
+   stacks **above** a focused fullscreen/borderless FO76.
+4. **The gate:** with FO76 running and mouselook active, does the game **keep its cursor lock**
+   with the native-Wayland overlay on top (click-through)? Per KDE bug 485409 this is expected
+   to fail — confirm whether it actually does on current KWin.
+5. If the lock survives: Insert → chat → type → Escape → confirm the lock **returns cleanly**.
+6. Confirm portal-granted global hotkeys fire while FO76 has focus (expect a KDE consent
+   prompt on first use — our defaults are bare keys, which portals are typically warier about
+   granting than modifier combos; this may need a native-mode-only keybind default change).
+7. Watch for direct-scanout/game-lag regression vs. the XWayland build.
+
+**Decision:** if step 4 fails, native-Wayland interactive play is not shippable (matches the
+"not achievable" conclusion above) — this doc's XWayland-relaunch solution remains the shipped
+default, unconditionally, and the opt-in flag stays a dev-only spike tool. If step 4 holds,
+proceed to a full migration plan.
+
+**Result (2026-07-04, real KDE Plasma 6 Wayland + FO76/Proton hardware): step 4 (the gate)
+holds — the game keeps its cursor lock with the native-Wayland overlay on top.** This is a
+partial GO: the one blocker research couldn't resolve without hardware (KDE bug 485409 is
+still CONFIRMED/unfixed upstream, per the check earlier in this section) did not manifest here.
+Two things remain open before calling this a full GO for Phase 1:
+- **Mechanism unconfirmed.** It's not yet known whether this held because Wine's own
+  `GrabFullscreen`/`GrabPointer` X11-level grab (see the "SOLUTION" section above — a
+  *different* locking path than the `zwp_pointer_constraints_v1` protocol bug 485409 is about)
+  was already applied to the test prefix, or because the native-Wayland surface genuinely
+  doesn't trigger the compositor-side revocation the bug describes. These have different
+  implications: the former means native-Wayland migration is safe **only if** the install/setup
+  flow keeps steering users to the Wine grab fix (tray → "Fix in-game cursor lock"); the latter
+  would mean the bug doesn't apply to this stacking arrangement at all. Follow-up: re-test with
+  a **vanilla Proton prefix (no `GrabFullscreen`/`GrabPointer` set)** to isolate which mechanism
+  is responsible.
+- **Steps 3/5/6/7 not yet confirmed** (stacking above the fullscreen game, lock returning
+  cleanly after chat, portal-granted hotkeys firing, scanout/lag regression). Only the cursor
+  lock (step 4) has been checked so far.
+
+Given the above, treat this as **GO on the critical blocker, not yet a full GO for Phase 1** —
+the automatic-fallback design in Phase 1 should assume the mechanism is Wine-grab-dependent
+(the conservative reading) until the vanilla-prefix retest says otherwise, and stacking/hotkeys
+still need their own hardware confirmation before Phases 2–3 are built out.
 
 ## Decision — two real shippable candidates
 
