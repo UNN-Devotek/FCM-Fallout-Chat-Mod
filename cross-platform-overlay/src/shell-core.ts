@@ -331,6 +331,7 @@ export interface WebMirrorInput {
   timestampFormat: '12h' | '24h';
   disableNameMotion: boolean;
   channelFilters: string[];
+  mutedPartyIds?: string[];
   notifyKeywords: string[];
   showTypingWhenCollapsed: boolean;
   notifySoundEnabled: boolean;
@@ -346,6 +347,7 @@ export interface WebMirrorSettings {
   timestampFormat: '12h' | '24h';
   disableNameMotion: boolean;
   channelFilters: string[];
+  mutedPartyIds: string[];
   notifyKeywords: string[];
   showTypingWhenCollapsed: boolean;
   notifySoundEnabled: boolean;
@@ -372,6 +374,9 @@ export function shellToWebSettings(s: WebMirrorInput): WebMirrorSettings {
     // Hidden-channel names — the component filters these out of the feed and
     // per-channel views (case-insensitive). Copied so the array can't alias.
     channelFilters: Array.isArray(s.channelFilters) ? s.channelFilters.slice() : [],
+    // Moderator-only party IDs muted from the aggregate General/feed. Keep a
+    // defensive copy so shell and renderer state cannot alias one another.
+    mutedPartyIds: Array.isArray(s.mutedPartyIds) ? s.mutedPartyIds.slice() : [],
     // Words that highlight a message like an @mention of you (#422). Copied so
     // the array can't alias back into shell state.
     notifyKeywords: Array.isArray(s.notifyKeywords) ? s.notifyKeywords.slice() : [],

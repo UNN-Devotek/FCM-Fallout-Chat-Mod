@@ -741,6 +741,9 @@ interface WebOverlaySettings {
   // "Hidden channels" filter, mirrored here). Their messages are excluded from
   // the feed AND per-channel views. Case-insensitive match on channel name.
   channelFilters: string[];
+  // Party IDs this moderator has muted from the aggregate General/feed view.
+  // This is a local view preference; direct party views remain available.
+  mutedPartyIds: string[];
   // Extra words that highlight a message the same way an @mention of you does
   // (issue #422). Bare words — no leading @ — matched case-insensitively on word
   // boundaries. Empty by default: @mentions of your own names always trigger
@@ -768,6 +771,7 @@ const DEFAULT_SETTINGS: WebOverlaySettings = {
   disableNameMotion: false,
   timestampFormat: '12h',
   channelFilters: [],
+  mutedPartyIds: [],
   notifyKeywords: [],
   showTypingWhenCollapsed: false,
   notifySoundEnabled: false,
@@ -1070,9 +1074,12 @@ interface SettingsModalProps {
   // the shell's own settings panel is the source of truth for those.
   hideShellSliders?: boolean;
   chromeBgAlpha?: number;
+  // Party-feed mute controls are shown only to moderators/admins.
+  isMod?: boolean;
+  parties?: Party[];
 }
 
-function SettingsModal({ settings, theme, onChange, onClose, selfAvatarUrl, selfName, onBlockChange, hideShellSliders = false, chromeBgAlpha = 1 }: SettingsModalProps) {
+function SettingsModal({ settings, theme, onChange, onClose, selfAvatarUrl, selfName, onBlockChange, hideShellSliders = false, chromeBgAlpha = 1, isMod = false, parties = [] }: SettingsModalProps) {
   const primary = theme.primaryColor;
   const panelBg = hexToRgba(theme.backgroundColor, Math.min(1, theme.bgAlpha * 1.4));
   const chromeBg = hexToRgba(theme.chromeColor, Math.min(1, theme.chromeAlpha * chromeBgAlpha));
@@ -1302,6 +1309,69 @@ function SettingsModal({ settings, theme, onChange, onClose, selfAvatarUrl, self
                 </button>
               ))}
             </div>
+          )}
+
+          {isMod && (
+            <>
+              <div style={{ ...sectionStyle, marginTop: '20px' }}>PARTY FEED</div>
+              <div style={{ fontSize: '11px', color: dimText, marginBottom: '10px', lineHeight: 1.45 }}>
+                Mute party chats from the aggregate General feed without leaving the party. Direct party views are never muted.
+              </div>
+              {parties.length > 0 ? parties.map(p => {
+                const muted = settings.mutedPartyIds.includes(p.id);
+                const toggle = () => onChange({
+                  mutedPartyIds: muted
+                    ? settings.mutedPartyIds.filter(id => id !== p.id)
+                    : [...settings.mutedPartyIds, p.id],
+                });
+                return (
+                  <div
+                    key={p.id}
+                    role="checkbox"
+                    aria-checked={muted}
+                    tabIndex={0}
+                    onClick={toggle}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggle();
+                      }
+                    }}
+                    style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', marginBottom: '8px' }}
+                  >
+                    <div style={{
+                      width: '14px', height: '14px', flexShrink: 0,
+                      border: `1px solid ${hexAlpha(primary, 0.6)}`,
+                      background: muted ? hexAlpha(primary, 0.3) : 'transparent',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {muted && <span style={{ color: primary, fontSize: '10px', lineHeight: 1 }}>✓</span>}
+                    </div>
+                    <span style={{ color: theme.textColor, fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {p.name}
+                    </span>
+                    {muted && <span style={{ color: dimText, fontSize: '10px', marginLeft: 'auto' }}>MUTED</span>}
+                  </div>
+                );
+              }) : (
+                <div style={{ fontSize: '11px', color: dimText }}>No party chats are available yet.</div>
+              )}
+              {settings.mutedPartyIds
+                .filter(id => !parties.some(p => p.id === id))
+                .map(id => (
+                  <div key={id} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => onChange({ mutedPartyIds: settings.mutedPartyIds.filter(partyId => partyId !== id) })}
+                      style={{
+                        background: hexAlpha(primary, 0.12), border: `1px solid ${hexAlpha(primary, 0.45)}`,
+                        color: primary, cursor: 'pointer', fontFamily: theme.fontFamily, fontSize: '10px', padding: '3px 7px',
+                      }}
+                    >SHOW</button>
+                    <span style={{ color: dimText, fontSize: '10px' }}>Muted party · {id.slice(0, 8)}…</span>
+                  </div>
+                ))}
+            </>
           )}
 
           {/* ── BLOCKED USERS ── (shared body, also used by the standalone modal) */}
@@ -1755,6 +1825,20 @@ export function isPrivilegedRole(role: string): boolean {
   return MOD_ROLES.includes(role);
 }
 
+/** Pure gate shared by rendering and live-notification paths. */
+export function isPartyMutedForModerator(
+  m: { channelId: string; source?: string },
+  ctx: { isMod: boolean; isPublicMode: boolean; mutedPartyIds?: readonly string[] | ReadonlySet<string> },
+): boolean {
+  const mutedPartyIds = ctx.mutedPartyIds ?? [];
+  const mutedArray = Array.isArray(mutedPartyIds) ? mutedPartyIds : null;
+  const mutedSet = mutedArray ? null : mutedPartyIds as ReadonlySet<string>;
+  return ctx.isMod
+    && !ctx.isPublicMode
+    && m.source === 'party'
+    && (mutedSet ? mutedSet.has(m.channelId) : mutedArray?.includes(m.channelId) ?? false);
+}
+
 /**
  * Pure helper: determines whether a message should appear in the main feed
  * (website "Feed" tab / overlay "General" channel).
@@ -1767,6 +1851,9 @@ export function isPrivilegedRole(role: string): boolean {
  *     messages (source === 'party') flow into the main feed so mods can
  *     observe foreign-party conversations inline. Server-enforced — regular
  *     users never receive foreign-party frames.
+ *  5. A moderator's muted party IDs are excluded from this aggregate view.
+ *     This check deliberately happens before joined-party inclusion so a mod
+ *     can mute one of their own parties as well as a foreign party.
  */
 export function shouldShowInMainFeed(
   m: { channelId: string; source?: string },
@@ -1776,10 +1863,12 @@ export function shouldShowInMainFeed(
     feedPartyIds: string[];
     isMod: boolean;
     isPublicMode: boolean;
+    mutedPartyIds?: readonly string[];
   },
 ): boolean {
   if (m.channelId === ctx.feedParentId) return true;
   if (ctx.childIds.includes(m.channelId)) return true;
+  if (isPartyMutedForModerator(m, ctx)) return false;
   if (ctx.feedPartyIds.includes(m.channelId)) return true;
   // Privileged moderation visibility: all party messages flow into the main
   // feed (website Feed tab + overlay General). Never in public mode.
@@ -3408,6 +3497,10 @@ export default function ChatOverlay() {
     setSettingsRaw(prev => {
       const next = { ...prev, ...patch };
       saveSettings(next);
+      // Electron's native shell keeps a superset copy of these settings. The
+      // event is ignored by the website and prevents a later shell slider
+      // change from restoring a stale party-mute list.
+      try { window.dispatchEvent(new CustomEvent('fcm-web-settings-changed', { detail: next })); } catch { /* non-browser test/runtime */ }
       return next;
     });
   }
@@ -3578,6 +3671,7 @@ export default function ChatOverlay() {
     };
   }, [settings.notifySoundEnabled, settings.notifySoundVolume]);
   const myUserIdRef = useRef<string>('');
+  const mutedPartyIdsRef = useRef<Set<string>>(new Set());
   const viewCtxRef  = useRef<{ activeSubId: string; feedId: string | null; feedChildIds: string[]; activePartyId: string | null }>({ activeSubId: '', feedId: null, feedChildIds: [], activePartyId: null });
   const jumpIdxRef  = useRef(0);
   // When a mention badge is clicked we switch channel first, then need to run
@@ -3604,6 +3698,26 @@ export default function ChatOverlay() {
     myNamesRef.current  = [...new Set(ns)];
     myUserIdRef.current = user?.id || '';
   }, [user]);
+  useEffect(() => {
+    mutedPartyIdsRef.current = new Set(
+      isMod && !isPublicMode ? (settings.mutedPartyIds ?? []) : [],
+    );
+  }, [settings.mutedPartyIds, isMod, isPublicMode]);
+  useEffect(() => {
+    if (!isMod || isPublicMode || !settings.mutedPartyIds?.length) return;
+    const muted = new Set(settings.mutedPartyIds);
+    setUnreadMentions(prev => {
+      let changed = false;
+      const next = { ...prev };
+      for (const id of muted) {
+        if (id in next) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [settings.mutedPartyIds, isMod, isPublicMode]);
   // ── Party state ──────────────────────────────────────────────────────────────
   const [partyView, setPartyView] = useState<'browser' | string>('browser');
   const [partySearch, setPartySearch] = useState('');
@@ -5012,7 +5126,12 @@ export default function ChatOverlay() {
                 {
                   const content: string = frame.payload.content || '';
                   const chId: string = frame.payload.channelId;
+                  const mutedParty = isPartyMutedForModerator(
+                    { channelId: chId, source: frame.payload.source },
+                    { isMod, isPublicMode, mutedPartyIds: mutedPartyIdsRef.current },
+                  );
                   const mentionsMe = frame.payload.userId !== myUserIdRef.current
+                    && !mutedParty
                     && messageTriggersNotify(content, myNamesRef.current, notifyKeywordsRef.current);
                   if (mentionsMe && chId) {
                     const v = viewCtxRef.current;
@@ -6572,6 +6691,7 @@ export default function ChatOverlay() {
             feedPartyIds,
             isMod,
             isPublicMode,
+            mutedPartyIds: settings.mutedPartyIds,
           }) &&
           // Drop messages from channels the viewer hid (e.g. Trading) out of the
           // aggregated feed.
@@ -6580,7 +6700,7 @@ export default function ChatOverlay() {
         );
     }
     return messages.filter(m => m.channelId === activeSubId && notBlocked(m));
-  }, [messages, activeSubId, isMainFeedView, feedParent, activeMainId, partyView, pmView, blockedIds, user?.id, joinedParties, isPublicMode, publicPartyIdKey, isMod, hiddenChannelIds, privateMessages]);
+  }, [messages, activeSubId, isMainFeedView, feedParent, activeMainId, partyView, pmView, blockedIds, user?.id, joinedParties, isPublicMode, publicPartyIdKey, isMod, hiddenChannelIds, settings.mutedPartyIds, privateMessages]);
 
   // After a mention-badge click switched channel, run the scroll once the new
   // channel's messages have rendered into the DOM (this effect re-runs whenever
@@ -6870,6 +6990,18 @@ export default function ChatOverlay() {
     }
   }, [queryClient]);
 
+  const togglePartyFeedMute = useCallback((partyId: string, partyName: string) => {
+    if (!isMod || isPublicMode) return;
+    const muted = new Set(settings.mutedPartyIds ?? []);
+    const wasMuted = muted.has(partyId);
+    if (wasMuted) muted.delete(partyId);
+    else muted.add(partyId);
+    patchSettings({ mutedPartyIds: [...muted] });
+    showActionToast('ok', wasMuted
+      ? `${partyName} is visible in General again`
+      : `${partyName} is muted in General`);
+  }, [isMod, isPublicMode, settings.mutedPartyIds, showActionToast, patchSettings]);
+
   // Single source of truth for the party right-click menu. Builds the IDENTICAL
   // option set for a party regardless of WHERE the menu was triggered (joined
   // sub-tab, the active in-party sub-tab, or a Public Parties browser row) —
@@ -6889,13 +7021,17 @@ export default function ChatOverlay() {
     };
     return [
       { label: 'Open', action: () => { setActiveMainId(PARTY_MAIN_ID); setPartyView(p.id); } },
+      ...((isMod && !isPublicMode) ? [{
+        label: settings.mutedPartyIds.includes(p.id) ? 'Show in General' : 'Mute in General',
+        action: () => togglePartyFeedMute(p.id, p.name),
+      }] : []),
       ...(!p.isMember && !p.isPrivate ? [{ label: 'Join party', action: () => joinPartyById(p.id) }] : []),
       ...(canInvite ? [{ label: 'Invite members…', action: () => { setActiveMainId(PARTY_MAIN_ID); setPartyView(p.id); setInviteModalFor({ partyId: p.id }); } }] : []),
       ...(canInvite ? [{ label: 'Set member limit…', action: () => setPartyLimitEditor({ partyId: p.id, x: menuX, y: menuY }) }] : []),
       ...(canInvite ? [{ label: 'Edit description…', action: () => setPartyDescriptionEditor({ partyId: p.id }) }] : []),
       ...(p.isMember ? [{ label: isOwner ? 'Delete party' : 'Leave party', action: leaveOrDelete, danger: true }] : []),
     ];
-  }, [joinPartyById]);
+  }, [joinPartyById, isMod, isPublicMode, settings.mutedPartyIds, togglePartyFeedMute]);
 
   // ── Active tab rendering helpers ──────────────────────────────────────────
   function renderMainTab(ch: Channel) {
@@ -9916,6 +10052,20 @@ export default function ChatOverlay() {
                   && ctxMenu.msg.userId !== (user?.id ?? '')
                 ? [{ label: `Block ${ctxMenu.msg.username}`, action: () => { blockUser(ctxMenu.msg.userId!); } }]
                 : []),
+              // Party-feed visibility is a personal moderator preference. It
+              // only affects the aggregate General/feed view; direct party
+              // views remain available after muting.
+              ...(!isPublicMode && isMod && ctxMenu.msg.source === 'party' && ctxMenu.msg.channelId
+                ? (() => {
+                    const party = parties.find(p => p.id === ctxMenu.msg.channelId);
+                    const partyName = party?.name || 'This party';
+                    const muted = settings.mutedPartyIds.includes(ctxMenu.msg.channelId);
+                    return [{
+                      label: muted ? `Show ${partyName} in General` : `Mute ${partyName} in General`,
+                      action: () => togglePartyFeedMute(ctxMenu.msg.channelId, partyName),
+                    }];
+                  })()
+                : []),
               // Mod actions — only for mod/admin viewers, only on a real user message.
               ...(!isPublicMode && isMod && ctxMenu.msg.userId && ctxMenu.msg.userId !== 'system'
                   && ctxMenu.msg.source !== 'bot' && ctxMenu.msg.source !== 'system'
@@ -10711,6 +10861,8 @@ export default function ChatOverlay() {
           onBlockChange={refreshBlocked}
           hideShellSliders={!!overlayShell}
           chromeBgAlpha={chromeBgAlpha}
+          isMod={isMod && !isPublicMode}
+          parties={parties}
         />,
         document.body
       )}

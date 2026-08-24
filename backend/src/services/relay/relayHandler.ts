@@ -758,12 +758,13 @@ async function handleHello(ws: WebSocket, frame: Record<string, unknown>): Promi
  * getAuthState — reflects the current link state for the SWF to gate its input.
  *
  * Response shape:
- *   { success: true, userId, state: 'authenticated'|'limited', permissions: { canReport, canSend } }
+ *   { success: true, userId, state: 'authenticated'|'limited', permissions: { canReport, canSend, canKickUser, ... } }
  *
  * userId is always populated so the widget can correlate its authenticated relay session.
  * state='authenticated' only when linked_user_id is set; otherwise 'limited'.
  * permissions.canSend reflects isLinked (same gate as handleSend).
  * permissions.canReport reflects the same linked-account gate as handleReport.
+ * Staff-only moderation permissions reflect the currently verified Discord role.
  */
 async function handleGetAuthState(ws: WebSocket, frame: Record<string, unknown>): Promise<void> {
   const rawToken = typeof frame.token === 'string' ? frame.token : null;
@@ -792,6 +793,7 @@ async function handleGetAuthState(ws: WebSocket, frame: Record<string, unknown>)
       canSend:   identity.isLinked,
       canReport: identity.isLinked,
       canDeleteMessage: identity.isLinked && privileged,
+      canKickUser:      identity.isLinked && privileged,
       canMuteUser:      identity.isLinked && privileged,
       canUnmuteUser:    identity.isLinked && privileged,
       canBanUser:       identity.isLinked && privileged,
@@ -1205,7 +1207,7 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
 }
 
 const RELAY_MODERATION_ACTIONS = new Set([
-  'deleteMessage', 'muteUser', 'unmuteUser', 'banUser', 'unbanUser', 'setSlowMode',
+  'deleteMessage', 'kickUser', 'muteUser', 'unmuteUser', 'banUser', 'unbanUser', 'setSlowMode',
 ]);
 
 function boundedReason(frame: Record<string, unknown>): string {
@@ -1266,6 +1268,7 @@ async function handleModerationAction(ws: WebSocket, frame: Record<string, unkno
 
   const targetUserId = typeof frame.targetUserId === 'string' ? frame.targetUserId.trim() : '';
   const service = require('../moderationActionsService') as {
+    kickUser: (targetId: string, actorId: string, reason: string) => Promise<unknown>;
     deleteMessageById: (messageId: string, actorId: string, reason?: string) => Promise<void>;
     muteUser: (targetId: string, actorId: string, durationMs: number, category: string, reason: string) => Promise<unknown>;
     unmuteUser: (targetId: string, actorId: string, reason: string) => Promise<void>;
@@ -1288,7 +1291,9 @@ async function handleModerationAction(ws: WebSocket, frame: Record<string, unkno
         return;
       }
 
-      if (action === 'muteUser') {
+      if (action === 'kickUser') {
+        await service.kickUser(targetUserId, identity.linkedUserId, reason);
+      } else if (action === 'muteUser') {
         const minutes = positiveDurationMinutes(frame, 10);
         if (!minutes) {
           send(ws, errEnvelope('invalid_request', 'durationMinutes must be a positive number'));

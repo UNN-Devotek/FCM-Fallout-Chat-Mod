@@ -148,12 +148,14 @@ Privileged users (role `owner`, `admin`, or `moderator`) see every party's messa
 - **Rendering:** party messages already carry `[PartyName]` tags via the existing tag logic (each `source === 'party'` message renders its party's name and colour as a prefix). No separate rendering path is needed.
 - **Read/write:** the input bar remains active for the mod's own joined parties. Foreign-party messages are read-only by the nature of how party send works (requires membership — server-enforced).
 - **Server-enforced visibility:** the backend controls which `chat:message` frames reach the client. Privileged users receive foreign-party frames with `_modObserver: true`; regular users never receive them. The client filter is defence-in-depth only.
+- **Per-moderator mute:** authenticated owners, admins, and moderators can choose **Mute in General** from a party tab or party-message context menu. The same list is available under the built-in settings modal's **PARTY FEED** section. Muted IDs are stored in the viewer's `fcm_web_overlay_settings` local preference and are never sent to the backend, so the choice affects only that moderator/device. It removes the party from the aggregate General/Feed view and mention notifications, but never blocks delivery or direct party views; **Show in General** reverses it.
 
 ### Key exported helpers
 
 | Export | Signature | Purpose |
 |--------|-----------|---------|
 | `isPrivilegedRole` | `(role: string) => boolean` | Returns true for owner/admin/moderator. Single source of truth, backed by `MOD_ROLES`. |
+| `isPartyMutedForModerator` | `(m, ctx) => boolean` | Pure gate shared by aggregate-feed rendering and live mention notifications. Only authenticated privileged viewers can mute party-source messages. |
 | `shouldShowInMainFeed` | `(m, ctx) => boolean` | Pure: determines whether a message belongs in the main feed. Handles feedParent, child ids, joined party ids, and mod-observer inclusion. Testable without React. |
 | `formatMessageTimestamp` | `(value, format, opts?) => string` | Pure: formats a message's UTC timestamp in the VIEWER's local time. `format` is `'12h'`/`'24h'`; `opts.timeZone`/`opts.locale` exist for tests only. Returns `''` for missing/unparseable input. |
 | `isProdRelayHost` | `(host) => boolean` | Pure: true only for the prod relay host (`falloutchatmod.com`/`www.`), case-insensitive, port-ignored. Drives the footer `[DEV]` indicator so a build on any non-prod relay self-identifies. |
@@ -167,6 +169,7 @@ set includes:
 - Messages in any child sub-channel of that main
 - Messages from joined parties (auth mode) or public parties (public mode)
 - **Privileged users only (auth mode):** all party messages (`source === 'party'`), including foreign parties observed via `_modObserver`. See [Party moderation visibility](#party-moderation-visibility).
+- **Moderator party mutes:** any party ID in `settings.mutedPartyIds` is excluded for privileged viewers before joined-party or foreign-party inclusion is applied. This does not affect regular users or public mode.
 
 Each message in the combined feed is prefixed with a coloured `[TagName]` label:
 
@@ -256,6 +259,17 @@ local time for every reader, with zero extra wire data.
   dashboard) and the Electron shell's Appearance panel (`shell.ts`, mirrored into
   `WEB_SETTINGS_KEY` as `showTimestamps` / `timestampFormat`). The 12h/24h picker
   only appears while the toggle is on.
+
+## Moderator Party Feed Mutes
+
+`WebOverlaySettings.mutedPartyIds` is a list of party IDs that an authenticated
+owner/admin/moderator does not want to see in the aggregate General/Feed view.
+It defaults to `[]`, is persisted alongside the other local overlay settings, and
+is mirrored through the Electron shell so shell-setting changes cannot erase it.
+The preference is intentionally client-side: it does not alter server delivery,
+party membership, moderation visibility for anyone else, or the direct party view.
+The Party Feed section in the settings modal and the party/message context menus
+provide the same mute/unmute action.
 
 ## Reconnect / Auth-Terminal Behavior
 

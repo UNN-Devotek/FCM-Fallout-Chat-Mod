@@ -56,6 +56,9 @@ const {
   probeUsable,
   parseInputText,
   jsonObjectEnd,
+  parseModerationCommand,
+  findModerationTarget,
+  resolveModerationTarget,
 } = require('./fcm-chat-widget-logic.js');
 
 describe('normChannel', () => {
@@ -208,6 +211,75 @@ describe('switchChannelBySlash', () => {
   });
   it('is case-insensitive', () => {
     expect(switchChannelBySlash('GENERAL')).toBe(0);
+  });
+});
+
+describe('HUD moderation command routing', () => {
+  const records = [
+    { messageId: '11111111-1111-4111-8111-111111111111', senderUserId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', channel: 'global', user: 'Alice' },
+    { messageId: '22222222-2222-4222-8222-222222222222', senderUserId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', channel: 'trade', user: 'Bob' },
+  ];
+
+  it('consumes only /mod commands and preserves the full reason', () => {
+    expect(parseModerationCommand('/g hello')).toEqual({ handled: false });
+    expect(parseModerationCommand('/mod #11111111 mute 15 repeated spam in trade')).toEqual({
+      handled: true,
+      request: { action: 'muteUser', target: '#11111111', durationMinutes: 15, reason: 'repeated spam in trade' },
+    });
+  });
+
+  it('accepts an exact visible player name as the target, including quoted multi-word names', () => {
+    expect(parseModerationCommand('/mod Alice mute 15 repeated spam in trade')).toEqual({
+      handled: true,
+      request: { action: 'muteUser', target: 'Alice', durationMinutes: 15, reason: 'repeated spam in trade' },
+    });
+    expect(parseModerationCommand('/mod "Alice Smith" kick repeated harassment')).toEqual({
+      handled: true,
+      request: { action: 'kickUser', target: 'Alice Smith', reason: 'repeated harassment' },
+    });
+  });
+
+  it('requires an explicit duration for a ban and permits permanent bans deliberately', () => {
+    expect(parseModerationCommand('mod #11111111 ban griefing')).toEqual({
+      handled: true,
+      error: 'ban_duration_required',
+    });
+    expect(parseModerationCommand('mod #11111111 ban permanent repeated harassment')).toEqual({
+      handled: true,
+      request: { action: 'banUser', target: '#11111111', durationMinutes: 0, reason: 'repeated harassment' },
+    });
+  });
+
+  it('routes delete, kick, unmute, and unban to the selected message target', () => {
+    expect(parseModerationCommand('mod #11111111 delete remove scam link').request).toMatchObject({
+      action: 'deleteMessage', target: '#11111111', reason: 'remove scam link',
+    });
+    expect(parseModerationCommand('mod #11111111 kick cooldown abuse').request).toMatchObject({ action: 'kickUser' });
+    expect(parseModerationCommand('mod #11111111 unmute appeal accepted').request).toMatchObject({ action: 'unmuteUser' });
+    expect(parseModerationCommand('mod #11111111 unban appeal accepted').request).toMatchObject({ action: 'unbanUser' });
+  });
+
+  it('only resolves a staff reference to an exact visible message in the active channel', () => {
+    expect(findModerationTarget(records, '#11111111', 'global')).toEqual(records[0]);
+    expect(findModerationTarget(records, '#22222222', 'global')).toBeNull();
+    expect(findModerationTarget(records, '#deadbeef', 'global')).toBeNull();
+  });
+
+  it('resolves an exact visible name to the newest record for that account, case-insensitively', () => {
+    const repeated = [
+      ...records,
+      { messageId: '33333333-3333-4333-8333-333333333333', senderUserId: records[0].senderUserId, channel: 'global', user: 'ALICE' },
+    ];
+    expect(findModerationTarget(repeated, ' alice ', 'global')).toEqual(repeated[2]);
+  });
+
+  it('refuses an ambiguous visible name instead of selecting one player', () => {
+    const duplicate = [
+      ...records,
+      { messageId: '33333333-3333-4333-8333-333333333333', senderUserId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', channel: 'global', user: 'Alice' },
+    ];
+    expect(resolveModerationTarget(duplicate, 'Alice', 'global')).toEqual({ target: null, ambiguous: true });
+    expect(findModerationTarget(duplicate, 'Alice', 'global')).toBeNull();
   });
 });
 

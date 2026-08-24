@@ -204,6 +204,7 @@ Use `chat.v1.getAuthState` to show connection and push health:
   "permissions": {
     "canReport": true,
     "canDeleteMessage": false,
+    "canKickUser": false,
     "canMuteUser": false,
     "canUnmuteUser": false,
     "canBanUser": false,
@@ -422,11 +423,11 @@ Response:
 { "success": true, "status": "submitted" }
 ```
 
-Supported actions: `deleteMessage`, `muteUser`, `unmuteUser`, `banUser`, `unbanUser`, `setSlowMode`.
+Supported actions: `deleteMessage`, `kickUser`, `muteUser`, `unmuteUser`, `banUser`, `unbanUser`, `setSlowMode`.
 
 The **server is authoritative**. ZFE only **pre-checks** the permissions it received from auth
 Only linked Discord-backed `moderator`, `admin`, and `owner` accounts may submit these actions.
-The relay routes delete, mute, unmute, ban, and unban through the shared moderation service, audit
+The relay routes delete, kick, mute, unmute, ban, and unban through the shared moderation service, audit
 log, and live-session enforcement. In-game bans use the supplied reason as text evidence because
 the relay cannot upload evidence files. `setSlowMode` is currently rejected with `invalid_action`
 and `canSetSlowMode` remains `false`.

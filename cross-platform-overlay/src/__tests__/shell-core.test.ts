@@ -438,6 +438,7 @@ describe('shellToWebSettings (mirror)', () => {
     showTimestamps: true,
     timestampFormat: '24h' as const,
     channelFilters: ['Trading', 'Events'],
+    mutedPartyIds: ['party-1'],
     notifyKeywords: ['nuke'],
     showTypingWhenCollapsed: true,
     notifySoundEnabled: true,
@@ -467,6 +468,11 @@ describe('shellToWebSettings (mirror)', () => {
     const w = shellToWebSettings(input);
     expect(w.channelFilters).toEqual(['Trading', 'Events']);
     expect(w.channelFilters).not.toBe(input.channelFilters); // copied, not aliased
+  });
+  it('carries (a copy of) muted party IDs into the mirror', () => {
+    const w = shellToWebSettings(input);
+    expect(w.mutedPartyIds).toEqual(['party-1']);
+    expect(w.mutedPartyIds).not.toBe(input.mutedPartyIds);
   });
   it('forces windowOpacity=1 and base font (shell drives those itself)', () => {
     const w = shellToWebSettings(input);

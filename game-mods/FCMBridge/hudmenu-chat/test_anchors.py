@@ -352,6 +352,18 @@ if widget_src:
     check('callTop("writeStorage", payload)' in widget_src
           and 'callTop("readStorage", payload)' in widget_src,
           "FCMChatWidget persists Customize settings in vendor-scoped ZFE storage")
+    check('"chat.v1.moderationAction"' in widget_src
+          and 'function handleModerationCommand' in widget_src,
+          "FCMChatWidget exposes a HUD moderation command surface")
+    check('"canKickUser"' in widget_src
+          and '"canMuteUser"' in widget_src
+          and '"canBanUser"' in widget_src,
+          "FCMChatWidget renders moderation controls only from relay permissions")
+    check('function resolveModerationTarget' in widget_src
+          and 'StringTools.trim(rec.user).toLowerCase()' in widget_src
+          and 'rec.messageId.substr(0, 8)' in widget_src
+          and 'rec.senderUserId' in widget_src,
+          "FCMChatWidget resolves visible names locally to immutable relay record IDs")
 
 try:
     widget_ini_src = open(WIDGET_INI, encoding="utf-8").read()

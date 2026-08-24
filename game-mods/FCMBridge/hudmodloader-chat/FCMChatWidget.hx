@@ -9,6 +9,21 @@ import flash.net.URLLoader;
 import flash.net.URLRequest;
 import flash.events.IOErrorEvent;
 
+private typedef ChatRecord = {
+    var color:String;
+    var channel:String;
+    var user:String;
+    var body:String;
+    var ts:String;
+    var messageId:String;
+    var senderUserId:String;
+}
+
+private typedef ModerationTargetResolution = {
+    var target:Null<ChatRecord>;
+    var ambiguous:Bool;
+}
+
 /**
  * FCMChatWidget — HUDModLoader widget for Fallout Chat Mod.
  *
@@ -113,7 +128,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.1";  // clientVersion handshake (relay capability gating)
+    static inline var VERSION:String  = "2.10.3";  // clientVersion handshake + name-targeted HUD moderation
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -259,7 +274,7 @@ class FCMChatWidget extends MovieClip {
     var _fmt:TextFormat;
 
     // ── Chat render state ─────────────────────────────────────────────────────
-    var _records:Array<{color:String, channel:String, user:String, body:String, ts:String}> = [];
+    var _records:Array<ChatRecord> = [];
     var _seenMessageIds:Map<String,Bool> = new Map();
     var _seenMessageOrder:Array<String> = [];
     var _bScrolling:Bool         = false;
@@ -305,6 +320,10 @@ class FCMChatWidget extends MovieClip {
 
     // ── Auth state ────────────────────────────────────────────────────────────
     var _authState:String        = "limited";
+    // Server-authoritative permission snapshot from chat.v1.getAuthState. This only
+    // controls whether staff-only references/help are shown; every action is still
+    // authorized again by the relay from the linked Discord role.
+    var _canModerate:Bool         = false;
     var _pinnedSystemBody:String = "";
     // True once the relay has sent a system link-code notice (sent ONLY to limited/unlinked
     // identities) — the authoritative "not linked" signal (ZFE getAuthState can't tell us).
@@ -536,8 +555,9 @@ class FCMChatWidget extends MovieClip {
     function idlePrompt():String {
         // Blank when idle unless showHints (CAP-014); in-progress text still shows while typing.
         if (!_cfg.showHints) return "";
+        var suffix:String = _canModerate ? "  |  [F11] moderation" : "";
         return '<font face="' + FONT_BODY + '" size="13" color="' + hx(_cfg.promptColor) + '">&#x203A; ['
-            + _cfg.openKey + '] chat  |  [/g /t /e /i /r] channel</font>';
+            + _cfg.openKey + '] chat  |  [/g /t /e /i /r] channel' + suffix + '</font>';
     }
 
     function typingPrompt():String {
@@ -647,6 +667,11 @@ class FCMChatWidget extends MovieClip {
             Reflect.callMethod(_hudTools, add, ["hidechat", "Hide chat", true, false, -1]);
             Reflect.callMethod(_hudTools, add, ["autohide", (_autoHideOn ? "Auto-hide: ON" : "Auto-hide: OFF"), true, false, -1]);
             Reflect.callMethod(_hudTools, add, ["customize", "Customize...", true, true, -1]);   // isMenu=true
+            // The relay provides this permission snapshot from the linked Discord role.
+            // The command itself is re-authorized server-side on every submit.
+            if (_canModerate) {
+                Reflect.callMethod(_hudTools, add, ["moderationhelp", "Moderation commands", true, false, -1]);
+            }
             Reflect.callMethod(_hudTools, add, ["relink", "Link account...", _authState != "authenticated", false, -1]);
         } catch (e:Dynamic) {
             zfeLog("warn", "menu", "AddMenuItem threw: " + Std.string(e));
@@ -671,6 +696,8 @@ class FCMChatWidget extends MovieClip {
             if (_autoHideOn) { bumpAutoHide(); }
             else { if (_autoHideTimer != null) { _autoHideTimer.stop(); _autoHideTimer = null; } if (_hidden) show(); }
             zfeLog("info", "menu", "auto-hide " + (_autoHideOn ? "on" : "off"));
+        } else if (id == "moderationhelp") {
+            setLogText(moderationHelp());
         } else if (id == "relink") {
             setLogText(linkHint());
         }
@@ -1356,6 +1383,11 @@ class FCMChatWidget extends MovieClip {
         // /hide — hide the panel (CAP-011). Consume: never send. Restore with the open key.
         if (s.toLowerCase() == "/hide") { hide(); return; }
 
+        // Staff-only, local HUD commands. They are parsed before channel switches so a
+        // moderation request can never fall through and become a public chat message.
+        // Authorization is still repeated by the relay from the linked Discord role.
+        if (handleModerationCommand(s)) return;
+
         // Slash-command channel switch: "/g /t /e /i /r" (or ".g" alias).
         // If the whole input IS a slash command (bare or with trailing content),
         // consume it — never let it leak through as a chat message.
@@ -1387,6 +1419,224 @@ class FCMChatWidget extends MovieClip {
         }
 
         sendMessage(s);
+    }
+
+    // =========================================================================
+    // Moderation commands — staff-only HUD surface
+    //
+    // Commands accept an exact visible player name (quote multi-word names) or the
+    // [#XXXXXXXX] reference rendered beside a visible message. Both resolve locally
+    // to immutable relay IDs; the server validates the resolved IDs again.
+    // =========================================================================
+
+    function nextWord(input:String):{word:String, rest:String} {
+        var s:String = StringTools.trim(input == null ? "" : input);
+        if (s.length == 0) return { word: "", rest: "" };
+        var i:Int = 0;
+        while (i < s.length && s.charAt(i) != " " && s.charAt(i) != "\t") i++;
+        return { word: s.substr(0, i), rest: StringTools.trim(s.substr(i)) };
+    }
+
+    function readModerationTarget(input:String):{target:String, rest:String, valid:Bool, quoted:Bool} {
+        var s:String = StringTools.trim(input == null ? "" : input);
+        if (s.length == 0) return { target: "", rest: "", valid: false, quoted: false };
+        if (s.charAt(0) == "\"") {
+            var close:Int = 1;
+            while (close < s.length && s.charAt(close) != "\"") close++;
+            if (close >= s.length) return { target: "", rest: "", valid: false, quoted: true };
+            var quotedTarget:String = StringTools.trim(s.substr(1, close - 1));
+            return {
+                target: quotedTarget,
+                rest: StringTools.trim(s.substr(close + 1)),
+                valid: quotedTarget.length > 0,
+                quoted: true,
+            };
+        }
+        var word = nextWord(s);
+        return { target: word.word, rest: word.rest, valid: word.word.length > 0, quoted: false };
+    }
+
+    function isVisibleModerationRecord(rec:ChatRecord, activeChannel:String):Bool {
+        return rec.channel == activeChannel
+            && rec.messageId != null && rec.messageId.length >= 8
+            && rec.senderUserId != null && rec.senderUserId.length > 0;
+    }
+
+    function findModerationTargetByReference(reference:String):Null<ChatRecord> {
+        var ref:String = StringTools.trim(reference == null ? "" : reference).toLowerCase();
+        if (StringTools.startsWith(ref, "#")) ref = ref.substr(1);
+        if (ref.length != 8) return null;
+        var activeChannel:String = CHAN_SLUGS[_chanIdx];
+        for (rec in _records) {
+            if (!isVisibleModerationRecord(rec, activeChannel)) continue;
+            if (rec.messageId.substr(0, 8).toLowerCase() == ref) return rec;
+        }
+        return null;
+    }
+
+    function resolveModerationTarget(targetInput:String):ModerationTargetResolution {
+        var rawTarget:String = StringTools.trim(targetInput == null ? "" : targetInput);
+        if (StringTools.startsWith(rawTarget, "#")) {
+            return { target: findModerationTargetByReference(rawTarget), ambiguous: false };
+        }
+
+        var normalizedName:String = rawTarget.toLowerCase();
+        if (normalizedName.length == 0) return { target: null, ambiguous: false };
+        var activeChannel:String = CHAN_SLUGS[_chanIdx];
+        var candidate:Null<ChatRecord> = null;
+        for (rec in _records) {
+            if (!isVisibleModerationRecord(rec, activeChannel)) continue;
+            if (StringTools.trim(rec.user).toLowerCase() != normalizedName) continue;
+            if (candidate != null && candidate.senderUserId != rec.senderUserId) {
+                return { target: null, ambiguous: true };
+            }
+            // Records are chronological; delete-by-name should act on this user's latest row.
+            candidate = rec;
+        }
+        return { target: candidate, ambiguous: false };
+    }
+
+    function moderationHelp():String {
+        return "HUD MODERATION\n"
+            + "Use an exact visible name (quote names with spaces), or [#XXXXXXXX]:\n"
+            + "/mod Alice mute [minutes] [reason]\n"
+            + "/mod \"Alice Smith\" kick [reason]\n"
+            + "/mod #ref delete [reason]\n"
+            + "/mod #ref kick [reason]\n"
+            + "/mod #ref mute [minutes] [reason]\n"
+            + "/mod #ref unmute [reason]\n"
+            + "/mod #ref ban [minutes|permanent] [reason]\n"
+            + "/mod #ref unban [reason]\n"
+            + "Slow mode is not available.";
+    }
+
+    function moderationError(code:String, message:String):Void {
+        var text:String = "Moderation failed";
+        if (code == "permission_denied") text = "Moderation denied. Your linked staff role may have changed.";
+        else if (code == "user_banned" || code == "user_kicked") text = "Chat session ended - reconnecting...";
+        else if (message != null && message.length > 0) text += ": " + message;
+        else if (code != null && code.length > 0) text += ": " + code;
+        setLogText(FcmConfig.htmlEscape(text));
+        if (code == "auth_token_invalid" || code == "auth_token_revoked" || code == "user_banned" || code == "user_kicked") {
+            _connected = false;
+            stopPollTimer();
+            scheduleConnectRetry();
+        }
+    }
+
+    function removeLocalMessage(messageId:String):Void {
+        if (messageId == null || messageId.length == 0) return;
+        for (i in 0..._records.length) {
+            if (_records[i].messageId == messageId) {
+                _records.splice(i, 1);
+                renderRecords();
+                return;
+            }
+        }
+    }
+
+    function submitModerationAction(action:String, target:ChatRecord, durationMinutes:Int, reason:String):Void {
+        if (_api == null || !_connected || !_canModerate) {
+            setLogText("Moderation is unavailable until your linked staff role is verified.");
+            return;
+        }
+        reason = fcmClean(reason);
+        if (reason.length == 0) {
+            setLogText("A moderation reason is required.");
+            return;
+        }
+        if (reason.length > 500) reason = reason.substr(0, 500);
+
+        var messageId:String = action == "deleteMessage" ? target.messageId : "";
+        var targetUserId:String = action == "deleteMessage" ? "" : target.senderUserId;
+        var payload:String = '{"action":"' + jsonEscape(action)
+            + '","messageId":"' + jsonEscape(messageId)
+            + '","targetUserId":"' + jsonEscape(targetUserId)
+            + '","durationMinutes":' + durationMinutes
+            + ',"category":"Other","reason":"' + jsonEscape(reason) + '"}';
+        try {
+            var raw:String = Std.string(_api.call("chat.v1.moderationAction", payload));
+            var success:Bool = raw.indexOf('"success":true') >= 0 || raw.indexOf('success:true') >= 0;
+            if (!success) {
+                moderationError(extractJsonString(raw, "code"), extractJsonString(raw, "message"));
+                return;
+            }
+            if (action == "deleteMessage") removeLocalMessage(target.messageId);
+            zfeLog("info", "moderation", "submitted action=" + action);
+            setLogText("Moderation action submitted: " + action + ".");
+        } catch (e:Dynamic) {
+            zfeLog("warn", "moderation", "request threw: " + Std.string(e));
+            setLogText("Moderation request failed (no relay).");
+        }
+    }
+
+    /** Returns true only when the input is a /mod (or ZFE-stripped mod) command. */
+    function handleModerationCommand(input:String):Bool {
+        var s:String = StringTools.trim(input == null ? "" : input);
+        if (StringTools.startsWith(s, "/") || StringTools.startsWith(s, ".")) s = StringTools.trim(s.substr(1));
+        var command = nextWord(s);
+        if (command.word.toLowerCase() != "mod") return false;
+        if (!_canModerate) {
+            setLogText("Moderation commands require a linked staff account.");
+            return true;
+        }
+
+        var targetPart = readModerationTarget(command.rest);
+        if (!targetPart.valid || (!targetPart.quoted && targetPart.target.toLowerCase() == "help")) {
+            setLogText(moderationHelp());
+            return true;
+        }
+        var actionPart = nextWord(targetPart.rest);
+        if (actionPart.word.length == 0) {
+            setLogText(moderationHelp());
+            return true;
+        }
+        var resolution:ModerationTargetResolution = resolveModerationTarget(targetPart.target);
+        var target = resolution.target;
+        if (target == null) {
+            if (resolution.ambiguous) {
+                setLogText("That name matches multiple visible players. Use [#XXXXXXXX].");
+            } else if (StringTools.startsWith(targetPart.target, "#")) {
+                setLogText("That moderation reference is not visible in this channel.");
+            } else {
+                setLogText("That player name is not visible in this channel.");
+            }
+            return true;
+        }
+
+        var action:String = actionPart.word.toLowerCase();
+        var rest:String = actionPart.rest;
+        switch (action) {
+            case "delete":
+                submitModerationAction("deleteMessage", target, 0, rest);
+            case "kick":
+                submitModerationAction("kickUser", target, 0, rest);
+            case "unmute":
+                submitModerationAction("unmuteUser", target, 0, rest);
+            case "unban":
+                submitModerationAction("unbanUser", target, 0, rest);
+            case "mute":
+                var durationPart = nextWord(rest);
+                var minutes:Null<Int> = Std.parseInt(durationPart.word);
+                if (minutes == null || minutes <= 0 || minutes > 30 * 24 * 60) {
+                    setLogText("Mute duration must be 1 to 43200 minutes.");
+                } else {
+                    submitModerationAction("muteUser", target, minutes, durationPart.rest);
+                }
+            case "ban":
+                var durationPart = nextWord(rest);
+                var durationWord:String = durationPart.word.toLowerCase();
+                var minutes:Null<Int> = (durationWord == "perm" || durationWord == "permanent")
+                    ? 0 : Std.parseInt(durationWord);
+                if (minutes == null || minutes < 0 || minutes > 30 * 24 * 60) {
+                    setLogText("Ban duration must be minutes or permanent.");
+                } else {
+                    submitModerationAction("banUser", target, minutes, durationPart.rest);
+                }
+            default:
+                setLogText(moderationHelp());
+        }
+        return true;
     }
 
     // =========================================================================
@@ -1451,7 +1701,10 @@ class FCMChatWidget extends MovieClip {
                     // Render immediately on the active channel.
                     if (slug == CHAN_SLUGS[_chanIdx]) {
                         // Own-message time stays blank until a server time exists (D-08).
-                        _records.push({ color: hx(_cfg.senderColor), channel: slug, user: _displayName, body: raw, ts: "" });
+                        _records.push({
+                            color: hx(_cfg.senderColor), channel: slug, user: _displayName, body: raw, ts: "",
+                            messageId: messageId, senderUserId: _relayUserId,
+                        });
                         while (_records.length > _cfg.maxMessages) _records.shift();
                         renderRecords();
                         zfeLog("info", "echo", "pushed+rendered ch=" + slug + " records=" + _records.length);
@@ -1711,13 +1964,20 @@ class FCMChatWidget extends MovieClip {
                 zfeLog("info", "auth", "relay identity available");
             }
             var prevAuth:String = _authState;
+            var prevCanModerate:Bool = _canModerate;
             if (state.indexOf('"state":"authenticated"') >= 0 || state.indexOf('state:"authenticated"') >= 0) {
                 _authState = "authenticated";
             } else {
                 _authState = "limited";
             }
-            if (_authState != prevAuth) {
-                zfeLog("info", "auth", "authState=" + _authState);
+            _canModerate = extractJsonBool(state, "canDeleteMessage")
+                || extractJsonBool(state, "canKickUser")
+                || extractJsonBool(state, "canMuteUser")
+                || extractJsonBool(state, "canUnmuteUser")
+                || extractJsonBool(state, "canBanUser")
+                || extractJsonBool(state, "canUnbanUser");
+            if (_authState != prevAuth || _canModerate != prevCanModerate) {
+                zfeLog("info", "auth", "authState=" + _authState + " moderation=" + (_canModerate ? "yes" : "no"));
                 renderRecords();
             }
             // One-shot startup probe — once auth succeeds, capture the full raw shapes
@@ -1979,7 +2239,10 @@ class FCMChatWidget extends MovieClip {
             if (CHAN_SLUGS.indexOf(channel) < 0) continue;
             if (!shouldRenderReplayMessage(messageId)) continue;
 
-            _records.push({ color: hx(_cfg.senderColor), channel: channel, user: displayName, body: body, ts: createdAt });
+            _records.push({
+                color: hx(_cfg.senderColor), channel: channel, user: displayName, body: body, ts: createdAt,
+                messageId: messageId, senderUserId: senderUserId,
+            });
             while (_records.length > _cfg.maxMessages) _records.shift();
             if (_bScrolling) _newWhileScrolled++;
             newRecords = true;
@@ -2297,11 +2560,20 @@ class FCMChatWidget extends MovieClip {
             if (_cfg.showChannelTag) {
                 tagHtml = '<font color="' + hx(_cfg.channelColor(rec.channel)) + '">[' + FcmConfig.chanLabel(rec.channel) + ']</font> ';
             }
+            // Staff only: a short, stable reference for the moderation command surface.
+            // Never target by display name — names can be changed and are not unique.
+            var moderationRefHtml:String = "";
+            if (_canModerate && rec.messageId != null && rec.messageId.length >= 8
+                    && rec.senderUserId != null && rec.senderUserId.length > 0) {
+                moderationRefHtml = '<font color="' + hx(_cfg.promptColor) + '">[#'
+                    + rec.messageId.substr(0, 8).toUpperCase() + ']</font> ';
+            }
             // [channel] + body = light; sender name (the <b> span) = bold alias.
             html.push(
                 '<font face="' + FONT_BODY + '" size="' + fs + '">'
                 + tsHtml
                 + tagHtml
+                + moderationRefHtml
                 + '<b><font face="' + FONT_BOLD + '" color="' + col + '">' + user + ':</font></b> '
                 + '<font color="' + hx(_cfg.textColor) + '">' + msg + '</font>'
                 + '</font>');
@@ -2733,6 +3005,27 @@ class FCMChatWidget extends MovieClip {
         while (end < json.length && "0123456789-".indexOf(json.charAt(end)) >= 0) end++;
         if (end == start) return 0;
         return Std.parseInt(json.substring(start, end));
+    }
+
+    /** Read a compact or whitespace-formatted JSON boolean without a parser dependency. */
+    static function extractJsonBool(json:String, key:String):Bool {
+        if (json == null) return false;
+        var needle:String = '"' + key + '"';
+        var idx:Int = json.indexOf(needle);
+        if (idx < 0) {
+            needle = key;
+            idx = json.indexOf(needle);
+            if (idx < 0) return false;
+        }
+        var colon:Int = json.indexOf(":", idx + needle.length);
+        if (colon < 0) return false;
+        var start:Int = colon + 1;
+        while (start < json.length) {
+            var c:String = json.charAt(start);
+            if (c != " " && c != "\t" && c != "\r" && c != "\n") break;
+            start++;
+        }
+        return json.substr(start, 4).toLowerCase() == "true";
     }
 
     /**

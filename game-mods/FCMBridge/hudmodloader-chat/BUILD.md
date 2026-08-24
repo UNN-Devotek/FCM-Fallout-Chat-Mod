@@ -1,6 +1,6 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.1. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.3. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
@@ -148,9 +148,36 @@ overwrite an in-use BA2.
 HUDModLoader's upstream menu hotkey is **F11**, outside the Pip-Boy. F12 is the
 game's `DiagnosticSnapshot` action and is not a reliable route to the loader menu.
 
+### Staff moderation commands
+
+The HUD derives moderation availability from `chat.v1.getAuthState`; only a linked Discord
+`moderator`, `admin`, or `owner` sees a `[#XXXXXXXX]` reference beside visible messages and the
+**FCM → Moderation commands** F11 menu item. Enter an exact visible player name for a quick action,
+or quote a multi-word name. The HUD resolves that local display-name match to the immutable relay
+message and account IDs. If two visible accounts have the same name, it refuses the action and you
+must use the `[#XXXXXXXX]` reference instead.
+
+Open chat and enter one of the following, supplying a non-empty reason for every action:
+
+```text
+/mod Alice mute <minutes> <reason>
+/mod "Alice Smith" kick <reason>
+/mod #XXXXXXXX delete <reason>
+/mod #XXXXXXXX kick <reason>
+/mod #XXXXXXXX mute <minutes> <reason>
+/mod #XXXXXXXX unmute <reason>
+/mod #XXXXXXXX ban <minutes|permanent> <reason>
+/mod #XXXXXXXX unban <reason>
+```
+
+`mute` and temporary `ban` accept 1–43,200 minutes (30 days). `ban` requires an explicit duration
+or `permanent`, preventing an accidental permanent ban. Slow mode deliberately has no HUD command:
+FCM has no per-channel slow-mode primitive. The relay repeats role, target, reason, and protected-
+staff validation on every request; the HUD permission is only a visibility hint.
+
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.10.1`.
+1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.10.3`.
 2. The tab row contains one label for each visible channel—no boxed duplicate labels.
 3. Switch channels, join/leave a world, and switch again; the tab row remains single-rendered.
 4. Send a body containing `{`, `}`, quotes, and backslashes; later events still render.
@@ -165,6 +192,12 @@ game's `DiagnosticSnapshot` action and is not a reliable route to the loader men
 8. Outside the Pip-Boy, press F11 and confirm the HUDModLoader menu lists FCMChatWidget.
 9. Open **FCM → Customize → Reset all settings**; confirm the default size, position, opacity,
    amber theme, and auto-hide behavior return immediately and remain after restarting the game.
+10. On the DEV relay, sign in with a linked moderator account. Confirm staff references and
+    **FCM → Moderation commands** appear; submit actions against disposable test accounts by exact
+    visible name (including a quoted multi-word name). Verify a duplicate visible name is rejected
+    until its `[#XXXXXXXX]` reference is used. Submit delete, kick, mute, unmute, temporary ban,
+    permanent ban, and unban. Confirm each action creates an audit entry and has the same Discord
+    timeout/lockdown/role restoration outcome as the dashboard.
 
 Do not copy the new BA2 into a live game installation or publish it until these
 checks have passed on the intended environment.
