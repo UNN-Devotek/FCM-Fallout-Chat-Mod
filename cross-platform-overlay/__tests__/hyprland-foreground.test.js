@@ -67,6 +67,15 @@ describe('findHyprctlClient', () => {
     expect(findHyprctlClient(json, GAME_PATTERN)).toEqual({ class: 'steam_app_1151340', at: [1920, 108], address: '0xbbb' });
   });
 
+  it('selects the current overlay by PID and exact address when duplicates exist', () => {
+    const json = JSON.stringify([
+      { class: 'fallout-chat-mod', pid: 111, address: '0xaaa', pinned: false },
+      { class: 'fallout-chat-mod', pid: 222, address: '0xbbb', pinned: true },
+    ]);
+    expect(findHyprctlClient(json, OVERLAY_PATTERN, { pid: 222 })).toMatchObject({ address: '0xbbb' });
+    expect(findHyprctlClient(json, OVERLAY_PATTERN, { pid: 222, address: '0xaaa' })).toBeNull();
+  });
+
   it('matches the overlay by its own class pattern', () => {
     const json = JSON.stringify([
       { class: 'kitty', at: [0, 0], address: '0xaaa' },
@@ -87,6 +96,18 @@ describe('findHyprctlClient', () => {
 
   it('returns null on an empty clients array', () => {
     expect(findHyprctlClient('[]', GAME_PATTERN)).toBeNull();
+  });
+});
+
+describe('resolveKeepAboveApply', () => {
+  it('preserves the last applied state after a failed helper', () => {
+    expect(core.resolveKeepAboveApply({ desired: true, applied: false, attempted: true, success: false }))
+      .toEqual({ applied: false, shouldReconcile: false });
+  });
+
+  it('records success and asks for reconciliation when the desired state changed in flight', () => {
+    expect(core.resolveKeepAboveApply({ desired: false, applied: false, attempted: true, success: true }))
+      .toEqual({ applied: true, shouldReconcile: true });
   });
 });
 

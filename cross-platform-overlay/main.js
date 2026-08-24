@@ -1080,10 +1080,9 @@ function onGamePresenceChanged(found) {
   if (gameRunning && !wasRunning) {
     diag('[game-gate] game launched — clearing userHidden');
     userHidden = false;
-    // Sync now (cache is usually null -> assumes same output), then probe the
-    // game's display async so a different-monitor layout drops it later.
-    if (KDE_WAYLAND) syncKwinKeepAboveRule('game-launch');
-    else if (IS_HYPRLAND) syncHyprlandPin('game-launch');
+    // Probe the game's display asynchronously. Stacking stays ordinary while
+    // the output is unknown, then enables only after a confirmed same-output
+    // result.
     probeGameDisplay();
   } else if (!gameRunning && wasRunning) {
     _cachedGameDisplayId = null;
@@ -1119,13 +1118,13 @@ function onGamePresenceChanged(found) {
 }
 
 // Locate FO76 and cache which Electron display it's on, so the keep-above rule
-// installs only when the overlay shares that output. Fail-open: any miss leaves
-// _cachedGameDisplayId=null, treated as "assume same output".
+// installs only when the overlay shares that output. Every probe invalidates the
+// old result first; a miss therefore fails closed until a fresh position is known.
 function probeGameDisplay() {
+  _cachedGameDisplayId = null;
+  if (KDE_WAYLAND) syncKwinKeepAboveRule('probe-pending');
+  else if (IS_HYPRLAND) syncHyprlandPin('probe-pending');
   if (!IS_LINUX || !fgTool) {
-    _cachedGameDisplayId = null;
-    if (KDE_WAYLAND) syncKwinKeepAboveRule('probe-skip');
-    else if (IS_HYPRLAND) syncHyprlandPin('probe-skip');
     return;
   }
   const pattern = (GAME_PROCESSES || []).concat(['steam_app_1151340']).join('|');
@@ -1199,22 +1198,66 @@ function isOverlaySameOutputAsGame() {
 // re-derives the state fresh once the in-flight one completes.
 let _kwinSyncInFlight = false;
 let _kwinSyncQueued = false;
+let _kwinSyncRetryTimer = null;
+let _kwinSyncRetryTarget = null;
+let _kwinSyncFailureCount = 0;
+const KWIN_SYNC_RETRY_DELAYS_MS = [2500, 5000, 10000, 30000, 60000];
+
+function clearKwinSyncRetry() {
+  if (_kwinSyncRetryTimer) clearTimeout(_kwinSyncRetryTimer);
+  _kwinSyncRetryTimer = null;
+  _kwinSyncRetryTarget = null;
+  _kwinSyncFailureCount = 0;
+}
+
+function scheduleKwinSyncRetry(syncFn, attempted) {
+  if (_kwinSyncRetryTimer || _desiredRuleInstalled !== attempted) return;
+  const delay = KWIN_SYNC_RETRY_DELAYS_MS[Math.min(
+    _kwinSyncFailureCount, KWIN_SYNC_RETRY_DELAYS_MS.length - 1
+  )];
+  _kwinSyncFailureCount += 1;
+  _kwinSyncRetryTarget = attempted;
+  _kwinSyncRetryTimer = setTimeout(() => {
+    _kwinSyncRetryTimer = null;
+    _kwinSyncRetryTarget = null;
+    syncFn('retry');
+  }, delay);
+  diag('[linux-stack] helper failed; retry scheduled in ' + delay + 'ms');
+}
+
+function prepareKwinSync(want) {
+  // A new desired state supersedes a delayed retry for the old state.
+  if (_kwinSyncRetryTimer && want !== _kwinSyncRetryTarget) clearKwinSyncRetry();
+  return !_kwinSyncRetryTimer;
+}
+
 function syncKwinKeepAboveRule(reason) {
   if (!IS_LINUX || !KDE_WAYLAND) return;
   const sameOutput = isOverlaySameOutputAsGame();
   const want = overlayCore.shouldInstallKeepAboveRule({ gameRunning, sameOutput });
   _desiredRuleInstalled = want;
   if (_kwinSyncInFlight) { _kwinSyncQueued = true; return; }
-  if (want === _appliedRuleInstalled) return;
+  if (want === _appliedRuleInstalled) { clearKwinSyncRetry(); return; }
+  if (!prepareKwinSync(want)) return;
   const attempted = want;
   _kwinSyncInFlight = true;
   diag('[kwin] rule -> ' + want + ' (sameOutput=' + sameOutput + ' reason=' + reason + ')');
   const onDone = (success) => {
-    if (success) _appliedRuleInstalled = attempted;
+    const result = overlayCore.resolveKeepAboveApply({
+      desired: _desiredRuleInstalled,
+      applied: _appliedRuleInstalled,
+      attempted,
+      success,
+    });
+    _appliedRuleInstalled = result.applied;
     _kwinSyncInFlight = false;
-    if (_kwinSyncQueued || _desiredRuleInstalled !== attempted) {
+    if (result.shouldReconcile || _kwinSyncQueued) {
       _kwinSyncQueued = false;
       syncKwinKeepAboveRule('queued-recheck');
+    } else if (success) {
+      clearKwinSyncRetry();
+    } else {
+      scheduleKwinSyncRetry(syncKwinKeepAboveRule, attempted);
     }
   };
   if (want) {
@@ -1242,19 +1285,30 @@ function syncHyprlandPin(reason) {
   const want = overlayCore.shouldInstallKeepAboveRule({ gameRunning, sameOutput });
   _desiredRuleInstalled = want;
   if (_kwinSyncInFlight) { _kwinSyncQueued = true; return; }
-  if (want === _appliedRuleInstalled) return;
+  if (want === _appliedRuleInstalled) { clearKwinSyncRetry(); return; }
+  if (!prepareKwinSync(want)) return;
   const attempted = want;
   _kwinSyncInFlight = true;
   diag('[hyprland] pin -> ' + want + ' (sameOutput=' + sameOutput + ' reason=' + reason + ')');
   const onDone = (success) => {
-    if (success) _appliedRuleInstalled = attempted;
+    const result = overlayCore.resolveKeepAboveApply({
+      desired: _desiredRuleInstalled,
+      applied: _appliedRuleInstalled,
+      attempted,
+      success,
+    });
+    _appliedRuleInstalled = result.applied;
     _kwinSyncInFlight = false;
-    if (_kwinSyncQueued || _desiredRuleInstalled !== attempted) {
+    if (result.shouldReconcile || _kwinSyncQueued) {
       _kwinSyncQueued = false;
       syncHyprlandPin('queued-recheck');
+    } else if (success) {
+      clearKwinSyncRetry();
+    } else {
+      scheduleKwinSyncRetry(syncHyprlandPin, attempted);
     }
   };
-  const verifyPin = () => {
+  const verifyPin = (address) => {
     exec('hyprctl clients -j', { timeout: 2000, shell: '/bin/sh' }, (verifyErr, verifyStdout) => {
       if (verifyErr || !verifyStdout) {
         diag('[hyprland] pin verification failed: ' + String((verifyErr && verifyErr.message) || verifyErr || 'empty'));
@@ -1262,7 +1316,11 @@ function syncHyprlandPin(reason) {
         return;
       }
       let verified = null;
-      try { verified = overlayCore.findHyprctlClient(verifyStdout, 'fallout-chat-mod'); } catch { verified = null; }
+      try {
+        verified = overlayCore.findHyprctlClient(verifyStdout, 'fallout-chat-mod', {
+          pid: process.pid, address,
+        });
+      } catch { verified = null; }
       const state = overlayCore.getHyprlandPinState(verified);
       if (state !== want) {
         diag('[hyprland] pin verification mismatch (wanted=' + want + ' actual=' + state + ')');
@@ -1280,7 +1338,7 @@ function syncHyprlandPin(reason) {
         return;
       }
       let client = null;
-      try { client = overlayCore.findHyprctlClient(stdout, 'fallout-chat-mod'); } catch (e) {
+      try { client = overlayCore.findHyprctlClient(stdout, 'fallout-chat-mod', { pid: process.pid }); } catch (e) {
         diag('[hyprland] clients parse threw: ' + String((e && e.message) || e));
         onDone(false);
         return;
@@ -1313,7 +1371,7 @@ function syncHyprlandPin(reason) {
           onDone(false);
           return;
         }
-        verifyPin();
+        verifyPin(address);
       });
     });
   } catch (e) { diag('[hyprland] pin sync threw: ' + String((e && e.message) || e)); onDone(false); }
@@ -2342,8 +2400,9 @@ ipcMain.on('overlay:move-end', () => {
     diag('[move] end bounds=' + JSON.stringify(b ? { x: b.x, y: b.y } : null));
   } catch { /* ignore */ }
   if (gameRunning) {
-    if (KDE_WAYLAND) syncKwinKeepAboveRule('move-end');
-    else if (IS_HYPRLAND) syncHyprlandPin('move-end');
+    // The game may have moved to another monitor while the overlay was being
+    // dragged. Refresh the game position instead of trusting a stale display id.
+    probeGameDisplay();
   }
 });
 
@@ -3642,6 +3701,7 @@ function _startForegroundPoller() {
     foregroundDetect = true;
     const altNote = available.length > 1 ? ' (fallback available: ' + available.filter((t) => t !== fgTool).join(',') + ')' : '';
     diag('[foreground] ' + fgTool + ' found — active-window detection ENABLED (~300ms poll).' + altNote);
+    if (gameRunning) probeGameDisplay();
     // `tried` tracks tools we've already polled with so the breaker never ping-pongs
     // back to a tool that already crashed (xdotool→kdotool→xdotool…).
     _runForegroundPoll(available, new Set([fgTool]));

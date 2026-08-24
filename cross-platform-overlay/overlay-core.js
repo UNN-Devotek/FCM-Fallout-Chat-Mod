@@ -789,7 +789,7 @@ function parseForegroundOutput(tool, stdout) {
 // dispatch, see syncHyprlandPin). Returns the matched client object or
 // null if not found / malformed JSON. Pure, no subprocess, just JSON
 // parsing, so it's unit-testable without hyprctl installed.
-function findHyprctlClient(jsonText, classPattern) {
+function findHyprctlClient(jsonText, classPattern, { pid = null, address = null } = {}) {
   let clients;
   try {
     clients = JSON.parse(String(jsonText || ''));
@@ -798,7 +798,9 @@ function findHyprctlClient(jsonText, classPattern) {
   }
   if (!Array.isArray(clients)) return null;
   const re = new RegExp(classPattern, 'i');
-  return clients.find((c) => c && typeof c.class === 'string' && re.test(c.class)) || null;
+  return clients.find((c) => c && typeof c.class === 'string' && re.test(c.class)
+    && (pid == null || c.pid === pid)
+    && (address == null || c.address === address)) || null;
 }
 
 // `pinned` is present in hyprctl's client JSON on supported Hyprland versions.
@@ -806,6 +808,16 @@ function findHyprctlClient(jsonText, classPattern) {
 // `dispatch pin` command without first knowing the current state.
 function getHyprlandPinState(client) {
   return client && typeof client.pinned === 'boolean' ? client.pinned : null;
+}
+
+// Keep the last confirmed compositor state separate from the desired state.
+// A failed helper must preserve `applied`, allowing the caller to retry rather
+// than treating an attempted command as successful.
+function resolveKeepAboveApply({ desired, applied, attempted, success } = {}) {
+  return {
+    applied: success ? attempted : applied,
+    shouldReconcile: desired !== attempted,
+  };
 }
 
 // Install (clean + apply) script. Removes any stale FCM rules, then writes the current
@@ -1161,6 +1173,7 @@ module.exports = {
   parseForegroundOutput,
   findHyprctlClient,
   getHyprlandPinState,
+  resolveKeepAboveApply,
   shouldRegisterShortcuts,
   decideForegroundPollerAction,
   nextPollerBackoffMs,
