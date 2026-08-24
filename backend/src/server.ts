@@ -317,6 +317,11 @@ app.get('/auth/discord', authLimiter, async (req: Request, res: Response) => {
     res.status(500).send('Internal error');
     return;
   }
+  // saveUninitialized is deliberately false, so creating only a Redis state is
+  // not enough to make express-session emit a browser cookie. Touch the session
+  // before saving it; the callback must receive the same session ID for the
+  // CSRF-bound state check below to succeed on a fresh /link visit.
+  (req.session as any).oauthState = state;
   try {
     await new Promise<void>((resolve, reject) => {
       req.session.save((err) => (err ? reject(err) : resolve()));

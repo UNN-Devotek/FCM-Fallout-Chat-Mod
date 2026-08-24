@@ -56,8 +56,8 @@ Documents/My Games/Fallout 76/Fallout76Custom.ini
 sResourceArchive2List=HUDModLoader.ba2,FCMChatWidget.ba2
 ```
 
-The shipped fragment uses `OpenChatKey=INSERT` and
-`Endpoint=wss://falloutchatmod.com/relay`. The endpoint is **always** `/relay`,
+The shipped fragment uses `OpenChatKey=INSERT` and the production endpoint by
+default. The endpoint is **always** `/relay`,
 not `/zfe-relay`. Local and hosted-dev users override the exact endpoint key in
 `Data/configuration/zfe.ini`:
 
@@ -75,6 +75,23 @@ the widget cannot reload native relay configuration.
 HUDModLoader's F11 menu exposes **FCM → Customize → Reset all settings**. The action
 restores the `FcmConfig` defaults live, saves them in vendor-scoped ZFE storage
 (`FCMChatWidget/settings.ini`), and retains the environment-owned link URL.
+
+### Target-specific packages
+
+Do not assemble a DEV package by copying the production INIs. The package helper
+stamps both environment-owned values together: the relay endpoint and the account
+link host. Run it from this directory after building `FCMChatWidget.ba2`:
+
+```bash
+python3 package.py --target dev --output /tmp/FCMChatWidget-dev.zip
+python3 test_package.py
+```
+
+Use `--target prod` for production. A DEV package must contain both
+`Endpoint=wss://dev.falloutchatmod.com/relay` and
+`linkUrl=dev.falloutchatmod.com/link`; these values must never be mixed with
+production. `INSTALL.txt` in the generated archive repeats the matching URL and
+installation steps.
 
 ## Build the archive
 
