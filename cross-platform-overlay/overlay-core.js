@@ -717,7 +717,8 @@ function classifyInputGrab(psOutput) {
 // loops the rule names, reads each group's Description via kreadconfig6, and builds `$KEEP`
 // (kept, comma-joined) and `$FCM` (space-joined FCM group names to clear). The qdbus
 // reconfigure name varies by distro/Qt, so we try qdbus / qdbus6 / qdbus-qt6.
-const KWIN_RECONF = `(qdbus org.kde.KWin /KWin reconfigure || qdbus6 org.kde.KWin /KWin reconfigure || qdbus-qt6 org.kde.KWin /KWin reconfigure) 2>/dev/null || true`;
+const KWIN_RECONF = `(qdbus org.kde.KWin /KWin reconfigure || qdbus6 org.kde.KWin /KWin reconfigure || qdbus-qt6 org.kde.KWin /KWin reconfigure) 2>/dev/null || { echo kwin-reconfigure-failed >&2; exit 1; }`;
+const KWIN_TOOL_CHECK = `command -v kwriteconfig6 >/dev/null 2>&1 && command -v kreadconfig6 >/dev/null 2>&1 || { echo kwin-tools-missing >&2; exit 127; }`;
 function kwinPartitionSnippet(file) {
   return [
     // $RULES = the on-disk path (kwriteconfig6 --file is relative to ~/.config; awk needs the path).
@@ -747,9 +748,10 @@ function awkStripFcmSectionLines() {
 }
 
 // Install the rule only while the game runs AND the overlay shares its monitor.
-// `sameOutput` must be explicitly false to block. An unresolved probe fails open.
-function shouldInstallKeepAboveRule({ gameRunning, sameOutput = true } = {}) {
-  return !!gameRunning && sameOutput !== false;
+// An unresolved display probe is deliberately fail-closed: only an explicit true
+// permits a compositor stacking change.
+function shouldInstallKeepAboveRule({ gameRunning, sameOutput = false } = {}) {
+  return !!gameRunning && sameOutput === true;
 }
 
 // The subprocess argv for the active-window probe, per tool. hyprctl returns
@@ -799,6 +801,13 @@ function findHyprctlClient(jsonText, classPattern) {
   return clients.find((c) => c && typeof c.class === 'string' && re.test(c.class)) || null;
 }
 
+// `pinned` is present in hyprctl's client JSON on supported Hyprland versions.
+// Treat missing/invalid data as unknown so callers never use the toggle-like
+// `dispatch pin` command without first knowing the current state.
+function getHyprlandPinState(client) {
+  return client && typeof client.pinned === 'boolean' ? client.pinned : null;
+}
+
 // Install (clean + apply) script. Removes any stale FCM rules, then writes the current
 // named rule, preserving the user's own rules. Idempotent: if the active FCM rules are
 // already EXACTLY our current named group, it prints fcm-rule-present and skips the
@@ -826,6 +835,7 @@ function buildKwinKeepAboveScript({ file = 'kwinrulesrc', overlayWmclass = 'fall
   const RULE = 'fcm-keepabove';   // overlay keep-above + force-Layer=Overlay, one rule, same window
   const w = (grp, key, val) => `kwriteconfig6 --file ${file} --group ${grp} --key ${key} ${val}`;
   const lines = [
+    KWIN_TOOL_CHECK,
     ...kwinPartitionSnippet(file),
     // Idempotency: exactly the one rule wanted → skip. Anything else (stale numbered
     // groups, the retired fcm-game-demote, a leftover opt-in fcm-game-below from
@@ -868,6 +878,7 @@ function buildKwinKeepAboveScript({ file = 'kwinrulesrc', overlayWmclass = 'fall
 // fullscreen). Pure → unit-testable. Prints fcm-rules-removed (or fcm-no-rules if none found).
 function buildKwinRemoveRulesScript({ file = 'kwinrulesrc' } = {}) {
   return [
+    KWIN_TOOL_CHECK,
     ...kwinPartitionSnippet(file),
     `if [ -z "$FCM" ]; then echo fcm-no-rules; exit 0; fi`,
     // Remove the FCM sections entirely (awk-strip — kwriteconfig6 can't delete a section).
@@ -1149,6 +1160,7 @@ module.exports = {
   buildForegroundProbe,
   parseForegroundOutput,
   findHyprctlClient,
+  getHyprlandPinState,
   shouldRegisterShortcuts,
   decideForegroundPollerAction,
   nextPollerBackoffMs,

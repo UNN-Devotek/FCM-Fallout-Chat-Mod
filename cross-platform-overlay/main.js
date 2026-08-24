@@ -457,9 +457,9 @@ function setupKdeKeepAbove(onDone) {
       if (err) diag('[kwin] keep-above auto-apply failed (use System Settings → Window Rules → Import): ' + String(err.message || err));
       else if (out.includes('fcm-rule-present')) diag('[kwin] keep-above rule already present — skipped');
       else diag('[kwin] keep-above rule installed + KWin reconfigured');
-      if (onDone) onDone();
+      if (onDone) onDone(!err);
     });
-  } catch (e) { diag('[kwin] setupKdeKeepAbove exec failed:', String(e && e.message || e)); if (onDone) onDone(); }
+  } catch (e) { diag('[kwin] setupKdeKeepAbove exec failed:', String(e && e.message || e)); if (onDone) onDone(false); }
   diag('[kwin] setupKdeKeepAbove: rule at ' + rulePath);
 }
 
@@ -898,7 +898,7 @@ function isPrivileged() {
 // There's no stacking contest to win elsewhere. Without this, alt-tab would
 // hide the overlay even on a monitor the game isn't on.
 function canShowOverlay() {
-  const focusAware = (KDE_WAYLAND || IS_X11 || IS_HYPRLAND) && foregroundDetect && isOverlaySameOutputAsGame();
+  const focusAware = (KDE_WAYLAND || IS_X11 || IS_HYPRLAND) && foregroundDetect && isOverlaySameOutputAsGame() === true;
   return overlayCore.canShowOverlay({ forceVisible, role: userRole, gameRunning, chatActive, focusAware, gameFocused });
 }
 
@@ -955,8 +955,9 @@ let gameRunning = false;           // true when Fallout76.exe is in the process 
 let gameFocused = false;           // committed focus state: game or overlay has it
 let _focusCandidate = null;        // pending gameFocused value (hysteresis)
 let _focusStableCount = 0;         // consecutive samples agreeing on _focusCandidate
-let _cachedGameDisplayId = null;   // FO76's Electron display id (null = assume same output)
-let _lastRuleInstalled = null;     // last want-value passed to the KWin / Hyprland pin installer
+let _cachedGameDisplayId = null;   // FO76's Electron display id (null = output unknown)
+let _desiredRuleInstalled = null;  // latest state requested by game/display probes
+let _appliedRuleInstalled = null;  // last state confirmed by a successful helper command
 let gameScanTimer = null;          // interval handle for the process scanner
 let _scanCount = 0;                // diagnostic: number of game scans run
 let _lastDiagFound = null;         // diagnostic: last logged detection state
@@ -1171,9 +1172,10 @@ function probeGameDisplay() {
 // Is the overlay on the same Electron display as FO76? Cheap, no subprocess,
 // just compares live bounds against the cached game display id. Shared by the
 // KWin rule gate AND canShowOverlay so a different-monitor overlay is an
-// ordinary window on BOTH axes. Null cached id fails open to "same output".
+// ordinary window on BOTH axes. Returns "unknown" until the game display probe
+// has succeeded; unknown must never enable compositor stacking.
 function isOverlaySameOutputAsGame() {
-  if (_cachedGameDisplayId == null || !mainWindow || mainWindow.isDestroyed()) return true;
+  if (_cachedGameDisplayId == null || !mainWindow || mainWindow.isDestroyed()) return 'unknown';
   try {
     const b = mainWindow.getBounds();
     const overlayDisplay = screen.getDisplayMatching(b);
@@ -1182,32 +1184,38 @@ function isOverlaySameOutputAsGame() {
       ' overlayBounds=' + JSON.stringify(b) + ' overlayDisplayId=' + (overlayDisplay && overlayDisplay.id) +
       ' -> ' + result);
     return result;
-  } catch (e) { diag('[output] sameOutput check threw: ' + String(e && e.message || e)); return true; }
+  } catch (e) { diag('[output] sameOutput check threw: ' + String(e && e.message || e)); return 'unknown'; }
 }
 
 // Install/remove the KWin rule: present only while the game runs AND the
-// overlay shares its output. Null cached display id fails open to same-output.
+// overlay shares its output. Unknown display state fails closed.
 //
 // SERIALIZED: two kwinrulesrc-touching execs in flight race on the same file.
-// A game-launch call (assumes same-output, so it installs) can race the
-// display probe resolving false moments later (which removes); whichever exec
-// finishes last wins on disk, regardless of what _lastRuleInstalled says.
+// A game-launch call can race the display probe resolving false moments later
+// (which removes); whichever exec finishes last must still reflect the latest
+// desired state. Failed helpers leave the applied state unchanged so a later
+// probe retries instead of assuming the command worked.
 // While one is in flight, a new request just queues a recheck, which
 // re-derives the state fresh once the in-flight one completes.
 let _kwinSyncInFlight = false;
 let _kwinSyncQueued = false;
 function syncKwinKeepAboveRule(reason) {
   if (!IS_LINUX || !KDE_WAYLAND) return;
-  if (_kwinSyncInFlight) { _kwinSyncQueued = true; return; }
   const sameOutput = isOverlaySameOutputAsGame();
   const want = overlayCore.shouldInstallKeepAboveRule({ gameRunning, sameOutput });
-  if (want === _lastRuleInstalled) return;
-  _lastRuleInstalled = want;
+  _desiredRuleInstalled = want;
+  if (_kwinSyncInFlight) { _kwinSyncQueued = true; return; }
+  if (want === _appliedRuleInstalled) return;
+  const attempted = want;
   _kwinSyncInFlight = true;
   diag('[kwin] rule -> ' + want + ' (sameOutput=' + sameOutput + ' reason=' + reason + ')');
-  const onDone = () => {
+  const onDone = (success) => {
+    if (success) _appliedRuleInstalled = attempted;
     _kwinSyncInFlight = false;
-    if (_kwinSyncQueued) { _kwinSyncQueued = false; syncKwinKeepAboveRule('queued-recheck'); }
+    if (_kwinSyncQueued || _desiredRuleInstalled !== attempted) {
+      _kwinSyncQueued = false;
+      syncKwinKeepAboveRule('queued-recheck');
+    }
   };
   if (want) {
     setupKdeKeepAbove(onDone);
@@ -1216,63 +1224,99 @@ function syncKwinKeepAboveRule(reason) {
       const script = overlayCore.buildKwinRemoveRulesScript({});
       exec(script, { timeout: 8000, shell: '/bin/sh' }, (err) => {
         if (err) diag('[kwin] remove-rule failed: ' + String(err && err.message || err));
-        onDone();
+        onDone(!err);
       });
-    } catch (e) { diag('[kwin] remove-rule threw: ' + String(e && e.message || e)); onDone(); }
+    } catch (e) { diag('[kwin] remove-rule threw: ' + String(e && e.message || e)); onDone(false); }
   }
 }
 
 // Hyprland stacking: pin the overlay above the workspace while the game runs
-// AND shares this output. hyprctl dispatch pin toggles, so we only dispatch
-// on an actual want-transition (same _lastRuleInstalled short-circuit as
-// syncKwinKeepAboveRule). Shares the KWin in-flight/queued/last-installed
+// AND shares this output. hyprctl dispatch pin toggles, so query and verify the
+// actual pinned state before dispatching. Shares the KWin in-flight/queued/state
 // state: Hyprland and KWin are mutually exclusive session types. Best-effort
 // - missing or failing hyprctl logs a diagnostic and never leaves in-flight
-// stuck. pin has not been verified on real Hyprland hardware.
+// stuck. Unknown pin state is fail-closed and retried on the next probe.
 function syncHyprlandPin(reason) {
   if (!IS_LINUX || !IS_HYPRLAND) return;
-  if (_kwinSyncInFlight) { _kwinSyncQueued = true; return; }
   const sameOutput = isOverlaySameOutputAsGame();
   const want = overlayCore.shouldInstallKeepAboveRule({ gameRunning, sameOutput });
-  if (want === _lastRuleInstalled) return;
-  _lastRuleInstalled = want;
+  _desiredRuleInstalled = want;
+  if (_kwinSyncInFlight) { _kwinSyncQueued = true; return; }
+  if (want === _appliedRuleInstalled) return;
+  const attempted = want;
   _kwinSyncInFlight = true;
   diag('[hyprland] pin -> ' + want + ' (sameOutput=' + sameOutput + ' reason=' + reason + ')');
-  const onDone = () => {
+  const onDone = (success) => {
+    if (success) _appliedRuleInstalled = attempted;
     _kwinSyncInFlight = false;
-    if (_kwinSyncQueued) { _kwinSyncQueued = false; syncHyprlandPin('queued-recheck'); }
+    if (_kwinSyncQueued || _desiredRuleInstalled !== attempted) {
+      _kwinSyncQueued = false;
+      syncHyprlandPin('queued-recheck');
+    }
+  };
+  const verifyPin = () => {
+    exec('hyprctl clients -j', { timeout: 2000, shell: '/bin/sh' }, (verifyErr, verifyStdout) => {
+      if (verifyErr || !verifyStdout) {
+        diag('[hyprland] pin verification failed: ' + String((verifyErr && verifyErr.message) || verifyErr || 'empty'));
+        onDone(false);
+        return;
+      }
+      let verified = null;
+      try { verified = overlayCore.findHyprctlClient(verifyStdout, 'fallout-chat-mod'); } catch { verified = null; }
+      const state = overlayCore.getHyprlandPinState(verified);
+      if (state !== want) {
+        diag('[hyprland] pin verification mismatch (wanted=' + want + ' actual=' + state + ')');
+        onDone(false);
+        return;
+      }
+      onDone(true);
+    });
   };
   try {
     exec('hyprctl clients -j', { timeout: 2000, shell: '/bin/sh' }, (err, stdout) => {
       if (err || !stdout) {
         diag('[hyprland] clients lookup failed: ' + String((err && err.message) || err || 'empty'));
-        onDone();
+        onDone(false);
         return;
       }
       let client = null;
       try { client = overlayCore.findHyprctlClient(stdout, 'fallout-chat-mod'); } catch (e) {
         diag('[hyprland] clients parse threw: ' + String((e && e.message) || e));
-        onDone();
+        onDone(false);
         return;
       }
       const address = client && typeof client.address === 'string' ? client.address : null;
       if (!address) {
         diag('[hyprland] overlay window not found in hyprctl clients');
-        onDone();
+        onDone(false);
+        return;
+      }
+      const actualPinned = overlayCore.getHyprlandPinState(client);
+      if (actualPinned === null) {
+        diag('[hyprland] overlay pin state is unknown, skipping toggle');
+        onDone(false);
+        return;
+      }
+      if (actualPinned === want) {
+        onDone(true);
         return;
       }
       // Fail-closed: only interpolate a hex window address into the shell.
       if (!/^0x[0-9a-fA-F]+$/.test(address)) {
         diag('[hyprland] unexpected window address, skipping pin');
-        onDone();
+        onDone(false);
         return;
       }
       exec('hyprctl dispatch pin address:' + address, { timeout: 2000, shell: '/bin/sh' }, (err2) => {
-        if (err2) diag('[hyprland] pin dispatch failed: ' + String((err2 && err2.message) || err2));
-        onDone();
+        if (err2) {
+          diag('[hyprland] pin dispatch failed: ' + String((err2 && err2.message) || err2));
+          onDone(false);
+          return;
+        }
+        verifyPin();
       });
     });
-  } catch (e) { diag('[hyprland] pin sync threw: ' + String((e && e.message) || e)); onDone(); }
+  } catch (e) { diag('[hyprland] pin sync threw: ' + String((e && e.message) || e)); onDone(false); }
 }
 
 function startGameScan() {

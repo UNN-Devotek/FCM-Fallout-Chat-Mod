@@ -24,12 +24,16 @@ describe('shouldInstallKeepAboveRule', () => {
     expect(shouldInstallKeepAboveRule({ gameRunning: false, sameOutput: true })).toBe(false);
   });
 
-  it('{gameRunning:true} (sameOutput omitted) → true (default)', () => {
-    expect(shouldInstallKeepAboveRule({ gameRunning: true })).toBe(true);
+  it('{gameRunning:true} (sameOutput omitted) → false (display unknown fails closed)', () => {
+    expect(shouldInstallKeepAboveRule({ gameRunning: true })).toBe(false);
   });
 
   it('{gameRunning:false} (sameOutput omitted) → false', () => {
     expect(shouldInstallKeepAboveRule({ gameRunning: false })).toBe(false);
+  });
+
+  it('{gameRunning:true, sameOutput:"unknown"} → false', () => {
+    expect(shouldInstallKeepAboveRule({ gameRunning: true, sameOutput: 'unknown' })).toBe(false);
   });
 });
 

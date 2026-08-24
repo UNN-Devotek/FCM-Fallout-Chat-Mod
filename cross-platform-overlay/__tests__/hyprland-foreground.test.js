@@ -10,6 +10,7 @@ const {
   buildForegroundProbe,
   parseForegroundOutput,
   findHyprctlClient,
+  getHyprlandPinState,
   preferredForegroundTools,
 } = core;
 
@@ -86,6 +87,19 @@ describe('findHyprctlClient', () => {
 
   it('returns null on an empty clients array', () => {
     expect(findHyprctlClient('[]', GAME_PATTERN)).toBeNull();
+  });
+});
+
+describe('getHyprlandPinState', () => {
+  it('returns the reported boolean pin state', () => {
+    expect(getHyprlandPinState({ pinned: true })).toBe(true);
+    expect(getHyprlandPinState({ pinned: false })).toBe(false);
+  });
+
+  it('returns unknown when the compositor omits or corrupts the field', () => {
+    expect(getHyprlandPinState({})).toBeNull();
+    expect(getHyprlandPinState(null)).toBeNull();
+    expect(getHyprlandPinState({ pinned: 'true' })).toBeNull();
   });
 });
 
