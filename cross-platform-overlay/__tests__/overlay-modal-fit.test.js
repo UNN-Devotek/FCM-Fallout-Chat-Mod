@@ -14,6 +14,7 @@ import core from '../overlay-core.js';
 
 const {
   modalFitBounds,
+  resolvePersistedSize,
   MODAL_FIT_WIDTH,
   MODAL_FIT_HEIGHT,
   MIN_WIDTH,
@@ -140,5 +141,41 @@ describe('restore policy — size only, position preserved', () => {
     expect(restored.height).toBe(preModal.height);
     expect(restored.x).toBe(movedTo.x);
     expect(restored.y).toBe(movedTo.y);
+  });
+});
+
+// Regression test for the HOME-key-spam growth bug: toggleSettings() (renderer)
+// fires on every HOME press, driving one growWindowForModal()/restoreWindowAfterModal()
+// cycle per press. On fractionally-scaled Linux sessions setBounds() doesn't return
+// what was commanded (issue #427's DIP round-trip), so growWindowForModal() reading a
+// fresh, un-corrected getBounds() as its baseline every cycle let the size creep by
+// ~1-2px per HOME press, forever. The fix runs the live baseline through the same
+// resolvePersistedSize() tolerance-snap #427 already uses for the disk-persist path,
+// keyed off a baseline that survives across cycles (mirroring main.js's
+// modalFitLastGoodSize). This composes modalFitBounds + resolvePersistedSize the same
+// way growWindowForModal() does, so it regresses if that wiring breaks.
+describe('modal-fit drift suppression across repeated open/close cycles (HOME-spam)', () => {
+  it('does not creep across many grow/restore toggles when the WM echoes +1px/axis', () => {
+    let lastGood = null;
+    let observed = { width: 538, height: 482 }; // #427's own repro pre-modal size
+    for (let i = 0; i < 200; i++) {
+      // growWindowForModal(): resolve the live (possibly drifted) read against the
+      // remembered baseline before deciding how much to grow.
+      const base = resolvePersistedSize(observed, lastGood);
+      lastGood = base;
+      const grown = modalFitBounds({ x: 0, y: 0, ...base }, WA);
+      expect(grown).not.toBeNull();
+      // restoreWindowAfterModal(): commands `base` back, but the compositor echoes
+      // it +1px/axis inflated (the #427 mechanism) — that's what the NEXT cycle's
+      // growWindowForModal() will observe.
+      observed = { width: base.width + 1, height: base.height + 1 };
+    }
+    expect(lastGood).toEqual({ width: 538, height: 482 });
+  });
+
+  it('still accepts a genuine resize beyond the tolerance mid-cycle', () => {
+    const lastGood = { width: 538, height: 482 };
+    const base = resolvePersistedSize({ width: 900, height: 700 }, lastGood);
+    expect(base).toEqual({ width: 900, height: 700 });
   });
 });
