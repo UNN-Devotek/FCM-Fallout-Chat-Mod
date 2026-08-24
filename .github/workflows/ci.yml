@@ -354,6 +354,11 @@ jobs:
       - name: Build renderer
         working-directory: cross-platform-overlay
         run: npm run build:renderer
+      - name: Validate Linux installer decision path
+        run: |
+          bash -n Packaging/linux/install.sh
+          bash Packaging/linux/install.sh --help >/dev/null
+          bash Packaging/linux/install.sh --print-plan
       - name: Install Xvfb + Electron system libs
         run: |
           sudo apt-get update -qq

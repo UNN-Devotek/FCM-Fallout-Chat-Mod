@@ -93,3 +93,35 @@ describe('install.sh hardening — regression guards for e2e-found bugs', () => 
     expect(sh).not.toContain('if [ -r /dev/tty ]');
   });
 });
+
+describe('install.sh — system-aware Linux install policy', () => {
+  const sh = readRepo('Packaging/linux/install.sh');
+
+  it('exposes explicit format selection and a network-free plan mode', () => {
+    expect(sh).toContain('--format=auto|--format=appimage|--format=deb');
+    expect(sh).toContain('--print-plan');
+    expect(sh).toContain('exit 0');
+  });
+
+  it('falls back to extract-and-run when FUSE2 is unavailable', () => {
+    expect(sh).toContain('FUSE2_AVAILABLE=0');
+    expect(sh).toContain('APPIMAGE_EXEC_ARGS="--appimage-extract-and-run"');
+    expect(sh).toContain('DESKTOP_EXEC=');
+  });
+
+  it('limits native package installation to Debian systems with apt-get', () => {
+    expect(sh).toContain('DISTRO_FAMILY="debian"');
+    expect(sh).toContain('has_command apt-get || die "--format deb requires apt-get');
+    expect(sh).toContain('sudo apt-get install "$DEB_TMP"');
+    expect(sh).not.toContain('sudo apt-get install -y');
+  });
+
+  it('detects compositor and Proton helper capabilities without installing them', () => {
+    expect(sh).toContain('HYPRCTL_AVAILABLE=0');
+    expect(sh).toContain('KWIN_TOOLS_AVAILABLE=0');
+    expect(sh).toContain('PROTONTRICKS_AVAILABLE=0');
+    expect(sh).toContain('has_command protontricks');
+    expect(sh).not.toContain('apt-get install -y protontricks');
+    expect(sh).not.toContain('sudo dnf install -y kdotool');
+  });
+});

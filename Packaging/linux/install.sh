@@ -4,9 +4,10 @@
 #
 #   curl -fsSL https://falloutchatmod.com/install.sh | bash
 #
-# Downloads the latest AppImage from the release API, installs it under
-# ~/.local/share, registers a desktop launcher + icon, and prints KDE setup
-# notes.
+# Detects the host distro/session/capabilities, then chooses a safe install path:
+# a per-user AppImage, AppImage extract-and-run when FUSE2 is unavailable, or an
+# explicitly confirmed Debian-family .deb install. It registers a desktop launcher
+# + icon and prints compositor/helper setup notes.
 #
 # New versions are NOT installed automatically. Download new versions from
 # Nexus Mods (https://www.nexusmods.com/fallout76/mods/4082) or
@@ -18,6 +19,9 @@
 # Uninstall:  curl -fsSL https://falloutchatmod.com/uninstall.sh | bash
 #
 set -euo pipefail
+
+INSTALL_FORMAT="auto"
+PRINT_PLAN=0
 
 BASE="https://falloutchatmod.com/downloads/electron"
 API_URL="https://falloutchatmod.com/api/releases"
@@ -34,6 +38,121 @@ ICON_PATH="$ICON_DIR/fallout-chat-mod.png"
 say()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!! \033[0m %s\n' "$*" >&2; }
 die()  { printf '\033[1;31mxx \033[0m %s\n' "$*" >&2; exit 1; }
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --format=auto|--format=appimage|--format=deb) INSTALL_FORMAT="${1#*=}"; shift ;;
+    --format)
+      [ "$#" -ge 2 ] || die "--format requires auto, appimage, or deb."
+      case "$2" in auto|appimage|deb) INSTALL_FORMAT="$2" ;; *) die "--format requires auto, appimage, or deb." ;; esac
+      shift 2
+      ;;
+    --help|-h)
+      printf '%s\n' 'Usage: install.sh [--format auto|appimage|deb]' \
+        '  auto      detect the safest supported path (default)' \
+        '  appimage  install the per-user AppImage' \
+        '  deb       offer the Debian-family package (requires apt and explicit sudo consent)' \
+        '  --print-plan  detect the host and print the selected path without downloading'
+      exit 0
+      ;;
+    --print-plan) PRINT_PLAN=1; shift ;;
+    *) die "Unknown option: $1 (use --help)." ;;
+  esac
+done
+
+# --- Detect the host without installing or elevating anything ----------------
+OS_ID="unknown"
+OS_LIKE=""
+if [ -r /etc/os-release ]; then
+  # shellcheck disable=SC1091
+  . /etc/os-release
+  OS_ID="${ID:-unknown}"
+  OS_LIKE="${ID_LIKE:-}"
+fi
+OS_ID="$(printf '%s' "$OS_ID" | tr 'A-Z' 'a-z')"
+OS_LIKE="$(printf '%s' "$OS_LIKE" | tr 'A-Z' 'a-z')"
+DISTRO_TOKENS=" $OS_ID $OS_LIKE "
+DISTRO_FAMILY="other"
+case "$DISTRO_TOKENS" in
+  *debian*|*ubuntu*|*linuxmint*|*pop*|*elementary*|*zorin*) DISTRO_FAMILY="debian" ;;
+  *fedora*|*rhel*|*centos*|*rocky*|*almalinux*) DISTRO_FAMILY="fedora" ;;
+  *arch*|*manjaro*|*cachyos*|*endeavouros*) DISTRO_FAMILY="arch" ;;
+esac
+
+DESKTOP_ENV="$(printf '%s' "${XDG_CURRENT_DESKTOP:-}" | tr 'A-Z' 'a-z')"
+SESSION_TYPE="$(printf '%s' "${XDG_SESSION_TYPE:-unknown}" | tr 'A-Z' 'a-z')"
+COMPOSITOR="other"
+if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] || printf '%s' "$DESKTOP_ENV" | grep -q 'hyprland'; then
+  COMPOSITOR="hyprland"
+elif printf '%s' "$DESKTOP_ENV" | grep -q 'kde\|plasma'; then
+  COMPOSITOR="kde"
+fi
+
+PACKAGE_MANAGER="none"
+if command -v apt-get >/dev/null 2>&1; then PACKAGE_MANAGER="apt";
+elif command -v dnf >/dev/null 2>&1; then PACKAGE_MANAGER="dnf";
+elif command -v pacman >/dev/null 2>&1; then PACKAGE_MANAGER="pacman";
+elif command -v zypper >/dev/null 2>&1; then PACKAGE_MANAGER="zypper";
+fi
+
+FUSE2_AVAILABLE=0
+if command -v ldconfig >/dev/null 2>&1 && ldconfig -p 2>/dev/null | grep -q 'libfuse\.so\.2'; then
+  FUSE2_AVAILABLE=1
+elif [ -e /lib/libfuse.so.2 ] || [ -e /lib64/libfuse.so.2 ] || [ -e /usr/lib/libfuse.so.2 ] || [ -e /usr/lib64/libfuse.so.2 ]; then
+  FUSE2_AVAILABLE=1
+fi
+
+has_command() { command -v "$1" >/dev/null 2>&1; }
+KDTOOL_AVAILABLE=0; has_command kdotool && KDTOOL_AVAILABLE=1
+XDOTOOL_AVAILABLE=0; has_command xdotool && XDOTOOL_AVAILABLE=1
+HYPRCTL_AVAILABLE=0; has_command hyprctl && HYPRCTL_AVAILABLE=1
+PROTONTRICKS_AVAILABLE=0; has_command protontricks && PROTONTRICKS_AVAILABLE=1
+KWIN_TOOLS_AVAILABLE=0
+if has_command kwriteconfig6 && has_command kreadconfig6; then KWIN_TOOLS_AVAILABLE=1; fi
+
+APPIMAGE_EXEC_ARGS=""
+DEB_SELECTED=0
+if [ "$INSTALL_FORMAT" = "deb" ]; then
+  [ "$DISTRO_FAMILY" = "debian" ] || die "--format deb is only supported on Debian-family systems (detected: $OS_ID)."
+  has_command apt-get || die "--format deb requires apt-get on this Debian-family system; re-run with --format appimage."
+  DEB_SELECTED=1
+elif [ "$INSTALL_FORMAT" = "auto" ] && [ "$FUSE2_AVAILABLE" -eq 0 ] && [ "$DISTRO_FAMILY" = "debian" ] && has_command apt-get; then
+  # A .deb is the native no-FUSE path on Debian-family systems, but installing it
+  # changes system package state, so it is always an explicit user choice.
+  DEB_SELECTED=2
+else
+  [ "$FUSE2_AVAILABLE" -eq 1 ] || APPIMAGE_EXEC_ARGS="--appimage-extract-and-run"
+fi
+
+say "Detected: $OS_ID ($DISTRO_FAMILY), session=$SESSION_TYPE, compositor=$COMPOSITOR, package-manager=$PACKAGE_MANAGER"
+if [ "$COMPOSITOR" = "kde" ] && [ "$SESSION_TYPE" = "wayland" ]; then
+  if [ "$KWIN_TOOLS_AVAILABLE" -eq 1 ]; then say "KDE rule tools detected (kwriteconfig6/kreadconfig6)."; else warn "KDE rule tools not found; automatic KWin stacking will retry/fail closed."; fi
+  if [ "$KDTOOL_AVAILABLE" -eq 1 ]; then say "kdotool detected for Wayland foreground detection."; else warn "kdotool not found; hotkeys may remain registered while you alt-tab."; fi
+elif [ "$COMPOSITOR" = "hyprland" ]; then
+  if [ "$HYPRCTL_AVAILABLE" -eq 1 ]; then say "hyprctl detected for Hyprland foreground and stacking control."; else warn "hyprctl not found; Hyprland stacking will remain ordinary."; fi
+elif [ "$SESSION_TYPE" = "x11" ] && [ "$XDOTOOL_AVAILABLE" -eq 0 ]; then
+  warn "xdotool not found; X11 foreground-aware hotkey release will be unavailable."
+fi
+if [ "$SESSION_TYPE" = "wayland" ]; then
+  if [ "$PROTONTRICKS_AVAILABLE" -eq 1 ]; then
+    say "protontricks detected for the optional Fallout 76 cursor-lock setup."
+  else
+    warn "protontricks not found; the optional Fallout 76 cursor-lock setup requires a manual install."
+  fi
+fi
+
+if [ "$PRINT_PLAN" -eq 1 ]; then
+  if [ "$DEB_SELECTED" -eq 1 ]; then
+    say "Plan: install the Debian package (explicit apt/sudo confirmation required)."
+  elif [ "$DEB_SELECTED" -eq 2 ]; then
+    say "Plan: offer the Debian package; decline falls back to AppImage extract-and-run."
+  elif [ -n "$APPIMAGE_EXEC_ARGS" ]; then
+    say "Plan: install the per-user AppImage with $APPIMAGE_EXEC_ARGS."
+  else
+    say "Plan: install the per-user AppImage using native FUSE2."
+  fi
+  exit 0
+fi
 
 # --- In-game cursor lock (Wayland) is a Proton/Wine concern -------------------
 # On Wayland the compositor drops Fallout 76's mouse-lock when the overlay sits on
@@ -136,6 +255,39 @@ urlencode() {
   printf '%s' "$out"
 }
 DL_URL="$BASE/$(urlencode "$APPIMAGE_NAME")"
+DEB_NAME="Fallout Chat Mod-${VERSION}.deb"
+DEB_URL="$BASE/$(urlencode "$DEB_NAME")"
+
+# In auto mode, offer the native Debian package only when it solves a detected
+# AppImage problem. The offer is interactive and never invokes sudo silently;
+# non-interactive callers use the no-root extract-and-run fallback instead.
+if [ "$DEB_SELECTED" -eq 2 ]; then
+  DEB_SELECTED=0
+  if { : >/dev/tty; } 2>/dev/null; then
+    printf '\033[1;33m?? \033[0m AppImage FUSE support is unavailable. Install the Debian package instead? [Y/n] ' > /dev/tty
+    DEB_ANSWER="y"
+    read -r DEB_ANSWER < /dev/tty || DEB_ANSWER="y"
+    case "$DEB_ANSWER" in n|N|no|NO) APPIMAGE_EXEC_ARGS="--appimage-extract-and-run" ;; *) DEB_SELECTED=1 ;; esac
+  else
+    APPIMAGE_EXEC_ARGS="--appimage-extract-and-run"
+    warn "No controlling terminal; using AppImage --appimage-extract-and-run instead of changing system packages."
+  fi
+fi
+
+if [ "$DEB_SELECTED" -eq 1 ]; then
+  has_command sudo || die "sudo is required to install the .deb; re-run with --format appimage for a per-user install."
+  say "Downloading $DEB_NAME …"
+  DEB_TMP="$(mktemp "${TMPDIR:-/tmp}/fcm.XXXXXX.deb")"
+  curl -fSL --progress-bar "$DEB_URL" -o "$DEB_TMP" || { rm -f "$DEB_TMP"; die "Download failed ($DEB_URL)."; }
+  DEB_SIZE="$(stat -c%s "$DEB_TMP" 2>/dev/null || stat -f%z "$DEB_TMP")"
+  [ "${DEB_SIZE:-0}" -gt 1000000 ] || { rm -f "$DEB_TMP"; die "Downloaded .deb is only ${DEB_SIZE} bytes — feed/CDN problem."; }
+  say "Installing the Debian package. apt/sudo will show its normal confirmation prompts."
+  sudo apt-get install "$DEB_TMP" || { rm -f "$DEB_TMP"; die "The .deb installation failed."; }
+  rm -f "$DEB_TMP"
+  say "Installed v$VERSION from $DEB_NAME."
+  say "The package manager owns this install; update with --format deb or remove it with your package manager."
+  exit 0
+fi
 
 # --- Stop any running overlay -------------------------------------------------
 # Recover a broken/locked prior install: kill any running overlay so the
@@ -150,6 +302,7 @@ sleep 1 2>/dev/null || true
 
 # --- Download -----------------------------------------------------------------
 mkdir -p "$APP_DIR" "$DESKTOP_DIR" "$ICON_DIR"
+DESKTOP_EXEC="\"$APP_PATH\"${APPIMAGE_EXEC_ARGS:+ $APPIMAGE_EXEC_ARGS} %U"
 say "Downloading $APPIMAGE_NAME …"
 TMP="$(mktemp "${TMPDIR:-/tmp}/fcm.XXXXXX.AppImage")"
 curl -fSL --progress-bar "$DL_URL" -o "$TMP" || die "Download failed ($DL_URL)."
@@ -175,7 +328,7 @@ cat > "$DESKTOP_FILE" <<EOF
 Type=Application
 Name=Fallout Chat Mod
 Comment=Community chat overlay for Fallout 76
-Exec="$APP_PATH" %U
+Exec=$DESKTOP_EXEC
 Icon=${ICON_PATH}
 Terminal=false
 Categories=Game;Network;Chat;
@@ -224,6 +377,8 @@ Fallout Chat Mod — installed via the CLI installer
 ===================================================
 App:       $APP_PATH
 Launcher:  $DESKTOP_FILE  (also in your application menu as "Fallout Chat Mod")
+Detected:  $OS_ID ($DISTRO_FAMILY), session=$SESSION_TYPE, compositor=$COMPOSITOR
+Run mode:  AppImage${APPIMAGE_EXEC_ARGS:+ with $APPIMAGE_EXEC_ARGS}
 
 Using the overlay
 - Run Fallout 76 in BORDERLESS WINDOWED (not exclusive fullscreen).
@@ -267,10 +422,11 @@ Troubleshooting — "it launched once, now the shortcut does nothing"
   * AppImageLauncher's "Integrate AppImage and run" moves the AppImage and makes
     its own shortcut, which conflicts with this installer. Use ONE method. To
     recover: remove the AppImageLauncher integration, then re-run this installer.
-  * A type-2 AppImage needs libfuse2 (libfuse.so.2). Fedora ships only fuse3 by
-    default. Install it (Fedora: sudo dnf install fuse-libs; Debian/Ubuntu:
-    sudo apt install libfuse2), OR — recommended on Fedora/Debian/Ubuntu — use the
-    .deb instead of the AppImage (no FUSE, no AppImageLauncher):
+  * A type-2 AppImage needs libfuse2 (libfuse.so.2). This install is configured to
+    use --appimage-extract-and-run when FUSE2 is unavailable, so it remains a
+    per-user install without sudo. It is slower because it extracts on launch.
+    On Debian-family systems you can instead run with --format deb to use the
+    native package (no FUSE, but apt/sudo owns the install):
       download "Fallout Chat Mod <ver>.deb" from https://falloutchatmod.com, then
       sudo apt install ./'Fallout Chat Mod'*.deb   (or: sudo dnf install ./*.deb)
 
@@ -286,17 +442,18 @@ Support:    https://falloutchatmod.com
 EOF
 say "Wrote setup notes + KDE rule to: $APP_DIR"
 
-# --- FUSE check ---------------------------------------------------------------
-# A type-2 AppImage needs libfuse2 (libfuse.so.2) to mount itself. Fedora and some
-# other modern distros ship only fuse3 by default, so the AppImage "launches once
-# then the shortcut does nothing" (issue #272). Steer those users to the .deb.
-if ! ldconfig -p 2>/dev/null | grep -q 'libfuse\.so\.2'; then
+# --- FUSE result --------------------------------------------------------------
+# A type-2 AppImage needs libfuse2 (libfuse.so.2) to mount itself. If it is absent,
+# the selected launcher uses --appimage-extract-and-run, which avoids package
+# changes and still works on Fedora, Arch, and other non-Debian systems.
+if [ "$FUSE2_AVAILABLE" -eq 0 ]; then
   warn "libfuse2 (libfuse.so.2) not detected — a type-2 AppImage needs it to launch."
-  warn "On Fedora/Debian/Ubuntu the .deb package is the more reliable option (no FUSE):"
-  warn "  download \"Fallout Chat Mod <ver>.deb\" from https://falloutchatmod.com and"
-  warn "  install with:  sudo apt install ./'Fallout Chat Mod'*.deb   (or: sudo dnf install ./*.deb)"
-  warn "Otherwise install libfuse2 (Fedora: sudo dnf install fuse-libs; Debian/Ubuntu:"
-  warn "  sudo apt install libfuse2), or run the AppImage with: \"$APP_PATH\" --appimage-extract-and-run"
+  warn "Using the no-root fallback: \"$APP_PATH\" --appimage-extract-and-run"
+  if [ "$DISTRO_FAMILY" = "debian" ]; then
+    warn "For a native package-managed install, re-run with: $0 --format deb"
+  elif [ "$DISTRO_FAMILY" = "fedora" ]; then
+    warn "If preferred, install FUSE2 with your distro's fuse-libs package and re-run."
+  fi
 fi
 
 # --- AppImageLauncher conflict note -------------------------------------------
@@ -312,8 +469,6 @@ if command -v AppImageLauncher >/dev/null 2>&1 || [ -e "$CONFIG_HOME/appimagelau
 fi
 
 # --- KDE / Wayland note -------------------------------------------------------
-DESKTOP_ENV="$(printf '%s' "${XDG_CURRENT_DESKTOP:-}" | tr 'A-Z' 'a-z')"
-SESSION_TYPE="$(printf '%s' "${XDG_SESSION_TYPE:-}" | tr 'A-Z' 'a-z')"
 if printf '%s' "$DESKTOP_ENV" | grep -q 'kde\|plasma' && [ "$SESSION_TYPE" = "wayland" ]; then
   echo
   say "KDE Plasma on Wayland detected — the overlay configures itself on first launch"

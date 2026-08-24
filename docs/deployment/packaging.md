@@ -106,8 +106,8 @@ The patch preserves the original byte length by trimming excess whitespace insid
 
 | File | Purpose |
 |------|---------|
-| `install.sh` | CLI one-liner installer: `curl -fsSL https://falloutchatmod.com/install.sh \| bash`. Queries `GET /api/releases` to discover the current version, downloads the `.AppImage` to a stable version-agnostic path (`$XDG_DATA_HOME/FalloutChatMod/Fallout Chat Mod.AppImage`), makes it executable, rewrites the `.desktop` launcher, and writes a `.fcm-version` marker. Doubles as the **update/patch path**: overwrites in place (fast-forwards from any older version) and when the `.fcm-version` marker shows the latest is already installed **prompts reinstall-or-cancel** from `/dev/tty` (piped/non-interactive → defaults to Cancel). |
-| `uninstall.sh` | Removes the installed AppImage, `.fcm-version` marker, and desktop launcher entry. |
+| `install.sh` | CLI one-liner installer: `curl -fsSL https://falloutchatmod.com/install.sh \| bash`. Detects distro family, session/compositor, FUSE2, package manager, and Linux helpers before choosing a path: per-user `.AppImage` by default, `--appimage-extract-and-run` when FUSE2 is unavailable, or an explicitly confirmed Debian-family `.deb` (`--format deb`). It never installs helpers or invokes `sudo` silently. The AppImage path is downloaded to a stable version-agnostic path (`$XDG_DATA_HOME/FalloutChatMod/Fallout Chat Mod.AppImage`), makes it executable, rewrites the `.desktop` launcher, and writes a `.fcm-version` marker. `--print-plan` reports detection without downloading. Doubles as the **update/patch path**: overwrites in place (fast-forwards from any older version) and when the `.fcm-version` marker shows the latest is already installed **prompts reinstall-or-cancel** from `/dev/tty` (piped/non-interactive → defaults to Cancel). |
+| `uninstall.sh` | Removes the per-user AppImage, `.fcm-version` marker, and desktop launcher entry. A `.deb` install is owned by apt/dpkg and should be removed with the package manager. |
 
 ---
 

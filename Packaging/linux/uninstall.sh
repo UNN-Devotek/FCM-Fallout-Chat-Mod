@@ -3,7 +3,8 @@
 # Fallout Chat Mod — Linux uninstaller
 #   curl -fsSL https://falloutchatmod.com/uninstall.sh | bash
 #
-# Removes the AppImage, the desktop launcher, and the icon. By default it KEEPS
+# Removes the per-user AppImage, the desktop launcher, and the icon. A .deb install
+# is owned by apt/dpkg and should be removed with the package manager. By default it KEEPS
 # your config/login (~/.config/Fallout Chat Mod). Pass --purge to remove that too.
 #
 set -euo pipefail
