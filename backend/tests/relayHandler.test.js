@@ -762,6 +762,45 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
+  test('short-lived RPC connections close after returning their response', async () => {
+    const { ws, msgs } = await conn();
+    const closed = new Promise((resolve) => {
+      ws.once('close', (code, reason) => resolve({ code, reason: reason.toString() }));
+    });
+
+    try {
+      const res = await waitForMsg(ws, msgs, () => send(ws, { op: 'nonexistent' }));
+      expect(res).toMatchObject({ success: false, error: { code: 'invalid_request' } });
+      await expect(Promise.race([
+        closed,
+        new Promise((resolve) => setTimeout(() => resolve(null), 500)),
+      ])).resolves.toMatchObject({ code: 1000 });
+    } finally {
+      if (ws.readyState !== WebSocket.CLOSED) ws.close();
+    }
+  });
+
+  test('idle RPC close releases a relay slot for the next request', async () => {
+    const accepted = await Promise.all(Array.from({ length: 5 }, () => conn()));
+    expect(accepted.every((result) => result.ok)).toBe(true);
+
+    await Promise.all(accepted.map(({ ws, msgs }) => new Promise(async (resolve, reject) => {
+      const closed = new Promise((closeResolve) => ws.once('close', closeResolve));
+      try {
+        const res = await waitForMsg(ws, msgs, () => send(ws, { op: 'nonexistent' }));
+        expect(res).toMatchObject({ success: false, error: { code: 'invalid_request' } });
+        await closed;
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    })));
+
+    const next = await conn();
+    expect(next.ok).toBe(true);
+    if (next.ok) next.ws.close();
+  });
+
   test('/relay rejects frames larger than 8 KiB before JSON parsing', async () => {
     const { ok, ws } = await conn();
     expect(ok).toBe(true);

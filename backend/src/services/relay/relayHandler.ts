@@ -81,6 +81,7 @@ const MAX_REGISTRATIONS_PER_IP = 3;
 const REPORT_WINDOW_SECONDS = 10 * 60;
 const MAX_REPORTS_PER_WINDOW = 5;
 const RELAY_FIRST_FRAME_TIMEOUT_MS = 10_000;
+const RELAY_RPC_IDLE_CLOSE_MS = 250;
 const POLL_HISTORY_LIMIT        = 75;    // initial history window on cursor=0 — must cover ~12 msgs x 5 static channels + recent live traffic (the window is global, not per-channel)
 const REDIS_BROADCAST_CHANNEL   = 'chat:broadcast';
 const RELAY_CONTROL_CHANNEL     = 'relay:control';
@@ -391,6 +392,13 @@ interface SubscriberState {
 // Module-level subscriber set — cleared on disconnect.
 const subscribers = new Set<SubscriberState>();
 const pendingSubscriptions = new WeakSet<WebSocket>();
+
+function hasSubscriberSocket(ws: WebSocket): boolean {
+  for (const subscriber of subscribers) {
+    if (subscriber.ws === ws) return true;
+  }
+  return false;
+}
 
 function evictLocalRelayUser(linkedUserId: string, code: string, message: string): number {
   let evicted = 0;
@@ -1593,9 +1601,28 @@ export function handleRelayConnection(ws: WebSocket, req: http.IncomingMessage):
       ws.close(1008, 'Initial relay frame required');
     }
   }, RELAY_FIRST_FRAME_TIMEOUT_MS);
-  ws.once('close', () => clearTimeout(firstFrameTimer));
+  let rpcIdleCloseTimer: ReturnType<typeof setTimeout> | null = null;
+  const cancelRpcIdleClose = (): void => {
+    if (rpcIdleCloseTimer === null) return;
+    clearTimeout(rpcIdleCloseTimer);
+    rpcIdleCloseTimer = null;
+  };
+  const scheduleRpcIdleClose = (): void => {
+    cancelRpcIdleClose();
+    rpcIdleCloseTimer = setTimeout(() => {
+      rpcIdleCloseTimer = null;
+      if (ws.readyState === 1) {
+        try { ws.close(1000, 'relay request idle'); } catch { /* already closing */ }
+      }
+    }, RELAY_RPC_IDLE_CLOSE_MS);
+  };
+  ws.once('close', () => {
+    clearTimeout(firstFrameTimer);
+    cancelRpcIdleClose();
+  });
 
   ws.on('message', async (data) => {
+    cancelRpcIdleClose();
     if (!receivedFirstFrame) {
       receivedFirstFrame = true;
       clearTimeout(firstFrameTimer);
@@ -1605,6 +1632,7 @@ export function handleRelayConnection(ws: WebSocket, req: http.IncomingMessage):
       frame = JSON.parse(data.toString());
     } catch {
       send(ws, errEnvelope('invalid_request', 'Frame must be valid JSON'));
+      scheduleRpcIdleClose();
       return;
     }
 
@@ -1626,6 +1654,14 @@ export function handleRelayConnection(ws: WebSocket, req: http.IncomingMessage):
     } catch (err) {
       logger.error({ err, op }, '[relayHandler] unhandled error in op handler');
       send(ws, errEnvelope('internal_error', 'Internal server error'));
+    } finally {
+      // ZFE opens a separate WebSocket for each request/response operation. Keep
+      // a subscribed socket alive, but release an idle RPC socket after a short
+      // grace period. The grace period preserves clients that reuse one socket
+      // for sequential frames while preventing poll/send/control calls from
+      // consuming the per-IP upgrade cap until the native client closes them.
+      if (hasSubscriberSocket(ws)) cancelRpcIdleClose();
+      else if (ws.readyState === 1) scheduleRpcIdleClose();
     }
   });
 

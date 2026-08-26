@@ -26,6 +26,7 @@ import type http from 'http';
 import type { Duplex } from 'stream';
 import { WebSocketServer } from 'ws';
 import { handleRelayConnection } from '../services/relay/relayHandler';
+import logger from '../config/logger';
 import { clientIp } from '../utils/clientIp';
 
 /** Path reserved for the HUD live-push WebSocket (handled by hudPushWs). */
@@ -57,6 +58,10 @@ function getRelayWss(): WebSocketServer {
         const ip = clientIp(info.req);
         const current = relayConnsByIp.get(ip) ?? 0;
         if (current >= RELAY_MAX_CONNS_PER_IP) {
+          logger.warn(
+            { ip, current, limit: RELAY_MAX_CONNS_PER_IP },
+            '[relayUpgrade] concurrent relay connection cap reached',
+          );
           return cb(false, 429, 'Too many relay connections');
         }
         // Reserve before completing the upgrade. Connection callbacks run after
