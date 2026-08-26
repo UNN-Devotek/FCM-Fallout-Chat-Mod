@@ -10,6 +10,7 @@ import ticketService from './ticketService';
 import supporterSyncService from './supporterSyncService';
 import cosmeticsCommandService from './cosmeticsCommandService';
 import chatNameCommandService from './chatNameCommandService';
+import { nextRelaySeq } from './relay/relaySeq';
 import { getEntry, bestMatch } from './wikiCatalogService';
 import { canon } from '../utils/textCanon';
 import { buildOverLengthDm } from '../utils/overLengthDm';
@@ -877,6 +878,19 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
       logger.debug({ err }, '[discord-relay] wiki URL resolution error (non-fatal)');
     }
 
+    // Discord-originated messages are part of the native relay stream too. Allocate
+    // the same monotonic cursor used by HUD/WS messages before broadcasting or
+    // persisting; the relay subscriber and history query both require relaySeq.
+    let relaySeq: number;
+    try {
+      relaySeq = await nextRelaySeq();
+    } catch (err) {
+      // Without Redis there is no safe cursor, so do not create a Discord message
+      // that the HUD cannot deliver or recover through history.
+      logger.warn({ err, discordMessageId: msg.id }, '[discord-relay] relay cursor allocation failed — message not relayed');
+      return;
+    }
+
     if (broadcastFn) {
       broadcastFn({
         type: 'chat:message',
@@ -889,6 +903,7 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
           source: 'discord',
           timestamp: createdAt,
           metadata: inboundMetadata,
+          relaySeq,
         },
       });
     }
@@ -901,6 +916,7 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
       source: 'discord',
       createdAt,
       metadata: inboundMetadata,
+      relaySeq,
     }).catch((err: Error) => logger.error({ err }, 'Failed to queue Discord message'));
 
     await prisma.discordMessageLink.upsert({

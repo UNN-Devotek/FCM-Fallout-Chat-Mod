@@ -103,7 +103,7 @@ import {
 import { requireDiscordRole } from './middleware/auth';
 import { initHudPushTcp } from './services/hudPushTcp';
 import { initHudPushWs, isHudPushWsEnabled } from './services/hudPushWs';
-import { seedRelaySeq } from './services/relay/relaySeq';
+import { backfillMissingRelaySeq, seedRelaySeq } from './services/relay/relaySeq';
 import { applyPostPushPatches } from './scripts/applyPostPushPatches';
 import { attachChatUpgradeRouter } from './websocket/upgradeRouter';
 import { initLatestVersion } from './services/latestReleaseVersion';
@@ -2070,8 +2070,9 @@ async function start(): Promise<void> {
     // idempotent compatibility set before any relay message can be persisted.
     await applyPostPushPatches(prisma);
 
-    // chat.v1 relay: seed the monotonic relay sequence counter from DB high-water mark.
-    // Must run after Redis is connected and before the first relay send.
+    // Restore cursors for legacy rows before seeding the counter. Must run after
+    // Redis is connected and before the first relay send.
+    await backfillMissingRelaySeq();
     await seedRelaySeq();
 
     // Ensure default channels exist regardless of migration state

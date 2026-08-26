@@ -51,6 +51,57 @@ export async function seedRelaySeq(): Promise<void> {
 }
 
 /**
+ * Give legacy chat rows a relay cursor so they can participate in native HUD
+ * history. Older Discord/game/HUD rows predate relay_seq and are otherwise
+ * invisible to fetchHistoryEvents, which intentionally filters on a cursor.
+ *
+ * This is idempotent: rows are numbered only while relay_seq is NULL. It runs
+ * before the server starts accepting traffic, so the Redis high-water mark can
+ * be advanced safely before the first new cursor is allocated.
+ */
+export async function backfillMissingRelaySeq(): Promise<number> {
+  try {
+    const prismaResult = await prisma.$executeRaw`
+      WITH legacy AS (
+        SELECT id,
+               created_at,
+               COALESCE((SELECT MAX(relay_seq) FROM messages), 0)
+                 + ROW_NUMBER() OVER (ORDER BY created_at ASC, id ASC) AS next_seq
+        FROM messages
+        WHERE relay_seq IS NULL
+      )
+      UPDATE messages AS m
+         SET relay_seq = legacy.next_seq
+        FROM legacy
+       WHERE m.id = legacy.id
+         AND m.created_at = legacy.created_at
+    `;
+    const updatedRows = Number(prismaResult) || 0;
+    const rows = await prisma.$queryRaw<[{ max: bigint | null }]>`
+      SELECT MAX(relay_seq) AS max FROM messages
+    `;
+    const maxSeq = rows[0]?.max === null || rows[0]?.max === undefined
+      ? 0
+      : Number(rows[0].max);
+
+    const redis = await getRedisClient();
+    const currentRaw = await redis.get(RELAY_SEQ_KEY);
+    const currentSeq = currentRaw === null ? 0 : Number(currentRaw);
+    if (!Number.isFinite(currentSeq) || currentSeq < maxSeq) {
+      await redis.set(RELAY_SEQ_KEY, String(maxSeq));
+    }
+
+    if (updatedRows > 0) {
+      logger.info({ updatedRows, maxSeq }, '[relaySeq] backfilled legacy chat cursors');
+    }
+    return updatedRows;
+  } catch (err) {
+    logger.warn({ err }, '[relaySeq] legacy cursor backfill failed — continuing without backfill');
+    return 0;
+  }
+}
+
+/**
  * Atomically increment and return the next relay sequence number.
  * Redis INCR is atomic — concurrent callers are guaranteed distinct values.
  */

@@ -267,7 +267,7 @@ const {
 } = require('../src/services/relay/tokenService');
 
 const {
-  nextRelaySeq, seedRelaySeq,
+  backfillMissingRelaySeq, nextRelaySeq, seedRelaySeq,
 } = require('../src/services/relay/relaySeq');
 
 const {
@@ -630,6 +630,18 @@ describe('relaySeq', () => {
     redisMock.set.mockClear();
     await seedRelaySeq();
     expect(redisMock.set).toHaveBeenCalledWith('relay:seq', '0', { NX: true });
+  });
+
+  test('backfillMissingRelaySeq assigns legacy rows and advances Redis high-water mark', async () => {
+    const prisma = require('../src/config/prisma').default;
+    prisma.$executeRaw.mockResolvedValueOnce(3);
+    prisma.$queryRaw.mockResolvedValueOnce([{ max: BigInt(45) }]);
+    redisMock.get.mockResolvedValueOnce('42');
+    redisMock.set.mockClear();
+
+    await expect(backfillMissingRelaySeq()).resolves.toBe(3);
+    expect(prisma.$executeRaw.mock.calls[0][0].join('')).toContain('relay_seq IS NULL');
+    expect(redisMock.set).toHaveBeenCalledWith('relay:seq', '45');
   });
 });
 
@@ -1749,6 +1761,50 @@ describe('relay WebSocket ops', () => {
       cursor: 1,
       event: { id: 1, channel: 'global', body: 'hist' },
     });
+    wsSub.close();
+  });
+
+  test('subscribe includes a recent Discord message in the initial static history', async () => {
+    // The Discord inbound path assigns relay_seq before persistence; this verifies
+    // the other half of the contract: a HUD cursor=0 subscribe actually receives
+    // that persisted Discord row during its initial history backfill.
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'DiscordHistoryPlayer' }),
+    );
+    wsReg.close();
+    const { token } = regRes;
+    const rawId = lastRawUserId();
+    _userMap[rawId] = { id: rawId, discordId: 'disc-history', steamId: null, isBanned: false, isMuted: false };
+
+    const historyRow = {
+      id: 'discord-history-row',
+      relay_seq: BigInt(123),
+      content: 'recent Discord message',
+      user_id: 'u-discord-history',
+      channel_id: '00000000-0000-0000-0000-000000000005',
+      username: 'Discord User',
+      fo76_account_name: null,
+      created_at: new Date('2026-08-26T04:18:49.588Z'),
+      source: 'discord',
+    };
+    require('../src/config/prisma').default.$queryRaw.mockResolvedValueOnce([historyRow]);
+
+    const { ws: wsSub, msgs: msgsSub } = await conn();
+    await waitForMsg(wsSub, msgsSub, () =>
+      send(wsSub, { op: 'subscribe', token, cursor: 0 }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    expect(msgsSub).toContainEqual(expect.objectContaining({
+      op: 'event',
+      cursor: 123,
+      event: expect.objectContaining({
+        messageId: historyRow.id,
+        body: historyRow.content,
+        channel: 'global',
+      }),
+    }));
     wsSub.close();
   });
 

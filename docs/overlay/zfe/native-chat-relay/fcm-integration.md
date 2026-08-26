@@ -182,6 +182,10 @@ Request/response sockets are closed after 250 ms of inactivity once their respon
 has been queued; this grace window preserves sequential frame reuse while ensuring
 ZFE's separate `poll`, `send`, and world-control calls do not accumulate against
 the connection cap. `subscribe` is the only operation that keeps a socket open.
+Discord-originated feed messages receive the same relay cursor as HUD/WS messages,
+so they are delivered live and included in subscribe-time history. On startup, the
+backend idempotently assigns cursors to older chat rows that predate this contract
+before accepting relay traffic.
 
 ## Verification
 
