@@ -26,7 +26,9 @@ fully verified without a payment processor.
 
 ## Step 1 — Create the two roles in the dev guild
 
-The dev bot already holds **Manage Roles** in the dev guild only. Create:
+The dev bot already holds **Manage Roles** in the dev guild only. The maintainer
+provisioning script now creates these roles when missing (and is safe to rerun), or
+they can be created manually:
 
 | Role | Purpose |
 | --- | --- |
@@ -37,10 +39,25 @@ Colours must not collide with the reserved set (`backend/src/services/cosmetics/
 — in particular **not** Discord blurple `#5865F2`, moderator green `#50C878`, or the
 owner/admin golds. Anything in the blue-grey or teal range is safe.
 
-Prefer extending `backend/scripts/clone-discord-layout.ts` over clicking through the UI,
-so the same script provisions prod later and prints the role-ID mapping.
+Run `backend/scripts/clone-discord-layout.ts` after the base guild layout is available;
+it provisions missing tier and appearance roles and prints the target-guild IDs for the
+tier roles alongside the staff role mapping. The same script can provision prod later.
 
 Record both role IDs (Discord → right-click role → Copy ID, with Developer Mode on).
+
+### Appearance roles
+
+The bot mirrors saved appearance selections to Discord. Create one role for every
+catalog colour label and these eight effect labels:
+
+`Soft Glow`, `Hard Glow`, `Heavy Outline`, `Chroma Split`, `Pulse Glow`, `CRT Phosphor`,
+`Glitch`, and `Shimmer`.
+
+Do not create a role for `None`. A user gets only their selected colour role and only
+their selected effect role; clearing a selection removes that family role. Keep all
+appearance roles below the bot's highest role and grant the bot **Manage Roles**.
+The role names are matched to the catalog labels, so no additional role IDs are added
+to the stack environment.
 
 ## Step 2 — Enable the `GuildMembers` privileged intent
 

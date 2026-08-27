@@ -412,11 +412,21 @@ export async function applyCosmetics(input: {
 
   await pushCosmeticsUpdate(userId, cosmetics);
 
-  // The Discord server nickname mirrors the same star/tag presentation. Do not
-  // await a remote Discord REST call in this write path: saving in the website or a
-  // slash command must remain successful even if the bot lacks nickname permission.
+  // Apply the role-backed Discord presentation before returning from the save. This
+  // gives preset colours a real Discord name colour and records the selected effect
+  // as a Discord role. The sync is deliberately non-fatal: FCM remains usable when
+  // Discord is unavailable or production has not finished provisioning its roles.
   if (user.discordId) {
     const discordId = user.discordId;
+    try {
+      const { syncCosmeticDiscordRoles } = await import('./discordRoleSyncService.js');
+      await syncCosmeticDiscordRoles(discordId, cosmetics);
+    } catch (err: unknown) {
+      logger.warn({ err, userId, discordId }, '[cosmetics] Discord role sync failed (non-fatal)');
+    }
+
+    // The Discord server nickname mirrors the same star/tag presentation. Keep this
+    // separate because nickname failures must never affect the role-backed colour.
     void import('../supporterNicknameService.js')
       .then(({ syncSupporterNickname }) => syncSupporterNickname(discordId))
       .catch((err: unknown) => logger.warn({ err, userId, discordId }, '[cosmetics] Discord nickname sync failed (non-fatal)'));

@@ -150,6 +150,28 @@ it is removed when the tier role is removed. A missing **Manage Nicknames** perm
 server ownership, or Discord role hierarchy only skips the nickname update — it never
 blocks a cosmetic save or entitlement change.
 
+### Appearance roles
+
+When a user saves a colour or effect, the bot mirrors the effective selection to the
+configured FCM guild. A colour preset adds its matching colour role (which supplies
+Discord's displayed name colour); a selected effect adds only its matching effect role.
+The previous role in each family is removed. Selecting `None` removes all effect roles.
+Custom hex colours have no corresponding Discord role, so they continue to render in
+FCM while any preset colour role is cleared. The effect role is a Discord marker only:
+the actual glow/animation still renders on the website and desktop overlay, not inside
+Discord or the Fallout 76 HUD.
+
+The role names must exactly match the labels in `cosmetics/presets.ts`. The provisioning
+script creates missing roles, and no per-role environment variables are required:
+
+- Colour roles: all labels in `COLOR_PRESETS` (23 roles).
+- Effect roles: `Soft Glow`, `Hard Glow`, `Heavy Outline`, `Chroma Split`, `Pulse Glow`,
+  `CRT Phosphor`, `Glitch`, and `Shimmer` (8 roles; no role for `None`).
+
+Roles must remain below the bot's highest role and the bot needs **Manage Roles**. A
+missing role is non-fatal to the FCM save, but the Discord presentation will remain at
+its previous value until the role is provisioned.
+
 Full design record: [docs/product/supporter-tier.md](../product/supporter-tier.md).
 
 ## Related docs

@@ -8,7 +8,8 @@
  *   ★ [TAG] Fallout name
  *
  * The star is a role benefit; tags appear only for active Overseer's Circle members.
- * Effects and colours remain FCM-only because Discord nicknames cannot render them.
+ * A separate role sync mirrors preset colours and selected effects because Discord
+ * nicknames cannot render either of those visual properties.
  */
 import logger from '../config/logger';
 import type { SupporterTier } from '../utils/supporterTier';
@@ -19,6 +20,7 @@ import {
   resolveCosmetics,
   type ResolvedCosmetics,
 } from './cosmetics/cosmeticsService';
+import { syncCosmeticDiscordRoles } from './cosmetics/discordRoleSyncService';
 
 export const DISCORD_NICKNAME_MAX_LENGTH = 32;
 export const SUPPORTER_NICKNAME_STAR = '★';
@@ -104,7 +106,7 @@ export async function syncSupporterNickname(discordId: string): Promise<boolean>
  */
 export async function refreshSupporterPresentation(
   discordId: string,
-  options: { syncNickname?: boolean } = {},
+  options: { syncNickname?: boolean; syncRoles?: boolean } = {},
 ): Promise<boolean> {
   const user = await getUserByDiscordId(discordId);
   if (!user) return false;
@@ -112,8 +114,12 @@ export async function refreshSupporterPresentation(
   await bustCosmeticsCache(user.id);
   const cosmetics = await resolveCosmetics(user.id);
   await pushCosmeticsUpdate(user.id, cosmetics);
-  if (options.syncNickname === false) return false;
-  return setResolvedNickname(user, cosmetics);
+  const roleSynced = options.syncRoles === false
+    ? false
+    : (await syncCosmeticDiscordRoles(discordId, cosmetics)).ok;
+  if (options.syncNickname === false) return roleSynced;
+  const nicknameSynced = await setResolvedNickname(user, cosmetics);
+  return roleSynced || nicknameSynced;
 }
 
 export default { formatSupporterNickname, syncSupporterNickname, refreshSupporterPresentation };

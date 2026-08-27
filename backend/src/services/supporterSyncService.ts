@@ -97,7 +97,12 @@ async function onGuildMemberRemove(member: GuildMember | PartialGuildMember): Pr
     const changed = await lapseEntitlement({ discordId: member.id, reason: 'left the guild' });
     // The member is already gone, so there is no guild nickname to update. The
     // cache bust + live FCM refresh still matters for their open sessions.
-    if (changed) await refreshSupporterPresentation(member.id, { syncNickname: false });
+    if (changed) {
+      // The member has already left, so Discord has no member object from which
+      // cosmetic roles could be removed. FCM cache/live presentation still needs
+      // refreshing, but role sync must wait for a future rejoin.
+      await refreshSupporterPresentation(member.id, { syncNickname: false, syncRoles: false });
+    }
   } catch (err) {
     logger.warn({ err }, '[supporterSync] GuildMemberRemove handler failed (non-fatal)');
   }

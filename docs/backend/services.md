@@ -377,6 +377,8 @@ record; this is the service-level map.
 | --- | --- |
 | `cosmetics/cosmeticsService.ts` | **The single cosmetic write path.** `applyCosmetics()` owns colour/effect/tag validation, tier gating, blacklist, cache busting, live push and audit logging. Both the REST endpoint and the Discord `/cosmetics` command call it, so the two surfaces cannot drift. Also `resolveCosmetics()` (read, Redis-cached 60s) and `attachCosmetics()` (decorates outgoing `chat:message` payloads). |
 | `cosmetics/presets.ts` | Colour + effect catalog, served over `GET /api/cosmetics/catalog` as the single source of truth for every surface. |
+| `cosmetics/discordRoleSyncService.ts` | Mirrors the effective saved colour/effect selection to the matching Discord roles. It assigns only the selected role in each family, removes stale family roles, and fails non-fatally when a role is missing, the bot is offline, or hierarchy blocks the update. |
+| `cosmetics/roleDefinitions.ts` | Derives the Discord role names and colors from the catalog and provides the pure role-diff planner used by the sync service and provisioning script. |
 | `cosmetics/reservedColors.ts` | Colours users may not pick, with the reason (impersonation vs ambiguity). |
 | `cosmetics/validation.ts` | Pure input validation, reused by the frontend picker's live feedback. |
 | `supporterService.ts` | Entitlement read/write, Redis-cached tier lookup, and the entitlement-vs-privileges split. |
