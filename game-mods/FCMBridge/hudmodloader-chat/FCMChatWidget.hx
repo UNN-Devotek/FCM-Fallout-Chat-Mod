@@ -62,9 +62,13 @@ private typedef ModerationTargetResolution = {
  *     closeInputNative(): clearChatInput + setChatInputActive("false").
  *   OPEN triggers: HUDMod::UserEvent open key, AND a low-rate (~150 ms) pollOpenKey()
  *     that opens on an isChatKeyPressed false->true edge (so the configured key opens chat).
- *   _nativeInputUsable is set by a CLEAN self-resetting startup probe (activate, test,
- *     deactivate+clear). If not usable, openInput() falls back to SharedHUDTools so the
- *     user can still type. NEVER run both. sendMessage stays chat.v1.sendMessage ONLY.
+ *   HUDModLoader menu: the F11 HUDMod::UserEvent explicitly calls SharedHUDTools.ShowMenu();
+ *     RegisterMenu() only registers FCM's entries and does not open the menu by itself.
+ *   Native input is tried only when a user opens the editor. The first activation is
+ *     immediately cleared and verified because some Windows/ZFE builds expose the bare
+ *     activation payload as literal text. If activation, cleanup, or the engine edit lock
+ *     fails, this session permanently falls back to SharedHUDTools. NEVER run both.
+ *     sendMessage stays chat.v1.sendMessage ONLY.
  *
  * Input path (FALLBACK): SharedHUDTools.FormatTextEdit + FormatOnScreenKeyboard + TextEdit.
  *   HUDModLoader's HUDTools handles StartEditText/EndEditText and gamepad OSK.
@@ -128,7 +132,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.3";  // clientVersion handshake + name-targeted HUD moderation
+    static inline var VERSION:String  = "2.10.4";  // local-player HUD identity resolution + deferred connect; + clientVersion handshake + name-targeted HUD moderation
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -344,16 +348,20 @@ class FCMChatWidget extends MovieClip {
     var _editTextLockOwned:Bool  = false;
     var _editTextUnlockRetry:flash.utils.Timer = null;
     // v2.5.3: DECODED native chat-input API — bare-value payloads ("true"/"false"),
-    // consume=boolean, text from readChatInput. Native is the primary path when usable.
+    // consume=boolean, text from readChatInput. Native input is attempted lazily on open;
+    // its activation buffer is cleared and verified before the session becomes visible.
+    static inline var USE_NATIVE_INPUT:Bool = true;
     var _nativeInput:Bool        = false;          // true while a native session owns input
     var _inputTimer:flash.utils.Timer = null;      // in-session native input poll (~100 ms)
     var _inProgress:String       = "";             // last readChatInput buffer text
     var _lastReadRaw:String      = "";             // throttle [nativein] read logging
     var _nativeSubmitInFlight:Bool = false;        // mark a send originating from a native submit (diagnostic log)
-    // The startup probe sets _nativeInputUsable; openInput() uses the native flow only
-    // when true (else SharedHUDTools fallback so the user can still type).
-    var _nativeInputUsable:Bool  = false;          // native chat-input session works (probe result)
-    var _probeSent:Bool          = false;          // one-shot startup probe guard
+    // Reset true on each relay connection; a failed open disables native input until reconnect
+    // and leaves SharedHUDTools as the compatibility fallback.
+    var _nativeInputUsable:Bool  = false;
+    // Set by callTop when a native helper throws or returns a command-level failure. A failed
+    // in-session helper must disable native input so the next open uses SharedHUDTools.
+    var _nativeInputCommandFailed:Bool = false;
     static inline var INPUT_POLL_MS:Int  = 100;    // in-session native input-poll interval
     // ── Open-key poll — open chat on the configured ZFE OpenChatKey edge ───────────────
     var _openKeyTimer:flash.utils.Timer = null;    // low-rate (~150 ms) open-trigger poll
@@ -633,6 +641,28 @@ class FCMChatWidget extends MovieClip {
     }
 
     /**
+     * Toggle the upstream HUDModLoader menu. RegisterMenu() only supplies our menu callbacks;
+     * HUDTools requires explicit ShowMenu()/CloseMenu() requests for the F11 action. Its
+     * isActive flag is shared by the menu and text editor, so never close an active chat edit
+     * from this menu toggle.
+     */
+    function showHudLoaderMenu():Void {
+        if (_hudTools == null) return;
+        try {
+            var active:Bool = (Reflect.field(_hudTools, "isActive") == true);
+            if (active && !_inputOpen) {
+                var close:Dynamic = Reflect.field(_hudTools, "CloseMenu");
+                if (close != null) Reflect.callMethod(_hudTools, close, []);
+            } else if (!active) {
+                var show:Dynamic = Reflect.field(_hudTools, "ShowMenu");
+                if (show != null) Reflect.callMethod(_hudTools, show, []);
+            }
+        } catch (e:Dynamic) {
+            zfeLog("warn", "menu", "menu toggle threw: " + Std.string(e));
+        }
+    }
+
+    /**
      * HUDModLoader menu build callback.
      * Adds channel-switch entries, a scroll-to-newest action, and a link action
      * (enabled only while auth is limited).
@@ -718,6 +748,14 @@ class FCMChatWidget extends MovieClip {
         try { action = Std.string(e.EventName); }  catch (_:Dynamic) {}
         try { isDown = (e.IsKeyDown == true); }    catch (_:Dynamic) {}
         if (isDown) return;
+
+        // HUDModLoader's RegisterMenu() does not bind the F11 hotkey. The loader forwards
+        // the key as a HUDMod::UserEvent, so explicitly open the shared menu here. Keep the
+        // guard narrow: "Unmapped" represents every unbound key and must never open menus.
+        if (action == "F11" || action == "HUDModMenu" || action == "HUDModLoaderMenu") {
+            showHudLoaderMenu();
+            return;
+        }
 
         // Keep the active input session and its buffer intact while changing the destination
         // channel. This is the HUDModLoader equivalent of the legacy Text Chat mod's Tab switch.
@@ -989,10 +1027,18 @@ class FCMChatWidget extends MovieClip {
      * chat-input verbs. Returns Std.string(result), or "" on throw.
      */
     function callTop(verb:String, payload:String):String {
-        if (_api == null) return "";
+        if (_api == null) {
+            _nativeInputCommandFailed = true;
+            return "";
+        }
         try {
-            return Std.string(_api.call(verb, payload));
+            var raw:String = Std.string(_api.call(verb, payload));
+            if (chatVerbFailed(raw) || StringTools.trim(raw).toLowerCase().indexOf('"success":false') >= 0) {
+                _nativeInputCommandFailed = true;
+            }
+            return raw;
         } catch (e:Dynamic) {
+            _nativeInputCommandFailed = true;
             zfeLog("warn", "nativein", verb + " threw: " + Std.string(e));
             return "";
         }
@@ -1029,7 +1075,7 @@ class FCMChatWidget extends MovieClip {
         var t:String = StringTools.trim(raw);
         if (t.length == 0) return "";
         var low:String = t.toLowerCase();
-        if (low == "false") return "";               // bare boolean "no buffer"
+        if (low == "false" || low == "true") return ""; // bare boolean, never user text
         // JSON object → extract a text/value/input field.
         if (t.charAt(0) == "{") {
             var f:String = extractJsonString(t, "text");
@@ -1058,17 +1104,15 @@ class FCMChatWidget extends MovieClip {
         // The open key both restores a hidden panel AND opens input (CAP-011, guaranteed).
         if (_hidden) show();
         bumpAutoHide();   // opening input = activity (the timer also never hides while input is open)
-        // NATIVE FIRST, but only with a verified ControlMap edit-text lock. HUDTools' keyboard-edit path double-inserts characters and
-        // renders only the last typed letter under Proton/Steam Input (live-verified;
-        // the 4-arg PlatformChangeEvent fix engaged KB mode but its editing is broken).
-        // ZFE's native input session captures cleanly (per-char reads, proven in June
-        // logs) and our prompt row displays the in-progress text. SharedHUDTools stays
-        // as the fallback. Trade-off to verify in-game: the native session may not
-        // lock the game's own keys while typing, so a native session falls back to HUDTools if
-        // StartEditText cannot be dispatched in the engine domain.
-        if (_nativeInputUsable) {
-            openInputNative();
-            if (_inputOpen) return;
+        // NATIVE FIRST, but only with a verified ControlMap edit-text lock. HUDTools' keyboard
+        // editor can receive only the newest character on some Windows/Steam Input combinations.
+        // The native ZFE session owns a cumulative buffer; its first activation is cleared and
+        // verified before it is accepted. SharedHUDTools remains the compatibility fallback.
+        if (USE_NATIVE_INPUT && _nativeInputUsable) {
+            if (openInputNative()) return;
+            // Do not keep re-triggering a known-bad native implementation for every Insert.
+            // A reconnect resets this capability so a transient ZFE startup failure can retry.
+            _nativeInputUsable = false;
         }
         openInputSharedHudTools();
     }
@@ -1148,6 +1192,7 @@ class FCMChatWidget extends MovieClip {
 
     function openInputNative():Bool {
         if (_api == null) return false;
+        _nativeInputCommandFailed = false;
         var raw:String = callTop("setChatInputActive", "true");   // bare "true", NOT JSON
         zfeLog("info", "nativein", "setChatInputActive(true) raw=" + clip200(raw));
 
@@ -1159,15 +1204,39 @@ class FCMChatWidget extends MovieClip {
             zfeLog("info", "nativein", "isChatInputActive after activate raw=" + clip200(a));
         }
         if (!active) {
-            zfeLog("warn", "nativein", "setChatInputActive not active; falling back");
+            // Even a rejected activation may have left a legacy payload in the native
+            // buffer. Clear/deactivate before handing control to SharedHUDTools.
+            var rejectedClear:String = callTop("clearChatInput", "{}");
+            callTop("setChatInputActive", "false");
+            zfeLog("warn", "nativein", "setChatInputActive not active; falling back clear="
+                + clip200(rejectedClear));
             return false;
         }
+
+        // Some Windows/ZFE builds return success but also expose the activation payload as
+        // the current editable text. Clear it before creating the visible session and verify
+        // that the buffer is empty. If either operation is unsupported, close the half-open
+        // session and use SharedHUDTools instead; literal "true" must never reach the user.
+        var clearRaw:String = callTop("clearChatInput", "{}");
+        var afterClearRaw:String = callTop("readChatInput", "{}");
+        if (_nativeInputCommandFailed) {
+            callTop("setChatInputActive", "false");
+            zfeLog("warn", "nativein", "activation helper failed; falling back");
+            return false;
+        }
+        var afterClear:String = StringTools.trim(afterClearRaw).toLowerCase();
+        if (parseInputText(afterClearRaw).length > 0 || afterClear == "true") {
+            callTop("setChatInputActive", "false");
+            zfeLog("warn", "nativein", "activation buffer not clear; falling back clear="
+                + clip200(clearRaw) + " read=" + clip200(afterClearRaw));
+            return false;
+        }
+        zfeLog("info", "nativein", "activation buffer cleared raw=" + clip200(clearRaw));
 
         // The user requirement is strict: do not accept a native input session unless the
         // corresponding engine edit lock was acquired. If that lock is unavailable, close the
         // half-open native session and use SharedHUDTools, which owns this lifecycle itself.
         if (!dispatchEditText(true)) {
-            var clearRaw:String = callTop("clearChatInput", "{}");
             var closeRaw:String = callTop("setChatInputActive", "false");
             zfeLog("warn", "nativein", "game-input lock unavailable; native closed clear="
                 + clip200(clearRaw) + " deactivate=" + clip200(closeRaw));
@@ -1194,9 +1263,15 @@ class FCMChatWidget extends MovieClip {
      */
     function pollNativeInput():Void {
         if (!_nativeInput) return;
+        _nativeInputCommandFailed = false;
         try {
             // ── 1. read the in-progress buffer; show it in the prompt ───────
             var rraw:String = callTop("readChatInput", "{}");
+            if (_nativeInputCommandFailed) {
+                zfeLog("warn", "nativein", "read helper failed; falling back");
+                closeInputNative(true);
+                return;
+            }
             if (rraw != _lastReadRaw) {
                 _lastReadRaw = rraw;
                 zfeLog("info", "nativein", "read raw=" + clip200(rraw));
@@ -1211,9 +1286,21 @@ class FCMChatWidget extends MovieClip {
             }
 
             // ── 2. submit? consume returns a bare boolean (true = Enter pressed) ──
-            if (nativeTruthy(callTop("consumeChatInputSubmitted", "{}"))) {
+            var submittedRaw:String = callTop("consumeChatInputSubmitted", "{}");
+            if (_nativeInputCommandFailed) {
+                zfeLog("warn", "nativein", "submit helper failed; falling back");
+                closeInputNative(true);
+                return;
+            }
+            if (nativeTruthy(submittedRaw)) {
                 // Read the final buffer once more; prefer it over the cached value.
-                var textNow:String = parseInputText(callTop("readChatInput", "{}"));
+                var finalRaw:String = callTop("readChatInput", "{}");
+                if (_nativeInputCommandFailed) {
+                    zfeLog("warn", "nativein", "final read helper failed; dropping submit");
+                    closeInputNative(true);
+                    return;
+                }
+                var textNow:String = parseInputText(finalRaw);
                 var fin:String = (textNow.length > 0) ? textNow : _inProgress;
                 closeInputNative();
                 fin = StringTools.trim(fin);
@@ -1228,7 +1315,13 @@ class FCMChatWidget extends MovieClip {
             }
 
             // ── 3. still active? a non-truthy isChatInputActive = user cancelled (Esc) ──
-            if (!nativeTruthy(callTop("isChatInputActive", "{}"))) {
+            var activeRaw:String = callTop("isChatInputActive", "{}");
+            if (_nativeInputCommandFailed) {
+                zfeLog("warn", "nativein", "active helper failed; falling back");
+                closeInputNative(true);
+                return;
+            }
+            if (!nativeTruthy(activeRaw)) {
                 zfeLog("info", "nativein", "isChatInputActive false; cancelled");
                 closeInputNative();
                 return;
@@ -1236,7 +1329,7 @@ class FCMChatWidget extends MovieClip {
         } catch (e:Dynamic) {
             zfeLog("warn", "nativein", "pollNativeInput threw: " + Std.string(e));
             // The lock must never survive a terminal native-input failure.
-            closeInputNative();
+            closeInputNative(true);
         }
     }
 
@@ -1244,15 +1337,21 @@ class FCMChatWidget extends MovieClip {
      * Close the native chat-input session: stop the poll timer, clear + deactivate
      * the native input (bare "false"), and reset the prompt.
      */
-    function closeInputNative():Void {
+    function closeInputNative(failed:Bool = false):Void {
         if (_inputTimer != null) { _inputTimer.stop(); _inputTimer = null; }
+        var closeFailed:Bool = false;
         try {
             var c1:String = callTop("clearChatInput", "{}");
             zfeLog("info", "nativein", "clearChatInput raw=" + clip200(c1));
             var c2:String = callTop("setChatInputActive", "false");   // bare "false", NOT JSON
             zfeLog("info", "nativein", "setChatInputActive(false) raw=" + clip200(c2));
         } catch (e:Dynamic) {
+            closeFailed = true;
             zfeLog("warn", "nativein", "native close threw: " + Std.string(e));
+        }
+        if (_nativeInputCommandFailed || closeFailed || failed) {
+            _nativeInputUsable = false;
+            zfeLog("warn", "nativein", "native input disabled until relay reconnect");
         }
         // Restore game routing only when this widget owns the lock; keep retrying if the HUD
         // domain is temporarily unavailable rather than silently forgetting the ownership.
@@ -1268,17 +1367,18 @@ class FCMChatWidget extends MovieClip {
     // =========================================================================
 
     // Dispatch a PlatformChangeEvent(PC_KB_MOUSE) so SharedHUDTools.startTextEdit picks the native
-    // keyboard field (stage.focus = entry_tf) instead of the on-screen-keyboard/controller path —
-    // this is what makes Backspace/arrows work. HUDTools listens for this on the stage; the event
-    // ctor is (uiPlatform, bPS3Switch, uiController) and PLATFORM_PC_KB_MOUSE == 0.
+    // keyboard field (stage.focus = entry_tf) instead of the on-screen-keyboard/controller path.
+    // HUDModLoader releases have used both the three- and four-argument event constructor, so
+    // try the current four-argument form and fall back to the upstream three-argument form.
     function forceKeyboardPlatform():Void {
         try {
             var cls:Dynamic = untyped __global__["flash.utils.getDefinitionByName"]("Shared.AS3.Events.PlatformChangeEvent");
-            // Decompiled ctor: PlatformChangeEvent(auiPlatform:uint, abIsGen9:Boolean,
-            // auiController:uint, auiKeyboard:uint) — FOUR args; the old 3-arg call threw
-            // ArgumentError #1063 on every input-open (keyboard mode never engaged).
-            // 0 = PLATFORM_PC_KB_MOUSE for platform+controller; keyboard 0 = PC_KB_ENG.
-            var ev:Dynamic = untyped __new__(cls, 0, false, 0, 0);
+            var ev:Dynamic = null;
+            try {
+                ev = untyped __new__(cls, 0, false, 0, 0);
+            } catch (_:Dynamic) {
+                ev = untyped __new__(cls, 0, false, 0);
+            }
             if (stage != null) {
                 stage.dispatchEvent(ev);
                 zfeLog("info", "input", "forced PC_KB_MOUSE platform (keyboard editing/backspace)");
@@ -1822,8 +1922,7 @@ class FCMChatWidget extends MovieClip {
         }
 
         loadPersistedConfig();
-        var nm0:String = readDisplayName();
-        if (nm0 != null && nm0.length > 0) _displayName = nm0;  // keep "Wanderer" default until a real name is available
+        refreshDisplayName();
         startConnect();
     }
 
@@ -1834,13 +1933,16 @@ class FCMChatWidget extends MovieClip {
     function startConnect():Void {
         if (_api == null) return;
         _connectAttempts++;
-        // Re-read the FO76 name each attempt until we have a real one; NEVER connect with an empty
-        // displayName (the relay rejects it with invalid_display_name). The default "Wanderer" is
-        // reconciled to the real name by the relay hello sync once linked.
-        if (_displayName == null || _displayName.length == 0 || _displayName == "Wanderer") {
-            var nm:String = readDisplayName();
-            if (nm != null && nm.length > 0) _displayName = nm;
-            if (_displayName == null || _displayName.length == 0) _displayName = "Wanderer";
+        // Re-read the FO76 name each attempt until we have a real one. The local roster may not
+        // be populated until the player reaches the world, so wait for a resolved identity rather
+        // than sending the placeholder to chat.v1.connect. The existing retry timer will probe
+        // again later, and HUD data callbacks only update local state.
+        refreshDisplayName();
+        if (!hasResolvedDisplayName()) {
+            zfeLog("info", "connect", "player identity not ready; delaying connect");
+            setLogText("waiting for character name...");
+            scheduleConnectRetry();
+            return;
         }
         zfeLog("info", "connect", "attempt=" + _connectAttempts);
         setLogText("connecting...");
@@ -1871,6 +1973,9 @@ class FCMChatWidget extends MovieClip {
         }
 
         _connected = true;
+        // Native input is probed lazily on the first open. Never activate it at startup:
+        // legacy Windows/ZFE builds can expose the bare probe payload as editable text.
+        _nativeInputUsable = true;
         // A new relay connection has no room membership until the fresh control below is
         // acknowledged. Force a roster send even when the observed names did not change.
         setServerSessionReady(false, "");
@@ -1980,74 +2085,12 @@ class FCMChatWidget extends MovieClip {
                 zfeLog("info", "auth", "authState=" + _authState + " moderation=" + (_canModerate ? "yes" : "no"));
                 renderRecords();
             }
-            // One-shot startup probe — once auth succeeds, capture the full raw shapes
-            // of the top-level native-input verbs (and getRuntimeInfo/getAuthState) and
-            // set _nativeInputUsable. Runs exactly once per session.
-            if (_authState == "authenticated" && !_probeSent) {
-                _probeSent = true;
-                runStartupProbe();
-            }
             if (_authState != "authenticated" && _connected) {
                 forceReconnect("ZFE auth state not authenticated");
             }
         } catch (e:Dynamic) {
             zfeLog("warn", "auth", "getAuthState threw: " + Std.string(e));
         }
-    }
-
-    // =========================================================================
-    // One-shot startup probe — clean, self-resetting (v2.5.3)
-    //
-    // The native API is decoded: bare-value payloads, bare-boolean returns. The probe
-    // determines _nativeInputUsable cleanly — activate with bare "true", test, then
-    // ALWAYS deactivate (bare "false") + clearChatInput so native input is left INACTIVE
-    // (no stuck state, which fought the SharedHUDTools box in v2.5.2). Also logs
-    // getRuntimeInfo / getAuthState once for reference.
-    // =========================================================================
-
-    function probe(label:String, verb:String, payload:String, max:Int):String {
-        var raw:String;
-        try {
-            raw = Std.string(_api.call(verb, payload));
-        } catch (e:Dynamic) {
-            raw = "<threw: " + Std.string(e) + ">";
-        }
-        // Auth-state responses include stable relay IDs and display names. They do not
-        // currently include the raw token, but keep release diagnostics minimal so a
-        // future response-shape change cannot turn zfe.log into a credential store.
-        if (verb == "chat.v1.getAuthState") {
-            var state:String = extractJsonString(raw, "state");
-            var connected:Bool = raw.indexOf('"connected":true') >= 0 || raw.indexOf('connected:true') >= 0;
-            zfeLog("info", "probe", label + " (" + verb + ") state="
-                + (state.length > 0 ? state : "unknown") + " connected=" + connected);
-        } else {
-            zfeLog("info", "probe", label + " (" + verb + ") raw=" + clip(raw, max));
-        }
-        return raw;
-    }
-
-    function runStartupProbe():Void {
-        if (_api == null) return;
-        zfeLog("info", "probe", "startup probe begin (v" + VERSION + ")");
-
-        // Full runtime/auth shapes (chat.v1.* — known-good prefixed commands).
-        probe("getRuntimeInfo", "chat.v1.getRuntimeInfo", "{}", 800);
-        probe("getAuthState",   "chat.v1.getAuthState",   "{}", 800);
-
-        // Activate with the DECODED bare-value payload "true", test, then ALWAYS reset.
-        var openRaw:String = probe("setChatInputActive(true)", "setChatInputActive", "true", 200);
-        var usable:Bool = nativeTruthy(openRaw);
-        if (!usable) {
-            var a:String = probe("isChatInputActive", "isChatInputActive", "{}", 200);
-            usable = nativeTruthy(a);
-        }
-        // ALWAYS leave native input INACTIVE — no stuck state.
-        probe("setChatInputActive(false)", "setChatInputActive", "false", 200);
-        probe("clearChatInput",            "clearChatInput",      "{}",    200);
-
-        _nativeInputUsable = usable;
-        zfeLog("info", "probe", "nativeInputUsable=" + _nativeInputUsable);
-        zfeLog("info", "probe", "startup probe end");
     }
 
     // =========================================================================
@@ -2467,6 +2510,9 @@ class FCMChatWidget extends MovieClip {
         if (_api == null || !_connected) return;
         _worldPollCount++;
         subscribeRoster();
+        // PlayerListData is often populated after the first relay connect. Re-read it on
+        // every world tick so the first fallback identity is replaced without a game restart.
+        refreshDisplayName();
         tickRoster();
         if (!_dataInventoryDone && _worldPollCount >= 6) { _dataInventoryDone = true; dumpDataInventory(); }
         var worldId:String = readWorldId();
@@ -2692,27 +2738,159 @@ class FCMChatWidget extends MovieClip {
     // BSUIDataManager reads — displayName + worldId
     // =========================================================================
 
-    // Returns the FO76 account/character name from the game's UI data, or "" if the game
-    // hasn't populated it yet (it loads a few seconds after HUD init — NOT ready at first connect).
+    // Read a field from an AS3 object without letting a sealed/native object abort the rest of
+    // the identity priority chain. HUDModLoader widgets run in a child movie domain, so both
+    // Reflect.field and bracket access have existed in supported HUD builds.
+    function uiField(obj:Dynamic, field:String):Dynamic {
+        if (obj == null) return null;
+        try {
+            var value:Dynamic = Reflect.field(obj, field);
+            if (value != null) return value;
+        } catch (e:Dynamic) {}
+        try { return untyped obj[field]; } catch (e:Dynamic) {}
+        return null;
+    }
+
+    function uiData(raw:Dynamic):Dynamic {
+        if (raw == null) return null;
+        var data:Dynamic = uiField(raw, "data");
+        return data != null ? data : raw;
+    }
+
+    function uiName(value:Dynamic, stripDecorations:Bool = false):String {
+        if (value == null) return "";
+        var name:String = fcmClean(Std.string(value));
+        if (stripDecorations) {
+            var marker:Int = name.indexOf("<");
+            if (marker >= 0) name = name.substr(0, marker);
+            name = StringTools.replace(name, "|", "");
+        }
+        name = StringTools.trim(name);
+        // "Wanderer" is the widget's placeholder, never a resolved game identity.
+        if (name.length == 0 || name == "Wanderer") return "";
+        return name.length > 64 ? name.substr(0, 64) : name;
+    }
+
+    function uiNameFromFields(obj:Dynamic, fields:Array<String>, stripDecorations:Bool = false):String {
+        if (obj == null) return "";
+        for (field in fields) {
+            var name:String = uiName(uiField(obj, field), stripDecorations);
+            if (name.length > 0) return name;
+        }
+        return "";
+    }
+
+    function uiArray(raw:Dynamic):Dynamic {
+        var data:Dynamic = uiData(raw);
+        if (data == null) return null;
+        try {
+            var rawLength:Dynamic = uiField(data, "length");
+            if (rawLength != null && Std.int(rawLength) >= 0) return data;
+        } catch (e:Dynamic) {}
+        for (field in ["players", "entries", "list"]) {
+            var list:Dynamic = uiField(data, field);
+            if (list == null) continue;
+            try {
+                var rawLength:Dynamic = uiField(list, "length");
+                if (rawLength != null && Std.int(rawLength) >= 0) return list;
+            } catch (e:Dynamic) {}
+        }
+        return null;
+    }
+
+    function uiBool(value:Dynamic):Bool {
+        if (value == true || value == 1) return true;
+        if (value == null) return false;
+        var text:String = StringTools.trim(Std.string(value)).toLowerCase();
+        return text == "true" || text == "1";
+    }
+
+    /** Return the local character name from a PlayerListData payload. */
+    function readLocalPlayerNameFromData(raw:Dynamic):String {
+        var list:Dynamic = uiArray(raw);
+        if (list == null) return "";
+        var length:Int = 0;
+        try {
+            var rawLength:Dynamic = uiField(list, "length");
+            if (rawLength == null) return "";
+            length = Std.int(rawLength);
+        } catch (e:Dynamic) { return ""; }
+        if (length < 0) return "";
+        for (i in 0...length) {
+            var entry:Dynamic = null;
+            try { entry = list[i]; } catch (e:Dynamic) {}
+            if (entry == null) continue;
+            var local:Bool = uiBool(uiField(entry, "isLocal"))
+                || uiBool(uiField(entry, "isLocalPlayer"))
+                || uiBool(uiField(entry, "isSelf"));
+            if (!local) continue;
+            var name:String = uiNameFromFields(entry,
+                ["characterName", "displayName", "playerName", "name"], true);
+            if (name.length > 0) return name;
+        }
+        return "";
+    }
+
+    function readLocalPlayerName(mgr:Dynamic):String {
+        return readLocalPlayerNameFromData(getBSUIData(mgr, "PlayerListData"));
+    }
+
+    function readNamedData(mgr:Dynamic, key:String):String {
+        var data:Dynamic = uiData(getBSUIData(mgr, key));
+        var name:String = uiNameFromFields(data,
+            ["characterName", "displayName", "playerName", "name"], true);
+        if (name.length > 0) return name;
+        for (field in ["character", "player"]) {
+            name = uiNameFromFields(uiField(data, field),
+                ["characterName", "displayName", "playerName", "name"], true);
+            if (name.length > 0) return name;
+        }
+        return "";
+    }
+
+    // Returns the FO76 character name from the game's UI data, or "" if the game has not
+    // populated it yet. PlayerListData's local entry is authoritative; the older
+    // CharacterInfoData and AccountInfoData shapes remain compatibility fallbacks.
     // Callers must treat "" as "not ready yet" and keep waiting, not as a name.
     function readDisplayName():String {
-        try {
-            var mgr:Dynamic = findBSUI();
-            if (mgr == null) return "";
-            var a:Dynamic = mgr.GetDataFromClient("AccountInfoData");
-            if (a != null && a.data != null && a.data.name != null) {
-                // SANITIZE, never escape. This used to return jsonEscape(...), but the caller
-                // (startConnect) escapes again when it builds the payload — so a name carrying
-                // the UTF-16 NULs BSUIDataManager hands back became "A b d..." at read
-                // and "A\\u0000b\\u0000d..." on the wire. The relay stored exactly that: 337
-                // characters instead of 8 (dev, 2026-08-05). fcmClean strips the control bytes;
-                // escaping belongs to whoever builds the JSON.
-                var n:String = Std.string(a.data.name);
-                var clean:String = fcmClean(n);
-                if (clean.length > 0) return clean.substr(0, 64);
-            }
-        } catch (e:Dynamic) {}
-        return "";
+        var mgr:Dynamic = findBSUI();
+        if (mgr == null) return "";
+
+        var name:String = readLocalPlayerName(mgr);
+        if (name.length > 0) return name;
+
+        name = readNamedData(mgr, "CharacterInfoData");
+        if (name.length > 0) return name;
+
+        var account:Dynamic = uiData(getBSUIData(mgr, "AccountInfoData"));
+        name = uiNameFromFields(account,
+            ["characterName", "displayName", "playerName", "name"]);
+        if (name.length > 0) return name;
+        return uiNameFromFields(uiField(account, "account"),
+            ["characterName", "displayName", "playerName", "name"]);
+    }
+
+    /** True once the HUD has supplied a usable character identity. */
+    function hasResolvedDisplayName():Bool {
+        if (_displayName == null) return false;
+        var name:String = StringTools.trim(_displayName);
+        return name.length > 0 && name != "Wanderer";
+    }
+
+    /**
+     * Apply a newly available HUD identity. This is observation-only: in particular, it must
+     * never call a native relay verb. Initial connection attempts are deferred until the retry
+     * timer observes a resolved identity, while an already-connected session keeps its relay
+     * identity until the next normal reconnect.
+     */
+    function refreshDisplayName(rosterData:Dynamic = null):Void {
+        var name:String = readLocalPlayerNameFromData(rosterData);
+        if (name.length == 0) name = readDisplayName();
+        if (name.length == 0) return;
+
+        var changed:Bool = (_displayName != name);
+        _displayName = name;
+        if (changed) zfeLog("info", "identity", "player name resolved from HUD data len=" + name.length);
     }
 
     // BSUIDataManager discovery — the engine injects it as a PROPERTY on the HUD
@@ -2721,8 +2899,33 @@ class FCMChatWidget extends MovieClip {
     // lookups). Probe property scopes like the ZFECodeObj fix: global, root,
     // parent chain, stage, stage children. Cached after first hit; logs the scope.
     var _bsui:Dynamic = null;
+
+    function canUseBSUI(candidate:Dynamic):Bool {
+        if (candidate == null) return false;
+        try {
+            // Validate the callable, not just a non-null class/property lookup. A decoy
+            // object here used to be cached forever and made every name read fall back.
+            candidate.GetDataFromClient("AccountInfoData");
+            return true;
+        } catch (e:Dynamic) {}
+        return false;
+    }
+
+    function getBSUIData(mgr:Dynamic, key:String):Dynamic {
+        if (mgr == null) return null;
+        try {
+            return mgr.GetDataFromClient(key);
+        } catch (e:Dynamic) {
+            if (_bsui == mgr) _bsui = null;
+        }
+        return null;
+    }
+
     function findBSUI():Dynamic {
-        if (_bsui != null) return _bsui;
+        if (_bsui != null) {
+            if (canUseBSUI(_bsui)) return _bsui;
+            _bsui = null;
+        }
         var names:Array<String> = ["classDef", "__global__", "root", "parent", "stage", "stageChild"];
         var cands:Array<Dynamic> = [];
         // The manager is the packaged class Shared.AS3.Data.BSUIDataManager (public,
@@ -2755,7 +2958,7 @@ class FCMChatWidget extends MovieClip {
             cands.push(hit);
         } catch (e:Dynamic) { cands.push(null); }
         for (k in 0...cands.length) {
-            if (cands[k] != null) {
+            if (cands[k] != null && canUseBSUI(cands[k])) {
                 _bsui = cands[k];
                 zfeLog("info", "world", "BSUIDataManager found via " + names[k]);
                 return _bsui;
@@ -2824,12 +3027,18 @@ class FCMChatWidget extends MovieClip {
         else arr = d; // PlayerListData is the array itself
         if (arr == null) return;
         var n:Int = 0;
-        try { n = Std.int(arr.length); } catch (e:Dynamic) { return; }
+        try {
+            var rawLength:Dynamic = uiField(arr, "length");
+            if (rawLength == null) return;
+            n = Std.int(rawLength);
+        } catch (e:Dynamic) { return; }
         // An empty update is meaningful: it represents a valid solo world roster.
         _lastRosterObservationAt = now;
         for (i in 0...n) {
             var e0:Dynamic = arr[i];
-            try { if (e0.isLocalPlayer == true || e0.isLocal == true) continue; } catch (e:Dynamic) {}
+            if (uiBool(uiField(e0, "isLocalPlayer"))
+                    || uiBool(uiField(e0, "isLocal"))
+                    || uiBool(uiField(e0, "isSelf"))) continue;
             var nm:String = "";
             for (cand in ["displayName", "characterName", "name", "playerName"]) {
                 try {
@@ -2898,6 +3107,10 @@ class FCMChatWidget extends MovieClip {
         try { d = evt.data; } catch (e:Dynamic) {}
         if (d == null) { try { d = evt.target.data; } catch (e:Dynamic) {} }
         if (d == null) return;
+        // Use the event payload directly: on some HUD builds GetDataFromClient is only
+        // populated after a Subscribe notification, while the event already contains the
+        // local character entry. This is the authoritative HUD-layer identity source.
+        refreshDisplayName(d);
         collectRoster("PlayerListData", d);
         // Throttle: first 3 updates, then at most every 30s.
         if (_rosterLogCount >= 3 && (now - _lastRosterLogAt) < 30000) return;
@@ -2927,7 +3140,7 @@ class FCMChatWidget extends MovieClip {
         if (mgr == null) return;
         for (key in ["AccountInfoData", "CharacterInfoData", "PlayerListData", "HUDModeData", "MenuStackData"]) {
             try {
-                var r:Dynamic = mgr.GetDataFromClient(key);
+                var r:Dynamic = getBSUIData(mgr, key);
                 if (r == null || r.data == null) { zfeLog("info", "inv", key + ": <no data>"); continue; }
                 var d:Dynamic = r.data;
                 // PlayerListData is an Array of entries — dump count + first entry's fields.
@@ -2952,7 +3165,7 @@ class FCMChatWidget extends MovieClip {
         try {
             var mgr:Dynamic = findBSUI();
             if (mgr == null) return "";
-            var a:Dynamic = mgr.GetDataFromClient("AccountInfoData");
+            var a:Dynamic = getBSUIData(mgr, "AccountInfoData");
             // One-shot diagnostic: what does AccountInfoData actually carry in-world?
             if (!_worldDiagDone && a != null && a.data != null) {
                 _worldDiagDone = true;

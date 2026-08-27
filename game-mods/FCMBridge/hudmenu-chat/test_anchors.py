@@ -291,6 +291,45 @@ except FileNotFoundError:
     widget_src = ""
 
 if widget_src:
+    check("static inline var USE_NATIVE_INPUT:Bool = true;" in widget_src,
+          "FCMChatWidget attempts native input lazily on open")
+    check('if (low == "false" || low == "true") return "";' in widget_src,
+          "FCMChatWidget never renders bare boolean input responses as chat text")
+    check("runStartupProbe()" not in widget_src,
+          "FCMChatWidget never activates native input during startup")
+    native_open = re.search(
+        r"function openInputNative\(\):Bool \{(.*?)\n    \}",
+        widget_src,
+        re.DOTALL,
+    )
+    if native_open is None:
+        check(False, "FCMChatWidget defines the lazy native input open path")
+    else:
+        native_body = native_open.group(1)
+        clear_pos = native_body.find('callTop("clearChatInput", "{}")')
+        read_pos = native_body.find('callTop("readChatInput", "{}")')
+        visible_pos = native_body.find("_inputOpen   = true;")
+        check(clear_pos >= 0 and read_pos > clear_pos and visible_pos > read_pos,
+              "FCMChatWidget clears and verifies native input before showing it")
+        check("activation buffer not clear; falling back" in native_body,
+              "FCMChatWidget falls back when native activation leaves text behind")
+    check("function openInputSharedHudTools" in widget_src,
+          "FCMChatWidget retains the SharedHUDTools fallback")
+    check("_nativeInputCommandFailed" in widget_src
+          and "closeInputNative(true)" in widget_src
+          and "_nativeInputUsable = false;" in widget_src,
+          "FCMChatWidget disables native input after an in-session helper failure")
+    check('var finalRaw:String = callTop("readChatInput", "{}");' in widget_src
+          and "final read helper failed; dropping submit" in widget_src,
+          "FCMChatWidget drops a submit when the final native buffer read fails")
+    check("ev = untyped __new__(cls, 0, false, 0);" in widget_src,
+          "FCMChatWidget supports the three-argument PlatformChangeEvent API")
+    check("function showHudLoaderMenu" in widget_src
+          and 'Reflect.field(_hudTools, "ShowMenu")' in widget_src
+          and 'Reflect.field(_hudTools, "CloseMenu")' in widget_src
+          and 'active && !_inputOpen' in widget_src
+          and 'action == "F11"' in widget_src,
+          "FCMChatWidget toggles the HUDModLoader menu on F11")
     rebuild_match = re.search(
         r"function rebuildChannelTabs\(\):Void \{(.*?)\n    \}",
         widget_src,
@@ -311,6 +350,45 @@ if widget_src:
           "FCMChatWidget uses string-aware JSON object boundaries")
     check("findBSUI()" in widget_src,
           "FCMChatWidget resolves BSUIDataManager through the HUDModLoader-safe finder")
+    check("function readLocalPlayerNameFromData" in widget_src
+          and "isLocalPlayer" in widget_src
+          and "characterName" in widget_src,
+          "FCMChatWidget prefers the local PlayerListData character name")
+    check("function readNamedData" in widget_src
+          and "CharacterInfoData" in widget_src
+          and "AccountInfoData" in widget_src,
+          "FCMChatWidget retains compatibility identity-data fallbacks")
+    check("function hasResolvedDisplayName():Bool" in widget_src,
+          "FCMChatWidget has an explicit non-placeholder identity gate")
+    start_connect_match = re.search(
+        r"function startConnect\(\):Void \{(.*?)\n    \}\n\n    /\*\*",
+        widget_src,
+        re.DOTALL,
+    )
+    check(start_connect_match is not None,
+          "FCMChatWidget defines an inspectable connect lifecycle")
+    if start_connect_match is not None:
+        start_connect_body = start_connect_match.group(1)
+        identity_gate = start_connect_body.find("if (!hasResolvedDisplayName())")
+        identity_retry = start_connect_body.find("scheduleConnectRetry()", identity_gate)
+        native_connect = start_connect_body.find('call("chat.v1.connect"', identity_gate)
+        check(identity_gate >= 0 and identity_retry > identity_gate and native_connect > identity_retry,
+              "FCMChatWidget defers native connect until HUD identity is resolved")
+    refresh_match = re.search(
+        r"function refreshDisplayName\([^)]*\):Void \{(.*?)\n    \}\n\n    // BSUIDataManager",
+        widget_src,
+        re.DOTALL,
+    )
+    check(refresh_match is not None,
+          "FCMChatWidget defines an inspectable HUD identity refresh path")
+    if refresh_match is not None:
+        refresh_body = refresh_match.group(1)
+        check("chat.v1.connect" not in refresh_body
+              and "reconcileDisplayName" not in refresh_body,
+              "FCMChatWidget keeps refreshDisplayName observation-only")
+    check("_lastSentDisplayName" not in widget_src
+          and "reconcileDisplayName" not in widget_src,
+          "FCMChatWidget has no cached late-identity native reconnect path")
     check("_editTextLockOwned" in widget_src,
           "FCMChatWidget tracks ownership of the game-input edit lock")
     check("if (!start && !_editTextLockOwned)" in widget_src,
