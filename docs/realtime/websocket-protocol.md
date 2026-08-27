@@ -257,14 +257,15 @@ Response uses the same `type: 'chat:history'` with `payload.messages` (array, ch
 For server channels (`server:<UUID>`): user must be a member of that session; history is bounded to the session's `createdAt`. `handlers.ts:2510–2688`
 
 ### `chat:typing` (C→S, S→C broadcast)
-Ephemeral typing indicator. Never persisted. Clients should send at most once every 2 s. Server broadcasts to all other clients (for channel typing) or party members only (for party typing).
+Ephemeral typing indicator. Never persisted. Clients should send at most once every 2 s. Server broadcasts to all other clients (for channel typing) or party members only (for party typing). Discord `typingStart` events for mapped relay channels use the same frame and add `source: "discord"`; this field is omitted from client-originated frames. The overlay automatically expires the indicator after four seconds because Discord has no typing-stopped event.
 ```json
 {
   "type": "chat:typing",
   "payload": {
     "channelId": "00000000-0000-0000-0000-000000000001",
     "username": "Devotek",
-    "userId": "<uuid>"
+    "userId": "<uuid>",
+    "source": "discord"
   }
 }
 ```

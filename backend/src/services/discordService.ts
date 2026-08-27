@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Partials, TextChannel, EmbedBuilder, ActivityType, type Message } from 'discord.js';
+import { Client, GatewayIntentBits, Partials, TextChannel, EmbedBuilder, ActivityType, type Message, type Typing } from 'discord.js';
 import { v4 as uuidv4 } from 'uuid';
 import env from '../config/environment';
 import prisma from '../config/prisma';
@@ -28,6 +28,17 @@ let discordStatus = 'disconnected';
 // ZWS watermark -- inserted into all outbound relay messages (game->Discord)
 // so inbound handler can detect and reject echo loops (defense-in-depth)
 const ZWS = '\u200B';
+
+// Discord typing is an ephemeral signal. Keep a small local cooldown so a burst
+// of gateway packets cannot fan out more often than the in-app typing protocol.
+const DISCORD_TYPING_THROTTLE_MS = 2_000;
+const DISCORD_TYPING_IDENTITY_TTL_MS = 30_000;
+const MAX_DISCORD_TYPING_STATE_ENTRIES = 4096;
+const discordTypingLastSentAt = new Map<string, number>();
+const discordTypingIdentityCache = new Map<string, {
+  identity: { userId: string; username: string } | null;
+  expiresAt: number;
+}>();
 
 // Outbound rate-limit queue -- drains at 4 msg/sec (250ms interval)
 const outboundQueue: Array<() => Promise<void>> = [];
@@ -241,6 +252,120 @@ let defaultChannelPromise: Promise<string | null> | null = null; // in-flight gu
 
 function setBroadcast(fn: (payload: any, excludeWs?: any) => void): void { broadcastFn = fn; }
 function getStatus(): string { return discordStatus; }
+
+function isSyntheticRelayUsername(username: string | null | undefined): boolean {
+  return !username
+    || username === 'Wanderer'
+    || username.startsWith('pending-')
+    || username.startsWith('discord:')
+    || /^overlay\d+$/i.test(username);
+}
+
+function typingDisplayName(typing: Typing): string {
+  const memberName = typing.member?.displayName?.trim();
+  if (memberName) return memberName;
+  const user = typing.user as { globalName?: string | null; username?: string | null };
+  return user.globalName?.trim() || user.username?.trim() || typing.user.id;
+}
+
+function pruneDiscordTypingState(now: number): void {
+  for (const [key, sentAt] of discordTypingLastSentAt) {
+    if (now - sentAt > DISCORD_TYPING_IDENTITY_TTL_MS) discordTypingLastSentAt.delete(key);
+  }
+  for (const [key, cached] of discordTypingIdentityCache) {
+    if (cached.expiresAt <= now) discordTypingIdentityCache.delete(key);
+  }
+  while (discordTypingLastSentAt.size > MAX_DISCORD_TYPING_STATE_ENTRIES) {
+    const first = discordTypingLastSentAt.keys().next().value as string | undefined;
+    if (!first) break;
+    discordTypingLastSentAt.delete(first);
+  }
+  while (discordTypingIdentityCache.size > MAX_DISCORD_TYPING_STATE_ENTRIES) {
+    const first = discordTypingIdentityCache.keys().next().value as string | undefined;
+    if (!first) break;
+    discordTypingIdentityCache.delete(first);
+  }
+}
+
+async function resolveDiscordTypingIdentity(
+  typing: Typing,
+): Promise<{ userId: string; username: string } | null> {
+  const discordId = typing.user.id;
+  const now = Date.now();
+  const cached = discordTypingIdentityCache.get(discordId);
+  if (cached && cached.expiresAt > now) return cached.identity;
+
+  let identity: { userId: string; username: string } | null = null;
+  try {
+    // Do not create a database user for a typing event alone. The normal inbound
+    // message path creates synthetic Discord users when they actually post.
+    const linked = await prisma.user.findFirst({
+      where: { discordId },
+      select: {
+        id: true,
+        username: true,
+        chatName: true,
+        discordUsername: true,
+        discordDisplayName: true,
+      },
+    });
+    if (linked) {
+      const fallbackName = typingDisplayName(typing);
+      const username = linked.chatName?.trim()
+        || (!isSyntheticRelayUsername(linked.username) ? linked.username.trim() : '')
+        || linked.discordDisplayName?.trim()
+        || linked.discordUsername?.trim()
+        || fallbackName;
+      if (username) identity = { userId: linked.id, username };
+    }
+  } catch (err) {
+    logger.debug({ err, discordId }, '[discord-typing] identity lookup failed');
+  }
+
+  discordTypingIdentityCache.set(discordId, {
+    identity,
+    expiresAt: now + DISCORD_TYPING_IDENTITY_TTL_MS,
+  });
+  pruneDiscordTypingState(now);
+  return identity;
+}
+
+/** Relay a Discord typing event through the existing overlay typing protocol. */
+async function relayDiscordTyping(typing: Typing): Promise<boolean> {
+  if (!broadcastFn || !env.DISCORD_SERVER_ID || !typing.guild || typing.guild.id !== env.DISCORD_SERVER_ID) return false;
+  if (!typing.channel?.id || !typing.user?.id || typing.user.bot) return false;
+
+  const key = `${typing.channel.id}:${typing.user.id}`;
+  const now = Date.now();
+  const lastSentAt = discordTypingLastSentAt.get(key) ?? 0;
+  if (lastSentAt + DISCORD_TYPING_THROTTLE_MS > now) return false;
+  // Set the cooldown before the async mapping/identity lookups so concurrent
+  // gateway packets cannot race and duplicate the fan-out.
+  discordTypingLastSentAt.set(key, now);
+  pruneDiscordTypingState(now);
+
+  const mappings = await loadRelayMappings().catch(() => new Map<string, string>());
+  let channelId = mappings.get(typing.channel.id);
+  if (!channelId && typing.channel.id === env.DISCORD_CHANNEL_ID) {
+    channelId = await getDefaultChannelId().catch(() => null) || undefined;
+  }
+  // Only configured relay channels may expose activity to the overlay.
+  if (!channelId) return false;
+
+  const identity = await resolveDiscordTypingIdentity(typing);
+  if (!identity) return false;
+
+  broadcastFn({
+    type: 'chat:typing',
+    payload: {
+      channelId,
+      username: identity.username,
+      userId: identity.userId,
+      source: 'discord',
+    },
+  });
+  return true;
+}
 
 /**
  * Live "Watching N dwellers tune the Vault-Tec airwaves" presence. Pulled from the
@@ -469,6 +594,7 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.GuildMessageTyping, // Discord → overlay typing indicators
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.GuildVoiceStates, // temp "join-to-create" voice channels
       GatewayIntentBits.GuildMessageReactions, // reaction roles
@@ -943,6 +1069,13 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
       logger.warn({ err, discordMessageId: newMessage?.id }, 'Failed to sync Discord message edit to overlay');
     });
   });
+
+  discordClient.on(
+    'typingStart',
+    (typing) => relayDiscordTyping(typing).catch((err) => {
+      logger.warn({ err, discordChannelId: typing.channel?.id, discordUserId: typing.user?.id }, '[discord-typing] relay failed');
+    }),
+  );
 
   discordClient.on('error', (err: Error) => {
     logger.error({ err }, 'Discord client error');
@@ -1462,6 +1595,6 @@ function invalidateRelayMappingsCache(): void {
   mappingsLastLoaded = 0;
 }
 
-export { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, editDiscordRelayMessage, syncDiscordMessageUpdate, invalidateRelayMappingsCache, loadRelayMappings, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };
+export { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, editDiscordRelayMessage, syncDiscordMessageUpdate, invalidateRelayMappingsCache, loadRelayMappings, relayDiscordTyping, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };
 export type { };
-module.exports = { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, editDiscordRelayMessage, syncDiscordMessageUpdate, invalidateRelayMappingsCache, loadRelayMappings, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };
+module.exports = { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, editDiscordRelayMessage, syncDiscordMessageUpdate, invalidateRelayMappingsCache, loadRelayMappings, relayDiscordTyping, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };

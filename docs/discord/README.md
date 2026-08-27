@@ -11,12 +11,13 @@ is **no second login**.
 
 ## Required gateway intents
 
-Declared at `discordService.ts:294-303`:
+Declared in `discordService.ts` when the shared client is created:
 
 | Intent | Used by |
 |--------|---------|
 | `Guilds` | All features |
 | `GuildMessages` | Chat bridge (inbound relay) |
+| `GuildMessageTyping` | Discord → overlay typing indicators |
 | `MessageContent` | Chat bridge — reading message text |
 | `GuildVoiceStates` | Temp voice channels (Join-to-Create) |
 | `GuildMessageReactions` | Reaction roles |
@@ -78,6 +79,13 @@ Handled by the `messageCreate` listener at `discordService.ts:348`.
 8. The message is broadcast via WebSocket to connected overlay clients and
    queued for DB persistence (`messages` table, `source = 'discord'`).
 
+Discord `typingStart` events use the same relay mapping and emit an ephemeral
+`chat:typing` frame to the mapped overlay channel. They are ignored for bots,
+unmapped channels, other guilds, and Discord members without a linked FCM
+identity. The event is throttled per Discord user/channel; the overlay's normal
+four-second timeout clears the indicator because Discord does not send a typing-
+stopped event.
+
 ### Overlay → Discord (outbound)
 
 Handled by `relayToDiscord()` at `discordService.ts:747`. Called from the WS
@@ -103,6 +111,7 @@ discordClient created (intents + partials)
   └─ emoji cache-invalidation listeners
   └─ ready handler (presence, logging)
   └─ messageCreate handler (chat bridge)
+  └─ typingStart handler (Discord → overlay typing)
   └─ discordClient.login()
 ```
 

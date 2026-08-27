@@ -55,6 +55,7 @@ jest.mock('discord.js', () => ({
     GuildVoiceStates: 8,
     GuildMembers: 16,
     GuildMessageReactions: 32,
+    GuildMessageTyping: 2048,
   },
   Partials: { Message: 'Message', Channel: 'Channel', Reaction: 'Reaction' },
 }));
@@ -64,6 +65,7 @@ jest.mock('../src/config/environment', () => ({
   default: {
     DISCORD_TOKEN: 'test-token',
     DISCORD_CHANNEL_ID: 'default-discord-channel',
+    DISCORD_SERVER_ID: 'dev-guild-id',
     NODE_ENV: 'test',
   },
 }));
@@ -142,4 +144,82 @@ test('Discord inbound messages carry relaySeq into live broadcast and history pe
     source: 'discord',
     relaySeq: 123,
   }));
+});
+
+test('Discord typingStart events use the mapped FCM identity and chat:typing protocol', async () => {
+  const handler = mockHandlers.get('typingStart');
+  expect(handler).toEqual(expect.any(Function));
+
+  await handler({
+    guild: { id: 'dev-guild-id' },
+    channel: { id: 'discord-channel-id' },
+    user: {
+      id: 'discord-typing-user',
+      bot: false,
+      username: 'discord-user',
+      globalName: 'Discord User',
+    },
+  });
+
+  expect(mockBroadcast).toHaveBeenCalledWith({
+    type: 'chat:typing',
+    payload: {
+      channelId: 'game-channel-id',
+      username: 'VaultDweller',
+      userId: 'user-uuid',
+      source: 'discord',
+    },
+  });
+});
+
+test('Discord typing relay throttles repeats, ignores bots, and ignores unmapped channels', async () => {
+  const handler = mockHandlers.get('typingStart');
+  expect(handler).toEqual(expect.any(Function));
+
+  await handler({
+    guild: { id: 'dev-guild-id' },
+    channel: { id: 'discord-channel-id' },
+    user: { id: 'discord-throttle-user', bot: false, username: 'typing-user' },
+  });
+  await handler({
+    guild: { id: 'dev-guild-id' },
+    channel: { id: 'discord-channel-id' },
+    user: { id: 'discord-throttle-user', bot: false, username: 'typing-user' },
+  });
+  expect(mockBroadcast).toHaveBeenCalledTimes(1);
+
+  mockBroadcast.mockClear();
+  await handler({
+    guild: { id: 'dev-guild-id' },
+    channel: { id: 'discord-channel-id' },
+    user: { id: 'discord-bot-user', bot: true, username: 'relay-bot' },
+  });
+  await handler({
+    guild: { id: 'dev-guild-id' },
+    channel: { id: 'unmapped-discord-channel' },
+    user: { id: 'discord-unmapped-user', bot: false, username: 'unmapped-user' },
+  });
+  expect(mockBroadcast).not.toHaveBeenCalled();
+});
+
+test('Discord typing relay does not create or relay an unlinked user', async () => {
+  const handler = mockHandlers.get('typingStart');
+  expect(handler).toEqual(expect.any(Function));
+  mockPrisma.user.findFirst.mockResolvedValueOnce(null);
+
+  await handler({
+    guild: { id: 'dev-guild-id' },
+    channel: { id: 'discord-channel-id' },
+    user: { id: 'discord-unlinked-user', bot: false, username: 'unlinked-user' },
+  });
+
+  expect(mockBroadcast).not.toHaveBeenCalled();
+  expect(mockPrisma.user.findFirst).toHaveBeenCalledWith(expect.objectContaining({
+    where: { discordId: 'discord-unlinked-user' },
+  }));
+});
+
+test('Discord client requests the GuildMessageTyping gateway intent', () => {
+  const discord = require('discord.js');
+  expect(discord.Client.mock.calls[0][0].intents).toContain(2048);
 });

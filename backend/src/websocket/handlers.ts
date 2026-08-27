@@ -2227,7 +2227,9 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       }
 
       case 'chat:typing': {
-        // Ephemeral typing indicator — never persisted, never Discord-relayed.
+        // Ephemeral typing indicator — never persisted. In-game typing is not
+        // sent back to Discord; Discord-originated typing enters via the
+        // discordService typingStart listener and uses this same frame shape.
         // Throttle: clients should send at most once every 2s; we enforce a
         // per-user server-side cooldown so a spammy client can't flood peers.
         const typingClient = clients.get(token);
