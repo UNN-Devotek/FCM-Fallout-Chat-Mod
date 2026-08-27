@@ -1,6 +1,6 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.3. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.5. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
@@ -26,6 +26,14 @@ On every widget initialization, v2.10.1 sends the authenticated `FCMCTL/1/RESYNC
 control. This restores static-feed history even if HUDModLoader recreated the SWF while
 ZFE kept its native subscriber alive. Server-room history waits for the next confirmed
 roster/world bind, so history from the previous world cannot leak into the new one.
+
+The widget resolves the sender identity from the local character entry in HUD-published
+`PlayerListData` (`isLocal`/`isLocalPlayer` + `characterName`) before trying the older
+`CharacterInfoData` shape. `AccountInfoData` is not an identity source. Because the character
+roster may be populated late, the widget waits and retries before its first relay handshake rather
+than connecting with the `Wanderer` placeholder. Once connected, later HUD reads update local
+identity state only; they never issue a second native `chat.v1.connect`, and empty reads do not
+erase a known name.
 
 ## Requirements
 
@@ -93,6 +101,16 @@ Use `--target prod` for production. A DEV package must contain both
 production. `INSTALL.txt` in the generated archive repeats the matching URL and
 installation steps.
 
+## Input-path acceptance
+
+The current Windows package tries ZFE native input lazily when Insert opens the editor. It clears
+and verifies the native buffer immediately after `setChatInputActive("true")`; the startup
+activation probe is intentionally absent because some supported Windows/ZFE builds expose that
+bare payload as literal text. If activation, cleanup, or the engine edit lock is unsupported, the
+widget disables native input for the session and uses `SharedHUDTools.TextEdit`. A package is not
+acceptable unless Insert opens an editable field, typing `hello` visibly becomes `hello`, Escape
+cancels, and Enter sends the complete text.
+
 ## Build the archive
 
 Run from this directory.
@@ -122,6 +140,8 @@ contains the same SWF before distributing it.
 ## Required checks
 
 ```bash
+haxe test-config.hxml
+haxe test-identity.hxml
 python3 ../hudmenu-chat/test_anchors.py
 cd ../../../cross-platform-overlay
 npm run test:unit -- --run __tests__/fcm-chat-widget-logic.test.js
@@ -194,7 +214,10 @@ staff validation on every request; the HUD permission is only a visibility hint.
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.10.3`.
+1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.10.5`. If the
+   character roster is late, the widget waits and retries; after a character reaches the world,
+   the sender label and a newly sent message use that character's Fallout 76 name. `Wanderer` is
+   never used for the relay handshake.
 2. The tab row contains one label for each visible channel—no boxed duplicate labels.
 3. Switch channels, join/leave a world, and switch again; the tab row remains single-rendered.
 4. Send a body containing `{`, `}`, quotes, and backslashes; later events still render.
@@ -203,10 +226,11 @@ staff validation on every request; the HUD permission is only a visibility hint.
 6. Confirm `SERVER` remains hidden until the relay acknowledges the printable roster/world control,
    then remains isolated to its derived room while static channels still work. Change worlds and confirm
    static history returns while only the newly bound server-room history appears.
-7. While typing, confirm the fallback has only one visible text renderer; game movement/actions
-   are locked; Page Down/Page Up switch channels without closing the input or losing its draft;
-   Enter/Esc restore game input.
-8. Outside the Pip-Boy, press F11 and confirm the HUDModLoader menu lists FCMChatWidget.
+7. While typing, confirm the native or fallback editor has only one visible text renderer; type
+   `hello` and confirm the complete buffer remains visible; game movement/actions are locked;
+   Page Down/Page Up switch channels without closing the input or losing its draft; Enter/Esc
+   restore game input.
+8. Outside the Pip-Boy, press F11 and confirm the HUDModLoader menu opens and lists FCMChatWidget.
 9. Open **FCM → Customize → Reset all settings**; confirm the default size, position, opacity,
    amber theme, and auto-hide behavior return immediately and remain after restarting the game.
 10. On the DEV relay, sign in with a linked moderator account. Confirm staff references and

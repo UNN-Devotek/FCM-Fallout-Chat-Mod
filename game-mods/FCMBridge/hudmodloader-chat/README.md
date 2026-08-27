@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-08-21):** v2.10.3 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-08-27):** v2.10.5 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -11,6 +11,12 @@ A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's H
 - Displays the FCM community feed (General / Trading / Events / Infests / Raids) as a scrolling
   amber-themed message log, sourced over the ZFE **chat.v1** native API (`chat.v1.connect` +
   `chat.v1.pollEvents` cursor poll), not the legacy text-chat socket.
+- Resolves the outgoing sender name from the local Fallout 76 character entry in
+  `PlayerListData`, with `CharacterInfoData` as a compatibility fallback. `AccountInfoData` is
+  never used as character identity. If the character identity is not ready yet, the widget waits
+  and retries before its first
+  handshake; it never connects as the `Wanderer` placeholder or re-enters the native ZFE connect
+  call when late HUD data arrives.
 - Lets the player send messages. Press the configured open key (default: `INSERT`) to open the
   chat input, type a message, and press Enter to send (`chat.v1.sendMessage`, slug-based channels).
 - Echos the player's own message immediately as a dim pending record before the server round-trip
@@ -24,13 +30,20 @@ A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's H
   visible names must use the reference. Full command syntax and DEV verification are in
   [BUILD.md](BUILD.md#staff-moderation-commands).
 
-## ZFE chat.v1 + native chat input (ZFE 0.9.9+)
+## ZFE chat.v1 + keyboard input (ZFE 0.9.9+)
 
 The widget discovers `__ZFE` on the parent HUDMenu frame via `findZfeApi()` (HUDModLoader shares
 `ApplicationDomain.currentDomain`, where ZFE installs `__ZFE`), gates on `zfe-chat-online-v1` via
 `chat.v1.getRuntimeInfo`, then connects/polls/sends over chat.v1.
 
-Text entry uses ZFE's **native chat-input API** — **top-level / bare** ZFE commands (NOT
+Player identity is read only from HUD-published `BSUIDataManager` data. The local
+`PlayerListData` entry (`isLocal`/`isLocalPlayer` plus `characterName`) is authoritative; older
+HUD shapes are supported through `CharacterInfoData`; `AccountInfoData` cannot satisfy the
+character-identity gate. HUD data can be late, so the widget waits for a usable character
+identity before its first relay handshake and retries without opening a second native connection.
+An empty read never overwrites a known name.
+
+Text entry tries ZFE's **native chat-input API** lazily when Insert opens the editor. ZFE's **native chat-input API** — **top-level / bare** ZFE commands (NOT
 `chat.v1.`-prefixed) that take **bare-value payloads** (`"true"` / `"false"`, NOT JSON) and return
 **bare booleans/strings**:
 
@@ -43,9 +56,9 @@ Text entry uses ZFE's **native chat-input API** — **top-level / bare** ZFE com
 | `consumeChatInputSubmitted` | `"{}"` | bool | `true` = Enter pressed (NOT the text) |
 | `clearChatInput` | `"{}"` | `true` | reset the buffer |
 
-The flow is **open → lock game input → read → consume → send → clear → deactivate → unlock**:
+The flow is **activate → clear/verify → lock game input → read → consume → send → clear → deactivate → unlock**:
 `setChatInputActive("true")`,
-poll `readChatInput` (show in-progress) + `consumeChatInputSubmitted` (Enter) + `isChatInputActive`
+immediately `clearChatInput` and verify `readChatInput` is empty, then poll `readChatInput` (show in-progress) + `consumeChatInputSubmitted` (Enter) + `isChatInputActive`
 (Esc), on submit `chat.v1.sendMessage` the `readChatInput` text, then `clearChatInput("{}")` +
 `setChatInputActive("false")`. The native path proceeds only when it can dispatch the engine's
 balanced `ControlMap::StartEditText` / `EndEditText` pair; otherwise it closes the native session
@@ -77,9 +90,11 @@ SharedHUDTools.FormatTextEdit(x, y, w, h, font, size, color, bgColor, bgAlpha)
 SharedHUDTools.TextEdit(callback, startText)
 ```
 
-HUDModLoader's built-in text-entry machinery, used as the **fallback** when the ZFE native
-input session is unavailable (the startup probe finds it unusable). `TextEdit` opens an input
-box and handles the `ControlMap::StartEditText` / `EndEditText` engine cycle (which suspends
+HUDModLoader's built-in text-entry machinery is retained as the fallback for unsupported native
+input/platform combinations. The widget never runs the startup activation probe because some
+Windows/ZFE builds expose the bare payload `true` as literal text. On native activation, it clears
+and verifies the buffer before making the session visible. `TextEdit` opens an input box and
+handles the `ControlMap::StartEditText` / `EndEditText` engine cycle (which suspends
 WASD and routes typed characters to the field); the callback fires with the text on ENTER, or
 an empty string on cancel. `SharedHUDTools` is resolved at runtime via
 `flash.utils.getDefinitionByName` so the widget needs no compile-time stub. If HUDModLoader is

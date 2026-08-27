@@ -357,9 +357,9 @@ if widget_src:
     check("function readNamedData" in widget_src
           and "CharacterInfoData" in widget_src,
           "FCMChatWidget retains CharacterInfoData identity fallback")
-    check("function readDisplayNameWithAccountFallback" in widget_src
-          and "AccountInfoData" in widget_src,
-          "FCMChatWidget retains AccountInfoData as a compatibility-only helper")
+    check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
+                    re.MULTILINE) is None,
+          "FCMChatWidget does not retain an AccountInfoData identity fallback")
     check('static inline var VERSION:String  = "2.10.5";' in widget_src
           and "character-only HUD identity gate" in widget_src,
           "FCMChatWidget bumps the identity-gate fix to version 2.10.5")
@@ -400,9 +400,13 @@ if widget_src:
           "FCMChatWidget defines an inspectable connect lifecycle")
     if start_connect_match is not None:
         start_connect_body = start_connect_match.group(1)
+        reset_identity = start_connect_body.find("resetCharacterIdentity();")
+        refresh_identity = start_connect_body.find("refreshDisplayName();")
         identity_gate = start_connect_body.find("if (!hasResolvedDisplayName())")
         identity_retry = start_connect_body.find("scheduleConnectRetry()", identity_gate)
         native_connect = start_connect_body.find('call("chat.v1.connect"', identity_gate)
+        check(reset_identity >= 0 and refresh_identity > reset_identity,
+              "FCMChatWidget resets cached character identity before each connect probe")
         check(identity_gate >= 0 and identity_retry > identity_gate and native_connect > identity_retry,
               "FCMChatWidget defers native connect until HUD identity is resolved")
     refresh_match = re.search(
