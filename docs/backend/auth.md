@@ -77,9 +77,15 @@ Applied on admin/mod routes. Verification order per request:
 1. `X-API-Key` header bypass — grants `owner` access (same key as `ADMIN_API_KEY`).
 2. `req.session.discordUser` must exist.
 3. Ban lockdown: checks linked game user for active ban; returns structured 403 if banned.
-4. Checks Redis role cache (`role:verified:<discordId>`).
-5. Falls back to `admin_users` DB table.
-6. Falls back to session `roles` array (covers fresh login before first verification cycle).
+4. Checks Redis role cache (`role:verified:<discordId>`), accepting the cached role only when it
+   satisfies the requested gate.
+5. Falls back to `admin_users` DB table with the same privilege check.
+6. Falls back to session `roles` array (covers fresh login before first verification cycle), matching
+   exact configured IDs and the same hierarchy.
+
+Route arguments may be configured Discord role IDs or literal labels (`owner`, `admin`, `moderator`).
+The effective hierarchy is `owner > admin > moderator`, so a higher role satisfies a lower gate but a
+lower cached or persisted role never satisfies an owner/admin-only route.
 
 ### Public Discord Auth (Reports / Applications)
 
@@ -105,6 +111,17 @@ On callback:
 - Returns a Pip-Boy-styled HTML success/error page (displayed in the browser window).
 
 The overlay polls `GET /api/auth/discord-status/:installToken` to check whether the link completed and to retrieve the resolved display name and avatar URL.
+
+### Hosted DEV persona login
+
+The unpackaged overlay may also start `GET /auth/discord/dev-login?installToken=<token>&persona=<persona>` when its relay is the isolated hosted DEV environment. This flow is not credential-less:
+
+1. The backend stores `dev_persona_oauth_state:<state>` with the install token and requested persona for 5 minutes, then redirects to Discord.
+2. Discord returns to the already-registered desktop-link callback (`/auth/discord/link/callback`), which consumes the DEV state and verifies the user has the developer role in both the production and DEV guilds.
+3. Only after both checks pass does the backend issue a normal 24-hour overlay session for the selected synthetic persona and store a one-time grant at `dev_persona_grant:<installToken>` for 10 minutes.
+4. The overlay polls `GET /api/auth/dev-login-status/:installToken`; Redis `GETDEL` makes the grant single-use.
+
+The credential-less `POST /api/dev/login-as` route remains mounted only when `NODE_ENV=development` and `ENABLE_DEV_LOGIN=true`, so it is available to fully-local development stacks but not the hosted DEV deployment.
 
 ---
 
@@ -164,6 +181,8 @@ Reads `X-Migration-Key` and gates `/admin/migration/*` (ad-hoc SQL, `pg_dump`, `
 | `nexus_oauth_state:<state>` | JSON `{ codeVerifier, sessionId }` | 10 min |
 | `oauth_link_state:<state>` | installToken | 5 min |
 | `discord_link:<installToken>` | JSON Discord identity | 10 min |
+| `dev_persona_oauth_state:<state>` | JSON `{ installToken, persona }` | 5 min |
+| `dev_persona_grant:<installToken>` | JSON session grant | 10 min, single-use |
 | `ws_ticket:<ticket>` | JSON `{ type, discordId, username }` | 60 s |
 | `role:verified:<discordId>` | role string | 5 min |
 | `device:nonce:<nonce>` | `1` | 120 s |

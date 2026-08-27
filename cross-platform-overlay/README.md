@@ -4,8 +4,9 @@ A **cross-platform Electron shell** (Windows / macOS / Linux X11) that mounts th
 **actual** Fallout Chat Mod web-overlay React component — the very same
 `admin-dashboard/src/features/chat/ChatOverlay.tsx` that renders on the website —
 and feeds it live chat from the Fallout Chat Mod relay. The **shipped** binary
-connects to the production relay; for **development you run it against your own
-local backend** (see "Run it" below) — never point a dev build at production.
+connects to the production relay; for development, use your own local backend or
+the isolated hosted DEV backend (see "Run it" below) — never point a dev build at
+the production relay.
 
 Because it renders the real component (not a lookalike), it is visually identical
 to the website overlay **by construction**: same Pip-Boy two-row tab bar, the
@@ -37,6 +38,21 @@ npm run start:local
 
 Both `:local` scripts point the overlay at `http://localhost:7076`. Develop
 **only** against your local backend.
+
+### Hosted DEV overlay
+
+To run the hot-reloading overlay against the isolated hosted DEV environment:
+
+```bash
+npm run dev:cloud
+```
+
+This is still an unpackaged Electron build, but hosted DEV intentionally disables
+credential-less persona logins (`ENABLE_DEV_LOGIN=false`). The **DEV ACCOUNTS**
+buttons are available here as an OAuth-gated developer tool: each button opens
+Discord and requires the developer role in both the production and DEV servers.
+Only a loopback backend (`dev:local` / `dev:linux`) permits the credential-less
+login shortcut.
 
 > `npm start` and `npm run dist:*` build the **shipped end-user binary**, which
 > targets the production relay. They are a release step, **not** a dev workflow —

@@ -221,6 +221,12 @@ risk to the live community:
   (`docker-compose.dev.yml`), where there is nothing to protect. The production
   boot guard already forbids dev-login when `NODE_ENV=production`.
 
+The unpackaged Electron overlay can still be run against hosted DEV with
+`npm run dev:cloud` from `cross-platform-overlay/`. Its **DEV ACCOUNTS** persona
+controls use Discord OAuth and the dual developer-role gate (the role must be
+present in both the production and DEV servers). Only a loopback backend with
+`ENABLE_DEV_LOGIN=true` exposes the credential-less persona shortcut.
+
 ---
 
 ## What is safe vs. what is explicitly forbidden
@@ -359,8 +365,9 @@ Two complementary mechanisms:
 2. **Bot-driven provisioning script (repeatable + captures new IDs).**
    `backend/scripts/clone-discord-layout.ts` (discord.js) reads the source guild's
    roles/channels and recreates anything the template missed in the target guild,
-   then **prints the new role-ID mapping**. This is necessary because cloned roles
-   get **brand-new IDs** in the dev server, and the dev backend's
+   ensures the `Supporter` and `Overseer's Circle` tier roles exist, then **prints
+   the new role-ID mapping**. This is necessary because cloned roles get **brand-new
+   IDs** in the dev server, and the dev backend's
    `OWNER_ROLE_ID` / `ADMIN_ROLE_ID` / `MODERATOR_ROLE_ID` env vars must point at
    the **dev** server's IDs, not prod's. The script outputs ready-to-paste env
    lines for the dev Dokploy project.
@@ -422,15 +429,16 @@ Verification gates two things, both **short-lived** so role removal takes effect
 quickly:
 
 1. **App session.** The dev backend issues its dashboard/app session only after
-   both roles verify. No persona login on the hosted instance
+   both roles verify. Hosted DEV persona login follows the same rule and is
+   OAuth-gated; there is no credential-less persona login on the hosted instance
    (`ENABLE_DEV_LOGIN=false`).
 2. **Infra credentials (DB / object store).** Currently, the maintainer issues the
    `fcm-dev-access` CF Access service token directly to vetted developers. The
    full broker (backend-minted short-lived credentials + `fcm-dev-cli login`) is
    **deferred** — the core `verifyDualRole` logic is built and tested, but the
-   OAuth flow wiring and credential-issuance endpoints are not yet wired into
-   `server.ts`. `pg_dump`/`pg_restore`/migrations run against the tunnel using the
-   directly-issued service token today.
+   OAuth flow wiring for persona sessions is now in `server.ts`; the full broker
+   for DB/object-store credentials remains deferred. `pg_dump`/`pg_restore`/
+   migrations run against the tunnel using the directly-issued service token today.
 
 ### Expiry and revocation
 
@@ -623,7 +631,7 @@ Code artifacts (in repo):
       `backend/tests/simStream.test.js`)
 - [x] `backend/scripts/clone-discord-layout.ts` — recreate prod roles/channels in
       the dev guild + print the new role-ID env mapping
-- [x] Dual-role auth core: `verify-dual-role` service + tests (OAuth/route wiring deferred)
+- [x] Dual-role auth: `verify-dual-role` service + tests and hosted DEV persona OAuth/session flow
 - [x] `GET /api/internal/verify-dev-role` on prod + prod-bot lookup (only viable
       prod-guild check) — controller/route + dev-side `makeDevSideDeps` fallback +
       `backend/tests/verifyDevRole.test.js`

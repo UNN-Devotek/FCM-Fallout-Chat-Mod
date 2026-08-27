@@ -19,9 +19,9 @@
  *   - Broker: mint/return short-lived Cloudflare Access service tokens +
  *     time-boxed DB credentials after both roles verify (the "Infra
  *     credentials" half of § Broker).
- *   - Route wiring: expose the dev OAuth flow + this verification through
- *     server.ts (deferred until the hosted dev infra exists; do not edit
- *     server.ts yet).
+ *   - Route wiring for infrastructure credentials: the hosted DEV persona
+ *     OAuth/session flow is wired in server.ts; DB/object-store credential
+ *     brokering remains deferred.
  *   - fcm-dev-cli login flow for contributors.
  * ---------------------------------------------------------------------------
  */

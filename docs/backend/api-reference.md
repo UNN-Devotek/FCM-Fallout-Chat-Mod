@@ -30,6 +30,8 @@ These routes are outside `/api/` and not subject to `apiLimiter`.
 | GET | `/auth/me` | Discord session | Current admin user identity + avatarUrl |
 | GET | `/auth/ws-ticket` | Discord session | Issue 60s single-use WS ticket |
 | GET | `/api/auth/discord-status/:installToken` | public | Poll Discord link status for desktop client |
+| GET | `/auth/discord/dev-login` | public, DEV-only | Start OAuth-gated persona login (`?installToken=&persona=`); requires the developer role in both Discord guilds |
+| GET | `/api/auth/dev-login-status/:installToken` | public, DEV-only | Consume the one-time hosted DEV persona session grant |
 
 See [auth.md](./auth.md) for full details.
 

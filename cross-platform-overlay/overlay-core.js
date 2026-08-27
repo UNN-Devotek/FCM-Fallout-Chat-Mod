@@ -1016,6 +1016,18 @@ function isLocalRelay(relayHttp) {
   }
 }
 
+// True only for the isolated hosted development relay. This lets an unpackaged
+// dev overlay use the OAuth-gated persona flow without ever treating production
+// as a development target.
+function isHostedDevRelay(relayHttp) {
+  try {
+    const h = new URL(String(relayHttp)).hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    return h === 'dev.falloutchatmod.com';
+  } catch {
+    return false;
+  }
+}
+
 // DEV-ONLY: derive a deterministic, per-install synthetic Discord id (18 digits,
 // matches the backend's /^\d{15,22}$/) from the installToken. Lets a local dev
 // overlay satisfy the backend's Discord-link gate on POST /api/users without
@@ -1216,6 +1228,7 @@ module.exports = {
   planOzoneRelaunch,
   cmpVersions,
   isLocalRelay,
+  isHostedDevRelay,
   syntheticDevDiscordId,
   filterProxyHeaders,
   resolveRelayProxyUrl,

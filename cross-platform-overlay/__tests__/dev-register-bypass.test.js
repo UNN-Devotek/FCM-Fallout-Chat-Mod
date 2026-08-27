@@ -28,6 +28,16 @@ describe('isLocalRelay', () => {
   });
 });
 
+describe('isHostedDevRelay', () => {
+  it('matches only the isolated hosted DEV hostname', () => {
+    expect(core.isHostedDevRelay('https://dev.falloutchatmod.com')).toBe(true);
+    expect(core.isHostedDevRelay('https://falloutchatmod.com')).toBe(false);
+    expect(core.isHostedDevRelay('https://dev.falloutchatmod.com.evil.example')).toBe(false);
+    expect(core.isHostedDevRelay('http://localhost:7177')).toBe(false);
+    expect(core.isHostedDevRelay('not a url')).toBe(false);
+  });
+});
+
 describe('syntheticDevDiscordId', () => {
   const RE = /^\d{15,22}$/; // backend gate (usersController register)
 

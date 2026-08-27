@@ -4,7 +4,6 @@ import { clientIp } from './utils/clientIp';
 import { paramStr } from './utils/reqParams';
 import { requireAuth, requireAnyAuthedClient } from './middleware/auth';
 import { mergeUserInto } from './utils/mergeUser';
-import { devPersonaDiscordId, devPersonaUsername } from './utils/devPersonaDiscordId';
 
 import http from 'http';
 
@@ -112,6 +111,16 @@ import { parseBoundOAuthState, serializeBoundOAuthState } from './utils/oauthSta
 import { setQaActiveVersion, getQaActiveVersion } from './controllers/qaVersionController';
 import { qaStart, makeQaCallbackHandler, defaultQaCallbackDeps } from './controllers/qaOAuthController';
 import { makeQaStatusHandler, defaultQaStatusDeps } from './controllers/qaStatusController';
+import {
+  DEV_PRIVILEGED_ROLES,
+  defaultDevPersonaCallbackDeps,
+  defaultDevPersonaStatusDeps,
+  devPersonaStart,
+  completeDevPersonaLogin,
+  getDevPersona,
+  issueDevPersonaSession,
+  makeDevPersonaStatusHandler,
+} from './controllers/devPersonaLoginController';
 import hudFeedRouter from './routes/hudFeed';
 
 const app = express();
@@ -197,28 +206,18 @@ app.use('/api/', apiLimiter);
 // opt-in, so these credential-less admin sessions can never appear in a
 // non-development deploy (even a misconfigured one).
 if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
-  const DEV_PERSONAS: Record<string, { id: string; username: string; role: string }> = {
-    user:      { id: 'dev-user-001',      username: 'System User',      role: env.DEV_USER_ROLE },
-    mod:       { id: 'dev-user-002',      username: 'System Mod',       role: env.DEV_MOD_ROLE },
-    moderator: { id: 'dev-user-002',      username: 'System Moderator', role: env.DEV_MOD_ROLE },
-    admin:     { id: 'dev-user-003',      username: 'System Admin',     role: env.DEV_ADMIN_ROLE },
-    supporter: { id: 'dev-user-004',      username: 'System Supporter', role: env.DEV_SUPPORTER_ROLE },
-    developer: { id: 'dev-user-005',      username: 'System Developer', role: env.DEV_DEVELOPER_ROLE },
-    owner:     { id: 'dev-user-006',      username: 'System Owner',     role: 'owner' },
-  };
-
-  const DEV_PRIVILEGED = ['owner', 'admin', 'moderator', 'supporter', 'developer'];
   app.get('/auth/dev-login/:persona', (req: Request, res: Response) => {
-    const persona = DEV_PERSONAS[paramStr(req, 'persona')];
+    const persona = getDevPersona(paramStr(req, 'persona'));
     if (!persona) { res.status(404).send('Unknown dev persona'); return; }
     (req.session as any).discordUser = { ...persona, avatar: null, roles: [] };
-    const dest = DEV_PRIVILEGED.includes(persona.role) ? 'server-health' : 'chat';
+    const dest = DEV_PRIVILEGED_ROLES.includes(persona.role) ? 'server-health' : 'chat';
     req.session.save(() => res.redirect(`${env.CLIENT_ORIGINS[0].replace(/\/$/, '')}/${dest}`));
   });
 
   // Keep old /auth/dev-login as alias for admin persona
   app.get('/auth/dev-login', (req: Request, res: Response) => {
-    (req.session as any).discordUser = { ...DEV_PERSONAS.admin, avatar: null, roles: [] };
+    const persona = getDevPersona('admin');
+    (req.session as any).discordUser = { ...persona, avatar: null, roles: [] };
     req.session.save(() => res.redirect(`${env.CLIENT_ORIGINS[0].replace(/\/$/, '')}/server-health`));
   });
 
@@ -241,46 +240,10 @@ if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
   app.post('/api/dev/login-as', async (req: Request, res: Response) => {
     const { persona, installToken } = req.body as { persona?: string; installToken?: string };
     if (!persona || !installToken) { res.status(400).json({ error: 'Missing persona or installToken' }); return; }
-    const p = DEV_PERSONAS[persona];
-    if (!p) { res.status(404).json({ error: 'Unknown persona' }); return; }
+    if (!getDevPersona(persona)) { res.status(404).json({ error: 'Unknown persona' }); return; }
     try {
-      // Unique per (persona, install) so multiple local installs can each adopt
-      // the same persona without colliding on the discord_id_link unique
-      // constraint. Persona still drives the role via the adminUser upsert below.
-      const fakeDiscordId = devPersonaDiscordId(persona, installToken);
-      await prisma.user.upsert({
-        where: { installToken },
-        create: {
-          installToken,
-          // Canonical username is @unique → must be unique per install; the clean
-          // persona name is preserved in discordDisplayName + the response below.
-          username: devPersonaUsername(p.username, installToken),
-          discordId: fakeDiscordId,
-          discordUsername: p.username,
-          discordDisplayName: p.username,
-          discordAuthedAt: new Date(),
-        },
-        update: {
-          discordId: fakeDiscordId,
-          discordUsername: p.username,
-          discordDisplayName: p.username,
-          discordAuthedAt: new Date(),
-        },
-      });
-      if (DEV_PRIVILEGED.includes(p.role)) {
-        await prisma.adminUser.upsert({
-          where: { discordId: fakeDiscordId },
-          create: { discordId: fakeDiscordId, username: p.username, role: p.role, updatedAt: new Date() },
-          update: { role: p.role, updatedAt: new Date() },
-        });
-      }
-      const user = await prisma.user.findUnique({ where: { installToken }, select: { id: true } });
-      if (!user) throw new Error('User not found after upsert');
-      const redis = await getRedisClient();
-      const token = uuidv4();
-      const SESSION_TTL = 24 * 60 * 60; // 24 hours (was 30 days)
-      await redis.set(`session:${token}`, user.id, { EX: SESSION_TTL });
-      res.json({ data: { token, userId: user.id, displayName: p.username, discordLinked: true, role: p.role } });
+      const grant = await issueDevPersonaSession(installToken, persona);
+      res.json({ data: { ...grant, discordLinked: true } });
     } catch (err) {
       logger.error({ err }, '[dev] login-as failed');
       res.status(500).json({ error: 'Dev login failed' });
@@ -292,6 +255,10 @@ if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
 // independent of ENABLE_DEV_LOGIN (hosted dev runs with it off). Never mounts in
 // production. See docs/deployment/hosted-dev-environment.md (QA tester access).
 if (env.NODE_ENV === 'development') {
+  // Hosted DEV persona login is OAuth + dual-role gated. It does not depend on
+  // ENABLE_DEV_LOGIN, which remains the local-only credential-less switch.
+  app.get('/auth/discord/dev-login', authLimiter, devPersonaStart);
+  app.get('/api/auth/dev-login-status/:installToken', apiLimiter, makeDevPersonaStatusHandler(defaultDevPersonaStatusDeps));
   app.post('/api/admin/qa/active-version', apiLimiter, requireAdminKey, setQaActiveVersion);
   app.get('/api/admin/qa/active-version', apiLimiter, requireAdminKey, getQaActiveVersion);
   app.get('/auth/discord/qa/start', authLimiter, qaStart);
@@ -619,14 +586,20 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
   if (!code) { res.status(400).send('Missing code'); return; }
 
   let installToken: string;
+  let hostedDevPersonaPending: { installToken: string; persona: string } | null = null;
   try {
     const redis = await getRedisClient();
-    const stored = await redis.get(`oauth_link_state:${state}`); await redis.del(`oauth_link_state:${state}`);
-    if (!state || !stored) {
+    // The hosted DEV persona flow reuses the already-registered Discord link
+    // callback URI, but keeps its OAuth state in a separate namespace.
+    if (state && env.NODE_ENV === 'development') {
+      hostedDevPersonaPending = await defaultDevPersonaCallbackDeps.consumeState(state);
+    }
+    const stored = hostedDevPersonaPending ? null : await redis.getDel(`oauth_link_state:${state}`);
+    if (!state || (!stored && !hostedDevPersonaPending)) {
       res.status(403).send('Invalid OAuth state — possible CSRF. Please try again.');
       return;
     }
-    installToken = stored;
+    installToken = hostedDevPersonaPending?.installToken || stored!;
   } catch (err) {
     logger.error({ err }, 'Failed to validate OAuth link state');
     res.status(500).send('Internal error');
@@ -680,6 +653,31 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
     const discordDisplayName = member.nick || discordUser.global_name || discordUser.username;
 
     const redis = await getRedisClient();
+
+    // Hosted DEV persona login is deliberately not credential-less: the user
+    // must have authenticated with Discord and pass the dual developer-role
+    // check before a synthetic persona session is issued.
+    if (hostedDevPersonaPending) {
+      const result = await completeDevPersonaLogin(
+        hostedDevPersonaPending,
+        String(discordUser.id || ''),
+        defaultDevPersonaCallbackDeps,
+      );
+      if (!result.authorized) {
+        res.status(403).send(PIP_BOY_HTML(
+          'DEV Login Denied — Fallout Chat Mod',
+          'Access Denied',
+          '<p>You need the developer role in both the production and DEV Discord servers.</p>',
+        ));
+        return;
+      }
+      res.send(PIP_BOY_HTML(
+        'DEV Login — Fallout Chat Mod',
+        'DEV Access Granted',
+        '<p>Your hosted DEV persona session is ready.</p><p class="dim">You can close this window and return to the overlay.</p>',
+      ));
+      return;
+    }
 
     // Check for any existing row already claiming this Discord ID (placeholder OR real).
     // discordId is now the canonical identity anchor — if ANY row owns it we merge into it.

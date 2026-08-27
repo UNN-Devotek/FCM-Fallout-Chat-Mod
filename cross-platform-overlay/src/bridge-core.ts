@@ -49,6 +49,33 @@ export function isLoopbackHost(host: string): boolean {
   return /^(localhost|127\.0\.0\.1|\[?::1\]?)(:\d+)?$/i.test(host);
 }
 
+function relayHostname(relayHostOrBase: string): string | null {
+  const raw = relayHostOrBase.trim();
+  try {
+    const parsed = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`);
+    return parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/** True only for the known isolated hosted development relay. */
+export function isHostedDevRelay(relayHostOrBase: string): boolean {
+  return relayHostname(relayHostOrBase) === 'dev.falloutchatmod.com';
+}
+
+/**
+ * Credential-less persona login is intentionally limited to a local backend.
+ * Hosted DEV exposes the same controls in unpackaged builds, but its backend
+ * requires Discord OAuth plus the dual developer-role gate before issuing a
+ * persona session.
+ */
+export function shouldShowDevPersonaLogins(isDevBuild: boolean, relayHostOrBase: string): boolean {
+  if (!isDevBuild || !relayHostOrBase) return false;
+  const hostname = relayHostname(relayHostOrBase);
+  return !!hostname && (isLoopbackHost(hostname) || isHostedDevRelay(relayHostOrBase));
+}
+
 /** Derive the absolute HTTP base for a relay host. loopback→http, else https. */
 export function relayBaseFor(host: string): string {
   return `${isLoopbackHost(host) ? 'http' : 'https'}://${host}`;

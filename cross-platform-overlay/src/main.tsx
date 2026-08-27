@@ -18,6 +18,7 @@ import { initShell, openSettings } from './shell';
 import { showOnboarding } from './onboarding';
 import { focusChatInput } from './focus-chat';
 import { shouldExitTextEntryOnEscape, shellToWebSettings } from './shell-core';
+import { shouldShowDevPersonaLogins } from './bridge-core';
 
 // 3) THE REAL COMPONENT — unmodified, imported straight from the dashboard source.
 import ChatOverlay from '@dashboard/features/chat/ChatOverlay';
@@ -272,6 +273,9 @@ function Shell() {
   // Whether this is an unpackaged dev build (populated from getInfo once on mount).
   // Stored as a ref so the onStatus callback closure always reads the current value.
   const isDevRef = useRef(false);
+  // Credential-less persona login is local-only. Unpackaged builds can also use
+  // hosted DEV, where the same controls launch OAuth and require both roles.
+  const [showDevPersonaLogins, setShowDevPersonaLogins] = useState(false);
   // Bumping this key remounts the ChatOverlay so it re-reads its settings from
   // localStorage (the component only loads them on mount). Driven by the shell
   // settings panel and the header refresh button.
@@ -454,6 +458,7 @@ function Shell() {
     // Populate the isDev flag from the main-process info (set once per session).
     window.relayBridge.getInfo().then((info) => {
       if (info?.isDev) isDevRef.current = true;
+      setShowDevPersonaLogins(shouldShowDevPersonaLogins(!!info?.isDev, info?.relayHost || ''));
     }).catch(() => { /* non-fatal */ });
 
     // Init the desktop-parity shell once. When settings change, remount the
@@ -523,10 +528,10 @@ function Shell() {
         <div style={{ opacity: 0.4, fontSize: 10, lineHeight: '1.5' }}>
           After authorizing in your browser, the overlay will unlock automatically.
         </div>
-        {isDevRef.current && typeof window.relayBridge?.devLoginAs === 'function' && (
+        {showDevPersonaLogins && typeof window.relayBridge?.devLoginAs === 'function' && (
           <div style={{ marginTop: 12, borderTop: `1px solid ${themePrimary}22`, paddingTop: 12 }}>
             <div style={{ opacity: 0.5, fontSize: 10, letterSpacing: '0.12em', marginBottom: 8 }}>DEV ACCOUNTS</div>
-            <div style={{ opacity: 0.5, fontSize: 10, marginBottom: 8 }}>Skip Discord — log in as a system user for local testing.</div>
+            <div style={{ opacity: 0.5, fontSize: 10, marginBottom: 8 }}>Local DEV can skip Discord. Hosted DEV requires Discord plus the developer role in both servers.</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {(['user', 'developer', 'moderator', 'admin', 'owner'] as const).map((persona) => (
                 <button key={persona}
@@ -591,10 +596,10 @@ function Shell() {
         <div style={{ color: themeText, opacity: 0.5, fontSize: 10, marginTop: 10 }}>
           (Or quit and relaunch after a minute)
         </div>
-        {isDevRef.current && typeof window.relayBridge?.devLoginAs === 'function' && (
+        {showDevPersonaLogins && typeof window.relayBridge?.devLoginAs === 'function' && (
           <div style={{ marginTop: 12, borderTop: `1px solid ${themePrimary}22`, paddingTop: 12 }}>
             <div style={{ opacity: 0.5, fontSize: 10, letterSpacing: '0.12em', marginBottom: 8 }}>DEV ACCOUNTS</div>
-            <div style={{ opacity: 0.5, fontSize: 10, marginBottom: 8 }}>Skip relay — log in as a system user for local testing.</div>
+            <div style={{ opacity: 0.5, fontSize: 10, marginBottom: 8 }}>Local DEV can skip the relay login. Hosted DEV requires Discord plus the developer role in both servers.</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {(['user', 'developer', 'moderator', 'admin', 'owner'] as const).map((persona) => (
                 <button key={persona}

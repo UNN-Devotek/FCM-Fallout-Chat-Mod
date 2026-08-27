@@ -121,10 +121,12 @@ golden-build version lock; see [hosted-dev-environment.md](../deployment/hosted-
 | `GET` | `/auth/discord/qa/start` | none | Initiates Discord OAuth for QA testers; redirects to Discord |
 | `GET` | `/auth/discord/qa/callback` | none (state CSRF) | OAuth callback; verifies `DEV_QA_ROLE_ID`, stores a one-time session grant in Redis |
 | `GET` | `/api/auth/qa-status/:installToken` | none | Polled by the QA overlay; enforces the golden-build lock (checks `x-client-version` header; returns 426 on mismatch); returns the session grant once and deletes it |
+| `GET` | `/auth/discord/dev-login` | none (state CSRF + dual developer-role gate) | Starts hosted DEV OAuth for a selected synthetic persona |
+| `GET` | `/api/auth/dev-login-status/:installToken` | none | Polled by the unpackaged DEV overlay; returns and deletes the one-time persona session grant |
 | `POST` | `/api/admin/qa/active-version` | `x-admin-api-key` | Sets the active QA build version (`QA_ACTIVE_VERSION` in Redis) |
 | `GET` | `/api/admin/qa/active-version` | `x-admin-api-key` | Returns the currently-active QA build version |
 
-All five routes are also subject to `apiLimiter` or `authLimiter` (same caps as their
+All seven routes are also subject to `apiLimiter` or `authLimiter` (same caps as their
 equivalent non-QA paths). The routes are independent of `ENABLE_DEV_LOGIN` — the hosted
 dev environment runs with `ENABLE_DEV_LOGIN=false` while still enabling these endpoints.
 

@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   isLoopbackHost,
+  shouldShowDevPersonaLogins,
   relayBaseFor,
   applyRelayBase,
   buildShellHook,
@@ -44,6 +45,16 @@ describe('relayBase derivation', () => {
     applyRelayBase(hook, '');
     expect(hook.relayBase).toBeUndefined();
     expect(() => applyRelayBase(undefined, 'host')).not.toThrow();
+  });
+
+  it('shows dev persona logins only for unpackaged overlays on a loopback relay', () => {
+    expect(shouldShowDevPersonaLogins(true, 'http://localhost:7177')).toBe(true);
+    expect(shouldShowDevPersonaLogins(true, '127.0.0.1:7076')).toBe(true);
+    expect(shouldShowDevPersonaLogins(true, 'https://dev.falloutchatmod.com')).toBe(true);
+    expect(shouldShowDevPersonaLogins(true, 'https://falloutchatmod.com')).toBe(false);
+    expect(shouldShowDevPersonaLogins(false, 'http://localhost:7177')).toBe(false);
+    expect(shouldShowDevPersonaLogins(true, 'https://localhost.falloutchatmod.com')).toBe(false);
+    expect(shouldShowDevPersonaLogins(true, 'not a relay')).toBe(false);
   });
 });
 
