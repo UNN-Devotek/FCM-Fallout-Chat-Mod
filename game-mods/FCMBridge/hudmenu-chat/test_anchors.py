@@ -355,9 +355,40 @@ if widget_src:
           and "characterName" in widget_src,
           "FCMChatWidget prefers the local PlayerListData character name")
     check("function readNamedData" in widget_src
-          and "CharacterInfoData" in widget_src
+          and "CharacterInfoData" in widget_src,
+          "FCMChatWidget retains CharacterInfoData identity fallback")
+    check("function readDisplayNameWithAccountFallback" in widget_src
           and "AccountInfoData" in widget_src,
-          "FCMChatWidget retains compatibility identity-data fallbacks")
+          "FCMChatWidget retains AccountInfoData as a compatibility-only helper")
+    check('static inline var VERSION:String  = "2.10.5";' in widget_src
+          and "character-only HUD identity gate" in widget_src,
+          "FCMChatWidget bumps the identity-gate fix to version 2.10.5")
+    character_match = re.search(
+        r"function readCharacterDisplayName\([^)]*\):String \{(.*?)\n    \}\n\n    // Compatibility-only resolver",
+        widget_src,
+        re.DOTALL,
+    )
+    check(character_match is not None,
+          "FCMChatWidget defines an inspectable character-only identity resolver")
+    if character_match is not None:
+        character_body = character_match.group(1)
+        check("readLocalPlayerNameFromData" in character_body
+              and 'readNamedData(mgr, "CharacterInfoData")' in character_body
+              and "AccountInfoData" not in character_body,
+              "FCMChatWidget character resolver excludes AccountInfoData")
+    ready_match = re.search(
+        r"function hasResolvedDisplayName\(\):Bool \{(.*?)\n    \}\n\n    /\*\*",
+        widget_src,
+        re.DOTALL,
+    )
+    check(ready_match is not None,
+          "FCMChatWidget defines an inspectable character identity readiness gate")
+    if ready_match is not None:
+        ready_body = ready_match.group(1)
+        check("_characterIdentityReady" in ready_body
+              and "AccountInfoData" not in ready_body
+              and "readDisplayNameWithAccountFallback" not in ready_body,
+              "FCMChatWidget readiness gate cannot be satisfied by AccountInfoData")
     check("function hasResolvedDisplayName():Bool" in widget_src,
           "FCMChatWidget has an explicit non-placeholder identity gate")
     start_connect_match = re.search(
@@ -383,9 +414,11 @@ if widget_src:
           "FCMChatWidget defines an inspectable HUD identity refresh path")
     if refresh_match is not None:
         refresh_body = refresh_match.group(1)
-        check("chat.v1.connect" not in refresh_body
+        check("readCharacterDisplayName" in refresh_body
+              and "readDisplayNameWithAccountFallback" not in refresh_body
+              and "chat.v1.connect" not in refresh_body
               and "reconcileDisplayName" not in refresh_body,
-              "FCMChatWidget keeps refreshDisplayName observation-only")
+              "FCMChatWidget keeps refreshDisplayName character-only and observation-only")
     check("_lastSentDisplayName" not in widget_src
           and "reconcileDisplayName" not in widget_src,
           "FCMChatWidget has no cached late-identity native reconnect path")

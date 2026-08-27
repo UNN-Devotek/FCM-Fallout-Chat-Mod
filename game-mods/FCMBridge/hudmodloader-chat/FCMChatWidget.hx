@@ -132,7 +132,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.4";  // local-player HUD identity resolution + deferred connect; + clientVersion handshake + name-targeted HUD moderation
+    static inline var VERSION:String  = "2.10.5";  // character-only HUD identity gate + deferred connect; + clientVersion handshake + name-targeted HUD moderation
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -301,6 +301,9 @@ class FCMChatWidget extends MovieClip {
     var _userId:String           = "";
     var _relayUserId:String      = "";
     var _displayName:String      = "Wanderer";
+    // True only after PlayerListData or CharacterInfoData supplies the local character name.
+    // Compatibility reads from AccountInfoData must never set this flag.
+    var _characterIdentityReady:Bool = false;
     var _connectDelay:Int        = CONNECT_RETRY_MS;
     var _connectAttempts:Int     = 0;
     var _cursor:Int              = 0;
@@ -2848,19 +2851,31 @@ class FCMChatWidget extends MovieClip {
         return "";
     }
 
-    // Returns the FO76 character name from the game's UI data, or "" if the game has not
-    // populated it yet. PlayerListData's local entry is authoritative; the older
-    // CharacterInfoData and AccountInfoData shapes remain compatibility fallbacks.
-    // Callers must treat "" as "not ready yet" and keep waiting, not as a name.
-    function readDisplayName():String {
+    // Returns only the FO76 character name from the game's character-owned UI data, or "" if
+    // the game has not populated it yet. PlayerListData's local entry is authoritative and
+    // CharacterInfoData is the compatibility fallback. AccountInfoData is deliberately absent.
+    function readCharacterDisplayName(rosterData:Dynamic = null):String {
+        var name:String = readLocalPlayerNameFromData(rosterData);
+        if (name.length > 0) return name;
+
         var mgr:Dynamic = findBSUI();
         if (mgr == null) return "";
 
-        var name:String = readLocalPlayerName(mgr);
+        name = readLocalPlayerName(mgr);
         if (name.length > 0) return name;
 
-        name = readNamedData(mgr, "CharacterInfoData");
+        return readNamedData(mgr, "CharacterInfoData");
+    }
+
+    // Compatibility-only resolver for callers that need the historical AccountInfoData shape.
+    // It is not used by refreshDisplayName() or startConnect(), so an account name can never
+    // become the first chat.v1.connect displayName.
+    function readDisplayNameWithAccountFallback():String {
+        var name:String = readCharacterDisplayName();
         if (name.length > 0) return name;
+
+        var mgr:Dynamic = findBSUI();
+        if (mgr == null) return "";
 
         var account:Dynamic = uiData(getBSUIData(mgr, "AccountInfoData"));
         name = uiNameFromFields(account,
@@ -2874,7 +2889,7 @@ class FCMChatWidget extends MovieClip {
     function hasResolvedDisplayName():Bool {
         if (_displayName == null) return false;
         var name:String = StringTools.trim(_displayName);
-        return name.length > 0 && name != "Wanderer";
+        return _characterIdentityReady && name.length > 0 && name != "Wanderer";
     }
 
     /**
@@ -2884,10 +2899,10 @@ class FCMChatWidget extends MovieClip {
      * identity until the next normal reconnect.
      */
     function refreshDisplayName(rosterData:Dynamic = null):Void {
-        var name:String = readLocalPlayerNameFromData(rosterData);
-        if (name.length == 0) name = readDisplayName();
+        var name:String = readCharacterDisplayName(rosterData);
         if (name.length == 0) return;
 
+        _characterIdentityReady = true;
         var changed:Bool = (_displayName != name);
         _displayName = name;
         if (changed) zfeLog("info", "identity", "player name resolved from HUD data len=" + name.length);
