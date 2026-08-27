@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import re
 import tempfile
 from pathlib import Path
 from zipfile import ZipFile
@@ -19,6 +20,17 @@ spec.loader.exec_module(package)
 def main() -> None:
     source_chat = (ROOT / "FCMChat.ini").read_text(encoding="utf-8")
     source_widget = (ROOT / "FCMChatWidget.ini").read_text(encoding="utf-8")
+    source_hx = (ROOT / "FCMChatWidget.hx").read_text(encoding="utf-8")
+    version_match = re.search(
+        r'static inline var VERSION:String\s*=\s*"([^"]+)"', source_hx
+    )
+    assert version_match, "FCMChatWidget.hx must define VERSION"
+    widget_artifact = (ROOT / "FCMChatWidget.ba2").read_bytes()
+    widget_version = version_match.group(1).encode("ascii")
+    assert widget_version in widget_artifact, "FCMChatWidget.ba2 embeds the current VERSION"
+    assert b"reconcileDisplayName" not in widget_artifact, (
+        "FCMChatWidget.ba2 must not contain the unsafe late-identity reconnect symbol"
+    )
 
     for target, expected in package.TARGETS.items():
         chat, widget = package.stamp_configs(target, source_chat, source_widget)
@@ -38,6 +50,7 @@ def main() -> None:
             assert "Data/FCMChat.ini" in names
             assert "Data/ZFE/TextChat/fragments/FCMChatWidget.ini" in names
             assert "INSTALL.txt" in names
+            assert archive.read("Data/FCMChatWidget.ba2") == widget_artifact
             assert b"dev.falloutchatmod.com/link" in archive.read("Data/FCMChat.ini")
             assert b"wss://dev.falloutchatmod.com/relay" in archive.read(
                 "Data/ZFE/TextChat/fragments/FCMChatWidget.ini"

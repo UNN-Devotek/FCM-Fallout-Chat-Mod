@@ -1,0 +1,4 @@
+## FcmIdentity character-only policy tests — pure Haxe, --interp.
+## Run from the hudmodloader-chat/ directory: haxe test-identity.hxml
+--main TestFcmIdentity
+--interp

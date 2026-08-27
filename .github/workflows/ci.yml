@@ -319,6 +319,9 @@ jobs:
       - name: Run FcmConfig unit tests
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe test-config.hxml
+      - name: Run FcmIdentity unit tests
+        working-directory: game-mods/FCMBridge/hudmodloader-chat
+        run: haxe test-identity.hxml
       - name: Run EasyFishing installer tests
         run: bash game-mods/EasyFishing/test-install.sh
 

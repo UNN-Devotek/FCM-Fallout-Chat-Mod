@@ -218,8 +218,8 @@ class FCMChatWidget extends MovieClip {
      * Scaleform GFx returns "" from String.fromCharCode(0), and a NUL escape literal in the SWF
      * string pool collapses to "" as well. `"test".split("").join("\\u0000")` does not strip
      * anything — it EXPLODES the string, inserting the escape between every character. That is
-     * how a clean slug became `g l o b a l` on the wire and how a clean
-     * body became `t e s t`, with ZFE then correctly rejecting the malformed
+     * how a clean slug became `g\\0l\\0o\\0b\\0a\\0l` on the wire and how a clean
+     * body became `t\\0e\\0s\\0t`, with ZFE then correctly rejecting the malformed
      * channel as `invalid_channel`. It also explains the log mangling seen since 2026-07-20.
      * Every split on a control-byte constant MUST go through here.
      */
@@ -1925,7 +1925,6 @@ class FCMChatWidget extends MovieClip {
         }
 
         loadPersistedConfig();
-        refreshDisplayName();
         startConnect();
     }
 
@@ -1933,7 +1932,13 @@ class FCMChatWidget extends MovieClip {
     // chat.v1 connect / reconnect
     // =========================================================================
 
+    function resetCharacterIdentity():Void {
+        _characterIdentityReady = false;
+        _displayName = "Wanderer";
+    }
+
     function startConnect():Void {
+        resetCharacterIdentity();
         if (_api == null) return;
         _connectAttempts++;
         // Re-read the FO76 name each attempt until we have a real one. The local roster may not
@@ -2010,6 +2015,7 @@ class FCMChatWidget extends MovieClip {
      */
     function forceReconnect(reason:String):Void {
         zfeLog("warn", "connect", "reconnecting: " + reason);
+        resetCharacterIdentity();
         if (_nativeInput) closeInputNative();
         setServerSessionReady(false, "");
         _connected = false;
@@ -2768,10 +2774,7 @@ class FCMChatWidget extends MovieClip {
             if (marker >= 0) name = name.substr(0, marker);
             name = StringTools.replace(name, "|", "");
         }
-        name = StringTools.trim(name);
-        // "Wanderer" is the widget's placeholder, never a resolved game identity.
-        if (name.length == 0 || name == "Wanderer") return "";
-        return name.length > 64 ? name.substr(0, 64) : name;
+        return FcmIdentity.normalizeCharacterName(name);
     }
 
     function uiNameFromFields(obj:Dynamic, fields:Array<String>, stripDecorations:Bool = false):String {
@@ -2855,41 +2858,22 @@ class FCMChatWidget extends MovieClip {
     // the game has not populated it yet. PlayerListData's local entry is authoritative and
     // CharacterInfoData is the compatibility fallback. AccountInfoData is deliberately absent.
     function readCharacterDisplayName(rosterData:Dynamic = null):String {
-        var name:String = readLocalPlayerNameFromData(rosterData);
-        if (name.length > 0) return name;
+        var localName:String = readLocalPlayerNameFromData(rosterData);
+        if (localName.length > 0) return FcmIdentity.selectCharacterName(localName, "");
 
         var mgr:Dynamic = findBSUI();
         if (mgr == null) return "";
 
-        name = readLocalPlayerName(mgr);
-        if (name.length > 0) return name;
-
-        return readNamedData(mgr, "CharacterInfoData");
+        localName = readLocalPlayerName(mgr);
+        var characterInfoName:String = readNamedData(mgr, "CharacterInfoData");
+        return FcmIdentity.selectCharacterName(localName, characterInfoName);
     }
 
-    // Compatibility-only resolver for callers that need the historical AccountInfoData shape.
-    // It is not used by refreshDisplayName() or startConnect(), so an account name can never
-    // become the first chat.v1.connect displayName.
-    function readDisplayNameWithAccountFallback():String {
-        var name:String = readCharacterDisplayName();
-        if (name.length > 0) return name;
-
-        var mgr:Dynamic = findBSUI();
-        if (mgr == null) return "";
-
-        var account:Dynamic = uiData(getBSUIData(mgr, "AccountInfoData"));
-        name = uiNameFromFields(account,
-            ["characterName", "displayName", "playerName", "name"]);
-        if (name.length > 0) return name;
-        return uiNameFromFields(uiField(account, "account"),
-            ["characterName", "displayName", "playerName", "name"]);
-    }
-
-    /** True once the HUD has supplied a usable character identity. */
+    // Compatibility-only resolver removed: the former function readDisplayNameWithAccountFallback
+    // read AccountInfoData, but an account name is not a character identity and must never satisfy
+    // the chat.v1.connect gate.
     function hasResolvedDisplayName():Bool {
-        if (_displayName == null) return false;
-        var name:String = StringTools.trim(_displayName);
-        return _characterIdentityReady && name.length > 0 && name != "Wanderer";
+        return _characterIdentityReady && FcmIdentity.isUsableCharacterName(_displayName);
     }
 
     /**
@@ -3309,7 +3293,7 @@ class FCMChatWidget extends MovieClip {
         s = s.split("\n").join(" ");
         s = stripControlChars(s);
         // Also drop ALREADY-ESCAPED NUL text. Game-UI strings reach us via ZFE, which hands
-        // some values back with their NULs pre-escaped as the six-character text " "
+        // some values back with their NULs pre-escaped as the six-character text "\\x00"
         // (and, when its own encoding is off, as a bare "u0000"). Those are not control bytes
         // any more, so the NUL split above cannot see them — strip both forms explicitly or
         // they ride out onto the wire and corrupt names and channel slugs alike.
