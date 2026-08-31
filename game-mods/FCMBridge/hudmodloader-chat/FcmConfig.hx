@@ -14,6 +14,8 @@ class FcmConfig {
 
     /** Immutable supporter marker. The HUD never renders a client-supplied glyph. */
     public static inline var SUPPORTER_STAR_GLYPH:String = "★";
+    /** Numeric entity is parsed reliably by Scaleform GFx htmlText across Wine/Windows. */
+    public static inline var SUPPORTER_STAR_HTML:String = "&#x2605;";
 
     // ── HUD viewport (HUDModLoader fixed 1920x1080 space) ──────────────────────
     public static inline var VIEW_W:Int = 1920;
@@ -160,6 +162,92 @@ class FcmConfig {
     /** Parse a server-provided cosmetic colour, failing closed to the HUD theme. */
     public static function supporterStarColor(s:String, fallback:Int):Int {
         return parseHexColor(s, fallback);
+    }
+
+    /**
+     * Treat the validated colour as a redundant marker signal. Some ZFE builds
+     * preserve JSON strings but normalize booleans while crossing the native API;
+     * a server-issued #RRGGBB star colour is only emitted for an active supporter.
+     */
+    public static function supporterStarPresent(serverFlag:Bool, serverColor:String):Bool {
+        return serverFlag || parseHexColor(serverColor, -1) >= 0;
+    }
+
+    /**
+     * Read a JSON string member without depending on the unavailable GFx JSON parser.
+     *
+     * ZFE normally returns compact JSON, but some native paths re-emit event objects
+     * with whitespace around the member colon. Keep this scanner tolerant of both
+     * forms, and of the legacy unquoted-key representation used by older ZFE builds.
+     * The returned value intentionally remains JSON-escaped to preserve the widget's
+     * existing rendering/wire behavior; callers that need decoded storage text use
+     * decodeJsonText().
+     */
+    public static function extractJsonString(json:String, key:String):String {
+        if (json == null || key == null || key.length == 0) return "";
+
+        var quotedNeedle:String = '"' + key + '"';
+        var idx:Int = json.indexOf(quotedNeedle);
+        while (idx >= 0) {
+            var after:Int = idx + quotedNeedle.length;
+            after = skipJsonWhitespace(json, after);
+            if (after < json.length && json.charAt(after) == ":") {
+                var valueStart:Int = skipJsonWhitespace(json, after + 1);
+                var value:String = scanJsonString(json, valueStart);
+                if (value != null) return value;
+            }
+            idx = json.indexOf(quotedNeedle, idx + 1);
+        }
+
+        // Older native responses can expose unquoted object keys. Require a clean
+        // key boundary so a value containing the same text cannot be mistaken for it.
+        idx = json.indexOf(key);
+        while (idx >= 0) {
+            var beforeOk:Bool = idx == 0 || !isJsonKeyChar(json.charCodeAt(idx - 1));
+            var afterKey:Int = idx + key.length;
+            var afterOk:Bool = afterKey >= json.length || !isJsonKeyChar(json.charCodeAt(afterKey));
+            if (beforeOk && afterOk) {
+                afterKey = skipJsonWhitespace(json, afterKey);
+                if (afterKey < json.length && json.charAt(afterKey) == ":") {
+                    var unquotedStart:Int = skipJsonWhitespace(json, afterKey + 1);
+                    var unquotedValue:String = scanJsonString(json, unquotedStart);
+                    if (unquotedValue != null) return unquotedValue;
+                }
+            }
+            idx = json.indexOf(key, idx + 1);
+        }
+        return "";
+    }
+
+    static function skipJsonWhitespace(json:String, start:Int):Int {
+        var i:Int = start;
+        while (i < json.length) {
+            var c:String = json.charAt(i);
+            if (c != " " && c != "\t" && c != "\r" && c != "\n") break;
+            i++;
+        }
+        return i;
+    }
+
+    static function scanJsonString(json:String, start:Int):Null<String> {
+        if (start >= json.length || json.charAt(start) != '"') return null;
+        var valueStart:Int = start + 1;
+        var i:Int = valueStart;
+        while (i < json.length) {
+            var c:String = json.charAt(i);
+            if (c == "\\") { i += 2; continue; }
+            if (c == '"') return json.substring(valueStart, i);
+            i++;
+        }
+        return null;
+    }
+
+    static function isJsonKeyChar(code:Null<Int>):Bool {
+        if (code == null) return false;
+        return (code >= 48 && code <= 57)
+            || (code >= 65 && code <= 90)
+            || (code >= 97 && code <= 122)
+            || code == 95 || code == 45;
     }
 
     /** Dim a color toward black by `factor` (0..1) — used for inactive channel sub-tabs. */

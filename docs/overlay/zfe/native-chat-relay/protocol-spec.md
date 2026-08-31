@@ -363,6 +363,15 @@ own immutable `★` glyph. The relay carries the negotiated token/version capabi
 separate connect and subscribe sockets with a short-lived Redis key containing only a token
 digest; missing or unreadable capability state fails closed to the legacy event shape.
 
+For an authenticated HUD send, the relay performs a bounded authoritative Discord
+member-role refresh before decoration: once per linked Discord account per minute across
+the deployment, coordinated by Redis. It derives the Discord ID from the linked FCM user,
+never from the HUD frame. A successful refresh updates the entitlement and invalidates
+resolved cosmetics only when the effective tier changes, before the message is broadcast,
+so capable subscribers and the sender's acknowledgement receive current supporter fields.
+Transient Discord failures leave the last known entitlement in place; a definitive
+member-not-found result is treated as loss of guild privileges.
+
 When `cursor` is `0`, the server **may** include an initial visible history window. The history
 size is relay policy, not a ZFE rule — a relay can return no history, five messages, twenty
 messages, or another bounded count. Returned events still use their **real relay cursors** so the

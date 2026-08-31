@@ -4,7 +4,7 @@ ZFE is a `dxgi.dll` proxy for Fallout 76 that exposes `__ZFE` to the Scaleform
 HUD. FCM's optional `FCMChatWidget` HUDModLoader mod uses its sanctioned
 `chat.v1` surface to display chat in game.
 
-> **Current widget (2026-08-31):** `FCMChatWidget` v2.10.10 targets `/relay` through
+> **Current widget (2026-08-31):** `FCMChatWidget` v2.10.12 targets `/relay` through
 > ZFE `chat.v1`. The backend keeps production relay access fail-closed until
 > `RELAY_PRODUCTION_ENABLED=true` is deliberately rolled out. The desktop overlay
 > remains independent of this optional mod path.
@@ -120,7 +120,7 @@ lexicographically, so a string compare would silently lock every updated client 
 `MIN_COSMETICS_VERSION` is **2.10.0**, the first build that reports a version at all —
 the bump IS the capability signal.
 
-### HUD identity cosmetics (widget v2.10.10)
+### HUD identity cosmetics (widget v2.10.12)
 
 The relay now sends these additive fields on `chat.message` events only to clients that
 negotiated `clientVersion >= 2.10.0`:

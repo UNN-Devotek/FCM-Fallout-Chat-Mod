@@ -29,16 +29,37 @@ import {
   tierFromDiscordRoles,
   lapseEntitlement,
 } from './supporterService';
+import type { DiscordRoleSyncResult, EntitlementSource } from './supporterService';
 import { refreshSupporterPresentation } from './supporterNicknameService';
+import { bustCosmeticsCache } from './cosmetics/cosmeticsService';
+import { getRedisClient } from '../config/redis';
 
 /** 15 minutes. The gateway listener covers the fast path; this is the backstop. */
 const RECONCILE_INTERVAL_MS = 15 * 60 * 1000;
 /** Delay the first sweep so it does not pile onto boot. */
 const FIRST_RUN_DELAY_MS = 60 * 1000;
+/**
+ * HUD sends need a faster role refresh than the periodic sweep, but a busy HUD
+ * must not turn every chat message into a Discord API request. One refresh per
+ * linked Discord account per minute is enough to make role changes visible
+ * promptly while keeping the request rate bounded.
+ */
+export const HUD_ROLE_REFRESH_INTERVAL_MS = 60 * 1000;
+const HUD_ROLE_REFRESH_LOCK_TTL_SECONDS = Math.ceil(HUD_ROLE_REFRESH_INTERVAL_MS / 1000);
+const HUD_ROLE_REFRESH_LOCK_KEY_PREFIX = 'supporter:hud-role-refresh';
+const MAX_HUD_ROLE_REFRESH_ENTRIES = 4096;
 
 let clientRef: Client | null = null;
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 let firstRunHandle: ReturnType<typeof setTimeout> | null = null;
+
+type HudRoleRefreshState = {
+  lastAttemptAt: number;
+  inFlight: Promise<void> | null;
+};
+
+const hudRoleRefreshState = new Map<string, HudRoleRefreshState>();
+const linkedDiscordIdCache = new Map<string, { discordId: string | null; expiresAt: number }>();
 
 const track = makeJobTracker('supporterReconcile');
 
@@ -52,6 +73,217 @@ const track = makeJobTracker('supporterReconcile');
 function configured(): boolean {
   if (!env.SUPPORTER_TIER_ENABLED) return false;
   return Boolean(env.SUPPORTER_ROLE_ID || env.OVERSEER_CIRCLE_ROLE_ID);
+}
+
+export type HudRoleRefreshRequest = {
+  userId: string;
+  /** Trusted value loaded from the FCM user row; omitted by the legacy TCP path. */
+  discordId?: string | null;
+};
+
+export type HudRoleRefreshDependencies = {
+  now?: () => number;
+  isConfigured?: () => boolean;
+  getUser?: (userId: string) => Promise<{ discordId: string | null } | null>;
+  acquireSlot?: (discordId: string, now: number) => Promise<boolean>;
+  fetchRoles?: (discordId: string) => Promise<readonly string[] | null>;
+  syncRoles?: (
+    discordId: string,
+    discordRoles: readonly string[] | null | undefined,
+    source?: EntitlementSource,
+  ) => Promise<DiscordRoleSyncResult>;
+  bustCosmetics?: (userId: string) => Promise<void>;
+  refreshPresentation?: (discordId: string, options?: { syncNickname?: boolean; syncRoles?: boolean }) => Promise<boolean>;
+};
+
+const hudRoleRefreshLockKey = (discordId: string): string =>
+  `${HUD_ROLE_REFRESH_LOCK_KEY_PREFIX}:${env.NODE_ENV}:${discordId}`;
+
+/** Acquire the deployment-wide role-check slot. The key intentionally expires
+ * instead of being deleted so a Discord failure is still rate-limited. */
+async function defaultAcquireHudRoleRefreshSlot(discordId: string, now: number): Promise<boolean> {
+  const redis = await getRedisClient();
+  const claimed = await redis.set(hudRoleRefreshLockKey(discordId), String(now), {
+    NX: true,
+    EX: HUD_ROLE_REFRESH_LOCK_TTL_SECONDS,
+  });
+  return claimed === 'OK';
+}
+
+async function defaultFetchHudMemberRoles(discordId: string): Promise<readonly string[] | null> {
+  if (!clientRef || !env.DISCORD_SERVER_ID) return null;
+  const guild = await clientRef.guilds.fetch(env.DISCORD_SERVER_ID);
+  const member = await guild.members.fetch(discordId);
+  return [...member.roles.cache.keys()];
+}
+
+function isMissingGuildMember(err: unknown): boolean {
+  const candidate = err as { code?: number | string; status?: number; statusCode?: number } | null;
+  return candidate?.code === 10007 || candidate?.code === '10007' || candidate?.status === 404 || candidate?.statusCode === 404;
+}
+
+function trimHudRoleRefreshState(now: number): void {
+  if (hudRoleRefreshState.size <= MAX_HUD_ROLE_REFRESH_ENTRIES) return;
+  for (const [discordId, state] of hudRoleRefreshState) {
+    if (state.inFlight) continue;
+    if (now - state.lastAttemptAt >= HUD_ROLE_REFRESH_INTERVAL_MS) hudRoleRefreshState.delete(discordId);
+    if (hudRoleRefreshState.size <= MAX_HUD_ROLE_REFRESH_ENTRIES) break;
+  }
+}
+
+function trimLinkedDiscordIdCache(now: number): void {
+  if (linkedDiscordIdCache.size <= MAX_HUD_ROLE_REFRESH_ENTRIES) return;
+  for (const [userId, state] of linkedDiscordIdCache) {
+    if (state.expiresAt <= now) linkedDiscordIdCache.delete(userId);
+    if (linkedDiscordIdCache.size <= MAX_HUD_ROLE_REFRESH_ENTRIES) break;
+  }
+}
+
+async function resolveHudRequestDiscordId(
+  request: HudRoleRefreshRequest,
+  deps: HudRoleRefreshDependencies,
+  now: () => number,
+): Promise<string | null> {
+  if (request.discordId !== undefined) {
+    linkedDiscordIdCache.set(request.userId, {
+      discordId: request.discordId,
+      expiresAt: now() + HUD_ROLE_REFRESH_INTERVAL_MS,
+    });
+    return request.discordId;
+  }
+
+  const cached = linkedDiscordIdCache.get(request.userId);
+  if (cached && cached.expiresAt > now()) return cached.discordId;
+
+  const user = await (deps.getUser ?? (async (id: string) =>
+    prisma.user.findUnique({ where: { id }, select: { discordId: true } })))(request.userId);
+  const discordId = user?.discordId ?? null;
+  linkedDiscordIdCache.set(request.userId, {
+    discordId,
+    expiresAt: now() + HUD_ROLE_REFRESH_INTERVAL_MS,
+  });
+  trimLinkedDiscordIdCache(now());
+  return discordId;
+}
+
+async function applyHudRoleResult(
+  request: HudRoleRefreshRequest,
+  discordId: string,
+  roles: readonly string[],
+  deps: HudRoleRefreshDependencies,
+): Promise<void> {
+  const syncRoles = deps.syncRoles ?? ((id, roleIds, source) =>
+    syncFromDiscordRolesWithResult(id, roleIds, source, { skipUnchanged: true }));
+  const result = await syncRoles(discordId, roles, 'discord_sub');
+  if (!result.changed) return;
+
+  // Tier writes already invalidate the tier cache. Clear the resolved cosmetics
+  // cache only after a real tier transition, then push the refreshed identity to
+  // connected web/overlay sessions. The HUD message itself is decorated after
+  // this helper returns.
+  await (deps.bustCosmetics ?? bustCosmeticsCache)(request.userId);
+  await (deps.refreshPresentation ?? refreshSupporterPresentation)(discordId, {
+    syncNickname: false,
+    syncRoles: false,
+  });
+}
+
+/**
+ * Refresh a linked HUD sender's supporter roles before its message is decorated.
+ *
+ * The client never supplies the Discord ID or role list. Both are resolved from
+ * the verified relay identity and the bot's configured guild. Discord outages,
+ * rate limits, and other transient failures preserve the last known entitlement;
+ * only a successful role read (or a definitive member-not-found response) can
+ * change privileges. Redis coordinates the cooldown across backend replicas;
+ * the in-process state is only a low-cost fast path and fallback. The periodic
+ * reconcile remains the cross-restart safety net.
+ *
+ * Dependencies are injectable so the bounded-refresh behavior can be tested
+ * without a Discord gateway or database connection.
+ */
+export async function refreshSupporterFromHudSend(
+  request: HudRoleRefreshRequest,
+  deps: HudRoleRefreshDependencies = {},
+): Promise<void> {
+  const isConfigured = deps.isConfigured ?? configured;
+  if (!isConfigured()) return;
+
+  const now = deps.now ?? Date.now;
+  let discordId: string | null;
+  try {
+    discordId = await resolveHudRequestDiscordId(request, deps, now);
+  } catch (err) {
+    logger.warn({ err, userId: request.userId }, '[supporterSync] HUD role refresh user lookup failed (non-fatal)');
+    return;
+  }
+
+  if (!discordId) return;
+
+  const existing = hudRoleRefreshState.get(discordId);
+  if (existing?.inFlight) {
+    await existing.inFlight;
+    return;
+  }
+  if (existing && now() - existing.lastAttemptAt < HUD_ROLE_REFRESH_INTERVAL_MS) return;
+
+  const state: HudRoleRefreshState = { lastAttemptAt: now(), inFlight: null };
+  const refresh = (async () => {
+    let acquired = true;
+    try {
+      acquired = await (deps.acquireSlot ?? defaultAcquireHudRoleRefreshSlot)(discordId, state.lastAttemptAt);
+    } catch (err) {
+      // Redis is already required by the relay, but supporter refresh is an
+      // optional enhancement. Preserve availability and use this process's
+      // cooldown if Redis briefly disappears; the normal reconcile remains the
+      // cross-process safety net.
+      logger.warn({ err, userId: request.userId, discordId }, '[supporterSync] HUD role refresh slot unavailable; using local cooldown (non-fatal)');
+    }
+    if (!acquired) return;
+
+    let roles: readonly string[] | null;
+    try {
+      roles = await (deps.fetchRoles ?? defaultFetchHudMemberRoles)(discordId);
+      if (!roles) return; // Discord client/guild is not ready; preserve known state.
+    } catch (err) {
+      // A definitive 404 means the member left the guild. Other failures are
+      // transient and must not revoke a paid entitlement during an outage.
+      if (isMissingGuildMember(err)) {
+        try {
+          await applyHudRoleResult(request, discordId, [], deps);
+        } catch (syncErr) {
+          logger.warn({ err: syncErr, userId: request.userId, discordId }, '[supporterSync] HUD member removal refresh failed (non-fatal)');
+        }
+        return;
+      }
+      logger.warn({ err, userId: request.userId, discordId }, '[supporterSync] HUD role fetch failed (non-fatal)');
+      return;
+    }
+
+    try {
+      await applyHudRoleResult(request, discordId, roles, deps);
+    } catch (err) {
+      logger.warn({ err, userId: request.userId, discordId }, '[supporterSync] HUD role reconciliation failed (non-fatal)');
+    }
+  })();
+
+  state.inFlight = refresh;
+  hudRoleRefreshState.set(discordId, state);
+  trimHudRoleRefreshState(now());
+  try {
+    await refresh;
+  } finally {
+    // Keep the timestamp for the cooldown, but clear the promise so a later
+    // message can perform the next periodic check even if a future dependency
+    // throws outside the helper's non-fatal guards.
+    if (hudRoleRefreshState.get(discordId) === state) state.inFlight = null;
+  }
+}
+
+/** Test/shutdown helper for the in-process HUD refresh limiter. */
+export function resetHudRoleRefreshState(): void {
+  hudRoleRefreshState.clear();
+  linkedDiscordIdCache.clear();
 }
 
 // ── Gateway listener ──────────────────────────────────────────────────────────
@@ -224,6 +456,18 @@ export function stop(): void {
   firstRunHandle = null;
 }
 
-export default { register, stop, runReconcile };
-module.exports = { register, stop, runReconcile };
+export default {
+  register,
+  stop,
+  runReconcile,
+  refreshSupporterFromHudSend,
+  resetHudRoleRefreshState,
+};
+module.exports = {
+  register,
+  stop,
+  runReconcile,
+  refreshSupporterFromHudSend,
+  resetHudRoleRefreshState,
+};
 module.exports.default = module.exports;

@@ -134,7 +134,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.10"; // HUD supporter send acknowledgement + Discord relay parity
+    static inline var VERSION:String  = "2.10.12"; // whitespace-tolerant HUD supporter marker parsing
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -1800,8 +1800,9 @@ class FCMChatWidget extends MovieClip {
                 if (_relayUserId.length > 0) {
                     var messageId:String = extractJsonString(rs, "messageId");
                     var ackTag:String = extractJsonString(rs, "tag");
-                    var ackSupporterStar:Bool = extractJsonBool(rs, "supporterStar");
                     var ackStarColor:String = extractJsonString(rs, "starColor");
+                    var ackSupporterStar:Bool = FcmConfig.supporterStarPresent(
+                        extractJsonBool(rs, "supporterStar"), ackStarColor);
                     var dedupKey:String = (messageId.length > 0)
                         ? echoIdKey(messageId)
                         : echoSbKey(_relayUserId, slug, raw);
@@ -2260,8 +2261,9 @@ class FCMChatWidget extends MovieClip {
             var senderUserId:String = extractJsonString(obj, "senderUserId");
             var displayName:String  = extractJsonString(obj, "senderDisplayName");
             var tag:String          = extractJsonString(obj, "tag");
-            var supporterStar:Bool  = extractJsonBool(obj, "supporterStar");
             var starColor:String    = extractJsonString(obj, "starColor");
+            var supporterStar:Bool  = FcmConfig.supporterStarPresent(
+                extractJsonBool(obj, "supporterStar"), starColor);
             var body:String         = extractJsonString(obj, "body");
             var messageId:String    = extractJsonString(obj, "messageId");
             var evId:Int            = extractJsonInt(obj, "id");
@@ -2664,7 +2666,7 @@ class FCMChatWidget extends MovieClip {
             var starHtml:String = rec.supporterStar
                 ? '<font face="' + FONT_BOLD + '" size="' + fs + '" color="'
                     + hx(FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor)) + '">'
-                    + FcmConfig.SUPPORTER_STAR_GLYPH + '</font> '
+                    + FcmConfig.SUPPORTER_STAR_HTML + '</font> '
                 : "";
             // Staff only: a short, stable reference for the moderation command surface.
             // Never target by display name — names can be changed and are not unique.
@@ -3246,22 +3248,7 @@ class FCMChatWidget extends MovieClip {
     // =========================================================================
 
     static function extractJsonString(json:String, key:String):String {
-        var needle:String = '"' + key + '":"';
-        var idx:Int = json.indexOf(needle);
-        if (idx < 0) {
-            needle = key + ':"';
-            idx = json.indexOf(needle);
-            if (idx < 0) return "";
-        }
-        var start:Int = idx + needle.length;
-        var i:Int = start;
-        while (i < json.length) {
-            var c:String = json.charAt(i);
-            if (c == '\\') { i += 2; continue; }
-            if (c == '"')  break;
-            i++;
-        }
-        return json.substring(start, i);
+        return FcmConfig.extractJsonString(json, key);
     }
 
     static function extractJsonInt(json:String, key:String):Int {

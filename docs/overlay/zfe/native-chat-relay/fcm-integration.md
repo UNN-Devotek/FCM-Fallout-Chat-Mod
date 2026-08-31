@@ -84,7 +84,7 @@ normal database channel.
 
 ## HUD identity cosmetic extension
 
-Widget v2.10.10 understands three optional, additive FCM fields on `chat.message`
+Widget v2.10.12 understands three optional, additive FCM fields on `chat.message`
 events, including subscribe-time history:
 
 ```json
@@ -113,6 +113,18 @@ is marked before the asynchronous subscriber echo arrives. The shared finalizer 
 the server-resolved supporter tier to the outbound Discord relay, which renders the
 immutable `★` beside the author; Discord cannot reproduce the web/HUD star colour in
 ordinary message text.
+
+Before a valid HUD message is decorated, the relay asks Discord for the linked user's
+current member roles at most once per minute per deployment, coordinated by a Redis
+`SET NX EX` slot (with a local fallback if Redis is temporarily unavailable). The
+Discord ID comes from the linked FCM account resolved by the relay token; the HUD cannot
+provide or forge it. A successful role read updates the shared supporter entitlement and
+clears caches only when the effective tier changes, so the message broadcast and send
+acknowledgement carry the current supporter marker to every connected capable HUD
+subscriber. Gateway events and the 15-minute bulk reconcile remain in place for changes
+that do not coincide with a HUD send. Discord timeouts, rate limits, and other transient
+failures preserve the last known entitlement; only a successful no-role read or definitive
+member removal can lapse it.
 
 ## Ephemeral `server` rooms
 

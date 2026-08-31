@@ -194,6 +194,12 @@ jest.mock('../src/services/discordService', () => ({
   postModAlert:     jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../src/services/supporterSyncService', () => ({
+  __esModule: true,
+  refreshSupporterFromHudSend: jest.fn().mockResolvedValue(undefined),
+  default: { refreshSupporterFromHudSend: jest.fn().mockResolvedValue(undefined) },
+}));
+
 jest.mock('../src/services/userRoleService', () => ({
   getEffectiveRole: jest.fn().mockResolvedValue('user'),
   isPrivilegedRole: jest.fn((role) => ['moderator', 'admin', 'owner'].includes(role)),
@@ -1348,6 +1354,8 @@ describe('relay WebSocket ops', () => {
       payload.starColor = '#FD4DA6';
       return payload;
     });
+    const refreshSupporterFromHudSend = require('../src/services/supporterSyncService').refreshSupporterFromHudSend;
+    refreshSupporterFromHudSend.mockClear();
 
     const { ws, msgs } = await conn();
     const res = await waitForMsg(ws, msgs, () =>
@@ -1359,6 +1367,10 @@ describe('relay WebSocket ops', () => {
       tag: 'X',
       supporterStar: true,
       starColor: '#FD4DA6',
+    });
+    expect(refreshSupporterFromHudSend).toHaveBeenCalledWith({
+      userId: fcmId,
+      discordId: 'disc-ack-supporter',
     });
     ws.close();
   });

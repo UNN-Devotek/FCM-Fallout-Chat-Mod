@@ -105,6 +105,12 @@ jest.mock('../src/services/ingestMessage', () => ({
   ingestMessage: jest.fn().mockResolvedValue({ ok: true, messageId: 'msg-uuid' }),
 }));
 
+jest.mock('../src/services/supporterSyncService', () => ({
+  __esModule: true,
+  refreshSupporterFromHudSend: jest.fn().mockResolvedValue(undefined),
+  default: { refreshSupporterFromHudSend: jest.fn().mockResolvedValue(undefined) },
+}));
+
 // ── Stub websocket handlers broadcast export (needed by ingestMessage transitive import) ──
 jest.mock('../src/websocket/handlers', () => ({
   broadcast: jest.fn(),
@@ -188,6 +194,7 @@ const { hudPushNotify, _setChannelResolver } = require('../src/services/hudPush'
 const { buildFeedLines } = require('../src/services/hudFeedService');
 const { ingestMessage } = require('../src/services/ingestMessage');
 const { resolveHudIdentity, getActiveBlock } = require('../src/services/hudIdentityService');
+const { refreshSupporterFromHudSend } = require('../src/services/supporterSyncService');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -492,6 +499,7 @@ describe('hudPushTcp integration', () => {
 
   it('ingests a message after HELLO + SEND', async () => {
     ingestMessage.mockClear();
+    refreshSupporterFromHudSend.mockClear();
     resolveHudIdentity.mockResolvedValue({ userId: 'user-abc', identityHash: 'hash-abc' });
     getActiveBlock.mockResolvedValue(null);
 
@@ -512,6 +520,7 @@ describe('hudPushTcp integration', () => {
       source: 'hud',
       identityHash: 'hash-abc',
     }));
+    expect(refreshSupporterFromHudSend).toHaveBeenCalledWith({ userId: 'user-abc' });
 
     client.close();
     await delay(100);

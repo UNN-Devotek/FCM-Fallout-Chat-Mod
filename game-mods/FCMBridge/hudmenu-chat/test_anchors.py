@@ -363,11 +363,12 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.10";' in widget_src
+    check('static inline var VERSION:String  = "2.10.12";' in widget_src
           and "function hydrateOwnEcho" in widget_src,
-          "FCMChatWidget bumps the HUD supporter send-ack build to version 2.10.10")
+          "FCMChatWidget bumps the HUD supporter marker/render build to version 2.10.12")
     check('extractJsonBool(obj, "supporterStar")' in widget_src
-          and 'FcmConfig.SUPPORTER_STAR_GLYPH' in widget_src
+          and 'FcmConfig.SUPPORTER_STAR_HTML' in widget_src
+          and 'supporterStarPresent' in widget_src
           and 'customTagHtml' in widget_src,
           "FCMChatWidget renders only the immutable supporter star and validated tag fields")
     check('FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor)' in widget_src
@@ -377,7 +378,7 @@ if widget_src:
           and 'rec.supporterStar = supporterStar;' in widget_src
           and 'rec.starColor = starColor;' in widget_src,
           "FCMChatWidget hydrates optimistic self-rows from authoritative cosmetics")
-    check('var ackSupporterStar:Bool = extractJsonBool(rs, "supporterStar");' in widget_src
+    check('var ackSupporterStar:Bool = FcmConfig.supporterStarPresent(' in widget_src
           and 'tag: ackTag, supporterStar: ackSupporterStar, starColor: ackStarColor' in widget_src,
           "FCMChatWidget decorates optimistic self-rows from the send acknowledgement")
     fallout_name_match = re.search(
@@ -473,6 +474,9 @@ if widget_src:
           "FCMChatWidget requests history replay after HUD reload")
     check('function shouldRenderReplayMessage' in widget_src and '_seenMessageIds' in widget_src,
           "FCMChatWidget deduplicates replayed history records")
+    check('return FcmConfig.extractJsonString(json, key);' in widget_src
+          and 'extractJsonString' in widget_src,
+          "FCMChatWidget accepts whitespace-formatted JSON string members")
     check("Shared.AS3.Events.CustomEvent" in widget_src,
           "FCMChatWidget resolves the game-qualified CustomEvent for the edit lock")
     check("startTypeMirror" not in widget_src,

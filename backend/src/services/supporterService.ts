@@ -191,6 +191,8 @@ export async function grantEntitlement(opts: {
   source?: EntitlementSource;
   externalId?: string | null;
   notes?: string | null;
+  /** Internal optimization for frequent authoritative Discord role checks. */
+  skipUnchanged?: boolean;
 }): Promise<boolean> {
   const tier = normalizeTier(opts.tier);
   if (tier === 'none') return lapseEntitlement({ discordId: opts.discordId, reason: 'tier resolved to none' });
@@ -202,6 +204,15 @@ export async function grantEntitlement(opts: {
     where: { discordId: opts.discordId },
     select: { tier: true, status: true },
   });
+
+  if (
+    opts.skipUnchanged &&
+    existing &&
+    normalizeTier(existing.tier) === tier &&
+    existing.status === 'active'
+  ) {
+    return false;
+  }
 
   await prisma.supporterEntitlement.upsert({
     where: { discordId: opts.discordId },
@@ -279,6 +290,15 @@ export interface DiscordRoleSyncResult {
   changed: boolean;
 }
 
+export interface DiscordRoleSyncOptions {
+  /**
+   * Skip the idempotent write when the effective Discord tier is unchanged.
+   * The HUD send refresh uses this because it may run once per minute; periodic
+   * reconcile keeps the default write/timestamp behavior for its audit trail.
+   */
+  skipUnchanged?: boolean;
+}
+
 /**
  * Reconcile a member's Discord roles and report whether the effective entitlement
  * changed. Consumers that update downstream presentation should use this variant so
@@ -288,11 +308,19 @@ export async function syncFromDiscordRolesWithResult(
   discordId: string,
   discordRoles: readonly string[] | null | undefined,
   source: EntitlementSource = 'discord_sub',
+  options: DiscordRoleSyncOptions = {},
 ): Promise<DiscordRoleSyncResult> {
   const tier = tierFromDiscordRoles(discordRoles);
   const changed = tier === 'none'
     ? await lapseEntitlement({ discordId, reason: 'tier role no longer held' })
-    : await grantEntitlement({ discordId, tier, source });
+    : await grantEntitlement({
+      discordId,
+      tier,
+      source,
+      // `grantEntitlement` is deliberately kept as the single write funnel;
+      // this flag lets high-frequency role checks avoid an unchanged upsert.
+      ...(options.skipUnchanged ? { skipUnchanged: true } : {}),
+    });
   return { tier, changed };
 }
 

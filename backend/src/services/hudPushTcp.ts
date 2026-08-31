@@ -31,6 +31,7 @@ import logger from '../config/logger';
 import { registerClient, unregisterClientPublic, switchClientChannel, type HudPushClient } from './hudPush';
 import { deriveIdentityHash, resolveHudIdentity, getActiveBlock, usingDefaultIdentitySecret } from './hudIdentityService';
 import { ingestMessage } from './ingestMessage';
+import { refreshSupporterFromHudSend } from './supporterSyncService';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -281,6 +282,11 @@ async function handleLine(
         const text = rest.slice(secondTilde + 1);
 
         if (text.trim().length === 0) return;
+
+        // Keep the legacy authenticated HUD ingress on the same supporter-role
+        // freshness path as chat.v1 /relay sends. The helper derives any Discord
+        // identity from the resolved FCM user and is bounded per account.
+        await refreshSupporterFromHudSend({ userId: state.userId });
 
         const result = await ingestMessage({
           userId:       state.userId,

@@ -160,7 +160,11 @@ longer does. Disabled entirely when no tier role is configured.
 This is the **backstop**. The fast path is the `guildMemberUpdate` /
 `guildMemberRemove` gateway listeners in the same service, which pick up a purchase or
 cancellation within seconds. The sweep exists because gateway events are lossy across
-restarts and outages.
+restarts and outages. Authenticated HUD sends also trigger an authoritative member-role
+read at most once per linked Discord account per minute across the deployment via a
+Redis distributed slot, before the
+message is decorated. This closes the freshness gap when a role changes while the gateway
+event is missed; transient Discord failures preserve the last known entitlement.
 
 **It deliberately does NOT copy role re-verification's 1-second-sleep-per-user pacing.**
 That is fine for the handful of rows in `admin_users`, but supporters are customers and
@@ -215,5 +219,5 @@ Failed jobs are logged at error level with `jobId`.
 | Wiki full ingest | node-cron + on-demand | Weekly Sun 03:00 UTC | Walk Fandom categories, upsert wiki_entries, mirror images |
 | Wiki incremental sync | setInterval (opt-in) | Every N hours (WIKI_SYNC_INTERVAL_HOURS) | recentchanges diff since last sync, targeted upsert |
 | Role re-verification | setInterval | Every 5 min | Re-verify Discord roles, revoke stale sessions |
-| Supporter reconcile | setInterval | Every 15 min | Re-derive supporter entitlements from live tier roles (bulk fetch, not per-user) |
+| Supporter reconcile | setInterval | Every 15 min | Re-derive supporter entitlements from live tier roles (bulk fetch, not per-user); HUD sends also use a Redis-coordinated once-per-minute-per-user role refresh |
 | message-persist | Bull (Redis) | Event-driven | Persist chat messages to Postgres |

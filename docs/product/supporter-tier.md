@@ -62,7 +62,10 @@ issue #230.
   `lapsed` when the role disappears, so cosmetics revert; re-adding it restores them with
   no re-purchase.
 - Because sync keeps `status` in lockstep with the role, `status === 'active'` *is* the
-  "currently holds the role" signal, and nothing on the hot path calls the Discord API.
+  "currently holds the role" signal. Gateway events and the periodic reconcile normally
+  maintain it; authenticated HUD sends additionally refresh the linked member's Discord
+  roles at most once per minute across the deployment via a Redis distributed slot, before
+  message cosmetics are resolved. Transient Discord failures preserve the last known state.
 
 Cosmetics are gated at **read** time as well as write. That is what makes
 lapse-and-restore work: a lapsed supporter's stored preset rows are left untouched but

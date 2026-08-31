@@ -33,8 +33,16 @@ class TestFcmConfig {
         eqi("hex empty->fallbk", FcmConfig.parseHexColor("", 0x111111), 0x111111);
         eqi("hex null->fallbk",  FcmConfig.parseHexColor(null, 0x222222), 0x222222);
         eqs("supporter star glyph is immutable", FcmConfig.SUPPORTER_STAR_GLYPH, "★");
+        eqs("supporter star uses a Scaleform-safe entity", FcmConfig.SUPPORTER_STAR_HTML, "&#x2605;");
         eqi("supporter star colour accepts hex", FcmConfig.supporterStarColor("#58FDFD", 0x123456), 0x58FDFD);
         eqi("supporter star colour rejects unsafe input", FcmConfig.supporterStarColor("url(evil)", 0x123456), 0x123456);
+        eqb("supporter marker accepts server flag", FcmConfig.supporterStarPresent(true, ""), true);
+        eqb("supporter marker accepts validated colour", FcmConfig.supporterStarPresent(false, "#FD4DA6"), true);
+        eqb("supporter marker rejects unsafe colour", FcmConfig.supporterStarPresent(false, "url(evil)"), false);
+        eqs("json string compact", FcmConfig.extractJsonString('{"tag":"X"}', "tag"), "X");
+        eqs("json string whitespace", FcmConfig.extractJsonString('{ "tag" : \"X\" }', "tag"), "X");
+        eqs("json string newline whitespace", FcmConfig.extractJsonString('{\n tag\t:\n \"X\"\n}', "tag"), "X");
+        eqs("json string escaped quote", FcmConfig.extractJsonString('{"tag":"a\\\"b"}', "tag"), "a\\\"b");
 
         // ── clampInt / clampFloat ──
         eqi("clampInt below", FcmConfig.clampInt(5, 10, 20), 10);

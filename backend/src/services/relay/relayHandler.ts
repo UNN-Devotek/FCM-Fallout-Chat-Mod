@@ -44,6 +44,7 @@ import {
 } from './clientCapabilityStore';
 import { ingestMessage } from '../ingestMessage';
 import { attachCosmetics, attachCosmeticsToHistory } from '../cosmetics/cosmeticsService';
+import { refreshSupporterFromHudSend } from '../supporterSyncService';
 import {
   relayHudCosmetics,
   withoutRelayHudCosmetics,
@@ -872,7 +873,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   // identity.userId is relay TEXT — ban state lives on the FCM account (linkedUserId).
   const user = await prisma.user.findUnique({
     where: { id: identity.linkedUserId! },
-    select: { isBanned: true, isMuted: true, kickedUntil: true },
+    select: { isBanned: true, isMuted: true, kickedUntil: true, discordId: true },
   });
   if (user?.isBanned) {
     send(ws, errEnvelope('user_banned', 'This account is banned'));
@@ -963,6 +964,16 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     send(ws, errEnvelope('message_too_long', 'Message body exceeds 500 characters'));
     return;
   }
+
+  // HUD-originated sends are the fast path for a supporter role change. Refresh
+  // the linked account's Discord roles at most once per minute before either the
+  // ephemeral server event or persisted static message is decorated. The helper
+  // fails open to the last known entitlement on transient Discord failures, so
+  // role verification can never make chat unavailable.
+  await refreshSupporterFromHudSend({
+    userId: identity.linkedUserId!,
+    discordId: user?.discordId ?? null,
+  });
 
   // Discard targetUserId on all non-whisper sends (frame.targetUserId ignored).
 
