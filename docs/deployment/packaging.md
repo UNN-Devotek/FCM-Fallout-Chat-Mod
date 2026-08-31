@@ -55,14 +55,26 @@ between environments.
 ```
 
 **What it does:**
-1. Calls `publish-nexus.ps1` for each enabled Nexus file group: the Linux AppImage ZIP as `main`, the Linux `.deb` ZIP as `main`, and the production HUD ZIP as `optional` (Windows remains disabled while Nexus quarantines `.exe` uploads)
+1. Calls `publish-nexus.ps1` for the Linux AppImage ZIP and Linux `.deb` ZIP as `main`, and the production HUD ZIP as `optional`; each normal replacement archives the previous file only after the new upload reaches Nexus `available`
 2. Uses the desktop version for both Linux Nexus files and the current `FCMChatWidget.hx` version for the HUD Nexus file
 3. After the Nexus publishes succeed, uploads the raw Windows `.exe` to VirusTotal using the large-file upload URL (required for files > 32 MB)
 4. Computes the SHA-256 permalink and POSTs it to `POST https://falloutchatmod.com/admin/virustotal-url` so the `/virustotal` redirect always points at the latest scan
 
+Windows is an explicit, support-gated path because Nexus may quarantine `.exe` uploads. To upload
+a new Windows ZIP alongside the existing live Windows file for review, run:
+
+```powershell
+.\Packaging\publish-nexus-release.ps1 -Version X.Y.Z -PublishWindowsForReview
+```
+
+The review path sends `archive_existing_file: false`, so both Windows files remain available. After
+Nexus support approves the new file, remove the old Windows file manually in the Nexus Files tab.
+The ordinary release path does not upload Windows to Nexus, and therefore does not require
+`NEXUS_FILE_GROUP_ID_WINDOWS`.
+
 **Required env vars** (Windows: set as USER env vars so they persist across PowerShell sessions. Linux/`pwsh`: put them in the repo-root `.env`/`.env.local` — `release.ps1` auto-loads them via `Import-DotEnv` — or `export` them before running):
 - `NEXUS_API_KEY` — personal API key from nexusmods.com/settings/api-keys
-- `NEXUS_FILE_GROUP_ID_WINDOWS` — file-group id for the Windows file (Files tab → Manage Files → API Info)
+- `NEXUS_FILE_GROUP_ID_WINDOWS` — file-group id for the Windows file (required only with `-PublishWindowsForReview`; Files tab → Manage Files → API Info)
 - `NEXUS_FILE_GROUP_ID_LINUX` — file-group id for the Linux file
 - `NEXUS_FILE_GROUP_ID_LINUX_DEB` — separate file-group id for the Linux `.deb` file
 - `NEXUS_FILE_GROUP_ID_HUD` — separate file-group id for the optional HUD ZIP on the same Nexus mod page
@@ -73,7 +85,9 @@ The HUD file is uploaded as a separate optional Nexus file group, so it does not
 desktop download. Set `NEXUS_FILE_GROUP_ID_HUD` to the group created for the HUD package in the
 Nexus Files tab. The wrapper expects `ZFE FCM HUD Mod-<widget-version> (PROD).zip` to already
 exist in `dist-electron/` (the normal `release.ps1` sequence creates it in step 4), then archives
-the previous HUD file when the new one reaches Nexus `available` state.
+the previous HUD file when the new one reaches Nexus `available` state. The low-level uploader
+defaults to preserving the previous file; the wrapper opts into archiving for the normal Linux,
+`.deb`, and HUD replacement paths.
 
 **ASCII-only rule:** This script must remain ASCII-only. PowerShell 5.1 via `-File` mis-tokenizes non-ASCII characters (em-dashes, smart quotes, etc.) inside double-quoted strings and throws a misleading `Unexpected token '}'` parse error. Use plain hyphens (`-`), never Unicode dashes.
 
@@ -89,9 +103,13 @@ the previous HUD file when the new one reaches Nexus `available` state.
 3. `POST <complete presigned url>` — complete the S3 multipart upload (XML body with ETags)
 4. `POST /uploads/{id}/finalise` — hand the upload back to Nexus
 5. `GET /uploads/{id}` (poll) — wait until state is `available` (Nexus virus-scans the file)
-6. `POST /mod-file-update-groups/{group_id}/versions` — attach as new MAIN file with `archive_existing_file: true`
+6. `POST /mod-file-update-groups/{group_id}/versions` — attach as a new file, with
+   `archive_existing_file` explicitly set by the caller
 
-There is no standalone archive/delete endpoint on Nexus; the previous file is archived as a side effect of posting a replacement.
+There is no standalone archive/delete endpoint on Nexus; the previous file is archived as a side
+effect of posting a replacement only when `archive_existing_file: true`. The low-level wrapper
+defaults this field to `false` so support-review uploads cannot retire the existing live file by
+accident. Pass `-ArchiveExisting:$true` only for an approved replacement.
 
 **Windows curl.exe / Schannel TLS note:** All Nexus API calls use `curl.exe` (not `Invoke-RestMethod`) with `--ssl-revoke-best-effort` to avoid a hard-revocation handshake failure. Windows curl is built against Schannel, which does a hard OCSP/CRL check. When the Nexus/Cloudflare revocation responder is slow or unreachable, the TLS handshake never completes (HTTP 000, `time_appconnect = 0`). The `--ssl-revoke-best-effort` flag tolerates an unreachable responder without disabling revocation entirely. Calls also carry `--connect-timeout 15 --max-time 120` and retry up to 4 times on transient failures (HTTP 0 or 5xx).
 

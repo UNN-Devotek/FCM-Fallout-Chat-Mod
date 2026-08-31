@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def main() -> None:
     nexus = (ROOT / "Packaging/publish-nexus-release.ps1").read_text(encoding="utf-8")
+    nexus_uploader = (ROOT / "Packaging/publish-nexus.ps1").read_text(encoding="utf-8")
     install_page = (ROOT / "admin-dashboard/src/features/auth/LandingPage.tsx").read_text(
         encoding="utf-8"
     )
@@ -31,9 +32,22 @@ def main() -> None:
         "FileCategory  = $p.Category",
         '$linuxDeb = Join-Path $DistDir "Fallout Chat Mod-$Version.deb"',
         '@{ Name = "Linux .deb";',
+        "[switch]$PublishWindowsForReview",
+        "$publishWindows = [bool]$PublishWindowsForReview",
+        "if ($publishWindows)",
+        '@{ Name = "Windows (support review)";',
+        "ArchiveExisting = $false",
+        "ArchiveExisting = $true",
     )
     for marker in required_nexus_markers:
         assert marker in nexus, f"Nexus release path is missing: {marker}"
+
+    for marker in (
+        "[bool]  $ArchiveExisting   = $false",
+        "archive_existing_file        = $ArchiveExisting",
+        "preserving previous file",
+    ):
+        assert marker in nexus_uploader, f"Nexus uploader is missing safe archive guard: {marker}"
 
     # The HUD download must remain in the first install section, before the
     # platform-specific Windows section, so it is visible without scrolling.

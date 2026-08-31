@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-    Publishes a built release file to Nexus Mods as a NEW file version and archives
-    the previously-current file, using the Nexus v3 Upload API.
+    Publishes a built release file to Nexus Mods as a NEW file version, optionally
+    archiving the previously-current file, using the Nexus v3 Upload API.
 
 .DESCRIPTION
     Implements the full 6-step v3 Upload flow (mirrors Nexus-Mods/upload-action):
@@ -11,12 +11,13 @@
       4. POST /uploads/{id}/finalise      - hand the upload back to Nexus
       5. GET  /uploads/{id}  (poll)       - wait until state == "available"
       6. POST /mod-file-update-groups/{group_id}/versions
-                                          - attach as the new file and archive
-                                            the previous one
+                                          - attach as the new file and optionally
+                                            archive the previous one
 
     There is no standalone "delete/archive" endpoint on Nexus - retiring the old
-    file happens ONLY as a side effect of posting the new one (archive_existing_file).
-    Each file group therefore receives a replacement file for every release.
+    file happens ONLY as a side effect of posting the new one, when
+    archive_existing_file is true. The default is false so a review upload can be
+    approved by Nexus support before the existing live file is retired.
 
 .NOTES
     TROUBLESHOOTING - "hangs on 1/6 opening multipart upload session" / HTTP 000:
@@ -67,7 +68,9 @@
     miscellaneous. Default: main.
 
 .PARAMETER ArchiveExisting
-    Archive the currently-live file when posting this one. Default: $true.
+    Archive the currently-live file when posting this one. Default: $false.
+    Pass -ArchiveExisting:$true for a normal replacement after the new upload is
+    approved and ready to become the current file.
 
 .PARAMETER DryRun
     Validate inputs and print the planned calls without uploading anything.
@@ -90,7 +93,7 @@ param(
     # Additional files to include alongside the installer in the -ZipAs archive
     # (e.g. INSTALL-*.txt, .kwinrule). Only used when -ZipAs is also provided.
     [string[]]$IncludeFiles    = @(),
-    [bool]  $ArchiveExisting   = $true,
+    [bool]  $ArchiveExisting   = $false,
     [string]$BaseUrl           = "https://api.nexusmods.com/v3",
     [int]   $MaxPollAttempts   = 60,
     [switch]$DryRun
@@ -347,8 +350,9 @@ for ($attempt = 1; $attempt -le $MaxPollAttempts; $attempt++) {
 }
 if ($state -ne "available") { Fail "Upload did not reach 'available' within $MaxPollAttempts attempts (last state: $state)" }
 
-# --- Step 6: attach the new file + archive the previous one ------------------
-Write-Host "[nexus] 6/6 attaching new version + archiving previous file ..."
+# --- Step 6: attach the new file + optionally archive the previous one --------
+$archiveLabel = if ($ArchiveExisting) { "archiving previous file" } else { "preserving previous file" }
+Write-Host "[nexus] 6/6 attaching new version + $archiveLabel ..."
 # Nexus auto-appends ".zip" to names for zip uploads - strip it to avoid ".zip.zip".
 $displayName = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
 $result = Invoke-Nexus -Method Post -Uri "$BaseUrl/mod-file-update-groups/$FileGroupId/versions" -Body @{
@@ -364,5 +368,5 @@ $result = Invoke-Nexus -Method Post -Uri "$BaseUrl/mod-file-update-groups/$FileG
 }
 $result = if ($result.data) { $result.data } else { $result }
 $categoryLabel = $FileCategory.ToUpperInvariant()
-Write-Host "[nexus] DONE - new file uid=$($result.id) is now the current $categoryLabel file; previous file archived=$ArchiveExisting"
+Write-Host "[nexus] DONE - new file uid=$($result.id) attached as $categoryLabel; previous file archived=$ArchiveExisting"
 exit 0

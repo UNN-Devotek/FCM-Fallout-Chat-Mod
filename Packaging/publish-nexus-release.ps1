@@ -22,10 +22,11 @@
          /app/downloads/electron/ on the VPS (see DEPLOY.md for the exact commands).
       5. Size verify: confirm the bytes served by the VPS match the local build artifact size.
       6. Register: POST /admin/releases {version, downloadUrl (Windows ZIP), releaseNotes}.
-      7. Nexus: THIS SCRIPT publishes the Linux ZIP as a MAIN file and the HUD ZIP
-         as an OPTIONAL file (each archiving its previous version) via
-         publish-nexus.ps1. Windows remains disabled while Nexus quarantines .exe
-         uploads; the website remains the Windows download source.
+      7. Nexus: THIS SCRIPT publishes the Linux AppImage ZIP and Linux .deb ZIP as
+         MAIN files and the HUD ZIP as an OPTIONAL file (each replacing its previous
+         version) via publish-nexus.ps1. Pass -PublishWindowsForReview to upload a
+         new Windows ZIP as a MAIN file while preserving the existing Windows file
+         for Nexus support review.
 
     IMPORTANT -- ASCII-ONLY SCRIPT RULE:
       Keep this file ASCII-only. Windows PowerShell 5.1 run via the `-File` flag
@@ -47,6 +48,10 @@
 .PARAMETER DistDir   build-output dir (default: ..\cross-platform-overlay\dist-electron)
 .PARAMETER HudModDir   HUD package source dir (default: ..\game-mods\FCMBridge\hudmodloader-chat)
 .PARAMETER DryRun    print planned calls (and test the zip step) without uploading
+.PARAMETER PublishWindowsForReview
+    Upload the Windows ZIP as a second MAIN file alongside the existing Windows
+    file without archiving it. Use this when submitting a new Windows build to
+    Nexus support for approval; remove the old file manually after approval.
 #>
 [CmdletBinding()]
 param(
@@ -56,7 +61,8 @@ param(
     # a "What's new in vX.Y.Z" block so the changelog is visible on the file page.
     [string]$ReleaseNotes = "",
     [string]$HudModDir = "",
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$PublishWindowsForReview
 )
 $ErrorActionPreference = "Stop"
 # Release notes may arrive via the FCM_RELEASE_NOTES env var instead of the
@@ -78,13 +84,16 @@ $winGroup   = $env:NEXUS_FILE_GROUP_ID_WINDOWS
 $linuxGroup = $env:NEXUS_FILE_GROUP_ID_LINUX
 $linuxDebGroup = $env:NEXUS_FILE_GROUP_ID_LINUX_DEB
 $hudGroup   = $env:NEXUS_FILE_GROUP_ID_HUD
+$publishWindows = [bool]$PublishWindowsForReview
 # Fall back to the persistent USER-scope value (process env may not carry it).
 if (-not $winGroup)   { $winGroup   = [Environment]::GetEnvironmentVariable('NEXUS_FILE_GROUP_ID_WINDOWS','User') }
 if (-not $linuxGroup) { $linuxGroup = [Environment]::GetEnvironmentVariable('NEXUS_FILE_GROUP_ID_LINUX','User') }
 if (-not $linuxDebGroup) { $linuxDebGroup = [Environment]::GetEnvironmentVariable('NEXUS_FILE_GROUP_ID_LINUX_DEB','User') }
 if (-not $hudGroup)   { $hudGroup   = [Environment]::GetEnvironmentVariable('NEXUS_FILE_GROUP_ID_HUD','User') }
-if (-not $winGroup -or -not $linuxGroup -or -not $linuxDebGroup -or -not $hudGroup) {
-    Write-Error "Set NEXUS_FILE_GROUP_ID_WINDOWS, NEXUS_FILE_GROUP_ID_LINUX, NEXUS_FILE_GROUP_ID_LINUX_DEB, and NEXUS_FILE_GROUP_ID_HUD env vars first."
+if (-not $linuxGroup -or -not $linuxDebGroup -or -not $hudGroup -or ($publishWindows -and -not $winGroup)) {
+    $requiredGroups = "NEXUS_FILE_GROUP_ID_LINUX, NEXUS_FILE_GROUP_ID_LINUX_DEB, and NEXUS_FILE_GROUP_ID_HUD"
+    if ($publishWindows) { $requiredGroups += ", plus NEXUS_FILE_GROUP_ID_WINDOWS for the Windows upload" }
+    Write-Error "Set $requiredGroups env vars first."
     exit 1
 }
 
@@ -199,19 +208,22 @@ $linuxInclude = @(
     (Join-Path $assetsDir "fallout-chatmod-keepabove.kwinrule")
 )
 
-foreach ($p in @(
-    # Windows OFF Nexus (re-disabled 2026-06-21): even the CODE-SIGNED .exe is quarantined by
-    # Nexus's .exe file-type policy. It reported state=available on upload, then the downstream
-    # virus scan flagged it. Signing fixes the SmartScreen warning on the website but does NOT
-    # get past Nexus, so Windows stays OFF Nexus and the bundled README points Windows users to
-    # the site. RE-ENABLE only if Nexus lifts the .exe quarantine (support ticket).
-    # @{ Name = "Windows"; File = $winExe;   Zip = $winZip;   Group = $winGroup;   Desc = $winDesc;   Include = $winInclude   },
-    @{ Name = "Linux AppImage"; File = $linuxApp; Zip = $linuxAppZip; Group = $linuxGroup; Desc = $linuxAppDesc; Include = $linuxInclude; NexusVersion = $Version; Category = "main" },
-    @{ Name = "Linux .deb"; File = $linuxDeb; Zip = $linuxDebZip; Group = $linuxDebGroup; Desc = $linuxDebDesc; Include = $linuxInclude; NexusVersion = $Version; Category = "main" },
+$platforms = @(
+    @{ Name = "Linux AppImage"; File = $linuxApp; Zip = $linuxAppZip; Group = $linuxGroup; Desc = $linuxAppDesc; Include = $linuxInclude; NexusVersion = $Version; Category = "main"; ArchiveExisting = $true },
+    @{ Name = "Linux .deb"; File = $linuxDeb; Zip = $linuxDebZip; Group = $linuxDebGroup; Desc = $linuxDebDesc; Include = $linuxInclude; NexusVersion = $Version; Category = "main"; ArchiveExisting = $true },
     # The HUD package is a separate optional file group on the same Nexus mod page.
     # Its file version follows the widget version, not the desktop overlay version.
-    @{ Name = "HUD"; File = $hudZip; Zip = ""; Group = $hudGroup; Desc = $hudDesc; Include = @(); NexusVersion = $hudVersion; Category = "optional" }
-)) {
+    @{ Name = "HUD"; File = $hudZip; Zip = ""; Group = $hudGroup; Desc = $hudDesc; Include = @(); NexusVersion = $hudVersion; Category = "optional"; ArchiveExisting = $true }
+)
+if ($publishWindows) {
+    # Support-review upload creates a second live Windows file alongside the existing one.
+    # The old file is removed manually only after Nexus support approves the new file.
+    $platforms = @(
+        @{ Name = "Windows (support review)"; File = $winExe; Zip = $winZip; Group = $winGroup; Desc = $winDesc; Include = $winInclude; NexusVersion = $Version; Category = "main"; ArchiveExisting = $false }
+    ) + $platforms
+}
+
+foreach ($p in $platforms) {
     if (-not (Test-Path $p.File)) { Write-Error "[$($p.Name)] artifact not found: $($p.File)"; exit 1 }
     Write-Host "==== Publishing $($p.Name) -> Nexus group $($p.Group) ===="
     $args = @{
@@ -222,12 +234,14 @@ foreach ($p in @(
         Description   = $p.Desc
         IncludeFiles  = $p.Include
         FileCategory  = $p.Category
+        ArchiveExisting = $p.ArchiveExisting
     }
     if ($DryRun) { $args.DryRun = $true }
     & $nexus @args
     if ($LASTEXITCODE -ne 0) { Write-Error "[$($p.Name)] publish failed (exit $LASTEXITCODE)"; exit 1 }
 }
-Write-Host "==== Nexus publish complete for Linux AppImage + .deb v$Version + HUD v$hudVersion ===="
+$windowsSummary = if ($publishWindows) { " + Windows support-review upload (old file preserved)" } else { "" }
+Write-Host "==== Nexus publish complete for Linux AppImage + .deb v$Version + HUD v$hudVersion$windowsSummary ===="
 
 # -- VirusTotal upload + backend permalink update --------------------------------
 # The Windows .exe is ~81 MB (>32 MB) so we must use the large-file upload URL.

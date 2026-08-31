@@ -111,7 +111,8 @@ OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows
 | `FCM_SSH_TARGET` | upload (step 5) | `user@host` of the prod VPS |
 | `FCM_SSH_KEY` | upload (step 5) | path to the SSH private key. On Linux the key must live at a real path with `chmod 600` (a key on `/mnt/*` DrvFs has perms `ssh` rejects — copy it to `~/.ssh/<key>`) |
 | `FCM_BACKEND_CONTAINER` | upload (step 5) | Dokploy backend container, e.g. `chat-mod-fallout-chat-mod-<id>-backend-1` |
-| `NEXUS_API_KEY`, `NEXUS_FILE_GROUP_ID_WINDOWS`, `NEXUS_FILE_GROUP_ID_LINUX`, `NEXUS_FILE_GROUP_ID_LINUX_DEB` | step 7 (Nexus) | optional; step 7 fail-closed-aborts if unset (the **primary** release in steps 1-6 is already live by then) |
+| `NEXUS_API_KEY`, `NEXUS_FILE_GROUP_ID_LINUX`, `NEXUS_FILE_GROUP_ID_LINUX_DEB` | step 7 (Nexus) | optional; required for the normal Linux/deb Nexus publish (the **primary** release in steps 1-6 is already live by then) |
+| `NEXUS_FILE_GROUP_ID_WINDOWS` | step 7 (Nexus) | only needed for the explicit `-PublishWindowsForReview` path |
 | `NEXUS_FILE_GROUP_ID_HUD` | step 7 (Nexus) | required for the optional HUD file upload; step 7 fail-closed-aborts if unset |
 
 ### Step 1 — Build raw artifacts
@@ -154,9 +155,9 @@ OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows
 #### Windows code signing (Azure Trusted Signing)
 
 The Windows installer is **code-signed via Azure Trusted Signing** by `build-windows.yml`. This
-removes the SmartScreen "unknown publisher" warning and is what lifts the Nexus installer
-quarantine (see Step 7). Signing happens automatically in the workflow's build step — no manual
-action per release.
+removes the SmartScreen "unknown publisher" warning on the website download. Nexus support review
+of Windows uploads remains a separate step (see Step 7). Signing happens automatically in the
+workflow's build step — no manual action per release.
 
 **How it's wired (and why it's in the workflow, not `package.json`):**
 
@@ -370,23 +371,27 @@ the dev install page. The dev announcement is posted to the dev bot's configured
 .\Packaging\publish-nexus-release.ps1 -Version X.Y.Z [-ReleaseNotes "..."]
 ```
 
-> **Windows Nexus upload is DISABLED — signing did NOT bypass it (since 2026-06-21).** The installer
-> is code-signed (Step 1 → "Windows code signing"), which removed the website SmartScreen warning,
-> but Nexus **still quarantines the `.exe`** by file-type policy: v1.3.91's signed `.exe` reported
-> `state=available` on upload, then Nexus's downstream scan flagged it and it was pulled. So the
-> `Windows` entry in the platform loop is **commented out** (Linux-only publish); the Linux zip is
-> renamed `Fallout Chat Mod <ver>.zip` and bundles `READ ME FIRST (Windows users).txt` pointing
-> Windows users to `falloutchatmod.com` (still uploaded to the website in steps 4-6). **Re-enable the
-> `Windows` line only if Nexus lifts the `.exe` quarantine** (support ticket).
+Nexus may quarantine Windows `.exe` uploads, so Windows publication is an explicit support-review
+workflow rather than part of the ordinary release path. To upload a new Windows ZIP alongside the
+existing live Windows file for support review, use:
+
+```powershell
+.\Packaging\publish-nexus-release.ps1 -Version X.Y.Z -PublishWindowsForReview
+```
+
+The review path passes `archive_existing_file: false`, so both Windows files remain available.
+After support approves the new file, remove the old Windows file manually in the Nexus Files tab.
+The normal release command does not upload Windows to Nexus.
 
 This script:
-1. Calls `Packaging/publish-nexus.ps1` for each enabled file group: the Linux AppImage ZIP and Linux `.deb` ZIP are published as `main`, and the production `ZFE FCM HUD Mod` ZIP is published as `optional` (Windows stays off Nexus per the note above)
-2. Each call implements the 6-step Nexus v3 Upload API: open multipart session → upload chunks to S3 → complete S3 multipart → finalise → poll for `available` state → attach the new file and archive its previous version
-3. Uploads the Windows `.exe` to VirusTotal and pushes the permalink to `/admin/virustotal-url`
+1. Calls `Packaging/publish-nexus.ps1` for the Linux AppImage ZIP and Linux `.deb` ZIP as `main`, and the production `ZFE FCM HUD Mod` ZIP as `optional`; these normal replacement paths archive their previous files
+2. Optionally calls `publish-nexus.ps1` for the Windows ZIP as `main` when one of the explicit Windows switches is supplied
+3. Implements the 6-step Nexus v3 Upload API: open multipart session → upload chunks to S3 → complete S3 multipart → finalise → poll for `available` state → attach the new file with the requested archive behavior
+4. Uploads the Windows `.exe` to VirusTotal and pushes the permalink to `/admin/virustotal-url`
 
 Required env vars (set as Windows USER env vars):
 - `NEXUS_API_KEY`
-- `NEXUS_FILE_GROUP_ID_WINDOWS`
+- `NEXUS_FILE_GROUP_ID_WINDOWS` — required only for `-PublishWindowsForReview`
 - `NEXUS_FILE_GROUP_ID_LINUX`
 - `NEXUS_FILE_GROUP_ID_LINUX_DEB` — the separate Linux `.deb` file group
 - `NEXUS_FILE_GROUP_ID_HUD` — the separate optional HUD file group on the same Nexus mod page
@@ -396,7 +401,9 @@ Required env vars (set as Windows USER env vars):
 The HUD package is uploaded from `dist-electron/ZFE FCM HUD Mod-<widget-version> (PROD).zip`.
 Its Nexus file version is the widget version read from `FCMChatWidget.hx`, not the desktop
 overlay version. Create the HUD file group in the Nexus Files tab and set its ID in
-`NEXUS_FILE_GROUP_ID_HUD`; the wrapper then replaces the previous HUD file on each release.
+`NEXUS_FILE_GROUP_ID_HUD`; the wrapper then replaces the previous HUD file on each release. The
+low-level uploader defaults to preserving the previous file; normal Linux, `.deb`, and HUD
+replacements explicitly enable archiving.
 
 ---
 
