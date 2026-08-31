@@ -1005,7 +1005,11 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       ...hudCosmetics,
     };
     await publishServerMessage(worldId, relaySeq, event);
-    send(ws, { success: true, messageId: event.messageId });
+    // Include the resolved identity cosmetics in the send acknowledgement as well as
+    // the live event. ZFE renders a local optimistic row immediately; returning the
+    // authoritative marker here means that row is decorated even if the asynchronous
+    // subscriber echo is delayed or consumed by a separate native queue.
+    send(ws, { success: true, messageId: event.messageId, ...hudCosmetics });
     return;
   }
 
@@ -1056,7 +1060,10 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     return;
   }
 
-  send(ws, { success: true, messageId: result.messageId });
+  const senderCosmetics = await resolveHudCosmetics(identity.linkedUserId);
+  // See the server-room acknowledgement above: the HUD can paint its optimistic
+  // self-row from this authoritative response without waiting for pub/sub delivery.
+  send(ws, { success: true, messageId: result.messageId, ...senderCosmetics });
 }
 
 /**

@@ -34,7 +34,7 @@ import { getRedisClient } from '../config/redis';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
 import { engineEvaluate } from './autoModEngine';
-import { relayToDiscord } from './discordService';
+import { relayToDiscord, type RelayAuthorCosmetics } from './discordService';
 import { persistMessage } from './messageService';
 import messageQueue from '../queues/messagePersist';
 import { emojifyShortcodes } from '../utils/emoji';
@@ -350,6 +350,9 @@ export async function finalizeMessage(opts: {
     opts.mentions,
     hasMetadata ? (opts.metadata ?? undefined) : undefined,
     messageId,
+    Array.isArray(payload.badges)
+      ? { badges: payload.badges as RelayAuthorCosmetics['badges'] }
+      : undefined,
   );
   relayPromise.catch((err) => logger.warn({ err }, '[finalizeMessage] Discord relay failed (non-fatal)'));
 

@@ -92,7 +92,8 @@ stopped event.
 ### Overlay → Discord (outbound)
 
 Handled by `relayToDiscord()` at `discordService.ts:747`. Called from the WS
-`chat:send` handler when the destination channel has `discord_relay` enabled.
+`chat:send` handler and the shared HUD relay finalizer when the destination channel
+has `discord_relay` enabled.
 
 - Outbound messages are rate-limited to 4 msg/sec through an in-memory queue
   drained by a 250 ms interval timer.
@@ -101,7 +102,11 @@ Handled by `relayToDiscord()` at `discordService.ts:747`. Called from the WS
   for linked users.
 - A zero-width-space watermark is appended to prevent the inbound handler from
   re-relaying the message.
-- Format: `**[ChannelName]** **Username**: content`
+- Format: `**[ChannelName]** **Username**: content`. When the server-resolved author
+  is a Supporter or Overseer, the immutable `★` is included beside the username;
+  arbitrary badge text is never accepted. The HUD send acknowledgement and live
+  event use the same server-resolved identity, so a supporter message typed in-game
+  is marked consistently in the HUD, overlay, and Discord relay.
 
 ---
 

@@ -103,6 +103,11 @@ jest.mock('../src/services/autoModEngine', () => ({
   engineEvaluate: jest.fn().mockResolvedValue({ block: false, matches: [] }),
 }));
 
+jest.mock('../src/services/cosmetics/cosmeticsService', () => ({
+  attachCosmetics: jest.fn(async (payload) => payload),
+  attachCosmeticsToHistory: jest.fn(async (payloads) => payloads),
+}));
+
 // Token + user state for mocked Prisma
 let _tokenRows = [];
 let _userMap   = {};
@@ -751,6 +756,9 @@ describe('relay WebSocket ops', () => {
     require('../src/services/ingestMessage').ingestMessage.mockResolvedValue(
       { ok: true, messageId: 'msg-stub' },
     );
+    require('../src/services/cosmetics/cosmeticsService').attachCosmetics.mockImplementation(
+      async (payload) => payload,
+    );
   });
 
   // Helper: connect a WS to this suite's server
@@ -1318,6 +1326,40 @@ describe('relay WebSocket ops', () => {
     expect(args.userId).toBe(fcmId);                          // the linked FCM UUID
     expect(args.userId).not.toBe(rawId);                     // NOT the relay TEXT id
     expect(String(args.userId).startsWith('user_')).toBe(false);
+    ws.close();
+  });
+
+  test('send acknowledgement carries authoritative supporter cosmetics for the HUD echo', async () => {
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'AckSupporter' }),
+    );
+    wsReg.close();
+    const { token } = regRes;
+    const rawId = lastRawUserId();
+    const fcmId = 'fcm-ack-supporter-001';
+    _userMap[fcmId] = { id: fcmId, discordId: 'disc-ack-supporter', steamId: null, isBanned: false, isMuted: false };
+    markTokensLinked(rawId, fcmId);
+
+    const attachCosmetics = require('../src/services/cosmetics/cosmeticsService').attachCosmetics;
+    attachCosmetics.mockImplementation(async (payload) => {
+      payload.tag = 'X';
+      payload.badges = ['overseer'];
+      payload.starColor = '#FD4DA6';
+      return payload;
+    });
+
+    const { ws, msgs } = await conn();
+    const res = await waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'send', token, channel: 'global', body: 'supporter ack' }),
+    );
+    expect(res).toMatchObject({
+      success: true,
+      messageId: 'msg-stub',
+      tag: 'X',
+      supporterStar: true,
+      starColor: '#FD4DA6',
+    });
     ws.close();
   });
 

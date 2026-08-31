@@ -4,7 +4,7 @@ ZFE is a `dxgi.dll` proxy for Fallout 76 that exposes `__ZFE` to the Scaleform
 HUD. FCM's optional `FCMChatWidget` HUDModLoader mod uses its sanctioned
 `chat.v1` surface to display chat in game.
 
-> **Current widget (2026-08-31):** `FCMChatWidget` v2.10.9 targets `/relay` through
+> **Current widget (2026-08-31):** `FCMChatWidget` v2.10.10 targets `/relay` through
 > ZFE `chat.v1`. The backend keeps production relay access fail-closed until
 > `RELAY_PRODUCTION_ENABLED=true` is deliberately rolled out. The desktop overlay
 > remains independent of this optional mod path.
@@ -120,7 +120,7 @@ lexicographically, so a string compare would silently lock every updated client 
 `MIN_COSMETICS_VERSION` is **2.10.0**, the first build that reports a version at all —
 the bump IS the capability signal.
 
-### HUD identity cosmetics (widget v2.10.9)
+### HUD identity cosmetics (widget v2.10.10)
 
 The relay now sends these additive fields on `chat.message` events only to clients that
 negotiated `clientVersion >= 2.10.0`:
@@ -131,9 +131,11 @@ negotiated `clientVersion >= 2.10.0`:
 
 The widget never accepts a glyph from the wire. It uses the immutable `★` constant and
 falls back to the configured active-tab color if a star color is absent or malformed. When
-the local player sends a message, the temporary optimistic row is replaced by the decorated
-relay echo before deduplication, so the sender sees the same supporter marker and tag as every
-other message author.
+the local player sends a message, the send acknowledgement decorates the optimistic row
+immediately and the later relay echo reconciles it before deduplication, so the sender sees
+the same supporter marker and tag as every other message author. The shared finalizer passes
+the server-resolved supporter tier to Discord, where the same immutable star is shown beside
+the author.
 Static history is decorated with the same current cosmetics as live messages. Because ZFE
 can use separate sockets for connect and subscribe, the relay stores only a short-lived
 one-way digest of the negotiated token/version in Redis to carry this capability across

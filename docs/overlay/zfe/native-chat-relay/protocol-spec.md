@@ -306,8 +306,19 @@ preserving server identity.
 Response:
 
 ```json
-{ "success": true, "messageId": "msg_1" }
+{
+  "success": true,
+  "messageId": "msg_1",
+  "tag": "X",
+  "supporterStar": true,
+  "starColor": "#FD4DA6"
+}
 ```
+
+The additive cosmetic fields appear only when the authenticated sender has the
+corresponding server-resolved identity cosmetics. The HUD uses them to decorate its
+immediate optimistic self-row; the same resolved supporter identity is also passed to
+the Discord relay, where the immutable `★` is rendered beside the author.
 
 ### Poll
 

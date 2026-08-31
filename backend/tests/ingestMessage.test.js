@@ -73,6 +73,10 @@ jest.mock('../src/services/discordService', () => ({
   relayToDiscord: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../src/services/cosmetics/cosmeticsService', () => ({
+  attachCosmetics: jest.fn(async (payload) => payload),
+}));
+
 jest.mock('../src/queues/messagePersist', () => ({
   add: jest.fn().mockResolvedValue({}),
   process: jest.fn(),
@@ -120,6 +124,7 @@ const messageQueue = require('../src/queues/messagePersist');
 const { engineEvaluate } = require('../src/services/autoModEngine');
 const { getActiveBlock } = require('../src/services/hudIdentityService');
 const { getRedisClient } = require('../src/config/redis');
+const { attachCosmetics } = require('../src/services/cosmetics/cosmeticsService');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -160,6 +165,7 @@ beforeEach(() => {
   engineEvaluate.mockResolvedValue({ block: false, matches: [] });
   broadcast.mockReset();
   relayToDiscord.mockResolvedValue(undefined);
+  attachCosmetics.mockImplementation(async (payload) => payload);
   messageQueue.add.mockResolvedValue({ finished: jest.fn().mockResolvedValue(undefined) });
   getActiveBlock.mockResolvedValue(null);
 });
@@ -205,6 +211,33 @@ describe('ingestMessage — happy path', () => {
       undefined,
       undefined,
       result.messageId,
+      undefined,
+    );
+  });
+
+  it('passes the server-resolved supporter identity to the Discord relay', async () => {
+    attachCosmetics.mockImplementation(async (payload) => {
+      payload.badges = ['overseer'];
+      payload.starColor = '#FD4DA6';
+      return payload;
+    });
+
+    const result = await ingestMessage({
+      userId: 'supporter-user',
+      channelId: VALID_CHANNEL_ID,
+      rawContent: 'supporter from HUD',
+      source: 'hud',
+    });
+
+    expect(relayToDiscord).toHaveBeenCalledWith(
+      VALID_CHANNEL_ID,
+      expect.any(String),
+      'supporter from HUD',
+      expect.any(String),
+      undefined,
+      undefined,
+      result.messageId,
+      { badges: ['overseer'] },
     );
   });
 

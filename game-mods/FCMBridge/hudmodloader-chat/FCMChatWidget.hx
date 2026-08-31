@@ -134,7 +134,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.9";  // HUD identity cosmetics + authoritative self-echo hydration
+    static inline var VERSION:String  = "2.10.10"; // HUD supporter send acknowledgement + Discord relay parity
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -1799,6 +1799,9 @@ class FCMChatWidget extends MovieClip {
                 // Optimistic local echo on CONFIRMED send (only when we know our id).
                 if (_relayUserId.length > 0) {
                     var messageId:String = extractJsonString(rs, "messageId");
+                    var ackTag:String = extractJsonString(rs, "tag");
+                    var ackSupporterStar:Bool = extractJsonBool(rs, "supporterStar");
+                    var ackStarColor:String = extractJsonString(rs, "starColor");
                     var dedupKey:String = (messageId.length > 0)
                         ? echoIdKey(messageId)
                         : echoSbKey(_relayUserId, slug, raw);
@@ -1809,7 +1812,7 @@ class FCMChatWidget extends MovieClip {
                     if (slug == CHAN_SLUGS[_chanIdx]) {
                         _records.push({
                             color: hx(_cfg.senderColor), channel: slug, user: _displayName,
-                            tag: "", supporterStar: false, starColor: "", body: raw,
+                            tag: ackTag, supporterStar: ackSupporterStar, starColor: ackStarColor, body: raw,
                             messageId: messageId, senderUserId: _relayUserId,
                         });
                         while (_records.length > _cfg.maxMessages) _records.shift();

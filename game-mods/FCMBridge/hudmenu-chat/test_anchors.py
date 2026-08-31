@@ -363,9 +363,9 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.9";' in widget_src
-          and "authoritative self-echo hydration" in widget_src,
-          "FCMChatWidget bumps the HUD identity-cosmetics build to version 2.10.9")
+    check('static inline var VERSION:String  = "2.10.10";' in widget_src
+          and "function hydrateOwnEcho" in widget_src,
+          "FCMChatWidget bumps the HUD supporter send-ack build to version 2.10.10")
     check('extractJsonBool(obj, "supporterStar")' in widget_src
           and 'FcmConfig.SUPPORTER_STAR_GLYPH' in widget_src
           and 'customTagHtml' in widget_src,
@@ -377,6 +377,9 @@ if widget_src:
           and 'rec.supporterStar = supporterStar;' in widget_src
           and 'rec.starColor = starColor;' in widget_src,
           "FCMChatWidget hydrates optimistic self-rows from authoritative cosmetics")
+    check('var ackSupporterStar:Bool = extractJsonBool(rs, "supporterStar");' in widget_src
+          and 'tag: ackTag, supporterStar: ackSupporterStar, starColor: ackStarColor' in widget_src,
+          "FCMChatWidget decorates optimistic self-rows from the send acknowledgement")
     fallout_name_match = re.search(
         r"function readFalloutDisplayName\([^)]*\):String \{(.*?)\n    \}\n\n    function hasResolvedDisplayName",
         widget_src,

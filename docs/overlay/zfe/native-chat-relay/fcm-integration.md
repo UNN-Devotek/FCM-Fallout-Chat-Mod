@@ -84,7 +84,7 @@ normal database channel.
 
 ## HUD identity cosmetic extension
 
-Widget v2.10.9 understands three optional, additive FCM fields on `chat.message`
+Widget v2.10.10 understands three optional, additive FCM fields on `chat.message`
 events, including subscribe-time history:
 
 ```json
@@ -105,6 +105,14 @@ the wire. The desktop/web `nameColor` and effect fields remain outside this HUD 
 self-authored in-game message is initially shown optimistically, then hydrated from its
 authoritative decorated relay echo before deduplication; it therefore receives the same fields
 as Discord-originated and other in-game messages.
+
+Successful static and server `chat.v1.sendMessage` responses also include the same
+HUD-safe `tag`, `supporterStar`, and `starColor` fields when present. The widget uses
+those fields for its immediate optimistic self-row, so a supporter sending from the HUD
+is marked before the asynchronous subscriber echo arrives. The shared finalizer passes
+the server-resolved supporter tier to the outbound Discord relay, which renders the
+immutable `★` beside the author; Discord cannot reproduce the web/HUD star colour in
+ordinary message text.
 
 ## Ephemeral `server` rooms
 

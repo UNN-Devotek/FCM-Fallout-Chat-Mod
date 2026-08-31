@@ -86,6 +86,30 @@ function stripMentions(text: string): string {
     .replace(/<#\d+>/g, '[channel]');
 }
 
+export type RelayAuthorCosmetics = {
+  /** Server-resolved supporter tiers only; arbitrary badge text is ignored. */
+  badges?: readonly string[] | null;
+};
+
+const SUPPORTER_STAR_GLYPH = '★' as const;
+
+/**
+ * Build the stable Discord author prefix used for messages originating in FCM.
+ * Discord cannot colour individual characters in ordinary message content, so the
+ * shared supporter identity is represented by the same immutable star glyph; the
+ * colour remains a web/HUD-only presentation detail.
+ */
+export function buildDiscordRelayPrefix(
+  channelName: string | undefined,
+  username: string,
+  badges?: readonly string[] | null,
+): string {
+  const isSupporter = badges?.includes('supporter') || badges?.includes('overseer');
+  const marker = isSupporter ? `${SUPPORTER_STAR_GLYPH} ` : '';
+  const tag = channelName ? `**[${channelName}]** ` : '';
+  return `${tag}**${marker}${stripMentions(username)}**: `;
+}
+
 /**
  * Resolve Discord user-mention tokens (<@id> / <@!id>) to readable names on the
  * INBOUND relay path (Discord → overlay). Each mentioned user id is resolved with
@@ -1235,7 +1259,7 @@ async function resolveWikiUrlFromContent(text: string): Promise<{
 
 // ── Outbound relay ────────────────────────────────────────────────────────────
 
-async function relayToDiscord(channelId: string, username: string, content: string, channelName?: string, mentions?: Array<{ name: string; discordId: string }>, metadata?: Record<string, unknown> | null, sourceMessageId?: string): Promise<void> {
+async function relayToDiscord(channelId: string, username: string, content: string, channelName?: string, mentions?: Array<{ name: string; discordId: string }>, metadata?: Record<string, unknown> | null, sourceMessageId?: string, authorCosmetics?: RelayAuthorCosmetics): Promise<void> {
   if (!discordClient || discordStatus !== 'connected') return;
 
   // Drop synthetic relay health-check probes so test traffic never appears in the
@@ -1275,8 +1299,7 @@ async function relayToDiscord(channelId: string, username: string, content: stri
     const withExplicit = applyExplicitMentions(stripped, mentions);
     const safeContent = markdownifyLinks(await resolveAppMentions(withExplicit));
     const watermarked = safeContent.length > 0 ? safeContent + ZWS : safeContent;
-    const tag = channelName ? `**[${channelName}]** ` : '';
-    const discordPrefix = `${tag}**${stripMentions(username)}**: `;
+    const discordPrefix = buildDiscordRelayPrefix(channelName, username, authorCosmetics?.badges);
     const formatted = `${discordPrefix}${watermarked}`;
 
     const mappings = await loadRelayMappings();
@@ -1630,4 +1653,4 @@ function invalidateRelayMappingsCache(): void {
 
 export { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, editDiscordRelayMessage, syncDiscordMessageUpdate, invalidateRelayMappingsCache, loadRelayMappings, relayDiscordTyping, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };
 export type { };
-module.exports = { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, editDiscordRelayMessage, syncDiscordMessageUpdate, invalidateRelayMappingsCache, loadRelayMappings, relayDiscordTyping, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };
+module.exports = { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, buildDiscordRelayPrefix, editDiscordRelayMessage, syncDiscordMessageUpdate, invalidateRelayMappingsCache, loadRelayMappings, relayDiscordTyping, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };

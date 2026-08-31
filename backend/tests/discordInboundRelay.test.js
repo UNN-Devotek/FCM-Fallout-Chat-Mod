@@ -165,6 +165,13 @@ test('Discord inbound messages carry relaySeq into live broadcast and history pe
   }));
 });
 
+test('HUD supporter relay uses the immutable star in the Discord author prefix', () => {
+  expect(service.buildDiscordRelayPrefix('General', 'Devotek-', ['overseer']))
+    .toBe('**[General]** **★ Devotek-**: ');
+  expect(service.buildDiscordRelayPrefix('General', 'Regular', ['★', 'moderator']))
+    .toBe('**[General]** **Regular**: ');
+});
+
 test('Discord typingStart events use the mapped FCM identity and chat:typing protocol', async () => {
   const handler = mockHandlers.get('typingStart');
   expect(handler).toEqual(expect.any(Function));
