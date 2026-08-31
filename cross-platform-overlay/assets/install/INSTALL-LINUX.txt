@@ -1,6 +1,16 @@
 Fallout Chat Mod — Linux install
 ==================================
 
+Download choices on the INSTALL page
+-------------------------------------
+The website shows the current Linux packages side by side:
+  LINUX APPIMAGE       Portable package; make it executable and run it.
+  LINUX .DEB           Debian/Ubuntu package managed by apt/dpkg.
+  LINUX ZIP + DOCS     This archive: both packages, this guide, and the KDE helper.
+
+Choose one package for the install. Do not install both unless you intentionally
+want both package formats on the same system.
+
 1. Extract this zip. You'll have:
      Fallout Chat Mod-<version>.AppImage   (the app — portable, runs anywhere)
      Fallout Chat Mod-<version>.deb         (Debian/Ubuntu apt package — optional)

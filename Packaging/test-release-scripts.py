@@ -73,6 +73,9 @@ def main() -> None:
         for marker in ("Hyprland", "hyprctl", "plain X11", "game-running fallback"):
             assert marker.lower() in source.lower(), f"{label} is missing Linux detection marker: {marker}"
 
+    for marker in ("Download choices on the INSTALL page", "LINUX APPIMAGE", "LINUX .DEB", "LINUX ZIP + DOCS"):
+        assert marker in linux_install, f"packaged Linux instructions are missing package choice: {marker}"
+
     # The merged Linux PR made cursor locking explicit/on-demand. Keep the
     # public page from regressing to the old silent Proton/Wine mutation claim.
     assert "The installer enables it for" not in install_page
