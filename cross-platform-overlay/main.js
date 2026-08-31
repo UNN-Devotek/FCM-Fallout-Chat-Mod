@@ -328,15 +328,18 @@ aboverule=3
 layer=overlay
 layerrule=2
 `;
-const LINUX_README_TEXT = `Fallout Chat Mod — Linux / KDE setup
-=====================================
+const LINUX_README_TEXT = `Fallout Chat Mod — Linux desktop setup
+========================================
 
 On KDE Plasma (Wayland) the overlay configures itself AUTOMATICALLY — there is
 normally nothing to do. This note explains what it does and how to fix the rare
 cases, because it's compositor behavior, not an app bug (Electron can't set window
 stacking on Wayland — only KWin can).
 
-----------------------------------------------------------------------
+The overlay detects the Linux session and compositor automatically. There is no
+desktop-environment switch to select. Each path fails closed and keeps the normal
+game-running fallback if its helper is missing or fails.
+
 1) KEEP THE OVERLAY ABOVE THE GAME  (automatic — one KWin rule)
 ----------------------------------------------------------------------
 On first launch the overlay forces the XWayland backend. While Fallout 76 runs
@@ -354,7 +357,7 @@ different monitor. There it's just an ordinary window, not forced above
 anything. The overlay also HIDES automatically when FO76 loses focus to
 another app on the same monitor (typing in chat still counts as "in the
 game"), so it won't sit on top of your desktop when you tab away. See
-section 2 for what enables this focus detection.
+section 5 for what enables this focus detection.
 
 Why the force-Layer property: borderless games (incl. FO76) still tell KWin
 they are fullscreen (_NET_WM_STATE_FULLSCREEN), and KWin ranks a FOCUSED
@@ -373,26 +376,55 @@ bundled rule by hand:
 Uninstalling? The uninstaller removes this rule; FO76's fullscreen is restored.
 
 ----------------------------------------------------------------------
-2) STOP THE OVERLAY STEALING KEYS IN OTHER APPS  (install kdotool)
+2) HYPRLAND / WAYLAND  (automatic, best effort)
 ----------------------------------------------------------------------
-By default the overlay's hotkeys (Insert / Delete / Home, etc.) stay registered
-the whole time Fallout 76 is running — so they get intercepted even when you tab
-to Konsole, Discord, a browser, etc. Wayland hides the active window from apps,
-so the overlay needs "kdotool" to tell when you're NOT in the game/overlay and
-release the keys.
+The overlay uses hyprctl for active-window focus, the same-output probe, and
+pinning. This path is implemented but has not been verified on real Hyprland
+hardware. Missing or failing hyprctl logs a diagnostic and leaves ordinary
+stacking plus the Linux setAlwaysOnTop heartbeat fallback.
+
+----------------------------------------------------------------------
+3) PLAIN X11  (automatic focus detection when a helper is installed)
+----------------------------------------------------------------------
+The overlay prefers xdotool (kdotool is the fallback) for hide-on-alt-tab and
+hotkey release. Without either tool, global hotkeys remain registered for the
+whole FO76 session; the game-running fallback is safe and unchanged.
+
+----------------------------------------------------------------------
+4) GNOME / OTHER WAYLAND  (conditional)
+----------------------------------------------------------------------
+No KWin or Hyprland rule is applied. If the overlay will not stay above the game,
+set this Fallout 76 Steam launch option:
+
+  PROTON_NO_WM_DECORATION=1 %command%
+
+KDE users must not use that option; use the KWin rule above instead. Windowed
+Borderless is still required. Do NOT run the game inside gamescope for overlay
+purposes — its nested compositor isolates the game and no external overlay can
+draw over it.
+
+
+----------------------------------------------------------------------
+5) OPTIONAL HOTKEY HELPER
+----------------------------------------------------------------------
+On KDE Wayland, kdotool is preferred because it sees native-Wayland and XWayland
+windows. xdotool is the fallback, but cannot see native-Wayland windows. On plain
+X11, xdotool is preferred and kdotool is the fallback. These helpers tell the
+overlay when you tab away from the game/overlay so it can release its hotkeys.
 
   Install kdotool, then relaunch the overlay:
     Arch / CachyOS:  paru -S kdotool       (AUR; or: yay -S kdotool)
     Fedora:          sudo dnf install kdotool
 
-kdotool is PREFERRED: it asks KWin directly, so it sees every window. xdotool
-also works as a fallback (sudo pacman -S xdotool / apt install xdotool), but it
-only sees XWayland windows — when you tab to a native-Wayland app (Konsole,
-Firefox) while the game runs, it can't tell and the hotkeys stay captured.
+kdotool is PREFERRED on KDE Wayland: it asks KWin directly, so it sees every
+window. On plain X11, install xdotool instead (kdotool is the fallback):
+  Arch / CachyOS:  sudo pacman -S xdotool
+  Fedora:          sudo dnf install xdotool
+  Debian / Ubuntu: sudo apt install xdotool
 
 Without kdotool (or xdotool) everything still works EXCEPT this key-release
 behavior — the overlay falls back to holding the hotkeys while the game runs (no
-crash, no other change). Install kdotool for the best experience on KDE Wayland.
+crash, no other change). Relaunch the overlay after installing a helper.
 
 ----------------------------------------------------------------------
 Notes
@@ -404,7 +436,7 @@ Notes
     compositor isolates the game and no external overlay can draw over it.
   - The overlay only auto-shows while Fallout 76 is running (detected fine
     under Proton); closed game -> hidden by design. With kdotool/xdotool
-    (section 2) it also hides on alt-tab away from the game on the same
+    (section 5) it also hides on alt-tab away from the game on the same
     monitor and reappears on tab-back; without the tool it stays visible
     for the whole game session.
 `;
@@ -1384,7 +1416,8 @@ function startGameScan() {
 }
 
 // ─── Idle-collapse state (window-height anchored to the header) ───────────────
-let collapsed = false;            // true → window shrunk to the header strip
+const FULL_AUTO_HIDE_HEIGHT = 1;
+let collapsed = false;            // true → window shrunk to the idle target
 let expandedHeight = DEFAULT_HEIGHT; // remembered full height to restore on expand
 // Full pre-collapse bounds snapshot — set at collapse time, cleared on expand.
 // Restoring the full rect (not just height) means the overlay returns to the exact
@@ -1398,7 +1431,7 @@ let collapseAnimTarget = null;    // target height of the active animation (null
 // uses screen.getCursorScreenPoint() (authoritative DIP coords) instead of the
 // renderer's screenX/Y, which can drift under fractional scaling. While a move is
 // active we also suppress idle-collapse so the wake-up height animation can't fight
-// the move's setPosition (that was the "window dances + expands while dragging" bug).
+// the move (that was the "window dances + expands while dragging" bug).
 let movingActive = false;         // true between overlay:move-start and move-end
 let moveAnchor = null;            // { cursor:{x,y}, win:{x,y} } captured at move-start
 // ─── Drag-in-progress guard for z-order heartbeat ─────────────────────────────
@@ -1750,14 +1783,32 @@ function persistBounds() {
 }
 
 // Clamp a desired bounds rect to the work area of whatever display it lands on,
-// so the window never exceeds the screen and its top is never above y=0. Returns
-// a sanitized { x, y, width, height }.
-function clampToWorkArea(desired) {
+// so the window never exceeds that display and its top is never above the display
+// work-area origin. Returns a sanitized { x, y, width, height }.
+function clampToWorkArea(desired, minHeight = MIN_HEIGHT) {
   // Pick the display nearest the desired position (falls back to primary).
   const point = { x: desired.x ?? 60, y: desired.y ?? 60 };
   const display = screen.getDisplayNearestPoint(point) || screen.getPrimaryDisplay();
   // Pure clamping math lives in overlay-core.js; inject the resolved work area.
-  return overlayCore.clampToWorkArea(desired, display.workArea);
+  return overlayCore.clampToWorkArea(desired, display.workArea, minHeight);
+}
+
+// Every runtime geometry write goes through this guard. Startup bounds are clamped
+// separately before BrowserWindow construction, but drag, resize, modal-fit, preset,
+// restore, and collapse-animation writes all need the same top-edge invariant too.
+// Keeping the raw Electron call in exactly one place prevents a future path from
+// putting the overlay above a monitor after a DPI or work-area change.
+function setWindowBoundsGuarded(desired) {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  const requestedHeight = desired && typeof desired.height === 'number' ? desired.height : null;
+  // The ordinary window floor is 280px, but idle-collapse intentionally owns a
+  // shorter native height (header strip or one-pixel full hide). Keep those
+  // animation frames inside the work area without re-expanding them to the
+  // ordinary resize minimum.
+  const minHeight = collapsed && requestedHeight != null && requestedHeight < MIN_HEIGHT ? 1 : MIN_HEIGHT;
+  const bounds = clampToWorkArea(desired || {}, minHeight);
+  mainWindow.setBounds(bounds);
+  return bounds;
 }
 
 // ─── Temporary modal-fit growth (issue #374) ──────────────────────────────────
@@ -1800,7 +1851,7 @@ function growWindowForModal() {
   modalFitPrevBounds = baseCur;
   diag('[modal-fit] growing ' + baseCur.width + 'x' + baseCur.height
     + ' -> ' + grown.width + 'x' + grown.height + ' for modal');
-  try { mainWindow.setBounds(grown); } catch { /* ignore */ }
+  try { setWindowBoundsGuarded(grown); } catch { /* ignore */ }
 }
 
 function restoreWindowAfterModal() {
@@ -1814,7 +1865,7 @@ function restoreWindowAfterModal() {
   const target = clampToWorkArea({ x: cur.x, y: cur.y, width: prev.width, height: prev.height });
   diag('[modal-fit] restoring ' + cur.width + 'x' + cur.height
     + ' -> ' + target.width + 'x' + target.height + ' after modal');
-  try { mainWindow.setBounds(target); } catch { /* ignore */ }
+  try { setWindowBoundsGuarded(target); } catch { /* ignore */ }
 }
 
 // ─── Register: POST /api/users → session token ────────────────────────────────
@@ -2264,9 +2315,9 @@ ipcMain.on('overlay:set-modal', (_evt, open) => {
 });
 
 // Idle collapse/expand driven by the renderer's idle timer + activity detector.
-// { collapsed: true, headerHeight } → shrink to header (top anchored).
+// { collapsed: true, headerHeight, fullAutoHide } → shrink to idle target (top anchored).
 // { collapsed: false, focusInput? } → grow back downward (top anchored).
-ipcMain.on('overlay:collapse', (_evt, { headerHeight }) => collapseToHeader(headerHeight));
+ipcMain.on('overlay:collapse', (_evt, { headerHeight, fullAutoHide }) => collapseToHeader(headerHeight, !!fullAutoHide));
 ipcMain.on('overlay:expand', (_evt, { focusInput }) => expandFromHeader(!!focusInput));
 
 // Cross-channel @mention: renderer asks main to show the overlay from tray.
@@ -2302,7 +2353,7 @@ ipcMain.on('window:set-bounds', (_evt, b) => {
   modalFitPrevBounds = null;
   modalFitLastGoodSize = null;
   const wa = clampToWorkArea({ x: b.x, y: b.y, width: b.width, height: b.height });
-  try { mainWindow.setBounds(wa); } catch { /* ignore */ }
+  try { setWindowBoundsGuarded(wa); } catch { /* ignore */ }
 });
 
 // In-app edge resize from the renderer's resize zones (shell.ts). Receives the
@@ -2325,50 +2376,53 @@ ipcMain.on('overlay:resize-bounds', (_evt, b) => {
     width: Math.max(MIN_WIDTH, typeof b.width === 'number' ? b.width : mainWindow.getBounds().width),
     height: Math.max(MIN_HEIGHT, typeof b.height === 'number' ? b.height : mainWindow.getBounds().height),
   });
-  try { mainWindow.setBounds(wa); } catch { /* ignore */ }
+  try { setWindowBoundsGuarded(wa); } catch { /* ignore */ }
 });
 
 // WM-independent pointer-drag MOVE (ticket #104). Receives the desired top-left
 // position {x, y} from the renderer (computed from screenX/Y deltas), clamps to
-// work area, and applies via setPosition. Mirrors overlay:resize-bounds but only
-// repositions — width/height are kept from the current bounds.
+// the work area, and applies through the same guarded bounds path as every other
+// geometry write. Width/height are kept from the current bounds.
 // isDragging is already set by the 'will-move' event on WM-driven moves; for the
 // pointer-drag path we don't need to toggle it separately because this IPC fires
-// at pointer-move frequency (not on every frame) and setPosition does not trigger
-// 'will-move' on Wayland/frameless windows. The z-order heartbeat skips while
-// isDragging=true (set from will-move on WM drag), so we only suppress it here
-// if a move is in progress — done by checking the isDragging flag set by will-move
-// on platforms where it fires. Additive: on WM-drag platforms both paths are safe.
+// at pointer-move frequency (not on every frame). The z-order heartbeat skips
+// while isDragging=true (set from will-move on WM drag), so we only suppress it
+// here if a move is in progress — done by checking the isDragging flag set by
+// will-move on platforms where it fires. Additive: on WM-drag platforms both
+// paths are safe.
 ipcMain.on('overlay:move-bounds', (_evt, pos) => {
   if (!mainWindow || mainWindow.isDestroyed() || !pos) return;
   if (typeof pos.x !== 'number' || typeof pos.y !== 'number') return;
   const cur = mainWindow.getBounds();
-  const wa = clampToWorkArea({ x: pos.x, y: pos.y, width: cur.width, height: cur.height });
-  try { mainWindow.setPosition(wa.x, wa.y); } catch { /* ignore */ }
+  try { setWindowBoundsGuarded({ x: pos.x, y: pos.y, width: cur.width, height: cur.height }); } catch { /* ignore */ }
 });
 
 // ─── Main-process drag-move (Linux) ──────────────────────────────────────────
-// Renderer sends move-start on pointerdown, move-tick on each pointermove, and
-// move-end on pointerup. We read the cursor from screen.getCursorScreenPoint()
-// (authoritative DIP, consistent with getBounds/setPosition) instead of trusting
-// the renderer's screenX/Y, which can drift under fractional scaling and make the
-// window jitter ("dance"). Only setPosition is used, so width/height never change.
+  // Renderer sends move-start on pointerdown, move-tick on each pointermove, and
+  // move-end on pointerup. We read the cursor from screen.getCursorScreenPoint()
+  // (authoritative DIP, consistent with getBounds/setBounds) instead of trusting
+  // the renderer's screenX/Y, which can drift under fractional scaling and make the
+  // window jitter ("dance"). The guarded bounds call changes position only here, so
+  // width/height never change.
 ipcMain.on('overlay:move-start', () => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   movingActive = true;
   // If the overlay is idle-collapsed, expand it INSTANTLY (no animation) before the
   // drag begins. The animated wake-up grow used a frozen x/y per frame and would
-  // fight the move's setPosition — snapping to full height up front avoids that
+  // fight the move — snapping to full height up front avoids that
   // entirely, so the drag is pure position with a stable size.
   if (collapsed || collapseAnim) {
     if (collapseAnim) { clearInterval(collapseAnim); collapseAnim = null; collapseAnimTarget = null; }
     collapsed = false;
-    try { mainWindow.setMinimumSize(MIN_WIDTH, MIN_HEIGHT); } catch { /* ignore */ }
+    try {
+      mainWindow.setMaximumSize(100000, 100000);
+      mainWindow.setMinimumSize(MIN_WIDTH, MIN_HEIGHT);
+    } catch { /* ignore */ }
     const targetH = (expandedHeight && expandedHeight >= MIN_HEIGHT) ? expandedHeight
       : (expandedBounds && expandedBounds.height >= MIN_HEIGHT ? expandedBounds.height : DEFAULT_HEIGHT);
     expandedBounds = null;
     const b0 = mainWindow.getBounds();
-    try { mainWindow.setBounds({ x: b0.x, y: b0.y, width: b0.width, height: targetH }); } catch { /* ignore */ }
+    try { setWindowBoundsGuarded({ x: b0.x, y: b0.y, width: b0.width, height: targetH }); } catch { /* ignore */ }
     sendToRenderer('overlay:force-expand', true); // sync the renderer's collapsed state
   }
   try {
@@ -2390,11 +2444,11 @@ ipcMain.on('overlay:move-tick', () => {
     const ny = Math.round(moveAnchor.win.y + (c.y - moveAnchor.cursor.y));
     // Use the LOCKED start-size (not getBounds, which may already be inflated by the
     // XWayland scaling feedback) and command it explicitly via setBounds so the window
-    // is re-pinned to its real size every tick — setPosition alone let it grow on KDE
+    // is re-pinned to its real size every tick — position-only writes let it grow on KDE
     // fractional-scaled XWayland.
     const w = moveAnchor.size.width, h = moveAnchor.size.height;
     const wa = clampToWorkArea({ x: nx, y: ny, width: w, height: h });
-    mainWindow.setBounds({ x: wa.x, y: wa.y, width: w, height: h });
+    setWindowBoundsGuarded({ x: wa.x, y: wa.y, width: w, height: h });
   } catch { /* ignore */ }
 });
 ipcMain.on('overlay:move-end', () => {
@@ -3470,7 +3524,7 @@ function registerHotkeys(kb, presets) {
       if (!p || !p.keybind || typeof p.x !== 'number') continue;
       bind(p.keybind, () => {
         const wa = clampToWorkArea({ x: p.x, y: p.y, width: p.w, height: p.h });
-        if (mainWindow && !mainWindow.isDestroyed()) { try { mainWindow.setBounds(wa); } catch { /* ignore */ } }
+        if (mainWindow && !mainWindow.isDestroyed()) { try { setWindowBoundsGuarded(wa); } catch { /* ignore */ } }
       }, true);
     }
   }
@@ -3506,8 +3560,9 @@ function setClickThrough(enabled) {
 //   Windows: click-through ONLY while the GAME is the foreground process; clickable
 //            otherwise (overlay focused, desktop, or another app). Driven by the
 //            foreground-process poll (lastForegroundProc) + focus/blur/show events.
-//   Non-win32: no foreground-process API → focus-driven (click-through when the
-//            overlay is blurred, interactive when focused).
+//   Non-win32: use the active-window detector when available; otherwise fall back
+//            to gameRunning. The overlay remains clickable over other apps so a
+//            click can focus it and trigger the topmost re-assertion.
 // A modal pins interactive; manual "Click-through (always)" (clickThrough=true)
 // keeps it click-through even when clickable-eligible.
 function applyFocusClickThrough(focusedHint) {
@@ -3518,28 +3573,37 @@ function applyFocusClickThrough(focusedHint) {
   // inert before mainWindow.focus() actually lands (the "type, but it went to the game" bug).
   const recentlyFocused = (Date.now() - lastUserFocusMs) < FOCUS_GUARD_MS;
   const overlayFocused = recentlyFocused || (typeof focusedHint === 'boolean' ? focusedHint : mainWindow.isFocused());
-  let ignore;
-  if (process.platform === 'win32') {
-    const gameForeground = !overlayFocused && isGameProcess(lastForegroundProc);
-    ignore = gameForeground ? true : clickThrough; // clickable unless the game is foreground
-  } else {
-    ignore = overlayFocused ? clickThrough : true; // focus-driven fallback
+  let gameForeground = false;
+  if (!overlayFocused) {
+    if (process.platform === 'win32') {
+      gameForeground = isGameProcess(lastForegroundProc);
+    } else if (foregroundDetect) {
+      // A fullscreen game can expose no readable class; when the game process is
+      // present, preserve the existing fail-safe click-through behavior for that
+      // ambiguous foreground. A readable non-game class remains interactive.
+      gameForeground = isGameClass(lastForegroundProc)
+        || (!!gameRunning && overlayCore.isUnknownForegroundClass(lastForegroundProc));
+    } else {
+      gameForeground = !!gameRunning;
+    }
   }
+  const mouse = overlayCore.shouldIgnoreMouse({
+    overlayFocused, gameForeground, clickThrough, autoClickThrough, modalInteractive,
+  });
   // forward:true forwards mouse-MOVE to the renderer while click-through so it can
   // show :hover states — but that's exactly the "still reacting while the game has
   // focus" bug. Only forward when the hover-to-interactive mode is explicitly on;
   // otherwise a click-through overlay is fully inert (no hover, no events).
-  setMouseIgnore(ignore, ignore && autoClickThrough);
+  setMouseIgnore(mouse.ignore, mouse.forward);
 }
 
 // ─── Foreground-aware z-order controller (native Windows; no new deps) ────────
-// The overlay behaves like an in-game overlay: it is TOPMOST only when the GAME
-// (Fallout76.exe) is the foreground window, OR when the overlay itself is
-// focused. When any other app is foreground (a browser, etc.), the overlay is a
-// NORMAL window so that app can cover it. If the game isn't running, the overlay
-// is NOT topmost. This is native-only: under WSLg the app runs in a sandboxed
-// Wayland/X server isolated from the Windows desktop, so the foreground poll
-// only ever sees the WSLg compositor and the controller no-ops gracefully.
+// A visible overlay stays TOPMOST so it can be clicked even when another app is
+// foreground; a click then focuses it and makes it interactive. Mouse input is
+// still ignored while the game is foreground (or manual click-through is on), so
+// this does not steal gameplay clicks. This is native-only: under WSLg the app
+// runs in a sandboxed Wayland/X server isolated from the Windows desktop, so the
+// foreground poll only ever sees the WSLg compositor.
 function desiredTopmost() {
   // Decision is pure (see overlay-core); main.js only supplies live state.
   // forceVisible overrides game gating; while the GAME IS RUNNING stay topmost no
@@ -3547,6 +3611,7 @@ function desiredTopmost() {
   // overlay focused → topmost; game is the foreground process → topmost.
   return overlayCore.desiredTopmost({
     hasWindow: !!(mainWindow && !mainWindow.isDestroyed()),
+    windowVisible: !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()),
     forceVisible,
     gameRunning,
     windowFocused: !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()),
@@ -4059,13 +4124,13 @@ function animateHeightTo(targetH, onDone) {
   const b = mainWindow.getBounds();
   const startH = b.height;
   // x/y are read LIVE each frame (below) rather than frozen here, so a concurrent
-  // drag-move (which changes x/y via setPosition) is never fought by this height
+  // drag-move (which changes x/y through the guarded bounds path) is never fought by this height
   // animation — only WIDTH is held from the start. The window top still stays put
   // when not moving because live x/y == the captured value in that case.
   const w = b.width;
   if (Math.abs(startH - targetH) < 2) {
     const c = mainWindow.getBounds();
-    try { mainWindow.setBounds({ x: c.x, y: c.y, width: w, height: targetH }); } catch { /* ignore */ }
+    try { setWindowBoundsGuarded({ x: c.x, y: c.y, width: w, height: targetH }); } catch { /* ignore */ }
     collapseAnimTarget = null;
     if (onDone) onDone();
     return;
@@ -4080,24 +4145,25 @@ function animateHeightTo(targetH, onDone) {
     const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
     const h = Math.round(startH + (targetH - startH) * eased);
     const c = mainWindow.getBounds(); // live x/y so a drag-move isn't reset
-    try { mainWindow.setBounds({ x: c.x, y: c.y, width: w, height: h }); } catch { /* ignore */ }
+    try { setWindowBoundsGuarded({ x: c.x, y: c.y, width: w, height: h }); } catch { /* ignore */ }
     if (t >= 1) {
       clearInterval(collapseAnim); collapseAnim = null; collapseAnimTarget = null;
       const f = mainWindow.getBounds();
-      try { mainWindow.setBounds({ x: f.x, y: f.y, width: w, height: targetH }); } catch { /* ignore */ }
+      try { setWindowBoundsGuarded({ x: f.x, y: f.y, width: w, height: targetH }); } catch { /* ignore */ }
       if (onDone) onDone();
     }
   }, 12);
 }
 
-function collapseToHeader(headerH) {
+function collapseToHeader(headerH, fullAutoHide = false) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   // Never collapse mid-drag — a height change while the user is moving the window
   // produces the "dance + expand" jitter. Idle behaviour resumes on move-end.
   if (movingActive) return;
   // If already collapsed, ignore (idempotent — prevents double-snapshot of height).
   if (collapsed) return;
-  diag('[collapse] idle-collapse to header h=' + Math.round(headerH) + ' focused=' + mainWindow.isFocused());
+  const target = fullAutoHide ? FULL_AUTO_HIDE_HEIGHT : Math.max(24, Math.round(headerH));
+  diag('[collapse] idle-collapse to ' + (fullAutoHide ? 'full-hide' : 'header') + ' h=' + target + ' focused=' + mainWindow.isFocused());
   // Cancel any running height animation first. If one WAS running we may be
   // reading a partial (mid-animation) frame, so remember its target to use
   // instead of the partial height below.
@@ -4119,15 +4185,19 @@ function collapseToHeader(headerH) {
   expandedBounds = { x: b.x, y: b.y, width: b.width, height: currentH };
   expandedHeight = currentH;
   collapsed = true;
-  const target = Math.max(24, Math.round(headerH));
   // Two things clamp the collapse height and leave dead black space below the
-  // tab strip:
+  // idle target:
   //   1. our own minHeight (MIN_HEIGHT) — lower it to the target.
-  //   2. Windows' MIN TRACKING SIZE for a WS_THICKFRAME (resizable) window —
-  //      ~64px at this DPI, which is why it stopped at 64. Dropping the resize
-  //      border (setResizable(false)) removes that OS floor so the window can
-  //      shrink to just the header. Aero Snap isn't needed while idle-collapsed.
-  try { mainWindow.setMinimumSize(MIN_WIDTH, target); } catch { /* ignore */ }
+  //   2. The native resize hint can retain the expanded client height, especially
+  //      on X11 where toggling resizable rewrites min/max hints to the current size.
+  //      Pin both limits to the header so the old expanded area cannot survive the
+  //      collapse. The window remains movable while idle-collapsed. Full mode
+  //      uses a one-pixel target; it is intentionally not a user-hidden window,
+  //      so the live renderer can receive a message and request expansion.
+  try {
+    mainWindow.setMinimumSize(MIN_WIDTH, target);
+    mainWindow.setMaximumSize(b.width, target);
+  } catch { /* ignore */ }
   animateHeightTo(target);
 }
 
@@ -4143,7 +4213,10 @@ function expandFromHeader(focusInput) {
   collapsed = false;
   // Restore the normal minimum height + the resize border (Aero Snap) before
   // growing back, so the window is fully resizable/snappable again.
-  try { mainWindow.setMinimumSize(MIN_WIDTH, MIN_HEIGHT); } catch { /* ignore */ }
+  try {
+    mainWindow.setMaximumSize(100000, 100000);
+    mainWindow.setMinimumSize(MIN_WIDTH, MIN_HEIGHT);
+  } catch { /* ignore */ }
   // ONLY the HEIGHT is restored. The window's x/y/WIDTH are left exactly as they
   // are right now — collapse never changed them, and the user may have moved or
   // narrowed the window while it was collapsed/idle. Restoring the snapshot width
@@ -4432,10 +4505,11 @@ function createWindow() {
     try {
       if (collapseAnim) { clearInterval(collapseAnim); collapseAnim = null; }
       collapsed = false;
+      mainWindow.setMaximumSize(100000, 100000);
       mainWindow.setMinimumSize(MIN_WIDTH, MIN_HEIGHT);
       const b = mainWindow.getBounds();
       if (b.height < MIN_HEIGHT) {
-        mainWindow.setBounds({ x: b.x, y: b.y, width: b.width, height: expandedHeight || DEFAULT_HEIGHT });
+        setWindowBoundsGuarded({ x: b.x, y: b.y, width: b.width, height: expandedHeight || DEFAULT_HEIGHT });
       }
     } catch { /* ignore */ }
     // Re-apply the saved Chrome Opacity as a CSS variable (--fcm-chrome-bg-alpha).

@@ -159,9 +159,11 @@ function emitVisibilityDecision(isVisible, pendingHide) {
   return 'schedule-hide';
 }
 
-// Pure form of desiredTopmost. state = { hasWindow, forceVisible, gameRunning,
-// windowFocused, foregroundIsGame, focusAwareTopmost }. Returns true when the
-// overlay should be always-on-top. No window → false.
+// Pure form of desiredTopmost. state = { hasWindow, windowVisible, forceVisible,
+// gameRunning, windowFocused, foregroundIsGame, focusAwareTopmost }. Returns true
+// when the overlay should be always-on-top. No window → false. A visible overlay
+// stays above normal desktop windows so a covered overlay can still receive a
+// click, focus itself, and become interactive.
 //
 // Two modes:
 //   focusAwareTopmost=true  (Linux KDE-Wayland with active-window detection): float
@@ -176,6 +178,7 @@ function emitVisibilityDecision(isVisible, pendingHide) {
 function desiredTopmost(state) {
   state = state || {};
   if (!state.hasWindow) return false;
+  if (state.windowVisible) return true;
   if (state.forceVisible) return true;
   if (state.windowFocused) return true;
   if (state.focusAwareTopmost) {
@@ -189,6 +192,17 @@ function desiredTopmost(state) {
   }
   if (state.gameRunning) return true;
   return state.foregroundIsGame === true;
+}
+
+// Pure form of the native mouse-interaction policy. A blurred overlay must stay
+// clickable when a non-game app is foreground; otherwise it can never receive the
+// click that would focus it and re-assert its topmost state. The caller supplies
+// gameForeground from the platform-specific foreground detector (or the
+// game-running fallback when no detector is available).
+function shouldIgnoreMouse({ overlayFocused, gameForeground, clickThrough, autoClickThrough, modalInteractive } = {}) {
+  if (modalInteractive) return { ignore: false, forward: false };
+  const ignore = !!clickThrough || (!!gameForeground && !overlayFocused);
+  return { ignore, forward: ignore && !!autoClickThrough };
 }
 
 // Pure hysteresis reducer for FO76 presence detection. A single bad scan must NOT flip
@@ -322,12 +336,13 @@ function showModeFor(reason) {
 // Pure clamp of a desired bounds rect to a given work area. workArea =
 // { x, y, width, height } (the display work area in screen coords). Returns a
 // sanitized { x, y, width, height } fully inside the work area.
-function clampToWorkArea(desired, workArea) {
+function clampToWorkArea(desired, workArea, minHeight = MIN_HEIGHT) {
   desired = desired || {};
   const wa = workArea;
 
   const width = Math.max(MIN_WIDTH, Math.min(desired.width || DEFAULT_WIDTH, wa.width));
-  const height = Math.max(MIN_HEIGHT, Math.min(desired.height || DEFAULT_HEIGHT, wa.height));
+  const safeMinHeight = Math.max(1, Number(minHeight) || MIN_HEIGHT);
+  const height = Math.max(safeMinHeight, Math.min(desired.height || DEFAULT_HEIGHT, wa.height));
 
   let x = desired.x;
   let y = desired.y;
@@ -1213,6 +1228,7 @@ module.exports = {
   visibilityDecision,
   emitVisibilityDecision,
   desiredTopmost,
+  shouldIgnoreMouse,
   nextPresenceState,
   nextGameFocusState,
   shouldHidePanelInGame,

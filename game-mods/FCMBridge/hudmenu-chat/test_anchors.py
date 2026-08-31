@@ -363,9 +363,16 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.7";' in widget_src
-          and "no HUD message timestamps" in widget_src,
-          "FCMChatWidget bumps the no-timestamps HUD build to version 2.10.7")
+    check('static inline var VERSION:String  = "2.10.8";' in widget_src
+          and "HUD identity cosmetics" in widget_src,
+          "FCMChatWidget bumps the HUD identity-cosmetics build to version 2.10.8")
+    check('extractJsonBool(obj, "supporterStar")' in widget_src
+          and 'FcmConfig.SUPPORTER_STAR_GLYPH' in widget_src
+          and 'customTagHtml' in widget_src,
+          "FCMChatWidget renders only the immutable supporter star and validated tag fields")
+    check('FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor)' in widget_src
+          and 'size="\' + fs + \'"' in widget_src,
+          "FCMChatWidget uses a validated star colour with shared line metrics")
     fallout_name_match = re.search(
         r"function readFalloutDisplayName\([^)]*\):String \{(.*?)\n    \}\n\n    function hasResolvedDisplayName",
         widget_src,

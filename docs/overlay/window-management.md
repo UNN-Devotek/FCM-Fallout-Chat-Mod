@@ -26,13 +26,13 @@ Bounds are loaded from `overlay-state.json` at launch and **clamped to the activ
 
 The renderer's shell strip uses CSS `-webkit-app-region: drag`. Edge resize zones in `shell.ts` compute new bounds on pointer move and send them through IPC (`overlay:resize-bounds`).
 
-On **Linux**, where CSS drag can drift under fractional DPI scaling, move events are routed through `overlay:move-start` / `overlay:move-tick` / `overlay:move-end`. The main process reads the authoritative cursor position via `screen.getCursorScreenPoint()` on each tick and calls `setPosition()` (`main.js:1192`).
+On **Linux**, where CSS drag can drift under fractional DPI scaling, move events are routed through `overlay:move-start` / `overlay:move-tick` / `overlay:move-end`. The main process reads the authoritative cursor position via `screen.getCursorScreenPoint()` on each tick and applies the result through the guarded bounds helper (`setWindowBoundsGuarded` in `main.js`).
 
 A `isDragging` flag suppresses the z-order heartbeat during drags. `setAlwaysOnTop` on a transparent window triggers a DWM recomposition on Windows that causes a visible flash; skipping it during the drag eliminates the flicker (`main.js:613`).
 
 **Known limitation.** On Linux, `isDragging` never becomes `true` during a drag. The JS-driven `move-start`/`move-tick`/`move-end` path doesn't trigger Electron's `will-move`/`moved` events, which are what set it. Pre-existing, unrelated to focus-gated visibility, noted here for reference rather than fixed.
 
-Bounds are **persisted** (debounced) to `overlay-state.json` on every move/resize, and on quit (`persistBounds`, `main.js:785`).
+Bounds are **persisted** (debounced) to `overlay-state.json` on every move/resize, and on quit (`persistBounds`, `main.js:785`). Every runtime `setBounds` and move path is routed through `setWindowBoundsGuarded`, which re-resolves the destination display and clamps the full rect to its work area. This includes collapse animation and modal-fit writes, so the overlay top can never move above the selected display's work-area origin after a drag, resize, restore, or DPI change.
 
 **Drift suppression on fractional scaling (issue #427).** On a fractionally-scaled display the
 DIP -> physical -> DIP round-trip does not return the value we asked for: commanding `560x720`
@@ -150,6 +150,16 @@ If a move or scroll-to-bottom command arrives while collapsed, the main process 
 **Typing indicator while collapsed (issue #420).** The normal typing indicator is a `flexShrink:0` sibling *below* the message list, so `applyCollapsedHidden()` hides it along with everything after the sub-tab row. A compact indicator is therefore also rendered **inside** the sub-tab row itself (`[data-fcm-subtab-row]`), which survives collapse by construction — no change to `headerStripHeight()`, deliberately, since that function has a history of zoom double-apply bugs (see above). It is gated on `ShellSettings.showTypingWhenCollapsed` (default **off** — opt in via Settings → "Show typing indicator while collapsed") and is Electron-shell-only; nothing collapses on the website. The shell emits `fcm-overlay-collapse-state` with `{ collapsed }` on **both** transitions for this — kept separate from the older one-way `fcm-overlay-collapsed` signal, which existing listeners treat as "close your floating panels" and which must not fire on expand.
 
 The "Auto-hide chat when idle" setting (`ShellSettings.fadeWhenIdle`, default `true`) toggles this behavior and maps to `OverlayConfig.FadeWhenIdle` in the WinForms desktop overlay.
+
+**Auto-hide mode.** The Electron Appearance panel stores `ShellSettings.autoHideMode` as
+`full` (the default) or `subtabs`. `subtabs` keeps the existing two-row navigation strip
+visible. `full` adds `fcm-full-auto-hidden` to the renderer and asks the main process to
+animate the native window to the guarded `FULL_AUTO_HIDE_HEIGHT` of 1 DIP. It does not call
+the user-hidden/tray path: the renderer and relay remain alive, so `markActivity()` can
+expand the complete window when a new message, mention, or explicit interaction arrives.
+The global focus/Insert path also force-expands it. Switching back to `subtabs` or resetting
+defaults is safe because the normal expand path restores native minimum/maximum sizing and
+removes the full-hide class.
 
 The **"Auto-hide delay"** slider (Settings → Appearance) controls how long the overlay waits before collapsing. It is persisted as `ShellSettings.idleCollapseSeconds` (default 25, bounded 5–120 by `clampIdleCollapseSeconds` in `shell-core.ts`). The idle timer reads the live `idleFadeMs` value, which is updated immediately as the slider drags (`applyLive`) and on commit — no restart needed. Out-of-range or corrupted persisted values fall back to the default via the clamp.
 
@@ -285,7 +295,7 @@ Running FO76 inside **gamescope** with `--force-grab-cursor` (definitive) or `-f
 
 ## Z-order controller
 
-`desiredTopmost()` (`overlay-core.js`, unit-tested) decides whether `setAlwaysOnTop` should be `true`: topmost while `forceVisible`, the overlay is focused, the game is the foreground process, or the game is `gameRunning` (session-long). `setAlwaysOnTop` maps to `_NET_WM_STATE_ABOVE` (KWin `AboveLayer`). On KWin 6 that alone loses to a *focused fullscreen* game, so the overlay being above the game is achieved by the **`fcm-keepabove` rule's force-Layer property** (see below), not by `setAlwaysOnTop`. The Force `layer` rule still trumps any `setAlwaysOnTop(false)`, so focus-aware *lowering* isn't done by flipping always-on-top. It's done by **hiding** the overlay (see [Focus-gated visibility](#focus-gated-visibility-hide--show)). (`focusAwareTopmost` exists in the pure function for completeness but isn't the KDE-Wayland hide/show path.)
+`desiredTopmost()` (`overlay-core.js`, unit-tested) keeps a visible overlay above normal desktop windows so it can receive a click even when another app is foreground. `setAlwaysOnTop` maps to `_NET_WM_STATE_ABOVE` (KWin `AboveLayer`). Mouse input remains ignored while the game is foreground (or manual click-through is enabled), so topmost does not steal gameplay clicks. On KWin 6 that alone loses to a *focused fullscreen* game, so the overlay being above the game is achieved by the **`fcm-keepabove` rule's force-Layer property** (see below), not by `setAlwaysOnTop`. The Force `layer` rule still trumps any `setAlwaysOnTop(false)`; visibility gating, not lowering, controls whether the overlay is present.
 
 `applyZOrder()` is idempotent (tracks `overlayIsTopmost`) and suppressed during drags. **When the overlay is hidden to tray, `applyZOrder()` RELEASES `setAlwaysOnTop` on Linux** (and stops the z-order heartbeat) instead of leaving the flag stuck — a hidden window must not keep holding the game out of exclusive fullscreen. On Windows the flag is kept while hidden (a hidden window doesn't affect stacking and re-toggling would DWM-flash on the next show). The overlay is a **NORMAL** window on all platforms (we tried `type:'notification'` for KDE stacking but reverted it — KWin's NotificationLayer is *below* the active-fullscreen layer, and notification windows are excluded from Alt-Tab/taskbar and non-focusable, so users couldn't tab into the chat).
 
@@ -303,10 +313,10 @@ Two modes:
 
 | Mode | When active |
 |---|---|
-| **Interactive** | Overlay focused, or user pressed Insert |
-| **Click-through** | Game is foreground (Windows) or overlay is blurred (Linux) |
+| **Interactive** | Overlay focused, or a non-game app is foreground |
+| **Click-through** | Game is foreground, or manual click-through is enabled |
 
-Manual click-through (`End` key or tray item) overrides the automatic logic and forces click-through until the user toggles it off.
+Manual click-through (`End` key or tray item) overrides the automatic logic and forces click-through until the user toggles it off. On Linux, the active-window detector is used when available; without one, the process-running state is the fallback. Keeping the overlay interactive over other apps is required so a user click can focus it and trigger the topmost re-assertion.
 
 A **modal-interactive pin** (`overlay:set-modal` IPC) forces full interactivity while the settings or onboarding panel is open, so slider drags work regardless of click-through state (`main.js:1125`). The same signal also drives [modal-fit growth](#modal-fit-growth-temporary-resize-for-settings--onboarding).
 

@@ -47,7 +47,8 @@ contextBridge.exposeInMainWorld('relayBridge', {
   // { ok: true, displayName } or { ok: false, reason } ('taken' | 'empty' | ...).
   setIdentityName: (name) => ipcRenderer.invoke('identity:set-name', name),
   // Idle collapse/expand → main resizes the window height (top anchored).
-  collapse: (headerHeight) => ipcRenderer.send('overlay:collapse', { headerHeight }),
+  // fullAutoHide keeps the renderer/relay alive while hiding the entire shell.
+  collapse: (headerHeight, fullAutoHide = false) => ipcRenderer.send('overlay:collapse', { headerHeight, fullAutoHide }),
   expand: (focusInput) => ipcRenderer.send('overlay:expand', { focusInput }),
 
   // Position presets: capture live bounds (SET POS) + snap to a saved rect.

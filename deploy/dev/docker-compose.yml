@@ -258,11 +258,11 @@ services:
       # Self-signed PEM, inline (ZFE does not validate the cert). Single-line with
       # \n escapes; hudPushTcp.readPemValue restores them. Values live in the
       # Dokploy fcm-dev env, never in git.
-      HUD_PUSH_TCP_TLS_CERT: ${HUD_PUSH_TCP_TLS_CERT}
-      HUD_PUSH_TCP_TLS_KEY: ${HUD_PUSH_TCP_TLS_KEY}
+      HUD_PUSH_TCP_TLS_CERT: ${HUD_PUSH_TCP_TLS_CERT:?set HUD_PUSH_TCP_TLS_CERT (inline dev PEM)}
+      HUD_PUSH_TCP_TLS_KEY: ${HUD_PUSH_TCP_TLS_KEY:?set HUD_PUSH_TCP_TLS_KEY (inline dev PEM)}
       # HMAC key for HUD identity hashing — REQUIRED for inbound SEND
       # (SR-003: initHudPushTcp refuses the inbound path on the default secret).
-      HUD_IDENTITY_SECRET: ${HUD_IDENTITY_SECRET}
+      HUD_IDENTITY_SECRET: ${HUD_IDENTITY_SECRET:?set HUD_IDENTITY_SECRET (dev-only)}
     volumes:
       - releases_dev_downloads:/app/downloads
     security_opt: ["no-new-privileges:true"]

@@ -47,7 +47,7 @@ interface RelayBridge {
   // Set the FO76 character name as the chat display name (re-registers with the
   // backend). Resolves with the outcome; 'taken' means another user owns it.
   setIdentityName?(name: string): Promise<{ ok: boolean; reason?: string; displayName?: string; message?: string }>;
-  collapse(headerHeight: number): void;
+  collapse(headerHeight: number, fullAutoHide?: boolean): void;
   expand(focusInput: boolean): void;
   onFocusInput(cb: (on: boolean) => void): void;
   onForceExpand(cb: () => void): void;

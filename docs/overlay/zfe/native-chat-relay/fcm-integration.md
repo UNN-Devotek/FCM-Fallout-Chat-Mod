@@ -82,6 +82,27 @@ moderation and rate-limit rules, persists messages, and assigns a monotonic rela
 cursor. The `server` slug is reserved for ephemeral in-game rooms and is not a
 normal database channel.
 
+## HUD identity cosmetic extension
+
+Widget v2.10.8 understands three optional, additive FCM fields on `chat.message`
+events, including subscribe-time history:
+
+```json
+{
+  "tag": "X",
+  "supporterStar": true,
+  "starColor": "#58FDFD"
+}
+```
+
+The relay emits these fields only for a token that negotiated `clientVersion >= 2.10.0`;
+missing, old, and invalid versions receive the upstream event shape. The relay records
+the capability beside a short-lived one-way token digest because ZFE may use separate
+connect and subscribe sockets. `tag` and `starColor` are already validated by the
+cosmetics service, and `supporterStar` is derived only from an active Supporter or
+Overseer entitlement. The HUD renders a fixed `★` glyph and never trusts a glyph from
+the wire. The desktop/web `nameColor` and effect fields remain outside this HUD extension.
+
 ## Ephemeral `server` rooms
 
 The widget periodically observes nearby names from approved HUD data sources and

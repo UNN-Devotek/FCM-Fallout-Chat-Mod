@@ -369,7 +369,7 @@ export function refreshClientIdentity(
 }
 
 /**
- * Push updated cosmetics (name colour, effect, tag, badges) to every viewer so
+ * Push updated cosmetics (name colour, effect, tag, badges, star colour) to every viewer so
  * already-rendered messages re-style without anyone reconnecting.
  *
  * Rides the same `user:identity_updated` frame the rename path uses, because
@@ -384,7 +384,7 @@ export function refreshClientIdentity(
  */
 export function refreshClientCosmetics(
   userId: string,
-  cosmetics: { nameColor?: string | null; effectId?: string | null; tag?: string | null; badges?: string[] },
+  cosmetics: { nameColor?: string | null; effectId?: string | null; tag?: string | null; badges?: string[]; starColor?: string | null },
 ): void {
   try {
     if (typeof broadcast !== 'function') return;
@@ -396,6 +396,7 @@ export function refreshClientCosmetics(
         effectId: cosmetics.effectId ?? null,
         tag: cosmetics.tag ?? null,
         badges: cosmetics.badges ?? [],
+        starColor: cosmetics.starColor ?? null,
       },
     });
   } catch (err) {

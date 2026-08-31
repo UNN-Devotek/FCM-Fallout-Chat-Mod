@@ -1442,7 +1442,7 @@ describe('relay WebSocket ops', () => {
     // to subscribed ZFE clients.
     const { ws: wsReg, msgs: msgsReg } = await conn();
     const regRes = await waitForMsg(wsReg, msgsReg, () =>
-      send(wsReg, { op: 'register', displayName: 'SubFwdPlayer' }),
+      send(wsReg, { op: 'register', displayName: 'SubFwdPlayer', clientVersion: '2.10.8' }),
     );
     wsReg.close();
     const { token } = regRes;
@@ -1470,6 +1470,9 @@ describe('relay WebSocket ops', () => {
           source: 'relay',
           timestamp: new Date().toISOString(),
           relaySeq: 9999,
+          tag: 'X',
+          badges: ['supporter'],
+          starColor: '#58FDFD',
         },
       },
     });
@@ -1492,7 +1495,55 @@ describe('relay WebSocket ops', () => {
       messageId: 'msg-fwd-1',
       channel: 'global',
       body: 'forwarded body',
+      tag: 'X',
+      supporterStar: true,
+      starColor: '#58FDFD',
     });
+    ws.close();
+  });
+
+  test('relay strips HUD cosmetic fields for a widget without capability handshake', async () => {
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'LegacyHudPlayer' }),
+    );
+    wsReg.close();
+    const { token } = regRes;
+    const rawId = lastRawUserId();
+    _userMap[rawId] = { id: rawId, discordId: null, steamId: null, isBanned: false, isMuted: false };
+
+    const { ws, msgs } = await conn();
+    const subRes = await waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'subscribe', token, cursor: 0 }),
+    );
+    expect(subRes).toMatchObject({ success: true, op: 'subscribed' });
+
+    const beforeLen = msgs.length;
+    await redisMock.publish('chat:broadcast', JSON.stringify({
+      instanceId: 'other-instance',
+      payload: {
+        type: 'chat:message',
+        payload: {
+          id: 'msg-legacy-cosmetics', content: 'legacy body', username: 'LegacyHudPlayer',
+          userId: 'fcm-legacy-cosmetics', channelId: '00000000-0000-0000-0000-000000000005',
+          source: 'relay', timestamp: new Date().toISOString(), relaySeq: 10000,
+          tag: 'X', badges: ['supporter'], starColor: '#58FDFD',
+        },
+      },
+    }));
+
+    await new Promise((resolve) => {
+      const iv = setInterval(() => {
+        if (msgs.length > beforeLen) { clearInterval(iv); resolve(); }
+      }, 20);
+      setTimeout(() => { clearInterval(iv); resolve(); }, 1000);
+    });
+
+    const evt = msgs.slice(beforeLen).find((m) => m.op === 'event');
+    expect(evt).toBeDefined();
+    expect(evt.event).not.toHaveProperty('tag');
+    expect(evt.event).not.toHaveProperty('supporterStar');
+    expect(evt.event).not.toHaveProperty('starColor');
     ws.close();
   });
 

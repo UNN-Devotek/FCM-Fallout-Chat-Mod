@@ -125,3 +125,34 @@ describe('install.sh — system-aware Linux install policy', () => {
     expect(sh).not.toContain('sudo dnf install -y kdotool');
   });
 });
+
+describe('Linux smart desktop detection is documented in every install surface', () => {
+  const linuxZipInstructions = readOverlay('assets/install/INSTALL-LINUX.txt');
+  const linuxCli = readRepo('Packaging/linux/install.sh');
+  const runtimeHelper = readOverlay('main.js');
+
+  for (const [label, text] of [
+    ['website', readRepo('admin-dashboard/src/features/auth/LandingPage.tsx')],
+    ['Linux ZIP', linuxZipInstructions],
+    ['CLI installer', linuxCli],
+    ['runtime helper', runtimeHelper],
+  ]) {
+    it(`${label} names the supported session/compositor paths`, () => {
+      const lower = text.toLowerCase();
+      expect(lower).toContain('hyprland');
+      expect(lower).toContain('hyprctl');
+      expect(lower).toContain('plain x11');
+      expect(lower).toContain('game-running fallback');
+    });
+  }
+
+  it('website HUD instructions are directly below the top HUD download', () => {
+    const page = readRepo('admin-dashboard/src/features/auth/LandingPage.tsx');
+    const hud = page.indexOf('Optional in-game HUD mod — keep the download visible at the top');
+    const instructions = page.indexOf('STEP 1 — PREPARE', hud);
+    const windows = page.indexOf('{/* ── Windows ─────────────────────────────────────────────────── */}');
+    expect(hud).toBeGreaterThanOrEqual(0);
+    expect(instructions).toBeGreaterThan(hud);
+    expect(instructions).toBeLessThan(windows);
+  });
+});

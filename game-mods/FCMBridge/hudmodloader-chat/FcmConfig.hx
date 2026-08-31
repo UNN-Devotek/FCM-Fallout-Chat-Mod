@@ -12,6 +12,9 @@
  */
 class FcmConfig {
 
+    /** Immutable supporter marker. The HUD never renders a client-supplied glyph. */
+    public static inline var SUPPORTER_STAR_GLYPH:String = "★";
+
     // ── HUD viewport (HUDModLoader fixed 1920x1080 space) ──────────────────────
     public static inline var VIEW_W:Int = 1920;
     public static inline var VIEW_H:Int = 1080;
@@ -152,6 +155,11 @@ class FcmConfig {
         if (!(~/^[0-9a-fA-F]{6}$/.match(t))) return fallback;
         var v:Null<Int> = Std.parseInt("0x" + t);
         return (v == null) ? fallback : v;
+    }
+
+    /** Parse a server-provided cosmetic colour, failing closed to the HUD theme. */
+    public static function supporterStarColor(s:String, fallback:Int):Int {
+        return parseHexColor(s, fallback);
     }
 
     /** Dim a color toward black by `factor` (0..1) — used for inactive channel sub-tabs. */

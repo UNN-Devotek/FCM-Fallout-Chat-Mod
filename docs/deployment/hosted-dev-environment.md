@@ -641,7 +641,7 @@ Code artifacts (in repo):
 
 Manual (maintainer) — **all done as of 2026-06-11:**
 - [x] Created the `fcm-dev` Dokploy project; stack deployed and healthy
-      (db / redis / discord all connected; builds from `dev` branch; autoDeploy off)
+      (db / redis / discord all connected; builds from `dev` branch; autoDeploy on)
 - [x] Dev secrets set in the Dokploy project env (never in the repo)
 - [x] Dedicated `cloudflared-dev` tunnel stood up on `fcm-dev-network`
 - [x] Cloudflare public hostnames + Access policies live:

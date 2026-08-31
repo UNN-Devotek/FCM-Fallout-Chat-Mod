@@ -91,9 +91,9 @@ See [realtime-socket.md](realtime-socket.md) for the full protocol and backend s
 > localhost opt-in below. There is **no environment variable** to skip TLS certificate verification or
 > to override the CA bundle path. Under Wine/Proton, chat.v1 reads the system CA bundle from the
 > Wine `Z:` system paths automatically (logged as `chat.v1 TLS CA source: wine_pem_bundle`); on native
-> Windows it uses the Windows certificate store (`windows_store`). chat.v1 is currently BLOCKED under
-> Proton/Wine by an upstream Zig TLS bug — see
-> [native-chat-relay/proton-status.md](native-chat-relay/proton-status.md) (#326).
+> Windows it uses the Windows certificate store (`windows_store`). The historical Proton/Wine TLS
+> issue is resolved in the current project ZFE build; use the target-specific package instructions
+> and a current ZFE binary.
 
 ## Disabling Remote Data For Testing
 

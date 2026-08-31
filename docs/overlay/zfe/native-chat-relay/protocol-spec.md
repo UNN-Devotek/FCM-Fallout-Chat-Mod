@@ -7,11 +7,11 @@
 > verbatim-in-substance as the canonical reference. FCM's relay implements R1–R3 + worldId — see
 > [fcm-integration.md](fcm-integration.md) for the integration status (epic #282).
 >
-> **Status (2026-06-26): end-to-end send works on native Windows (ZFE 0.9.9+).** The `chat.v1.send`
-> path is verified in-game against the FCM relay on **native Windows**. The 0.9.8 `dispatch_failed`
-> on `sendMessage` was an upstream ZFE bug fixed in **0.9.9**. **Proton/Wine is blocked** by an
-> upstream Zig TLS bug (fix = ZFE on Zig ≥ 0.14.0; #326). See [ZFE version history](#zfe-version-history)
-> and [Transport / TLS](#transport--tls-chatv1-is-not-schannel) below.
+> **Status (2026-08-31): end-to-end send works on native Windows and Proton/Wine.** The
+> `chat.v1.send` path is verified against the FCM relay on the current project ZFE build. The
+> older 0.9.8 `dispatch_failed` and Proton/Wine TLS failures apply only to pre-fix ZFE builds.
+> See [ZFE version history](#zfe-version-history) and [Transport / TLS](#transport--tls-chatv1-is-not-schannel)
+> below.
 >
 > **This is NOT the existing FCMHUD/1 bridge.** FCM's shipping in-game chat is a *bespoke*
 > line protocol (`color~channel~user~content` + M7 `HELLO/SEND/CHAN` verbs) riding ZFE's
@@ -36,6 +36,7 @@ chat.v1-relevant ZFE builds:
 | **0.9.9** | **Dispatch bug fixed → send works on native Windows.** This is the build the working Windows path needs. |
 | 0.9.10 | Added Wine detection (`wine_get_version`) + a Zig TLS client + system-CA loading (Wine `Z:` paths), but chat still crashed under Wine. |
 | 0.9.11 | Corrected misleading logging — the `Schannel/Winsock` line is the **legacy Text Chat** (now labeled `Legacy Text Chat transport backend`), not chat.v1. Added chat.v1 TLS CA logging (`TLS CA source: windows_store \| wine_pem_bundle`). |
+| Current project-supported ZFE build | chat.v1 send and TLS work on native Windows and Proton/Wine. |
 
 ---
 
@@ -45,14 +46,10 @@ chat.v1 uses its **own Zig TLS client** plus a **PEM CA bundle**, on every platf
 `Schannel/Winsock` line in older ZFE logs refers to the **legacy Text Chat** transport (SFE
 compat), **not** chat.v1 — corrected in ZFE 0.9.11's logging.
 
-**Proton/Wine (Linux/Steam Deck) is BLOCKED — upstream.** `chat.v1.connect` panics the game during
-the TLS handshake: Zig `std.crypto.tls.Client.readvAdvanced` has an out-of-bounds `@memcpy` on
-**partial socket reads**, fixed by Zig 0.14.0. Wine read fragmentation + Cloudflare TLS 1.3 record
-padding make it deterministic under Proton (only intermittent on native Windows). ZFE 0.9.11 logging
-confirms the host CA bundle loads fine (`certs=149`) before the crash, so the CA bundle is not the
-cause. **Fix = ZFE rebuilt on Zig ≥ 0.14.0**; there is no client-side workaround (plaintext `ws://`
-loopback is refused, and a local `wss://` proxy still drives ZFE's buggy Zig TLS client). Tracked in
-**#326**. Linux / Steam-Deck users use the native desktop overlay meanwhile.
+The historical Proton/Wine partial-read failure was resolved in the current project ZFE build.
+The FCM widget uses the same TLS-backed `chat.v1` path on native Windows and Proton/Wine; install
+the current ZFE build rather than an older pre-fix binary. Plaintext public `ws://` endpoints remain
+invalid; hosted packages use the target's `wss://` relay endpoint.
 
 ---
 
@@ -345,6 +342,13 @@ avoid duplicate messages between push and poll.
 `createdAt` is the message's **server send time** as an ISO 8601 UTC string (sourced from
 `messages.created_at`). Clients render timestamps from this field. The system link-notice carries
 the time it was issued. Older relays may omit it (treat absent/empty as "no timestamp").
+
+FCM's relay adds optional HUD cosmetic fields for capable FCM widgets: `tag` (a validated
+Overseer tag), `supporterStar: true` (an active Supporter/Overseer entitlement), and
+`starColor` (a validated `#rrggbb` value). They may appear on live, polled, and
+subscribe-time history events only after the client negotiates the capability; generic ZFE
+clients and older FCM widgets must ignore unknown fields. The FCM HUD always renders its
+own immutable `★` glyph.
 
 When `cursor` is `0`, the server **may** include an initial visible history window. The history
 size is relay policy, not a ZFE rule — a relay can return no history, five messages, twenty

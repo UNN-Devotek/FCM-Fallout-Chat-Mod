@@ -11,9 +11,9 @@ it.
 > worldId controls. R6 (production guard lift) remains follow-on work. `setSlowMode` is
 > intentionally advertised as unavailable because FCM has no per-channel slow-mode primitive.
 
-> **Status (2026-06-26): chat.v1 in-game send WORKS end-to-end on native Windows (ZFE 0.9.9+).**
+> **Status (2026-08-31): chat.v1 in-game send WORKS end-to-end on native Windows and Proton/Wine.**
 > The earlier 0.9.8 `chat.v1.sendMessage` → `dispatch_failed` was an upstream ZFE bug, fixed in
-> **0.9.9** (the build the working Windows path needs). On the relay side, two fixes landed (both
+> **0.9.9**. The current project ZFE build also contains the Proton/Wine transport fix. On the relay side, two fixes landed (both
 > squash-merged to `dev`):
 > - **#334** — `handleSend` now attributes the message to the **linked FCM user UUID**
 >   (`identity.linkedUserId`, the `users.id`), **not** the relay TEXT id (`user_<hex>`). The TEXT id
@@ -23,12 +23,9 @@ it.
 >   carries the pre-computed `relaySeq`; the old double-broadcast was removed). Without it,
 >   `poll`/history (which filter `relay_seq IS NOT NULL`) never returned relay sends.
 >
-> **Proton/Wine (Linux/Steam Deck) is BLOCKED** by an upstream Zig TLS bug — `chat.v1.connect`
-> panics in `std.crypto.tls.Client.readvAdvanced` on partial socket reads (fixed by Zig 0.14.0,
-> which ZFE must be rebuilt on). Tracked in **#326**. The native desktop overlay remains the Linux
-> chat path until ZFE ships the Zig-0.14.0 build. The `Schannel/Winsock` label seen in ZFE logs is
-> the **legacy Text Chat** transport, **not** chat.v1 — chat.v1 uses its own Zig TLS client + a PEM
-> CA bundle.
+> The historical Proton/Wine TLS issue tracked in **#326** is resolved in the current project ZFE
+> build. The `Schannel/Winsock` label seen in older ZFE logs is the **legacy Text Chat** transport,
+> not chat.v1 — chat.v1 uses its own Zig TLS client plus a PEM CA bundle.
 
 ## Contents
 

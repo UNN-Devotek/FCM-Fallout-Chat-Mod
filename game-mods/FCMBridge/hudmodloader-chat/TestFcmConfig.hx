@@ -32,6 +32,9 @@ class TestFcmConfig {
         eqi("hex short->fallbk", FcmConfig.parseHexColor("#FFF", 0x123456), 0x123456);
         eqi("hex empty->fallbk", FcmConfig.parseHexColor("", 0x111111), 0x111111);
         eqi("hex null->fallbk",  FcmConfig.parseHexColor(null, 0x222222), 0x222222);
+        eqs("supporter star glyph is immutable", FcmConfig.SUPPORTER_STAR_GLYPH, "★");
+        eqi("supporter star colour accepts hex", FcmConfig.supporterStarColor("#58FDFD", 0x123456), 0x58FDFD);
+        eqi("supporter star colour rejects unsafe input", FcmConfig.supporterStarColor("url(evil)", 0x123456), 0x123456);
 
         // ── clampInt / clampFloat ──
         eqi("clampInt below", FcmConfig.clampInt(5, 10, 20), 10);

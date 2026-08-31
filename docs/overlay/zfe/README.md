@@ -4,7 +4,7 @@ ZFE is a `dxgi.dll` proxy for Fallout 76 that exposes `__ZFE` to the Scaleform
 HUD. FCM's optional `FCMChatWidget` HUDModLoader mod uses its sanctioned
 `chat.v1` surface to display chat in game.
 
-> **Current widget (2026-08-12):** `FCMChatWidget` v2.10.1 targets `/relay` through
+> **Current widget (2026-08-31):** `FCMChatWidget` v2.10.8 targets `/relay` through
 > ZFE `chat.v1`. The backend keeps production relay access fail-closed until
 > `RELAY_PRODUCTION_ENABLED=true` is deliberately rolled out. The desktop overlay
 > remains independent of this optional mod path.
@@ -106,8 +106,8 @@ So any field the relay starts emitting reaches clients that do not understand it
 indefinitely. Before this, `VERSION` only ever reached the local ZFE log, so the relay
 had no way to tell what it was talking to.
 
-Any future change to the shape of what the widget receives — starting with per-user
-name colours — **must** be gated on this. `supportsCosmetics()` fails closed: an
+Any future change to the shape of what the widget receives — including per-user
+name colours and HUD identity adornments — **must** be gated on this. `supportsCosmetics()` fails closed: an
 unknown, missing or unparseable version means no. Being wrong that way means a
 supporter's colour does not show in-game until they update (invisible and harmless);
 being wrong the other way is permanent visible garbage in usernames for everyone on an
@@ -119,19 +119,19 @@ lexicographically, so a string compare would silently lock every updated client 
 `MIN_COSMETICS_VERSION` is **2.10.0**, the first build that reports a version at all —
 the bump IS the capability signal.
 
-### Still to do for in-game cosmetics
+### HUD identity cosmetics (widget v2.10.8)
 
-The relay-side encoding is deliberately **not** enabled yet, pending a ~30 minute probe
-that needs the game running: does ZFE forward unknown top-level event fields verbatim,
-or normalise them away? `protocol-spec.md` says ZFE "normalizes" pushed relay events,
-which implies re-serialization against a fixed struct.
+The relay now sends these additive fields on `chat.message` events only to clients that
+negotiated `clientVersion >= 2.10.0`:
 
-- If fields **survive**: add a clean `nameColor` field to the 5 emission sites in
-  `relayHandler.ts` and skip the sentinel tunnel (#300) entirely. The widget's
-  `extractJsonString()` is a substring scanner and will find any key present.
-- If they **do not**: implement #300's `senderDisplayName` sentinel tunnel, using a
-  printable ASCII sentinel (control bytes poison the ZFE string pool) and avoiding
-  `& < > "` which `htmlEscape()` would turn into visible mojibake.
+- `tag`: a server-validated Overseer tag, rendered before the sender name;
+- `supporterStar: true`: the capability marker for an entitled Supporter or Overseer;
+- `starColor`: a server-validated `#rrggbb` catalog color for the fixed `★` glyph.
 
-Either way, ship the **decoder-only** widget build first and only then enable
-relay-side encoding, gated on `clientVersion`.
+The widget never accepts a glyph from the wire. It uses the immutable `★` constant and
+falls back to the configured active-tab color if a star color is absent or malformed.
+Static history is decorated with the same current cosmetics as live messages. Because ZFE
+can use separate sockets for connect and subscribe, the relay stores only a short-lived
+one-way digest of the negotiated token/version to carry this capability across those sockets.
+Missing, old, or invalid versions receive the original event shape, so older BA2 files remain
+safe during a manual rollout.

@@ -19,6 +19,9 @@ import {
   IDLE_COLLAPSE_SECONDS_MIN,
   IDLE_COLLAPSE_SECONDS_MAX,
   IDLE_COLLAPSE_SECONDS_DEFAULT,
+  AUTO_HIDE_MODE_DEFAULT,
+  FULL_AUTO_HIDE_HEIGHT,
+  normalizeAutoHideMode,
   shellToWebSettings,
   resolveCollapsedHeight,
   revealCollapsedElements,
@@ -428,6 +431,25 @@ describe('clampIdleCollapseSeconds', () => {
     expect(clampIdleCollapseSeconds(Infinity)).toBe(IDLE_COLLAPSE_SECONDS_DEFAULT);
     expect(clampIdleCollapseSeconds(undefined)).toBe(IDLE_COLLAPSE_SECONDS_DEFAULT);
     expect(clampIdleCollapseSeconds(null)).toBe(IDLE_COLLAPSE_SECONDS_DEFAULT);
+  });
+});
+
+describe('normalizeAutoHideMode', () => {
+  it('accepts the full-window auto-hide mode', () => {
+    expect(normalizeAutoHideMode('full')).toBe('full');
+  });
+  it('accepts the explicit sub-tabs collapse mode', () => {
+    expect(normalizeAutoHideMode('subtabs')).toBe('subtabs');
+    expect(AUTO_HIDE_MODE_DEFAULT).toBe('full');
+  });
+  it('uses full auto-hide for missing or corrupted settings', () => {
+    expect(normalizeAutoHideMode(undefined)).toBe('full');
+    expect(normalizeAutoHideMode(null)).toBe('full');
+    expect(normalizeAutoHideMode('header')).toBe('full');
+    expect(normalizeAutoHideMode({})).toBe('full');
+  });
+  it('uses a native one-pixel target for full auto-hide', () => {
+    expect(FULL_AUTO_HIDE_HEIGHT).toBe(1);
   });
 });
 

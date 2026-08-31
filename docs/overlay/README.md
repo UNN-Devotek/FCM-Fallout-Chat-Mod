@@ -67,8 +67,9 @@ The global `window.__FCM_OVERLAY_SHELL__` (set in `bridge.ts`) gates desktop-onl
 signed-in account's active Discord tier through the overlay's install-token proxy; it
 does not accept a user id from the renderer. Free swatches remain usable by everyone,
 while Supporter and Overseer's Circle choices stay visible but locked until the matching
-Discord role is active. Colour and tag render in the in-game HUD; visual effects are
-honestly labelled desktop-only because Scaleform cannot render them safely.
+Discord role is active. The supporter marker is always a `★`, with its colour chosen
+independently from the username colour. Colour and tag render in the in-game HUD; visual
+effects are honestly labelled desktop-only because Scaleform cannot render them safely.
 
 ---
 

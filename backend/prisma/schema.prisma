@@ -293,6 +293,9 @@ model UserCosmetic {
   // colorPresetId wins when both are set; validation lives in cosmeticsService.
   colorPresetId        String?   @map("color_preset_id")
   customColorHex       String?   @map("custom_color_hex")
+  // Optional catalog preset for the supporter/Overseer star. When unset, the
+  // resolved tier default is used. The glyph itself is never stored or user input.
+  starColorPresetId    String?   @map("star_color_preset_id")
   // Supporter+ (static) and Overseer (animated) render effects. Desktop-only —
   // Scaleform cannot render them in-game (crash rule #1 bans .filters).
   effectId             String?   @map("effect_id")
@@ -503,6 +506,8 @@ model Release {
   version       String   @unique
   downloadUrl   String   @map("download_url")
   releaseNotes  String   @map("release_notes")
+  hudModVersion String?  @map("hud_mod_version")
+  hudModUrl     String?  @map("hud_mod_url")
   publishedAt   DateTime @default(now()) @map("published_at") @db.Timestamptz(6)
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   downloadCount Int      @default(0) @map("download_count")

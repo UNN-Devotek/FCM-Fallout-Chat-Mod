@@ -10,6 +10,11 @@
 
 import { windowsZipUrl, linuxZipUrl } from './releaseDownloadUrls';
 
+export interface HudModDownload {
+  version: string;
+  url: string;
+}
+
 /** Message content above the embed — pings the whole Updates channel. Requires
  *  `allowedMentions: { parse: ['everyone'] }` on send AND the bot to hold
  *  "Mention Everyone" in that channel (otherwise it posts but doesn't ping). */
@@ -26,9 +31,15 @@ export function downloadPageUrl(): string {
   return process.env.DOWNLOAD_PAGE_URL || 'https://falloutchatmod.com';
 }
 
-/** Embed "Download" field value — env-aware direct ZIP links + the download page. */
-export function releaseDownloadFieldValue(version: string): string {
-  return `🪟 [Windows](${windowsZipUrl(version)})  ·  🐧 [Linux (Proton)](${linuxZipUrl(version)})  ·  [Download page](${downloadPageUrl()})`;
+/** Embed "Download" field value — env-aware app links + optional HUD package. */
+export function releaseDownloadFieldValue(version: string, hudMod?: HudModDownload): string {
+  const links = [
+    `🪟 [Windows](${windowsZipUrl(version)})`,
+    `🐧 [Linux (Proton)](${linuxZipUrl(version)})`,
+    `[Download page](${downloadPageUrl()})`,
+  ];
+  if (hudMod) links.push(`[ZFE FCM HUD Mod ZIP v${hudMod.version}](${hudMod.url})`);
+  return links.join('  ·  ');
 }
 
 /** Embed "Endorse on Nexus" field value — encouragement + the download caveat. */

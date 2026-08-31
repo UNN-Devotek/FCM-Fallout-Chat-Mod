@@ -42,23 +42,46 @@ def main() -> None:
         ]
 
     with tempfile.TemporaryDirectory() as temp_dir:
-        output = Path(temp_dir) / "widget.zip"
-        package.build_package("dev", output)
-        with ZipFile(output) as archive:
-            names = set(archive.namelist())
-            assert "Data/FCMChatWidget.ba2" in names
-            assert "Data/FCMChat.ini" in names
-            assert "Data/ZFE/TextChat/fragments/FCMChatWidget.ini" in names
-            assert "INSTALL.txt" in names
-            assert archive.read("Data/FCMChatWidget.ba2") == widget_artifact
-            chat_config = archive.read("Data/FCMChat.ini")
-            assert b"dev.falloutchatmod.com/link" in chat_config
-            assert b"showTimestamps" not in chat_config
-            assert b"timestampColor" not in chat_config
-            assert b"wss://dev.falloutchatmod.com/relay" in archive.read(
-                "Data/ZFE/TextChat/fragments/FCMChatWidget.ini"
-            )
-            assert b"dev.falloutchatmod.com/link" in archive.read("INSTALL.txt")
+        assert package.widget_version() == version_match.group(1)
+        for target, expected in package.TARGETS.items():
+            output = Path(temp_dir) / f"widget-{target}.zip"
+            package.build_package(target, output)
+            with ZipFile(output) as archive:
+                names = set(archive.namelist())
+                assert "Data/FCMChatWidget.ba2" in names
+                assert "Data/FCMChat.ini" in names
+                assert "Data/ZFE/TextChat/fragments/FCMChatWidget.ini" in names
+                assert "FCMChatWidget.hudmodloader.ini" in names
+                assert "FCMChatWidget.version.txt" in names
+                assert "Data/hudmodloader.ini" not in names
+                assert "INSTALL.txt" in names
+                assert archive.read("Data/FCMChatWidget.ba2") == widget_artifact
+                assert archive.read("FCMChatWidget.hudmodloader.ini") == b"FCMChatWidget\n"
+                assert archive.read("FCMChatWidget.version.txt") == f"{package.widget_version()}\n".encode()
+
+                chat_config = archive.read("Data/FCMChat.ini")
+                widget_config = archive.read(
+                    "Data/ZFE/TextChat/fragments/FCMChatWidget.ini"
+                )
+                install = archive.read("INSTALL.txt")
+                assert f"linkUrl={expected['link_url']}\n".encode() in chat_config
+                assert f"Endpoint={expected['endpoint']}\n".encode() in widget_config
+                assert f"  {expected['web_link_url']}\n".encode() in install
+                assert f"  {expected['endpoint']}\n".encode() in install
+                assert b"showTimestamps" not in chat_config
+                assert b"timestampColor" not in chat_config
+
+                other = package.TARGETS["prod" if target == "dev" else "dev"]
+                assert f"linkUrl={other['link_url']}\n".encode() not in chat_config
+                assert f"Endpoint={other['endpoint']}\n".encode() not in widget_config
+                assert f"  {other['web_link_url']}\n".encode() not in install
+                assert f"  {other['endpoint']}\n".encode() not in install
+
+                if target == "prod":
+                    for name in names - {"Data/FCMChatWidget.ba2"}:
+                        assert b"dev" not in archive.read(name).lower(), (
+                            f"production archive mentions DEV in {name}"
+                        )
 
     print("package target tests passed")
 

@@ -69,6 +69,15 @@ describe('releaseAnnouncement', () => {
       assert.ok(v.includes('🪟 [Windows](https://falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod%20Setup%201.2.3%20(Windows).zip)'));
       assert.ok(v.includes('🐧 [Linux (Proton)](https://falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod-1.2.3.AppImage%20(Linux).zip)'));
     });
+
+    test('includes the target HUD package when release metadata provides one', () => {
+      process.env.RELEASE_DOWNLOAD_HOST = 'dev.falloutchatmod.com';
+      const v = releaseDownloadFieldValue('1.3.91-dev', {
+        version: '2.10.8',
+        url: 'https://dev.falloutchatmod.com/downloads/electron/ZFE%20FCM%20HUD%20Mod-2.10.8%20(DEV).zip',
+      });
+      assert.ok(v.includes('[ZFE FCM HUD Mod ZIP v2.10.8](https://dev.falloutchatmod.com/downloads/electron/ZFE%20FCM%20HUD%20Mod-2.10.8%20(DEV).zip)'));
+    });
   });
 
   describe('nexusEndorseFieldValue', () => {

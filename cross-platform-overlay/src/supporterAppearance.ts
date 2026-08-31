@@ -10,6 +10,17 @@
 
 export type SupporterTier = 'none' | 'supporter' | 'overseer';
 
+/** The badge is identity chrome, so previews use this constant rather than API text. */
+export const SUPPORTER_STAR_GLYPH = '★' as const;
+
+export function safeSupporterStarColor(
+  tier: Exclude<SupporterTier, 'none'>,
+  selected?: string | null,
+): string {
+  if (typeof selected === 'string' && /^#[0-9a-f]{6}$/i.test(selected)) return selected;
+  return tier === 'overseer' ? '#FD4DA6' : '#7EA8F7';
+}
+
 export interface ColorPreset {
   id: string;
   label: string;
@@ -40,11 +51,14 @@ export interface OverlayCosmeticsPayload {
   };
   cosmetics: {
     nameColor: string | null;
+    starColor: string | null;
     effectId: string | null;
     tag: string | null;
+    badges: string[];
     stored: {
       colorPresetId: string | null;
       customColorHex: string | null;
+      starColorPresetId: string | null;
       effectId: string | null;
       customTag: string | null;
       cosmeticsEnabled: boolean;
@@ -220,7 +234,21 @@ export function mountSupporterAppearance(parent: HTMLElement): HTMLElement {
     previewName.dataset.fcmName = data.displayName || 'YourName';
     previewName.textContent = data.displayName || 'YourName';
     if (data.cosmetics.tag) preview.append(node('span', 'ss-cosmetics-tag', `[${data.cosmetics.tag}] `));
-    preview.append(previewName, document.createTextNode(': preview message'));
+    const badges = Array.isArray(data.cosmetics.badges) ? data.cosmetics.badges : [];
+    const starTier = badges.includes('overseer') ? 'overseer'
+      : badges.includes('supporter') ? 'supporter' : null;
+    const identity = node('span', 'fcm-name-identity');
+    if (starTier) {
+      const star = node('span', `fcm-name-badge fcm-name-badge--${starTier}`);
+      star.dataset.fcmSupporterStar = 'true';
+      star.setAttribute('role', 'img');
+      star.setAttribute('aria-label', starTier === 'overseer' ? "Overseer's Circle" : 'Supporter');
+      star.style.color = safeSupporterStarColor(starTier, data.cosmetics.starColor);
+      star.textContent = SUPPORTER_STAR_GLYPH;
+      identity.append(star);
+    }
+    identity.append(previewName);
+    preview.append(identity, document.createTextNode(': preview message'));
     root.append(node('div', 'ss-cosmetics-caption', 'Desktop preview'), preview);
 
     const state = node('div', feedback ? 'ss-cosmetics-status saved' : 'ss-cosmetics-status');
@@ -267,6 +295,38 @@ export function mountSupporterAppearance(parent: HTMLElement): HTMLElement {
 
     colourGroup('COLOUR — everywhere, including the in-game HUD', data.catalog.colors.filter(c => c.tier === 'none'));
     colourGroup('SUPPORTER COLOURS', data.catalog.colors.filter(c => c.tier !== 'none'));
+
+    root.append(node('div', 'ss-cosmetics-label', 'SUPPORTER STAR COLOUR'));
+    root.append(node('div', 'ss-note', 'The supporter marker is always a star. Its colour is independent from your name colour.'));
+    const starColourGroup = (title: string, colors: ColorPreset[]) => {
+      root.append(node('div', 'ss-cosmetics-label', title));
+      const list = node('div', 'ss-cosmetics-swatches');
+      colors.forEach((preset) => {
+        const locked = isLocked(tier, preset.tier);
+        const button = node('button', `ss-cosmetics-swatch${locked ? ' locked' : ''}${stored?.starColorPresetId === preset.id ? ' selected' : ''}`) as HTMLButtonElement;
+        button.type = 'button';
+        button.style.background = preset.hex;
+        button.title = locked ? `${preset.label} — ${TIER_NAME[preset.tier]} required` : `${preset.label} · ${preset.hex}`;
+        button.setAttribute('aria-label', `Star colour: ${button.title}`);
+        if (locked) {
+          button.disabled = true;
+          button.append(node('span', 'ss-cosmetics-lock', '🔒'));
+        } else {
+          button.dataset.cosmeticsInteractive = 'true';
+          button.addEventListener('click', () => void mutate({ starColorPresetId: preset.id }));
+        }
+        list.append(button);
+      });
+      root.append(list);
+    };
+    starColourGroup('FREE STAR COLOURS', data.catalog.colors.filter(c => c.tier === 'none'));
+    starColourGroup('SUPPORTER STAR COLOURS', data.catalog.colors.filter(c => c.tier !== 'none'));
+    const resetStar = node('button', 'ss-fbtn', 'USE TIER DEFAULT') as HTMLButtonElement;
+    resetStar.type = 'button';
+    resetStar.disabled = tier === 'none';
+    if (!resetStar.disabled) resetStar.dataset.cosmeticsInteractive = 'true';
+    resetStar.addEventListener('click', () => void mutate({ starColorPresetId: null }));
+    root.append(resetStar);
 
     root.append(node('div', 'ss-cosmetics-label', 'EFFECTS — desktop overlay and website only'));
     root.append(node('div', 'ss-note', 'The game HUD shows your solid colour and tag only; its UI engine cannot render glow or animation.'));

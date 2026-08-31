@@ -25,6 +25,7 @@ import {
   validateCustomColor,
   CosmeticRejection,
 } from './validation';
+import { defaultStarColor } from './star';
 
 /** Resolved cosmetics as they appear on the wire and in the UI. */
 export interface ResolvedCosmetics {
@@ -37,11 +38,13 @@ export interface ResolvedCosmetics {
   tag: string | null;
   /** Badges rendered beside the name, e.g. ['supporter']. */
   badges: string[];
+  /** Final star colour, or null when the user has no supporter badge. */
+  starColor: string | null;
   tier: SupporterTier;
 }
 
 export const EMPTY_COSMETICS = (userId: string): ResolvedCosmetics => ({
-  userId, nameColor: null, effectId: null, tag: null, badges: [], tier: 'none',
+  userId, nameColor: null, effectId: null, tag: null, badges: [], starColor: null, tier: 'none',
 });
 
 export type ApplyReason =
@@ -65,6 +68,7 @@ export type ApplyResult =
 export interface CosmeticPatch {
   colorPresetId?: string | null;
   customColorHex?: string | null;
+  starColorPresetId?: string | null;
   effectId?: string | null;
   customTag?: string | null;
   cosmeticsEnabled?: boolean;
@@ -122,7 +126,10 @@ export async function resolveCosmetics(userId: string): Promise<ResolvedCosmetic
 
     resolved = { ...EMPTY_COSMETICS(userId), tier };
 
-    if (tier !== 'none') resolved.badges = [tier];
+    if (tier !== 'none') {
+      resolved.badges = [tier];
+      resolved.starColor = defaultStarColor(tier);
+    }
 
     if (row && row.cosmeticsEnabled) {
       // Preset wins over a custom hex when both are stored.
@@ -132,6 +139,13 @@ export async function resolveCosmetics(userId: string): Promise<ResolvedCosmetic
       } else if (!preset && row.customColorHex) {
         // Custom colours are free-tier — the picker is available to everyone.
         resolved.nameColor = row.customColorHex;
+      }
+
+      // The star remains a fixed glyph, but its colour is an independent catalog
+      // choice. An invalid or lapsed choice safely falls back to the tier default.
+      const starPreset = findColorPreset(row.starColorPresetId);
+      if (starPreset && tier !== 'none' && tierAtLeast(tier, starPreset.tier)) {
+        resolved.starColor = starPreset.hex;
       }
 
       const effect = findEffectPreset(row.effectId);
@@ -252,6 +266,7 @@ export async function attachCosmeticsToHistory<T extends Record<string, unknown>
     if (cosmetics.effectId) fields.effectId = cosmetics.effectId;
     if (cosmetics.tag) fields.tag = cosmetics.tag;
     if (cosmetics.badges.length > 0) fields.badges = cosmetics.badges;
+    if (cosmetics.starColor && cosmetics.badges.length > 0) fields.starColor = cosmetics.starColor;
     Object.assign(payload, fields);
   }
 
@@ -283,7 +298,7 @@ function rejectionToResult(r: CosmeticRejection): ApplyResult {
   if (r.field === 'customTag') {
     return { ok: false, reason: 'invalid_tag', detail: { field: r.field, code: r.code } };
   }
-  if (r.field === 'colorPresetId' || r.field === 'effectId') {
+  if (r.field === 'colorPresetId' || r.field === 'starColorPresetId' || r.field === 'effectId') {
     return { ok: false, reason: 'invalid_color', detail: { field: r.field, code: r.code } };
   }
   // CosmeticRejection is exhaustive above. Keep a safe fallback for future union
@@ -349,6 +364,19 @@ export async function applyCosmetics(input: {
       data.customColorHex = result.value;
       data.colorPresetId = null;
       changed.push('customColorHex');
+    }
+  }
+
+  // ── Supporter star colour ─────────────────────────────────────────────────
+  if (patch.starColorPresetId !== undefined) {
+    if (patch.starColorPresetId === null) {
+      data.starColorPresetId = null;
+      changed.push('starColorPresetId');
+    } else {
+      const result = validateColorPreset(patch.starColorPresetId, tier, 'starColorPresetId');
+      if (!result.ok) return rejectionToResult(result.rejection);
+      data.starColorPresetId = result.value;
+      changed.push('starColorPresetId');
     }
   }
 

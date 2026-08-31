@@ -313,6 +313,7 @@ jobs:
           python3 game-mods/FCMBridge/hudmenu-chat/test_anchors.py
           python3 game-mods/FCMBridge/hudmenu-chat/test_ba2tool.py
           python3 game-mods/FCMBridge/hudmodloader-chat/test_package.py
+          python3 Packaging/test-release-scripts.py
       # FcmConfig parser/clamp unit tests (CAP-001..005, #303/#304) — pure Haxe, --interp.
       - name: Install Haxe
         run: sudo apt-get update && sudo apt-get install -y haxe

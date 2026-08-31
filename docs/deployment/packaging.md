@@ -6,7 +6,8 @@ All scripts live in `Packaging/`. They are called in sequence during the release
 
 ## Packaging/package-downloads.ps1
 
-**Purpose:** Build the two human-download ZIP archives from the raw `electron-builder` artifacts.
+**Purpose:** Build the two desktop human-download ZIP archives and the target-specific optional
+in-game HUD-mod ZIP from the raw `electron-builder` artifacts and current HUD widget source.
 
 **Usage:**
 ```powershell
@@ -20,16 +21,27 @@ All scripts live in `Packaging/`. They are called in sequence during the release
 4. Compresses the staging contents (files at root, not nested in a subfolder) into:
    - `Fallout Chat Mod Setup X.Y.Z (Windows).zip` — installer + `INSTALL-WINDOWS.txt`
    - `Fallout Chat Mod-X.Y.Z.AppImage (Linux).zip` — AppImage + **`.deb`** + `INSTALL-LINUX.txt` + `.kwinrule`
-5. Both ZIPs land in `cross-platform-overlay/dist-electron/` alongside the raw files
+   - `ZFE FCM HUD Mod-<widget-version> (PROD).zip` — `FCMChatWidget.ba2`, both runtime INIs,
+     an append-only `FCMChatWidget.hudmodloader.ini` snippet, `FCMChatWidget.version.txt`,
+     `Fallout76Custom.ini.example`, and target-specific `INSTALL.txt`
+5. All three ZIPs land in `cross-platform-overlay/dist-electron/` alongside the raw files
 
 The `.deb` ships inside the Linux ZIP so apt users can `sudo apt install ./'Fallout Chat Mod-X.Y.Z.deb'` (or `dpkg -i`) — an in-place, apt-managed alternative to the AppImage. `Packaging/release.ps1` also verifies + uploads the raw `.deb` alongside the AppImage.
 
 **Note:** The ZIPs are for website/Nexus human downloads only. There are no `latest*.yml` feed files — `build.publish` was removed for Nexus Mods ToS compliance.
 
+The HUD ZIP is a separate, explicit opt-in install for the in-game HUD track; it never replaces
+the user's existing `Data/hudmodloader.ini`. `package.py` reads the widget version from
+`FCMChatWidget.hx` and refuses to package a stale BA2. Use `-HudTarget dev` when producing a
+hosted-dev package; use the default `prod` target for production. Never copy a stamped package
+between environments.
+
 **Parameters:**
 - `-Version` (required) — e.g. `1.3.73`
 - `-DistDir` (optional) — defaults to `<repo>/cross-platform-overlay/dist-electron`
 - `-AssetsDir` (optional) — defaults to `<repo>/cross-platform-overlay/assets`
+- `-HudModDir` (optional) — defaults to `<repo>/game-mods/FCMBridge/hudmodloader-chat`
+- `-HudTarget` (optional) — `prod` (default) or `dev`; stamps the HUD relay/link configuration and instructions
 
 ---
 
@@ -39,21 +51,28 @@ The `.deb` ships inside the Linux ZIP so apt users can `sudo apt install ./'Fall
 
 **Usage:**
 ```powershell
-.\Packaging\publish-nexus-release.ps1 -Version X.Y.Z [-ReleaseNotes "What's new..."] [-DryRun]
+.\Packaging\publish-nexus-release.ps1 -Version X.Y.Z [-ReleaseNotes "What's new..."] [-HudModDir path] [-DryRun]
 ```
 
 **What it does:**
-1. Calls `publish-nexus.ps1` once for the Windows ZIP and once for the Linux ZIP, passing per-platform file-group IDs and descriptions
-2. The Windows description includes a SmartScreen / false-positive disclaimer
-3. After both Nexus publishes succeed, uploads the raw Windows `.exe` to VirusTotal using the large-file upload URL (required for files > 32 MB)
+1. Calls `publish-nexus.ps1` for each enabled Nexus file group: the Linux desktop ZIP as `main` and the production HUD ZIP as `optional` (Windows remains disabled while Nexus quarantines `.exe` uploads)
+2. Uses the desktop version for the Linux Nexus file and the current `FCMChatWidget.hx` version for the HUD Nexus file
+3. After the Nexus publishes succeed, uploads the raw Windows `.exe` to VirusTotal using the large-file upload URL (required for files > 32 MB)
 4. Computes the SHA-256 permalink and POSTs it to `POST https://falloutchatmod.com/admin/virustotal-url` so the `/virustotal` redirect always points at the latest scan
 
 **Required env vars** (Windows: set as USER env vars so they persist across PowerShell sessions. Linux/`pwsh`: put them in the repo-root `.env`/`.env.local` — `release.ps1` auto-loads them via `Import-DotEnv` — or `export` them before running):
 - `NEXUS_API_KEY` — personal API key from nexusmods.com/settings/api-keys
 - `NEXUS_FILE_GROUP_ID_WINDOWS` — file-group id for the Windows file (Files tab → Manage Files → API Info)
 - `NEXUS_FILE_GROUP_ID_LINUX` — file-group id for the Linux file
+- `NEXUS_FILE_GROUP_ID_HUD` — separate file-group id for the optional HUD ZIP on the same Nexus mod page
 - `VT_API_KEY` — VirusTotal personal API key
 - `PROD_ADMIN_RELEASE_TOKEN` — backend admin release token (from `backend/.env`)
+
+The HUD file is uploaded as a separate optional Nexus file group, so it does not replace the
+desktop download. Set `NEXUS_FILE_GROUP_ID_HUD` to the group created for the HUD package in the
+Nexus Files tab. The wrapper expects `ZFE FCM HUD Mod-<widget-version> (PROD).zip` to already
+exist in `dist-electron/` (the normal `release.ps1` sequence creates it in step 4), then archives
+the previous HUD file when the new one reaches Nexus `available` state.
 
 **ASCII-only rule:** This script must remain ASCII-only. PowerShell 5.1 via `-File` mis-tokenizes non-ASCII characters (em-dashes, smart quotes, etc.) inside double-quoted strings and throws a misleading `Unexpected token '}'` parse error. Use plain hyphens (`-`), never Unicode dashes.
 

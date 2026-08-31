@@ -84,6 +84,15 @@ describe('githubReleaseService', () => {
       assert.ok(body.includes('## Endorse on Nexus'));
       assert.ok(body.includes('[endorse it on Nexus](https://www.nexusmods.com/fallout76/mods/4082)'));
     });
+
+    test('includes the versioned HUD package link when supplied', () => {
+      process.env.RELEASE_DOWNLOAD_HOST = 'dev.falloutchatmod.com';
+      const body = buildGitHubReleaseBody('1.3.91-dev', 'My notes here', {
+        version: '2.10.8',
+        url: 'https://dev.falloutchatmod.com/downloads/electron/ZFE%20FCM%20HUD%20Mod-2.10.8%20(DEV).zip',
+      });
+      assert.ok(body.includes('[ZFE FCM HUD Mod ZIP v2.10.8](https://dev.falloutchatmod.com/downloads/electron/ZFE%20FCM%20HUD%20Mod-2.10.8%20(DEV).zip)'));
+    });
   });
 
   describe('createGitHubRelease (best-effort)', () => {

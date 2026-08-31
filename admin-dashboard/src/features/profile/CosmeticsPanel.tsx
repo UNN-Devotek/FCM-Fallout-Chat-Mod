@@ -15,6 +15,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'motion/react';
 import { api } from '../../services/api';
+import { supporterBadge, supporterStarColor, SUPPORTER_STAR_GLYPH } from '../chat/supporterBadge';
 
 // ── Styles (matching Profile.tsx conventions) ────────────────────────────────
 
@@ -63,11 +64,13 @@ interface SupporterStatus {
 
 interface Cosmetics {
   nameColor: string | null;
+  starColor: string | null;
   effectId: string | null;
   tag: string | null;
   badges: string[];
   stored: {
     colorPresetId: string | null;
+    starColorPresetId: string | null;
     effectId: string | null;
     customTag: string | null;
   } | null;
@@ -118,6 +121,7 @@ export default function CosmeticsPanel({ userId, previewName }: { userId: string
 
   const currentColor = cosmetics?.nameColor ?? null;
   const currentEffect = cosmetics?.effectId ?? null;
+  const currentStar = supporterBadge(cosmetics?.badges);
 
   // The same stored tag is editable in the overlay's Settings → Appearance panel.
   // Sync only when the server value changes (initial load or another surface update),
@@ -170,13 +174,34 @@ export default function CosmeticsPanel({ userId, previewName }: { userId: string
       <div style={{ ...label }}>Preview</div>
       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '20px' }}>
         <PreviewRow bg="#1e1908" caption="Website / dashboard"
-          name={previewName || 'YourName'} color={currentColor} effect={currentEffect} tag={cosmetics?.tag ?? null} />
+          name={previewName || 'YourName'} color={currentColor} effect={currentEffect} tag={cosmetics?.tag ?? null}
+          starTier={currentStar?.tier ?? null} starColor={cosmetics?.starColor ?? null} />
         <PreviewRow bg="rgba(10,10,10,0.55)" caption="Overlay (translucent)"
-          name={previewName || 'YourName'} color={currentColor} effect={currentEffect} tag={cosmetics?.tag ?? null} />
+          name={previewName || 'YourName'} color={currentColor} effect={currentEffect} tag={cosmetics?.tag ?? null}
+          starTier={currentStar?.tier ?? null} starColor={cosmetics?.starColor ?? null} />
         {/* In-game deliberately previews WITHOUT the effect — Scaleform cannot render
             glow/animation, so showing it here would misrepresent what users get. */}
         <PreviewRow bg="#0a0a0a" caption="In-game HUD"
-          name={previewName || 'YourName'} color={currentColor} effect={null} tag={cosmetics?.tag ?? null} />
+          name={previewName || 'YourName'} color={currentColor} effect={null} tag={cosmetics?.tag ?? null}
+          starTier={currentStar?.tier ?? null} starColor={cosmetics?.starColor ?? null} />
+      </div>
+
+      {/* ── Supporter star colour ───────────────────────────────────────── */}
+      <div style={{ marginBottom: '20px' }}>
+        <div style={label}>Supporter star colour</div>
+        <p style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: '10px' }}>
+          The supporter marker is always a star. Choose its colour independently from your name colour.
+        </p>
+        <Swatches presets={freeColors} current={cosmetics?.stored?.starColorPresetId ?? null} tier={tier}
+          onPick={id => save.mutate({ starColorPresetId: id })} />
+        <div style={{ ...label, marginTop: '14px' }}>Supporter star colours</div>
+        <Swatches presets={paidColors} current={cosmetics?.stored?.starColorPresetId ?? null} tier={tier}
+          onPick={id => save.mutate({ starColorPresetId: id })} shopUrl={status?.shopUrl ?? null} />
+        <button type="button" disabled={save.isPending}
+          onClick={() => save.mutate({ starColorPresetId: null })}
+          style={{ ...btn, marginTop: '10px', fontSize: '12px' }}>
+          Use tier default
+        </button>
       </div>
 
       {/* ── Colours ────────────────────────────────────────────────────── */}
@@ -320,9 +345,10 @@ function Swatches({ presets, current, tier, onPick, shopUrl }: {
   );
 }
 
-function PreviewRow({ bg, caption, name, color, effect, tag }: {
+function PreviewRow({ bg, caption, name, color, effect, tag, starTier, starColor }: {
   bg: string; caption: string; name: string;
   color: string | null; effect: string | null; tag: string | null;
+  starTier: 'supporter' | 'overseer' | null; starColor: string | null;
 }) {
   return (
     <div style={{ minWidth: '210px' }}>
@@ -332,17 +358,24 @@ function PreviewRow({ bg, caption, name, color, effect, tag }: {
         border: '1px solid var(--border-color)', fontFamily: 'var(--font-mono)', fontSize: '13px',
       }}>
         {tag && <span className="fcm-name-tag" style={{ color: color ?? '#f0e8cc' }}>[{tag}]</span>}
-        <span
-          className={effect ? `fcm-name-fx--${effect}` : undefined}
-          data-fcm-name={name}
-          style={{
-            fontWeight: effect === 'outline-heavy' ? 900 : 'bold',
-            color: color ?? '#f0e8cc',
-            ['--fcm-name-color' as string]: color ?? '#f0e8cc',
-            ['--fcm-name-outline' as string]: '0 0 2px #000, 0 0 3px #000',
-          } as React.CSSProperties}
-        >
-          {name}
+        <span className="fcm-name-identity">
+          {starTier && <span className={`fcm-name-badge fcm-name-badge--${starTier}`} data-fcm-supporter-star="true"
+            aria-label={starTier === 'overseer' ? "Overseer's Circle" : 'Supporter'}
+            style={{ color: supporterStarColor([starTier], starColor) ?? undefined }}>
+            {SUPPORTER_STAR_GLYPH}
+          </span>}
+          <span
+            className={effect ? `fcm-name-fx--${effect}` : undefined}
+            data-fcm-name={name}
+            style={{
+              fontWeight: effect === 'outline-heavy' ? 900 : 'bold',
+              color: color ?? '#f0e8cc',
+              ['--fcm-name-color' as string]: color ?? '#f0e8cc',
+              ['--fcm-name-outline' as string]: '0 0 2px #000, 0 0 3px #000',
+            } as React.CSSProperties}
+          >
+            {name}
+          </span>
         </span>
         <span style={{ color: '#c0a870' }}>: hey wanderer</span>
       </div>

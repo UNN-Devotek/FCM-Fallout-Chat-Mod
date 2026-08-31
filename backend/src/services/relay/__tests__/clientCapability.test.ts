@@ -18,6 +18,8 @@ import {
   rememberClientVersion,
   getClientVersion,
   connectionSupportsCosmetics,
+  rememberTokenClientVersion,
+  tokenSupportsCosmetics,
 } from '../clientCapability';
 
 describe('parseClientVersion', () => {
@@ -121,5 +123,21 @@ describe('per-connection registry', () => {
     rememberClientVersion(ws, '2.9.4');
     rememberClientVersion(ws, '2.10.0');
     assert.equal(connectionSupportsCosmetics(ws), true);
+  });
+});
+
+describe('token capability registry', () => {
+  test('carries the negotiated version from connect to a separate subscribe socket', () => {
+    const token = 'relay-token-capability-test';
+    rememberTokenClientVersion(token, '2.10.7');
+    assert.equal(tokenSupportsCosmetics(token), true);
+  });
+
+  test('fails closed for an old, missing, or invalid token version', () => {
+    rememberTokenClientVersion('old-token', '2.9.9');
+    rememberTokenClientVersion('invalid-token', 'not-a-version');
+    assert.equal(tokenSupportsCosmetics('old-token'), false);
+    assert.equal(tokenSupportsCosmetics('invalid-token'), false);
+    assert.equal(tokenSupportsCosmetics('unknown-token'), false);
   });
 });

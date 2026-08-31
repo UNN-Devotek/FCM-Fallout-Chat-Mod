@@ -73,6 +73,8 @@ describe('GET /api/version', () => {
     expect(res.status).toBe(200);
     expect(res.body.data).toHaveProperty('version');
     expect(res.body.data).toHaveProperty('downloadUrl');
+    expect(res.body.data).toHaveProperty('hudModVersion');
+    expect(res.body.data).toHaveProperty('hudModUrl');
   });
 });
 

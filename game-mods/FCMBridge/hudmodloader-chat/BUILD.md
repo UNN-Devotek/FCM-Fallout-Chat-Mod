@@ -1,6 +1,6 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.7. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.8. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
@@ -44,19 +44,27 @@ connected, later HUD reads update local identity state only; they never issue a 
 | Python | 3 (stdlib only) |
 | HUDModLoader | installed by the user |
 | ZFE | 0.9.9+ with `zfe-chat-online-v1` capability |
-| Fallout 76 | native Windows installation validated; do not treat this as a requirement for the desktop overlay |
+| Fallout 76 | native Windows or Proton/Wine installation with the current ZFE chat.v1 support; do not treat this as a requirement for the desktop overlay |
 
 ## Configuration and install layout
 
-Install the opt-in mod assets into the Fallout 76 `Data` directory:
+Install the opt-in mod assets into the Fallout 76 `Data` directory. The recommended
+distribution is the target-specific ZIP produced by `package.py`; it includes the
+BA2, both configuration files, an append-only HUDModLoader snippet, and `INSTALL.txt`.
+It deliberately does not include a replacement `Data/hudmodloader.ini`.
 
 ```text
 Data/FCMChatWidget.ba2
 Data/FCMChat.ini
-Data/hudmodloader.ini                 # contains FCMChatWidget
 Data/ZFE/TextChat/fragments/FCMChatWidget.ini
+FCMChatWidget.hudmodloader.ini       # root-level append snippet, not Data/hudmodloader.ini
 Documents/My Games/Fallout 76/Fallout76Custom.ini
 ```
+
+After extracting the package, append `FCMChatWidget` exactly once to the user's
+existing `Data/hudmodloader.ini`. Preserve all other widget entries. Append
+`FCMChatWidget.ba2` to the existing `sResourceArchive2List` value in
+`Fallout76Custom.ini`; do not replace the user's BA2 list.
 
 `Fallout76Custom.ini` needs the archive listed with HUDModLoader, for example:
 
@@ -96,11 +104,18 @@ python3 package.py --target dev --output /tmp/FCMChatWidget-dev.zip
 python3 test_package.py
 ```
 
-Use `--target prod` for production. A DEV package must contain both
-`Endpoint=wss://dev.falloutchatmod.com/relay` and
-`linkUrl=dev.falloutchatmod.com/link`; these values must never be mixed with
-production. `INSTALL.txt` in the generated archive repeats the matching URL and
-installation steps.
+Use `--target prod` for production. The helper refuses to package a stale BA2
+whose embedded version does not match `FCMChatWidget.hx`. Each generated archive contains only its
+target's endpoint and account-link details. Never copy a configuration file
+between targets. `INSTALL.txt` in the generated archive repeats the matching
+URL and installation steps, and `FCMChatWidget.version.txt` records the embedded
+widget version. The output can be regenerated at any time from the current
+`FCMChatWidget.hx` version:
+
+```bash
+python3 package.py --print-version
+python3 package.py --target prod --output "/tmp/ZFE FCM HUD Mod-$(python3 package.py --print-version) (PROD).zip"
+```
 
 ## Input-path acceptance
 
@@ -215,7 +230,7 @@ staff validation on every request; the HUD permission is only a visibility hint.
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.10.7`. If
+1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.10.8`. If
    `AccountInfoData` is late, the widget waits and retries. The sender label and a newly sent
    message use the exact public Fallout 76 account handle, including punctuation; neither
    `Wanderer` nor the local character name is used for the relay handshake.

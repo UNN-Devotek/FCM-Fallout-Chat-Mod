@@ -16,7 +16,7 @@
          ABORT if the Linux artifact is missing -- both platforms must ship.
       2. GATE: smoke-test.ps1 -Version $Version  (exit non-zero -> ABORT, publish nothing)
       3. GATE: vt-gate.ps1 -Version $Version     (exit non-zero -> ABORT, publish nothing)
-      4. package-downloads.ps1 -Version $Version  (build human-download ZIPs)
+      4. package-downloads.ps1 -Version $Version  (build human-download ZIPs + HUD ZIP)
       5. Upload raw .exe + .AppImage + ZIPs to VPS; verify served sizes against
          LOCAL build artifact sizes (Get-Item .Length); no feed manifest uploads.
       6. POST https://falloutchatmod.com/admin/releases  (register release, triggers
@@ -39,6 +39,7 @@
       NEXUS_API_KEY
       NEXUS_FILE_GROUP_ID_WINDOWS
       NEXUS_FILE_GROUP_ID_LINUX
+      NEXUS_FILE_GROUP_ID_HUD
 
 .PARAMETER Version
     Required. Version string, e.g. 1.3.84.
@@ -158,14 +159,27 @@ Write-Host "================================================================"
 $repoRoot   = Split-Path $PSScriptRoot -Parent
 $overlayDir = Join-Path $repoRoot "cross-platform-overlay"
 $distDir    = Join-Path $overlayDir "dist-electron"
+$hudModDir  = Join-Path $repoRoot "game-mods\FCMBridge\hudmodloader-chat"
 
 $smokeScript = Join-Path $PSScriptRoot "smoke-test.ps1"
 $vtScript    = Join-Path $PSScriptRoot "vt-gate.ps1"
 $pkgScript   = Join-Path $PSScriptRoot "package-downloads.ps1"
 $nexusScript = Join-Path $PSScriptRoot "publish-nexus-release.ps1"
+$hudPackageScript = Join-Path $hudModDir "package.py"
 
 foreach ($s in @($smokeScript, $vtScript, $pkgScript, $nexusScript)) {
     if (-not (Test-Path $s)) { Fail "missing script" "Required script not found: $s" }
+}
+if (-not (Test-Path $hudPackageScript)) { Fail "missing script" "Required HUD package script not found: $hudPackageScript" }
+
+# The HUD package version is read from the same Haxe source used by package.py.
+# This keeps the release URL and the ZIP contents tied to one version source.
+$pythonCommand = Get-Command python3 -ErrorAction SilentlyContinue
+if (-not $pythonCommand) { $pythonCommand = Get-Command python -ErrorAction SilentlyContinue }
+if (-not $pythonCommand) { Fail "pre-flight" "Python 3 is required to package the ZFE FCM HUD Mod" }
+$hudModVersion = (& $pythonCommand.Source $hudPackageScript --print-version).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $hudModVersion -or $hudModVersion -notmatch '^\d+\.\d+\.\d+$') {
+    Fail "pre-flight" "Could not read a valid FCMChatWidget version from $hudPackageScript"
 }
 
 # Verify PROD_ADMIN_RELEASE_TOKEN is present before doing any work.
@@ -195,8 +209,11 @@ $linuxApp     = Join-Path $distDir "Fallout Chat Mod-$Version.AppImage"
 $linuxDeb     = Join-Path $distDir "Fallout Chat Mod-$Version.deb"
 $winZipName   = "Fallout Chat Mod Setup $Version (Windows).zip"
 $linuxZipName = "Fallout Chat Mod-$Version.AppImage (Linux).zip"
+$hudTarget    = "prod"
+$hudZipName   = "ZFE FCM HUD Mod-$hudModVersion ($($hudTarget.ToUpperInvariant())).zip"
 $winZip       = Join-Path $distDir $winZipName
 $linuxZip     = Join-Path $distDir $linuxZipName
+$hudZip       = Join-Path $distDir $hudZipName
 
 # Remote download dir (inside the container)
 $remoteDownloads = "/app/downloads/electron"
@@ -207,7 +224,9 @@ $linuxAppName    = "Fallout%20Chat%20Mod-$($Version).AppImage%20(Linux).zip"
 $winExeRawName   = "Fallout%20Chat%20Mod%20Setup%20$Version.exe"
 $linuxRawName    = "Fallout%20Chat%20Mod-$Version.AppImage"
 $linuxDebRawName = "Fallout%20Chat%20Mod-$Version.deb"
+$hudZipUrlName   = $hudZipName -replace ' ', '%20'
 $baseUrl         = "https://falloutchatmod.com/downloads/electron"
+$hudModUrl       = "$baseUrl/$hudZipUrlName"
 
 # ---- STEP 1: Build -----------------------------------------------------------
 
@@ -304,13 +323,14 @@ if ($DryRun) {
     Write-Host "  STEP 4: package-downloads.ps1 -Version $Version"
     Write-Host "          -> builds '$winZipName'"
     Write-Host "          -> builds '$linuxZipName'"
+    Write-Host "          -> builds '$hudZipName' (target: $hudTarget)"
     Write-Host ""
-    Write-Host "  STEP 5: SCP raw .exe + .AppImage + ZIPs to $SshTarget"
+    Write-Host "  STEP 5: SCP raw .exe + .AppImage + ZIPs + HUD ZIP to $SshTarget"
     Write-Host "          docker cp into ${ContainerName}:${remoteDownloads}"
     Write-Host "          Verify served sizes against local build artifact sizes"
     Write-Host ""
     Write-Host "  STEP 6: POST https://falloutchatmod.com/admin/releases"
-    Write-Host "          {version:'$Version', downloadUrl:'...Windows ZIP...', releaseNotes:'...'}"
+    Write-Host "          {version:'$Version', downloadUrl:'...Windows ZIP...', hudModVersion:'$hudModVersion', hudModUrl:'$hudModUrl', releaseNotes:'...'}"
     Write-Host ""
     Write-Host "  STEP 7: publish-nexus-release.ps1 -Version $Version -ReleaseNotes '...'"
     Write-Host ""
@@ -324,12 +344,13 @@ if ($DryRun) {
 Step-Banner 4 "Build download ZIPs"
 Write-Host "[step 4] Running package-downloads.ps1 -Version $Version ..."
 
-$pkgExit = Invoke-SubScript $pkgScript @("-Version", $Version, "-DistDir", $distDir)
+$pkgExit = Invoke-SubScript $pkgScript @("-Version", $Version, "-DistDir", $distDir, "-HudModDir", $hudModDir, "-HudTarget", $hudTarget)
 if ($pkgExit -ne 0) {
     Fail "step 4 (package-downloads)" "package-downloads.ps1 exited $pkgExit"
 }
 if (-not (Test-Path $winZip))   { Fail "step 4 (output check)" "Windows ZIP not produced: $winZip" }
 if (-not (Test-Path $linuxZip)) { Fail "step 4 (output check)" "Linux ZIP not produced: $linuxZip" }
+if (-not (Test-Path $hudZip))   { Fail "step 4 (output check)" "HUD ZIP not produced: $hudZip" }
 Pass "step 4 (download ZIPs built)"
 
 # ---- STEP 5: Upload to VPS + verify served sizes ----------------------------
@@ -355,6 +376,7 @@ Upload-Artifact $linuxApp
 Upload-Artifact $linuxDeb
 Upload-Artifact $winZip
 Upload-Artifact $linuxZip
+Upload-Artifact $hudZip
 
 # --- Verify served sizes against LOCAL build artifact sizes ---
 # electron-builder no longer generates latest*.yml, so we derive the expected
@@ -397,6 +419,17 @@ Write-Host "[step 5] Linux .deb served size: $debServedSize bytes"
 if ($debServedSize -ne $debLocalSize) {
     Fail "step 5 (size mismatch -- deb)" "Linux .deb: served=$debServedSize bytes vs local=$debLocalSize bytes. Upload may be corrupt or incomplete."
 }
+
+$hudLocalSize = (Get-Item $hudZip).Length
+Write-Host "[step 5] Local HUD ZIP size: $hudLocalSize bytes"
+$hudServedSize = Get-ServedSize $hudModUrl $SshKey $SshTarget
+if ($null -eq $hudServedSize) {
+    Fail "step 5 (size verify -- hud mod)" "Could not retrieve Content-Length for HUD ZIP from VPS. Check upload and container path."
+}
+Write-Host "[step 5] HUD ZIP served size: $hudServedSize bytes"
+if ($hudServedSize -ne $hudLocalSize) {
+    Fail "step 5 (size mismatch -- hud mod)" "HUD ZIP: served=$hudServedSize bytes vs local=$hudLocalSize bytes. Upload may be corrupt or incomplete."
+}
 Pass "step 5 (artifacts uploaded + sizes verified)"
 
 # ---- STEP 6: Register release ------------------------------------------------
@@ -408,10 +441,10 @@ $winZipUrlName = "Fallout%20Chat%20Mod%20Setup%20$Version%20(Windows).zip"
 $downloadUrl   = "$baseUrl/$winZipUrlName"
 
 $notesEscaped = $ReleaseNotes -replace '\\', '\\\\' -replace '"', '\"' -replace "`r`n", '\n' -replace "`n", '\n' -replace "`r", '\n'
-$body = "{`"version`":`"$Version`",`"downloadUrl`":`"$downloadUrl`",`"releaseNotes`":`"$notesEscaped`"}"
+$body = "{`"version`":`"$Version`",`"downloadUrl`":`"$downloadUrl`",`"hudModVersion`":`"$hudModVersion`",`"hudModUrl`":`"$hudModUrl`",`"releaseNotes`":`"$notesEscaped`"}"
 
 Write-Host "[step 6] POST https://falloutchatmod.com/admin/releases"
-Write-Host "         version=$Version  downloadUrl=$downloadUrl"
+Write-Host "         version=$Version  downloadUrl=$downloadUrl  hudModVersion=$hudModVersion  hudModUrl=$hudModUrl"
 
 try {
     $resp = Invoke-RestMethod -Uri "https://falloutchatmod.com/admin/releases" -Method Post `

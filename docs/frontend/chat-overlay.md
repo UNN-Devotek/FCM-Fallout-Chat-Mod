@@ -594,7 +594,7 @@ socket closes.
 
 ## Supporter chat cosmetics
 
-`ChatMessage` carries `nameColor`, `effectId`, `tag` and `badges`, resolved server-side
+`ChatMessage` carries `nameColor`, `effectId`, `tag`, `badges` and `starColor`, resolved server-side
 in `ingestMessage.attachCosmetics()`. Channel and party `chat:history` batches resolve the
 same fields per distinct author before they are sent, and the frontend preserves those
 additive fields while normalising both live and history frames. Switching tabs or reloading
@@ -626,8 +626,10 @@ same element, hence compound selectors in the CSS).
 
 Tag and badge render **before** the name so the name element's text node stays exactly
 `Name: `. The badge is always the compact star glyph (`★`) for Supporter and Overseer's Circle,
-with an accessible hover label, rather than an unexplained text abbreviation. Splitting the
-colon out broke `getByText(/Name:/)` queries in the existing private-messaging tests.
+with an accessible hover label, rather than an unexplained text abbreviation. The channel tag,
+custom tag, star, name, and message body use centered line alignment; the star color is
+independently selected from the catalog. Splitting the colon out broke `getByText(/Name:/)` queries
+in the existing private-messaging tests.
 
 Cosmetics updates arrive on the existing `user:identity_updated` frame, so the handler
 that back-applies renames to rendered history covers colour changes too.

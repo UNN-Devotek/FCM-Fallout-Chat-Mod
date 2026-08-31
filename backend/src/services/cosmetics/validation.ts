@@ -27,10 +27,10 @@ export const TAG_MAX_LENGTH = 12;
  */
 export type CosmeticRejection =
   | { field: 'customTag'; code: 'too_long' | 'empty_after_sanitize' }
-  | { field: 'colorPresetId'; code: 'unknown_preset' }
+  | { field: 'colorPresetId' | 'starColorPresetId'; code: 'unknown_preset' }
   | { field: 'effectId'; code: 'unknown_preset' }
   | { field: 'customColorHex'; code: 'unparseable' | 'low_contrast' | 'reserved'; detail?: string; ratio?: number; reserved?: ReservedColor }
-  | { field: 'colorPresetId' | 'effectId' | 'customTag'; code: 'tier_locked'; requiredTier: SupporterTier };
+  | { field: 'colorPresetId' | 'starColorPresetId' | 'effectId' | 'customTag'; code: 'tier_locked'; requiredTier: SupporterTier };
 
 /** Validate the Overseer-tier custom tag. */
 export function validateTag(raw: string, tier: SupporterTier): { ok: true; value: string } | { ok: false; rejection: CosmeticRejection } {
@@ -48,11 +48,15 @@ export function validateTag(raw: string, tier: SupporterTier): { ok: true; value
 }
 
 /** Validate a catalog colour preset against the caller's tier. */
-export function validateColorPreset(id: string, tier: SupporterTier): { ok: true; value: string } | { ok: false; rejection: CosmeticRejection } {
+export function validateColorPreset(
+  id: string,
+  tier: SupporterTier,
+  field: 'colorPresetId' | 'starColorPresetId' = 'colorPresetId',
+): { ok: true; value: string } | { ok: false; rejection: CosmeticRejection } {
   const preset = findColorPreset(id);
-  if (!preset) return { ok: false, rejection: { field: 'colorPresetId', code: 'unknown_preset' } };
+  if (!preset) return { ok: false, rejection: { field, code: 'unknown_preset' } };
   if (!tierAtLeast(tier, preset.tier)) {
-    return { ok: false, rejection: { field: 'colorPresetId', code: 'tier_locked', requiredTier: preset.tier } };
+    return { ok: false, rejection: { field, code: 'tier_locked', requiredTier: preset.tier } };
   }
   return { ok: true, value: preset.id };
 }

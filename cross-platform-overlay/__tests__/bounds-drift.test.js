@@ -12,6 +12,8 @@
 // Runner: vitest (environment 'node').
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import core from '../overlay-core.js';
 
 const { resolvePersistedSize, BOUNDS_DRIFT_TOLERANCE_PX } = core;
@@ -99,5 +101,21 @@ describe('resolvePersistedSize — guards', () => {
     const prev = { width: 540, height: 484 };
     expect(resolvePersistedSize({ width: 545, height: 489 }, prev, 6)).toEqual(prev);
     expect(resolvePersistedSize({ width: 545, height: 489 }, prev)).toEqual({ width: 545, height: 489 });
+  });
+});
+
+describe('runtime bounds guard', () => {
+  it('keeps the overlay top edge on the display work area', () => {
+    const workArea = { x: 3840, y: 1350, width: 3840, height: 2160 };
+    const result = core.clampToWorkArea({ x: 4400, y: -900, width: 660, height: 640 }, workArea);
+    expect(result.y).toBe(workArea.y);
+    expect(result.y).toBeGreaterThanOrEqual(workArea.y);
+  });
+
+  it('routes every runtime setBounds call through the central guard', () => {
+    const source = readFileSync(resolve(__dirname, '..', 'main.js'), 'utf8');
+    expect(source).toContain('function setWindowBoundsGuarded');
+    expect((source.match(/mainWindow\.setBounds\(/g) || []).length).toBe(1);
+    expect(source).not.toContain('mainWindow.setPosition(');
   });
 });

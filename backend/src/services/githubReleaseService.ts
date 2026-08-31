@@ -17,7 +17,11 @@
  */
 
 import logger from '../config/logger';
-import { releaseDownloadFieldValue, nexusEndorseFieldValue } from '../utils/releaseAnnouncement';
+import {
+  releaseDownloadFieldValue,
+  nexusEndorseFieldValue,
+} from '../utils/releaseAnnouncement';
+import type { HudModDownload } from '../utils/releaseAnnouncement';
 
 export interface GitHubReleaseConfig {
   token: string;
@@ -51,12 +55,16 @@ export function releaseTag(version: string): string {
 }
 
 /** Release body: the notes, then the same env-aware download links + Nexus-endorse copy as the Discord embed. */
-export function buildGitHubReleaseBody(version: string, releaseNotes: string): string {
+export function buildGitHubReleaseBody(
+  version: string,
+  releaseNotes: string,
+  hudMod?: HudModDownload,
+): string {
   return [
     (releaseNotes || 'A new version is available.').trim(),
     '',
     '## Download',
-    releaseDownloadFieldValue(version),
+    releaseDownloadFieldValue(version, hudMod),
     '',
     '## Endorse on Nexus',
     nexusEndorseFieldValue(),
@@ -72,12 +80,16 @@ export interface GitHubReleasePayload {
 }
 
 /** The create/update payload for the GitHub Releases API. */
-export function githubReleasePayload(version: string, releaseNotes: string): GitHubReleasePayload {
+export function githubReleasePayload(
+  version: string,
+  releaseNotes: string,
+  hudMod?: HudModDownload,
+): GitHubReleasePayload {
   const pre = isPrereleaseVersion(version);
   return {
     tag_name: releaseTag(version),
     name: `Fallout Chat Mod ${releaseTag(version)}`,
-    body: buildGitHubReleaseBody(version, releaseNotes),
+    body: buildGitHubReleaseBody(version, releaseNotes, hudMod),
     prerelease: pre,
     make_latest: pre ? 'false' : 'true',
   };
@@ -93,7 +105,7 @@ type FetchLike = typeof fetch;
 export async function createGitHubRelease(
   version: string,
   releaseNotes: string,
-  opts: { fetchImpl?: FetchLike } = {},
+  opts: { fetchImpl?: FetchLike; hudMod?: HudModDownload } = {},
 ): Promise<void> {
   const cfg = githubReleaseConfig();
   if (!cfg) {
@@ -109,7 +121,7 @@ export async function createGitHubRelease(
     'X-GitHub-Api-Version': '2022-11-28',
     'User-Agent': 'fcm-release',
   };
-  const payload = githubReleasePayload(version, releaseNotes);
+  const payload = githubReleasePayload(version, releaseNotes, opts.hudMod);
   const tag = payload.tag_name;
   const attemptDelays = [0, 1000, 3000]; // 3 tries
 

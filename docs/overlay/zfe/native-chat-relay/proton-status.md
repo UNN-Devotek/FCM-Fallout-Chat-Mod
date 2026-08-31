@@ -1,19 +1,18 @@
-# chat.v1 under Proton / Wine — BLOCKED (upstream Zig TLS bug)
+# chat.v1 under Proton / Wine — SUPPORTED
 
-**Status (2026-06-26): BLOCKED, upstream-only. Tracked in issue #326.**
+**Status (2026-08-31): SUPPORTED by the current project ZFE build.**
 
-ZFE's `chat.v1` native chat relay works end-to-end on **native Windows** (ZFE 0.9.9+), but
-**crashes the game under Proton/Wine** (Linux / Steam Deck) on connect. The crash is in ZFE's
-bundled Zig TLS client, not in FCM's relay or the CA bundle, and there is **no client-side
-workaround**. The fix is upstream: ZFE rebuilt on **Zig >= 0.14.0**.
+The FCMChatWidget `chat.v1` path works on native Windows and Proton/Wine. Install the current
+ZFE build with `chat.v1` support, then use the same target-specific FCM widget package on either
+platform. The failure described below applies only to older ZFE builds and is retained as
+historical troubleshooting context.
 
-Until that build ships, **Linux / Steam Deck users use the native desktop overlay** (no ZFE) for
-chat — see [../../README.md](../../README.md) (Electron overlay) and
-[../README.md](README.md) (chat.v1 relay overview).
+For the package install procedure, see
+[`game-mods/FCMBridge/hudmodloader-chat/BUILD.md`](../../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
 
 ---
 
-## Symptom
+## Historical pre-fix symptom
 
 `chat.v1.connect` panics the game under Proton/Wine — a Zig panic / `__fastfail`. The host CA
 bundle loads fine first; the crash happens later, during the first TLS read.
@@ -60,7 +59,7 @@ chat.v1 uses its own Zig TLS client + the host PEM CA bundle.
   certificate verification or override the CA path. See
   [../env-vars.md](../env-vars.md).
 
-## The fix (upstream)
+## Historical fix (upstream)
 
 The ZFE author rebuilds ZFE with **Zig >= 0.14.0**, which includes **Zig PR #20587** — the fix for
 the `readvAdvanced` partial-read panic. Zig 0.14.0 is a released toolchain on `ziglang.org/download`.
@@ -76,13 +75,13 @@ above remain readable.)
 | 0.9.10 | Added Wine detection + a Zig TLS client + system CA-bundle loading (Wine `Z:` paths); chat still crashed under Wine. |
 | 0.9.11 | Corrected the misleading `Schannel/Winsock` log line (it is the legacy transport); added the chat.v1 TLS CA-source / PEM-bundle logging that confirmed the CA bundle is not the cause. |
 
-## Linux install notes
+## Linux / Proton install notes
 
-- **No Steam launch option is required** on CachyOS — ZFE's `dxgi.dll` proxy loads without
-  `WINEDLLOVERRIDES`. The usual `WINEDLLOVERRIDES="dxgi=n,b" %command%` is harmless but unnecessary
-  here.
-- **Interim Linux chat path:** the native **desktop overlay** (Electron, no ZFE) — it is unaffected by
-  this bug. Use it on Linux / Steam Deck until ZFE ships the Zig-0.14.0 build.
+- Install the package's `Data/` files into the Fallout 76 game directory inside the Steam library.
+- Keep `Fallout76Custom.ini` in the Fallout 76 Proton prefix's user Documents path; the package
+  `INSTALL.txt` includes the common `compatdata/1151340` location.
+- Use the current ZFE/Proton setup for the installed game. No legacy workaround from the historical
+  partial-read failure is required by the FCM package.
 
 ## See also
 

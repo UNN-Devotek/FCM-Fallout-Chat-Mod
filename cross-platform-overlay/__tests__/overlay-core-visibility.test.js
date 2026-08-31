@@ -2,7 +2,8 @@
 // extracted into overlay-core.js (Group 1, P1). These mirror the decision logic
 // in main.js: registerHotkeys (buildKeybindMap / accelToAction), emitVisibility
 // (emitVisibilityDecision), reevaluateVisibility (visibilityDecision), and
-// desiredTopmost. The actual Electron/timer side effects stay in main.js.
+// desiredTopmost / shouldIgnoreMouse. The actual Electron/timer side effects stay
+// in main.js.
 
 import core from '../overlay-core.js';
 
@@ -12,6 +13,7 @@ const {
   visibilityDecision,
   emitVisibilityDecision,
   desiredTopmost,
+  shouldIgnoreMouse,
   nextPresenceState,
   shouldHidePanelInGame,
   buildPanelHidingSaveScript,
@@ -193,6 +195,10 @@ describe('desiredTopmost', () => {
     expect(desiredTopmost({ ...base, forceVisible: true })).toBe(true);
   });
 
+  it('visible overlay -> true even when blurred and no game is running', () => {
+    expect(desiredTopmost({ ...base, windowVisible: true })).toBe(true);
+  });
+
   it('gameRunning -> true (even when not foreground / not focused) in default mode', () => {
     expect(desiredTopmost({ ...base, gameRunning: true })).toBe(true);
   });
@@ -271,6 +277,48 @@ describe('desiredTopmost — focus-aware mode', () => {
 
   it('nothing foreground / not focused -> false', () => {
     expect(desiredTopmost(base)).toBe(false);
+  });
+});
+
+describe('shouldIgnoreMouse', () => {
+  it('keeps a blurred overlay interactive when the game is not foreground', () => {
+    expect(shouldIgnoreMouse({
+      overlayFocused: false,
+      gameForeground: false,
+      clickThrough: false,
+      autoClickThrough: false,
+      modalInteractive: false,
+    })).toEqual({ ignore: false, forward: false });
+  });
+
+  it('passes clicks through while the game is foreground', () => {
+    expect(shouldIgnoreMouse({
+      overlayFocused: false,
+      gameForeground: true,
+      clickThrough: false,
+      autoClickThrough: true,
+      modalInteractive: false,
+    })).toEqual({ ignore: true, forward: true });
+  });
+
+  it('keeps manual click-through authoritative', () => {
+    expect(shouldIgnoreMouse({
+      overlayFocused: true,
+      gameForeground: false,
+      clickThrough: true,
+      autoClickThrough: false,
+      modalInteractive: false,
+    })).toEqual({ ignore: true, forward: false });
+  });
+
+  it('pins interactivity for an open modal', () => {
+    expect(shouldIgnoreMouse({
+      overlayFocused: false,
+      gameForeground: true,
+      clickThrough: true,
+      autoClickThrough: true,
+      modalInteractive: true,
+    })).toEqual({ ignore: false, forward: false });
   });
 });
 

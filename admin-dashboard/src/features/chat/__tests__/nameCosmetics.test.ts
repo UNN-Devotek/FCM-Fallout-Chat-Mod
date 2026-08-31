@@ -10,7 +10,10 @@
  *      win over the stylesheet and every effect would render as a plain name.
  */
 import { describe, it, expect } from 'vitest';
-import { nameCosmeticProps, supporterBadge } from '../ChatOverlay';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { nameCosmeticProps } from '../ChatOverlay';
+import { supporterBadge, supporterStarColor, SUPPORTER_STAR_GLYPH } from '../supporterBadge';
 
 const THEME = {
   primaryText: 'rgba(245,203,91,0.9)',
@@ -96,10 +99,14 @@ describe('nameCosmeticProps — with an effect', () => {
 });
 
 describe('supporterBadge', () => {
-  it('uses a compact star rather than the old SUP text pill', () => {
+  it('uses a compact immutable star rather than arbitrary badge text', () => {
     expect(supporterBadge(['supporter'])).toEqual({
-      tier: 'supporter', glyph: '★', label: 'Supporter',
+      tier: 'supporter', glyph: SUPPORTER_STAR_GLYPH, label: 'Supporter',
     });
+    expect(supporterBadge(['supporter', 'OWNER', 'not-a-glyph'])).toEqual({
+      tier: 'supporter', glyph: SUPPORTER_STAR_GLYPH, label: 'Supporter',
+    });
+    expect(SUPPORTER_STAR_GLYPH).toBe('★');
   });
 
   it('uses the same star for Overseer and gives the higher tier precedence during a role transition', () => {
@@ -111,5 +118,32 @@ describe('supporterBadge', () => {
   it('does not render unknown or absent badges', () => {
     expect(supporterBadge(['moderator'])).toBeNull();
     expect(supporterBadge()).toBeNull();
+  });
+});
+
+describe('supporterStarColor', () => {
+  it('uses a valid selected hex and falls back by tier when absent', () => {
+    expect(supporterStarColor(['supporter'], '#58FDFD')).toBe('#58FDFD');
+    expect(supporterStarColor(['supporter'], null)).toBe('#7EA8F7');
+    expect(supporterStarColor(['overseer'], 'not-css')).toBe('#FD4DA6');
+  });
+
+  it('never accepts arbitrary CSS or creates a star without a known tier badge', () => {
+    expect(supporterStarColor(['supporter'], 'url(https://evil.invalid)')).toBe('#7EA8F7');
+    expect(supporterStarColor(['◆'], '#58FDFD')).toBeNull();
+  });
+});
+
+describe('chat identity alignment', () => {
+  it('centres the channel tag, star, name, and body on the same line', () => {
+    const component = readFileSync(resolve(__dirname, '..', 'ChatOverlay.tsx'), 'utf8');
+    const css = readFileSync(resolve(__dirname, '..', 'nameEffects.css'), 'utf8');
+    expect(component).toContain("display: 'flex', alignItems: 'flex-start'");
+    expect(component).toContain('className="fcm-message-prefix"');
+    expect(component).toContain("display: 'inline-flex', alignItems: 'center', height: '1em', lineHeight: 1");
+    expect(component).toContain("flex: '1 1 auto'");
+    expect(css).toContain('.fcm-message-prefix {\n  display: inline-flex;\n  align-items: center;\n  flex: 0 0 auto;');
+    expect(css).toContain('.fcm-name-identity {\n  display: inline-flex;\n  align-items: center;');
+    expect(css).toContain('vertical-align: middle;');
   });
 });

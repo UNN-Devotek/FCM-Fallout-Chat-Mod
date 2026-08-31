@@ -16,7 +16,7 @@ in the website's Cosmetics guide and in `/cosmetics help`, not here.
 | Curated palette | 12 colours | 12 + 11 | 12 + 11 |
 | Bounded HSL picker | yes | yes | yes |
 | Static effects | — | Soft/Hard Glow, Heavy Outline, Chroma Split | same |
-| Chat badge | — | gold `★` (hover: Supporter) | gold `★` (hover: Overseer's Circle) |
+| Chat badge | — | `★` (hover: Supporter), color selectable in Appearance | `★` (hover: Overseer's Circle), color selectable in Appearance |
 | Animated effects | — | — | Pulse Glow, CRT Phosphor, Glitch, Shimmer |
 | Custom tag | — | — | yes |
 | **Every functional feature** | yes | yes | yes |
@@ -34,6 +34,7 @@ channel chrome, so the slot is left empty rather than filled badly.
 | Name colour | yes | yes | yes |
 | Tag | yes | yes | yes |
 | Badge | yes | yes | as a text prefix |
+| Star colour | yes | yes | yes, via the same solid HUD color path |
 | Effects | yes | yes | **never** |
 
 Effects can never render in-game. Scaleform crashes *Fallout 76* on any `.filters`
@@ -86,6 +87,12 @@ Historical messages resolve the current appearance at delivery time rather than 
 cosmetic snapshot. That makes a colour/effect selection persist across channel switches,
 reconnects and history reloads, while keeping the original message content unchanged.
 
+The supporter marker is guarded separately from user text. `SUPPORTER_STAR_GLYPH` is the
+only rendered glyph and the client rejects non-hex star colors at the final render boundary.
+`starColorPresetId` stores an optional catalog choice; when it is absent, invalid, or no
+longer entitled, the effective tier default is used. Website Profile → **Chat appearance**
+and overlay Settings → **Appearance** expose the same free and supporter color catalog.
+
 ### Payment provider
 
 **Discord Server Subscriptions.** Discord is merchant of record (handles VAT/sales tax
@@ -114,6 +121,7 @@ future provider change an adapter rather than a rewrite.
 | Effect CSS | `admin-dashboard/src/features/chat/nameEffects.css` |
 | Editor UI | `admin-dashboard/src/features/profile/CosmeticsPanel.tsx` |
 | Native overlay editor | `cross-platform-overlay/src/supporterAppearance.ts` (mounted in Settings → Appearance) |
+| Star marker contract | `backend/src/services/cosmetics/star.ts`, `admin-dashboard/src/features/chat/supporterBadge.ts` |
 
 ## Catalog gates (enforced in CI)
 

@@ -94,6 +94,10 @@ sub-channels (GENERAL / TRADING / EVENTS / RAIDS) are in the row below.
 - **`Ctrl/Cmd+Shift+\`** → toggle the overlay **show/hide**.
 - **`Ctrl/Cmd+Shift+X`** → toggle **click-through** (`INTERACTIVE` ↔ clicks pass
   to whatever is behind the overlay). Use click-through in-game; toggle back to type.
+
+When the overlay is visible over another desktop app, it remains clickable so a
+click can focus it and bring it above that app. Automatic click-through is reserved
+for the game foreground; manual click-through still always passes clicks through.
 - **`Ctrl/Cmd+Shift+]`** / **`Ctrl/Cmd+Shift+[`** → **next / previous channel**
   (drives the sub-tab row).
 - **`Ctrl/Cmd+Shift+,`** → **open settings** (the full desktop-parity panel).
@@ -104,7 +108,8 @@ scrolls internally). Exposes, mapped from the desktop `SettingsForm.cs` /
 `OverlayConfig.cs`:
 - **Appearance:** Theme (default **Fallout 76 amber**; also Vault-Tec Green /
   Amber / White), Window Opacity, Text Opacity, **Background Dim**, **Scanline
-  Intensity**, Font Size.
+  Intensity**, Font Size, and supporter star colour when the account has a
+  supporter badge.
 - **Behaviour:** Show hint bar, **Fade / collapse when idle** (on by default).
 - **Filters:** Blocked users, Hidden channels.
 - **Keybinds:** the global-shortcut set (toggle / focus / click-through / next /
@@ -115,7 +120,11 @@ All settings persist (localStorage + the Electron state file) and apply live
 **Auto-collapse (idle fade — desktop `_idleFaded` parity):** after ~25 s with no
 activity the overlay folds to just the header / tab strip; it expands again on
 any interaction (mouse / key / scroll) **or** a new message in the active
-channel. Toggle via **Fade when idle** in Settings.
+channel. Toggle via **Fade when idle** in Settings. **Auto-hide mode** next to
+that toggle selects either **Full auto-hide** (the default; hides the whole
+overlay, including the navigation, while keeping the relay connected so a new
+message can restore the window) or **Sub-tabs collapse** (leaves the navigation
+visible).
 
 **Window size / position:**
 - Default size is **520 × 500** (kept modest so the channel-tab bar at the top
@@ -127,9 +136,9 @@ channel. Toggle via **Fade when idle** in Settings.
   `skipTaskbar:false`, and `minimizable/maximizable:true` (the Electron-supported
   equivalent of `WS_EX_APPWINDOW` — a normal, non-tool window), so a
   transparent/frameless window still appears in the OS taskbar and alt-tab switcher.
-- **Always-on-top:** `setAlwaysOnTop(true, 'screen-saver')` is **re-asserted** on
-  focus/blur/show and on a 2 s timer, so the overlay stays above a
-  fullscreen-borderless game (native only — see WSLg note).
+- **Always-on-top:** `setAlwaysOnTop(true, 'screen-saver')` is **re-asserted**
+  while the overlay is visible, so it can be clicked above normal desktop windows
+  and stays above a fullscreen-borderless game (native only — see WSLg note).
 
 **Popovers stay in-frame:** the emoji picker, GIF picker, right-click context
 menu, @mention / slash-command autocomplete, and the settings modal all reposition

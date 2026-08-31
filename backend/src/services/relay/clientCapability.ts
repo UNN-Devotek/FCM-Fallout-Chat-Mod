@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 /**
  * In-game client version handshake and capability gating.
  *
@@ -90,6 +92,25 @@ export function supportsCosmetics(clientVersion: unknown): boolean {
  */
 const versions = new WeakMap<object, string>();
 
+// `chat.v1.connect` and the long-lived `chat.v1.subscribe` may be separate
+// WebSocket connections inside ZFE. Keep the capability beside the opaque relay
+// token as well, so the subscriber can receive the same additive fields as the
+// connection that negotiated the widget version. Store only a digest — never the
+// bearer token itself — and expire entries so a long-running backend cannot retain
+// one entry for every token ever issued.
+const TOKEN_VERSION_TTL_MS = 24 * 60 * 60 * 1000;
+const tokenVersions = new Map<string, { version: string; expiresAt: number }>();
+
+function tokenKey(token: string): string {
+  return createHash('sha256').update(token).digest('hex');
+}
+
+function pruneTokenVersions(now = Date.now()): void {
+  for (const [key, entry] of tokenVersions) {
+    if (entry.expiresAt <= now) tokenVersions.delete(key);
+  }
+}
+
 /** Record the version a client reported at register/hello. */
 export function rememberClientVersion(ws: object, raw: unknown): void {
   if (typeof raw === 'string' && raw.trim()) versions.set(ws, raw.trim());
@@ -105,6 +126,25 @@ export function connectionSupportsCosmetics(ws: object): boolean {
   return supportsCosmetics(getClientVersion(ws));
 }
 
+/** Remember the widget version across ZFE's separate connect/subscribe sockets. */
+export function rememberTokenClientVersion(token: unknown, raw: unknown): void {
+  if (typeof token !== 'string' || !token || typeof raw !== 'string' || !raw.trim()) return;
+  const now = Date.now();
+  pruneTokenVersions(now);
+  tokenVersions.set(tokenKey(token), { version: raw.trim(), expiresAt: now + TOKEN_VERSION_TTL_MS });
+}
+
+/** True only when the token negotiated a widget build that understands cosmetics. */
+export function tokenSupportsCosmetics(token: unknown): boolean {
+  if (typeof token !== 'string' || !token) return false;
+  const entry = tokenVersions.get(tokenKey(token));
+  if (!entry || entry.expiresAt <= Date.now()) {
+    if (entry) tokenVersions.delete(tokenKey(token));
+    return false;
+  }
+  return supportsCosmetics(entry.version);
+}
+
 export default {
   MIN_COSMETICS_VERSION,
   parseClientVersion,
@@ -114,6 +154,8 @@ export default {
   rememberClientVersion,
   getClientVersion,
   connectionSupportsCosmetics,
+  rememberTokenClientVersion,
+  tokenSupportsCosmetics,
 };
 module.exports = {
   MIN_COSMETICS_VERSION,
@@ -124,5 +166,7 @@ module.exports = {
   rememberClientVersion,
   getClientVersion,
   connectionSupportsCosmetics,
+  rememberTokenClientVersion,
+  tokenSupportsCosmetics,
 };
 module.exports.default = module.exports;

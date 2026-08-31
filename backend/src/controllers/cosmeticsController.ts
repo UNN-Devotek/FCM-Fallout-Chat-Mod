@@ -44,6 +44,7 @@ export function parseCosmeticPatch(body: unknown): CosmeticPatch {
   const patch: CosmeticPatch = {};
   if ('colorPresetId' in source) patch.colorPresetId = source.colorPresetId as string | null;
   if ('customColorHex' in source) patch.customColorHex = source.customColorHex as string | null;
+  if ('starColorPresetId' in source) patch.starColorPresetId = source.starColorPresetId as string | null;
   if ('effectId' in source) patch.effectId = source.effectId as string | null;
   if ('customTag' in source) patch.customTag = source.customTag as string | null;
   if ('cosmeticsEnabled' in source) patch.cosmeticsEnabled = Boolean(source.cosmeticsEnabled);
@@ -80,6 +81,7 @@ function supporterStatusPayload(status: Awaited<ReturnType<typeof getSupporterSt
 function storedCosmetics(row: {
   colorPresetId: string | null;
   customColorHex: string | null;
+  starColorPresetId: string | null;
   effectId: string | null;
   customTag: string | null;
   cosmeticsEnabled: boolean;
@@ -88,6 +90,7 @@ function storedCosmetics(row: {
     ? {
         colorPresetId: row.colorPresetId,
         customColorHex: row.customColorHex,
+        starColorPresetId: row.starColorPresetId,
         effectId: row.effectId,
         customTag: row.customTag,
         cosmeticsEnabled: row.cosmeticsEnabled,

@@ -40,6 +40,10 @@ export interface ServerRoomEvent {
   body: string;
   targetUserId: '';
   createdAt: string;
+  /** Additive fields understood by widget builds with HUD cosmetics support. */
+  tag?: string;
+  supporterStar?: true;
+  starColor?: string;
 }
 
 /** Envelope published on SERVER_EVENTS_CHANNEL. */

@@ -9,7 +9,14 @@ async function getVersion(_req: Request, res: Response, next: NextFunction): Pro
   try {
     const latest = await prisma.release.findFirst({ orderBy: { publishedAt: 'desc' } });
     if (!latest) {
-      res.json({ data: { version: '—', releaseNotes: '', downloadUrl: '', publishedAt: null } });
+      res.json({ data: {
+        version: '—',
+        releaseNotes: '',
+        downloadUrl: '',
+        hudModVersion: null,
+        hudModUrl: null,
+        publishedAt: null,
+      } });
       return;
     }
     res.json({
@@ -17,6 +24,8 @@ async function getVersion(_req: Request, res: Response, next: NextFunction): Pro
         version: latest.version,
         downloadUrl: latest.downloadUrl,
         releaseNotes: latest.releaseNotes,
+        hudModVersion: latest.hudModVersion ?? null,
+        hudModUrl: latest.hudModUrl ?? null,
         publishedAt: latest.publishedAt.toISOString(),
       },
     });

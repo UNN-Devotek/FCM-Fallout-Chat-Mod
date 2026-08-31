@@ -7,6 +7,7 @@
     Produces:
       - "Fallout Chat Mod Setup V (Windows).zip"  (Windows installer + INSTALL-WINDOWS.txt)
       - "Fallout Chat Mod-V.AppImage (Linux).zip" (Linux AppImage + .deb + INSTALL-LINUX.txt + .kwinrule)
+      - "ZFE FCM HUD Mod-V (TARGET).zip" (target-stamped FCMChatWidget BA2 + configs + INSTALL.txt)
 
     These ZIPs are the artifacts linked from the website download buttons and uploaded
     to Nexus Mods. They are ADDITIONAL to (not replacing) the raw installer files.
@@ -26,12 +27,21 @@
 .PARAMETER AssetsDir
     Path to the overlay assets directory. Defaults to
     <repo>\cross-platform-overlay\assets (resolved from $PSScriptRoot).
+
+.PARAMETER HudModDir
+    Path to the FCMChatWidget package source. Defaults to
+    <repo>\game-mods\FCMBridge\hudmodloader-chat.
+
+.PARAMETER HudTarget
+    FCM environment stamped into the HUD package: prod (default) or dev.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)] [string]$Version,
     [string]$DistDir   = "",
-    [string]$AssetsDir = ""
+    [string]$AssetsDir = "",
+    [string]$HudModDir = "",
+    [ValidateSet("prod", "dev")] [string]$HudTarget = "prod"
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,6 +51,7 @@ $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path $PSScriptRoot -Parent
 if (-not $DistDir)   { $DistDir   = Join-Path $repoRoot "cross-platform-overlay\dist-electron" }
 if (-not $AssetsDir) { $AssetsDir = Join-Path $repoRoot "cross-platform-overlay\assets" }
+if (-not $HudModDir) { $HudModDir = Join-Path $repoRoot "game-mods\FCMBridge\hudmodloader-chat" }
 
 function Fail($msg) { Write-Error "[package-downloads] $msg"; exit 1 }
 
@@ -60,16 +71,30 @@ if (-not $linuxDeb -or -not (Test-Path $linuxDeb)) { Fail "Linux .deb not found 
 $installWin   = Join-Path $AssetsDir "install\INSTALL-WINDOWS.txt"
 $installLinux = Join-Path $AssetsDir "install\INSTALL-LINUX.txt"
 $kwinRule     = Join-Path $AssetsDir "fallout-chatmod-keepabove.kwinrule"
+$hudPackage   = Join-Path $HudModDir "package.py"
 
 if (-not (Test-Path $installWin))   { Fail "Missing: $installWin" }
 if (-not (Test-Path $installLinux)) { Fail "Missing: $installLinux" }
 if (-not (Test-Path $kwinRule))     { Fail "Missing: $kwinRule" }
+if (-not (Test-Path $hudPackage))   { Fail "Missing: $hudPackage" }
+
+# Resolve Python once so package.py is run consistently by the repeatable
+# release wrapper on Windows, Linux, and macOS.
+$pythonCommand = Get-Command python3 -ErrorAction SilentlyContinue
+if (-not $pythonCommand) { $pythonCommand = Get-Command python -ErrorAction SilentlyContinue }
+if (-not $pythonCommand) { Fail "Python 3 is required to package the ZFE FCM HUD Mod" }
+$hudVersion = (& $pythonCommand.Source $hudPackage --print-version).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $hudVersion -or $hudVersion -notmatch '^\d+\.\d+\.\d+$') {
+    Fail "Could not read a valid FCMChatWidget version from $hudPackage"
+}
 
 # --- Output ZIP names --------------------------------------------------------
 $winZipName   = "Fallout Chat Mod Setup $Version (Windows).zip"
 $linuxZipName = "Fallout Chat Mod-$Version.AppImage (Linux).zip"
+$hudZipName   = "ZFE FCM HUD Mod-$hudVersion ($($HudTarget.ToUpperInvariant())).zip"
 $winZipOut    = Join-Path $DistDir $winZipName
 $linuxZipOut  = Join-Path $DistDir $linuxZipName
+$hudZipOut    = Join-Path $DistDir $hudZipName
 
 # Stage UNDER $DistDir: always on the same filesystem/drive as the artifacts (the original
 # cross-drive concern) and always writable. Cross-platform -- the old GetPathRoot($DistDir)
@@ -104,10 +129,21 @@ Compress-Archive -Path (Join-Path $linuxStaging "*") -DestinationPath $linuxZipO
 $linuxSize = (Get-Item $linuxZipOut).Length
 Write-Host "[package-downloads]   -> $linuxZipOut ($([math]::Round($linuxSize/1MB,1)) MB)"
 
+# --- Build ZFE FCM HUD Mod ZIP ----------------------------------------------
+Write-Host "[package-downloads] Building HUD ZIP: $hudZipName"
+if (Test-Path $hudZipOut) { Remove-Item $hudZipOut -Force }
+& $pythonCommand.Source $hudPackage --target $HudTarget --output $hudZipOut
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $hudZipOut)) {
+    Fail "HUD package failed for target $HudTarget"
+}
+$hudSize = (Get-Item $hudZipOut).Length
+Write-Host "[package-downloads]   -> $hudZipOut ($([math]::Round($hudSize/1KB,1)) KB)"
+
 # --- Cleanup -----------------------------------------------------------------
 Remove-Item $stagingRoot -Recurse -Force -ErrorAction SilentlyContinue
 
-Write-Host "[package-downloads] Done. Two download ZIPs ready in $DistDir"
+Write-Host "[package-downloads] Done. Three download ZIPs ready in $DistDir"
 Write-Host "  $winZipName  ($([math]::Round($winSize/1MB,1)) MB)"
 Write-Host "  $linuxZipName  ($([math]::Round($linuxSize/1MB,1)) MB)"
-Write-Host "NOTE: Upload the raw .exe/.AppImage alongside the ZIPs. The ZIPs are for human download (website/Nexus) -- not for the download URL in POST /admin/releases."
+Write-Host "  $hudZipName  ($([math]::Round($hudSize/1KB,1)) KB)"
+Write-Host "NOTE: Upload the raw .exe/.AppImage alongside the ZIPs. The HUD ZIP is for the website and Discord release message."

@@ -23,6 +23,7 @@ import { ChatEmbedCard } from './components/ChatEmbedCard';
 import { ChatInlineEmbed } from './components/ChatInlineEmbed';
 import ImageLightbox from './components/ImageLightbox';
 import { OutboxQueue } from './outboxQueue';
+import { supporterBadge, supporterStarColor, SUPPORTER_STAR_GLYPH } from './supporterBadge';
 
 /**
  * Web-based chat overlay — identical to the desktop SkiaSharp overlay.
@@ -1546,6 +1547,8 @@ interface ChatMessage {
   tag?: string | null;
   /** e.g. ['supporter'] — rendered as a pill after the name. */
   badges?: string[];
+  /** Validated catalog colour for the immutable supporter star. */
+  starColor?: string | null;
 }
 
 /**
@@ -1603,19 +1606,6 @@ export function nameCosmeticProps(
     } as React.CSSProperties,
     dataName: displayName,
   };
-}
-
-/** Compact, accessible tier icon displayed immediately before a player's name. */
-export function supporterBadge(
-  badges?: readonly string[] | null,
-): { tier: 'supporter' | 'overseer'; glyph: string; label: string } | null {
-  if (badges?.includes('overseer')) {
-    return { tier: 'overseer', glyph: '★', label: "Overseer's Circle" };
-  }
-  if (badges?.includes('supporter')) {
-    return { tier: 'supporter', glyph: '★', label: 'Supporter' };
-  }
-  return null;
 }
 
 /** Whether an authenticated user may be offered the self-edit action. */
@@ -4126,7 +4116,7 @@ export default function ChatOverlay() {
   // Parallel to knownDisplayNames: the latest cosmetics seen for a user, so a
   // colour/effect change back-applies to rendered history the same way a rename does.
   const knownCosmetics = useRef<Map<string, {
-    nameColor?: string | null; effectId?: string | null; tag?: string | null; badges?: string[];
+    nameColor?: string | null; effectId?: string | null; tag?: string | null; badges?: string[]; starColor?: string | null;
   }>>(new Map());
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -5108,6 +5098,7 @@ export default function ChatOverlay() {
                   effectId: frame.payload.effectId ?? null,
                   tag: frame.payload.tag ?? null,
                   badges: frame.payload.badges ?? [],
+                  starColor: frame.payload.starColor ?? null,
                 }]);
 
                 // Track active giveaways from broadcast metadata.
@@ -5203,6 +5194,7 @@ export default function ChatOverlay() {
                     effectId: m.effectId ?? null,
                     tag: m.tag ?? null,
                     badges: m.badges ?? [],
+                    starColor: m.starColor ?? null,
                   };
                 });
                 // ── Lazy-load branch ─────────────────────────────────────────
@@ -5472,13 +5464,14 @@ export default function ChatOverlay() {
                 // history without a reconnect — one handler covers both cases.
                 // `displayName` is absent when only cosmetics changed, so the two
                 // are applied independently rather than gated on each other.
-                const { userId, displayName, nameColor, effectId, tag, badges } = frame.payload ?? {};
-                const hasCosmetics = 'nameColor' in (frame.payload ?? {});
+                const { userId, displayName, nameColor, effectId, tag, badges, starColor } = frame.payload ?? {};
+                const hasCosmetics = ['nameColor', 'effectId', 'tag', 'badges', 'starColor']
+                  .some(key => key in (frame.payload ?? {}));
                 if (userId && typeof displayName === 'string' && displayName) {
                   knownDisplayNames.current.set(userId, displayName);
                 }
                 if (userId && (displayName || hasCosmetics)) {
-                  knownCosmetics.current.set(userId, { nameColor, effectId, tag, badges });
+                  knownCosmetics.current.set(userId, { nameColor, effectId, tag, badges, starColor });
                   // Back-apply to already-stored messages so they show the
                   // correct name immediately without requiring a reconnect.
                   setMessages(prev => prev.map(m => {
@@ -5490,6 +5483,7 @@ export default function ChatOverlay() {
                       next.effectId = effectId ?? null;
                       next.tag = tag ?? null;
                       next.badges = badges ?? [];
+                      next.starColor = starColor ?? null;
                     }
                     return next;
                   }));
@@ -8410,6 +8404,69 @@ export default function ChatOverlay() {
                   return hexAlpha(rc, textAlpha);
                 })();
                 const mentionsMe = msgMentionsMe(msg);
+                const channelTagEl = tagName && (() => {
+                  // ALL feed tags are clickable: click a tag to jump to that
+                  // party or channel. NO special "clickable" styling (no dotted
+                  // underline/box) — just a pointer cursor.
+                  const isParty = msg.source === 'party';
+                  const target = isPublicMode ? null
+                    : isParty ? msg.channelId
+                    : (msg.channelId && msg.channelId !== 'system' && !msg.channelId.startsWith('server:') ? msg.channelId : null);
+                  const clickable = isMainFeedView && !!target;
+                  return (
+                    <span
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', height: '1em', lineHeight: 1,
+                        color: hexAlpha(tagColor, textAlpha), marginRight: `${scaleGap(4)}px`, fontWeight: 'normal',
+                        borderRadius: '2px', padding: '0 1px',
+                        // Base glow (scaled by text opacity) so the tag is as bright
+                        // as the other text; the hover brightens it further.
+                        textShadow: glowEnabled ? `0 0 3px ${hexAlpha(tagColor, 0.5 * textAlpha)}, ${textOutline}` : undefined,
+                        transition: 'background 120ms ease, text-shadow 120ms ease',
+                        ...(clickable ? { cursor: 'pointer' } : {}),
+                      }}
+                      title={clickable ? `Go to ${tagName}` : undefined}
+                      // Hover affordance (parity with the .username-chip hover): a
+                      // tinted background + glow in the tag's OWN color so it reads
+                      // as clickable without losing the channel/party color.
+                      onMouseEnter={clickable ? (e) => {
+                        e.currentTarget.style.background = hexAlpha(tagColor, 0.16);
+                        e.currentTarget.style.textShadow = `0 0 6px ${hexAlpha(tagColor, 0.55)}`;
+                      } : undefined}
+                      onMouseLeave={clickable ? (e) => {
+                        e.currentTarget.style.background = 'transparent';
+                        e.currentTarget.style.textShadow = glowEnabled ? `0 0 3px ${hexAlpha(tagColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline;
+                      } : undefined}
+                      onClick={clickable ? (e) => {
+                        e.stopPropagation();
+                        if (isParty) { setActiveMainId(PARTY_MAIN_ID); setPartyView(target!); }
+                        else { setActiveSubId(target!); }
+                      } : undefined}
+                    >
+                      [{tagName}]
+                    </span>
+                  );
+                })();
+                const timestampEl = settings.showTimestamps && (() => {
+                  // Optional per-message timestamp, rendered in the viewer's
+                  // LOCAL time (right of the channel tag, before the name).
+                  const ts = formatMessageTimestamp(msg.timestamp, settings.timestampFormat);
+                  if (!ts) return null;
+                  return (
+                    <span style={{
+                      color: hexAlpha(theme.textColor, 0.45 * textAlpha),
+                      marginRight: `${scaleGap(4)}px`,
+                      // A touch smaller than the message text; `em` keeps it
+                      // proportional as the user changes the chat font size.
+                      fontSize: '0.82em',
+                      fontWeight: 'normal',
+                      fontVariantNumeric: 'tabular-nums',
+                      textShadow: glowEnabled ? textOutline : undefined,
+                    }}>
+                      {ts}
+                    </span>
+                  );
+                })();
                 return (
                   <div key={msg.id}
                     data-mention-msg={mentionsMe ? '1' : undefined}
@@ -8420,77 +8477,18 @@ export default function ChatOverlay() {
                     style={{
                       fontSize: `${fontSize}px`, lineHeight: `${lineH}px`,
                       wordBreak: 'break-word', padding: '1px 8px',
-                      display: 'flex', alignItems: 'baseline', gap: `${scaleGap(4)}px`,
+                      display: 'flex', alignItems: 'center', gap: `${scaleGap(4)}px`,
                       background: mentionsMe
                         ? hexAlpha(primaryColor, 0.07)
                         : (hoveredMsg === msg.id && isMod ? hexAlpha(primaryColor, 0.04) : 'transparent'),
                       borderLeft: mentionsMe ? `2px solid ${primaryColor}` : '2px solid transparent',
-                    }}
+                  }}
                   >
-                    <span style={{ flex: 1 }}>
-                      {tagName && (() => {
-                        // ALL feed tags are clickable: click a tag to jump to that
-                        // party or channel. NO special "clickable" styling (no dotted
-                        // underline/box) — just a pointer cursor.
-                        const isParty = msg.source === 'party';
-                        const target = isPublicMode ? null
-                          : isParty ? msg.channelId
-                          : (msg.channelId && msg.channelId !== 'system' && !msg.channelId.startsWith('server:') ? msg.channelId : null);
-                        const clickable = isMainFeedView && !!target;
-                        return (
-                          <span
-                            style={{
-                              color: hexAlpha(tagColor, textAlpha), marginRight: `${scaleGap(4)}px`, fontWeight: 'normal',
-                              borderRadius: '2px', padding: '0 1px',
-                              // Base glow (scaled by text opacity) so the tag is as bright
-                              // as the other text; the hover brightens it further.
-                              textShadow: glowEnabled ? `0 0 3px ${hexAlpha(tagColor, 0.5 * textAlpha)}, ${textOutline}` : undefined,
-                              transition: 'background 120ms ease, text-shadow 120ms ease',
-                              ...(clickable ? { cursor: 'pointer' } : {}),
-                            }}
-                            title={clickable ? `Go to ${tagName}` : undefined}
-                            // Hover affordance (parity with the .username-chip hover): a
-                            // tinted background + glow in the tag's OWN color so it reads
-                            // as clickable without losing the channel/party color.
-                            onMouseEnter={clickable ? (e) => {
-                              e.currentTarget.style.background = hexAlpha(tagColor, 0.16);
-                              e.currentTarget.style.textShadow = `0 0 6px ${hexAlpha(tagColor, 0.55)}`;
-                            } : undefined}
-                            onMouseLeave={clickable ? (e) => {
-                              e.currentTarget.style.background = 'transparent';
-                              e.currentTarget.style.textShadow = glowEnabled ? `0 0 3px ${hexAlpha(tagColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline;
-                            } : undefined}
-                            onClick={clickable ? (e) => {
-                              e.stopPropagation();
-                              if (isParty) { setActiveMainId(PARTY_MAIN_ID); setPartyView(target!); }
-                              else { setActiveSubId(target!); }
-                            } : undefined}
-                          >
-                            [{tagName}]
-                          </span>
-                        );
-                      })()}
-                      {settings.showTimestamps && (() => {
-                        // Optional per-message timestamp, rendered in the viewer's
-                        // LOCAL time (right of the channel tag, before the name).
-                        const ts = formatMessageTimestamp(msg.timestamp, settings.timestampFormat);
-                        if (!ts) return null;
-                        return (
-                          <span style={{
-                            color: hexAlpha(theme.textColor, 0.45 * textAlpha),
-                            marginRight: `${scaleGap(4)}px`,
-                            // A touch smaller than the message text; `em` keeps it
-                            // proportional as the user changes the chat font size.
-                            fontSize: '0.82em',
-                            fontWeight: 'normal',
-                            fontVariantNumeric: 'tabular-nums',
-                            textShadow: glowEnabled ? textOutline : undefined,
-                          }}>
-                            {ts}
-                          </span>
-                        );
-                      })()}
-                      {(() => {
+                    <span style={{ flex: 1, minWidth: 0, lineHeight: 'inherit', display: 'flex', alignItems: 'flex-start' }}>
+                      <span className="fcm-message-prefix">
+                        {channelTagEl}
+                        {timestampEl}
+                        {(() => {
                         // `fcm-no-name-motion` collapses every animated effect to its
                         // static sibling (see nameEffects.css). Applied per-name rather
                         // than on a shared ancestor because the feed rows are the only
@@ -8503,39 +8501,45 @@ export default function ChatOverlay() {
                         // The icon is intentionally before the name. Its CSS uses the
                         // same 4px trailing space as a custom tag, never a text pill.
                         const badgeEl = badge
-                          ? <span className={`fcm-name-badge fcm-name-badge--${badge.tier}`} role="img" title={badge.label} aria-label={badge.label}>{badge.glyph}</span>
+                          ? <span className={`fcm-name-badge fcm-name-badge--${badge.tier}`} role="img" title={badge.label} aria-label={badge.label} data-fcm-supporter-star="true"
+                              style={{ color: supporterStarColor(msg.badges, msg.starColor) ?? undefined }}>{SUPPORTER_STAR_GLYPH}</span>
                           : null;
                         // Tag and badge render BEFORE the name, which keeps the name
                         // element's text node exactly `${displayName}: ` as it has
                         // always been. Splitting the colon into its own element broke
                         // getByText(/Name:/) queries and made the bare name match twice.
-                        return msg.userId && msg.userId !== 'system' ? (
+                        const nameEl = msg.userId && msg.userId !== 'system' ? (
                           isPublicMode ? (
-                            <>
-                              {tagEl}{badgeEl}
-                              <Link to={`/profile/${msg.userId}`} className={`username-chip ${fx.className}`} style={fx.style} data-fcm-name={fx.dataName}>
-                                {displayName}:{' '}
-                              </Link>
-                            </>
+                            <Link to={`/profile/${msg.userId}`} className={`username-chip ${fx.className}`} style={fx.style} data-fcm-name={fx.dataName}>
+                              {displayName}:{' '}
+                            </Link>
                           ) : (
-                            <>
-                              {tagEl}{badgeEl}
-                              <span role="button" tabIndex={0} className={`username-chip username-chip--mention ${fx.className}`}
-                                style={{ ...fx.style, cursor: 'pointer' }} data-fcm-name={fx.dataName}
-                                onClick={() => insertMentionFromClick(displayName)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') insertMentionFromClick(displayName); }}>
-                                {displayName}:{' '}
-                              </span>
-                            </>
+                            <span role="button" tabIndex={0} className={`username-chip username-chip--mention ${fx.className}`}
+                              style={{ ...fx.style, cursor: 'pointer' }} data-fcm-name={fx.dataName}
+                              onClick={() => insertMentionFromClick(displayName)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') insertMentionFromClick(displayName); }}>
+                              {displayName}:{' '}
+                            </span>
                           )
                         ) : (
                           <span style={fx.style} className={fx.className} data-fcm-name={fx.dataName}>
                             {displayName}:{' '}
                           </span>
                         );
-                      })()}
+                        // Keep the star and username in one middle-aligned identity
+                        // run. The message body remains a sibling, so long names can
+                        // still break at the identity boundary.
+                          return <>
+                            {tagEl}
+                            <span className="fcm-name-identity">{badgeEl}{nameEl}</span>
+                          </>;
+                        })()}
+                      </span>
                       <span style={{
+                        flex: '1 1 auto',
+                        minWidth: 0,
                         color: contentColor,
                         fontWeight: 600,
+                        lineHeight: 'inherit',
                         textShadow: glowEnabled ? `0 0 2px ${hexAlpha(primaryColor, 0.3 * textAlpha)}, ${textOutline}` : textOutline,
                       }}>
                         {inlineContent ?? renderContent(msg.content, activeMainId === PARTY_MAIN_ID && partyView !== 'browser')}
@@ -9094,12 +9098,16 @@ export default function ChatOverlay() {
                     style={{
                       fontSize: `${fontSize}px`, lineHeight: `${lineH}px`,
                       wordBreak: 'break-word', padding: '1px 8px',
-                      display: 'flex', alignItems: 'baseline', gap: `${scaleGap(4)}px`,
+                      display: 'flex', alignItems: 'center', gap: `${scaleGap(4)}px`,
                       background: hoveredMsg === msg.id ? hexAlpha(primaryColor, 0.04) : 'transparent',
                     }}
                   >
-                    <span style={{ flex: 1 }}>
-                      <span style={{ fontWeight: 'bold', color: endpointTagColor, fontSize: `${Math.max(7, fontSize - 2)}px` }}>
+                    <span style={{ flex: 1, lineHeight: 'inherit' }}>
+                      <span style={{
+                        display: 'inline-flex', alignItems: 'center', height: '1em', lineHeight: 1,
+                        verticalAlign: 'middle',
+                        fontWeight: 'bold', color: endpointTagColor, fontSize: `${Math.max(7, fontSize - 2)}px`,
+                      }}>
                         [{msg.serverEndpoint}]{' '}
                       </span>
                       {msg.userId && msg.userId !== 'system' ? (
@@ -9125,6 +9133,7 @@ export default function ChatOverlay() {
                       <span style={{
                         color: textRgba,
                         fontWeight: 600,
+                        verticalAlign: 'middle',
                         textShadow: glowEnabled ? `0 0 2px ${hexAlpha(primaryColor, 0.3 * textAlpha)}, ${textOutline}` : textOutline,
                       }}>
                         {renderContent(msg.content)}

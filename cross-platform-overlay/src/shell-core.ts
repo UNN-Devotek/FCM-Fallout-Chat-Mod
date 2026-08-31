@@ -257,6 +257,18 @@ export const IDLE_COLLAPSE_SECONDS_MIN = 5;
 export const IDLE_COLLAPSE_SECONDS_MAX = 120;
 export const IDLE_COLLAPSE_SECONDS_DEFAULT = 25;
 
+// Idle auto-hide modes are shell-only preferences. The default preserves the
+// full mode is the default; the legacy two-row header collapse remains an
+// explicit choice. Full mode hides the renderer and lets the native shell shrink
+// to a one-pixel strip without disconnecting the relay.
+export type AutoHideMode = 'subtabs' | 'full';
+export const AUTO_HIDE_MODE_DEFAULT: AutoHideMode = 'full';
+export const FULL_AUTO_HIDE_HEIGHT = 1;
+
+export function normalizeAutoHideMode(value: unknown): AutoHideMode {
+  return value === 'full' || value === 'subtabs' ? value : AUTO_HIDE_MODE_DEFAULT;
+}
+
 /**
  * Clamp/sanitise the idle-collapse delay (seconds). Non-finite or out-of-range
  * values fall back to the default (NaN/undefined) or the nearest bound.

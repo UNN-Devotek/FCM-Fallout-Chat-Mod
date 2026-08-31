@@ -21,6 +21,7 @@ import {
   releaseDownloadFieldValue,
   nexusEndorseFieldValue,
 } from '../utils/releaseAnnouncement';
+import type { HudModDownload } from '../utils/releaseAnnouncement';
 
 let discordClient: Client | null = null;
 let broadcastFn: ((payload: any, excludeWs?: any) => void) | null = null; // Injected from WS handler to avoid circular deps
@@ -1339,7 +1340,11 @@ const UPDATES_CHANNEL_ID = process.env.DISCORD_UPDATES_CHANNEL_ID || '1479531502
  * Discord-bridge unavailability (the bot may still be connecting when the
  * publish lands).
  */
-async function postReleaseAnnouncement(version: string, releaseNotes: string): Promise<void> {
+async function postReleaseAnnouncement(
+  version: string,
+  releaseNotes: string,
+  hudMod?: HudModDownload,
+): Promise<void> {
   const attemptDelays = [0, 500, 1500, 3000, 5000]; // 5 tries, ~10s total
   let lastErr: unknown = null;
 
@@ -1361,7 +1366,7 @@ async function postReleaseAnnouncement(version: string, releaseNotes: string): P
         .setColor(0xF1C40F) // gold/yellow — matches the Securitron role color
         .setDescription((releaseNotes || 'A new version is available.').slice(0, 4000))
         .addFields(
-          { name: '📥 Download', value: releaseDownloadFieldValue(version) },
+          { name: '📥 Download', value: releaseDownloadFieldValue(version, hudMod) },
           { name: '❤️ Endorse on Nexus', value: nexusEndorseFieldValue() },
         )
         .setTimestamp(new Date());

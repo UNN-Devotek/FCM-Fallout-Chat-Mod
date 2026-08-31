@@ -13,6 +13,9 @@ private typedef ChatRecord = {
     var color:String;
     var channel:String;
     var user:String;
+    var tag:String;
+    var supporterStar:Bool;
+    var starColor:String;
     var body:String;
     var messageId:String;
     var senderUserId:String;
@@ -131,7 +134,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.7";  // exact Fallout account handle + deferred one-shot connect; no HUD message timestamps
+    static inline var VERSION:String  = "2.10.8";  // HUD identity cosmetics: fixed supporter star + validated colour/tag fields
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -1805,7 +1808,8 @@ class FCMChatWidget extends MovieClip {
                     // useful in the game UI and optimistic echoes do not have server time yet.
                     if (slug == CHAN_SLUGS[_chanIdx]) {
                         _records.push({
-                            color: hx(_cfg.senderColor), channel: slug, user: _displayName, body: raw,
+                            color: hx(_cfg.senderColor), channel: slug, user: _displayName,
+                            tag: "", supporterStar: false, starColor: "", body: raw,
                             messageId: messageId, senderUserId: _relayUserId,
                         });
                         while (_records.length > _cfg.maxMessages) _records.shift();
@@ -2252,6 +2256,9 @@ class FCMChatWidget extends MovieClip {
             var channel:String      = normChannel(rawChannel);
             var senderUserId:String = extractJsonString(obj, "senderUserId");
             var displayName:String  = extractJsonString(obj, "senderDisplayName");
+            var tag:String          = extractJsonString(obj, "tag");
+            var supporterStar:Bool  = extractJsonBool(obj, "supporterStar");
+            var starColor:String    = extractJsonString(obj, "starColor");
             var body:String         = extractJsonString(obj, "body");
             var messageId:String    = extractJsonString(obj, "messageId");
             var evId:Int            = extractJsonInt(obj, "id");
@@ -2291,7 +2298,8 @@ class FCMChatWidget extends MovieClip {
             if (!shouldRenderReplayMessage(messageId)) continue;
 
             _records.push({
-                color: hx(_cfg.senderColor), channel: channel, user: displayName, body: body,
+                color: hx(_cfg.senderColor), channel: channel, user: displayName,
+                tag: tag, supporterStar: supporterStar, starColor: starColor, body: body,
                 messageId: messageId, senderUserId: senderUserId,
             });
             while (_records.length > _cfg.maxMessages) _records.shift();
@@ -2606,8 +2614,21 @@ class FCMChatWidget extends MovieClip {
             // Optional proper-cased channel tag (CAP-012, D-09).
             var tagHtml:String = "";
             if (_cfg.showChannelTag) {
-                tagHtml = '<font color="' + hx(_cfg.channelColor(rec.channel)) + '">[' + FcmConfig.chanLabel(rec.channel) + ']</font> ';
+                tagHtml = '<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + hx(_cfg.channelColor(rec.channel)) + '">[' + FcmConfig.chanLabel(rec.channel) + ']</font> ';
             }
+            // Identity adornments use the same font face and size as the sender and
+            // body. Scaleform rich text has no reliable CSS vertical-align support;
+            // equal line metrics keep the channel tag, custom tag, star, name, and
+            // message on one visual middle line across GFx builds.
+            var customTagHtml:String = (rec.tag != null && rec.tag.length > 0)
+                ? '<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + col + '">['
+                    + FcmConfig.htmlEscape(rec.tag) + ']</font> '
+                : "";
+            var starHtml:String = rec.supporterStar
+                ? '<font face="' + FONT_BOLD + '" size="' + fs + '" color="'
+                    + hx(FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor)) + '">'
+                    + FcmConfig.SUPPORTER_STAR_GLYPH + '</font> '
+                : "";
             // Staff only: a short, stable reference for the moderation command surface.
             // Never target by display name — names can be changed and are not unique.
             var moderationRefHtml:String = "";
@@ -2616,13 +2637,16 @@ class FCMChatWidget extends MovieClip {
                 moderationRefHtml = '<font color="' + hx(_cfg.promptColor) + '">[#'
                     + rec.messageId.substr(0, 8).toUpperCase() + ']</font> ';
             }
-            // [channel] + body = light; sender name (the <b> span) = bold alias.
+            // Every visible run uses the same explicit size. Weight comes from the
+            // HUD bold alias, not from a nested <b> tag that can alter GFx metrics.
             html.push(
                 '<font face="' + FONT_BODY + '" size="' + fs + '">'
                 + tagHtml
                 + moderationRefHtml
-                + '<b><font face="' + FONT_BOLD + '" color="' + col + '">' + user + ':</font></b> '
-                + '<font color="' + hx(_cfg.textColor) + '">' + msg + '</font>'
+                + customTagHtml
+                + starHtml
+                + '<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + col + '">' + user + ':</font> '
+                + '<font face="' + FONT_BODY + '" size="' + fs + '" color="' + hx(_cfg.textColor) + '">' + msg + '</font>'
                 + '</font>');
         }
 

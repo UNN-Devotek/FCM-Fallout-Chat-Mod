@@ -2,8 +2,9 @@
  * Electron overlay shell — desktop-parity behaviors layered over the shared
  * ChatOverlay component without forking it:
  *
- *   1. Idle auto-collapse: after idle time (default 25 s) collapse to the
- *      header/tab strip; expand on any interaction or a new message.
+ *   1. Idle auto-hide: after idle time (default 25 s) full-hide the overlay by
+ *      default; users can choose the legacy header/tab-strip collapse instead.
+ *      Expand on any interaction or a new message.
  *   2. Full settings panel: theme, opacities, scanline, font, keybinds,
  *      blocked users, channel filters. Persisted to the Electron state file
  *      and mirrored to the localStorage key the React component reads.
@@ -32,6 +33,9 @@ import {
   IDLE_COLLAPSE_SECONDS_MIN,
   IDLE_COLLAPSE_SECONDS_MAX,
   IDLE_COLLAPSE_SECONDS_DEFAULT,
+  AUTO_HIDE_MODE_DEFAULT,
+  FULL_AUTO_HIDE_HEIGHT,
+  normalizeAutoHideMode,
   shellToWebSettings,
   resolveCollapsedHeight,
   revealCollapsedElements,
@@ -40,6 +44,7 @@ import {
   detectLinuxRenderer,
   gameReservedWarning,
   mergeKeybindDefaults,
+  type AutoHideMode,
   type ResizeEdge,
 } from './shell-core';
 import { mountSupporterAppearance } from './supporterAppearance';
@@ -67,6 +72,7 @@ export interface ShellSettings {
   backgroundOpacity: number; // 0..1 extra background dim
   scanlineIntensity: number; // 0..1 (default 0.08)
   fadeWhenIdle: boolean;     // default true
+  autoHideMode: AutoHideMode; // 'full' (default) or 'subtabs'
   showTypingWhenCollapsed: boolean; // default FALSE — opt in; see issue #420
   notifySoundEnabled: boolean;      // default FALSE — opt in; see issue #437
   notifySoundVolume: number;        // 0..1
@@ -149,6 +155,7 @@ export const DEFAULT_SHELL_SETTINGS: ShellSettings = {
   // CRT texture rather than heavy bars.
   scanlineIntensity: 0.08,
   fadeWhenIdle: true,
+  autoHideMode: AUTO_HIDE_MODE_DEFAULT,
   showTypingWhenCollapsed: false,
   notifySoundEnabled: false,
   notifySoundVolume: 0.5,
@@ -228,6 +235,8 @@ export function loadShellSettings(): ShellSettings {
       }
     }
   } catch { /* defaults */ }
+  // A corrupted or pre-feature value must preserve the existing behavior.
+  s.autoHideMode = normalizeAutoHideMode(s.autoHideMode);
   // One-time keybind reset (NON-DESTRUCTIVE — issue #136 §3.1): when the persisted
   // version is older, fill only UNSET/blank binds with the current defaults and keep
   // every bind the user actually set, then stamp the version. The old code wiped the
@@ -458,13 +467,21 @@ function setCollapsed(next: boolean, focusInput = false) {
   lastTransitionMs = Date.now();
   const root = document.getElementById('root');
   if (next) {
+    const fullAutoHide = currentSettings.autoHideMode === 'full';
     // Measure the strip height BEFORE applying the 'collapsed' class so the
     // sub-tab row is still in its normal position when we read its offset.
-    const h = headerStripHeight();
-    applyCollapsedHidden();
+    // Full mode does not need the measurement: it hides the complete renderer
+    // and uses a one-pixel native window target.
+    const h = fullAutoHide ? FULL_AUTO_HIDE_HEIGHT : headerStripHeight();
+    if (fullAutoHide) {
+      collapsedHidden = [];
+      root?.classList.add('fcm-full-auto-hidden');
+    } else {
+      applyCollapsedHidden();
+    }
     collapsed = true;
     root?.classList.add('collapsed');
-    window.relayBridge.collapse(h);
+    window.relayBridge.collapse(h, fullAutoHide);
     // Notify the React overlay that it idle-collapsed so it can close any
     // absolutely-positioned floating UI (e.g. the party member panel) that
     // would otherwise hang over the collapsed header strip.
@@ -475,6 +492,7 @@ function setCollapsed(next: boolean, focusInput = false) {
     // would start closing panels when the user comes back.
     emitCollapseState(true);
   } else {
+    const wasFullAutoHide = root?.classList.contains('fcm-full-auto-hidden') ?? false;
     collapsed = false;
     emitCollapseState(false);
     // Keep 'collapsed' on root through the 240ms expand animation — removing it
@@ -486,6 +504,7 @@ function setCollapsed(next: boolean, focusInput = false) {
     // 260ms > 240ms animation — reveal content once fully expanded.
     setTimeout(() => {
       if (collapsed) return;
+      if (wasFullAutoHide) root?.classList.remove('fcm-full-auto-hidden');
       revealCollapsedElements(root, hiddenEls);
       // Jump the feed to the latest message so the user sees the most recent
       // chat after expanding. Defer a frame so the body has laid out first.
@@ -521,7 +540,15 @@ function scrollMessagesToBottomDeferred() {
 // jump-to-input. Only runs while collapsed.
 function reassertCollapsed() {
   if (!collapsed) return;
-  applyCollapsedHidden();
+  const fullAutoHide = currentSettings.autoHideMode === 'full';
+  const root = document.getElementById('root');
+  if (fullAutoHide) {
+    collapsedHidden = [];
+    root?.classList.add('fcm-full-auto-hidden');
+  } else {
+    root?.classList.remove('fcm-full-auto-hidden');
+    applyCollapsedHidden();
+  }
   // Reset any scroll the React overlay applied so the input can't be revealed.
   const host = document.getElementById('shell-overlay-host');
   if (host && host.scrollTop !== 0) host.scrollTop = 0;
@@ -529,7 +556,9 @@ function reassertCollapsed() {
   if (scroller && scroller.scrollTop !== 0) scroller.scrollTop = 0;
   // Re-anchor to the header strip; suppress scale re-clamp during settlement.
   lastTransitionMs = Date.now();
-  try { window.relayBridge.collapse(headerStripHeight()); } catch { /* non-fatal */ }
+  try {
+    window.relayBridge.collapse(fullAutoHide ? FULL_AUTO_HIDE_HEIGHT : headerStripHeight(), fullAutoHide);
+  } catch { /* non-fatal */ }
 }
 
 /** Reset the idle timer + expand (desktop MarkChatActivity). */
@@ -714,6 +743,7 @@ export function openComponentSettings() {
 let currentSettings: ShellSettings = DEFAULT_SHELL_SETTINGS;
 let onSettingsChange: ((s: ShellSettings) => void) | null = null;
 let webSettingsSyncHandler: ((event: Event) => void) | null = null;
+let syncAutoHideModeButtons: (() => void) | null = null;
 /** Reference to the version span — set once the settings panel is built. */
 let verSpanEl: HTMLElement | null = null;
 /** Latched when an update signal arrives before the panel is built. */
@@ -1060,6 +1090,7 @@ function buildSettingsPanel() {
     fadeEnabled = currentSettings.fadeWhenIdle;
     setIdleFadeFromSeconds(currentSettings.idleCollapseSeconds);
     if (!fadeEnabled) setCollapsed(false);
+    syncAutoHideModeButtons?.();
     onSettingsChange?.(currentSettings);
   };
 
@@ -1527,6 +1558,38 @@ function buildSettingsPanel() {
 
     toggle(s, 'Show footer hints (keybind bar at the bottom)', () => currentSettings.showHints, v => commit({ showHints: v }));
     toggle(s, 'Auto-hide chat when idle (collapse to header)', () => currentSettings.fadeWhenIdle, v => commit({ fadeWhenIdle: v }));
+    const autoHideModeRow = el('div', { className: 'ss-row' });
+    autoHideModeRow.append(el('label', { className: 'ss-lbl' }, 'Auto-hide mode'));
+    const autoHideModeWrap = el('div', { className: 'ss-seg' });
+    autoHideModeWrap.style.display = 'flex';
+    autoHideModeWrap.style.gap = '6px';
+    autoHideModeWrap.style.flexWrap = 'wrap';
+    const modeButtons: { mode: AutoHideMode; button: HTMLButtonElement }[] = [];
+    const syncModeButtons = () => {
+      for (const { mode, button } of modeButtons) {
+        const active = currentSettings.autoHideMode === mode;
+        button.style.background = active ? 'var(--shell-primary-dim)' : 'transparent';
+        button.style.borderColor = active ? 'var(--shell-primary)' : '';
+        button.setAttribute('aria-pressed', String(active));
+      }
+    };
+    syncAutoHideModeButtons = syncModeButtons;
+    for (const [mode, label] of [
+      ['subtabs', 'SUB-TABS COLLAPSE'],
+      ['full', 'FULL AUTO-HIDE'],
+    ] as const) {
+      const button = el('button', { className: 'ss-fbtn', type: 'button' }, label) as HTMLButtonElement;
+      button.addEventListener('click', () => {
+        commit({ autoHideMode: mode });
+        syncModeButtons();
+      });
+      modeButtons.push({ mode, button });
+      autoHideModeWrap.append(button);
+    }
+    syncModeButtons();
+    autoHideModeRow.append(autoHideModeWrap);
+    s.append(autoHideModeRow);
+    hint(s, 'Sub-tabs collapse keeps the navigation visible. Full auto-hide hides the entire overlay after the idle delay and restores it when a new message arrives or you interact with the overlay.');
     toggle(s, 'Show typing indicator while collapsed', () => currentSettings.showTypingWhenCollapsed, v => commit({ showTypingWhenCollapsed: v }));
     hint(s, 'Keeps "X is typing…" visible in the tab strip while the chat is collapsed, so you can tell someone is replying without expanding it.');
     slider(
@@ -1593,6 +1656,8 @@ function buildSettingsPanel() {
     applyWindowVisual(currentSettings);
     fadeEnabled = currentSettings.fadeWhenIdle;
     setIdleFadeFromSeconds(currentSettings.idleCollapseSeconds);
+    setCollapsed(false);
+    syncAutoHideModeButtons?.();
     onSettingsChange?.(currentSettings);
     closeSettings();
   });
@@ -1698,6 +1763,7 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
   (window as unknown as { __ovTest?: unknown }).__ovTest = {
     collapse: () => setCollapsed(true),
     expand: () => setCollapsed(false),
+    setAutoHideMode: (mode: AutoHideMode) => { currentSettings = { ...currentSettings, autoHideMode: normalizeAutoHideMode(mode) }; },
     noIdle: () => { fadeEnabled = false; if (collapsed) setCollapsed(false); },
   };
 
@@ -2009,6 +2075,8 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
     lastActivityMs = Date.now();
     // Cancel any pending debounced message-activity expand to prevent thrash.
     if (msgActivityTimeout) { clearTimeout(msgActivityTimeout); msgActivityTimeout = null; }
+    const root = document.getElementById('root');
+    root?.classList.remove('fcm-full-auto-hidden');
     if (collapsed) {
       collapsed = false;
       // #327: fully reveal — not just the root 'collapsed' class. Previously this
@@ -2019,7 +2087,7 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
       // same reveal as setCollapsed so the two paths can't diverge.
       const hiddenEls = collapsedHidden.slice();
       collapsedHidden = [];
-      revealCollapsedElements(document.getElementById('root'), hiddenEls);
+      revealCollapsedElements(root, hiddenEls);
       scrollMessagesToBottomDeferred();
     }
   });

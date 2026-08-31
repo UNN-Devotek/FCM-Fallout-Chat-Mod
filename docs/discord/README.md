@@ -128,6 +128,8 @@ discordClient created (intents + partials)
 | `DISCORD_SERVER_ID` | Guild snowflake (assignable-roles, nickname sync) |
 | `DISCORD_CHANNEL_ID` | Default relay channel fallback |
 | `DISCORD_UPDATES_CHANNEL_ID` | Release announcement channel (default `1479531502567166066`) |
+| `DOWNLOAD_PAGE_URL` | Release embed/download-page URL; dev overrides this to `https://dev.falloutchatmod.com` |
+| `RELEASE_DOWNLOAD_HOST` | Host for release artifact links; prod defaults to `falloutchatmod.com`, dev uses `dev.falloutchatmod.com` |
 
 ---
 

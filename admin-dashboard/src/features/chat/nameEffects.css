@@ -302,20 +302,44 @@
 
 /* ── Supporter badge ─────────────────────────────────────────────────────── */
 
+/* One shared inline flex context keeps every message prefix token on the same
+   optical center: channel tag, timestamp, Overseer tag, supporter star, and
+   username. The body remains a sibling so wrapped message text starts after the
+   identity run instead of being vertically centered against the whole message. */
+.fcm-message-prefix {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  line-height: inherit;
+  white-space: nowrap;
+}
+
+.fcm-name-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  line-height: inherit;
+  vertical-align: middle;
+}
+
 .fcm-name-badge {
-  display: inline-block;
-  /* Match the custom tag's trailing gap so the badge never touches a name. */
-  margin-right: 4px;
+  display: inline-flex;
+  align-items: center;
+  /* The identity wrapper owns the gap; keeping this zero prevents double spacing. */
+  margin: 0;
   padding: 0;
   border: 0;
   font-size: 0.95em;
   font-weight: bold;
+  height: 1em;
   line-height: 1;
   vertical-align: middle;
   letter-spacing: normal;
   text-transform: none;
   text-shadow: var(--fcm-name-outline, 0 0 2px #000);
   opacity: 0.95;
+  flex: 0 0 auto;
 }
 
 .fcm-name-badge--supporter { color: #7ea8f7; }
@@ -323,9 +347,14 @@
 
 /* Overseer custom tag, rendered before the name. */
 .fcm-name-tag {
+  display: inline-flex;
+  align-items: center;
   margin-right: 4px;
   font-size: 0.82em;
   font-weight: bold;
   opacity: 0.9;
+  height: 1em;
+  line-height: 1;
+  vertical-align: middle;
   text-shadow: var(--fcm-name-outline, 0 0 2px #000);
 }

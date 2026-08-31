@@ -128,6 +128,14 @@
         display: none !important;
       }
 
+      /* Full auto-hide keeps the native window and relay alive at a one-pixel
+         height so a new message can wake the overlay. Hide every renderer pixel
+         without using display:none, which would disturb the expand measurement. */
+      #root.fcm-full-auto-hidden {
+        visibility: hidden !important;
+        pointer-events: none !important;
+      }
+
       /* Prototype-managed visual layers the web component doesn't expose as
          settings: an adjustable scanline overlay (above the settings modal so it
          updates the ENTIRE UI live) and a background-dim layer (below #root, see

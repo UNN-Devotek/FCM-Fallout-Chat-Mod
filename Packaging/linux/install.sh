@@ -386,6 +386,25 @@ Using the overlay
   Proton). With the game closed it stays hidden by design.
 - Download new versions from Nexus Mods (https://www.nexusmods.com/fallout76/mods/4082) or falloutchatmod.com.
 
+Automatic desktop/session detection
+- The installer and overlay detect the Linux session and compositor automatically.
+  There is no desktop-environment switch to select. Each path fails closed and
+  keeps the normal game-running fallback if its helper is unavailable.
+- KDE Plasma + Wayland: forces XWayland and installs one KWin rule only while
+  Fallout 76 runs on the same display. The rule combines keep-above with KWin's
+  Overlay layer without demoting the game, then is removed on game exit or a
+  monitor change. Run Fallout 76 in Borderless Windowed mode.
+- Hyprland: uses hyprctl for focus, same-output detection, and pinning. This path
+  is best-effort and has not been verified on real Hyprland hardware; missing or
+  failing hyprctl logs a diagnostic and leaves ordinary stacking plus the Linux
+  heartbeat fallback.
+- Plain X11: xdotool is preferred (kdotool is the fallback) for hide-on-alt-tab
+  and hotkey release. Without either tool, the game-running fallback remains.
+- GNOME or other non-KDE Wayland: no KWin or Hyprland rule is applied. If the
+  overlay will not stay above the game, use this Fallout 76 Steam launch option:
+    PROTON_NO_WM_DECORATION=1 %command%
+  KDE users must not use that option; use the KWin rule above instead.
+
 KDE Plasma (Wayland) — automatic
 - On first launch the overlay forces XWayland. While FO76 runs and the overlay
   shares its display, it installs one KWin rule (fcm-keepabove: above=true +
@@ -433,9 +452,10 @@ Troubleshooting — "it launched once, now the shortcut does nothing"
 Optional — release hotkeys when you tab out (KDE Wayland)
 - Install kdotool (Arch/CachyOS: paru -S kdotool [AUR]; Fedora: sudo dnf install
   kdotool) so the overlay's hotkeys (Insert/Delete/Home) are released when you
-  switch to Konsole/Discord. xdotool also works, but it cannot see native-Wayland
-  windows, so keys may stay captured in those apps while the game runs. Without
-  either tool they stay registered for the whole game session (still works fine).
+  switch to Konsole/Discord. It is preferred on KDE Wayland because it sees
+  native-Wayland windows. xdotool is the fallback there; on plain X11, xdotool
+  is preferred and kdotool is the fallback. Without either tool they stay
+  registered for the whole game session (still works fine).
 
 Uninstall:  curl -fsSL https://falloutchatmod.com/uninstall.sh | bash
 Support:    https://falloutchatmod.com
