@@ -34,6 +34,8 @@ import { tierLabel } from '../utils/supporterTier';
 import {
   buildCosmeticId,
   parseCosmeticId,
+  clearCosmeticPatch,
+  COSMETICS_CLEAR_FIELD_CHOICES,
   buildColorChoices,
   buildEffectChoices,
   reasonToMessage,
@@ -109,6 +111,7 @@ async function handleShow(interaction: any): Promise<void> {
       { name: 'Tier', value: tierLabel(status.tier), inline: true },
       { name: 'Chat name', value: user.chatName ?? '_default_', inline: true },
       { name: 'Colour', value: cosmetics.nameColor ?? '_default_', inline: true },
+      { name: 'Star colour', value: cosmetics.starColor ?? '_tier default_', inline: true },
       { name: 'Effect', value: findEffectPreset(cosmetics.effectId)?.label ?? '_none_', inline: true },
       { name: 'Tag', value: cosmetics.tag ?? '_none_', inline: true },
     );
@@ -124,12 +127,16 @@ async function handleShow(interaction: any): Promise<void> {
   await ephemEmbed(interaction, embed);
 }
 
-async function handleColorOrEffect(interaction: any, kind: 'color' | 'effect'): Promise<void> {
+async function handleColorOrEffect(interaction: any, kind: 'color' | 'effect' | 'star'): Promise<void> {
   const caller = await requireLinkedUser(interaction);
   if (!caller) return;
 
   const presetId = interaction.options.getString('preset', true);
-  const patch = kind === 'color' ? { colorPresetId: presetId } : { effectId: presetId };
+  const patch = kind === 'color'
+    ? { colorPresetId: presetId }
+    : kind === 'star'
+      ? { starColorPresetId: presetId }
+      : { effectId: presetId };
 
   const result = await applyCosmetics({ userId: caller.userId, patch, actor: { kind: 'self', discordId: caller.discordId } });
   if (!result.ok) {
@@ -140,6 +147,9 @@ async function handleColorOrEffect(interaction: any, kind: 'color' | 'effect'): 
   if (kind === 'color') {
     const preset = findColorPreset(presetId);
     await ephem(interaction, `Your name colour is now **${preset?.label ?? presetId}** (${preset?.hex ?? ''}).`);
+  } else if (kind === 'star') {
+    const preset = findColorPreset(presetId);
+    await ephem(interaction, `Your supporter star colour is now **${preset?.label ?? presetId}** (${preset?.hex ?? ''}). The marker always remains ★.`);
   } else {
     const preset = findEffectPreset(presetId);
     const note = presetId === 'none' ? '' : ' It shows on the desktop overlay and website — in-game shows your colour only.';
@@ -190,15 +200,7 @@ async function handleClear(interaction: any): Promise<void> {
   if (!caller) return;
 
   const field: string = interaction.options.getString('field') ?? 'all';
-  const BY_FIELD: Record<string, CosmeticPatch> = {
-    color: { colorPresetId: null, customColorHex: null },
-    effect: { effectId: null },
-    tag: { customTag: null },
-  };
-  const patch: CosmeticPatch =
-    field === 'all'
-      ? { colorPresetId: null, customColorHex: null, effectId: null, customTag: null }
-      : BY_FIELD[field] ?? {};
+  const patch: CosmeticPatch = clearCosmeticPatch(field);
 
   const result = await applyCosmetics({ userId: caller.userId, patch, actor: { kind: 'self', discordId: caller.discordId } });
   if (!result.ok) {
@@ -224,6 +226,7 @@ async function handleHelp(interaction: any): Promise<void> {
         '`/cosmetics clear` — go back to default',
         '',
         '**Supporters**',
+        '`/cosmetics star` — choose the supporter star colour (the glyph is always ★)',
         '`/cosmetics effect` — glow and CRT effects',
         '',
         "**Overseer's Circle**",
@@ -279,6 +282,7 @@ async function onInteraction(interaction: Interaction): Promise<void> {
         case 'show': return await handleShow(i);
         case 'color': return await handleColorOrEffect(i, 'color');
         case 'effect': return await handleColorOrEffect(i, 'effect');
+        case 'star': return await handleColorOrEffect(i, 'star');
         case 'tag': return await showTagModal(i);
         case 'clear': return await handleClear(i);
         case 'help': return await handleHelp(i);
@@ -319,6 +323,10 @@ function buildCommand() {
       .setName('effect')
       .setDescription('Pick a name effect (supporters)')
       .addStringOption((o) => o.setName('preset').setDescription('Effect').setRequired(true).setAutocomplete(true)))
+    .addSubcommand((s) => s
+      .setName('star')
+      .setDescription('Pick your supporter star colour')
+      .addStringOption((o) => o.setName('preset').setDescription('Star colour').setRequired(true).setAutocomplete(true)))
     .addSubcommand((s) => s.setName('tag').setDescription("Set a tag beside your name (Overseer's Circle)"))
     .addSubcommand((s) => s
       .setName('clear')
@@ -327,12 +335,7 @@ function buildCommand() {
         .setName('field')
         .setDescription('What to reset')
         .setRequired(false)
-        .addChoices(
-          { name: 'everything', value: 'all' },
-          { name: 'colour', value: 'color' },
-          { name: 'effect', value: 'effect' },
-          { name: 'tag', value: 'tag' },
-        )))
+        .addChoices(...COSMETICS_CLEAR_FIELD_CHOICES)))
     .addSubcommand((s) => s.setName('help').setDescription('How chat appearance works'))
     .toJSON();
 }

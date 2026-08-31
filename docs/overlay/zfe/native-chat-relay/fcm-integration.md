@@ -84,7 +84,7 @@ normal database channel.
 
 ## HUD identity cosmetic extension
 
-Widget v2.10.8 understands three optional, additive FCM fields on `chat.message`
+Widget v2.10.9 understands three optional, additive FCM fields on `chat.message`
 events, including subscribe-time history:
 
 ```json
@@ -97,11 +97,14 @@ events, including subscribe-time history:
 
 The relay emits these fields only for a token that negotiated `clientVersion >= 2.10.0`;
 missing, old, and invalid versions receive the upstream event shape. The relay records
-the capability beside a short-lived one-way token digest because ZFE may use separate
+the capability beside a short-lived one-way token digest in Redis because ZFE may use separate
 connect and subscribe sockets. `tag` and `starColor` are already validated by the
 cosmetics service, and `supporterStar` is derived only from an active Supporter or
 Overseer entitlement. The HUD renders a fixed `★` glyph and never trusts a glyph from
-the wire. The desktop/web `nameColor` and effect fields remain outside this HUD extension.
+the wire. The desktop/web `nameColor` and effect fields remain outside this HUD extension. A
+self-authored in-game message is initially shown optimistically, then hydrated from its
+authoritative decorated relay echo before deduplication; it therefore receives the same fields
+as Discord-originated and other in-game messages.
 
 ## Ephemeral `server` rooms
 

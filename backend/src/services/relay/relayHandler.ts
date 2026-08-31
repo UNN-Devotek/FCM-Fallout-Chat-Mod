@@ -37,9 +37,11 @@ import { setRoster, clearRoster, computeRooms } from './worldRosterService';
 import { nextRelaySeq } from './relaySeq';
 import {
   rememberClientVersion,
-  rememberTokenClientVersion,
-  tokenSupportsCosmetics,
 } from './clientCapability';
+import {
+  rememberTokenClientVersionDurable,
+  tokenSupportsCosmeticsDurable,
+} from './clientCapabilityStore';
 import { ingestMessage } from '../ingestMessage';
 import { attachCosmetics, attachCosmeticsToHistory } from '../cosmetics/cosmeticsService';
 import {
@@ -721,7 +723,7 @@ async function handleRegister(ws: WebSocket, frame: Record<string, unknown>, ip:
   }
 
   const { userId, token, role } = await mintToken(displayName);
-  rememberTokenClientVersion(token, frame.clientVersion);
+  await rememberTokenClientVersionDurable(token, frame.clientVersion);
   send(ws, {
     success:     true,
     // userId is already in "user_"+hex format from mintToken — pass through directly.
@@ -754,7 +756,7 @@ async function handleHello(ws: WebSocket, frame: Record<string, unknown>): Promi
     send(ws, errEnvelope('auth_token_invalid', 'Token not found or invalid'));
     return;
   }
-  rememberTokenClientVersion(rawToken, frame.clientVersion);
+  await rememberTokenClientVersionDurable(rawToken, frame.clientVersion);
 
   // Check the linked FCM account. identity.userId is a relay TEXT id; account
   // moderation state lives on linkedUserId.
@@ -1234,7 +1236,7 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
   const cursor = typeof frame.cursor === 'number' ? frame.cursor : 0;
   const max    = Math.min(typeof frame.max === 'number' ? frame.max : 64, 100);
 
-  const supportsCosmetics = tokenSupportsCosmetics(rawToken);
+  const supportsCosmetics = await tokenSupportsCosmeticsDurable(rawToken);
   const events = await fetchHistoryEvents(cursor, max, supportsCosmetics);
 
   // Merge in the caller's current-world server-room history (ephemeral, not in SQL).
@@ -1512,7 +1514,7 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
 
   const cursor = typeof frame.cursor === 'number' ? frame.cursor : 0;
   const worldId = await getWorldId(identity.userId);
-  const supportsCosmetics = tokenSupportsCosmetics(rawToken);
+  const supportsCosmetics = await tokenSupportsCosmeticsDurable(rawToken);
 
   const state: SubscriberState = {
     ws,

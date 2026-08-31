@@ -348,7 +348,9 @@ Overseer tag), `supporterStar: true` (an active Supporter/Overseer entitlement),
 `starColor` (a validated `#rrggbb` value). They may appear on live, polled, and
 subscribe-time history events only after the client negotiates the capability; generic ZFE
 clients and older FCM widgets must ignore unknown fields. The FCM HUD always renders its
-own immutable `★` glyph.
+own immutable `★` glyph. The relay carries the negotiated token/version capability across
+separate connect and subscribe sockets with a short-lived Redis key containing only a token
+digest; missing or unreadable capability state fails closed to the legacy event shape.
 
 When `cursor` is `0`, the server **may** include an initial visible history window. The history
 size is relay policy, not a ZFE rule — a relay can return no history, five messages, twenty

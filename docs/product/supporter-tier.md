@@ -93,6 +93,24 @@ only rendered glyph and the client rejects non-hex star colors at the final rend
 longer entitled, the effective tier default is used. Website Profile → **Chat appearance**
 and overlay Settings → **Appearance** expose the same free and supporter color catalog.
 
+### Appearance command contract
+
+The Discord `/cosmetics` command mirrors the website and overlay appearance controls:
+
+| Command | Rule |
+| --- | --- |
+| `/cosmetics color` | Select a catalog color for the username. |
+| `/cosmetics star` | Select a catalog color for the supporter marker; the rendered glyph is always `★`. |
+| `/cosmetics effect` | Select a desktop/web-only effect; never an in-game effect. |
+| `/cosmetics tag` | Set an Overseer's Circle tag shown before the name, including in-game. |
+| `/cosmetics clear field:star` | Restore the tier-default star color without changing the other fields. |
+
+`/cosmetics clear` with no field resets every appearance field, including the star color.
+The star color is an independent catalog selection, is tier-gated by the same validator as
+username colors, and is only rendered when the account has an active Supporter or
+Overseer's Circle entitlement. A lapsed entitlement keeps its saved selection and restores
+it when the role returns.
+
 ### Payment provider
 
 **Discord Server Subscriptions.** Discord is merchant of record (handles VAT/sales tax

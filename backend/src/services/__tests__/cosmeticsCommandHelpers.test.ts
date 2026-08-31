@@ -14,6 +14,8 @@ import {
   buildEffectChoices,
   reasonToMessage,
   AUTOCOMPLETE_LIMIT,
+  clearCosmeticPatch,
+  COSMETICS_CLEAR_FIELD_CHOICES,
 } from '../cosmeticsCommandHelpers';
 import { COLOR_PRESETS, EFFECT_PRESETS } from '../cosmetics/presets';
 
@@ -143,4 +145,21 @@ describe('reasonToMessage', () => {
     }
   });
 
+});
+
+describe('appearance clear rules', () => {
+  test('clears the independently selected supporter star colour', () => {
+    assert.deepEqual(clearCosmeticPatch('star'), { starColorPresetId: null });
+    assert.ok(COSMETICS_CLEAR_FIELD_CHOICES.some((choice) => choice.value === 'star'));
+  });
+
+  test('all resets every appearance field, including star colour', () => {
+    assert.deepEqual(clearCosmeticPatch('all'), {
+      colorPresetId: null,
+      customColorHex: null,
+      starColorPresetId: null,
+      effectId: null,
+      customTag: null,
+    });
+  });
 });

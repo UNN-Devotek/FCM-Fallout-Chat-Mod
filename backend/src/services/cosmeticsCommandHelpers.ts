@@ -9,6 +9,7 @@
  */
 import { SupporterTier, tierAtLeast, tierLabel } from '../utils/supporterTier';
 import { ColorPreset, EffectPreset } from './cosmetics/presets';
+import type { CosmeticPatch } from './cosmetics/cosmeticsService';
 
 /** customId namespace. Guards this listener against ticket/voice interactions. */
 export const CUSTOM_ID_PREFIX = 'fcmcos';
@@ -32,6 +33,33 @@ export function parseCosmeticId(customId: string | null | undefined): ParsedCust
 
 /** Discord caps autocomplete responses (and select menus) at 25 entries. */
 export const AUTOCOMPLETE_LIMIT = 25;
+
+/** The fields that `/cosmetics clear` is allowed to reset. */
+export const COSMETICS_CLEAR_FIELD_CHOICES = [
+  { name: 'everything', value: 'all' },
+  { name: 'colour', value: 'color' },
+  { name: 'star colour', value: 'star' },
+  { name: 'effect', value: 'effect' },
+  { name: 'tag', value: 'tag' },
+] as const;
+
+/** Build the partial patch used by the Discord clear command. */
+export function clearCosmeticPatch(field: string): CosmeticPatch {
+  switch (field) {
+    case 'all':
+      return { colorPresetId: null, customColorHex: null, starColorPresetId: null, effectId: null, customTag: null };
+    case 'color':
+      return { colorPresetId: null, customColorHex: null };
+    case 'star':
+      return { starColorPresetId: null };
+    case 'effect':
+      return { effectId: null };
+    case 'tag':
+      return { customTag: null };
+    default:
+      return {};
+  }
+}
 
 export interface AutocompleteChoice {
   name: string;
@@ -132,8 +160,10 @@ export function reasonToMessage(
 export default {
   CUSTOM_ID_PREFIX,
   AUTOCOMPLETE_LIMIT,
+  COSMETICS_CLEAR_FIELD_CHOICES,
   buildCosmeticId,
   parseCosmeticId,
+  clearCosmeticPatch,
   buildColorChoices,
   buildEffectChoices,
   reasonToMessage,
@@ -141,8 +171,10 @@ export default {
 module.exports = {
   CUSTOM_ID_PREFIX,
   AUTOCOMPLETE_LIMIT,
+  COSMETICS_CLEAR_FIELD_CHOICES,
   buildCosmeticId,
   parseCosmeticId,
+  clearCosmeticPatch,
   buildColorChoices,
   buildEffectChoices,
   reasonToMessage,

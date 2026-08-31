@@ -147,6 +147,12 @@ twice. Without it the gateway connection is rejected outright.
 Both are gated on `SUPPORTER_TIER_ENABLED` (default `false`): with the tier off the
 command is never registered and no listener attaches.
 
+The appearance subcommands are `/cosmetics color`, `/cosmetics star`,
+`/cosmetics effect`, `/cosmetics tag`, `/cosmetics show`, `/cosmetics clear`, and
+`/cosmetics help`. `/cosmetics star` changes only the supporter marker colour; the
+marker itself is always the fixed `★` glyph. `/cosmetics clear field:star` resets only
+that colour, while an unqualified `/cosmetics clear` resets all appearance fields.
+
 `chatNameCommandService` separately registers `/name`, a free account setting that is
 available whether supporter cosmetics are enabled or not. It opens an ephemeral modal;
 leaving it blank restores the ordinary Fallout 76 / Discord-derived name.
@@ -174,6 +180,10 @@ Custom hex colours have no corresponding Discord role, so they continue to rende
 FCM while any preset colour role is cleared. The effect role is a Discord marker only:
 the actual glow/animation still renders on the website and desktop overlay, not inside
 Discord or the Fallout 76 HUD.
+
+The supporter star is not a user-editable Discord role or text field. Its glyph is
+server/client guarded as `★`, its colour comes from the shared catalog, and the in-game
+HUD receives the same validated colour through the additive relay fields.
 
 The role names must exactly match the labels in `cosmetics/presets.ts`. The provisioning
 script creates missing roles, and no per-role environment variables are required:

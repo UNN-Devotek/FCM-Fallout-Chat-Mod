@@ -139,42 +139,44 @@ Work through all four surfaces before promoting to prod.
 
 7. `/cosmetics help` returns an ephemeral embed.
 8. `/cosmetics color` autocomplete lists free colours first, locked ones marked.
-9. `/name` opens a modal; submitting applies the same free chat name as the website.
-10. `/cosmetics show` embed's colour strip matches the chosen colour.
-11. Locked preset → ephemeral reply naming the tier.
-12. A name that trips the blacklist is rejected **without naming the pattern**.
+9. `/cosmetics star` uses the same colour catalog and reports that the marker remains `★`.
+10. `/cosmetics clear field:star` clears only the selected star colour.
+11. `/name` opens a modal; submitting applies the same free chat name as the website.
+12. `/cosmetics show` reports the effective star colour and its colour strip matches the name colour.
+13. Locked preset → ephemeral reply naming the tier.
+14. A name that trips the blacklist is rejected **without naming the pattern**.
 
 ### Grant a tier (the important one)
 
-13. Assign the dev `Supporter` role to a test account.
-14. Backend logs `[supporterSync] tier changed via GuildMemberUpdate`.
-15. Supporter colours and effects unlock — **without reconnecting**.
-16. The supporter badge renders in chat.
-17. Assign `Overseer's Circle`; animated effects and the tag unlock.
-18. On a **non-owner** test supporter, set a tag through `/cosmetics tag` and confirm
+15. Assign the dev `Supporter` role to a test account.
+16. Backend logs `[supporterSync] tier changed via GuildMemberUpdate`.
+17. Supporter colours and effects unlock — **without reconnecting**.
+18. The supporter badge renders in chat.
+19. Assign `Overseer's Circle`; animated effects and the tag unlock.
+20. On a **non-owner** test supporter, set a tag through `/cosmetics tag` and confirm
     their dev-guild nickname becomes `★ [TAG] Name`. Edit the tag on the website and
     confirm it changes there too. Clearing/removing the tier role restores the bare name.
 
 ### Lapse and restore (#230's hard rule)
 
-19. Remove the tier role. Cosmetics revert to default within one reconcile cycle
+21. Remove the tier role. Cosmetics revert to default within one reconcile cycle
     (15 min) or immediately via the gateway event.
-20. The `supporter_entitlements` row still exists with `status='lapsed'` — **not
+22. The `supporter_entitlements` row still exists with `status='lapsed'` — **not
     deleted**.
-21. Re-add the role. The user's **exact previous look** returns with no reconfiguration.
+23. Re-add the role. The user's **exact previous look** returns with no reconfiguration.
 
 ### Overlay
 
-22. Point the DEV overlay at dev (`npm run dev:local` → `electron`). Never touch the
+24. Point the DEV overlay at dev (`npm run dev:local` → `electron`). Never touch the
     packaged `Fallout Chat Mod` process, and never `Fallout76`.
-23. Colours, effects, tags and badges render.
-24. Settings → Appearance → **Disable animated name effects** collapses animated
+25. Colours, effects, tags and badges render.
+26. Settings → Appearance → **Disable animated name effects** collapses animated
     effects to their static form.
 
 ### Regression
 
-25. A user with no `user_cosmetics` row renders exactly as before.
-26. Public-mode chat still leaks no private data.
+27. A user with no `user_cosmetics` row renders exactly as before.
+28. Public-mode chat still leaks no private data.
 
 ### In-game
 

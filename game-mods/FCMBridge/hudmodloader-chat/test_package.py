@@ -25,9 +25,16 @@ def main() -> None:
         r'static inline var VERSION:String\s*=\s*"([^"]+)"', source_hx
     )
     assert version_match, "FCMChatWidget.hx must define VERSION"
+    swf_artifact = (ROOT / "FCMChatWidget.swf").read_bytes()
+    assert swf_artifact[:3] == b"FWS" and swf_artifact[3] == 32, (
+        "FCMChatWidget.swf must be an uncompressed Flash v32 artifact"
+    )
     widget_artifact = (ROOT / "FCMChatWidget.ba2").read_bytes()
     widget_version = version_match.group(1).encode("ascii")
     assert widget_version in widget_artifact, "FCMChatWidget.ba2 embeds the current VERSION"
+    assert b"hydrateOwnEcho" in widget_artifact, (
+        "FCMChatWidget.ba2 must contain authoritative self-echo hydration"
+    )
     assert b"reconcileDisplayName" not in widget_artifact, (
         "FCMChatWidget.ba2 must not contain the unsafe late-identity reconnect symbol"
     )

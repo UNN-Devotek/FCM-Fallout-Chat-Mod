@@ -4,7 +4,7 @@ ZFE is a `dxgi.dll` proxy for Fallout 76 that exposes `__ZFE` to the Scaleform
 HUD. FCM's optional `FCMChatWidget` HUDModLoader mod uses its sanctioned
 `chat.v1` surface to display chat in game.
 
-> **Current widget (2026-08-31):** `FCMChatWidget` v2.10.8 targets `/relay` through
+> **Current widget (2026-08-31):** `FCMChatWidget` v2.10.9 targets `/relay` through
 > ZFE `chat.v1`. The backend keeps production relay access fail-closed until
 > `RELAY_PRODUCTION_ENABLED=true` is deliberately rolled out. The desktop overlay
 > remains independent of this optional mod path.
@@ -96,8 +96,9 @@ loop (build, version-byte patch, cache clearing). Localhost requires
 
 ## Client version handshake (`clientVersion`)
 
-The widget reports its `VERSION` to the relay in the register/hello payload, and the
-relay records it per connection (`backend/src/services/relay/clientCapability.ts`).
+The widget reports its `VERSION` to the relay in the register/hello payload. The relay records
+it per connection (`backend/src/services/relay/clientCapability.ts`) and mirrors a short-lived
+token-digest record in Redis (`clientCapabilityStore.ts`) for ZFE's separate subscribe socket.
 
 **Why it exists.** The `.ba2` is distributed as a manual file copy — download, fully
 exit the game, drop into `Data/`, restart. There is no auto-update and no way to retire
@@ -119,7 +120,7 @@ lexicographically, so a string compare would silently lock every updated client 
 `MIN_COSMETICS_VERSION` is **2.10.0**, the first build that reports a version at all —
 the bump IS the capability signal.
 
-### HUD identity cosmetics (widget v2.10.8)
+### HUD identity cosmetics (widget v2.10.9)
 
 The relay now sends these additive fields on `chat.message` events only to clients that
 negotiated `clientVersion >= 2.10.0`:
@@ -129,9 +130,13 @@ negotiated `clientVersion >= 2.10.0`:
 - `starColor`: a server-validated `#rrggbb` catalog color for the fixed `★` glyph.
 
 The widget never accepts a glyph from the wire. It uses the immutable `★` constant and
-falls back to the configured active-tab color if a star color is absent or malformed.
+falls back to the configured active-tab color if a star color is absent or malformed. When
+the local player sends a message, the temporary optimistic row is replaced by the decorated
+relay echo before deduplication, so the sender sees the same supporter marker and tag as every
+other message author.
 Static history is decorated with the same current cosmetics as live messages. Because ZFE
 can use separate sockets for connect and subscribe, the relay stores only a short-lived
-one-way digest of the negotiated token/version to carry this capability across those sockets.
+one-way digest of the negotiated token/version in Redis to carry this capability across
+backend instances and reconnects; the bearer token itself is never stored.
 Missing, old, or invalid versions receive the original event shape, so older BA2 files remain
 safe during a manual rollout.

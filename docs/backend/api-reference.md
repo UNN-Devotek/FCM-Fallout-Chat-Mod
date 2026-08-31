@@ -274,6 +274,11 @@ Chat appearance personalisation and the paid supporter entitlement. Design recor
 An **absent** key means "leave unchanged"; an explicit **`null`** means "clear". The two
 are distinct and the service relies on that.
 
+Appearance patches include `starColorPresetId`, which is independent of
+`colorPresetId`. It accepts the same catalog and tier rules as a username colour. The
+fixed supporter marker remains `★`; clients never accept a glyph from the API. Clear it
+with `starColorPresetId: null` (or Discord `/cosmetics clear field:star`).
+
 ```json
 { "colorPresetId": "cryo", "effectId": null }
 ```

@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-08-31):** v2.10.8 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-08-31):** v2.10.9 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -25,7 +25,9 @@ A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's H
   indicator appears and auto-scroll is suppressed.
 - Renders the server-resolved Overseer tag and supporter marker in the HUD when the relay
   negotiates widget capability. The marker is always the immutable `★`; only its validated
-  catalog color varies. Older widget builds receive the original event shape.
+  catalog color varies. An author's own optimistic row is replaced with the authoritative
+  relay event so self-authored messages receive the same marker and tag as Discord and other
+  in-game messages. Older widget builds receive the original event shape.
 - Handles the unlinked-account (limited) state: receive-only with a pinned link-code notice.
 - Gives linked moderators an in-HUD command surface for delete, kick, mute, unmute, ban, and unban.
   Staff can enter an exact visible player name (quote multi-word names) or use the `[#XXXXXXXX]`

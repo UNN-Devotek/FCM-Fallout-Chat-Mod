@@ -134,7 +134,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.8";  // HUD identity cosmetics: fixed supporter star + validated colour/tag fields
+    static inline var VERSION:String  = "2.10.9";  // HUD identity cosmetics + authoritative self-echo hydration
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -2285,8 +2285,15 @@ class FCMChatWidget extends MovieClip {
                 continue;
             }
 
-            // Dedup our own echoed message (already shown optimistically).
+            // Replace our optimistic self-row with the authoritative relay event before
+            // deduping it. The relay is the source of truth for supporterStar, starColor,
+            // and tag; discarding this event would leave the sender's own HUD row permanently
+            // unadorned because the optimistic row deliberately starts with safe defaults.
             if (isOwnEcho(messageId, senderUserId, channel, body)) {
+                if (hydrateOwnEcho(messageId, senderUserId, channel, body, displayName,
+                        tag, supporterStar, starColor)) {
+                    newRecords = true;
+                }
                 continue;
             }
 
@@ -2380,7 +2387,8 @@ class FCMChatWidget extends MovieClip {
 
     /**
      * Returns true if an incoming chat.message is our own optimistic echo
-     * (already rendered locally). Consumes the matched _pendingEchoes entry.
+     * (already rendered locally or awaiting the local row hydration). Consumes
+     * the matched _pendingEchoes entry.
      */
     function isOwnEcho(messageId:String, senderUserId:String, channel:String, body:String):Bool {
         // Strong signal: the relay told us our own id and it's coming back.
@@ -2398,6 +2406,32 @@ class FCMChatWidget extends MovieClip {
                 _pendingEchoes.splice(k, 1);
                 return true;
             }
+        }
+        return false;
+    }
+
+    /**
+     * Apply server-resolved identity cosmetics to the optimistic local row.
+     *
+     * The successful send response gives the optimistic row its messageId. The relay echo
+     * carries the canonical sender metadata, including the supporter marker, so matching by
+     * messageId is preferred. The sender/channel/body fallback covers older relay responses that
+     * acknowledge a send without returning a messageId.
+     */
+    function hydrateOwnEcho(messageId:String, senderUserId:String, channel:String, body:String,
+            displayName:String, tag:String, supporterStar:Bool, starColor:String):Bool {
+        for (rec in _records) {
+            var idMatch:Bool = messageId != null && messageId.length > 0
+                && rec.messageId == messageId;
+            var fallbackMatch:Bool = rec.senderUserId == senderUserId
+                && rec.channel == channel && rec.body == body;
+            if (!idMatch && !fallbackMatch) continue;
+
+            if (displayName != null && displayName.length > 0) rec.user = displayName;
+            rec.tag = tag;
+            rec.supporterStar = supporterStar;
+            rec.starColor = starColor;
+            return true;
         }
         return false;
     }

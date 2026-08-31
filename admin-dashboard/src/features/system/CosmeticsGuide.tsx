@@ -81,7 +81,7 @@ export default function CosmeticsGuide({ variant = 'dashboard' }: Props) {
       </p>
       <p style={p}>
         <strong style={{ color: gold }}>In Discord:</strong> use{' '}
-        <code style={sCode}>/cosmetics</code> for colours, effects and tags, or{' '}
+        <code style={sCode}>/cosmetics</code> for colours, effects, the supporter star and tags, or{' '}
         <code style={sCode}>/name</code> for your free chat name. Replies are only visible to you.
       </p>
       <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '6px' }}>
@@ -91,6 +91,7 @@ export default function CosmeticsGuide({ variant = 'dashboard' }: Props) {
             ['/cosmetics show', 'See what your name currently looks like'],
             ['/name', 'Change your free chat name (no supporter tier or cooldown)'],
             ['/cosmetics color', 'Pick a name colour'],
+            ['/cosmetics star', 'Pick the colour of the supporter star (the glyph is always ★)'],
             ['/cosmetics effect', 'Pick a name effect (supporters)'],
             ['/cosmetics tag', "Set a tag beside your name (Overseer's Circle)"],
             ['/cosmetics clear', 'Go back to the default look'],
@@ -122,6 +123,8 @@ export default function CosmeticsGuide({ variant = 'dashboard' }: Props) {
           {[
             ['Display name', 'Yes', 'Yes', 'Yes'],
             ['Name colour', 'Yes', 'Yes', 'Yes'],
+            ['Supporter star (★)', 'Yes', 'Yes', 'As text'],
+            ['Star colour', 'Yes', 'Yes', 'Yes'],
             ['Tag', 'Yes', 'Yes', 'Yes'],
             ['Badge', 'Yes', 'Yes', 'As text'],
             ['Effects (glow, CRT, glitch, shimmer)', 'Yes', 'Yes', 'No'],
@@ -135,6 +138,13 @@ export default function CosmeticsGuide({ variant = 'dashboard' }: Props) {
           ))}
         </tbody>
       </table>
+      <p style={{ ...p, color: muted }}>
+        The supporter marker is always the fixed <code style={sCode}>★</code> glyph. Its
+        colour is selected independently from the name colour, and arbitrary text or
+        glyphs can never replace it. The star appears only while an active Supporter or
+        Overseer's Circle role is present; a saved selection is restored if a supporter
+        rejoins the Discord server.
+      </p>
       <p style={{ ...p, color: muted }}>
         Effects cannot appear in the in-game HUD. The game's interface engine crashes
         outright if a mod tries to apply glow or animation to text, so this is a hard
@@ -160,7 +170,8 @@ export default function CosmeticsGuide({ variant = 'dashboard' }: Props) {
       <p style={sSection}>TURNING IT OFF</p>
       <p style={p}>
         Use <code style={sCode}>/cosmetics clear</code>, or the reset controls on your
-        Profile, to go back to the default look at any time.
+        Profile, to go back to the default look at any time. To reset only the marker
+        colour, use <code style={sCode}>/cosmetics clear field:star</code>.
       </p>
       <p style={p}>
         If you find other people's animated names distracting while you play, the desktop
