@@ -86,8 +86,9 @@ publish 502s and no release is recorded.
 - **Pings `@everyone`.** The message `content` is `@everyone` with
   `allowedMentions: { parse: ['everyone'] }`; the ping only fires if the bot holds
   **Mention Everyone** in that channel (otherwise it posts silently).
-- **Download field** — direct 🪟 Windows / 🐧 Linux ZIP links + the Download-page link + the
-  versioned **ZFE FCM HUD Mod ZIP** link when the release includes HUD metadata.
+- **Download field** — direct 🪟 Windows ZIP / 🐧 Linux AppImage / Linux `.deb` links, the
+  Linux ZIP with install docs, the Download-page link, and the versioned **ZFE FCM HUD Mod ZIP**
+  link when the release includes HUD metadata.
   The URLs are **environment-aware** (`utils/releaseAnnouncement.ts` →
   `releaseDownloadUrls.ts`, `RELEASE_DOWNLOAD_HOST`), so a dev/QA release links to the
   dev host instead of prod (where the dev artifacts would 404).

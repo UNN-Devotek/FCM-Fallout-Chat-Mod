@@ -11,6 +11,7 @@ import {
   linuxZipUrl,
   rawWindowsInstallerUrl,
   rawLinuxAppImageUrl,
+  rawLinuxDebUrl,
   assertAllowedDownloadUrl,
   isAllowedDownloadUrl,
 } from '../utils/releaseDownloadUrls';
@@ -159,7 +160,7 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
     const { version, downloadUrl, releaseNotes, announce, hudModUrl, hudModVersion } = parsed.data;
     const publishedAt = new Date();
 
-    // Pipeline gate: verify all four overlay artifacts and, when supplied, the
+    // Pipeline gate: verify all five overlay artifacts and, when supplied, the
     // HUD ZIP exist and are full-size on the
     // server BEFORE we announce or record. Stops filename mismatches / truncated
     // uploads from shipping a release whose buttons serve a corrupt file.
@@ -168,6 +169,7 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
     // - linuxZipUrl         = Linux ZIP   (human download — website + Nexus)
     // - rawWindowsInstallerUrl = raw .exe  (CLI installer / direct download)
     // - rawLinuxAppImageUrl    = raw .AppImage (CLI installer / direct download)
+    // - rawLinuxDebUrl         = raw .deb (website / direct download)
     //
     // The zips are >1 MB; raw installers are also well above the 1 MB floor.
     try {
@@ -175,6 +177,7 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
       await verifyDownload(linuxZipUrl(version), 'Linux ZIP');
       await verifyDownload(rawWindowsInstallerUrl(version), 'Windows raw installer (CLI installer / direct download)');
       await verifyDownload(rawLinuxAppImageUrl(version), 'Linux raw AppImage (CLI installer / direct download)');
+      await verifyDownload(rawLinuxDebUrl(version), 'Linux raw .deb (direct download)');
       if (hudModUrl) {
         // The HUD ZIP is intentionally much smaller than an Electron installer,
         // but it must still be a real uploaded artifact rather than an HTML 404.

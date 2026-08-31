@@ -14,6 +14,7 @@ import {
   windowsZipUrl,
   rawWindowsInstallerUrl,
   rawLinuxAppImageUrl,
+  rawLinuxDebUrl,
   isAllowedDownloadUrl,
   assertAllowedDownloadUrl,
 } from '../releaseDownloadUrls';
@@ -58,6 +59,10 @@ describe('releaseDownloadUrls', () => {
         rawLinuxAppImageUrl('1.2.3'),
         'https://falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod-1.2.3.AppImage',
       );
+      assert.equal(
+        rawLinuxDebUrl('1.2.3'),
+        'https://falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod-1.2.3.deb',
+      );
     });
 
     test('dev override swaps the host, keeps the filenames', () => {
@@ -68,6 +73,10 @@ describe('releaseDownloadUrls', () => {
       );
       assert.ok(
         rawLinuxAppImageUrl('1.3.91-dev').startsWith('https://dev.falloutchatmod.com/downloads/electron/'),
+      );
+      assert.equal(
+        rawLinuxDebUrl('1.3.91-dev'),
+        'https://dev.falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod-1.3.91-dev.deb',
       );
     });
   });

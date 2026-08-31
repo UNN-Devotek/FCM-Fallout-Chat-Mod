@@ -15,7 +15,7 @@
     Role in the release pipeline:
       Run AFTER electron-builder produces the raw artifacts and BEFORE uploading to
       the VPS. Outputs land in the same dist-electron dir alongside the raw files.
-      Upload order to /app/downloads/electron/: raw .exe + .AppImage, then the ZIPs.
+      Upload order to /app/downloads/electron/: raw .exe + .AppImage + .deb, then the ZIPs.
 
 .PARAMETER Version
     Version string, e.g. 1.3.68.
@@ -58,14 +58,14 @@ function Fail($msg) { Write-Error "[package-downloads] $msg"; exit 1 }
 # --- Validate raw artifact existence -----------------------------------------
 $winExe   = Join-Path $DistDir "Fallout Chat Mod Setup $Version.exe"
 $linuxApp = Join-Path $DistDir "Fallout Chat Mod-$Version.AppImage"
-# electron-builder names the .deb from the package name (e.g.
-# fallout-chatmod-cross-platform-overlay_${Version}_amd64.deb), NOT productName,
-# so glob for it rather than assuming the AppImage-style "Fallout Chat Mod-$Version.deb".
-$linuxDeb = (Get-ChildItem -Path $DistDir -Filter "*$Version*.deb" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+# electron-builder is pinned to the product-name artifact pattern in
+# cross-platform-overlay/package.json, so the raw .deb name is deterministic
+# and can be linked directly from the website and Discord.
+$linuxDeb = Join-Path $DistDir "Fallout Chat Mod-$Version.deb"
 
 if (-not (Test-Path $winExe))   { Fail "Windows installer not found: $winExe" }
 if (-not (Test-Path $linuxApp)) { Fail "Linux AppImage not found: $linuxApp" }
-if (-not $linuxDeb -or -not (Test-Path $linuxDeb)) { Fail "Linux .deb not found in $DistDir (electron-builder deb target)" }
+if (-not (Test-Path $linuxDeb)) { Fail "Linux .deb not found: $linuxDeb (electron-builder deb target)" }
 
 # --- Instruction files -------------------------------------------------------
 $installWin   = Join-Path $AssetsDir "install\INSTALL-WINDOWS.txt"
@@ -146,4 +146,4 @@ Write-Host "[package-downloads] Done. Three download ZIPs ready in $DistDir"
 Write-Host "  $winZipName  ($([math]::Round($winSize/1MB,1)) MB)"
 Write-Host "  $linuxZipName  ($([math]::Round($linuxSize/1MB,1)) MB)"
 Write-Host "  $hudZipName  ($([math]::Round($hudSize/1KB,1)) KB)"
-Write-Host "NOTE: Upload the raw .exe/.AppImage alongside the ZIPs. The HUD ZIP is for the website and Discord release message."
+Write-Host "NOTE: Upload the raw .exe/.AppImage/.deb alongside the ZIPs. The HUD ZIP is for the website and Discord release message."

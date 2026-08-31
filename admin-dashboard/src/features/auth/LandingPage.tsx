@@ -288,11 +288,20 @@ const WINDOWS_CLI = 'irm https://falloutchatmod.com/install.ps1 | iex';
 const LINUX_CLI   = 'curl -fsSL https://falloutchatmod.com/install.sh | bash';
 
 // ── Download URLs ─────────────────────────────────────────────────────────────
-// Windows uses the server-authoritative `latest.downloadUrl`. Linux builds its
-// ZIP URL from the version string. NOTE: `productName` is "Fallout Chat Mod"
-// WITH spaces — a no-space name 404s (see CLAUDE.md).
-const ELECTRON_BASE = 'https://falloutchatmod.com/downloads/electron';
-function electronLinuxUrl(version: string): string {
+// Windows uses the server-authoritative `latest.downloadUrl`. Linux derives its
+// artifact URLs from the version string. Hosted Dev keeps these links on the Dev
+// origin; local dashboard development falls back to production downloads.
+const ELECTRON_BASE = typeof window !== 'undefined' &&
+  (window.location.hostname === 'falloutchatmod.com' || window.location.hostname === 'dev.falloutchatmod.com')
+  ? `${window.location.origin}/downloads/electron`
+  : 'https://falloutchatmod.com/downloads/electron';
+function electronLinuxAppImageUrl(version: string): string {
+  return `${ELECTRON_BASE}/${encodeURIComponent(`Fallout Chat Mod-${version}.AppImage`)}`;
+}
+function electronLinuxDebUrl(version: string): string {
+  return `${ELECTRON_BASE}/${encodeURIComponent(`Fallout Chat Mod-${version}.deb`)}`;
+}
+function electronLinuxZipUrl(version: string): string {
   return `${ELECTRON_BASE}/${encodeURIComponent(`Fallout Chat Mod-${version}.AppImage (Linux).zip`)}`;
 }
 
@@ -369,7 +378,9 @@ function InstallPanel() {
   const [copied, setCopied] = useState<CopyKey | null>(null);
   const { latest } = useReleases();
   const winUrl = latest?.downloadUrl ?? null;            // server-authoritative
-  const linUrl = latest?.version ? electronLinuxUrl(latest.version) : null;
+  const linAppImageUrl = latest?.version ? electronLinuxAppImageUrl(latest.version) : null;
+  const linDebUrl = latest?.version ? electronLinuxDebUrl(latest.version) : null;
+  const linZipUrl = latest?.version ? electronLinuxZipUrl(latest.version) : null;
   const verTag = latest?.version ? `v${latest.version}` : '';
   const hudModUrl = latest?.hudModUrl ?? null;
   const hudModVersion = latest?.hudModVersion ? `v${latest.hudModVersion}` : '';
@@ -685,13 +696,14 @@ function InstallPanel() {
 
       <div style={subHeaderStyle}>STEP 1 — DOWNLOAD</div>
       <div style={bodyStyle}>
-        Download the AppImage ZIP and unzip it. See &ldquo;Run the AppImage&rdquo; below for the
-        commands to make it executable and launch it.
+        Choose the package that matches your Linux setup. The AppImage is portable; the
+        <code>.deb</code> is managed by apt/dpkg. The ZIP contains both packages plus the
+        complete install instructions and KDE helper file.
       </div>
-      <div className="install-dl-row" style={downloadRowStyle}>
-        {linUrl ? (
+      <div className="install-dl-row" style={{ ...downloadRowStyle, gap: '8px', flexWrap: 'wrap' }}>
+        {linAppImageUrl ? (
           <a
-            href={linUrl}
+            href={linAppImageUrl}
             download
             target="_blank"
             rel="noopener noreferrer"
@@ -700,16 +712,48 @@ function InstallPanel() {
             onMouseEnter={dlHoverIn}
             onMouseLeave={dlHoverOut}
           >
-            ↓ DOWNLOAD FOR LINUX {verTag}
+            ↓ LINUX APPIMAGE {verTag}
           </a>
         ) : (
-          <span className="install-dl-btn" style={{ ...downloadBtnStyle, opacity: 0.5, cursor: 'default' }}>↓ LINUX — UNAVAILABLE</span>
+          <span className="install-dl-btn" style={{ ...downloadBtnStyle, opacity: 0.5, cursor: 'default' }}>↓ APPIMAGE — UNAVAILABLE</span>
+        )}
+        {linDebUrl ? (
+          <a
+            href={linDebUrl}
+            download
+            target="_blank"
+            rel="noopener noreferrer"
+            className="install-dl-btn"
+            style={downloadBtnStyle}
+            onMouseEnter={dlHoverIn}
+            onMouseLeave={dlHoverOut}
+          >
+            ↓ LINUX .DEB {verTag}
+          </a>
+        ) : (
+          <span className="install-dl-btn" style={{ ...downloadBtnStyle, opacity: 0.5, cursor: 'default' }}>↓ .DEB — UNAVAILABLE</span>
+        )}
+        {linZipUrl ? (
+          <a
+            href={linZipUrl}
+            download
+            target="_blank"
+            rel="noopener noreferrer"
+            className="install-dl-btn"
+            style={downloadBtnStyle}
+            onMouseEnter={dlHoverIn}
+            onMouseLeave={dlHoverOut}
+          >
+            ↓ LINUX ZIP + DOCS {verTag}
+          </a>
+        ) : (
+          <span className="install-dl-btn" style={{ ...downloadBtnStyle, opacity: 0.5, cursor: 'default' }}>↓ LINUX ZIP — UNAVAILABLE</span>
         )}
       </div>
 
       <div style={stepStyle}>STEP 2 (RECOMMENDED) — ONE-LINE INSTALL</div>
       <div style={bodyStyle}>
-        The easiest path: paste this into a terminal. It downloads the AppImage, adds an
+        The easiest portable path: paste this into a terminal. It downloads the AppImage, adds an
         app-menu launcher, and registers the overlay as a startup application.
       </div>
       <div className="install-cmd-row" style={cmdCenterRowStyle}>

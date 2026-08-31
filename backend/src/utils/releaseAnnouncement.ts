@@ -8,7 +8,12 @@
  * artifacts 404).
  */
 
-import { windowsZipUrl, linuxZipUrl } from './releaseDownloadUrls';
+import {
+  windowsZipUrl,
+  linuxZipUrl,
+  rawLinuxAppImageUrl,
+  rawLinuxDebUrl,
+} from './releaseDownloadUrls';
 
 export interface HudModDownload {
   version: string;
@@ -31,11 +36,13 @@ export function downloadPageUrl(): string {
   return process.env.DOWNLOAD_PAGE_URL || 'https://falloutchatmod.com';
 }
 
-/** Embed "Download" field value — env-aware app links + optional HUD package. */
+/** Embed "Download" field value — env-aware platform links + optional HUD package. */
 export function releaseDownloadFieldValue(version: string, hudMod?: HudModDownload): string {
   const links = [
     `🪟 [Windows](${windowsZipUrl(version)})`,
-    `🐧 [Linux (Proton)](${linuxZipUrl(version)})`,
+    `🐧 [Linux AppImage](${rawLinuxAppImageUrl(version)})`,
+    `[Linux .deb](${rawLinuxDebUrl(version)})`,
+    `[Linux ZIP + install docs](${linuxZipUrl(version)})`,
     `[Download page](${downloadPageUrl()})`,
   ];
   if (hudMod) links.push(`[ZFE FCM HUD Mod ZIP v${hudMod.version}](${hudMod.url})`);

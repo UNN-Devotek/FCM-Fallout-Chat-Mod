@@ -20,6 +20,8 @@ def main() -> None:
 
     required_nexus_markers = (
         "$hudGroup   = $env:NEXUS_FILE_GROUP_ID_HUD",
+        "$linuxDebGroup = $env:NEXUS_FILE_GROUP_ID_LINUX_DEB",
+        "NEXUS_FILE_GROUP_ID_LINUX_DEB",
         "NEXUS_FILE_GROUP_ID_HUD",
         "$hudVersion = (& $pythonCommand.Source $hudPackage --print-version).Trim()",
         '$hudZip   = Join-Path $DistDir "ZFE FCM HUD Mod-$hudVersion (PROD).zip"',
@@ -27,6 +29,8 @@ def main() -> None:
         "NexusVersion = $hudVersion",
         'Category = "optional"',
         "FileCategory  = $p.Category",
+        '$linuxDeb = Join-Path $DistDir "Fallout Chat Mod-$Version.deb"',
+        '@{ Name = "Linux .deb";',
     )
     for marker in required_nexus_markers:
         assert marker in nexus, f"Nexus release path is missing: {marker}"
@@ -39,6 +43,16 @@ def main() -> None:
         "{/* ── Windows ─────────────────────────────────────────────────── */}"
     )
     assert "↓ ZFE FCM HUD Mod ZIP {hudModVersion}" in install_page
+    for marker in (
+        "electronLinuxAppImageUrl",
+        "electronLinuxDebUrl",
+        "electronLinuxZipUrl",
+        "↓ LINUX APPIMAGE {verTag}",
+        "↓ LINUX .DEB {verTag}",
+        "↓ LINUX ZIP + DOCS {verTag}",
+        "window.location.hostname === 'dev.falloutchatmod.com'",
+    ):
+        assert marker in install_page, f"website Linux download control is missing: {marker}"
     for marker in (
         "STEP 1 — PREPARE",
         "Data/FCMChatWidget.ba2",

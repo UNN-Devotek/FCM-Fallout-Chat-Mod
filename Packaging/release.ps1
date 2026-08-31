@@ -17,7 +17,7 @@
       2. GATE: smoke-test.ps1 -Version $Version  (exit non-zero -> ABORT, publish nothing)
       3. GATE: vt-gate.ps1 -Version $Version     (exit non-zero -> ABORT, publish nothing)
       4. package-downloads.ps1 -Version $Version  (build human-download ZIPs + HUD ZIP)
-      5. Upload raw .exe + .AppImage + ZIPs to VPS; verify served sizes against
+      5. Upload raw .exe + .AppImage + .deb + ZIPs to VPS; verify served sizes against
          LOCAL build artifact sizes (Get-Item .Length); no feed manifest uploads.
       6. POST https://falloutchatmod.com/admin/releases  (register release, triggers
          app:update-available notification to connected clients on next WS connect).
@@ -39,6 +39,7 @@
       NEXUS_API_KEY
       NEXUS_FILE_GROUP_ID_WINDOWS
       NEXUS_FILE_GROUP_ID_LINUX
+      NEXUS_FILE_GROUP_ID_LINUX_DEB
       NEXUS_FILE_GROUP_ID_HUD
 
 .PARAMETER Version
@@ -276,7 +277,7 @@ Both platforms MUST ship every release.
 }
 Pass "step 1 (Linux artifact present)"
 
-# Linux .deb ships in the Linux download ZIP (apt-managed install option).
+# Linux .deb is an explicit electron-builder artifact and also ships in the Linux download ZIP.
 Write-Host "[step 1] Verifying Linux .deb (electron-builder deb target)..."
 if (-not (Test-Path $linuxDeb)) {
     Fail "step 1 (Linux .deb check)" @"
@@ -325,7 +326,7 @@ if ($DryRun) {
     Write-Host "          -> builds '$linuxZipName'"
     Write-Host "          -> builds '$hudZipName' (target: $hudTarget)"
     Write-Host ""
-    Write-Host "  STEP 5: SCP raw .exe + .AppImage + ZIPs + HUD ZIP to $SshTarget"
+    Write-Host "  STEP 5: SCP raw .exe + .AppImage + .deb + ZIPs + HUD ZIP to $SshTarget"
     Write-Host "          docker cp into ${ContainerName}:${remoteDownloads}"
     Write-Host "          Verify served sizes against local build artifact sizes"
     Write-Host ""

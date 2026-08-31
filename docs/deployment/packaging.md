@@ -15,7 +15,7 @@ in-game HUD-mod ZIP from the raw `electron-builder` artifacts and current HUD wi
 ```
 
 **What it does:**
-1. Locates `Fallout Chat Mod Setup X.Y.Z.exe`, `Fallout Chat Mod-X.Y.Z.AppImage`, and `Fallout Chat Mod-X.Y.Z.deb` in `cross-platform-overlay/dist-electron/` (the `.deb` is required — a missing `.deb` fails the build)
+1. Locates `Fallout Chat Mod Setup X.Y.Z.exe`, `Fallout Chat Mod-X.Y.Z.AppImage`, and `Fallout Chat Mod-X.Y.Z.deb` in `cross-platform-overlay/dist-electron/` (the `.deb` artifact name is pinned by `build.deb.artifactName`; a missing `.deb` fails the build)
 2. Reads instruction files from `cross-platform-overlay/assets/install/`: `INSTALL-WINDOWS.txt`, `INSTALL-LINUX.txt`, and `fallout-chatmod-keepabove.kwinrule`
 3. Stages each artifact + its instruction file(s) in a temp directory on the same drive as the dist dir (avoids cross-drive copies on dev machines where C: may be full)
 4. Compresses the staging contents (files at root, not nested in a subfolder) into:
@@ -26,7 +26,7 @@ in-game HUD-mod ZIP from the raw `electron-builder` artifacts and current HUD wi
      `Fallout76Custom.ini.example`, and target-specific `INSTALL.txt`
 5. All three ZIPs land in `cross-platform-overlay/dist-electron/` alongside the raw files
 
-The `.deb` ships inside the Linux ZIP so apt users can `sudo apt install ./'Fallout Chat Mod-X.Y.Z.deb'` (or `dpkg -i`) — an in-place, apt-managed alternative to the AppImage. `Packaging/release.ps1` also verifies + uploads the raw `.deb` alongside the AppImage.
+The `.deb` ships inside the Linux ZIP so apt users can `sudo apt install ./'Fallout Chat Mod-X.Y.Z.deb'` (or `dpkg -i`) — an in-place, apt-managed alternative to the AppImage. `Packaging/release.ps1` also verifies + uploads the raw `.deb` alongside the AppImage, and the website exposes both raw Linux files side by side.
 
 **Note:** The ZIPs are for website/Nexus human downloads only. There are no `latest*.yml` feed files — `build.publish` was removed for Nexus Mods ToS compliance.
 
@@ -55,8 +55,8 @@ between environments.
 ```
 
 **What it does:**
-1. Calls `publish-nexus.ps1` for each enabled Nexus file group: the Linux desktop ZIP as `main` and the production HUD ZIP as `optional` (Windows remains disabled while Nexus quarantines `.exe` uploads)
-2. Uses the desktop version for the Linux Nexus file and the current `FCMChatWidget.hx` version for the HUD Nexus file
+1. Calls `publish-nexus.ps1` for each enabled Nexus file group: the Linux AppImage ZIP as `main`, the Linux `.deb` ZIP as `main`, and the production HUD ZIP as `optional` (Windows remains disabled while Nexus quarantines `.exe` uploads)
+2. Uses the desktop version for both Linux Nexus files and the current `FCMChatWidget.hx` version for the HUD Nexus file
 3. After the Nexus publishes succeed, uploads the raw Windows `.exe` to VirusTotal using the large-file upload URL (required for files > 32 MB)
 4. Computes the SHA-256 permalink and POSTs it to `POST https://falloutchatmod.com/admin/virustotal-url` so the `/virustotal` redirect always points at the latest scan
 
@@ -64,6 +64,7 @@ between environments.
 - `NEXUS_API_KEY` — personal API key from nexusmods.com/settings/api-keys
 - `NEXUS_FILE_GROUP_ID_WINDOWS` — file-group id for the Windows file (Files tab → Manage Files → API Info)
 - `NEXUS_FILE_GROUP_ID_LINUX` — file-group id for the Linux file
+- `NEXUS_FILE_GROUP_ID_LINUX_DEB` — separate file-group id for the Linux `.deb` file
 - `NEXUS_FILE_GROUP_ID_HUD` — separate file-group id for the optional HUD ZIP on the same Nexus mod page
 - `VT_API_KEY` — VirusTotal personal API key
 - `PROD_ADMIN_RELEASE_TOKEN` — backend admin release token (from `backend/.env`)

@@ -53,12 +53,14 @@ describe('releaseAnnouncement', () => {
     });
   });
 
-  describe('releaseDownloadFieldValue (env-aware links — the prod-404 fix)', () => {
-    test('uses the configured host for the Windows + Linux ZIP links', () => {
+  describe('releaseDownloadFieldValue (env-aware platform links — the prod-404 fix)', () => {
+    test('uses the configured host for Windows, both Linux packages, and the Linux ZIP', () => {
       process.env.RELEASE_DOWNLOAD_HOST = 'dev.falloutchatmod.com';
       const v = releaseDownloadFieldValue('1.3.91-dev');
       assert.ok(v.includes('🪟 [Windows](https://dev.falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod%20Setup%201.3.91-dev%20(Windows).zip)'));
-      assert.ok(v.includes('🐧 [Linux (Proton)](https://dev.falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod-1.3.91-dev.AppImage%20(Linux).zip)'));
+      assert.ok(v.includes('🐧 [Linux AppImage](https://dev.falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod-1.3.91-dev.AppImage)'));
+      assert.ok(v.includes('[Linux .deb](https://dev.falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod-1.3.91-dev.deb)'));
+      assert.ok(v.includes('[Linux ZIP + install docs](https://dev.falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod-1.3.91-dev.AppImage%20(Linux).zip)'));
     });
     test('defaults to the prod host when RELEASE_DOWNLOAD_HOST is unset', () => {
       delete process.env.RELEASE_DOWNLOAD_HOST;
@@ -67,7 +69,9 @@ describe('releaseAnnouncement', () => {
       // `includes('host')` trips CodeQL's incomplete-url-substring-sanitization
       // and proves nothing about the host. The full prod URLs exclude the dev host.
       assert.ok(v.includes('🪟 [Windows](https://falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod%20Setup%201.2.3%20(Windows).zip)'));
-      assert.ok(v.includes('🐧 [Linux (Proton)](https://falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod-1.2.3.AppImage%20(Linux).zip)'));
+      assert.ok(v.includes('🐧 [Linux AppImage](https://falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod-1.2.3.AppImage)'));
+      assert.ok(v.includes('[Linux .deb](https://falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod-1.2.3.deb)'));
+      assert.ok(v.includes('[Linux ZIP + install docs](https://falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod-1.2.3.AppImage%20(Linux).zip)'));
     });
 
     test('includes the target HUD package when release metadata provides one', () => {

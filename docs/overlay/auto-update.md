@@ -120,7 +120,8 @@ prompt-when-current logic is for the **CLI** path only.
 
 ### `.deb` shipped in the Linux ZIP
 
-The Linux download ZIP bundles both the AppImage and a `.deb` (`Fallout Chat Mod-<version>.deb`) so apt
+The Linux download ZIP bundles both the AppImage and a `.deb` (`Fallout Chat Mod-<version>.deb`, the
+explicit `build.deb.artifactName` output) so apt
 users can manage the install through `dpkg`. `Packaging/package-downloads.ps1` stages the `.deb` into
 the Linux ZIP and `Packaging/release.ps1` verifies + uploads the raw `.deb` alongside the AppImage. See
 `../deployment/packaging.md`.

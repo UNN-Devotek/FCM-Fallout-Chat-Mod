@@ -181,6 +181,7 @@
       "maintainer": "Fallout Chat Mod <support@falloutchatmod.com>"
     },
     "deb": {
+      "artifactName": "Fallout Chat Mod-${version}.${ext}",
       "depends": [
         "libgtk-3-0",
         "libnotify4",

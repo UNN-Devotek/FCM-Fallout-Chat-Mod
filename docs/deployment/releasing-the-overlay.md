@@ -111,7 +111,7 @@ OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows
 | `FCM_SSH_TARGET` | upload (step 5) | `user@host` of the prod VPS |
 | `FCM_SSH_KEY` | upload (step 5) | path to the SSH private key. On Linux the key must live at a real path with `chmod 600` (a key on `/mnt/*` DrvFs has perms `ssh` rejects — copy it to `~/.ssh/<key>`) |
 | `FCM_BACKEND_CONTAINER` | upload (step 5) | Dokploy backend container, e.g. `chat-mod-fallout-chat-mod-<id>-backend-1` |
-| `NEXUS_API_KEY`, `NEXUS_FILE_GROUP_ID_WINDOWS`, `NEXUS_FILE_GROUP_ID_LINUX` | step 7 (Nexus) | optional; step 7 fail-closed-aborts if unset (the **primary** release in steps 1-6 is already live by then) |
+| `NEXUS_API_KEY`, `NEXUS_FILE_GROUP_ID_WINDOWS`, `NEXUS_FILE_GROUP_ID_LINUX`, `NEXUS_FILE_GROUP_ID_LINUX_DEB` | step 7 (Nexus) | optional; step 7 fail-closed-aborts if unset (the **primary** release in steps 1-6 is already live by then) |
 | `NEXUS_FILE_GROUP_ID_HUD` | step 7 (Nexus) | required for the optional HUD file upload; step 7 fail-closed-aborts if unset |
 
 ### Step 1 — Build raw artifacts
@@ -380,7 +380,7 @@ the dev install page. The dev announcement is posted to the dev bot's configured
 > `Windows` line only if Nexus lifts the `.exe` quarantine** (support ticket).
 
 This script:
-1. Calls `Packaging/publish-nexus.ps1` for each enabled file group: the desktop Linux ZIP is published as `main`, and the production `ZFE FCM HUD Mod` ZIP is published as `optional` (Windows stays off Nexus per the note above)
+1. Calls `Packaging/publish-nexus.ps1` for each enabled file group: the Linux AppImage ZIP and Linux `.deb` ZIP are published as `main`, and the production `ZFE FCM HUD Mod` ZIP is published as `optional` (Windows stays off Nexus per the note above)
 2. Each call implements the 6-step Nexus v3 Upload API: open multipart session → upload chunks to S3 → complete S3 multipart → finalise → poll for `available` state → attach the new file and archive its previous version
 3. Uploads the Windows `.exe` to VirusTotal and pushes the permalink to `/admin/virustotal-url`
 
@@ -388,6 +388,7 @@ Required env vars (set as Windows USER env vars):
 - `NEXUS_API_KEY`
 - `NEXUS_FILE_GROUP_ID_WINDOWS`
 - `NEXUS_FILE_GROUP_ID_LINUX`
+- `NEXUS_FILE_GROUP_ID_LINUX_DEB` — the separate Linux `.deb` file group
 - `NEXUS_FILE_GROUP_ID_HUD` — the separate optional HUD file group on the same Nexus mod page
 - `VT_API_KEY`
 - `PROD_ADMIN_RELEASE_TOKEN`
