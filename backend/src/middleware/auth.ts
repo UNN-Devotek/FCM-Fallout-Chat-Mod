@@ -4,7 +4,7 @@ import prisma from '../config/prisma';
 import { createError } from './errorHandler';
 import logger from '../config/logger';
 import { constantTimeEquals } from '../utils/constantTimeEquals';
-import { getCachedRole } from '../services/roleVerificationService';
+import { getCachedRole, resolveRole } from '../services/roleVerificationService';
 import env from '../config/environment';
 
 // Extend Express Request to include our custom properties
@@ -95,6 +95,49 @@ async function requireAuth(req: Request, _res: Response, next: NextFunction): Pr
  * 2. Check admin_users DB table (source of truth)
  * 3. Fall back to session roles (backward compat, covers dev-login)
  */
+type AdminRole = 'owner' | 'admin' | 'moderator';
+
+const ADMIN_ROLE_LEVEL: Record<AdminRole, number> = {
+  moderator: 1,
+  admin: 2,
+  owner: 3,
+};
+
+/**
+ * Convert either a configured Discord role ID or a literal role name into the
+ * canonical role label used by the cache and admin_users table.
+ */
+function normalizeAdminRole(value: string | undefined): AdminRole | null {
+  if (!value) return null;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'owner' || value === env.OWNER_ROLE_ID) return 'owner';
+  if (normalized === 'admin' || value === env.ADMIN_ROLE_ID) return 'admin';
+  if (normalized === 'moderator' || value === env.MODERATOR_ROLE_ID) return 'moderator';
+  return null;
+}
+
+/**
+ * Check a canonical stored role against a route's requested roles. Role gates
+ * are hierarchical: owner satisfies admin/moderator gates and admin satisfies
+ * moderator gates. Unknown configured IDs are intentionally not inferred from
+ * stored labels; the session-role fallback can still match them exactly.
+ */
+function roleSatisfiesRequirement(actualRole: string | undefined, allowedRoles: string[]): boolean {
+  const actual = normalizeAdminRole(actualRole);
+  if (!actual) return false;
+  return allowedRoles.some((requiredRole) => {
+    const required = normalizeAdminRole(requiredRole);
+    return required !== null && ADMIN_ROLE_LEVEL[actual] >= ADMIN_ROLE_LEVEL[required];
+  });
+}
+
+function sessionHasAllowedRole(userRoles: unknown, sessionRole: string | undefined, allowedRoles: string[]): boolean {
+  const roles = Array.isArray(userRoles) ? userRoles.filter((role): role is string => typeof role === 'string') : [];
+  if (allowedRoles.some((role) => roles.includes(role))) return true;
+  const resolvedSessionRole = resolveRole(roles);
+  return roleSatisfiesRequirement(resolvedSessionRole ?? sessionRole, allowedRoles);
+}
+
 function requireDiscordRole(...allowedRoles: string[]) {
   return async (req: Request, _res: Response, next: NextFunction): Promise<void> => {
     // API key bypass — grants full admin access from CLI/scripts
@@ -154,7 +197,7 @@ function requireDiscordRole(...allowedRoles: string[]) {
     try {
       // 1. Check Redis role cache (set by background role verification service)
       const cachedRole = await getCachedRole(user.id);
-      if (cachedRole) {
+      if (cachedRole && roleSatisfiesRequirement(cachedRole, validRoles)) {
         user.role = cachedRole;
         req.adminUser = user;
         return next();
@@ -166,14 +209,14 @@ function requireDiscordRole(...allowedRoles: string[]) {
         select: { role: true },
       });
 
-      if (adminUser) {
+      if (adminUser && roleSatisfiesRequirement(adminUser.role, validRoles)) {
         user.role = adminUser.role;
         req.adminUser = user;
         return next();
       }
 
       // 3. Fall back to session Discord role IDs (covers fresh login before first verification cycle)
-      const hasRole = validRoles.some((role) => user.roles.includes(role));
+      const hasRole = sessionHasAllowedRole(user.roles, user.role, validRoles);
       if (hasRole) {
         req.adminUser = user;
         return next();
@@ -183,7 +226,7 @@ function requireDiscordRole(...allowedRoles: string[]) {
     } catch (err) {
       // On error, fall back to session-based check (resilience)
       logger.warn({ err }, 'Role verification lookup failed -- falling back to session roles');
-      const hasRole = validRoles.some((role) => user.roles.includes(role));
+      const hasRole = sessionHasAllowedRole(user.roles, user.role, validRoles);
       if (!hasRole) {
         return next(createError(403, 'Insufficient Discord role'));
       }

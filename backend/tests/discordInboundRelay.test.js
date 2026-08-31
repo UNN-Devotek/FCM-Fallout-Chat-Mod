@@ -45,6 +45,13 @@ const mockPrisma = {
 const mockBroadcast = jest.fn();
 const mockQueueAdd = jest.fn().mockResolvedValue(undefined);
 const mockRedis = { incr: jest.fn().mockResolvedValue(123) };
+const mockAttachCosmetics = jest.fn(async (payload) => {
+  payload.nameColor = '#57DBDB';
+  payload.effectId = 'glow-soft';
+  payload.tag = 'SUPPORTER';
+  payload.badges = ['supporter'];
+  return payload;
+});
 
 jest.mock('discord.js', () => ({
   Client: jest.fn(() => mockClient),
@@ -88,6 +95,9 @@ jest.mock('../src/services/ticketService', () => ({ __esModule: true, default: {
 jest.mock('../src/services/supporterSyncService', () => ({ __esModule: true, default: { register: jest.fn() } }));
 jest.mock('../src/services/cosmeticsCommandService', () => ({ __esModule: true, default: { register: jest.fn() } }));
 jest.mock('../src/services/chatNameCommandService', () => ({ __esModule: true, default: { register: jest.fn() } }));
+jest.mock('../src/services/cosmetics/cosmeticsService', () => ({
+  attachCosmetics: (...args) => mockAttachCosmetics(...args),
+}));
 jest.mock('../src/services/autoModEngine', () => ({
   engineEvaluate: jest.fn().mockResolvedValue({ block: false, matches: [] }),
 }));
@@ -106,6 +116,7 @@ beforeAll(async () => {
 beforeEach(() => {
   mockBroadcast.mockClear();
   mockQueueAdd.mockClear();
+  mockAttachCosmetics.mockClear();
   mockRedis.incr.mockClear().mockResolvedValue(123);
   mockPrisma.discordMessageLink.upsert.mockClear();
 });
@@ -138,7 +149,15 @@ test('Discord inbound messages carry relaySeq into live broadcast and history pe
     payload: expect.objectContaining({
       source: 'discord',
       relaySeq: 123,
+      nameColor: '#57DBDB',
+      effectId: 'glow-soft',
+      tag: 'SUPPORTER',
+      badges: ['supporter'],
     }),
+  }));
+  expect(mockAttachCosmetics).toHaveBeenCalledWith(expect.objectContaining({
+    source: 'discord',
+    userId: 'user-uuid',
   }));
   expect(mockQueueAdd).toHaveBeenCalledWith(expect.objectContaining({
     source: 'discord',

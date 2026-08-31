@@ -57,7 +57,8 @@ export interface Environment {
   DEV_ADMIN_ROLE: string;
   DEV_SUPPORTER_ROLE: string;
   DEV_DEVELOPER_ROLE: string;
-  // Positive opt-in for the credential-less dev-login + simulation routes.
+  // Positive opt-in for browser-only credential-less dev-login aliases and
+  // simulation routes. Overlay persona login is separately NODE_ENV-gated.
   // Only honored when NODE_ENV === 'development'; never in production.
   ENABLE_DEV_LOGIN: boolean;
   // Explicit opt-in to expose /api/mcp/sim/* routes. Must be 'true' AND

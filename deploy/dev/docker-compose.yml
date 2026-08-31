@@ -110,10 +110,10 @@ services:
   # ---------------------------------------------------------------------------
   # backend-dev — the dev API, built from the SAME backend Dockerfile as prod.
   #   - NODE_ENV=development
-  #   - ENABLE_DEV_LOGIN=false  → no credential-less persona login on the HOSTED
-  #     instance. Access is gated by the dual Discord role check (SR + plan).
-  #     The prod boot guard already forbids dev-login under NODE_ENV=production;
-  #     here we keep it OFF explicitly even in development.
+  #   - ENABLE_DEV_LOGIN=false  → browser-only dev-login aliases stay disabled on
+  #     the HOSTED instance. The unpackaged overlay's direct DevAccount endpoint
+  #     is separately gated by NODE_ENV=development and uses only fake dev data.
+  #     The prod boot guard forbids every dev-only route under NODE_ENV=production.
   #   - All secrets from ${VAR} (Dokploy fcm-dev project env), never prod's.
   #   - No host port — reached only via cloudflared-dev (dev.falloutchatmod.com).
   # ---------------------------------------------------------------------------
@@ -131,7 +131,8 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: development
-      # HARD: hosted dev must NOT expose persona login. Dual-role gate handles access.
+      # Keep browser-only dev-login aliases disabled; overlay DevAccount login is
+      # mounted separately by NODE_ENV=development and is limited to fake DEV data.
       ENABLE_DEV_LOGIN: "false"
       PORT: 7676
 
@@ -208,7 +209,7 @@ services:
       GITHUB_PROJECT_NUMBER: ${GITHUB_PROJECT_NUMBER:-5}
       GITHUB_WEBHOOK_SECRET: ${GITHUB_WEBHOOK_SECRET}
 
-      # --- Dual Discord role gate (dev login authority) ---
+      # --- Dual Discord role gate (dashboard/tool access authority) ---
       # Dev-guild check is local (dev bot is in the dev guild). Prod-guild check
       # goes through the prod-bot verify endpoint (dev bot is NOT in prod guild).
       PROD_GUILD_ID: ${PROD_GUILD_ID}

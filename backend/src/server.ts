@@ -4,6 +4,7 @@ import { clientIp } from './utils/clientIp';
 import { paramStr } from './utils/reqParams';
 import { requireAuth, requireAnyAuthedClient } from './middleware/auth';
 import { mergeUserInto } from './utils/mergeUser';
+import { buildAuthUserResponse } from './utils/authUserResponse';
 
 import http from 'http';
 
@@ -118,8 +119,8 @@ import {
   devPersonaStart,
   completeDevPersonaLogin,
   getDevPersona,
-  issueDevPersonaSession,
   makeDevPersonaStatusHandler,
+  makeDevPersonaLoginAsHandler,
 } from './controllers/devPersonaLoginController';
 import hudFeedRouter from './routes/hudFeed';
 
@@ -201,7 +202,7 @@ app.use('/api/', apiLimiter);
 
 // -- Discord OAuth2 routes ----------------------------------------------------
 
-// Dev-only persona logins — skips Discord entirely.
+// Browser-only dev shortcuts — skip Discord entirely.
 // Gated POSITIVELY: requires development mode AND an explicit ENABLE_DEV_LOGIN
 // opt-in, so these credential-less admin sessions can never appear in a
 // non-development deploy (even a misconfigured one).
@@ -235,28 +236,19 @@ if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
     req.session.save(() => res.redirect(`${env.CLIENT_ORIGINS[0].replace(/\/$/, '')}/${intent}`));
   });
 
-  // Overlay dev login — returns a session token directly (no Discord OAuth needed).
-  // Called by the unpackaged Electron overlay's onboarding "Login as system user" buttons.
-  app.post('/api/dev/login-as', async (req: Request, res: Response) => {
-    const { persona, installToken } = req.body as { persona?: string; installToken?: string };
-    if (!persona || !installToken) { res.status(400).json({ error: 'Missing persona or installToken' }); return; }
-    if (!getDevPersona(persona)) { res.status(404).json({ error: 'Unknown persona' }); return; }
-    try {
-      const grant = await issueDevPersonaSession(installToken, persona);
-      res.json({ data: { ...grant, discordLinked: true } });
-    } catch (err) {
-      logger.error({ err }, '[dev] login-as failed');
-      res.status(500).json({ error: 'Dev login failed' });
-    }
-  });
 }
 
 // QA-tester surface — live only on the dev backend (NODE_ENV=development),
 // independent of ENABLE_DEV_LOGIN (hosted dev runs with it off). Never mounts in
 // production. See docs/deployment/hosted-dev-environment.md (QA tester access).
 if (env.NODE_ENV === 'development') {
-  // Hosted DEV persona login is OAuth + dual-role gated. It does not depend on
-  // ENABLE_DEV_LOGIN, which remains the local-only credential-less switch.
+  // Synthetic persona login is a DEV-only convenience for the unpackaged overlay.
+  // It intentionally does not depend on ENABLE_DEV_LOGIN so the hosted isolated
+  // DEV environment exposes the same DevAccount buttons as a local stack.
+  app.post('/api/dev/login-as', makeDevPersonaLoginAsHandler());
+
+  // Legacy browser persona OAuth endpoints remain DEV-only for compatibility;
+  // the overlay DevAccount buttons use the direct endpoint above.
   app.get('/auth/discord/dev-login', authLimiter, devPersonaStart);
   app.get('/api/auth/dev-login-status/:installToken', apiLimiter, makeDevPersonaStatusHandler(defaultDevPersonaStatusDeps));
   app.post('/api/admin/qa/active-version', apiLimiter, requireAdminKey, setQaActiveVersion);
@@ -654,9 +646,10 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
 
     const redis = await getRedisClient();
 
-    // Hosted DEV persona login is deliberately not credential-less: the user
-    // must have authenticated with Discord and pass the dual developer-role
-    // check before a synthetic persona session is issued.
+    // Legacy hosted DEV persona login is OAuth-gated: the user must have
+    // authenticated with Discord and pass the dual developer-role check before
+    // a synthetic persona session is issued. Current overlay DevAccount buttons
+    // use POST /api/dev/login-as instead.
     if (hostedDevPersonaPending) {
       const result = await completeDevPersonaLogin(
         hostedDevPersonaPending,
@@ -1192,11 +1185,13 @@ app.get('/auth/me', apiLimiter, async (req: Request, res: Response) => {
   // so the header/overlay get a real avatarUrl even when this particular session
   // didn't carry an `avatar` field. Fall back to the session avatar.
   let avatarUrl: string | null = null;
+  let authDatabaseUser: { id: string } | null = null;
   try {
     const row = await prisma.user.findFirst({
       where: { discordId: sessionUser.id },
-      select: { username: true, discordDisplayName: true, discordId: true, discordAvatar: true },
+      select: { id: true, username: true, discordDisplayName: true, discordId: true, discordAvatar: true },
     });
+    authDatabaseUser = row ? { id: row.id } : null;
     if (row?.username && row.username.trim() !== '' && row.username !== 'Wanderer' && !row.username.startsWith('discord:')) {
       fo76Name = row.username;
     }
@@ -1222,7 +1217,7 @@ app.get('/auth/me', apiLimiter, async (req: Request, res: Response) => {
     avatarUrl = '/avatars/default';
   }
 
-  res.json({ data: { ...sessionUser, fo76Name, discordDisplayName, avatarUrl } });
+  res.json({ data: buildAuthUserResponse(sessionUser, authDatabaseUser, { fo76Name, discordDisplayName, avatarUrl }) });
 });
 
 // -- Served avatars -----------------------------------------------------------

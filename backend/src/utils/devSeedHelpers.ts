@@ -164,6 +164,8 @@ export function roleNameToEnvKey(name: string): string | null {
   if (n.includes('admin')) return 'ADMIN_ROLE_ID';
   if (n.includes('moderator') || n === 'mod' || n.includes('modteam')) return 'MODERATOR_ROLE_ID';
   if (n.includes('developer') || n === 'dev') return 'DEVELOPER_ROLE_ID';
+  if (n.includes('supporter')) return 'SUPPORTER_ROLE_ID';
+  if (n.includes('overseer')) return 'OVERSEER_CIRCLE_ROLE_ID';
   return null;
 }
 
@@ -174,9 +176,9 @@ export interface ClonedRole {
 
 /**
  * Given the cloned roles in the TARGET guild, produce ready-to-paste env lines
- * for the dev backend (OWNER_ROLE_ID=…, ADMIN_ROLE_ID=…, etc.). Only roles that
- * map to a known env key are emitted; first match per key wins. Output is sorted
- * by env key for stable, copy-pasteable output.
+ * for the dev backend (OWNER_ROLE_ID=…, SUPPORTER_ROLE_ID=…, etc.). Only roles
+ * that map to a known env key are emitted; first match per key wins. Output is
+ * sorted by env key for stable, copy-pasteable output.
  */
 export function formatRoleEnvLines(roles: ClonedRole[]): string[] {
   const seen = new Map<string, string>();

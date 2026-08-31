@@ -75,7 +75,6 @@ class TestFcmConfig {
         eqs("default channelPrevKey", d.channelPrevKey, "PrevPage");
         eqs("default hideKey (unset)", d.hideKey, "");
         eqb("default showChannelTag", d.showChannelTag, true);
-        eqb("default showTimestamps", d.showTimestamps, true);
         eqb("default showHints", d.showHints, false);
         eqs("default linkUrl", d.linkUrl, "falloutchatmod.com/link");
         eqs("parse linkUrl (dev)",
@@ -104,7 +103,7 @@ class TestFcmConfig {
             + "bgColor=#101010\nbgAlpha=0.5\nborderColor=00FF00\ntextColor=0xABCDEF\n"
             + "maxMessages=250\nmaxSendLen=120\n"
             + "openKey=INSERT\nchannelNextKey=NextPage\nchannelPrevKey=PrevPage\nhideKey=DiagnosticSnapshot\n"
-            + "showChannelTag=false\nshowTimestamps=false\nshowHints=true\n";
+            + "showChannelTag=false\nshowHints=true\n";
         var c = FcmConfig.parse(ini);
         eqi("parse x", c.x, 50);
         eqi("parse width", c.width, 600);
@@ -117,8 +116,9 @@ class TestFcmConfig {
         eqi("parse maxSendLen", c.maxSendLen, 120);
         eqs("parse hideKey", c.hideKey, "DiagnosticSnapshot");
         eqb("parse showChannelTag", c.showChannelTag, false);
-        eqb("parse showTimestamps", c.showTimestamps, false);
         eqb("parse showHints", c.showHints, true);
+        check("legacy timestamp settings are ignored", FcmConfig.parse(
+            "[FCMChat]\nshowTimestamps=true\ntimestampColor=#FFFFFF\n").toIni().indexOf("showTimestamps") < 0);
 
         // ── clamps + invalid fallbacks ──
         var bad = FcmConfig.parse("[FCMChat]\nwidth=5\nheight=99999\nfontSize=999\nbgAlpha=9\n"
@@ -172,18 +172,6 @@ class TestFcmConfig {
         eqi("dimColor 0.0",      FcmConfig.dimColor(0xABCDEF, 0.0), 0x000000);
         eqi("dimColor 1.0",      FcmConfig.dimColor(0xABCDEF, 1.0), 0xABCDEF);
         eqi("dimColor clamp >1", FcmConfig.dimColor(0x102030, 2.0), 0x102030);
-
-        // ── hhmm: ISO 8601 UTC -> "HH:MM" (24h, substring only, CAP-013, D-08) ──
-        eqs("hhmm typical", FcmConfig.hhmm("2026-06-26T12:34:56.000Z"), "12:34");
-        eqs("hhmm midnight", FcmConfig.hhmm("2026-01-01T00:00:00Z"), "00:00");
-        eqs("hhmm no T", FcmConfig.hhmm("2026-06-26 12:34:56"), "");
-        eqs("hhmm empty", FcmConfig.hhmm(""), "");
-        eqs("hhmm null", FcmConfig.hhmm(null), "");
-        // fail-closed: only digit:digit may reach htmlText (crash rule #2 — no raw &<> entities)
-        eqs("hhmm entity amp",  FcmConfig.hhmm("2026-06-26T12&34:56Z"), "");
-        eqs("hhmm entity lt",   FcmConfig.hhmm("2026-06-26T<2:34:56Z"), "");
-        eqs("hhmm non-numeric", FcmConfig.hhmm("2026-06-26Tab:cdZ"),    "");
-        eqs("hhmm no colon",    FcmConfig.hhmm("2026-06-26T1234:56Z"),  "");
 
         // ── htmlEscape: numeric refs for unsanitized relay input (SR-001, crash rule #2) ──
         eqs("htmlEscape plain",  FcmConfig.htmlEscape("hello world"), "hello world");

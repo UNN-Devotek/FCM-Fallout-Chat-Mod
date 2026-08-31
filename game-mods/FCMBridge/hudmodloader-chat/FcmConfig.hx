@@ -34,7 +34,6 @@ class FcmConfig {
     public var tabInactiveColor:Int = 0xB49544;
     public var promptColor:Int      = 0xAC9043;
     public var tabRowColor:Int      = 0x080705;
-    public var timestampColor:Int   = 0xAC9043;
 
     // ── Per-channel colors — mirror the website chat_rooms.color (pulled from PROD
     //    2026-06-28). Drive the channel sub-tabs + the [Channel] message tag so each
@@ -73,7 +72,6 @@ class FcmConfig {
 
     // ── Feed toggles ───────────────────────────────────────────────────────────
     public var showChannelTag:Bool  = true;
-    public var showTimestamps:Bool  = true;
     public var showHints:Bool       = false;      // blank idle prompt by default (CAP-014)
 
     // ── Link flow ────────────────────────────────────────────────────────────────
@@ -186,24 +184,6 @@ class FcmConfig {
     }
 
     /**
-     * "HH:MM" (24h) extracted from an ISO 8601 UTC string like
-     * "2026-06-26T12:34:56.000Z" — pure substring of the chars after "T",
-     * no Date dependency. Empty / no "T" -> "" (D-08: no client-time fallback).
-     */
-    public static function hhmm(iso:String):String {
-        if (iso == null) return "";
-        var t:Int = iso.indexOf("T");
-        if (t < 0) return "";
-        var time:String = iso.substr(t + 1);
-        if (time.length < 5) return "";
-        // Fail-closed: only "HH:MM" (digit:digit) may reach htmlText. Any malformed /
-        // non-ISO createdAt whose first 5 chars contain &, <, > etc. would inject a raw
-        // entity into _logTf.htmlText (crash rule #2) — drop it instead.
-        var r:String = time.substr(0, 5);
-        return (~/^[0-9][0-9]:[0-9][0-9]$/.match(r)) ? r : "";
-    }
-
-    /**
      * Escape user-controlled text (chat body, sender name, in-progress input) before it
      * is interpolated into a Scaleform GFx `htmlText` string. The relay does NOT sanitize
      * message content or display names (SR-001), so a message containing &, < or > would
@@ -300,7 +280,6 @@ class FcmConfig {
                 case "tabinactivecolor": cfg.tabInactiveColor = parseHexColor(val, cfg.tabInactiveColor);
                 case "promptcolor":     cfg.promptColor = parseHexColor(val, cfg.promptColor);
                 case "tabrowcolor":     cfg.tabRowColor = parseHexColor(val, cfg.tabRowColor);
-                case "timestampcolor":  cfg.timestampColor = parseHexColor(val, cfg.timestampColor);
                 case "maxmessages":     cfg.maxMessages = parseIntOr(val, cfg.maxMessages);
                 case "maxsendlen":      cfg.maxSendLen = parseIntOr(val, cfg.maxSendLen);
                 case "pollms":          cfg.pollMs = parseIntOr(val, cfg.pollMs);
@@ -314,7 +293,6 @@ class FcmConfig {
                 case "channelprevkey":  cfg.channelPrevKey = validAction(val, cfg.channelPrevKey);
                 case "hidekey":         cfg.hideKey = validAction(val, "");
                 case "showchanneltag":  cfg.showChannelTag = parseBool(val, cfg.showChannelTag);
-                case "showtimestamps":  cfg.showTimestamps = parseBool(val, cfg.showTimestamps);
                 case "showhints":       cfg.showHints = parseBool(val, cfg.showHints);
                 case "linkurl":
                     // URL-safe charset only — interpolated into htmlText (crash rule #2).
@@ -362,7 +340,6 @@ class FcmConfig {
         s.add("tabInactiveColor=" + h(tabInactiveColor) + "\n");
         s.add("promptColor=" + h(promptColor) + "\n");
         s.add("tabRowColor=" + h(tabRowColor) + "\n");
-        s.add("timestampColor=" + h(timestampColor) + "\n");
         s.add("colorGeneral=" + h(chanColorGlobal) + "\n");
         s.add("colorTrading=" + h(chanColorTrade) + "\n");
         s.add("colorEvents=" + h(chanColorEvents) + "\n");
@@ -378,7 +355,6 @@ class FcmConfig {
         s.add("channelPrevKey=" + channelPrevKey + "\n");
         s.add("hideKey=" + hideKey + "\n");
         s.add("showChannelTag=" + b(showChannelTag) + "\n");
-        s.add("showTimestamps=" + b(showTimestamps) + "\n");
         s.add("showHints=" + b(showHints) + "\n");
         s.add("linkUrl=" + linkUrl + "\n");
         return s.toString();

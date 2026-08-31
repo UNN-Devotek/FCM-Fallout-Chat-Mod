@@ -213,19 +213,19 @@ risk to the live community:
 - `backend-dev` holds the dev token; **contributors never hold it** — they test
   by *interacting* with the dev bot in the dev server. Worst-case malicious
   outcome is a wrecked disposable server, never the production community.
-- `ENABLE_DEV_LOGIN=false` on the **hosted** `backend-dev`. Access to the hosted
-  dev environment is gated by the dual Discord role check (see
-  [Developer authorization](#developer-authorization--dual-discord-role-gate)),
-  so the credential-less persona login must NOT be open on the hosted instance.
-  Personas remain available only on contributors' **fully-local** stacks
-  (`docker-compose.dev.yml`), where there is nothing to protect. The production
-  boot guard already forbids dev-login when `NODE_ENV=production`.
+- `ENABLE_DEV_LOGIN=false` remains set on the **hosted** `backend-dev` for the
+  browser-only developer shortcuts. The overlay's `POST /api/dev/login-as` route
+  is separately gated by `NODE_ENV=development`, so it is available on the
+  isolated hosted DEV stack but never mounts in production. These synthetic
+  accounts are intentionally limited to the fake hosted DEV database and are not
+  a substitute for normal developer access to protected tooling.
 
 The unpackaged Electron overlay can still be run against hosted DEV with
 `npm run dev:cloud` from `cross-platform-overlay/`. Its **DEV ACCOUNTS** persona
-controls use Discord OAuth and the dual developer-role gate (the role must be
-present in both the production and DEV servers). Only a loopback backend with
-`ENABLE_DEV_LOGIN=true` exposes the credential-less persona shortcut.
+controls immediately issue synthetic sessions and do not open Discord. The
+controls are shown only by an unpackaged overlay targeting localhost or
+`dev.falloutchatmod.com`; the packaged production overlay does not contain this
+login path. Normal hosted dashboard access remains governed by the dual-role gate.
 
 ---
 
@@ -428,10 +428,10 @@ through the prod-bot endpoint per the research above).
 Verification gates two things, both **short-lived** so role removal takes effect
 quickly:
 
-1. **App session.** The dev backend issues its dashboard/app session only after
-   both roles verify. Hosted DEV persona login follows the same rule and is
-   OAuth-gated; there is no credential-less persona login on the hosted instance
-   (`ENABLE_DEV_LOGIN=false`).
+1. **App session.** The dev backend issues its normal dashboard/app session only
+   after both roles verify. The unpackaged overlay also has DEV-only synthetic
+   persona accounts for testing against the isolated fake dataset; those accounts
+   are issued by `POST /api/dev/login-as` and are not available in production.
 2. **Infra credentials (DB / object store).** Currently, the maintainer issues the
    `fcm-dev-access` CF Access service token directly to vetted developers. The
    full broker (backend-minted short-lived credentials + `fcm-dev-cli login`) is
@@ -632,6 +632,7 @@ Code artifacts (in repo):
 - [x] `backend/scripts/clone-discord-layout.ts` — recreate prod roles/channels in
       the dev guild + print the new role-ID env mapping
 - [x] Dual-role auth: `verify-dual-role` service + tests and hosted DEV persona OAuth/session flow
+      (legacy); current unpackaged DevAccount buttons use the DEV-only direct session route
 - [x] `GET /api/internal/verify-dev-role` on prod + prod-bot lookup (only viable
       prod-guild check) — controller/route + dev-side `makeDevSideDeps` fallback +
       `backend/tests/verifyDevRole.test.js`

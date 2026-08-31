@@ -1,5 +1,5 @@
 // Pure logic ported from game-mods/FCMBridge/hudmodloader-chat/FCMChatWidget.hx
-// (FCMChatWidget v2.9.8). The .hx (Haxe → SWF) is not unit-tested directly; per the
+// (FCMChatWidget v2.10.4). The .hx (Haxe → SWF) is not unit-tested directly; per the
 // repo HARD RULE the pure algorithms are mirrored here in JS and covered by Vitest
 // (fcm-chat-widget-logic.test.js). Keep these in lockstep with the .hx — they are the
 // same algorithms, not a re-design.
@@ -475,6 +475,75 @@ function readDisplayName(raw) {
   return clean.length > 0 ? clean.slice(0, 64) : '';
 }
 
+// resolveDisplayName mirrors FCMChatWidget's HUD data priority. The local entry in
+// PlayerListData is the character identity; AccountInfoData is retained as a compatibility
+// fallback because older HUD builds expose the name there instead.
+function resolveDisplayName({ playerListData, characterInfoData, accountInfoData } = {}) {
+  const unwrap = (value) => {
+    if (value == null) return null;
+    return value && value.data != null ? value.data : value;
+  };
+
+  const cleanCandidate = (value, stripDecorations = false) => {
+    if (value == null) return '';
+    let name = fcmClean(value);
+    if (stripDecorations) {
+      const marker = name.indexOf('<');
+      if (marker >= 0) name = name.slice(0, marker);
+      name = name.split('|').join('');
+    }
+    name = name.trim();
+    if (!name || name === 'Wanderer') return '';
+    return name.slice(0, 64);
+  };
+
+  const fieldCandidate = (value, fields, stripDecorations = false) => {
+    if (value == null || typeof value !== 'object') return '';
+    for (const field of fields) {
+      const name = cleanCandidate(value[field], stripDecorations);
+      if (name) return name;
+    }
+    return '';
+  };
+
+  const localRosterName = (raw) => {
+    const data = unwrap(raw);
+    const list = Array.isArray(data)
+      ? data
+      : [data && data.players, data && data.entries, data && data.list]
+        .find((candidate) => Array.isArray(candidate));
+    if (!list) return '';
+    const truthy = (value) => value === true || value === 1
+      || String(value == null ? '' : value).trim().toLowerCase() === 'true'
+      || String(value == null ? '' : value).trim() === '1';
+    for (const entry of list) {
+      if (!entry || ![entry.isLocal, entry.isLocalPlayer, entry.isSelf].some(truthy)) continue;
+      const name = fieldCandidate(entry, ['characterName', 'displayName', 'playerName', 'name'], true);
+      if (name) return name;
+    }
+    return '';
+  };
+
+  const rosterName = localRosterName(playerListData);
+  if (rosterName) return rosterName;
+
+  const characterData = unwrap(characterInfoData);
+  const characterName = fieldCandidate(characterData, ['characterName', 'displayName', 'playerName', 'name'], true);
+  if (characterName) return characterName;
+
+  const accountData = unwrap(accountInfoData);
+  const accountName = fieldCandidate(accountData, ['characterName', 'displayName', 'playerName', 'name']);
+  if (accountName) return accountName;
+  return fieldCandidate(accountData && accountData.account, ['characterName', 'displayName', 'playerName', 'name']);
+}
+
+// Mirrors FCMChatWidget.reconcileDisplayName's state gate. The relay only needs a second
+// connect after a real HUD name differs from the name accepted by the previous connect.
+function shouldReconcileDisplayName({ connected, lastSentDisplayName, displayName } = {}) {
+  const name = String(displayName == null ? '' : displayName);
+  return Boolean(connected && name.length > 0 && name !== 'Wanderer' && name !== (lastSentDisplayName || ''));
+}
+
 // bareName: strip the "<title" decorations after sanitizing.
 function bareName(s) {
   if (s == null) return '';
@@ -711,6 +780,8 @@ module.exports = {
   linkGateRender,
   fcmClean,
   readDisplayName,
+  resolveDisplayName,
+  shouldReconcileDisplayName,
   bareName,
   replaceIfPresent,
   stripControlChars,

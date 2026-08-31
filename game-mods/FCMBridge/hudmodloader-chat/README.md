@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-08-27):** v2.10.5 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-08-27):** v2.10.7 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -11,12 +11,12 @@ A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's H
 - Displays the FCM community feed (General / Trading / Events / Infests / Raids) as a scrolling
   amber-themed message log, sourced over the ZFE **chat.v1** native API (`chat.v1.connect` +
   `chat.v1.pollEvents` cursor poll), not the legacy text-chat socket.
-- Resolves the outgoing sender name from the local Fallout 76 character entry in
-  `PlayerListData`, with `CharacterInfoData` as a compatibility fallback. `AccountInfoData` is
-  never used as character identity. If the character identity is not ready yet, the widget waits
-  and retries before its first
-  handshake; it never connects as the `Wanderer` placeholder or re-enters the native ZFE connect
-  call when late HUD data arrives.
+- Resolves the outgoing sender name from Fallout 76's public Bethesda/Fallout account handle in
+  `AccountInfoData.name`, preserving punctuation such as a trailing hyphen. `PlayerListData` and
+  `CharacterInfoData` contain character labels and cannot satisfy the relay identity gate. If the
+  account handle is not ready yet, the widget waits and retries before its first handshake; it
+  never connects as the `Wanderer` placeholder or re-enters the native ZFE connect call when late
+  HUD data arrives.
 - Lets the player send messages. Press the configured open key (default: `INSERT`) to open the
   chat input, type a message, and press Enter to send (`chat.v1.sendMessage`, slug-based channels).
 - Echos the player's own message immediately as a dim pending record before the server round-trip
@@ -36,12 +36,12 @@ The widget discovers `__ZFE` on the parent HUDMenu frame via `findZfeApi()` (HUD
 `ApplicationDomain.currentDomain`, where ZFE installs `__ZFE`), gates on `zfe-chat-online-v1` via
 `chat.v1.getRuntimeInfo`, then connects/polls/sends over chat.v1.
 
-Player identity is read only from HUD-published `BSUIDataManager` data. The local
-`PlayerListData` entry (`isLocal`/`isLocalPlayer` plus `characterName`) is authoritative; older
-HUD shapes are supported through `CharacterInfoData`; `AccountInfoData` cannot satisfy the
-character-identity gate. HUD data can be late, so the widget waits for a usable character
-identity before its first relay handshake and retries without opening a second native connection.
-An empty read never overwrites a known name.
+Player identity is read only from HUD-published `BSUIDataManager` data.
+`AccountInfoData.name` is authoritative because it is the public Fallout/Bethesda handle other
+players see. `PlayerListData` and `CharacterInfoData` are character-name sources and are not used
+as relay identity fallbacks. HUD data can be late, so the widget waits for a usable account handle
+before its first relay handshake and retries without opening a second native connection. An empty
+read never overwrites a known name.
 
 Text entry tries ZFE's **native chat-input API** lazily when Insert opens the editor. ZFE's **native chat-input API** — **top-level / bare** ZFE commands (NOT
 `chat.v1.`-prefixed) that take **bare-value payloads** (`"true"` / `"false"`, NOT JSON) and return
@@ -130,12 +130,15 @@ All appearance + behavior is user-editable in `Data/FCMChat.ini`, parsed by `Fcm
 (`FcmConfig.hx`). Coordinate space is always 1920×1080 (HUDModLoader's fixed HUD viewport).
 Editable keys (defaults reproduce the amber Pip-Boy theme): position `x`/`y`, `width`/`height`,
 `fontSize`; colors `bgColor`/`bgAlpha`/`borderColor`/`textColor`/`senderColor`/`channelTagColor`/
-`tabActiveColor`/`tabInactiveColor`/`promptColor`/`tabRowColor`/`timestampColor`; limits
-`maxMessages`/`maxSendLen`; toggles `showChannelTag`/`showTimestamps`/`showHints`; keybinds
+`tabActiveColor`/`tabInactiveColor`/`promptColor`/`tabRowColor`; limits
+`maxMessages`/`maxSendLen`; toggles `showChannelTag`/`showHints`; keybinds
 `openKey`/`channelNextKey`/`channelPrevKey`/`hideKey`. Colors accept `#RRGGBB`, `RRGGBB`, or
 `0xRRGGBB`. Every value is validated + clamped — a bad edit falls back to its default, never
 crashes, never goes off-screen. Edit, then reload via the F11 HUDModLoader menu. Full catalog with
 ranges: the comments in `FCMChat.ini`. Design + decisions: `docs/roadmap/hud-widget-customization-spec.md`.
+
+Message timestamps are intentionally not displayed in the in-game feed. Older `showTimestamps`
+and `timestampColor` entries in `FCMChat.ini` or persisted settings are ignored.
 
 The F11 menu's **FCM → Customize → Reset all settings** action restores all user-facing values to
 the `FcmConfig` defaults immediately and persists them with the other Customize actions in

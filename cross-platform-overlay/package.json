@@ -113,6 +113,7 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
+      "differentialPackage": false,
       "installerIcon": "assets/fcm.ico",
       "uninstallerIcon": "assets/fcm.ico",
       "createDesktopShortcut": true,

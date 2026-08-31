@@ -27,14 +27,14 @@ its actor from this verified token, never from a client-supplied ID.
 receive-only linking state. The token can be linked after a web device-code flow;
 the normal relay event flow then refreshes the widget state.
 
-The widget resolves `displayName` from HUD-published `BSUIDataManager` data. The local
-`PlayerListData` entry (`isLocal`/`isLocalPlayer` plus `characterName`) is authoritative;
-`CharacterInfoData` is a compatibility fallback. `AccountInfoData` (including the older nested
-`account.name` shape) is not an identity source and cannot satisfy the handshake gate. HUD data can
-arrive late, so the widget waits and retries until a usable character identity is available before
-its first relay handshake. It never connects with the `Wanderer` placeholder and never issues a
-second native `chat.v1.connect` from a late HUD update. Empty reads never replace a known name, and
-the actual name is not written to diagnostics.
+The widget resolves `displayName` from HUD-published `BSUIDataManager` data.
+`AccountInfoData.name` (or the older nested `account.name` shape) is authoritative because it is
+the public Fallout/Bethesda account handle. `PlayerListData` and `CharacterInfoData` contain local
+character labels and cannot satisfy the handshake gate. HUD data can arrive late, so the widget
+waits and retries until the account handle is available before its first relay handshake. It never
+connects with the `Wanderer` placeholder or a character-name substitute, and never issues a second
+native `chat.v1.connect` from a late HUD update. Empty reads never replace a known name, punctuation
+is preserved, and the actual name is not written to diagnostics.
 
 Successful relay-token verification uses a short-lived in-process cache keyed by a one-way token
 digest, while repeated invalid-token Argon2 checks are throttled. The cache is invalidated on

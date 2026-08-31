@@ -112,16 +112,23 @@ On callback:
 
 The overlay polls `GET /api/auth/discord-status/:installToken` to check whether the link completed and to retrieve the resolved display name and avatar URL.
 
-### Hosted DEV persona login
+### DEV persona accounts
 
-The unpackaged overlay may also start `GET /auth/discord/dev-login?installToken=<token>&persona=<persona>` when its relay is the isolated hosted DEV environment. This flow is not credential-less:
+The unpackaged overlay's **DEV ACCOUNTS** buttons call
+`POST /api/dev/login-as` with `{ persona, installToken }`. When the relay is either
+the local backend or the isolated hosted DEV backend, the endpoint immediately issues
+a normal 24-hour overlay session for the selected synthetic persona. No Discord
+authentication or browser window is involved.
 
-1. The backend stores `dev_persona_oauth_state:<state>` with the install token and requested persona for 5 minutes, then redirects to Discord.
-2. Discord returns to the already-registered desktop-link callback (`/auth/discord/link/callback`), which consumes the DEV state and verifies the user has the developer role in both the production and DEV guilds.
-3. Only after both checks pass does the backend issue a normal 24-hour overlay session for the selected synthetic persona and store a one-time grant at `dev_persona_grant:<installToken>` for 10 minutes.
-4. The overlay polls `GET /api/auth/dev-login-status/:installToken`; Redis `GETDEL` makes the grant single-use.
+The route is mounted only when `NODE_ENV=development`, including hosted DEV, and is
+absent from production regardless of `ENABLE_DEV_LOGIN`. The overlay adds the buttons
+only for unpackaged builds targeting a known development relay; packaged production
+builds and the production relay cannot use them.
 
-The credential-less `POST /api/dev/login-as` route remains mounted only when `NODE_ENV=development` and `ENABLE_DEV_LOGIN=true`, so it is available to fully-local development stacks but not the hosted DEV deployment.
+The older `GET /auth/discord/dev-login` and
+`GET /api/auth/dev-login-status/:installToken` endpoints remain DEV-only for backward
+compatibility with an earlier OAuth-based persona flow. Current DevAccount buttons do
+not call those endpoints.
 
 ---
 

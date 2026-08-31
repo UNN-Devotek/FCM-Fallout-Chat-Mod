@@ -30,9 +30,10 @@ builds are hard-rejected so they can't be used (or exploited) against dev.
   entirely behind Cloudflare Access (the "FCM Developers" email-allowlist group). An
   overlay cannot reach it today without a CF Access browser session; even
   `/auth/discord/callback` is gated.
-- **Hosted dev has `ENABLE_DEV_LOGIN=false`** — credential-less persona login is
-  local-only. So an enforced QA gate via real Discord OAuth is the only viable hosted
-  model.
+- **Hosted dev has `ENABLE_DEV_LOGIN=false`** for the browser-only developer
+  shortcuts. The unpackaged overlay's DevAccount buttons now use a separate
+  `NODE_ENV=development`-only direct session endpoint; the packaged QA build still
+  uses the real Discord OAuth role gate described by this design.
 - **Dev OAuth-issues-a-session is deferred/unbuilt.** Only the dual-role *logic*
   (`backend/src/services/devAuthService.ts`) and the prod verify endpoint
   (`GET /api/internal/verify-dev-role`) exist; no OAuth callback issues a dev session.

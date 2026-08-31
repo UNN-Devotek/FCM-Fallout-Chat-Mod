@@ -47,7 +47,7 @@ describe('relayBase derivation', () => {
     expect(() => applyRelayBase(undefined, 'host')).not.toThrow();
   });
 
-  it('shows dev persona logins only for unpackaged overlays on a loopback relay', () => {
+  it('shows dev persona logins only for unpackaged overlays on known DEV relays', () => {
     expect(shouldShowDevPersonaLogins(true, 'http://localhost:7177')).toBe(true);
     expect(shouldShowDevPersonaLogins(true, '127.0.0.1:7076')).toBe(true);
     expect(shouldShowDevPersonaLogins(true, 'https://dev.falloutchatmod.com')).toBe(true);

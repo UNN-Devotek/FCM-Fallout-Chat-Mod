@@ -1,5 +1,5 @@
 // Vitest coverage for the pure logic of the in-game HUD chat widget
-// (game-mods/FCMBridge/hudmodloader-chat/FCMChatWidget.hx, v2.9.8). The .hx compiles
+// (game-mods/FCMBridge/hudmodloader-chat/FCMChatWidget.hx, v2.10.4). The .hx compiles
 // to a SWF and is not testable in-process; the pure algorithms are mirrored in
 // fcm-chat-widget-logic.js and asserted here. Keep both in lockstep with the .hx.
 
@@ -36,6 +36,8 @@ const {
   linkGateRender,
   fcmClean,
   readDisplayName,
+  resolveDisplayName,
+  shouldReconcileDisplayName,
   bareName,
   replaceIfPresent,
   stripControlChars,
@@ -888,6 +890,66 @@ describe('game-UI string sanitization (v2.9.8)', () => {
 
   it('fcmClean removes control bytes that would corrupt a control frame body', () => {
     expect(fcmClean('AAA' + NUL + String.fromCharCode(31) + 'BBB')).toBe('AAABBB');
+  });
+});
+
+describe('player identity resolution (HUDModLoader widget)', () => {
+  it('prefers the local roster character over remote players and account metadata', () => {
+    expect(resolveDisplayName({
+      playerListData: { data: [
+        { isLocal: false, characterName: 'NearbyPlayer' },
+        { isLocal: true, characterName: 'MyActualCharacter' },
+      ] },
+      accountInfoData: { data: { name: 'BethesdaHandle' } },
+    })).toBe('MyActualCharacter');
+  });
+
+  it('accepts the HUD local-player flag variant and sanitizes the character name', () => {
+    expect(resolveDisplayName({
+      playerListData: { data: [
+        { isLocalPlayer: true, characterName: 'A' + String.fromCharCode(0) + 'b' + String.fromCharCode(0) + 'deraan' },
+      ] },
+    })).toBe('Abderaan');
+  });
+
+  it('accepts wrapped roster data and string local-player flags', () => {
+    expect(resolveDisplayName({
+      playerListData: { data: { players: [
+        { isLocal: 'false', characterName: 'NearbyPlayer' },
+        { isSelf: 'true', characterName: 'WrappedCharacter' },
+      ] } },
+    })).toBe('WrappedCharacter');
+  });
+
+  it('falls back through CharacterInfoData and nested AccountInfoData.account.name', () => {
+    expect(resolveDisplayName({
+      characterInfoData: { data: { characterName: 'CharacterInfoName' } },
+    })).toBe('CharacterInfoName');
+    expect(resolveDisplayName({
+      accountInfoData: { data: { account: { name: 'NestedAccountName' } } },
+    })).toBe('NestedAccountName');
+  });
+
+  it('does not treat a blank or placeholder candidate as a resolved player name', () => {
+    expect(resolveDisplayName({
+      playerListData: { data: [{ isLocal: true, characterName: 'Wanderer' }] },
+      accountInfoData: { data: { name: '' } },
+    })).toBe('');
+  });
+
+  it('reconciles only when a connected session has a new real name', () => {
+    expect(shouldReconcileDisplayName({
+      connected: true, lastSentDisplayName: 'Wanderer', displayName: 'MyActualCharacter',
+    })).toBe(true);
+    expect(shouldReconcileDisplayName({
+      connected: true, lastSentDisplayName: 'MyActualCharacter', displayName: 'MyActualCharacter',
+    })).toBe(false);
+    expect(shouldReconcileDisplayName({
+      connected: false, lastSentDisplayName: 'Wanderer', displayName: 'MyActualCharacter',
+    })).toBe(false);
+    expect(shouldReconcileDisplayName({
+      connected: true, lastSentDisplayName: 'Wanderer', displayName: 'Wanderer',
+    })).toBe(false);
   });
 });
 

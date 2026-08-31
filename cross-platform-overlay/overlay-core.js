@@ -1017,8 +1017,8 @@ function isLocalRelay(relayHttp) {
 }
 
 // True only for the isolated hosted development relay. This lets an unpackaged
-// dev overlay use the OAuth-gated persona flow without ever treating production
-// as a development target.
+// dev overlay use the direct persona flow without ever treating production as
+// a development target.
 function isHostedDevRelay(relayHttp) {
   try {
     const h = new URL(String(relayHttp)).hostname.replace(/^\[|\]$/g, '').toLowerCase();

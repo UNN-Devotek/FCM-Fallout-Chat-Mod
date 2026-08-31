@@ -1610,7 +1610,7 @@ export function supporterBadge(
   badges?: readonly string[] | null,
 ): { tier: 'supporter' | 'overseer'; glyph: string; label: string } | null {
   if (badges?.includes('overseer')) {
-    return { tier: 'overseer', glyph: '◆', label: "Overseer's Circle" };
+    return { tier: 'overseer', glyph: '★', label: "Overseer's Circle" };
   }
   if (badges?.includes('supporter')) {
     return { tier: 'supporter', glyph: '★', label: 'Supporter' };

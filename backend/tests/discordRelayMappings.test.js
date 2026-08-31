@@ -262,4 +262,33 @@ describe('editDiscordRelayMessage', () => {
     expect(changed).toBe(true);
     expect(edit).toHaveBeenCalledWith({ content: '**[General]** **VaultEller**: corrected text\u200b' });
   });
+
+  it('waits briefly for a relay link created by the outbound send queue', async () => {
+    const link = {
+      messageId: '11111111-1111-4111-8111-111111111111',
+      discordMessageId: 'discord-message-1',
+      discordChannelId: 'discord-channel-1',
+      discordPrefix: '**[General]** **VaultEller**: ',
+      isBotMessage: true,
+    };
+    mockDiscordMessageLinkFindUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(link);
+    const edit = jest.fn().mockResolvedValue(undefined);
+    const fakeChannel = {
+      isTextBased: () => true,
+      messages: { fetch: jest.fn().mockResolvedValue({ edit }) },
+    };
+    const fakeClient = { channels: { fetch: jest.fn().mockResolvedValue(fakeChannel) } };
+
+    const changed = await svc.editDiscordRelayMessage(
+      link.messageId,
+      'corrected after send',
+      fakeClient,
+    );
+
+    expect(changed).toBe(true);
+    expect(mockDiscordMessageLinkFindUnique).toHaveBeenCalledTimes(2);
+    expect(edit).toHaveBeenCalledWith({ content: '**[General]** **VaultEller**: corrected after send\u200b' });
+  });
 });

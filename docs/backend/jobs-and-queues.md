@@ -183,7 +183,8 @@ Discord and rejoins gets their cosmetics back without re-purchasing. See
 
 **Defined in:** `backend/src/queues/messagePersist.ts`
 
-Built on **Bull** (Redis-backed). Used to persist chat messages to PostgreSQL without blocking the WebSocket hot path.
+Built on **Bull** (Redis-backed). Canonical chat sends use it to persist messages before broadcasting,
+while background and simulation producers may use it asynchronously.
 
 **Configuration:**
 - Queue name: `message-persist`
@@ -194,7 +195,9 @@ Built on **Bull** (Redis-backed). Used to persist chat messages to PostgreSQL wi
 
 **Worker:** calls `persistMessage(job.data)` from `services/messageService.ts`. The persist uses `INSERT ... ON CONFLICT (id, created_at) DO NOTHING` so retries are safe.
 
-**Producer:** the WebSocket `chat:message` handler enqueues a job immediately after broadcasting the message to connected clients. This ensures the message is visible to other clients within milliseconds even if the DB write takes longer.
+**Producer:** the shared WS/HUD ingestion path enqueues a job before broadcasting and awaits its
+completion. This ensures an immediately editable message always has a durable database row. Background
+and simulation producers that explicitly use the queue directly may still enqueue asynchronously.
 
 Failed jobs are logged at error level with `jobId`.
 

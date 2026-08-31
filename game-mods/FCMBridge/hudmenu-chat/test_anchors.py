@@ -353,42 +353,46 @@ if widget_src:
     check("function readLocalPlayerNameFromData" in widget_src
           and "isLocalPlayer" in widget_src
           and "characterName" in widget_src,
-          "FCMChatWidget prefers the local PlayerListData character name")
+          "FCMChatWidget can inspect the local PlayerListData character candidate")
     check("function readNamedData" in widget_src
           and "CharacterInfoData" in widget_src,
-          "FCMChatWidget retains CharacterInfoData identity fallback")
+          "FCMChatWidget can inspect the CharacterInfoData character candidate")
+    check("function readAccountDisplayName" in widget_src
+          and 'getBSUIData(mgr, "AccountInfoData")' in widget_src,
+          "FCMChatWidget reads the public Fallout handle from AccountInfoData")
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
-          "FCMChatWidget does not retain an AccountInfoData identity fallback")
-    check('static inline var VERSION:String  = "2.10.5";' in widget_src
-          and "character-only HUD identity gate" in widget_src,
-          "FCMChatWidget bumps the identity-gate fix to version 2.10.5")
-    character_match = re.search(
-        r"function readCharacterDisplayName\([^)]*\):String \{(.*?)\n    \}\n\n    // Compatibility-only resolver",
+          "FCMChatWidget has no obsolete compatibility resolver")
+    check('static inline var VERSION:String  = "2.10.7";' in widget_src
+          and "no HUD message timestamps" in widget_src,
+          "FCMChatWidget bumps the no-timestamps HUD build to version 2.10.7")
+    fallout_name_match = re.search(
+        r"function readFalloutDisplayName\([^)]*\):String \{(.*?)\n    \}\n\n    function hasResolvedDisplayName",
         widget_src,
         re.DOTALL,
     )
-    check(character_match is not None,
-          "FCMChatWidget defines an inspectable character-only identity resolver")
-    if character_match is not None:
-        character_body = character_match.group(1)
-        check("readLocalPlayerNameFromData" in character_body
-              and 'readNamedData(mgr, "CharacterInfoData")' in character_body
-              and "AccountInfoData" not in character_body,
-              "FCMChatWidget character resolver excludes AccountInfoData")
+    check(fallout_name_match is not None,
+          "FCMChatWidget defines an inspectable Fallout public-name resolver")
+    if fallout_name_match is not None:
+        fallout_name_body = fallout_name_match.group(1)
+        check("readAccountDisplayName(mgr)" in fallout_name_body
+              and "readLocalPlayerNameFromData" in fallout_name_body
+              and 'readNamedData(mgr, "CharacterInfoData")' in fallout_name_body
+              and "selectFalloutDisplayName(accountName, localName, characterInfoName)" in fallout_name_body,
+              "FCMChatWidget makes AccountInfoData authoritative over character candidates")
     ready_match = re.search(
         r"function hasResolvedDisplayName\(\):Bool \{(.*?)\n    \}\n\n    /\*\*",
         widget_src,
         re.DOTALL,
     )
     check(ready_match is not None,
-          "FCMChatWidget defines an inspectable character identity readiness gate")
+          "FCMChatWidget defines an inspectable Fallout identity readiness gate")
     if ready_match is not None:
         ready_body = ready_match.group(1)
-        check("_characterIdentityReady" in ready_body
-              and "AccountInfoData" not in ready_body
-              and "readDisplayNameWithAccountFallback" not in ready_body,
-              "FCMChatWidget readiness gate cannot be satisfied by AccountInfoData")
+        check("_falloutIdentityReady" in ready_body
+              and "isUsableFalloutDisplayName" in ready_body
+              and "_characterIdentityReady" not in ready_body,
+              "FCMChatWidget readiness gate requires the Fallout account handle")
     check("function hasResolvedDisplayName():Bool" in widget_src,
           "FCMChatWidget has an explicit non-placeholder identity gate")
     start_connect_match = re.search(
@@ -400,13 +404,13 @@ if widget_src:
           "FCMChatWidget defines an inspectable connect lifecycle")
     if start_connect_match is not None:
         start_connect_body = start_connect_match.group(1)
-        reset_identity = start_connect_body.find("resetCharacterIdentity();")
+        reset_identity = start_connect_body.find("resetFalloutIdentity();")
         refresh_identity = start_connect_body.find("refreshDisplayName();")
         identity_gate = start_connect_body.find("if (!hasResolvedDisplayName())")
         identity_retry = start_connect_body.find("scheduleConnectRetry()", identity_gate)
         native_connect = start_connect_body.find('call("chat.v1.connect"', identity_gate)
         check(reset_identity >= 0 and refresh_identity > reset_identity,
-              "FCMChatWidget resets cached character identity before each connect probe")
+              "FCMChatWidget resets cached Fallout identity before each connect probe")
         check(identity_gate >= 0 and identity_retry > identity_gate and native_connect > identity_retry,
               "FCMChatWidget defers native connect until HUD identity is resolved")
     refresh_match = re.search(
@@ -418,11 +422,11 @@ if widget_src:
           "FCMChatWidget defines an inspectable HUD identity refresh path")
     if refresh_match is not None:
         refresh_body = refresh_match.group(1)
-        check("readCharacterDisplayName" in refresh_body
+        check("readFalloutDisplayName" in refresh_body
               and "readDisplayNameWithAccountFallback" not in refresh_body
               and "chat.v1.connect" not in refresh_body
               and "reconcileDisplayName" not in refresh_body,
-              "FCMChatWidget keeps refreshDisplayName character-only and observation-only")
+              "FCMChatWidget keeps refreshDisplayName account-authoritative and observation-only")
     check("_lastSentDisplayName" not in widget_src
           and "reconcileDisplayName" not in widget_src,
           "FCMChatWidget has no cached late-identity native reconnect path")
@@ -479,6 +483,10 @@ if widget_src:
           and 'rec.messageId.substr(0, 8)' in widget_src
           and 'rec.senderUserId' in widget_src,
           "FCMChatWidget resolves visible names locally to immutable relay record IDs")
+    check('tsHtml' not in widget_src
+          and 'showTimestamps' not in widget_src
+          and 'createdAt:String' not in widget_src,
+          "FCMChatWidget never renders or depends on message timestamps")
 
 try:
     widget_ini_src = open(WIDGET_INI, encoding="utf-8").read()

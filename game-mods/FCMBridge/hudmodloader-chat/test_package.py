@@ -51,7 +51,10 @@ def main() -> None:
             assert "Data/ZFE/TextChat/fragments/FCMChatWidget.ini" in names
             assert "INSTALL.txt" in names
             assert archive.read("Data/FCMChatWidget.ba2") == widget_artifact
-            assert b"dev.falloutchatmod.com/link" in archive.read("Data/FCMChat.ini")
+            chat_config = archive.read("Data/FCMChat.ini")
+            assert b"dev.falloutchatmod.com/link" in chat_config
+            assert b"showTimestamps" not in chat_config
+            assert b"timestampColor" not in chat_config
             assert b"wss://dev.falloutchatmod.com/relay" in archive.read(
                 "Data/ZFE/TextChat/fragments/FCMChatWidget.ini"
             )

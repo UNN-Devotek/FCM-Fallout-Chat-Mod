@@ -65,10 +65,9 @@ export function isHostedDevRelay(relayHostOrBase: string): boolean {
 }
 
 /**
- * Credential-less persona login is intentionally limited to a local backend.
- * Hosted DEV exposes the same controls in unpackaged builds, but its backend
- * requires Discord OAuth plus the dual developer-role gate before issuing a
- * persona session.
+ * Persona login is available only in unpackaged builds pointed at a known
+ * development relay. Both local and hosted DEV use the direct synthetic-session
+ * endpoint; production and unknown relays never expose the controls.
  */
 export function shouldShowDevPersonaLogins(isDevBuild: boolean, relayHostOrBase: string): boolean {
   if (!isDevBuild || !relayHostOrBase) return false;

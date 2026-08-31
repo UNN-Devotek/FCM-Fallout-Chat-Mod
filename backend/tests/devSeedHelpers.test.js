@@ -124,6 +124,8 @@ describe('roleNameToEnvKey', () => {
     expect(roleNameToEnvKey('Mod')).toBe('MODERATOR_ROLE_ID');
     expect(roleNameToEnvKey('Developer')).toBe('DEVELOPER_ROLE_ID');
     expect(roleNameToEnvKey('Dev')).toBe('DEVELOPER_ROLE_ID');
+    expect(roleNameToEnvKey('Supporter')).toBe('SUPPORTER_ROLE_ID');
+    expect(roleNameToEnvKey("Overseer's Circle")).toBe('OVERSEER_CIRCLE_ROLE_ID');
   });
 
   test('returns null for unrelated roles', () => {
@@ -139,6 +141,8 @@ describe('formatRoleEnvLines', () => {
       { name: 'Admin', id: '222' },
       { name: 'Moderator', id: '333' },
       { name: 'Developer', id: '444' },
+      { name: 'Supporter', id: '666' },
+      { name: "Overseer's Circle", id: '777' },
       { name: 'Admin', id: '999' }, // duplicate — ignored
       { name: 'Member', id: '555' }, // unmapped — ignored
     ]);
@@ -146,7 +150,9 @@ describe('formatRoleEnvLines', () => {
       'ADMIN_ROLE_ID=222',
       'DEVELOPER_ROLE_ID=444',
       'MODERATOR_ROLE_ID=333',
+      'OVERSEER_CIRCLE_ROLE_ID=777',
       'OWNER_ROLE_ID=111',
+      'SUPPORTER_ROLE_ID=666',
     ]);
   });
 

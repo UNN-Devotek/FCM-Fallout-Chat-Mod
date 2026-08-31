@@ -10,6 +10,7 @@ import ticketService from './ticketService';
 import supporterSyncService from './supporterSyncService';
 import cosmeticsCommandService from './cosmeticsCommandService';
 import chatNameCommandService from './chatNameCommandService';
+import { attachCosmetics } from './cosmetics/cosmeticsService';
 import { nextRelaySeq } from './relay/relaySeq';
 import { getEntry, bestMatch } from './wikiCatalogService';
 import { canon } from '../utils/textCanon';
@@ -500,6 +501,25 @@ function queueDiscordSend(
   });
 }
 
+const DISCORD_LINK_RETRY_DELAYS_MS = [0, 100, 250, 500, 1000] as const;
+
+/**
+ * Outbound Discord sends are rate-limited through a separate queue, so the
+ * relay link can be created shortly after the local message is visible. Give
+ * an immediate edit a bounded chance to find that link before treating the
+ * message as having no bot-authored Discord counterpart.
+ */
+async function findDiscordMessageLinkWithRetry(messageId: string): Promise<DiscordRelayLink | null> {
+  for (let attempt = 0; attempt < DISCORD_LINK_RETRY_DELAYS_MS.length; attempt++) {
+    const delay = DISCORD_LINK_RETRY_DELAYS_MS[attempt];
+    if (delay > 0) await new Promise<void>((resolve) => setTimeout(resolve, delay));
+
+    const link = await prisma.discordMessageLink.findUnique({ where: { messageId } });
+    if (link) return link;
+  }
+  return null;
+}
+
 /**
  * Edit the bot-authored Discord copy of an in-app message, when one exists.
  * Discord does not allow the bot to edit a user's original Discord message,
@@ -514,7 +534,7 @@ async function editDiscordRelayMessage(
   const client = clientOverride ?? discordClient;
   if (!client || (clientOverride === undefined && discordStatus !== 'connected')) return false;
 
-  const link = await prisma.discordMessageLink.findUnique({ where: { messageId } });
+  const link = await findDiscordMessageLinkWithRetry(messageId);
   if (!link || !link.isBotMessage) return false;
 
   const stripped = stripMentions(content);
@@ -1017,20 +1037,28 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
       return;
     }
 
+    const discordPayload: Record<string, unknown> = {
+      id: messageId,
+      content: broadcastContent,
+      username: relayUsername,
+      userId: relayUserId,
+      channelId,
+      source: 'discord',
+      timestamp: createdAt,
+      metadata: inboundMetadata,
+      relaySeq,
+    };
+
+    // Discord-originated messages must use the exact same resolved cosmetics as
+    // messages typed in-game or in the dashboard. History resolves cosmetics on
+    // read, but the live broadcast needs the decoration before it leaves this
+    // process or supporters see an unstyled message until a reload.
+    await attachCosmetics(discordPayload);
+
     if (broadcastFn) {
       broadcastFn({
         type: 'chat:message',
-        payload: {
-          id: messageId,
-          content: broadcastContent,
-          username: relayUsername,
-          userId: relayUserId,
-          channelId,
-          source: 'discord',
-          timestamp: createdAt,
-          metadata: inboundMetadata,
-          relaySeq,
-        },
+        payload: discordPayload,
       });
     }
 

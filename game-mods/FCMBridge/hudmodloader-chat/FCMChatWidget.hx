@@ -14,7 +14,6 @@ private typedef ChatRecord = {
     var channel:String;
     var user:String;
     var body:String;
-    var ts:String;
     var messageId:String;
     var senderUserId:String;
 }
@@ -132,7 +131,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.5";  // character-only HUD identity gate + deferred connect; + clientVersion handshake + name-targeted HUD moderation
+    static inline var VERSION:String  = "2.10.7";  // exact Fallout account handle + deferred one-shot connect; no HUD message timestamps
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -301,9 +300,9 @@ class FCMChatWidget extends MovieClip {
     var _userId:String           = "";
     var _relayUserId:String      = "";
     var _displayName:String      = "Wanderer";
-    // True only after PlayerListData or CharacterInfoData supplies the local character name.
-    // Compatibility reads from AccountInfoData must never set this flag.
-    var _characterIdentityReady:Bool = false;
+    // True only after AccountInfoData supplies the public Fallout/Bethesda account handle.
+    // CharacterInfoData is the local character name and must never set this flag.
+    var _falloutIdentityReady:Bool = false;
     var _connectDelay:Int        = CONNECT_RETRY_MS;
     var _connectAttempts:Int     = 0;
     var _cursor:Int              = 0;
@@ -1801,11 +1800,12 @@ class FCMChatWidget extends MovieClip {
                         ? echoIdKey(messageId)
                         : echoSbKey(_relayUserId, slug, raw);
                     _pendingEchoes.push({ key: dedupKey, ts: flash.Lib.getTimer() });
-                    // Render immediately on the active channel.
+                    // Render immediately on the active channel. Message timestamps are
+                    // intentionally omitted from the HUD; the relay's UTC values were not
+                    // useful in the game UI and optimistic echoes do not have server time yet.
                     if (slug == CHAN_SLUGS[_chanIdx]) {
-                        // Own-message time stays blank until a server time exists (D-08).
                         _records.push({
-                            color: hx(_cfg.senderColor), channel: slug, user: _displayName, body: raw, ts: "",
+                            color: hx(_cfg.senderColor), channel: slug, user: _displayName, body: raw,
                             messageId: messageId, senderUserId: _relayUserId,
                         });
                         while (_records.length > _cfg.maxMessages) _records.shift();
@@ -1932,23 +1932,23 @@ class FCMChatWidget extends MovieClip {
     // chat.v1 connect / reconnect
     // =========================================================================
 
-    function resetCharacterIdentity():Void {
-        _characterIdentityReady = false;
+    function resetFalloutIdentity():Void {
+        _falloutIdentityReady = false;
         _displayName = "Wanderer";
     }
 
     function startConnect():Void {
-        resetCharacterIdentity();
+        resetFalloutIdentity();
         if (_api == null) return;
         _connectAttempts++;
-        // Re-read the FO76 name each attempt until we have a real one. The local roster may not
-        // be populated until the player reaches the world, so wait for a resolved identity rather
-        // than sending the placeholder to chat.v1.connect. The existing retry timer will probe
-        // again later, and HUD data callbacks only update local state.
+        // Re-read the public FO76 account handle each attempt until AccountInfoData has it.
+        // Never substitute CharacterInfoData: that is the local character label, not the name
+        // other Fallout 76 players see. The retry timer probes later without re-entering a live
+        // native connection, and HUD data callbacks only update local state.
         refreshDisplayName();
         if (!hasResolvedDisplayName()) {
             zfeLog("info", "connect", "player identity not ready; delaying connect");
-            setLogText("waiting for character name...");
+            setLogText("waiting for Fallout 76 player name...");
             scheduleConnectRetry();
             return;
         }
@@ -2015,7 +2015,7 @@ class FCMChatWidget extends MovieClip {
      */
     function forceReconnect(reason:String):Void {
         zfeLog("warn", "connect", "reconnecting: " + reason);
-        resetCharacterIdentity();
+        resetFalloutIdentity();
         if (_nativeInput) closeInputNative();
         setServerSessionReady(false, "");
         _connected = false;
@@ -2254,7 +2254,6 @@ class FCMChatWidget extends MovieClip {
             var displayName:String  = extractJsonString(obj, "senderDisplayName");
             var body:String         = extractJsonString(obj, "body");
             var messageId:String    = extractJsonString(obj, "messageId");
-            var createdAt:String    = extractJsonString(obj, "createdAt");
             var evId:Int            = extractJsonInt(obj, "id");
 
             // Always advance the cursor, even for skipped/deduped events.
@@ -2292,7 +2291,7 @@ class FCMChatWidget extends MovieClip {
             if (!shouldRenderReplayMessage(messageId)) continue;
 
             _records.push({
-                color: hx(_cfg.senderColor), channel: channel, user: displayName, body: body, ts: createdAt,
+                color: hx(_cfg.senderColor), channel: channel, user: displayName, body: body,
                 messageId: messageId, senderUserId: senderUserId,
             });
             while (_records.length > _cfg.maxMessages) _records.shift();
@@ -2519,8 +2518,8 @@ class FCMChatWidget extends MovieClip {
         if (_api == null || !_connected) return;
         _worldPollCount++;
         subscribeRoster();
-        // PlayerListData is often populated after the first relay connect. Re-read it on
-        // every world tick so the first fallback identity is replaced without a game restart.
+        // AccountInfoData can be republished during world transitions. Re-read it for local
+        // state only; refreshDisplayName never enters the native relay connection path.
         refreshDisplayName();
         tickRoster();
         if (!_dataInventoryDone && _worldPollCount >= 6) { _dataInventoryDone = true; dumpDataInventory(); }
@@ -2604,12 +2603,6 @@ class FCMChatWidget extends MovieClip {
             // Escape sender name + body — both are unsanitized relay/Discord input (SR-001).
             var user:String = FcmConfig.htmlEscape(rec.user);
             var msg:String  = FcmConfig.htmlEscape(rec.body);
-            // Optional "HH:MM " timestamp prefix (CAP-013, D-08 — only when the event carries a time).
-            var tsHtml:String = "";
-            if (_cfg.showTimestamps && rec.ts != null && rec.ts != "") {
-                var hm:String = FcmConfig.hhmm(rec.ts);
-                if (hm != "") tsHtml = '<font color="' + hx(_cfg.timestampColor) + '">' + hm + '</font> ';
-            }
             // Optional proper-cased channel tag (CAP-012, D-09).
             var tagHtml:String = "";
             if (_cfg.showChannelTag) {
@@ -2626,7 +2619,6 @@ class FCMChatWidget extends MovieClip {
             // [channel] + body = light; sender name (the <b> span) = bold alias.
             html.push(
                 '<font face="' + FONT_BODY + '" size="' + fs + '">'
-                + tsHtml
                 + tagHtml
                 + moderationRefHtml
                 + '<b><font face="' + FONT_BOLD + '" color="' + col + '">' + user + ':</font></b> '
@@ -2774,7 +2766,7 @@ class FCMChatWidget extends MovieClip {
             if (marker >= 0) name = name.substr(0, marker);
             name = StringTools.replace(name, "|", "");
         }
-        return FcmIdentity.normalizeCharacterName(name);
+        return FcmIdentity.normalizeDisplayName(name);
     }
 
     function uiNameFromFields(obj:Dynamic, fields:Array<String>, stripDecorations:Bool = false):String {
@@ -2854,26 +2846,34 @@ class FCMChatWidget extends MovieClip {
         return "";
     }
 
-    // Returns only the FO76 character name from the game's character-owned UI data, or "" if
-    // the game has not populated it yet. PlayerListData's local entry is authoritative and
-    // CharacterInfoData is the compatibility fallback. AccountInfoData is deliberately absent.
-    function readCharacterDisplayName(rosterData:Dynamic = null):String {
-        var localName:String = readLocalPlayerNameFromData(rosterData);
-        if (localName.length > 0) return FcmIdentity.selectCharacterName(localName, "");
+    /** Return the public Fallout/Bethesda handle from AccountInfoData. */
+    function readAccountDisplayName(mgr:Dynamic):String {
+        var data:Dynamic = uiData(getBSUIData(mgr, "AccountInfoData"));
+        var name:String = uiNameFromFields(data,
+            ["name", "displayName", "playerName"]);
+        if (name.length > 0) return name;
+        // Retain compatibility with older HUD payloads that wrapped the same
+        // Fallout account object rather than publishing its fields directly.
+        return uiNameFromFields(uiField(data, "account"),
+            ["name", "displayName", "playerName"]);
+    }
 
+    // Returns only the public FO76 account handle, or "" until AccountInfoData is ready.
+    // PlayerListData and CharacterInfoData are read as explicit non-authoritative candidates;
+    // FcmIdentity refuses to let either character label satisfy the relay handshake.
+    function readFalloutDisplayName(rosterData:Dynamic = null):String {
         var mgr:Dynamic = findBSUI();
         if (mgr == null) return "";
 
-        localName = readLocalPlayerName(mgr);
+        var accountName:String = readAccountDisplayName(mgr);
+        var localName:String = readLocalPlayerNameFromData(rosterData);
+        if (localName.length == 0) localName = readLocalPlayerName(mgr);
         var characterInfoName:String = readNamedData(mgr, "CharacterInfoData");
-        return FcmIdentity.selectCharacterName(localName, characterInfoName);
+        return FcmIdentity.selectFalloutDisplayName(accountName, localName, characterInfoName);
     }
 
-    // Compatibility-only resolver removed: the former function readDisplayNameWithAccountFallback
-    // read AccountInfoData, but an account name is not a character identity and must never satisfy
-    // the chat.v1.connect gate.
     function hasResolvedDisplayName():Bool {
-        return _characterIdentityReady && FcmIdentity.isUsableCharacterName(_displayName);
+        return _falloutIdentityReady && FcmIdentity.isUsableFalloutDisplayName(_displayName);
     }
 
     /**
@@ -2883,13 +2883,14 @@ class FCMChatWidget extends MovieClip {
      * identity until the next normal reconnect.
      */
     function refreshDisplayName(rosterData:Dynamic = null):Void {
-        var name:String = readCharacterDisplayName(rosterData);
+        var name:String = readFalloutDisplayName(rosterData);
         if (name.length == 0) return;
 
-        _characterIdentityReady = true;
+        _falloutIdentityReady = true;
         var changed:Bool = (_displayName != name);
         _displayName = name;
-        if (changed) zfeLog("info", "identity", "player name resolved from HUD data len=" + name.length);
+        if (changed) zfeLog("info", "identity",
+            "Fallout account name resolved from AccountInfoData len=" + name.length);
     }
 
     // BSUIDataManager discovery — the engine injects it as a PROPERTY on the HUD
@@ -3106,9 +3107,8 @@ class FCMChatWidget extends MovieClip {
         try { d = evt.data; } catch (e:Dynamic) {}
         if (d == null) { try { d = evt.target.data; } catch (e:Dynamic) {} }
         if (d == null) return;
-        // Use the event payload directly: on some HUD builds GetDataFromClient is only
-        // populated after a Subscribe notification, while the event already contains the
-        // local character entry. This is the authoritative HUD-layer identity source.
+        // Pass the event payload as a non-authoritative character candidate. The public relay
+        // identity still comes exclusively from AccountInfoData inside refreshDisplayName().
         refreshDisplayName(d);
         collectRoster("PlayerListData", d);
         // Throttle: first 3 updates, then at most every 30s.

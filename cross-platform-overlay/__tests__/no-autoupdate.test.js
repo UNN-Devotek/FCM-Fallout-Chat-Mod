@@ -42,6 +42,10 @@ describe('package.json — no auto-updater config', () => {
     expect(pkg.build?.publish).toBeUndefined();
   });
 
+  it('disables NSIS differential packages so no blockmap is emitted', () => {
+    expect(pkg.build?.nsis?.differentialPackage).toBe(false);
+  });
+
   it('has no updater.js in build.files', () => {
     const files = pkg.build?.files ?? [];
     expect(files).not.toContain('updater.js');

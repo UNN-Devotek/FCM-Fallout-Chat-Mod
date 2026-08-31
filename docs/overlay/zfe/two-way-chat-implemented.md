@@ -120,7 +120,7 @@ In `sendChatMessage(text)` we inject `this.fcmForward(text)`. `fcmForward`:
   Ban-hash → socket destroyed. Sets `state.identified`.
 - `SEND~channelId~text` (only when identified) → `ingestMessage({userId, channelId, rawContent,
   source:'hud', identityHash})` → full governance (mute, rate-limit, validation, automod) →
-  `finalizeMessage` (broadcast + write-behind persist + Discord relay).
+  `finalizeMessage` (durable persist + broadcast + Discord relay).
 - **HELLO is OPTIONAL.** Receive-only feed clients never send it and must NOT be dropped. (An earlier
   "destroy if no HELLO in 10s" timeout killed the feed — removed. Do not re-add.)
 
@@ -200,8 +200,9 @@ FCMBridge proves every primitive (`Shape` bg + `TextField` + `TextFormat`).
 ## Known gaps / follow-ups
 
 - **UI**: native green box, wrong position, no scroll → §8 rebuild.
-- **Persist**: in-game message broadcasts (seen live) but write-behind DB persist needs verifying (a
-  test SEND showed `ok=true` but did not appear in `messages` — check the Bull queue worker).
+- **Persist**: canonical in-game sends wait for the Bull persistence job to complete before the live
+  broadcast, so the message row exists before the UI can offer self-edit. A queue failure falls back
+  to direct persistence and fails the send if that fallback also fails.
 - **History/backfill**: the in-game feed shows only **root** channels (`parent_id IS NULL`); the
   wastelander streamer writes to sub-channel `…0005`, so those don't appear there (not a chat bug).
 - **Identity**: confirm auto-pair vs auto-provision behavior with a non-linked character.

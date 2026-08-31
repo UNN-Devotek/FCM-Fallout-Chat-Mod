@@ -1,4 +1,8 @@
-const { makeDevPersonaCallbackHandler, makeDevPersonaStatusHandler } = require('../src/controllers/devPersonaLoginController');
+const {
+  makeDevPersonaCallbackHandler,
+  makeDevPersonaStatusHandler,
+  makeDevPersonaLoginAsHandler,
+} = require('../src/controllers/devPersonaLoginController');
 
 function response() {
   return {
@@ -119,5 +123,58 @@ describe('hosted DEV persona grant polling', () => {
 
     expect(res.body).toEqual({ data: { authorized: false, error: 'Missing developer role in the prod guild.' } });
     expect(consumeDenial).toHaveBeenCalledWith('install-1');
+  });
+});
+
+describe('DEV persona direct login', () => {
+  test('issues a synthetic session without an OAuth step', async () => {
+    const issueSession = jest.fn().mockResolvedValue({
+      token: 'session-1',
+      userId: 'user-1',
+      displayName: 'System Developer',
+      role: 'developer',
+    });
+    const handler = makeDevPersonaLoginAsHandler({ issueSession });
+    const res = response();
+
+    await handler({ body: { persona: 'DEVELOPER', installToken: ' install-1 ' } }, res);
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toEqual({
+      data: {
+        token: 'session-1',
+        userId: 'user-1',
+        displayName: 'System Developer',
+        role: 'developer',
+        discordLinked: true,
+      },
+    });
+    expect(issueSession).toHaveBeenCalledWith('install-1', 'developer');
+  });
+
+  test('rejects missing or unknown persona input before issuing a session', async () => {
+    const issueSession = jest.fn();
+    const handler = makeDevPersonaLoginAsHandler({ issueSession });
+
+    const missing = response();
+    await handler({ body: { installToken: 'install-1' } }, missing);
+    expect(missing.statusCode).toBe(400);
+
+    const unknown = response();
+    await handler({ body: { persona: 'production-admin', installToken: 'install-1' } }, unknown);
+    expect(unknown.statusCode).toBe(404);
+    expect(issueSession).not.toHaveBeenCalled();
+  });
+
+  test('returns 500 when session issuance fails', async () => {
+    const handler = makeDevPersonaLoginAsHandler({
+      issueSession: jest.fn().mockRejectedValue(new Error('database unavailable')),
+    });
+    const res = response();
+
+    await handler({ body: { persona: 'user', installToken: 'install-1' } }, res);
+
+    expect(res.statusCode).toBe(500);
+    expect(res.body).toEqual({ error: 'Dev login failed' });
   });
 });

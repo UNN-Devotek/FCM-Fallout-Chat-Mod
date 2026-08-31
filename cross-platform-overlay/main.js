@@ -2151,138 +2151,15 @@ ipcMain.handle('overlay:get-pending-update', () => pendingRendererUpdateVersion)
 ipcMain.on('overlay:get-relay-host-sync', (evt) => { evt.returnValue = RELAY_HOST; });
 
 // ─── Dev-only overlay login ──────────────────────────────────────────────────
-// Unpackaged local overlays can use the credential-less /api/dev/login-as route.
-// An unpackaged overlay pointed at hosted DEV must use Discord OAuth instead;
-// the hosted backend never exposes the credential-less route.
-function startHostedDevPersonaLogin(persona) {
-  const st = loadState();
-  if (!st || !st.installToken) return Promise.resolve({ ok: false, error: 'No installToken' });
-
-  const startUrl = `${RELAY_HTTP}/auth/discord/dev-login?installToken=${encodeURIComponent(st.installToken)}&persona=${encodeURIComponent(persona)}`;
-  // The hosted flow deliberately reuses the already-registered desktop-link
-  // callback URI, so the Discord application needs no new redirect URI.
-  const callbackPath = '/auth/discord/link/callback';
-  const statusUrl = new URL(`${RELAY_HTTP}/api/auth/dev-login-status/${encodeURIComponent(st.installToken)}`);
-  const MAX_ATTEMPTS = 40; // 60 seconds at the 1.5s poll interval
-
-  sendToRenderer('relay:status', { state: 'dev_login_required' });
-
-  return new Promise((resolve) => {
-    let win = null;
-    let settled = false;
-
-    const finish = (result) => {
-      if (settled) return;
-      settled = true;
-      resolve(result);
-    };
-
-    const poll = (attempt = 0) => {
-      if (settled) return;
-      const req = httpModule(statusUrl).request(
-        {
-          hostname: statusUrl.hostname,
-          port: statusUrl.port || undefined,
-          path: statusUrl.pathname,
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json', 'X-Client-Version': APP_VERSION },
-        },
-        (res) => {
-          let data = '';
-          res.on('data', (c) => (data += c));
-          res.on('end', () => {
-            let body = {};
-            try { body = JSON.parse(data).data || {}; } catch { /* retry below */ }
-            if (body.authorized && body.token) {
-              sessionToken = body.token;
-              flushPendingWsOpens();
-              saveState({
-                discordLinked: true,
-                displayName: body.displayName || '',
-                userRole: body.role || null,
-              });
-              userRole = body.role || null;
-              rebuildTray();
-              sendToRenderer('relay:status', {
-                state: 'authenticated',
-                displayName: body.displayName || '',
-                discordLinked: true,
-                role: body.role || null,
-                userId: body.userId || null,
-              });
-              finish({ ok: true });
-              return;
-            }
-            if (body.error) {
-              finish({ ok: false, error: String(body.error).slice(0, 200) });
-              return;
-            }
-            if (attempt + 1 < MAX_ATTEMPTS) setTimeout(() => poll(attempt + 1), 1500);
-            else finish({ ok: false, error: 'Hosted DEV login timed out or was denied' });
-          });
-        },
-      );
-      req.on('error', (err) => {
-        if (attempt + 1 < MAX_ATTEMPTS) setTimeout(() => poll(attempt + 1), 1500);
-        else finish({ ok: false, error: String(err && err.message || err) });
-      });
-      req.setTimeout(12000, () => req.destroy(new Error('dev-login status timeout')));
-      req.end();
-    };
-
-    try {
-      win = new BrowserWindow({
-        width: 520, height: 720,
-        parent: mainWindow || undefined,
-        modal: false,
-        title: 'DEV Login — Fallout Chat Mod',
-        icon: appIcon() || undefined,
-        resizable: true,
-        center: true,
-        webPreferences: { contextIsolation: true, nodeIntegration: false },
-      });
-      const wc = win.webContents;
-      const checkNav = (url) => {
-        try {
-          if (new URL(url).pathname === callbackPath) {
-            setTimeout(() => { if (win && !win.isDestroyed()) win.close(); }, 1200);
-          }
-        } catch { /* ignore invalid URLs */ }
-      };
-      wc.on('did-navigate', (_evt, url) => checkNav(url));
-      wc.on('will-redirect', (_evt, url) => checkNav(url));
-      wc.on('did-redirect-navigation', (_evt, url) => checkNav(url));
-      wc.on('did-fail-load', (_evt, errorCode, errorDesc, _url, isMainFrame) => {
-        if (!isMainFrame || errorCode === -3) return;
-        diag('[dev-login] OAuth window failed: ' + errorCode + ' ' + (errorDesc || ''));
-        try { shell.openExternal(startUrl); } catch { /* ignore */ }
-      });
-      win.on('closed', () => { win = null; });
-      win.loadURL(startUrl).catch((err) => {
-        diag('[dev-login] OAuth window load failed: ' + String(err && err.message || err));
-        try { shell.openExternal(startUrl); } catch { /* ignore */ }
-      });
-    } catch (err) {
-      diag('[dev-login] OAuth window unavailable: ' + String(err && err.message || err));
-      try { shell.openExternal(startUrl); } catch { /* ignore */ }
-    }
-
-    // Start polling even when the OAuth window falls back to the system browser.
-    poll(0);
-  });
-}
-
-// Only callable in unpackaged builds. Local relays answer directly; hosted DEV
-// starts the OAuth + dual-role-gated flow above.
+// Unpackaged overlays can use the credential-less /api/dev/login-as route when
+// pointed at a known development relay. Production and unknown relays reject it.
+// Only callable in unpackaged builds on a local or hosted DEV relay.
 ipcMain.handle('overlay:dev-login-as', async (_evt, persona) => {
   if (app.isPackaged) return { ok: false, error: 'Not in dev mode' };
   const state = loadState();
   if (!state.installToken) return { ok: false, error: 'No installToken' };
-  if (!overlayCore.isLocalRelay(RELAY_HTTP)) {
-    if (!overlayCore.isHostedDevRelay(RELAY_HTTP)) {
-      return { ok: false, error: 'Persona login is only available on the local or hosted DEV relay' };
-    }
-    return startHostedDevPersonaLogin(persona);
+  if (!overlayCore.isLocalRelay(RELAY_HTTP) && !overlayCore.isHostedDevRelay(RELAY_HTTP)) {
+    return { ok: false, error: 'Persona login is only available on the local or hosted DEV relay' };
   }
   const body = JSON.stringify({ persona, installToken: state.installToken });
   return new Promise((resolve) => {

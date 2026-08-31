@@ -91,6 +91,15 @@ for (const f of forbidden) {
     pass(`absent: ${path.relative(REPO_ROOT, f)}`);
   });
 }
+const rootFeedFiles = fs.existsSync(DIST)
+  ? fs.readdirSync(DIST).filter((entry) => /^(latest.*\.yml|app-update\.yml|.*\.blockmap)$/i.test(entry))
+  : [];
+check('no root auto-update artifacts', () => {
+  if (rootFeedFiles.length > 0) {
+    throw new Error(`auto-update artifacts present (should NOT exist): ${rootFeedFiles.join(', ')}`);
+  }
+  pass('no root latest/app-update/blockmap artifacts');
+});
 
 // ── Result ────────────────────────────────────────────────────────────────────
 

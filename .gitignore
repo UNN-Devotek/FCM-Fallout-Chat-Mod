@@ -97,7 +97,7 @@ docs/CODE-SIGNING.md
 .playwright-mcp/
 measure.js
 *.png
-_arcwright-output/replay/
+_arcwright-output/
 
 # Script working dirs
 scripts/node_modules/

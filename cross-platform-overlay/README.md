@@ -47,12 +47,10 @@ To run the hot-reloading overlay against the isolated hosted DEV environment:
 npm run dev:cloud
 ```
 
-This is still an unpackaged Electron build, but hosted DEV intentionally disables
-credential-less persona logins (`ENABLE_DEV_LOGIN=false`). The **DEV ACCOUNTS**
-buttons are available here as an OAuth-gated developer tool: each button opens
-Discord and requires the developer role in both the production and DEV servers.
-Only a loopback backend (`dev:local` / `dev:linux`) permits the credential-less
-login shortcut.
+This is still an unpackaged Electron build. The **DEV ACCOUNTS** buttons work here
+and immediately issue synthetic DEV sessions; they do not open Discord. They are
+available only in unpackaged builds targeting the local backend or the exact hosted
+DEV relay, and are never available in packaged production builds.
 
 > `npm start` and `npm run dist:*` build the **shipped end-user binary**, which
 > targets the production relay. They are a release step, **not** a dev workflow —

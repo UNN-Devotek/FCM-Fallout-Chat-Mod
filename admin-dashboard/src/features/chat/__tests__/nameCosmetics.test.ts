@@ -102,9 +102,9 @@ describe('supporterBadge', () => {
     });
   });
 
-  it('uses the Overseer diamond and gives it precedence during a role transition', () => {
+  it('uses the same star for Overseer and gives the higher tier precedence during a role transition', () => {
     expect(supporterBadge(['supporter', 'overseer'])).toEqual({
-      tier: 'overseer', glyph: '◆', label: "Overseer's Circle",
+      tier: 'overseer', glyph: '★', label: "Overseer's Circle",
     });
   });
 

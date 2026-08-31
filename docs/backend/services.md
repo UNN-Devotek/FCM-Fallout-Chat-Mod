@@ -8,7 +8,7 @@ Service files live in `backend/src/services/`. They contain business logic calle
 
 **Role:** Persists chat messages to PostgreSQL.
 
-`persistMessage({ id, content, userId, channelId, parentChannelId, source, createdAt, metadata })` — writes a row to the `messages` table using a raw `INSERT ... ON CONFLICT (id, created_at) DO NOTHING` query. Idempotent. Called from the Bull `message-persist` queue worker (non-blocking on the WS hot path).
+`persistMessage({ id, content, userId, channelId, parentChannelId, source, createdAt, metadata })` — writes a row to the `messages` table using a raw `INSERT ... ON CONFLICT (id, created_at) DO NOTHING` query. Idempotent. Canonical WS/HUD sends await the Bull `message-persist` job before broadcasting; other background/simulation producers may remain asynchronous.
 
 The `metadata` column accepts arbitrary JSONB (e.g. party invite embed data).
 

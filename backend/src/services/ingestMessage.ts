@@ -8,8 +8,8 @@
  *   4. Emoji shortcode expansion
  *   5. Channel validity check
  *   6. Automod engine (word-filter + spam + automod_rules)
- *   7. broadcast() → WS fan-out + hudPushNotify
- *   8. Write-behind persist (messageQueue → messageService fallback)
+ *   7. Durable persist (messageQueue worker → messageService fallback)
+ *   8. broadcast() → WS fan-out + hudPushNotify
  *   9. Discord relay
  *
  * Source tag is 'hud' or 'ws' — forwarded to the persisted Message row for
@@ -258,7 +258,7 @@ export async function ingestMessage(opts: {
 // ── Shared finalize tail ────────────────────────────────────────────────────
 
 /**
- * Broadcast + write-behind persist + Discord relay for a fully-governed message.
+ * Persist, broadcast, and relay a fully-governed message.
  *
  * This is the single source of truth for the chat:message wire payload, the
  * persisted Message row, and the Discord relay — called by BOTH ingestMessage
@@ -267,8 +267,8 @@ export async function ingestMessage(opts: {
  *
  * Optional fields are included ONLY when the caller provides them, so the HUD
  * payload stays lean (no avatarUrl/metadata/mentions) while the WS payload keeps
- * its richer shape unchanged. Persist is fire-and-forget (write-behind) so the
- * caller's ack stays on the low-latency hot path.
+ * its richer shape unchanged. Persistence completes before broadcast/ack so a
+ * message cannot be selected for editing before its database row exists.
  */
 export async function finalizeMessage(opts: {
   userId: string;
@@ -311,10 +311,9 @@ export async function finalizeMessage(opts: {
   // majority of users who have no cosmetics row and can never block delivery.
   await attachCosmetics(payload);
 
-  broadcast({ type: 'chat:message', payload });
-  incrementMessageCount();
-
-  // Write-behind persist — fire-and-forget so it never blocks the sender ack.
+  // Persist before broadcast/ack. Bull still provides retries and backoff, but
+  // waiting for job completion closes the edit race: clients never receive a
+  // message whose canonical row is still missing from PostgreSQL.
   const { parentId: parentChannelId, name: channelName } = await getChannelInfo(opts.channelId);
   const record: Record<string, unknown> = {
     id: messageId,
@@ -328,10 +327,18 @@ export async function finalizeMessage(opts: {
   if (hasMetadata) record.metadata = opts.metadata ?? null;
   if (relaySeq !== undefined) record.relaySeq = relaySeq;
 
-  Promise.resolve(messageQueue.add(record as any)).catch((qErr) => {
+  try {
+    const persistJob = await messageQueue.add(record as any);
+    if (typeof persistJob?.finished === 'function') {
+      await persistJob.finished();
+    }
+  } catch (qErr) {
     logger.warn({ err: qErr, messageId }, '[finalizeMessage] queue failed — falling back to direct persist');
-    persistMessage(record as any).catch((err) => logger.error({ err, messageId }, '[finalizeMessage] direct persist also failed'));
-  });
+    await persistMessage(record as any);
+  }
+
+  broadcast({ type: 'chat:message', payload });
+  incrementMessageCount();
 
   // Discord relay — fire-and-forget. Carry the generated source ID so a
   // successful bot send can be linked for later bidirectional edits.

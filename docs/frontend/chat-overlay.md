@@ -625,7 +625,7 @@ the viewer opt-out (`settings.disableNameMotion` → `fcm-no-name-motion`, appli
 same element, hence compound selectors in the CSS).
 
 Tag and badge render **before** the name so the name element's text node stays exactly
-`Name: `. The badge is a compact glyph (`✦` for Supporter, `◆` for Overseer's Circle)
+`Name: `. The badge is always the compact star glyph (`★`) for Supporter and Overseer's Circle,
 with an accessible hover label, rather than an unexplained text abbreviation. Splitting the
 colon out broke `getByText(/Name:/)` queries in the existing private-messaging tests.
 

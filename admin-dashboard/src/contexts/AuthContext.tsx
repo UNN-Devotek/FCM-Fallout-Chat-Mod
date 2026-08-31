@@ -2,6 +2,8 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 
 export interface AuthUser {
   id: string;
+  /** Discord snowflake; `id` is the canonical internal user UUID when linked. */
+  discordId?: string;
   username: string;
   discordDisplayName?: string;
   role: string;

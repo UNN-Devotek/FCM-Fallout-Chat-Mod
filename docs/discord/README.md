@@ -76,8 +76,11 @@ Handled by the `messageCreate` listener at `discordService.ts:348`.
    the DB if linked, otherwise the Discord server display name.
 7. The automod engine is run on the content. Blocked messages are silently
    dropped (author is notified by DM).
-8. The message is broadcast via WebSocket to connected overlay clients and
-   queued for DB persistence (`messages` table, `source = 'discord'`).
+8. The message is decorated with the author's current supporter cosmetics using
+   the shared `attachCosmetics()` resolver, then broadcast via WebSocket to
+   connected overlay clients and queued for DB persistence (`messages` table,
+   `source = 'discord'`). This applies to every mapped Discord channel; history
+   resolution remains the fallback for reconnects and reloads.
 
 Discord `typingStart` events use the same relay mapping and emit an ephemeral
 `chat:typing` frame to the mapped overlay channel. They are ignored for bots,

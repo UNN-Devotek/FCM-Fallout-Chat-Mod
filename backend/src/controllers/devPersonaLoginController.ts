@@ -48,6 +48,10 @@ export interface DevPersonaStatusDeps {
   consumeDenial?(installToken: string): Promise<string | null>;
 }
 
+export interface DevPersonaLoginAsDeps {
+  issueSession(installToken: string, persona: string): Promise<DevPersonaGrant>;
+}
+
 export interface DevPersonaCompletionDeps {
   checkDeveloperAccess(discordUserId: string): Promise<{ authorized: boolean; reason?: string }>;
   issueSession(installToken: string, persona: string): Promise<DevPersonaGrant>;
@@ -190,6 +194,30 @@ export function makeDevPersonaStatusHandler(deps: DevPersonaStatusDeps): Request
     const denial = await deps.consumeDenial?.(installToken);
     if (denial) { res.json({ data: { authorized: false, error: denial } }); return; }
     res.json({ data: { authorized: false } });
+  };
+}
+
+/** POST /api/dev/login-as — issue a synthetic persona session in development. */
+export function makeDevPersonaLoginAsHandler(
+  deps: DevPersonaLoginAsDeps = { issueSession: issueDevPersonaSession },
+): RequestHandler {
+  return async (req: Request, res: Response): Promise<void> => {
+    const persona = String(req.body?.persona || '').trim().toLowerCase();
+    const installToken = String(req.body?.installToken || '').trim();
+    if (!persona || !installToken) {
+      res.status(400).json({ error: 'Missing persona or installToken' });
+      return;
+    }
+    if (!getDevPersona(persona)) {
+      res.status(404).json({ error: 'Unknown persona' });
+      return;
+    }
+    try {
+      const grant = await deps.issueSession(installToken, persona);
+      res.json({ data: { ...grant, discordLinked: true } });
+    } catch {
+      res.status(500).json({ error: 'Dev login failed' });
+    }
   };
 }
 

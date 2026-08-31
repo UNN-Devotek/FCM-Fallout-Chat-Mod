@@ -6,7 +6,7 @@
  * messageQueue, broadcast) and call ingestMessage() directly.
  *
  * Coverage:
- *  - Happy path: ok=true, broadcast called, messageQueue.add called, relayToDiscord called
+ *  - Happy path: ok=true, persistence completes before broadcast, relayToDiscord called
  *  - Muted user (isMuted=true): returns { ok: false, reason: 'muted' }
  *  - Expired mute auto-lifted: proceeds normally
  *  - HUD identity block (active mute block): returns muted
@@ -160,7 +160,7 @@ beforeEach(() => {
   engineEvaluate.mockResolvedValue({ block: false, matches: [] });
   broadcast.mockReset();
   relayToDiscord.mockResolvedValue(undefined);
-  messageQueue.add.mockResolvedValue({});
+  messageQueue.add.mockResolvedValue({ finished: jest.fn().mockResolvedValue(undefined) });
   getActiveBlock.mockResolvedValue(null);
 });
 
@@ -188,7 +188,7 @@ describe('ingestMessage — happy path', () => {
       }),
     }));
 
-    // Write-behind queue
+    // Persistence queue
     expect(messageQueue.add).toHaveBeenCalledWith(expect.objectContaining({
       content: 'Hello vault!',
       userId: 'user-1',
@@ -206,6 +206,30 @@ describe('ingestMessage — happy path', () => {
       undefined,
       result.messageId,
     );
+  });
+
+  it('does not broadcast until the persistence job has completed', async () => {
+    let releasePersistence;
+    const persistenceFinished = new Promise((resolve) => { releasePersistence = resolve; });
+    messageQueue.add.mockResolvedValue({
+      finished: jest.fn().mockReturnValue(persistenceFinished),
+    });
+
+    const sendPromise = ingestMessage({
+      userId: 'user-before-persist',
+      channelId: VALID_CHANNEL_ID,
+      rawContent: 'persist first',
+      source: 'hud',
+    });
+
+    while (messageQueue.add.mock.calls.length === 0) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    expect(broadcast).not.toHaveBeenCalled();
+    releasePersistence();
+    await sendPromise;
+    expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: 'chat:message' }));
   });
 
   it('works with source=ws too', async () => {

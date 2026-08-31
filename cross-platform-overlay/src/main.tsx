@@ -273,8 +273,7 @@ function Shell() {
   // Whether this is an unpackaged dev build (populated from getInfo once on mount).
   // Stored as a ref so the onStatus callback closure always reads the current value.
   const isDevRef = useRef(false);
-  // Credential-less persona login is local-only. Unpackaged builds can also use
-  // hosted DEV, where the same controls launch OAuth and require both roles.
+  // Synthetic persona login is limited to unpackaged builds on a known DEV relay.
   const [showDevPersonaLogins, setShowDevPersonaLogins] = useState(false);
   // Bumping this key remounts the ChatOverlay so it re-reads its settings from
   // localStorage (the component only loads them on mount). Driven by the shell
@@ -531,7 +530,7 @@ function Shell() {
         {showDevPersonaLogins && typeof window.relayBridge?.devLoginAs === 'function' && (
           <div style={{ marginTop: 12, borderTop: `1px solid ${themePrimary}22`, paddingTop: 12 }}>
             <div style={{ opacity: 0.5, fontSize: 10, letterSpacing: '0.12em', marginBottom: 8 }}>DEV ACCOUNTS</div>
-            <div style={{ opacity: 0.5, fontSize: 10, marginBottom: 8 }}>Local DEV can skip Discord. Hosted DEV requires Discord plus the developer role in both servers.</div>
+            <div style={{ opacity: 0.5, fontSize: 10, marginBottom: 8 }}>DEV accounts grant synthetic test access immediately. These controls are unavailable in production.</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {(['user', 'developer', 'moderator', 'admin', 'owner'] as const).map((persona) => (
                 <button key={persona}
@@ -599,7 +598,7 @@ function Shell() {
         {showDevPersonaLogins && typeof window.relayBridge?.devLoginAs === 'function' && (
           <div style={{ marginTop: 12, borderTop: `1px solid ${themePrimary}22`, paddingTop: 12 }}>
             <div style={{ opacity: 0.5, fontSize: 10, letterSpacing: '0.12em', marginBottom: 8 }}>DEV ACCOUNTS</div>
-            <div style={{ opacity: 0.5, fontSize: 10, marginBottom: 8 }}>Local DEV can skip the relay login. Hosted DEV requires Discord plus the developer role in both servers.</div>
+            <div style={{ opacity: 0.5, fontSize: 10, marginBottom: 8 }}>DEV accounts grant synthetic test access immediately. These controls are unavailable in production.</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {(['user', 'developer', 'moderator', 'admin', 'owner'] as const).map((persona) => (
                 <button key={persona}

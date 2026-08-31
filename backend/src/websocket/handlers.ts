@@ -14,7 +14,7 @@ import { engineEvaluate } from '../services/autoModEngine';
 import { relayToDiscord, editDiscordRelayMessage, invalidateRelayMappingsCache } from '../services/discordService';
 import { persistMessage } from '../services/messageService';
 import { finalizeMessage } from '../services/ingestMessage';
-import { attachCosmeticsToHistory } from '../services/cosmetics/cosmeticsService';
+import { attachCosmetics, attachCosmeticsToHistory } from '../services/cosmetics/cosmeticsService';
 import messageQueue from '../queues/messagePersist';
 import logger from '../config/logger';
 import { incrementMessageCount, setFullscreenStatus, removeFullscreenClient } from '../controllers/healthController';
@@ -819,6 +819,118 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
           break;
         }
 
+        case 'chat:edit': {
+          if (!identity.discordId) {
+            sendWsError(ws, 'No linked game account — cannot edit messages.');
+            return;
+          }
+
+          const messageId = frame.payload?.messageId;
+          const content = frame.payload?.content;
+          const source = frame.payload?.source;
+          const channelId = frame.payload?.channelId;
+          const conversationId = frame.payload?.conversationId;
+
+          if (typeof messageId !== 'string' || !UUID_RE.test(messageId)) {
+            sendWsError(ws, 'Invalid messageId.');
+            break;
+          }
+          if (typeof source !== 'string' || source === 'bot' || source === 'system' || source === 'server') {
+            sendWsError(ws, 'This message cannot be edited.');
+            break;
+          }
+          if (source === 'pm') {
+            if (typeof conversationId !== 'string' || !UUID_RE.test(conversationId)) {
+              sendWsError(ws, 'Invalid conversationId.');
+              break;
+            }
+          } else if (source === 'party') {
+            if (typeof channelId !== 'string' || !UUID_RE.test(channelId)) {
+              sendWsError(ws, 'Invalid partyId.');
+              break;
+            }
+          } else if (typeof channelId !== 'string' || !UUID_RE.test(channelId)) {
+            sendWsError(ws, 'Invalid channelId.');
+            break;
+          }
+
+          let gameUser: any;
+          try {
+            gameUser = await prisma.user.findFirst({
+              where: { discordId: identity.discordId },
+              select: {
+                id: true, username: true, discordUsername: true, discordDisplayName: true,
+                installToken: true, isBanned: true, isMuted: true,
+              },
+            });
+          } catch (err) {
+            logger.error({ err }, 'Admin observer: DB error resolving game user for edit');
+            sendWsError(ws, 'Server error.');
+            return;
+          }
+          if (!gameUser) {
+            sendWsError(ws, 'No game account linked to this Discord user.');
+            return;
+          }
+          if (gameUser.isBanned) {
+            sendWsError(ws, 'Your game account is banned.');
+            return;
+          }
+          if (gameUser.isMuted) {
+            sendWsError(ws, 'You are muted.');
+            return;
+          }
+
+          if (await checkWsRateLimit(gameUser.id)) {
+            ws.send(JSON.stringify({ type: 'rate:status', payload: { remaining: 0, retryAfterMs: 1000 } }));
+            sendWsError(ws, 'Rate limit exceeded. Slow down.');
+            break;
+          }
+
+          try {
+            const edited = await editOwnedMessage({
+              userId: gameUser.id,
+              messageId,
+              content,
+              source,
+              channelId: source === 'pm' ? undefined : channelId,
+              conversationId: source === 'pm' ? conversationId : undefined,
+              user: gameUser,
+            });
+            const payload = { ...edited };
+
+            if (edited.source === 'party' && edited.channelId) {
+              const members = await prisma.partyMember.findMany({
+                where: { partyId: edited.channelId },
+                select: { userId: true },
+              });
+              await broadcastToPartyMembers({ type: 'chat:edit', payload }, members.map(m => m.userId));
+              ws.send(JSON.stringify({ type: 'chat:edit', payload }));
+            } else if (edited.source === 'pm' && edited.recipientId) {
+              await broadcastToUsers({ type: 'chat:edit', payload }, [gameUser.id, edited.recipientId]);
+              ws.send(JSON.stringify({ type: 'chat:edit', payload }));
+            } else {
+              broadcast({ type: 'chat:edit', payload });
+            }
+
+            if (edited.source !== 'party' && edited.source !== 'pm') {
+              editDiscordRelayMessage(edited.messageId, edited.content).catch((err) => {
+                logger.warn({ err, messageId: edited.messageId }, '[chat:edit] admin observer Discord mirror failed (non-fatal)');
+              });
+            }
+
+            ws.send(JSON.stringify({ type: 'message:edit:ack', payload }));
+          } catch (err: any) {
+            if (err instanceof MessageEditError) {
+              sendWsError(ws, err.message);
+            } else {
+              logger.warn({ err, userId: gameUser.id, messageId, source }, '[chat:edit] admin observer failed');
+              sendWsError(ws, 'Could not edit message.');
+            }
+          }
+          break;
+        }
+
         case 'chat:send': {
           if (!identity.discordId) {
             sendWsError(ws, 'No linked game account — cannot send messages.');
@@ -961,18 +1073,20 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
               } else if (cmdResult.actionType === 'relay') {
                 const relayId = uuidv4();
                 const relayTs = new Date().toISOString();
+                const adminRelayPayload: Record<string, unknown> = {
+                  id: relayId,
+                  content: cmdResult.relayContent,
+                  username: displayName,
+                  userId: gameUser.id,
+                  channelId: cmdResult.targetChannelId,
+                  source: 'web',
+                  timestamp: relayTs,
+                  ...(cmdResult.responseColor != null ? { responseColor: cmdResult.responseColor } : {}),
+                };
+                await attachCosmetics(adminRelayPayload);
                 broadcast({
                   type: 'chat:message',
-                  payload: {
-                    id: relayId,
-                    content: cmdResult.relayContent,
-                    username: displayName,
-                    userId: gameUser.id,
-                    channelId: cmdResult.targetChannelId,
-                    source: 'web',
-                    timestamp: relayTs,
-                    ...(cmdResult.responseColor != null ? { responseColor: cmdResult.responseColor } : {}),
-                  },
+                  payload: adminRelayPayload,
                 });
                 const { parentId: adminRelayParent } = await getChannelInfo(cmdResult.targetChannelId);
                 messageQueue.add({
@@ -1023,17 +1137,19 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
           const messageId = uuidv4();
           const createdAt = new Date().toISOString();
 
+          const adminMessagePayload: Record<string, unknown> = {
+            id: messageId,
+            content: content.trim(),
+            username: displayName,
+            userId: gameUser.id,
+            channelId,
+            source: 'web',
+            timestamp: createdAt,
+          };
+          await attachCosmetics(adminMessagePayload);
           broadcast({
             type: 'chat:message',
-            payload: {
-              id: messageId,
-              content: content.trim(),
-              username: displayName,
-              userId: gameUser.id,
-              channelId,
-              source: 'web',
-              timestamp: createdAt,
-            },
+            payload: adminMessagePayload,
           });
 
           incrementMessageCount();
@@ -2206,8 +2322,8 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
           rateRemaining = Math.max(0, 2 - count);
         } catch { /* non-fatal */ }
 
-        // Shared broadcast + write-behind persist + Discord relay (same path the
-        // HUD ingestMessage uses — keeps the wire/persist/relay format in one place).
+        // Shared durable persist + broadcast + Discord relay (same path the HUD
+        // ingestMessage uses — keeps the wire/persist/relay format in one place).
         // WS-specific extras (avatarUrl, metadata, @mentions, source 'game') are
         // passed through so the WS payload is unchanged.
         const { messageId } = await finalizeMessage({
