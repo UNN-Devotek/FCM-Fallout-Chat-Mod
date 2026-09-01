@@ -97,6 +97,7 @@ docs/CODE-SIGNING.md
 .playwright-mcp/
 measure.js
 *.png
+!game-mods/FCMBridge/hudmodloader-chat/assets/supporter-star-*.png
 _arcwright-output/
 
 # Script working dirs

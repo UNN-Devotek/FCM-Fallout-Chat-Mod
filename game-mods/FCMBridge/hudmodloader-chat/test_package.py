@@ -32,8 +32,8 @@ def main() -> None:
     widget_artifact = (ROOT / "FCMChatWidget.ba2").read_bytes()
     widget_version = version_match.group(1).encode("ascii")
     assert widget_version in widget_artifact, "FCMChatWidget.ba2 embeds the current VERSION"
-    assert b"hydrateOwnEcho" in widget_artifact, (
-        "FCMChatWidget.ba2 must contain authoritative self-echo hydration"
+    assert b"awaiting authoritative live echo" in widget_artifact, (
+        "FCMChatWidget.ba2 must wait for an authoritative self-echo"
     )
     assert b"reconcileDisplayName" not in widget_artifact, (
         "FCMChatWidget.ba2 must not contain the unsafe late-identity reconnect symbol"

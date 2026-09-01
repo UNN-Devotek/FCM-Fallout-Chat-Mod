@@ -6,10 +6,32 @@ import flash.events.TimerEvent;
 import flash.utils.Timer;
 import flash.text.TextField;
 import flash.text.TextFormat;
-import flash.geom.ColorTransform;
 import flash.net.URLLoader;
 import flash.net.URLRequest;
 import flash.events.IOErrorEvent;
+import SupporterStarBitmap.SupporterStarBitmapEdabab;
+import SupporterStarBitmap.SupporterStarBitmapEaea9a;
+import SupporterStarBitmap.SupporterStarBitmapB8cf81;
+import SupporterStarBitmap.SupporterStarBitmap8cdb57;
+import SupporterStarBitmap.SupporterStarBitmapAbedb5;
+import SupporterStarBitmap.SupporterStarBitmap7ec8ae;
+import SupporterStarBitmap.SupporterStarBitmap57dbdb;
+import SupporterStarBitmap.SupporterStarBitmapAbbfed;
+import SupporterStarBitmap.SupporterStarBitmap868dcb;
+import SupporterStarBitmap.SupporterStarBitmapEba2eb;
+import SupporterStarBitmap.SupporterStarBitmapDf68c7;
+import SupporterStarBitmap.SupporterStarBitmapC87e98;
+import SupporterStarBitmap.SupporterStarBitmapFe8b8b;
+import SupporterStarBitmap.SupporterStarBitmapFd5f1c;
+import SupporterStarBitmap.SupporterStarBitmapF8fe8b;
+import SupporterStarBitmap.SupporterStarBitmapC4fd1c;
+import SupporterStarBitmap.SupporterStarBitmap70f835;
+import SupporterStarBitmap.SupporterStarBitmap81fe87;
+import SupporterStarBitmap.SupporterStarBitmap1cfdae;
+import SupporterStarBitmap.SupporterStarBitmap58fdfd;
+import SupporterStarBitmap.SupporterStarBitmap7ea8f7;
+import SupporterStarBitmap.SupporterStarBitmapFd1cfd;
+import SupporterStarBitmap.SupporterStarBitmapFd4da6;
 
 private typedef ChatRecord = {
     var color:String;
@@ -136,7 +158,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.21"; // embedded Scaleform supporter-star renderer
+    static inline var VERSION:String  = "2.10.22"; // catalog-coloured Scaleform supporter-star renderer
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -607,33 +629,52 @@ class FCMChatWidget extends MovieClip {
             + px + '" height="' + px + '" vspace="-2"></font> ';
     }
 
+    /** Select the embedded BitmapData variant for a validated catalog colour. */
+    function starBitmapForColor(color:Int, size:Int):BitmapData {
+        switch (color) {
+            case 0xEDABAB: return new SupporterStarBitmapEdabab(size, size);
+            case 0xEAEA9A: return new SupporterStarBitmapEaea9a(size, size);
+            case 0xB8CF81: return new SupporterStarBitmapB8cf81(size, size);
+            case 0x8CDB57: return new SupporterStarBitmap8cdb57(size, size);
+            case 0xABEDB5: return new SupporterStarBitmapAbedb5(size, size);
+            case 0x7EC8AE: return new SupporterStarBitmap7ec8ae(size, size);
+            case 0x57DBDB: return new SupporterStarBitmap57dbdb(size, size);
+            case 0xABBFED: return new SupporterStarBitmapAbbfed(size, size);
+            case 0x868DCB: return new SupporterStarBitmap868dcb(size, size);
+            case 0xEBA2EB: return new SupporterStarBitmapEba2eb(size, size);
+            case 0xDF68C7: return new SupporterStarBitmapDf68c7(size, size);
+            case 0xC87E98: return new SupporterStarBitmapC87e98(size, size);
+            case 0xFE8B8B: return new SupporterStarBitmapFe8b8b(size, size);
+            case 0xFD5F1C: return new SupporterStarBitmapFd5f1c(size, size);
+            case 0xF8FE8B: return new SupporterStarBitmapF8fe8b(size, size);
+            case 0xC4FD1C: return new SupporterStarBitmapC4fd1c(size, size);
+            case 0x70F835: return new SupporterStarBitmap70f835(size, size);
+            case 0x81FE87: return new SupporterStarBitmap81fe87(size, size);
+            case 0x1CFDAE: return new SupporterStarBitmap1cfdae(size, size);
+            case 0x58FDFD: return new SupporterStarBitmap58fdfd(size, size);
+            case 0x7EA8F7: return new SupporterStarBitmap7ea8f7(size, size);
+            case 0xFD1CFD: return new SupporterStarBitmapFd1cfd(size, size);
+            case 0xFD4DA6: return new SupporterStarBitmapFd4da6(size, size);
+            default: return new SupporterStarBitmap(size, size);
+        }
+    }
+
     /**
      * Return an embedded, linkage-backed star image for TextFieldEx.
      *
      * The image must be embedded in the SWF: Fallout 76's GFx build rejects
-     * runtime-only BitmapData in setImageSubstitutions. Recolour the embedded
-     * white source while retaining its alpha channel for the user's validated
-     * catalog colour.
+     * runtime-only BitmapData in setImageSubstitutions and rejects
+     * BitmapData.colorTransform. Every accepted catalog colour therefore has
+     * its own pre-rendered embedded source; unknown values fail closed to the
+     * immutable white star rather than attempting a runtime pixel operation.
      */
     function createStarBitmap(color:Int, size:Int):BitmapData {
         var px:Int = FcmConfig.clampInt(size, 8, 47);
-        // BitmapData rejects zero dimensions in the HUD runtime.  Use the
-        // same positive dimensions as the rendered token, then apply the
-        // requested supporter colour below.
         var bitmap:BitmapData;
         try {
-            bitmap = new SupporterStarBitmap(px, px);
+            bitmap = starBitmapForColor(color, px);
         } catch (e:Dynamic) {
             zfeLog("warn", "render", "starImages=unavailable stage=bitmap-constructor");
-            throw e;
-        }
-        var red:Int = (color >> 16) & 0xFF;
-        var green:Int = (color >> 8) & 0xFF;
-        var blue:Int = color & 0xFF;
-        try {
-            bitmap.colorTransform(bitmap.rect, new ColorTransform(0, 0, 0, 1, red, green, blue, 0));
-        } catch (e:Dynamic) {
-            zfeLog("warn", "render", "starImages=unavailable stage=bitmap-color-transform");
             throw e;
         }
         return bitmap;
@@ -1911,7 +1952,11 @@ class FCMChatWidget extends MovieClip {
                 zfeLog("info", "send", "sent ch=" + slug + " len=" + raw.length);
                 // A successful send proves this identity is LINKED — clear the link gate.
                 if (_needsLink) { clearLinkGate("successful send"); }
-                // Optimistic local echo on CONFIRMED send (only when we know our id).
+                // Register the confirmed send for authoritative live-echo reconciliation
+                // (only when we know our id). ZFE strips the additive fields and targetUserId
+                // carrier from this native RPC response, so an optimistic row here would be
+                // visibly untagged until the subscriber echo arrived. The live event is the
+                // first reliable source for the sender's resolved cosmetics.
                 if (_relayUserId.length > 0) {
                     var messageId:String = extractJsonString(rs, "messageId");
                     var ackTag:String = extractJsonString(rs, "tag");
@@ -1935,21 +1980,11 @@ class FCMChatWidget extends MovieClip {
                         ? echoIdKey(messageId)
                         : echoSbKey(_relayUserId, slug, raw);
                     _pendingEchoes.push({ key: dedupKey, ts: flash.Lib.getTimer() });
-                    // Render immediately on the active channel. Message timestamps are
-                    // intentionally omitted from the HUD; the relay's UTC values were not
-                    // useful in the game UI and optimistic echoes do not have server time yet.
-                    if (slug == CHAN_SLUGS[_chanIdx]) {
-                        _records.push({
-                            color: hx(_cfg.senderColor), channel: slug, user: _displayName,
-                            tag: ackTag, supporterStar: ackSupporterStar, starColor: ackStarColor, body: raw,
-                            messageId: messageId, senderUserId: _relayUserId,
-                        });
-                        while (_records.length > _cfg.maxMessages) _records.shift();
-                        renderRecords();
-                        zfeLog("info", "echo", "pushed+rendered ch=" + slug + " records=" + _records.length);
-                    } else {
-                        zfeLog("warn", "echo", "NOT rendered: slug=" + slug + " active=" + CHAN_SLUGS[_chanIdx]);
-                    }
+                    // Do not paint a second-class local row when the native ACK has no
+                    // authoritative cosmetics. The subscriber event below is rendered as
+                    // the canonical row, preserving tag/star data for new messages.
+                    zfeLog("info", "echo", "awaiting authoritative live echo ch=" + slug
+                        + " ackCosmetics=" + ((ackTag.length > 0 || ackSupporterStar) ? "y" : "n"));
                 }
             } else {
                 // Surface the relay error code to the user.
@@ -2372,6 +2407,9 @@ class FCMChatWidget extends MovieClip {
         var parsedCount:Int = 0;   // diagnostic: events seen this poll (logged below)
         var wireStarCount:Int = 0;
         var wireStarColorCount:Int = 0;
+        var wireTagCount:Int = 0;
+        var wireTransportCount:Int = 0;
+        var ownEchoMatchedCount:Int = 0;
         var i:Int = evStart;
         while (i < rs.length) {
             var objStart:Int = rs.indexOf('{', i);
@@ -2401,6 +2439,9 @@ class FCMChatWidget extends MovieClip {
             var transportStarColor:String = FcmConfig.hudTransportStarColor(hudTransport);
             if (transportTag.length > 0) tag = transportTag;
             if (transportStarColor.length > 0) starColor = transportStarColor;
+            if (tag.length > 0) wireTagCount++;
+            if (hudTransport.length > 0 && StringTools.startsWith(
+                    hudTransport, FcmConfig.HUD_COSMETICS_TRANSPORT_PREFIX)) wireTransportCount++;
             var supporterStar:Bool  = FcmConfig.supporterStarPresent(
                 extractJsonBool(obj, "supporterStar")
                     || FcmConfig.hudTransportHasStar(hudTransport), starColor);
@@ -2432,16 +2473,14 @@ class FCMChatWidget extends MovieClip {
                 continue;
             }
 
-            // Replace our optimistic self-row with the authoritative relay event before
+            // Reconcile a pending self-send with the authoritative relay event before
             // deduping it. The relay is the source of truth for supporterStar, starColor,
-            // and tag; discarding this event would leave the sender's own HUD row permanently
-            // unadorned because the optimistic row deliberately starts with safe defaults.
+            // and tag. If the native ACK was stripped and no optimistic row exists, fall
+            // through so this canonical event is stored and rendered normally.
             if (isOwnEcho(messageId, senderUserId, channel, body)) {
-                if (hydrateOwnEcho(messageId, senderUserId, channel, body, displayName,
-                        tag, supporterStar, starColor)) {
-                    newRecords = true;
-                }
-                continue;
+                ownEchoMatchedCount++;
+                // There was no optimistic row because the native ACK did not preserve
+                // cosmetics. Fall through and store this authoritative event normally.
             }
 
             // Store ALL known channels (renderRecords filters to the active tab).
@@ -2463,7 +2502,9 @@ class FCMChatWidget extends MovieClip {
 
         if (parsedCount > 0) zfeLog("info", "recv", "events=" + parsedCount + " cursor=" + _cursor
             + " newRecords=" + (newRecords ? "y" : "n")
-            + " wireStars=" + wireStarCount + " wireStarColors=" + wireStarColorCount);
+            + " wireStars=" + wireStarCount + " wireStarColors=" + wireStarColorCount
+            + " wireTags=" + wireTagCount + " wireTransport=" + wireTransportCount
+            + " ownEchoMatched=" + ownEchoMatchedCount);
         if (newRecords) {
             if (_autoHideOn && _hidden) show();   // auto-hide: pop back up on a new message
             renderRecords();
@@ -2535,9 +2576,9 @@ class FCMChatWidget extends MovieClip {
     }
 
     /**
-     * Returns true if an incoming chat.message is our own optimistic echo
-     * (already rendered locally or awaiting the local row hydration). Consumes
-     * the matched _pendingEchoes entry.
+     * Returns true if an incoming chat.message is our own pending self-send.
+     * Consumes the matched _pendingEchoes entry so the canonical live event is
+     * stored exactly once.
      */
     function isOwnEcho(messageId:String, senderUserId:String, channel:String, body:String):Bool {
         // Strong signal: the relay told us our own id and it's coming back.
@@ -2555,37 +2596,6 @@ class FCMChatWidget extends MovieClip {
                 _pendingEchoes.splice(k, 1);
                 return true;
             }
-        }
-        return false;
-    }
-
-    /**
-     * Apply server-resolved identity cosmetics to the optimistic local row.
-     *
-     * The successful send response gives the optimistic row its messageId. The relay echo
-     * carries the canonical sender metadata, including the supporter marker, so matching by
-     * messageId is preferred. The sender/channel/body fallback covers older relay responses that
-     * acknowledge a send without returning a messageId.
-     */
-    function hydrateOwnEcho(messageId:String, senderUserId:String, channel:String, body:String,
-            displayName:String, tag:String, supporterStar:Bool, starColor:String):Bool {
-        for (rec in _records) {
-            var idMatch:Bool = messageId != null && messageId.length > 0
-                && rec.messageId == messageId;
-            var fallbackMatch:Bool = rec.senderUserId == senderUserId
-                && rec.channel == channel && rec.body == body;
-            if (!idMatch && !fallbackMatch) continue;
-
-            if (displayName != null && displayName.length > 0) rec.user = displayName;
-            // A later native echo may still be schema-normalized and omit the
-            // cosmetics. Do not erase an already-authoritative optimistic marker.
-            if (tag.length > 0 || rec.tag.length == 0) rec.tag = tag;
-            // A successful send ACK is already an authoritative entitlement
-            // result. A legacy/malformed echo must not erase that marker before
-            // the next history refresh can supply the same validated fields.
-            if (supporterStar || !rec.supporterStar) rec.supporterStar = supporterStar;
-            if (starColor.length > 0 || !rec.supporterStar) rec.starColor = starColor;
-            return true;
         }
         return false;
     }

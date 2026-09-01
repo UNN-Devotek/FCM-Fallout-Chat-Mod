@@ -106,16 +106,17 @@ the same capability decision. `tag` and `starColor` are already validated by the
 service, and `supporterStar` is derived only from an active Supporter or Overseer entitlement.
 The HUD renders a fixed embedded five-point star image and never trusts a glyph from the wire. The desktop/web
 `nameColor` and effect fields remain outside this HUD extension. A self-authored in-game message
-is initially shown optimistically, then hydrated from its authoritative decorated relay echo
-before deduplication; it therefore receives the same fields as Discord-originated and other
-in-game messages.
+is rendered from its authoritative decorated relay echo before it is admitted to the feed; this is
+intentional because ZFE strips cosmetic fields from native send acknowledgements. It therefore
+receives the same fields as Discord-originated and other in-game messages without a transient
+untagged self-row.
 
 Successful static and server `chat.v1.sendMessage` responses also include the same
 HUD-safe `tag`, `supporterStar`, and `starColor` fields when present. For v2.10.16+
 widgets, those fields are also mirrored in an `FCMHUD/1;...` envelope carried by the
-known `targetUserId` member because ZFE may strip newer JSON members from native RPC
-responses. The widget uses the response for its immediate optimistic self-row, so a
-supporter sending from the HUD is marked before the asynchronous subscriber echo arrives.
+known `targetUserId` member. ZFE currently strips that carrier from native RPC responses, so the
+widget records the confirmed send and waits for the asynchronous subscriber echo; the authoritative
+event is then rendered exactly once with the supporter cosmetics.
 The shared finalizer passes the server-resolved supporter tier to the outbound Discord
 relay, which renders the immutable `★` beside the author; Discord cannot reproduce the
 web/HUD star colour in ordinary message text.

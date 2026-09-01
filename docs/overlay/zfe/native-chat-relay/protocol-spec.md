@@ -318,7 +318,7 @@ Response:
 
 The additive cosmetic fields appear only when the authenticated sender has the
 corresponding server-resolved identity cosmetics. The HUD uses them to decorate its
-immediate optimistic self-row; the same resolved supporter identity is also passed to
+authoritative live self-row; the same resolved supporter identity is also passed to
 the Discord relay, where the immutable `★` is rendered beside the author. For widget
 v2.10.16+, `targetUserId` carries the same validated `FCMHUD/1;...` cosmetic envelope
 used by live events, because ZFE may strip newer JSON members from native RPC responses.

@@ -364,9 +364,8 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.21";' in widget_src
-          and "function hydrateOwnEcho" in widget_src,
-          "FCMChatWidget bumps the HUD supporter marker/embedded image build to version 2.10.21")
+    check('static inline var VERSION:String  = "2.10.22";' in widget_src,
+          "FCMChatWidget bumps the HUD supporter marker/embedded image build to version 2.10.22")
     check('FcmConfig.hudTransportHasStar(hudTransport)' in widget_src
           and 'FcmConfig.hudTransportStarColor(hudTransport)' in widget_src,
           "FCMChatWidget decodes native-known HUD cosmetics transport")
@@ -382,7 +381,7 @@ if widget_src:
           and 'public function new(width:Int = 128, height:Int = 128)' in open(
               os.path.join(os.path.dirname(WIDGET_HX), 'SupporterStarBitmap.hx'),
               encoding='utf-8').read()
-          and 'new SupporterStarBitmap(px, px)' in widget_src
+          and 'new SupporterStarBitmap(size, size)' in widget_src
           and 'new SupporterStarBitmap(0, 0)' not in widget_src
           and 'src="SupporterStarBitmap"' in widget_src
           and 'setImageSubstitutions' in widget_src
@@ -393,18 +392,19 @@ if widget_src:
     check('FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor)' in widget_src
           and 'size="\' + fs + \'"' in widget_src,
           "FCMChatWidget uses a validated star colour with shared line metrics")
-    check('hydrateOwnEcho(messageId, senderUserId, channel, body, displayName,' in widget_src
-          and 'rec.supporterStar = supporterStar;' in widget_src
-          and 'rec.starColor = starColor;' in widget_src,
-          "FCMChatWidget hydrates optimistic self-rows from authoritative cosmetics")
+    check('function isOwnEcho' in widget_src
+          and 'ownEchoMatched=' in widget_src,
+          "FCMChatWidget reconciles self-sends against authoritative live events")
     check('var ackSupporterStar:Bool = FcmConfig.supporterStarPresent(' in widget_src
           and 'FcmConfig.hudTransportHasStar(ackHudTransport)' in widget_src
           and 'FcmConfig.hudTransportStarColor(ackHudTransport)' in widget_src
-          and 'tag: ackTag, supporterStar: ackSupporterStar, starColor: ackStarColor' in widget_src,
-          "FCMChatWidget decorates optimistic self-rows from the send acknowledgement")
-    check('stage=bitmap-constructor' in widget_src
-          and 'stage=bitmap-color-transform' in widget_src,
-          "FCMChatWidget distinguishes bitmap constructor and colour-transform failures")
+          and 'awaiting authoritative live echo' in widget_src
+          and 'ackCosmetics=' in widget_src,
+          "FCMChatWidget waits for authoritative live cosmetics after a stripped send acknowledgement")
+    check('function starBitmapForColor' in widget_src
+          and 'new SupporterStarBitmapFd4da6(size, size)' in widget_src
+          and 'bitmap.colorTransform' not in widget_src,
+          "FCMChatWidget selects pre-coloured embedded stars without runtime pixel transforms")
     fallout_name_match = re.search(
         r"function readFalloutDisplayName\([^)]*\):String \{(.*?)\n    \}\n\n    function hasResolvedDisplayName",
         widget_src,

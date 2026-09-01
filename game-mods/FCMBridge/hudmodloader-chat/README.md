@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-09-01):** v2.10.21 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-09-01):** v2.10.22 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -19,20 +19,20 @@ A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's H
   HUD data arrives.
 - Lets the player send messages. Press the configured open key (default: `INSERT`) to open the
   chat input, type a message, and press Enter to send (`chat.v1.sendMessage`, slug-based channels).
-- Echos the player's own message immediately as a dim pending record; the authoritative send
-  acknowledgement decorates that row with the supporter marker before the server round-trip
-  echo reconciles it (dedup'd by `messageId`).
+- Sends the player's own message and renders the authoritative live relay event once it arrives;
+  this avoids showing an untagged row because ZFE strips cosmetics from native send acknowledgements.
 - Supports a scrolling read-back mode: while the user scrolls up, a "N new messages below"
   indicator appears and auto-scroll is suppressed.
 - Renders the server-resolved Overseer tag and embedded supporter marker in the HUD when the relay
   negotiates widget capability. The marker is always the immutable `★`; only its validated
-  catalog color varies. An author's own optimistic row is decorated from the authoritative
-  send acknowledgement and then reconciled with the relay event, so self-authored messages
-  receive the same marker and tag as Discord and other in-game messages. ZFE strips unknown
-  event members before the SWF receives them, so v2.10.21 decodes validated cosmetics from the
-  `FCMHUD/1;...` envelope in the known empty `targetUserId` slot. Older widget builds receive
-  no envelope. The marker is an embedded inline Scaleform image rather than a font glyph, because the
-  HUDModLoader font aliases do not provide U+2605.
+  catalog color varies. Self-authored messages use the same authoritative live event as Discord
+  and other in-game messages, so the tag and marker are not lost to the native send ACK boundary.
+  ZFE strips unknown event members before the SWF receives them, so v2.10.22 decodes validated
+  cosmetics from the `FCMHUD/1;...` envelope in the known empty `targetUserId` slot. Older widget
+  builds receive no envelope. The marker is an embedded inline Scaleform image rather than a font
+  glyph, because the HUDModLoader font aliases do not provide U+2605. Since Fallout 76's GFx
+  rejects `BitmapData.colorTransform`, the BA2 embeds one pre-coloured star source per catalog
+  colour and selects the matching source without runtime pixel operations.
 - Handles the unlinked-account (limited) state: receive-only with a pinned link-code notice.
 - Gives linked moderators an in-HUD command surface for delete, kick, mute, unmute, ban, and unban.
   Staff can enter an exact visible player name (quote multi-word names) or use the `[#XXXXXXXX]`
