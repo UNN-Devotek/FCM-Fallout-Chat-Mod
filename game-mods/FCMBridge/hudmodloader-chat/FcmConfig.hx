@@ -228,6 +228,74 @@ class FcmConfig {
         return "";
     }
 
+    /**
+     * Read a JSON boolean from both normal JSON and the unquoted object form
+     * returned by some native ZFE bridges. Numeric/string truthy forms are
+     * accepted only for native compatibility; arbitrary values remain false.
+     */
+    public static function extractJsonBool(json:String, key:String):Bool {
+        if (json == null || key == null || key.length == 0) return false;
+
+        var quotedNeedle:String = '"' + key + '"';
+        var idx:Int = json.indexOf(quotedNeedle);
+        while (idx >= 0) {
+            if (isJsonMemberStart(json, idx)) {
+                var after:Int = skipJsonWhitespace(json, idx + quotedNeedle.length);
+                if (after < json.length && json.charAt(after) == ":") {
+                    var valueStart:Int = skipJsonWhitespace(json, after + 1);
+                    var quotedValue:Null<String> = scanJsonString(json, valueStart);
+                    if (quotedValue != null) return parseJsonBool(quotedValue);
+                    return parseJsonBoolToken(json, valueStart);
+                }
+            }
+            idx = json.indexOf(quotedNeedle, idx + 1);
+        }
+
+        // Native object stringification may omit JSON quotes. Require a clean
+        // key boundary so a chat body containing the key is not a match.
+        idx = json.indexOf(key);
+        while (idx >= 0) {
+            var beforeOk:Bool = isJsonMemberStart(json, idx);
+            var afterKey:Int = idx + key.length;
+            var afterOk:Bool = afterKey >= json.length || !isJsonKeyChar(json.charCodeAt(afterKey));
+            if (beforeOk && afterOk) {
+                afterKey = skipJsonWhitespace(json, afterKey);
+                if (afterKey < json.length && json.charAt(afterKey) == ":") {
+                    return parseJsonBoolToken(json, skipJsonWhitespace(json, afterKey + 1));
+                }
+            }
+            idx = json.indexOf(key, idx + 1);
+        }
+        return false;
+    }
+
+    static function isJsonMemberStart(json:String, idx:Int):Bool {
+        var before:Int = idx - 1;
+        while (before >= 0) {
+            var c:String = json.charAt(before);
+            if (c != " " && c != "\t" && c != "\r" && c != "\n") break;
+            before--;
+        }
+        return before < 0 || json.charAt(before) == "{" || json.charAt(before) == ",";
+    }
+
+    static function parseJsonBool(value:String):Bool {
+        if (value == null) return false;
+        var token:String = StringTools.trim(value).toLowerCase();
+        return token == "true" || token == "1" || token == "yes" || token == "on";
+    }
+
+    static function parseJsonBoolToken(json:String, start:Int):Bool {
+        if (start >= json.length) return false;
+        var end:Int = start;
+        while (end < json.length) {
+            var c:String = json.charAt(end);
+            if ((c < "a" || c > "z") && (c < "A" || c > "Z") && (c < "0" || c > "9")) break;
+            end++;
+        }
+        return parseJsonBool(json.substring(start, end));
+    }
+
     static function skipJsonWhitespace(json:String, start:Int):Int {
         var i:Int = start;
         while (i < json.length) {

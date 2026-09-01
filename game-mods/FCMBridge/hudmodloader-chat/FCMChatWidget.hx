@@ -135,7 +135,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.14"; // vector/image HUD supporter star renderer
+    static inline var VERSION:String  = "2.10.15"; // robust native JSON supporter-star parsing
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -1891,6 +1891,10 @@ class FCMChatWidget extends MovieClip {
                     var ackStarColor:String = extractJsonString(rs, "starColor");
                     var ackSupporterStar:Bool = FcmConfig.supporterStarPresent(
                         extractJsonBool(rs, "supporterStar"), ackStarColor);
+                    zfeLog("info", "cosmetics", "sendAck len=" + rs.length
+                        + " tag=" + (ackTag.length > 0 ? "y" : "n")
+                        + " star=" + (ackSupporterStar ? "y" : "n")
+                        + " color=" + (ackStarColor.length > 0 ? "y" : "n"));
                     var dedupKey:String = (messageId.length > 0)
                         ? echoIdKey(messageId)
                         : echoSbKey(_relayUserId, slug, raw);
@@ -2330,6 +2334,8 @@ class FCMChatWidget extends MovieClip {
 
         var newRecords:Bool = false;
         var parsedCount:Int = 0;   // diagnostic: events seen this poll (logged below)
+        var wireStarCount:Int = 0;
+        var wireStarColorCount:Int = 0;
         var i:Int = evStart;
         while (i < rs.length) {
             var objStart:Int = rs.indexOf('{', i);
@@ -2352,6 +2358,8 @@ class FCMChatWidget extends MovieClip {
             var starColor:String    = extractJsonString(obj, "starColor");
             var supporterStar:Bool  = FcmConfig.supporterStarPresent(
                 extractJsonBool(obj, "supporterStar"), starColor);
+            if (supporterStar) wireStarCount++;
+            if (starColor.length > 0) wireStarColorCount++;
             var body:String         = extractJsonString(obj, "body");
             var messageId:String    = extractJsonString(obj, "messageId");
             var evId:Int            = extractJsonInt(obj, "id");
@@ -2407,7 +2415,9 @@ class FCMChatWidget extends MovieClip {
             newRecords = true;
         }
 
-        if (parsedCount > 0) zfeLog("info", "recv", "events=" + parsedCount + " cursor=" + _cursor + " newRecords=" + (newRecords ? "y" : "n"));
+        if (parsedCount > 0) zfeLog("info", "recv", "events=" + parsedCount + " cursor=" + _cursor
+            + " newRecords=" + (newRecords ? "y" : "n")
+            + " wireStars=" + wireStarCount + " wireStarColors=" + wireStarColorCount);
         if (newRecords) {
             if (_autoHideOn && _hidden) show();   // auto-hide: pop back up on a new message
             renderRecords();
@@ -2522,8 +2532,11 @@ class FCMChatWidget extends MovieClip {
 
             if (displayName != null && displayName.length > 0) rec.user = displayName;
             rec.tag = tag;
-            rec.supporterStar = supporterStar;
-            rec.starColor = starColor;
+            // A successful send ACK is already an authoritative entitlement
+            // result. A legacy/malformed echo must not erase that marker before
+            // the next history refresh can supply the same validated fields.
+            if (supporterStar || !rec.supporterStar) rec.supporterStar = supporterStar;
+            if (starColor.length > 0 || !rec.supporterStar) rec.starColor = starColor;
             return true;
         }
         return false;
@@ -3384,23 +3397,7 @@ class FCMChatWidget extends MovieClip {
 
     /** Read a compact or whitespace-formatted JSON boolean without a parser dependency. */
     static function extractJsonBool(json:String, key:String):Bool {
-        if (json == null) return false;
-        var needle:String = '"' + key + '"';
-        var idx:Int = json.indexOf(needle);
-        if (idx < 0) {
-            needle = key;
-            idx = json.indexOf(needle);
-            if (idx < 0) return false;
-        }
-        var colon:Int = json.indexOf(":", idx + needle.length);
-        if (colon < 0) return false;
-        var start:Int = colon + 1;
-        while (start < json.length) {
-            var c:String = json.charAt(start);
-            if (c != " " && c != "\t" && c != "\r" && c != "\n") break;
-            start++;
-        }
-        return json.substr(start, 4).toLowerCase() == "true";
+        return FcmConfig.extractJsonBool(json, key);
     }
 
     /**

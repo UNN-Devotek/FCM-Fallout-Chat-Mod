@@ -84,7 +84,7 @@ normal database channel.
 
 ## HUD identity cosmetic extension
 
-Widget v2.10.14 understands three optional, additive FCM fields on `chat.message`
+Widget v2.10.15 understands three optional, additive FCM fields on `chat.message`
 events, including subscribe-time history:
 
 ```json

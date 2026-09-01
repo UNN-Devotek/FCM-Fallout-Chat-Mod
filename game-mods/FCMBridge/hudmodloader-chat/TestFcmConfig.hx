@@ -46,6 +46,13 @@ class TestFcmConfig {
         eqs("json string whitespace", FcmConfig.extractJsonString('{ "tag" : \"X\" }', "tag"), "X");
         eqs("json string newline whitespace", FcmConfig.extractJsonString('{\n tag\t:\n \"X\"\n}', "tag"), "X");
         eqs("json string escaped quote", FcmConfig.extractJsonString('{"tag":"a\\\"b"}', "tag"), "a\\\"b");
+        eqb("json bool compact", FcmConfig.extractJsonBool('{"supporterStar":true}', "supporterStar"), true);
+        eqb("json bool whitespace", FcmConfig.extractJsonBool('{ "supporterStar" : true }', "supporterStar"), true);
+        eqb("json bool unquoted native", FcmConfig.extractJsonBool('{supporterStar: true}', "supporterStar"), true);
+        eqb("json bool numeric native", FcmConfig.extractJsonBool('{supporterStar: 1}', "supporterStar"), true);
+        eqb("json bool false", FcmConfig.extractJsonBool('{"supporterStar":false}', "supporterStar"), false);
+        eqb("json bool body key is ignored", FcmConfig.extractJsonBool('{"body":"supporterStar: true"}', "supporterStar"), false);
+        eqb("json bool quoted body key is ignored", FcmConfig.extractJsonBool('{"body":"\\"supporterStar\\":true"}', "supporterStar"), false);
 
         // ── clampInt / clampFloat ──
         eqi("clampInt below", FcmConfig.clampInt(5, 10, 20), 10);
