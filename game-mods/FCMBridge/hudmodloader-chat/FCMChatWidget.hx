@@ -136,7 +136,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.20"; // embedded Scaleform supporter-star renderer
+    static inline var VERSION:String  = "2.10.21"; // embedded Scaleform supporter-star renderer
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -615,16 +615,27 @@ class FCMChatWidget extends MovieClip {
      * white source while retaining its alpha channel for the user's validated
      * catalog colour.
      */
-    static function createStarBitmap(color:Int, size:Int):BitmapData {
+    function createStarBitmap(color:Int, size:Int):BitmapData {
         var px:Int = FcmConfig.clampInt(size, 8, 47);
         // BitmapData rejects zero dimensions in the HUD runtime.  Use the
         // same positive dimensions as the rendered token, then apply the
         // requested supporter colour below.
-        var bitmap:BitmapData = new SupporterStarBitmap(px, px);
+        var bitmap:BitmapData;
+        try {
+            bitmap = new SupporterStarBitmap(px, px);
+        } catch (e:Dynamic) {
+            zfeLog("warn", "render", "starImages=unavailable stage=bitmap-constructor");
+            throw e;
+        }
         var red:Int = (color >> 16) & 0xFF;
         var green:Int = (color >> 8) & 0xFF;
         var blue:Int = color & 0xFF;
-        bitmap.colorTransform(bitmap.rect, new ColorTransform(0, 0, 0, 1, red, green, blue, 0));
+        try {
+            bitmap.colorTransform(bitmap.rect, new ColorTransform(0, 0, 0, 1, red, green, blue, 0));
+        } catch (e:Dynamic) {
+            zfeLog("warn", "render", "starImages=unavailable stage=bitmap-color-transform");
+            throw e;
+        }
         return bitmap;
     }
 

@@ -282,6 +282,22 @@ async function resolveHudCosmetics(userId: string | null): Promise<RelayHudCosme
   return relayHudCosmetics(source);
 }
 
+/** Log only cosmetic-presence booleans at the native send boundary. */
+function logHudSendAckCosmetics(
+  ack: Record<string, unknown>,
+  cosmetics: RelayHudCosmetics,
+  transportEnabled: boolean,
+): void {
+  logger.info({
+    transportEnabled,
+    hasTag: typeof cosmetics.tag === 'string' && cosmetics.tag.trim().length > 0,
+    hasStar: cosmetics.supporterStar === true,
+    hasStarColor: typeof cosmetics.starColor === 'string' && cosmetics.starColor.length > 0,
+    carrierPresent: typeof ack.targetUserId === 'string'
+      && ack.targetUserId.startsWith('FCMHUD/1;'),
+  }, '[relayHandler] HUD send acknowledgement cosmetics');
+}
+
 // ── Authenticated world/roster control parsing ────────────────────────────────
 
 function validWorldId(value: string): string | null {
@@ -1025,11 +1041,13 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     // the live event. ZFE renders a local optimistic row immediately; returning the
     // authoritative marker here means that row is decorated even if the asynchronous
     // subscriber echo is delayed or consumed by a separate native queue.
-    send(ws, relayHudSendAck(
+    const ack = relayHudSendAck(
       { success: true, messageId: event.messageId },
       hudCosmetics,
       supportsHudCosmeticsTransport,
-    ));
+    );
+    logHudSendAckCosmetics(ack, hudCosmetics, supportsHudCosmeticsTransport);
+    send(ws, ack);
     return;
   }
 
@@ -1083,11 +1101,13 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   const senderCosmetics = await resolveHudCosmetics(identity.linkedUserId);
   // See the server-room acknowledgement above: the HUD can paint its optimistic
   // self-row from this authoritative response without waiting for pub/sub delivery.
-  send(ws, relayHudSendAck(
+  const ack = relayHudSendAck(
     { success: true, messageId: result.messageId },
     senderCosmetics,
     supportsHudCosmeticsTransport,
-  ));
+  );
+  logHudSendAckCosmetics(ack, senderCosmetics, supportsHudCosmeticsTransport);
+  send(ws, ack);
 }
 
 /**

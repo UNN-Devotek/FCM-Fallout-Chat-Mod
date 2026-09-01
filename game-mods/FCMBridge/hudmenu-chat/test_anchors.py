@@ -364,9 +364,9 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.20";' in widget_src
+    check('static inline var VERSION:String  = "2.10.21";' in widget_src
           and "function hydrateOwnEcho" in widget_src,
-          "FCMChatWidget bumps the HUD supporter marker/embedded image build to version 2.10.20")
+          "FCMChatWidget bumps the HUD supporter marker/embedded image build to version 2.10.21")
     check('FcmConfig.hudTransportHasStar(hudTransport)' in widget_src
           and 'FcmConfig.hudTransportStarColor(hudTransport)' in widget_src,
           "FCMChatWidget decodes native-known HUD cosmetics transport")
@@ -402,6 +402,9 @@ if widget_src:
           and 'FcmConfig.hudTransportStarColor(ackHudTransport)' in widget_src
           and 'tag: ackTag, supporterStar: ackSupporterStar, starColor: ackStarColor' in widget_src,
           "FCMChatWidget decorates optimistic self-rows from the send acknowledgement")
+    check('stage=bitmap-constructor' in widget_src
+          and 'stage=bitmap-color-transform' in widget_src,
+          "FCMChatWidget distinguishes bitmap constructor and colour-transform failures")
     fallout_name_match = re.search(
         r"function readFalloutDisplayName\([^)]*\):String \{(.*?)\n    \}\n\n    function hasResolvedDisplayName",
         widget_src,

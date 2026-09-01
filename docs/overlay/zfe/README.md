@@ -4,7 +4,7 @@ ZFE is a `dxgi.dll` proxy for Fallout 76 that exposes `__ZFE` to the Scaleform
 HUD. FCM's optional `FCMChatWidget` HUDModLoader mod uses its sanctioned
 `chat.v1` surface to display chat in game.
 
-> **Current widget (2026-09-01):** `FCMChatWidget` v2.10.20 targets `/relay` through
+> **Current widget (2026-09-01):** `FCMChatWidget` v2.10.21 targets `/relay` through
 > ZFE `chat.v1`. The backend keeps production relay access fail-closed until
 > `RELAY_PRODUCTION_ENABLED=true` is deliberately rolled out. The desktop overlay
 > remains independent of this optional mod path.
@@ -119,7 +119,7 @@ lexicographically, so a string compare would silently lock every updated client 
 `MIN_COSMETICS_VERSION` is **2.10.0**, the first build that reports a version at all —
 the bump IS the capability signal.
 
-### HUD identity cosmetics (widget v2.10.20)
+### HUD identity cosmetics (widget v2.10.21)
 
 The relay now sends these additive fields on every `chat.message` event:
 
@@ -136,7 +136,7 @@ the same supporter marker and tag as every other message author. The shared fina
 the server-resolved supporter tier to Discord, where the same immutable star is shown beside
 the author.
 Static history is decorated with the same current cosmetics as live messages. ZFE's native
-chat bridge strips unknown JSON members before they reach Scaleform, so v2.10.20 also reads a
+chat bridge strips unknown JSON members before they reach Scaleform, so v2.10.21 also reads a
 capability-gated `FCMHUD/1;...` envelope from the existing, known `targetUserId` member. That
 member is an empty transport slot for ordinary channel chat; it is never a real recipient. Older
 BA2 files receive no envelope, while raw relay consumers retain the additive JSON fields. The
