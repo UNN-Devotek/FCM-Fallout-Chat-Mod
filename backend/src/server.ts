@@ -89,6 +89,7 @@ import { triggerWikiIngest, getWikiUpdates } from './controllers/wikiAdminContro
 import { triggerCampIngest, getCampUpdates } from './controllers/campAdminController';
 import { ingestCampDatabase, isCampTableEmpty } from './services/campService';
 import { startCampSyncSchedule } from './jobs/campSyncSchedule';
+import { shouldStartBackgroundJobs } from './utils/runtimeEnvironment';
 import partiesRouter from './routes/parties';
 import giveawaysRouter, { adminCancelGiveaway } from './routes/giveaways';
 import * as giveawayService from './services/giveawayService';
@@ -1957,43 +1958,47 @@ setInterval(() => {
   );
 }, 60 * 60 * 1000);
 
-// Online-snapshot cron — inserts the live WS client count every 5 min so the
-// public stats endpoint can serve an onlineOverTime chart. Purges rows older
-// than 7 days daily at 04:07 UTC.
-startOnlineSnapshotJob();
-startWikiIngestJob();
-startWikiSyncSchedule();
-startCampSyncSchedule();
+if (shouldStartBackgroundJobs(env.NODE_ENV)) {
+  // Online-snapshot cron — inserts the live WS client count every 5 min so the
+  // public stats endpoint can serve an onlineOverTime chart. Purges rows older
+  // than 7 days daily at 04:07 UTC.
+  startOnlineSnapshotJob();
+  startWikiIngestJob();
+  startWikiSyncSchedule();
+  startCampSyncSchedule();
 
-// CAMP database — auto-populate on first boot if the table is empty.
-// A single 7.6 MB JSON fetch; completes in seconds.
-isCampTableEmpty().then(empty => {
-  if (empty) {
-    logger.info('[camp] camp_items table is empty — running initial ingest');
-    ingestCampDatabase().then(({ fetched, upserted }) => {
-      logger.info({ fetched, upserted }, '[camp] initial CAMP ingest complete');
-    }).catch(err => {
-      logger.error({ err }, '[camp] initial CAMP ingest failed');
-    });
-  }
-}).catch(err => {
-  logger.warn({ err }, '[camp] could not check camp_items table — skipping auto-ingest');
-});
+  // CAMP database — auto-populate on first boot if the table is empty.
+  // A single 7.6 MB JSON fetch; completes in seconds.
+  isCampTableEmpty().then(empty => {
+    if (empty) {
+      logger.info('[camp] camp_items table is empty — running initial ingest');
+      ingestCampDatabase().then(({ fetched, upserted }) => {
+        logger.info({ fetched, upserted }, '[camp] initial CAMP ingest complete');
+      }).catch(err => {
+        logger.error({ err }, '[camp] initial CAMP ingest failed');
+      });
+    }
+  }).catch(err => {
+    logger.warn({ err }, '[camp] could not check camp_items table — skipping auto-ingest');
+  });
 
-// Party reap sweep — ephemeral parties with 0 online members are soft-deleted every ~60s.
-// Also GCs persistent parties with 0 members and expires stale invites.
-startPartyReapJob({
-  prisma: prisma as any,
-  getOnlineUserIds: () => {
-    const ids = new Set<string>();
-    for (const id of getConnectedUserIds()) ids.add(id);
-    return ids;
-  },
-  broadcastToPartyMembers,
-});
+  // Party reap sweep — ephemeral parties with 0 online members are soft-deleted every ~60s.
+  // Also GCs persistent parties with 0 members and expires stale invites.
+  startPartyReapJob({
+    prisma: prisma as any,
+    getOnlineUserIds: () => {
+      const ids = new Set<string>();
+      for (const id of getConnectedUserIds()) ids.add(id);
+      return ids;
+    },
+    broadcastToPartyMembers,
+  });
 
-// Giveaway service — restore draw timers for any in-flight giveaways after restart.
-void giveawayService.init({ prisma: prisma as any, broadcast });
+  // Giveaway service — restore draw timers for any in-flight giveaways after restart.
+  void giveawayService.init({ prisma: prisma as any, broadcast });
+} else {
+  logger.info('Background sync, party reap, and giveaway restore jobs disabled for test runtime');
+}
 
 // Moderation sweeps — every 5 min clear expired bans/mutes/kicks. WS guards
 // also auto-expire on access for connected users; this catches offline ones

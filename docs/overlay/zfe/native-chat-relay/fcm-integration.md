@@ -238,6 +238,13 @@ to exposing the production endpoint; building a BA2 does not enable production.
 When enabled, the relay caps frames at 8 KiB, allows at most five concurrent
 connections per client IP, requires a first frame within 10 seconds, and limits
 anonymous registrations to three per IP per minute.
+
+The production deployment must set `RELAY_PRODUCTION_ENABLED=true` in the
+production backend environment before distributing a production-configured HUD
+package. This is an operational rollout setting, not a build-time default. Verify
+the deployed backend health/logs and complete an authenticated production
+`/relay` handshake before announcing the package; if the flag is absent or the
+handshake fails, the HUD must remain undistributed.
 Request/response sockets are closed after 250 ms of inactivity once their response
 has been queued; this grace window preserves sequential frame reuse while ensuring
 ZFE's separate `poll`, `send`, and world-control calls do not accumulate against

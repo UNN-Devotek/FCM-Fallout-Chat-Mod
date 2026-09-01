@@ -3,10 +3,8 @@
 #
 # `prisma db push` is AUTHORITATIVE for the schema (it diffs schema.prisma
 # against the live DB and applies the difference), so it alone guarantees the
-# tables/columns the app needs exist. `migrate deploy` then just records
-# migration history and is best-effort (|| true) — a single failed/legacy
-# migration entry must never block boot, because db push already made the
-# schema correct.
+# tables/columns the app needs exist. A schema-sync failure is fatal: the app
+# must never boot against an unknown or partially-updated schema.
 #
 # NOTE: an earlier version invoked the prisma CLI ~2x per migration
 # (`resolve --rolled-back` then `--applied` for every migration). With ~48
@@ -23,8 +21,13 @@
 # no re-run). Steady state = 0 pending, so it is a no-op on normal boots and
 # never reintroduces the slow loop above. See src/scripts/reconcileMigrations.ts.
 
+set -eu
+
 echo "=== prisma db push (authoritative schema sync) ==="
-npx prisma db push --skip-generate --accept-data-loss 2>&1 | tail -3 || true
+if ! npx prisma db push --skip-generate; then
+  echo "FATAL: prisma db push failed; refusing to boot" >&2
+  exit 1
+fi
 
 echo "=== apply post-push compatibility patches (required) ==="
 node dist/scripts/applyPostPushPatches.js

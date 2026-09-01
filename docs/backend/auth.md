@@ -125,6 +125,13 @@ absent from production regardless of `ENABLE_DEV_LOGIN`. The overlay adds the bu
 only for unpackaged builds targeting a known development relay; packaged production
 builds and the production relay cannot use them.
 
+The local DEV stack accepts loopback requests without another credential so that
+workflow remains immediate. The hosted DEV stack has a required
+`DEV_PERSONA_LOGIN_SECRET`, and therefore every request to it must include
+`X-Dev-Persona-Key`. The unpackaged overlay reads that value from its process
+environment; it is never placed in a URL. Generate it independently for the
+hosted stack and pass it when launching `npm run dev:cloud`.
+
 The older `GET /auth/discord/dev-login` and
 `GET /api/auth/dev-login-status/:installToken` endpoints remain DEV-only for backward
 compatibility with an earlier OAuth-based persona flow. Current DevAccount buttons do

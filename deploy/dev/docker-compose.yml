@@ -222,6 +222,9 @@ services:
       # --- Dev-only admin / session secrets (SR-001: never prod's) ---
       ADMIN_API_KEY: ${ADMIN_API_KEY:?set ADMIN_API_KEY (dev-only, never prod)}
       SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET (dev-only, never prod)}
+      # Shared key required by remote hosted-DEV DevAccount buttons. Generate a
+      # dedicated value in Dokploy; never reuse a production secret.
+      DEV_PERSONA_LOGIN_SECRET: ${DEV_PERSONA_LOGIN_SECRET:?set DEV_PERSONA_LOGIN_SECRET (dev-only, never prod)}
 
       # --- Overlay registration shared key (TOFU client-key path) ---
       # Must match the overlay's baked DEFAULT_APP_CLIENT_KEY (overlay-core.js).

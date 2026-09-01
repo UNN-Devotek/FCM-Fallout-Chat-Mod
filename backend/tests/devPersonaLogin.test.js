@@ -14,6 +14,10 @@ function response() {
   };
 }
 
+function devLoginRequest(body, remoteAddress = '127.0.0.1', headers = {}) {
+  return { body, headers, socket: { remoteAddress } };
+}
+
 function callbackDeps(overrides = {}) {
   return {
     consumeState: async () => ({ installToken: 'install-1', persona: 'developer' }),
@@ -137,7 +141,7 @@ describe('DEV persona direct login', () => {
     const handler = makeDevPersonaLoginAsHandler({ issueSession });
     const res = response();
 
-    await handler({ body: { persona: 'DEVELOPER', installToken: ' install-1 ' } }, res);
+    await handler(devLoginRequest({ persona: 'DEVELOPER', installToken: ' install-1 ' }), res);
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toEqual({
@@ -157,11 +161,11 @@ describe('DEV persona direct login', () => {
     const handler = makeDevPersonaLoginAsHandler({ issueSession });
 
     const missing = response();
-    await handler({ body: { installToken: 'install-1' } }, missing);
+    await handler(devLoginRequest({ installToken: 'install-1' }), missing);
     expect(missing.statusCode).toBe(400);
 
     const unknown = response();
-    await handler({ body: { persona: 'production-admin', installToken: 'install-1' } }, unknown);
+    await handler(devLoginRequest({ persona: 'production-admin', installToken: 'install-1' }), unknown);
     expect(unknown.statusCode).toBe(404);
     expect(issueSession).not.toHaveBeenCalled();
   });
@@ -172,9 +176,40 @@ describe('DEV persona direct login', () => {
     });
     const res = response();
 
-    await handler({ body: { persona: 'user', installToken: 'install-1' } }, res);
+    await handler(devLoginRequest({ persona: 'user', installToken: 'install-1' }), res);
 
     expect(res.statusCode).toBe(500);
     expect(res.body).toEqual({ error: 'Dev login failed' });
+  });
+
+  test('rejects remote callers when the dev persona key is not configured', async () => {
+    const issueSession = jest.fn();
+    const handler = makeDevPersonaLoginAsHandler({ issueSession, personaLoginSecret: '' });
+    const res = response();
+
+    await handler(devLoginRequest(
+      { persona: 'developer', installToken: 'install-1' },
+      '203.0.113.10',
+    ), res);
+
+    expect(res.statusCode).toBe(403);
+    expect(issueSession).not.toHaveBeenCalled();
+  });
+
+  test('accepts a remote hosted-DEV caller only with the configured key', async () => {
+    const issueSession = jest.fn().mockResolvedValue({
+      token: 'session-1', userId: 'user-1', displayName: 'System Developer', role: 'developer',
+    });
+    const handler = makeDevPersonaLoginAsHandler({ issueSession, personaLoginSecret: 'dev-secret' });
+    const res = response();
+
+    await handler(devLoginRequest(
+      { persona: 'developer', installToken: 'install-1' },
+      '203.0.113.10',
+      { 'x-dev-persona-key': 'dev-secret' },
+    ), res);
+
+    expect(res.statusCode).toBe(200);
+    expect(issueSession).toHaveBeenCalledWith('install-1', 'developer');
   });
 });

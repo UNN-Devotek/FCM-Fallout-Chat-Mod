@@ -9,6 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def main() -> None:
     nexus = (ROOT / "Packaging/publish-nexus-release.ps1").read_text(encoding="utf-8")
+    release = (ROOT / "Packaging/release.ps1").read_text(encoding="utf-8")
     nexus_uploader = (ROOT / "Packaging/publish-nexus.ps1").read_text(encoding="utf-8")
     install_page = (ROOT / "admin-dashboard/src/features/auth/LandingPage.tsx").read_text(
         encoding="utf-8"
@@ -41,6 +42,16 @@ def main() -> None:
     )
     for marker in required_nexus_markers:
         assert marker in nexus, f"Nexus release path is missing: {marker}"
+
+    for marker in (
+        "[switch]$SkipWindowsNexus",
+        "PublishWindowsForReview",
+        "-PublishWindowsForReview",
+        "-SkipWindowsNexus",
+    ):
+        assert marker in release, f"canonical release path is missing: {marker}"
+
+    assert release.index("Nexus publish") < release.index("Register release")
 
     for marker in (
         "[bool]  $ArchiveExisting   = $false",

@@ -121,7 +121,7 @@ golden-build version lock; see [hosted-dev-environment.md](../deployment/hosted-
 | `GET` | `/auth/discord/qa/start` | none | Initiates Discord OAuth for QA testers; redirects to Discord |
 | `GET` | `/auth/discord/qa/callback` | none (state CSRF) | OAuth callback; verifies `DEV_QA_ROLE_ID`, stores a one-time session grant in Redis |
 | `GET` | `/api/auth/qa-status/:installToken` | none | Polled by the QA overlay; enforces the golden-build lock (checks `x-client-version` header; returns 426 on mismatch); returns the session grant once and deletes it |
-| `POST` | `/api/dev/login-as` | none, DEV-only | Issues an immediate synthetic persona session for an unpackaged local or hosted DEV overlay (`{ persona, installToken }`) |
+| `POST` | `/api/dev/login-as` | loopback or `X-Dev-Persona-Key`, DEV-only | Issues an immediate synthetic persona session for an unpackaged local or hosted DEV overlay (`{ persona, installToken }`) |
 | `GET` | `/auth/discord/dev-login` | none (state CSRF + dual developer-role gate) | Legacy hosted DEV OAuth for a selected synthetic persona; not used by the overlay DevAccount buttons |
 | `GET` | `/api/auth/dev-login-status/:installToken` | none | Legacy polling endpoint for the hosted OAuth persona flow |
 | `POST` | `/api/admin/qa/active-version` | `x-admin-api-key` | Sets the active QA build version (`QA_ACTIVE_VERSION` in Redis) |

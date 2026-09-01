@@ -1,6 +1,6 @@
 # M6: HUD Chat Auth System — Design Document
 
-**Status:** **Implemented** (2026-06-24, worktree `chatv1-auth`). Core auth gate, provider linking, device-code flow, /link page, and deny-list are in the working tree awaiting integration review. The §9 Open Decisions are resolved (OD-3/OD-6) or carried as recommendations.  
+**Status:** **Implemented** (2026-06-24, worktree `chatv1-auth`). Core auth gate, provider linking, device-code flow, /link page, and deny-list are in the working tree awaiting integration review. The §9 Open Decisions are resolved (OD-3/OD-6) or carried as recommendations.
 **Milestone:** M6 (production-exposure gate)  
 **Author:** Design session 2026-06-11  
 **Depends on:** existing Discord OAuth flow; ZFE `chat.v1` relay (epic #282); multi-provider identity (epic #163)

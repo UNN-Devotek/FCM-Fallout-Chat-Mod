@@ -736,6 +736,9 @@ const BUILD_CHANNEL = (() => {
 })();
 const { relayHttp: RELAY_HTTP, relayWs: RELAY_WS } = overlayCore.resolveRelayUrls(process.env, BUILD_CHANNEL);
 const RELAY_HOST = new URL(RELAY_HTTP).host;
+// Optional shared key for remote hosted-DEV DevAccount requests. Keep this out
+// of URLs and omit the header entirely for local development / production.
+const DEV_PERSONA_LOGIN_SECRET = process.env.DEV_PERSONA_LOGIN_SECRET || '';
 
 // Stable, identifiable User-Agent for every outbound request from the main
 // process. Cloudflare WAF can allowlist on this string. The Electron version is
@@ -2225,6 +2228,7 @@ ipcMain.handle('overlay:dev-login-as', async (_evt, persona) => {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
           'Origin': RELAY_HTTP,
+          ...(DEV_PERSONA_LOGIN_SECRET ? { 'X-Dev-Persona-Key': DEV_PERSONA_LOGIN_SECRET } : {}),
         },
       },
       (res) => {

@@ -215,14 +215,18 @@ risk to the live community:
   outcome is a wrecked disposable server, never the production community.
 - `ENABLE_DEV_LOGIN=false` remains set on the **hosted** `backend-dev` for the
   browser-only developer shortcuts. The overlay's `POST /api/dev/login-as` route
-  is separately gated by `NODE_ENV=development`, so it is available on the
-  isolated hosted DEV stack but never mounts in production. These synthetic
+  is separately gated by `NODE_ENV=development` and a dedicated
+  `DEV_PERSONA_LOGIN_SECRET` for remote callers, so it is available on the
+  isolated hosted DEV stack but never mounts in production. Loopback local-dev
+  requests do not need the key; hosted requests must send it. These synthetic
   accounts are intentionally limited to the fake hosted DEV database and are not
   a substitute for normal developer access to protected tooling.
 
 The unpackaged Electron overlay can still be run against hosted DEV with
 `npm run dev:cloud` from `cross-platform-overlay/`. Its **DEV ACCOUNTS** persona
-controls immediately issue synthetic sessions and do not open Discord. The
+controls immediately issue synthetic sessions and do not open Discord. Set the
+same `DEV_PERSONA_LOGIN_SECRET` in the shell that launches the overlay so the
+remote request is authorized. The
 controls are shown only by an unpackaged overlay targeting localhost or
 `dev.falloutchatmod.com`; the packaged production overlay does not contain this
 login path. Normal hosted dashboard access remains governed by the dual-role gate.

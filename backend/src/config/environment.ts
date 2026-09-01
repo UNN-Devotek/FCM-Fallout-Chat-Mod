@@ -61,6 +61,9 @@ export interface Environment {
   // simulation routes. Overlay persona login is separately NODE_ENV-gated.
   // Only honored when NODE_ENV === 'development'; never in production.
   ENABLE_DEV_LOGIN: boolean;
+  // Optional shared key for remote hosted-DEV DevAccount requests. Loopback
+  // local-dev requests do not need it; remote requests fail closed when unset.
+  DEV_PERSONA_LOGIN_SECRET: string;
   // Explicit opt-in to expose /api/mcp/sim/* routes. Must be 'true' AND
   // NODE_ENV must not be 'production'. Default off — both conditions required.
   ENABLE_SIM_ROUTES: boolean;
@@ -265,6 +268,7 @@ const env: Environment = {
   DEV_SUPPORTER_ROLE: process.env.DEV_SUPPORTER_ROLE || 'supporter',
   DEV_DEVELOPER_ROLE: process.env.DEV_DEVELOPER_ROLE || 'developer',
   ENABLE_DEV_LOGIN: process.env.ENABLE_DEV_LOGIN === 'true',
+  DEV_PERSONA_LOGIN_SECRET: process.env.DEV_PERSONA_LOGIN_SECRET || '',
   ENABLE_SIM_ROUTES: process.env.ENABLE_SIM_ROUTES === 'true',
   WIKI_SYNC_INTERVAL_HOURS: parseFloat(process.env.WIKI_SYNC_INTERVAL_HOURS || '0'),
   CAMP_SYNC_INTERVAL_HOURS: parseFloat(process.env.CAMP_SYNC_INTERVAL_HOURS || '0'),

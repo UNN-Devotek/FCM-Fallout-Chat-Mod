@@ -5,6 +5,8 @@ import prisma from '../config/prisma';
 import { getRedisClient } from '../config/redis';
 import { checkDeveloperAccess, makeDevSideDeps } from '../services/devAuthService';
 import { devPersonaDiscordId, devPersonaUsername } from '../utils/devPersonaDiscordId';
+import { clientIp } from '../utils/clientIp';
+import { constantTimeEquals } from '../utils/constantTimeEquals';
 
 const STATE_TTL_SECONDS = 5 * 60;
 const GRANT_TTL_SECONDS = 10 * 60;
@@ -50,6 +52,8 @@ export interface DevPersonaStatusDeps {
 
 export interface DevPersonaLoginAsDeps {
   issueSession(installToken: string, persona: string): Promise<DevPersonaGrant>;
+  /** Override for tests; production uses the configured environment secret. */
+  personaLoginSecret?: string;
 }
 
 export interface DevPersonaCompletionDeps {
@@ -60,6 +64,24 @@ export interface DevPersonaCompletionDeps {
 }
 
 export const DEV_PRIVILEGED_ROLES = ['owner', 'admin', 'moderator', 'supporter', 'developer'];
+
+function isLoopbackAddress(address: string): boolean {
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+}
+
+/**
+ * Direct persona login is intentionally convenient on a developer machine,
+ * but the hosted DEV relay is internet-reachable. Keep the local shortcut and
+ * require a separate, dev-only shared key for every remote caller.
+ */
+export function isDevPersonaLoginAuthorized(req: Request, secret = env.DEV_PERSONA_LOGIN_SECRET): boolean {
+  const supplied = String(req.headers['x-dev-persona-key'] || '').trim();
+  // Once the hosted stack has a key configured, require it for every caller.
+  // This prevents a misconfigured proxy from making all tunnel connections
+  // appear loopback-local and bypassing the remote gate.
+  if (secret) return supplied.length > 0 && constantTimeEquals(supplied, secret);
+  return isLoopbackAddress(clientIp(req));
+}
 
 export function getDevPersona(persona: string): DevPersona | null {
   const personas: Record<string, DevPersona> = {
@@ -202,6 +224,10 @@ export function makeDevPersonaLoginAsHandler(
   deps: DevPersonaLoginAsDeps = { issueSession: issueDevPersonaSession },
 ): RequestHandler {
   return async (req: Request, res: Response): Promise<void> => {
+    if (!isDevPersonaLoginAuthorized(req, deps.personaLoginSecret)) {
+      res.status(403).json({ error: 'Dev persona login is restricted to local development or an authorized hosted-DEV client' });
+      return;
+    }
     const persona = String(req.body?.persona || '').trim().toLowerCase();
     const installToken = String(req.body?.installToken || '').trim();
     if (!persona || !installToken) {

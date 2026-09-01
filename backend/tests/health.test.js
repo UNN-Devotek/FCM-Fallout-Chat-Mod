@@ -32,6 +32,13 @@ jest.mock('../src/config/redis', () => ({
   healthCheck: jest.fn().mockResolvedValue(true),
 }));
 
+jest.mock('../src/config/prisma', () => ({
+  __esModule: true,
+  default: {
+    release: { findFirst: jest.fn().mockResolvedValue(null) },
+  },
+}));
+
 jest.mock('../src/services/discordService', () => ({
   start: jest.fn().mockResolvedValue(undefined),
   setBroadcast: jest.fn(),

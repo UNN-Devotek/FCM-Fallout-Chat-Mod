@@ -19,6 +19,12 @@ describe('overlay DevAccount login', () => {
     expect(handlerSource).not.toContain('/auth/discord/dev-login');
   });
 
+  it('passes the optional hosted-DEV persona key without putting it in the URL', () => {
+    expect(handlerSource).toContain('DEV_PERSONA_LOGIN_SECRET');
+    expect(handlerSource).toContain('X-Dev-Persona-Key');
+    expect(handlerSource).not.toContain('DEV_PERSONA_LOGIN_SECRET`');
+  });
+
   it('fails closed for packaged builds and unknown relays', () => {
     expect(handlerSource).toContain("if (app.isPackaged) return { ok: false, error: 'Not in dev mode' }");
     expect(handlerSource).toContain('Persona login is only available on the local or hosted DEV relay');

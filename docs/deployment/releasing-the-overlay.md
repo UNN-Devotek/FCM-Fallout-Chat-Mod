@@ -71,14 +71,16 @@ fix(overlay): a range of reliability and quality fixes across chat connections, 
 
 ## Release Pipeline (in order)
 
-**FAIL-CLOSED ORDER:** build -> **smoke-test (gate)** -> **VirusTotal (gate, must pass)** -> build ZIPs -> upload artifacts -> verify served sizes -> `POST /admin/releases` -> Nexus. If a gate fails, STOP — publish nothing.
+**FAIL-CLOSED ORDER:** build -> **smoke-test (gate)** -> **VirusTotal (gate, must pass)** -> build ZIPs -> upload artifacts -> verify served sizes -> Nexus -> `POST /admin/releases`. Nexus runs before release registration so a missing or failed Nexus upload cannot advertise a release in the client feed. These external operations are still not one transaction: if registration fails after Nexus succeeds, retry registration for the same version rather than uploading a second Nexus file.
 
 **Preferred: use the orchestrator** -- `Packaging/release.ps1` enforces the full sequence automatically and cannot skip gates:
 
 ```powershell
-.\Packaging\release.ps1 -Version X.Y.Z [-ReleaseNotes "..."] [-SkipBuild] [-DryRun]
+.\Packaging\release.ps1 -Version X.Y.Z [-ReleaseNotes "..."] [-SkipBuild] [-DryRun] [-SkipWindowsNexus]
 # -SkipBuild: reuse existing dist-electron artifacts (Linux AppImage must already be present)
 # -DryRun: runs smoke-test + VT gates for real; prints what would run for steps 4-7 without uploading
+# -SkipWindowsNexus: omit the Windows support-review upload; Linux/.deb/HUD still publish
+# Default: upload the new Windows ZIP with -PublishWindowsForReview and preserve the old Nexus file.
 ```
 
 Manual step-by-step (if running gates individually):
@@ -111,9 +113,8 @@ OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows
 | `FCM_SSH_TARGET` | upload (step 5) | `user@host` of the prod VPS |
 | `FCM_SSH_KEY` | upload (step 5) | path to the SSH private key. On Linux the key must live at a real path with `chmod 600` (a key on `/mnt/*` DrvFs has perms `ssh` rejects — copy it to `~/.ssh/<key>`) |
 | `FCM_BACKEND_CONTAINER` | upload (step 5) | Dokploy backend container, e.g. `chat-mod-fallout-chat-mod-<id>-backend-1` |
-| `NEXUS_API_KEY`, `NEXUS_FILE_GROUP_ID_LINUX`, `NEXUS_FILE_GROUP_ID_LINUX_DEB` | step 7 (Nexus) | optional; required for the normal Linux/deb Nexus publish (the **primary** release in steps 1-6 is already live by then) |
-| `NEXUS_FILE_GROUP_ID_WINDOWS` | step 7 (Nexus) | only needed for the explicit `-PublishWindowsForReview` path |
-| `NEXUS_FILE_GROUP_ID_HUD` | step 7 (Nexus) | required for the optional HUD file upload; step 7 fail-closed-aborts if unset |
+| `NEXUS_API_KEY`, `NEXUS_FILE_GROUP_ID_LINUX`, `NEXUS_FILE_GROUP_ID_LINUX_DEB`, `NEXUS_FILE_GROUP_ID_HUD` | step 6 (Nexus) | required before the canonical publish path starts |
+| `NEXUS_FILE_GROUP_ID_WINDOWS` | step 6 (Nexus) | required by default for the Windows support-review upload; omit only with `-SkipWindowsNexus` |
 
 ### Step 1 — Build raw artifacts
 
@@ -149,14 +150,14 @@ OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows
 >
 > Each build is **artifacts only** — it does NOT run the smoke-test / VirusTotal gates or publish.
 > Download the artifacts, then continue with the FAIL-CLOSED gate + publish steps below
-> (`smoke-test.ps1` → `vt-gate.ps1` → upload → verify → `POST /admin/releases` → Nexus). The
+> (`smoke-test.ps1` → `vt-gate.ps1` → upload → verify → Nexus → `POST /admin/releases`). The
 > `publish` input is reserved for a future automated publish step and is currently a no-op.
 
 #### Windows code signing (Azure Trusted Signing)
 
 The Windows installer is **code-signed via Azure Trusted Signing** by `build-windows.yml`. This
 removes the SmartScreen "unknown publisher" warning on the website download. Nexus support review
-of Windows uploads remains a separate step (see Step 7). Signing happens automatically in the
+of Windows uploads remains a separate step (see Step 6). Signing happens automatically in the
 workflow's build step — no manual action per release.
 
 **How it's wired (and why it's in the workflow, not `package.json`):**
@@ -268,7 +269,7 @@ only to `dev.falloutchatmod.com`. Never copy a stamped package between environme
 
 ### Step 3 — VirusTotal + permalink (via publish-nexus-release.ps1)
 
-`Packaging/publish-nexus-release.ps1` (step 7 below) handles this automatically. It can also be run standalone:
+`Packaging/publish-nexus-release.ps1` (step 6 below) handles this automatically. It can also be run standalone:
 - Uploads the raw Windows `.exe` to VirusTotal using the large-file upload URL (files > 32 MB require this)
 - Computes the SHA-256 permalink (`https://www.virustotal.com/gui/file/<sha256>/detection`)
 - POSTs the permalink to `POST /admin/virustotal-url` so `falloutchatmod.com/virustotal` always redirects to the latest scan
@@ -316,7 +317,7 @@ curl -sI "https://falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod%20S
   | grep -i content-length
 ```
 
-### Step 6 — Register the release
+### Step 7 — Register the release
 
 Confirm version and release notes with the user first, then call the admin endpoint. This updates the server's in-memory `latestVersion` cache — newly connecting overlay clients will receive `{ type: 'app:update-available', payload: { latestVersion } }` over the chat WebSocket and show a passive OS notification if the version is newer than their build.
 
@@ -365,15 +366,15 @@ Set `DOWNLOAD_PAGE_URL=https://dev.falloutchatmod.com` so the Dev Discord messag
 the dev install page. The dev announcement is posted to the dev bot's configured
 `DISCORD_UPDATES_CHANNEL_ID`; production uses its own configured channel.
 
-### Step 7 — Nexus publish
+### Step 6 — Nexus publish
 
 ```powershell
 .\Packaging\publish-nexus-release.ps1 -Version X.Y.Z [-ReleaseNotes "..."]
 ```
 
-Nexus may quarantine Windows `.exe` uploads, so Windows publication is an explicit support-review
-workflow rather than part of the ordinary release path. To upload a new Windows ZIP alongside the
-existing live Windows file for support review, use:
+Nexus may quarantine Windows `.exe` uploads. The canonical `release.ps1` path
+passes `-PublishWindowsForReview` by default and uploads a new Windows ZIP
+alongside the existing live Windows file for support review:
 
 ```powershell
 .\Packaging\publish-nexus-release.ps1 -Version X.Y.Z -PublishWindowsForReview
@@ -381,17 +382,19 @@ existing live Windows file for support review, use:
 
 The review path passes `archive_existing_file: false`, so both Windows files remain available.
 After support approves the new file, remove the old Windows file manually in the Nexus Files tab.
-The normal release command does not upload Windows to Nexus.
+Use `-SkipWindowsNexus` on `release.ps1` only when the Windows support-review
+upload is intentionally deferred. The standalone wrapper still requires the
+explicit `-PublishWindowsForReview` switch.
 
 This script:
 1. Calls `Packaging/publish-nexus.ps1` for the Linux AppImage ZIP and Linux `.deb` ZIP as `main`, and the production `ZFE FCM HUD Mod` ZIP as `optional`; these normal replacement paths archive their previous files
-2. Optionally calls `publish-nexus.ps1` for the Windows ZIP as `main` when one of the explicit Windows switches is supplied
+2. Calls `publish-nexus.ps1` for the Windows ZIP as `main` with `archive_existing_file: false` when the canonical release path enables the support-review upload
 3. Implements the 6-step Nexus v3 Upload API: open multipart session → upload chunks to S3 → complete S3 multipart → finalise → poll for `available` state → attach the new file with the requested archive behavior
 4. Uploads the Windows `.exe` to VirusTotal and pushes the permalink to `/admin/virustotal-url`
 
 Required env vars (set as Windows USER env vars):
 - `NEXUS_API_KEY`
-- `NEXUS_FILE_GROUP_ID_WINDOWS` — required only for `-PublishWindowsForReview`
+- `NEXUS_FILE_GROUP_ID_WINDOWS` — required by the canonical release path unless `-SkipWindowsNexus` is used; required by the standalone wrapper only with `-PublishWindowsForReview`
 - `NEXUS_FILE_GROUP_ID_LINUX`
 - `NEXUS_FILE_GROUP_ID_LINUX_DEB` — the separate Linux `.deb` file group
 - `NEXUS_FILE_GROUP_ID_HUD` — the separate optional HUD file group on the same Nexus mod page

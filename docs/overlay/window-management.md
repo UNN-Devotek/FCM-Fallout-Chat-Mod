@@ -257,7 +257,7 @@ This signal now also drives **overlay visibility**, not just hotkeys. `nextGameF
 - **tool present:** Sets `foregroundDetect = true` and records `fgTool`. `_runForegroundPoll()` spawns the tool every 300ms. The printed WM_CLASS is lowercased into `lastForegroundProc`, and `applyZOrder()` / `applyFocusClickThrough()` / `refreshShortcuts()` (and the focus-gated visibility reducer) are called on each change, mirroring the win32 PowerShell path. Empty output on a clean exit is a valid "not the game" signal (kdotool: genuinely no active window; xdotool: no active *X* window, see the caveat above).
 - **neither tool present:** Logs a single diagnostic and leaves `foregroundDetect = false`. `refreshShortcuts()` falls back to `gameRunning` as the gate for hotkey registration (the pre-existing behavior — no regression).
 
-**Crash circuit-breaker (issue #272):**  
+**Crash circuit-breaker (issue #272):**
 On some distros (confirmed **Fedora 44**, xdotool 3.x) the chained `getactivewindow getwindowclassname` aborts **inside libxdo** — a double-free in `xdo_get_window_classname` → `XFree` → `SIGABRT` — whenever the active window's WM_CLASS can't be read cleanly (routine under XWayland when a native-Wayland window is focused). Because the overlay re-spawns the tool every 300ms, this produces a **coredump storm** (≈3/sec, plus a burst during shutdown). Our JS error-handling can't prevent the per-spawn coredump, so the breaker stops re-spawning into the crash:
 
 - The `close` handler distinguishes a **crash** (terminated by a signal) from a normal **non-zero exit** (no active X window — *not* a crash). Only signal deaths count.

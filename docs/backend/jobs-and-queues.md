@@ -32,6 +32,16 @@ Two rules make the tracker actually work, and both are enforced:
 
 ---
 
+## Test runtime isolation
+
+When `NODE_ENV=test`, `server.ts` does not start the online snapshot, wiki
+ingest/sync, CAMP sync/initial ingest, party reap, or giveaway restore jobs.
+Those jobs can call external services or schedule database work and must not
+run merely because a test imports the application. Development and production
+startup retain the normal jobs.
+
+---
+
 ## Scheduled Jobs (node-cron / setInterval)
 
 ### 1. Message + Audit Log Purge (node-cron)

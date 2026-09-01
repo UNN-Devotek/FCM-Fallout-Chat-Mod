@@ -8,12 +8,12 @@
 reconciliation on every container startup:
 
 ```sh
-npx prisma db push --skip-generate --accept-data-loss   # authoritative schema sync
+npx prisma db push --skip-generate                    # authoritative schema sync; failure stops boot
 node dist/scripts/applyPostPushPatches.js              # raw constraints + safe data defaults
 node dist/scripts/reconcileMigrations.js                # record pending migrations as applied (non-fatal)
 ```
 
-`prisma db push` is the authoritative step — it diffs `schema.prisma` against the live DB and applies the difference directly, so the schema is already correct before the second step runs.
+`prisma db push` is the authoritative step — it diffs `schema.prisma` against the live DB and applies the difference directly, so the schema is already correct before the second step runs. `baseline-migrations.sh` uses `set -eu` and refuses to start the backend when this command fails. It deliberately does **not** pass `--accept-data-loss`; destructive schema drift must be reviewed and applied explicitly rather than silently accepted during a production boot.
 
 Some compatibility changes are not represented by Prisma's schema diff: raw `CHECK` constraints
 and data-only repairs. After `db push`, `baseline-migrations.sh` runs
@@ -97,7 +97,7 @@ CREATE TABLE "admin_users" ( ... );
 CREATE UNIQUE INDEX "admin_users_discord_id_key" ON "admin_users"("discord_id");
 ```
 
-The older Prisma-generated migrations (before this rule was established) omit `IF NOT EXISTS`. They work because `prisma db push` already applied the schema; `migrate deploy` skips them with `|| true`. **All new migrations must use the idempotent patterns** to avoid log noise and to be safe for manual `migrate deploy` runs.
+The older Prisma-generated migrations (before this rule was established) omit `IF NOT EXISTS`. They work because `prisma db push` already applied the schema; the history reconciliation step records them without replaying their SQL. **All new migrations must use the idempotent patterns** to avoid log noise and to be safe for manual `migrate deploy` runs.
 
 ## Generating a New Migration
 
