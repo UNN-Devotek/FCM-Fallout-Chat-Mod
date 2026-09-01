@@ -364,8 +364,8 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.23";' in widget_src,
-          "FCMChatWidget bumps the HUD supporter marker/direct image build to version 2.10.23")
+    check('static inline var VERSION:String  = "2.10.24";' in widget_src,
+          "FCMChatWidget bumps the guarded feed/input + appendHtml build to version 2.10.24")
     check('FcmConfig.hudTransportHasStar(hudTransport)' in widget_src
           and 'FcmConfig.hudTransportStarColor(hudTransport)' in widget_src,
           "FCMChatWidget decodes native-known HUD cosmetics transport")
@@ -404,6 +404,19 @@ if widget_src:
           and 'new SupporterStarBitmapFd4da6(size, size)' in widget_src
           and 'bitmap.colorTransform' not in widget_src,
           "FCMChatWidget selects pre-coloured embedded stars without runtime pixel transforms")
+    check('function renderLogHtml(lines:Array<String>):Bool' in widget_src
+          and 'Reflect.field(ext, "appendHtml")' in widget_src
+          and '_logTf.htmlText = ""' in widget_src,
+          "FCMChatWidget rebuilds the feed through guarded TextFieldEx.appendHtml fragments")
+    check('static inline var LOG_INPUT_GAP:Int' in widget_src
+          and 'var logBottom:Int = h - INPUT_H - LOG_INPUT_GAP;' in widget_src
+          and '_logTf.height = logHeight;' in widget_src
+          and 'var editY:Float = y + _cfg.height - INPUT_H + 4;' in widget_src,
+          "FCMChatWidget keeps the feed clip rectangle above the top-level HUDTools input")
+    check('function snapLogToBottom():Void' in widget_src
+          and '_logTf.setSelection(_logTf.length, _logTf.length)' in widget_src
+          and 'snapLogToBottom();' in widget_src,
+          "FCMChatWidget snaps new messages to the visible area above the input")
     fallout_name_match = re.search(
         r"function readFalloutDisplayName\([^)]*\):String \{(.*?)\n    \}\n\n    function hasResolvedDisplayName",
         widget_src,

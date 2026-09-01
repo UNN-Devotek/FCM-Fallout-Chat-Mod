@@ -158,7 +158,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.23"; // direct embedded Scaleform supporter-star renderer
+    static inline var VERSION:String  = "2.10.24"; // appendHtml star renderer + guarded feed/input geometry
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -200,6 +200,8 @@ class FCMChatWidget extends MovieClip {
     // ── Layout (row heights fixed; user-config deferred to v2 per spec D-04) ───
     // Row order from top: TAB_H (main tab) | SUB_H (channel tabs) | log | INPUT_H
     static inline var INPUT_H:Int           = 28;
+    // Keep the feed's clipped bottom clear of the top-level HUDTools entry field.
+    static inline var LOG_INPUT_GAP:Int     = 8;
     static inline var TAB_H:Int             = 22;
     static inline var SUB_H:Int             = 20;
 
@@ -462,8 +464,12 @@ class FCMChatWidget extends MovieClip {
     function buildPanel():Void {
         var w:Int = _cfg.width;
         var h:Int = _cfg.height;
-        // Log area gets everything except tab rows and input.
-        var logH:Int = h - TAB_H - SUB_H - INPUT_H;
+        // Log area gets everything except tab rows and input. HUDTools renders its
+        // entry field as a top-level object, so leave an explicit safety gap between
+        // the feed's clip rectangle and the input rectangle.
+        var logTop:Int = TAB_H + SUB_H + 4;
+        var logBottom:Int = h - INPUT_H - LOG_INPUT_GAP;
+        var logHeight:Int = logBottom - logTop;
 
         _bg = new Shape();
         var g = _bg.graphics;
@@ -511,12 +517,11 @@ class FCMChatWidget extends MovieClip {
         renderSubTabs();
         addChild(_subTf);
 
-        var logY:Int = TAB_H + SUB_H + 4;
         _logTf = new TextField();
         _logTf.x = 6;
-        _logTf.y = logY;
+        _logTf.y = logTop;
         _logTf.width  = w - 12;
-        _logTf.height = logH - 6;
+        _logTf.height = logHeight;
         _logTf.multiline  = true;
         _logTf.wordWrap   = true;
         _logTf.selectable = false;
@@ -615,6 +620,44 @@ class FCMChatWidget extends MovieClip {
     function setPrompt(html:String):Void {
         if (_promptTf == null) return;
         _promptTf.htmlText = html;
+    }
+
+    /**
+     * Rebuild the feed through Scaleform's proven HTML extension path. GFx's
+     * TextFieldEx parser handles embedded <img> linkages when fragments are
+     * appended; assigning the complete document through htmlText can silently
+     * drop those inline images in Fallout 76's child-SWF runtime.
+     */
+    function renderLogHtml(lines:Array<String>):Bool {
+        if (_logTf == null) return false;
+        try {
+            var ext:Dynamic = null;
+            var getDefinition:Dynamic = untyped __global__["flash.utils.getDefinitionByName"];
+            if (getDefinition != null) {
+                ext = Reflect.callMethod(null, getDefinition, ["scaleform.gfx.TextFieldEx"]);
+            }
+            if (ext == null) return false;
+            var append:Dynamic = Reflect.field(ext, "appendHtml");
+            if (append == null) return false;
+
+            _logTf.htmlText = "";
+            for (i in 0...lines.length) {
+                var fragment:String = lines[i];
+                if (i + 1 < lines.length) fragment += "<br/>";
+                Reflect.callMethod(ext, append, [_logTf, fragment]);
+            }
+            return true;
+        } catch (e:Dynamic) {
+            zfeLog("warn", "render", "appendHtml unavailable; using htmlText fallback");
+            return false;
+        }
+    }
+
+    /** Snap after an append/reflow; both calls are guarded for GFx build variance. */
+    function snapLogToBottom():Void {
+        if (_logTf == null) return;
+        try { _logTf.setSelection(_logTf.length, _logTf.length); } catch (e:Dynamic) {}
+        try { _logTf.scrollV = _logTf.maxScrollV; } catch (e:Dynamic) {}
     }
 
     /** Return the embedded SWF linkage for a validated supporter-star colour. */
@@ -2847,20 +2890,18 @@ class FCMChatWidget extends MovieClip {
                 + '">v ' + _newWhileScrolled + ' new - wheel down or F11 Scroll to newest</font>');
         }
 
-        _logTf.htmlText = html.join("<br/>");
+        if (!renderLogHtml(html)) _logTf.htmlText = html.join("<br/>");
 
         if (!_bScrolling) {
-            // setSelection() does NOT scroll an unfocused/non-editable TextField in GFx
-            // (the old code here never scrolled at all — only unnoticed while the feed fit
-            // the box). Snap via scrollV, then re-snap one tick later: GFx recalculates
-            // maxScrollV only after the new htmlText is laid out.
-            try { _logTf.scrollV = _logTf.maxScrollV; } catch (e:Dynamic) {}
+            // Use the legacy Text Chat end-selection snap and retain the deferred
+            // maxScrollV pass for GFx builds that lay out appendHtml asynchronously.
+            snapLogToBottom();
             if (_scrollSnapTimer != null) { _scrollSnapTimer.stop(); _scrollSnapTimer = null; }
             _scrollSnapTimer = new Timer(30, 1);
             _scrollSnapTimer.addEventListener(TimerEvent.TIMER, function(_) {
                 _scrollSnapTimer = null;
                 if (!_bScrolling && _logTf != null) {
-                    try { _logTf.scrollV = _logTf.maxScrollV; } catch (e:Dynamic) {}
+                    snapLogToBottom();
                 }
             });
             _scrollSnapTimer.start();
@@ -2930,7 +2971,7 @@ class FCMChatWidget extends MovieClip {
 
     public function scrollToBottom():Void {
         if (_logTf == null) return;
-        try { _logTf.setSelection(_logTf.length, _logTf.length); } catch (e:Dynamic) {}
+        snapLogToBottom();
         _bScrolling = false; _newWhileScrolled = 0;
     }
 
