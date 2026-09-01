@@ -1,6 +1,5 @@
 import flash.display.MovieClip;
 import flash.display.Shape;
-import flash.display.BitmapData;
 import flash.events.Event;
 import flash.events.TimerEvent;
 import flash.utils.Timer;
@@ -9,29 +8,6 @@ import flash.text.TextFormat;
 import flash.net.URLLoader;
 import flash.net.URLRequest;
 import flash.events.IOErrorEvent;
-import SupporterStarBitmap.SupporterStarBitmapEdabab;
-import SupporterStarBitmap.SupporterStarBitmapEaea9a;
-import SupporterStarBitmap.SupporterStarBitmapB8cf81;
-import SupporterStarBitmap.SupporterStarBitmap8cdb57;
-import SupporterStarBitmap.SupporterStarBitmapAbedb5;
-import SupporterStarBitmap.SupporterStarBitmap7ec8ae;
-import SupporterStarBitmap.SupporterStarBitmap57dbdb;
-import SupporterStarBitmap.SupporterStarBitmapAbbfed;
-import SupporterStarBitmap.SupporterStarBitmap868dcb;
-import SupporterStarBitmap.SupporterStarBitmapEba2eb;
-import SupporterStarBitmap.SupporterStarBitmapDf68c7;
-import SupporterStarBitmap.SupporterStarBitmapC87e98;
-import SupporterStarBitmap.SupporterStarBitmapFe8b8b;
-import SupporterStarBitmap.SupporterStarBitmapFd5f1c;
-import SupporterStarBitmap.SupporterStarBitmapF8fe8b;
-import SupporterStarBitmap.SupporterStarBitmapC4fd1c;
-import SupporterStarBitmap.SupporterStarBitmap70f835;
-import SupporterStarBitmap.SupporterStarBitmap81fe87;
-import SupporterStarBitmap.SupporterStarBitmap1cfdae;
-import SupporterStarBitmap.SupporterStarBitmap58fdfd;
-import SupporterStarBitmap.SupporterStarBitmap7ea8f7;
-import SupporterStarBitmap.SupporterStarBitmapFd1cfd;
-import SupporterStarBitmap.SupporterStarBitmapFd4da6;
 
 private typedef ChatRecord = {
     var color:String;
@@ -158,7 +134,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.26"; // lower-case inline stars + compact feed + send echo poll
+    static inline var VERSION:String  = "2.10.28"; // tag-only HUD feed + compact spacing
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -204,7 +180,7 @@ class FCMChatWidget extends MovieClip {
     // Row order from top: TAB_H (main tab) | SUB_H (channel tabs) | log | INPUT_H
     static inline var INPUT_H:Int           = 28;
     // Keep the feed's clipped bottom clear of the top-level HUDTools entry field.
-    static inline var LOG_INPUT_GAP:Int     = 8;
+    static inline var LOG_INPUT_GAP:Int     = 4;
     static inline var TAB_H:Int             = 22;
     static inline var SUB_H:Int             = 20;
 
@@ -307,11 +283,6 @@ class FCMChatWidget extends MovieClip {
     var _subTf:TextField;
     var _promptTf:TextField;
     var _fmt:TextFormat;
-    // Keep the embedded BitmapData instances alive after preparing direct HTML
-    // image linkages. The image tags reference the SWF linkages by name; they do
-    // not depend on a text substitution token.
-    var _starBitmaps:Array<BitmapData> = [];
-
     // ── Chat render state ─────────────────────────────────────────────────────
     var _records:Array<ChatRecord> = [];
     var _seenMessageIds:Map<String,Bool> = new Map();
@@ -535,7 +506,10 @@ class FCMChatWidget extends MovieClip {
         _fmt.font    = FONT_BODY;
         _fmt.size    = _cfg.fontSize;
         _fmt.color   = _cfg.textColor;
-        _fmt.leading = 3;
+        // Keep each message on the font's native line box. Direct image HTML
+        // previously forced a 32px image line and exposed this extra leading;
+        // substitution images now share the normal text baseline.
+        _fmt.leading = 0;
         _logTf.defaultTextFormat = _fmt;
         setLogText("connecting...");
         addChild(_logTf);
@@ -626,12 +600,7 @@ class FCMChatWidget extends MovieClip {
         _promptTf.htmlText = html;
     }
 
-    /**
-     * Rebuild the feed through Scaleform's proven HTML extension path. GFx's
-     * TextFieldEx parser handles embedded <img> linkages when fragments are
-     * appended; assigning the complete document through htmlText can silently
-     * drop those inline images in Fallout 76's child-SWF runtime.
-     */
+    /** Rebuild the feed through Scaleform's incremental HTML extension path. */
     function renderLogHtml(lines:Array<String>):Bool {
         if (_logTf == null) return false;
         try {
@@ -662,100 +631,6 @@ class FCMChatWidget extends MovieClip {
         if (_logTf == null) return;
         try { _logTf.setSelection(_logTf.length, _logTf.length); } catch (e:Dynamic) {}
         try { _logTf.scrollV = _logTf.maxScrollV; } catch (e:Dynamic) {}
-    }
-
-    /** Return the embedded SWF linkage for a validated supporter-star colour. */
-    static function starBitmapLinkage(color:Int):String {
-        switch (color) {
-            case 0xEDABAB: return "supporterstarbitmapedabab";
-            case 0xEAEA9A: return "supporterstarbitmapeaea9a";
-            case 0xB8CF81: return "supporterstarbitmapb8cf81";
-            case 0x8CDB57: return "supporterstarbitmap8cdb57";
-            case 0xABEDB5: return "supporterstarbitmapabedb5";
-            case 0x7EC8AE: return "supporterstarbitmap7ec8ae";
-            case 0x57DBDB: return "supporterstarbitmap57dbdb";
-            case 0xABBFED: return "supporterstarbitmapabbfed";
-            case 0x868DCB: return "supporterstarbitmap868dcb";
-            case 0xEBA2EB: return "supporterstarbitmapeba2eb";
-            case 0xDF68C7: return "supporterstarbitmapdf68c7";
-            case 0xC87E98: return "supporterstarbitmapc87e98";
-            case 0xFE8B8B: return "supporterstarbitmapfe8b8b";
-            case 0xFD5F1C: return "supporterstarbitmapfd5f1c";
-            case 0xF8FE8B: return "supporterstarbitmapf8fe8b";
-            case 0xC4FD1C: return "supporterstarbitmapc4fd1c";
-            case 0x70F835: return "supporterstarbitmap70f835";
-            case 0x81FE87: return "supporterstarbitmap81fe87";
-            case 0x1CFDAE: return "supporterstarbitmap1cfdae";
-            case 0x58FDFD: return "supporterstarbitmap58fdfd";
-            case 0x7EA8F7: return "supporterstarbitmap7ea8f7";
-            case 0xFD1CFD: return "supporterstarbitmapfd1cfd";
-            case 0xFD4DA6: return "supporterstarbitmapfd4da6";
-            default: return "supporterstarbitmap";
-        }
-    }
-
-    /**
-     * Render a supporter star as a direct embedded-image HTML tag. This follows
-     * the proven legacy Text Chat path and bypasses the GFx substitution-token
-     * behavior that leaked the substitution token into the feed as literal text.
-     */
-    static function supporterStarHtml(color:Int, size:Int):String {
-        var px:Int = FcmConfig.clampInt(size, 8, 47);
-        // The legacy Text Chat parser resolves BitmapData linkages by their
-        // lower-case export name. Keep the image inline with the surrounding
-        // font run; a nested font tag makes GFx calculate a second line box.
-        return '<img src="' + starBitmapLinkage(color) + '" height="' + px
-            + '" width="' + px + '"> ';
-    }
-
-    /** Select the embedded BitmapData variant for a validated catalog colour. */
-    function starBitmapForColor(color:Int, size:Int):BitmapData {
-        switch (color) {
-            case 0xEDABAB: return new SupporterStarBitmapEdabab(size, size);
-            case 0xEAEA9A: return new SupporterStarBitmapEaea9a(size, size);
-            case 0xB8CF81: return new SupporterStarBitmapB8cf81(size, size);
-            case 0x8CDB57: return new SupporterStarBitmap8cdb57(size, size);
-            case 0xABEDB5: return new SupporterStarBitmapAbedb5(size, size);
-            case 0x7EC8AE: return new SupporterStarBitmap7ec8ae(size, size);
-            case 0x57DBDB: return new SupporterStarBitmap57dbdb(size, size);
-            case 0xABBFED: return new SupporterStarBitmapAbbfed(size, size);
-            case 0x868DCB: return new SupporterStarBitmap868dcb(size, size);
-            case 0xEBA2EB: return new SupporterStarBitmapEba2eb(size, size);
-            case 0xDF68C7: return new SupporterStarBitmapDf68c7(size, size);
-            case 0xC87E98: return new SupporterStarBitmapC87e98(size, size);
-            case 0xFE8B8B: return new SupporterStarBitmapFe8b8b(size, size);
-            case 0xFD5F1C: return new SupporterStarBitmapFd5f1c(size, size);
-            case 0xF8FE8B: return new SupporterStarBitmapF8fe8b(size, size);
-            case 0xC4FD1C: return new SupporterStarBitmapC4fd1c(size, size);
-            case 0x70F835: return new SupporterStarBitmap70f835(size, size);
-            case 0x81FE87: return new SupporterStarBitmap81fe87(size, size);
-            case 0x1CFDAE: return new SupporterStarBitmap1cfdae(size, size);
-            case 0x58FDFD: return new SupporterStarBitmap58fdfd(size, size);
-            case 0x7EA8F7: return new SupporterStarBitmap7ea8f7(size, size);
-            case 0xFD1CFD: return new SupporterStarBitmapFd1cfd(size, size);
-            case 0xFD4DA6: return new SupporterStarBitmapFd4da6(size, size);
-            default: return new SupporterStarBitmap(size, size);
-        }
-    }
-
-    /**
-     * Instantiate the linked source images once per visible colour. This keeps
-     * every @:bitmap linkage in the SWF and validates that the asset can be
-     * constructed by the Fallout GFx runtime before htmlText references it.
-     */
-    function prepareStarImages(colors:Array<Int>, size:Int):Bool {
-        var px:Int = FcmConfig.clampInt(size, 8, 47);
-        var bitmaps:Array<BitmapData> = [];
-        try {
-            for (color in colors) bitmaps.push(starBitmapForColor(color, px));
-            _starBitmaps = bitmaps;
-            zfeLog("info", "render", "starImages=ready count=" + bitmaps.length + " mode=direct-html");
-            return true;
-        } catch (e:Dynamic) {
-            zfeLog("warn", "render", "starImages=unavailable stage=bitmap-constructor");
-            _starBitmaps = [];
-            return false;
-        }
     }
 
     // =========================================================================
@@ -2835,24 +2710,6 @@ class FCMChatWidget extends MovieClip {
         var html:Array<String> = [];
         var fs:Int = _cfg.fontSize;
 
-        // Prepare one embedded image for each distinct visible star color before
-        // assigning htmlText. Stars use direct SWF linkage names; never emit a
-        // private-use substitution token or the U+2605 glyph.
-        var starColors:Array<Int> = [];
-        var starColorKeys:Map<String,Bool> = new Map();
-        var visibleStarCount:Int = 0;
-        for (candidate in _records) {
-            if (candidate.channel != CHAN_SLUGS[_chanIdx] || !candidate.supporterStar) continue;
-            visibleStarCount++;
-            var candidateColor:Int = FcmConfig.supporterStarColor(candidate.starColor, _cfg.tabActiveColor);
-            var candidateKey:String = hx(candidateColor);
-            if (!starColorKeys.exists(candidateKey)) {
-                starColorKeys.set(candidateKey, true);
-                starColors.push(candidateColor);
-            }
-        }
-        var starImagesReady:Bool = prepareStarImages(starColors, fs);
-
         for (rec in _records) {
             // Per-channel view: only render messages for the active tab's channel.
             if (rec.channel != CHAN_SLUGS[_chanIdx]) continue;
@@ -2865,22 +2722,12 @@ class FCMChatWidget extends MovieClip {
             if (_cfg.showChannelTag) {
                 tagHtml = '<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + hx(_cfg.channelColor(rec.channel)) + '">[' + FcmConfig.chanLabel(rec.channel) + ']</font> ';
             }
-            // Identity adornments use the same font face and size as the sender and
-            // body. Scaleform rich text has no reliable CSS vertical-align support;
-            // equal line metrics keep the channel tag, custom tag, star, name, and
-            // message on one visual middle line across GFx builds.
+            // Keep the channel and server-resolved identity tag on the same text
+            // line as the sender name and message body.
             var customTagHtml:String = (rec.tag != null && rec.tag.length > 0)
                 ? '<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + col + '">['
                     + FcmConfig.htmlEscape(rec.tag) + ']</font> '
                 : "";
-            var starColor:Int = FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor);
-            var starHtml:String = "";
-            if (rec.supporterStar) {
-                // The linked image path is deliberately used for every row:
-                // missing game-font glyphs become blocks, and the old
-                // substitution token could leak as literal text.
-                starHtml = supporterStarHtml(starColor, fs);
-            }
             // Staff only: a short, stable reference for the moderation command surface.
             // Never target by display name — names can be changed and are not unique.
             var moderationRefHtml:String = "";
@@ -2896,7 +2743,6 @@ class FCMChatWidget extends MovieClip {
                 + tagHtml
                 + moderationRefHtml
                 + customTagHtml
-                + starHtml
                 + '<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + col + '">' + user + ':</font> '
                 + '<font face="' + FONT_BODY + '" size="' + fs + '" color="' + hx(_cfg.textColor) + '">' + msg + '</font>'
                 + '</font>');
@@ -2904,8 +2750,7 @@ class FCMChatWidget extends MovieClip {
 
         // Authenticated with an empty feed (the unlinked / connecting cases returned above).
         zfeLog("info", "render", "records=" + _records.length + " shown=" + html.length
-            + " stars=" + visibleStarCount + " starImages=" + (starImagesReady ? "ready" : "fallback")
-            + " tab=" + CHAN_SLUGS[_chanIdx]);
+            + " tags=enabled tab=" + CHAN_SLUGS[_chanIdx]);
         if (html.length == 0) {
             setLogText("No messages in " + CHAN_NAMES[_chanIdx] + " yet"); return;
         }

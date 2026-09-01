@@ -32,9 +32,8 @@ class TestFcmConfig {
         eqi("hex short->fallbk", FcmConfig.parseHexColor("#FFF", 0x123456), 0x123456);
         eqi("hex empty->fallbk", FcmConfig.parseHexColor("", 0x111111), 0x111111);
         eqi("hex null->fallbk",  FcmConfig.parseHexColor(null, 0x222222), 0x222222);
-        eqs("supporter star glyph is immutable", FcmConfig.SUPPORTER_STAR_GLYPH, "★");
-        eqi("supporter star colour accepts hex", FcmConfig.supporterStarColor("#58FDFD", 0x123456), 0x58FDFD);
-        eqi("supporter star colour rejects unsafe input", FcmConfig.supporterStarColor("url(evil)", 0x123456), 0x123456);
+        // The HUD intentionally renders tags only. Supporter transport parsing
+        // remains covered because it still gates the server-issued metadata.
         eqb("supporter marker accepts server flag", FcmConfig.supporterStarPresent(true, ""), true);
         eqb("supporter marker accepts validated colour", FcmConfig.supporterStarPresent(false, "#FD4DA6"), true);
         eqb("supporter marker rejects unsafe colour", FcmConfig.supporterStarPresent(false, "url(evil)"), false);

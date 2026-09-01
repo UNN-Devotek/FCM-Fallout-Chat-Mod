@@ -12,8 +12,6 @@
  */
 class FcmConfig {
 
-    /** Immutable supporter marker. The HUD never renders a client-supplied glyph. */
-    public static inline var SUPPORTER_STAR_GLYPH:String = "★";
     /** Native-known chat.v1 field carrier used because ZFE strips additive JSON members. */
     public static inline var HUD_COSMETICS_TRANSPORT_PREFIX:String = "FCMHUD/1;";
     // ── HUD viewport (HUDModLoader fixed 1920x1080 space) ──────────────────────
@@ -156,11 +154,6 @@ class FcmConfig {
         if (!(~/^[0-9a-fA-F]{6}$/.match(t))) return fallback;
         var v:Null<Int> = Std.parseInt("0x" + t);
         return (v == null) ? fallback : v;
-    }
-
-    /** Parse a server-provided cosmetic colour, failing closed to the HUD theme. */
-    public static function supporterStarColor(s:String, fallback:Int):Int {
-        return parseHexColor(s, fallback);
     }
 
     /**

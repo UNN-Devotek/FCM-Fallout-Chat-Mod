@@ -364,34 +364,20 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.26";' in widget_src,
-          "FCMChatWidget bumps the compact lower-case-image + send-echo-poll build to version 2.10.26")
+    check('static inline var VERSION:String  = "2.10.28";' in widget_src,
+          "FCMChatWidget bumps the tag-only + compact-feed build to version 2.10.28")
     check('FcmConfig.hudTransportHasStar(hudTransport)' in widget_src
           and 'FcmConfig.hudTransportStarColor(hudTransport)' in widget_src,
           "FCMChatWidget decodes native-known HUD cosmetics transport")
     check('extractJsonBool(obj, "supporterStar")' in widget_src
-          and 'SUPPORTER_STAR_GLYPH:String = "★"' in open(WIDGET_CONFIG_HX, encoding='utf-8').read()
           and 'supporterStarPresent' in widget_src
-          and 'customTagHtml' in widget_src,
-          "FCMChatWidget renders only the immutable supporter star and validated tag fields")
-    check('starBitmapLinkage' in widget_src
-          and '@:bitmap("assets/supporter-star.png")' in open(
-              os.path.join(os.path.dirname(WIDGET_HX), 'SupporterStarBitmap.hx'),
-              encoding='utf-8').read()
-          and 'public function new(width:Int = 128, height:Int = 128)' in open(
-              os.path.join(os.path.dirname(WIDGET_HX), 'SupporterStarBitmap.hx'),
-              encoding='utf-8').read()
-          and 'new SupporterStarBitmap(size, size)' in widget_src
-          and 'new SupporterStarBitmap(0, 0)' not in widget_src
-          and 'return \'<img src="\' + starBitmapLinkage(color) + \'" height="\' + px' in widget_src
-          and 'supporterstarbitmapfd4da6' in widget_src
-          and 'return "SupporterStarBitmapFd4da6"' not in widget_src
-          and 'FCMSTAR' not in widget_src
+          and 'customTagHtml' in widget_src
+          and 'starHtml' not in widget_src
+          and 'SupporterStarBitmap' not in widget_src
           and 'setImageSubstitutions' not in widget_src,
-          "FCMChatWidget renders supporter stars through lower-case embedded image linkages")
-    check('FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor)' in widget_src
-          and 'size="\' + fs + \'"' in widget_src,
-          "FCMChatWidget uses a validated star colour with shared line metrics")
+          "FCMChatWidget renders validated channel and identity tags without a HUD star")
+    # No supporter-star renderer is part of the HUD build. The package test
+    # additionally asserts that the compiled SWF has no star linkage bytes.
     check('function isOwnEcho' in widget_src
           and 'ownEchoMatched=' in widget_src,
           "FCMChatWidget reconciles self-sends against authoritative live events")
@@ -401,15 +387,11 @@ if widget_src:
           and 'awaiting authoritative live echo' in widget_src
           and 'ackCosmetics=' in widget_src,
           "FCMChatWidget waits for authoritative live cosmetics after a stripped send acknowledgement")
-    check('function starBitmapForColor' in widget_src
-          and 'new SupporterStarBitmapFd4da6(size, size)' in widget_src
-          and 'bitmap.colorTransform' not in widget_src,
-          "FCMChatWidget selects pre-coloured embedded stars without runtime pixel transforms")
     check('function renderLogHtml(lines:Array<String>):Bool' in widget_src
           and 'Reflect.field(ext, "appendHtml")' in widget_src
           and '_logTf.htmlText = ""' in widget_src,
           "FCMChatWidget rebuilds the feed through guarded TextFieldEx.appendHtml fragments")
-    check('static inline var LOG_INPUT_GAP:Int' in widget_src
+    check('static inline var LOG_INPUT_GAP:Int     = 4;' in widget_src
           and 'var logBottom:Int = h - INPUT_H - LOG_INPUT_GAP;' in widget_src
           and '_logTf.height = logHeight;' in widget_src
           and 'var editY:Float = y + _cfg.height - INPUT_H + 4;' in widget_src,
