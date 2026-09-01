@@ -111,12 +111,14 @@ before deduplication; it therefore receives the same fields as Discord-originate
 in-game messages.
 
 Successful static and server `chat.v1.sendMessage` responses also include the same
-HUD-safe `tag`, `supporterStar`, and `starColor` fields when present. The widget uses
-those fields for its immediate optimistic self-row, so a supporter sending from the HUD
-is marked before the asynchronous subscriber echo arrives. The shared finalizer passes
-the server-resolved supporter tier to the outbound Discord relay, which renders the
-immutable `★` beside the author; Discord cannot reproduce the web/HUD star colour in
-ordinary message text.
+HUD-safe `tag`, `supporterStar`, and `starColor` fields when present. For v2.10.16+
+widgets, those fields are also mirrored in an `FCMHUD/1;...` envelope carried by the
+known `targetUserId` member because ZFE may strip newer JSON members from native RPC
+responses. The widget uses the response for its immediate optimistic self-row, so a
+supporter sending from the HUD is marked before the asynchronous subscriber echo arrives.
+The shared finalizer passes the server-resolved supporter tier to the outbound Discord
+relay, which renders the immutable `★` beside the author; Discord cannot reproduce the
+web/HUD star colour in ordinary message text.
 
 Before a valid HUD message is decorated, the relay asks Discord for the linked user's
 current member roles at most once per minute per deployment, coordinated by a Redis

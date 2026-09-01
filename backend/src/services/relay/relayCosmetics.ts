@@ -97,9 +97,32 @@ export function relayHudEventForClient<T extends Record<string, unknown>>(
     : event;
 }
 
+/**
+ * Adapt a send acknowledgement for the native HUD bridge.
+ *
+ * ZFE preserves the established `targetUserId` member but may discard newer
+ * cosmetic members from RPC responses. Keep the additive fields for raw relay
+ * clients and mirror the validated projection through the same carrier used by
+ * live events when the widget negotiated support for it.
+ */
+export function relayHudSendAck<T extends Record<string, unknown>>(
+  ack: T,
+  cosmetics: RelayHudCosmetics,
+  supportsCosmeticTransport: boolean,
+): T {
+  const next = { ...ack, ...cosmetics } as T;
+  if (!supportsCosmeticTransport) return next;
+
+  const transport = relayHudCosmeticTransport(cosmetics);
+  return transport
+    ? ({ ...next, targetUserId: transport } as T)
+    : next;
+}
+
 export default {
   relayHudCosmetics,
   withoutRelayHudCosmetics,
   relayHudCosmeticTransport,
   relayHudEventForClient,
+  relayHudSendAck,
 };

@@ -48,6 +48,7 @@ import { refreshSupporterFromHudSend } from '../supporterSyncService';
 import {
   relayHudCosmetics,
   relayHudEventForClient,
+  relayHudSendAck,
   type RelayHudCosmetics,
 } from './relayCosmetics';
 import { engineEvaluate } from '../autoModEngine';
@@ -973,6 +974,11 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     userId: identity.linkedUserId!,
     discordId: user?.discordId ?? null,
   });
+  // The native bridge preserves targetUserId but can strip newer JSON members
+  // from short-lived RPC responses. Resolve this capability once for the send
+  // acknowledgement and carry the same validated projection through the known
+  // field when the widget understands FCMHUD/1.
+  const supportsHudCosmeticsTransport = await tokenSupportsHudCosmeticsTransportDurable(rawToken);
 
   // Discard targetUserId on all non-whisper sends (frame.targetUserId ignored).
 
@@ -1019,7 +1025,11 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     // the live event. ZFE renders a local optimistic row immediately; returning the
     // authoritative marker here means that row is decorated even if the asynchronous
     // subscriber echo is delayed or consumed by a separate native queue.
-    send(ws, { success: true, messageId: event.messageId, ...hudCosmetics });
+    send(ws, relayHudSendAck(
+      { success: true, messageId: event.messageId },
+      hudCosmetics,
+      supportsHudCosmeticsTransport,
+    ));
     return;
   }
 
@@ -1073,7 +1083,11 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   const senderCosmetics = await resolveHudCosmetics(identity.linkedUserId);
   // See the server-room acknowledgement above: the HUD can paint its optimistic
   // self-row from this authoritative response without waiting for pub/sub delivery.
-  send(ws, { success: true, messageId: result.messageId, ...senderCosmetics });
+  send(ws, relayHudSendAck(
+    { success: true, messageId: result.messageId },
+    senderCosmetics,
+    supportsHudCosmeticsTransport,
+  ));
 }
 
 /**

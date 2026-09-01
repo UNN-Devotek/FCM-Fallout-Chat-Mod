@@ -311,14 +311,18 @@ Response:
   "messageId": "msg_1",
   "tag": "X",
   "supporterStar": true,
-  "starColor": "#FD4DA6"
+  "starColor": "#FD4DA6",
+  "targetUserId": "FCMHUD/1;s=1;c=%23FD4DA6;t=X"
 }
 ```
 
 The additive cosmetic fields appear only when the authenticated sender has the
 corresponding server-resolved identity cosmetics. The HUD uses them to decorate its
 immediate optimistic self-row; the same resolved supporter identity is also passed to
-the Discord relay, where the immutable `★` is rendered beside the author.
+the Discord relay, where the immutable `★` is rendered beside the author. For widget
+v2.10.16+, `targetUserId` carries the same validated `FCMHUD/1;...` cosmetic envelope
+used by live events, because ZFE may strip newer JSON members from native RPC responses.
+For older widgets or senders without cosmetics, the additive fields/carrier are omitted.
 
 ### Poll
 

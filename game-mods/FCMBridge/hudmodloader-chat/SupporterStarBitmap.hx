@@ -8,4 +8,11 @@ import flash.display.BitmapData;
  * is not accepted by the Fallout 76 GFx build.
  */
 @:bitmap("assets/supporter-star.png")
-class SupporterStarBitmap extends BitmapData {}
+class SupporterStarBitmap extends BitmapData {
+    // Match the constructor shape used by the working legacy HUD assets.
+    // Scaleform's GFx BitmapData bridge rejects the generated four-argument
+    // Haxe constructor even when width and height are valid.
+    public function new(width:Int = 128, height:Int = 128) {
+        super(width, height);
+    }
+}

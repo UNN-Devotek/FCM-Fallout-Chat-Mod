@@ -4,6 +4,7 @@ import {
   relayHudCosmetics,
   relayHudCosmeticTransport,
   relayHudEventForClient,
+  relayHudSendAck,
   withoutRelayHudCosmetics,
 } from '../relayCosmetics';
 
@@ -62,5 +63,21 @@ test('native HUD transport is capability-gated per event', () => {
     supporterStar: true,
     starColor: '#FD4DA6',
     badges: ['supporter'],
+  });
+});
+
+test('native HUD transport is carried through send acknowledgements', () => {
+  const cosmetics = { tag: 'X', supporterStar: true as const, starColor: '#FD4DA6' };
+
+  assert.deepEqual(relayHudSendAck({ success: true, messageId: 'm-1' }, cosmetics, true), {
+    success: true,
+    messageId: 'm-1',
+    ...cosmetics,
+    targetUserId: 'FCMHUD/1;s=1;c=%23FD4DA6;t=X',
+  });
+  assert.deepEqual(relayHudSendAck({ success: true, messageId: 'm-1' }, cosmetics, false), {
+    success: true,
+    messageId: 'm-1',
+    ...cosmetics,
   });
 });

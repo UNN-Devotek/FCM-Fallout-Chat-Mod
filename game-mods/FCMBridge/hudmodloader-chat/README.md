@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-09-01):** v2.10.17 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-09-01):** v2.10.20 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -29,7 +29,7 @@ A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's H
   catalog color varies. An author's own optimistic row is decorated from the authoritative
   send acknowledgement and then reconciled with the relay event, so self-authored messages
   receive the same marker and tag as Discord and other in-game messages. ZFE strips unknown
-  event members before the SWF receives them, so v2.10.17 decodes validated cosmetics from the
+  event members before the SWF receives them, so v2.10.20 decodes validated cosmetics from the
   `FCMHUD/1;...` envelope in the known empty `targetUserId` slot. Older widget builds receive
   no envelope. The marker is an embedded inline Scaleform image rather than a font glyph, because the
   HUDModLoader font aliases do not provide U+2605.
