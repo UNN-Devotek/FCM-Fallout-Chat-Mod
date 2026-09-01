@@ -104,7 +104,7 @@ envelope only to v2.10.16+; older widgets receive no envelope. The relay records
 beside a short-lived one-way token digest in Redis so separate connect and subscribe sockets use
 the same capability decision. `tag` and `starColor` are already validated by the cosmetics
 service, and `supporterStar` is derived only from an active Supporter or Overseer entitlement.
-The HUD renders a fixed literal `★` glyph and never trusts a glyph from the wire. The desktop/web
+The HUD renders a fixed embedded five-point star image and never trusts a glyph from the wire. The desktop/web
 `nameColor` and effect fields remain outside this HUD extension. A self-authored in-game message
 is initially shown optimistically, then hydrated from its authoritative decorated relay echo
 before deduplication; it therefore receives the same fields as Discord-originated and other

@@ -362,7 +362,7 @@ bridge, however, filters unknown members before passing an event to Scaleform; t
 v2.10.16+ also receives a `FCMHUD/1;...` envelope in the existing known `targetUserId` member.
 For ordinary channel messages this is an empty transport slot, never a real recipient. The
 envelope is capability-gated to v2.10.16+; older widgets receive an empty `targetUserId` and no
-transport data. The FCM HUD always renders its own immutable `★` glyph. The relay records the
+transport data. The FCM HUD always renders its own immutable five-point star asset. The relay records the
 negotiated token/version across separate connect and subscribe sockets so the same gate applies
 to live, poll, and history delivery.
 
