@@ -158,7 +158,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.22"; // catalog-coloured Scaleform supporter-star renderer
+    static inline var VERSION:String  = "2.10.23"; // direct embedded Scaleform supporter-star renderer
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -302,8 +302,9 @@ class FCMChatWidget extends MovieClip {
     var _subTf:TextField;
     var _promptTf:TextField;
     var _fmt:TextFormat;
-    // Scaleform cannot render U+2605 through the HUDModLoader font aliases. Keep
-    // the per-render BitmapData alive while TextFieldEx owns the substitution map.
+    // Keep the embedded BitmapData instances alive after preparing direct HTML
+    // image linkages. The image tags reference the SWF linkages by name; they do
+    // not depend on a text substitution token.
     var _starBitmaps:Array<BitmapData> = [];
 
     // ── Chat render state ─────────────────────────────────────────────────────
@@ -616,17 +617,46 @@ class FCMChatWidget extends MovieClip {
         _promptTf.htmlText = html;
     }
 
+    /** Return the embedded SWF linkage for a validated supporter-star colour. */
+    static function starBitmapLinkage(color:Int):String {
+        switch (color) {
+            case 0xEDABAB: return "SupporterStarBitmapEdabab";
+            case 0xEAEA9A: return "SupporterStarBitmapEaea9a";
+            case 0xB8CF81: return "SupporterStarBitmapB8cf81";
+            case 0x8CDB57: return "SupporterStarBitmap8cdb57";
+            case 0xABEDB5: return "SupporterStarBitmapAbedb5";
+            case 0x7EC8AE: return "SupporterStarBitmap7ec8ae";
+            case 0x57DBDB: return "SupporterStarBitmap57dbdb";
+            case 0xABBFED: return "SupporterStarBitmapAbbfed";
+            case 0x868DCB: return "SupporterStarBitmap868dcb";
+            case 0xEBA2EB: return "SupporterStarBitmapEba2eb";
+            case 0xDF68C7: return "SupporterStarBitmapDf68c7";
+            case 0xC87E98: return "SupporterStarBitmapC87e98";
+            case 0xFE8B8B: return "SupporterStarBitmapFe8b8b";
+            case 0xFD5F1C: return "SupporterStarBitmapFd5f1c";
+            case 0xF8FE8B: return "SupporterStarBitmapF8fe8b";
+            case 0xC4FD1C: return "SupporterStarBitmapC4fd1c";
+            case 0x70F835: return "SupporterStarBitmap70f835";
+            case 0x81FE87: return "SupporterStarBitmap81fe87";
+            case 0x1CFDAE: return "SupporterStarBitmap1cfdae";
+            case 0x58FDFD: return "SupporterStarBitmap58fdfd";
+            case 0x7EA8F7: return "SupporterStarBitmap7ea8f7";
+            case 0xFD1CFD: return "SupporterStarBitmapFd1cfd";
+            case 0xFD4DA6: return "SupporterStarBitmapFd4da6";
+            default: return "SupporterStarBitmap";
+        }
+    }
+
     /**
-     * Last-resort linked-image fallback for GFx builds without TextFieldEx
-     * substitution support. Never fall back to U+2605: the HUD font renders
-     * that missing glyph as a filled square. The linkage name is emitted by
-     * SupporterStarBitmap and is the same HTML-image mechanism used by the old
-     * Text Chat mod for its inline emoji assets.
+     * Render a supporter star as a direct embedded-image HTML tag. This follows
+     * the proven legacy Text Chat path and bypasses the GFx substitution-token
+     * behavior that leaked the substitution token into the feed as literal text.
      */
-    static function fallbackStarHtml(size:Int):String {
+    static function supporterStarHtml(color:Int, size:Int):String {
         var px:Int = FcmConfig.clampInt(size, 8, 47);
-        return '<font face="' + FONT_BOLD + '" size="' + px + '"><img src="SupporterStarBitmap" width="'
-            + px + '" height="' + px + '" vspace="-2"></font> ';
+        return '<font face="' + FONT_BOLD + '" size="' + px + '"><img src="'
+            + starBitmapLinkage(color) + '" width="' + px + '" height="' + px
+            + '" align="baseline" vspace="-2"></font> ';
     }
 
     /** Select the embedded BitmapData variant for a validated catalog colour. */
@@ -660,87 +690,21 @@ class FCMChatWidget extends MovieClip {
     }
 
     /**
-     * Return an embedded, linkage-backed star image for TextFieldEx.
-     *
-     * The image must be embedded in the SWF: Fallout 76's GFx build rejects
-     * runtime-only BitmapData in setImageSubstitutions and rejects
-     * BitmapData.colorTransform. Every accepted catalog colour therefore has
-     * its own pre-rendered embedded source; unknown values fail closed to the
-     * immutable white star rather than attempting a runtime pixel operation.
+     * Instantiate the linked source images once per visible colour. This keeps
+     * every @:bitmap linkage in the SWF and validates that the asset can be
+     * constructed by the Fallout GFx runtime before htmlText references it.
      */
-    function createStarBitmap(color:Int, size:Int):BitmapData {
+    function prepareStarImages(colors:Array<Int>, size:Int):Bool {
         var px:Int = FcmConfig.clampInt(size, 8, 47);
-        var bitmap:BitmapData;
+        var bitmaps:Array<BitmapData> = [];
         try {
-            bitmap = starBitmapForColor(color, px);
-        } catch (e:Dynamic) {
-            zfeLog("warn", "render", "starImages=unavailable stage=bitmap-constructor");
-            throw e;
-        }
-        return bitmap;
-    }
-
-    /**
-     * Install one inline image substitution per distinct supporter-star color in
-     * the active feed. This keeps the star in the TextField's baseline/scroll
-     * layout while avoiding the missing U+2605 glyph in the engine font aliases.
-     */
-    function installStarSubstitutions(colors:Array<Int>, tokens:Array<String>, size:Int):Bool {
-        var ext:Dynamic = null;
-        var stageName:String = "resolve-class";
-        if (_logTf == null) return false;
-        // HUDModLoader child SWFs do not reliably expose dotted Scaleform class
-        // names through __global__. Resolve the AS3 extension from the active
-        // ApplicationDomain, as we do for BSUIDataManager and platform events.
-        try {
-            var getDefinition:Dynamic = untyped __global__["flash.utils.getDefinitionByName"];
-            if (getDefinition != null) {
-                ext = Reflect.callMethod(null, getDefinition, ["scaleform.gfx.TextFieldEx"]);
-            }
-        } catch (e:Dynamic) {}
-        if (ext == null) {
-            zfeLog("warn", "render", "starImages=unavailable class");
-            return false;
-        }
-
-        var setter:Dynamic = null;
-        try { setter = Reflect.field(ext, "setImageSubstitutions"); } catch (e:Dynamic) {}
-        if (setter == null) {
-            zfeLog("warn", "render", "starImages=unavailable method");
-            return false;
-        }
-
-        try {
-            stageName = "clear";
-            // setImageSubstitutions appends to an internal list, so clear the old
-            // map before replacing it after a message/color/config change.
-            Reflect.callMethod(ext, setter, [_logTf, null]);
-            var descriptors:Array<Dynamic> = [];
-            var bitmaps:Array<BitmapData> = [];
-            var px:Int = FcmConfig.clampInt(size, 8, 47);
-            for (i in 0...tokens.length) {
-                stageName = "create-image";
-                var bitmap:BitmapData = createStarBitmap(colors[i], px);
-                bitmaps.push(bitmap);
-                descriptors.push({
-                    subString: tokens[i],
-                    image: bitmap,
-                    width: px,
-                    height: px,
-                    baseLineY: Std.int(px * 0.86),
-                    id: tokens[i],
-                });
-            }
-            if (descriptors.length > 0) {
-                stageName = "install-images";
-                Reflect.callMethod(ext, setter, [_logTf, descriptors]);
-            }
+            for (color in colors) bitmaps.push(starBitmapForColor(color, px));
             _starBitmaps = bitmaps;
-            zfeLog("info", "render", "starImages=ready count=" + descriptors.length);
+            zfeLog("info", "render", "starImages=ready count=" + bitmaps.length + " mode=direct-html");
             return true;
         } catch (e:Dynamic) {
+            zfeLog("warn", "render", "starImages=unavailable stage=bitmap-constructor");
             _starBitmaps = [];
-            zfeLog("warn", "render", "starImages=unavailable stage=" + stageName);
             return false;
         }
     }
@@ -2802,28 +2766,23 @@ class FCMChatWidget extends MovieClip {
         var html:Array<String> = [];
         var fs:Int = _cfg.fontSize;
 
-        // Prepare one embedded inline image for each distinct visible star color
-        // before assigning htmlText. If TextFieldEx is unavailable, rendering
-        // falls back to the linked image HTML path; never emit the tofu glyph.
-        var starTokens:Map<String,String> = new Map();
+        // Prepare one embedded image for each distinct visible star color before
+        // assigning htmlText. Stars use direct SWF linkage names; never emit a
+        // private-use substitution token or the U+2605 glyph.
         var starColors:Array<Int> = [];
-        var starTokenList:Array<String> = [];
-        var nextStarSlot:Int = 0;
+        var starColorKeys:Map<String,Bool> = new Map();
         var visibleStarCount:Int = 0;
         for (candidate in _records) {
             if (candidate.channel != CHAN_SLUGS[_chanIdx] || !candidate.supporterStar) continue;
             visibleStarCount++;
             var candidateColor:Int = FcmConfig.supporterStarColor(candidate.starColor, _cfg.tabActiveColor);
             var candidateKey:String = hx(candidateColor);
-            if (!starTokens.exists(candidateKey)) {
-                var candidateToken:String = FcmConfig.supporterStarToken(nextStarSlot);
-                starTokens.set(candidateKey, candidateToken);
+            if (!starColorKeys.exists(candidateKey)) {
+                starColorKeys.set(candidateKey, true);
                 starColors.push(candidateColor);
-                starTokenList.push(candidateToken);
-                nextStarSlot++;
             }
         }
-        var starImagesReady:Bool = installStarSubstitutions(starColors, starTokenList, fs);
+        var starImagesReady:Bool = prepareStarImages(starColors, fs);
 
         for (rec in _records) {
             // Per-channel view: only render messages for the active tab's channel.
@@ -2846,17 +2805,12 @@ class FCMChatWidget extends MovieClip {
                     + FcmConfig.htmlEscape(rec.tag) + ']</font> '
                 : "";
             var starColor:Int = FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor);
-            var starToken:String = starTokens.get(hx(starColor));
             var starHtml:String = "";
             if (rec.supporterStar) {
-                if (starImagesReady && starToken != null) {
-                    starHtml = '<font face="' + FONT_BOLD + '" size="' + fs + '">' + starToken + '</font> ';
-                } else {
-                    // The linked image path is deliberately preferred to the
-                    // immutable U+2605 text constant: missing game-font glyphs
-                    // become blocks, which is not an acceptable marker.
-                    starHtml = fallbackStarHtml(fs);
-                }
+                // The linked image path is deliberately used for every row:
+                // missing game-font glyphs become blocks, and the old
+                // substitution token could leak as literal text.
+                starHtml = supporterStarHtml(starColor, fs);
             }
             // Staff only: a short, stable reference for the moderation command surface.
             // Never target by display name — names can be changed and are not unique.

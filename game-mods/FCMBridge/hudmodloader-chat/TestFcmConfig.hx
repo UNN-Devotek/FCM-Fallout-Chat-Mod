@@ -33,10 +33,6 @@ class TestFcmConfig {
         eqi("hex empty->fallbk", FcmConfig.parseHexColor("", 0x111111), 0x111111);
         eqi("hex null->fallbk",  FcmConfig.parseHexColor(null, 0x222222), 0x222222);
         eqs("supporter star glyph is immutable", FcmConfig.SUPPORTER_STAR_GLYPH, "★");
-        var starToken:String = FcmConfig.supporterStarToken(4);
-        check("supporter star image token is bounded", starToken.length <= 15);
-        check("supporter star image token is private-use delimited",
-            starToken.charCodeAt(0) == 0xE000 && starToken.charCodeAt(starToken.length - 1) == 0xE001);
         eqi("supporter star colour accepts hex", FcmConfig.supporterStarColor("#58FDFD", 0x123456), 0x58FDFD);
         eqi("supporter star colour rejects unsafe input", FcmConfig.supporterStarColor("url(evil)", 0x123456), 0x123456);
         eqb("supporter marker accepts server flag", FcmConfig.supporterStarPresent(true, ""), true);

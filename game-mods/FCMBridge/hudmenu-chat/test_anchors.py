@@ -364,8 +364,8 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.22";' in widget_src,
-          "FCMChatWidget bumps the HUD supporter marker/embedded image build to version 2.10.22")
+    check('static inline var VERSION:String  = "2.10.23";' in widget_src,
+          "FCMChatWidget bumps the HUD supporter marker/direct image build to version 2.10.23")
     check('FcmConfig.hudTransportHasStar(hudTransport)' in widget_src
           and 'FcmConfig.hudTransportStarColor(hudTransport)' in widget_src,
           "FCMChatWidget decodes native-known HUD cosmetics transport")
@@ -374,7 +374,7 @@ if widget_src:
           and 'supporterStarPresent' in widget_src
           and 'customTagHtml' in widget_src,
           "FCMChatWidget renders only the immutable supporter star and validated tag fields")
-    check('createStarBitmap' in widget_src
+    check('starBitmapLinkage' in widget_src
           and '@:bitmap("assets/supporter-star.png")' in open(
               os.path.join(os.path.dirname(WIDGET_HX), 'SupporterStarBitmap.hx'),
               encoding='utf-8').read()
@@ -383,12 +383,11 @@ if widget_src:
               encoding='utf-8').read()
           and 'new SupporterStarBitmap(size, size)' in widget_src
           and 'new SupporterStarBitmap(0, 0)' not in widget_src
-          and 'src="SupporterStarBitmap"' in widget_src
-          and 'setImageSubstitutions' in widget_src
-          and 'getDefinitionByName' in widget_src
-          and 'FcmConfig.supporterStarToken' in widget_src
-          and 'baseLineY' in widget_src,
-          "FCMChatWidget renders supporter stars through baseline-aligned embedded image substitutions")
+          and 'align="baseline"' in widget_src
+          and 'SupporterStarBitmapFd4da6' in widget_src
+          and 'FCMSTAR' not in widget_src
+          and 'setImageSubstitutions' not in widget_src,
+          "FCMChatWidget renders supporter stars through direct baseline-aligned embedded images")
     check('FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor)' in widget_src
           and 'size="\' + fs + \'"' in widget_src,
           "FCMChatWidget uses a validated star colour with shared line metrics")
