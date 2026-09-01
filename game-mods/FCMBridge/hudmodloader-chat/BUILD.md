@@ -1,6 +1,6 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.12. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.14. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
@@ -35,6 +35,12 @@ identity gate. Because account data may be populated late, the widget waits and 
 first relay handshake rather than connecting with `Wanderer` or a character-name substitute. Once
 connected, later HUD reads update local identity state only; they never issue a second native
 `chat.v1.connect`, and empty reads do not erase a known name.
+
+Supporter stars are rendered as Scaleform inline images generated from a vector five-point shape,
+not as the U+2605 text glyph. Fallout 76's `$MAIN_Font_Bold` alias does not contain U+2605, and
+`embedFonts=true` prevents a device-font fallback. The widget installs one image substitution per
+visible star color and supplies the image's baseline so the marker remains aligned with the channel
+tag, custom tag, sender name, and message text while the feed scrolls.
 
 ## Requirements
 
@@ -230,7 +236,7 @@ staff validation on every request; the HUD permission is only a visibility hint.
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.10.12`. If
+1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.10.14`. If
    `AccountInfoData` is late, the widget waits and retries. The sender label and a newly sent
    message use the exact public Fallout 76 account handle, including punctuation; neither
    `Wanderer` nor the local character name is used for the relay handshake.

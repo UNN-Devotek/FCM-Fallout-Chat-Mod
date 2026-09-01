@@ -363,14 +363,20 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.12";' in widget_src
+    check('static inline var VERSION:String  = "2.10.14";' in widget_src
           and "function hydrateOwnEcho" in widget_src,
-          "FCMChatWidget bumps the HUD supporter marker/render build to version 2.10.12")
+          "FCMChatWidget bumps the HUD supporter marker/render build to version 2.10.14")
     check('extractJsonBool(obj, "supporterStar")' in widget_src
-          and 'FcmConfig.SUPPORTER_STAR_HTML' in widget_src
+          and 'FcmConfig.SUPPORTER_STAR_GLYPH' in widget_src
           and 'supporterStarPresent' in widget_src
           and 'customTagHtml' in widget_src,
           "FCMChatWidget renders only the immutable supporter star and validated tag fields")
+    check('createStarBitmap' in widget_src
+          and 'setImageSubstitutions' in widget_src
+          and 'getDefinitionByName' in widget_src
+          and 'FcmConfig.supporterStarToken' in widget_src
+          and 'baseLineY' in widget_src,
+          "FCMChatWidget renders supporter stars through baseline-aligned vector image substitutions")
     check('FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor)' in widget_src
           and 'size="\' + fs + \'"' in widget_src,
           "FCMChatWidget uses a validated star colour with shared line metrics")

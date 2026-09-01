@@ -1,5 +1,6 @@
 import flash.display.MovieClip;
 import flash.display.Shape;
+import flash.display.BitmapData;
 import flash.events.Event;
 import flash.events.TimerEvent;
 import flash.utils.Timer;
@@ -134,7 +135,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.12"; // whitespace-tolerant HUD supporter marker parsing
+    static inline var VERSION:String  = "2.10.14"; // vector/image HUD supporter star renderer
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -278,6 +279,9 @@ class FCMChatWidget extends MovieClip {
     var _subTf:TextField;
     var _promptTf:TextField;
     var _fmt:TextFormat;
+    // Scaleform cannot render U+2605 through the HUDModLoader font aliases. Keep
+    // the per-render BitmapData alive while TextFieldEx owns the substitution map.
+    var _starBitmaps:Array<BitmapData> = [];
 
     // ── Chat render state ─────────────────────────────────────────────────────
     var _records:Array<ChatRecord> = [];
@@ -587,6 +591,90 @@ class FCMChatWidget extends MovieClip {
     function setPrompt(html:String):Void {
         if (_promptTf == null) return;
         _promptTf.htmlText = html;
+    }
+
+    /** Draw a small solid five-point star without depending on a game font glyph. */
+    static function createStarBitmap(color:Int, size:Int):BitmapData {
+        var px:Int = FcmConfig.clampInt(size, 8, 47);
+        var bitmap:BitmapData = new BitmapData(px, px, true, 0x00000000);
+        var star:Shape = new Shape();
+        var center:Float = px / 2.0;
+        var outer:Float = (px - 3) / 2.0;
+        var inner:Float = outer * 0.42;
+        var first:Bool = true;
+        star.graphics.beginFill(color, 1.0);
+        for (point in 0...10) {
+            var angle:Float = -Math.PI / 2.0 + point * Math.PI / 5.0;
+            var radius:Float = (point % 2 == 0) ? outer : inner;
+            var sx:Float = center + Math.cos(angle) * radius;
+            var sy:Float = center + Math.sin(angle) * radius;
+            if (first) { star.graphics.moveTo(sx, sy); first = false; }
+            else star.graphics.lineTo(sx, sy);
+        }
+        star.graphics.lineTo(center + Math.cos(-Math.PI / 2.0) * outer,
+            center + Math.sin(-Math.PI / 2.0) * outer);
+        star.graphics.endFill();
+        bitmap.draw(star);
+        return bitmap;
+    }
+
+    /**
+     * Install one inline image substitution per distinct supporter-star color in
+     * the active feed. This keeps the star in the TextField's baseline/scroll
+     * layout while avoiding the missing U+2605 glyph in the engine font aliases.
+     */
+    function installStarSubstitutions(colors:Array<Int>, tokens:Array<String>, size:Int):Bool {
+        var ext:Dynamic = null;
+        if (_logTf == null) return false;
+        // HUDModLoader child SWFs do not reliably expose dotted Scaleform class
+        // names through __global__. Resolve the AS3 extension from the active
+        // ApplicationDomain, as we do for BSUIDataManager and platform events.
+        try {
+            var getDefinition:Dynamic = untyped __global__["flash.utils.getDefinitionByName"];
+            if (getDefinition != null) {
+                ext = Reflect.callMethod(null, getDefinition, ["scaleform.gfx.TextFieldEx"]);
+            }
+        } catch (e:Dynamic) {}
+        if (ext == null) {
+            zfeLog("warn", "render", "starImages=unavailable class");
+            return false;
+        }
+
+        var setter:Dynamic = null;
+        try { setter = Reflect.field(ext, "setImageSubstitutions"); } catch (e:Dynamic) {}
+        if (setter == null) {
+            zfeLog("warn", "render", "starImages=unavailable method");
+            return false;
+        }
+
+        try {
+            // setImageSubstitutions appends to an internal list, so clear the old
+            // map before replacing it after a message/color/config change.
+            Reflect.callMethod(ext, setter, [_logTf, null]);
+            var descriptors:Array<Dynamic> = [];
+            var bitmaps:Array<BitmapData> = [];
+            var px:Int = FcmConfig.clampInt(size, 8, 47);
+            for (i in 0...tokens.length) {
+                var bitmap:BitmapData = createStarBitmap(colors[i], px);
+                bitmaps.push(bitmap);
+                descriptors.push({
+                    subString: tokens[i],
+                    image: bitmap,
+                    width: px,
+                    height: px,
+                    baseLineY: Std.int(px * 0.86),
+                    id: tokens[i],
+                });
+            }
+            if (descriptors.length > 0) Reflect.callMethod(ext, setter, [_logTf, descriptors]);
+            _starBitmaps = bitmaps;
+            zfeLog("info", "render", "starImages=ready count=" + descriptors.length);
+            return true;
+        } catch (e:Dynamic) {
+            _starBitmaps = [];
+            zfeLog("warn", "render", "star image substitutions unavailable");
+            return false;
+        }
     }
 
     // =========================================================================
@@ -2643,6 +2731,29 @@ class FCMChatWidget extends MovieClip {
         var html:Array<String> = [];
         var fs:Int = _cfg.fontSize;
 
+        // Prepare one vector-backed inline image for each distinct visible star
+        // color before assigning htmlText. The normal U+2605 remains the guarded
+        // fallback for Scaleform builds that do not expose TextFieldEx images.
+        var starTokens:Map<String,String> = new Map();
+        var starColors:Array<Int> = [];
+        var starTokenList:Array<String> = [];
+        var nextStarSlot:Int = 0;
+        var visibleStarCount:Int = 0;
+        for (candidate in _records) {
+            if (candidate.channel != CHAN_SLUGS[_chanIdx] || !candidate.supporterStar) continue;
+            visibleStarCount++;
+            var candidateColor:Int = FcmConfig.supporterStarColor(candidate.starColor, _cfg.tabActiveColor);
+            var candidateKey:String = hx(candidateColor);
+            if (!starTokens.exists(candidateKey)) {
+                var candidateToken:String = FcmConfig.supporterStarToken(nextStarSlot);
+                starTokens.set(candidateKey, candidateToken);
+                starColors.push(candidateColor);
+                starTokenList.push(candidateToken);
+                nextStarSlot++;
+            }
+        }
+        var starImagesReady:Bool = installStarSubstitutions(starColors, starTokenList, fs);
+
         for (rec in _records) {
             // Per-channel view: only render messages for the active tab's channel.
             if (rec.channel != CHAN_SLUGS[_chanIdx]) continue;
@@ -2663,10 +2774,12 @@ class FCMChatWidget extends MovieClip {
                 ? '<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + col + '">['
                     + FcmConfig.htmlEscape(rec.tag) + ']</font> '
                 : "";
+            var starColor:Int = FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor);
+            var starToken:String = starTokens.get(hx(starColor));
+            var starMarker:String = starImagesReady && starToken != null
+                ? starToken : FcmConfig.SUPPORTER_STAR_GLYPH;
             var starHtml:String = rec.supporterStar
-                ? '<font face="' + FONT_BOLD + '" size="' + fs + '" color="'
-                    + hx(FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor)) + '">'
-                    + FcmConfig.SUPPORTER_STAR_HTML + '</font> '
+                ? '<font face="' + FONT_BOLD + '" size="' + fs + '">' + starMarker + '</font> '
                 : "";
             // Staff only: a short, stable reference for the moderation command surface.
             // Never target by display name — names can be changed and are not unique.
@@ -2690,7 +2803,9 @@ class FCMChatWidget extends MovieClip {
         }
 
         // Authenticated with an empty feed (the unlinked / connecting cases returned above).
-        zfeLog("info", "render", "records=" + _records.length + " shown=" + html.length + " tab=" + CHAN_SLUGS[_chanIdx]);
+        zfeLog("info", "render", "records=" + _records.length + " shown=" + html.length
+            + " stars=" + visibleStarCount + " starImages=" + (starImagesReady ? "ready" : "fallback")
+            + " tab=" + CHAN_SLUGS[_chanIdx]);
         if (html.length == 0) {
             setLogText("No messages in " + CHAN_NAMES[_chanIdx] + " yet"); return;
         }

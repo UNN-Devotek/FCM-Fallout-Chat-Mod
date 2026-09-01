@@ -84,7 +84,7 @@ normal database channel.
 
 ## HUD identity cosmetic extension
 
-Widget v2.10.12 understands three optional, additive FCM fields on `chat.message`
+Widget v2.10.14 understands three optional, additive FCM fields on `chat.message`
 events, including subscribe-time history:
 
 ```json
@@ -95,16 +95,17 @@ events, including subscribe-time history:
 }
 ```
 
-The relay emits these fields only for a token that negotiated `clientVersion >= 2.10.0`;
-missing, old, and invalid versions receive the upstream event shape. The relay records
-the capability beside a short-lived one-way token digest in Redis because ZFE may use separate
-connect and subscribe sockets. `tag` and `starColor` are already validated by the
-cosmetics service, and `supporterStar` is derived only from an active Supporter or
-Overseer entitlement. The HUD renders a fixed `★` glyph and never trusts a glyph from
-the wire. The desktop/web `nameColor` and effect fields remain outside this HUD extension. A
-self-authored in-game message is initially shown optimistically, then hydrated from its
-authoritative decorated relay echo before deduplication; it therefore receives the same fields
-as Discord-originated and other in-game messages.
+The relay emits these fields on every chat event. They are additive JSON members, so generic
+ZFE clients and older FCM widgets ignore them safely; this avoids making the supporter marker
+depend on a capability record crossing ZFE's separate connect and subscribe sockets. The relay
+still records `clientVersion` beside a short-lived one-way token digest in Redis for future
+non-additive protocol extensions. `tag` and `starColor` are already validated by the cosmetics
+service, and `supporterStar` is derived only from an active Supporter or Overseer entitlement.
+The HUD renders a fixed literal `★` glyph and never trusts a glyph from the wire. The desktop/web
+`nameColor` and effect fields remain outside this HUD extension. A self-authored in-game message
+is initially shown optimistically, then hydrated from its authoritative decorated relay echo
+before deduplication; it therefore receives the same fields as Discord-originated and other
+in-game messages.
 
 Successful static and server `chat.v1.sendMessage` responses also include the same
 HUD-safe `tag`, `supporterStar`, and `starColor` fields when present. The widget uses
@@ -120,8 +121,8 @@ current member roles at most once per minute per deployment, coordinated by a Re
 Discord ID comes from the linked FCM account resolved by the relay token; the HUD cannot
 provide or forge it. A successful role read updates the shared supporter entitlement and
 clears caches only when the effective tier changes, so the message broadcast and send
-acknowledgement carry the current supporter marker to every connected capable HUD
-subscriber. Gateway events and the 15-minute bulk reconcile remain in place for changes
+acknowledgement carry the current supporter marker to every connected HUD subscriber. Gateway
+events and the 15-minute bulk reconcile remain in place for changes
 that do not coincide with a HUD send. Discord timeouts, rate limits, and other transient
 failures preserve the last known entitlement; only a successful no-role read or definitive
 member removal can lapse it.

@@ -40,14 +40,12 @@ import {
 } from './clientCapability';
 import {
   rememberTokenClientVersionDurable,
-  tokenSupportsCosmeticsDurable,
 } from './clientCapabilityStore';
 import { ingestMessage } from '../ingestMessage';
 import { attachCosmetics, attachCosmeticsToHistory } from '../cosmetics/cosmeticsService';
 import { refreshSupporterFromHudSend } from '../supporterSyncService';
 import {
   relayHudCosmetics,
-  withoutRelayHudCosmetics,
   type RelayHudCosmetics,
 } from './relayCosmetics';
 import { engineEvaluate } from '../autoModEngine';
@@ -408,7 +406,6 @@ interface SubscriberState {
   linkedUserId: string | null;
   cursor: number;
   worldId: string | null;
-  supportsCosmetics: boolean;
 }
 
 // Module-level subscriber set — cleared on disconnect.
@@ -492,10 +489,7 @@ async function backfillWorldToUser(userId: string, worldId: string): Promise<voi
   for (const sub of subscribers) {
     if (sub.userId !== userId || sub.ws.readyState !== 1) continue;
     for (const ev of history) {
-      const event = sub.supportsCosmetics
-        ? ev
-        : withoutRelayHudCosmetics(ev as unknown as Record<string, unknown>);
-      if (!sendRaw(sub.ws, JSON.stringify({ op: 'event', cursor: ev.id, event }))) {
+      if (!sendRaw(sub.ws, JSON.stringify({ op: 'event', cursor: ev.id, event: ev }))) {
         subscribers.delete(sub);
         break;
       }
@@ -506,15 +500,14 @@ async function backfillWorldToUser(userId: string, worldId: string): Promise<voi
 
 /** Replay the bounded SQL-backed history to every local native subscriber for a user. */
 async function backfillStaticHistoryToUser(userId: string): Promise<void> {
-  // Resolve cosmetics once, then strip the additive fields for old widget builds
-  // on a per-subscriber basis below.
-  const history = await fetchHistoryEvents(0, POLL_HISTORY_LIMIT, true);
+  // Resolve cosmetics once. These are additive JSON fields, so every widget can
+  // safely receive the same authoritative projection.
+  const history = await fetchHistoryEvents(0, POLL_HISTORY_LIMIT);
   if (history.length === 0) return;
   for (const sub of subscribers) {
     if (sub.userId !== userId || sub.ws.readyState !== 1) continue;
     for (const ev of history) {
-      const event = sub.supportsCosmetics ? ev : withoutRelayHudCosmetics(ev);
-      send(sub.ws, { op: 'event', cursor: ev.id as number, event });
+      send(sub.ws, { op: 'event', cursor: ev.id as number, event: ev });
     }
   }
 }
@@ -620,10 +613,14 @@ async function ensurePubSub(): Promise<void> {
 
       // Static channels only. The worldId-scoped 'server' room is fanned out via
       // SERVER_EVENTS_CHANNEL below (server messages never hit chat:broadcast).
+      // HUD cosmetics are additive JSON fields. Older widgets ignore unknown object
+      // members, so keep the projection on every relay event instead of depending on
+      // a capability record from a different native socket. This is important for
+      // ZFE's separate connect/subscribe transports: a missed capability handoff
+      // must not make a current HUD silently lose supporter markers.
       for (const sub of subscribers) {
         if (sub.cursor >= relaySeq) continue; // already seen
-        const event = sub.supportsCosmetics ? eventObj : withoutRelayHudCosmetics(eventObj);
-        const frame = JSON.stringify({ op: 'event', cursor: relaySeq, event });
+        const frame = JSON.stringify({ op: 'event', cursor: relaySeq, event: eventObj });
         if (sendRaw(sub.ws, frame)) {
           sub.cursor = relaySeq;
         } else {
@@ -685,9 +682,10 @@ async function ensurePubSub(): Promise<void> {
         for (const sub of subscribers) {
           if (sub.worldId !== worldId) continue; // world-scoped: only same-world subscribers
           if (sub.cursor >= cursor) continue;    // already seen
-          const event = sub.supportsCosmetics
-            ? parsed.event
-            : withoutRelayHudCosmetics(parsed.event as Record<string, unknown>);
+          // Server-room cosmetics follow the same additive-field contract as static
+          // chat. Do not strip them when the native subscribe socket did not retain
+          // the connect socket's optional capability record.
+          const event = parsed.event;
           const frame = JSON.stringify({ op: 'event', cursor, event });
           if (sendRaw(sub.ws, frame)) {
             sub.cursor = cursor;
@@ -1254,18 +1252,16 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
   const cursor = typeof frame.cursor === 'number' ? frame.cursor : 0;
   const max    = Math.min(typeof frame.max === 'number' ? frame.max : 64, 100);
 
-  const supportsCosmetics = await tokenSupportsCosmeticsDurable(rawToken);
-  const events = await fetchHistoryEvents(cursor, max, supportsCosmetics);
+  // Cosmetic fields are additive and safe for older widgets to ignore. Always include
+  // them so a separate ZFE poll socket cannot lose the current HUD marker.
+  const events = await fetchHistoryEvents(cursor, max);
 
   // Merge in the caller's current-world server-room history (ephemeral, not in SQL).
   const worldId = await getWorldId(identity.userId);
   if (worldId) {
     const sHist = await getServerHistory(worldId, cursor, max);
     if (sHist.length > 0) {
-      const serverEvents = supportsCosmetics
-        ? sHist
-        : sHist.map((event) => withoutRelayHudCosmetics(event as unknown as Record<string, unknown>));
-      events.push(...(serverEvents as unknown as Array<Record<string, unknown>>));
+      events.push(...(sHist as unknown as Array<Record<string, unknown>>));
       events.sort((a, b) => (a.id as number) - (b.id as number));
     }
   }
@@ -1423,12 +1419,12 @@ async function handleModerationAction(ws: WebSocket, frame: Record<string, unkno
  * POLL_HISTORY_LIMIT, oldest-first); otherwise everything with relay_seq > cursor.
  * Shared by handlePoll and subscribe-time backfill. ZFE's pollEvents drains the native
  * queue supplied by the long-lived subscription; it does not issue a relay poll request
- * when the HUD initializes.
+ * when the HUD initializes. Returned events always carry the additive HUD cosmetic
+ * projection; older widgets safely ignore unknown JSON members.
  */
 async function fetchHistoryEvents(
   cursor: number,
   max: number,
-  includeCosmetics = false,
 ): Promise<Array<Record<string, unknown>>> {
   let rows: Array<{
     id: string;
@@ -1486,14 +1482,12 @@ async function fetchHistoryEvents(
     body:              row.content,
     targetUserId:      '',
     createdAt:         row.created_at ? new Date(row.created_at).toISOString() : '',
-    ...(includeCosmetics ? { userId: row.user_id } : {}),
+    userId: row.user_id,
   }));
-
-  if (!includeCosmetics) return events;
 
   // History stores identity, not a cosmetic snapshot. Resolve each distinct author
   // once through the same cache-backed service used by live chat, then project only
-  // the fields this HUD build understands into the relay event.
+  // the validated HUD fields into the relay event.
   await attachCosmeticsToHistory(events);
   return events.map((event) => {
     const { userId: _userId, ...base } = event;
@@ -1532,15 +1526,12 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
 
   const cursor = typeof frame.cursor === 'number' ? frame.cursor : 0;
   const worldId = await getWorldId(identity.userId);
-  const supportsCosmetics = await tokenSupportsCosmeticsDurable(rawToken);
-
   const state: SubscriberState = {
     ws,
     userId: identity.userId,
     linkedUserId: identity.linkedUserId,
     cursor,
     worldId,
-    supportsCosmetics,
   };
   subscribers.add(state);
 
@@ -1562,7 +1553,7 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
   // reach the HUD on initial load. Respect the supplied cursor for non-ZFE clients
   // that resume an already-established position.
   try {
-    const history = await fetchHistoryEvents(cursor, POLL_HISTORY_LIMIT, supportsCosmetics);
+    const history = await fetchHistoryEvents(cursor, POLL_HISTORY_LIMIT);
     for (const ev of history) {
       if (!sendRaw(ws, JSON.stringify({ op: 'event', cursor: ev.id as number, event: ev }))) {
         subscribers.delete(state);

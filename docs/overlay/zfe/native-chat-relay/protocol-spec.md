@@ -354,21 +354,21 @@ avoid duplicate messages between push and poll.
 `messages.created_at`). Clients render timestamps from this field. The system link-notice carries
 the time it was issued. Older relays may omit it (treat absent/empty as "no timestamp").
 
-FCM's relay adds optional HUD cosmetic fields for capable FCM widgets: `tag` (a validated
+FCM's relay adds optional HUD cosmetic fields to FCM chat events: `tag` (a validated
 Overseer tag), `supporterStar: true` (an active Supporter/Overseer entitlement), and
 `starColor` (a validated `#rrggbb` value). They may appear on live, polled, and
-subscribe-time history events only after the client negotiates the capability; generic ZFE
-clients and older FCM widgets must ignore unknown fields. The FCM HUD always renders its
-own immutable `★` glyph. The relay carries the negotiated token/version capability across
-separate connect and subscribe sockets with a short-lived Redis key containing only a token
-digest; missing or unreadable capability state fails closed to the legacy event shape.
+subscribe-time history events. These are additive JSON members; generic ZFE clients and
+older FCM widgets ignore unknown fields, so a separate ZFE connect/subscribe socket can
+never silently remove a current HUD supporter's marker. The FCM HUD always renders its own
+immutable `★` glyph. The relay still records the negotiated token/version across separate
+connect and subscribe sockets for future non-additive protocol extensions.
 
 For an authenticated HUD send, the relay performs a bounded authoritative Discord
 member-role refresh before decoration: once per linked Discord account per minute across
 the deployment, coordinated by Redis. It derives the Discord ID from the linked FCM user,
 never from the HUD frame. A successful refresh updates the entitlement and invalidates
 resolved cosmetics only when the effective tier changes, before the message is broadcast,
-so capable subscribers and the sender's acknowledgement receive current supporter fields.
+so every subscriber and the sender's acknowledgement receive current supporter fields.
 Transient Discord failures leave the last known entitlement in place; a definitive
 member-not-found result is treated as loss of guild privileges.
 

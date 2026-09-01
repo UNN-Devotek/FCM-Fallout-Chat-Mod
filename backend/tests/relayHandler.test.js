@@ -1556,7 +1556,7 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
-  test('relay strips HUD cosmetic fields for a widget without capability handshake', async () => {
+  test('relay keeps additive HUD cosmetic fields when the subscriber handshake is absent', async () => {
     const { ws: wsReg, msgs: msgsReg } = await conn();
     const regRes = await waitForMsg(wsReg, msgsReg, () =>
       send(wsReg, { op: 'register', displayName: 'LegacyHudPlayer' }),
@@ -1595,9 +1595,14 @@ describe('relay WebSocket ops', () => {
 
     const evt = msgs.slice(beforeLen).find((m) => m.op === 'event');
     expect(evt).toBeDefined();
-    expect(evt.event).not.toHaveProperty('tag');
-    expect(evt.event).not.toHaveProperty('supporterStar');
-    expect(evt.event).not.toHaveProperty('starColor');
+    // ZFE can establish the long-lived subscriber on a separate socket from the
+    // connect/register call. Cosmetics are additive JSON members, so a missing
+    // cross-socket capability record must not silently remove supporter markers.
+    expect(evt.event).toMatchObject({
+      tag: 'X',
+      supporterStar: true,
+      starColor: '#58FDFD',
+    });
     ws.close();
   });
 

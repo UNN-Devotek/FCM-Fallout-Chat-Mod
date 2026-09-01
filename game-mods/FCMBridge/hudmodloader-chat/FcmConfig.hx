@@ -14,8 +14,17 @@ class FcmConfig {
 
     /** Immutable supporter marker. The HUD never renders a client-supplied glyph. */
     public static inline var SUPPORTER_STAR_GLYPH:String = "★";
-    /** Numeric entity is parsed reliably by Scaleform GFx htmlText across Wine/Windows. */
-    public static inline var SUPPORTER_STAR_HTML:String = "&#x2605;";
+    /** Private-use token prefix for the Scaleform inline-image fallback. */
+    public static inline var SUPPORTER_STAR_TOKEN_PREFIX:String = "\uE000FCMSTAR";
+
+    /**
+     * Return a collision-resistant text token for an inline supporter-star image.
+     * The token stays below Scaleform's 15-character substitution limit and uses
+     * private-use delimiters so ordinary chat text cannot accidentally trigger it.
+     */
+    public static function supporterStarToken(slot:Int):String {
+        return SUPPORTER_STAR_TOKEN_PREFIX + clampInt(slot, 0, 999) + "\uE001";
+    }
 
     // ── HUD viewport (HUDModLoader fixed 1920x1080 space) ──────────────────────
     public static inline var VIEW_W:Int = 1920;

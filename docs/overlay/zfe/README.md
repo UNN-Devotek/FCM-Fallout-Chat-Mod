@@ -4,7 +4,7 @@ ZFE is a `dxgi.dll` proxy for Fallout 76 that exposes `__ZFE` to the Scaleform
 HUD. FCM's optional `FCMChatWidget` HUDModLoader mod uses its sanctioned
 `chat.v1` surface to display chat in game.
 
-> **Current widget (2026-08-31):** `FCMChatWidget` v2.10.12 targets `/relay` through
+> **Current widget (2026-08-31):** `FCMChatWidget` v2.10.14 targets `/relay` through
 > ZFE `chat.v1`. The backend keeps production relay access fail-closed until
 > `RELAY_PRODUCTION_ENABLED=true` is deliberately rolled out. The desktop overlay
 > remains independent of this optional mod path.
@@ -107,12 +107,11 @@ So any field the relay starts emitting reaches clients that do not understand it
 indefinitely. Before this, `VERSION` only ever reached the local ZFE log, so the relay
 had no way to tell what it was talking to.
 
-Any future change to the shape of what the widget receives — including per-user
-name colours and HUD identity adornments — **must** be gated on this. `supportsCosmetics()` fails closed: an
-unknown, missing or unparseable version means no. Being wrong that way means a
-supporter's colour does not show in-game until they update (invisible and harmless);
-being wrong the other way is permanent visible garbage in usernames for everyone on an
-old build.
+Any future non-additive change to the shape of what the widget receives — such as a
+sentinel embedded in a display string — **must** be gated on this. `supportsCosmetics()`
+still fails closed for those extensions: an unknown, missing or unparseable version means
+no. The HUD identity fields are deliberately excluded from that gate because they are
+standalone JSON members that older widgets ignore safely.
 
 Version comparison is numeric per component, not string: `'2.10.0' < '2.9.4'`
 lexicographically, so a string compare would silently lock every updated client out.
@@ -120,25 +119,24 @@ lexicographically, so a string compare would silently lock every updated client 
 `MIN_COSMETICS_VERSION` is **2.10.0**, the first build that reports a version at all —
 the bump IS the capability signal.
 
-### HUD identity cosmetics (widget v2.10.12)
+### HUD identity cosmetics (widget v2.10.14)
 
-The relay now sends these additive fields on `chat.message` events only to clients that
-negotiated `clientVersion >= 2.10.0`:
+The relay now sends these additive fields on every `chat.message` event:
 
 - `tag`: a server-validated Overseer tag, rendered before the sender name;
 - `supporterStar: true`: the capability marker for an entitled Supporter or Overseer;
-- `starColor`: a server-validated `#rrggbb` catalog color for the fixed `★` glyph.
+- `starColor`: a server-validated `#rrggbb` catalog color for the fixed `★` marker. The HUD
+  renders that marker as a Scaleform inline image because its font aliases do not contain U+2605.
 
-The widget never accepts a glyph from the wire. It uses the immutable `★` constant and
+The widget never accepts a glyph from the wire. It uses the immutable literal `★` constant and
 falls back to the configured active-tab color if a star color is absent or malformed. When
 the local player sends a message, the send acknowledgement decorates the optimistic row
 immediately and the later relay echo reconciles it before deduplication, so the sender sees
 the same supporter marker and tag as every other message author. The shared finalizer passes
 the server-resolved supporter tier to Discord, where the same immutable star is shown beside
 the author.
-Static history is decorated with the same current cosmetics as live messages. Because ZFE
-can use separate sockets for connect and subscribe, the relay stores only a short-lived
-one-way digest of the negotiated token/version in Redis to carry this capability across
-backend instances and reconnects; the bearer token itself is never stored.
-Missing, old, or invalid versions receive the original event shape, so older BA2 files remain
-safe during a manual rollout.
+Static history is decorated with the same current cosmetics as live messages. Because these
+fields are additive JSON members, older BA2 files safely ignore them; the marker no longer
+depends on the relay carrying a capability record across ZFE's separate connect and subscribe
+sockets. The relay still stores only a short-lived one-way digest of the negotiated token/version
+in Redis for future non-additive protocol extensions; the bearer token itself is never stored.
