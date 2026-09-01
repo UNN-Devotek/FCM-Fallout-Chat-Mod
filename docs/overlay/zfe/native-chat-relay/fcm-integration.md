@@ -84,7 +84,7 @@ normal database channel.
 
 ## HUD identity cosmetic extension
 
-Widget v2.10.15 understands three optional, additive FCM fields on `chat.message`
+Widget v2.10.16 understands three optional, additive FCM fields on `chat.message`
 events, including subscribe-time history:
 
 ```json
@@ -95,11 +95,14 @@ events, including subscribe-time history:
 }
 ```
 
-The relay emits these fields on every chat event. They are additive JSON members, so generic
-ZFE clients and older FCM widgets ignore them safely; this avoids making the supporter marker
-depend on a capability record crossing ZFE's separate connect and subscribe sockets. The relay
-still records `clientVersion` beside a short-lived one-way token digest in Redis for future
-non-additive protocol extensions. `tag` and `starColor` are already validated by the cosmetics
+The relay emits these fields on every chat event. Raw relay consumers retain the additive JSON
+members, but ZFE's native bridge strips unknown members before Scaleform sees them. To cross that
+boundary, v2.10.16 advertises support and receives the same validated projection in an
+`FCMHUD/1;...` envelope carried by the existing known `targetUserId` field. For ordinary channel
+messages that field is an empty transport slot, not a real recipient. The relay emits the
+envelope only to v2.10.16+; older widgets receive no envelope. The relay records `clientVersion`
+beside a short-lived one-way token digest in Redis so separate connect and subscribe sockets use
+the same capability decision. `tag` and `starColor` are already validated by the cosmetics
 service, and `supporterStar` is derived only from an active Supporter or Overseer entitlement.
 The HUD renders a fixed literal `★` glyph and never trusts a glyph from the wire. The desktop/web
 `nameColor` and effect fields remain outside this HUD extension. A self-authored in-game message

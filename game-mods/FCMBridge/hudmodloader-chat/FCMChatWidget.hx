@@ -135,7 +135,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.15"; // robust native JSON supporter-star parsing
+    static inline var VERSION:String  = "2.10.16"; // native-known-field supporter cosmetics transport
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -2356,8 +2356,18 @@ class FCMChatWidget extends MovieClip {
             var displayName:String  = extractJsonString(obj, "senderDisplayName");
             var tag:String          = extractJsonString(obj, "tag");
             var starColor:String    = extractJsonString(obj, "starColor");
+            // ZFE's native chat bridge strips unknown additive members. The relay
+            // therefore mirrors cosmetics into targetUserId for widget builds that
+            // negotiated the FCMHUD/1 transport. targetUserId is empty for ordinary
+            // channel messages and is never used as a real recipient here.
+            var hudTransport:String = extractJsonString(obj, "targetUserId");
+            var transportTag:String = FcmConfig.hudTransportTag(hudTransport);
+            var transportStarColor:String = FcmConfig.hudTransportStarColor(hudTransport);
+            if (transportTag.length > 0) tag = transportTag;
+            if (transportStarColor.length > 0) starColor = transportStarColor;
             var supporterStar:Bool  = FcmConfig.supporterStarPresent(
-                extractJsonBool(obj, "supporterStar"), starColor);
+                extractJsonBool(obj, "supporterStar")
+                    || FcmConfig.hudTransportHasStar(hudTransport), starColor);
             if (supporterStar) wireStarCount++;
             if (starColor.length > 0) wireStarColorCount++;
             var body:String         = extractJsonString(obj, "body");
@@ -2531,7 +2541,9 @@ class FCMChatWidget extends MovieClip {
             if (!idMatch && !fallbackMatch) continue;
 
             if (displayName != null && displayName.length > 0) rec.user = displayName;
-            rec.tag = tag;
+            // A later native echo may still be schema-normalized and omit the
+            // cosmetics. Do not erase an already-authoritative optimistic marker.
+            if (tag.length > 0 || rec.tag.length == 0) rec.tag = tag;
             // A successful send ACK is already an authoritative entitlement
             // result. A legacy/malformed echo must not erase that marker before
             // the next history refresh can supply the same validated fields.

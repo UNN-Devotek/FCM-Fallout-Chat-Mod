@@ -11,15 +11,18 @@ import assert from 'node:assert/strict';
 
 import {
   MIN_COSMETICS_VERSION,
+  MIN_HUD_COSMETICS_TRANSPORT_VERSION,
   parseClientVersion,
   compareVersions,
   versionAtLeast,
   supportsCosmetics,
+  supportsHudCosmeticsTransport,
   rememberClientVersion,
   getClientVersion,
   connectionSupportsCosmetics,
   rememberTokenClientVersion,
   tokenSupportsCosmetics,
+  tokenSupportsHudCosmeticsTransport,
 } from '../clientCapability';
 
 describe('parseClientVersion', () => {
@@ -77,6 +80,15 @@ describe('supportsCosmetics — fails closed', () => {
     for (const missing of [undefined, null, '', 'unknown', 0, false] as unknown[]) {
       assert.equal(supportsCosmetics(missing), false, `${JSON.stringify(missing)} must fail closed`);
     }
+  });
+});
+
+describe('supportsHudCosmeticsTransport — native carrier gate', () => {
+  test('requires the widget build that decodes the targetUserId carrier', () => {
+    assert.equal(supportsHudCosmeticsTransport(MIN_HUD_COSMETICS_TRANSPORT_VERSION), true);
+    assert.equal(supportsHudCosmeticsTransport('2.10.15'), false);
+    assert.equal(supportsHudCosmeticsTransport('2.10.0'), false);
+    assert.equal(supportsHudCosmeticsTransport(undefined), false);
   });
 });
 
@@ -139,5 +151,12 @@ describe('token capability registry', () => {
     assert.equal(tokenSupportsCosmetics('old-token'), false);
     assert.equal(tokenSupportsCosmetics('invalid-token'), false);
     assert.equal(tokenSupportsCosmetics('unknown-token'), false);
+  });
+
+  test('separates native carrier support from the older additive capability', () => {
+    rememberTokenClientVersion('native-carrier-token', '2.10.16');
+    rememberTokenClientVersion('additive-only-token', '2.10.15');
+    assert.equal(tokenSupportsHudCosmeticsTransport('native-carrier-token'), true);
+    assert.equal(tokenSupportsHudCosmeticsTransport('additive-only-token'), false);
   });
 });

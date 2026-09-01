@@ -4,7 +4,7 @@ ZFE is a `dxgi.dll` proxy for Fallout 76 that exposes `__ZFE` to the Scaleform
 HUD. FCM's optional `FCMChatWidget` HUDModLoader mod uses its sanctioned
 `chat.v1` surface to display chat in game.
 
-> **Current widget (2026-08-31):** `FCMChatWidget` v2.10.15 targets `/relay` through
+> **Current widget (2026-09-01):** `FCMChatWidget` v2.10.16 targets `/relay` through
 > ZFE `chat.v1`. The backend keeps production relay access fail-closed until
 > `RELAY_PRODUCTION_ENABLED=true` is deliberately rolled out. The desktop overlay
 > remains independent of this optional mod path.
@@ -108,10 +108,10 @@ indefinitely. Before this, `VERSION` only ever reached the local ZFE log, so the
 had no way to tell what it was talking to.
 
 Any future non-additive change to the shape of what the widget receives — such as a
-sentinel embedded in a display string — **must** be gated on this. `supportsCosmetics()`
-still fails closed for those extensions: an unknown, missing or unparseable version means
-no. The HUD identity fields are deliberately excluded from that gate because they are
-standalone JSON members that older widgets ignore safely.
+sentinel embedded in a display string — **must** be gated on this. Unknown, missing or
+unparseable versions fail closed. The legacy additive cosmetics capability starts at
+`2.10.0`; the native-known `FCMHUD/1` carrier has its own stricter `2.10.16` gate because
+ZFE filters unknown members before the SWF sees them.
 
 Version comparison is numeric per component, not string: `'2.10.0' < '2.9.4'`
 lexicographically, so a string compare would silently lock every updated client out.
@@ -119,7 +119,7 @@ lexicographically, so a string compare would silently lock every updated client 
 `MIN_COSMETICS_VERSION` is **2.10.0**, the first build that reports a version at all —
 the bump IS the capability signal.
 
-### HUD identity cosmetics (widget v2.10.15)
+### HUD identity cosmetics (widget v2.10.16)
 
 The relay now sends these additive fields on every `chat.message` event:
 
@@ -135,8 +135,10 @@ immediately and the later relay echo reconciles it before deduplication, so the 
 the same supporter marker and tag as every other message author. The shared finalizer passes
 the server-resolved supporter tier to Discord, where the same immutable star is shown beside
 the author.
-Static history is decorated with the same current cosmetics as live messages. Because these
-fields are additive JSON members, older BA2 files safely ignore them; the marker no longer
-depends on the relay carrying a capability record across ZFE's separate connect and subscribe
-sockets. The relay still stores only a short-lived one-way digest of the negotiated token/version
-in Redis for future non-additive protocol extensions; the bearer token itself is never stored.
+Static history is decorated with the same current cosmetics as live messages. ZFE's native
+chat bridge strips unknown JSON members before they reach Scaleform, so v2.10.16 also reads a
+capability-gated `FCMHUD/1;...` envelope from the existing, known `targetUserId` member. That
+member is an empty transport slot for ordinary channel chat; it is never a real recipient. Older
+BA2 files receive no envelope, while raw relay consumers retain the additive JSON fields. The
+relay stores only a short-lived one-way digest of the negotiated token/version in Redis; the
+bearer token itself is never stored.

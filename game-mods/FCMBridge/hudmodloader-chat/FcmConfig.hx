@@ -14,6 +14,8 @@ class FcmConfig {
 
     /** Immutable supporter marker. The HUD never renders a client-supplied glyph. */
     public static inline var SUPPORTER_STAR_GLYPH:String = "★";
+    /** Native-known chat.v1 field carrier used because ZFE strips additive JSON members. */
+    public static inline var HUD_COSMETICS_TRANSPORT_PREFIX:String = "FCMHUD/1;";
     /** Private-use token prefix for the Scaleform inline-image fallback. */
     public static inline var SUPPORTER_STAR_TOKEN_PREFIX:String = "\uE000FCMSTAR";
 
@@ -180,6 +182,41 @@ class FcmConfig {
      */
     public static function supporterStarPresent(serverFlag:Bool, serverColor:String):Bool {
         return serverFlag || parseHexColor(serverColor, -1) >= 0;
+    }
+
+    /**
+     * Read one value from the FCMHUD/1 envelope carried in targetUserId. The
+     * envelope is only accepted with the exact prefix and exact key match; this
+     * prevents a real recipient id or arbitrary chat data from becoming a marker.
+     */
+    public static function hudTransportValue(wire:String, key:String):String {
+        if (wire == null || key == null || key.length == 0
+                || !StringTools.startsWith(wire, HUD_COSMETICS_TRANSPORT_PREFIX)) return "";
+        var fields:Array<String> = wire.substr(HUD_COSMETICS_TRANSPORT_PREFIX.length).split(";");
+        for (field in fields) {
+            var eq:Int = field.indexOf("=");
+            if (eq <= 0 || field.substr(0, eq) != key) continue;
+            var encoded:String = field.substr(eq + 1);
+            try {
+                return StringTools.urlDecode(encoded);
+            } catch (e:Dynamic) {
+                return "";
+            }
+        }
+        return "";
+    }
+
+    public static function hudTransportTag(wire:String):String {
+        return hudTransportValue(wire, "t");
+    }
+
+    public static function hudTransportStarColor(wire:String):String {
+        var color:String = hudTransportValue(wire, "c");
+        return parseHexColor(color, -1) >= 0 ? color : "";
+    }
+
+    public static function hudTransportHasStar(wire:String):Bool {
+        return hudTransportValue(wire, "s") == "1";
     }
 
     /**

@@ -23,8 +23,9 @@ import { createHash } from 'node:crypto';
  * way to push a fix.
  *
  * Hence: the widget now reports `clientVersion` at register/hello, the relay records it
- * per connection, and any wire-format evolution is gated on it. This is the prerequisite
- * for cosmetics and for anything else that changes the shape of what the widget receives.
+ * per connection, and any wire-format evolution is gated on it. The native-known
+ * FCMHUD/1 cosmetics carrier has a separate minimum from the older additive cosmetics
+ * capability because the carrier requires a newer parser in the BA2.
  *
  * This module is PURE (no sockets, no Prisma) so the comparison logic is unit-testable.
  */
@@ -37,6 +38,8 @@ import { createHash } from 'node:crypto';
  * is the whole point: absence is treated as "assume the oldest possible client".
  */
 export const MIN_COSMETICS_VERSION = '2.10.0';
+/** First widget build that understands the native-known targetUserId carrier. */
+export const MIN_HUD_COSMETICS_TRANSPORT_VERSION = '2.10.16';
 
 export interface ParsedVersion {
   major: number;
@@ -82,6 +85,11 @@ export function versionAtLeast(raw: unknown, minimum: string): boolean {
  */
 export function supportsCosmetics(clientVersion: unknown): boolean {
   return versionAtLeast(clientVersion, MIN_COSMETICS_VERSION);
+}
+
+/** True only for widgets that decode the FCMHUD/1 carrier in targetUserId. */
+export function supportsHudCosmeticsTransport(clientVersion: unknown): boolean {
+  return versionAtLeast(clientVersion, MIN_HUD_COSMETICS_TRANSPORT_VERSION);
 }
 
 // ── Per-connection registry ───────────────────────────────────────────────────
@@ -145,28 +153,45 @@ export function tokenSupportsCosmetics(token: unknown): boolean {
   return supportsCosmetics(entry.version);
 }
 
+/** True only when a token negotiated a widget that understands the native carrier. */
+export function tokenSupportsHudCosmeticsTransport(token: unknown): boolean {
+  if (typeof token !== 'string' || !token) return false;
+  const entry = tokenVersions.get(tokenKey(token));
+  if (!entry || entry.expiresAt <= Date.now()) {
+    if (entry) tokenVersions.delete(tokenKey(token));
+    return false;
+  }
+  return supportsHudCosmeticsTransport(entry.version);
+}
+
 export default {
   MIN_COSMETICS_VERSION,
+  MIN_HUD_COSMETICS_TRANSPORT_VERSION,
   parseClientVersion,
   compareVersions,
   versionAtLeast,
   supportsCosmetics,
+  supportsHudCosmeticsTransport,
   rememberClientVersion,
   getClientVersion,
   connectionSupportsCosmetics,
   rememberTokenClientVersion,
   tokenSupportsCosmetics,
+  tokenSupportsHudCosmeticsTransport,
 };
 module.exports = {
   MIN_COSMETICS_VERSION,
+  MIN_HUD_COSMETICS_TRANSPORT_VERSION,
   parseClientVersion,
   compareVersions,
   versionAtLeast,
   supportsCosmetics,
+  supportsHudCosmeticsTransport,
   rememberClientVersion,
   getClientVersion,
   connectionSupportsCosmetics,
   rememberTokenClientVersion,
   tokenSupportsCosmetics,
+  tokenSupportsHudCosmeticsTransport,
 };
 module.exports.default = module.exports;

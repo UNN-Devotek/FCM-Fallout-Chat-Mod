@@ -42,6 +42,13 @@ class TestFcmConfig {
         eqb("supporter marker accepts server flag", FcmConfig.supporterStarPresent(true, ""), true);
         eqb("supporter marker accepts validated colour", FcmConfig.supporterStarPresent(false, "#FD4DA6"), true);
         eqb("supporter marker rejects unsafe colour", FcmConfig.supporterStarPresent(false, "url(evil)"), false);
+        var hudWire:String = "FCMHUD/1;s=1;c=%23FD4DA6;t=X%3BY";
+        eqb("HUD transport recognizes prefix", FcmConfig.hudTransportHasStar(hudWire), true);
+        eqs("HUD transport decodes tag", FcmConfig.hudTransportTag(hudWire), "X;Y");
+        eqs("HUD transport validates color", FcmConfig.hudTransportStarColor(hudWire), "#FD4DA6");
+        eqb("HUD transport rejects ordinary target", FcmConfig.hudTransportHasStar("user_123"), false);
+        eqs("HUD transport rejects invalid color",
+            FcmConfig.hudTransportStarColor("FCMHUD/1;c=url%28evil%29"), "");
         eqs("json string compact", FcmConfig.extractJsonString('{"tag":"X"}', "tag"), "X");
         eqs("json string whitespace", FcmConfig.extractJsonString('{ "tag" : \"X\" }', "tag"), "X");
         eqs("json string newline whitespace", FcmConfig.extractJsonString('{\n tag\t:\n \"X\"\n}', "tag"), "X");

@@ -14,6 +14,7 @@ export interface RelayHudCosmetics {
 }
 
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
+export const HUD_COSMETICS_TRANSPORT_PREFIX = 'FCMHUD/1;';
 
 /** Project server-resolved cosmetics into the additive chat.v1 HUD fields. */
 export function relayHudCosmetics(source: Record<string, unknown>): RelayHudCosmetics {
@@ -42,4 +43,63 @@ export function withoutRelayHudCosmetics<T extends Record<string, unknown>>(even
   return next as T;
 }
 
-export default { relayHudCosmetics, withoutRelayHudCosmetics };
+/**
+ * Encode the HUD cosmetic projection in the existing, native-known targetUserId
+ * member. ZFE's native chat bridge filters unknown JSON members before returning
+ * an event to Scaleform, while targetUserId is already part of the chat.v1 event
+ * schema and is empty for ordinary channel messages.
+ *
+ * This is a transport envelope only; it is never used as a real recipient. Keep
+ * the additive fields on the event too so raw relay consumers retain the normal
+ * JSON contract. The version-gated caller is responsible for sending this only
+ * to widgets that know how to decode it.
+ */
+export function relayHudCosmeticTransport(cosmetics: RelayHudCosmetics): string {
+  const fields: string[] = [];
+  if (cosmetics.supporterStar) fields.push('s=1');
+  if (cosmetics.starColor && HEX_COLOR.test(cosmetics.starColor)) {
+    fields.push(`c=${encodeURIComponent(cosmetics.starColor)}`);
+  }
+  if (typeof cosmetics.tag === 'string' && cosmetics.tag.trim()) {
+    fields.push(`t=${encodeURIComponent(cosmetics.tag)}`);
+  }
+  return fields.length > 0
+    ? `${HUD_COSMETICS_TRANSPORT_PREFIX}${fields.join(';')}`
+    : '';
+}
+
+/**
+ * Prepare one event for a native HUD subscriber. Older/raw clients retain the
+ * additive JSON projection; the native-known transport envelope is added only
+ * for a widget build that explicitly negotiated support for it. ZFE filters the
+ * additive members before old widgets can see them, while raw relay consumers
+ * continue to receive the established JSON contract.
+ */
+export function relayHudEventForClient<T extends Record<string, unknown>>(
+  event: T,
+  supportsCosmeticTransport: boolean,
+): T {
+  const cosmetics = relayHudCosmetics(event);
+  // History and server-room events already contain the validated projection but
+  // intentionally do not carry the full badges array. Preserve that projection
+  // when adapting those events for the native transport.
+  if (event.supporterStar === true) {
+    cosmetics.supporterStar = true;
+    if (typeof event.starColor === 'string' && HEX_COLOR.test(event.starColor)) {
+      cosmetics.starColor = event.starColor;
+    }
+  }
+  if (!supportsCosmeticTransport) return event;
+
+  const transport = relayHudCosmeticTransport(cosmetics);
+  return transport
+    ? ({ ...event, targetUserId: transport } as T)
+    : event;
+}
+
+export default {
+  relayHudCosmetics,
+  withoutRelayHudCosmetics,
+  relayHudCosmeticTransport,
+  relayHudEventForClient,
+};

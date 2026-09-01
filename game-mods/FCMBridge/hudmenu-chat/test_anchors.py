@@ -363,9 +363,12 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.15";' in widget_src
+    check('static inline var VERSION:String  = "2.10.16";' in widget_src
           and "function hydrateOwnEcho" in widget_src,
-          "FCMChatWidget bumps the HUD supporter marker/render build to version 2.10.15")
+          "FCMChatWidget bumps the HUD supporter marker/native transport build to version 2.10.16")
+    check('FcmConfig.hudTransportHasStar(hudTransport)' in widget_src
+          and 'FcmConfig.hudTransportStarColor(hudTransport)' in widget_src,
+          "FCMChatWidget decodes native-known HUD cosmetics transport")
     check('extractJsonBool(obj, "supporterStar")' in widget_src
           and 'FcmConfig.SUPPORTER_STAR_GLYPH' in widget_src
           and 'supporterStarPresent' in widget_src

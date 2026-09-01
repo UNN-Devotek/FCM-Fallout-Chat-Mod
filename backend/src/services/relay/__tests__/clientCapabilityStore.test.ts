@@ -6,6 +6,7 @@ import {
   rememberTokenClientVersionDurable,
   tokenCapabilityKey,
   tokenSupportsCosmeticsDurable,
+  tokenSupportsHudCosmeticsTransportDurable,
 } from '../clientCapabilityStore';
 
 type FakeRedis = {
@@ -45,6 +46,17 @@ describe('durable relay client capability handoff', () => {
 
     assert.equal(
       await tokenSupportsCosmeticsDurable(token, async () => redis),
+      true,
+    );
+  });
+
+  test('recovers native HUD transport capability from the durable record', async () => {
+    const redis = fakeRedis();
+    const token = 'native-carrier-durable-token';
+    redis.values.set(tokenCapabilityKey(token), '2.10.16');
+
+    assert.equal(
+      await tokenSupportsHudCosmeticsTransportDurable(token, async () => redis),
       true,
     );
   });

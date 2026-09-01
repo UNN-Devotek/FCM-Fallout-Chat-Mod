@@ -14,7 +14,9 @@ import logger from '../../config/logger';
 import {
   rememberTokenClientVersion,
   supportsCosmetics,
+  supportsHudCosmeticsTransport,
   tokenSupportsCosmetics,
+  tokenSupportsHudCosmeticsTransport,
 } from './clientCapability';
 
 const KEY_PREFIX = 'relay:client-capability:';
@@ -82,8 +84,30 @@ export async function tokenSupportsCosmeticsDurable(
   }
 }
 
+/** Resolve the stricter native-known-field transport capability. */
+export async function tokenSupportsHudCosmeticsTransportDurable(
+  token: unknown,
+  redisFactory: RedisFactory = getRedisClient,
+): Promise<boolean> {
+  if (typeof token !== 'string' || !token) return false;
+  if (tokenSupportsHudCosmeticsTransport(token)) return true;
+
+  try {
+    const redis = await redisFactory();
+    const raw = await redis.get(tokenCapabilityKey(token));
+    if (typeof raw !== 'string' || !raw.trim()) return false;
+
+    rememberTokenClientVersion(token, raw);
+    return supportsHudCosmeticsTransport(raw);
+  } catch (err) {
+    logger.warn({ err }, '[relay] durable HUD transport-capability read failed');
+    return false;
+  }
+}
+
 export default {
   tokenCapabilityKey,
   rememberTokenClientVersionDurable,
   tokenSupportsCosmeticsDurable,
+  tokenSupportsHudCosmeticsTransportDurable,
 };

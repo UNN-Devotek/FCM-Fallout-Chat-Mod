@@ -357,11 +357,14 @@ the time it was issued. Older relays may omit it (treat absent/empty as "no time
 FCM's relay adds optional HUD cosmetic fields to FCM chat events: `tag` (a validated
 Overseer tag), `supporterStar: true` (an active Supporter/Overseer entitlement), and
 `starColor` (a validated `#rrggbb` value). They may appear on live, polled, and
-subscribe-time history events. These are additive JSON members; generic ZFE clients and
-older FCM widgets ignore unknown fields, so a separate ZFE connect/subscribe socket can
-never silently remove a current HUD supporter's marker. The FCM HUD always renders its own
-immutable `★` glyph. The relay still records the negotiated token/version across separate
-connect and subscribe sockets for future non-additive protocol extensions.
+subscribe-time history events. Raw relay consumers receive these additive members. ZFE's native
+bridge, however, filters unknown members before passing an event to Scaleform; therefore widget
+v2.10.16+ also receives a `FCMHUD/1;...` envelope in the existing known `targetUserId` member.
+For ordinary channel messages this is an empty transport slot, never a real recipient. The
+envelope is capability-gated to v2.10.16+; older widgets receive an empty `targetUserId` and no
+transport data. The FCM HUD always renders its own immutable `★` glyph. The relay records the
+negotiated token/version across separate connect and subscribe sockets so the same gate applies
+to live, poll, and history delivery.
 
 For an authenticated HUD send, the relay performs a bounded authoritative Discord
 member-role refresh before decoration: once per linked Discord account per minute across
