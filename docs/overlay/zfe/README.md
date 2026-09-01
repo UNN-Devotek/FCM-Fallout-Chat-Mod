@@ -4,7 +4,7 @@ ZFE is a `dxgi.dll` proxy for Fallout 76 that exposes `__ZFE` to the Scaleform
 HUD. FCM's optional `FCMChatWidget` HUDModLoader mod uses its sanctioned
 `chat.v1` surface to display chat in game.
 
-> **Current widget (2026-09-01):** `FCMChatWidget` v2.10.25 targets `/relay` through
+> **Current widget (2026-09-01):** `FCMChatWidget` v2.10.26 targets `/relay` through
 > ZFE `chat.v1`. The backend keeps production relay access fail-closed until
 > `RELAY_PRODUCTION_ENABLED=true` is deliberately rolled out. The desktop overlay
 > remains independent of this optional mod path.
@@ -119,7 +119,7 @@ lexicographically, so a string compare would silently lock every updated client 
 `MIN_COSMETICS_VERSION` is **2.10.0**, the first build that reports a version at all —
 the bump IS the capability signal.
 
-### HUD identity cosmetics (widget v2.10.25)
+### HUD identity cosmetics (widget v2.10.26)
 
 The relay now sends these additive fields on every `chat.message` event:
 
@@ -132,7 +132,8 @@ The widget never accepts a glyph from the wire. It uses immutable embedded five-
 and falls back to the configured active-tab color if a star color is absent or malformed. The
 catalog colour sources are embedded ahead of time because Fallout 76's GFx rejects runtime
 `BitmapData.colorTransform` calls. Each row renders the selected asset through a direct HTML
-`<img src="..." align="baseline">` linkage appended with `TextFieldEx.appendHtml`, avoiding a text
+lower-case `<img src="...">` linkage appended with `TextFieldEx.appendHtml`, matching the original
+Text Chat resolver and avoiding a text
 substitution token that can leak into the feed as literal text. The feed also keeps an explicit gap
 above the top-level HUDTools input and re-snaps to the end after each reflow. When the local player sends a message, the widget waits for the
 authoritative live relay event because ZFE strips cosmetics from the native send acknowledgement;
@@ -140,7 +141,7 @@ the sender therefore receives the same supporter marker and tag as every other m
 The shared finalizer passes the server-resolved supporter tier to Discord, where the same immutable
 star is shown beside the author.
 Static history is decorated with the same current cosmetics as live messages. ZFE's native
-chat bridge strips unknown JSON members before they reach Scaleform, so v2.10.25 also reads a
+chat bridge strips unknown JSON members before they reach Scaleform, so v2.10.26 also reads a
 capability-gated `FCMHUD/1;...` envelope from the existing, known `targetUserId` member. That
 member is an empty transport slot for ordinary channel chat; it is never a real recipient. Older
 BA2 files receive no envelope, while raw relay consumers retain the additive JSON fields. The

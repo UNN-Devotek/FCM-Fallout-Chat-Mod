@@ -158,7 +158,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.25"; // appendHtml stars + guarded feed/input + send echo poll
+    static inline var VERSION:String  = "2.10.26"; // lower-case inline stars + compact feed + send echo poll
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -667,30 +667,30 @@ class FCMChatWidget extends MovieClip {
     /** Return the embedded SWF linkage for a validated supporter-star colour. */
     static function starBitmapLinkage(color:Int):String {
         switch (color) {
-            case 0xEDABAB: return "SupporterStarBitmapEdabab";
-            case 0xEAEA9A: return "SupporterStarBitmapEaea9a";
-            case 0xB8CF81: return "SupporterStarBitmapB8cf81";
-            case 0x8CDB57: return "SupporterStarBitmap8cdb57";
-            case 0xABEDB5: return "SupporterStarBitmapAbedb5";
-            case 0x7EC8AE: return "SupporterStarBitmap7ec8ae";
-            case 0x57DBDB: return "SupporterStarBitmap57dbdb";
-            case 0xABBFED: return "SupporterStarBitmapAbbfed";
-            case 0x868DCB: return "SupporterStarBitmap868dcb";
-            case 0xEBA2EB: return "SupporterStarBitmapEba2eb";
-            case 0xDF68C7: return "SupporterStarBitmapDf68c7";
-            case 0xC87E98: return "SupporterStarBitmapC87e98";
-            case 0xFE8B8B: return "SupporterStarBitmapFe8b8b";
-            case 0xFD5F1C: return "SupporterStarBitmapFd5f1c";
-            case 0xF8FE8B: return "SupporterStarBitmapF8fe8b";
-            case 0xC4FD1C: return "SupporterStarBitmapC4fd1c";
-            case 0x70F835: return "SupporterStarBitmap70f835";
-            case 0x81FE87: return "SupporterStarBitmap81fe87";
-            case 0x1CFDAE: return "SupporterStarBitmap1cfdae";
-            case 0x58FDFD: return "SupporterStarBitmap58fdfd";
-            case 0x7EA8F7: return "SupporterStarBitmap7ea8f7";
-            case 0xFD1CFD: return "SupporterStarBitmapFd1cfd";
-            case 0xFD4DA6: return "SupporterStarBitmapFd4da6";
-            default: return "SupporterStarBitmap";
+            case 0xEDABAB: return "supporterstarbitmapedabab";
+            case 0xEAEA9A: return "supporterstarbitmapeaea9a";
+            case 0xB8CF81: return "supporterstarbitmapb8cf81";
+            case 0x8CDB57: return "supporterstarbitmap8cdb57";
+            case 0xABEDB5: return "supporterstarbitmapabedb5";
+            case 0x7EC8AE: return "supporterstarbitmap7ec8ae";
+            case 0x57DBDB: return "supporterstarbitmap57dbdb";
+            case 0xABBFED: return "supporterstarbitmapabbfed";
+            case 0x868DCB: return "supporterstarbitmap868dcb";
+            case 0xEBA2EB: return "supporterstarbitmapeba2eb";
+            case 0xDF68C7: return "supporterstarbitmapdf68c7";
+            case 0xC87E98: return "supporterstarbitmapc87e98";
+            case 0xFE8B8B: return "supporterstarbitmapfe8b8b";
+            case 0xFD5F1C: return "supporterstarbitmapfd5f1c";
+            case 0xF8FE8B: return "supporterstarbitmapf8fe8b";
+            case 0xC4FD1C: return "supporterstarbitmapc4fd1c";
+            case 0x70F835: return "supporterstarbitmap70f835";
+            case 0x81FE87: return "supporterstarbitmap81fe87";
+            case 0x1CFDAE: return "supporterstarbitmap1cfdae";
+            case 0x58FDFD: return "supporterstarbitmap58fdfd";
+            case 0x7EA8F7: return "supporterstarbitmap7ea8f7";
+            case 0xFD1CFD: return "supporterstarbitmapfd1cfd";
+            case 0xFD4DA6: return "supporterstarbitmapfd4da6";
+            default: return "supporterstarbitmap";
         }
     }
 
@@ -701,9 +701,11 @@ class FCMChatWidget extends MovieClip {
      */
     static function supporterStarHtml(color:Int, size:Int):String {
         var px:Int = FcmConfig.clampInt(size, 8, 47);
-        return '<font face="' + FONT_BOLD + '" size="' + px + '"><img src="'
-            + starBitmapLinkage(color) + '" width="' + px + '" height="' + px
-            + '" align="baseline" vspace="-2"></font> ';
+        // The legacy Text Chat parser resolves BitmapData linkages by their
+        // lower-case export name. Keep the image inline with the surrounding
+        // font run; a nested font tag makes GFx calculate a second line box.
+        return '<img src="' + starBitmapLinkage(color) + '" height="' + px
+            + '" width="' + px + '"> ';
     }
 
     /** Select the embedded BitmapData variant for a validated catalog colour. */

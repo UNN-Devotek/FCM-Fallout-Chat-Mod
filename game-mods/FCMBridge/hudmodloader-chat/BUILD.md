@@ -1,6 +1,6 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.25. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.26. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
@@ -39,9 +39,11 @@ connected, later HUD reads update local identity state only; they never issue a 
 Supporter stars are rendered as Scaleform inline images from embedded linkage-backed source images,
 not as the U+2605 text glyph. Fallout 76's `$MAIN_Font_Bold` alias does not contain U+2605, and
 `embedFonts=true` prevents a device-font fallback. Each row emits a direct `<img src="...">` tag
-using the selected linkage name and `align="baseline"`, appended through `TextFieldEx.appendHtml`,
-keeping the marker aligned with the channel tag, custom tag, sender name, and message text while
-the feed scrolls. This avoids a text
+using the selected **lower-case** linkage name (matching the original Text Chat resolver) and
+appended through `TextFieldEx.appendHtml`, keeping the marker aligned with the channel tag, custom
+tag, sender name, and message text while the feed scrolls. The image is kept in the same inline
+font run; nested font metrics and unsupported vertical-alignment attributes are not used, which
+also prevents an unresolved image from inflating the row height. This avoids a text
 substitution token that can be rendered literally by the Fallout GFx build. The GFx runtime rejects
 `BitmapData.colorTransform`, so `SupporterStarBitmap.hx` embeds the validated catalog colours
 ahead of time and the widget selects the matching bitmap without runtime pixel transforms. The feed
@@ -51,7 +53,7 @@ After a successful send, one deferred poll fetches the authoritative live echo i
 ordinary background polling remains controlled by `pollMs`.
 
 ZFE's native `chat.v1` bridge filters unknown JSON members before the SWF receives an event. The
-The v2.10.25 widget therefore reads the validated `tag`, supporter marker, and color from an
+The v2.10.26 widget therefore reads the validated `tag`, supporter marker, and color from an
 `FCMHUD/1;...` envelope carried in the existing known `targetUserId` field. For ordinary channel
 chat this field is an empty transport slot, not a real recipient. The relay only emits the
 envelope to v2.10.16+ clients; older BA2 files receive no transport data. Raw relay consumers
@@ -251,7 +253,7 @@ staff validation on every request; the HUD permission is only a visibility hint.
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.10.25`. If
+1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.10.26`. If
    `AccountInfoData` is late, the widget waits and retries. The sender label and a newly sent
    message use the exact public Fallout 76 account handle, including punctuation; neither
    `Wanderer` nor the local character name is used for the relay handshake.

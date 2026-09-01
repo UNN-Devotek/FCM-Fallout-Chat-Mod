@@ -364,8 +364,8 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.25";' in widget_src,
-          "FCMChatWidget bumps the guarded feed/input + appendHtml + send-echo-poll build to version 2.10.25")
+    check('static inline var VERSION:String  = "2.10.26";' in widget_src,
+          "FCMChatWidget bumps the compact lower-case-image + send-echo-poll build to version 2.10.26")
     check('FcmConfig.hudTransportHasStar(hudTransport)' in widget_src
           and 'FcmConfig.hudTransportStarColor(hudTransport)' in widget_src,
           "FCMChatWidget decodes native-known HUD cosmetics transport")
@@ -383,11 +383,12 @@ if widget_src:
               encoding='utf-8').read()
           and 'new SupporterStarBitmap(size, size)' in widget_src
           and 'new SupporterStarBitmap(0, 0)' not in widget_src
-          and 'align="baseline"' in widget_src
-          and 'SupporterStarBitmapFd4da6' in widget_src
+          and 'return \'<img src="\' + starBitmapLinkage(color) + \'" height="\' + px' in widget_src
+          and 'supporterstarbitmapfd4da6' in widget_src
+          and 'return "SupporterStarBitmapFd4da6"' not in widget_src
           and 'FCMSTAR' not in widget_src
           and 'setImageSubstitutions' not in widget_src,
-          "FCMChatWidget renders supporter stars through direct baseline-aligned embedded images")
+          "FCMChatWidget renders supporter stars through lower-case embedded image linkages")
     check('FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor)' in widget_src
           and 'size="\' + fs + \'"' in widget_src,
           "FCMChatWidget uses a validated star colour with shared line metrics")

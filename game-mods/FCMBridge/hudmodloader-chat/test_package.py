@@ -29,6 +29,12 @@ def main() -> None:
     assert swf_artifact[:3] == b"FWS" and swf_artifact[3] == 32, (
         "FCMChatWidget.swf must be an uncompressed Flash v32 artifact"
     )
+    assert b"supporterstarbitmapfd4da6" in swf_artifact, (
+        "FCMChatWidget.swf must export the lower-case supporter-star linkage"
+    )
+    assert b"SupporterStarBitmapFd4da6" not in swf_artifact, (
+        "FCMChatWidget.swf must not export the old PascalCase supporter-star linkage"
+    )
     widget_artifact = (ROOT / "FCMChatWidget.ba2").read_bytes()
     widget_version = version_match.group(1).encode("ascii")
     assert widget_version in widget_artifact, "FCMChatWidget.ba2 embeds the current VERSION"
