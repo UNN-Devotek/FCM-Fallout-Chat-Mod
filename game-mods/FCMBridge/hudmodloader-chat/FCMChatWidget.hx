@@ -158,7 +158,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.24"; // appendHtml star renderer + guarded feed/input geometry
+    static inline var VERSION:String  = "2.10.25"; // appendHtml stars + guarded feed/input + send echo poll
     static inline var SETTINGS_PATH:String = "settings.ini";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
@@ -180,6 +180,9 @@ class FCMChatWidget extends MovieClip {
     // Event-poll interval moved to FcmConfig.pollMs (tunable via FCMChat.ini `pollMs`,
     // default 5000) — each poll is a fresh wss/TLS handshake under Wine, so the rate is the
     // game-lag knob. See FcmConfig.pollMs.
+    // A successful send schedules one additional next-tick poll so the sender does not wait for
+    // the next background interval to receive the authoritative cosmetics-bearing echo.
+    static inline var SEND_ECHO_POLL_DELAY_MS:Int = 1;
     static inline var CONNECT_RETRY_MS:Int = 3000;
     static inline var CONNECT_MAX_MS:Int   = 30000;
     // worldId re-read interval (ms)
@@ -341,6 +344,7 @@ class FCMChatWidget extends MovieClip {
     var _cursor:Int              = 0;
     var _consecutivePollFailures:Int = 0;
     var _pollTimer:Timer         = null;
+    var _sendEchoPollTimer:flash.utils.Timer = null;
     var _connectTimer:Timer      = null;
     var _worldTimer:Timer        = null;
     var _lastWorldId:String      = "";
@@ -1993,6 +1997,7 @@ class FCMChatWidget extends MovieClip {
                     zfeLog("info", "echo", "awaiting authoritative live echo ch=" + slug
                         + " ackCosmetics=" + ((ackTag.length > 0 || ackSupporterStar) ? "y" : "n"));
                 }
+                scheduleEchoPoll();
             } else {
                 // Surface the relay error code to the user.
                 var code:String = extractJsonString(rs, "code");
@@ -2198,6 +2203,7 @@ class FCMChatWidget extends MovieClip {
         setServerSessionReady(false, "");
         _connected = false;
         stopPollTimer();
+        stopEchoPollTimer();
         scheduleConnectRetry();
     }
 
@@ -2338,8 +2344,26 @@ class FCMChatWidget extends MovieClip {
         pollEvents(); // immediate first poll for history
     }
 
+    /** Poll once on the next event tick after a successful send for a fast authoritative echo. */
+    function scheduleEchoPoll():Void {
+        if (_sendEchoPollTimer != null) return;
+        _sendEchoPollTimer = new flash.utils.Timer(SEND_ECHO_POLL_DELAY_MS, 1);
+        _sendEchoPollTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
+            _sendEchoPollTimer = null;
+            if (_api != null && _connected) {
+                zfeLog("info", "echo", "polling after send");
+                pollEvents();
+            }
+        });
+        _sendEchoPollTimer.start();
+    }
+
     function stopPollTimer():Void {
         if (_pollTimer != null) { _pollTimer.stop(); _pollTimer = null; }
+    }
+
+    function stopEchoPollTimer():Void {
+        if (_sendEchoPollTimer != null) { _sendEchoPollTimer.stop(); _sendEchoPollTimer = null; }
     }
 
     /**

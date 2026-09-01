@@ -1,6 +1,6 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.24. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.25. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
@@ -47,9 +47,11 @@ substitution token that can be rendered literally by the Fallout GFx build. The 
 ahead of time and the widget selects the matching bitmap without runtime pixel transforms. The feed
 reserves an explicit gap above the top-level HUDTools input and re-snaps to the end after each
 reflow so a new message cannot be hidden behind the input field.
+After a successful send, one deferred poll fetches the authoritative live echo immediately;
+ordinary background polling remains controlled by `pollMs`.
 
 ZFE's native `chat.v1` bridge filters unknown JSON members before the SWF receives an event. The
-The v2.10.24 widget therefore reads the validated `tag`, supporter marker, and color from an
+The v2.10.25 widget therefore reads the validated `tag`, supporter marker, and color from an
 `FCMHUD/1;...` envelope carried in the existing known `targetUserId` field. For ordinary channel
 chat this field is an empty transport slot, not a real recipient. The relay only emits the
 envelope to v2.10.16+ clients; older BA2 files receive no transport data. Raw relay consumers
@@ -249,7 +251,7 @@ staff validation on every request; the HUD permission is only a visibility hint.
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.10.24`. If
+1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.10.25`. If
    `AccountInfoData` is late, the widget waits and retries. The sender label and a newly sent
    message use the exact public Fallout 76 account handle, including punctuation; neither
    `Wanderer` nor the local character name is used for the relay handshake.

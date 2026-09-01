@@ -364,8 +364,8 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.24";' in widget_src,
-          "FCMChatWidget bumps the guarded feed/input + appendHtml build to version 2.10.24")
+    check('static inline var VERSION:String  = "2.10.25";' in widget_src,
+          "FCMChatWidget bumps the guarded feed/input + appendHtml + send-echo-poll build to version 2.10.25")
     check('FcmConfig.hudTransportHasStar(hudTransport)' in widget_src
           and 'FcmConfig.hudTransportStarColor(hudTransport)' in widget_src,
           "FCMChatWidget decodes native-known HUD cosmetics transport")
@@ -417,6 +417,10 @@ if widget_src:
           and '_logTf.setSelection(_logTf.length, _logTf.length)' in widget_src
           and 'snapLogToBottom();' in widget_src,
           "FCMChatWidget snaps new messages to the visible area above the input")
+    check('function scheduleEchoPoll():Void' in widget_src
+          and '_sendEchoPollTimer' in widget_src
+          and 'scheduleEchoPoll();' in widget_src,
+          "FCMChatWidget polls immediately after a successful send for the authoritative echo")
     fallout_name_match = re.search(
         r"function readFalloutDisplayName\([^)]*\):String \{(.*?)\n    \}\n\n    function hasResolvedDisplayName",
         widget_src,

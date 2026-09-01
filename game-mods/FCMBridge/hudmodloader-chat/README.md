@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-09-01):** v2.10.24 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-09-01):** v2.10.25 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -27,7 +27,7 @@ A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's H
   negotiates widget capability. The marker is always the immutable `★`; only its validated
   catalog color varies. Self-authored messages use the same authoritative live event as Discord
   and other in-game messages, so the tag and marker are not lost to the native send ACK boundary.
-  ZFE strips unknown event members before the SWF receives them, so v2.10.24 decodes validated
+  ZFE strips unknown event members before the SWF receives them, so v2.10.25 decodes validated
   cosmetics from the `FCMHUD/1;...` envelope in the known empty `targetUserId` slot. Older widget
   builds receive no envelope. The marker is an embedded inline Scaleform image rather than a font
   glyph, because the HUDModLoader font aliases do not provide U+2605. Each row uses a direct
@@ -38,6 +38,8 @@ A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's H
   colour and selects the matching source without runtime pixel operations. The feed clip rectangle
   reserves a guarded gap above the top-level HUDTools input field, and new content snaps to the
   end of the feed after each reflow.
+  After a successful send, the widget schedules one next-tick event poll so the authoritative
+  cosmetics-bearing echo appears without waiting for the normal background poll interval.
 - Handles the unlinked-account (limited) state: receive-only with a pinned link-code notice.
 - Gives linked moderators an in-HUD command surface for delete, kick, mute, unmute, ban, and unban.
   Staff can enter an exact visible player name (quote multi-word names) or use the `[#XXXXXXXX]`
