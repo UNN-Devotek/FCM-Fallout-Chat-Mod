@@ -123,14 +123,19 @@ golden-build version lock; see [hosted-dev-environment.md](../deployment/hosted-
 | `GET` | `/api/auth/qa-status/:installToken` | none | Polled by the QA overlay; enforces the golden-build lock (checks `x-client-version` header; returns 426 on mismatch); returns the session grant once and deletes it |
 | `POST` | `/api/dev/login-as` | loopback or `X-Dev-Persona-Key`, DEV-only | Issues an immediate synthetic persona session for an unpackaged local or hosted DEV overlay (`{ persona, installToken }`) |
 | `GET` | `/auth/discord/dev-login` | none (state CSRF + dual developer-role gate) | Legacy hosted DEV OAuth for a selected synthetic persona; not used by the overlay DevAccount buttons |
+| `GET` | `/auth/dev-login/:persona` | loopback, or an existing owner/admin session | Browser-only DEV persona alias; hosted DEV does not expose it on the public login page |
+| `GET` | `/auth/dev-login` | loopback, or an existing owner/admin session | Legacy browser alias for the admin persona; DEV-only |
 | `GET` | `/api/auth/dev-login-status/:installToken` | none | Legacy polling endpoint for the hosted OAuth persona flow |
 | `POST` | `/api/admin/qa/active-version` | `x-admin-api-key` | Sets the active QA build version (`QA_ACTIVE_VERSION` in Redis) |
 | `GET` | `/api/admin/qa/active-version` | `x-admin-api-key` | Returns the currently-active QA build version |
 
-All eight routes are also subject to `apiLimiter` or `authLimiter` (same caps as their
+All ten routes are also subject to `apiLimiter` or `authLimiter` (same caps as their
 equivalent non-QA paths). The overlay persona route is independent of
 `ENABLE_DEV_LOGIN`; the hosted Dev dashboard's browser persona aliases are enabled
-separately by `ENABLE_DEV_LOGIN=true` and are never mounted in production.
+separately by `ENABLE_DEV_LOGIN=true`, are rendered only to real owner/admin sessions,
+and are never mounted in production. Local loopback requests remain credentialless for
+local development. A remote browser request must already have an owner/admin session;
+after admission, a server-side session marker permits switching among synthetic personas.
 
 ## Related Documentation
 

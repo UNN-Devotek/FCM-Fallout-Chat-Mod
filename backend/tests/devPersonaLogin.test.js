@@ -2,6 +2,8 @@ const {
   makeDevPersonaCallbackHandler,
   makeDevPersonaStatusHandler,
   makeDevPersonaLoginAsHandler,
+  isAdvancedDevPersonaRole,
+  isBrowserDevPersonaLoginAuthorized,
 } = require('../src/controllers/devPersonaLoginController');
 
 function response() {
@@ -131,6 +133,41 @@ describe('hosted DEV persona grant polling', () => {
 });
 
 describe('DEV persona direct login', () => {
+  test('recognizes only owner and admin as advanced browser roles', () => {
+    expect(isAdvancedDevPersonaRole('owner')).toBe(true);
+    expect(isAdvancedDevPersonaRole(' ADMIN ')).toBe(true);
+    expect(isAdvancedDevPersonaRole('moderator')).toBe(false);
+    expect(isAdvancedDevPersonaRole(undefined)).toBe(false);
+  });
+
+  test('allows browser aliases from loopback local development', () => {
+    expect(isBrowserDevPersonaLoginAuthorized(devLoginRequest({}, '127.0.0.1'))).toBe(true);
+  });
+
+  test('requires a real advanced session for remote browser aliases', () => {
+    const remoteRequest = devLoginRequest({}, '203.0.113.10');
+    remoteRequest.session = { discordUser: { role: 'user' } };
+    expect(isBrowserDevPersonaLoginAuthorized(remoteRequest)).toBe(false);
+
+    remoteRequest.session.discordUser.role = 'owner';
+    expect(isBrowserDevPersonaLoginAuthorized(remoteRequest)).toBe(true);
+  });
+
+  test('does not trust a forwarded loopback address for the local exception', () => {
+    const remoteRequest = devLoginRequest(
+      {},
+      '203.0.113.10',
+      { 'x-forwarded-for': '127.0.0.1' },
+    );
+    expect(isBrowserDevPersonaLoginAuthorized(remoteRequest)).toBe(false);
+  });
+
+  test('preserves the advanced admission marker after switching persona', () => {
+    const remoteRequest = devLoginRequest({}, '203.0.113.10');
+    remoteRequest.session = { devPersonaAccess: true, discordUser: { role: 'user' } };
+    expect(isBrowserDevPersonaLoginAuthorized(remoteRequest)).toBe(true);
+  });
+
   test('issues a synthetic session without an OAuth step', async () => {
     const issueSession = jest.fn().mockResolvedValue({
       token: 'session-1',

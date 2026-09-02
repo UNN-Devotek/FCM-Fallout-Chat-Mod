@@ -214,9 +214,13 @@ risk to the live community:
   by *interacting* with the dev bot in the dev server. Worst-case malicious
   outcome is a wrecked disposable server, never the production community.
 - `ENABLE_DEV_LOGIN=true` is set only on the isolated **hosted** `backend-dev` so
-  the Dev dashboard's browser-only persona buttons work without opening Discord.
-  The dashboard build also receives `VITE_DEV_PERSONAS=true`; production keeps its
-  default `false`, so these controls are absent from the production site. The
+  the Dev dashboard's browser-only persona aliases can be used by an already
+  authenticated advanced operator. The dashboard build also receives
+  `VITE_DEV_PERSONAS=true`; production keeps its default `false`, so these controls
+  are absent from the production site and from the public login page. The hosted
+  dashboard renders the switcher only for the real `owner`/`admin` role, and the
+  browser aliases reject remote requests unless that session has been admitted.
+  Local loopback requests remain available for local development. The
   overlay's `POST /api/dev/login-as` route is separately gated by
   `NODE_ENV=development` and a dedicated
   `DEV_PERSONA_LOGIN_SECRET` for remote callers, so it is available on the

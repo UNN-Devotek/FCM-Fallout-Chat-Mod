@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { devPersonaUiEnabled } from '../../lib/devPersonaAccess';
 
 function useTypewriter(text: string, speed = 28) {
   const [displayed, setDisplayed] = useState('');
@@ -327,86 +326,6 @@ export default function LoginPage() {
               </svg>
               SIGN UP WITH DISCORD
             </a>
-          )}
-
-          {devPersonaUiEnabled && ready && (
-            <div style={{ marginTop: '20px', borderTop: '1px solid rgba(200,168,64,0.2)', paddingTop: '16px' }}>
-              <div style={{ fontSize: '10px', letterSpacing: '2px', color: 'rgba(200,168,64,0.35)', marginBottom: '10px', textAlign: 'center' }}>
-                ── DEV ACCESS ──
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                {[
-                  { persona: 'admin',     label: 'SYSTEM ADMIN'     },
-                  { persona: 'mod',       label: 'SYSTEM MOD'       },
-                  { persona: 'supporter', label: 'SYSTEM SUPPORTER' },
-                  { persona: 'user',      label: 'SYSTEM USER'      },
-                ].map(({ persona, label }) => (
-                  <a
-                    key={persona}
-                    href={`/auth/dev-login/${persona}`}
-                    style={{
-                      display: 'block',
-                      padding: '9px 0',
-                      textAlign: 'center',
-                      background: 'rgba(24,255,98,0.06)',
-                      border: '1px solid rgba(24,255,98,0.25)',
-                      color: 'rgba(24,255,98,0.7)',
-                      textDecoration: 'none',
-                      fontSize: '11px',
-                      fontWeight: 'bold',
-                      letterSpacing: '1px',
-                      fontFamily: 'Courier New, monospace',
-                      transition: 'background 0.1s, color 0.1s',
-                    }}
-                    onMouseEnter={e => {
-                      e.currentTarget.style.background = 'rgba(24,255,98,0.14)';
-                      e.currentTarget.style.color = '#18FF62';
-                    }}
-                    onMouseLeave={e => {
-                      e.currentTarget.style.background = 'rgba(24,255,98,0.06)';
-                      e.currentTarget.style.color = 'rgba(24,255,98,0.7)';
-                    }}
-                  >
-                    {label}
-                  </a>
-                ))}
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginTop: '8px' }}>
-                {[
-                  { href: '/apply',  label: 'APPLY PAGE'  },
-                  { href: '/report', label: 'REPORT PAGE' },
-                ].map(({ href, label }) => (
-                  <a
-                    key={href}
-                    href={href}
-                    style={{
-                      display: 'block',
-                      padding: '9px 0',
-                      textAlign: 'center',
-                      background: 'rgba(24,255,98,0.06)',
-                      border: '1px solid rgba(24,255,98,0.25)',
-                      color: 'rgba(24,255,98,0.7)',
-                      textDecoration: 'none',
-                      fontSize: '11px',
-                      fontWeight: 'bold',
-                      letterSpacing: '1px',
-                      fontFamily: 'Courier New, monospace',
-                      transition: 'background 0.1s, color 0.1s',
-                    }}
-                    onMouseEnter={e => {
-                      e.currentTarget.style.background = 'rgba(24,255,98,0.14)';
-                      e.currentTarget.style.color = '#18FF62';
-                    }}
-                    onMouseLeave={e => {
-                      e.currentTarget.style.background = 'rgba(24,255,98,0.06)';
-                      e.currentTarget.style.color = 'rgba(24,255,98,0.7)';
-                    }}
-                  >
-                    {label}
-                  </a>
-                ))}
-              </div>
-            </div>
           )}
 
           <div style={{ textAlign: 'center', marginTop: '16px' }}>
