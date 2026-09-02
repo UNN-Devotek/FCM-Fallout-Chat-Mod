@@ -47,6 +47,15 @@ The payload is deliberately NOT structured JSON — see
 [fcmbridge-data-pattern.md](fcmbridge-data-pattern.md) for why (ZFE envelope
 escaping corrupts nested quotes).
 
+The standalone legacy renderer also treats every relay-provided display name,
+message body, and pinned system notice as untrusted at the final GFx boundary.
+Before assigning `htmlText`, `FCMBridge.swf` escapes `&`, `<`, `>`, and `"` as
+numeric character references (`&#38;`, `&#60;`, `&#62;`, `&#34;`). Named entities
+such as `&amp;` are intentionally not used because Fallout 76's Scaleform
+parser can reject them. The game-mod CI job compiles this legacy Haxe source in
+addition to the HUDModLoader widget and runs regression anchors for the escape
+contract.
+
 ### Real-time push path (live feed)
 
 ```

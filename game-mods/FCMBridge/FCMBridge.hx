@@ -33,8 +33,9 @@ import flash.text.TextFormat;
  *
  * SWF CRASH HARD RULES (violations crashed the game in production):
  *   1. NO GlowFilter or any filters array — crashes Scaleform on FO76.
- *   2. NO HTML entities (&amp; etc.) in htmlText — crashes Scaleform on FO76.
- *   3. Live content is zfeSafe()d server-side; renderRecords() is reused unmodified.
+ *   2. NO named HTML entities (&amp; etc.) in htmlText — crashes Scaleform on FO76.
+ *      Numeric character references are safe when user-controlled text needs escaping.
+ *   3. Live content is escaped at the final render boundary before htmlText assignment.
  *   4. Debug panels: use tf.text (plain text), NOT htmlText.
  *
  * Design tokens from ChatOverlay.tsx, theme fo76-wasteland:
@@ -635,7 +636,7 @@ class FCMBridge extends MovieClip {
             // 'server' into every tab and lost other channels' history on switch).
             if (CHANNEL_SLUGS.indexOf(channel) < 0) continue;
 
-            // Record format: "slug|displayName|body" (no tildes — safe for htmlText)
+            // Record format: "slug|displayName|body" (delimiter-safe; HTML-escaped at render)
             _records.push(channel + "|" + displayName + "|" + body);
             while (_records.length > MAX_MSGS) _records.shift();
             newRecords = true;
@@ -840,7 +841,7 @@ class FCMBridge extends MovieClip {
         // Pinned system notice — shown above the feed when auth is limited.
         // Re-emitted by the relay if the link code refreshes; always shows the latest.
         if (_authState != "authenticated" && _pinnedSystemBody.length > 0) {
-            lines.push("** " + _pinnedSystemBody + " **");
+            lines.push("** " + htmlEscape(_pinnedSystemBody) + " **");
         }
 
         // Filter to the ACTIVE channel tab (records are channel-tagged).
@@ -852,7 +853,7 @@ class FCMBridge extends MovieClip {
             if (slug != activeSlug) continue;
             var name:String = f[1];
             var body:String = f.slice(2).join("|");
-            lines.push("[" + slug + "] " + name + ": " + body);
+            lines.push("[" + htmlEscape(slug) + "] " + htmlEscape(name) + ": " + htmlEscape(body));
         }
         if (lines.length == 0) { setText("no messages in " + CHANNEL_NAMES[_activeChannelIdx] + " yet"); return; }
         setText(lines.join("\n"));
@@ -862,6 +863,21 @@ class FCMBridge extends MovieClip {
     function setText(s:String):Void {
         if (_tf == null) return;
         _tf.htmlText = '<font face="$$MAIN_Font" size="' + FONT_SIZE + '" color="' + TEXT_HEX + '">' + s + '</font>';
+    }
+
+    /**
+     * Escape remote/user-controlled text before it is interpolated into a
+     * Scaleform GFx htmlText string. Named entities are not safe on FO76's
+     * parser, so this deliberately matches FcmConfig.htmlEscape and emits
+     * numeric character references only.
+     */
+    static function htmlEscape(s:String):String {
+        if (s == null) return "";
+        s = StringTools.replace(s, "&", "&#38;");
+        s = StringTools.replace(s, "<", "&#60;");
+        s = StringTools.replace(s, ">", "&#62;");
+        s = StringTools.replace(s, '"', "&#34;");
+        return s;
     }
 
     // =========================================================================

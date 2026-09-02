@@ -260,6 +260,29 @@ if bridge_src:
     check("pinned system notice" in bridge_src.lower() or "pinnedSystemBody" in bridge_src,
           "FCMBridge.hx renders pinned system notice above feed")
 
+    # The legacy renderer assigns the final feed string to GFx htmlText. Keep
+    # the same numeric-reference escaping contract as FcmConfig.htmlEscape:
+    # named entities are rejected by the Fallout 76 Scaleform parser.
+    check('static function htmlEscape(s:String):String' in bridge_src,
+          "FCMBridge.hx defines numeric-reference htmlEscape")
+    for source, escaped, label in (
+        ('StringTools.replace(s, "&", "&#38;")', "&#38;", "ampersand"),
+        ('StringTools.replace(s, "<", "&#60;")', "&#60;", "less-than"),
+        ('StringTools.replace(s, ">", "&#62;")', "&#62;", "greater-than"),
+        ('''StringTools.replace(s, '"', "&#34;")''', "&#34;", "double-quote"),
+    ):
+        check(source in bridge_src and escaped in bridge_src,
+              "FCMBridge.hx htmlEscape covers " + label + " with numeric reference")
+    render_match = re.search(r"function renderRecords\(records:Array<String>\):Void \{(.*?)\n    \}\n\n    function setText", bridge_src, re.DOTALL)
+    check(render_match is not None,
+          "FCMBridge.hx renderRecords body is inspectable for escaping coverage")
+    if render_match is not None:
+        render_body = render_match.group(1)
+        check("htmlEscape(_pinnedSystemBody)" in render_body,
+              "FCMBridge.hx escapes the pinned system body before htmlText")
+        check("htmlEscape(name)" in render_body and "htmlEscape(body)" in render_body,
+              "FCMBridge.hx escapes remote sender and body before htmlText")
+
     # Gate in fcmSendMessage must block when not authenticated.
     check("send blocked" in bridge_src or "_authState != \"authenticated\"" in bridge_src,
           "FCMBridge.hx fcmSendMessage blocks send when authState != authenticated")
