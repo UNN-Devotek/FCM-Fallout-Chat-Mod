@@ -15,6 +15,9 @@
  * Deliberately NOT stored in admin_users: that table is reserved for elevated staff
  * identities, and isPrivilegedRole() must keep returning false for supporters.
  * SupporterTier is orthogonal to EffectiveRole.
+ * When enabled, ADMIN_ROLE_ID is resolved as the Overseer cosmetics tier; that
+ * bypass is still kept on this entitlement path so all surfaces share one source
+ * of truth, without changing the user's EffectiveRole.
  */
 import prisma from '../config/prisma';
 import { getRedisClient } from '../config/redis';
@@ -64,6 +67,7 @@ export function tierRoleIds() {
   return {
     supporterRoleId: env.SUPPORTER_ROLE_ID,
     overseerCircleRoleId: env.OVERSEER_CIRCLE_ROLE_ID,
+    adminRoleId: env.ADMIN_ROLE_ID,
   };
 }
 
