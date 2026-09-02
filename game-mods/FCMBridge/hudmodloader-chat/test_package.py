@@ -30,10 +30,13 @@ def main() -> None:
         "FCMChatWidget.swf must be an uncompressed Flash v32 artifact"
     )
     assert b"supporterstarbitmap" not in swf_artifact.lower(), (
-        "FCMChatWidget.swf must not embed a HUD supporter-star renderer"
+        "FCMChatWidget.swf must not embed a bitmap supporter-star renderer"
     )
     assert b"setimagesubstitutions" not in swf_artifact.lower(), (
         "FCMChatWidget.swf must not use the HUD supporter-star substitution path"
+    )
+    assert b"getcharboundaries" in swf_artifact.lower(), (
+        "FCMChatWidget.swf must position supporter markers from text character bounds"
     )
     widget_artifact = (ROOT / "FCMChatWidget.ba2").read_bytes()
     widget_version = version_match.group(1).encode("ascii")
@@ -66,10 +69,13 @@ def main() -> None:
                 assert "Data/ZFE/TextChat/fragments/FCMChatWidget.ini" in names
                 assert "FCMChatWidget.hudmodloader.ini" in names
                 assert "FCMChatWidget.version.txt" in names
+                assert "xscal.ini.example" in names
                 assert "Data/hudmodloader.ini" not in names
                 assert "INSTALL.txt" in names
                 assert "HUDMODLOADER-MENU.txt" in names
                 assert archive.read("Data/FCMChatWidget.ba2") == widget_artifact
+                assert b"chatInterface" in widget_artifact
+                assert b"__SFECodeObj" in widget_artifact
                 assert archive.read("FCMChatWidget.hudmodloader.ini") == b"FCMChatWidget\n"
                 assert archive.read("FCMChatWidget.version.txt") == f"{package.widget_version()}\n".encode()
 
@@ -79,18 +85,22 @@ def main() -> None:
                 )
                 install = archive.read("INSTALL.txt")
                 menu = archive.read("HUDMODLOADER-MENU.txt")
+                xscal_config = archive.read("xscal.ini.example")
                 assert f"linkUrl={expected['link_url']}\n".encode() in chat_config
                 assert f"Endpoint={expected['endpoint']}\n".encode() in widget_config
                 assert f"  {expected['web_link_url']}\n".encode() in install
                 assert f"  {expected['endpoint']}\n".encode() in install
+                assert f"relayEndpoint={expected['endpoint']}\n".encode() in xscal_config
                 assert b"Press F11" in install
                 assert b"Press Insert" in install
                 assert b"/g, /t, /e" in install
+                assert b"/relink" in install
                 assert b"Reset all settings" in install
                 assert b"F11" in menu
                 assert b"FCM -> Customize..." in menu
                 assert b"Press Insert" in menu
                 assert b"/g, /t, /e" in menu
+                assert b"/relink" in menu
                 assert b"Auto-hide" in menu
                 assert b"SERVER" in menu
                 assert b"Reset all settings" in menu

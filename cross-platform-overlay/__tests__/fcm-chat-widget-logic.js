@@ -214,12 +214,45 @@ function shouldIgnoreBlankWorldId({ lastWorldId, currentWorldId, freshRosterObse
   return currentWorldId === '' && currentWorldId !== lastWorldId && freshRosterObservation;
 }
 
-// ── In-session channel action routing (FCMChatWidget.onUserEvent) ──────────────
+// ── HUDModLoader event decoding + in-session channel action routing ────────────
+// HUDModLoader's public event fields are lower camel case. The capitalized aliases
+// are accepted for older loader builds that shipped the earlier event wrapper.
+function hudUserEventAction(event) {
+  if (!event) return '';
+  const value = event.actionName != null && String(event.actionName).length > 0
+    ? event.actionName : event.EventName;
+  return value == null ? '' : String(value);
+}
+
+function hudUserEventIsDown(event) {
+  if (!event) return false;
+  const value = event.isDown != null ? event.isDown : event.IsKeyDown;
+  return value === true;
+}
+
+function isExternalInputAction(action) {
+  const value = String(action == null ? '' : action).toLowerCase();
+  return value === 'escape' || value === 'cancel'
+    || value.includes('quick')
+    || value.includes('friend')
+    || value.includes('social');
+}
+
 function inputChannelAction({ inputOpen, isKeyDown, action, nextAction, prevAction }) {
-  if (!inputOpen || isKeyDown) return 'none';
+  if (isKeyDown) return 'none';
   if (action === nextAction) return 'next';
   if (action === prevAction) return 'prev';
   return 'none';
+}
+
+// Some ZFE/Steam Input builds return only the newest character from readChatInput.
+// Accumulate that stream while preserving shorter real edits and empty clears.
+function mergeNativeInputText(previous, observed) {
+  previous = String(previous == null ? '' : previous);
+  observed = String(observed == null ? '' : observed);
+  if (!observed) return '';
+  if (previous && observed.length === 1 && !previous.endsWith(observed)) return previous + observed;
+  return observed;
 }
 
 // SharedHUDTools owns and renders the fallback TextField, so the widget must leave
@@ -467,6 +500,35 @@ function fcmClean(s) {
     .split('\\u0000').join('')
     .split('u0000').join('');
   return s.trim();
+}
+
+// Mirrors FcmConfig.normalizeDiscordEmojiMarkup. The web renderer keeps custom
+// emoji as CDN-backed images; the Scaleform HUD uses a readable shortcode label
+// and must not expose the Discord snowflake ID.
+function normalizeDiscordEmojiMarkup(s) {
+  if (s == null || String(s).indexOf('<') < 0) return s;
+  s = String(s);
+  let out = '';
+  let i = 0;
+  while (i < s.length) {
+    const animated = s.substr(i, 3) === '<a:';
+    if (!animated && s.substr(i, 2) !== '<:') {
+      out += s.charAt(i); i += 1; continue;
+    }
+    const nameStart = i + (animated ? 3 : 2);
+    const nameEnd = s.indexOf(':', nameStart);
+    if (nameEnd <= nameStart) { out += s.charAt(i); i += 1; continue; }
+    const idEnd = s.indexOf('>', nameEnd + 1);
+    if (idEnd <= nameEnd + 1) { out += s.charAt(i); i += 1; continue; }
+    const name = s.slice(nameStart, nameEnd);
+    const id = s.slice(nameEnd + 1, idEnd);
+    if (name.length > 64 || id.length > 22 || !/^[A-Za-z0-9_]+$/.test(name) || !/^\d+$/.test(id)) {
+      out += s.charAt(i); i += 1; continue;
+    }
+    out += ':' + name + ':';
+    i = idEnd + 1;
+  }
+  return out;
 }
 
 // readDisplayName: sanitize + truncate. Must NOT escape — the payload builder does that once.
@@ -762,6 +824,10 @@ module.exports = {
   jsonEscape,
   nativeLockAdmission,
   nativeLockRelease,
+  hudUserEventAction,
+  hudUserEventIsDown,
+  isExternalInputAction,
+  mergeNativeInputText,
   shouldRebindWorldId,
   shouldIgnoreBlankWorldId,
   inputChannelAction,
@@ -779,6 +845,7 @@ module.exports = {
   extractLinkCode,
   linkGateRender,
   fcmClean,
+  normalizeDiscordEmojiMarkup,
   readDisplayName,
   resolveDisplayName,
   shouldReconcileDisplayName,

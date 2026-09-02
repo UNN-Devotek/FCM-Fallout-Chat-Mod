@@ -9,6 +9,9 @@ import * as giveawayService from './giveawayService';
 import { GiveawayError } from './giveawayService';
 import { getMinervaStatus } from './minervaService';
 
+export const MINERVA_SOURCE_NAME = 'Fallout Builds';
+export const MINERVA_SOURCE_URL = 'https://www.falloutbuilds.com/fo76/minerva';
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface ChatCommand {
@@ -263,7 +266,7 @@ async function buildOnlineResponse(
 
 // ── /minerva Response Builder ─────────────────────────────────────────────────
 
-function buildMinervaResponse(): { text: string; metadata: Record<string, unknown> } {
+export function buildMinervaResponse(): { text: string; metadata: Record<string, unknown> } {
   const { active, next } = getMinervaStatus();
   const fmt = (d: Date) => d.toUTCString().replace(':00 GMT', ' UTC').replace(/:\d\d UTC/, ' UTC');
   const sale = active ?? next;
@@ -275,7 +278,7 @@ function buildMinervaResponse(): { text: string; metadata: Record<string, unknow
     `LIST     — #${sale.listNumber}`,
     `${active ? 'ENDS' : 'STARTS'}    — ${fmt(active ? sale.endUtc : sale.startUtc)}`,
     '',
-    'More info at falloutbuilds.com/fo76/minerva',
+    `More info at ${MINERVA_SOURCE_URL.replace(/^https?:\/\/(www\.)?/, '')}`,
   ];
   return {
     text: lines.join('\n'),
@@ -291,6 +294,8 @@ function buildMinervaResponse(): { text: string; metadata: Record<string, unknow
       nextListNumber: active ? next.listNumber : null,
       nextIsSuperSale: active ? next.isSuperSale : null,
       nextStartUtc: active ? next.startUtc.toISOString() : null,
+      sourceName: MINERVA_SOURCE_NAME,
+      sourceUrl: MINERVA_SOURCE_URL,
     },
   };
 }

@@ -60,8 +60,9 @@ def install_instructions(target: str) -> str:
 FCMChatWidget version: {version}
 
 This archive is the explicit opt-in in-game HUD-mod track. It is separate from
-the desktop overlay. It connects to {config['label'].lower()} through ZFE chat.v1.
-Install ZFE with chat.v1 support and HUDModLoader before installing this archive.
+the desktop overlay. It connects to {config['label'].lower()} through ZFE chat.v1
+or xScal chatInterface, selected automatically.
+Install either a supported ZFE build or xScal, plus HUDModLoader, before installing this archive.
 
 1. Exit Fallout 76 completely.
 2. Extract this archive into the Fallout 76 installation folder, preserving all
@@ -70,6 +71,7 @@ Install ZFE with chat.v1 support and HUDModLoader before installing this archive
    Data/FCMChatWidget.ba2
    Data/FCMChat.ini
    Data/ZFE/TextChat/fragments/FCMChatWidget.ini
+   xscal.ini.example
    FCMChatWidget.hudmodloader.ini
    FCMChatWidget.version.txt
    HUDMODLOADER-MENU.txt
@@ -93,6 +95,11 @@ Install ZFE with chat.v1 support and HUDModLoader before installing this archive
    `Documents/My Games/Fallout 76/`. Proton/Wine normally stores it in the
    Fallout 76 Steam prefix under `compatdata/1151340/pfx/drive_c/users/steamuser/`.
    The `Data/` files always belong in the Fallout 76 game installation folder.
+
+   If using xScal, merge the `[Chat]` section from `xscal.ini.example` into
+   the existing `xscal.ini` beside the game executable. Preserve xScalPriority
+   and every other existing section; do not replace the full file. ZFE ignores
+   this section and continues to use its own fragment configuration.
 
 5. Start Fallout 76 and open the HUDModLoader menu:
    a. Press F11 to open the menu.
@@ -125,9 +132,24 @@ HUD input and commands:
   /i, or /r before a message to route it to General, Trading, Events, Infests,
   or Raids. /s (or /server) is available after the current server/world session
   is confirmed. Type /hide by itself to hide the feed; press Insert to restore it.
-  Keep FCMChat.ini openKey aligned with the ZFE fragment OpenChatKey. A
+  Type /relink by itself to request that the active extender clear its local chat auth and issue
+  a new link code. This requires clearChatAuth support; older builds will show a manual recovery
+  instruction. Keep FCMChat.ini openKey aligned with the ZFE fragment OpenChatKey when ZFE is used. A
   Data/configuration/zfe.ini [TextChat] OpenChatKey override must match too.
+  Customize actions can be repeated without backing out to the parent menu.
+  Auto-hide is shown with its current ON/OFF state the next time F11 opens.
+  Discord custom emojis appear on the HUD as readable :name: labels; public
+  feed image/GIF attachments are intentionally not relayed into the HUD.
 """
+
+
+def xscal_config_example(target: str) -> str:
+    """Return target-specific xScal chat settings without overwriting user config."""
+    return (
+        "[Chat]\n"
+        "enabled=true\n"
+        f"relayEndpoint={TARGETS[target]['endpoint']}\n"
+    )
 
 
 def build_package(target: str, output: Path) -> None:
@@ -149,17 +171,20 @@ def build_package(target: str, output: Path) -> None:
             "HUDMODLOADER-MENU.txt",
             "FCMChatWidget HUDModLoader menu\n"
             "================================\n\n"
-            "1. Start Fallout 76 with ZFE and HUDModLoader enabled.\n"
+            "1. Start Fallout 76 with ZFE or xScal and HUDModLoader enabled.\n"
             "2. Press F11 to open or close the HUDModLoader menu.\n"
             "3. Open FCM -> Customize... to adjust size, position, opacity, or color theme.\n"
             "4. FCM -> Customize... -> Reset all settings restores packaged defaults.\n"
             "5. FCM -> Scroll to newest jumps to the end of the feed.\n"
             "6. FCM -> Hide chat hides the feed; press the configured open key to restore it.\n"
             "7. FCM -> Auto-hide toggles automatic hiding after inactivity.\n"
+            "   The menu closes after the toggle so the next F11 open shows the\n"
+            "   current ON/OFF state. Customize actions have a short repeat\n"
+            "   cooldown and do not require backing out to the parent menu.\n"
             "8. FCM -> General / Trading / Events / Infests / Raids selects a channel;\n"
             "   SERVER appears after a current world binding is confirmed.\n"
             "9. Use the loader reload control for live widget changes. Replacing\n"
-            "   the BA2 or either ZFE fragment requires exiting and restarting\n"
+            "   the BA2 or a script-extender configuration fragment requires exiting and restarting\n"
             "   Fallout 76 so native configuration is reloaded.\n\n"
             "HUD input and commands\n"
             "-----------------------\n"
@@ -169,9 +194,15 @@ def build_package(target: str, output: Path) -> None:
             "to General, Trading, Events, Infests, or Raids. /s (or /server)\n"
             "is available after the current server/world session is confirmed.\n"
             "Type /hide by itself to hide the feed; press Insert to restore it.\n"
-            "Keep FCMChat.ini openKey aligned with the ZFE fragment OpenChatKey.\n"
+            "Type /relink by itself to clear local chat auth and request a new\n"
+            "link code. This requires clearChatAuth support; older builds must\n"
+            "be reset using that extender's documented local-auth recovery.\n"
+            "Keep FCMChat.ini openKey aligned with the ZFE fragment OpenChatKey\n"
+            "when ZFE is used. xScal uses its own chat configuration.\n"
             "A Data/configuration/zfe.ini [TextChat] OpenChatKey override must\n"
             "match too.\n\n"
+            "Discord custom emojis render in the HUD as readable :name: labels;\n"
+            "public feed image/GIF attachments are intentionally not relayed.\n\n"
             "If FCM is missing, confirm that FCMChatWidget appears exactly once in\n"
             "Data/hudmodloader.ini, then restart Fallout 76.\n"
         )
@@ -180,6 +211,7 @@ def build_package(target: str, output: Path) -> None:
             "[Archive]\n"
             "sResourceArchive2List=HUDModLoader.ba2,FCMChatWidget.ba2\n",
         )
+        archive.writestr("xscal.ini.example", xscal_config_example(target))
         archive.write(widget_artifact, "Data/FCMChatWidget.ba2")
         archive.writestr("Data/FCMChat.ini", chat_ini)
         archive.writestr("Data/ZFE/TextChat/fragments/FCMChatWidget.ini", widget_ini)

@@ -59,14 +59,12 @@ export const ChatInlineEmbed: React.FC<ChatInlineEmbedProps> = ({
       {children}
       {title != null && (
         onTitleClick ? (
-          <span
+          <button
+            type="button"
             className={titleClass}
-            role="button"
-            tabIndex={0}
             title="Open in the overlay"
-            onClick={onTitleClick}
-            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onTitleClick(); } }}
-          >{title}</span>
+            onClick={e => { e.stopPropagation(); onTitleClick(); }}
+          >{title}</button>
         ) : (
           <span className={titleClass}>{title}</span>
         )
@@ -75,14 +73,16 @@ export const ChatInlineEmbed: React.FC<ChatInlineEmbedProps> = ({
       {meta && (
         <>
           <span className="fcm-inline__sep">&middot;</span>
-          <span
-            className="fcm-inline__meta"
-            role="button"
-            tabIndex={0}
-            title={meta.title}
-            onClick={meta.onClick}
-            onKeyDown={e => { if ((e.key === 'Enter' || e.key === ' ') && meta.onClick) meta.onClick(); }}
-          >{meta.label}</span>
+          {meta.onClick ? (
+            <button
+              type="button"
+              className="fcm-inline__meta"
+              title={meta.title}
+              onClick={e => { e.stopPropagation(); meta.onClick?.(); }}
+            >{meta.label}</button>
+          ) : (
+            <span className="fcm-inline__meta" title={meta.title}>{meta.label}</span>
+          )}
         </>
       )}
       {action && <span className="fcm-inline__action">{action}</span>}

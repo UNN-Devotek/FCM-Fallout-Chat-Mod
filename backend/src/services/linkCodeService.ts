@@ -61,6 +61,14 @@ export async function redeemLinkCode(rawCode: string, redeemedByUserId: string):
   const row = await prisma.hudLinkCode.findUnique({ where: { code } });
   if (!row) return { ok: false, reason: 'not_found' };
   const now = new Date();
+  // A redeem is deliberately idempotent for the same authenticated account. The
+  // route promotes the relay token immediately after this mutation; if that
+  // promotion is interrupted, the user must be able to retry the same code
+  // without receiving "already used" forever. A different account still cannot
+  // take over a consumed code.
+  if (row.usedAt && row.redeemedByUserId === redeemedByUserId) {
+    return { ok: true, relayUserId: row.relayUserId };
+  }
   if (row.usedAt) return { ok: false, reason: 'already_used' };
   if (now > row.expiresAt) return { ok: false, reason: 'expired' };
   if (row.attempts >= MAX_ATTEMPTS) return { ok: false, reason: 'max_attempts' };

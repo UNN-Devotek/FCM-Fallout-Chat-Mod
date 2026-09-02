@@ -1,0 +1,3 @@
+## FcmNativeApi unit tests — pure dynamic bridge mapping, no flash runtime.
+--main TestFcmNativeApi
+--interp

@@ -1,13 +1,29 @@
-# ZFE (Zeroed Fallout Extender) — FCM in-game integration
+# ZFE / xScal — FCM in-game integration
 
-ZFE is a `dxgi.dll` proxy for Fallout 76 that exposes `__ZFE` to the Scaleform
-HUD. FCM's optional `FCMChatWidget` HUDModLoader mod uses its sanctioned
-`chat.v1` surface to display chat in game.
+ZFE (Zeroed Fallout Extender) and xScal are supported script-extender providers
+for Fallout 76's Scaleform HUD. FCM's optional `FCMChatWidget` HUDModLoader mod
+uses ZFE's sanctioned `chat.v1` surface or xScal's
+`__SFECodeObj.chatInterface` surface, selected automatically.
 
-> **Current widget (2026-09-01):** `FCMChatWidget` v2.10.28 targets `/relay` through
-> ZFE `chat.v1`. The backend keeps production relay access fail-closed until
-> `RELAY_PRODUCTION_ENABLED=true` is deliberately rolled out. The desktop overlay
-> remains independent of this optional mod path.
+> **Current widget (2026-09-02):** `FCMChatWidget` v2.10.33 targets `/relay` through
+> ZFE `chat.v1` or xScal `chatInterface`. If both providers are present, ZFE is
+> preferred for its native text-input path; xScal uses SharedHUDTools text input.
+> The desktop overlay remains independent of this optional mod path.
+
+## Provider paths and automatic detection
+
+| Provider | Runtime object | Configuration path | FCM code path |
+|---|---|---|---|
+| ZFE | `__ZFE`, `ZFECodeObj`, or legacy `__SFCodeObj`, each exposing `.call` | `Data/configuration/zfe.ini` or `Documents/My Games/Fallout 76/configuration/zfe.ini`; FCM fragment at `Data/ZFE/TextChat/fragments/FCM.ini` | `FcmNativeApi.hx` calls canonical `chat.v1.*` verbs and preserves ZFE native input |
+| xScal | `__SFECodeObj.chatInterface` with `connect`, `pollEvents`, and `sendMessage` | `xscal.ini` beside the Fallout 76 executable, using the `[Chat]` section; package example is `xscal.ini.example` | `FcmNativeApi.hx` removes `chat.v1.`, maps `report` → `reportMessage`, and uses SharedHUDTools input |
+
+The shared widget files are `Data/FCMChatWidget.ba2`, `Data/FCMChat.ini`, and the
+HUDModLoader registry entry. `hudmenu-chat/fcm-inject.as` passes the host's ZFE or
+xScal object to `FCMBridge.hx`; `FCMChatWidget.hx` and `FCMBridge.hx` also retry
+self-discovery on their parent/root chain. Detection is capability-based and
+does not load `dxgi.dll`, read extender files, scan ports, inject code, or read
+game memory. When both objects are exposed, valid ZFE is selected first and
+xScal remains the fallback.
 
 ## Guides
 
@@ -128,23 +144,22 @@ lexicographically, so a string compare would silently lock every updated client 
 `MIN_COSMETICS_VERSION` is **2.10.0**, the first build that reports a version at all —
 the bump IS the capability signal.
 
-### HUD identity cosmetics (widget v2.10.28)
+### HUD identity cosmetics (widget v2.10.30)
 
 The relay now sends these additive fields on every `chat.message` event:
 
 - `tag`: a server-validated Overseer tag, rendered before the sender name;
-- `supporterStar: true` and `starColor`: retained in the shared relay contract for other clients;
-  the HUD widget does not render them.
+- `supporterStar: true` and `starColor`: a server-validated supporter marker and its color.
 
-The widget renders the validated channel and identity tags only. It intentionally contains no
-star glyph, embedded star bitmap, HTML image, or TextFieldEx image substitution, avoiding the
-tofu blocks produced by Fallout 76's missing star glyph and GFx image path. Feed paragraph leading
-is zero and the feed keeps only a 4px safety gap above the top-level HUDTools input. When the local
-player sends a message, the widget waits for the authoritative live relay event because ZFE strips
-cosmetics from the native send acknowledgement; the sender therefore receives the same validated
-tag as every other message author. Static history is decorated with the same current tag data as
-live messages. ZFE's native chat bridge strips unknown JSON members before they reach Scaleform, so
-v2.10.28 also reads a
+The widget renders the marker as a fixed five-point vector `Shape` positioned from the author's
+`TextField.getCharBoundaries()`. It never inserts U+2605, a bitmap, an HTML image, or a substitution
+token, avoiding the tofu blocks produced by Fallout 76's missing star glyph and GFx image path.
+Feed paragraph leading is zero and the feed keeps only a 4px safety gap above the top-level HUDTools
+input. When the local player sends a message, the widget waits for the authoritative live relay
+event because ZFE strips cosmetics from the native send acknowledgement; the sender therefore
+receives the same validated marker/tag as every other message author. Static history is decorated
+with the same current tag data as live messages. ZFE's native chat bridge strips unknown JSON members
+before they reach Scaleform, so v2.10.30 also reads a
 capability-gated `FCMHUD/1;...` envelope from the existing, known `targetUserId` member. That
 member is an empty transport slot for ordinary channel chat; it is never a real recipient. Older
 BA2 files receive no envelope, while raw relay consumers retain the additive JSON fields. The

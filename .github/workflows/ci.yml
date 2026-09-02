@@ -299,6 +299,9 @@ jobs:
             backend/src/utils/__tests__/oauthState.test.ts
             game-mods/EasyFishing/test-install.sh
             game-mods/FCMBridge/FCMBridge.hx
+            game-mods/FCMBridge/FcmNativeApi.hx
+            game-mods/FCMBridge/TestFcmNativeApi.hx
+            game-mods/FCMBridge/test-native-api.hxml
             game-mods/FCMBridge/hudmenu-chat/test_ba2tool.py
           )
           for path in "${required[@]}"; do
@@ -324,6 +327,12 @@ jobs:
       - name: Run FcmIdentity unit tests
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe test-identity.hxml
+      - name: Run FcmCommand unit tests
+        working-directory: game-mods/FCMBridge/hudmodloader-chat
+        run: haxe test-command.hxml
+      - name: Run native bridge compatibility tests
+        working-directory: game-mods/FCMBridge
+        run: haxe test-native-api.hxml
       - name: Compile FCMChatWidget
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe build.hxml

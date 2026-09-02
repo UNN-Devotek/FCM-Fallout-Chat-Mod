@@ -100,6 +100,8 @@ if inject_src:
           "fcm-inject.as discovers hostZfe at HUDMenu level before passing")
     check("fcmSetZfe" in inject_src,
           "fcm-inject.as calls fcmSetZfe on the bridge (injects __ZFE reference)")
+    check("__SFECodeObj" in inject_src and "fcmSetNativeApi" in inject_src,
+          "fcm-inject.as passes the xScal chat bridge when ZFE is absent")
 
     # Channel table uses slugs, not UUIDs.
     check('"global"' in inject_src or "'global'" in inject_src,
@@ -300,6 +302,8 @@ if bridge_src:
           "FCMBridge.hx has postDiscoveryInit() helper (shared by self-discovery and host-inject paths)")
     check("_zfeInjectedByHost" in bridge_src,
           "FCMBridge.hx tracks _zfeInjectedByHost to guard against double-init")
+    check("FcmNativeApi.discover" in bridge_src and "fcmSetNativeApi" in bridge_src,
+          "FCMBridge.hx discovers and accepts either native chat provider")
 
 # ---------------------------------------------------------------------------
 # 4c. Verify FCMChatWidget tab renderer lifecycle
@@ -387,20 +391,38 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.28";' in widget_src,
-          "FCMChatWidget bumps the tag-only + compact-feed build to version 2.10.28")
+    check('static inline var VERSION:String  = "2.10.33";' in widget_src,
+          "FCMChatWidget bumps the automatic provider selection build to version 2.10.33")
+    check("FcmNativeApi.discover" in widget_src and "supportsNativeInput" in widget_src,
+          "FCMChatWidget selects the provider and avoids ZFE-only input on xScal")
+    check('MENU_ACTION_TIMEOUT_MS' in widget_src
+          and 'true, false, MENU_ACTION_TIMEOUT_MS' in widget_src,
+          "FCMChatWidget uses a positive repeatable HUDTools menu timeout")
+    check('closeHudLoaderMenuAfterStateChange();' in widget_src
+          and 'Auto-hide: ON' in widget_src and 'Auto-hide: OFF' in widget_src,
+          "FCMChatWidget refreshes the auto-hide label after toggling")
+    check('normalizeDiscordEmojiMarkup' in widget_src
+          and 'displayBody' in widget_src,
+          "FCMChatWidget normalizes Discord custom emoji for HUD rendering")
+    check('FcmCommand.isRelink(s)' in widget_src
+          and 'function requestRelink' in widget_src
+          and 'CLEAR_AUTH_COMMAND:String = "clearChatAuth"' in widget_src,
+          "FCMChatWidget exposes a guarded local-auth relink command")
     check('FcmConfig.hudTransportHasStar(hudTransport)' in widget_src
           and 'FcmConfig.hudTransportStarColor(hudTransport)' in widget_src,
           "FCMChatWidget decodes native-known HUD cosmetics transport")
     check('extractJsonBool(obj, "supporterStar")' in widget_src
           and 'supporterStarPresent' in widget_src
           and 'customTagHtml' in widget_src
-          and 'starHtml' not in widget_src
           and 'SupporterStarBitmap' not in widget_src
-          and 'setImageSubstitutions' not in widget_src,
-          "FCMChatWidget renders validated channel and identity tags without a HUD star")
-    # No supporter-star renderer is part of the HUD build. The package test
-    # additionally asserts that the compiled SWF has no star linkage bytes.
+          and 'setImageSubstitutions' not in widget_src
+          and 'function makeSupporterStar' in widget_src
+          and 'function positionStarOverlays' in widget_src
+          and 'getCharBoundaries' in widget_src
+          and 'FcmConfig.supporterStarColor' in widget_src
+          and widget_src.find('moderationRefHtml =') < widget_src.find('if (rawTag.length > 0) rowPrefix')
+          and 'U+2605' in widget_src,
+          "FCMChatWidget renders supporter stars as guarded vector geometry, never as a HUD glyph or image")
     check('function isOwnEcho' in widget_src
           and 'ownEchoMatched=' in widget_src,
           "FCMChatWidget reconciles self-sends against authoritative live events")
@@ -498,9 +520,18 @@ if widget_src:
     check("function releaseEditTextLock" in widget_src
           and "if (_editTextLockOwned) releaseEditTextLock()" in widget_src,
           "FCMChatWidget retries a failed EndEditText until the owned lock is released")
+    check('Reflect.field(e, "actionName")' in widget_src
+          and 'Reflect.field(e, "isDown")' in widget_src
+          and 'Reflect.field(e, "EventName")' in widget_src
+          and 'Reflect.field(e, "IsKeyDown")' in widget_src,
+          "FCMChatWidget accepts current and legacy HUDModLoader event field names")
     check("action == _cfg.channelNextKey" in widget_src
-          and "action == _cfg.channelPrevKey" in widget_src,
-          "FCMChatWidget handles configured next/previous actions while input is open")
+          and "action == _cfg.channelPrevKey" in widget_src
+          and "function isExternalInputAction" in widget_src,
+          "FCMChatWidget handles channel actions and external focus recovery")
+    check("function mergeNativeInputText" in widget_src
+          and "_inProgress + observed" in widget_src,
+          "FCMChatWidget preserves native drafts when ZFE returns one character at a time")
     check("applyServerControlResult" in widget_src
           and "_serverSessionReady" in widget_src,
           "FCMChatWidget gates SERVER on an acknowledged relay control")

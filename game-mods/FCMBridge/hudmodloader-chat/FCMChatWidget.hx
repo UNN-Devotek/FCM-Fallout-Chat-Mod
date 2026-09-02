@@ -1,10 +1,12 @@
 import flash.display.MovieClip;
 import flash.display.Shape;
+import flash.display.Sprite;
 import flash.events.Event;
 import flash.events.TimerEvent;
 import flash.utils.Timer;
 import flash.text.TextField;
 import flash.text.TextFormat;
+import flash.geom.Rectangle;
 import flash.net.URLLoader;
 import flash.net.URLRequest;
 import flash.events.IOErrorEvent;
@@ -21,6 +23,12 @@ private typedef ChatRecord = {
     var senderUserId:String;
 }
 
+private typedef StarAnchor = {
+    var rowText:String;
+    var userOffset:Int;
+    var color:Int;
+}
+
 private typedef ModerationTargetResolution = {
     var target:Null<ChatRecord>;
     var ambiguous:Bool;
@@ -29,11 +37,12 @@ private typedef ModerationTargetResolution = {
 /**
  * FCMChatWidget — HUDModLoader widget for Fallout Chat Mod.
  *
- * Transport: ZFE chat.v1 native API (ZFE 0.9.8+).
+ * Transport: ZFE chat.v1 or xScal chatInterface, selected automatically.
  *   __ZFE.call("chat.v1.connect",    payload)   — register + connect
  *   __ZFE.call("chat.v1.pollEvents", payload)   — cursor-based event poll
  *   __ZFE.call("chat.v1.sendMessage",payload)   — send a message
  *   __ZFE.call("chat.v1.getAuthState","{}") — connection/auth health
+ *   __ZFE.call("clearChatAuth","{}") — clear ZFE's local relay token (relink)
  *
  * Font: GFx engine-registered HUDModLoader aliases — NO embed.
  *   `$MAIN_Font_Light` (body) and `$MAIN_Font_Bold` (bold/headers/tab labels) are
@@ -134,8 +143,11 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.28"; // tag-only HUD feed + compact spacing
+    static inline var VERSION:String  = "2.10.33"; // automatic ZFE/xScal chat bridge selection
     static inline var SETTINGS_PATH:String = "settings.ini";
+    // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
+    // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
+    static inline var CLEAR_AUTH_COMMAND:String = "clearChatAuth";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
 
@@ -279,6 +291,7 @@ class FCMChatWidget extends MovieClip {
     // ── Display objects ───────────────────────────────────────────────────────
     var _bg:Shape;
     var _logTf:TextField;
+    var _starLayer:Sprite;
     var _tabTf:TextField;
     var _subTf:TextField;
     var _promptTf:TextField;
@@ -289,6 +302,10 @@ class FCMChatWidget extends MovieClip {
     var _seenMessageOrder:Array<String> = [];
     var _bScrolling:Bool         = false;
     var _scrollSnapTimer:Timer   = null;   // deferred bottom-snap after htmlText relayout
+    var _starLayoutTimer:Timer   = null;   // deferred vector-star layout after GFx text reflow
+    var _starShapes:Array<Shape> = [];
+    var _starAnchors:Array<StarAnchor> = [];
+    var _starLayoutWarned:Bool = false;
     var _newWhileScrolled:Int    = 0;
 
     // ── Channel state ─────────────────────────────────────────────────────────
@@ -300,9 +317,12 @@ class FCMChatWidget extends MovieClip {
     var _autoHideOn:Bool         = false;
     var _autoHideTimer:Timer     = null;
     var _themeIdx:Int            = 0;       // F11 Customize → cycle color theme
+    // HUDTools disables a clicked item until its timeout expires. A short cooldown
+    // keeps repeatable actions usable without allowing key-repeat to flood commands.
+    static inline var MENU_ACTION_TIMEOUT_MS:Float = 250;
 
     // ── chat.v1 session state ─────────────────────────────────────────────────
-    var _api:Dynamic             = null;
+    var _api:FcmNativeApi        = null;
     var _connected:Bool          = false;
     var _userId:String           = "";
     var _relayUserId:String      = "";
@@ -514,6 +534,16 @@ class FCMChatWidget extends MovieClip {
         setLogText("connecting...");
         addChild(_logTf);
 
+        // Supporter markers are drawn as vector geometry in a sibling layer. GFx's HUD font
+        // does not contain U+2605 and the previous bitmap/HTML substitution paths rendered as
+        // tofu blocks. The layer uses the TextField's character bounds only for placement; it
+        // never changes the relay payload or inserts a glyph into htmlText.
+        _starLayer = new Sprite();
+        _starLayer.mouseEnabled = false;
+        _starLayer.mouseChildren = false;
+        _starLayer.scrollRect = new Rectangle(_logTf.x, _logTf.y, _logTf.width, _logTf.height);
+        addChild(_starLayer);
+
         // Mouse-wheel over the log scrolls history (CAP-008, VER-2). HUD-availability
         // unverified; F11 "Scroll to newest" + auto-scroll stay the fallback.
         try {
@@ -592,6 +622,7 @@ class FCMChatWidget extends MovieClip {
 
     function setLogText(s:String):Void {
         if (_logTf == null) return;
+        clearStarOverlays();
         _logTf.htmlText = '<font face="' + FONT_BODY + '" size="' + _cfg.fontSize + '" color="' + hx(_cfg.textColor) + '">' + s + '</font>';
     }
 
@@ -631,6 +662,7 @@ class FCMChatWidget extends MovieClip {
         if (_logTf == null) return;
         try { _logTf.setSelection(_logTf.length, _logTf.length); } catch (e:Dynamic) {}
         try { _logTf.scrollV = _logTf.maxScrollV; } catch (e:Dynamic) {}
+        positionStarOverlays();
     }
 
     // =========================================================================
@@ -715,7 +747,9 @@ class FCMChatWidget extends MovieClip {
      * HUDModLoader menu build callback.
      * Adds channel-switch entries, a scroll-to-newest action, and a link action
      * (enabled only while auth is limited).
-     * AddMenuItem(id, text, isEnabled=true, isMenu=false, timeout=-1).
+     * AddMenuItem(id, text, isEnabled=true, isMenu=false, timeout=250).
+     * HUDTools treats timeout=0 as a one-shot item until the menu is rebuilt, so
+     * repeatable actions must use a positive timeout.
      */
     function onBuildMenu(parentItem:Dynamic):Void {
         if (_hudTools == null) return;
@@ -726,32 +760,34 @@ class FCMChatWidget extends MovieClip {
             // Customize submenu (opened when the "customize" isMenu item is selected — HUDTools
             // re-invokes this builder with parentItem = the submenu id).
             if (p == "customize") {
-                Reflect.callMethod(_hudTools, add, ["cz_bigger",  "Size +",        true, false, -1]);
-                Reflect.callMethod(_hudTools, add, ["cz_smaller", "Size -",        true, false, -1]);
-                Reflect.callMethod(_hudTools, add, ["cz_up",      "Move up",       true, false, -1]);
-                Reflect.callMethod(_hudTools, add, ["cz_down",    "Move down",     true, false, -1]);
-                Reflect.callMethod(_hudTools, add, ["cz_left",    "Move left",     true, false, -1]);
-                Reflect.callMethod(_hudTools, add, ["cz_right",   "Move right",    true, false, -1]);
-                Reflect.callMethod(_hudTools, add, ["cz_opac_up", "Opacity +",     true, false, -1]);
-                Reflect.callMethod(_hudTools, add, ["cz_opac_dn", "Opacity -",     true, false, -1]);
-                Reflect.callMethod(_hudTools, add, ["cz_theme",   "Color theme >", true, false, -1]);
-                Reflect.callMethod(_hudTools, add, ["cz_reset",   "Reset all settings", true, false, -1]);
+                Reflect.callMethod(_hudTools, add, ["cz_bigger",  "Size +",        true, false, MENU_ACTION_TIMEOUT_MS]);
+                Reflect.callMethod(_hudTools, add, ["cz_smaller", "Size -",        true, false, MENU_ACTION_TIMEOUT_MS]);
+                Reflect.callMethod(_hudTools, add, ["cz_up",      "Move up",       true, false, MENU_ACTION_TIMEOUT_MS]);
+                Reflect.callMethod(_hudTools, add, ["cz_down",    "Move down",     true, false, MENU_ACTION_TIMEOUT_MS]);
+                Reflect.callMethod(_hudTools, add, ["cz_left",    "Move left",     true, false, MENU_ACTION_TIMEOUT_MS]);
+                Reflect.callMethod(_hudTools, add, ["cz_right",   "Move right",    true, false, MENU_ACTION_TIMEOUT_MS]);
+                Reflect.callMethod(_hudTools, add, ["cz_opac_up", "Opacity +",     true, false, MENU_ACTION_TIMEOUT_MS]);
+                Reflect.callMethod(_hudTools, add, ["cz_opac_dn", "Opacity -",     true, false, MENU_ACTION_TIMEOUT_MS]);
+                Reflect.callMethod(_hudTools, add, ["cz_theme",   "Color theme >", true, false, MENU_ACTION_TIMEOUT_MS]);
+                Reflect.callMethod(_hudTools, add, ["cz_reset",   "Reset all settings", true, false, MENU_ACTION_TIMEOUT_MS]);
                 return;
             }
             // Top-level menu — channel entries in display order (SERVER included in-world).
             for (si in tabOrder()) {
-                Reflect.callMethod(_hudTools, add, ["chan" + si, CHAN_NAMES[si], true, false, -1]);
+                Reflect.callMethod(_hudTools, add, ["chan" + si, CHAN_NAMES[si], true, false, MENU_ACTION_TIMEOUT_MS]);
             }
-            Reflect.callMethod(_hudTools, add, ["scrollbottom", "Scroll to newest", true, false, -1]);
-            Reflect.callMethod(_hudTools, add, ["hidechat", "Hide chat", true, false, -1]);
-            Reflect.callMethod(_hudTools, add, ["autohide", (_autoHideOn ? "Auto-hide: ON" : "Auto-hide: OFF"), true, false, -1]);
-            Reflect.callMethod(_hudTools, add, ["customize", "Customize...", true, true, -1]);   // isMenu=true
+            Reflect.callMethod(_hudTools, add, ["scrollbottom", "Scroll to newest", true, false, MENU_ACTION_TIMEOUT_MS]);
+            Reflect.callMethod(_hudTools, add, ["hidechat", "Hide chat", true, false, MENU_ACTION_TIMEOUT_MS]);
+            Reflect.callMethod(_hudTools, add, ["autohide", (_autoHideOn ? "Auto-hide: ON" : "Auto-hide: OFF"), true, false, MENU_ACTION_TIMEOUT_MS]);
+            Reflect.callMethod(_hudTools, add, ["customize", "Customize...", true, true, MENU_ACTION_TIMEOUT_MS]);   // isMenu=true
             // The relay provides this permission snapshot from the linked Discord role.
             // The command itself is re-authorized server-side on every submit.
             if (_canModerate) {
-                Reflect.callMethod(_hudTools, add, ["moderationhelp", "Moderation commands", true, false, -1]);
+                Reflect.callMethod(_hudTools, add, ["moderationhelp", "Moderation commands", true, false, MENU_ACTION_TIMEOUT_MS]);
             }
-            Reflect.callMethod(_hudTools, add, ["relink", "Link account...", _authState != "authenticated", false, -1]);
+            // Relink is intentionally available even while authenticated: it is the recovery
+            // path when a user linked the wrong Discord account or wants to switch accounts.
+            Reflect.callMethod(_hudTools, add, ["relink", "Relink account...", true, false, MENU_ACTION_TIMEOUT_MS]);
         } catch (e:Dynamic) {
             zfeLog("warn", "menu", "AddMenuItem threw: " + Std.string(e));
         }
@@ -775,27 +811,63 @@ class FCMChatWidget extends MovieClip {
             if (_autoHideOn) { bumpAutoHide(); }
             else { if (_autoHideTimer != null) { _autoHideTimer.stop(); _autoHideTimer = null; } if (_hidden) show(); }
             zfeLog("info", "menu", "auto-hide " + (_autoHideOn ? "on" : "off"));
+            // HUDTools does not update the text of an existing button when a menu
+            // is rebuilt in place. Close this menu so the next F11 open constructs
+            // a fresh item with the current ON/OFF label.
+            closeHudLoaderMenuAfterStateChange();
         } else if (id == "moderationhelp") {
             setLogText(moderationHelp());
         } else if (id == "relink") {
-            setLogText(linkHint());
+            requestRelink();
+        }
+    }
+
+    function closeHudLoaderMenuAfterStateChange():Void {
+        if (_hudTools == null || _inputOpen) return;
+        try {
+            if (Reflect.field(_hudTools, "isActive") == true) {
+                var close:Dynamic = Reflect.field(_hudTools, "CloseMenu");
+                if (close != null) Reflect.callMethod(_hudTools, close, []);
+            }
+        } catch (e:Dynamic) {
+            zfeLog("warn", "menu", "menu refresh close threw: " + Std.string(e));
         }
     }
 
     /**
      * HUDMod::UserEvent handler — control-map ACTIONS only. FO76 collapses every unbound key
      * (INSERT, Page Up/Down, Delete, …) to "Unmapped" with no key info, so this path is reliable
-     * ONLY for real named actions. It is just a secondary open-chat trigger for when OpenChatKey
-     * is a real action (Console / TeamChat). The primary open AND the channel cycle run off the
-     * native isChatKeyPressed poll (pollOpenKey); channel jumps are slash commands or the
-     * configured NextPage/PrevPage actions. event.EventName (String), event.IsKeyDown (Boolean)
-     * per HUDModUserEvent.as.
+     * ONLY for real named actions. HUDModLoader's public event uses actionName/isDown; the
+     * capitalized aliases are retained for older loader builds. The primary open trigger still
+     * uses the native isChatKeyPressed poll (pollOpenKey).
      */
     function onUserEvent(e:Dynamic):Void {
         var action:String = "";
         var isDown:Bool   = false;
-        try { action = Std.string(e.EventName); }  catch (_:Dynamic) {}
-        try { isDown = (e.IsKeyDown == true); }    catch (_:Dynamic) {}
+        try {
+            var actionValue:Dynamic = Reflect.field(e, "actionName");
+            if (actionValue != null && Std.string(actionValue).length > 0) {
+                action = Std.string(actionValue);
+            } else {
+                actionValue = Reflect.field(e, "EventName");
+                if (actionValue != null) action = Std.string(actionValue);
+            }
+        } catch (_:Dynamic) {}
+        try {
+            var downValue:Dynamic = Reflect.field(e, "isDown");
+            if (downValue == null) downValue = Reflect.field(e, "IsKeyDown");
+            isDown = (downValue == true);
+        } catch (_:Dynamic) {}
+
+        // Native ZFE input has no focus/blur callback. When the game hands a named action to
+        // Quick Actions/Friends (or Escape), close our native session immediately so the stale
+        // ZFE buffer and edit lock cannot survive the focus handoff. This runs on key-down and
+        // key-up because the loader emits both for named actions.
+        if (_inputOpen && _nativeInput && isExternalInputAction(action)) {
+            zfeLog("info", "input", "native session closed for external action " + action);
+            closeInputNative();
+            return;
+        }
         if (isDown) return;
 
         // HUDModLoader's RegisterMenu() does not bind the F11 hotkey. The loader forwards
@@ -807,11 +879,10 @@ class FCMChatWidget extends MovieClip {
         }
 
         // Keep the active input session and its buffer intact while changing the destination
-        // channel. This is the HUDModLoader equivalent of the legacy Text Chat mod's Tab switch.
-        if (_inputOpen) {
-            if (action == _cfg.channelNextKey) { cycleChannel(); return; }
-            if (action == _cfg.channelPrevKey) { cyclePrev(); return; }
-        }
+        // channel. Channel cycling also works while the feed is idle; this is the HUDModLoader
+        // equivalent of the legacy Text Chat mod's Tab switch.
+        if (action == _cfg.channelNextKey) { cycleChannel(); return; }
+        if (action == _cfg.channelPrevKey) { cyclePrev(); return; }
 
         // Open only on a real action used as the open key (never on "Unmapped", which would
         // open on ANY unbound key). INSERT etc. open via the native poll, not here.
@@ -820,6 +891,21 @@ class FCMChatWidget extends MovieClip {
             if (_inputOpen && _nativeInput) return;
             if (!_inputOpen) openInput();   // openInput() restores from hidden first (CAP-011)
         }
+    }
+
+    /**
+     * Named actions that indicate FO76 is taking focus for another input surface. Raw Ctrl+Tab
+     * is not delivered to a HUD-layer SWF, but HUDModLoader forwards named equivalents on loader
+     * builds that expose them. Matching by token keeps this compatible with the loader's naming
+     * variants (QuickActions, QuickActionsMenu, FriendsList, etc.).
+     */
+    static function isExternalInputAction(action:String):Bool {
+        if (action == null) return false;
+        var a:String = action.toLowerCase();
+        return a == "escape" || a == "cancel"
+            || a.indexOf("quick") >= 0
+            || a.indexOf("friend") >= 0
+            || a.indexOf("social") >= 0;
     }
 
     // =========================================================================
@@ -916,7 +1002,7 @@ class FCMChatWidget extends MovieClip {
     // numChildren/getChildAt (Scaleform VM crash, rule #9). buildPanel re-adds everything
     // and re-applies x/y from _cfg.
     function rebuildPanel():Void {
-        var kids:Array<flash.display.DisplayObject> = [_bg, _tabTf, _subTf, _logTf, _promptTf];
+        var kids:Array<flash.display.DisplayObject> = [_bg, _tabTf, _subTf, _logTf, _starLayer, _promptTf];
         for (c in kids) { try { if (c != null) removeChild(c); } catch (e:Dynamic) {} }
         buildPanel();
         setSelectedTab(_chanIdx);
@@ -1141,6 +1227,21 @@ class FCMChatWidget extends MovieClip {
         return t;
     }
 
+    /**
+     * Some ZFE/Steam Input combinations expose only the newest character from the native
+     * buffer. Preserve the complete draft in that case while still honoring a real edit that
+     * returns a shorter buffer (backspace/cursor editing). The raw-response guard in the poller
+     * ensures a repeated poll of the same one-character value is not appended twice.
+     */
+    function mergeNativeInputText(observed:String):String {
+        if (observed == null || observed.length == 0) return "";
+        if (_inProgress.length > 0 && observed.length == 1
+                && !StringTools.endsWith(_inProgress, observed)) {
+            return _inProgress + observed;
+        }
+        return observed;
+    }
+
     function openInput():Void {
         if (_inputOpen) return;
         // If a previous EndEditText is still being retried, do not start another editor on
@@ -1321,12 +1422,14 @@ class FCMChatWidget extends MovieClip {
                 closeInputNative(true);
                 return;
             }
-            if (rraw != _lastReadRaw) {
+            var readChanged:Bool = (rraw != _lastReadRaw);
+            if (readChanged) {
                 _lastReadRaw = rraw;
                 zfeLog("info", "nativein", "read raw=" + clip200(rraw));
             }
-            var text:String = parseInputText(rraw);
+            var text:String = readChanged ? mergeNativeInputText(parseInputText(rraw)) : _inProgress;
             _inProgress = text;
+            _lastReadRaw = rraw;
             if (text.length > 0) {
                 setPrompt(typingPrompt() + ' <font face="' + FONT_BODY + '" size="13" color="'
                     + hx(_cfg.textColor) + '"> &#x203A; ' + FcmConfig.htmlEscape(text) + '</font>');
@@ -1349,7 +1452,11 @@ class FCMChatWidget extends MovieClip {
                     closeInputNative(true);
                     return;
                 }
-                var textNow:String = parseInputText(finalRaw);
+                var textNow:String = (finalRaw == _lastReadRaw)
+                    ? _inProgress
+                    : mergeNativeInputText(parseInputText(finalRaw));
+                _lastReadRaw = finalRaw;
+                _inProgress = textNow;
                 var fin:String = (textNow.length > 0) ? textNow : _inProgress;
                 closeInputNative();
                 fin = StringTools.trim(fin);
@@ -1528,6 +1635,11 @@ class FCMChatWidget extends MovieClip {
         var s:String = (text == null) ? "" : Std.string(text);
         s = StringTools.trim(s);
         if (s.length == 0) return;
+
+        // /relink is local and standalone. It must be consumed before auth-gated sending and
+        // before the channel parser; when the game strips a leading slash, bare "relink" is
+        // accepted by FcmCommand as the equivalent input.
+        if (FcmCommand.isRelink(s)) { requestRelink(); return; }
 
         // /hide — hide the panel (CAP-011). Consume: never send. Restore with the open key.
         if (s.toLowerCase() == "/hide") { hide(); return; }
@@ -1930,14 +2042,14 @@ class FCMChatWidget extends MovieClip {
     }
 
     // =========================================================================
-    // ZFE API discovery + chat.v1 boot
+    // ZFE/xScal API discovery + chat boot
     // =========================================================================
 
     /**
      * init() — entry point called 3 s after stage attach.
      *
-     * ZFE installs __ZFE on the HUDMenu root a few seconds after dxgi.dll loads.
-     * Retry every ZFE_SEARCH_MS ms up to ZFE_SEARCH_MAX times (~30 s total).
+     * ZFE or xScal installs its bridge on the HUDMenu root a few seconds after
+     * dxgi.dll loads. Retry every ZFE_SEARCH_MS ms up to ZFE_SEARCH_MAX times.
      */
     function init():Void {
         _zfeSearchTries = 0;
@@ -1946,16 +2058,16 @@ class FCMChatWidget extends MovieClip {
 
     function tryFindZfe():Void {
         _zfeSearchTries++;
-        _api = findZfeApi(this);
+        _api = FcmNativeApi.discover(this);
         if (_api != null) {
             onZfeFound();
             return;
         }
         if (_zfeSearchTries >= ZFE_SEARCH_MAX) {
-            setLogText("ZFE not found\nInstall dxgi.dll + zfe.ini");
+            setLogText("ZFE/xScal not found\nInstall one script extender");
             return;
         }
-        setLogText("searching for ZFE (" + _zfeSearchTries + "/" + ZFE_SEARCH_MAX + ")...");
+        setLogText("searching for ZFE/xScal (" + _zfeSearchTries + "/" + ZFE_SEARCH_MAX + ")...");
         if (_zfeSearchTimer != null) { _zfeSearchTimer.stop(); _zfeSearchTimer = null; }
         _zfeSearchTimer = new Timer(ZFE_SEARCH_MS, 1);
         _zfeSearchTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
@@ -1968,17 +2080,20 @@ class FCMChatWidget extends MovieClip {
     function onZfeFound():Void {
         if (_zfeSearchTimer != null) { _zfeSearchTimer.stop(); _zfeSearchTimer = null; }
 
-        // Capability gate: zfe-chat-online-v1 required (ZFE 0.9.8+).
+        // ZFE has an explicit capability string; xScal's validated chatInterface
+        // discovery is its capability gate.
         try {
             var info:String = Std.string(_api.call("chat.v1.getRuntimeInfo", "{}"));
-            if (info.indexOf("zfe-chat-online-v1") < 0) {
+            if (_api.provider == FcmNativeApi.ZFE && info.indexOf("zfe-chat-online-v1") < 0) {
                 zfeLog("warn", "startup", "zfe-chat-online-v1 not present; need ZFE 0.9.8+");
-                setLogText("ZFE 0.9.8+ required\nfor chat.v1");
+                setLogText("ZFE 0.9.8+ or xScal chat\ninterface required");
                 return;
             }
             zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
             zfeLog("info", "startup", "BUILD=chatv1-widget-v" + VERSION);
-            zfeLog("info", "startup", "zfe-chat-online-v1 OK");
+            zfeLog("info", "startup", _api.provider == FcmNativeApi.ZFE
+                ? "zfe-chat-online-v1 OK"
+                : "xscal-chat-interface OK");
             zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
         } catch (e:Dynamic) {
             zfeLog("warn", "startup", "getRuntimeInfo threw: " + Std.string(e));
@@ -2043,7 +2158,7 @@ class FCMChatWidget extends MovieClip {
         _connected = true;
         // Native input is probed lazily on the first open. Never activate it at startup:
         // legacy Windows/ZFE builds can expose the bare probe payload as editable text.
-        _nativeInputUsable = true;
+        _nativeInputUsable = _api.supportsNativeInput();
         // A new relay connection has no room membership until the fresh control below is
         // acknowledged. Force a roster send even when the observed names did not change.
         setServerSessionReady(false, "");
@@ -2082,6 +2197,51 @@ class FCMChatWidget extends MovieClip {
         stopPollTimer();
         stopEchoPollTimer();
         scheduleConnectRetry();
+    }
+
+    /**
+     * Start a deliberate account relink.
+     *
+     * The relay token is owned by ZFE and stored outside the SWF. The widget therefore requests
+     * the explicit top-level ZFE `clearChatAuth` operation instead of trying to write
+     * `Data/ZFE/chat-auth.bin` through the unrelated vendor-scoped settings API. On older ZFE
+     * builds the command is unsupported; leave the existing session alone and show the exact
+     * manual fallback so a user is never told that their account was reset when it was not.
+     */
+    function requestRelink():Void {
+        if (_inputOpen && _nativeInput) closeInputNative();
+        _needsLink          = true;
+        _pinnedSystemBody   = "";
+        _linkNoticeAt       = 0;
+        _linkRefreshPending = false;
+        _authState           = "limited";
+        _canModerate         = false;
+        setServerSessionReady(false, "");
+
+        if (_api == null) {
+            setLogText("Relink unavailable: ZFE is not connected. Restart ZFE and try again.");
+            zfeLog("warn", "relink", "cannot clear auth without ZFE");
+            return;
+        }
+
+        var cleared:Bool = false;
+        try {
+            var raw:String = Std.string(_api.call(CLEAR_AUTH_COMMAND, "{}"));
+            cleared = !chatVerbFailed(raw)
+                && (nativeTruthy(raw) || raw.indexOf('"cleared":true') >= 0);
+            zfeLog(cleared ? "info" : "warn", "relink",
+                "clearChatAuth " + (cleared ? "accepted" : "rejected"));
+        } catch (e:Dynamic) {
+            zfeLog("warn", "relink", "clearChatAuth threw: " + Std.string(e));
+        }
+
+        if (!cleared) {
+            setLogText("Relink needs the current ZFE. Exit Fallout 76, delete Data/ZFE/chat-auth.bin, then restart.");
+            return;
+        }
+
+        setLogText("Local chat auth cleared. Reconnecting for a new link code...");
+        forceReconnect("user requested relink");
     }
 
     /** Clear the link gate — only ever called with PROOF the identity is linked. */
@@ -2356,6 +2516,10 @@ class FCMChatWidget extends MovieClip {
             if (supporterStar) wireStarCount++;
             if (starColor.length > 0) wireStarColorCount++;
             var body:String         = extractJsonString(obj, "body");
+            // The web client renders Discord custom emojis from CDN images. The
+            // Scaleform HUD cannot safely load those images, so keep the readable
+            // emoji name and remove the numeric Discord snowflake from this surface.
+            var displayBody:String  = FcmConfig.normalizeDiscordEmojiMarkup(body);
             var messageId:String    = extractJsonString(obj, "messageId");
             var evId:Int            = extractJsonInt(obj, "id");
 
@@ -2400,7 +2564,7 @@ class FCMChatWidget extends MovieClip {
 
             _records.push({
                 color: hx(_cfg.senderColor), channel: channel, user: displayName,
-                tag: tag, supporterStar: supporterStar, starColor: starColor, body: body,
+                tag: tag, supporterStar: supporterStar, starColor: starColor, body: displayBody,
                 messageId: messageId, senderUserId: senderUserId,
             });
             while (_records.length > _cfg.maxMessages) _records.shift();
@@ -2708,6 +2872,7 @@ class FCMChatWidget extends MovieClip {
         if (_needsLink) { setLogText(linkHint()); return; }
 
         var html:Array<String> = [];
+        var starAnchors:Array<StarAnchor> = [];
         var fs:Int = _cfg.fontSize;
 
         for (rec in _records) {
@@ -2715,18 +2880,26 @@ class FCMChatWidget extends MovieClip {
             if (rec.channel != CHAN_SLUGS[_chanIdx]) continue;
             var col:String  = ~/^#[0-9a-fA-F]{6}$/.match(rec.color) ? rec.color : hx(_cfg.senderColor);
             // Escape sender name + body — both are unsanitized relay/Discord input (SR-001).
-            var user:String = FcmConfig.htmlEscape(rec.user);
-            var msg:String  = FcmConfig.htmlEscape(rec.body);
+            var rawUser:String = rec.user == null ? "" : rec.user;
+            var rawBody:String = rec.body == null ? "" : rec.body;
+            var rawTag:String = rec.tag == null ? "" : rec.tag;
+            var user:String = FcmConfig.htmlEscape(rawUser);
+            var msg:String  = FcmConfig.htmlEscape(rawBody);
+            // Keep a plain-text copy of the row so getCharBoundaries() can locate the author
+            // after GFx has parsed the HTML. This is deliberately built from raw values, not
+            // from htmlText, because GFx decodes numeric HTML references back into text.
+            var rowPrefix:String = "";
             // Optional proper-cased channel tag (CAP-012, D-09).
             var tagHtml:String = "";
             if (_cfg.showChannelTag) {
                 tagHtml = '<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + hx(_cfg.channelColor(rec.channel)) + '">[' + FcmConfig.chanLabel(rec.channel) + ']</font> ';
+                rowPrefix += "[" + FcmConfig.chanLabel(rec.channel) + "] ";
             }
             // Keep the channel and server-resolved identity tag on the same text
             // line as the sender name and message body.
-            var customTagHtml:String = (rec.tag != null && rec.tag.length > 0)
+            var customTagHtml:String = (rawTag.length > 0)
                 ? '<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + col + '">['
-                    + FcmConfig.htmlEscape(rec.tag) + ']</font> '
+                    + FcmConfig.htmlEscape(rawTag) + ']</font> '
                 : "";
             // Staff only: a short, stable reference for the moderation command surface.
             // Never target by display name — names can be changed and are not unique.
@@ -2735,7 +2908,9 @@ class FCMChatWidget extends MovieClip {
                     && rec.senderUserId != null && rec.senderUserId.length > 0) {
                 moderationRefHtml = '<font color="' + hx(_cfg.promptColor) + '">[#'
                     + rec.messageId.substr(0, 8).toUpperCase() + ']</font> ';
+                rowPrefix += "[#" + rec.messageId.substr(0, 8).toUpperCase() + "] ";
             }
+            if (rawTag.length > 0) rowPrefix += "[" + rawTag + "] ";
             // Every visible run uses the same explicit size. Weight comes from the
             // HUD bold alias, not from a nested <b> tag that can alter GFx metrics.
             html.push(
@@ -2746,6 +2921,13 @@ class FCMChatWidget extends MovieClip {
                 + '<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + col + '">' + user + ':</font> '
                 + '<font face="' + FONT_BODY + '" size="' + fs + '" color="' + hx(_cfg.textColor) + '">' + msg + '</font>'
                 + '</font>');
+            if (rec.supporterStar && rawUser.length > 0) {
+                starAnchors.push({
+                    rowText: rowPrefix + rawUser + ": " + rawBody,
+                    userOffset: rowPrefix.length,
+                    color: FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor)
+                });
+            }
         }
 
         // Authenticated with an empty feed (the unlinked / connecting cases returned above).
@@ -2761,7 +2943,14 @@ class FCMChatWidget extends MovieClip {
                 + '">v ' + _newWhileScrolled + ' new - wheel down or F11 Scroll to newest</font>');
         }
 
+        _starAnchors = starAnchors;
+
         if (!renderLogHtml(html)) _logTf.htmlText = html.join("<br/>");
+
+        // GFx can complete HTML layout one tick after htmlText/appendHtml. Try immediately for
+        // low-latency display, then retry once after the deferred layout/snap pass.
+        positionStarOverlays();
+        scheduleStarLayout();
 
         if (!_bScrolling) {
             // Use the legacy Text Chat end-selection snap and retain the deferred
@@ -2773,6 +2962,7 @@ class FCMChatWidget extends MovieClip {
                 _scrollSnapTimer = null;
                 if (!_bScrolling && _logTf != null) {
                     snapLogToBottom();
+                    positionStarOverlays();
                 }
             });
             _scrollSnapTimer.start();
@@ -2829,7 +3019,7 @@ class FCMChatWidget extends MovieClip {
 
     public function scrollUp():Void {
         if (_logTf == null) return;
-        if (_logTf.scrollV > 1) { _logTf.scrollV--; _bScrolling = true; }
+        if (_logTf.scrollV > 1) { _logTf.scrollV--; _bScrolling = true; positionStarOverlays(); }
     }
 
     public function scrollDown():Void {
@@ -2838,6 +3028,7 @@ class FCMChatWidget extends MovieClip {
         if (_logTf.scrollV >= _logTf.maxScrollV) {
             _bScrolling = false; _newWhileScrolled = 0;
         }
+        positionStarOverlays();
     }
 
     public function scrollToBottom():Void {
@@ -2854,6 +3045,95 @@ class FCMChatWidget extends MovieClip {
         } catch (err:Dynamic) {
             zfeLog("warn", "scroll", "onLogWheel threw: " + Std.string(err));
         }
+    }
+
+    /** Remove only the vector shapes, retaining the current text-to-star anchors. */
+    function clearStarShapes():Void {
+        for (star in _starShapes) {
+            try { if (_starLayer != null) _starLayer.removeChild(star); } catch (e:Dynamic) {}
+        }
+        _starShapes = [];
+    }
+
+    /** Clear supporter markers when the feed changes to a non-message state. */
+    function clearStarOverlays():Void {
+        _starAnchors = [];
+        if (_starLayoutTimer != null) { _starLayoutTimer.stop(); _starLayoutTimer = null; }
+        clearStarShapes();
+    }
+
+    function scheduleStarLayout():Void {
+        if (_starLayoutTimer != null) { _starLayoutTimer.stop(); _starLayoutTimer = null; }
+        if (_starAnchors.length == 0 || _logTf == null) return;
+        _starLayoutTimer = new Timer(30, 1);
+        _starLayoutTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
+            _starLayoutTimer = null;
+            positionStarOverlays();
+        });
+        _starLayoutTimer.start();
+    }
+
+    /** Draw one fixed, font-independent five-point star. */
+    function makeSupporterStar(color:Int, size:Float):Shape {
+        var star:Shape = new Shape();
+        var g = star.graphics;
+        var cx:Float = size / 2;
+        var cy:Float = size / 2;
+        var outer:Float = size / 2;
+        var inner:Float = size * 0.22;
+        g.beginFill(color, 1.0);
+        for (i in 0...10) {
+            var radius:Float = (i % 2 == 0) ? outer : inner;
+            var angle:Float = -Math.PI / 2 + i * Math.PI / 5;
+            var px:Float = cx + Math.cos(angle) * radius;
+            var py:Float = cy + Math.sin(angle) * radius;
+            if (i == 0) g.moveTo(px, py); else g.lineTo(px, py);
+        }
+        g.lineTo(cx, cy - outer);
+        g.endFill();
+        return star;
+    }
+
+    /**
+     * Locate each supporter author's first character in the rendered TextField and place a
+     * vector star immediately before it. Missing bounds are treated as a safe no-op because
+     * off-screen characters can return null on some GFx builds.
+     */
+    function positionStarOverlays():Void {
+        if (_starLayer == null || _logTf == null) return;
+        clearStarShapes();
+        if (_starAnchors.length == 0) return;
+
+        var plain:String = _logTf.text;
+        if (plain == null || plain.length == 0) return;
+        var searchFrom:Int = 0;
+        var size:Float = Math.max(8, Math.min(16, _cfg.fontSize * 0.95));
+        for (anchor in _starAnchors) {
+            var rowStart:Int = plain.indexOf(anchor.rowText, searchFrom);
+            if (rowStart < 0) {
+                if (!_starLayoutWarned) {
+                    _starLayoutWarned = true;
+                    zfeLog("warn", "render", "supporter star row not found after GFx HTML layout");
+                }
+                continue;
+            }
+            searchFrom = rowStart + anchor.rowText.length;
+            var bounds:Rectangle = null;
+            try { bounds = _logTf.getCharBoundaries(rowStart + anchor.userOffset); } catch (e:Dynamic) {}
+            if (bounds == null || bounds.height <= 0) {
+                if (!_starLayoutWarned) {
+                    _starLayoutWarned = true;
+                    zfeLog("warn", "render", "supporter star bounds unavailable; hiding marker safely");
+                }
+                continue;
+            }
+            var star:Shape = makeSupporterStar(anchor.color, size);
+            star.x = _logTf.x + bounds.x - size - 2;
+            star.y = _logTf.y + bounds.y + (bounds.height - size) / 2;
+            _starLayer.addChild(star);
+            _starShapes.push(star);
+        }
+        if (_starShapes.length > 0) _starLayoutWarned = false;
     }
 
     // =========================================================================

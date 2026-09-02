@@ -20,6 +20,10 @@ const {
   shouldSendRosterControl,
   nativeLockAdmission,
   nativeLockRelease,
+  hudUserEventAction,
+  hudUserEventIsDown,
+  isExternalInputAction,
+  mergeNativeInputText,
   shouldRebindWorldId,
   shouldIgnoreBlankWorldId,
   historyResyncControlBody,
@@ -35,6 +39,7 @@ const {
   extractLinkCode,
   linkGateRender,
   fcmClean,
+  normalizeDiscordEmojiMarkup,
   readDisplayName,
   resolveDisplayName,
   shouldReconcileDisplayName,
@@ -62,6 +67,23 @@ const {
   findModerationTarget,
   resolveModerationTarget,
 } = require('./fcm-chat-widget-logic.js');
+
+describe('HUD custom emoji normalization', () => {
+  it('keeps the emoji name and removes the Discord numeric ID', () => {
+    expect(normalizeDiscordEmojiMarkup('hello <:vaultboy:123456789012345678>'))
+      .toBe('hello :vaultboy:');
+  });
+
+  it('normalizes animated and multiple custom emoji tokens', () => {
+    expect(normalizeDiscordEmojiMarkup('<a:wave:987654321098765432> <:ok:123456789012345678>'))
+      .toBe(':wave: :ok:');
+  });
+
+  it('leaves malformed tokens unchanged', () => {
+    expect(normalizeDiscordEmojiMarkup('<:bad-name:123456789012345678>'))
+      .toBe('<:bad-name:123456789012345678>');
+  });
+});
 
 describe('normChannel', () => {
   it('maps general → global', () => expect(normChannel('general')).toBe('global'));
@@ -406,9 +428,40 @@ describe('in-session channel actions', () => {
     expect(inputChannelAction({ ...base, action: 'NextPage' })).toBe('next');
     expect(inputChannelAction({ ...base, action: 'PrevPage' })).toBe('prev');
   });
-  it('ignores key-down and closed-input actions, preserving the draft/session', () => {
+  it('ignores key-down actions but cycles while the feed is idle too', () => {
     expect(inputChannelAction({ ...base, isKeyDown: true, action: 'NextPage' })).toBe('none');
-    expect(inputChannelAction({ ...base, inputOpen: false, action: 'NextPage' })).toBe('none');
+    expect(inputChannelAction({ ...base, inputOpen: false, action: 'NextPage' })).toBe('next');
+    expect(inputChannelAction({ ...base, inputOpen: false, action: 'PrevPage' })).toBe('prev');
+  });
+});
+
+describe('HUDModLoader event compatibility and native-input recovery', () => {
+  it('reads the documented lower-camel event fields', () => {
+    expect(hudUserEventAction({ actionName: 'NextPage', isDown: false })).toBe('NextPage');
+    expect(hudUserEventIsDown({ actionName: 'NextPage', isDown: true })).toBe(true);
+  });
+  it('accepts the legacy capitalized event aliases', () => {
+    expect(hudUserEventAction({ EventName: 'PrevPage', IsKeyDown: false })).toBe('PrevPage');
+    expect(hudUserEventIsDown({ EventName: 'PrevPage', IsKeyDown: true })).toBe(true);
+  });
+  it('prefers documented fields when both event shapes are present', () => {
+    expect(hudUserEventAction({ actionName: 'NextPage', EventName: 'PrevPage' })).toBe('NextPage');
+    expect(hudUserEventIsDown({ isDown: false, IsKeyDown: true })).toBe(false);
+  });
+  it('falls back when an older wrapper leaves the current action field empty', () => {
+    expect(hudUserEventAction({ actionName: '', EventName: 'PrevPage' })).toBe('PrevPage');
+  });
+  it('recognizes external focus actions without treating channel actions as dismissal', () => {
+    expect(isExternalInputAction('QuickActionsMenu')).toBe(true);
+    expect(isExternalInputAction('FriendsList')).toBe(true);
+    expect(isExternalInputAction('Escape')).toBe(true);
+    expect(isExternalInputAction('NextPage')).toBe(false);
+  });
+  it('accumulates a one-character native stream without duplicating a repeated poll', () => {
+    expect(mergeNativeInputText('', 'h')).toBe('h');
+    expect(mergeNativeInputText('h', 'e')).toBe('he');
+    expect(mergeNativeInputText('he', 'e')).toBe('e');
+    expect(mergeNativeInputText('he', '')).toBe('');
   });
 });
 

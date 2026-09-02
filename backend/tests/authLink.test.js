@@ -177,6 +177,7 @@ describe('redeemLinkCode unit tests', () => {
           relayUserId: 'relay-user-1',
           expiresAt: new Date(Date.now() + 60000),
           usedAt: new Date(),
+          redeemedByUserId: 'another-user',
           attempts: 0,
         }),
         update: jest.fn(),
@@ -187,6 +188,28 @@ describe('redeemLinkCode unit tests', () => {
     const result = await redeemLinkCode('ABCDEFGH', FCM_USER_ID);
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('already_used');
+  });
+
+  it('is idempotent when the same user retries a consumed code', async () => {
+    const mockUpdateMany = jest.fn();
+    jest.mock('../src/config/prisma', () => ({
+      hudLinkCode: {
+        findUnique: jest.fn().mockResolvedValue({
+          id: 'uuid',
+          code: 'ABCDEFGH',
+          relayUserId: 'relay-user-1',
+          expiresAt: new Date(Date.now() + 60000),
+          usedAt: new Date(),
+          redeemedByUserId: FCM_USER_ID,
+          attempts: 1,
+        }),
+        updateMany: mockUpdateMany,
+      },
+    }));
+    const { redeemLinkCode } = require('../src/services/linkCodeService');
+    const result = await redeemLinkCode('ABCD-EFGH', FCM_USER_ID);
+    expect(result).toEqual({ ok: true, relayUserId: 'relay-user-1' });
+    expect(mockUpdateMany).not.toHaveBeenCalled();
   });
 
   it('returns max_attempts when attempts >= 5', async () => {
@@ -331,5 +354,26 @@ describe('validateAndConsume unit tests', () => {
       expect(result.relayUserId).toBe('relay-user-1');
       expect(result.redeemedByUserId).toBe('fcm-user-uuid');
     }
+  });
+});
+
+describe('markRelayTokenLinked acknowledgement', () => {
+  beforeEach(() => {
+    jest.resetModules();
+  });
+
+  it('returns the number of active relay tokens promoted', async () => {
+    jest.mock('../src/config/prisma', () => ({
+      __esModule: true,
+      default: {
+        hudPairingToken: {
+          updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+          findFirst: jest.fn().mockResolvedValue(null),
+        },
+        user: { update: jest.fn() },
+      },
+    }));
+    const { markRelayTokenLinked } = require('../src/services/relay/tokenService');
+    await expect(markRelayTokenLinked('stale-relay-user', 'fcm-user')).resolves.toBe(0);
   });
 });

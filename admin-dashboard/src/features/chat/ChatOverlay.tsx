@@ -864,6 +864,17 @@ export function boundedPublicPartyIds(key: string, max = 50): string[] {
 }
 
 /**
+ * Shared card replies must be addressed to the channel that owns the clicked
+ * message. In an aggregate feed, activeSubId can be the parent feed channel;
+ * using it would deliver the private card outside the visible child channel.
+ * Keep the fallback for older/partial message payloads.
+ */
+export function resolveSharedCardChannelId(messageChannelId: string | null | undefined, activeChannelId: string): string {
+  const messageChannel = typeof messageChannelId === 'string' ? messageChannelId.trim() : '';
+  return messageChannel || activeChannelId;
+}
+
+/**
  * openUrl — open a URL via the Electron relay bridge (if present) or window.open.
  * Centralises the openExternal / window.open pattern used throughout the component.
  */
@@ -1459,7 +1470,10 @@ interface MinervaMetadata {
   nextListNumber: number | null;
   nextIsSuperSale: boolean | null;
   nextStartUtc: string | null;
+  sourceName?: string;
+  sourceUrl?: string;
 }
+export const MINERVA_SOURCE_URL = 'https://www.falloutbuilds.com/fo76/minerva';
 interface CardShareMetadata {
   type: 'card_share';
   command: string;
@@ -6516,6 +6530,8 @@ export default function ChatOverlay() {
         ? { sourceName: 'NukaCrypt', sourceUrl: 'https://nukacrypt.com' }
         : opts.command.startsWith('/serverstatus')
           ? { sourceName: 'Bethesda', sourceUrl: 'https://bethesda.net/en/status' }
+          : opts.command.startsWith('/minerva')
+            ? { sourceName: 'Fallout Builds', sourceUrl: 'https://www.falloutbuilds.com/fo76/minerva' }
           : { sourceName: undefined, sourceUrl: undefined };
     sendOrQueueChat({
       type: 'chat:send',
@@ -6544,15 +6560,16 @@ export default function ChatOverlay() {
   }, [activeSubId]);
 
   /** Re-run a shared card command on the caller's own client (produces an ephemeral card). */
-  const openSharedCard = useCallback((command: string) => {
+  const openSharedCard = useCallback((command: string, messageChannelId?: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    if (!activeSubId) return;
+    const targetChannelId = resolveSharedCardChannelId(messageChannelId, activeSubId);
+    if (!targetChannelId) return;
     if (!/^\/(nukecodes|serverstatus|camp|minerva)\b/.test(command)) return;
     wsRef.current.send(JSON.stringify({
       type: 'chat:send',
       payload: {
         content: command,
-        channelId: activeSubId,
+        channelId: targetChannelId,
         clientCreatedAt: new Date().toISOString(),
         mentions: [],
       },
@@ -8077,7 +8094,7 @@ export default function ChatOverlay() {
                       accent={cs.accent}
                       icon={cs.icon}
                       title={cs.label}
-                      onTitleClick={() => openSharedCard(cs.command)}
+                      onTitleClick={() => openSharedCard(cs.command, msg.channelId)}
                       titleGlow={glowEnabled}
                       meta={cs.sourceUrl ? {
                         label: `${cs.sourceName} ↗`,
@@ -8217,6 +8234,8 @@ export default function ChatOverlay() {
                 if (md && md.type === 'minerva') {
                   const mv = md as unknown as MinervaMetadata;
                   const mvAccent = '#F1C40F';
+                  const minervaSourceUrl = mv.sourceUrl || MINERVA_SOURCE_URL;
+                  const minervaSourceName = mv.sourceName || 'Fallout Builds';
                   const fmtDate = (iso: string) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
                   const fmtDuration = (iso: string) => {
                     const diffMs = new Date(iso).getTime() - Date.now();
@@ -8252,12 +8271,12 @@ export default function ChatOverlay() {
                         onShareToChat={() => shareCardToChat({ command: '/minerva', label: "Minerva's Big Sale", accent: mvAccent, icon: '⛟' })}
                         shareDisabled={cardShareCooldown}
                         fields={mvFields}
-                        footerLeft={
-                          <span role="button" tabIndex={0} title="More info at falloutbuilds.com"
-                            onClick={() => openUrl('https://www.falloutbuilds.com/fo76/minerva')}
-                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') openUrl('https://www.falloutbuilds.com/fo76/minerva'); }}
+                        inlineMeta={
+                          <span role="button" tabIndex={0} title={`Source: ${minervaSourceName}`}
+                            onClick={() => openUrl(minervaSourceUrl)}
+                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') openUrl(minervaSourceUrl); }}
                             style={{ color: hexAlpha(mvAccent, 0.85), textDecoration: 'underline', cursor: 'pointer' }}
-                          >more info &#8599;</span>
+                          >via {minervaSourceName} &#8599;</span>
                         }
                         hexAlpha={hexAlpha}
                         fontFamily={theme.fontFamily}

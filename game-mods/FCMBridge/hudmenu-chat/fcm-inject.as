@@ -47,16 +47,16 @@
          }
       }
 
-      // Pass the __ZFE reference we hold at the HUDMenu (parent) level down to
-      // the FCMBridge child SWF. ZFE 0.9.8 sets child_bridge_access=disabled so
-      // it does NOT inject __ZFE into child SWFs; the parent holds it normally.
+      // Pass the native chat bridge we hold at the HUDMenu (parent) level down
+      // to the FCMBridge child SWF. ZFE and xScal both attach their bridge to
+      // the parent movie, while child SWFs may not inherit it.
       // Sharing it here lets FCMBridge connect even without HUDModLoader.
       public function fcmPassZfeToBridge() : void
       {
          if(this._fcmBridge == null) { return; }
          try
          {
-            // Discover __ZFE using the documented order at the HUDMenu level.
+            // Prefer ZFE for backwards compatibility, then probe xScal.
             var hostZfe:* = null;
             try { hostZfe = this["__ZFE"]; } catch(e0:Error) {}
             if(hostZfe == null)
@@ -75,14 +75,29 @@
             {
                try { hostZfe = __SFCodeObj; } catch(e4:Error) {}
             }
-            var found:String = (hostZfe != null) ? "found" : "absent";
-            this.fcmLog("info","zfe","hostZfe=" + found);
-            if(hostZfe != null)
+            var hostNative:* = hostZfe;
+            var provider:String = "zfe";
+            if(hostNative == null)
             {
-               try { this._fcmBridge.fcmSetZfe(hostZfe); }
+               try { hostNative = this["__SFECodeObj"]; } catch(eX0:Error) {}
+               if(hostNative == null)
+               {
+                  try { if(this.parent != null) { hostNative = this.parent["__SFECodeObj"]; } } catch(eX1:Error) {}
+               }
+               if(hostNative == null)
+               {
+                  try { if(this.root != null) { hostNative = this.root["__SFECodeObj"]; } } catch(eX2:Error) {}
+               }
+               provider = "xscal";
+            }
+            var found:String = (hostNative != null) ? "found" : "absent";
+            this.fcmLog("info","native","provider=" + provider + " bridge=" + found);
+            if(hostNative != null)
+            {
+               try { this._fcmBridge.fcmSetNativeApi(hostNative); }
                catch(eSet:Error)
                {
-                  this.fcmLog("warn","zfe","fcmSetZfe threw: " + eSet.message);
+                  this.fcmLog("warn","native","fcmSetNativeApi threw: " + eSet.message);
                }
             }
          }

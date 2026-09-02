@@ -32,11 +32,13 @@ class TestFcmConfig {
         eqi("hex short->fallbk", FcmConfig.parseHexColor("#FFF", 0x123456), 0x123456);
         eqi("hex empty->fallbk", FcmConfig.parseHexColor("", 0x111111), 0x111111);
         eqi("hex null->fallbk",  FcmConfig.parseHexColor(null, 0x222222), 0x222222);
-        // The HUD intentionally renders tags only. Supporter transport parsing
-        // remains covered because it still gates the server-issued metadata.
+        // Supporter transport parsing and vector-render color selection share the same
+        // validation path. The SWF draws the marker as geometry, never as a Unicode glyph.
         eqb("supporter marker accepts server flag", FcmConfig.supporterStarPresent(true, ""), true);
         eqb("supporter marker accepts validated colour", FcmConfig.supporterStarPresent(false, "#FD4DA6"), true);
         eqb("supporter marker rejects unsafe colour", FcmConfig.supporterStarPresent(false, "url(evil)"), false);
+        eqi("supporter color validates server value", FcmConfig.supporterStarColor("#FD4DA6", 0), 0xFD4DA6);
+        eqi("supporter color falls back safely", FcmConfig.supporterStarColor("url(evil)", 0xF5CB5B), 0xF5CB5B);
         var hudWire:String = "FCMHUD/1;s=1;c=%23FD4DA6;t=X%3BY";
         eqb("HUD transport recognizes prefix", FcmConfig.hudTransportHasStar(hudWire), true);
         eqs("HUD transport decodes tag", FcmConfig.hudTransportTag(hudWire), "X;Y");
@@ -48,6 +50,17 @@ class TestFcmConfig {
         eqs("json string whitespace", FcmConfig.extractJsonString('{ "tag" : \"X\" }', "tag"), "X");
         eqs("json string newline whitespace", FcmConfig.extractJsonString('{\n tag\t:\n \"X\"\n}', "tag"), "X");
         eqs("json string escaped quote", FcmConfig.extractJsonString('{"tag":"a\\\"b"}', "tag"), "a\\\"b");
+        eqs("custom emoji markup becomes readable shortcode",
+            FcmConfig.normalizeDiscordEmojiMarkup("hello <:vaultboy:123456789012345678>"),
+            "hello :vaultboy:");
+        eqs("animated custom emoji markup drops the numeric id",
+            FcmConfig.normalizeDiscordEmojiMarkup("<a:wave:987654321098765432>"), ":wave:");
+        eqs("multiple custom emoji tokens normalize",
+            FcmConfig.normalizeDiscordEmojiMarkup("<:one:123456789012345678> <a:two:987654321098765432>"),
+            ":one: :two:");
+        eqs("malformed custom emoji stays unchanged",
+            FcmConfig.normalizeDiscordEmojiMarkup("<:bad-name:123456789012345678>"),
+            "<:bad-name:123456789012345678>");
         eqb("json bool compact", FcmConfig.extractJsonBool('{"supporterStar":true}', "supporterStar"), true);
         eqb("json bool whitespace", FcmConfig.extractJsonBool('{ "supporterStar" : true }', "supporterStar"), true);
         eqb("json bool unquoted native", FcmConfig.extractJsonBool('{supporterStar: true}', "supporterStar"), true);
