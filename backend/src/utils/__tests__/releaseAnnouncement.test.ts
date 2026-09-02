@@ -13,6 +13,7 @@ import {
   downloadPageUrl,
   releaseDownloadFieldValue,
   nexusEndorseFieldValue,
+  releaseAnnouncementMessage,
 } from '../releaseAnnouncement';
 
 describe('releaseAnnouncement', () => {
@@ -30,6 +31,17 @@ describe('releaseAnnouncement', () => {
 
   test('RELEASE_PING pings @everyone', () => {
     assert.equal(RELEASE_PING, '@everyone');
+  });
+
+  test('quiet release posts omit content and allowed mentions', () => {
+    assert.deepEqual(releaseAnnouncementMessage(false), {});
+  });
+
+  test('normal release posts retain the explicit @everyone mention', () => {
+    assert.deepEqual(releaseAnnouncementMessage(true), {
+      content: '@everyone',
+      allowedMentions: { parse: ['everyone'] },
+    });
   });
 
   describe('nexusModUrl', () => {

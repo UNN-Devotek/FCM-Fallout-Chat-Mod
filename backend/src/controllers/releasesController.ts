@@ -81,6 +81,9 @@ const releaseBodySchema = z.object({
   // normal releases always announce. The site download + in-app update notification
   // still update; the operator edits the existing announcement by hand.
   announce: z.boolean().optional().default(true),
+  // When false, post the release embed without a channel-wide @everyone mention.
+  // This is useful for corrected follow-up notes while retaining the announcement.
+  mentionEveryone: z.boolean().optional().default(true),
 }).refine(
   (value) => Boolean(value.hudModVersion) === Boolean(value.hudModUrl),
   { message: 'hudModVersion and hudModUrl must be provided together' },
@@ -157,7 +160,7 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
       return next(createError(400, detail));
     }
 
-    const { version, downloadUrl, releaseNotes, announce, hudModUrl, hudModVersion } = parsed.data;
+    const { version, downloadUrl, releaseNotes, announce, mentionEveryone, hudModUrl, hudModVersion } = parsed.data;
     const publishedAt = new Date();
 
     // Pipeline gate: verify all five overlay artifacts and, when supplied, the
@@ -200,9 +203,9 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
     if (announce) {
       try {
         if (hudModUrl && hudModVersion) {
-          await postReleaseAnnouncement(version, releaseNotes, { url: hudModUrl, version: hudModVersion });
+          await postReleaseAnnouncement(version, releaseNotes, { url: hudModUrl, version: hudModVersion }, { mentionEveryone });
         } else {
-          await postReleaseAnnouncement(version, releaseNotes);
+          await postReleaseAnnouncement(version, releaseNotes, undefined, { mentionEveryone });
         }
       } catch (e: any) {
         return next(createError(

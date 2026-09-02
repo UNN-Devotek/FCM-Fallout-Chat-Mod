@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Partials, TextChannel, EmbedBuilder, ActivityType, type Message, type Typing } from 'discord.js';
+import { Client, GatewayIntentBits, Partials, TextChannel, EmbedBuilder, ActivityType, type Message, type MessageCreateOptions, type Typing } from 'discord.js';
 import { v4 as uuidv4 } from 'uuid';
 import env from '../config/environment';
 import prisma from '../config/prisma';
@@ -16,8 +16,8 @@ import { getEntry, bestMatch } from './wikiCatalogService';
 import { canon } from '../utils/textCanon';
 import { buildOverLengthDm } from '../utils/overLengthDm';
 import {
-  RELEASE_PING,
   downloadPageUrl,
+  releaseAnnouncementMessage,
   releaseDownloadFieldValue,
   nexusEndorseFieldValue,
 } from '../utils/releaseAnnouncement';
@@ -1367,9 +1367,11 @@ async function postReleaseAnnouncement(
   version: string,
   releaseNotes: string,
   hudMod?: HudModDownload,
+  options: { mentionEveryone?: boolean } = {},
 ): Promise<void> {
   const attemptDelays = [0, 500, 1500, 3000, 5000]; // 5 tries, ~10s total
   let lastErr: unknown = null;
+  const mentionEveryone = options.mentionEveryone ?? true;
 
   for (let i = 0; i < attemptDelays.length; i++) {
     if (attemptDelays[i] > 0) await new Promise((r) => setTimeout(r, attemptDelays[i]));
@@ -1393,15 +1395,12 @@ async function postReleaseAnnouncement(
           { name: '❤️ Endorse on Nexus', value: nexusEndorseFieldValue() },
         )
         .setTimestamp(new Date());
-      // Ping @everyone in the Updates channel. allowedMentions is REQUIRED for the
-      // ping to actually fire, and the bot must hold "Mention Everyone" in the
-      // channel — without the perm the message still posts, just without the ping.
-      await (channel as TextChannel).send({
-        content: RELEASE_PING,
+      const message = {
         embeds: [embed],
-        allowedMentions: { parse: ['everyone'] },
-      });
-      logger.info({ version, channelId: UPDATES_CHANNEL_ID, attempt: i + 1 }, 'Posted release announcement to Discord');
+        ...releaseAnnouncementMessage(mentionEveryone),
+      } satisfies MessageCreateOptions;
+      await (channel as TextChannel).send(message);
+      logger.info({ version, channelId: UPDATES_CHANNEL_ID, attempt: i + 1, mentionEveryone }, 'Posted release announcement to Discord');
       return; // success
     } catch (err) {
       lastErr = err;

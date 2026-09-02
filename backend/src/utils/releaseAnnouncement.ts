@@ -8,6 +8,7 @@
  * artifacts 404).
  */
 
+import type { MessageCreateOptions } from 'discord.js';
 import {
   windowsZipUrl,
   linuxZipUrl,
@@ -24,6 +25,17 @@ export interface HudModDownload {
  *  `allowedMentions: { parse: ['everyone'] }` on send AND the bot to hold
  *  "Mention Everyone" in that channel (otherwise it posts but doesn't ping). */
 export const RELEASE_PING = '@everyone';
+
+/** Message options for a release post's optional whole-channel mention. */
+export function releaseAnnouncementMessage(
+  mentionEveryone: boolean,
+): Pick<MessageCreateOptions, 'content' | 'allowedMentions'> {
+  if (!mentionEveryone) return {};
+  return {
+    content: RELEASE_PING,
+    allowedMentions: { parse: ['everyone'] },
+  };
+}
 
 /** FCM's Nexus Mods page (default); overridable so a different mod id can be set. */
 export const DEFAULT_NEXUS_MOD_URL = 'https://www.nexusmods.com/fallout76/mods/4082';

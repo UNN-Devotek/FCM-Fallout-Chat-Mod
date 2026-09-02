@@ -336,9 +336,11 @@ Mounted at both paths. Auth is handled inside `releasesController` using `ADMIN_
 | GET | `/admin/releases` or `/api/releases` | public | List releases (current version + notes) |
 | DELETE | `/admin/releases/:version` | Bearer `ADMIN_RELEASE_TOKEN` | Remove release entry |
 
-**POST body:** `{ version, downloadUrl, releaseNotes, announce? }`. `announce` defaults to `true`;
-set it `false` for a **quiet publish** that skips the Discord `@everyone` post (the site download,
-`latestVersion` cache / in-app `app:update-available`, and the GitHub Release still update). See
+**POST body:** `{ version, downloadUrl, releaseNotes, announce?, mentionEveryone? }`. Both
+`announce` and `mentionEveryone` default to `true`. Set `announce` to `false` to skip Discord
+entirely, or set `mentionEveryone` to `false` to post the embed without the channel-wide
+`@everyone` mention. The site download, `latestVersion` cache / in-app `app:update-available`,
+and GitHub Release still update in either quiet mode. See
 [releasing-the-overlay.md](../deployment/releasing-the-overlay.md) → Step 6.
 
 ---

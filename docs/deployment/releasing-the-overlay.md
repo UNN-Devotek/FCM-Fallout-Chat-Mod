@@ -367,6 +367,11 @@ Set `DOWNLOAD_PAGE_URL=https://dev.falloutchatmod.com` so the Dev Discord messag
 the dev install page. The dev announcement is posted to the dev bot's configured
 `DISCORD_UPDATES_CHANNEL_ID`; production uses its own configured channel.
 
+To publish corrected notes without notifying the entire channel again, keep `announce: true`
+and add `mentionEveryone: false` to the same release request. This posts a replacement embed,
+updates the stored release notes and latest-version cache, and omits the `@everyone` content and
+allowed-mentions setting. Set `announce: false` only when no Discord post should be sent.
+
 ### Step 6 — Nexus publish
 
 ```powershell
