@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 
 import {
   resolveSupporterTier,
+  hasConfiguredCosmeticsRole,
   normalizeTier,
   tierAtLeast,
   tierLabel,
@@ -14,7 +15,11 @@ import {
   TIER_ORDER,
 } from '../supporterTier';
 
-const ROLES = { supporterRoleId: 'ROLE_SUP', overseerCircleRoleId: 'ROLE_OVR' };
+const ROLES = {
+  supporterRoleId: 'ROLE_SUP',
+  overseerCircleRoleId: 'ROLE_OVR',
+  adminRoleId: 'ROLE_ADMIN',
+};
 
 describe('resolveSupporterTier', () => {
   test('returns none for empty / missing role lists', () => {
@@ -33,24 +38,34 @@ describe('resolveSupporterTier', () => {
     assert.equal(resolveSupporterTier(['ROLE_OVR', 'ROLE_SUP'], ROLES), 'overseer');
   });
 
+  test('the configured admin role receives the full overseer cosmetics tier', () => {
+    assert.equal(resolveSupporterTier(['ROLE_ADMIN'], ROLES), 'overseer');
+    assert.equal(resolveSupporterTier(['ROLE_ADMIN', 'ROLE_SUP'], ROLES), 'overseer');
+    assert.equal(hasConfiguredCosmeticsRole(['ROLE_ADMIN'], ROLES), true);
+  });
+
   test('unrelated roles never grant a tier', () => {
-    assert.equal(resolveSupporterTier(['ROLE_MOD', 'ROLE_ADMIN'], ROLES), 'none');
+    assert.equal(resolveSupporterTier(['ROLE_MOD', 'ROLE_OTHER'], ROLES), 'none');
   });
 
   test('an unconfigured role id must NOT match — a half-configured env grants nothing', () => {
     // The dangerous failure would be an empty env var matching an empty entry in the
     // member's role array and handing the paid tier to everyone.
-    assert.equal(resolveSupporterTier([''], { supporterRoleId: '', overseerCircleRoleId: '' }), 'none');
-    assert.equal(resolveSupporterTier([''], { supporterRoleId: null, overseerCircleRoleId: undefined }), 'none');
+    assert.equal(resolveSupporterTier([''], { supporterRoleId: '', overseerCircleRoleId: '', adminRoleId: '' }), 'none');
+    assert.equal(resolveSupporterTier([''], { supporterRoleId: null, overseerCircleRoleId: undefined, adminRoleId: null }), 'none');
     assert.equal(
-      resolveSupporterTier(['ROLE_SUP'], { supporterRoleId: '', overseerCircleRoleId: '' }),
+      resolveSupporterTier(['ROLE_SUP'], { supporterRoleId: '', overseerCircleRoleId: '', adminRoleId: '' }),
+      'none',
+    );
+    assert.equal(
+      resolveSupporterTier(['ROLE_ADMIN'], { supporterRoleId: '', overseerCircleRoleId: '', adminRoleId: '' }),
       'none',
     );
   });
 
   test('overseer still resolves when only the supporter role is unconfigured', () => {
     assert.equal(
-      resolveSupporterTier(['ROLE_OVR'], { supporterRoleId: '', overseerCircleRoleId: 'ROLE_OVR' }),
+      resolveSupporterTier(['ROLE_OVR'], { supporterRoleId: '', overseerCircleRoleId: 'ROLE_OVR', adminRoleId: '' }),
       'overseer',
     );
   });

@@ -1,5 +1,6 @@
 /**
- * Keeps supporter entitlements in lockstep with Discord tier roles.
+ * Keeps supporter entitlements in lockstep with Discord tier roles and the
+ * admin-role cosmetics bypass.
  *
  * Two paths, deliberately funnelled through the same
  * supporterService.syncFromDiscordRoles() so they cannot diverge:
@@ -27,9 +28,11 @@ import { makeJobTracker } from '../jobs/jobTracker';
 import {
   syncFromDiscordRolesWithResult,
   tierFromDiscordRoles,
+  tierRoleIds,
   lapseEntitlement,
 } from './supporterService';
 import type { DiscordRoleSyncResult, EntitlementSource } from './supporterService';
+import { hasConfiguredCosmeticsRole } from '../utils/supporterTier';
 import { refreshSupporterPresentation } from './supporterNicknameService';
 import { bustCosmeticsCache } from './cosmetics/cosmeticsService';
 import { getRedisClient } from '../config/redis';
@@ -64,7 +67,8 @@ const linkedDiscordIdCache = new Map<string, { discordId: string | null; expires
 const track = makeJobTracker('supporterReconcile');
 
 /**
- * True when the tier is switched ON and at least one tier role is configured.
+ * True when the tier is switched ON and at least one paid tier or admin cosmetics
+ * role is configured.
  *
  * SUPPORTER_TIER_ENABLED is the master kill switch: with it off (the default, including
  * in production) no listener attaches and no sweep runs, so the feature costs nothing
@@ -72,7 +76,7 @@ const track = makeJobTracker('supporterReconcile');
  */
 function configured(): boolean {
   if (!env.SUPPORTER_TIER_ENABLED) return false;
-  return Boolean(env.SUPPORTER_ROLE_ID || env.OVERSEER_CIRCLE_ROLE_ID);
+  return Boolean(env.SUPPORTER_ROLE_ID || env.OVERSEER_CIRCLE_ROLE_ID || env.ADMIN_ROLE_ID);
 }
 
 export type HudRoleRefreshRequest = {
@@ -364,7 +368,7 @@ export async function runReconcile(deps?: {
   let granted = 0;
   let lapsed = 0;
 
-  // Anyone currently holding a tier role: grant or refresh.
+  // Anyone currently holding a paid tier or admin cosmetics role: grant or refresh.
   for (const [discordId, roles] of roleMembers) {
     const tier = tierFromDiscordRoles(roles);
     if (tier === 'none') continue;
@@ -405,13 +409,14 @@ async function defaultFetchMembers(): Promise<Map<string, readonly string[]>> {
 
   const guild = await clientRef.guilds.fetch(env.DISCORD_SERVER_ID);
   const members = await guild.members.fetch();
-  const tierRoleIdSet = new Set([env.SUPPORTER_ROLE_ID, env.OVERSEER_CIRCLE_ROLE_ID].filter(Boolean));
+  const cosmeticsRoleIds = tierRoleIds();
 
   for (const [id, member] of members) {
     const roles = [...member.roles.cache.keys()];
-    // Only carry members who hold a tier role — the map is then small regardless of
-    // guild size, and the lapse pass below treats "absent" as "no longer entitled".
-    if (roles.some((r) => tierRoleIdSet.has(r))) out.set(id, roles);
+    // Only carry members who hold a paid tier or admin cosmetics role — the map is
+    // then small regardless of guild size, and the lapse pass below treats
+    // "absent" as "no longer entitled".
+    if (hasConfiguredCosmeticsRole(roles, cosmeticsRoleIds)) out.set(id, roles);
   }
   return out;
 }
@@ -424,7 +429,7 @@ export function register(client: Client): void {
   if (!configured()) {
     logger.info(
       { tierEnabled: env.SUPPORTER_TIER_ENABLED },
-      '[supporterSync] disabled (tier switched off, or no tier roles configured)',
+      '[supporterSync] disabled (tier switched off, or no tier/admin cosmetics roles configured)',
     );
     return;
   }

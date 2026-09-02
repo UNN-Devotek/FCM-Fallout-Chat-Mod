@@ -89,6 +89,8 @@ In the Dokploy `fcm-dev` compose stack environment:
 ```bash
 SUPPORTER_ROLE_ID=<dev Supporter role id>
 OVERSEER_CIRCLE_ROLE_ID=<dev Overseer's Circle role id>
+# Optional: this role receives the full Overseer cosmetics catalog for testing.
+ADMIN_ROLE_ID=<dev admin role id>
 SUPPORTER_TIER_ENABLED=true
 # No Discord shop on dev — leave empty. The purchase CTA is hidden when it is unset,
 # which is exactly what we want while testing with hand-assigned roles.
@@ -99,7 +101,8 @@ Note the production boot guard (`collectSupporterTierProductionErrors`) only fir
 `NODE_ENV=production`, so an empty shop URL is fine on dev.
 
 `backend-dev` deliberately does not use `env_file`; `deploy/dev/docker-compose.yml`
-explicitly forwards these four Dokploy stack variables. Keep that wiring with any future
+explicitly forwards the supporter variables, including the `ADMIN_ROLE_ID` forwarded with
+the staff-role block above. Keep that wiring with any future
 compose refactor, or the dev stack will silently fall back to the disabled defaults.
 
 ## Step 4 — Deploy
@@ -115,8 +118,8 @@ Verify in the backend-dev logs:
 [cosmetics] /cosmetics registered
 ```
 
-If you instead see `[supporterSync] disabled (tier switched off, or no tier roles
-configured)`, the flag or the role IDs did not land.
+If you instead see `[supporterSync] disabled (tier switched off, or no tier/admin
+cosmetics roles configured)`, the flag or the role IDs did not land.
 
 ---
 

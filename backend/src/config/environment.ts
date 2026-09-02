@@ -155,14 +155,15 @@ export interface Environment {
   // ── Supporter tier (cosmetics entitlement) ────────────────────────────────
   // Discord Server Subscription tier roles. Discord assigns these automatically on
   // purchase and removes them on cancellation, so the ROLE is the entitlement signal
-  // (see supporterService.resolveSupporterTier). Deliberately NOT part of the
-  // owner/admin/moderator cascade in roleVerificationService — supporter is an
-  // orthogonal axis to EffectiveRole and must never grant moderation privileges.
+  // (see supporterService.resolveSupporterTier). ADMIN_ROLE_ID is also treated as
+  // an Overseer-level cosmetics bypass when the feature is enabled, but it remains
+  // deliberately separate from the owner/admin/moderator cascade in
+  // roleVerificationService: this never grants or changes moderation privileges.
   SUPPORTER_ROLE_ID: string;
   OVERSEER_CIRCLE_ROLE_ID: string;
-  // Master switch for the commercial tier. When false the cosmetics system still runs
-  // (free presets, admin-granted entitlements) but no purchase CTA is surfaced. Lets the
-  // code ship to prod well ahead of the commercial switch-on.
+  // Master switch for the supporter/cosmetics feature. When false, all cosmetics —
+  // including the admin-role bypass — are disabled. This lets the code ship to prod
+  // well ahead of the commercial switch-on.
   SUPPORTER_TIER_ENABLED: boolean;
   // Public URL of the Discord server shop / subscription page, used by the pricing CTA
   // and the /cosmetics upsell copy. Point at the WEB purchase path — mobile purchases

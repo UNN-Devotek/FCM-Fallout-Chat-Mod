@@ -381,8 +381,8 @@ record; this is the service-level map.
 | `cosmetics/roleDefinitions.ts` | Derives the Discord role names and colors from the catalog and provides the pure role-diff planner used by the sync service and provisioning script. |
 | `cosmetics/reservedColors.ts` | Colours users may not pick, with the reason (impersonation vs ambiguity). |
 | `cosmetics/validation.ts` | Pure input validation, reused by the frontend picker's live feedback. |
-| `supporterService.ts` | Entitlement read/write, Redis-cached tier lookup, and the entitlement-vs-privileges split. |
-| `supporterSyncService.ts` | Keeps entitlements in lockstep with Discord tier roles: `guildMemberUpdate` / `guildMemberRemove`, a Redis-coordinated once-per-minute-per-account refresh before authenticated HUD sends, plus a 15-minute reconcile backstop. |
+| `supporterService.ts` | Entitlement read/write, Redis-cached tier lookup, and the entitlement-vs-privileges split. The configured `ADMIN_ROLE_ID` resolves to the full Overseer cosmetics tier without changing `EffectiveRole`. |
+| `supporterSyncService.ts` | Keeps entitlements in lockstep with Discord tier/admin cosmetics roles: `guildMemberUpdate` / `guildMemberRemove`, a Redis-coordinated once-per-minute-per-account refresh before authenticated HUD sends, plus a 15-minute reconcile backstop. |
 | `cosmeticsCommandService.ts` | The Discord `/cosmetics` command. Marshals interactions only — no business logic. |
 | `chatNameService.ts` | Free account-level chat-name write path. Validates 2–32 characters, checks the blacklist/automod, persists `users.chat_name`, audits, and refreshes connected clients. It has no supporter gate or calendar cooldown. |
 | `chatNameCommandService.ts` | The Discord `/name` modal. Calls `chatNameService.setChatName()`; it is registered even when supporter cosmetics are disabled. |

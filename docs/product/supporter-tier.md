@@ -54,6 +54,13 @@ Entitlements live in `supporter_entitlements`, keyed by `discord_id`, never in
 keep returning false for supporters. This is a deliberate deviation from the wording of
 issue #230.
 
+When `SUPPORTER_TIER_ENABLED=true`, a member holding the configured `ADMIN_ROLE_ID` is
+resolved as `Overseer` for cosmetics. This grants the full supporter-effects catalog,
+including Overseer's Circle effects, tags, star colors, and name colors. It is a
+cosmetics-only bypass: it does not alter `EffectiveRole`, moderation permissions, or
+the paid Discord subscription roles. Admin access is still live-role based, so removing
+the admin role removes the bypass on the next gateway/reconcile/HUD refresh.
+
 ### Entitlement vs privileges (#230's hard rule)
 
 - The `supporter_entitlements` row is the **entitlement**. It survives the user leaving
@@ -184,13 +191,15 @@ and silently flatten every effect to a plain name.
 | --- | --- |
 | `SUPPORTER_ROLE_ID` | Discord role for the Supporter tier |
 | `OVERSEER_CIRCLE_ROLE_ID` | Discord role for Overseer's Circle |
+| `ADMIN_ROLE_ID` | Staff role that receives the full Overseer-level cosmetics catalog while the feature is enabled; does not grant moderation access |
 | `SUPPORTER_TIER_ENABLED` | **Master kill switch. Defaults to `false`, including in production.** |
 | `DISCORD_SERVER_SHOP_URL` | Web purchase URL for the CTA |
 
 ### The kill switch
 
 `SUPPORTER_TIER_ENABLED` gates the WHOLE feature, not just the purchase CTA. With it
-off — the default everywhere, including production — the feature is completely inert:
+off — the default everywhere, including production — the feature is completely inert
+for everyone, including members with `ADMIN_ROLE_ID`:
 
 - no cosmetics are attached to any chat message (chat renders byte-identically to
   before the feature existed), and `resolveCosmetics` returns without touching Redis

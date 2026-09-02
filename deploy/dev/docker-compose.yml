@@ -185,7 +185,9 @@ services:
 
       # --- Supporter cosmetics (dev-only; roles are assigned by hand) ---
       # This compose service intentionally does not use env_file, so every supporter
-      # variable must be passed through explicitly. Keep the master switch false by
+      # all supporter variables must be passed through explicitly. ADMIN_ROLE_ID is forwarded with
+      # the staff role IDs above and also grants the full cosmetic tier when enabled.
+      # Keep the master switch false by
       # default; the isolated dev Dokploy stack sets it true only for QA.
       SUPPORTER_TIER_ENABLED: ${SUPPORTER_TIER_ENABLED:-false}
       SUPPORTER_ROLE_ID: ${SUPPORTER_ROLE_ID:-}
