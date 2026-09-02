@@ -157,14 +157,14 @@ async function getUnreadCounts(userId: string, conversationIds: string[]): Promi
     SELECT pm.conversation_id, COUNT(*)::int AS unread_count
     FROM private_messages pm
     JOIN private_conversations pc ON pc.id = pm.conversation_id
-    WHERE pm.conversation_id IN (${Prisma.join(conversationIds)})
+    WHERE pm.conversation_id IN (${Prisma.join(conversationIds.map((conversationId) => Prisma.sql`${conversationId}::uuid`))})
       AND pm.is_deleted = false
-      AND pm.sender_id <> ${userId}
+      AND pm.sender_id <> ${Prisma.sql`${userId}::uuid`}
       AND (
-        (pc.user_a_id = ${userId}
+        (pc.user_a_id = ${Prisma.sql`${userId}::uuid`}
           AND (pc.user_a_last_read_at IS NULL OR pm.created_at > pc.user_a_last_read_at))
         OR
-        (pc.user_b_id = ${userId}
+        (pc.user_b_id = ${Prisma.sql`${userId}::uuid`}
           AND (pc.user_b_last_read_at IS NULL OR pm.created_at > pc.user_b_last_read_at))
       )
     GROUP BY pm.conversation_id

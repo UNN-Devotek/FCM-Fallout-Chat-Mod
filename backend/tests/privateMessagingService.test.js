@@ -210,6 +210,27 @@ describe('privateMessagingService', () => {
     ]);
   });
 
+  it('casts UUID parameters in the unread-count query', async () => {
+    prismaMock.privateConversation.findMany.mockResolvedValue([
+      {
+        id: '11111111-1111-4111-8111-111111111111',
+        userAId: '22222222-2222-4222-8222-222222222222',
+        userBId: '33333333-3333-4333-8333-333333333333',
+        userALastReadAt: null,
+        userBLastReadAt: null,
+        lastMessageAt: null,
+        createdAt: new Date('2026-06-25T15:20:00.000Z'),
+        userA: { id: '22222222-2222-4222-8222-222222222222', username: 'Sender', discordUsername: null, discordDisplayName: null },
+        userB: { id: '33333333-3333-4333-8333-333333333333', username: 'Receiver', discordUsername: null, discordDisplayName: null },
+        messages: [],
+      },
+    ]);
+
+    await listPrivateConversations('22222222-2222-4222-8222-222222222222');
+
+    expect(JSON.stringify(prismaMock.$queryRaw.mock.calls[0])).toContain('::uuid');
+  });
+
   it('caps inbox rows even when a caller requests an excessive limit', async () => {
     prismaMock.privateConversation.findMany.mockResolvedValue([]);
 
