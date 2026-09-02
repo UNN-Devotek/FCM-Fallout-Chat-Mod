@@ -275,6 +275,7 @@ const {
 
 const {
   mintToken, verifyToken, revokeToken, revokeTokensForLinkedUser, updateDisplayName, clearVerificationCache,
+  MAX_FAILED_VERIFICATION_PREFIXES,
 } = require('../src/services/relay/tokenService');
 
 const {
@@ -560,6 +561,52 @@ describe('tokenService', () => {
     const identity = await verifyToken(fakeToken);
     expect(identity).toBeNull();
   });
+
+  test('expired failed-token windows are cleaned up and allow verification again', async () => {
+    jest.useFakeTimers();
+    const argonVerify = jest.spyOn(argon2, 'verify').mockResolvedValue(false);
+    const prefix = 'expire1a';
+    require('../src/config/prisma').default.hudPairingToken.findMany.mockImplementation(async ({ where }) => [{
+      id: 'failed-expiry-row', tokenHash: 'unused', tokenPrefix: where.tokenPrefix,
+      userId: 'user_expiry', fo76Name: 'Expiry', linkedUserId: null,
+    }]);
+    const token = `${prefix}-invalid`;
+
+    for (let attempt = 0; attempt < 10; attempt++) await verifyToken(token);
+    await verifyToken(token);
+    expect(argonVerify).toHaveBeenCalledTimes(10);
+
+    jest.advanceTimersByTime(10_001);
+    await verifyToken(token);
+    expect(argonVerify).toHaveBeenCalledTimes(11);
+
+    argonVerify.mockRestore();
+    jest.useRealTimers();
+  });
+
+  test('failed-token prefixes are evicted at the hard bound', async () => {
+    const argonVerify = jest.spyOn(argon2, 'verify').mockResolvedValue(false);
+    require('../src/config/prisma').default.hudPairingToken.findMany.mockImplementation(async ({ where }) => [{
+      id: `failed-${where.tokenPrefix}`, tokenHash: 'unused', tokenPrefix: where.tokenPrefix,
+      userId: `user-${where.tokenPrefix}`, fo76Name: 'Bounded', linkedUserId: null,
+    }]);
+    const tokenFor = (prefix) => `${prefix}-invalid`;
+
+    // Keep the oldest prefix at its per-prefix throttle limit, then fill the
+    // global map. Once the overflow prefix is recorded, the oldest entry must
+    // be gone; a subsequent attempt for it must reach Argon2 again.
+    const oldest = tokenFor('00000000');
+    for (let attempt = 0; attempt < 10; attempt++) await verifyToken(oldest);
+    for (let index = 1; index < MAX_FAILED_VERIFICATION_PREFIXES; index++) {
+      await verifyToken(tokenFor(index.toString(36).padStart(8, '0')));
+    }
+    await verifyToken(tokenFor(MAX_FAILED_VERIFICATION_PREFIXES.toString(36).padStart(8, '0')));
+    const callsBeforeOldestRetry = argonVerify.mock.calls.length;
+    await verifyToken(oldest);
+    expect(argonVerify.mock.calls.length).toBe(callsBeforeOldestRetry + 1);
+
+    argonVerify.mockRestore();
+  }, 30000);
 
   test('verifyToken returns null for revoked token', async () => {
     const { token } = await mintToken('TestPlayer');
@@ -1401,6 +1448,29 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
+  test('relay HUD slash commands return slash_ignored instead of becoming chat', async () => {
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'SlashSender' }),
+    );
+    wsReg.close();
+    const rawId = lastRawUserId();
+    const fcmId = 'fcm-relay-slash-001';
+    _userMap[fcmId] = { id: fcmId, discordId: 'disc-relay-slash', steamId: null, isBanned: false, isMuted: false };
+    markTokensLinked(rawId, fcmId);
+
+    const ingestMock = require('../src/services/ingestMessage').ingestMessage;
+    ingestMock.mockResolvedValueOnce({ ok: false, reason: 'slash-command-dropped' });
+
+    const { ws, msgs } = await conn();
+    const res = await waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'send', token: regRes.token, channel: 'global', body: '/unsupported-command' }),
+    );
+    expect(res).toMatchObject({ success: false, error: { code: 'slash_ignored' } });
+    expect(ingestMock).toHaveBeenCalledWith(expect.objectContaining({ source: 'relay' }));
+    ws.close();
+  });
+
   test('limited (unlinked) subscriber receives the system link-code notice on subscribe', async () => {
     // Regression: the link notice was pushed only on register/hello — a transient connection the
     // in-game widget's pollEvents/liveSubscriber never reads — so the code never reached the widget.
@@ -1435,11 +1505,29 @@ describe('relay WebSocket ops', () => {
     const { ws, msgs } = await conn();
     await waitForMsg(ws, msgs, () => send(ws, { op: 'subscribe', token }));
     await new Promise((r) => setTimeout(r, 150));
+    redisMock.publish.mockClear();
     await notifyLinkComplete(relayUserId);
     await new Promise((r) => setTimeout(r, 250));
     const done = msgs.find((m) => m && m.op === 'event' && m.event && m.event.channel === 'system'
       && String(m.event.body).includes('LINK COMPLETE'));
     expect(done).toBeTruthy();
+    expect(redisMock.publish).toHaveBeenCalledWith(
+      'relay:control',
+      expect.stringMatching(/"kind":"link-complete"/),
+    );
+
+    // The test Redis mock loops local publications back to this process. The
+    // instance id prevents a duplicate local delivery; a different instance's
+    // control message must still wake this process's subscriber.
+    const remoteControl = JSON.stringify({
+      kind: 'link-complete',
+      relayUserId,
+      sourceInstanceId: '11111111-1111-4111-8111-111111111111',
+    });
+    for (const callback of _pubCallbacks) callback(remoteControl);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(msgs.filter((m) => m && m.op === 'event' && m.event && m.event.channel === 'system'
+      && String(m.event.body).includes('LINK COMPLETE'))).toHaveLength(2);
     ws.close();
   });
 
@@ -1779,6 +1867,43 @@ describe('relay WebSocket ops', () => {
     );
     expect(res.events).toHaveLength(1);
     expect(res.events[0].createdAt).toBe(ISO);
+    ws.close();
+  });
+
+  test('poll applies max after merging static and current-world history', async () => {
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'BoundedPollPlayer' }),
+    );
+    wsReg.close();
+    const { token } = regRes;
+    const rawId = lastRawUserId();
+
+    require('../src/config/prisma').default.$queryRaw.mockResolvedValueOnce([
+      {
+        id: 'msg-poll-static-1', relay_seq: BigInt(1), content: 'static 1', user_id: 'u1',
+        channel_id: '00000000-0000-0000-0000-000000000005', username: 'Static',
+        fo76_account_name: null,
+      },
+      {
+        id: 'msg-poll-static-3', relay_seq: BigInt(3), content: 'static 3', user_id: 'u1',
+        channel_id: '00000000-0000-0000-0000-000000000005', username: 'Static',
+        fo76_account_name: null,
+      },
+    ]);
+    await setWorldId(rawId, 'bounded-poll-world');
+    _lists['relay:serverchat:bounded-poll-world'] = [
+      JSON.stringify({ id: 4, messageId: 'server-4', channel: 'server', senderUserId: 'u2', senderDisplayName: 'World', body: 'server 4', targetUserId: '', createdAt: '2026-01-01T00:00:04.000Z' }),
+      JSON.stringify({ id: 2, messageId: 'server-2', channel: 'server', senderUserId: 'u2', senderDisplayName: 'World', body: 'server 2', targetUserId: '', createdAt: '2026-01-01T00:00:02.000Z' }),
+    ];
+
+    const { ws, msgs } = await conn();
+    const res = await waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'poll', token, cursor: 0, max: 2 }),
+    );
+    expect(res).toMatchObject({ success: true });
+    expect(res.events).toHaveLength(2);
+    expect(res.events.map((event) => event.id)).toEqual([1, 2]);
     ws.close();
   });
 

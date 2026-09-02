@@ -50,6 +50,7 @@ const VERIFY_CACHE_TTL_MS = 5_000;
 const MAX_VERIFY_CACHE_ENTRIES = 10_000;
 const VERIFY_FAILURE_WINDOW_MS = 10_000;
 const MAX_VERIFY_FAILURES_PER_PREFIX = 10;
+export const MAX_FAILED_VERIFICATION_PREFIXES = 10_000;
 
 const verificationCache = new Map<string, { identity: RelayToken; expiresAt: number }>();
 const failedVerifications = new Map<string, { windowStartedAt: number; count: number }>();
@@ -74,10 +75,29 @@ function invalidateVerificationCacheByLinkedUserId(linkedUserId: string): void {
   }
 }
 
+/**
+ * Expired failure windows are kept in insertion order, so pruning stops at the
+ * first live entry. A prefix is deleted/reinserted when its window rolls over,
+ * preserving that ordering while keeping each request O(1) amortized.
+ */
+function pruneExpiredFailedVerifications(now: number): void {
+  for (const [prefix, entry] of failedVerifications) {
+    if (now - entry.windowStartedAt < VERIFY_FAILURE_WINDOW_MS) break;
+    failedVerifications.delete(prefix);
+  }
+}
+
 function allowArgonVerification(prefix: string): boolean {
   const now = Date.now();
+  pruneExpiredFailedVerifications(now);
   const prior = failedVerifications.get(prefix);
   if (!prior || now - prior.windowStartedAt >= VERIFY_FAILURE_WINDOW_MS) {
+    if (prior) failedVerifications.delete(prefix);
+    while (failedVerifications.size >= MAX_FAILED_VERIFICATION_PREFIXES) {
+      const oldest = failedVerifications.keys().next().value;
+      if (oldest === undefined) break;
+      failedVerifications.delete(oldest);
+    }
     failedVerifications.set(prefix, { windowStartedAt: now, count: 1 });
     return true;
   }

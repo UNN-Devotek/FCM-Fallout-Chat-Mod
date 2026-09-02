@@ -12,11 +12,13 @@
  *   8. broadcast() → WS fan-out + hudPushNotify
  *   9. Discord relay
  *
- * Source tag is 'hud' or 'ws' — forwarded to the persisted Message row for
+ * Source tag is 'hud', 'relay', or 'ws' — forwarded to the persisted Message row for
  * telemetry/abuse-tracing only; it does NOT skip any governance step.
  *
- * Slash commands from HUD: OUT OF SCOPE for v1.  SEND lines starting with '/'
- * are dropped before governance runs.
+ * Slash commands from the HUD transports ('hud' and the chat.v1 'relay' adapter):
+ * OUT OF SCOPE for v1. SEND lines starting with '/' are dropped before governance
+ * runs. The ordinary WS/web source remains available for the server-side command
+ * handler in handlers.ts.
  *
  * The WS handler (handlers.ts) continues to own WS-specific concerns:
  *   - Ack frames (message:ack, rate:status, user:muted)
@@ -119,7 +121,8 @@ export interface IngestResult {
  * @param userId      - Resolved user ID (from WS auth or HUD identity resolution).
  * @param channelId   - UUID of the target channel.
  * @param rawContent  - Raw text from the client (before emoji expansion).
- * @param source      - 'hud' or 'ws' (telemetry tag only).
+ * @param source      - 'hud'/'relay' for in-game transports, or 'ws'/'mcp' for
+ *                      ordinary server-side clients.
  * @param identityHash - (HUD only) identityHash for block lookup; undefined for WS path.
  * @param relaySeq    - (relay ONLY) pre-computed monotonic cursor from nextRelaySeq().
  *                      Threaded through to finalizeMessage so the persisted row carries
@@ -142,9 +145,12 @@ export async function ingestMessage(opts: {
   const { userId, channelId, source, identityHash, relaySeq } = opts;
   let rawContent = opts.rawContent;
 
-  // Drop slash commands from HUD — not supported on the HUD transport.
-  if (source === 'hud' && rawContent.trim().startsWith('/')) {
-    logger.info({ userId }, '[ingestMessage] dropping HUD slash command (not supported on hud transport)');
+  // The legacy HUD adapter and chat.v1 relay adapter both represent in-game HUD
+  // sends. Neither transport implements the web command surface, so a slash line
+  // must never fall through as ordinary chat. Keep WS/MCP unchanged: the web WS
+  // handler owns its supported slash-command interception.
+  if ((source === 'hud' || source === 'relay') && rawContent.trim().startsWith('/')) {
+    logger.info({ userId, source }, '[ingestMessage] dropping HUD slash command (not supported on HUD transport)');
     return { ok: false, reason: 'slash-command-dropped' };
   }
 

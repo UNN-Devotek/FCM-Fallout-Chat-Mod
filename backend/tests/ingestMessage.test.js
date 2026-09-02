@@ -16,7 +16,7 @@
  *  - Invalid channelId (not UUID): returns invalid-channel
  *  - Channel not found: returns channel-not-found
  *  - Automod blocks: returns automod
- *  - Slash command from HUD source: returns slash-command-dropped
+ *  - Slash command from HUD/relay sources: returns slash-command-dropped
  *  - Slash command from ws source: NOT dropped (handled by WS path)
  */
 
@@ -492,6 +492,19 @@ describe('ingestMessage — slash command handling', () => {
     const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: '/wiki Nuka-Cola', source: 'hud' });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('slash-command-dropped');
+    expect(broadcast).not.toHaveBeenCalled();
+  });
+
+  it('drops slash command from the chat.v1 relay source', async () => {
+    const result = await ingestMessage({
+      userId: 'relay-user',
+      channelId: VALID_CHANNEL_ID,
+      rawContent: '/not-a-hud-command',
+      source: 'relay',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('slash-command-dropped');
+    expect(prismaStub.user.findUnique).not.toHaveBeenCalled();
     expect(broadcast).not.toHaveBeenCalled();
   });
 

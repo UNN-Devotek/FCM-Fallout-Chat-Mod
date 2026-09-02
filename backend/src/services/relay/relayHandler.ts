@@ -96,7 +96,7 @@ const REPORT_WINDOW_SECONDS = 10 * 60;
 const MAX_REPORTS_PER_WINDOW = 5;
 const RELAY_FIRST_FRAME_TIMEOUT_MS = 10_000;
 const RELAY_RPC_IDLE_CLOSE_MS = 250;
-const POLL_HISTORY_LIMIT        = 75;    // initial history window on cursor=0 — must cover ~12 msgs x 5 static channels + recent live traffic (the window is global, not per-channel)
+const POLL_HISTORY_LIMIT        = 75;    // SQL initial history window on cursor=0; handlePoll applies the caller's final max after merging server history
 const REDIS_BROADCAST_CHANNEL   = 'chat:broadcast';
 const RELAY_CONTROL_CHANNEL     = 'relay:control';
 const MAX_SOCKET_BUFFER_BYTES    = 1_048_576;
@@ -188,6 +188,22 @@ async function pushLinkNotice(ws: WebSocket, relayUserId: string): Promise<void>
  * "LINK COMPLETE" system body as the authoritative "now linked" signal (clears its link gate).
  */
 export async function notifyLinkComplete(relayUserId: string): Promise<void> {
+  const pushed = await pushLinkCompleteLocal(relayUserId);
+  try {
+    const redis = await getRedisClient();
+    await redis.publish(RELAY_CONTROL_CHANNEL, JSON.stringify({
+      kind: 'link-complete',
+      relayUserId,
+      sourceInstanceId: relayInstanceId,
+    }));
+  } catch (err) {
+    logger.warn({ err, relayUserId }, '[relayHandler] cross-instance link completion publish failed');
+  }
+  logger.info({ relayUserId, pushed }, '[relayHandler] notifyLinkComplete pushed');
+}
+
+/** Deliver a link completion only to subscribers owned by this process. */
+async function pushLinkCompleteLocal(relayUserId: string): Promise<number> {
   const redis  = await getRedisClient();
   const cursor = await redis.incr('relay:seq');
   const event = {
@@ -211,7 +227,7 @@ export async function notifyLinkComplete(relayUserId: string): Promise<void> {
       }
     }
   }
-  logger.info({ relayUserId, pushed }, '[relayHandler] notifyLinkComplete pushed');
+  return pushed;
 }
 
 // ── Error envelope ────────────────────────────────────────────────────────────
@@ -652,12 +668,29 @@ async function ensurePubSub(): Promise<void> {
     await sub.subscribe(RELAY_CONTROL_CHANNEL, (message: string) => {
       let parsed: Record<string, unknown>;
       try { parsed = JSON.parse(message); } catch { return; }
-      if (parsed.kind !== 'evict' || typeof parsed.linkedUserId !== 'string') return;
-      evictLocalRelayUser(
-        parsed.linkedUserId,
-        typeof parsed.code === 'string' ? parsed.code : 'user_banned',
-        typeof parsed.message === 'string' ? parsed.message : 'This account is banned',
-      );
+      if (parsed.sourceInstanceId !== undefined
+        && (typeof parsed.sourceInstanceId !== 'string' || !UUID_RE.test(parsed.sourceInstanceId))) return;
+      if (parsed.sourceInstanceId === relayInstanceId) return;
+
+      if (parsed.kind === 'evict' && typeof parsed.linkedUserId === 'string') {
+        evictLocalRelayUser(
+          parsed.linkedUserId,
+          typeof parsed.code === 'string' ? parsed.code : 'user_banned',
+          typeof parsed.message === 'string' ? parsed.message : 'This account is banned',
+        );
+        return;
+      }
+
+      // Link redemption can happen on a different backend replica than the
+      // long-lived HUD subscriber. Recreate the same system event locally;
+      // never republish control messages received from Redis.
+      if (parsed.kind === 'link-complete'
+        && typeof parsed.relayUserId === 'string'
+        && /^user_[0-9a-f]{32}$/i.test(parsed.relayUserId)) {
+        pushLinkCompleteLocal(parsed.relayUserId).catch((err) =>
+          logger.warn({ err, relayUserId: parsed.relayUserId }, '[relayHandler] remote link completion delivery failed'),
+        );
+      }
     });
 
     // Server-room events: worldId-scoped chat + membership rebinds.
@@ -1285,7 +1318,7 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
   if (identity.linkedUserId && await rejectBlockedAccount(ws, identity.linkedUserId)) return;
 
   const cursor = typeof frame.cursor === 'number' ? frame.cursor : 0;
-  const max    = Math.min(typeof frame.max === 'number' ? frame.max : 64, 100);
+  const max    = Math.max(0, Math.min(typeof frame.max === 'number' ? frame.max : 64, 100));
 
   // The native bridge preserves targetUserId but strips newer JSON members. Resolve
   // the negotiated capability once for this short-lived poll and carry cosmetics
@@ -1310,7 +1343,10 @@ async function handlePoll(ws: WebSocket, frame: Record<string, unknown>): Promis
     }
   }
 
-  send(ws, { success: true, events });
+  // fetchHistoryEvents(cursor=0) deliberately reads a larger bounded SQL
+  // window so the merge has enough candidates. The caller's requested max is
+  // authoritative across both SQL and ephemeral server history.
+  send(ws, { success: true, events: events.slice(0, max) });
 }
 
 const RELAY_MODERATION_ACTIONS = new Set([
