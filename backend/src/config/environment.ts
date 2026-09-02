@@ -355,8 +355,8 @@ export function hudIdentitySecretGuardFails(opts: {
  * The tier is a PAID product: if SUPPORTER_TIER_ENABLED is true but the tier role IDs
  * are missing, Discord would happily take a subscriber's money while
  * resolveSupporterTier could never match a role — the buyer pays and receives nothing,
- * silently and indefinitely. Refuse to boot instead. Same reasoning for the shop URL:
- * without it the purchase CTA has nowhere to send anyone.
+ * silently and indefinitely. Refuse to boot instead. The shop URL is optional: when it
+ * is absent, the purchase CTA is omitted while supporter cosmetics remain available.
  *
  * Only fires when the tier is actually switched on, so the code can ship to production
  * with SUPPORTER_TIER_ENABLED=false long before the roles exist.
@@ -366,14 +366,14 @@ export function collectSupporterTierProductionErrors(opts: {
   supporterTierEnabled: boolean;
   supporterRoleId: string | undefined | null;
   overseerCircleRoleId: string | undefined | null;
-  discordServerShopUrl: string | undefined | null;
+  /** Optional purchase CTA destination; it must never block supporter cosmetics. */
+  discordServerShopUrl?: string | null;
 }): string[] {
   if (opts.nodeEnv !== 'production') return [];
   if (!opts.supporterTierEnabled) return [];
   const errors: string[] = [];
   if (!opts.supporterRoleId) errors.push('SUPPORTER_ROLE_ID');
   if (!opts.overseerCircleRoleId) errors.push('OVERSEER_CIRCLE_ROLE_ID');
-  if (!opts.discordServerShopUrl) errors.push('DISCORD_SERVER_SHOP_URL');
   return errors;
 }
 
