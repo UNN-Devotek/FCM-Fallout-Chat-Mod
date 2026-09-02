@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regression checks for the repeatable HUD/Nexus release contract."""
 
+import re
 from pathlib import Path
 
 
@@ -42,6 +43,22 @@ def main() -> None:
     )
     for marker in required_nexus_markers:
         assert marker in nexus, f"Nexus release path is missing: {marker}"
+
+    # These scripts are documented for pwsh on Linux/macOS as well as Windows.
+    # A backslash inside a Join-Path child path is a literal character on Unix,
+    # so keep every multi-component path expressed as platform-neutral joins.
+    for script_name, script in (("release.ps1", release), ("publish-nexus-release.ps1", nexus)):
+        for line in script.splitlines():
+            if "Join-Path" in line:
+                assert not re.search(r'''Join-Path[^\r\n]*["'][^"']*\\[^"']*["']''', line), (
+                    f"{script_name} contains a non-portable Join-Path child: {line.strip()}"
+                )
+    assert '$gameModsDir = Join-Path $repoRoot "game-mods"' in release
+    assert '$fcmBridgeDir = Join-Path $gameModsDir "FCMBridge"' in release
+    assert '$hudModDir  = Join-Path $fcmBridgeDir "hudmodloader-chat"' in release
+    assert '$gameModsDir = Join-Path $repoRoot "game-mods"' in nexus
+    assert '$fcmBridgeDir = Join-Path $gameModsDir "FCMBridge"' in nexus
+    assert 'Join-Path $fcmBridgeDir "hudmodloader-chat"' in nexus
 
     for marker in (
         "[switch]$SkipWindowsNexus",

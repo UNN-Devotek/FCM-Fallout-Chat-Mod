@@ -30,7 +30,8 @@ A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's H
   cosmetics from the `FCMHUD/1;...` envelope in the known empty `targetUserId` slot. Older widget
   builds receive no envelope. The HUD intentionally renders only the server-validated channel and
   identity tags; supporter-star metadata may remain in the relay transport for compatibility but
-  is not rendered in this widget. Feed leading is zero to keep rows compact, and the feed clip
+  is not rendered in this widget. The former embedded supporter-star renderer and its source
+  images are not part of the release tree. Feed leading is zero to keep rows compact, and the feed clip
   rectangle reserves only a 4px safety gap above the top-level HUDTools input field. New content
   snaps to the end of the feed after each reflow.
   After a successful send, the widget schedules one next-tick event poll so the authoritative

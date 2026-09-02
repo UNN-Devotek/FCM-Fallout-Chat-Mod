@@ -73,11 +73,14 @@ $ErrorActionPreference = "Stop"
 if (-not $ReleaseNotes -and $env:FCM_RELEASE_NOTES) { $ReleaseNotes = $env:FCM_RELEASE_NOTES }
 # "What's new" block (blank if no notes supplied).
 $notesBlock = if ($ReleaseNotes.Trim()) { "What's new in v${Version}:`n$($ReleaseNotes.Trim())`n`n" } else { "" }
-if (-not $DistDir) { $DistDir = Join-Path $PSScriptRoot "..\cross-platform-overlay\dist-electron" }
 $repoRoot  = Split-Path $PSScriptRoot -Parent
-if (-not $HudModDir) { $HudModDir = Join-Path $repoRoot "game-mods\FCMBridge\hudmodloader-chat" }
+$overlayDir = Join-Path $repoRoot "cross-platform-overlay"
+if (-not $DistDir) { $DistDir = Join-Path $overlayDir "dist-electron" }
+$gameModsDir = Join-Path $repoRoot "game-mods"
+$fcmBridgeDir = Join-Path $gameModsDir "FCMBridge"
+if (-not $HudModDir) { $HudModDir = Join-Path $fcmBridgeDir "hudmodloader-chat" }
 $nexus     = Join-Path $PSScriptRoot "publish-nexus.ps1"
-$assetsDir = Join-Path $PSScriptRoot "..\cross-platform-overlay\assets"
+$assetsDir = Join-Path $overlayDir "assets"
 $hudPackage = Join-Path $HudModDir "package.py"
 
 $winGroup   = $env:NEXUS_FILE_GROUP_ID_WINDOWS
@@ -200,11 +203,11 @@ do not replace that file.
 # Per-platform extra files to bundle into the Nexus zip alongside the installer.
 # Result: Nexus zip = installer + same instruction files as the website zip.
 $winInclude   = @(
-    (Join-Path $assetsDir "install\INSTALL-WINDOWS.txt")
+    (Join-Path (Join-Path $assetsDir "install") "INSTALL-WINDOWS.txt")
 )
 $linuxInclude = @(
-    (Join-Path $assetsDir "install\READ ME FIRST (Windows users).txt"),
-    (Join-Path $assetsDir "install\INSTALL-LINUX.txt"),
+    (Join-Path (Join-Path $assetsDir "install") "READ ME FIRST (Windows users).txt"),
+    (Join-Path (Join-Path $assetsDir "install") "INSTALL-LINUX.txt"),
     (Join-Path $assetsDir "fallout-chatmod-keepabove.kwinrule")
 )
 

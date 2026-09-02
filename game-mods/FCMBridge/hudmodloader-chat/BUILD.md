@@ -38,7 +38,8 @@ connected, later HUD reads update local identity state only; they never issue a 
 
 The HUD deliberately renders the server-validated channel and identity tags only. Supporter-star
 metadata may still arrive in the transport for shared relay compatibility, but the HUD widget does
-not render a glyph, bitmap, HTML image, or substitution token. This prevents Fallout 76's missing
+not render a glyph, bitmap, HTML image, or substitution token. The former embedded supporter-star
+renderer source and image catalog have been removed from the build tree. This prevents Fallout 76's missing
 star glyph and GFx image behavior from producing tofu blocks. Feed paragraph leading is zero, and
 the feed keeps only a 4px safety gap above the top-level HUDTools input so rows stay compact while
 new content remains above the input field.

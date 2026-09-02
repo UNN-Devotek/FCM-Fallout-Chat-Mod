@@ -175,7 +175,9 @@ Write-Host "================================================================"
 $repoRoot   = Split-Path $PSScriptRoot -Parent
 $overlayDir = Join-Path $repoRoot "cross-platform-overlay"
 $distDir    = Join-Path $overlayDir "dist-electron"
-$hudModDir  = Join-Path $repoRoot "game-mods\FCMBridge\hudmodloader-chat"
+$gameModsDir = Join-Path $repoRoot "game-mods"
+$fcmBridgeDir = Join-Path $gameModsDir "FCMBridge"
+$hudModDir  = Join-Path $fcmBridgeDir "hudmodloader-chat"
 
 $smokeScript = Join-Path $PSScriptRoot "smoke-test.ps1"
 $vtScript    = Join-Path $PSScriptRoot "vt-gate.ps1"
