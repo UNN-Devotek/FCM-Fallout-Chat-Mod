@@ -220,9 +220,10 @@ guard must be applied PER ROUTE, never as `router.use()`. This router is mounted
 every request under `/api` and 404'd the entire API whenever the tier was off. The
 integration suites caught it (23 failures across health, mcp and wiki).
 
-Production **refuses to boot** if the tier is enabled while the role IDs or shop URL are
+Production **refuses to boot** if the tier is enabled while either required role ID is
 unset — otherwise Discord would take a subscriber's money while no role could ever
-match. Guard: `collectSupporterTierProductionErrors()`.
+match. `DISCORD_SERVER_SHOP_URL` is optional; when it is unset, the purchase CTA is
+omitted and cosmetics still work. Guard: `collectSupporterTierProductionErrors()`.
 
 Requires the **`GuildMembers` privileged intent**, enabled per Discord application —
 dev and prod are separate apps, so twice.

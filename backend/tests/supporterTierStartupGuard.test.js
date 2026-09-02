@@ -6,15 +6,15 @@
  * The supporter tier is a PAID product. If SUPPORTER_TIER_ENABLED is true but the tier
  * role IDs are missing, Discord will happily take a subscriber's money while
  * resolveSupporterTier can never match a role — the buyer pays and receives nothing,
- * silently and indefinitely. Same for the shop URL: without it the purchase CTA has
- * nowhere to send anyone. Refuse to boot instead.
+ * silently and indefinitely. The shop URL is optional: without it the purchase CTA
+ * is omitted, but supporter cosmetics still work.
  *
  * These exercise the REAL exported predicate (collectSupporterTierProductionErrors in
  * src/config/environment.ts) — the same function the module-load startup block calls
  * before process.exit(1) — so reverting the guard makes them fail.
  *
  * Coverage:
- *  - each missing var is reported, individually and together
+ *  - each missing role var is reported, individually and together
  *  - a fully configured production tier is accepted
  *  - the guard fires ONLY when SUPPORTER_TIER_ENABLED=true
  *  - the guard fires ONLY when NODE_ENV=production
@@ -61,10 +61,15 @@ describe('collectSupporterTierProductionErrors — production + tier enabled', (
     expect(collectSupporterTierProductionErrors(FULLY_CONFIGURED)).toEqual([]);
   });
 
+  it('accepts a tier without a shop URL because the purchase CTA is optional', () => {
+    expect(
+      collectSupporterTierProductionErrors({ ...FULLY_CONFIGURED, discordServerShopUrl: '' }),
+    ).toEqual([]);
+  });
+
   it.each([
     ['supporterRoleId', 'SUPPORTER_ROLE_ID'],
     ['overseerCircleRoleId', 'OVERSEER_CIRCLE_ROLE_ID'],
-    ['discordServerShopUrl', 'DISCORD_SERVER_SHOP_URL'],
   ])('flags a missing %s', (field, expectedName) => {
     expect(
       collectSupporterTierProductionErrors({ ...FULLY_CONFIGURED, [field]: '' }),
@@ -86,7 +91,7 @@ describe('collectSupporterTierProductionErrors — production + tier enabled', (
         overseerCircleRoleId: '',
         discordServerShopUrl: '',
       }),
-    ).toEqual(['SUPPORTER_ROLE_ID', 'OVERSEER_CIRCLE_ROLE_ID', 'DISCORD_SERVER_SHOP_URL']);
+    ).toEqual(['SUPPORTER_ROLE_ID', 'OVERSEER_CIRCLE_ROLE_ID']);
   });
 });
 
