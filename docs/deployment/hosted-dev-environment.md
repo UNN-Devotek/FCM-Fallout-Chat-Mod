@@ -213,14 +213,18 @@ risk to the live community:
 - `backend-dev` holds the dev token; **contributors never hold it** — they test
   by *interacting* with the dev bot in the dev server. Worst-case malicious
   outcome is a wrecked disposable server, never the production community.
-- `ENABLE_DEV_LOGIN=false` remains set on the **hosted** `backend-dev` for the
-  browser-only developer shortcuts. The overlay's `POST /api/dev/login-as` route
-  is separately gated by `NODE_ENV=development` and a dedicated
+- `ENABLE_DEV_LOGIN=true` is set only on the isolated **hosted** `backend-dev` so
+  the Dev dashboard's browser-only persona buttons work without opening Discord.
+  The dashboard build also receives `VITE_DEV_PERSONAS=true`; production keeps its
+  default `false`, so these controls are absent from the production site. The
+  overlay's `POST /api/dev/login-as` route is separately gated by
+  `NODE_ENV=development` and a dedicated
   `DEV_PERSONA_LOGIN_SECRET` for remote callers, so it is available on the
   isolated hosted DEV stack but never mounts in production. Loopback local-dev
   requests do not need the key; hosted requests must send it. These synthetic
-  accounts are intentionally limited to the fake hosted DEV database and are not
-  a substitute for normal developer access to protected tooling.
+  accounts are intentionally limited to the fake hosted DEV database. Normal
+  hosted dashboard access remains governed by the dual-role gate; persona links
+  are a Dev testing shortcut, not a way to obtain production access.
 
 The unpackaged Electron overlay can still be run against hosted DEV with
 `npm run dev:cloud` from `cross-platform-overlay/`. Its **DEV ACCOUNTS** persona

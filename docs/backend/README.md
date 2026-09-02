@@ -128,8 +128,9 @@ golden-build version lock; see [hosted-dev-environment.md](../deployment/hosted-
 | `GET` | `/api/admin/qa/active-version` | `x-admin-api-key` | Returns the currently-active QA build version |
 
 All eight routes are also subject to `apiLimiter` or `authLimiter` (same caps as their
-equivalent non-QA paths). The routes are independent of `ENABLE_DEV_LOGIN` — the hosted
-dev environment runs with `ENABLE_DEV_LOGIN=false` while still enabling these endpoints.
+equivalent non-QA paths). The overlay persona route is independent of
+`ENABLE_DEV_LOGIN`; the hosted Dev dashboard's browser persona aliases are enabled
+separately by `ENABLE_DEV_LOGIN=true` and are never mounted in production.
 
 ## Related Documentation
 

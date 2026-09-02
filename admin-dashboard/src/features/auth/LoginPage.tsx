@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { devPersonaUiEnabled } from '../../lib/devPersonaAccess';
 
 function useTypewriter(text: string, speed = 28) {
   const [displayed, setDisplayed] = useState('');
@@ -328,7 +329,7 @@ export default function LoginPage() {
             </a>
           )}
 
-          {import.meta.env.DEV && import.meta.env.VITE_DEV_PERSONAS === 'true' && ready && (
+          {devPersonaUiEnabled && ready && (
             <div style={{ marginTop: '20px', borderTop: '1px solid rgba(200,168,64,0.2)', paddingTop: '16px' }}>
               <div style={{ fontSize: '10px', letterSpacing: '2px', color: 'rgba(200,168,64,0.35)', marginBottom: '10px', textAlign: 'center' }}>
                 ── DEV ACCESS ──

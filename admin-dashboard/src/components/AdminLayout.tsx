@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate, useLocation, Link } from 'react-router';
+import { devPersonaUiEnabled } from '../lib/devPersonaAccess';
 
 // Maps each admin route to its Title-Case browser-tab name. The tab title is
 // `${name}.FCM` (e.g. "Chat.FCM"). For sub-paths or unknown routes we fall back
@@ -596,7 +597,7 @@ export default function AdminLayout({ user, children }: AdminLayoutProps) {
 
         <PipboyStatusBar version={version} user={user} />
       </div>
-      {import.meta.env.DEV && import.meta.env.VITE_DEV_PERSONAS === 'true' && <DevPersonaSwitcher user={user} />}
+      {devPersonaUiEnabled && <DevPersonaSwitcher user={user} />}
       {/* Prod "view as role" switcher — visible to real owners/admins only. */}
       <RoleViewSwitcher />
     </div>
