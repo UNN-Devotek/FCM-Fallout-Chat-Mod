@@ -23,21 +23,28 @@ export type EntitlementStatus = 'active' | 'lapsed' | 'cancelled';
 export interface TierRoleIds {
   supporterRoleId: string | undefined | null;
   overseerCircleRoleId: string | undefined | null;
+  /** Staff role that receives the highest cosmetic tier without paid access. */
+  adminRoleId: string | undefined | null;
 }
 
 /**
  * Derive the tier from the Discord role IDs a member currently holds.
  *
  * Highest match wins (overseer > supporter), mirroring resolveRole()'s
- * first-match-wins shape in roleVerificationService. An unset/empty role ID is
- * skipped rather than matched, so a half-configured environment degrades to 'none'
- * instead of granting the tier to everyone.
+ * first-match-wins shape in roleVerificationService. The configured admin role is
+ * deliberately treated as an Overseer-level cosmetics bypass. This only affects
+ * SupporterTier; it never changes EffectiveRole or grants moderation privileges.
+ * An unset/empty role ID is skipped rather than matched, so a half-configured
+ * environment degrades to 'none' instead of granting the tier to everyone.
  */
 export function resolveSupporterTier(
   discordRoles: readonly string[] | undefined | null,
   roleIds: TierRoleIds,
 ): SupporterTier {
   if (!Array.isArray(discordRoles) || discordRoles.length === 0) return 'none';
+  if (roleIds.adminRoleId && discordRoles.includes(roleIds.adminRoleId)) {
+    return 'overseer';
+  }
   if (roleIds.overseerCircleRoleId && discordRoles.includes(roleIds.overseerCircleRoleId)) {
     return 'overseer';
   }
@@ -45,6 +52,18 @@ export function resolveSupporterTier(
     return 'supporter';
   }
   return 'none';
+}
+
+/**
+ * Whether a member should be included in a live entitlement/cosmetics sweep.
+ * Keep this predicate coupled to the resolver so admin-role access cannot be
+ * granted on one path and missed by the periodic or HUD refresh path.
+ */
+export function hasConfiguredCosmeticsRole(
+  discordRoles: readonly string[] | undefined | null,
+  roleIds: TierRoleIds,
+): boolean {
+  return resolveSupporterTier(discordRoles, roleIds) !== 'none';
 }
 
 /** Normalize an arbitrary string (DB column, API input) to a known tier. */
@@ -84,6 +103,7 @@ export default {
   TIER_ORDER,
   PAID_TIERS,
   resolveSupporterTier,
+  hasConfiguredCosmeticsRole,
   normalizeTier,
   tierAtLeast,
   tierLabel,
@@ -93,6 +113,7 @@ module.exports = {
   TIER_ORDER,
   PAID_TIERS,
   resolveSupporterTier,
+  hasConfiguredCosmeticsRole,
   normalizeTier,
   tierAtLeast,
   tierLabel,
