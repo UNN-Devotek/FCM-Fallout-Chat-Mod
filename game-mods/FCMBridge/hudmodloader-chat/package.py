@@ -72,6 +72,7 @@ Install ZFE with chat.v1 support and HUDModLoader before installing this archive
    Data/ZFE/TextChat/fragments/FCMChatWidget.ini
    FCMChatWidget.hudmodloader.ini
    FCMChatWidget.version.txt
+   HUDMODLOADER-MENU.txt
    Fallout76Custom.ini.example
 
    The file `FCMChatWidget.hudmodloader.ini` is an append-only snippet; it is
@@ -93,8 +94,20 @@ Install ZFE with chat.v1 support and HUDModLoader before installing this archive
    Fallout 76 Steam prefix under `compatdata/1151340/pfx/drive_c/users/steamuser/`.
    The `Data/` files always belong in the Fallout 76 game installation folder.
 
-5. Start Fallout 76 and open the HUDModLoader F11 menu. Confirm that
-   `FCMChatWidget` is listed.
+5. Start Fallout 76 and open the HUDModLoader menu:
+   a. Press F11 to open the menu.
+   b. Confirm the `FCM` menu is present and choose `Customize...` for widget
+      settings. The menu also provides `Scroll to newest`, `Hide chat`, and
+      the auto-hide toggle.
+   c. Choose `FCM` -> `Customize...` -> `Reset all settings` only when you
+      want the packaged defaults restored. The environment-specific link URL
+      is kept.
+   d. Use the HUDModLoader reload control for live widget changes. If you replace
+      the BA2 or either ZFE fragment, exit Fallout 76 before copying the files
+      and restart the game so native configuration is reloaded.
+
+   If the widget is not listed under FCM, exit the game and verify that the
+   `FCMChatWidget` line was appended exactly once to `Data/hudmodloader.ini`.
 
 Account linking for this {config['label']} package:
   {config['web_link_url']}
@@ -105,6 +118,15 @@ The relay endpoint is:
 When the in-game widget shows a fresh 8-character code, open the link above,
 sign in with Discord, enter the code, and return to the game. Codes expire after
 10 minutes; reconnect the widget to request a new code if needed.
+
+HUD input and commands:
+  Press Insert while Fallout 76 is focused to start typing. Press Enter to send
+  or Escape to cancel. Page Down / Page Up switch channels. Type /g, /t, /e,
+  /i, or /r before a message to route it to General, Trading, Events, Infests,
+  or Raids. /s (or /server) is available after the current server/world session
+  is confirmed. Type /hide by itself to hide the feed; press Insert to restore it.
+  Keep FCMChat.ini openKey aligned with the ZFE fragment OpenChatKey. A
+  Data/configuration/zfe.ini [TextChat] OpenChatKey override must match too.
 """
 
 
@@ -123,6 +145,36 @@ def build_package(target: str, output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
         archive.writestr("INSTALL.txt", install_instructions(target))
+        archive.writestr(
+            "HUDMODLOADER-MENU.txt",
+            "FCMChatWidget HUDModLoader menu\n"
+            "================================\n\n"
+            "1. Start Fallout 76 with ZFE and HUDModLoader enabled.\n"
+            "2. Press F11 to open or close the HUDModLoader menu.\n"
+            "3. Open FCM -> Customize... to adjust size, position, opacity, or color theme.\n"
+            "4. FCM -> Customize... -> Reset all settings restores packaged defaults.\n"
+            "5. FCM -> Scroll to newest jumps to the end of the feed.\n"
+            "6. FCM -> Hide chat hides the feed; press the configured open key to restore it.\n"
+            "7. FCM -> Auto-hide toggles automatic hiding after inactivity.\n"
+            "8. FCM -> General / Trading / Events / Infests / Raids selects a channel;\n"
+            "   SERVER appears after a current world binding is confirmed.\n"
+            "9. Use the loader reload control for live widget changes. Replacing\n"
+            "   the BA2 or either ZFE fragment requires exiting and restarting\n"
+            "   Fallout 76 so native configuration is reloaded.\n\n"
+            "HUD input and commands\n"
+            "-----------------------\n"
+            "Press Insert while Fallout 76 is focused to start typing. Press\n"
+            "Enter to send or Escape to cancel. Page Down / Page Up switch\n"
+            "channels. Type /g, /t, /e, /i, or /r before a message to route it\n"
+            "to General, Trading, Events, Infests, or Raids. /s (or /server)\n"
+            "is available after the current server/world session is confirmed.\n"
+            "Type /hide by itself to hide the feed; press Insert to restore it.\n"
+            "Keep FCMChat.ini openKey aligned with the ZFE fragment OpenChatKey.\n"
+            "A Data/configuration/zfe.ini [TextChat] OpenChatKey override must\n"
+            "match too.\n\n"
+            "If FCM is missing, confirm that FCMChatWidget appears exactly once in\n"
+            "Data/hudmodloader.ini, then restart Fallout 76.\n"
+        )
         archive.writestr(
             "Fallout76Custom.ini.example",
             "[Archive]\n"

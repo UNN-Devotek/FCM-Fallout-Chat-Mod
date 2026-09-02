@@ -9,6 +9,7 @@
  */
 
 import React from 'react';
+import HudKeybindGuide from '../system/HudKeybindGuide';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 
@@ -152,6 +153,8 @@ export default function PublicCommandsKeybindsPage() {
       flex: 1, padding: '24px 36px', overflowY: 'auto',
       fontFamily: FONT, color: GOLD,
     }}>
+
+      <HudKeybindGuide variant="public" />
 
       {/* ── COMMANDS ───────────────────────────────────────────────────────── */}
 

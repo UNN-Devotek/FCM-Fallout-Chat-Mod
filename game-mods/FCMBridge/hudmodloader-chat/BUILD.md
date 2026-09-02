@@ -66,7 +66,8 @@ still receive the additive fields described in the protocol spec.
 
 Install the opt-in mod assets into the Fallout 76 `Data` directory. The recommended
 distribution is the target-specific ZIP produced by `package.py`; it includes the
-BA2, both configuration files, an append-only HUDModLoader snippet, and `INSTALL.txt`.
+BA2, both configuration files, an append-only HUDModLoader snippet, `INSTALL.txt`,
+and `HUDMODLOADER-MENU.txt`.
 It deliberately does not include a replacement `Data/hudmodloader.ini`.
 
 ```text
@@ -107,7 +108,11 @@ the widget cannot reload native relay configuration.
 
 HUDModLoader's F11 menu exposes **FCM → Customize → Reset all settings**. The action
 restores the `FcmConfig` defaults live, saves them in vendor-scoped ZFE storage
-(`FCMChatWidget/settings.ini`), and retains the environment-owned link URL.
+(`FCMChatWidget/settings.ini`), and retains the environment-owned link URL. The generated ZIP
+includes `HUDMODLOADER-MENU.txt` with the same menu and input steps. Press **F11** to open the
+menu, use **FCM → Customize...** for appearance/settings, and **FCM → Scroll to newest** for the
+feed. The loader reload control applies live widget changes; replacing the BA2 or ZFE fragment
+requires exiting and restarting Fallout 76.
 
 ### Target-specific packages
 

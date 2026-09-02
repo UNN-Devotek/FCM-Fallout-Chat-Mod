@@ -156,6 +156,11 @@ The F11 menu's **FCM → Customize → Reset all settings** action restores all 
 the `FcmConfig` defaults immediately and persists them with the other Customize actions in
 vendor-scoped ZFE storage (`FCMChatWidget/settings.ini`). It retains the environment-owned
 account-link URL so a hosted-dev build continues to link against dev rather than production.
+The generated ZIP also includes `HUDMODLOADER-MENU.txt` with the F11, Customize, reset, scroll,
+hide, channel, and reload steps. With Fallout 76 focused, press `Insert` to start typing; `Enter`
+sends, `Escape` cancels, `/g` `/t` `/e` `/i` `/r` `/s` switch channels (`/s` after a current
+server/world binding), and `/hide` hides the feed. Replacing the BA2 or ZFE fragment requires a
+full game restart; the loader reload control is for live widget changes.
 
 ## Files
 

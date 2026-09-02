@@ -10,6 +10,7 @@
  */
 
 import React from 'react';
+import HudKeybindGuide from './HudKeybindGuide';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -170,6 +171,8 @@ export default function KeybindsPage({ variant = 'dashboard' }: KeybindsPageProp
 
   return (
     <div style={containerStyle}>
+      <HudKeybindGuide variant={variant} />
+
       <h1 style={h1Style}>OVERLAY KEYBINDS</h1>
       <p style={subtitleStyle}>
         All keybinds are stored in <code style={codeStyle}>keybinds.cfg</code> — a plain text file

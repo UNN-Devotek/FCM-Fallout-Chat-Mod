@@ -68,6 +68,7 @@ def main() -> None:
                 assert "FCMChatWidget.version.txt" in names
                 assert "Data/hudmodloader.ini" not in names
                 assert "INSTALL.txt" in names
+                assert "HUDMODLOADER-MENU.txt" in names
                 assert archive.read("Data/FCMChatWidget.ba2") == widget_artifact
                 assert archive.read("FCMChatWidget.hudmodloader.ini") == b"FCMChatWidget\n"
                 assert archive.read("FCMChatWidget.version.txt") == f"{package.widget_version()}\n".encode()
@@ -77,10 +78,22 @@ def main() -> None:
                     "Data/ZFE/TextChat/fragments/FCMChatWidget.ini"
                 )
                 install = archive.read("INSTALL.txt")
+                menu = archive.read("HUDMODLOADER-MENU.txt")
                 assert f"linkUrl={expected['link_url']}\n".encode() in chat_config
                 assert f"Endpoint={expected['endpoint']}\n".encode() in widget_config
                 assert f"  {expected['web_link_url']}\n".encode() in install
                 assert f"  {expected['endpoint']}\n".encode() in install
+                assert b"Press F11" in install
+                assert b"Press Insert" in install
+                assert b"/g, /t, /e" in install
+                assert b"Reset all settings" in install
+                assert b"F11" in menu
+                assert b"FCM -> Customize..." in menu
+                assert b"Press Insert" in menu
+                assert b"/g, /t, /e" in menu
+                assert b"Auto-hide" in menu
+                assert b"SERVER" in menu
+                assert b"Reset all settings" in menu
                 assert b"showTimestamps" not in chat_config
                 assert b"timestampColor" not in chat_config
 

@@ -23,7 +23,7 @@ in-game HUD-mod ZIP from the raw `electron-builder` artifacts and current HUD wi
    - `Fallout Chat Mod-X.Y.Z.AppImage (Linux).zip` — AppImage + **`.deb`** + `INSTALL-LINUX.txt` + `.kwinrule`
    - `ZFE FCM HUD Mod-<widget-version> (PROD).zip` — `FCMChatWidget.ba2`, both runtime INIs,
      an append-only `FCMChatWidget.hudmodloader.ini` snippet, `FCMChatWidget.version.txt`,
-     `Fallout76Custom.ini.example`, and target-specific `INSTALL.txt`
+     `Fallout76Custom.ini.example`, target-specific `INSTALL.txt`, and `HUDMODLOADER-MENU.txt`
 5. All three ZIPs land in `cross-platform-overlay/dist-electron/` alongside the raw files
 
 The `.deb` ships inside the Linux ZIP so apt users can `sudo apt install ./'Fallout Chat Mod-X.Y.Z.deb'` (or `dpkg -i`) — an in-place, apt-managed alternative to the AppImage. `Packaging/release.ps1` also verifies + uploads the raw `.deb` alongside the AppImage, and the website exposes both raw Linux files side by side.

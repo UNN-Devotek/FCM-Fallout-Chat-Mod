@@ -26,6 +26,7 @@ import {
   UTILITY_CMDS,
 } from '../../auth/PublicCommandsKeybindsPage';
 import { BUILTIN_RELAYS, BUILTIN_FORMS } from '../../chat/ChatOverlay';
+import { HUD_CHANNEL_COMMANDS, HUD_KEYBIND_ROWS } from '../HudKeybindGuide';
 
 /**
  * Mirrors `commandService.ts` CHANNEL_SHORTCUTS. These are PUBLIC channels that relay to
@@ -123,5 +124,16 @@ describe('command list drift guards', () => {
         expect(allKnown, `alias ${trigger} has no corresponding command`).toContain(trigger);
       }
     }
+  });
+
+  it('documents the HUD start-typing controls and channel command set', () => {
+    const start = HUD_KEYBIND_ROWS.find(row => row.key === 'Insert');
+    expect(start?.config).toContain('openKey=INSERT');
+    expect(start?.config).toContain('OpenChatKey=INSERT');
+    expect(start?.description).toMatch(/start typing/i);
+    expect(HUD_KEYBIND_ROWS.map(row => row.key)).toEqual(
+      expect.arrayContaining(['Enter', 'Escape', 'Page Down', 'Page Up', 'F11']),
+    );
+    expect(HUD_CHANNEL_COMMANDS).toEqual(['/g', '/t', '/e', '/i', '/r', '/s']);
   });
 });

@@ -116,6 +116,23 @@ receives **no raw keyboard events** — its input surface is restricted to (1) t
 key polled by ZFE and (2) named Fallout 76 control-map **actions** the loader forwards as
 `HUDMod::UserEvent`. Configure them in `Data/FCMChat.ini` (`[FCMChat]` section).
 
+### Start typing and HUDModLoader menu
+
+With Fallout 76 focused, press `Insert` to open the widget's native input and start typing. Press
+`Enter` to send or `Escape` to cancel. The packaged defaults require both `Data/FCMChat.ini`
+`openKey=INSERT` and the ZFE fragment's `OpenChatKey=INSERT`; keep them in sync. If
+`Data/configuration/zfe.ini` has a `[TextChat]` `OpenChatKey` override, it must match as well.
+Press `F11` to
+open the HUDModLoader menu, then use `FCM → Customize...` for settings, `FCM → Scroll to newest`
+for the feed, and `FCM → Customize... → Reset all settings` to restore the packaged defaults. Use
+the loader reload control for live widget changes; replacing the BA2 or ZFE fragment requires
+exiting and restarting Fallout 76.
+
+After opening input, `/g`, `/t`, `/e`, `/i`, `/r`, and `/s` (or `/server` after a current
+server/world binding is confirmed) switch the destination channel before the rest of the message
+is sent; `/hide` hides the feed and the open key restores it. The generated HUD ZIP includes these
+steps in both `INSTALL.txt` and `HUDMODLOADER-MENU.txt`.
+
 | Default | Action / config key | Behavior |
 |---------|---------------------|----------|
 | `Insert` | `openKey` (native ZFE key) | **Open / restore.** Opens the native chat input; if the panel is hidden, restores it first. The only freely-choosable physical key (ZFE `isChatKeyPressed`). `PAGE_DOWN` is the known-good fallback if `INSERT` does not fire in-game. |
