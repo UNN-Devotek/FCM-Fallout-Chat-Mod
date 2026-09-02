@@ -108,7 +108,105 @@ XDOTOOL_AVAILABLE=0; has_command xdotool && XDOTOOL_AVAILABLE=1
 HYPRCTL_AVAILABLE=0; has_command hyprctl && HYPRCTL_AVAILABLE=1
 PROTONTRICKS_AVAILABLE=0; has_command protontricks && PROTONTRICKS_AVAILABLE=1
 KWIN_TOOLS_AVAILABLE=0
-if has_command kwriteconfig6 && has_command kreadconfig6; then KWIN_TOOLS_AVAILABLE=1; fi
+KWIN_READ_BIN=""
+KWIN_WRITE_BIN=""
+if has_command kwriteconfig6 && has_command kreadconfig6; then
+  KWIN_TOOLS_AVAILABLE=1
+  KWIN_READ_BIN="kreadconfig6"
+  KWIN_WRITE_BIN="kwriteconfig6"
+elif has_command kwriteconfig5 && has_command kreadconfig5; then
+  KWIN_TOOLS_AVAILABLE=1
+  KWIN_READ_BIN="kreadconfig5"
+  KWIN_WRITE_BIN="kwriteconfig5"
+fi
+
+# Remove only KWin rules authored by Fallout Chat Mod. Older builds used two
+# rules (including a game-side fullscreen demotion), while newer builds use one
+# overlay-only rule. A description prefix is the ownership marker written by
+# every FCM rule generation path; all other groups remain untouched. This runs
+# before either package format is installed so a stale rule cannot survive a
+# switch from an older production build to the new compositor behavior.
+remove_fcm_kwin_rules() {
+  [ "$KWIN_TOOLS_AVAILABLE" -eq 1 ] || return 0
+
+  local rules_file="$CONFIG_HOME/kwinrulesrc"
+  [ -f "$rules_file" ] || return 0
+
+  local rules="" group="" description="" keep_groups="" drop_groups=""
+  rules="$($KWIN_READ_BIN --file kwinrulesrc --group General --key rules 2>/dev/null || true)"
+  [ -n "$rules" ] || return 0
+
+  while IFS= read -r group; do
+    [ -n "$group" ] || continue
+    description="$($KWIN_READ_BIN --file kwinrulesrc --group "$group" --key Description 2>/dev/null || true)"
+    case "$description" in
+      Fallout\ Chat\ Mod*)
+        drop_groups="${drop_groups}${drop_groups:+$'\034'}${group}"
+        ;;
+      *)
+        keep_groups="${keep_groups}${keep_groups:+,}${group}"
+        ;;
+    esac
+  done < <(printf '%s\n' "$rules" | tr ',' '\n')
+
+  [ -n "$drop_groups" ] || return 0
+
+  local tmp_file="${rules_file}.fcm-migrate.$$"
+  local backup_file="${rules_file}.fcm-migrate-backup.$$"
+  if ! awk -v drop="$drop_groups" '
+    function is_drop(name, parts, count, i) {
+      count = split(drop, parts, "\034")
+      for (i = 1; i <= count; i++) if (parts[i] == name) return 1
+      return 0
+    }
+    /^\[.*\]$/ {
+      section = $0
+      sub(/^\[/, "", section)
+      sub(/\]$/, "", section)
+      skip = is_drop(section)
+    }
+    !skip { print }
+  ' "$rules_file" > "$tmp_file"; then
+    rm -f "$tmp_file"
+    warn "Could not prepare the KWin rule migration; leaving existing rules unchanged."
+    return 0
+  fi
+
+  if ! cp -p "$rules_file" "$backup_file"; then
+    rm -f "$tmp_file"
+    warn "Could not back up kwinrulesrc; leaving existing rules unchanged."
+    return 0
+  fi
+
+  # awk creates a new file with the process umask. Preserve the existing KWin
+  # file's mode and owner before replacing it, so migration does not broaden or
+  # narrow access to the user's compositor configuration.
+  chmod --reference="$rules_file" "$tmp_file" 2>/dev/null || true
+  chown --reference="$rules_file" "$tmp_file" 2>/dev/null || true
+
+  if ! mv -f "$tmp_file" "$rules_file"; then
+    rm -f "$backup_file"
+    rm -f "$tmp_file"
+    warn "Could not replace kwinrulesrc; leaving existing rules unchanged."
+    return 0
+  fi
+
+  "$KWIN_WRITE_BIN" --file kwinrulesrc --group General --key rules "$keep_groups" >/dev/null 2>&1 || {
+    cp -p "$backup_file" "$rules_file" 2>/dev/null || true
+    rm -f "$backup_file"
+    warn "Could not update KWin's rule index; restored the original rules."
+    return 0
+  }
+  rm -f "$backup_file"
+
+  local rule_count=0
+  if [ -n "$keep_groups" ]; then
+    rule_count="$(printf '%s' "$keep_groups" | tr ',' '\n' | awk 'NF { count += 1 } END { print count + 0 }')"
+  fi
+  "$KWIN_WRITE_BIN" --file kwinrulesrc --group General --key count "$rule_count" >/dev/null 2>&1 || true
+  (qdbus org.kde.KWin /KWin reconfigure || qdbus6 org.kde.KWin /KWin reconfigure || qdbus-qt6 org.kde.KWin /KWin reconfigure) >/dev/null 2>&1 || true
+  say "Removed stale Fallout Chat Mod KWin rules; preserved user-owned rules."
+}
 
 APPIMAGE_EXEC_ARGS=""
 DEB_SELECTED=0
@@ -126,7 +224,7 @@ fi
 
 say "Detected: $OS_ID ($DISTRO_FAMILY), session=$SESSION_TYPE, compositor=$COMPOSITOR, package-manager=$PACKAGE_MANAGER"
 if [ "$COMPOSITOR" = "kde" ] && [ "$SESSION_TYPE" = "wayland" ]; then
-  if [ "$KWIN_TOOLS_AVAILABLE" -eq 1 ]; then say "KDE rule tools detected (kwriteconfig6/kreadconfig6)."; else warn "KDE rule tools not found; automatic KWin stacking will retry/fail closed."; fi
+  if [ "$KWIN_TOOLS_AVAILABLE" -eq 1 ]; then say "KDE rule tools detected ($KWIN_WRITE_BIN/$KWIN_READ_BIN)."; else warn "KDE rule tools not found; automatic KWin stacking will retry/fail closed."; fi
   if [ "$KDTOOL_AVAILABLE" -eq 1 ]; then say "kdotool detected for Wayland foreground detection."; else warn "kdotool not found; hotkeys may remain registered while you alt-tab."; fi
 elif [ "$COMPOSITOR" = "hyprland" ]; then
   if [ "$HYPRCTL_AVAILABLE" -eq 1 ]; then say "hyprctl detected for Hyprland foreground and stacking control."; else warn "hyprctl not found; Hyprland stacking will remain ordinary."; fi
@@ -274,6 +372,33 @@ if [ "$DEB_SELECTED" -eq 2 ]; then
   fi
 fi
 
+stop_running_overlay() {
+  stop_processes_matching() {
+    local match="$1" process_pid="" process_command=""
+    while read -r process_pid process_command; do
+      [ -n "$process_pid" ] || continue
+      # The path can appear in the command line that launched this script (for
+      # example in a test harness or an XDG_DATA_HOME assignment). Never kill
+      # this shell or its direct parent while looking for the overlay.
+      [ "$process_pid" = "$$" ] && continue
+      [ "$process_pid" = "$PPID" ] && continue
+      case "$process_command" in
+        *"$match"*) kill -KILL "$process_pid" 2>/dev/null || true ;;
+      esac
+    done < <(ps -eo pid=,args= 2>/dev/null || true)
+  }
+
+  # Recover a broken/locked prior install. Exact process-name matches cover both
+  # the AppImage and Debian package forms without touching Fallout76.
+  say "Closing any running Fallout Chat Mod overlay so it can be replaced…"
+  stop_processes_matching "Fallout Chat Mod.AppImage"
+  stop_processes_matching "$APP_PATH"
+  pkill -x fallout-chat-mod 2>/dev/null || true
+  pkill -x "Fallout Chat Mod" 2>/dev/null || true
+  # Give the process a moment to release the file before we overwrite it.
+  sleep 1 2>/dev/null || true
+}
+
 if [ "$DEB_SELECTED" -eq 1 ]; then
   has_command sudo || die "sudo is required to install the .deb; re-run with --format appimage for a per-user install."
   say "Downloading $DEB_NAME …"
@@ -281,24 +406,21 @@ if [ "$DEB_SELECTED" -eq 1 ]; then
   curl -fSL --progress-bar "$DEB_URL" -o "$DEB_TMP" || { rm -f "$DEB_TMP"; die "Download failed ($DEB_URL)."; }
   DEB_SIZE="$(stat -c%s "$DEB_TMP" 2>/dev/null || stat -f%z "$DEB_TMP")"
   [ "${DEB_SIZE:-0}" -gt 1000000 ] || { rm -f "$DEB_TMP"; die "Downloaded .deb is only ${DEB_SIZE} bytes — feed/CDN problem."; }
+  stop_running_overlay
+  # Migrate compositor state only after the replacement artifact is valid. This
+  # keeps a failed download from changing the user's desktop state.
+  remove_fcm_kwin_rules
   say "Installing the Debian package. apt/sudo will show its normal confirmation prompts."
   sudo apt-get install "$DEB_TMP" || { rm -f "$DEB_TMP"; die "The .deb installation failed."; }
   rm -f "$DEB_TMP"
+  # Switching from the per-user AppImage to the package-managed install should
+  # not leave the old user launcher shadowing the .deb's desktop entry. Only
+  # remove the known FCM-owned paths, and only after apt succeeds.
+  rm -f "$APP_PATH" "$VERSION_MARKER" "$DESKTOP_FILE" "$CONFIG_HOME/autostart/fallout-chat-mod.desktop" 2>/dev/null || true
   say "Installed v$VERSION from $DEB_NAME."
   say "The package manager owns this install; update with --format deb or remove it with your package manager."
   exit 0
 fi
-
-# --- Stop any running overlay -------------------------------------------------
-# Recover a broken/locked prior install: kill any running overlay so the
-# AppImage file is not in use (a busy/text-busy file can fail to be replaced)
-# and a crashed/broken existing build is fully swapped out. We match the overlay
-# by name/path only - NEVER kill Fallout76 (the game).
-say "Closing any running Fallout Chat Mod overlay so it can be replaced…"
-pkill -f "Fallout Chat Mod.AppImage" 2>/dev/null || true
-pkill -f "$APP_PATH" 2>/dev/null || true
-# Give the process a moment to release the file before we overwrite it.
-sleep 1 2>/dev/null || true
 
 # --- Download -----------------------------------------------------------------
 mkdir -p "$APP_DIR" "$DESKTOP_DIR" "$ICON_DIR"
@@ -310,6 +432,11 @@ curl -fSL --progress-bar "$DL_URL" -o "$TMP" || die "Download failed ($DL_URL)."
 SIZE="$(stat -c%s "$TMP" 2>/dev/null || stat -f%z "$TMP")"
 [ "${SIZE:-0}" -gt 1000000 ] || { rm -f "$TMP"; die "Downloaded file is only ${SIZE} bytes — feed/CDN problem."; }
 chmod +x "$TMP"
+stop_running_overlay
+# Migrate compositor state only after the replacement artifact is valid. This
+# is intentionally independent of current compositor detection: a KDE session
+# may retain stale FCM rules from an older production install.
+remove_fcm_kwin_rules
 mv -f "$TMP" "$APP_PATH"
 # Record the installed version so a later re-run can detect "already current".
 printf '%s\n' "$VERSION" > "$VERSION_MARKER" 2>/dev/null || true

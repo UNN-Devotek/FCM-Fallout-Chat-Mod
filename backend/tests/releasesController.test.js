@@ -281,11 +281,13 @@ describe('POST /admin/releases — successful publish refreshes cache', () => {
       .set('Authorization', `Bearer ${RELEASE_TOKEN}`)
       .send({ version: VALID_VERSION, downloadUrl: VALID_DOWNLOAD_URL, releaseNotes: 'Test release' });
 
-    // postReleaseAnnouncement(version, releaseNotes) — the download link is now
-    // derived env-aware inside the announcement, no longer passed in (#235).
+    // The download link is derived env-aware inside the announcement, and the
+    // controller makes the channel-wide mention policy explicit.
     expect(discordService.postReleaseAnnouncement).toHaveBeenCalledWith(
       VALID_VERSION,
       'Test release',
+      undefined,
+      { mentionEveryone: true },
     );
   });
 
@@ -312,6 +314,7 @@ describe('POST /admin/releases — successful publish refreshes cache', () => {
       VALID_VERSION,
       'HUD package included',
       { url: VALID_HUD_MOD_URL, version: VALID_HUD_MOD_VERSION },
+      { mentionEveryone: true },
     );
     expect(prismaMock.release.upsert).toHaveBeenCalledWith(expect.objectContaining({
       update: expect.objectContaining({
@@ -352,7 +355,33 @@ describe('POST /admin/releases — announce flag (quiet publish)', () => {
       .set('Authorization', `Bearer ${RELEASE_TOKEN}`)
       .send({ version: VALID_VERSION, downloadUrl: VALID_DOWNLOAD_URL, releaseNotes: 'Normal release' });
 
-    expect(discordService.postReleaseAnnouncement).toHaveBeenCalledWith(VALID_VERSION, 'Normal release');
+    expect(discordService.postReleaseAnnouncement).toHaveBeenCalledWith(
+      VALID_VERSION,
+      'Normal release',
+      undefined,
+      { mentionEveryone: true },
+    );
+  });
+
+  it('passes mentionEveryone=false through to the Discord announcement', async () => {
+    const discordService = require('../src/services/discordService');
+
+    await request(app)
+      .post('/admin/releases')
+      .set('Authorization', `Bearer ${RELEASE_TOKEN}`)
+      .send({
+        version: VALID_VERSION,
+        downloadUrl: VALID_DOWNLOAD_URL,
+        releaseNotes: 'Dev release without a channel-wide mention',
+        mentionEveryone: false,
+      });
+
+    expect(discordService.postReleaseAnnouncement).toHaveBeenCalledWith(
+      VALID_VERSION,
+      'Dev release without a channel-wide mention',
+      undefined,
+      { mentionEveryone: false },
+    );
   });
 });
 

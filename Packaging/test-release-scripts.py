@@ -20,6 +20,7 @@ def main() -> None:
     )
     linux_cli = (ROOT / "Packaging/linux/install.sh").read_text(encoding="utf-8")
     linux_helper = (ROOT / "cross-platform-overlay/main.js").read_text(encoding="utf-8")
+    smoke = (ROOT / "Packaging/smoke-test.ps1").read_text(encoding="utf-8")
 
     required_nexus_markers = (
         "$hudGroup   = $env:NEXUS_FILE_GROUP_ID_HUD",
@@ -117,6 +118,10 @@ def main() -> None:
 
     for marker in ("Download choices on the INSTALL page", "LINUX APPIMAGE", "LINUX .DEB", "LINUX ZIP + DOCS"):
         assert marker in linux_install, f"packaged Linux instructions are missing package choice: {marker}"
+
+    assert 'Fallout Chat Mod-$Version.AppImage' in smoke
+    assert 'Get-ChildItem -Path $DistDir -Filter "*.AppImage"' not in smoke
+    assert '$env:ELECTRON_RUN_AS_NODE = $null' in smoke
 
     # The merged Linux PR made cursor locking explicit/on-demand. Keep the
     # public page from regressing to the old silent Proton/Wine mutation claim.

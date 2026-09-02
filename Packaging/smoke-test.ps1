@@ -49,13 +49,17 @@ if ($IsLinux) {
     $cfgHome = $env:XDG_CONFIG_HOME
     if (-not $cfgHome) { $cfgHome = Join-Path $HOME ".config" }
     $logDir = Join-Path $cfgHome "Fallout Chat Mod/logs"
-    $item = Get-ChildItem -Path $DistDir -Filter "*.AppImage" -ErrorAction SilentlyContinue | Select-Object -First 1
+    # DistDir can contain QA and historical AppImages alongside the release being
+    # tested. Select the exact requested version so the gate cannot launch an
+    # unrelated artifact and report a misleading result.
+    $item = Get-ChildItem -Path $DistDir -Filter "Fallout Chat Mod-$Version.AppImage" -File -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($item) { $exe = $item.FullName } else { $exe = "" }
 } else {
     $logDir = Join-Path $env:APPDATA "Fallout Chat Mod\logs"
     $exe    = Join-Path $DistDir "win-unpacked\Fallout Chat Mod.exe"
 }
 $logPath = Join-Path $logDir "main.log"
+$priorElectronRunAsNode = $env:ELECTRON_RUN_AS_NODE
 
 Write-Host "==== SMOKE TEST for v$Version ===="
 Write-Host "[smoke] App: $exe"
@@ -72,12 +76,18 @@ $launchTime = Get-Date
 $proc = $null
 $exitCode = 1
 try {
+    # Some developer shells export ELECTRON_RUN_AS_NODE=1 for Node tooling. A
+    # packaged Electron app must never inherit that flag or it will behave like
+    # the Node binary and exit without creating a window.
+    $env:ELECTRON_RUN_AS_NODE = $null
     if ($IsLinux) {
-        # Pass --ozone-platform=x11 so the KDE-Wayland XWayland self-relaunch is skipped
-        # (single tracked process); APPIMAGELAUNCHER_DISABLE avoids the integrate prompt.
+        # Explicitly extract-and-run so AppImageLauncher/binfmt cannot consume the
+        # Electron arguments as its own options. Pass --ozone-platform=x11 so the
+        # KDE-Wayland XWayland self-relaunch is skipped (single tracked process);
+        # APPIMAGELAUNCHER_DISABLE avoids the integrate prompt.
         & chmod +x $exe 2>$null
         $env:APPIMAGELAUNCHER_DISABLE = "1"
-        $proc = Start-Process -FilePath $exe -ArgumentList "--no-sandbox","--ozone-platform=x11" -PassThru
+        $proc = Start-Process -FilePath $exe -ArgumentList "--appimage-extract-and-run","--no-sandbox","--ozone-platform=x11" -PassThru
     } else {
         $proc = Start-Process -FilePath $exe -PassThru
     }
@@ -154,6 +164,7 @@ finally {
         Write-Host "[smoke] Killing test instance PID tree $($proc.Id)..."
         try { & taskkill /PID $proc.Id /T /F 2>$null | Out-Null } catch { }
     }
+    $env:ELECTRON_RUN_AS_NODE = $priorElectronRunAsNode
 }
 
 if ($exitCode -eq 0) {

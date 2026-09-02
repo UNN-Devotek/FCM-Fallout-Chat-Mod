@@ -63,6 +63,10 @@ Using the overlay
   re-run the installer (CLI one-liner, the AppImage installer, or the .deb).
   Your settings, keybinds and Discord link are preserved, and it works even if
   you are several versions behind.
+- When updating from an older build, the installer first removes only KWin rules
+  whose description identifies them as Fallout Chat Mod rules. Your own KWin
+  rules are preserved. This clears legacy game-side rules before the new
+  compositor handling is used.
 
 Automatic desktop/session detection
 ------------------------------------

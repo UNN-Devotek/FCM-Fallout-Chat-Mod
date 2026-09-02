@@ -100,7 +100,7 @@ pwsh -NoProfile -File Packaging/release.ps1 -Version X.Y.Z -SkipBuild -ReleaseNo
 ```
 
 OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows`):
-- **`smoke-test.ps1`** launches the **`.AppImage`** on Linux (with `--ozone-platform=x11` to skip the KDE self-relaunch) and reads `~/.config/Fallout Chat Mod/logs/main.log`; on Windows it launches `win-unpacked\*.exe` and reads `%APPDATA%`. Cleanup kills by process **name** (`pkill fallout-chat` / `taskkill`), never the runner or `Fallout76`.
+- **`smoke-test.ps1`** launches the exact requested-version **`.AppImage`** on Linux (with `--appimage-extract-and-run` and `--ozone-platform=x11` to bypass AppImageLauncher and skip the KDE self-relaunch) and reads `~/.config/Fallout Chat Mod/logs/main.log`; on Windows it launches `win-unpacked\*.exe` and reads `%APPDATA%`. The gate clears an inherited `ELECTRON_RUN_AS_NODE` flag so the packaged binary is tested as Electron. Cleanup kills by process **name** (`pkill fallout-chat` / `taskkill`), never the runner or `Fallout76`.
 - **`release.ps1`** uses `ssh`/`scp` (not `ssh.exe`/`scp.exe`) and runs the child gate scripts via `pwsh` on Linux, `powershell.exe` on Windows.
 - **`package-downloads.ps1`** stages ZIPs under `DistDir` (cross-platform; not a Windows temp path).
 

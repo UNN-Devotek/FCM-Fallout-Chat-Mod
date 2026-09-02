@@ -73,6 +73,54 @@ describe('CLI installers — patch path is present', () => {
   });
 });
 
+describe('cross-version installer migration', () => {
+  const ps = readRepo('Packaging/windows/install.ps1');
+  const nsis = readOverlay('assets/install/installer.nsh');
+  const sh = readRepo('Packaging/linux/install.sh');
+
+  it('Windows stops and uninstalls the pre-rename per-user install', () => {
+    expect(ps).toContain('Programs\\Fallout ChatMod\\Fallout ChatMod.exe');
+    expect(nsis).toContain('Fallout ChatMod.exe');
+    expect(nsis).toContain('Programs\\Fallout ChatMod\\Uninstall Fallout ChatMod.exe');
+    expect(nsis).toContain('/S');
+  });
+
+  it('Linux removes only FCM-owned KWin rules before either package path', () => {
+    expect(sh).toContain('KWIN_READ_BIN="kreadconfig6"');
+    expect(sh).toContain('KWIN_READ_BIN="kreadconfig5"');
+    expect(sh).toContain('Fallout\\ Chat\\ Mod*)');
+    expect(sh).toContain('drop_groups=');
+    expect(sh).toContain('preserved user-owned rules');
+    expect(sh).toContain('chmod --reference="$rules_file" "$tmp_file"');
+    expect(sh).toContain('chown --reference="$rules_file" "$tmp_file"');
+    expect(sh).toContain('stop_processes_matching()');
+    expect(sh).not.toContain('pkill -f');
+    expect(sh).toContain('remove_fcm_kwin_rules');
+    expect(sh).toContain('stop_running_overlay()');
+    expect(sh).toContain('chmod +x "$TMP"\nstop_running_overlay\n# Migrate compositor state only after the replacement artifact is valid. This\n# is intentionally independent of current compositor detection: a KDE session\n# may retain stale FCM rules from an older production install.\nremove_fcm_kwin_rules\nmv -f "$TMP" "$APP_PATH"');
+    const debStart = sh.indexOf('if [ "$DEB_SELECTED" -eq 1 ]');
+    const debDownload = sh.indexOf('curl -fSL --progress-bar "$DEB_URL"', debStart);
+    const debMigration = sh.indexOf('remove_fcm_kwin_rules', debStart);
+    const debInstall = sh.indexOf('sudo apt-get install "$DEB_TMP"', debStart);
+    expect(debMigration).toBeGreaterThan(debDownload);
+    expect(debMigration).toBeLessThan(debInstall);
+  });
+
+  it('Linux .deb switching removes only the known old per-user AppImage launcher paths after success', () => {
+    expect(sh).toContain('sudo apt-get install "$DEB_TMP"');
+    expect(sh).toContain('rm -f "$APP_PATH" "$VERSION_MARKER" "$DESKTOP_FILE"');
+  });
+
+  it('Linux uninstaller can clean FCM rules with either KWin tool generation', () => {
+    const uninstall = readRepo('Packaging/linux/uninstall.sh');
+    expect(uninstall).toContain('KWIN_READ_BIN="kreadconfig6"');
+    expect(uninstall).toContain('KWIN_READ_BIN="kreadconfig5"');
+    expect(uninstall).toContain('"$KWIN_READ_BIN"');
+    expect(uninstall).toContain('"$KWIN_WRITE_BIN"');
+    expect(uninstall).toContain('Fallout Chat Mod"*)');
+  });
+});
+
 describe('install.sh hardening — regression guards for e2e-found bugs', () => {
   const sh = readRepo('Packaging/linux/install.sh');
 

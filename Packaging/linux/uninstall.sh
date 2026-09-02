@@ -36,12 +36,22 @@ say "Removed app, launcher, and icon."
 # Mod" Description (current + legacy/numbered groups), keeps the user's own.
 # Mirrors overlay-core.js buildKwinRemoveRulesScript. Best-effort: no-ops
 # without the KDE config tools.
+KWIN_READ_BIN=""
+KWIN_WRITE_BIN=""
 if command -v kreadconfig6 >/dev/null 2>&1 && command -v kwriteconfig6 >/dev/null 2>&1; then
+  KWIN_READ_BIN="kreadconfig6"
+  KWIN_WRITE_BIN="kwriteconfig6"
+elif command -v kreadconfig5 >/dev/null 2>&1 && command -v kwriteconfig5 >/dev/null 2>&1; then
+  KWIN_READ_BIN="kreadconfig5"
+  KWIN_WRITE_BIN="kwriteconfig5"
+fi
+
+if [ -n "$KWIN_READ_BIN" ] && [ -n "$KWIN_WRITE_BIN" ]; then
   RULES="${XDG_CONFIG_HOME:-$HOME/.config}/kwinrulesrc"
-  R="$(kreadconfig6 --file kwinrulesrc --group General --key rules 2>/dev/null || true)"
+  R="$("$KWIN_READ_BIN" --file kwinrulesrc --group General --key rules 2>/dev/null || true)"
   KEEP=""; FCM=""
   for g in $(printf '%s' "$R" | tr ',' ' '); do
-    d="$(kreadconfig6 --file kwinrulesrc --group "$g" --key Description 2>/dev/null || true)"
+    d="$("$KWIN_READ_BIN" --file kwinrulesrc --group "$g" --key Description 2>/dev/null || true)"
     case "$d" in
       "Fallout Chat Mod"*) FCM="$FCM $g" ;;
       *) KEEP="${KEEP:+$KEEP,}$g" ;;
@@ -52,9 +62,9 @@ if command -v kreadconfig6 >/dev/null 2>&1 && command -v kwriteconfig6 >/dev/nul
     # delete a section (neither `--key X --delete` nor `--group G --delete` works — both
     # silently no-op), so per-key deletion left orphaned [section] cruft behind.
     awk -v drop=" $FCM " '/^\[.*\]$/{name=$0;sub(/^\[/,"",name);sub(/\]$/,"",name);skip=index(drop," " name " ")>0} !skip' "$RULES" > "$RULES.fcmtmp" && mv "$RULES.fcmtmp" "$RULES"
-    kwriteconfig6 --file kwinrulesrc --group General --key rules "$KEEP"
+    "$KWIN_WRITE_BIN" --file kwinrulesrc --group General --key rules "$KEEP"
     COUNT="$(printf '%s' "$KEEP" | tr ',' '\n' | grep -c . || true)"
-    kwriteconfig6 --file kwinrulesrc --group General --key count "$COUNT"
+    "$KWIN_WRITE_BIN" --file kwinrulesrc --group General --key count "$COUNT"
     (qdbus org.kde.KWin /KWin reconfigure || qdbus6 org.kde.KWin /KWin reconfigure || qdbus-qt6 org.kde.KWin /KWin reconfigure) 2>/dev/null || true
     say "Removed Fallout Chat Mod KWin rules (KDE) — FO76 fullscreen restored."
   fi
