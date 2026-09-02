@@ -30,7 +30,7 @@ function createFakeRedis() {
       return Array.from(sets.get(key) ?? []);
     },
     async *scanIterator({ MATCH }) {
-      const prefix = MATCH.replace('*', '');
+      const prefix = MATCH.replace(/\*/g, '');
       for (const key of sets.keys()) {
         if (key.startsWith(prefix)) yield key;
       }
