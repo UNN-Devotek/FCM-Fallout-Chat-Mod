@@ -13,7 +13,7 @@ function useTypewriter(text: string, speed = 28) {
   }, [text, speed]);
   return displayed;
 }
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router';
 
 function PipboyNav() {
   const tabs = ['CHAT', 'MODERATION', 'SYSTEM'];

@@ -1,17 +1,29 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useOutletContext, Link } from 'react-router-dom';
+// Notification ping (#437). Imported as a module asset so Vite fingerprints it
+// into dist-renderer for BOTH the website and the Electron renderer builds — no
+// electron-builder `files` entry needed, and no risk of the v1.3.82-style
+// missing-asset failure.
+import notifySoundUrl from './assets/notify.wav';
+import { useOutletContext, Link } from 'react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../services/api';
 import type { AuthUser } from '../../contexts/AuthContext';
-import EmojiPicker from './EmojiPicker';
+import EmojiPicker, {
+  extractEmojiTokens,
+  loadRecentEmojiTokens,
+  recordRecentEmoji,
+  saveRecentEmojiTokens,
+} from './EmojiPicker';
 import GifPicker from './GifPicker';
+import './nameEffects.css';
 import { usePickerInsert } from './usePickerInsert';
 import { useDebouncedSearch } from './useDebouncedSearch';
 import { ChatEmbedCard } from './components/ChatEmbedCard';
 import { ChatInlineEmbed } from './components/ChatInlineEmbed';
 import ImageLightbox from './components/ImageLightbox';
 import { OutboxQueue } from './outboxQueue';
+import { supporterBadge, supporterStarColor, SUPPORTER_STAR_GLYPH } from './supporterBadge';
 
 /**
  * Web-based chat overlay — identical to the desktop SkiaSharp overlay.
@@ -254,6 +266,42 @@ export function computeMainTabCutout(offsetLeft: number, offsetWidth: number): {
 }
 
 /**
+ * Px from the bottom of the message list within which we treat the user as
+ * "pinned to the latest message" and keep auto-scrolling on new appends. Beyond
+ * it, the user has deliberately scrolled up to read history and must not be
+ * yanked back down.
+ */
+export const STICK_TO_BOTTOM_THRESHOLD = 80;
+
+/**
+ * Looser bottom threshold for the typing-indicator re-pin. The indicator is a
+ * small (~16px) sibling whose appearance/disappearance resizes the message
+ * area, so a more generous band keeps the newest message visible without
+ * yanking a user who has genuinely scrolled up to read history.
+ */
+export const TYPING_INDICATOR_STICK_THRESHOLD = 120;
+
+/**
+ * Whether a scroll position counts as "at the bottom" (stuck to the latest msg).
+ *
+ * This MUST be sampled from a real scroll event (the user's actual position),
+ * NOT recomputed right after a tall message is appended: once a tall card is in
+ * the DOM, `scrollHeight` has already grown while `scrollTop` hasn't moved, so
+ * `scrollHeight - scrollTop - clientHeight` ≈ the card's height and a
+ * post-append reading wrongly looks like "scrolled up". See #313 — the old
+ * auto-scroll guard made exactly that mistake and never scrolled to `/camp`
+ * and `/nukecodes` cards.
+ */
+export function isNearBottom(
+  scrollHeight: number,
+  scrollTop: number,
+  clientHeight: number,
+  threshold: number = STICK_TO_BOTTOM_THRESHOLD,
+): boolean {
+  return scrollHeight - scrollTop - clientHeight <= threshold;
+}
+
+/**
  * Whether becoming-visible must force a WS reconnect. onVisibility(true) fires on
  * hidden->visible, so overlayVisible was false. Only kick when the gate WON'T
  * already re-run the WS effect: the game was running (gate = overlayVisible ||
@@ -361,6 +409,27 @@ export function isProdRelayHost(host: string | null | undefined): boolean {
 }
 
 /**
+ * Is `candidate` a STRICTLY newer version than `current`?
+ *
+ * Mirrors the shell's `cmpVersions` guard (cross-platform-overlay/overlay-core.js):
+ * the backend broadcasts `app:update-available` to EVERY client whenever it has a
+ * latest version cached — it does NOT compare against the client's installed
+ * build — so the update dot must do the comparison itself. We can't import the
+ * shell's `cmpVersions` here (it's a CommonJS module in a different package, outside
+ * the Vite build root), so this is a minimal, intentionally identical re-implementation.
+ *
+ * Uses locale-aware numeric compare so '1.3.10' > '1.3.9' (not string-ordered).
+ * A pre-release suffix sorts AFTER the bare release (e.g. '1.3.91-dev' > '1.3.91'),
+ * which matches the shell: a dev/QA build of a release must NOT light the dot for
+ * that same release. Malformed / non-string inputs are treated as '0.0.0', so they
+ * never appear newer than a real version.
+ */
+export function isVersionNewer(candidate: string | null | undefined, current: string | null | undefined): boolean {
+  const normalize = (v: string | null | undefined) => (typeof v === 'string' && v.trim() ? v.trim() : '0.0.0');
+  return normalize(candidate).localeCompare(normalize(current), undefined, { numeric: true, sensitivity: 'base' }) > 0;
+}
+
+/**
  * Resolve a backend avatar path to a loadable URL.
  *
  * Backend sends `avatarUrl` as a RELATIVE same-origin path ("/avatars/<id>")
@@ -402,6 +471,22 @@ export function resolveMediaUrl(url: string): string {
     return `${relayBase.replace(/\/$/, '')}${url.startsWith('/') ? '' : '/'}${url}`;
   }
   return url;
+}
+
+/** Computes the result of inserting `@displayName ` into `current` at [selStart, selEnd].
+ *  Adds a space before the mention when the preceding character is not already a space.
+ *  The returned string is capped at `maxLen` characters. */
+export function buildMentionInsert(
+  current: string,
+  displayName: string,
+  selStart: number,
+  selEnd: number,
+  maxLen = 255,
+): string {
+  const before = current.slice(0, selStart);
+  const after = current.slice(selEnd);
+  const spacer = before.length > 0 && !before.endsWith(' ') ? ' ' : '';
+  return (before + spacer + `@${displayName} ` + after).slice(0, maxLen);
 }
 
 /** Escape a value for safe interpolation into a double/single-quoted HTML attribute. */
@@ -448,6 +533,150 @@ export function buildRichHtmlImpl(text: string): string {
   const tail = text.slice(last);
   if (tail) html += tail.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>');
   return html;
+}
+
+/** Serialize rich-input DOM/fragment nodes back to the plain-text message form. */
+export function serializeRichContent(input: Pick<ParentNode, 'childNodes'>): string {
+  function walk(node: Node): string {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
+    if (node.nodeName === 'IMG') {
+      const token = (node as HTMLImageElement).dataset.token;
+      return token ?? (node as HTMLImageElement).alt ?? '';
+    }
+    if (node.nodeName === 'BR') return '\n';
+    let out = '';
+    const isBlock = node.nodeName === 'DIV' || node.nodeName === 'P';
+    for (const child of Array.from(node.childNodes)) out += walk(child);
+    if (isBlock && (node as Element).previousSibling) out = '\n' + out;
+    return out;
+  }
+
+  let out = '';
+  for (const node of Array.from(input.childNodes)) out += walk(node);
+  return out.replace(/\n$/, '');
+}
+
+/** Compute plain-text selection offsets for the rich composer, if selection is inside it. */
+export function getRichSelectionOffsets(
+  el: HTMLDivElement,
+  selection: Selection | null = window.getSelection(),
+): { start: number; end: number } | null {
+  if (!selection || selection.rangeCount === 0) return null;
+  const range = selection.getRangeAt(0);
+  if (!el.contains(range.startContainer) || !el.contains(range.endContainer)) return null;
+
+  const startRange = document.createRange();
+  startRange.selectNodeContents(el);
+  startRange.setEnd(range.startContainer, range.startOffset);
+
+  const endRange = document.createRange();
+  endRange.selectNodeContents(el);
+  endRange.setEnd(range.endContainer, range.endOffset);
+
+  return {
+    start: serializeRichContent(startRange.cloneContents()).length,
+    end: serializeRichContent(endRange.cloneContents()).length,
+  };
+}
+
+/** Restore the rich composer caret at a plain-text offset across text, <br>, and emoji <img> nodes. */
+export function placeRichCaretAtOffset(
+  el: HTMLDivElement,
+  offset: number,
+  selection: Selection | null = window.getSelection(),
+): void {
+  const targetOffset = Math.max(0, offset);
+  let remaining = targetOffset;
+  let placed = false;
+  const range = document.createRange();
+
+  function walk(node: Node) {
+    if (placed) return;
+
+    if (node.nodeType === Node.TEXT_NODE) {
+      const len = (node as Text).length;
+      if (remaining <= len) {
+        range.setStart(node, remaining);
+        range.collapse(true);
+        placed = true;
+        return;
+      }
+      remaining -= len;
+      return;
+    }
+
+    if (node.nodeName === 'IMG') {
+      const token = (node as HTMLImageElement).dataset.token ?? (node as HTMLImageElement).alt ?? '';
+      const len = token.length;
+      if (remaining <= len) {
+        range.setStartAfter(node);
+        range.collapse(true);
+        placed = true;
+        return;
+      }
+      remaining -= len;
+      return;
+    }
+
+    if (node.nodeName === 'BR') {
+      if (remaining <= 1) {
+        range.setStartAfter(node);
+        range.collapse(true);
+        placed = true;
+        return;
+      }
+      remaining -= 1;
+      return;
+    }
+
+    for (const child of Array.from(node.childNodes)) walk(child);
+  }
+
+  walk(el);
+
+  if (!placed) {
+    range.selectNodeContents(el);
+    range.collapse(false);
+  }
+
+  if (selection) {
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+}
+
+/** Insert a token into plain text, clamp to max length, and return the advanced caret offset. */
+export function insertTokenIntoText(
+  current: string,
+  start: number,
+  end: number,
+  token: string,
+  maxLength = 255,
+): { text: string; caretOffset: number } {
+  const safeStart = Math.max(0, Math.min(current.length, start));
+  const safeEnd = Math.max(safeStart, Math.min(current.length, end));
+  const text = (current.slice(0, safeStart) + token + current.slice(safeEnd)).slice(0, maxLength);
+  return {
+    text,
+    caretOffset: Math.min(text.length, safeStart + token.length),
+  };
+}
+
+/**
+ * Resolve where the caret should land after the rich input's text is set from
+ * OUTSIDE (autocomplete, emoji insert, clear-on-send). Normally we preserve the
+ * previously-saved caret offset (clamped to the new length) so emoji/token
+ * inserts don't yank the caret. But for command-autocomplete completions the
+ * caret must collapse to the END — otherwise picking "/minerva" while the caret
+ * sat at offset 4 ("/min") restores offset 4 and lands mid-command ("/min|erva").
+ */
+export function resolveExternalSetCaret(
+  textLength: number,
+  savedOffset: number,
+  forceToEnd: boolean,
+): number {
+  if (forceToEnd) return textLength;
+  return Math.min(textLength, Math.max(0, savedOffset));
 }
 
 /**
@@ -503,11 +732,34 @@ interface WebOverlaySettings {
   // formatMessageTimestamp), so everyone sees their own local time with no extra
   // wire data. `timestampFormat` only matters when showTimestamps is true.
   showTimestamps: boolean;
+  // Viewer opt-out for OTHER users' animated supporter name effects. Nothing to do
+  // with your own tier — it exists for anyone who finds motion in the feed distracting
+  // without wanting system-wide reduced motion. Applied as a single root class so the
+  // collapse is one CSS toggle rather than per-message JS.
+  disableNameMotion?: boolean;
   timestampFormat: TimestampFormat;
   // Channel NAMES the viewer has chosen to hide (set via the overlay shell's
   // "Hidden channels" filter, mirrored here). Their messages are excluded from
   // the feed AND per-channel views. Case-insensitive match on channel name.
   channelFilters: string[];
+  // Party IDs this moderator has muted from the aggregate General/feed view.
+  // This is a local view preference; direct party views remain available.
+  mutedPartyIds: string[];
+  // Extra words that highlight a message the same way an @mention of you does
+  // (issue #422). Bare words — no leading @ — matched case-insensitively on word
+  // boundaries. Empty by default: @mentions of your own names always trigger
+  // regardless of this list.
+  notifyKeywords: string[];
+  // Keep the typing indicator visible in the tab strip while the overlay is
+  // idle-collapsed (#420). Electron shell only — on the website nothing
+  // collapses, so this is inert there.
+  showTypingWhenCollapsed: boolean;
+  // Audible ping when a message triggers a notification (@mention of you or one
+  // of your notify keywords) — issue #437. Off by default: audio is intrusive and
+  // an unsolicited sound from a game overlay is a bad first impression.
+  notifySoundEnabled: boolean;
+  // 0..1. Applied to the HTMLAudioElement's volume.
+  notifySoundVolume: number;
 }
 
 const DEFAULT_SETTINGS: WebOverlaySettings = {
@@ -517,8 +769,14 @@ const DEFAULT_SETTINGS: WebOverlaySettings = {
   showHints: true,
   fontSize: 14,
   showTimestamps: false,
+  disableNameMotion: false,
   timestampFormat: '12h',
   channelFilters: [],
+  mutedPartyIds: [],
+  notifyKeywords: [],
+  showTypingWhenCollapsed: false,
+  notifySoundEnabled: false,
+  notifySoundVolume: 0.5,
 };
 
 const SETTINGS_KEY = 'fcm_web_overlay_settings';
@@ -597,6 +855,12 @@ export function hexAlpha(hex: string, alpha: number): string {
 // text would be unreadable over the see-through chat/game behind it.
 export function menuBgColor(theme: WebTheme, chromeBgAlpha: number, mult = 1.4): string {
   return hexToRgba(theme.chromeColor, Math.max(0.9, Math.min(1, theme.chromeAlpha * mult * chromeBgAlpha)));
+}
+
+/** Bound public-party fan-out for both polling and the aggregated feed. */
+export function boundedPublicPartyIds(key: string, max = 50): string[] {
+  if (!Number.isFinite(max) || max <= 0) return [];
+  return key ? key.split(',').filter(Boolean).slice(0, Math.floor(max)) : [];
 }
 
 /**
@@ -811,9 +1075,12 @@ interface SettingsModalProps {
   // the shell's own settings panel is the source of truth for those.
   hideShellSliders?: boolean;
   chromeBgAlpha?: number;
+  // Party-feed mute controls are shown only to moderators/admins.
+  isMod?: boolean;
+  parties?: Party[];
 }
 
-function SettingsModal({ settings, theme, onChange, onClose, selfAvatarUrl, selfName, onBlockChange, hideShellSliders = false, chromeBgAlpha = 1 }: SettingsModalProps) {
+function SettingsModal({ settings, theme, onChange, onClose, selfAvatarUrl, selfName, onBlockChange, hideShellSliders = false, chromeBgAlpha = 1, isMod = false, parties = [] }: SettingsModalProps) {
   const primary = theme.primaryColor;
   const panelBg = hexToRgba(theme.backgroundColor, Math.min(1, theme.bgAlpha * 1.4));
   const chromeBg = hexToRgba(theme.chromeColor, Math.min(1, theme.chromeAlpha * chromeBgAlpha));
@@ -1045,6 +1312,69 @@ function SettingsModal({ settings, theme, onChange, onClose, selfAvatarUrl, self
             </div>
           )}
 
+          {isMod && (
+            <>
+              <div style={{ ...sectionStyle, marginTop: '20px' }}>PARTY FEED</div>
+              <div style={{ fontSize: '11px', color: dimText, marginBottom: '10px', lineHeight: 1.45 }}>
+                Mute party chats from the aggregate General feed without leaving the party. Direct party views are never muted.
+              </div>
+              {parties.length > 0 ? parties.map(p => {
+                const muted = settings.mutedPartyIds.includes(p.id);
+                const toggle = () => onChange({
+                  mutedPartyIds: muted
+                    ? settings.mutedPartyIds.filter(id => id !== p.id)
+                    : [...settings.mutedPartyIds, p.id],
+                });
+                return (
+                  <div
+                    key={p.id}
+                    role="checkbox"
+                    aria-checked={muted}
+                    tabIndex={0}
+                    onClick={toggle}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggle();
+                      }
+                    }}
+                    style={{ display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', marginBottom: '8px' }}
+                  >
+                    <div style={{
+                      width: '14px', height: '14px', flexShrink: 0,
+                      border: `1px solid ${hexAlpha(primary, 0.6)}`,
+                      background: muted ? hexAlpha(primary, 0.3) : 'transparent',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {muted && <span style={{ color: primary, fontSize: '10px', lineHeight: 1 }}>✓</span>}
+                    </div>
+                    <span style={{ color: theme.textColor, fontSize: '11px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {p.name}
+                    </span>
+                    {muted && <span style={{ color: dimText, fontSize: '10px', marginLeft: 'auto' }}>MUTED</span>}
+                  </div>
+                );
+              }) : (
+                <div style={{ fontSize: '11px', color: dimText }}>No party chats are available yet.</div>
+              )}
+              {settings.mutedPartyIds
+                .filter(id => !parties.some(p => p.id === id))
+                .map(id => (
+                  <div key={id} style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '8px' }}>
+                    <button
+                      type="button"
+                      onClick={() => onChange({ mutedPartyIds: settings.mutedPartyIds.filter(partyId => partyId !== id) })}
+                      style={{
+                        background: hexAlpha(primary, 0.12), border: `1px solid ${hexAlpha(primary, 0.45)}`,
+                        color: primary, cursor: 'pointer', fontFamily: theme.fontFamily, fontSize: '10px', padding: '3px 7px',
+                      }}
+                    >SHOW</button>
+                    <span style={{ color: dimText, fontSize: '10px' }}>Muted party · {id.slice(0, 8)}…</span>
+                  </div>
+                ))}
+            </>
+          )}
+
           {/* ── BLOCKED USERS ── (shared body, also used by the standalone modal) */}
           <div style={{ ...sectionStyle, marginTop: '20px' }}>BLOCKED USERS</div>
           <BlockManagerBody theme={theme} onBlockChange={onBlockChange} />
@@ -1116,6 +1446,19 @@ interface CampItemMetadata {
   sourceLabel: string | null;
   atomPrice?: number | null;
   atomBundle?: string | null;
+}
+interface MinervaMetadata {
+  type: 'minerva';
+  location: string;
+  listNumber: number;
+  isSuperSale: boolean;
+  isActive: boolean;
+  startUtc: string;
+  endUtc: string;
+  nextLocation: string | null;
+  nextListNumber: number | null;
+  nextIsSuperSale: boolean | null;
+  nextStartUtc: string | null;
 }
 interface CardShareMetadata {
   type: 'card_share';
@@ -1191,9 +1534,120 @@ interface ChatMessage {
   channelId: string;
   source: string;
   timestamp?: string;
+  editedAt?: string | null;
   responseColor?: string | null;
   avatarUrl?: string | null;
   metadata?: ChatMessageMetadata;
+  // ── Supporter cosmetics, resolved server-side in ingestMessage.attachCosmetics ──
+  /** Per-user name colour, `#rrggbb`. Absent for the vast majority of users. */
+  nameColor?: string | null;
+  /** Effect preset id — rendered as a `.fcm-name-fx--<id>` class (see nameEffects.css). */
+  effectId?: string | null;
+  /** Overseer tag rendered before the name. */
+  tag?: string | null;
+  /** e.g. ['supporter'] — rendered as a pill after the name. */
+  badges?: string[];
+  /** Validated catalog colour for the immutable supporter star. */
+  starColor?: string | null;
+}
+
+/**
+ * Build the className / style / data attributes for a username span.
+ *
+ * Effects are pure CSS (nameEffects.css) driven by two custom properties. When an
+ * effect is present the class owns `text-shadow` entirely — the outline is handed
+ * over via `--fcm-name-outline` so the effect can compose with it rather than an
+ * inline `textShadow` silently winning over the stylesheet.
+ *
+ * `data-fcm-name` is required by the glitch effect, whose ::before/::after copies
+ * read it with `content: attr(...)`.
+ *
+ * Exported for unit tests.
+ */
+export function nameCosmeticProps(
+  msg: { nameColor?: string | null; effectId?: string | null },
+  theme: {
+    primaryText: string;
+    primaryColor: string;
+    textAlpha: number;
+    textOutline: string;
+    glowEnabled: boolean;
+  },
+  displayName: string,
+): { className: string; style: React.CSSProperties; dataName?: string } {
+  const color = msg.nameColor || theme.primaryText;
+  const effect = msg.effectId || null;
+
+  if (!effect) {
+    // Unchanged from before cosmetics existed, so users without a colour render
+    // byte-identically to how they always have.
+    return {
+      className: '',
+      style: {
+        fontWeight: 'bold',
+        color,
+        textShadow: theme.glowEnabled
+          ? `0 0 3px ${hexAlpha(theme.primaryColor, 0.5 * theme.textAlpha)}, ${theme.textOutline}`
+          : theme.textOutline,
+      },
+    };
+  }
+
+  return {
+    className: `fcm-name-fx--${effect}`,
+    style: {
+      // Heavy Outline is intentionally a visibly heavier face, not merely a
+      // regular-bold name with a blur around it.
+      fontWeight: effect === 'outline-heavy' ? 900 : 'bold',
+      color,
+      // No inline textShadow — the effect class composes it with the outline below.
+      ['--fcm-name-color' as string]: color,
+      ['--fcm-name-outline' as string]: theme.textOutline,
+    } as React.CSSProperties,
+    dataName: displayName,
+  };
+}
+
+/** Whether an authenticated user may be offered the self-edit action. */
+export function canEditOwnMessage(
+  message: { id?: string; userId?: string; source?: string },
+  userId?: string | null,
+  isPublicMode = false,
+): boolean {
+  return !isPublicMode
+    && !!message.id
+    && !!userId
+    && message.userId === userId
+    && message.source !== 'bot'
+    && message.source !== 'system'
+    && message.source !== 'server';
+}
+
+interface PrivateConversationSummary {
+  conversationId: string;
+  otherUserId: string;
+  otherDisplayName: string;
+  lastMessagePreview: string;
+  lastMessageSenderId: string | null;
+  lastMessageAt: string;
+  unreadCount: number;
+}
+
+interface PrivateMessagePayload {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  senderName: string;
+  recipientId: string;
+  content: string;
+  createdAt: string;
+  editedAt?: string | null;
+}
+
+interface PrivateUserSearchResult {
+  userId: string;
+  displayName: string;
+  avatarUrl?: string | null;
 }
 
 interface SubChannel {
@@ -1220,6 +1674,7 @@ interface Channel {
 // ── Party interfaces ──────────────────────────────────────────────────────────
 
 const PARTY_MAIN_ID = '__party__';
+const PM_MAIN_ID = '__pm__';
 
 // Per-channel initial history batch size (also the lazy-load page size). When a
 // returned batch is smaller than this, we've hit the start of history.
@@ -1228,6 +1683,34 @@ const HISTORY_PAGE = 300;
 // enough that lazy-loaded older batches aren't trimmed off the top when a new
 // live message arrives, while still bounding memory.
 const MESSAGE_CAP = 2000;
+
+function toPrivateChatMessage(message: PrivateMessagePayload): ChatMessage {
+  return {
+    id: message.id,
+    content: message.content,
+    username: message.senderName,
+    userId: message.senderId,
+    channelId: message.conversationId,
+    source: 'pm',
+    timestamp: message.createdAt,
+    editedAt: message.editedAt ?? null,
+  };
+}
+
+function formatPrivateConversationPreview(
+  conversation: PrivateConversationSummary,
+  messages: ChatMessage[] | undefined,
+  currentUserId: string,
+): string {
+  const latestMessage = messages && messages.length > 0 ? messages[messages.length - 1] : null;
+  const previewText = latestMessage?.content ?? conversation.lastMessagePreview;
+  if (!previewText) return '';
+
+  const senderId = latestMessage?.userId ?? conversation.lastMessageSenderId;
+  if (senderId === currentUserId) return `You: ${previewText}`;
+  if (senderId && senderId === conversation.otherUserId) return `${conversation.otherDisplayName}: ${previewText}`;
+  return previewText;
+}
 
 interface Party {
   id: string;
@@ -1303,11 +1786,12 @@ const SYNTHETIC_HELP: SlashCommand = {
 };
 
 // Built-in relay shortcuts — trigger → (seeded channel UUID, fallback color if DB has none)
-const BUILTIN_RELAYS: { cmd: SlashCommand; channelId: string | null; fallbackColor: string }[] = [
+export const BUILTIN_RELAYS: { cmd: SlashCommand; channelId: string | null; fallbackColor: string }[] = [
   { cmd: { trigger: '/g',    description: 'Send to General',             requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000005', fallbackColor: '#C8A840' },
   { cmd: { trigger: '/t',    description: 'Send to Trading',             requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000002', fallbackColor: '#4A9FE0' },
   { cmd: { trigger: '/e',    description: 'Send to Events',              requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000003', fallbackColor: '#50C878' },
   { cmd: { trigger: '/r',    description: 'Send to Raids',               requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000004', fallbackColor: '#FF6644' },
+  { cmd: { trigger: '/raid', description: 'Send to Raids (alias of /r)', requiresArgs: true, actionType: 'relay' }, channelId: '00000000-0000-0000-0000-000000000004', fallbackColor: '#FF6644' },
   { cmd: { trigger: '/i',    description: 'Send to Infests',             requiresArgs: true, actionType: 'relay' }, channelId: '983995c1-f9ab-44c0-9b78-8b4cbf497273', fallbackColor: '#CC44FF' },
   // /s omitted — server chat is pending re-enable (tracked in the server-scoped-chat
   // epic). A typed "/s ..." falls through to the backend, which returns a disabled notice.
@@ -1315,17 +1799,20 @@ const BUILTIN_RELAYS: { cmd: SlashCommand; channelId: string | null; fallbackCol
 
 // Hardcoded form/utility commands — mirrors the desktop overlay's _acCommands list exactly.
 // These are excluded from the DB fetch so descriptions stay consistent.
-const BUILTIN_FORMS: SlashCommand[] = [
+export const BUILTIN_FORMS: SlashCommand[] = [
   { trigger: '/report bug',   description: 'Bug report — title, description, steps to reproduce, expected vs actual',            requiresArgs: true,  actionType: 'report'  },
   { trigger: '/report player', description: 'Player report — player name, reason, description',                                   requiresArgs: true,  actionType: 'report'  },
   { trigger: '/apply',        description: 'Join the mod team — in-game name, age, timezone, availability, experience, motivation', requiresArgs: false, actionType: 'message' },
   // FO76 data lookups — handled backend-side, reply privately to the sender.
+  { trigger: '/online',       description: 'Show total users online in chat',                                                   requiresArgs: false, actionType: 'message' },
   { trigger: '/serverstatus', description: 'Show Fallout 76 server status (up/down)',                                            requiresArgs: false, actionType: 'message' },
   { trigger: '/nukecodes',    description: 'Show this week\'s nuke launch codes (Alpha/Bravo/Charlie)',                       requiresArgs: false, actionType: 'message' },
+  { trigger: '/minerva',      description: 'Show Minerva\'s current or next Big Sale — location, list number, and dates',     requiresArgs: false, actionType: 'message' },
   { trigger: '/wiki',         description: 'Search the Fallout 76 wiki — weapons, armor, items, creatures, locations, quests…',  requiresArgs: true,  actionType: 'wiki'    },
   { trigger: '/camp',         description: 'Look up a CAMP item — category, sub-category, budget cost, and plan requirement',       requiresArgs: true,  actionType: 'message' },
   // Party shortcuts — resolved dynamically at send time; listed here for autocomplete only.
   { trigger: '/recent',  description: 'Send to most-recent party',                                    requiresArgs: true,  actionType: 'message' },
+  { trigger: '/rp',      description: 'Send to most-recent party (alias of /recent)',                 requiresArgs: true,  actionType: 'message' },
   { trigger: '/p1',      description: 'Send to 1st joined party',                                     requiresArgs: true,  actionType: 'message' },
   { trigger: '/p2',      description: 'Send to 2nd joined party',                                     requiresArgs: true,  actionType: 'message' },
   { trigger: '/p3',      description: 'Send to 3rd joined party',                                     requiresArgs: true,  actionType: 'message' },
@@ -1346,6 +1833,20 @@ export function isPrivilegedRole(role: string): boolean {
   return MOD_ROLES.includes(role);
 }
 
+/** Pure gate shared by rendering and live-notification paths. */
+export function isPartyMutedForModerator(
+  m: { channelId: string; source?: string },
+  ctx: { isMod: boolean; isPublicMode: boolean; mutedPartyIds?: readonly string[] | ReadonlySet<string> },
+): boolean {
+  const mutedPartyIds = ctx.mutedPartyIds ?? [];
+  const mutedArray = Array.isArray(mutedPartyIds) ? mutedPartyIds : null;
+  const mutedSet = mutedArray ? null : mutedPartyIds as ReadonlySet<string>;
+  return ctx.isMod
+    && !ctx.isPublicMode
+    && m.source === 'party'
+    && (mutedSet ? mutedSet.has(m.channelId) : mutedArray?.includes(m.channelId) ?? false);
+}
+
 /**
  * Pure helper: determines whether a message should appear in the main feed
  * (website "Feed" tab / overlay "General" channel).
@@ -1358,6 +1859,9 @@ export function isPrivilegedRole(role: string): boolean {
  *     messages (source === 'party') flow into the main feed so mods can
  *     observe foreign-party conversations inline. Server-enforced — regular
  *     users never receive foreign-party frames.
+ *  5. A moderator's muted party IDs are excluded from this aggregate view.
+ *     This check deliberately happens before joined-party inclusion so a mod
+ *     can mute one of their own parties as well as a foreign party.
  */
 export function shouldShowInMainFeed(
   m: { channelId: string; source?: string },
@@ -1367,10 +1871,12 @@ export function shouldShowInMainFeed(
     feedPartyIds: string[];
     isMod: boolean;
     isPublicMode: boolean;
+    mutedPartyIds?: readonly string[];
   },
 ): boolean {
   if (m.channelId === ctx.feedParentId) return true;
   if (ctx.childIds.includes(m.channelId)) return true;
+  if (isPartyMutedForModerator(m, ctx)) return false;
   if (ctx.feedPartyIds.includes(m.channelId)) return true;
   // Privileged moderation visibility: all party messages flow into the main
   // feed (website Feed tab + overlay General). Never in public mode.
@@ -1514,6 +2020,76 @@ export function contentMentionsName(content: string, name: string): boolean {
     idx = lc.indexOf(needle, after);
   }
   return false;
+}
+
+/**
+ * Does `content` contain the user-configured notification keyword `keyword`?
+ * (issue #422)
+ *
+ * Deliberately NOT contentMentionsName: that one hard-codes an '@' prefix, so it
+ * can never match a bare word like "nuke" or "WTS". This is its sibling for
+ * plain keywords.
+ *
+ * Matching rules, chosen to avoid the false positives an over-eager filter
+ * causes:
+ *   - case-insensitive
+ *   - bounded on BOTH sides by a non-alphanumeric, so "ore" does not fire on
+ *     "before" and "nuke" does not fire on "nukes"... except that trailing
+ *     boundary would also miss the plural the user almost certainly wants, so
+ *     the trailing edge allows a word character ONLY when the keyword is a
+ *     prefix of a longer word the user typed — see below.
+ *   - a keyword shorter than 2 chars is ignored (too noisy to be useful)
+ *
+ * Concretely we require a leading boundary and allow the match to be followed by
+ * letters (so "nuke" hits "nukes"/"nuked") but not preceded by them (so "ore"
+ * does not hit "before"). That asymmetry is what people actually expect from a
+ * keyword watch list.
+ */
+export function contentMatchesKeyword(content: string, keyword: string): boolean {
+  const kw = keyword.trim().toLowerCase();
+  if (!content || kw.length < 2) return false;
+  const lc = content.toLowerCase();
+  let idx = lc.indexOf(kw);
+  while (idx >= 0) {
+    const before = idx === 0 ? '' : content[idx - 1];
+    if (!before || !/[A-Za-z0-9]/.test(before)) return true;
+    idx = lc.indexOf(kw, idx + kw.length);
+  }
+  return false;
+}
+
+/**
+ * Rate-limit the notification ping (#437).
+ *
+ * A busy Trading channel with a common keyword ("fixer") can trigger many times a
+ * second. Without a floor the overlay would machine-gun the sound, which is worse
+ * than no sound at all. Pure so the policy is testable without an audio device.
+ *
+ * Returns true when enough time has passed since the last ping.
+ */
+export const NOTIFY_SOUND_MIN_GAP_MS = 3000;
+
+export function shouldPlayNotifySound(
+  nowMs: number,
+  lastPlayedMs: number | null,
+  minGapMs: number = NOTIFY_SOUND_MIN_GAP_MS,
+): boolean {
+  if (lastPlayedMs == null) return true;
+  return nowMs - lastPlayedMs >= minGapMs;
+}
+
+/**
+ * Should this message be highlighted / badged for the viewer? True when it
+ * @mentions one of the viewer's own names OR contains one of their configured
+ * notification keywords (#422). Own messages never trigger.
+ */
+export function messageTriggersNotify(
+  content: string,
+  myNames: string[],
+  keywords: string[],
+): boolean {
+  if (myNames.some(n => contentMentionsName(content, n))) return true;
+  return keywords.some(k => contentMatchesKeyword(content, k));
 }
 
 /**
@@ -2929,6 +3505,10 @@ export default function ChatOverlay() {
     setSettingsRaw(prev => {
       const next = { ...prev, ...patch };
       saveSettings(next);
+      // Electron's native shell keeps a superset copy of these settings. The
+      // event is ignored by the website and prevents a later shell slider
+      // change from restoring a stale party-mute list.
+      try { window.dispatchEvent(new CustomEvent('fcm-web-settings-changed', { detail: next })); } catch { /* non-browser test/runtime */ }
       return next;
     });
   }
@@ -3005,6 +3585,8 @@ export default function ChatOverlay() {
   const [modError, setModError] = useState<string | null>(null);
   const [hoveredMsg, setHoveredMsg] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; msg: ChatMessage } | null>(null);
+  const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+  const [editPending, setEditPending] = useState(false);
   // Right-click menu for a joined-party sub-tab (Open / Invite / Leave|Delete).
   const [partyTabCtx, setPartyTabCtx] = useState<{ x: number; y: number; partyId: string } | null>(null);
   // Invite modal (in-overlay, opened from the member panel "+ INVITE"). Holds
@@ -3062,7 +3644,44 @@ export default function ChatOverlay() {
   // ── @mention: unread badges + jump-to-mention ──
   const [unreadMentions, setUnreadMentions] = useState<Record<string, number>>({});
   const myNamesRef  = useRef<string[]>([]);
+  // Notification keywords (#422), read by msgMentionsMe through a ref so the
+  // callback identity stays stable while the list stays live.
+  const notifyKeywordsRef = useRef<string[]>([]);
+  // Notification ping (#437). Settings read through refs so the WS handler does
+  // not need rebuilding when they change. lastNotifySoundAtRef enforces the
+  // rate limit across messages.
+  const notifySoundRef = useRef<{ enabled: boolean; volume: number }>({ enabled: false, volume: 0.5 });
+  const lastNotifySoundAtRef = useRef<number | null>(null);
+  const notifyAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Play the ping, subject to the enabled flag and the rate limit. Never throws:
+  // browsers reject play() without a prior user gesture, and on the website that
+  // rejection is expected until the user has clicked something.
+  const playNotifySound = useCallback(() => {
+    const { enabled, volume } = notifySoundRef.current;
+    if (!enabled) return;
+    const now = Date.now();
+    if (!shouldPlayNotifySound(now, lastNotifySoundAtRef.current)) return;
+    lastNotifySoundAtRef.current = now;
+    try {
+      let el = notifyAudioRef.current;
+      if (!el) { el = new Audio(notifySoundUrl); notifyAudioRef.current = el; }
+      el.volume = volume;
+      el.currentTime = 0;
+      void el.play().catch(() => { /* autoplay blocked — not fatal */ });
+    } catch { /* no audio device / jsdom — not fatal */ }
+  }, []);
+
+  useEffect(() => { notifyKeywordsRef.current = settings.notifyKeywords ?? []; },
+    [settings.notifyKeywords]);
+  useEffect(() => {
+    notifySoundRef.current = {
+      enabled: !!settings.notifySoundEnabled,
+      volume: Math.max(0, Math.min(1, settings.notifySoundVolume ?? 0.5)),
+    };
+  }, [settings.notifySoundEnabled, settings.notifySoundVolume]);
   const myUserIdRef = useRef<string>('');
+  const mutedPartyIdsRef = useRef<Set<string>>(new Set());
   const viewCtxRef  = useRef<{ activeSubId: string; feedId: string | null; feedChildIds: string[]; activePartyId: string | null }>({ activeSubId: '', feedId: null, feedChildIds: [], activePartyId: null });
   const jumpIdxRef  = useRef(0);
   // When a mention badge is clicked we switch channel first, then need to run
@@ -3089,6 +3708,26 @@ export default function ChatOverlay() {
     myNamesRef.current  = [...new Set(ns)];
     myUserIdRef.current = user?.id || '';
   }, [user]);
+  useEffect(() => {
+    mutedPartyIdsRef.current = new Set(
+      isMod && !isPublicMode ? (settings.mutedPartyIds ?? []) : [],
+    );
+  }, [settings.mutedPartyIds, isMod, isPublicMode]);
+  useEffect(() => {
+    if (!isMod || isPublicMode || !settings.mutedPartyIds?.length) return;
+    const muted = new Set(settings.mutedPartyIds);
+    setUnreadMentions(prev => {
+      let changed = false;
+      const next = { ...prev };
+      for (const id of muted) {
+        if (id in next) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [settings.mutedPartyIds, isMod, isPublicMode]);
   // ── Party state ──────────────────────────────────────────────────────────────
   const [partyView, setPartyView] = useState<'browser' | string>('browser');
   const [partySearch, setPartySearch] = useState('');
@@ -3133,15 +3772,61 @@ export default function ChatOverlay() {
   const [partyDescriptionEditor, setPartyDescriptionEditor] = useState<{ partyId: string } | null>(null);
   // live party:member-update cache
   const [partyMemberCache, setPartyMemberCache] = useState<Record<string, PartyMember[]>>({});
+  const [pmView, setPmView] = useState<'inbox' | string>('inbox');
+  const [privateConversations, setPrivateConversations] = useState<PrivateConversationSummary[]>([]);
+  const [privateMessages, setPrivateMessages] = useState<Record<string, ChatMessage[]>>({});
+  const [pmSearch, setPmSearch] = useState('');
+  const [pmSearchResults, setPmSearchResults] = useState<PrivateUserSearchResult[]>([]);
+  const [pmSearchLoading, setPmSearchLoading] = useState(false);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
+
+  useEffect(() => { pmViewRef.current = pmView; }, [pmView]);
+
+  useEffect(() => {
+    if (isPublicMode || activeMainId !== PM_MAIN_ID || pmView !== 'inbox') {
+      setPmSearchLoading(false);
+      setPmSearchResults([]);
+      return;
+    }
+    const term = pmSearch.trim();
+    if (term.length < 2) {
+      setPmSearchLoading(false);
+      setPmSearchResults([]);
+      return;
+    }
+    setPmSearchLoading(true);
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await api.get<{ results: PrivateUserSearchResult[] }>(`/api/block/search?q=${encodeURIComponent(term)}`);
+        setPmSearchResults((res?.results ?? []).filter(result => result.userId !== (user?.id ?? '')));
+      } catch {
+        setPmSearchResults([]);
+      } finally {
+        setPmSearchLoading(false);
+      }
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [pmSearch, activeMainId, pmView, isPublicMode, user?.id]);
 
   // Close the floating member panel when the overlay idle-collapses (the shell
   // fires `fcm-overlay-collapsed`). The panel is absolutely positioned, so left
   // open it would hang over the collapsed header strip during auto-hide. It can
   // be reopened after the user expands again. Also close ALL context menus +
   // popovers so none float over the collapsed strip (item 4b).
+  // Live collapsed state (#420). The shell emits this on BOTH transitions, unlike
+  // 'fcm-overlay-collapsed' below which is a one-way "close floating panels" signal.
+  const [shellCollapsed, setShellCollapsed] = useState(false);
+  useEffect(() => {
+    const onState = (e: Event) => {
+      const detail = (e as CustomEvent<{ collapsed?: boolean }>).detail;
+      setShellCollapsed(!!detail?.collapsed);
+    };
+    window.addEventListener('fcm-overlay-collapse-state', onState);
+    return () => window.removeEventListener('fcm-overlay-collapse-state', onState);
+  }, []);
+
   useEffect(() => {
     const onCollapsed = () => {
       setMemberPanelOpen(false);
@@ -3428,6 +4113,11 @@ export default function ChatOverlay() {
   // carried a stale or login-only username (e.g. "devotek" → "Devotek")
   // and to re-resolve names when the backend broadcasts a fresh identity.
   const knownDisplayNames = useRef<Map<string, string>>(new Map());
+  // Parallel to knownDisplayNames: the latest cosmetics seen for a user, so a
+  // colour/effect change back-applies to rendered history the same way a rename does.
+  const knownCosmetics = useRef<Map<string, {
+    nameColor?: string | null; effectId?: string | null; tag?: string | null; badges?: string[]; starColor?: string | null;
+  }>>(new Map());
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContRef = useRef<HTMLDivElement>(null);
@@ -3435,6 +4125,12 @@ export default function ChatOverlay() {
   // first time messages populate, so opening the page lands you at the latest
   // message. The in-game overlay (overlayShell) deliberately does NOT auto-jump.
   const didInitialScrollRef = useRef(false);
+  // #313: Tracks whether the user is currently pinned to the bottom of the feed,
+  // sampled from real scroll events (see isNearBottom). The auto-scroll effect
+  // reads THIS — the user's actual intent — instead of re-measuring distance
+  // after a (possibly tall) message has already been appended, which corrupts
+  // the reading. Defaults true so a fresh feed pins to the latest message.
+  const stickToBottomRef = useRef(true);
   // Timer used to debounce the initial cold-start scroll-to-bottom (Fix 2).
   // We reset the timer on each incoming messages batch during the initial-load
   // window and only fire scrollToBottom() once the feed has quieted for ~220ms.
@@ -3486,6 +4182,14 @@ export default function ChatOverlay() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // Rich (contentEditable) input ref — used only when overlayShell is active.
   const richInputRef = useRef<HTMLDivElement>(null);
+  const editingMessageRef = useRef<ChatMessage | null>(null);
+  const editPendingRef = useRef(false);
+  useEffect(() => { editingMessageRef.current = editingMessage; }, [editingMessage]);
+  const richSelectionRef = useRef<{ start: number; end: number }>({ start: 0, end: 0 });
+  // One-shot flag: when an external setInputText should land the caret at the END
+  // (slash-command autocomplete) rather than restoring the saved offset. Consumed
+  // and cleared by the rich-input sync effect on the next run.
+  const caretToEndRef = useRef<boolean>(false);
   // Tracks whether the chat input had focus immediately before a state update
   // (e.g. chat:history repopulation) so we can restore it afterward.
   const inputWasFocusedRef = useRef<boolean>(false);
@@ -3496,21 +4200,20 @@ export default function ChatOverlay() {
   // custom emoji <img data-token="<:name:id>"> nodes become their token and
   // everything else is plain text. Preserves newlines from <br>/<div>.
   const serializeRichInput = useCallback((el: HTMLDivElement): string => {
-    function walk(node: Node): string {
-      if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
-      if (node.nodeName === 'IMG') {
-        const token = (node as HTMLImageElement).dataset.token;
-        return token ?? (node as HTMLImageElement).alt ?? '';
-      }
-      if (node.nodeName === 'BR') return '\n';
-      let out = '';
-      const isBlock = node.nodeName === 'DIV' || node.nodeName === 'P';
-      for (const child of Array.from(node.childNodes)) out += walk(child);
-      if (isBlock && (node as Element).previousSibling) out = '\n' + out;
-      return out;
-    }
-    return walk(el).replace(/\n$/, ''); // strip trailing newline added by browser
+    return serializeRichContent(el);
   }, []);
+
+  const syncRichSelectionRef = useCallback((el: HTMLDivElement) => {
+    const offsets = getRichSelectionOffsets(el);
+    if (offsets) {
+      richSelectionRef.current = offsets;
+      return offsets;
+    }
+    const end = serializeRichInput(el).length;
+    const fallback = { start: end, end };
+    richSelectionRef.current = fallback;
+    return fallback;
+  }, [serializeRichInput]);
 
   // Stable callback wrapper over the top-level, unit-tested buildRichHtmlImpl
   // (which owns all HTML escaping/sanitization for the rich input). Kept as a
@@ -3522,56 +4225,24 @@ export default function ChatOverlay() {
   const richInsertAtCaret = useCallback((token: string) => {
     const el = richInputRef.current;
     if (!el) { insertAtCaret(token); return; } // fallback to textarea
+    const current = serializeRichInput(el);
+    const liveSelection = getRichSelectionOffsets(el);
+    const fallbackSelection = richSelectionRef.current;
+    const next = insertTokenIntoText(
+      current,
+      liveSelection?.start ?? fallbackSelection.start,
+      liveSelection?.end ?? fallbackSelection.end,
+      token,
+      255,
+    );
+
+    // Rebuild from the canonical plain-text model immediately so rapid picker
+    // clicks reuse the advanced caret and the composer keeps emoji inline.
+    el.innerHTML = buildRichHtml(next.text);
     el.focus();
-    const sel = window.getSelection();
-    if (!sel || sel.rangeCount === 0) {
-      // No selection -- append. Serialize from the live DOM rather than
-      // reading inputText state, which may be stale on rapid consecutive inserts.
-      const current = serializeRichInput(el);
-      const newText = (current + token).slice(0, 255);
-      setInputText(newText);
-      el.innerHTML = buildRichHtml(newText);
-      return;
-    }
-    const range = sel.getRangeAt(0);
-    // Delete any selected content first
-    range.deleteContents();
-    const CUSTOM_RE = /<(a?):([A-Za-z0-9_]+):(\d{16,22})>/;
-    if (CUSTOM_RE.test(token)) {
-      // Insert as an <img> node
-      const m = CUSTOM_RE.exec(token)!;
-      const animated = m[1] === 'a';
-      const name = m[2];
-      const id = m[3];
-      const src = animated
-        ? `https://cdn.discordapp.com/emojis/${id}.webp?animated=true`
-        : `https://cdn.discordapp.com/emojis/${id}.png`;
-      const img = document.createElement('img');
-      img.src = src;
-      img.alt = `:${name}:`;
-      img.title = `:${name}:`;
-      img.dataset.token = token;
-      img.style.cssText = 'height:20px;vertical-align:middle;margin:0 1px;display:inline';
-      range.insertNode(img);
-      // Move caret after the img
-      const after = document.createRange();
-      after.setStartAfter(img);
-      after.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(after);
-    } else {
-      // Plain text / unicode emoji
-      const textNode = document.createTextNode(token);
-      range.insertNode(textNode);
-      const after = document.createRange();
-      after.setStartAfter(textNode);
-      after.collapse(true);
-      sel.removeAllRanges();
-      sel.addRange(after);
-    }
-    // Re-serialize and update state
-    const serialized = serializeRichInput(el).slice(0, 255);
-    setInputText(serialized);
+    placeRichCaretAtOffset(el, next.caretOffset);
+    richSelectionRef.current = { start: next.caretOffset, end: next.caretOffset };
+    setInputText(next.text);
   }, [setInputText, buildRichHtml, serializeRichInput, insertAtCaret]);
 
   // Sync the rich input's HTML to the current inputText whenever it changes
@@ -3591,62 +4262,21 @@ export default function ChatOverlay() {
     const current = serializeRichInput(el);
     if (current === inputText) return; // DOM already matches — nothing to do
 
-    // Save caret offset before rewrite so we can restore it after.
-    let savedOffset: number | null = null;
-    try {
-      const sel = window.getSelection();
-      if (sel && sel.rangeCount > 0 && el.contains(sel.getRangeAt(0).startContainer)) {
-        // Walk text nodes to compute a flat character offset.
-        const range = sel.getRangeAt(0);
-        let offset = 0;
-        const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-        let node: Node | null;
-        while ((node = walker.nextNode())) {
-          if (node === range.startContainer) {
-            offset += range.startOffset;
-            break;
-          }
-          offset += (node as Text).length;
-        }
-        savedOffset = offset;
-      }
-    } catch {
-      // Ignore — will fall back to end-of-content
-    }
+    const savedOffset = getRichSelectionOffsets(el)?.start ?? richSelectionRef.current.start;
+    // Consume the one-shot "caret to end" flag (set by slash-command autocomplete).
+    const forceToEnd = caretToEndRef.current;
+    caretToEndRef.current = false;
 
     el.innerHTML = buildRichHtml(inputText);
 
-    // Restore caret (or place at end) after programmatic set.
+    // Restore caret (or, for command completions, collapse to end) after the
+    // programmatic set.
     requestAnimationFrame(() => {
       const target = richInputRef.current;
       if (!target) return;
-      const r = document.createRange();
-      if (savedOffset !== null) {
-        // Re-walk text nodes and place caret at the saved offset (clamped).
-        let remaining = savedOffset;
-        const walker = document.createTreeWalker(target, NodeFilter.SHOW_TEXT);
-        let placed = false;
-        let node: Node | null;
-        while ((node = walker.nextNode())) {
-          const len = (node as Text).length;
-          if (remaining <= len) {
-            r.setStart(node, remaining);
-            r.collapse(true);
-            placed = true;
-            break;
-          }
-          remaining -= len;
-        }
-        if (!placed) {
-          r.selectNodeContents(target);
-          r.collapse(false);
-        }
-      } else {
-        r.selectNodeContents(target);
-        r.collapse(false);
-      }
-      const s = window.getSelection();
-      if (s) { s.removeAllRanges(); s.addRange(r); }
+      const caretOffset = resolveExternalSetCaret(inputText.length, savedOffset, forceToEnd);
+      placeRichCaretAtOffset(target, caretOffset);
+      richSelectionRef.current = { start: caretOffset, end: caretOffset };
     });
   }, [inputText]); // eslint-disable-line react-hooks/exhaustive-deps
   // ^^ Intentionally omitting buildRichHtml/serializeRichInput/overlayShell —
@@ -3656,6 +4286,7 @@ export default function ChatOverlay() {
 
   const activeSubIdRef = useRef(activeSubId);
   const partyViewRef = useRef<string>('browser');
+  const pmViewRef = useRef<'inbox' | string>('inbox');
   // Track which party histories have been requested this WS session to avoid duplicate sends.
   const requestedPartyHistoriesRef = useRef<Set<string>>(new Set());
   const allChannelsRef = useRef<Channel[]>([]);
@@ -3707,6 +4338,13 @@ export default function ChatOverlay() {
   // relay. The website (no shell) keeps liveVersion (the latest available).
   const [shellInfo, setShellInfo] = useState<{ appVersion?: string; relayHost?: string } | null>(null);
   const displayVersion = (overlayShell && shellInfo?.appVersion) || liveVersion || __APP_VERSION__;
+  // Mirror displayVersion into a ref so the long-lived WS message handler (whose
+  // effect deps are [wsGate, wsReconnectTick]) always compares against the CURRENT
+  // installed/displayed version — not the value captured when the socket connected
+  // (displayVersion arrives async from the shell bridge / GET /api/version).
+  const displayVersionRef = useRef(displayVersion);
+  useEffect(() => { displayVersionRef.current = displayVersion; }, [displayVersion]);
+  const [updateAvailableVersion, setUpdateAvailableVersion] = useState<string | null>(null);
   // DEV indicator: website dev-server (localhost) OR overlay on a non-prod relay.
   const isDevEnv = (typeof window !== 'undefined' && window.location.hostname === 'localhost')
     || (!!overlayShell && !!shellInfo?.relayHost && !isProdRelayHost(shellInfo.relayHost));
@@ -4375,6 +5013,7 @@ export default function ChatOverlay() {
             if (pv && pv !== 'browser') {
               ws!.send(JSON.stringify({ type: 'party:history', payload: { partyId: pv, limit: 200 } }));
             }
+            ws!.send(JSON.stringify({ type: 'pm:list', payload: {} }));
             // Refetch channels on every (re)connect so the list is always current
             // even if channels:refresh events were missed during a disconnect.
             refetchChannelsRef.current?.();
@@ -4390,6 +5029,11 @@ export default function ChatOverlay() {
           };
           ws.onclose = (ev?: { code?: number; reason?: string }) => {
             setConnected(false);
+            if (editPendingRef.current) {
+              editPendingRef.current = false;
+              setEditPending(false);
+              showActionToast('err', 'Edit could not be saved. Please retry.');
+            }
             // Log the close code + reason. Critical for diagnosing the in-game
             // reconnect storm: a 1006 (abnormal/no close frame) points at a
             // transport/proxy drop (Cloudflare idle, NIC sleep, AV), whereas a
@@ -4443,9 +5087,18 @@ export default function ChatOverlay() {
                   channelId: frame.payload.channelId,
                   source: frame.payload.source || 'game',
                   timestamp: frame.payload.createdAt || frame.payload.timestamp,
+                  editedAt: frame.payload.editedAt ?? null,
                   responseColor: frame.payload.responseColor ?? null,
                   avatarUrl: frame.payload.avatarUrl ?? null,
                   metadata: frame.payload.metadata ?? null,
+                  // Preserve the server-resolved appearance fields. Dropping these
+                  // here made a freshly sent message look correct only until a
+                  // tab/history refresh rebuilt the row from the plain message.
+                  nameColor: frame.payload.nameColor ?? null,
+                  effectId: frame.payload.effectId ?? null,
+                  tag: frame.payload.tag ?? null,
+                  badges: frame.payload.badges ?? [],
+                  starColor: frame.payload.starColor ?? null,
                 }]);
 
                 // Track active giveaways from broadcast metadata.
@@ -4493,8 +5146,13 @@ export default function ChatOverlay() {
                 {
                   const content: string = frame.payload.content || '';
                   const chId: string = frame.payload.channelId;
+                  const mutedParty = isPartyMutedForModerator(
+                    { channelId: chId, source: frame.payload.source },
+                    { isMod, isPublicMode, mutedPartyIds: mutedPartyIdsRef.current },
+                  );
                   const mentionsMe = frame.payload.userId !== myUserIdRef.current
-                    && myNamesRef.current.some(n => contentMentionsName(content, n));
+                    && !mutedParty
+                    && messageTriggersNotify(content, myNamesRef.current, notifyKeywordsRef.current);
                   if (mentionsMe && chId) {
                     const v = viewCtxRef.current;
                     const inView = v.feedId
@@ -4508,6 +5166,7 @@ export default function ChatOverlay() {
                     // no-op (idle-timer reset only; no focus steal). The unread badge +
                     // jump button stay gated on !inView below.
                     window.dispatchEvent(new CustomEvent('fcm-mention-appear', { detail: { chId } }));
+                    playNotifySound();
                     if (!inView) {
                       setUnreadMentions(prev => ({ ...prev, [chId]: (prev[chId] || 0) + 1 }));
                     }
@@ -4528,8 +5187,14 @@ export default function ChatOverlay() {
                     id: m.id, content: m.content, username: m.username,
                     userId: uid, channelId: m.channel_id ?? m.channelId,
                     source: m.source || 'game', timestamp: m.created_at ?? m.createdAt,
+                    editedAt: m.edited_at ?? m.editedAt ?? null,
                     avatarUrl: av,
                     metadata: m.metadata ?? null,
+                    nameColor: m.nameColor ?? null,
+                    effectId: m.effectId ?? null,
+                    tag: m.tag ?? null,
+                    badges: m.badges ?? [],
+                    starColor: m.starColor ?? null,
                   };
                 });
                 // ── Lazy-load branch ─────────────────────────────────────────
@@ -4607,6 +5272,44 @@ export default function ChatOverlay() {
               } else if (frame.type === 'chat:delete') {
                 setMessages(prev => prev.filter(m => m.id !== frame.payload.messageId));
                 setFeedMessages(prev => prev.filter(m => m.id !== frame.payload.messageId));
+              } else if (frame.type === 'chat:edit') {
+                const payload = frame.payload ?? {};
+                const update = (message: ChatMessage): ChatMessage => message.id === payload.messageId
+                  ? { ...message, content: payload.content, editedAt: payload.editedAt ?? null }
+                  : message;
+                setMessages(prev => prev.map(update));
+                if (payload.source === 'pm' && typeof payload.conversationId === 'string') {
+                  setPrivateMessages(prev => ({
+                    ...prev,
+                    [payload.conversationId]: (prev[payload.conversationId] ?? []).map(update),
+                  }));
+                  setPrivateConversations(prev => prev.map(conversation =>
+                    conversation.conversationId === payload.conversationId
+                      ? { ...conversation, lastMessagePreview: payload.content, lastMessageAt: payload.createdAt ?? conversation.lastMessageAt }
+                      : conversation,
+                  ));
+                }
+              } else if (frame.type === 'message:edit:ack') {
+                const payload = frame.payload ?? {};
+                if (payload.messageId === editingMessageRef.current?.id) {
+                  editingMessageRef.current = null;
+                  editPendingRef.current = false;
+                  setEditingMessage(null);
+                  setEditPending(false);
+                  setInputText('');
+                  if (richInputRef.current) richInputRef.current.innerHTML = '';
+                  showActionToast('ok', 'Message edited');
+                  requestAnimationFrame(() => {
+                    if (richInputRef.current) richInputRef.current.focus();
+                    else inputRef.current?.focus();
+                  });
+                }
+              } else if (frame.type === 'error') {
+                if (editPendingRef.current) {
+                  editPendingRef.current = false;
+                  setEditPending(false);
+                }
+                if (frame.payload?.message) showActionToast('err', frame.payload.message);
               } else if (frame.type === 'mod:report') {
                 setReportAlerts(prev => [frame.payload, ...prev].slice(0, 5));
               } else if (frame.type === 'channels:refresh') {
@@ -4670,6 +5373,85 @@ export default function ChatOverlay() {
                 setPartyMemberCache(prev => { const n = { ...prev }; delete n[partyId]; return n; });
                 // If viewing this party, return to browser
                 setPartyView(prev => prev === partyId ? 'browser' : prev);
+              } else if (frame.type === 'pm:list') {
+                const nextConversations = Array.isArray(frame.payload?.conversations)
+                  ? frame.payload.conversations as PrivateConversationSummary[]
+                  : [];
+                setPrivateConversations(nextConversations);
+                if (typeof frame.payload?.openedConversationId === 'string') {
+                  setActiveMainId(PM_MAIN_ID);
+                  setPmView(frame.payload.openedConversationId);
+                } else if (pmViewRef.current !== 'inbox' && !nextConversations.some(c => c.conversationId === pmViewRef.current)) {
+                  setPmView('inbox');
+                }
+              } else if (frame.type === 'pm:history') {
+                const conversationId = typeof frame.payload?.conversationId === 'string' ? frame.payload.conversationId : '';
+                const incoming = Array.isArray(frame.payload?.messages)
+                  ? (frame.payload.messages as PrivateMessagePayload[]).map(toPrivateChatMessage)
+                  : [];
+                if (conversationId) {
+                  const latestMessage = incoming.length > 0 ? incoming[incoming.length - 1] : null;
+                  setPrivateMessages(prev => ({ ...prev, [conversationId]: incoming }));
+                  setPrivateConversations(prev => prev.map(conversation =>
+                    conversation.conversationId === conversationId
+                      ? {
+                        ...conversation,
+                        unreadCount: 0,
+                        lastMessagePreview: latestMessage?.content ?? conversation.lastMessagePreview,
+                        lastMessageSenderId: latestMessage?.userId ?? conversation.lastMessageSenderId,
+                        lastMessageAt: latestMessage?.timestamp ?? conversation.lastMessageAt,
+                      }
+                      : conversation,
+                  ));
+                }
+              } else if (frame.type === 'pm:message') {
+                const payload = frame.payload as PrivateMessagePayload;
+                if (!payload?.conversationId || !payload?.id) return;
+                const mapped = toPrivateChatMessage(payload);
+                const senderIsMe = payload.senderId === (user?.id ?? '');
+                const conversationActive = activeMainIdRef.current === PM_MAIN_ID && pmViewRef.current === payload.conversationId;
+                setPrivateMessages(prev => {
+                  const existing = prev[payload.conversationId] ?? [];
+                  if (existing.some(message => message.id === payload.id)) return prev;
+                  return {
+                    ...prev,
+                    [payload.conversationId]: [...existing, mapped],
+                  };
+                });
+                setPrivateConversations(prev => {
+                  const existing = prev.find(conversation => conversation.conversationId === payload.conversationId);
+                  const unreadCount = senderIsMe || conversationActive
+                    ? 0
+                    : (existing?.unreadCount ?? 0) + 1;
+                  const nextConversation: PrivateConversationSummary = {
+                    conversationId: payload.conversationId,
+                    otherUserId: senderIsMe ? payload.recipientId : payload.senderId,
+                    otherDisplayName: senderIsMe
+                      ? (existing?.otherDisplayName ?? 'Wanderer')
+                      : payload.senderName,
+                    lastMessagePreview: payload.content,
+                    lastMessageSenderId: payload.senderId,
+                    lastMessageAt: payload.createdAt,
+                    unreadCount,
+                  };
+                  const others = prev.filter(conversation => conversation.conversationId !== payload.conversationId);
+                  return [nextConversation, ...others];
+                });
+                if (!senderIsMe && conversationActive && wsRef.current?.readyState === WebSocket.OPEN) {
+                  wsRef.current.send(JSON.stringify({
+                    type: 'pm:read',
+                    payload: { conversationId: payload.conversationId },
+                  }));
+                }
+              } else if (frame.type === 'pm:read') {
+                const conversationId = typeof frame.payload?.conversationId === 'string' ? frame.payload.conversationId : '';
+                if (conversationId) {
+                  setPrivateConversations(prev => prev.map(conversation =>
+                    conversation.conversationId === conversationId
+                      ? { ...conversation, unreadCount: frame.payload?.unreadCount ?? 0 }
+                      : conversation,
+                  ));
+                }
               } else if (frame.type === 'user:identity_updated') {
                 // Backend broadcasts the resolved displayName whenever a user's
                 // FO76 name or Discord name is updated. Store it so we can
@@ -4677,16 +5459,34 @@ export default function ChatOverlay() {
                 // history messages that may have carried a stale login-only name
                 // (e.g. "devotek" instead of "Devotek"). Parity with the desktop
                 // _knownDisplayNames + history correction in ChatOverlayWindow.cs.
-                const { userId, displayName } = frame.payload ?? {};
-                if (userId && displayName && typeof displayName === 'string') {
+                // The same frame also carries supporter cosmetics (colour, effect,
+                // tag, badges) so a cosmetics change re-styles already-rendered
+                // history without a reconnect — one handler covers both cases.
+                // `displayName` is absent when only cosmetics changed, so the two
+                // are applied independently rather than gated on each other.
+                const { userId, displayName, nameColor, effectId, tag, badges, starColor } = frame.payload ?? {};
+                const hasCosmetics = ['nameColor', 'effectId', 'tag', 'badges', 'starColor']
+                  .some(key => key in (frame.payload ?? {}));
+                if (userId && typeof displayName === 'string' && displayName) {
                   knownDisplayNames.current.set(userId, displayName);
+                }
+                if (userId && (displayName || hasCosmetics)) {
+                  knownCosmetics.current.set(userId, { nameColor, effectId, tag, badges, starColor });
                   // Back-apply to already-stored messages so they show the
                   // correct name immediately without requiring a reconnect.
-                  setMessages(prev => prev.map(m =>
-                    m.userId === userId && m.source !== 'bot' && m.username !== '[Vault-Tec]'
-                      ? { ...m, username: displayName }
-                      : m
-                  ));
+                  setMessages(prev => prev.map(m => {
+                    if (m.userId !== userId || m.source === 'bot' || m.username === '[Vault-Tec]') return m;
+                    const next = { ...m };
+                    if (typeof displayName === 'string' && displayName) next.username = displayName;
+                    if (hasCosmetics) {
+                      next.nameColor = nameColor ?? null;
+                      next.effectId = effectId ?? null;
+                      next.tag = tag ?? null;
+                      next.badges = badges ?? [];
+                      next.starColor = starColor ?? null;
+                    }
+                    return next;
+                  }));
                 }
               } else if (frame.type === 'giveaway:update') {
                 const { giveawayId, shortId, entryCount, status, winnerName } = frame.payload ?? {};
@@ -4727,6 +5527,15 @@ export default function ChatOverlay() {
                       return next;
                     });
                   }, 4100);
+                }
+              } else if (frame.type === 'app:update-available') {
+                // The backend broadcasts this to EVERY client whenever it merely has
+                // a latest version cached — it does not compare to the client's build.
+                // Only light the dot when `v` is STRICTLY newer than what we're running,
+                // mirroring the shell's guarded `relay:update-available` path (main.js).
+                const v = frame.payload?.latestVersion;
+                if (v && typeof v === 'string' && isVersionNewer(v, displayVersionRef.current)) {
+                  setUpdateAvailableVersion(v);
                 }
               }
             } catch { /* ignore */ }
@@ -4802,6 +5611,7 @@ export default function ChatOverlay() {
                 channelId: m.channelId ?? m.channel_id ?? id,
                 source: m.source || 'game',
                 timestamp: m.createdAt ?? m.created_at,
+                editedAt: m.editedAt ?? m.edited_at ?? null,
                 avatarUrl: m.avatarUrl ?? null,
                 metadata: m.metadata ?? null,
               } as ChatMessage)))
@@ -4841,10 +5651,16 @@ export default function ChatOverlay() {
   // side. ONLY public parties are ever fetched (the endpoint rejects private).
   useEffect(() => {
     if (!isPublicMode) return;
-    const ids = publicPartyIdKey ? publicPartyIdKey.split(',') : [];
+    // A public session can discover many parties. Keep the poll bounded so a
+    // stale URL cannot fan out an unbounded number of unauthenticated reads.
+    const ids = boundedPublicPartyIds(publicPartyIdKey);
     if (ids.length === 0) return;
+    let inFlight = false;
+    let cancelled = false;
 
     async function loadPartyMsgs() {
+      if (inFlight) return;
+      inFlight = true;
       try {
         const results = await Promise.all(
           ids.map(id =>
@@ -4858,6 +5674,7 @@ export default function ChatOverlay() {
                 channelId: m.channelId ?? m.partyId ?? id,
                 source: 'party',
                 timestamp: m.createdAt ?? m.created_at,
+                editedAt: m.editedAt ?? m.edited_at ?? null,
                 avatarUrl: null,
                 metadata: null,
               } as ChatMessage)))
@@ -4865,8 +5682,9 @@ export default function ChatOverlay() {
           )
         );
         const all = results.flat();
-        if (all.length === 0) return;
+        if (cancelled || all.length === 0) return;
         setMessages(prev => {
+          if (cancelled) return prev;
           const incomingIds = new Set(all.map(m => m.id));
           const partyIdSet = new Set(ids);
           // Drop prior party messages for these parties (refresh) but keep
@@ -4876,12 +5694,18 @@ export default function ChatOverlay() {
           merged.sort((a, b) => ((a.timestamp ?? '') < (b.timestamp ?? '') ? -1 : 1));
           return merged.slice(-800);
         });
-      } catch { /* ignore poll failure */ }
+      } catch { /* ignore poll failure */
+      } finally {
+        inFlight = false;
+      }
     }
 
     loadPartyMsgs();
     const t = setInterval(loadPartyMsgs, 4000);
-    return () => clearInterval(t);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
   }, [isPublicMode, publicPartyIdKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { activeSubIdRef.current = activeSubId; }, [activeSubId]);
@@ -4895,6 +5719,14 @@ export default function ChatOverlay() {
     fo76SubsRef.current   = fo76Main?.children ?? [];
     fo76MainIdRef.current = fo76Main?.id ?? null;
   }, [fo76Main?.id, channelsRaw]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!isPublicMode || activeMainId !== PM_MAIN_ID) return;
+    setPmView('inbox');
+    if (fo76Main?.id) {
+      setActiveMainId(fo76Main.id);
+      if (fo76Main.children?.[0]?.id) setActiveSubId(fo76Main.children[0].id);
+    }
+  }, [isPublicMode, activeMainId, fo76Main]);
   // Persist the selected tab at module level (overlay only) so a remount restores
   // it instead of snapping back to General. Only store real selections.
   useEffect(() => {
@@ -4913,6 +5745,15 @@ export default function ChatOverlay() {
     }));
     requestedPartyHistoriesRef.current.add(partyView);
   }, [activeMainId, partyView]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (activeMainId !== PM_MAIN_ID || pmView === 'inbox') return;
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+    wsRef.current.send(JSON.stringify({
+      type: 'pm:history',
+      payload: { conversationId: pmView, limit: 100 },
+    }));
+  }, [activeMainId, pmView]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load history for all joined parties so the General feed can show party
   // messages that arrived before this session (not just live messages).
@@ -5011,12 +5852,15 @@ export default function ChatOverlay() {
       return;
     }
 
-    const container = end.parentElement;
-    if (container) {
-      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-      if (distanceFromBottom > 80) return; // user scrolled up to read — don't yank them
-    }
-    end.scrollIntoView({ behavior: 'auto' });
+    // #313: Decide from the user's tracked intent (sampled during real scroll
+    // events, see the stick-tracking effect below) — NOT from a distance reading
+    // taken after a tall card was already appended, which reads as the card's
+    // height and was misfiring the "user scrolled up" guard.
+    if (!stickToBottomRef.current) return; // user scrolled up to read — don't yank them
+    // Multi-pass pin so a tall card (and its async-loading image) lands fully in
+    // view across the reflow frames, not a single-shot scrollIntoView that ends
+    // up short.
+    scrollToBottom();
   }, [messages, scrollToBottom]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Clean up the initial-scroll debounce timer on unmount.
@@ -5026,6 +5870,25 @@ export default function ChatOverlay() {
         clearTimeout(initialScrollTimerRef.current);
       }
     };
+  }, []);
+
+  // #313: Track stick-to-bottom INTENT from real scroll events. Reading the
+  // distance HERE (as the user scrolls) is what lets the auto-scroll effect
+  // distinguish "user scrolled up to read history" from "a tall card was just
+  // appended at the bottom" — the latter inflates a post-append distance reading
+  // and used to misfire the guard. Always-on and seeded from the actual position
+  // (never assumed pinned), independent of the lazy-load top-scroll listener
+  // (which is gated off in public mode). The container is display-toggled, not
+  // unmounted, so a single mount-time attach stays valid.
+  useEffect(() => {
+    const cont = messagesContRef.current;
+    if (!cont) return;
+    const onScroll = () => {
+      stickToBottomRef.current = isNearBottom(cont.scrollHeight, cont.scrollTop, cont.clientHeight);
+    };
+    onScroll(); // seed from the current position
+    cont.addEventListener('scroll', onScroll, { passive: true });
+    return () => cont.removeEventListener('scroll', onScroll);
   }, []);
 
   // (a2) Activating the chat by clicking/focusing the input box → land at the
@@ -5050,6 +5913,7 @@ export default function ChatOverlay() {
   // pushed under the indicator. Re-pin to bottom on each typing-visibility change
   // so the newest message stays fully visible above the indicator.
   const typingVisibleForScope = useMemo(() => {
+    if (activeMainId === PM_MAIN_ID) return false;
     const isParty = activeMainId === PARTY_MAIN_ID && partyView !== 'browser';
     const activeScopeKey = isParty ? `party:${partyView}` : `ch:${activeSubId}`;
     const myId = user?.id ?? '';
@@ -5061,8 +5925,7 @@ export default function ChatOverlay() {
     if (!cont) return;
     // Generous threshold so the indicator's own height (~16px) isn't read as
     // "scrolled up". If the user genuinely scrolled up to read history, leave them.
-    const distanceFromBottom = cont.scrollHeight - cont.scrollTop - cont.clientHeight;
-    if (distanceFromBottom > 120) return;
+    if (!isNearBottom(cont.scrollHeight, cont.scrollTop, cont.clientHeight, TYPING_INDICATOR_STICK_THRESHOLD)) return;
     const pin = () => { const c = messagesContRef.current; if (c) c.scrollTop = c.scrollHeight; };
     requestAnimationFrame(() => { pin(); requestAnimationFrame(pin); });
     setTimeout(pin, 50);
@@ -5284,10 +6147,21 @@ export default function ChatOverlay() {
   }, [inputText, acSuggestions.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function selectAcSuggestion(cmd: SlashCommand) {
-    setInputText(cmd.trigger + ' ');
+    const nextText = cmd.trigger + ' ';
+    // Land the caret at the END of the completed command, not wherever it sat
+    // mid-typing (the rich-input sync effect would otherwise restore the saved
+    // offset and drop the caret into the middle of the command).
+    caretToEndRef.current = true;
+    setInputText(nextText);
     setAcOpen(false);
-    if (richInputRef.current) richInputRef.current.focus();
-    else inputRef.current?.focus();
+    if (richInputRef.current) {
+      richInputRef.current.focus();
+    } else if (inputRef.current) {
+      // Website plain-textarea path: place caret at end directly (no rich sync effect).
+      const ta = inputRef.current;
+      ta.focus();
+      requestAnimationFrame(() => { ta.setSelectionRange(nextText.length, nextText.length); });
+    }
   }
 
   // ── Wiki autocomplete effect ──────────────────────────────────────────────
@@ -5441,6 +6315,38 @@ export default function ChatOverlay() {
     else inputRef.current?.focus();
   }
 
+  function insertMentionFromClick(displayName: string) {
+    const textarea = inputRef.current;
+    if (textarea) {
+      const start = textarea.selectionStart ?? inputText.length;
+      const end = textarea.selectionEnd ?? start;
+      const next = buildMentionInsert(inputText, displayName, start, end);
+      const afterLen = inputText.slice(end).length;
+      const newCaret = Math.max(0, next.length - afterLen);
+      setInputText(next);
+      requestAnimationFrame(() => {
+        if (!inputRef.current) return;
+        inputRef.current.focus();
+        inputRef.current.setSelectionRange(newCaret, newCaret);
+      });
+      return;
+    }
+    if (richInputRef.current) {
+      const next = buildMentionInsert(inputText, displayName, inputText.length, inputText.length);
+      setInputText(next);
+      richInputRef.current.innerHTML = buildRichHtml(next);
+      requestAnimationFrame(() => {
+        if (!richInputRef.current) return;
+        richInputRef.current.focus();
+        const r = document.createRange();
+        r.selectNodeContents(richInputRef.current);
+        r.collapse(false);
+        const s = window.getSelection();
+        if (s) { s.removeAllRanges(); s.addRange(r); }
+      });
+    }
+  }
+
   // ── Offline outbox helper ─────────────────────────────────────────────────
   // Sends a chat:send frame immediately when the WS is open, or queues it for
   // automatic flush on the next reconnect. Inert in public mode.
@@ -5457,12 +6363,25 @@ export default function ChatOverlay() {
 
   // Build + send/queue a plain chat:send frame. Centralizes the payload shape
   // (clientCreatedAt stamping, mentions default) shared by every text send site.
+  // Log any emoji (native or custom) in an OUTGOING message into the recent-emoji
+  // store, so typing+sending an emoji surfaces it in the picker's Recent row the
+  // same as clicking it from the picker. Newest-first, deduped, capped at
+  // RECENT_EMOJI_LIMIT — all enforced by recordRecentEmoji/save.
+  const recordSentEmojis = useCallback((content: string) => {
+    const tokens = extractEmojiTokens(content);
+    if (tokens.length === 0) return;
+    let next = loadRecentEmojiTokens();
+    for (const token of tokens) next = recordRecentEmoji(next, token);
+    saveRecentEmojiTokens(next);
+  }, []);
+
   const sendChatMessage = useCallback((content: string, channelId: string, mentions: { name: string; discordId: string }[] = []) => {
+    recordSentEmojis(content);
     sendOrQueueChat({
       type: 'chat:send',
       payload: { content, channelId, clientCreatedAt: new Date().toISOString(), mentions },
     });
-  }, [sendOrQueueChat]);
+  }, [sendOrQueueChat, recordSentEmojis]);
 
   // Send a party:send frame. Unlike chat:send, party messages are NEVER queued
   // (party state may be stale after a reconnect), so this no-ops when the WS is
@@ -5470,13 +6389,86 @@ export default function ChatOverlay() {
   const sendPartyMessage = useCallback((partyId: string, content: string) => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    recordSentEmojis(content);
     ws.send(JSON.stringify({ type: 'party:send', payload: { partyId, content } }));
+  }, [recordSentEmojis]);
+
+  const openPrivateConversation = useCallback((targetUserId: string) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'pm:open', payload: { targetUserId } }));
   }, []);
+
+  const sendPrivateMessageFrame = useCallback((conversationId: string, recipientUserId: string, content: string) => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    recordSentEmojis(content);
+    ws.send(JSON.stringify({
+      type: 'pm:send',
+      payload: {
+        conversationId,
+        recipientUserId,
+        content,
+        clientCreatedAt: new Date().toISOString(),
+      },
+    }));
+  }, [recordSentEmojis]);
+
+  const startEditingMessage = useCallback((message: ChatMessage) => {
+    if (!canEditOwnMessage(message, user?.id, isPublicMode)) return;
+    setEditingMessage(message);
+    editPendingRef.current = false;
+    setEditPending(false);
+    setInputText(message.content);
+    setCtxMenu(null);
+    setCtxMenuInviteSubmenu(false);
+    setOpenPicker(null);
+    requestAnimationFrame(() => {
+      if (richInputRef.current) {
+        richInputRef.current.innerHTML = buildRichHtml(message.content);
+        richInputRef.current.focus();
+        placeRichCaretAtOffset(richInputRef.current, message.content.length);
+      } else {
+        inputRef.current?.focus();
+      }
+    });
+  }, [user?.id, isPublicMode, buildRichHtml]);
+
+  const cancelEditingMessage = useCallback(() => {
+    setEditingMessage(null);
+    editPendingRef.current = false;
+    setEditPending(false);
+    setInputText('');
+    if (richInputRef.current) richInputRef.current.innerHTML = '';
+    requestAnimationFrame(() => {
+      if (richInputRef.current) richInputRef.current.focus();
+      else inputRef.current?.focus();
+    });
+  }, []);
+
+  const sendEditMessage = useCallback((message: ChatMessage, content: string): boolean => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !canEditOwnMessage(message, user?.id, isPublicMode)) return false;
+    recordSentEmojis(content);
+    ws.send(JSON.stringify({
+      type: 'chat:edit',
+      payload: {
+        messageId: message.id,
+        content,
+        source: message.source,
+        ...(message.source === 'pm'
+          ? { conversationId: message.channelId }
+          : { channelId: message.channelId }),
+      },
+    }));
+    return true;
+  }, [user?.id, isPublicMode, recordSentEmojis]);
 
   // Send a throttled chat:typing frame (once per 2s per scope).
   const sendTyping = useCallback(() => {
     const ws = wsRef.current;
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (activeMainId === PM_MAIN_ID) return;
     const isParty = activeMainId === PARTY_MAIN_ID && partyView !== 'browser';
     const scopeKey = isParty ? `party:${partyView}` : `ch:${activeSubId}`;
     const now = Date.now();
@@ -5533,7 +6525,7 @@ export default function ChatOverlay() {
   const openSharedCard = useCallback((command: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     if (!activeSubId) return;
-    if (!/^\/(nukecodes|serverstatus|camp)\b/.test(command)) return;
+    if (!/^\/(nukecodes|serverstatus|camp|minerva)\b/.test(command)) return;
     wsRef.current.send(JSON.stringify({
       type: 'chat:send',
       payload: {
@@ -5549,10 +6541,27 @@ export default function ChatOverlay() {
     setOpenPicker(null);
     const text = inputText.trim();
     if (!text) return;
+    if (editingMessage) {
+      if (editPending || !sendEditMessage(editingMessage, text)) return;
+      editPendingRef.current = true;
+      setEditPending(true);
+      return;
+    }
     // party:send paths require an active connection (party state may be stale after
     // a reconnect; never queue them). chat:send paths go through sendOrQueueChat which
     // will queue them if the WS is down.
     const wsOpen = wsRef.current?.readyState === WebSocket.OPEN;
+
+    if (activeMainId === PM_MAIN_ID && pmView !== 'inbox') {
+      const conversation = privateConversations.find(entry => entry.conversationId === pmView);
+      if (!wsOpen || !conversation) return;
+      sendPrivateMessageFrame(pmView, conversation.otherUserId, text);
+      setInputText('');
+      if (richInputRef.current) richInputRef.current.innerHTML = '';
+      if (richInputRef.current) richInputRef.current.focus();
+      else inputRef.current?.focus();
+      return;
+    }
 
     // Client-side relay: intercept /g /t /e /r /i /s so they always go to the
     // correct target channel regardless of which sub-tab is active.
@@ -5676,7 +6685,7 @@ export default function ChatOverlay() {
     // Electron only: signal the shell to return focus to FO76 after send.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     (window as any).relayBridge?.returnToGame?.();
-  }, [inputText, activeSubId, mainChannels, joinedParties, sendChatMessage, sendPartyMessage]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [inputText, activeSubId, mainChannels, joinedParties, sendChatMessage, sendPartyMessage, activeMainId, pmView, privateConversations, sendPrivateMessageFrame, editingMessage, editPending, sendEditMessage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Moderation actions
   async function executeModAction(body: any) {
@@ -5710,6 +6719,9 @@ export default function ChatOverlay() {
 
   const activeMain = mainChannels.find(c => c.id === activeMainId);
   const subChannels = activeMain?.children || [];
+  const isOnPmTab = activeMainId === PM_MAIN_ID;
+  const activePmConversation = privateConversations.find(c => c.conversationId === pmView) ?? null;
+  const pmMainUnread = privateConversations.reduce((sum, conversation) => sum + (conversation.unreadCount || 0), 0);
   const flattenedChannels = useMemo(
     () => [...mainChannels, ...mainChannels.flatMap(m => m.children || [])],
     [mainChannels]
@@ -5774,6 +6786,9 @@ export default function ChatOverlay() {
     // messages authored by a blocked user. Never hides your own / system / bot.
     const notBlocked = (m: ChatMessage) =>
       !m.userId || m.userId === (user?.id ?? '') || !blockedIds.has(m.userId);
+    if (activeMainId === PM_MAIN_ID && pmView !== 'inbox') {
+      return (privateMessages[pmView] ?? []).filter(notBlocked);
+    }
     // Party in-chat view: messages keyed by partyId (partyId === channelId in the message)
     if (activeMainId === PARTY_MAIN_ID && partyView !== 'browser') {
       return messages.filter(m => m.channelId === partyView && notBlocked(m));
@@ -5786,7 +6801,7 @@ export default function ChatOverlay() {
       // Privileged mods (isMod && !isPublicMode) also see foreign-party messages
       // here inline via shouldShowInMainFeed — server-enforced, never in public mode.
       const feedPartyIds = isPublicMode
-        ? (publicPartyIdKey ? publicPartyIdKey.split(',') : [])
+        ? boundedPublicPartyIds(publicPartyIdKey)
         : joinedParties.map(p => p.id);
       return messages
         .filter(m =>
@@ -5796,6 +6811,7 @@ export default function ChatOverlay() {
             feedPartyIds,
             isMod,
             isPublicMode,
+            mutedPartyIds: settings.mutedPartyIds,
           }) &&
           // Drop messages from channels the viewer hid (e.g. Trading) out of the
           // aggregated feed.
@@ -5804,7 +6820,7 @@ export default function ChatOverlay() {
         );
     }
     return messages.filter(m => m.channelId === activeSubId && notBlocked(m));
-  }, [messages, activeSubId, isMainFeedView, feedParent, activeMainId, partyView, blockedIds, user?.id, joinedParties, isPublicMode, publicPartyIdKey, isMod, hiddenChannelIds]);
+  }, [messages, activeSubId, isMainFeedView, feedParent, activeMainId, partyView, pmView, blockedIds, user?.id, joinedParties, isPublicMode, publicPartyIdKey, isMod, hiddenChannelIds, settings.mutedPartyIds, privateMessages]);
 
   // After a mention-badge click switched channel, run the scroll once the new
   // channel's messages have rendered into the DOM (this effect re-runs whenever
@@ -5818,8 +6834,13 @@ export default function ChatOverlay() {
   }, [visibleMessages, activeSubId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Which visible messages mention me (for jump-to-mention).
+  // Also fires on the viewer's configured notification keywords (#422), so the
+  // existing highlight / unread-badge / jump-to-mention pipeline covers them with
+  // no extra wiring. Read through a ref so changing the keyword list takes effect
+  // immediately without rebuilding this callback (and re-rendering the feed).
   const msgMentionsMe = useCallback((m: ChatMessage) =>
-    m.userId !== myUserIdRef.current && myNamesRef.current.some(n => contentMentionsName(m.content, n)),
+    m.userId !== myUserIdRef.current
+      && messageTriggersNotify(m.content, myNamesRef.current, notifyKeywordsRef.current),
   []);
   // Show the jump button only when there is at least one visible mention whose
   // message id has NOT yet been dismissed. dismissedMentionEpoch is bumped each
@@ -6089,6 +7110,18 @@ export default function ChatOverlay() {
     }
   }, [queryClient]);
 
+  const togglePartyFeedMute = useCallback((partyId: string, partyName: string) => {
+    if (!isMod || isPublicMode) return;
+    const muted = new Set(settings.mutedPartyIds ?? []);
+    const wasMuted = muted.has(partyId);
+    if (wasMuted) muted.delete(partyId);
+    else muted.add(partyId);
+    patchSettings({ mutedPartyIds: [...muted] });
+    showActionToast('ok', wasMuted
+      ? `${partyName} is visible in General again`
+      : `${partyName} is muted in General`);
+  }, [isMod, isPublicMode, settings.mutedPartyIds, showActionToast, patchSettings]);
+
   // Single source of truth for the party right-click menu. Builds the IDENTICAL
   // option set for a party regardless of WHERE the menu was triggered (joined
   // sub-tab, the active in-party sub-tab, or a Public Parties browser row) —
@@ -6108,13 +7141,17 @@ export default function ChatOverlay() {
     };
     return [
       { label: 'Open', action: () => { setActiveMainId(PARTY_MAIN_ID); setPartyView(p.id); } },
+      ...((isMod && !isPublicMode) ? [{
+        label: settings.mutedPartyIds.includes(p.id) ? 'Show in General' : 'Mute in General',
+        action: () => togglePartyFeedMute(p.id, p.name),
+      }] : []),
       ...(!p.isMember && !p.isPrivate ? [{ label: 'Join party', action: () => joinPartyById(p.id) }] : []),
       ...(canInvite ? [{ label: 'Invite members…', action: () => { setActiveMainId(PARTY_MAIN_ID); setPartyView(p.id); setInviteModalFor({ partyId: p.id }); } }] : []),
       ...(canInvite ? [{ label: 'Set member limit…', action: () => setPartyLimitEditor({ partyId: p.id, x: menuX, y: menuY }) }] : []),
       ...(canInvite ? [{ label: 'Edit description…', action: () => setPartyDescriptionEditor({ partyId: p.id }) }] : []),
       ...(p.isMember ? [{ label: isOwner ? 'Delete party' : 'Leave party', action: leaveOrDelete, danger: true }] : []),
     ];
-  }, [joinPartyById]);
+  }, [joinPartyById, isMod, isPublicMode, settings.mutedPartyIds, togglePartyFeedMute]);
 
   // ── Active tab rendering helpers ──────────────────────────────────────────
   function renderMainTab(ch: Channel) {
@@ -6257,6 +7294,41 @@ export default function ChatOverlay() {
     );
   }
 
+  function renderPmMainTab() {
+    const isActive = activeMainId === PM_MAIN_ID;
+    const tabStyle: React.CSSProperties = {
+      height: '20px',
+      alignSelf: 'flex-end',
+      padding: '0 9px 0 8px',
+      marginRight: '4px',
+      marginBottom: '-1px',
+      fontSize: `${fontSize}px`,
+      fontWeight: 'bold',
+      letterSpacing: tabLetterSpacing,
+      cursor: 'pointer',
+      color: isActive ? primaryText : inactiveTabText,
+      background: 'transparent',
+      borderTop: isActive ? `1px solid ${hexAlpha(primaryColor, 0.5)}` : '1px solid transparent',
+      borderLeft: isActive ? `1px solid ${hexAlpha(primaryColor, 0.5)}` : '1px solid transparent',
+      borderRight: isActive ? `1px solid ${hexAlpha(primaryColor, 0.5)}` : '1px solid transparent',
+      borderBottom: 'none',
+      textTransform: 'uppercase',
+      userSelect: 'none',
+      whiteSpace: 'nowrap',
+      display: 'inline-flex',
+      alignItems: 'center',
+      boxSizing: 'border-box',
+      textShadow: isActive && glowEnabled ? `0 0 6px ${hexAlpha(primaryColor, 0.6 * textAlpha)}, ${textOutline}` : textOutline,
+      ...(overlayShell ? { WebkitAppRegion: 'no-drag' } as React.CSSProperties : {}),
+    };
+    return (
+      <div key={PM_MAIN_ID} ref={isActive ? activeMainTabRef : undefined} onClick={() => setActiveMainId(PM_MAIN_ID)} style={tabStyle}>
+        {pmMainUnread > 0 && <UnreadBadge n={pmMainUnread} />}
+        PM
+      </div>
+    );
+  }
+
   // Shared label/style for a joined-party sub-tab — used by BOTH the visible row
   // and the hidden measurement row so measured widths exactly match what renders.
   // Small inline padlock for private parties (replaces the 🔒 emoji). currentColor
@@ -6304,17 +7376,26 @@ export default function ChatOverlay() {
       // is no awkward floating "max N" / blank cell.
       // 0 (pre-measure) is treated as wide so the first paint shows everything.
       const plw = partyListWidth || 9999;
-      const showCategory = plw >= 320;
-      const showOnline = plw >= 230;
       // Row line-height/height follow fontSize so large fonts don't clip.
       const partyRowLine = `${Math.max(18, fontSize + 8)}px`;
       const statFontSize = `${Math.max(9, fontSize - 2)}px`;
       // Fixed-width, left-aligned stat cells so member/online/category line up
       // as columns down the list (scales with font so big fonts never clip).
-      const memberCellW = `${Math.max(46, fontSize * 4)}px`;
-      const onlineCellW = `${Math.max(36, fontSize * 3)}px`;
-      const categoryCellW = `${Math.max(64, fontSize * 5.5)}px`;
-      const actionCellW = `${Math.max(46, fontSize * 4)}px`;
+      const memberCellPx = Math.max(46, fontSize * 4);
+      const onlineCellPx = Math.max(36, fontSize * 3);
+      const categoryCellPx = Math.max(64, fontSize * 5.5);
+      const baseActionCellPx = Math.max(46, fontSize * 4);
+      const actionCellPx = Math.max(104, fontSize * 8);
+      // The original collapse thresholds were tuned for a single action button.
+      // Shift them by the extra width introduced by the new OPEN + LEAVE/DELETE
+      // action cluster so narrow layouts preserve the previous density balance.
+      const actionThresholdDelta = actionCellPx - baseActionCellPx;
+      const showCategory = plw >= 320 + actionThresholdDelta;
+      const showOnline = plw >= 230 + actionThresholdDelta;
+      const memberCellW = `${memberCellPx}px`;
+      const onlineCellW = `${onlineCellPx}px`;
+      const categoryCellW = `${categoryCellPx}px`;
+      const actionCellW = `${actionCellPx}px`;
       // Per-row CSS grid with FIXED tracks so the dot / name / category / member /
       // online / action columns line up at the same x on EVERY row (a flex row
       // let the action-button width shift the stat columns out of alignment).
@@ -6654,17 +7735,31 @@ export default function ChatOverlay() {
                       }}
                     ><span style={{ display: 'block', transform: 'translateY(-1px)' }}>ACCEPT</span></button>
                   ) : party.isMember ? (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setPartyView(party.id); }}
-                      style={{
-                        height: '18px', minHeight: 0, boxSizing: 'border-box',
-                        display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                        padding: '0 5px', fontSize: '11px', fontFamily: theme.fontFamily,
-                        background: hexAlpha(primaryColor, 0.1), border: `1px solid ${hexAlpha(primaryColor, 0.4)}`,
-                        color: primaryColor, cursor: 'pointer', flexShrink: 0,
-                        lineHeight: '1', paddingBottom: '2px',
-                      }}
-                    ><span style={{ display: 'block', transform: 'translateY(-1px)' }}>OPEN</span></button>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', minWidth: 0 }}>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setPartyView(party.id); }}
+                        style={{
+                          flex: 1, height: '18px', minHeight: 0, minWidth: 0, boxSizing: 'border-box',
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          padding: '0 5px', fontSize: '11px', fontFamily: theme.fontFamily,
+                          background: hexAlpha(primaryColor, 0.1), border: `1px solid ${hexAlpha(primaryColor, 0.4)}`,
+                          color: primaryColor, cursor: 'pointer', lineHeight: '1', paddingBottom: '2px',
+                        }}
+                      ><span style={{ display: 'block', transform: 'translateY(-1px)' }}>OPEN</span></button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLeaveConfirmFor({ partyId: party.id, isOwner: party.role === 'owner' });
+                        }}
+                        style={{
+                          flex: 1, height: '18px', minHeight: 0, minWidth: 0, boxSizing: 'border-box',
+                          display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                          padding: '0 5px', fontSize: '11px', fontFamily: theme.fontFamily,
+                          background: 'transparent', border: `1px solid ${hexAlpha('#FF4444', 0.4)}`,
+                          color: '#FF4444', cursor: 'pointer', lineHeight: '1', paddingBottom: '2px',
+                        }}
+                      ><span style={{ display: 'block', transform: 'translateY(-1px)' }}>{party.role === 'owner' ? 'DELETE' : 'LEAVE'}</span></button>
+                    </div>
                   ) : !party.isPrivate ? (
                     <button
                       onClick={async (e) => {
@@ -6700,9 +7795,158 @@ export default function ChatOverlay() {
   // Memoized normal-feed message rows. Decoupled from inputText so typing
   // (e.g. holding Backspace) no longer re-renders all ~300 rows. Recomputes
   // only when a listed dependency actually changes.
+  const filteredPrivateConversations = useMemo(() => {
+    const term = pmSearch.trim().toLowerCase();
+    if (!term) return privateConversations;
+    return privateConversations.filter(conversation => {
+      const formattedPreview = formatPrivateConversationPreview(
+        conversation,
+        privateMessages[conversation.conversationId],
+        user?.id ?? '',
+      ).toLowerCase();
+      return conversation.otherDisplayName.toLowerCase().includes(term)
+        || conversation.lastMessagePreview.toLowerCase().includes(term)
+        || formattedPreview.includes(term);
+    });
+  }, [privateConversations, privateMessages, pmSearch, user?.id]);
+
+  const privateSearchResults = useMemo(() => {
+    const existingUserIds = new Set(privateConversations.map(conversation => conversation.otherUserId));
+    return pmSearchResults.filter(result => !existingUserIds.has(result.userId));
+  }, [pmSearchResults, privateConversations]);
+
+  function renderPrivateInboxContent() {
+    return (
+      <div data-pm-inbox="true" style={{ padding: '6px 8px 8px' }}>
+        <input
+          value={pmSearch}
+          onChange={e => setPmSearch(e.target.value)}
+          placeholder="Type to search..."
+          style={{
+            width: '100%',
+            boxSizing: 'border-box',
+            marginBottom: '8px',
+            background: inputBgRgba,
+            border: `1px solid ${hexAlpha(primaryColor, 0.25)}`,
+            color: textRgba,
+            fontFamily: theme.fontFamily,
+            fontSize: `${fontSize}px`,
+            lineHeight: '18px',
+            padding: '5px 8px',
+            outline: 'none',
+          }}
+        />
+        {privateSearchResults.length > 0 && (
+          <div style={{ marginBottom: '8px' }}>
+            <div style={{ color: hexAlpha(dimText, 0.8), fontSize: '10px', letterSpacing: '0.08em', marginBottom: '4px' }}>
+              USERS
+            </div>
+            {privateSearchResults.map(result => (
+              <div
+                key={`pm-user-${result.userId}`}
+                onClick={() => openPrivateConversation(result.userId)}
+                style={{
+                  padding: '6px 4px',
+                  cursor: 'pointer',
+                  borderBottom: `1px solid ${hexAlpha(primaryColor, 0.08)}`,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = hexAlpha(primaryColor, 0.08); }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+              >
+                <div style={{ color: primaryText, fontWeight: 'bold', textShadow: textOutline }}>
+                  {result.displayName}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {pmSearchLoading && (
+          <div style={{ color: dimText, fontSize: `${Math.max(10, fontSize - 1)}px`, marginBottom: '6px' }}>
+            Searching...
+          </div>
+        )}
+        {filteredPrivateConversations.length === 0 ? (
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minHeight: '120px',
+            color: hexAlpha(theme.secondaryColor, 0.4),
+            fontSize: `${fontSize}px`,
+            fontFamily: '"Courier New", Courier, monospace',
+          }}>
+            No Private Messages Yet...
+          </div>
+        ) : (
+          filteredPrivateConversations.map(conversation => (
+            <div
+              key={conversation.conversationId}
+              data-pm-inbox-row="true"
+              onClick={() => setPmView(conversation.conversationId)}
+              style={{
+                padding: '6px 4px',
+                cursor: 'pointer',
+                borderBottom: `1px solid ${hexAlpha(primaryColor, 0.08)}`,
+              }}
+              onMouseEnter={e => { e.currentTarget.style.background = hexAlpha(primaryColor, 0.08); }}
+              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px' }}>
+                <span style={{
+                  flex: 1,
+                  color: primaryText,
+                  fontWeight: 'bold',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  textShadow: textOutline,
+                }}>
+                  {conversation.otherDisplayName}
+                </span>
+                <span style={{
+                  color: hexAlpha(dimText, 0.78),
+                  fontSize: `${Math.max(9, fontSize - 2)}px`,
+                  whiteSpace: 'nowrap',
+                  textShadow: textOutline,
+                }}>
+                  {formatMessageTimestamp(conversation.lastMessageAt, settings.timestampFormat)}
+                </span>
+                {conversation.unreadCount > 0 && <UnreadBadge n={conversation.unreadCount} />}
+              </div>
+              <div style={{
+                color: textRgba,
+                fontSize: `${Math.max(10, fontSize - 1)}px`,
+                marginTop: '2px',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                textShadow: textOutline,
+              }}>
+                {formatPrivateConversationPreview(
+                  conversation,
+                  privateMessages[conversation.conversationId],
+                  user?.id ?? '',
+                )}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    );
+  }
+
+  const inputPlaceholder = editingMessage ? 'Edit message...' : 'Type a message...';
+  const composerMaxLength = editingMessage && editingMessage.source !== 'pm' ? 500 : 255;
+  const showComposer = !isPublicMode
+    && !adminFeedActive
+    && (!isOnPartyTab || partyView !== 'browser')
+    && (!isOnPmTab || pmView !== 'inbox');
+
   const normalFeedRows = useMemo(() =>
               visibleMessages.map(msg => {
-                const displayName = resolveUsername(msg);
+                const displayName = isOnPmTab && msg.userId && msg.userId === (user?.id ?? '')
+                  ? 'You'
+                  : resolveUsername(msg);
                 // ── Party-invite embed ──────────────────────────────────────
                 // Public-invitation messages carry metadata.type === 'party_invite'.
                 // Render a styled embed with a Join button instead of plain text.
@@ -6882,6 +8126,10 @@ export default function ChatOverlay() {
                         title="Click to zoom"
                         style={{ display: 'block', maxWidth: '100%', maxHeight: '80px', objectFit: 'contain', background: 'transparent', cursor: 'zoom-in' }}
                         onClick={() => setChatLightboxSrc(resolveMediaUrl(ci.imageUrl!))}
+                        // #313: the image loads async and grows the card AFTER the
+                        // append already scrolled — re-pin if the user is still at
+                        // the bottom so the (now taller) card lands fully in view.
+                        onLoad={() => { if (stickToBottomRef.current) scrollToBottom(); }}
                         onError={e => { (e.currentTarget as HTMLImageElement).parentElement!.style.display = 'none'; }}
                       />
                     </div>
@@ -6903,6 +8151,60 @@ export default function ChatOverlay() {
                             onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') openUrl(ci.sourceUrl); }}
                             style={{ color: hexAlpha(campAccent, 0.85), textDecoration: 'underline', cursor: 'pointer' }}
                           >via 76 CAMP Database &#8599;</span>
+                        }
+                        hexAlpha={hexAlpha}
+                        fontFamily={theme.fontFamily}
+                        fontSize={fontSize}
+                        dimText={dimText}
+                      />
+                    </div>
+                  );
+                }
+                // ── Minerva card ─────────────────────────────────────────────
+                if (md && md.type === 'minerva') {
+                  const mv = md as unknown as MinervaMetadata;
+                  const mvAccent = '#F1C40F';
+                  const fmtDate = (iso: string) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+                  const fmtDuration = (iso: string) => {
+                    const diffMs = new Date(iso).getTime() - Date.now();
+                    if (diffMs <= 0) return 'ending soon';
+                    const totalMins = Math.floor(diffMs / 60000);
+                    const days = Math.floor(totalMins / 1440);
+                    const hours = Math.floor((totalMins % 1440) / 60);
+                    const mins = totalMins % 60;
+                    const parts = [];
+                    if (days > 0) parts.push(`${days}d`);
+                    if (hours > 0) parts.push(`${hours}h`);
+                    if (mins > 0 || parts.length === 0) parts.push(`${mins}m`);
+                    return parts.join(' ');
+                  };
+                  const mvFields: { label: string; value: string }[] = [
+                    { label: 'STATUS', value: mv.isActive ? 'ACTIVE NOW' : 'UPCOMING' },
+                    { label: 'LOCATION', value: mv.location + (mv.isSuperSale ? ' ★' : '') },
+                    { label: 'LIST', value: `#${mv.listNumber}${mv.isSuperSale ? ' (Super Sale)' : ''}` },
+                    { label: mv.isActive ? 'ENDS' : 'STARTS', value: fmtDate(mv.isActive ? mv.endUtc : mv.startUtc) },
+                    { label: mv.isActive ? 'LEAVES IN' : 'ARRIVES IN', value: fmtDuration(mv.isActive ? mv.endUtc : mv.startUtc) },
+                    ...(mv.isActive && mv.nextLocation ? [
+                      { label: 'NEXT', value: `${mv.nextLocation}${mv.nextIsSuperSale ? ' ★' : ''} — List #${mv.nextListNumber}` },
+                      { label: 'NEXT STARTS', value: fmtDate(mv.nextStartUtc!) },
+                    ] : []),
+                  ];
+                  return (
+                    <div key={msg.id} style={{ padding: '2px 8px' }}>
+                      <ChatEmbedCard
+                        accent={mvAccent}
+                        icon="⛟"
+                        tag={mv.isSuperSale ? '★ SUPER SALE' : ''}
+                        title="Minerva's Big Sale"
+                        onShareToChat={() => shareCardToChat({ command: '/minerva', label: "Minerva's Big Sale", accent: mvAccent, icon: '⛟' })}
+                        shareDisabled={cardShareCooldown}
+                        fields={mvFields}
+                        footerLeft={
+                          <span role="button" tabIndex={0} title="More info at falloutbuilds.com"
+                            onClick={() => openUrl('https://www.falloutbuilds.com/fo76/minerva')}
+                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') openUrl('https://www.falloutbuilds.com/fo76/minerva'); }}
+                            style={{ color: hexAlpha(mvAccent, 0.85), textDecoration: 'underline', cursor: 'pointer' }}
+                          >more info &#8599;</span>
                         }
                         hexAlpha={hexAlpha}
                         fontFamily={theme.fontFamily}
@@ -7102,6 +8404,69 @@ export default function ChatOverlay() {
                   return hexAlpha(rc, textAlpha);
                 })();
                 const mentionsMe = msgMentionsMe(msg);
+                const channelTagEl = tagName && (() => {
+                  // ALL feed tags are clickable: click a tag to jump to that
+                  // party or channel. NO special "clickable" styling (no dotted
+                  // underline/box) — just a pointer cursor.
+                  const isParty = msg.source === 'party';
+                  const target = isPublicMode ? null
+                    : isParty ? msg.channelId
+                    : (msg.channelId && msg.channelId !== 'system' && !msg.channelId.startsWith('server:') ? msg.channelId : null);
+                  const clickable = isMainFeedView && !!target;
+                  return (
+                    <span
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', height: '1em', lineHeight: 1,
+                        color: hexAlpha(tagColor, textAlpha), marginRight: `${scaleGap(4)}px`, fontWeight: 'normal',
+                        borderRadius: '2px', padding: '0 1px',
+                        // Base glow (scaled by text opacity) so the tag is as bright
+                        // as the other text; the hover brightens it further.
+                        textShadow: glowEnabled ? `0 0 3px ${hexAlpha(tagColor, 0.5 * textAlpha)}, ${textOutline}` : undefined,
+                        transition: 'background 120ms ease, text-shadow 120ms ease',
+                        ...(clickable ? { cursor: 'pointer' } : {}),
+                      }}
+                      title={clickable ? `Go to ${tagName}` : undefined}
+                      // Hover affordance (parity with the .username-chip hover): a
+                      // tinted background + glow in the tag's OWN color so it reads
+                      // as clickable without losing the channel/party color.
+                      onMouseEnter={clickable ? (e) => {
+                        e.currentTarget.style.background = hexAlpha(tagColor, 0.16);
+                        e.currentTarget.style.textShadow = `0 0 6px ${hexAlpha(tagColor, 0.55)}`;
+                      } : undefined}
+                      onMouseLeave={clickable ? (e) => {
+                        e.currentTarget.style.background = 'transparent';
+                        e.currentTarget.style.textShadow = glowEnabled ? `0 0 3px ${hexAlpha(tagColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline;
+                      } : undefined}
+                      onClick={clickable ? (e) => {
+                        e.stopPropagation();
+                        if (isParty) { setActiveMainId(PARTY_MAIN_ID); setPartyView(target!); }
+                        else { setActiveSubId(target!); }
+                      } : undefined}
+                    >
+                      [{tagName}]
+                    </span>
+                  );
+                })();
+                const timestampEl = settings.showTimestamps && (() => {
+                  // Optional per-message timestamp, rendered in the viewer's
+                  // LOCAL time (right of the channel tag, before the name).
+                  const ts = formatMessageTimestamp(msg.timestamp, settings.timestampFormat);
+                  if (!ts) return null;
+                  return (
+                    <span style={{
+                      color: hexAlpha(theme.textColor, 0.45 * textAlpha),
+                      marginRight: `${scaleGap(4)}px`,
+                      // A touch smaller than the message text; `em` keeps it
+                      // proportional as the user changes the chat font size.
+                      fontSize: '0.82em',
+                      fontWeight: 'normal',
+                      fontVariantNumeric: 'tabular-nums',
+                      textShadow: glowEnabled ? textOutline : undefined,
+                    }}>
+                      {ts}
+                    </span>
+                  );
+                })();
                 return (
                   <div key={msg.id}
                     data-mention-msg={mentionsMe ? '1' : undefined}
@@ -7112,93 +8477,73 @@ export default function ChatOverlay() {
                     style={{
                       fontSize: `${fontSize}px`, lineHeight: `${lineH}px`,
                       wordBreak: 'break-word', padding: '1px 8px',
-                      display: 'flex', alignItems: 'baseline', gap: `${scaleGap(4)}px`,
+                      display: 'flex', alignItems: 'center', gap: `${scaleGap(4)}px`,
                       background: mentionsMe
                         ? hexAlpha(primaryColor, 0.07)
                         : (hoveredMsg === msg.id && isMod ? hexAlpha(primaryColor, 0.04) : 'transparent'),
                       borderLeft: mentionsMe ? `2px solid ${primaryColor}` : '2px solid transparent',
-                    }}
+                  }}
                   >
-                    <span style={{ flex: 1 }}>
-                      {tagName && (() => {
-                        // ALL feed tags are clickable: click a tag to jump to that
-                        // party or channel. NO special "clickable" styling (no dotted
-                        // underline/box) — just a pointer cursor.
-                        const isParty = msg.source === 'party';
-                        const target = isPublicMode ? null
-                          : isParty ? msg.channelId
-                          : (msg.channelId && msg.channelId !== 'system' && !msg.channelId.startsWith('server:') ? msg.channelId : null);
-                        const clickable = isMainFeedView && !!target;
-                        return (
-                          <span
-                            style={{
-                              color: hexAlpha(tagColor, textAlpha), marginRight: `${scaleGap(4)}px`, fontWeight: 'normal',
-                              borderRadius: '2px', padding: '0 1px',
-                              // Base glow (scaled by text opacity) so the tag is as bright
-                              // as the other text; the hover brightens it further.
-                              textShadow: glowEnabled ? `0 0 3px ${hexAlpha(tagColor, 0.5 * textAlpha)}, ${textOutline}` : undefined,
-                              transition: 'background 120ms ease, text-shadow 120ms ease',
-                              ...(clickable ? { cursor: 'pointer' } : {}),
-                            }}
-                            title={clickable ? `Go to ${tagName}` : undefined}
-                            // Hover affordance (parity with the .username-chip hover): a
-                            // tinted background + glow in the tag's OWN color so it reads
-                            // as clickable without losing the channel/party color.
-                            onMouseEnter={clickable ? (e) => {
-                              e.currentTarget.style.background = hexAlpha(tagColor, 0.16);
-                              e.currentTarget.style.textShadow = `0 0 6px ${hexAlpha(tagColor, 0.55)}`;
-                            } : undefined}
-                            onMouseLeave={clickable ? (e) => {
-                              e.currentTarget.style.background = 'transparent';
-                              e.currentTarget.style.textShadow = glowEnabled ? `0 0 3px ${hexAlpha(tagColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline;
-                            } : undefined}
-                            onClick={clickable ? (e) => {
-                              e.stopPropagation();
-                              if (isParty) { setActiveMainId(PARTY_MAIN_ID); setPartyView(target!); }
-                              else { setActiveSubId(target!); }
-                            } : undefined}
-                          >
-                            [{tagName}]
+                    <span style={{ flex: 1, minWidth: 0, lineHeight: 'inherit', display: 'flex', alignItems: 'flex-start' }}>
+                      <span className="fcm-message-prefix">
+                        {channelTagEl}
+                        {timestampEl}
+                        {(() => {
+                        // `fcm-no-name-motion` collapses every animated effect to its
+                        // static sibling (see nameEffects.css). Applied per-name rather
+                        // than on a shared ancestor because the feed rows are the only
+                        // element this component reliably owns on all three surfaces.
+                        const motionOff = settings.disableNameMotion ? ' fcm-no-name-motion' : '';
+                        const fx = nameCosmeticProps(msg, { primaryText, primaryColor, textAlpha, textOutline, glowEnabled }, displayName);
+                        fx.className = fx.className ? fx.className + motionOff : fx.className;
+                        const tagEl = msg.tag ? <span className="fcm-name-tag" style={{ color: msg.nameColor || primaryText }}>[{msg.tag}]</span> : null;
+                        const badge = supporterBadge(msg.badges);
+                        // The icon is intentionally before the name. Its CSS uses the
+                        // same 4px trailing space as a custom tag, never a text pill.
+                        const badgeEl = badge
+                          ? <span className={`fcm-name-badge fcm-name-badge--${badge.tier}`} role="img" title={badge.label} aria-label={badge.label} data-fcm-supporter-star="true"
+                              style={{ color: supporterStarColor(msg.badges, msg.starColor) ?? undefined }}>{SUPPORTER_STAR_GLYPH}</span>
+                          : null;
+                        // Tag and badge render BEFORE the name, which keeps the name
+                        // element's text node exactly `${displayName}: ` as it has
+                        // always been. Splitting the colon into its own element broke
+                        // getByText(/Name:/) queries and made the bare name match twice.
+                        const nameEl = msg.userId && msg.userId !== 'system' ? (
+                          isPublicMode ? (
+                            <Link to={`/profile/${msg.userId}`} className={`username-chip ${fx.className}`} style={fx.style} data-fcm-name={fx.dataName}>
+                              {displayName}:{' '}
+                            </Link>
+                          ) : (
+                            <span role="button" tabIndex={0} className={`username-chip username-chip--mention ${fx.className}`}
+                              style={{ ...fx.style, cursor: 'pointer' }} data-fcm-name={fx.dataName}
+                              onClick={() => insertMentionFromClick(displayName)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') insertMentionFromClick(displayName); }}>
+                              {displayName}:{' '}
+                            </span>
+                          )
+                        ) : (
+                          <span style={fx.style} className={fx.className} data-fcm-name={fx.dataName}>
+                            {displayName}:{' '}
                           </span>
                         );
-                      })()}
-                      {settings.showTimestamps && (() => {
-                        // Optional per-message timestamp, rendered in the viewer's
-                        // LOCAL time (right of the channel tag, before the name).
-                        const ts = formatMessageTimestamp(msg.timestamp, settings.timestampFormat);
-                        if (!ts) return null;
-                        return (
-                          <span style={{
-                            color: hexAlpha(theme.textColor, 0.45 * textAlpha),
-                            marginRight: `${scaleGap(4)}px`,
-                            // A touch smaller than the message text; `em` keeps it
-                            // proportional as the user changes the chat font size.
-                            fontSize: '0.82em',
-                            fontWeight: 'normal',
-                            fontVariantNumeric: 'tabular-nums',
-                            textShadow: glowEnabled ? textOutline : undefined,
-                          }}>
-                            {ts}
-                          </span>
-                        );
-                      })()}
-                      {msg.userId && msg.userId !== 'system' ? (
-                        <Link to={`/profile/${msg.userId}`} className="username-chip" style={{
-                          fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline,
-                        }}>
-                          {displayName}:{' '}
-                        </Link>
-                      ) : (
-                        <span style={{ fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline }}>
-                          {displayName}:{' '}
-                        </span>
-                      )}
+                        // Keep the star and username in one middle-aligned identity
+                        // run. The message body remains a sibling, so long names can
+                        // still break at the identity boundary.
+                          return <>
+                            {tagEl}
+                            <span className="fcm-name-identity">{badgeEl}{nameEl}</span>
+                          </>;
+                        })()}
+                      </span>
                       <span style={{
+                        flex: '1 1 auto',
+                        minWidth: 0,
                         color: contentColor,
                         fontWeight: 600,
+                        lineHeight: 'inherit',
                         textShadow: glowEnabled ? `0 0 2px ${hexAlpha(primaryColor, 0.3 * textAlpha)}, ${textOutline}` : textOutline,
                       }}>
                         {inlineContent ?? renderContent(msg.content, activeMainId === PARTY_MAIN_ID && partyView !== 'browser')}
+                        {msg.editedAt && <span style={{ color: hexAlpha(dimText, 0.8), fontSize: '0.82em', fontWeight: 'normal', marginLeft: '4px' }} title="Edited">(edited)</span>}
                       </span>
                     </span>
                   </div>
@@ -7284,6 +8629,7 @@ export default function ChatOverlay() {
           {partiesAvailable !== false && (
             <PartyErrorBoundary fallback={null}>{renderPartyMainTab()}</PartyErrorBoundary>
           )}
+          {!isPublicMode && renderPmMainTab()}
 
           {/* Push buttons to the right */}
           <div style={{ flex: 1 }} />
@@ -7563,6 +8909,27 @@ export default function ChatOverlay() {
             // The sub-tab row's empty space is also a window-drag handle.
             ...(overlayShell ? { WebkitAppRegion: 'drag' } as React.CSSProperties : {}),
           }}>
+            {/* Collapsed typing indicator (#420). The normal indicator is a sibling
+                BELOW the message list, so applyCollapsedHidden() hides it along with
+                everything after the sub-tab row. Rendering a compact one INSIDE this
+                row means it survives collapse with no change to the collapsed-height
+                math — deliberately avoiding headerStripHeight(), which has a history
+                of zoom double-apply bugs. Shell-only, opt-out via settings. */}
+            {overlayShell && shellCollapsed && settings.showTypingWhenCollapsed && typingVisibleForScope && (
+              <span
+                data-fcm-collapsed-typing="1"
+                title="Someone is typing"
+                style={{
+                  marginRight: '8px', flexShrink: 0, lineHeight: 1,
+                  fontSize: '11px', color: hexAlpha(primaryColor, 0.85),
+                  // Not a drag handle — the row itself is, and inheriting that here
+                  // would make the indicator swallow drags oddly.
+                  ...(overlayShell ? { WebkitAppRegion: 'no-drag' } as React.CSSProperties : {}),
+                }}
+              >
+                ●●●
+              </span>
+            )}
             {subChannels.filter(sub => !hiddenChannelIds.has(sub.id)).map(sub => {
               const isActive = sub.id === activeSubId;
               const unread = unreadMentions[sub.id] || 0;
@@ -7699,6 +9066,8 @@ export default function ChatOverlay() {
 
           {isOnPartyTab && partyView === 'browser' ? (
             <PartyErrorBoundary>{renderPartyContent()}</PartyErrorBoundary>
+          ) : isOnPmTab && pmView === 'inbox' ? (
+            renderPrivateInboxContent()
           ) : adminFeedActive ? (
             feedMessages.length === 0 ? (
               <div style={{
@@ -7729,20 +9098,33 @@ export default function ChatOverlay() {
                     style={{
                       fontSize: `${fontSize}px`, lineHeight: `${lineH}px`,
                       wordBreak: 'break-word', padding: '1px 8px',
-                      display: 'flex', alignItems: 'baseline', gap: `${scaleGap(4)}px`,
+                      display: 'flex', alignItems: 'center', gap: `${scaleGap(4)}px`,
                       background: hoveredMsg === msg.id ? hexAlpha(primaryColor, 0.04) : 'transparent',
                     }}
                   >
-                    <span style={{ flex: 1 }}>
-                      <span style={{ fontWeight: 'bold', color: endpointTagColor, fontSize: `${Math.max(7, fontSize - 2)}px` }}>
+                    <span style={{ flex: 1, lineHeight: 'inherit' }}>
+                      <span style={{
+                        display: 'inline-flex', alignItems: 'center', height: '1em', lineHeight: 1,
+                        verticalAlign: 'middle',
+                        fontWeight: 'bold', color: endpointTagColor, fontSize: `${Math.max(7, fontSize - 2)}px`,
+                      }}>
                         [{msg.serverEndpoint}]{' '}
                       </span>
                       {msg.userId && msg.userId !== 'system' ? (
-                        <Link to={`/profile/${msg.userId}`} className="username-chip" style={{
-                          fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline,
-                        }}>
-                          {feedDisplayName}:{' '}
-                        </Link>
+                        isPublicMode ? (
+                          <Link to={`/profile/${msg.userId}`} className="username-chip" style={{
+                            fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline,
+                          }}>
+                            {feedDisplayName}:{' '}
+                          </Link>
+                        ) : (
+                          <span role="button" tabIndex={0} className="username-chip username-chip--mention" style={{
+                            fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline,
+                            cursor: 'pointer',
+                          }} onClick={() => insertMentionFromClick(feedDisplayName)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') insertMentionFromClick(feedDisplayName); }}>
+                            {feedDisplayName}:{' '}
+                          </span>
+                        )
                       ) : (
                         <span style={{ fontWeight: 'bold', color: primaryText, textShadow: glowEnabled ? `0 0 3px ${hexAlpha(primaryColor, 0.5 * textAlpha)}, ${textOutline}` : textOutline }}>
                           {feedDisplayName}:{' '}
@@ -7751,6 +9133,7 @@ export default function ChatOverlay() {
                       <span style={{
                         color: textRgba,
                         fontWeight: 600,
+                        verticalAlign: 'middle',
                         textShadow: glowEnabled ? `0 0 2px ${hexAlpha(primaryColor, 0.3 * textAlpha)}, ${textOutline}` : textOutline,
                       }}>
                         {renderContent(msg.content)}
@@ -7761,17 +9144,51 @@ export default function ChatOverlay() {
               })
             )
           ) : (
-            visibleMessages.length === 0 ? (
-              <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                height: '100%', color: hexAlpha(theme.secondaryColor, 0.4),
-                fontSize: `${fontSize}px`, fontFamily: '"Courier New", Courier, monospace',
-              }}>
-                No Radio Signals Detected...
-              </div>
-            ) : (
-              normalFeedRows
-            )
+            <>
+              {isOnPmTab && activePmConversation && (
+                <div data-pm-conversation="true" style={{
+                  padding: '4px 8px 6px',
+                  borderBottom: `1px solid ${hexAlpha(primaryColor, 0.15)}`,
+                  marginBottom: '4px',
+                }}>
+                  <div
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setPmView('inbox')}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setPmView('inbox'); }}
+                    style={{
+                      color: primaryColor,
+                      cursor: 'pointer',
+                      fontSize: `${Math.max(10, fontSize - 1)}px`,
+                      fontWeight: 'bold',
+                      marginBottom: '4px',
+                      textShadow: textOutline,
+                    }}
+                  >
+                    {'< BACK TO INBOX'}
+                  </div>
+                  <div style={{
+                    color: hexAlpha(primaryColor, 0.92),
+                    fontSize: `${Math.max(11, fontSize)}px`,
+                    fontWeight: 'bold',
+                    textShadow: textOutline,
+                  }}>
+                    {activePmConversation.otherDisplayName}
+                  </div>
+                </div>
+              )}
+              {visibleMessages.length === 0 ? (
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  height: '100%', color: hexAlpha(theme.secondaryColor, 0.4),
+                  fontSize: `${fontSize}px`, fontFamily: '"Courier New", Courier, monospace',
+                }}>
+                  {isOnPmTab ? 'No Private Messages Yet...' : 'No Radio Signals Detected...'}
+                </div>
+              ) : (
+                normalFeedRows
+              )}
+            </>
           )}
           <div ref={messagesEndRef} />
         </div>
@@ -7807,7 +9224,8 @@ export default function ChatOverlay() {
         )}
 
         {/* ── Typing indicator — in-flow flex child between messages and input ── */}
-        {!isPublicMode && (!isOnPartyTab || partyView !== 'browser') && !adminFeedActive && (() => {
+        {showComposer && (() => {
+          if (isOnPmTab) return null;
           const isParty = activeMainId === PARTY_MAIN_ID && partyView !== 'browser';
           const activeScopeKey = isParty ? `party:${partyView}` : `ch:${activeSubId}`;
           const myId = user?.id ?? '';
@@ -8087,7 +9505,7 @@ export default function ChatOverlay() {
           )}
 
           {/* Hide input in public/logged-out mode (read-only) and party browser view */}
-          {!isPublicMode && (!isOnPartyTab || partyView !== 'browser') && <div style={{
+          {showComposer && <div style={{
             background: inputBgRgba, paddingTop: '6px', paddingBottom: '8px',
             borderTop: `1px solid ${borderRgba}`,
           }}>
@@ -8100,6 +9518,21 @@ export default function ChatOverlay() {
               🔇 You are muted{muteState.until ? ` until ${new Date(muteState.until).toLocaleString()}` : ''}
               {muteState.category || muteState.reason ? ' — ' : ''}
               {muteState.category ? `${muteState.category}: ` : ''}{muteState.reason ?? ''}
+            </div>
+          )}
+          {editingMessage && (
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '3px 10px', fontSize: `${Math.max(9, fontSize - 1)}px`,
+              color: hexAlpha(primaryColor, 0.9), borderBottom: `1px solid ${hexAlpha(primaryColor, 0.25)}`,
+            }}>
+              <span>EDITING MESSAGE{editPending ? ' — SAVING…' : ''}</span>
+              <button
+                type="button"
+                onMouseDown={e => { e.preventDefault(); cancelEditingMessage(); }}
+                disabled={editPending}
+                style={{ background: 'transparent', border: 'none', color: primaryColor, cursor: editPending ? 'not-allowed' : 'pointer', fontFamily: theme.fontFamily, fontSize: `${Math.max(9, fontSize - 1)}px`, fontWeight: 'bold' }}
+              >CANCEL</button>
             </div>
           )}
           {/* alignItems: 'center' vertically centers emoji/GIF buttons and char counter with the input caret. */}
@@ -8140,19 +9573,19 @@ export default function ChatOverlay() {
                     overflow: 'hidden',
                     zIndex: 0,
                   }}>
-                    Type a message...
+                    {inputPlaceholder}
                   </span>
                 )}
               <div
                 ref={richInputRef}
-                contentEditable={muteState ? 'false' : 'true'}
+                contentEditable={muteState || editPending ? 'false' : 'true'}
                 suppressContentEditableWarning
                 // data-placeholder removed — placeholder is now a sibling span
                 onInput={e => {
                   const el = e.currentTarget as HTMLDivElement;
                   const raw = serializeRichInput(el);
-                  const clamped = raw.slice(0, 255);
-                  if (raw.length > 255) {
+                  const clamped = raw.slice(0, composerMaxLength);
+                  if (raw.length > composerMaxLength) {
                     // Trim and re-render so the visual matches the clamped value
                     el.innerHTML = buildRichHtml(clamped);
                     // Move caret to end
@@ -8191,14 +9624,19 @@ export default function ChatOverlay() {
                       if (sel) { sel.removeAllRanges(); sel.addRange(r); }
                     }
                   }
+                  const selection = getRichSelectionOffsets(el);
+                  richSelectionRef.current = selection ?? { start: finalText.length, end: finalText.length };
                   setInputText(finalText);
                   const cursor = finalText.length;
                   const mention = getMentionAt(finalText, cursor);
                   setMentionMeta(mention);
                   if (mention) fetchMentionSuggestions(mention.query);
                   else { setMentionOpen(false); setMentionSuggestions([]); }
-                  if (clamped.trim()) sendTyping();
+                  if (clamped.trim() && !editingMessage) sendTyping();
                 }}
+                onFocus={e => { syncRichSelectionRef(e.currentTarget); }}
+                onMouseUp={e => { syncRichSelectionRef(e.currentTarget); }}
+                onKeyUp={e => { syncRichSelectionRef(e.currentTarget); }}
                 onKeyDown={e => {
                   // Mention popover takes priority over slash-command
                   if (mentionOpen && mentionSuggestions.length > 0) {
@@ -8232,9 +9670,9 @@ export default function ChatOverlay() {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
                     handleSend();
-                    // Clear the rich input visually after send, then restore focus so
-                    // the user can keep typing without having to click the box again.
-                    if (richInputRef.current) richInputRef.current.innerHTML = '';
+                    // New messages clear immediately; edits stay visible while the
+                    // server validates and acknowledges the change.
+                    if (!editingMessage && richInputRef.current) richInputRef.current.innerHTML = '';
                     requestAnimationFrame(() => {
                       if (richInputRef.current) richInputRef.current.focus();
                       else inputRef.current?.focus();
@@ -8301,7 +9739,7 @@ export default function ChatOverlay() {
                     start = serializeRichInput({ childNodes: before.cloneContents().childNodes } as unknown as HTMLDivElement).length;
                     end = start;
                   }
-                  const next = (curText.slice(0, start) + text + curText.slice(end)).slice(0, 255);
+                  const next = (curText.slice(0, start) + text + curText.slice(end)).slice(0, composerMaxLength);
                   el.innerHTML = buildRichHtml(next);
                   setInputText(next);
                   // Move caret to after inserted text
@@ -8343,7 +9781,7 @@ export default function ChatOverlay() {
             ) : (
             <textarea
               ref={inputRef}
-              disabled={!!muteState}
+              disabled={!!muteState || editPending}
               value={inputText}
               onChange={e => {
                 const newVal = e.target.value;
@@ -8410,9 +9848,9 @@ export default function ChatOverlay() {
                   handleSend();
                 }
               }}
-              maxLength={255}
+              maxLength={composerMaxLength}
               rows={1}
-              placeholder="Type a message..."
+              placeholder={inputPlaceholder}
               style={{
                 flex: 1,
                 background: 'transparent',
@@ -8646,7 +10084,10 @@ export default function ChatOverlay() {
                 parts.push('/help');
                 return parts.join(' · ');
               })() : 'Enter send · /help'}</span>
-              <span style={{ color: hexAlpha(primaryColor, 0.8), textShadow: textOutline, flexShrink: 0, marginLeft: '6px' }}>
+              <span style={{ color: hexAlpha(primaryColor, 0.8), textShadow: textOutline, flexShrink: 0, marginLeft: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                {updateAvailableVersion && (
+                  <span title={`Update available: v${updateAvailableVersion}`} style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#e74c3c', boxShadow: '0 0 4px rgba(231,76,60,0.8)', flexShrink: 0, display: 'inline-block' }} />
+                )}
                 v{displayVersion}{isDevEnv ? ' [DEV]' : ''}
               </span>
             </div>
@@ -8734,6 +10175,9 @@ export default function ChatOverlay() {
             flexDirection: 'column',
           }}>
             {[
+              ...(!isPublicMode && canEditOwnMessage(ctxMenu.msg, user?.id, isPublicMode)
+                ? [{ label: 'Edit message', action: () => startEditingMessage(ctxMenu.msg) }]
+                : []),
               // Reply — auth only (writes to the input; public mode is read-only).
               ...(!isPublicMode && ctxMenu.msg.source !== 'bot' && ctxMenu.msg.source !== 'system' && ctxMenu.msg.username
                 ? [{ label: 'Reply', action: () => {
@@ -8741,6 +10185,11 @@ export default function ChatOverlay() {
                     setInputText(prev => (prev.startsWith(mention) ? prev : mention + prev));
                     setTimeout(() => inputRef.current?.focus(), 0);
                   }}]
+                : []),
+              ...(!isPublicMode && ctxMenu.msg.userId && ctxMenu.msg.userId !== 'system'
+                  && ctxMenu.msg.source !== 'bot' && ctxMenu.msg.source !== 'system'
+                  && ctxMenu.msg.userId !== (user?.id ?? '')
+                ? [{ label: 'Message', action: () => { openPrivateConversation(ctxMenu.msg.userId!); } }]
                 : []),
               // Copy items are harmless and available to everyone (incl. public mode).
               { label: copyFlash === 'msg' ? '✓ COPIED' : 'Copy Message', action: () => copyToClipboard(ctxMenu.msg.content, 'msg') },
@@ -8757,6 +10206,20 @@ export default function ChatOverlay() {
                   && ctxMenu.msg.source !== 'bot' && ctxMenu.msg.source !== 'system'
                   && ctxMenu.msg.userId !== (user?.id ?? '')
                 ? [{ label: `Block ${ctxMenu.msg.username}`, action: () => { blockUser(ctxMenu.msg.userId!); } }]
+                : []),
+              // Party-feed visibility is a personal moderator preference. It
+              // only affects the aggregate General/feed view; direct party
+              // views remain available after muting.
+              ...(!isPublicMode && isMod && ctxMenu.msg.source === 'party' && ctxMenu.msg.channelId
+                ? (() => {
+                    const party = parties.find(p => p.id === ctxMenu.msg.channelId);
+                    const partyName = party?.name || 'This party';
+                    const muted = settings.mutedPartyIds.includes(ctxMenu.msg.channelId);
+                    return [{
+                      label: muted ? `Show ${partyName} in General` : `Mute ${partyName} in General`,
+                      action: () => togglePartyFeedMute(ctxMenu.msg.channelId, partyName),
+                    }];
+                  })()
                 : []),
               // Mod actions — only for mod/admin viewers, only on a real user message.
               ...(!isPublicMode && isMod && ctxMenu.msg.userId && ctxMenu.msg.userId !== 'system'
@@ -9306,13 +10769,11 @@ export default function ChatOverlay() {
               </div>
             );
           })()}
-          {/* Footer: invite / leave / delete — compact buttons, permission-gated.
-              Invite → owner/co-mod only · Delete → owner only · everyone else
-              sees just Leave. */}
+          {/* Footer: invite only — leave/delete now live in the Parties browser row
+              action area so the main party actions stay grouped together. */}
           {(() => {
             const myParty = parties.find(p => p.id === partyView);
             const myRole = myParty?.role;
-            const isOwner = myRole === 'owner';
             const canInvite = myRole === 'owner' || myRole === 'comod';
             const compactBtn: React.CSSProperties = {
               flex: 1, minHeight: 0, boxSizing: 'border-box', height: '22px',
@@ -9329,10 +10790,6 @@ export default function ChatOverlay() {
                     style={{ ...compactBtn, border: `1px solid ${hexAlpha(primaryColor, 0.4)}`, color: primaryColor }}
                   >+ INVITE</button>
                 )}
-                <button
-                  onClick={() => { if (typeof partyView === 'string') setLeaveConfirmFor({ partyId: partyView, isOwner }); }}
-                  style={{ ...compactBtn, border: `1px solid ${hexAlpha('#FF4444', 0.4)}`, color: '#FF4444' }}
-                >{isOwner ? 'DELETE' : 'LEAVE'}</button>
               </div>
             );
           })()}
@@ -9559,6 +11016,8 @@ export default function ChatOverlay() {
           onBlockChange={refreshBlocked}
           hideShellSliders={!!overlayShell}
           chromeBgAlpha={chromeBgAlpha}
+          isMod={isMod && !isPublicMode}
+          parties={parties}
         />,
         document.body
       )}

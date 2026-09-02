@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { paramsOf } from '../utils/reqParams';
 import prisma from '../config/prisma';
 import { createError } from '../middleware/errorHandler';
 import logger from '../config/logger';
@@ -26,7 +27,7 @@ async function listAdminUsers(_req: Request, res: Response, next: NextFunction):
  * Update an admin user's role.
  */
 async function updateAdminUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const { discordId } = req.params;
+  const { discordId } = paramsOf(req);
   const { role } = req.body;
 
   if (!role || !VALID_ROLES.includes(role)) {
@@ -66,7 +67,7 @@ async function updateAdminUser(req: Request, res: Response, next: NextFunction):
  * Remove an admin user record.
  */
 async function deleteAdminUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const { discordId } = req.params;
+  const { discordId } = paramsOf(req);
 
   // Prevent owners from deleting themselves
   if (req.adminUser && req.adminUser.id === discordId) {

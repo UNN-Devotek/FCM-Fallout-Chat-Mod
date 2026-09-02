@@ -8,15 +8,17 @@
  *   4. Emoji shortcode expansion
  *   5. Channel validity check
  *   6. Automod engine (word-filter + spam + automod_rules)
- *   7. broadcast() → WS fan-out + hudPushNotify
- *   8. Write-behind persist (messageQueue → messageService fallback)
+ *   7. Durable persist (messageQueue worker → messageService fallback)
+ *   8. broadcast() → WS fan-out + hudPushNotify
  *   9. Discord relay
  *
- * Source tag is 'hud' or 'ws' — forwarded to the persisted Message row for
+ * Source tag is 'hud', 'relay', or 'ws' — forwarded to the persisted Message row for
  * telemetry/abuse-tracing only; it does NOT skip any governance step.
  *
- * Slash commands from HUD: OUT OF SCOPE for v1.  SEND lines starting with '/'
- * are dropped before governance runs.
+ * Slash commands from the HUD transports ('hud' and the chat.v1 'relay' adapter):
+ * OUT OF SCOPE for v1. SEND lines starting with '/' are dropped before governance
+ * runs. The ordinary WS/web source remains available for the server-side command
+ * handler in handlers.ts.
  *
  * The WS handler (handlers.ts) continues to own WS-specific concerns:
  *   - Ack frames (message:ack, rate:status, user:muted)
@@ -34,12 +36,14 @@ import { getRedisClient } from '../config/redis';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
 import { engineEvaluate } from './autoModEngine';
-import { relayToDiscord } from './discordService';
+import { relayToDiscord, type RelayAuthorCosmetics } from './discordService';
 import { persistMessage } from './messageService';
 import messageQueue from '../queues/messagePersist';
 import { emojifyShortcodes } from '../utils/emoji';
 import { broadcast } from '../websocket/handlers';
+import { tryNextRelaySeq } from './relay/relaySeq';
 import { incrementMessageCount } from '../controllers/healthController';
+import { attachCosmetics } from './cosmetics/cosmeticsService';
 import { shadowMute } from './autoModService';
 import { getActiveBlock } from './hudIdentityService';
 
@@ -90,18 +94,18 @@ async function checkRateLimit(userId: string, source: IngestSource): Promise<boo
     return (results[2] as number) > 5; // true = exceeded
   } catch (err) {
     // SR-004: fail OPEN for the authenticated WS path (availability for known
-    // users), but fail CLOSED for the 'hud' transport — it is unauthenticated
-    // (identity asserted over a raw socket), so a Redis outage must not remove
-    // its only flood control. Returning true here marks it rate-limited.
-    const failClosed = source === 'hud';
-    logger.warn({ err, source, failClosed }, `[ingestMessage] rate-limit Redis error — ${failClosed ? 'fail-closed (hud)' : 'fail-open (ws)'}`);
+    // users), but fail CLOSED for the 'hud' and 'relay' transports — both are
+    // lower-trust paths where a Redis outage must not remove flood control.
+    // Returning true here marks the message as rate-limited.
+    const failClosed = source === 'hud' || source === 'relay';
+    logger.warn({ err, source, failClosed }, `[ingestMessage] rate-limit Redis error — ${failClosed ? `fail-closed (${source})` : 'fail-open (ws/mcp)'}`);
     return failClosed;
   }
 }
 
 // ── Result type ───────────────────────────────────────────────────────────────
 
-export type IngestSource = 'hud' | 'ws' | 'mcp';
+export type IngestSource = 'hud' | 'ws' | 'mcp' | 'relay';
 
 export interface IngestResult {
   ok: boolean;
@@ -117,8 +121,14 @@ export interface IngestResult {
  * @param userId      - Resolved user ID (from WS auth or HUD identity resolution).
  * @param channelId   - UUID of the target channel.
  * @param rawContent  - Raw text from the client (before emoji expansion).
- * @param source      - 'hud' or 'ws' (telemetry tag only).
+ * @param source      - 'hud'/'relay' for in-game transports, or 'ws'/'mcp' for
+ *                      ordinary server-side clients.
  * @param identityHash - (HUD only) identityHash for block lookup; undefined for WS path.
+ * @param relaySeq    - (relay ONLY) pre-computed monotonic cursor from nextRelaySeq().
+ *                      Threaded through to finalizeMessage so the persisted row carries
+ *                      relay_seq and the single broadcast carries relaySeq. When an
+ *                      ordinary producer does not supply one, finalizeMessage makes a
+ *                      best-effort allocation; chat remains available if Redis is down.
  */
 export async function ingestMessage(opts: {
   userId: string;
@@ -126,20 +136,28 @@ export async function ingestMessage(opts: {
   rawContent: string;
   source: IngestSource;
   identityHash?: string;
+  relaySeq?: number;
+  // Explicit display-name override. The relay/HUD path passes the in-game CHARACTER name
+  // (identity.fo76Name, e.g. "Wanderer") so chat shows that, not the linked FCM account's
+  // Discord name (the message is still attributed to the linked user UUID for moderation).
+  displayName?: string;
 }): Promise<IngestResult> {
-  const { userId, channelId, source, identityHash } = opts;
+  const { userId, channelId, source, identityHash, relaySeq } = opts;
   let rawContent = opts.rawContent;
 
-  // Drop slash commands from HUD — not supported on the HUD transport.
-  if (source === 'hud' && rawContent.trim().startsWith('/')) {
-    logger.info({ userId }, '[ingestMessage] dropping HUD slash command (not supported on hud transport)');
+  // The legacy HUD adapter and chat.v1 relay adapter both represent in-game HUD
+  // sends. Neither transport implements the web command surface, so a slash line
+  // must never fall through as ordinary chat. Keep WS/MCP unchanged: the web WS
+  // handler owns its supported slash-command interception.
+  if ((source === 'hud' || source === 'relay') && rawContent.trim().startsWith('/')) {
+    logger.info({ userId, source }, '[ingestMessage] dropping HUD slash command (not supported on HUD transport)');
     return { ok: false, reason: 'slash-command-dropped' };
   }
 
   // ── 1. Mute check ─────────────────────────────────────────────────────────
   const dbUser = await prisma.user.findUnique({
     where: { id: userId },
-    select: { isMuted: true, muteExpiresAt: true, username: true, discordUsername: true, discordDisplayName: true, fo76AccountName: true, fo76CharacterName: true },
+    select: { isMuted: true, muteExpiresAt: true, username: true, chatName: true, discordUsername: true, discordDisplayName: true, fo76AccountName: true, fo76CharacterName: true },
   });
 
   if (!dbUser) {
@@ -222,15 +240,22 @@ export async function ingestMessage(opts: {
   // name is the social/player name shown in-game; fall back to character name,
   // then the generic chain. WS (dashboard) messages keep the Discord display name.
   const displayName =
-    source === 'hud'
-      ? (dbUser.fo76AccountName || dbUser.fo76CharacterName || dbUser.discordDisplayName || dbUser.discordUsername || dbUser.username)
-      : (dbUser.discordDisplayName ?? dbUser.discordUsername ?? dbUser.username);
+    dbUser.chatName
+      ? dbUser.chatName
+      : (opts.displayName && opts.displayName.trim())
+      ? opts.displayName.trim()
+      : source === 'hud'
+        ? (dbUser.fo76AccountName || dbUser.fo76CharacterName || dbUser.discordDisplayName || dbUser.discordUsername || dbUser.username)
+        : (dbUser.discordDisplayName ?? dbUser.discordUsername ?? dbUser.username);
   const { messageId } = await finalizeMessage({
     userId,
     channelId,
     content: content.trim(),
     displayName,
     source,
+    // A supplied relay cursor is authoritative. For ordinary producers the
+    // finalizer makes a best-effort allocation without making chat depend on Redis.
+    relaySeq,
   });
 
   return { ok: true, messageId };
@@ -239,7 +264,7 @@ export async function ingestMessage(opts: {
 // ── Shared finalize tail ────────────────────────────────────────────────────
 
 /**
- * Broadcast + write-behind persist + Discord relay for a fully-governed message.
+ * Persist, broadcast, and relay a fully-governed message.
  *
  * This is the single source of truth for the chat:message wire payload, the
  * persisted Message row, and the Discord relay — called by BOTH ingestMessage
@@ -248,24 +273,31 @@ export async function ingestMessage(opts: {
  *
  * Optional fields are included ONLY when the caller provides them, so the HUD
  * payload stays lean (no avatarUrl/metadata/mentions) while the WS payload keeps
- * its richer shape unchanged. Persist is fire-and-forget (write-behind) so the
- * caller's ack stays on the low-latency hot path.
+ * its richer shape unchanged. Persistence completes before broadcast/ack so a
+ * message cannot be selected for editing before its database row exists.
  */
 export async function finalizeMessage(opts: {
   userId: string;
   channelId: string;
   content: string;        // already emoji-expanded; caller trims
   displayName: string;
-  source: string;         // 'hud' | 'game' | 'ws' | …
+  source: string;         // 'hud' | 'game' | 'ws' | 'relay' | …
   messageId?: string;
   createdAt?: string;
   avatarUrl?: string | null;
   metadata?: Record<string, unknown> | null;
   mentions?: Array<{ name: string; discordId: string }>;
+  relaySeq?: number;      // relay path only — monotonic cursor assigned by nextRelaySeq()
 }): Promise<{ messageId: string; createdAt: string }> {
   const messageId   = opts.messageId ?? uuidv4();
   const createdAt   = opts.createdAt ?? new Date().toISOString();
   const hasMetadata = 'metadata' in opts;
+  // Ordinary chat gets a cursor when Redis is healthy so it can flow through
+  // the in-game relay. During a Redis incident, omit the optional cursor rather
+  // than turning the dashboard/HUD send path into a hard dependency.
+  const relaySeq = opts.relaySeq !== undefined
+    ? opts.relaySeq
+    : await tryNextRelaySeq();
 
   const payload: Record<string, unknown> = {
     id: messageId,
@@ -278,11 +310,16 @@ export async function finalizeMessage(opts: {
   };
   if (opts.avatarUrl !== undefined) payload.avatarUrl = opts.avatarUrl;
   if (hasMetadata) payload.metadata = opts.metadata ?? null;
+  if (relaySeq !== undefined) payload.relaySeq = relaySeq;
 
-  broadcast({ type: 'chat:message', payload });
-  incrementMessageCount();
+  // Resolve the author's cosmetics (colour, effect, tag, badges) onto the
+  // payload. Redis-cached ~60s and non-throwing, so it costs nothing for the vast
+  // majority of users who have no cosmetics row and can never block delivery.
+  await attachCosmetics(payload);
 
-  // Write-behind persist — fire-and-forget so it never blocks the sender ack.
+  // Persist before broadcast/ack. Bull still provides retries and backoff, but
+  // waiting for job completion closes the edit race: clients never receive a
+  // message whose canonical row is still missing from PostgreSQL.
   const { parentId: parentChannelId, name: channelName } = await getChannelInfo(opts.channelId);
   const record: Record<string, unknown> = {
     id: messageId,
@@ -294,17 +331,35 @@ export async function finalizeMessage(opts: {
     createdAt,
   };
   if (hasMetadata) record.metadata = opts.metadata ?? null;
+  if (relaySeq !== undefined) record.relaySeq = relaySeq;
 
-  Promise.resolve(messageQueue.add(record as any)).catch((qErr) => {
+  try {
+    const persistJob = await messageQueue.add(record as any);
+    if (typeof persistJob?.finished === 'function') {
+      await persistJob.finished();
+    }
+  } catch (qErr) {
     logger.warn({ err: qErr, messageId }, '[finalizeMessage] queue failed — falling back to direct persist');
-    persistMessage(record as any).catch((err) => logger.error({ err, messageId }, '[finalizeMessage] direct persist also failed'));
-  });
+    await persistMessage(record as any);
+  }
 
-  // Discord relay — fire-and-forget. Pass the mentions/metadata tail only when
-  // the caller supplied them (WS path) so the lean HUD call stays 4-arg.
-  const relayPromise = (opts.mentions !== undefined || hasMetadata)
-    ? relayToDiscord(opts.channelId, opts.displayName, opts.content, channelName ?? undefined, opts.mentions, hasMetadata ? (opts.metadata ?? undefined) : undefined)
-    : relayToDiscord(opts.channelId, opts.displayName, opts.content, channelName ?? undefined);
+  broadcast({ type: 'chat:message', payload });
+  incrementMessageCount();
+
+  // Discord relay — fire-and-forget. Carry the generated source ID so a
+  // successful bot send can be linked for later bidirectional edits.
+  const relayPromise = relayToDiscord(
+    opts.channelId,
+    opts.displayName,
+    opts.content,
+    channelName ?? undefined,
+    opts.mentions,
+    hasMetadata ? (opts.metadata ?? undefined) : undefined,
+    messageId,
+    Array.isArray(payload.badges)
+      ? { badges: payload.badges as RelayAuthorCosmetics['badges'] }
+      : undefined,
+  );
   relayPromise.catch((err) => logger.warn({ err }, '[finalizeMessage] Discord relay failed (non-fatal)'));
 
   return { messageId, createdAt };

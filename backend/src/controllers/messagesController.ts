@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { paramStr } from '../utils/reqParams';
 import { v4 as uuidv4 } from 'uuid';
 import prisma from '../config/prisma';
 import { createError } from '../middleware/errorHandler';
@@ -19,7 +20,7 @@ async function listMessages(req: Request, res: Response, next: NextFunction): Pr
 
   try {
     const messages = await prisma.$queryRaw<any[]>`
-      SELECT m.id, m.content, u.username, u.discord_display_name, u.discord_username, m.user_id, m.channel_id, m.source, m.created_at
+      SELECT m.id, m.content, u.username, u.discord_display_name, u.discord_username, m.user_id, m.channel_id, m.source, m.created_at, m.edited_at
       FROM messages m
       JOIN users u ON u.id = m.user_id
       WHERE m.channel_id = ${channelId}::uuid AND NOT m.is_deleted
@@ -123,23 +124,23 @@ async function scrubMessages(req: Request, res: Response, next: NextFunction): P
  * DELETE /api/messages/:id -- moderator+
  */
 async function deleteMessage(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!UUID_RE.test(req.params.id)) return next(createError(400, 'Invalid message ID format'));
+  if (!UUID_RE.test(paramStr(req, 'id'))) return next(createError(400, 'Invalid message ID format'));
   try {
     // Raw query required — Message has a composite PK.
     const result = await prisma.$executeRaw`
-      UPDATE messages SET is_deleted = TRUE WHERE id = ${req.params.id}::uuid AND NOT is_deleted`;
+      UPDATE messages SET is_deleted = TRUE WHERE id = ${paramStr(req, 'id')}::uuid AND NOT is_deleted`;
 
     if (result === 0) return next(createError(404, 'Message not found'));
     await prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'delete_message',
-        targetId: req.params.id,
+        targetId: paramStr(req, 'id'),
         targetType: 'message',
       },
     });
     if ((global as any).broadcastMessageDeletion) {
-      (global as any).broadcastMessageDeletion(req.params.id);
+      (global as any).broadcastMessageDeletion(paramStr(req, 'id'));
     }
     res.json({ data: { deleted: true } });
   } catch (err) {
@@ -208,7 +209,7 @@ async function listPublicMessages(req: Request, res: Response, next: NextFunctio
 
   try {
     const messages = await prisma.$queryRaw<any[]>`
-      SELECT m.id, m.content, u.username, u.discord_display_name, u.discord_username, m.source, m.created_at
+      SELECT m.id, m.content, u.username, u.discord_display_name, u.discord_username, m.source, m.created_at, m.edited_at
       FROM messages m
       JOIN users u ON u.id = m.user_id
       WHERE m.channel_id = ${channelId}::uuid AND NOT m.is_deleted
@@ -221,7 +222,7 @@ async function listPublicMessages(req: Request, res: Response, next: NextFunctio
       const displayName = !isPlaceholderPub(row.username)
         ? row.username
         : (row.discord_display_name || row.discord_username || row.username || 'Wanderer');
-      return { id: row.id, content: row.content, username: displayName, source: row.source, channelId: row.channel_id, createdAt: row.created_at };
+      return { id: row.id, content: row.content, username: displayName, source: row.source, channelId: row.channel_id, createdAt: row.created_at, editedAt: row.edited_at ?? null };
     });
     res.json({ data: transformed });
   } catch (err) {

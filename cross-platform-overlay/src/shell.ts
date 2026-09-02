@@ -2,8 +2,9 @@
  * Electron overlay shell — desktop-parity behaviors layered over the shared
  * ChatOverlay component without forking it:
  *
- *   1. Idle auto-collapse: after idle time (default 25 s) collapse to the
- *      header/tab strip; expand on any interaction or a new message.
+ *   1. Idle auto-hide: after idle time (default 25 s) full-hide the overlay by
+ *      default; users can choose the legacy header/tab-strip collapse instead.
+ *      Expand on any interaction or a new message.
  *   2. Full settings panel: theme, opacities, scanline, font, keybinds,
  *      blocked users, channel filters. Persisted to the Electron state file
  *      and mirrored to the localStorage key the React component reads.
@@ -28,16 +29,25 @@ import {
   textOpacityValue,
   scanlineOpacityValue,
   clampIdleCollapseSeconds,
+  shouldResetIdleOnVisibility,
   IDLE_COLLAPSE_SECONDS_MIN,
   IDLE_COLLAPSE_SECONDS_MAX,
   IDLE_COLLAPSE_SECONDS_DEFAULT,
+  AUTO_HIDE_MODE_DEFAULT,
+  FULL_AUTO_HIDE_HEIGHT,
+  normalizeAutoHideMode,
   shellToWebSettings,
   resolveCollapsedHeight,
+  revealCollapsedElements,
   computeResizeBounds,
   isDragTarget as isDragTargetCore,
   detectLinuxRenderer,
+  gameReservedWarning,
+  mergeKeybindDefaults,
+  type AutoHideMode,
   type ResizeEdge,
 } from './shell-core';
+import { mountSupporterAppearance } from './supporterAppearance';
 
 // ── Settings model (desktop-parity superset) ──────────────────────────────────
 
@@ -62,13 +72,27 @@ export interface ShellSettings {
   backgroundOpacity: number; // 0..1 extra background dim
   scanlineIntensity: number; // 0..1 (default 0.08)
   fadeWhenIdle: boolean;     // default true
+  autoHideMode: AutoHideMode; // 'full' (default) or 'subtabs'
+  showTypingWhenCollapsed: boolean; // default FALSE — opt in; see issue #420
+  notifySoundEnabled: boolean;      // default FALSE — opt in; see issue #437
+  notifySoundVolume: number;        // 0..1
   // Seconds of inactivity before collapsing to the header strip (5..120, default 25).
   idleCollapseSeconds: number;
   // Per-message timestamps rendered in the viewer's local time. Mirrored to WEB_SETTINGS_KEY.
   showTimestamps: boolean;
   timestampFormat: '12h' | '24h';
+  // VIEWER-side opt-out for animated supporter name effects (pulse/CRT/glitch/shimmer).
+  // Nothing to do with your own tier — it controls what YOU see from other people, for
+  // anyone who finds motion in the feed distracting while playing but does not want to
+  // turn on system-wide reduced motion. Collapses each animated effect to its static
+  // sibling via a single root class, so supporters still look distinct.
+  disableNameMotion: boolean;
   blockedUsers: string[];
   channelFilters: string[];
+  // Moderator-only party IDs muted from the aggregate General/feed view. This
+  // is a personal view preference; direct party views remain available.
+  mutedPartyIds: string[];
+  notifyKeywords: string[];
   // Electron globalShortcut accelerator strings.
   keybinds: {
     toggle: string;
@@ -102,9 +126,12 @@ export interface PositionPreset {
   w?: number; h?: number;   // captured window size
 }
 
-// Bump to force all users' keybinds back to current defaults exactly once.
-// Must NOT be baked into DEFAULT_SHELL_SETTINGS — the default leaves
-// keybindsResetVersion undefined (→ 0) so the guard (stored < current) can fire.
+// Bump to fill any NEW default binds for existing users exactly once. The reset is
+// NON-DESTRUCTIVE (issue #136 §3.1): it only fills unset/blank binds and preserves
+// every bind the user customised (see mergeKeybindDefaults), so a reinstall or a
+// version bump never clobbers a working config. Must NOT be baked into
+// DEFAULT_SHELL_SETTINGS — the default leaves keybindsResetVersion undefined (→ 0)
+// so the guard (stored < current) can fire.
 // v5: goFo76 and recentParty default to '' — single-char defaults (/,\) were broken
 //     because isSinglePrintableChar gating prevented them from ever firing.
 export const KEYBIND_RESET_VERSION = 5;
@@ -128,11 +155,18 @@ export const DEFAULT_SHELL_SETTINGS: ShellSettings = {
   // CRT texture rather than heavy bars.
   scanlineIntensity: 0.08,
   fadeWhenIdle: true,
+  autoHideMode: AUTO_HIDE_MODE_DEFAULT,
+  showTypingWhenCollapsed: false,
+  notifySoundEnabled: false,
+  notifySoundVolume: 0.5,
   idleCollapseSeconds: IDLE_COLLAPSE_SECONDS_DEFAULT,
   showTimestamps: false,
   timestampFormat: '12h',
+  disableNameMotion: false,
   blockedUsers: [],
   channelFilters: [],
+  mutedPartyIds: [],
+  notifyKeywords: [],
   // Single-key defaults from the nav cluster (not used by FO76 gameplay binds).
   // Global single keys are intercepted before the game sees them.
   keybinds: {
@@ -201,10 +235,15 @@ export function loadShellSettings(): ShellSettings {
       }
     }
   } catch { /* defaults */ }
-  // One-time keybind reset: restore new defaults if the persisted version is older,
-  // then stamp the version so later customisations are never clobbered.
+  // A corrupted or pre-feature value must preserve the existing behavior.
+  s.autoHideMode = normalizeAutoHideMode(s.autoHideMode);
+  // One-time keybind reset (NON-DESTRUCTIVE — issue #136 §3.1): when the persisted
+  // version is older, fill only UNSET/blank binds with the current defaults and keep
+  // every bind the user actually set, then stamp the version. The old code wiped the
+  // whole map back to defaults, so a reinstall re-broke a working config; now it
+  // never clobbers a customised bind.
   if ((s.keybindsResetVersion ?? 0) < KEYBIND_RESET_VERSION) {
-    s.keybinds = { ...DEFAULT_SHELL_SETTINGS.keybinds };
+    s.keybinds = mergeKeybindDefaults(s.keybinds, DEFAULT_SHELL_SETTINGS.keybinds);
     s.keybindsResetVersion = KEYBIND_RESET_VERSION;
     try { localStorage.setItem(SHELL_SETTINGS_KEY, JSON.stringify(s)); } catch { /* ignore */ }
   }
@@ -415,24 +454,47 @@ function applyCollapsedHidden() {
   }
 }
 
+function emitCollapseState(isCollapsed: boolean): void {
+  try {
+    window.dispatchEvent(new CustomEvent('fcm-overlay-collapse-state', {
+      detail: { collapsed: isCollapsed },
+    }));
+  } catch { /* non-fatal */ }
+}
+
 function setCollapsed(next: boolean, focusInput = false) {
   if (collapsed === next) return;
   lastTransitionMs = Date.now();
   const root = document.getElementById('root');
   if (next) {
+    const fullAutoHide = currentSettings.autoHideMode === 'full';
     // Measure the strip height BEFORE applying the 'collapsed' class so the
     // sub-tab row is still in its normal position when we read its offset.
-    const h = headerStripHeight();
-    applyCollapsedHidden();
+    // Full mode does not need the measurement: it hides the complete renderer
+    // and uses a one-pixel native window target.
+    const h = fullAutoHide ? FULL_AUTO_HIDE_HEIGHT : headerStripHeight();
+    if (fullAutoHide) {
+      collapsedHidden = [];
+      root?.classList.add('fcm-full-auto-hidden');
+    } else {
+      applyCollapsedHidden();
+    }
     collapsed = true;
     root?.classList.add('collapsed');
-    window.relayBridge.collapse(h);
+    window.relayBridge.collapse(h, fullAutoHide);
     // Notify the React overlay that it idle-collapsed so it can close any
     // absolutely-positioned floating UI (e.g. the party member panel) that
     // would otherwise hang over the collapsed header strip.
     try { window.dispatchEvent(new CustomEvent('fcm-overlay-collapsed')); } catch { /* non-fatal */ }
+    // Separate STATE event (fires both directions). Kept distinct from
+    // 'fcm-overlay-collapsed' above, which existing listeners treat as a
+    // one-way 'close your floating panels' signal — firing that on expand too
+    // would start closing panels when the user comes back.
+    emitCollapseState(true);
   } else {
+    const wasFullAutoHide = root?.classList.contains('fcm-full-auto-hidden') ?? false;
     collapsed = false;
+    emitCollapseState(false);
     // Keep 'collapsed' on root through the 240ms expand animation — removing it
     // immediately flashes the header from dark to transparent while the window
     // is still at header height. Strip it only after the window is full-size.
@@ -442,8 +504,8 @@ function setCollapsed(next: boolean, focusInput = false) {
     // 260ms > 240ms animation — reveal content once fully expanded.
     setTimeout(() => {
       if (collapsed) return;
-      root?.classList.remove('collapsed');
-      hiddenEls.forEach(e => e.classList.remove('fcm-collapsed-hidden'));
+      if (wasFullAutoHide) root?.classList.remove('fcm-full-auto-hidden');
+      revealCollapsedElements(root, hiddenEls);
       // Jump the feed to the latest message so the user sees the most recent
       // chat after expanding. Defer a frame so the body has laid out first.
       scrollMessagesToBottomDeferred();
@@ -478,7 +540,15 @@ function scrollMessagesToBottomDeferred() {
 // jump-to-input. Only runs while collapsed.
 function reassertCollapsed() {
   if (!collapsed) return;
-  applyCollapsedHidden();
+  const fullAutoHide = currentSettings.autoHideMode === 'full';
+  const root = document.getElementById('root');
+  if (fullAutoHide) {
+    collapsedHidden = [];
+    root?.classList.add('fcm-full-auto-hidden');
+  } else {
+    root?.classList.remove('fcm-full-auto-hidden');
+    applyCollapsedHidden();
+  }
   // Reset any scroll the React overlay applied so the input can't be revealed.
   const host = document.getElementById('shell-overlay-host');
   if (host && host.scrollTop !== 0) host.scrollTop = 0;
@@ -486,7 +556,9 @@ function reassertCollapsed() {
   if (scroller && scroller.scrollTop !== 0) scroller.scrollTop = 0;
   // Re-anchor to the header strip; suppress scale re-clamp during settlement.
   lastTransitionMs = Date.now();
-  try { window.relayBridge.collapse(headerStripHeight()); } catch { /* non-fatal */ }
+  try {
+    window.relayBridge.collapse(fullAutoHide ? FULL_AUTO_HIDE_HEIGHT : headerStripHeight(), fullAutoHide);
+  } catch { /* non-fatal */ }
 }
 
 /** Reset the idle timer + expand (desktop MarkChatActivity). */
@@ -670,6 +742,35 @@ export function openComponentSettings() {
 
 let currentSettings: ShellSettings = DEFAULT_SHELL_SETTINGS;
 let onSettingsChange: ((s: ShellSettings) => void) | null = null;
+let webSettingsSyncHandler: ((event: Event) => void) | null = null;
+let syncAutoHideModeButtons: (() => void) | null = null;
+/** Reference to the version span — set once the settings panel is built. */
+let verSpanEl: HTMLElement | null = null;
+/** Latched when an update signal arrives before the panel is built. */
+let pendingUpdateVersion: string | null = null;
+
+function applyUpdateDot(latestVersion: string): void {
+  if (!verSpanEl) return;
+  if (!verSpanEl.querySelector('.ss-update-dot')) {
+    const dot = document.createElement('span');
+    dot.className = 'ss-update-dot';
+    dot.title = `Update available: v${latestVersion}`;
+    dot.style.cssText = [
+      'display:inline-block',
+      'width:7px',
+      'height:7px',
+      'border-radius:50%',
+      'background:#e74c3c',
+      'box-shadow:0 0 5px rgba(231,76,60,0.8)',
+      'margin-left:5px',
+      'vertical-align:middle',
+      'flex-shrink:0',
+    ].join(';');
+    verSpanEl.style.display = 'inline-flex';
+    verSpanEl.style.alignItems = 'center';
+    verSpanEl.appendChild(dot);
+  }
+}
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, attrs?: Partial<HTMLElementTagNameMap[K]> & { className?: string }, ...kids: (Node | string)[]): HTMLElementTagNameMap[K] {
   const node = document.createElement(tag);
@@ -928,6 +1029,8 @@ function buildSettingsPanel() {
   // Show the build-time version from the Vite define constant. No live fetch —
   // the displayed version is always the installed build version.
   const verSpan = el('span', { className: 'ss-ver' }, `v${__APP_VERSION__}`);
+  verSpanEl = verSpan;
+  if (pendingUpdateVersion) applyUpdateDot(pendingUpdateVersion);
   head.append(verSpan);
   panel.append(head);
   // Official non-affiliation disclaimer — shown at the top of Settings, under the
@@ -987,6 +1090,7 @@ function buildSettingsPanel() {
     fadeEnabled = currentSettings.fadeWhenIdle;
     setIdleFadeFromSeconds(currentSettings.idleCollapseSeconds);
     if (!fadeEnabled) setCollapsed(false);
+    syncAutoHideModeButtons?.();
     onSettingsChange?.(currentSettings);
   };
 
@@ -1309,6 +1413,14 @@ function buildSettingsPanel() {
           if (!accel) return; // wait for a non-modifier key
           window.removeEventListener('keydown', onKey, true);
           btn.classList.remove('listening');
+          // Warn (don't block) on a bare FO76 gameplay key — pressing it in-game would
+          // trigger both the overlay and the game (issue #136: Tab=nextChannel popped
+          // the overlay on every Pip-Boy open). The user can still bind it.
+          const warn = gameReservedWarning(accel);
+          if (warn && !window.confirm(warn + '\n\nBind it anyway?')) {
+            btn.textContent = prettyAccel(currentSettings.keybinds[key]); // keep the existing bind
+            return;
+          }
           const next = { ...currentSettings.keybinds, [key]: accel };
           commit({ keybinds: next });
           btn.textContent = prettyAccel(accel);
@@ -1335,6 +1447,23 @@ function buildSettingsPanel() {
       allowCustom: false,
     }));
     hint(s, 'Pick channels to hide from the feed. Click ✕ on a chip to show it again.');
+
+    s.append(chipField({
+      label: 'Notify keywords',
+      placeholder: 'Add a word to watch for…',
+      get: () => currentSettings.notifyKeywords,
+      set: (v) => commit({ notifyKeywords: v }),
+      candidates: () => [],
+      allowCustom: true,
+    }));
+    hint(s, 'Messages containing one of these words are highlighted like an @mention of you, and badge the channel. Your own names always trigger, whatever is listed here. Click ✕ on a chip to remove one.');
+
+    toggle(s, 'Play a sound on mentions and keywords', () => currentSettings.notifySoundEnabled, v => commit({ notifySoundEnabled: v }));
+    hint(s, 'Plays a short ping when a message @mentions you or matches one of your notify keywords. Rate-limited to once every few seconds so a busy channel cannot spam it.');
+    slider(s, 'Notification volume', 0, 1, 0.01,
+      () => currentSettings.notifySoundVolume,
+      v => commit({ notifySoundVolume: v }),
+      v => `${Math.round(v * 100)}%`);
 
     // ── POSITION PRESETS (desktop SettingsForm.cs parity) ──
     heading(s, 'POSITION PRESETS');
@@ -1429,6 +1558,40 @@ function buildSettingsPanel() {
 
     toggle(s, 'Show footer hints (keybind bar at the bottom)', () => currentSettings.showHints, v => commit({ showHints: v }));
     toggle(s, 'Auto-hide chat when idle (collapse to header)', () => currentSettings.fadeWhenIdle, v => commit({ fadeWhenIdle: v }));
+    const autoHideModeRow = el('div', { className: 'ss-row' });
+    autoHideModeRow.append(el('label', { className: 'ss-lbl' }, 'Auto-hide mode'));
+    const autoHideModeWrap = el('div', { className: 'ss-seg' });
+    autoHideModeWrap.style.display = 'flex';
+    autoHideModeWrap.style.gap = '6px';
+    autoHideModeWrap.style.flexWrap = 'wrap';
+    const modeButtons: { mode: AutoHideMode; button: HTMLButtonElement }[] = [];
+    const syncModeButtons = () => {
+      for (const { mode, button } of modeButtons) {
+        const active = currentSettings.autoHideMode === mode;
+        button.style.background = active ? 'var(--shell-primary-dim)' : 'transparent';
+        button.style.borderColor = active ? 'var(--shell-primary)' : '';
+        button.setAttribute('aria-pressed', String(active));
+      }
+    };
+    syncAutoHideModeButtons = syncModeButtons;
+    for (const [mode, label] of [
+      ['subtabs', 'SUB-TABS COLLAPSE'],
+      ['full', 'FULL AUTO-HIDE'],
+    ] as const) {
+      const button = el('button', { className: 'ss-fbtn', type: 'button' }, label) as HTMLButtonElement;
+      button.addEventListener('click', () => {
+        commit({ autoHideMode: mode });
+        syncModeButtons();
+      });
+      modeButtons.push({ mode, button });
+      autoHideModeWrap.append(button);
+    }
+    syncModeButtons();
+    autoHideModeRow.append(autoHideModeWrap);
+    s.append(autoHideModeRow);
+    hint(s, 'Sub-tabs collapse keeps the navigation visible. Full auto-hide hides the entire overlay after the idle delay and restores it when a new message arrives or you interact with the overlay.');
+    toggle(s, 'Show typing indicator while collapsed', () => currentSettings.showTypingWhenCollapsed, v => commit({ showTypingWhenCollapsed: v }));
+    hint(s, 'Keeps "X is typing…" visible in the tab strip while the chat is collapsed, so you can tell someone is replying without expanding it.');
     slider(
       s, 'Auto-hide delay', IDLE_COLLAPSE_SECONDS_MIN, IDLE_COLLAPSE_SECONDS_MAX, 1,
       () => currentSettings.idleCollapseSeconds,
@@ -1464,6 +1627,20 @@ function buildSettingsPanel() {
       fmtRow.style.display = v ? '' : 'none';
     });
     s.append(fmtRow);
+
+    // Viewer-side control over OTHER people's animated name effects. Independent of
+    // your own tier — it exists for anyone who finds motion in the feed distracting
+    // mid-game but does not want system-wide reduced motion turned on. Animated
+    // effects collapse to their static equivalent, so supporters still look distinct.
+    toggle(s, 'Disable animated name effects', () => currentSettings.disableNameMotion, v => {
+      commit({ disableNameMotion: v });
+    });
+    hint(s, 'Supporter names with moving effects render as a static version instead.');
+
+    // The native desktop settings are a first-class cosmetics surface, not a link
+    // back to the website. It reads the exact catalog + Discord entitlement state
+    // and writes through the same backend service as the Profile panel and bot.
+    mountSupporterAppearance(s);
   }
 
   // ── Footer ──
@@ -1479,6 +1656,8 @@ function buildSettingsPanel() {
     applyWindowVisual(currentSettings);
     fadeEnabled = currentSettings.fadeWhenIdle;
     setIdleFadeFromSeconds(currentSettings.idleCollapseSeconds);
+    setCollapsed(false);
+    syncAutoHideModeButtons?.();
     onSettingsChange?.(currentSettings);
     closeSettings();
   });
@@ -1567,11 +1746,24 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
   // not a stale mirror left from a previous session.
   persistLocal(currentSettings);
   onSettingsChange = opts.onSettingsChange;
+  // ChatOverlay owns the party context menus and persists its web settings in
+  // WEB_SETTINGS_KEY. Keep the native shell copy in sync when a moderator
+  // mutes/unmutes a party there, otherwise the next shell slider change could
+  // overwrite the renderer's preference with a stale mirror.
+  if (webSettingsSyncHandler) window.removeEventListener('fcm-web-settings-changed', webSettingsSyncHandler);
+  webSettingsSyncHandler = (event: Event) => {
+    const detail = (event as CustomEvent<{ mutedPartyIds?: unknown }>).detail;
+    if (!Array.isArray(detail?.mutedPartyIds)) return;
+    currentSettings = { ...currentSettings, mutedPartyIds: detail.mutedPartyIds.filter((id): id is string => typeof id === 'string') };
+    persistShellSettings(currentSettings);
+  };
+  window.addEventListener('fcm-web-settings-changed', webSettingsSyncHandler);
 
   // DEV-ONLY: test hooks for the screenshot harness.
   (window as unknown as { __ovTest?: unknown }).__ovTest = {
     collapse: () => setCollapsed(true),
     expand: () => setCollapsed(false),
+    setAutoHideMode: (mode: AutoHideMode) => { currentSettings = { ...currentSettings, autoHideMode: normalizeAutoHideMode(mode) }; },
     noIdle: () => { fadeEnabled = false; if (collapsed) setCollapsed(false); },
   };
 
@@ -1584,6 +1776,27 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
   // resizes the overlay when Fallout 76 launches/closes, and the old resize→
   // re-clamp path is what reset the font to ~8px on every game launch.
   startIdleLoop(currentSettings);
+
+  // Hidden→visible: reset idle so a long tab-away doesn't re-show collapsed.
+  // ChatOverlay.tsx also listens to onVisibility (WS reconnect gate). A
+  // second listener is fine; idle-collapse must stay shell-owned, not shared.
+  window.relayBridge.onVisibility?.((isVisible) => {
+    if (shouldResetIdleOnVisibility(isVisible)) markActivity();
+  });
+
+  // Version update indicator: when main signals a newer version is available,
+  // latch the version and apply a red dot to the settings panel version span.
+  // The panel may not be built yet (it's lazy), so we store the version and
+  // apply it when the panel is first opened.
+  window.relayBridge.onUpdateAvailable?.(({ latestVersion }) => {
+    pendingUpdateVersion = latestVersion;
+    applyUpdateDot(latestVersion);
+  });
+  // Also poll on startup — the update event may have fired before this listener
+  // was registered (WS connects early, before initShell completes).
+  window.relayBridge.getPendingUpdate?.().then(v => {
+    if (v) { pendingUpdateVersion = v; applyUpdateDot(v); }
+  }).catch(() => { /* non-fatal */ });
 
   // While collapsed, re-assert on any window resize (compositor-driven or manual)
   // so the viewport never jumps to the chat input. Debounced; skips the
@@ -1862,9 +2075,19 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
     lastActivityMs = Date.now();
     // Cancel any pending debounced message-activity expand to prevent thrash.
     if (msgActivityTimeout) { clearTimeout(msgActivityTimeout); msgActivityTimeout = null; }
+    const root = document.getElementById('root');
+    root?.classList.remove('fcm-full-auto-hidden');
     if (collapsed) {
       collapsed = false;
-      document.getElementById('root')?.classList.remove('collapsed');
+      // #327: fully reveal — not just the root 'collapsed' class. Previously this
+      // path left the body/input/footer carrying 'fcm-collapsed-hidden', so when
+      // the Insert hotkey's force-expand won the race against the local
+      // keydown→setCollapsed(false) path (which then no-op'd on its guard), the
+      // overlay expanded but showed nothing but the top bar. Funnel through the
+      // same reveal as setCollapsed so the two paths can't diverge.
+      const hiddenEls = collapsedHidden.slice();
+      collapsedHidden = [];
+      revealCollapsedElements(root, hiddenEls);
       scrollMessagesToBottomDeferred();
     }
   });

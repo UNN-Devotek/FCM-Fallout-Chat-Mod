@@ -51,12 +51,28 @@ const { app, BrowserWindow, globalShortcut, ipcMain, Tray, Menu, MenuItem, scree
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
+// Pure logic lives in overlay-core (no electron / no side effects). Required up
+// here so the logger below can use resolveLogLevel/shouldRotateLog.
+const overlayCore = require('./overlay-core');
 
 // ─── Diagnostic logging ───────────────────────────────────────────────────────
 // Always-on file log so failures on machines we can't access (especially
 // Linux/Proton, where game detection + window behavior differ) are diagnosable.
 // Path: per-user logs dir — Linux ~/.config/Fallout Chat Mod/logs/main.log,
-// Windows %APPDATA%\Fallout Chat Mod\logs\main.log. Truncates past ~1MB.
+// Windows %APPDATA%\Fallout Chat Mod\logs\main.log.
+//
+// Two levels:
+//   diag()  — INFO, always on. Lifecycle + state TRANSITIONS (startup, tray,
+//             visibility, hotkeys, game on/off, kwin, ozone, relay). Low-frequency,
+//             so a normal user's log stays lean but still tells the story.
+//   vdiag() — VERBOSE, opt-in (FCM_DEBUG=1 / --debug / Settings → Debug logging).
+//             Per-tick spam (z-order re-applies, game scans, foreground polls) for
+//             deep debugging sessions. Off by default to keep the log small.
+// The file rotates to main.log.1 at ~2MB (mid-session, not just at startup) so a
+// user report retains the relevant tail without the file growing without bound.
+const LOG_ROTATE_BYTES = 2 * 1024 * 1024;
+let _logLevel = 'info';       // refined by refreshLogLevel() from env/argv/settings
+let _diagWrites = 0;
 let _diagPath = null;
 function diagPath() {
   if (_diagPath) return _diagPath;
@@ -65,15 +81,49 @@ function diagPath() {
   catch { dir = path.join(os.tmpdir(), 'FalloutChatMod-logs'); }
   try { fs.mkdirSync(dir, { recursive: true }); } catch { /* ignore */ }
   _diagPath = path.join(dir, 'main.log');
-  try { const st = fs.statSync(_diagPath); if (st.size > 1024 * 1024) fs.writeFileSync(_diagPath, ''); } catch { /* ignore */ }
+  // Rotate a large log left over from a previous session ONCE, on first resolution.
+  try {
+    const st = fs.statSync(_diagPath);
+    if (overlayCore.shouldRotateLog(st.size, LOG_ROTATE_BYTES)) rotateLog();
+  } catch { /* no existing log */ }
   return _diagPath;
+}
+// Rename the current log to .1 (keep one prior session) and start fresh. Falls back
+// to truncation if the rename can't happen (e.g. cross-device / locked file).
+function rotateLog() {
+  if (!_diagPath) return;
+  try { fs.renameSync(_diagPath, _diagPath + '.1'); }
+  catch { try { fs.writeFileSync(_diagPath, ''); } catch { /* ignore */ } }
+}
+function rotateLogIfNeeded() {
+  try {
+    const st = fs.statSync(diagPath());
+    if (overlayCore.shouldRotateLog(st.size, LOG_ROTATE_BYTES)) rotateLog();
+  } catch { /* ignore */ }
 }
 function diag(...parts) {
   const line = '[' + new Date().toISOString() + '] ' +
     parts.map(p => (typeof p === 'string' ? p : JSON.stringify(p))).join(' ');
   try { fs.appendFileSync(diagPath(), line + '\n'); } catch { /* ignore */ }
   try { console.log(line); } catch { /* ignore */ }
+  // Throttled size check (statSync every write would be wasteful).
+  if ((++_diagWrites % 50) === 0) rotateLogIfNeeded();
 }
+// VERBOSE log line — only written when verbose logging is enabled.
+function vdiag(...parts) { if (_logLevel === 'verbose') diag(...parts); }
+function isVerboseLogging() { return _logLevel === 'verbose'; }
+// Recompute the level from env/argv (immediate) and, once available, persisted
+// settings. Safe to call repeatedly; logs the level on change so the log itself
+// records whether verbose was active.
+function refreshLogLevel(settings) {
+  const next = overlayCore.resolveLogLevel({ env: process.env, argv: process.argv, settings: settings || null });
+  if (next !== _logLevel) {
+    _logLevel = next;
+    try { diag('[log] level=' + _logLevel + (next === 'verbose' ? ' (verbose — per-tick logging ON)' : '')); } catch { /* ignore */ }
+  }
+}
+// Initialize from env/argv at module load (settings are applied later once state loads).
+refreshLogLevel(null);
 const IS_LINUX = process.platform === 'linux';
 const crypto = require('crypto');
 const https = require('https');
@@ -94,8 +144,21 @@ const _xdgDesktop = (process.env.XDG_CURRENT_DESKTOP || process.env.XDG_SESSION_
 const _xdgSession = (process.env.XDG_SESSION_TYPE || '').toLowerCase();
 const IS_KDE = _xdgDesktop.includes('kde') || _xdgDesktop.includes('plasma');
 const IS_WAYLAND = _xdgSession === 'wayland' || !!process.env.WAYLAND_DISPLAY;
+const IS_X11 = IS_LINUX && !IS_WAYLAND;
 // The single switch that turns the new behavior on. KDE + Wayland only.
 const KDE_WAYLAND = IS_LINUX && IS_KDE && IS_WAYLAND;
+// Hyprland is a wlroots compositor, not KWin. HYPRLAND_INSTANCE_SIGNATURE is
+// Hyprland's own env var (always set inside a Hyprland session, the most
+// reliable signal); XDG_CURRENT_DESKTOP is a secondary fallback. Mutually
+// exclusive with KDE_WAYLAND / IS_X11 in practice.
+const IS_HYPRLAND = IS_LINUX && IS_WAYLAND &&
+  (!!process.env.HYPRLAND_INSTANCE_SIGNATURE || _xdgDesktop.includes('hyprland'));
+// Phase-0 spike opt-in (see docs/overlay/linux-overlay-approaches.md): when set, stay
+// on native Wayland instead of relaunching into XWayland. Off by default — every
+// existing user keeps the XWayland relaunch below unchanged. This exists to let us
+// empirically test the one open blocker (does FO76's Proton mouse-lock survive a
+// native-Wayland overlay above it — KDE bug 485409) before committing to a migration.
+const NATIVE_WAYLAND_OPT_IN = KDE_WAYLAND && process.env.FCM_NATIVE_WAYLAND === '1';
 
 // KDE+WAYLAND ONLY: force the XWayland (X11) Ozone backend. On a native Wayland
 // session Chromium uses the Wayland backend, where an external window cannot
@@ -125,28 +188,72 @@ const KDE_WAYLAND = IS_LINUX && IS_KDE && IS_WAYLAND;
 // under Proton is itself XWayland — sharing the XWayland root is what makes stacking work.
 // (Caveat: even under XWayland, KWin only forwards MODIFIER-bearing global keys between
 // XWayland clients, so bare keys may need follow-up — see docs.)
-if (KDE_WAYLAND) {
+if (KDE_WAYLAND && NATIVE_WAYLAND_OPT_IN) {
+  // Phase-0 spike path: skip the XWayland relaunch entirely and stay native. Enable
+  // Chromium's GlobalShortcutsPortal (fixed in Electron 42.0.0 — we're pinned to
+  // 42.5.0, see package.json) so globalShortcut has a chance of working without
+  // XGrabKey. Belt-and-suspenders ozone-platform switches are deliberately NOT set
+  // here — setting them would force XWayland, defeating the opt-in.
+  try { app.commandLine.appendSwitch('enable-features', 'GlobalShortcutsPortal'); } catch { /* ignore */ }
+  try {
+    // Electron has no public API to read back the app_id it actually sent via
+    // xdg_toplevel.set_app_id() — package.json's top-level "desktopName" (see the
+    // comment near app.setName() above) is what we PIN it to, but the only reliable
+    // ground truth is what KWin itself reports. Phase-0 tester: open System Settings
+    // -> Window Management -> Window Rules -> Add New... -> Detect Window Properties,
+    // click the overlay window, and confirm "Window class" reads fallout-chat-mod —
+    // same workflow already used to inspect Konsole/Chrome/Discord.
+    diag('[ozone] FCM_NATIVE_WAYLAND=1 — staying on native Wayland (skipping XWayland relaunch); ' +
+      'GlobalShortcutsPortal feature enabled; expected app_id=fallout-chat-mod (verify via ' +
+      'System Settings -> Window Rules -> Detect Window Properties on this window).');
+  } catch { /* logger not ready */ }
+} else if (KDE_WAYLAND) {
   // overlayCore is required further down; this runs at module load, so inline the
   // same pure logic via a local require to keep the relaunch decision testable.
+  // NATIVE_WAYLAND_OPT_IN is always false here (the branch above already handled the
+  // true case) — planOzoneRelaunch's nativeWaylandOptIn param isn't passed since this
+  // path is unconditionally the XWayland-relaunch decision.
   const _ozoneRelaunch = require('./overlay-core').planOzoneRelaunch({
     kdeWayland: KDE_WAYLAND, argv: process.argv, appImagePath: process.env.APPIMAGE || null,
+    execPath: process.execPath,
   });
-  if (_ozoneRelaunch) {
+  if (_ozoneRelaunch && _ozoneRelaunch.safe === false) {
+    // UNSAFE re-exec (issue #272): the only binary is a transient AppImage FUSE mount
+    // (/tmp/.mount_*) and $APPIMAGE is unset, so app.exit(0) would unmount it before the
+    // child starts → the app "launches once, then the shortcut does nothing". Do NOT
+    // exit; stay on native Wayland (stacking may be degraded) rather than vanish. This
+    // happens with some AppImageLauncher / wrapper launches; the .deb avoids it entirely.
+    try {
+      diag('[ozone] XWayland relaunch needed but UNSAFE — execPath=' + process.execPath +
+        ' is a transient AppImage mount and $APPIMAGE is unset; staying on native Wayland ' +
+        'to avoid disappearing on exit. Reinstall via the .deb or install.sh for reliable launch.');
+    } catch { /* logger not ready */ }
+  } else if (_ozoneRelaunch) {
     // NOTE: app.relaunch() does NOT work for an AppImage here — the relaunched instance
     // never reaches app.ready (verified). Re-exec manually via child_process instead, with
     // a CLEANED env: drop the AppImage-runtime vars (APPDIR/APPIMAGE/ARGV0/OWD point at the
     // transient /tmp/.mount_* path that's gone after we exit) so the fresh AppImage runtime
     // repopulates them, and APPIMAGELAUNCHER_DISABLE (it makes the binfmt handler misfire on
     // the re-exec). detached + unref + ignored stdio so the child outlives this process.
+    const exe = _ozoneRelaunch.execPath || process.execPath;
     try {
       const cp = require('child_process');
-      const exe = _ozoneRelaunch.execPath || process.execPath;
-      const env = { ...process.env };
+      const env = { ...process.env, ...(_ozoneRelaunch.env || {}) };
       for (const k of ['APPDIR', 'APPIMAGE', 'ARGV0', 'OWD', 'APPIMAGELAUNCHER_DISABLE']) delete env[k];
+      // Diagnostic BEFORE the spawn — if the child fails to start (FUSE/binfmt/launcher
+      // issues) this is the last line we log, which pinpoints the cause from a user report.
+      try {
+        diag('[ozone] relaunching for XWayland: exe=' + exe + ' $APPIMAGE=' + (process.env.APPIMAGE || '(unset)') +
+          ' args=' + JSON.stringify(_ozoneRelaunch.args));
+      } catch { /* logger not ready */ }
       const child = cp.spawn(exe, _ozoneRelaunch.args, { detached: true, stdio: 'ignore', env });
       child.unref();
       app.exit(0);
-    } catch { /* re-exec failed — fall through to the best-effort switches below */ }
+    } catch (e) {
+      // re-exec failed — log it (previously swallowed silently) and fall through to the
+      // best-effort switches below so we at least keep running.
+      try { diag('[ozone] relaunch spawn FAILED for exe=' + exe + ': ' + (e && e.message ? e.message : String(e))); } catch { /* ignore */ }
+    }
   }
   // Belt-and-suspenders: no-op on the relaunched X11 process; the route that actually
   // worked on older Electron (<=37, where the hint still selected X11).
@@ -175,11 +282,17 @@ if (!app.isPackaged) {
 // and continue; the relay retries on its own schedule.
 // NOTE: do NOT call app.setName() here. The app name feeds app.getPath('userData')
 // (→ ~/.config/Fallout Chat Mod), so renaming it would orphan every existing
-// user's session/settings/keybinds on all platforms. KWin matches the overlay by
-// its X11 WM_CLASS ("Fallout Chat Mod", since the overlay runs under XWayland on
-// KDE) via the bundled keep-above rule's substring match on "fallout" — no app_id
-// override is needed. The electron-builder linux.desktopName only affects the
-// installed .desktop filename / native-Wayland app_id and does not change userData.
+// user's session/settings/keybinds on all platforms. What the KWin/Hyprland rules
+// match on instead is the top-level "desktopName" field in package.json (bundled
+// via build.files). Electron reads it at startup and calls app.setDesktopName,
+// which sets BOTH the X11 WM_CLASS and the native-Wayland app_id to
+// "fallout-chat-mod", independently of app.getName()/userData. Without it Electron
+// falls back to `${app.name}.desktop`, and app.name prefers productName, so the
+// class would become "Fallout Chat Mod" and every wmclass=fallout-chat-mod match
+// (the keep-above rule, findHyprctlClient) would silently stop matching. The
+// separate build.linux.executableName only names the packaged binary. See
+// FCM_NATIVE_WAYLAND / NATIVE_WAYLAND_OPT_IN above and
+// docs/overlay/linux-overlay-approaches.md.
 
 process.on('uncaughtException', (err) => {
   const msg = (err && err.message) ? err.message : String(err);
@@ -192,93 +305,126 @@ process.on('unhandledRejection', (reason) => {
 
 // LINUX/KDE: the importable KWin rule + setup note. Written to the stable
 // userData dir on startup (an AppImage has no install dir, and asar contents
-// aren't user-reachable) so users can import the rule and read the guide. Also
-// surfaced via the tray ("KDE: keep overlay above game"). Keep in sync with
+// aren't user-reachable) so users can import the rule and read the guide.
+// Keep in sync with
 // cross-platform-overlay/assets/fallout-chatmod-keepabove.kwinrule + docs.
 // NOTE: kept byte-consistent with assets/fallout-chatmod-keepabove.kwinrule
-// (sans comments — KWin's INI parser ignores them). TWO rules:
-//   1) keep-above on the OVERLAY (wmclass "fallout" + title "Fallout Chat Mod").
-//   2) fullscreen-demote on the GAME (wmclass "steam_app_1151340").
-// On KWin 6 the layer=8/layerrule=2 force is IGNORED, so keep-above ALONE loses to a
-// FOCUSED fullscreen game. Rule 2 (fullscreen=false Force) demotes FO76 out of the
-// active-fullscreen layer so the overlay's keep-above wins even while playing. The
-// layer/layerrule keys are kept on rule 1 only for older KWin builds that honor them.
-// The overlay AUTO-APPLIES these on startup (setupKdeKeepAbove); this file is the
-// manual-import fallback. Game still renders full-screen-sized in Borderless.
+// (sans comments — KWin's INI parser ignores them). ONE rule, on the OVERLAY
+// (wmclass "fallout-chat-mod"), combining two properties:
+//   1) keep-above (above=true) — belt-and-suspenders.
+//   2) force-Layer=Overlay (layer=overlay, layerrule=2 Force) — THE KWin-6 fix
+//      (KDE Bug 441074): lifts the overlay above an active-fullscreen game WITHOUT
+//      demoting the game, so FO76 keeps normal fullscreen stacking above the panel.
+// The automatic path (syncKwinKeepAboveRule) installs/removes this dynamically
+// based on gameRunning && sameOutput. This string (and the .kwinrule asset) stay
+// the static, always-apply manual-import fallback.
 const KWINRULE_TEXT = `[Fallout Chat Mod - keep above games]
 Description=Fallout Chat Mod - keep above games
-title=Fallout Chat Mod
-titlematch=2
-wmclass=fallout
+wmclass=fallout-chat-mod
 wmclassmatch=2
 wmclasscomplete=false
 above=true
 aboverule=3
-layer=8
+layer=overlay
 layerrule=2
-fsplevel=0
-fsplevelrule=2
-
-[Fallout Chat Mod - demote game from fullscreen layer]
-Description=Fallout Chat Mod - demote game from fullscreen layer
-wmclass=steam_app_1151340
-wmclassmatch=2
-wmclasscomplete=false
-fullscreen=false
-fullscreenrule=2
 `;
-const LINUX_README_TEXT = `Fallout Chat Mod — Linux / KDE setup
-=====================================
+const LINUX_README_TEXT = `Fallout Chat Mod — Linux desktop setup
+========================================
 
 On KDE Plasma (Wayland) the overlay configures itself AUTOMATICALLY — there is
 normally nothing to do. This note explains what it does and how to fix the rare
 cases, because it's compositor behavior, not an app bug (Electron can't set window
 stacking on Wayland — only KWin can).
 
-----------------------------------------------------------------------
-1) KEEP THE OVERLAY ABOVE THE GAME  (automatic — two KWin rules)
-----------------------------------------------------------------------
-On first launch the overlay forces the XWayland backend and installs TWO KWin
-rules into ~/.config/kwinrulesrc, then reloads KWin — no manual steps:
+The overlay detects the Linux session and compositor automatically. There is no
+desktop-environment switch to select. Each path fails closed and keeps the normal
+game-running fallback if its helper is missing or fails.
 
-  - "keep above games"               -> keeps the overlay window above others.
-  - "demote game from fullscreen"    -> stops KWin promoting Fallout 76 to the
-                                        active-fullscreen layer, so the overlay
-                                        stays on top even while the GAME is focused.
+1) KEEP THE OVERLAY ABOVE THE GAME  (automatic — one KWin rule)
+----------------------------------------------------------------------
+On first launch the overlay forces the XWayland backend. While Fallout 76 runs
+AND the overlay shares its monitor, it also installs ONE KWin rule into
+~/.config/kwinrulesrc (reloading KWin). No manual steps. The rule ("keep
+above games") combines two properties on the OVERLAY window:
 
-Why two rules: borderless games (incl. FO76) still tell KWin they are fullscreen
-(_NET_WM_STATE_FULLSCREEN), and KWin ranks a FOCUSED fullscreen window above any
-"keep above" window. On KWin 6 the old layer-override trick is ignored, so the
-demote rule is what actually keeps the overlay visible while you play. The game
-still renders full-screen-sized in Borderless — only its KWin stacking changes.
+  - keeps the overlay window above others, AND
+  - forces the OVERLAY into KWin's Overlay layer, so it stays on top even
+    while the GAME is focused fullscreen. The game is NOT demoted — FO76
+    keeps its normal fullscreen stacking (above the panel).
+
+The rule is removed automatically when FO76 exits or the overlay moves to a
+different monitor. There it's just an ordinary window, not forced above
+anything. The overlay also HIDES automatically when FO76 loses focus to
+another app on the same monitor (typing in chat still counts as "in the
+game"), so it won't sit on top of your desktop when you tab away. See
+section 5 for what enables this focus detection.
+
+Why the force-Layer property: borderless games (incl. FO76) still tell KWin
+they are fullscreen (_NET_WM_STATE_FULLSCREEN), and KWin ranks a FOCUSED
+fullscreen window above any plain "keep above" window. The force-Layer
+property (KWin 6+) is the sanctioned way to out-rank it without touching the
+game's own stacking.
 Run FO76 in BORDERLESS WINDOWED (not exclusive fullscreen).
 
 If it ever ends up behind the game (e.g. the auto-apply couldn't run), import the
-bundled rule by hand, or use the tray menu -> "KDE: keep overlay above game":
+bundled rule by hand:
 
   1. System Settings -> Window Management -> Window Rules -> Import...
   2. Select: fallout-chatmod-keepabove.kwinrule  (in this same folder)
   3. Apply, then run:  qdbus org.kde.KWin /KWin reconfigure   (or log out/in)
 
-Uninstalling? The uninstaller removes these rules; FO76's fullscreen is restored.
+Uninstalling? The uninstaller removes this rule; FO76's fullscreen is restored.
 
 ----------------------------------------------------------------------
-2) STOP THE OVERLAY STEALING KEYS IN OTHER APPS  (install xdotool)
+2) HYPRLAND / WAYLAND  (automatic, best effort)
 ----------------------------------------------------------------------
-By default the overlay's hotkeys (Insert / Delete / Home, etc.) stay registered
-the whole time Fallout 76 is running — so they get intercepted even when you tab
-to Konsole, Discord, a browser, etc. Wayland hides the active window from apps,
-so the overlay needs "xdotool" to tell when you're NOT in the game/overlay and
-release the keys. (kdotool also works as a fallback if you prefer it.)
+The overlay uses hyprctl for active-window focus, the same-output probe, and
+pinning. This path is implemented but has not been verified on real Hyprland
+hardware. Missing or failing hyprctl logs a diagnostic and leaves ordinary
+stacking plus the Linux setAlwaysOnTop heartbeat fallback.
 
-  Install xdotool, then relaunch the overlay:
-    Arch / CachyOS:  sudo pacman -S xdotool   (or: paru -S xdotool)
-    Debian/Ubuntu:   sudo apt install xdotool
-    Fedora:          sudo dnf install xdotool
+----------------------------------------------------------------------
+3) PLAIN X11  (automatic focus detection when a helper is installed)
+----------------------------------------------------------------------
+The overlay prefers xdotool (kdotool is the fallback) for hide-on-alt-tab and
+hotkey release. Without either tool, global hotkeys remain registered for the
+whole FO76 session; the game-running fallback is safe and unchanged.
 
-Without xdotool (or kdotool) everything still works EXCEPT this key-release
+----------------------------------------------------------------------
+4) GNOME / OTHER WAYLAND  (conditional)
+----------------------------------------------------------------------
+No KWin or Hyprland rule is applied. If the overlay will not stay above the game,
+set this Fallout 76 Steam launch option:
+
+  PROTON_NO_WM_DECORATION=1 %command%
+
+KDE users must not use that option; use the KWin rule above instead. Windowed
+Borderless is still required. Do NOT run the game inside gamescope for overlay
+purposes — its nested compositor isolates the game and no external overlay can
+draw over it.
+
+
+----------------------------------------------------------------------
+5) OPTIONAL HOTKEY HELPER
+----------------------------------------------------------------------
+On KDE Wayland, kdotool is preferred because it sees native-Wayland and XWayland
+windows. xdotool is the fallback, but cannot see native-Wayland windows. On plain
+X11, xdotool is preferred and kdotool is the fallback. These helpers tell the
+overlay when you tab away from the game/overlay so it can release its hotkeys.
+
+  Install kdotool, then relaunch the overlay:
+    Arch / CachyOS:  paru -S kdotool       (AUR; or: yay -S kdotool)
+    Fedora:          sudo dnf install kdotool
+
+kdotool is PREFERRED on KDE Wayland: it asks KWin directly, so it sees every
+window. On plain X11, install xdotool instead (kdotool is the fallback):
+  Arch / CachyOS:  sudo pacman -S xdotool
+  Fedora:          sudo dnf install xdotool
+  Debian / Ubuntu: sudo apt install xdotool
+
+Without kdotool (or xdotool) everything still works EXCEPT this key-release
 behavior — the overlay falls back to holding the hotkeys while the game runs (no
-crash, no other change). Install it for the best experience on KDE Wayland.
+crash, no other change). Relaunch the overlay after installing a helper.
 
 ----------------------------------------------------------------------
 Notes
@@ -289,10 +435,10 @@ Notes
   - Do NOT run the game inside gamescope for overlay purposes — its nested
     compositor isolates the game and no external overlay can draw over it.
   - The overlay only auto-shows while Fallout 76 is running (detected fine
-    under Proton). With the game closed it stays hidden by design.
-
-Tray menu -> "KDE: keep overlay above game" opens this folder and tries to
-import the rule for you automatically.
+    under Proton); closed game -> hidden by design. With kdotool/xdotool
+    (section 5) it also hides on alt-tab away from the game on the same
+    monitor and reappears on tab-back; without the tool it stays visible
+    for the whole game session.
 `;
 
 // Write the helper files into userData (Linux only). Returns the rule path.
@@ -309,14 +455,11 @@ function writeLinuxHelperFiles() {
   } catch (e) { diag('[linux] writeLinuxHelperFiles failed:', String(e && e.message || e)); return null; }
 }
 
-// Apply the KWin keep-above layer rule. Two entry points:
-//   • Auto, at startup on KDE+Wayland (interactive=false) — so the overlay sits
-//     above the game for EVERY user with no manual step. This is the path that
-//     makes it "just work"; previously the rule was only written to disk and the
-//     user had to discover the tray item, so most installs left it behind the game.
-//   • Tray "KDE: keep overlay above game" (interactive=true) — additionally opens
-//     the helper folder so the user can import the .kwinrule by hand if the auto
-//     path failed (older KWin / missing kwriteconfig6 / non-KDE).
+// Apply the KWin keep-above layer rule. Single entry point: syncKwinKeepAboveRule
+// on KDE+Wayland when gameRunning && sameOutput — so the overlay sits above the
+// game for EVERY user with no manual step. This is the path that makes it "just
+// work"; previously the rule was only written to disk and most installs left it
+// behind the game.
 //
 // IDEMPOTENT (required now that it runs on every launch): KWin stores rules as
 // NUMBERED groups ([1], [2], …) enumerated by [General] count — NOT named groups
@@ -324,29 +467,240 @@ function writeLinuxHelperFiles() {
 // our Description and EXITS if it's already there; without that guard, each startup
 // would append a duplicate rule group and reconfigure KWin needlessly. Only when the
 // rule is missing does it append group [N+1], bump count, and reconfigure. All
-// best-effort: on GNOME / missing tools / older KWin it no-ops (the interactive path
-// still opens the folder so the manual System-Settings → Import remains available).
-function setupKdeKeepAbove({ interactive = false } = {}) {
-  if (!IS_LINUX) return;
+// best-effort: on GNOME / missing tools / older KWin it no-ops. The .kwinrule file
+// is still written to userData (writeLinuxHelperFiles) so a hand import via
+// System Settings → Window Rules → Import remains available (e.g. Plasma 5,
+// missing kwriteconfig6).
+// The `fcm-keepabove` rule's force-Layer property (layer=overlay) keeps the overlay above a
+// focused fullscreen game WITHOUT demoting the game (so the game keeps normal fullscreen above
+// the panel) — the primary KWin-6 fix, always applied. (The old opt-in "keep game below"
+// fallback rule was removed: it dropped FO76 to BelowLayer, under EVERY window and the
+// panel. The install script still strips a stale fcm-game-below from old installs.)
+function setupKdeKeepAbove(onDone) {
+  if (!IS_LINUX) { if (onDone) onDone(); return; }
   const rulePath = writeLinuxHelperFiles();
-  if (interactive) {
-    const dir = (() => { try { return app.getPath('userData'); } catch { return null; } })();
-    if (dir) { try { shell.openPath(dir); } catch { /* ignore */ } }
-  }
   try {
     const { exec } = require('child_process');
-    // Shared, unit-tested script builder (idempotency guard + numbered-group write
+    // Shared, unit-tested script builder (idempotency guard + named-group write
     // + count bump + KWin reconfigure). See overlay-core.buildKwinKeepAboveScript.
-    const script = overlayCore.buildKwinKeepAboveScript();
+    const script = overlayCore.buildKwinKeepAboveScript({});
     exec(script, { timeout: 8000, shell: '/bin/sh' }, (err, stdout) => {
       const out = String(stdout || '');
-      if (err) diag('[linux] KDE keep-above auto-apply failed (use System Settings → Window Rules → Import): ' + String(err.message || err));
-      else if (out.includes('fcm-rule-present')) diag('[linux] KDE keep-above rule already present — skipped');
-      else diag('[linux] KDE keep-above rule installed (numbered group + count) + KWin reconfigured');
+      if (err) diag('[kwin] keep-above auto-apply failed (use System Settings → Window Rules → Import): ' + String(err.message || err));
+      else if (out.includes('fcm-rule-present')) diag('[kwin] keep-above rule already present — skipped');
+      else diag('[kwin] keep-above rule installed + KWin reconfigured');
+      if (onDone) onDone(!err);
     });
-  } catch (e) { diag('[linux] setupKdeKeepAbove exec failed:', String(e && e.message || e)); }
-  diag('[linux] setupKdeKeepAbove: rule at ' + rulePath + ' (interactive=' + interactive + ')');
+  } catch (e) { diag('[kwin] setupKdeKeepAbove exec failed:', String(e && e.message || e)); if (onDone) onDone(false); }
+  diag('[kwin] setupKdeKeepAbove: rule at ' + rulePath);
 }
+
+// Is the overlay window actually on screen right now (not hidden to tray / minimized)?
+// Used to gate the panel auto-hide: a hidden overlay must not keep the panels retracted.
+function overlayVisibleForZOrder() {
+  return !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized());
+}
+
+// --- KDE panel auto-hide while in-game (opt-in, default OFF) ------------------
+// KWin's fullscreen promotion is FOCUS-GATED: a borderless FO76 is above the panel only
+// while it is the ACTIVE window; when it loses focus — e.g. the user focuses THIS overlay
+// to type in chat — it drops to NormalLayer and the taskbar pops over the game's edge.
+// When enabled, set every Plasma panel to "autohide" while the overlay is visible over a
+// running game, and restore the user's exact per-panel modes on exit. Crash-safe: the
+// saved modes are persisted to userData, so a crash-then-relaunch restores them (see
+// restore-on-startup + before-quit). (Independent of any game demotion — this is normal
+// KWin layering for an inactive fullscreen-state window.)
+let _qdbusBin = null;
+function resolveQdbusBin() {
+  if (_qdbusBin !== null) return _qdbusBin;
+  const { execSync } = require('child_process');
+  _qdbusBin = '';
+  for (const b of ['qdbus6', 'qdbus-qt6', 'qdbus']) {
+    try { execSync('command -v ' + b, { shell: '/bin/sh', stdio: 'ignore' }); _qdbusBin = b; break; } catch { /* next */ }
+  }
+  return _qdbusBin;
+}
+// Run a plasmashell evaluateScript. Returns { ok, out, locked }.
+function plasmaEval(js) {
+  const bin = resolveQdbusBin();
+  if (!bin) return { ok: false, out: '' };
+  const { execFileSync } = require('child_process');
+  try {
+    const out = execFileSync(bin, ['org.kde.plasmashell', '/PlasmaShell', 'org.kde.PlasmaShell.evaluateScript', js],
+      { timeout: 6000, encoding: 'utf8' });
+    if (/Widgets are locked/i.test(out || '')) return { ok: false, locked: true, out: String(out || '') };
+    return { ok: true, out: String(out || '') };
+  } catch (e) {
+    const msg = String((e && (e.stdout || e.message)) || e);
+    return { ok: false, locked: /Widgets are locked/i.test(msg), out: msg };
+  }
+}
+function isPanelHideInGameEnabled() {
+  try { const s = loadState().settings; return !!(s && s.kdePanelHideInGame === true); } catch { return false; }
+}
+// Persisted saved per-panel modes (its EXISTENCE means "panels hidden, not yet restored").
+function panelHidingStatePath() {
+  try { return path.join(app.getPath('userData'), '.fcm-panel-hiding.json'); } catch { return null; }
+}
+function readSavedPanelHiding() {
+  const p = panelHidingStatePath();
+  try { return (p && fs.existsSync(p)) ? JSON.parse(fs.readFileSync(p, 'utf8')) : null; } catch { return null; }
+}
+function writeSavedPanelHiding(map) { const p = panelHidingStatePath(); if (p) { try { fs.writeFileSync(p, JSON.stringify(map)); } catch { /* ignore */ } } }
+function clearSavedPanelHiding() { const p = panelHidingStatePath(); if (p) { try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch { /* ignore */ } } }
+
+let _panelHidingActive = false;
+function applyPanelHideInGame() {
+  if (_panelHidingActive) return;
+  // Capture current modes only if we don't already have a saved map (a stale one from a
+  // crash is the authoritative restore target and must not be overwritten with "autohide").
+  if (!readSavedPanelHiding()) {
+    const r = plasmaEval(overlayCore.buildPanelHidingSaveScript());
+    if (!r.ok) { if (r.locked) diag('[panel-hide] skipped — Plasma widgets are locked'); return; }
+    const map = overlayCore.parsePanelHidingSave(r.out);
+    if (!Object.keys(map).length) return;                 // no panels → nothing to do
+    if (Object.values(map).every(m => m === 'autohide')) { // already all autohide → treat as active, no-op
+      writeSavedPanelHiding(map); _panelHidingActive = true; return;
+    }
+    writeSavedPanelHiding(map);
+  }
+  const s = plasmaEval(overlayCore.buildPanelHidingSetScript('autohide'));
+  if (s.ok) { _panelHidingActive = true; diag('[panel-hide] taskbar set to autohide while in-game'); }
+}
+function restorePanelHiding() {
+  const map = readSavedPanelHiding();
+  if (!map || !Object.keys(map).length) { clearSavedPanelHiding(); _panelHidingActive = false; return; }
+  const js = overlayCore.buildPanelHidingRestoreScript(map);
+  const r = js ? plasmaEval(js) : { ok: true };
+  if (r.ok || r.locked) { clearSavedPanelHiding(); _panelHidingActive = false; diag('[panel-hide] restored user panel modes'); }
+}
+// Drive on every game/visibility transition (NOT the heartbeat). Also restores a stale
+// saved map (e.g. the setting was turned off, or a previous crash) when we shouldn't hide.
+function syncPanelHideInGame(reason) {
+  if (!IS_LINUX) return;
+  const want = overlayCore.shouldHidePanelInGame({
+    gameRunning, overlayVisible: overlayVisibleForZOrder(), enabled: isPanelHideInGameEnabled(),
+  });
+  if (want && !_panelHidingActive) { diag('[panel-hide] hide (' + (reason || '') + ')'); applyPanelHideInGame(); }
+  else if (!want && (_panelHidingActive || readSavedPanelHiding())) { diag('[panel-hide] restore (' + (reason || '') + ')'); restorePanelHiding(); }
+}
+
+// FO76 in-game cursor lock (Wayland) — explicit, tray-triggered only (see
+// overlay-core.js FO76 comment block). The overlay never writes to FO76's
+// Proton/Wine prefix automatically; this only runs when the user presses the
+// tray's "Fix in-game cursor lock" action. Detects if FO76 is running so we
+// don't fight a live Wine session.
+function fo76IsRunning() {
+  try {
+    const { execSync } = require('child_process');
+    const out = execSync('ps -A -o comm=', { timeout: 4000 }).toString();
+    return out.split('\n').some(l => l.trim().toLowerCase() === 'fallout76.exe');
+  } catch { return false; }
+}
+
+// Locate protontricks: native `protontricks`, else the flatpak. Returns the argv prefix
+// (e.g. ['protontricks'] or ['flatpak','run','com.github.Matoking.protontricks']) or null.
+function findProtontricks() {
+  const { execSync } = require('child_process');
+  try { execSync('command -v protontricks', { shell: '/bin/sh', stdio: 'ignore' }); return ['protontricks']; }
+  catch { /* not native */ }
+  try { execSync('flatpak info com.github.Matoking.protontricks', { stdio: 'ignore' }); return ['flatpak', 'run', 'com.github.Matoking.protontricks']; }
+  catch { /* not flatpak */ }
+  return null;
+}
+
+// Read-only check of FO76's Wine prefix for the cursor-lock Wine settings.
+// No writes, no subprocess — just fs.readFileSync over the candidate
+// user.reg paths. Returns { found, grabFullscreen, grabPointer }; found is
+// false if no candidate path exists (game never launched under this prefix,
+// or a non-Steam install FCM doesn't know how to locate).
+function readFo76GrabSettings() {
+  const candidates = overlayCore.fo76UserRegCandidates(os.homedir(), overlayCore.FO76_APPID);
+  for (const p of candidates) {
+    try {
+      const text = fs.readFileSync(p, 'utf8');
+      return { found: true, ...overlayCore.parseWineGrabSettings(text) };
+    } catch { /* try next candidate */ }
+  }
+  return { found: false, grabFullscreen: false, grabPointer: false };
+}
+
+// Enable the in-game cursor lock via protontricks' winetricks verb `grabfullscreen=y`
+// (the winecfg "Automatically capture the mouse in full-screen windows" setting) — no
+// hand-editing of Wine config. Needs protontricks + FO76's prefix (game launched once) +
+// FO76 closed + a display (the overlay runs under XWayland, so DISPLAY is set). Surfaced
+// via the tray only — never automatic. Returns { status }:
+// 'applied'|'fo76-running'|'no-prefix'|'no-protontricks'|'error'.
+function applyFo76Grab() {
+  if (fo76IsRunning()) return { status: 'fo76-running' };
+  const pt = findProtontricks();
+  if (!pt) return { status: 'no-protontricks' };
+  const { execFileSync } = require('child_process');
+  const run = (args) => execFileSync(pt[0], [...pt.slice(1), ...args],
+    { timeout: 120000, encoding: 'utf8', env: { ...process.env } });
+  try {
+    // GrabFullscreen via the winetricks verb (locks the cursor in Fullscreen mode).
+    const out = run([overlayCore.FO76_APPID, 'grabfullscreen=y']);
+    if (overlayCore.protontricksIndicatesNoPrefix(out)) return { status: 'no-prefix' };
+    // GrabPointer via a raw reg add so the lock ALSO holds in Borderless-Windowed (no
+    // winetricks verb exists for it). See overlay-core.js buildFo76GrabPointerRegArgs.
+    run(overlayCore.buildFo76GrabPointerRegArgs());
+    diag('[cursor-fix] protontricks grabfullscreen=y + GrabPointer=Y applied for FO76');
+    return { status: 'applied' };
+  } catch (e) {
+    const msg = String((e && (e.stdout || e.message)) || e);
+    if (overlayCore.protontricksIndicatesNoPrefix(msg)) return { status: 'no-prefix' };
+    diag('[cursor-fix] protontricks failed: ' + msg.slice(0, 200));
+    return { status: 'error', error: e };
+  }
+}
+
+// Tray action: same core, with explicit dialog feedback per status. This is the ONLY
+// way the cursor lock gets applied — never on install, never on launch (installer
+// only prints the manual steps; see Packaging/linux/install.sh).
+function fixFo76CursorLock() {
+  if (!IS_LINUX) return;
+  const { dialog } = require('electron');
+  const r = applyFo76Grab();
+  const { type, message, detail } = overlayCore.cursorLockStatusMessage(r.status, r.error && r.error.message);
+  try { dialog.showMessageBox({ type, title: 'Fallout Chat Mod — in-game cursor lock', message, detail: detail || '', buttons: ['OK'] }); }
+  catch { diag('[cursor-fix] ' + message + (detail ? ' — ' + detail : '')); }
+}
+
+// Fires at most once per install: after FO76 exits on a Wayland session,
+// check (read-only) whether the Wine cursor-lock settings are missing and,
+// if so, nudge the user toward the existing one-click tray fix via a system
+// notification. Never writes to the prefix itself. See fixFo76CursorLock /
+// applyFo76Grab for the only place that happens, and only on an explicit
+// click (the notification's or the tray's). Persists cursorLockPrompted once
+// we have actually looked (prefix found): either we showed the notification,
+// or both settings were already set. Does not persist when the prefix is
+// missing; that is not an informed decision.
+function maybePromptCursorLockFix() {
+  if (!IS_LINUX || !IS_WAYLAND) return;
+  let alreadyPrompted = false;
+  try { alreadyPrompted = !!(loadState().settings || {}).cursorLockPrompted; } catch { /* default false */ }
+  if (alreadyPrompted) return;
+  const r = readFo76GrabSettings();
+  if (!r.found) return; // no prefix yet — nothing to detect, don't mark as prompted
+  const needPrompt = overlayCore.shouldPromptCursorLock({
+    wayland: IS_WAYLAND,
+    grabFullscreen: r.grabFullscreen,
+    grabPointer: r.grabPointer,
+    alreadyPrompted,
+  });
+  try {
+    const st = loadState();
+    saveState({ settings: { ...(st.settings || {}), cursorLockPrompted: true } });
+  } catch { /* non-fatal — worst case we prompt again next exit */ }
+  if (!needPrompt) return;
+  showSystemNotification(
+    'Fallout Chat Mod — cursor lock',
+    'Fallout 76\'s mouse-lock may drop while the overlay is up on Wayland. Click to apply the one-time fix.',
+    () => fixFo76CursorLock(),
+  );
+}
+
 const http = require('http');
 const { URL } = require('url');
 // Helper: pick http or https module based on the relay URL protocol.
@@ -358,8 +712,8 @@ function httpModule(urlOrString) {
 const WebSocket = require('ws');
 // Pure main-process helpers (side-effect-free, no electron). Single source of
 // truth — see overlay-core.js. main.js adapts these to its module state / the
-// electron `screen` API at the call sites below.
-const overlayCore = require('./overlay-core');
+// electron `screen` API at the call sites below. (overlayCore is require()d at the
+// top of the file so the logger can use it.)
 
 // Version FOLLOWS the main desktop app (ChatOverlay/ChatOverlay.csproj <Version>,
 // patched by build-installer.ps1). Falls back to this package's version if the
@@ -376,8 +730,15 @@ const NEXUS_MOD_URL = 'https://www.nexusmods.com/fallout76/mods/4082';
 // Path A (dev:cloud, non-CF-Access dev backend): https://dev.falloutchatmod.com
 // Path B (dev:local):                            http://localhost:7177
 // Production default (no override):              https://falloutchatmod.com
-const { relayHttp: RELAY_HTTP, relayWs: RELAY_WS } = overlayCore.resolveRelayUrls(process.env);
+const BUILD_CHANNEL = (() => {
+  try { return require('./package.json').fcmChannel || process.env.BUILD_CHANNEL || 'stable'; }
+  catch { return process.env.BUILD_CHANNEL || 'stable'; }
+})();
+const { relayHttp: RELAY_HTTP, relayWs: RELAY_WS } = overlayCore.resolveRelayUrls(process.env, BUILD_CHANNEL);
 const RELAY_HOST = new URL(RELAY_HTTP).host;
+// Optional shared key for remote hosted-DEV DevAccount requests. Keep this out
+// of URLs and omit the header entirely for local development / production.
+const DEV_PERSONA_LOGIN_SECRET = process.env.DEV_PERSONA_LOGIN_SECRET || '';
 
 // Stable, identifiable User-Agent for every outbound request from the main
 // process. Cloudflare WAF can allowlist on this string. The Electron version is
@@ -506,6 +867,7 @@ const MIN_HEIGHT = 280;
 
 let mainWindow = null;
 let tray = null;
+let trayAvailable = false;        // true once new Tray() succeeds (SNI host present)
 let clickThrough = false;
 let autoClickThrough = false;
 // ─── Idempotent setIgnoreMouseEvents ──────────────────────────────────────────
@@ -532,6 +894,9 @@ let isQuitting = false;
 // Once-per-session guard: prevents the update toast from re-firing on WS reconnects
 // within the same app launch. Reset to false on each app start.
 let updateNotifiedThisSession = false;
+/** Latched when an update fires — renderer can query this on init to catch
+ *  signals that arrived before its onUpdateAvailable listener was registered. */
+let pendingRendererUpdateVersion = null;
 // Track whether the chat input was focused before a reload so we can re-focus it.
 let inputWasFocused = false;
 // User role from register response (null = regular user). Used to show the
@@ -562,8 +927,14 @@ function isPrivileged() {
 // A fully-set-up regular user with the game closed → false (overlay hides). This
 // is intentional: onboarding stays visible (chatActive=false), then the overlay
 // closes the instant onboarding completes (chatActive=true) if FO76 isn't running.
+// focusAware/gameFocused (KDE-Wayland, X11, or Hyprland w/ live foreground
+// probe): hides the overlay when the game isn't focused, but only on the SAME
+// output as the game, same reasoning as syncKwinKeepAboveRule / syncHyprlandPin.
+// There's no stacking contest to win elsewhere. Without this, alt-tab would
+// hide the overlay even on a monitor the game isn't on.
 function canShowOverlay() {
-  return overlayCore.canShowOverlay({ forceVisible, role: userRole, gameRunning, chatActive });
+  const focusAware = (KDE_WAYLAND || IS_X11 || IS_HYPRLAND) && foregroundDetect && isOverlaySameOutputAsGame() === true;
+  return overlayCore.canShowOverlay({ forceVisible, role: userRole, gameRunning, chatActive, focusAware, gameFocused });
 }
 
 // Throttled tray balloon: shown when a regular user tries to open the overlay
@@ -590,12 +961,21 @@ function notifyGameRequired() {
 const { spawn, exec } = require('child_process');
 const { GAME_PROCESSES, isGameProcess, isGameClass } = overlayCore;
 let zorderProc = null;            // long-lived PowerShell foreground poller (win32)
-let fgPoller = null;              // active-window poller child (KDE-Wayland only)
+let fgPoller = null;              // active-window poller child (KDE-Wayland / X11 / Hyprland)
 let fgPollTimer = null;           // setInterval driving the active-window poll
-let fgTool = null;                // resolved tool name: 'xdotool' | 'kdotool'
-let kdeWaylandForegroundDetect = false; // true once a foreground tool is confirmed present
+let fgTool = null;                // resolved tool name: 'xdotool' | 'kdotool' | 'hyprctl'
+let foregroundDetect = false;     // true once a foreground tool is confirmed present (any Linux session type)
 let zorderTimer = null;           // fallback JS timer (re-applies desired state)
 let lastForegroundProc = '';      // last reported foreground process name (lower)
+// ── win32 foreground-poller self-heal + fail-safe (issue #136) ───────────────
+let lastForegroundAt = 0;         // ms ts of the last foreground line from the win32 poller
+let pollerStartedAt = 0;          // ms ts the current win32 poller child was spawned
+let pollerEverEmitted = false;    // current win32 poller child produced >= 1 line
+let pollerRestartCount = 0;       // consecutive win32 poller restarts (backoff index; resets on a healthy line)
+let pollerRestartTimer = null;    // pending win32 poller relaunch timer
+let fgWatchdogTimer = null;       // win32 fail-safe staleness watchdog interval
+let fgFailClosed = false;         // true while the watchdog has released keys (poller silent)
+const FG_STALE_MS = 4000;         // no foreground line for this long → fail closed (release hotkeys)
 let overlayIsTopmost = false;     // current applied alwaysOnTop state
 let lastUserFocusMs = 0;          // ts of last explicit user focus (Insert/focusToChat)
 const FOCUS_GUARD_MS = 800;       // window after a user focus during which the overlay stays interactive (beats the 100ms foreground poll)
@@ -607,13 +987,20 @@ const FOCUS_GUARD_MS = 800;       // window after a user focus during which the 
 // foreground-window-process API without native modules). Standalone/no-game mode
 // always remains usable regardless of whether the game is found.
 let gameRunning = false;           // true when Fallout76.exe is in the process list
+let gameFocused = false;           // committed focus state: game or overlay has it
+let _focusCandidate = null;        // pending gameFocused value (hysteresis)
+let _focusStableCount = 0;         // consecutive samples agreeing on _focusCandidate
+let _cachedGameDisplayId = null;   // FO76's Electron display id (null = output unknown)
+let _desiredRuleInstalled = null;  // latest state requested by game/display probes
+let _appliedRuleInstalled = null;  // last state confirmed by a successful helper command
 let gameScanTimer = null;          // interval handle for the process scanner
 let _scanCount = 0;                // diagnostic: number of game scans run
 let _lastDiagFound = null;         // diagnostic: last logged detection state
 let _inputGrabWarned = false;      // diagnostic: warned once about gamescope exclusive input grab
 let _presenceCandidate = null;     // pending gameRunning value awaiting confirmation (hysteresis)
 let _presenceStableCount = 0;      // consecutive scans agreeing on _presenceCandidate
-const PRESENCE_FLIP_SCANS = 2;     // scans (×2.5s) a new presence must persist before we flip gameRunning
+const PRESENCE_FLIP_SCANS_ON = 2;  // scans (×2.5s) a LAUNCH must persist before we flip gameRunning→true
+const PRESENCE_FLIP_SCANS_OFF = 3; // scans an EXIT must persist (held longer so a transient miss mid-game can't drop the overlay)
 
 function scanForGame() {
   if (process.platform === 'win32') {
@@ -640,24 +1027,36 @@ function scanForGame() {
       'ps -A -o command=',
       { timeout: 4000 },
       (err, stdout) => {
+        if (err) {
+          // A ps failure/timeout carries NO information about the game — do NOT read it
+          // as "game gone" (that would drop the overlay mid-game on a transient hiccup).
+          // Keep the committed state; a real change still needs fresh confirmations.
+          onGamePresenceChanged(null);
+          vdiag('[game-scan] ps error — keeping gameRunning=' + gameRunning + ': ' + String(err.message || err));
+          return;
+        }
         // Match the EXECUTABLE (Fallout76.exe), not a bare "fallout76" substring —
         // otherwise opening a file with "76" in the name (e.g. Fallout76.ini /
         // Fallout76Custom.ini in an editor under Wine) is a false positive that
         // pops the overlay open. The game runs as Fallout76.exe under Proton.
-        const found = !err && /fallout76\.exe/i.test(stdout || '');
+        const found = /fallout76\.exe/i.test(stdout || '');
         _scanCount++;
-        // Linux/Proton diagnostics: when detection state changes OR every ~60s,
-        // dump the candidate process lines (fallout/wine/proton/steam/fo76) so if
-        // FO76-via-Proton isn't detected we can see EXACTLY what name it runs as.
-        if (IS_LINUX && (found !== _lastDiagFound || _scanCount % 24 === 1)) {
+        // Linux/Proton diagnostics: dump candidate process lines (fallout/wine/
+        // proton/steam/fo76) so if FO76-via-Proton isn't detected we can see EXACTLY
+        // what name it runs as. On a detection TRANSITION this is logged at info (rare,
+        // high-value); the periodic ~60s heartbeat dump is VERBOSE-only (it was the #1
+        // source of log bloat — see [zorder] too).
+        const _gsTransition = found !== _lastDiagFound;
+        if (IS_LINUX && (_gsTransition || _scanCount % 24 === 1)) {
           _lastDiagFound = found;
           if (err) diag('[game-scan] ps error:', String(err.message || err));
           const cand = (stdout || '').split('\n')
             .filter(l => /fallout|wine|proton|steam|fo76|gamescope|umu/i.test(l))
             .map(l => l.trim().slice(0, 240));
-          diag('[game-scan] found=' + found +
+          const msg = '[game-scan] found=' + found +
             (cand.length ? ' — candidate processes:\n  ' + cand.join('\n  ')
-                         : ' — no fallout/wine/proton/steam processes visible to ps'));
+                         : ' — no fallout/wine/proton/steam processes visible to ps');
+          if (_gsTransition) diag(msg); else vdiag(msg);
         }
         // Diagnose the #1 cause of "hotkeys + window drag don't work in-game" on
         // Linux: gamescope's exclusive evdev input grab. `--force-grab-cursor` (and
@@ -685,27 +1084,46 @@ function scanForGame() {
   }
 }
 
+// `found`: true (game seen) | false (not seen) | null (scan FAILED — no information).
+// Hysteresis lives in the pure overlay-core.nextPresenceState reducer: a single bad scan
+// used to flip gameRunning instantly, churning z-order + visibility (reads as the overlay
+// flashing/bouncing). A launch must persist PRESENCE_FLIP_SCANS_ON scans, an exit
+// PRESENCE_FLIP_SCANS_OFF (held longer), and a scan failure never drops the game.
 function onGamePresenceChanged(found) {
-  if (found === gameRunning) { _presenceCandidate = null; _presenceStableCount = 0; return; }
-  // Hysteresis: a single bad scan (tasklist timeout / transient miss) used to flip
-  // gameRunning instantly, which churns z-order + visibility — reading as the overlay
-  // flashing/reloading and bouncing focus. Require the NEW state to persist across
-  // PRESENCE_FLIP_SCANS consecutive scans before committing.
-  if (found === _presenceCandidate) { _presenceStableCount++; }
-  else { _presenceCandidate = found; _presenceStableCount = 1; }
-  if (_presenceStableCount < PRESENCE_FLIP_SCANS) {
-    diag('[game-gate] presence candidate=' + found + ' (' + _presenceStableCount + '/' + PRESENCE_FLIP_SCANS + ') — awaiting confirm, current=' + gameRunning);
+  const r = overlayCore.nextPresenceState({
+    found,
+    gameRunning,
+    candidate: _presenceCandidate,
+    stableCount: _presenceStableCount,
+    appearScans: PRESENCE_FLIP_SCANS_ON,
+    disappearScans: PRESENCE_FLIP_SCANS_OFF,
+  });
+  _presenceCandidate = r.candidate;
+  _presenceStableCount = r.stableCount;
+  if (!r.commit) {
+    if (found != null && found !== gameRunning) {
+      diag('[game-gate] presence candidate=' + found + ' (' + _presenceStableCount + '/' +
+        (found ? PRESENCE_FLIP_SCANS_ON : PRESENCE_FLIP_SCANS_OFF) + ') — awaiting confirm, current=' + gameRunning);
+    }
     return;
   }
-  _presenceCandidate = null; _presenceStableCount = 0;
   const wasRunning = gameRunning;
-  gameRunning = found;
-  diag('[game-gate] gameRunning changed to ' + found + ' chatActive=' + chatActive + ' isPrivileged=' + isPrivileged() + ' forceVisible=' + forceVisible);
+  gameRunning = r.gameRunning;
+  diag('[game-gate] gameRunning changed to ' + gameRunning + ' chatActive=' + chatActive + ' isPrivileged=' + isPrivileged() + ' forceVisible=' + forceVisible);
   // On game-launch transition (not-running → running), clear userHidden so alt-tabbing
   // back into the game brings the overlay back after the user had hidden it with Delete.
-  if (found && !wasRunning) {
+  if (gameRunning && !wasRunning) {
     diag('[game-gate] game launched — clearing userHidden');
     userHidden = false;
+    // Probe the game's display asynchronously. Stacking stays ordinary while
+    // the output is unknown, then enables only after a confirmed same-output
+    // result.
+    probeGameDisplay();
+  } else if (!gameRunning && wasRunning) {
+    _cachedGameDisplayId = null;
+    if (KDE_WAYLAND) syncKwinKeepAboveRule('game-exit');
+    else if (IS_HYPRLAND) syncHyprlandPin('game-exit');
+    maybePromptCursorLockFix();
   }
   // Re-evaluate keybind registration: on non-win32 the keys are gated on game-
   // RUNNING (no foreground API), so they must (un)register when the game launches
@@ -715,19 +1133,283 @@ function onGamePresenceChanged(found) {
   // client:status over the WS — this is how the backend knows whether to count
   // this user as "online" for party presence.
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send('overlay:game-state', found);
+    mainWindow.webContents.send('overlay:game-state', gameRunning);
   }
   // On non-Windows where we have no foreground-window API: mirror game-running
   // state onto lastForegroundProc so the existing desiredTopmost() logic works.
   // While the game is running → act topmost; when it stops → drop back.
-  if (process.platform !== 'win32') {
-    lastForegroundProc = found ? GAME_PROCESSES[0].toLowerCase() : '';
+  // Skip when a real foreground probe drives lastForegroundProc. Stomping it
+  // on every launch/exit would fight the poller.
+  if (process.platform !== 'win32' && !foregroundDetect) {
+    lastForegroundProc = gameRunning ? GAME_PROCESSES[0].toLowerCase() : '';
     applyZOrder();
   }
   // Re-evaluate overlay visibility for ALL platforms:
   //   game launched → show (now allowed for regular users)
   //   game closed   → hide if fully set up and not privileged/force-visible
-  reevaluateVisibility();
+  reevaluateVisibility(gameRunning ? 'game-launch' : 'game-exit');
+  // Apply/restore the panel auto-hide (opt-in) to match the new state (Linux).
+  syncPanelHideInGame('game-' + (gameRunning ? 'launch' : 'exit'));
+}
+
+// Locate FO76 and cache which Electron display it's on, so the keep-above rule
+// installs only when the overlay shares that output. Every probe invalidates the
+// old result first; a miss therefore fails closed until a fresh position is known.
+function probeGameDisplay() {
+  _cachedGameDisplayId = null;
+  if (KDE_WAYLAND) syncKwinKeepAboveRule('probe-pending');
+  else if (IS_HYPRLAND) syncHyprlandPin('probe-pending');
+  if (!IS_LINUX || !fgTool) {
+    return;
+  }
+  const pattern = (GAME_PROCESSES || []).concat(['steam_app_1151340']).join('|');
+  const applyGamePos = (x, y) => {
+    try {
+      const d = screen.getDisplayMatching({ x, y, width: 1, height: 1 });
+      _cachedGameDisplayId = d ? d.id : null;
+      diag('[output] game display probed id=' + _cachedGameDisplayId + ' at ' + x + ',' + y);
+    } catch { _cachedGameDisplayId = null; }
+    if (KDE_WAYLAND) syncKwinKeepAboveRule('probe');
+    else if (IS_HYPRLAND) syncHyprlandPin('probe');
+  };
+  const onProbeFail = (reason) => {
+    _cachedGameDisplayId = null;
+    if (KDE_WAYLAND) syncKwinKeepAboveRule(reason);
+    else if (IS_HYPRLAND) syncHyprlandPin(reason);
+  };
+  if (fgTool === 'hyprctl') {
+    try {
+      exec('hyprctl clients -j', { timeout: 2000, shell: '/bin/sh' }, (err, stdout) => {
+        if (err || !stdout) { onProbeFail('probe-empty'); return; }
+        let client = null;
+        try { client = overlayCore.findHyprctlClient(stdout, pattern); } catch { client = null; }
+        if (!client || !Array.isArray(client.at) || client.at.length < 2) { onProbeFail('probe-unparsed'); return; }
+        applyGamePos(client.at[0], client.at[1]);
+      });
+    } catch (e) {
+      diag('[hyprland] clients probe threw: ' + String((e && e.message) || e));
+      onProbeFail('probe-empty');
+    }
+    return;
+  }
+  exec(fgTool + " search --class '" + pattern + "' getwindowgeometry", { timeout: 2000, shell: '/bin/sh' }, (err, stdout) => {
+    if (err || !stdout) { onProbeFail('probe-empty'); return; }
+    // Verified (kdotool 0.2.3 + xdotool): both print `Position: X,Y`; xdotool
+    // adds ` (screen: N)`. Anchor on the label so xdotool's `Window 12345` id
+    // isn't mistaken for a coordinate.
+    const m = String(stdout).match(/Position:\s*(-?\d+)\s*,\s*(-?\d+)/);
+    if (!m) { onProbeFail('probe-unparsed'); return; }
+    applyGamePos(parseInt(m[1], 10), parseInt(m[2], 10));
+  });
+}
+
+// Is the overlay on the same Electron display as FO76? Cheap, no subprocess,
+// just compares live bounds against the cached game display id. Shared by the
+// KWin rule gate AND canShowOverlay so a different-monitor overlay is an
+// ordinary window on BOTH axes. Returns "unknown" until the game display probe
+// has succeeded; unknown must never enable compositor stacking.
+function isOverlaySameOutputAsGame() {
+  if (_cachedGameDisplayId == null || !mainWindow || mainWindow.isDestroyed()) return 'unknown';
+  try {
+    const b = mainWindow.getBounds();
+    const overlayDisplay = screen.getDisplayMatching(b);
+    const result = !!overlayDisplay && overlayDisplay.id === _cachedGameDisplayId;
+    vdiag('[output] sameOutput check: cachedGameDisplayId=' + _cachedGameDisplayId +
+      ' overlayBounds=' + JSON.stringify(b) + ' overlayDisplayId=' + (overlayDisplay && overlayDisplay.id) +
+      ' -> ' + result);
+    return result;
+  } catch (e) { diag('[output] sameOutput check threw: ' + String(e && e.message || e)); return 'unknown'; }
+}
+
+// Install/remove the KWin rule: present only while the game runs AND the
+// overlay shares its output. Unknown display state fails closed.
+//
+// SERIALIZED: two kwinrulesrc-touching execs in flight race on the same file.
+// A game-launch call can race the display probe resolving false moments later
+// (which removes); whichever exec finishes last must still reflect the latest
+// desired state. Failed helpers leave the applied state unchanged so a later
+// probe retries instead of assuming the command worked.
+// While one is in flight, a new request just queues a recheck, which
+// re-derives the state fresh once the in-flight one completes.
+let _kwinSyncInFlight = false;
+let _kwinSyncQueued = false;
+let _kwinSyncRetryTimer = null;
+let _kwinSyncRetryTarget = null;
+let _kwinSyncFailureCount = 0;
+const KWIN_SYNC_RETRY_DELAYS_MS = [2500, 5000, 10000, 30000, 60000];
+
+function clearKwinSyncRetry() {
+  if (_kwinSyncRetryTimer) clearTimeout(_kwinSyncRetryTimer);
+  _kwinSyncRetryTimer = null;
+  _kwinSyncRetryTarget = null;
+  _kwinSyncFailureCount = 0;
+}
+
+function scheduleKwinSyncRetry(syncFn, attempted) {
+  if (_kwinSyncRetryTimer || _desiredRuleInstalled !== attempted) return;
+  const delay = KWIN_SYNC_RETRY_DELAYS_MS[Math.min(
+    _kwinSyncFailureCount, KWIN_SYNC_RETRY_DELAYS_MS.length - 1
+  )];
+  _kwinSyncFailureCount += 1;
+  _kwinSyncRetryTarget = attempted;
+  _kwinSyncRetryTimer = setTimeout(() => {
+    _kwinSyncRetryTimer = null;
+    _kwinSyncRetryTarget = null;
+    syncFn('retry');
+  }, delay);
+  diag('[linux-stack] helper failed; retry scheduled in ' + delay + 'ms');
+}
+
+function prepareKwinSync(want) {
+  // A new desired state supersedes a delayed retry for the old state.
+  if (_kwinSyncRetryTimer && want !== _kwinSyncRetryTarget) clearKwinSyncRetry();
+  return !_kwinSyncRetryTimer;
+}
+
+function syncKwinKeepAboveRule(reason) {
+  if (!IS_LINUX || !KDE_WAYLAND) return;
+  const sameOutput = isOverlaySameOutputAsGame();
+  const want = overlayCore.shouldInstallKeepAboveRule({ gameRunning, sameOutput });
+  _desiredRuleInstalled = want;
+  if (_kwinSyncInFlight) { _kwinSyncQueued = true; return; }
+  if (want === _appliedRuleInstalled) { clearKwinSyncRetry(); return; }
+  if (!prepareKwinSync(want)) return;
+  const attempted = want;
+  _kwinSyncInFlight = true;
+  diag('[kwin] rule -> ' + want + ' (sameOutput=' + sameOutput + ' reason=' + reason + ')');
+  const onDone = (success) => {
+    const result = overlayCore.resolveKeepAboveApply({
+      desired: _desiredRuleInstalled,
+      applied: _appliedRuleInstalled,
+      attempted,
+      success,
+    });
+    _appliedRuleInstalled = result.applied;
+    _kwinSyncInFlight = false;
+    if (result.shouldReconcile || _kwinSyncQueued) {
+      _kwinSyncQueued = false;
+      syncKwinKeepAboveRule('queued-recheck');
+    } else if (success) {
+      clearKwinSyncRetry();
+    } else {
+      scheduleKwinSyncRetry(syncKwinKeepAboveRule, attempted);
+    }
+  };
+  if (want) {
+    setupKdeKeepAbove(onDone);
+  } else {
+    try {
+      const script = overlayCore.buildKwinRemoveRulesScript({});
+      exec(script, { timeout: 8000, shell: '/bin/sh' }, (err) => {
+        if (err) diag('[kwin] remove-rule failed: ' + String(err && err.message || err));
+        onDone(!err);
+      });
+    } catch (e) { diag('[kwin] remove-rule threw: ' + String(e && e.message || e)); onDone(false); }
+  }
+}
+
+// Hyprland stacking: pin the overlay above the workspace while the game runs
+// AND shares this output. hyprctl dispatch pin toggles, so query and verify the
+// actual pinned state before dispatching. Shares the KWin in-flight/queued/state
+// state: Hyprland and KWin are mutually exclusive session types. Best-effort
+// - missing or failing hyprctl logs a diagnostic and never leaves in-flight
+// stuck. Unknown pin state is fail-closed and retried on the next probe.
+function syncHyprlandPin(reason) {
+  if (!IS_LINUX || !IS_HYPRLAND) return;
+  const sameOutput = isOverlaySameOutputAsGame();
+  const want = overlayCore.shouldInstallKeepAboveRule({ gameRunning, sameOutput });
+  _desiredRuleInstalled = want;
+  if (_kwinSyncInFlight) { _kwinSyncQueued = true; return; }
+  if (want === _appliedRuleInstalled) { clearKwinSyncRetry(); return; }
+  if (!prepareKwinSync(want)) return;
+  const attempted = want;
+  _kwinSyncInFlight = true;
+  diag('[hyprland] pin -> ' + want + ' (sameOutput=' + sameOutput + ' reason=' + reason + ')');
+  const onDone = (success) => {
+    const result = overlayCore.resolveKeepAboveApply({
+      desired: _desiredRuleInstalled,
+      applied: _appliedRuleInstalled,
+      attempted,
+      success,
+    });
+    _appliedRuleInstalled = result.applied;
+    _kwinSyncInFlight = false;
+    if (result.shouldReconcile || _kwinSyncQueued) {
+      _kwinSyncQueued = false;
+      syncHyprlandPin('queued-recheck');
+    } else if (success) {
+      clearKwinSyncRetry();
+    } else {
+      scheduleKwinSyncRetry(syncHyprlandPin, attempted);
+    }
+  };
+  const verifyPin = (address) => {
+    exec('hyprctl clients -j', { timeout: 2000, shell: '/bin/sh' }, (verifyErr, verifyStdout) => {
+      if (verifyErr || !verifyStdout) {
+        diag('[hyprland] pin verification failed: ' + String((verifyErr && verifyErr.message) || verifyErr || 'empty'));
+        onDone(false);
+        return;
+      }
+      let verified = null;
+      try {
+        verified = overlayCore.findHyprctlClient(verifyStdout, 'fallout-chat-mod', {
+          pid: process.pid, address,
+        });
+      } catch { verified = null; }
+      const state = overlayCore.getHyprlandPinState(verified);
+      if (state !== want) {
+        diag('[hyprland] pin verification mismatch (wanted=' + want + ' actual=' + state + ')');
+        onDone(false);
+        return;
+      }
+      onDone(true);
+    });
+  };
+  try {
+    exec('hyprctl clients -j', { timeout: 2000, shell: '/bin/sh' }, (err, stdout) => {
+      if (err || !stdout) {
+        diag('[hyprland] clients lookup failed: ' + String((err && err.message) || err || 'empty'));
+        onDone(false);
+        return;
+      }
+      let client = null;
+      try { client = overlayCore.findHyprctlClient(stdout, 'fallout-chat-mod', { pid: process.pid }); } catch (e) {
+        diag('[hyprland] clients parse threw: ' + String((e && e.message) || e));
+        onDone(false);
+        return;
+      }
+      const address = client && typeof client.address === 'string' ? client.address : null;
+      if (!address) {
+        diag('[hyprland] overlay window not found in hyprctl clients');
+        onDone(false);
+        return;
+      }
+      const actualPinned = overlayCore.getHyprlandPinState(client);
+      if (actualPinned === null) {
+        diag('[hyprland] overlay pin state is unknown, skipping toggle');
+        onDone(false);
+        return;
+      }
+      if (actualPinned === want) {
+        onDone(true);
+        return;
+      }
+      // Fail-closed: only interpolate a hex window address into the shell.
+      if (!/^0x[0-9a-fA-F]+$/.test(address)) {
+        diag('[hyprland] unexpected window address, skipping pin');
+        onDone(false);
+        return;
+      }
+      exec('hyprctl dispatch pin address:' + address, { timeout: 2000, shell: '/bin/sh' }, (err2) => {
+        if (err2) {
+          diag('[hyprland] pin dispatch failed: ' + String((err2 && err2.message) || err2));
+          onDone(false);
+          return;
+        }
+        verifyPin(address);
+      });
+    });
+  } catch (e) { diag('[hyprland] pin sync threw: ' + String((e && e.message) || e)); onDone(false); }
 }
 
 function startGameScan() {
@@ -737,7 +1419,8 @@ function startGameScan() {
 }
 
 // ─── Idle-collapse state (window-height anchored to the header) ───────────────
-let collapsed = false;            // true → window shrunk to the header strip
+const FULL_AUTO_HIDE_HEIGHT = 1;
+let collapsed = false;            // true → window shrunk to the idle target
 let expandedHeight = DEFAULT_HEIGHT; // remembered full height to restore on expand
 // Full pre-collapse bounds snapshot — set at collapse time, cleared on expand.
 // Restoring the full rect (not just height) means the overlay returns to the exact
@@ -751,7 +1434,7 @@ let collapseAnimTarget = null;    // target height of the active animation (null
 // uses screen.getCursorScreenPoint() (authoritative DIP coords) instead of the
 // renderer's screenX/Y, which can drift under fractional scaling. While a move is
 // active we also suppress idle-collapse so the wake-up height animation can't fight
-// the move's setPosition (that was the "window dances + expands while dragging" bug).
+// the move (that was the "window dances + expands while dragging" bug).
 let movingActive = false;         // true between overlay:move-start and move-end
 let moveAnchor = null;            // { cursor:{x,y}, win:{x,y} } captured at move-start
 // ─── Drag-in-progress guard for z-order heartbeat ─────────────────────────────
@@ -1053,22 +1736,139 @@ function migrateLegacyUserData() {
 // While COLLAPSED (idle-faded), persist the remembered EXPANDED height instead
 // of the shrunken header height — otherwise a reopen / next launch would be
 // stuck at header height. x/y/width still track live.
+// Modal-fit restore snapshot — see the "Temporary modal-fit growth" block below.
+// Declared up here because persistBounds() reads it. Non-null ONLY while we are
+// holding the window inflated for a modal.
+let modalFitPrevBounds = null;
+
+// Drift-corrected pre-modal size, carried ACROSS grow/restore cycles (unlike
+// modalFitPrevBounds, which is cleared on every restore). On fractional-scaling
+// Linux sessions setBounds() doesn't return what was commanded (issue #427) — the
+// #427 fix stops that drift from being persisted to overlay-state.json, but does
+// nothing for growWindowForModal() re-reading a live, already-drifted getBounds()
+// as the baseline for the NEXT cycle. Toggling the settings modal (HOME key, which
+// calls toggleSettings() on every press) repeats this grow/restore round-trip, so
+// without a remembered baseline the ~1-2px compositor rounding compounds every
+// toggle — "spamming HOME slowly grows the window". Resolved through the same
+// tolerance-snap `resolvePersistedSize()` uses, just applied at this second,
+// in-memory boundary instead of the disk-persist one.
+let modalFitLastGoodSize = null;
+
+// While temporarily grown to fit a modal (see modalFitPrevBounds), persist the
+// user's real PRE-MODAL size — never the inflated one. Without this the debounced
+// resize save (and the before-quit save) would bake the temporary size in as the
+// user's window size. x/y still track live so moving the window while a modal is
+// open is kept.
+// Last size actually written to overlay-state.json. Seeded from the loaded state
+// at startup so the very first save after launch already has a reference point —
+// otherwise the launch-time setBounds would bank one drift step per run.
+let lastPersistedSize = null;
+
 function persistBounds() {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.isMinimized()) return;
   const b = mainWindow.getBounds();
-  const height = collapsed ? (expandedHeight || b.height) : b.height;
-  saveState({ bounds: { x: b.x, y: b.y, width: b.width, height } });
+  const width = modalFitPrevBounds ? modalFitPrevBounds.width : b.width;
+  const baseHeight = modalFitPrevBounds ? modalFitPrevBounds.height : b.height;
+  const height = collapsed ? (expandedHeight || baseHeight) : baseHeight;
+
+  // Suppress fractional-scaling round-trip drift (#427): a size within a couple of
+  // px of what we last wrote is rounding noise, not a resize. Persisting it would
+  // feed the next setBounds and grow the window ~1px per cycle, forever. Skipped
+  // while collapsed / modal-inflated, where the value above is already a remembered
+  // size rather than a live measurement.
+  const usingRememberedSize = collapsed || !!modalFitPrevBounds;
+  const size = usingRememberedSize
+    ? { width, height }
+    : overlayCore.resolvePersistedSize({ width, height }, lastPersistedSize);
+
+  lastPersistedSize = { width: size.width, height: size.height };
+  saveState({ bounds: { x: b.x, y: b.y, width: size.width, height: size.height } });
 }
 
 // Clamp a desired bounds rect to the work area of whatever display it lands on,
-// so the window never exceeds the screen and its top is never above y=0. Returns
-// a sanitized { x, y, width, height }.
-function clampToWorkArea(desired) {
+// so the window never exceeds that display and its top is never above the display
+// work-area origin. Returns a sanitized { x, y, width, height }.
+function clampToWorkArea(desired, minHeight = MIN_HEIGHT) {
   // Pick the display nearest the desired position (falls back to primary).
   const point = { x: desired.x ?? 60, y: desired.y ?? 60 };
   const display = screen.getDisplayNearestPoint(point) || screen.getPrimaryDisplay();
   // Pure clamping math lives in overlay-core.js; inject the resolved work area.
-  return overlayCore.clampToWorkArea(desired, display.workArea);
+  return overlayCore.clampToWorkArea(desired, display.workArea, minHeight);
+}
+
+// Every runtime geometry write goes through this guard. Startup bounds are clamped
+// separately before BrowserWindow construction, but drag, resize, modal-fit, preset,
+// restore, and collapse-animation writes all need the same top-edge invariant too.
+// Keeping the raw Electron call in exactly one place prevents a future path from
+// putting the overlay above a monitor after a DPI or work-area change.
+function setWindowBoundsGuarded(desired) {
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  const requestedHeight = desired && typeof desired.height === 'number' ? desired.height : null;
+  // The ordinary window floor is 280px, but idle-collapse intentionally owns a
+  // shorter native height (header strip or one-pixel full hide). Keep those
+  // animation frames inside the work area without re-expanding them to the
+  // ordinary resize minimum.
+  const minHeight = collapsed && requestedHeight != null && requestedHeight < MIN_HEIGHT ? 1 : MIN_HEIGHT;
+  const bounds = clampToWorkArea(desired || {}, minHeight);
+  mainWindow.setBounds(bounds);
+  return bounds;
+}
+
+// ─── Temporary modal-fit growth (issue #374) ──────────────────────────────────
+// The shell settings / onboarding panels live inside this window, so their
+// `max-width: 96vw` / `max-height: 90vh` caps are relative to the OVERLAY, not
+// the screen. Kept compact for gameplay (down to 320x280) the settings panel is
+// squeezed to ~307x252 and becomes impractical to use. Nothing in the renderer
+// can paint outside its own OS window, so the fix has to happen here: grow the
+// window while a modal is open, then put the user's size back.
+//
+// State lives in `modalFitPrevBounds` (declared above persistBounds, which reads
+// it): it doubles as the restore snapshot and as the "don't persist this size"
+// flag.
+function growWindowForModal() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (modalFitPrevBounds) return;  // already grown — don't stack snapshots
+  // Idle-collapse owns the height while collapsed; opening a modal marks
+  // activity and expands first, so leave the collapsed case alone entirely.
+  if (collapsed) return;
+  // Also stay out of the way of a running collapse/expand animation.
+  // animateHeightTo() freezes the width at animation start and re-applies it on
+  // every frame, so growing mid-flight would be fought and reverted — and worse,
+  // the snapshot we took would be a meaningless interim size that we'd then
+  // "restore" on close. Skipping just means no growth for this one open.
+  if (collapseAnim) return;
+  const cur = mainWindow.getBounds();
+  // Snap the live width/height back to the last known-good size if it's within
+  // rounding-noise tolerance of it (see modalFitLastGoodSize above) — otherwise a
+  // real resize since the last cycle is trusted as-is. x/y stay live either way.
+  const base = overlayCore.resolvePersistedSize(
+    { width: cur.width, height: cur.height },
+    modalFitLastGoodSize,
+  );
+  modalFitLastGoodSize = base;
+  const baseCur = { x: cur.x, y: cur.y, width: base.width, height: base.height };
+  const point = { x: cur.x, y: cur.y };
+  const display = screen.getDisplayNearestPoint(point) || screen.getPrimaryDisplay();
+  const grown = overlayCore.modalFitBounds(baseCur, display.workArea);
+  if (!grown) return;  // already big enough (or the display can't fit more)
+  modalFitPrevBounds = baseCur;
+  diag('[modal-fit] growing ' + baseCur.width + 'x' + baseCur.height
+    + ' -> ' + grown.width + 'x' + grown.height + ' for modal');
+  try { setWindowBoundsGuarded(grown); } catch { /* ignore */ }
+}
+
+function restoreWindowAfterModal() {
+  const prev = modalFitPrevBounds;
+  modalFitPrevBounds = null;
+  if (!prev) return;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  // Restore the SIZE only — keep the live x/y, since the user may have dragged
+  // the window while the modal was open and we must not teleport it back.
+  const cur = mainWindow.getBounds();
+  const target = clampToWorkArea({ x: cur.x, y: cur.y, width: prev.width, height: prev.height });
+  diag('[modal-fit] restoring ' + cur.width + 'x' + cur.height
+    + ' -> ' + target.width + 'x' + target.height + ' after modal');
+  try { setWindowBoundsGuarded(target); } catch { /* ignore */ }
 }
 
 // ─── Register: POST /api/users → session token ────────────────────────────────
@@ -1209,8 +2009,15 @@ ipcMain.handle('proxy:http', async (_evt, reqDesc) => {
   return new Promise((resolve) => {
     const outHeaders = overlayCore.filterProxyHeaders(headers);
     if (sessionToken) outHeaders['X-Auth-Token'] = sessionToken;
+    outHeaders['X-Client-Version'] = APP_VERSION;
     outHeaders['User-Agent'] = APP_UA;
     outHeaders['Origin'] = RELAY_HTTP;
+    // Keep every proxied request from an unpackaged overlay in the same bounded
+    // dev allowance as registration. The native Appearance panel issues a PATCH
+    // for each deliberate picker choice; without this header only registration
+    // received the dev allowance and normal cosmetic testing could trip the
+    // production-sized API/cosmetics buckets. Packaged builds never send it.
+    if (!app.isPackaged) outHeaders['X-Overlay-Dev'] = '1';
     // cookie is never in the allowlist, but delete defensively in case the
     // allowlist is widened in future without re-auditing this call site.
     delete outHeaders['cookie'];
@@ -1222,9 +2029,18 @@ ipcMain.handle('proxy:http', async (_evt, reqDesc) => {
         let data = '';
         res.on('data', (c) => (data += c));
         res.on('end', () => {
-          // Surface CF/edge transient conditions to the renderer's error path so
-          // they route to the retry UI rather than rendering an HTML challenge body.
+          // Keep an RFC 7807 429 from our backend intact. The old implementation
+          // rewrote *every* 429 as an "edge" failure, which hid the actual limiter
+          // and made a normal cosmetics-write cap look like a Cloudflare problem.
+          // Non-JSON 429s are still an edge/proxy condition, so keep their safe
+          // generic message rather than passing an HTML response into the renderer.
           if (res.statusCode === 429) {
+            try {
+              const parsed = JSON.parse(data);
+              if (parsed && typeof parsed === 'object') {
+                return resolve({ status: 429, body: data });
+              }
+            } catch { /* edge response was not JSON */ }
             return resolve({ status: 429, body: JSON.stringify({ detail: 'Rate-limited by edge — please wait a moment before retrying.' }), cfTransient: true });
           }
           if (isCfChallenge(res.statusCode, res.headers, data)) {
@@ -1235,6 +2051,13 @@ ipcMain.handle('proxy:http', async (_evt, reqDesc) => {
       }
     );
     req.on('error', (err) => resolve({ status: 599, body: JSON.stringify({ detail: err.message }) }));
+    // A TCP connection can be established yet never produce a response (for
+    // example a stalled edge connection). Without a deadline the renderer's
+    // Appearance picker awaits this IPC promise forever and remains disabled.
+    // Keep the proxy aligned with registerRelay's established 15s deadline.
+    req.setTimeout(15_000, () => {
+      req.destroy(new Error('Request timed out: the relay did not respond within 15 seconds.'));
+    });
     if (payload) req.write(payload);
     req.end();
   });
@@ -1251,6 +2074,7 @@ function openRelaySocket(id) {
   const sock = new WebSocket(RELAY_WS, {
     headers: {
       'X-Auth-Token': sessionToken,
+      'X-Client-Version': APP_VERSION,
       'User-Agent': APP_UA,
       'Origin': RELAY_HTTP,
     },
@@ -1277,7 +2101,9 @@ function openRelaySocket(id) {
         const latestVersion = msg.payload.latestVersion;
         if (!updateNotifiedThisSession && overlayCore.cmpVersions(latestVersion, APP_VERSION) > 0) {
           updateNotifiedThisSession = true;
+          pendingRendererUpdateVersion = latestVersion;
           showUpdateNotification(latestVersion);
+          sendToRenderer('relay:update-available', { latestVersion });
         }
       }
     } catch { /* not JSON or not an update event — ignore */ }
@@ -1286,6 +2112,15 @@ function openRelaySocket(id) {
   sock.on('close', (code, reason) => {
     relaySockets.delete(id);
     relaySendBuffers.delete(id);
+    // Golden-build lock: the dev backend rejected this build as outdated. This is
+    // terminal — do NOT auto-reconnect. Tell the user to grab the current QA build.
+    if (code === 4003) {
+      diag('[relay] WS closed 4003 OUTDATED_BUILD — prompting update');
+      try { showUpdateNotification((reason && reason.toString().split(':')[1]) || ''); } catch { /* ignore */ }
+      sendToRenderer('relay:status', { state: 'error', message: 'This QA build is no longer active. Download the current QA build from the dev Discord.' });
+      sendToRenderer('proxy:ws:close', { id, code, reason: reason && reason.toString() });
+      return;
+    }
     sendToRenderer('proxy:ws:close', { id, code, reason: reason && reason.toString() });
   });
   sock.on('error', (err) => sendToRenderer('proxy:ws:error', { id, message: err.message }));
@@ -1363,16 +2198,23 @@ ipcMain.handle('overlay:get-info', () => ({
   clickThrough, toggleShortcut: currentKeybinds.toggle || TOGGLE_SHORTCUT, platform: process.platform, relayHost: RELAY_HOST,
   appVersion: APP_VERSION, keybinds: currentKeybinds, isDev: !app.isPackaged,
 }));
+// Let the renderer query the pending update version on init, catching any
+// update signal that fired before the onUpdateAvailable listener was registered.
+ipcMain.handle('overlay:get-pending-update', () => pendingRendererUpdateVersion);
 // Synchronous version — used by bridge.ts to set relayBase before first render.
 ipcMain.on('overlay:get-relay-host-sync', (evt) => { evt.returnValue = RELAY_HOST; });
 
-// ─── Dev-only overlay login bypass ────────────────────────────────────────────
-// Only callable in unpackaged builds. Calls the backend /api/dev/login-as endpoint
-// and stores the returned session token exactly as a normal register flow would.
+// ─── Dev-only overlay login ──────────────────────────────────────────────────
+// Unpackaged overlays can use the credential-less /api/dev/login-as route when
+// pointed at a known development relay. Production and unknown relays reject it.
+// Only callable in unpackaged builds on a local or hosted DEV relay.
 ipcMain.handle('overlay:dev-login-as', async (_evt, persona) => {
   if (app.isPackaged) return { ok: false, error: 'Not in dev mode' };
   const state = loadState();
   if (!state.installToken) return { ok: false, error: 'No installToken' };
+  if (!overlayCore.isLocalRelay(RELAY_HTTP) && !overlayCore.isHostedDevRelay(RELAY_HTTP)) {
+    return { ok: false, error: 'Persona login is only available on the local or hosted DEV relay' };
+  }
   const body = JSON.stringify({ persona, installToken: state.installToken });
   return new Promise((resolve) => {
     const url = new URL(RELAY_HTTP + '/api/dev/login-as');
@@ -1386,6 +2228,7 @@ ipcMain.handle('overlay:dev-login-as', async (_evt, persona) => {
           'Content-Type': 'application/json',
           'Content-Length': Buffer.byteLength(body),
           'Origin': RELAY_HTTP,
+          ...(DEV_PERSONA_LOGIN_SECRET ? { 'X-Dev-Persona-Key': DEV_PERSONA_LOGIN_SECRET } : {}),
         },
       },
       (res) => {
@@ -1457,6 +2300,9 @@ ipcMain.on('overlay:set-interactive', (_evt, interactive) => {
 // case) and the window stays in whatever ignore-state click-through left it in,
 // so slider drags never reach the renderer. On close we restore the click-
 // through state. The set-interactive + reassert + blur paths all respect this.
+// Also drives the temporary modal-fit growth (#374): the same signal that pins
+// interactivity tells us a full-size panel is on screen, so grow the window to
+// fit it and restore the user's size on close.
 ipcMain.on('overlay:set-modal', (_evt, open) => {
   modalInteractive = !!open;
   if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -1464,12 +2310,18 @@ ipcMain.on('overlay:set-modal', (_evt, open) => {
     if (open) setMouseIgnore(false, false);
     else setMouseIgnore(clickThrough, true);
   } catch { /* ignore */ }
+  // Outside the try above so a setMouseIgnore throw can't strand the window
+  // inflated with no restore.
+  try {
+    if (open) growWindowForModal();
+    else restoreWindowAfterModal();
+  } catch { /* ignore */ }
 });
 
 // Idle collapse/expand driven by the renderer's idle timer + activity detector.
-// { collapsed: true, headerHeight } → shrink to header (top anchored).
+// { collapsed: true, headerHeight, fullAutoHide } → shrink to idle target (top anchored).
 // { collapsed: false, focusInput? } → grow back downward (top anchored).
-ipcMain.on('overlay:collapse', (_evt, { headerHeight }) => collapseToHeader(headerHeight));
+ipcMain.on('overlay:collapse', (_evt, { headerHeight, fullAutoHide }) => collapseToHeader(headerHeight, !!fullAutoHide));
 ipcMain.on('overlay:expand', (_evt, { focusInput }) => expandFromHeader(!!focusInput));
 
 // Cross-channel @mention: renderer asks main to show the overlay from tray.
@@ -1496,8 +2348,16 @@ ipcMain.on('overlay:show-for-mention', () => {
 ipcMain.handle('window:get-bounds', () => (mainWindow && !mainWindow.isDestroyed()) ? mainWindow.getBounds() : null);
 ipcMain.on('window:set-bounds', (_evt, b) => {
   if (!mainWindow || mainWindow.isDestroyed() || !b) return;
+  // Preset hotkeys are global, so they still fire while a modal is open (unlike
+  // the edge-resize zones, which the shell disables then). A preset carries its
+  // own width/height, so it supersedes our temporary growth: drop the restore
+  // snapshot or closing the modal would undo the preset the user just snapped to.
+  // Also drop the drift baseline — a deliberate resize shouldn't get snapped back
+  // to a stale pre-preset size on the next modal open.
+  modalFitPrevBounds = null;
+  modalFitLastGoodSize = null;
   const wa = clampToWorkArea({ x: b.x, y: b.y, width: b.width, height: b.height });
-  try { mainWindow.setBounds(wa); } catch { /* ignore */ }
+  try { setWindowBoundsGuarded(wa); } catch { /* ignore */ }
 });
 
 // In-app edge resize from the renderer's resize zones (shell.ts). Receives the
@@ -1508,56 +2368,65 @@ ipcMain.on('window:set-bounds', (_evt, b) => {
 // via the will-resize / resized events, but belt-and-suspenders here too).
 ipcMain.on('overlay:resize-bounds', (_evt, b) => {
   if (!mainWindow || mainWindow.isDestroyed() || !b) return;
+  // A deliberate resize while a modal is open supersedes our temporary growth:
+  // drop the restore snapshot so closing the modal keeps the size the user just
+  // chose instead of snapping back to the pre-modal one. Also drop the drift
+  // baseline for the same reason as the preset handler above.
+  modalFitPrevBounds = null;
+  modalFitLastGoodSize = null;
   const wa = clampToWorkArea({
     x: typeof b.x === 'number' ? b.x : mainWindow.getBounds().x,
     y: typeof b.y === 'number' ? b.y : mainWindow.getBounds().y,
     width: Math.max(MIN_WIDTH, typeof b.width === 'number' ? b.width : mainWindow.getBounds().width),
     height: Math.max(MIN_HEIGHT, typeof b.height === 'number' ? b.height : mainWindow.getBounds().height),
   });
-  try { mainWindow.setBounds(wa); } catch { /* ignore */ }
+  try { setWindowBoundsGuarded(wa); } catch { /* ignore */ }
 });
 
 // WM-independent pointer-drag MOVE (ticket #104). Receives the desired top-left
 // position {x, y} from the renderer (computed from screenX/Y deltas), clamps to
-// work area, and applies via setPosition. Mirrors overlay:resize-bounds but only
-// repositions — width/height are kept from the current bounds.
+// the work area, and applies through the same guarded bounds path as every other
+// geometry write. Width/height are kept from the current bounds.
 // isDragging is already set by the 'will-move' event on WM-driven moves; for the
 // pointer-drag path we don't need to toggle it separately because this IPC fires
-// at pointer-move frequency (not on every frame) and setPosition does not trigger
-// 'will-move' on Wayland/frameless windows. The z-order heartbeat skips while
-// isDragging=true (set from will-move on WM drag), so we only suppress it here
-// if a move is in progress — done by checking the isDragging flag set by will-move
-// on platforms where it fires. Additive: on WM-drag platforms both paths are safe.
+// at pointer-move frequency (not on every frame). The z-order heartbeat skips
+// while isDragging=true (set from will-move on WM drag), so we only suppress it
+// here if a move is in progress — done by checking the isDragging flag set by
+// will-move on platforms where it fires. Additive: on WM-drag platforms both
+// paths are safe.
 ipcMain.on('overlay:move-bounds', (_evt, pos) => {
   if (!mainWindow || mainWindow.isDestroyed() || !pos) return;
   if (typeof pos.x !== 'number' || typeof pos.y !== 'number') return;
   const cur = mainWindow.getBounds();
-  const wa = clampToWorkArea({ x: pos.x, y: pos.y, width: cur.width, height: cur.height });
-  try { mainWindow.setPosition(wa.x, wa.y); } catch { /* ignore */ }
+  try { setWindowBoundsGuarded({ x: pos.x, y: pos.y, width: cur.width, height: cur.height }); } catch { /* ignore */ }
 });
 
 // ─── Main-process drag-move (Linux) ──────────────────────────────────────────
-// Renderer sends move-start on pointerdown, move-tick on each pointermove, and
-// move-end on pointerup. We read the cursor from screen.getCursorScreenPoint()
-// (authoritative DIP, consistent with getBounds/setPosition) instead of trusting
-// the renderer's screenX/Y, which can drift under fractional scaling and make the
-// window jitter ("dance"). Only setPosition is used, so width/height never change.
+  // Renderer sends move-start on pointerdown, move-tick on each pointermove, and
+  // move-end on pointerup. We read the cursor from screen.getCursorScreenPoint()
+  // (authoritative DIP, consistent with getBounds/setBounds) instead of trusting
+  // the renderer's screenX/Y, which can drift under fractional scaling and make the
+  // window jitter ("dance"). The guarded bounds call changes position only here, so
+  // width/height never change.
 ipcMain.on('overlay:move-start', () => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   movingActive = true;
   // If the overlay is idle-collapsed, expand it INSTANTLY (no animation) before the
   // drag begins. The animated wake-up grow used a frozen x/y per frame and would
-  // fight the move's setPosition — snapping to full height up front avoids that
+  // fight the move — snapping to full height up front avoids that
   // entirely, so the drag is pure position with a stable size.
   if (collapsed || collapseAnim) {
     if (collapseAnim) { clearInterval(collapseAnim); collapseAnim = null; collapseAnimTarget = null; }
     collapsed = false;
-    try { mainWindow.setMinimumSize(MIN_WIDTH, MIN_HEIGHT); } catch { /* ignore */ }
+    try {
+      mainWindow.setMaximumSize(100000, 100000);
+      mainWindow.setMinimumSize(MIN_WIDTH, MIN_HEIGHT);
+    } catch { /* ignore */ }
     const targetH = (expandedHeight && expandedHeight >= MIN_HEIGHT) ? expandedHeight
       : (expandedBounds && expandedBounds.height >= MIN_HEIGHT ? expandedBounds.height : DEFAULT_HEIGHT);
     expandedBounds = null;
     const b0 = mainWindow.getBounds();
-    try { mainWindow.setBounds({ x: b0.x, y: b0.y, width: b0.width, height: targetH }); } catch { /* ignore */ }
+    try { setWindowBoundsGuarded({ x: b0.x, y: b0.y, width: b0.width, height: targetH }); } catch { /* ignore */ }
     sendToRenderer('overlay:force-expand', true); // sync the renderer's collapsed state
   }
   try {
@@ -1579,11 +2448,11 @@ ipcMain.on('overlay:move-tick', () => {
     const ny = Math.round(moveAnchor.win.y + (c.y - moveAnchor.cursor.y));
     // Use the LOCKED start-size (not getBounds, which may already be inflated by the
     // XWayland scaling feedback) and command it explicitly via setBounds so the window
-    // is re-pinned to its real size every tick — setPosition alone let it grow on KDE
+    // is re-pinned to its real size every tick — position-only writes let it grow on KDE
     // fractional-scaled XWayland.
     const w = moveAnchor.size.width, h = moveAnchor.size.height;
     const wa = clampToWorkArea({ x: nx, y: ny, width: w, height: h });
-    mainWindow.setBounds({ x: wa.x, y: wa.y, width: w, height: h });
+    setWindowBoundsGuarded({ x: wa.x, y: wa.y, width: w, height: h });
   } catch { /* ignore */ }
 });
 ipcMain.on('overlay:move-end', () => {
@@ -1592,6 +2461,11 @@ ipcMain.on('overlay:move-end', () => {
     const b = mainWindow && !mainWindow.isDestroyed() ? mainWindow.getBounds() : null;
     diag('[move] end bounds=' + JSON.stringify(b ? { x: b.x, y: b.y } : null));
   } catch { /* ignore */ }
+  if (gameRunning) {
+    // The game may have moved to another monitor while the overlay was being
+    // dragged. Refresh the game position instead of trusting a stale display id.
+    probeGameDisplay();
+  }
 });
 
 // Chrome Opacity — sends --fcm-chrome-bg-alpha CSS variable to the renderer so
@@ -1796,6 +2670,85 @@ ipcMain.on('discord:link', () => {
   oauthWin.loadURL(linkUrl).catch((e) => oauthFallback(String(e && e.message || e)));
 });
 
+// ─── QA login (golden dev build) ──────────────────────────────────────────────
+// Opens the QA Discord OAuth in a window, then polls /api/auth/qa-status until the
+// backend hands back a role-gated session token (or 426 OUTDATED_BUILD).
+function startQaLogin() {
+  const st = loadState();
+  if (!st || !st.installToken) return;
+  const startUrl = `${RELAY_HTTP}/auth/discord/qa/start?installToken=${encodeURIComponent(st.installToken)}`;
+  const callbackPath = '/auth/discord/qa/callback';
+  sendToRenderer('relay:status', { state: 'qa_required' });
+
+  let win = null;
+  try {
+    win = new BrowserWindow({
+      width: 520, height: 720, parent: mainWindow || undefined, modal: false,
+      title: 'QA Login — Fallout Chat Mod', icon: appIcon() || undefined, center: true,
+      webPreferences: { contextIsolation: true, nodeIntegration: false },
+    });
+  } catch {
+    try { shell.openExternal(startUrl); } catch { /* ignore */ }
+    pollQaStatus(0);
+    return;
+  }
+  const wc = win.webContents;
+  const checkNav = (url) => {
+    try {
+      if (new URL(url).pathname === callbackPath) {
+        setTimeout(() => { if (win && !win.isDestroyed()) win.close(); }, 1200);
+      }
+    } catch { /* ignore */ }
+  };
+  wc.on('did-navigate', (_e, url) => checkNav(url));
+  wc.on('will-redirect', (_e, url) => checkNav(url));
+  wc.on('did-redirect-navigation', (_e, url) => checkNav(url));
+  win.on('closed', () => { win = null; pollQaStatus(0); });
+  win.loadURL(startUrl).catch(() => { try { shell.openExternal(startUrl); } catch { /* ignore */ } pollQaStatus(0); });
+}
+
+function pollQaStatus(attempt = 0) {
+  const st = loadState();
+  if (!st || !st.installToken) return;
+  const MAX = 20;
+  const url = new URL(`${RELAY_HTTP}/api/auth/qa-status/${encodeURIComponent(st.installToken)}`);
+  const req = httpModule(url).request(
+    { hostname: url.hostname, port: url.port || undefined, path: url.pathname, method: 'GET',
+      headers: { 'Content-Type': 'application/json', 'X-Client-Version': APP_VERSION } },
+    (res) => {
+      if (res.statusCode === 426) {
+        res.resume();
+        diag('[qa-status] 426 OUTDATED_BUILD');
+        try { showUpdateNotification(''); } catch { /* ignore */ }
+        sendToRenderer('relay:status', { state: 'error', message: 'This QA build is no longer active. Download the current QA build from the dev Discord.' });
+        return;
+      }
+      let data = '';
+      res.on('data', (c) => (data += c));
+      res.on('end', () => {
+        let d = {};
+        try { d = (JSON.parse(data).data) || {}; } catch { /* ignore */ }
+        if (d.authorized && d.token) {
+          sessionToken = d.token;
+          flushPendingWsOpens();
+          saveState({ discordLinked: true, displayName: d.displayName || '', userRole: d.role || null });
+          userRole = d.role || null;
+          rebuildTray();
+          sendToRenderer('relay:status', { state: 'authenticated', displayName: d.displayName || '', discordLinked: true, role: d.role || null });
+          return;
+        }
+        if (attempt + 1 < MAX) setTimeout(() => pollQaStatus(attempt + 1), 1500);
+        else sendToRenderer('relay:status', { state: 'error', message: 'QA login timed out. Click to retry.' });
+      });
+    },
+  );
+  req.on('error', () => { if (attempt + 1 < MAX) setTimeout(() => pollQaStatus(attempt + 1), 1500); });
+  req.setTimeout(12000, () => req.destroy(new Error('qa-status timeout')));
+  req.end();
+}
+
+ipcMain.handle('overlay:qa-login', async () => { startQaLogin(); return { ok: true }; });
+
 // Discord link status refresh: poll /api/auth/discord-status/:installToken and
 // broadcast the real linked state to the renderer as 'relay:discord-status'. The
 // renderer calls this (via ipcMain 'discord:refresh-status') after returning from
@@ -1979,21 +2932,22 @@ ipcMain.on('overlay:chat-active', (_evt, active) => {
   if (chatActive !== prev) {
     diag('[game-gate] chatActive → ' + chatActive + ' gameRunning=' + gameRunning + ' isPrivileged=' + isPrivileged());
     // If the user just finished setup and the game isn't running, apply the gate.
-    reevaluateVisibility();
+    reevaluateVisibility('chat-active');
   }
 });
 
 // Show a native OS notification (Windows toast / Linux libnotify). No-op if the
 // platform doesn't support it. Used to guide the user after onboarding.
-function showSystemNotification(title, body) {
+function showSystemNotification(title, body, onClick) {
   try {
     if (!Notification || !Notification.isSupported || !Notification.isSupported()) {
       diag('[notify] not supported — skipping: ' + title);
       return;
     }
     const n = new Notification({ title, body, icon: appIcon() || undefined, silent: false });
-    // Clicking the toast brings the overlay forward (useful once the game is up).
-    n.on('click', () => { try { focusToChat(); } catch { /* non-fatal */ } });
+    // Clicking the toast brings the overlay forward (useful once the game is up),
+    // unless the caller supplied a different action.
+    n.on('click', () => { try { (onClick || focusToChat)(); } catch { /* non-fatal */ } });
     n.show();
     diag('[notify] shown: ' + title + ' — ' + body);
   } catch (e) {
@@ -2048,7 +3002,7 @@ ipcMain.on('overlay:onboarding-complete', () => {
   const prev = chatActive;
   chatActive = true;
   diag('[onboarding] complete — chatActive=true gameRunning=' + gameRunning + ' isPrivileged=' + isPrivileged() + ' forceVisible=' + forceVisible);
-  if (prev !== true) reevaluateVisibility();
+  if (prev !== true) reevaluateVisibility('onboarding');
 
   if (isPrivileged() || forceVisible) return;
 
@@ -2102,7 +3056,7 @@ async function startRelay(retryCount = 0) {
     if (userRole !== prevRole) rebuildTray();
     // If the user is privileged, re-evaluate visibility now so they can open the
     // overlay without the game from the moment register completes.
-    if (isPrivileged()) reevaluateVisibility();
+    if (isPrivileged()) reevaluateVisibility('privileged');
     sendToRenderer('relay:status', {
       state: 'authenticated',
       displayName: displayName || '',
@@ -2269,9 +3223,33 @@ function toggleWindow() {
 // reevaluateVisibility: re-check canShowOverlay and show or hide accordingly.
 // Called after game-detection changes or after auth/setup completes.
 // NOTE: does NOT auto-show while userHidden=true (user explicitly hid with Delete/tray).
-function reevaluateVisibility() {
-  if (overlayCore.visibilityDecision(canShowOverlay(), userHidden) === 'show') _doShow();
-  else hideWindow();
+// `reason` picks the activation mode via showModeFor: 'active' -> _doShow()
+// (steals focus); else showWindowInactive(). Hide is always bare hideWindow(),
+// never hideWindowUserExplicit, so userHidden stays untouched.
+function reevaluateVisibility(reason = 'presence') {
+  if (overlayCore.visibilityDecision(canShowOverlay(), userHidden) === 'show') {
+    if (overlayCore.showModeFor(reason) === 'active') _doShow();
+    else showWindowInactive();
+  } else {
+    hideWindow(); // bare hide, NEVER hideWindowUserExplicit here; userHidden must stay untouched
+  }
+}
+
+function applyGameFocus(activeClass, overlayFocusedOverride) {
+  const overlayFocused = (typeof overlayFocusedOverride === 'boolean')
+    ? overlayFocusedOverride
+    : !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused());
+  const r = overlayCore.nextGameFocusState({
+    activeClass, overlayFocused, gameRunning,
+    candidate: _focusCandidate, stableCount: _focusStableCount,
+  });
+  _focusCandidate = r.candidate;
+  _focusStableCount = r.stableCount;
+  if (!r.commit || r.gameFocused === gameFocused) return;
+  gameFocused = r.gameFocused;
+  diag('[focus] gameFocused -> ' + gameFocused);
+  reevaluateVisibility(gameFocused ? 'game-focus' : 'game-unfocus');
+  refreshShortcuts();
 }
 
 // Focus-to-chat (the desktop overlay's "Insert opens chat input" behaviour):
@@ -2295,6 +3273,11 @@ function _stealForegroundWin32() {
   // Windows foreground-lock for a background/overlay process. It must be
   // called AFTER the window is already shown/focusable.
   try { app.focus({ steal: true }); } catch { /* ignore — older Electron */ }
+}
+
+function dispatchFocusInput(reason) {
+  diag('[focusToChat] dispatch overlay:focus-input reason=' + reason);
+  sendToRenderer('overlay:focus-input', true);
 }
 
 function focusToChat() {
@@ -2328,7 +3311,7 @@ function focusToChat() {
     // Without this the renderer's overlayVisible stays false after the 20s grace
     // fires (hide→show via Insert) and the WS stays disconnected with no live chat.
     emitVisibility(true);
-    sendToRenderer('overlay:focus-input', true);
+    dispatchFocusInput('focusToChat:hidden-immediate');
     if (collapsed) {
       sendToRenderer('overlay:force-expand', true);
       expandFromHeader(true);
@@ -2350,7 +3333,7 @@ function focusToChat() {
   // When the game is foreground, mainWindow.focus() alone does not pull focus
   // to the overlay — the OS denies it. app.focus({steal:true}) overrides this.
   _stealForegroundWin32();
-  sendToRenderer('overlay:focus-input', true);
+  dispatchFocusInput('focusToChat:visible-immediate');
   if (collapsed) {
     sendToRenderer('overlay:force-expand', true);
     expandFromHeader(true);
@@ -2417,21 +3400,39 @@ function refreshShortcuts() {
   const overlayFocused = !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused());
   // shouldRegisterShortcuts handles all platform/detection-availability cases:
   //   win32             → game active = foreground window is the game
-  //   linux KDE-Wayland + xdotool/kdotool present → same as win32 (fgPoller running)
+  //   linux + live tool → same as win32 (fgPoller running, KDE-Wayland or X11)
   //   linux fallback    → game active = game process is running (old behavior)
   const active = overlayCore.shouldRegisterShortcuts({
     platform: process.platform,
-    kdeWayland: KDE_WAYLAND,
-    hasForegroundDetect: kdeWaylandForegroundDetect,
+    hasForegroundDetect: foregroundDetect,
     gameRunning,
     foregroundProc: lastForegroundProc,
     overlayFocused,
+    gameFocused,
   });
-  const stateKey = active + '|' + overlayFocused;
+  const stateKey = active + '|' + overlayFocused + '|' + trayAvailable;
   if (stateKey === _shortcutState) return; // idempotent — no churn on the 300ms poll
   _shortcutState = stateKey;
   globalShortcut.unregisterAll();
-  if (!active) return; // another app is foreground — let it have the keys
+  if (!active) {
+    // RECOVERABILITY (issue #272 follow-up): with NO system tray (no SNI host) the
+    // only way back to a hidden overlay is a global hotkey. So even while another app
+    // is foreground, keep the summon binds (focus/toggle) registered so the overlay
+    // is never strandable. With a tray present we release ALL keys (the tray is the
+    // fallback) so other apps keep Insert/Delete etc.
+    if (!trayAvailable) {
+      let kept = 0;
+      for (const b of _allBinds) {
+        if (b.action === 'focus' || b.action === 'toggle') {
+          try { if (globalShortcut.register(b.accel, b.fn)) kept++; } catch { /* skip */ }
+        }
+      }
+      diag('[hotkeys] inactive context + no tray — kept ' + kept + ' summon bind(s) registered for recoverability');
+    } else {
+      diag('[hotkeys] inactive context — released all global shortcuts (tray is the fallback)');
+    }
+    return; // another app is foreground — let it have the (non-summon) keys
+  }
   // Register EVERY bind while the game or overlay is the active context — including the
   // channel-cycle (PageUp/PageDown), settings (Home), and party/preset binds. These were
   // previously suppressed unless the overlay itself was focused, which made them dead while
@@ -2441,10 +3442,13 @@ function refreshShortcuts() {
   // keys while you're actually in FCM or the game. (`overlayOnly` is retained on the bind
   // records for reference but no longer gates registration.) Char binds (/ \) stay released
   // while the overlay is focused so they remain typeable in chat.
+  let reg = 0, fail = 0;
   for (const b of _allBinds) {
     if (b.isChar && overlayFocused) continue; // keep / and \ typeable in the overlay
-    try { globalShortcut.register(b.accel, b.fn); } catch { /* skip bad accel */ }
+    try { if (globalShortcut.register(b.accel, b.fn)) reg++; else fail++; } catch { fail++; }
   }
+  diag('[hotkeys] active context (overlayFocused=' + overlayFocused + ') — registered ' + reg +
+    (fail ? ', ' + fail + ' FAILED (already held by another app?)' : ''));
 }
 
 // Register the global shortcuts from a keybind map (settings panel) or the
@@ -2496,7 +3500,7 @@ function registerHotkeys(kb, presets) {
       // mashing Insert/Delete made the keys stop responding after a few presses.
       setImmediate(fn);
     };
-    _allBinds.push({ accel, fn: wrappedFn, isChar: isSinglePrintableChar(accel), overlayOnly });
+    _allBinds.push({ accel, fn: wrappedFn, isChar: isSinglePrintableChar(accel), overlayOnly, action });
   };
 
   // Global binds — active whenever the game or overlay is the foreground context.
@@ -2524,7 +3528,7 @@ function registerHotkeys(kb, presets) {
       if (!p || !p.keybind || typeof p.x !== 'number') continue;
       bind(p.keybind, () => {
         const wa = clampToWorkArea({ x: p.x, y: p.y, width: p.w, height: p.h });
-        if (mainWindow && !mainWindow.isDestroyed()) { try { mainWindow.setBounds(wa); } catch { /* ignore */ } }
+        if (mainWindow && !mainWindow.isDestroyed()) { try { setWindowBoundsGuarded(wa); } catch { /* ignore */ } }
       }, true);
     }
   }
@@ -2560,8 +3564,9 @@ function setClickThrough(enabled) {
 //   Windows: click-through ONLY while the GAME is the foreground process; clickable
 //            otherwise (overlay focused, desktop, or another app). Driven by the
 //            foreground-process poll (lastForegroundProc) + focus/blur/show events.
-//   Non-win32: no foreground-process API → focus-driven (click-through when the
-//            overlay is blurred, interactive when focused).
+//   Non-win32: use the active-window detector when available; otherwise fall back
+//            to gameRunning. The overlay remains clickable over other apps so a
+//            click can focus it and trigger the topmost re-assertion.
 // A modal pins interactive; manual "Click-through (always)" (clickThrough=true)
 // keeps it click-through even when clickable-eligible.
 function applyFocusClickThrough(focusedHint) {
@@ -2572,28 +3577,37 @@ function applyFocusClickThrough(focusedHint) {
   // inert before mainWindow.focus() actually lands (the "type, but it went to the game" bug).
   const recentlyFocused = (Date.now() - lastUserFocusMs) < FOCUS_GUARD_MS;
   const overlayFocused = recentlyFocused || (typeof focusedHint === 'boolean' ? focusedHint : mainWindow.isFocused());
-  let ignore;
-  if (process.platform === 'win32') {
-    const gameForeground = !overlayFocused && isGameProcess(lastForegroundProc);
-    ignore = gameForeground ? true : clickThrough; // clickable unless the game is foreground
-  } else {
-    ignore = overlayFocused ? clickThrough : true; // focus-driven fallback
+  let gameForeground = false;
+  if (!overlayFocused) {
+    if (process.platform === 'win32') {
+      gameForeground = isGameProcess(lastForegroundProc);
+    } else if (foregroundDetect) {
+      // A fullscreen game can expose no readable class; when the game process is
+      // present, preserve the existing fail-safe click-through behavior for that
+      // ambiguous foreground. A readable non-game class remains interactive.
+      gameForeground = isGameClass(lastForegroundProc)
+        || (!!gameRunning && overlayCore.isUnknownForegroundClass(lastForegroundProc));
+    } else {
+      gameForeground = !!gameRunning;
+    }
   }
+  const mouse = overlayCore.shouldIgnoreMouse({
+    overlayFocused, gameForeground, clickThrough, autoClickThrough, modalInteractive,
+  });
   // forward:true forwards mouse-MOVE to the renderer while click-through so it can
   // show :hover states — but that's exactly the "still reacting while the game has
   // focus" bug. Only forward when the hover-to-interactive mode is explicitly on;
   // otherwise a click-through overlay is fully inert (no hover, no events).
-  setMouseIgnore(ignore, ignore && autoClickThrough);
+  setMouseIgnore(mouse.ignore, mouse.forward);
 }
 
 // ─── Foreground-aware z-order controller (native Windows; no new deps) ────────
-// The overlay behaves like an in-game overlay: it is TOPMOST only when the GAME
-// (Fallout76.exe) is the foreground window, OR when the overlay itself is
-// focused. When any other app is foreground (a browser, etc.), the overlay is a
-// NORMAL window so that app can cover it. If the game isn't running, the overlay
-// is NOT topmost. This is native-only: under WSLg the app runs in a sandboxed
-// Wayland/X server isolated from the Windows desktop, so the foreground poll
-// only ever sees the WSLg compositor and the controller no-ops gracefully.
+// A visible overlay stays TOPMOST so it can be clicked even when another app is
+// foreground; a click then focuses it and makes it interactive. Mouse input is
+// still ignored while the game is foreground (or manual click-through is on), so
+// this does not steal gameplay clicks. This is native-only: under WSLg the app
+// runs in a sandboxed Wayland/X server isolated from the Windows desktop, so the
+// foreground poll only ever sees the WSLg compositor.
 function desiredTopmost() {
   // Decision is pure (see overlay-core); main.js only supplies live state.
   // forceVisible overrides game gating; while the GAME IS RUNNING stay topmost no
@@ -2601,24 +3615,34 @@ function desiredTopmost() {
   // overlay focused → topmost; game is the foreground process → topmost.
   return overlayCore.desiredTopmost({
     hasWindow: !!(mainWindow && !mainWindow.isDestroyed()),
+    windowVisible: !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()),
     forceVisible,
     gameRunning,
     windowFocused: !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isFocused()),
-    foregroundIsGame: isGameProcess(lastForegroundProc),
+    foregroundIsGame: isGameClass(lastForegroundProc),
+    foregroundUnknown: overlayCore.isUnknownForegroundClass(lastForegroundProc),
+    // Focus-aware lowering is DISABLED on KDE-Wayland by design: the fcm-keepabove KWin
+    // rule's force-Layer property FORCES the overlay into OverlayLayer (layerrule=2),
+    // which trumps any setAlwaysOnTop(false) we could issue — so we use session-long "game running →
+    // topmost" (the chosen "above the game, no flicker" behavior; confirmed 2026-07).
+    // Hotkey gating still uses the foreground class (see shouldRegisterShortcuts).
+    focusAwareTopmost: false,
   });
 }
 
 // Linux always-on-top heartbeat: re-assert topmost on a short interval while
 // the game is running. On some X11 WMs and under Proton/XWayland the
 // _NET_WM_STATE_ABOVE hint can be silently dropped when the game window raises
-// itself (e.g. on game-launch or alt-tab). The heartbeat catches this by
-// forcing a re-apply every few seconds — idempotent on Windows (guarded by
-// overlayIsTopmost) but explicitly re-forced on Linux where stacking races are
-// more common. Only active on Linux; Windows has the 1500ms applyZOrder timer
-// already plus the DWM-flash constraint that prohibits frequent forced re-apply.
+// itself. Forces a re-apply every few seconds. Windows has its own 1500ms timer
+// instead (plus a DWM-flash constraint that rules out frequent forced re-apply).
+// Skipped on KDE-Wayland: the KWin Force-layer rule (syncKwinKeepAboveRule)
+// self-heals on window-raise, making the heartbeat redundant there.
+// Not skipped on Hyprland: pin has not been verified on real hardware to beat
+// a fullscreen Proton game the way KWin's Force-Layer rule was, so the
+// setAlwaysOnTop heartbeat stays as belt-and-suspenders until verified.
 let _linuxZOrderTimer = null;
 function _startLinuxZOrderHeartbeat() {
-  if (!IS_LINUX) return;
+  if (!IS_LINUX || KDE_WAYLAND) return;
   if (_linuxZOrderTimer) return;
   _linuxZOrderTimer = setInterval(() => {
     if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible() || isDragging) return;
@@ -2626,7 +3650,7 @@ function _startLinuxZOrderHeartbeat() {
     // Force re-apply by clearing the cached state so applyZOrder() always calls
     // setAlwaysOnTop. This is safe on Linux — there is no DWM-recomposition flash.
     overlayIsTopmost = false;
-    applyZOrder();
+    applyZOrder({ heartbeat: true });
   }, 3000); // 3s — short enough to catch a game-raise, long enough not to spam
 }
 function _stopLinuxZOrderHeartbeat() {
@@ -2635,8 +3659,26 @@ function _stopLinuxZOrderHeartbeat() {
   _linuxZOrderTimer = null;
 }
 
-function applyZOrder() {
-  if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible()) return;
+function applyZOrder(opts) {
+  // The 3s Linux heartbeat re-applies topmost every tick; route ITS logs through
+  // vdiag (verbose) so they don't flood the log — a real z-order CHANGE still logs
+  // at info. (Heartbeat re-applies were the #1 source of log bloat.)
+  const zlog = (opts && opts.heartbeat) ? vdiag : diag;
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (!mainWindow.isVisible()) {
+    // Overlay hidden to tray. On Linux, RELEASE always-on-top (and stop the heartbeat) so
+    // a hidden window doesn't keep holding the game out of exclusive fullscreen — otherwise
+    // the flag stayed stuck from when it was visible and FO76 stayed under the panel even
+    // after hiding. On Windows we keep the flag: a hidden window doesn't affect stacking and
+    // re-toggling it would DWM-flash on the next show.
+    if (IS_LINUX && overlayIsTopmost) {
+      overlayIsTopmost = false;
+      _stopLinuxZOrderHeartbeat();
+      try { mainWindow.setAlwaysOnTop(false); } catch { /* ignore */ }
+      diag('[zorder] linux: released always-on-top (overlay hidden)');
+    }
+    return;
+  }
   // Suppress z-order changes while the user is dragging the window. On Windows,
   // calling setAlwaysOnTop on a transparent window triggers a DWM recomposition
   // that flashes/dims the overlay visuals mid-drag. We skip the re-apply until
@@ -2656,17 +3698,17 @@ function applyZOrder() {
       // flag when the window is hidden/shown or another fullscreen window raises.
       try {
         mainWindow.setAlwaysOnTop(true, 'pop-up-menu');
-        diag('[zorder] linux: setAlwaysOnTop(true, pop-up-menu) — gameRunning=' + gameRunning + ' focused=' + mainWindow.isFocused());
+        zlog('[zorder] linux: setAlwaysOnTop(true, pop-up-menu) — gameRunning=' + gameRunning + ' focused=' + mainWindow.isFocused());
       } catch {
         mainWindow.setAlwaysOnTop(true, 'screen-saver');
-        diag('[zorder] linux: setAlwaysOnTop(true, screen-saver) fallback — gameRunning=' + gameRunning);
+        zlog('[zorder] linux: setAlwaysOnTop(true, screen-saver) fallback — gameRunning=' + gameRunning);
       }
       try { mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true }); } catch { /* ignore */ }
       _startLinuxZOrderHeartbeat();
     } else {
       if (IS_LINUX && !want) {
         _stopLinuxZOrderHeartbeat();
-        diag('[zorder] linux: setAlwaysOnTop(false) — gameRunning=' + gameRunning + ' focused=' + mainWindow.isFocused());
+        zlog('[zorder] linux: setAlwaysOnTop(false) — gameRunning=' + gameRunning + ' focused=' + mainWindow.isFocused());
       }
       // 'screen-saver' is the highest standard level so we sit above a
       // fullscreen-borderless game. setAlwaysOnTop does not steal focus
@@ -2676,133 +3718,180 @@ function applyZOrder() {
   } catch (e) { if (IS_LINUX) diag('[zorder] setAlwaysOnTop failed:', String(e && e.message || e)); }
 }
 
-// KDE-Wayland active-window poller using xdotool (preferred) or kdotool.
+// Linux active-window poller using kdotool / xdotool / hyprctl. KDE-Wayland
+// prefers kdotool (KWin D-Bus, sees native-Wayland windows). Plain X11 prefers
+// xdotool (the native X11 tool); kdotool is only a fallback there. Hyprland
+// uses hyprctl (activewindow -j), its own compositor IPC, not KWin.
 //
-// FO76 runs under Proton as an XWayland window, and the overlay itself runs under
-// XWayland on KDE (forced ozone hint), so the standard X11 tool `xdotool` CAN read
-// the active window's WM_CLASS here. `kdotool` (https://github.com/jinliu/kdotool)
-// is the pure-Wayland counterpart that talks to KWin over D-Bus; we use it as a
-// fallback when xdotool isn't installed. Both share the same subcommand syntax:
+// `kdotool` (https://github.com/jinliu/kdotool) talks to KWin over D-Bus, so it
+// sees EVERY window — native-Wayland (Konsole, Wayland Firefox) AND XWayland
+// (FO76 under Proton) — and reads the game's class reliably. It is PREFERRED
+// on KDE-Wayland. `xdotool` is the X11-native tool: on Wayland it only sees
+// the XWayland side, so when a native-Wayland window is focused it reports
+// NO active window. With the game running, the "(null)"-class heuristic then
+// treats that as "probably the fullscreen game" and the hotkeys stay captured
+// in the other app. It also hits
+// a libxdo double-free crash on some builds (see the circuit-breaker below).
+// Both tools share the same subcommand syntax:
 //   <tool> getactivewindow getwindowclassname
-// Output: the WM_CLASS of the currently active window, e.g.
+// Output: the window class of the currently active window, e.g.
 //   steam_app_1151340   (FO76 under Proton — confirmed on CachyOS)
 //   fallout76.exe       (FO76 under some Proton/Wine versions)
-//   konsole / discord   (other apps)
+//   org.kde.konsole     (kdotool reports native-Wayland apps by app-id;
+//                        xdotool would report X11-style "konsole" — neither
+//                        matches isGameClass(), which is all that matters)
 //   fallout chat mod    (our own overlay — must NOT match isGameClass(); the
 //                        overlay-focused case is covered separately via isFocused())
-// When a native-Wayland window is active, xdotool getactivewindow returns nothing
-// (no active X window) → we treat that as "not the game" and release the hotkeys.
 //
 // Graceful degradation: if neither tool is on PATH, we log a single diagnostic and
-// leave kdeWaylandForegroundDetect=false so refreshShortcuts falls back to the
+// leave foregroundDetect=false so refreshShortcuts falls back to the
 // pre-existing "game running → keys active" behavior (no regression).
 function _startForegroundPoller() {
-  if (!KDE_WAYLAND) return; // only on KDE+Wayland
-  // Resolve which tool is available — prefer xdotool (XWayland, ubiquitous on
-  // Arch/CachyOS), then kdotool. `command -v` is POSIX and returns non-zero if
-  // the binary isn't found.
-  exec('command -v xdotool || command -v kdotool', { shell: '/bin/sh' }, (err, stdout) => {
-    const resolved = (stdout || '').trim().split('\n')[0].trim();
-    if (err || !resolved) {
-      // Neither tool installed — log once and leave detection disabled.
-      diag('[foreground] xdotool/kdotool not found on PATH — KDE-Wayland active-window detection disabled.');
-      diag('[foreground] Install xdotool (recommended) for precise hotkey-release support, or kdotool.');
-      diag('[foreground] Falling back to game-running detection (hotkeys stay registered while FO76 is open).');
+  if (!KDE_WAYLAND && !IS_X11 && !IS_HYPRLAND) return; // KDE-Wayland, X11, or Hyprland
+  // Resolve which tools are available. Order is session-dependent (hyprctl on
+  // Hyprland, kdotool first on KDE-Wayland, xdotool first on X11). We detect
+  // all three so the crash circuit-breaker below can auto-switch to the
+  // alternate tool if the primary keeps aborting. `;` (not `||`) runs every
+  // probe; `command -v` prints the path when found.
+  exec('command -v kdotool; command -v xdotool; command -v hyprctl', { shell: '/bin/sh' }, (_err, stdout) => {
+    const found = (stdout || '').split('\n').map((s) => s.trim().split('/').pop()).filter(Boolean);
+    const available = overlayCore.preferredForegroundTools({
+      hyprland: IS_HYPRLAND, kdeWayland: KDE_WAYLAND, x11: IS_X11,
+    }).filter((t) => found.includes(t));
+    if (available.length === 0) {
+      // Preferred tool not installed — log once and leave detection disabled.
+      if (IS_HYPRLAND) {
+        diag('[foreground] hyprctl not found on PATH — active-window detection disabled.');
+        diag('[foreground] Falling back to game-running detection (hotkeys stay registered while FO76 is open).');
+      } else {
+        diag('[foreground] kdotool/xdotool not found on PATH — active-window detection disabled.');
+        diag('[foreground] Install kdotool (recommended — Arch: AUR, Fedora: dnf install kdotool) for precise hotkey-release support; xdotool also works with caveats.');
+        diag('[foreground] Falling back to game-running detection (hotkeys stay registered while FO76 is open).');
+      }
       return;
     }
-    fgTool = resolved.split('/').pop(); // 'xdotool' or 'kdotool'
-    kdeWaylandForegroundDetect = true;
-    diag('[foreground] ' + fgTool + ' found — KDE-Wayland active-window detection ENABLED (~300ms poll).');
-
-    const POLL_INTERVAL_MS = 300;
-    // Poll by spawning the tool each interval. Each spawn is cheap (< 1ms startup)
-    // vs. a long-lived subprocess that could die silently.
-    fgPollTimer = setInterval(() => {
-      if (isQuitting) return;
-      let done = false;
-      let out = '';
-      try {
-        fgPoller = spawn(fgTool, ['getactivewindow', 'getwindowclassname']);
-        fgPoller.stdout.on('data', (d) => { out += d.toString(); });
-        fgPoller.on('close', () => {
-          if (done) return;
-          done = true;
-          // Empty output (e.g. a native-Wayland window is active, so xdotool sees
-          // no active X window) is a valid signal meaning "not the game".
-          const line = out.trim().toLowerCase();
-          // Only update and act when the value actually changed — avoids
-          // redundant applyZOrder / refreshShortcuts churn every 300ms.
-          if (line !== lastForegroundProc) {
-            lastForegroundProc = line;
-            if (gameRunning) applyZOrder();
-            applyFocusClickThrough();
-            refreshShortcuts();
-          }
-        });
-        fgPoller.on('error', () => { done = true; /* ignore — tool may have vanished */ });
-        // Safety timeout: if the process doesn't close in 500ms, kill it.
-        setTimeout(() => {
-          if (!done) {
-            done = true;
-            try { fgPoller && fgPoller.kill(); } catch { /* ignore */ }
-          }
-        }, 500);
-      } catch { /* ignore spawn errors */ }
-    }, POLL_INTERVAL_MS);
+    fgTool = available[0];
+    foregroundDetect = true;
+    const altNote = available.length > 1 ? ' (fallback available: ' + available.filter((t) => t !== fgTool).join(',') + ')' : '';
+    diag('[foreground] ' + fgTool + ' found — active-window detection ENABLED (~300ms poll).' + altNote);
+    if (gameRunning) probeGameDisplay();
+    // `tried` tracks tools we've already polled with so the breaker never ping-pongs
+    // back to a tool that already crashed (xdotool→kdotool→xdotool…).
+    _runForegroundPoll(available, new Set([fgTool]));
   });
 }
 
-// Spawn a long-lived PowerShell that prints the foreground window's process name
-// (~300ms cadence). We read its stdout lines and update lastForegroundProc.
-function startForegroundZOrder() {
-  if (process.platform !== 'win32') {
-    // Non-Windows (incl. WSLg's Linux Electron): no foreground-window-process API
-    // that maps to the Windows desktop. Use the process-scan-based game detection
-    // (startGameScan) to drive always-on-top: topmost while the game is running.
-    // Focus/blur also flip topmost so the user can always interact with chat.
-    // KDE-Wayland exception: we additionally start a kdotool poller so we CAN
-    // detect the active window and release hotkeys when another app is foreground.
-    lastForegroundProc = '';
-    if (mainWindow) {
-      // CRITICAL for Linux (Wayland/Bazzite) + macOS: let the overlay float over
-      // a FULLSCREEN game. Plain alwaysOnTop is not enough over a fullscreen
-      // window — `visibleOnFullScreen` is the option that lets the window appear
-      // above other apps' fullscreen surfaces. Without this the overlay simply
-      // never shows over the game (the user's "I have to keep hitting insert").
-      // NOTE: works best when FO76 runs in BORDERLESS/WINDOWED, not exclusive
-      // fullscreen — exclusive fullscreen grabs the GPU output and no overlay
-      // (on any OS) can draw above it.
-      try {
-        mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-        diag('[zorder] non-win32: setVisibleOnAllWorkspaces(visibleOnFullScreen=true) applied');
-      } catch (e) { diag('[zorder] setVisibleOnAllWorkspaces failed:', String(e && e.message || e)); }
-      mainWindow.on('focus', () => { applyZOrder(); applyFocusClickThrough(true); refreshShortcuts(); });
-      mainWindow.on('blur', () => { applyZOrder(); applyFocusClickThrough(false); refreshShortcuts(); });
-      // On 'show' (restore from tray or first show), force-clear the cached
-      // z-order state so applyZOrder always re-asserts the correct level.
-      // This is critical on Linux/Proton: the compositor may have dropped our
-      // _NET_WM_STATE_ABOVE hint while the window was hidden; re-asserting on
-      // every show ensures the overlay is above the game surface immediately.
-      mainWindow.on('show', () => {
-        overlayIsTopmost = false; // force re-apply even if state is unchanged
-        applyZOrder();
-        applyFocusClickThrough(mainWindow.isFocused());
-        diag('[zorder] linux: show event — re-asserting always-on-top');
+// Drive the ~300ms active-window poll with the currently-selected fgTool, guarded by a
+// crash circuit-breaker. On some distros (Fedora 44, xdotool 3.x) the chained
+// `getactivewindow getwindowclassname` aborts INSIDE libxdo (double-free in
+// xdo_get_window_classname → SIGABRT). We can't stop the per-spawn coredump, so after
+// MAX_CONSEC_CRASHES back-to-back signal deaths we either switch to the alternate tool
+// (if one is installed) or disable detection entirely — both stop the coredump storm.
+function _runForegroundPoll(available, tried) {
+  const POLL_INTERVAL_MS = 300;
+  const MAX_CONSEC_CRASHES = 3;
+  let consecutiveCrashes = 0;
+  // Poll by spawning the tool each interval. Each spawn is cheap (< 1ms startup)
+  // vs. a long-lived subprocess that could die silently.
+  fgPollTimer = setInterval(() => {
+    if (isQuitting) return;
+    let done = false;
+    let out = '';
+    try {
+      const { cmd, args } = overlayCore.buildForegroundProbe(fgTool);
+      fgPoller = spawn(cmd, args);
+      fgPoller.stdout.on('data', (d) => { out += d.toString(); });
+      // Drain stderr: a crashing xdotool prints a libc backtrace to stderr, and the
+      // default piped-but-unread stderr could fill and block the child before our
+      // 500ms kill. Discard it.
+      if (fgPoller.stderr) fgPoller.stderr.on('data', () => { /* discard */ });
+      fgPoller.on('close', (code, signal) => {
+        if (done) return;
+        done = true;
+        // A SIGNAL death (SIGABRT from the libxdo double-free, SIGSEGV, …) is a crash.
+        // A non-zero EXIT CODE with no signal is NOT a crash — xdotool returns 1 when
+        // there's simply no active X window (a native-Wayland window is focused), which
+        // is the normal "not the game" state. Our own 500ms timeout kill sets done=true
+        // first, so its SIGTERM never reaches here.
+        if (signal) {
+          consecutiveCrashes += 1;
+          const untried = available.filter((t) => !tried.has(t));
+          const action = overlayCore.decideForegroundPollerAction({
+            crashed: true, consecutiveCrashes, maxCrashes: MAX_CONSEC_CRASHES, hasAltTool: untried.length > 0,
+          });
+          const libxdoNote = (fgTool === 'kdotool' || fgTool === 'xdotool')
+            ? ', likely libxdo getwindowclassname double-free' : '';
+          if (action === 'switch-tool') {
+            const alt = untried[0];
+            diag('[foreground] ' + fgTool + ' crashed ' + consecutiveCrashes + 'x (' + signal +
+              libxdoNote + ') — switching to ' + alt + '.');
+            if (fgPollTimer) { clearInterval(fgPollTimer); fgPollTimer = null; }
+            fgTool = alt;
+            tried.add(alt);
+            _runForegroundPoll(available, tried);
+          } else if (action === 'disable') {
+            diag('[foreground] ' + fgTool + ' crashed ' + consecutiveCrashes + 'x (' + signal +
+              libxdoNote + ') — disabling active-window detection' +
+              (libxdoNote ? ' to stop coredump spam.' : '.'));
+            if (fgTool === 'kdotool' || fgTool === 'xdotool') {
+              diag('[foreground] Install the alternate tool to restore precise hotkey-release — kdotool preferred (Arch: AUR, Fedora: dnf): https://github.com/jinliu/kdotool');
+            }
+            diag('[foreground] Falling back to game-running detection (hotkeys stay registered while FO76 is open).');
+            if (fgPollTimer) { clearInterval(fgPollTimer); fgPollTimer = null; }
+            foregroundDetect = false;
+            lastForegroundProc = '';
+            refreshShortcuts();
+          }
+          // action === 'continue' (still under threshold): keep polling; don't act on
+          // this spawn's (absent) output.
+          return;
+        }
+        // Clean exit — reset the crash streak. Empty output is a valid signal:
+        // kdotool → genuinely no active window; xdotool → no active X window,
+        // which ALSO happens when a native-Wayland window is focused (xdotool
+        // can't see those) or when a fullscreen game exposes no WM_CLASS — the
+        // "(null)" heuristic in shouldRegisterShortcuts handles that ambiguity.
+        consecutiveCrashes = 0;
+        const line = overlayCore.parseForegroundOutput(fgTool, out);
+        // Feed every sample into the focus hysteresis (a class-changed-only call
+        // would never commit if enterScans/leaveScans > 1). The block below still
+        // drives z-order/click-through/shortcuts on actual class changes.
+        applyGameFocus(line);
+        // Only update and act when the value actually changed — avoids redundant
+        // applyZOrder / refreshShortcuts churn every 300ms.
+        if (line !== lastForegroundProc) {
+          // Verbose: the raw active-window class drives z-order + hotkey gating. A
+          // fullscreen game reads "(null)"/empty here (no WM_CLASS) — logging it makes
+          // "overlay won't stay above the game" diagnosable without a manual capture.
+          vdiag('[foreground] active-window class changed: "' + lastForegroundProc + '" → "' + line +
+            '" (isGame=' + isGameClass(line) + ' unknown=' + overlayCore.isUnknownForegroundClass(line) + ' gameRunning=' + gameRunning + ')');
+          lastForegroundProc = line;
+          if (gameRunning) applyZOrder();
+          applyFocusClickThrough();
+          refreshShortcuts();
+        }
       });
-    }
-    applyZOrder();
-    startGameScan();
-    // KDE-Wayland: start the xdotool/kdotool poller for active-window detection.
-    // This is the key difference from other Linux setups: it gives us a real
-    // foreground window class so refreshShortcuts() can release hotkeys when the
-    // user switches to Konsole, Discord, etc. — just like the win32 PS poller does.
-    _startForegroundPoller();
-    return;
-  }
-  // Windows: also run the process scanner as a supplement (confirms game is
-  // actually present, not just in foreground — handles Proton/Wine sub-processes).
-  startGameScan();
+      fgPoller.on('error', () => { done = true; /* ignore — tool may have vanished */ });
+      // Safety timeout: if the process doesn't close in 500ms, kill it.
+      setTimeout(() => {
+        if (!done) {
+          done = true;
+          try { fgPoller && fgPoller.kill(); } catch { /* ignore */ }
+        }
+      }, 500);
+    } catch { /* ignore spawn errors */ }
+  }, POLL_INTERVAL_MS);
+}
 
+// Build + spawn the long-lived PowerShell foreground poller (win32). Extracted from
+// startForegroundZOrder so it can be RELAUNCHED after a death (issue #136): the
+// poller is the ONLY thing that updates lastForegroundProc, so if it dies with no
+// restart the last-known foreground (the game, while keys were registered) freezes
+// and the global hotkeys are never released again. Each healthy line resets the
+// restart backoff and clears any fail-closed state (the watchdog re-engages if the
+// lines stop again).
+function spawnWindowsForegroundPoller() {
+  if (process.platform !== 'win32' || isQuitting) return;
   const ps = `
 $sig = @'
 using System;
@@ -2823,8 +3912,12 @@ while ($true) {
   } catch { Write-Output '' }
   Start-Sleep -Milliseconds 100
 }`;
+  pollerStartedAt = Date.now();
+  lastForegroundAt = Date.now(); // grace: give the poller FG_STALE_MS to emit its first line before the watchdog trips
+  pollerEverEmitted = false;
   try {
     zorderProc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { windowsHide: true });
+    diag('[foreground] win32 poller started (pid=' + (zorderProc && zorderProc.pid) + ')');
     let buf = '';
     zorderProc.stdout.on('data', (d) => {
       buf += d.toString();
@@ -2832,12 +3925,138 @@ while ($true) {
       while ((nl = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, nl).trim();
         buf = buf.slice(nl + 1);
-        if (line) { lastForegroundProc = line.toLowerCase(); if (gameRunning) applyZOrder(); applyFocusClickThrough(); refreshShortcuts(); }
+        if (!line) continue;
+        // A line arrived → the poller is healthy. Stamp the watchdog clock, reset the
+        // restart backoff, and clear any fail-closed state from a previous silence.
+        lastForegroundAt = Date.now();
+        pollerRestartCount = 0;
+        if (!pollerEverEmitted) { pollerEverEmitted = true; diag('[foreground] win32 poller: first line ("' + line.toLowerCase() + '")'); }
+        if (fgFailClosed) { fgFailClosed = false; diag('[foreground] win32 poller recovered — re-evaluating hotkeys'); }
+        lastForegroundProc = line.toLowerCase();
+        if (gameRunning) applyZOrder();
+        applyFocusClickThrough();
+        refreshShortcuts();
       }
     });
-    zorderProc.on('error', () => { zorderProc = null; });
-    zorderProc.on('exit', () => { zorderProc = null; });
-  } catch { zorderProc = null; }
+    zorderProc.on('error', (err) => handleWindowsPollerDown('error', err && err.message));
+    zorderProc.on('exit', (code) => handleWindowsPollerDown('exit', code));
+  } catch (e) {
+    handleWindowsPollerDown('spawn-throw', String(e && e.message || e));
+  }
+}
+
+// Relaunch the win32 poller after a death, with capped backoff (1s → 2s → 5s). A
+// poller that exits immediately and never emitted a line is the BLOCKED signature
+// (PowerShell Constrained Language Mode rejecting `Add-Type`, or AppLocker/AV
+// blocking powershell.exe) — log an actionable hint and keep retrying; the watchdog
+// meanwhile fails closed so the hotkeys are released regardless of WHY it failed.
+function handleWindowsPollerDown(reason, detail) {
+  zorderProc = null;
+  if (isQuitting) return;
+  const kind = overlayCore.classifyPollerExit({ msSinceStart: Date.now() - pollerStartedAt, everEmitted: pollerEverEmitted });
+  const backoff = overlayCore.nextPollerBackoffMs(pollerRestartCount);
+  if (kind === 'blocked-or-clm') {
+    diag('[foreground] win32 poller ' + reason + ' immediately with no output (' + detail + ') — powershell.exe likely blocked ' +
+      '(Constrained Language Mode / AppLocker). Hotkeys released as a fail-safe; in-game hotkeys need a working foreground poll. Retrying in ' + (backoff / 1000) + 's.');
+  } else {
+    diag('[foreground] win32 poller ' + reason + ' (' + detail + ') — restarting in ' + (backoff / 1000) + 's.');
+  }
+  pollerRestartCount += 1;
+  if (pollerRestartTimer) clearTimeout(pollerRestartTimer);
+  pollerRestartTimer = setTimeout(() => {
+    pollerRestartTimer = null;
+    spawnWindowsForegroundPoller();
+  }, backoff);
+}
+
+// Fail-safe watchdog (win32) — the real #136 fix, independent of WHY the poller
+// failed. The poller is a single point of failure: if it dies, is blocked, or never
+// starts, lastForegroundProc freezes and refreshShortcuts() stops firing, so the
+// global hotkeys are never released and fire in every app. Once per second, if no
+// foreground line has arrived for FG_STALE_MS, FORGET the stale foreground
+// (lastForegroundProc='') and re-run refreshShortcuts() — which releases the hotkeys
+// (keeping only the summon binds when there's no tray). When the poller recovers, its
+// stdout handler clears fgFailClosed and re-registers.
+function startWindowsForegroundWatchdog() {
+  if (process.platform !== 'win32' || fgWatchdogTimer) return;
+  fgWatchdogTimer = setInterval(() => {
+    if (isQuitting) return;
+    if (!overlayCore.isForegroundStale({ lastLineAt: lastForegroundAt, now: Date.now(), staleMs: FG_STALE_MS })) return;
+    if (!fgFailClosed) {
+      fgFailClosed = true;
+      diag('[foreground] win32 poller silent > ' + (FG_STALE_MS / 1000) + 's — releasing global hotkeys (fail-safe, #136)');
+    }
+    if (lastForegroundProc !== '') lastForegroundProc = '';
+    refreshShortcuts();
+  }, 1000);
+}
+
+// Spawn a long-lived PowerShell that prints the foreground window's process name
+// (~300ms cadence). We read its stdout lines and update lastForegroundProc.
+function startForegroundZOrder() {
+  if (process.platform !== 'win32') {
+    // Non-Windows (incl. WSLg's Linux Electron): no foreground-window-process API
+    // that maps to the Windows desktop. Use the process-scan-based game detection
+    // (startGameScan) to drive always-on-top: topmost while the game is running.
+    // Focus/blur also flip topmost so the user can always interact with chat.
+    // KDE-Wayland / X11 exception: we additionally start a kdotool/xdotool
+    // poller so we CAN detect the active window and release hotkeys when
+    // another app is foreground.
+    lastForegroundProc = '';
+    if (mainWindow) {
+      // CRITICAL for Linux (Wayland/Bazzite) + macOS: let the overlay float over
+      // a FULLSCREEN game. Plain alwaysOnTop is not enough over a fullscreen
+      // window — `visibleOnFullScreen` is the option that lets the window appear
+      // above other apps' fullscreen surfaces. Without this the overlay simply
+      // never shows over the game (the user's "I have to keep hitting insert").
+      // NOTE: works best when FO76 runs in BORDERLESS/WINDOWED, not exclusive
+      // fullscreen — exclusive fullscreen grabs the GPU output and no overlay
+      // (on any OS) can draw above it.
+      try {
+        mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+        diag('[zorder] non-win32: setVisibleOnAllWorkspaces(visibleOnFullScreen=true) applied');
+      } catch (e) { diag('[zorder] setVisibleOnAllWorkspaces failed:', String(e && e.message || e)); }
+      mainWindow.on('focus', () => { applyGameFocus(lastForegroundProc, true); applyZOrder(); applyFocusClickThrough(true); refreshShortcuts(); });
+      mainWindow.on('blur', () => { applyGameFocus(lastForegroundProc, false); applyZOrder(); applyFocusClickThrough(false); refreshShortcuts(); });
+      // On 'show' (restore from tray or first show), force-clear the cached
+      // z-order state so applyZOrder always re-asserts the correct level.
+      // This is critical on Linux/Proton: the compositor may have dropped our
+      // _NET_WM_STATE_ABOVE hint while the window was hidden; re-asserting on
+      // every show ensures the overlay is above the game surface immediately.
+      mainWindow.on('show', () => {
+        overlayIsTopmost = false; // force re-apply even if state is unchanged
+        applyZOrder();
+        applyFocusClickThrough(mainWindow.isFocused());
+        syncPanelHideInGame('show'); // hide the taskbar (opt-in) now that we're over the game
+        diag('[zorder] linux: show event — re-asserting always-on-top');
+      });
+      // On hide-to-tray, applyZOrder releases always-on-top and the panel auto-hide
+      // restores while nothing is shown.
+      mainWindow.on('hide', () => {
+        applyZOrder();
+        syncPanelHideInGame('hide'); // restore the taskbar while nothing is shown
+        diag('[zorder] linux: hide event — released always-on-top');
+      });
+    }
+    applyZOrder();
+    startGameScan();
+    // KDE-Wayland, plain X11, and Hyprland: start the active-window poller
+    // so refreshShortcuts() can release hotkeys when the user switches to
+    // Konsole, Discord, etc. Other Wayland compositors still no-op inside
+    // the helper.
+    _startForegroundPoller();
+    return;
+  }
+  // Windows: also run the process scanner as a supplement (confirms game is
+  // actually present, not just in foreground — handles Proton/Wine sub-processes).
+  startGameScan();
+
+  // Spawn the foreground poller and start the fail-safe watchdog (issue #136).
+  // The poller self-heals (restart-with-backoff on death) and the watchdog releases
+  // the global hotkeys whenever the poller goes silent, so a dead/blocked poller can
+  // never strand the hotkeys "registered everywhere".
+  spawnWindowsForegroundPoller();
+  startWindowsForegroundWatchdog();
 
   // Focus/blur of the overlay also flips topmost (user interacting with chat).
   // On focus/show Electron can reset setIgnoreMouseEvents back to interactive,
@@ -2909,13 +4128,13 @@ function animateHeightTo(targetH, onDone) {
   const b = mainWindow.getBounds();
   const startH = b.height;
   // x/y are read LIVE each frame (below) rather than frozen here, so a concurrent
-  // drag-move (which changes x/y via setPosition) is never fought by this height
+  // drag-move (which changes x/y through the guarded bounds path) is never fought by this height
   // animation — only WIDTH is held from the start. The window top still stays put
   // when not moving because live x/y == the captured value in that case.
   const w = b.width;
   if (Math.abs(startH - targetH) < 2) {
     const c = mainWindow.getBounds();
-    try { mainWindow.setBounds({ x: c.x, y: c.y, width: w, height: targetH }); } catch { /* ignore */ }
+    try { setWindowBoundsGuarded({ x: c.x, y: c.y, width: w, height: targetH }); } catch { /* ignore */ }
     collapseAnimTarget = null;
     if (onDone) onDone();
     return;
@@ -2930,24 +4149,25 @@ function animateHeightTo(targetH, onDone) {
     const eased = 1 - Math.pow(1 - t, 3); // ease-out cubic
     const h = Math.round(startH + (targetH - startH) * eased);
     const c = mainWindow.getBounds(); // live x/y so a drag-move isn't reset
-    try { mainWindow.setBounds({ x: c.x, y: c.y, width: w, height: h }); } catch { /* ignore */ }
+    try { setWindowBoundsGuarded({ x: c.x, y: c.y, width: w, height: h }); } catch { /* ignore */ }
     if (t >= 1) {
       clearInterval(collapseAnim); collapseAnim = null; collapseAnimTarget = null;
       const f = mainWindow.getBounds();
-      try { mainWindow.setBounds({ x: f.x, y: f.y, width: w, height: targetH }); } catch { /* ignore */ }
+      try { setWindowBoundsGuarded({ x: f.x, y: f.y, width: w, height: targetH }); } catch { /* ignore */ }
       if (onDone) onDone();
     }
   }, 12);
 }
 
-function collapseToHeader(headerH) {
+function collapseToHeader(headerH, fullAutoHide = false) {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   // Never collapse mid-drag — a height change while the user is moving the window
   // produces the "dance + expand" jitter. Idle behaviour resumes on move-end.
   if (movingActive) return;
   // If already collapsed, ignore (idempotent — prevents double-snapshot of height).
   if (collapsed) return;
-  diag('[collapse] idle-collapse to header h=' + Math.round(headerH) + ' focused=' + mainWindow.isFocused());
+  const target = fullAutoHide ? FULL_AUTO_HIDE_HEIGHT : Math.max(24, Math.round(headerH));
+  diag('[collapse] idle-collapse to ' + (fullAutoHide ? 'full-hide' : 'header') + ' h=' + target + ' focused=' + mainWindow.isFocused());
   // Cancel any running height animation first. If one WAS running we may be
   // reading a partial (mid-animation) frame, so remember its target to use
   // instead of the partial height below.
@@ -2969,15 +4189,19 @@ function collapseToHeader(headerH) {
   expandedBounds = { x: b.x, y: b.y, width: b.width, height: currentH };
   expandedHeight = currentH;
   collapsed = true;
-  const target = Math.max(24, Math.round(headerH));
   // Two things clamp the collapse height and leave dead black space below the
-  // tab strip:
+  // idle target:
   //   1. our own minHeight (MIN_HEIGHT) — lower it to the target.
-  //   2. Windows' MIN TRACKING SIZE for a WS_THICKFRAME (resizable) window —
-  //      ~64px at this DPI, which is why it stopped at 64. Dropping the resize
-  //      border (setResizable(false)) removes that OS floor so the window can
-  //      shrink to just the header. Aero Snap isn't needed while idle-collapsed.
-  try { mainWindow.setMinimumSize(MIN_WIDTH, target); } catch { /* ignore */ }
+  //   2. The native resize hint can retain the expanded client height, especially
+  //      on X11 where toggling resizable rewrites min/max hints to the current size.
+  //      Pin both limits to the header so the old expanded area cannot survive the
+  //      collapse. The window remains movable while idle-collapsed. Full mode
+  //      uses a one-pixel target; it is intentionally not a user-hidden window,
+  //      so the live renderer can receive a message and request expansion.
+  try {
+    mainWindow.setMinimumSize(MIN_WIDTH, target);
+    mainWindow.setMaximumSize(b.width, target);
+  } catch { /* ignore */ }
   animateHeightTo(target);
 }
 
@@ -2993,7 +4217,10 @@ function expandFromHeader(focusInput) {
   collapsed = false;
   // Restore the normal minimum height + the resize border (Aero Snap) before
   // growing back, so the window is fully resizable/snappable again.
-  try { mainWindow.setMinimumSize(MIN_WIDTH, MIN_HEIGHT); } catch { /* ignore */ }
+  try {
+    mainWindow.setMaximumSize(100000, 100000);
+    mainWindow.setMinimumSize(MIN_WIDTH, MIN_HEIGHT);
+  } catch { /* ignore */ }
   // ONLY the HEIGHT is restored. The window's x/y/WIDTH are left exactly as they
   // are right now — collapse never changed them, and the user may have moved or
   // narrowed the window while it was collapsed/idle. Restoring the snapshot width
@@ -3003,7 +4230,7 @@ function expandFromHeader(focusInput) {
     : (expandedBounds && expandedBounds.height >= MIN_HEIGHT ? expandedBounds.height : DEFAULT_HEIGHT);
   expandedBounds = null; // clear so a manual resize while expanded isn't accidentally restored
   animateHeightTo(targetH, () => {
-    if (focusInput) { mainWindow.focus(); sendToRenderer('overlay:focus-input', true); }
+    if (focusInput) { mainWindow.focus(); dispatchFocusInput('expandFromHeader:post-animation'); }
   });
 }
 
@@ -3047,12 +4274,34 @@ function rebuildTrayMenu() {
         },
       },
     ] : []),
-    // Linux/KDE helper: imports the "keep above" KWin rule so the overlay sits
-    // above the game, and opens the folder with the rule + setup note.
     ...(IS_LINUX ? [
       { type: 'separator' },
-      { label: 'KDE: keep overlay above game', click: () => setupKdeKeepAbove({ interactive: true }) },
+      { label: 'Linux fixes', enabled: false },
+      // Cursor-lock fix: enable Wine's own mouse capture in the FO76 prefix so the cursor
+      // stays locked to the game on KWin Wayland (KWin revokes the game's pointer constraint
+      // when the overlay is on top). Explicit, on-demand only — never automatic (installer
+      // only prints the manual steps). One-click, idempotent; needs FO76 closed (implicit —
+      // this is a Proton-prefix fix, so it only makes sense between game sessions).
+      { label: 'Fix FO76 cursor lock (Wayland)', click: () => fixFo76CursorLock() },
+      // Optional: hide the KDE taskbar/panel while in-game so it can't pop over a BORDERLESS
+      // game whenever the game loses focus (e.g. while typing in the chat overlay — KWin's
+      // above-the-panel fullscreen promotion only holds while the game is ACTIVE).
+      // Restores your exact panel modes when the game exits / overlay hides / app quits.
+      { label: 'Hide taskbar while in-game (KDE)', type: 'checkbox', checked: isPanelHideInGameEnabled(), click: (mi) => {
+        try { const st = loadState(); const settings = { ...(st.settings || {}), kdePanelHideInGame: !!mi.checked }; saveState({ settings }); } catch { /* ignore */ }
+        syncPanelHideInGame('toggle');     // hide now if in-game, or restore if turned off
+        rebuildTrayMenu();
+      } },
     ] : []),
+    // Diagnostics: surface the log for bug reports + let users enable verbose
+    // (per-tick) logging without a relaunch. The toggle persists to settings so it
+    // survives a restart; FCM_DEBUG=1 / --fcm-debug do the same from the CLI.
+    { type: 'separator' },
+    { label: 'Debug logging (verbose)', type: 'checkbox', checked: isVerboseLogging(), click: (mi) => {
+      try { const st = loadState(); const settings = { ...(st.settings || {}), debugLogging: !!mi.checked }; saveState({ settings }); refreshLogLevel(settings); } catch { /* ignore */ }
+      rebuildTrayMenu();
+    } },
+    { label: 'Open log folder', click: () => { try { shell.openPath(path.dirname(diagPath())); } catch { /* ignore */ } } },
     { type: 'separator' },
     { label: 'Quit', click: () => quitApp() },
   ];
@@ -3087,14 +4336,24 @@ function createTray() {
     }
   }
   // Tray icons render best at ~16px; resize the .ico down so it's crisp.
+  const iconSource = appIcon() ? 'app-icon' : (icon && !icon.isEmpty() ? 'generated-dot' : 'empty');
   try {
     if (icon && !icon.isEmpty()) icon = icon.resize({ width: 16, height: 16 });
   } catch { /* ignore */ }
   try {
     tray = new Tray(icon);
-  } catch {
-    // Some headless/WSLg setups lack a system tray; tray is best-effort.
+    trayAvailable = true;
+    diag('[tray] created (iconSource=' + iconSource + ')');
+  } catch (e) {
+    // Some setups lack a StatusNotifierItem host (many wlroots/Wayland compositors,
+    // GNOME without an AppIndicator extension, headless/WSLg) — `new Tray()` then
+    // throws or no-ops. Logged because a missing tray is the #1 reason a Linux user
+    // gets "stuck" with no way to re-show the overlay. refreshShortcuts() compensates
+    // by keeping the summon hotkey registered (see its [hotkeys] recoverability path).
     tray = null;
+    trayAvailable = false;
+    diag('[tray] FAILED to create — no system tray / StatusNotifierItem host (iconSource=' + iconSource + '): ' +
+      String(e && e.message ? e.message : e) + '. Overlay stays recoverable via the always-on summon hotkey.');
     return;
   }
   tray.setToolTip(`Fallout Chat Mod Overlay v${APP_VERSION}`);
@@ -3106,6 +4365,10 @@ function createTray() {
 function createWindow() {
   const state = loadState();
   const bounds = clampToWorkArea(state.bounds || { width: DEFAULT_WIDTH, height: DEFAULT_HEIGHT });
+  // Seed the drift reference (#427) with the size we are about to open at, so the
+  // first save of the session compares against a real value instead of banking one
+  // drift step per launch.
+  lastPersistedSize = { width: bounds.width, height: bounds.height };
 
   mainWindow = new BrowserWindow({
     width: bounds.width, height: bounds.height, x: bounds.x, y: bounds.y,
@@ -3117,18 +4380,15 @@ function createWindow() {
     //     window (this is the Electron-supported equivalent of WS_EX_APPWINDOW —
     //     a non-tool window with a taskbar button + alt-tab entry).
     title: APP_TITLE,
-    // LINUX/KDE-WAYLAND STACKING FIX: `type:'notification'` sets
-    // _NET_WM_WINDOW_TYPE_NOTIFICATION on the X11 (XWayland) surface. KWin places
-    // notification-type windows in a higher stacking layer than NORMAL windows —
-    // high enough to sit above a borderless/fullscreen game, which plain
-    // _NET_WM_STATE_ABOVE (what setAlwaysOnTop maps to on Linux) does NOT achieve
-    // (KWin's fullscreen-layer promotion outranks ABOVE). Confirmed working on KDE
-    // Plasma 6 Wayland by comparable Electron game overlays. The trade-off — a
-    // notification window is non-focusable by default — is handled in
-    // setClickThrough(), which toggles setFocusable() so chat input still works
-    // when the overlay is interactive. KDE+Wayland ONLY — other Linux setups
-    // (X11/GNOME/etc.) already worked and would lose taskbar/alt-tab + gain
-    // nothing here, so they keep a NORMAL window. Windows/macOS keep NORMAL too.
+    // NORMAL window on every platform. We tried `type:'notification'` on KDE-Wayland
+    // to out-rank a focused fullscreen game (KWin's NotificationLayer), but it is
+    // actually BELOW KWin's active-fullscreen layer (so it only helped while the overlay
+    // had focus) AND a notification window is excluded from Alt-Tab / the taskbar and is
+    // non-focusable — users couldn't tab into the chat. The correct KWin-6 fix is the
+    // force-Layer property (on the fcm-keepabove KWin rule): it lifts the OVERLAY to OverlayLayer,
+    // above the active-fullscreen game without demoting it, so a NORMAL overlay sits
+    // above the game with no flicker — and stays a normal, focusable, tab-able window.
+    // See overlay-core.buildKwinKeepAboveScript + window-management.md.
     type: undefined,
     icon: appIcon() || undefined, // real product icon for taskbar / alt-tab
     // show:false — don't flash the window open before we know whether FO76 is
@@ -3239,7 +4499,7 @@ function createWindow() {
     // For a brand-new user chatActive=false → canShowOverlay()=true → shows.
     // For a returning set-up user without the game it will show for login, then
     // hide once the renderer signals chatActive=true and FO76 is not running.
-    reevaluateVisibility();
+    reevaluateVisibility('did-finish-load');
     setClickThrough(false); // start interactive so the user can see/drag it
     // A fresh load ALWAYS starts the renderer expanded (collapsed=false in JS).
     // If the window was left collapsed (e.g. a hot-reload while idle-hidden, or a
@@ -3249,10 +4509,11 @@ function createWindow() {
     try {
       if (collapseAnim) { clearInterval(collapseAnim); collapseAnim = null; }
       collapsed = false;
+      mainWindow.setMaximumSize(100000, 100000);
       mainWindow.setMinimumSize(MIN_WIDTH, MIN_HEIGHT);
       const b = mainWindow.getBounds();
       if (b.height < MIN_HEIGHT) {
-        mainWindow.setBounds({ x: b.x, y: b.y, width: b.width, height: expandedHeight || DEFAULT_HEIGHT });
+        setWindowBoundsGuarded({ x: b.x, y: b.y, width: b.width, height: expandedHeight || DEFAULT_HEIGHT });
       }
     } catch { /* ignore */ }
     // Re-apply the saved Chrome Opacity as a CSS variable (--fcm-chrome-bg-alpha).
@@ -3267,7 +4528,11 @@ function createWindow() {
         ).catch(() => { /* ignore */ });
       }
     } catch { /* ignore */ }
-    startRelay();
+    if (BUILD_CHANNEL === 'qa') {
+      startQaLogin();
+    } else {
+      startRelay();
+    }
     // Re-focus the chat input after a reload if it was focused before.
     // We fire this after startRelay so the component has received relay:status
     // and re-mounted before we ask it to focus. A short delay lets the React
@@ -3275,7 +4540,7 @@ function createWindow() {
     if (inputWasFocused) {
       setTimeout(() => {
         if (mainWindow && !mainWindow.isDestroyed()) {
-          sendToRenderer('overlay:focus-input', true);
+          dispatchFocusInput('post-reload-refocus');
         }
       }, 800);
     }
@@ -3373,6 +4638,10 @@ ipcMain.on('input:context-menu', (_evt, { x, y }) => {
 // instance handles second-instance signals by restoring/focusing the window.
 const _gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!_gotSingleInstanceLock) {
+  // Another instance already holds the lock — this process hands off and exits. Logged
+  // so a "won't launch" report (issue #272) can be distinguished from a silent quit
+  // here vs. a failed AppImage mount / Ozone relaunch upstream.
+  try { diag('[singleton] lock not acquired (another instance is running) — exiting this process'); } catch { /* logger not ready */ }
   app.quit();
 } else {
   app.on('second-instance', () => {
@@ -3392,29 +4661,60 @@ app.whenReady().then(() => {
     diag('version=' + APP_VERSION, 'platform=' + process.platform, 'arch=' + process.arch,
       'electron=' + process.versions.electron, 'node=' + process.versions.node);
     diag('packaged=' + app.isPackaged, 'relayHost=' + RELAY_HOST, 'userData=' + app.getPath('userData'));
-    diag('logFile=' + diagPath());
-    if (IS_LINUX) diag('[linux] desktop=' + (process.env.XDG_CURRENT_DESKTOP || '?'),
-      'session=' + (process.env.XDG_SESSION_TYPE || '?'),
-      'kdeWaylandXWayland=' + KDE_WAYLAND +
-      ' ozoneX11Arg=' + process.argv.includes('--ozone-platform=x11') +
-      ' (KDE_WAYLAND true + ozoneX11Arg true → running XWayland via argv relaunch; ' +
-      'ozoneX11Arg false on KDE_WAYLAND → still native Wayland, relaunch failed)');
+    diag('logFile=' + diagPath(), 'logLevel=' + _logLevel, 'execPath=' + process.execPath);
+    if (IS_LINUX) {
+      diag('[startup] desktop=' + (process.env.XDG_CURRENT_DESKTOP || '?'),
+        'sessionDesktop=' + (process.env.XDG_SESSION_DESKTOP || '?'),
+        'session=' + (process.env.XDG_SESSION_TYPE || '?'),
+        'waylandDisplay=' + (process.env.WAYLAND_DISPLAY || '(unset)'),
+        'x11Display=' + (process.env.DISPLAY || '(unset)'),
+        'gdkBackend=' + (process.env.GDK_BACKEND || '(unset)'),
+        'ozoneHint=' + (process.env.ELECTRON_OZONE_PLATFORM_HINT || '(unset)'));
+      diag('[startup] kdeWaylandXWayland=' + KDE_WAYLAND +
+        ' ozoneX11Arg=' + process.argv.includes('--ozone-platform=x11') +
+        ' (KDE_WAYLAND true + ozoneX11Arg true → running XWayland via argv relaunch; ' +
+        'ozoneX11Arg false on KDE_WAYLAND → still native Wayland, relaunch failed)');
+      if (IS_HYPRLAND) diag('[startup] Hyprland session detected, using hyprctl for foreground detection + pin-based stacking (unverified on hardware, best-effort)');
+      diag('[startup] appimage=' + (process.env.APPIMAGE || '(unset)'),
+        'appdir=' + (process.env.APPDIR || '(unset)'),
+        'argv0=' + (process.env.ARGV0 || '(unset)'),
+        'appImageLauncherDisable=' + (process.env.APPIMAGELAUNCHER_DISABLE || '(unset)'));
+      diag('[startup] argv=' + JSON.stringify(process.argv));
+      // Async (don't block startup): the two most common Linux launch blockers —
+      // missing libfuse2 (Fedora ships fuse3 → AppImage "launches once then dead",
+      // issue #272) and AppImageLauncher (its "Integrate & run" conflicts with our
+      // installer/relaunch). Logged so a user report shows them without asking.
+      try {
+        exec('ldconfig -p 2>/dev/null | grep -c "libfuse\\.so\\.2"; command -v AppImageLauncher >/dev/null 2>&1 && echo AIL || true',
+          { shell: '/bin/sh', timeout: 4000 }, (_e, out) => {
+            const lines = String(out || '').trim().split('\n');
+            const fuse2 = (parseInt(lines[0], 10) || 0) > 0;
+            const ail = lines.includes('AIL') || !!process.env.APPIMAGELAUNCHER_DISABLE;
+            diag('[startup] libfuse2=' + (fuse2 ? 'present' : 'MISSING (AppImage may not mount — prefer the .deb)') +
+              ' appImageLauncher=' + (ail ? 'present (avoid its Integrate&run for this app)' : 'not detected'));
+          });
+      } catch { /* ignore */ }
+    }
   } catch { /* ignore */ }
   // Linux: drop the KWin "keep above" rule + setup note into userData so KDE
-  // users can import it manually if needed (tray → "KDE: keep overlay above game").
-  // On KDE+Wayland — the one config where the overlay renders BEHIND a fullscreen-
-  // promoted game — auto-apply the keep-above layer rule + reconfigure KWin so the
-  // overlay sits above the game for EVERYONE without any manual step. Idempotent:
-  // skips if already installed (see setupKdeKeepAbove). Other Linux setups just get
-  // the helper files written (setupKdeKeepAbove writes them on its first line too).
-  if (KDE_WAYLAND) setupKdeKeepAbove({ interactive: false });
+  // users can import it manually if needed.
+  // KDE+Wayland: the rule is gated by gameRunning && sameOutput
+  // (syncKwinKeepAboveRule). At startup the game isn't running yet, so no
+  // rule installs until launch. Other Linux setups just get the helper files.
+  if (KDE_WAYLAND) syncKwinKeepAboveRule('startup');
+  else if (IS_HYPRLAND) syncHyprlandPin('startup');
   else writeLinuxHelperFiles();
+  // Crash recovery: if a previous run set panels to autohide and died before restoring, the
+  // saved-modes file still exists — restore the user's panels now (before the game-gate runs).
+  if (IS_LINUX && readSavedPanelHiding()) { diag('[panel-hide] stale saved state at startup — restoring'); restorePanelHiding(); }
   // One-time userData migration (productName "Fallout ChatMod" → "Fallout Chat Mod").
   // MUST run before any loadState()/register so the migrated install token is used
   // and the user stays on their real account (discordLinked carries over).
   migrateLegacyUserData();
   // Restore persisted role so the tray menu is correct even before register completes.
-  try { const st = loadState(); userRole = st.userRole || null; } catch { /* ignore */ }
+  // Also apply the persisted "Debug logging" toggle so verbose survives a restart
+  // (env FCM_DEBUG / --fcm-debug still override and were already applied at load).
+  try { const st = loadState(); userRole = st.userRole || null; refreshLogLevel(st.settings || null); } catch { /* ignore */ }
   createWindow();
   buildApplicationMenu();
   createTray();
@@ -3465,7 +4765,17 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
 
-app.on('before-quit', () => { isQuitting = true; persistBounds(); });
+app.on('before-quit', () => {
+  isQuitting = true;
+  persistBounds();
+  if (IS_LINUX) restorePanelHiding();
+  // Hyprland's pin is a live attribute of the window object, not a persisted
+  // config file like kwinrulesrc, so it needs no equivalent before-quit
+  // teardown: it disappears with the window on exit.
+  if (IS_LINUX && KDE_WAYLAND) {
+    try { exec(overlayCore.buildKwinRemoveRulesScript({}), { timeout: 5000, shell: '/bin/sh' }, () => {}); } catch { /* ignore */ }
+  }
+});
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
@@ -3474,6 +4784,9 @@ app.on('will-quit', () => {
   if (gameScanTimer) { clearInterval(gameScanTimer); gameScanTimer = null; }
   if (collapseAnim) clearInterval(collapseAnim);
   if (zorderProc) { try { zorderProc.kill(); } catch { /* ignore */ } zorderProc = null; }
+  // win32 foreground-poller self-heal + watchdog cleanup (issue #136).
+  if (pollerRestartTimer) { clearTimeout(pollerRestartTimer); pollerRestartTimer = null; }
+  if (fgWatchdogTimer) { clearInterval(fgWatchdogTimer); fgWatchdogTimer = null; }
   // KDE-Wayland kdotool poller cleanup.
   if (fgPollTimer) { clearInterval(fgPollTimer); fgPollTimer = null; }
   if (fgPoller) { try { fgPoller.kill(); } catch { /* ignore */ } fgPoller = null; }

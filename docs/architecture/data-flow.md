@@ -23,12 +23,12 @@ sequenceDiagram
         WS->>WS: auth/mute/ban checks
         WS->>WS: automod (content filter)
         WS->>Q: messageQueue.add({ id, content, userId, channelId, … })
-        Note over Q,DB: Bull worker: 3 attempts, exponential backoff
+        Note over Q,DB: Bull worker: 3 attempts, exponential backoff; canonical sends await job completion
         Q->>DB: INSERT INTO messages … ON CONFLICT DO NOTHING
         WS->>PUB: redis.publish("chat:broadcast", broadcastPayload)
         PUB-->>WS: subscriber fires on every backend instance
         WS->>OTHER: ws.send(chat:message) to all open sockets on that channel
-        WS-->>C: { type:"message:ack" }
+        WS-->>C: { type:"message:ack" } (only after persistence completes)
     end
 ```
 

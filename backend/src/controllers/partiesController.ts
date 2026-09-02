@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import prisma from '../config/prisma';
 import { createError } from '../middleware/errorHandler';
+import { paramStr, paramsOf } from '../utils/reqParams';
 import logger from '../config/logger';
 import { PARTIES_ENABLED } from '../config/features';
 import { findProhibitedPhrase } from '../services/autoModService';
@@ -372,7 +373,7 @@ export async function createParty(req: Request, res: Response, next: NextFunctio
 export async function updateParty(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
-  const partyId = req.params.id;
+  const partyId = paramStr(req, 'id');
   if (!UUID_RE.test(partyId)) return next(createError(400, 'Invalid party ID'));
 
   // At least one editable field must be present.
@@ -503,7 +504,7 @@ export async function listInvites(req: Request, res: Response, next: NextFunctio
 export async function acceptInvite(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
-  const inviteId = req.params.id;
+  const inviteId = paramStr(req, 'id');
   if (!UUID_RE.test(inviteId)) return next(createError(400, 'Invalid invite ID'));
 
   try {
@@ -592,7 +593,7 @@ export async function acceptInvite(req: Request, res: Response, next: NextFuncti
 export async function declineInvite(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
-  const inviteId = req.params.id;
+  const inviteId = paramStr(req, 'id');
   if (!UUID_RE.test(inviteId)) return next(createError(400, 'Invalid invite ID'));
 
   try {
@@ -616,7 +617,7 @@ export async function declineInvite(req: Request, res: Response, next: NextFunct
 export async function getParty(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
-  const partyId = req.params.id;
+  const partyId = paramStr(req, 'id');
   if (!UUID_RE.test(partyId)) return next(createError(400, 'Invalid party ID'));
 
   try {
@@ -645,7 +646,7 @@ export async function getParty(req: Request, res: Response, next: NextFunction):
 export async function getPartyMembers(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
-  const partyId = req.params.id;
+  const partyId = paramStr(req, 'id');
   if (!UUID_RE.test(partyId)) return next(createError(400, 'Invalid party ID'));
 
   try {
@@ -702,7 +703,7 @@ export async function getPartyMembers(req: Request, res: Response, next: NextFun
 export async function joinParty(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
-  const partyId = req.params.id;
+  const partyId = paramStr(req, 'id');
   if (!UUID_RE.test(partyId)) return next(createError(400, 'Invalid party ID'));
 
   try {
@@ -756,7 +757,7 @@ export async function joinParty(req: Request, res: Response, next: NextFunction)
 export async function leaveParty(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
-  const partyId = req.params.id;
+  const partyId = paramStr(req, 'id');
   if (!UUID_RE.test(partyId)) return next(createError(400, 'Invalid party ID'));
 
   try {
@@ -817,7 +818,7 @@ export async function leaveParty(req: Request, res: Response, next: NextFunction
 export async function deleteParty(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
-  const partyId = req.params.id;
+  const partyId = paramStr(req, 'id');
   if (!UUID_RE.test(partyId)) return next(createError(400, 'Invalid party ID'));
 
   try {
@@ -849,7 +850,7 @@ export async function deleteParty(req: Request, res: Response, next: NextFunctio
 export async function inviteToParty(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
-  const partyId = req.params.id;
+  const partyId = paramStr(req, 'id');
   const { userId: inviteeId } = req.body ?? {};
 
   if (!UUID_RE.test(partyId)) return next(createError(400, 'Invalid party ID'));
@@ -941,7 +942,7 @@ export async function inviteToParty(req: Request, res: Response, next: NextFunct
 export async function inviteSearch(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
-  const partyId = req.params.id;
+  const partyId = paramStr(req, 'id');
   if (!UUID_RE.test(partyId)) return next(createError(400, 'Invalid party ID'));
 
   try {
@@ -1002,7 +1003,7 @@ export async function inviteSearch(req: Request, res: Response, next: NextFuncti
 export async function invitePublic(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
-  const partyId = req.params.id;
+  const partyId = paramStr(req, 'id');
   const body = req.body ?? {};
 
   // Accept the new multi-channel shape `{ channelIds: string[] }` while still
@@ -1180,7 +1181,7 @@ export async function invitePublic(req: Request, res: Response, next: NextFuncti
 export async function kickMember(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
   const callerId = resolveCallerId(req);
-  const partyId = req.params.id;
+  const partyId = paramStr(req, 'id');
   const { userId: targetId } = req.body ?? {};
 
   if (!UUID_RE.test(partyId)) return next(createError(400, 'Invalid party ID'));
@@ -1238,7 +1239,7 @@ async function changeMemberRole(
   direction: 'promote' | 'demote',
 ): Promise<void> {
   const callerId = resolveCallerId(req);
-  const partyId = req.params.id;
+  const partyId = paramStr(req, 'id');
   const { userId: targetId } = req.body ?? {};
 
   if (!UUID_RE.test(partyId)) return next(createError(400, 'Invalid party ID'));
@@ -1310,7 +1311,7 @@ export async function adminListParties(req: Request, res: Response, next: NextFu
 /** GET /api/admin/parties/:id */
 export async function adminGetParty(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
-  const partyId = req.params.id;
+  const partyId = paramStr(req, 'id');
   if (!UUID_RE.test(partyId)) return next(createError(400, 'Invalid party ID'));
   try {
     const party = await prisma.party.findUnique({
@@ -1333,7 +1334,7 @@ export async function adminGetParty(req: Request, res: Response, next: NextFunct
 /** GET /api/admin/parties/:id/messages */
 export async function adminListPartyMessages(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
-  const partyId = req.params.id;
+  const partyId = paramStr(req, 'id');
   if (!UUID_RE.test(partyId)) return next(createError(400, 'Invalid party ID'));
   try {
     const limit = Math.min(300, Math.max(1, parseInt((req.query.limit as string) ?? '100', 10) || 100));
@@ -1416,7 +1417,7 @@ export async function listPublicParties(req: Request, res: Response, next: NextF
  */
 export async function listPublicPartyMessages(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
-  const partyId = req.params.id;
+  const partyId = paramStr(req, 'id');
   if (!UUID_RE.test(partyId)) return next(createError(400, 'Invalid party ID'));
   try {
     const party = await prisma.party.findUnique({
@@ -1435,7 +1436,7 @@ export async function listPublicPartyMessages(req: Request, res: Response, next:
       take: limit,
       select: {
         id: true, content: true, username: true, userId: true, partyId: true,
-        source: true, createdAt: true,
+        source: true, createdAt: true, editedAt: true,
       },
     });
 
@@ -1447,6 +1448,7 @@ export async function listPublicPartyMessages(req: Request, res: Response, next:
       channelId: m.partyId,
       source: m.source || 'party',
       createdAt: m.createdAt,
+      editedAt: m.editedAt,
     }));
     res.json({ data: { messages: transformed } });
   } catch (err) {
@@ -1460,7 +1462,7 @@ export async function listPublicPartyMessages(req: Request, res: Response, next:
  */
 export async function adminDeletePartyMessage(req: Request, res: Response, next: NextFunction): Promise<void> {
   if (!PARTIES_ENABLED) { res.status(404).json({ error: 'Not found' }); return; }
-  const { partyId, messageId } = req.params;
+  const { partyId, messageId } = paramsOf(req);
   if (!UUID_RE.test(partyId) || !UUID_RE.test(messageId)) return next(createError(400, 'Invalid ID'));
   try {
     const msg = await prisma.partyMessage.findFirst({ where: { id: messageId } });
@@ -1487,7 +1489,7 @@ export async function adminDeletePartyMessage(req: Request, res: Response, next:
 
 async function checkIsStaff(userId: string): Promise<boolean> {
   try {
-    const { getEffectiveRole } = await import('../services/userRoleService');
+    const { getEffectiveRole } = await import('../services/userRoleService.js');
     const role = await getEffectiveRole(userId);
     return ['owner', 'admin', 'moderator'].includes(role);
   } catch {

@@ -38,7 +38,9 @@ without a reload because everything reads the effective `user.role` from
 context. The real identity is always preserved in `realUser`.
 
 Auth is Discord OAuth2: `GET /auth/discord` → callback → cookie session. The
-`/auth/me` endpoint provides the hydrated `AuthUser` on load.
+`/auth/me` endpoint provides the hydrated `AuthUser` on load. For linked accounts,
+`id` is the canonical internal user UUID used by chat messages and user routes;
+the original Discord snowflake remains available as `discordId`.
 
 ## Feature Folder Structure
 

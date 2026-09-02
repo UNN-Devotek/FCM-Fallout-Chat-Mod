@@ -1,5 +1,17 @@
 # Two-Way In-Game Chat — IMPLEMENTED & WORKING
 
+> **ACTIVE (re-sequenced 2026-06-24).** This **FCMHUD/1** two-way input (custom `FCMBridge.swf` +
+> M7) is the **shipping in-game path now** — the HUD feature push (epic #302) builds on it. ZFE
+> **`chat.v1`** ([native-chat-relay/](native-chat-relay/README.md)) is a **later transport swap**, not
+> a current replacement. This pattern stays the in-game-input reference until chat.v1 ships AND is
+> validated (#291, post-launch).
+>
+> **chat.v1 update (2026-06-26):** chat.v1 two-way send now **works end-to-end on native Windows**
+> (ZFE 0.9.9+ plus relay fixes #334/#335) — the later transport swap is proven on Windows. It remains
+> **BLOCKED under Proton/Wine** by an upstream Zig TLS bug (#326), so FCMHUD/1 stays the active path and
+> the native desktop overlay remains the Linux chat path. See
+> [native-chat-relay/proton-status.md](native-chat-relay/proton-status.md).
+
 **Status: functional.** A message typed in-game reaches the backend, is ingested with full governance,
 and broadcasts back to every surface (dashboard, overlay, in-game feed). This documents the **exact
 working pattern** discovered through a long debugging session so we can recover from regressions.
@@ -108,7 +120,7 @@ In `sendChatMessage(text)` we inject `this.fcmForward(text)`. `fcmForward`:
   Ban-hash → socket destroyed. Sets `state.identified`.
 - `SEND~channelId~text` (only when identified) → `ingestMessage({userId, channelId, rawContent,
   source:'hud', identityHash})` → full governance (mute, rate-limit, validation, automod) →
-  `finalizeMessage` (broadcast + write-behind persist + Discord relay).
+  `finalizeMessage` (durable persist + broadcast + Discord relay).
 - **HELLO is OPTIONAL.** Receive-only feed clients never send it and must NOT be dropped. (An earlier
   "destroy if no HELLO in 10s" timeout killed the feed — removed. Do not re-add.)
 
@@ -188,8 +200,9 @@ FCMBridge proves every primitive (`Shape` bg + `TextField` + `TextFormat`).
 ## Known gaps / follow-ups
 
 - **UI**: native green box, wrong position, no scroll → §8 rebuild.
-- **Persist**: in-game message broadcasts (seen live) but write-behind DB persist needs verifying (a
-  test SEND showed `ok=true` but did not appear in `messages` — check the Bull queue worker).
+- **Persist**: canonical in-game sends wait for the Bull persistence job to complete before the live
+  broadcast, so the message row exists before the UI can offer self-edit. A queue failure falls back
+  to direct persistence and fails the send if that fallback also fails.
 - **History/backfill**: the in-game feed shows only **root** channels (`parent_id IS NULL`); the
   wastelander streamer writes to sub-channel `…0005`, so those don't appear there (not a chat bug).
 - **Identity**: confirm auto-pair vs auto-provision behavior with a non-linked character.

@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-    Publishes a built installer to Nexus Mods as a NEW file version and archives
-    the previously-current file, using the Nexus v3 Upload API.
+    Publishes a built release file to Nexus Mods as a NEW file version, optionally
+    archiving the previously-current file, using the Nexus v3 Upload API.
 
 .DESCRIPTION
     Implements the full 6-step v3 Upload flow (mirrors Nexus-Mods/upload-action):
@@ -11,12 +11,13 @@
       4. POST /uploads/{id}/finalise      - hand the upload back to Nexus
       5. GET  /uploads/{id}  (poll)       - wait until state == "available"
       6. POST /mod-file-update-groups/{group_id}/versions
-                                          - attach as the new MAIN file and
-                                            archive_existing_file: true
+                                          - attach as the new file and optionally
+                                            archive the previous one
 
     There is no standalone "delete/archive" endpoint on Nexus - retiring the old
-    file happens ONLY as a side effect of posting the new one (archive_existing_file).
-    That's exactly our model: every release ships a replacement installer.
+    file happens ONLY as a side effect of posting the new one, when
+    archive_existing_file is true. The default is false so a review upload can be
+    approved by Nexus support before the existing live file is retired.
 
 .NOTES
     TROUBLESHOOTING - "hangs on 1/6 opening multipart upload session" / HTTP 000:
@@ -34,7 +35,7 @@
       http=200 with --ssl-revoke-best-effort but http=000 without it confirms the cause.
 
     Role in the release pipeline:
-      Called by publish-nexus-release.ps1 (once for Windows, once for Linux). Not
+      Called by publish-nexus-release.ps1 (once for each enabled release file). Not
       intended to be invoked directly during a normal release; use the wrapper script
       which supplies the correct per-platform file-group IDs and descriptions.
 
@@ -50,7 +51,7 @@
     change while the API is in beta - pin against Nexus-Mods/upload-action.
 
 .PARAMETER FilePath
-    Full path to the installer .exe to upload (e.g. dist\FalloutChatMod_Setup_v1.3.57.exe).
+    Full path to the file to upload (e.g. a desktop installer or HUD ZIP).
 
 .PARAMETER Version
     Version string for the Nexus file version field (e.g. 1.3.57).
@@ -67,7 +68,9 @@
     miscellaneous. Default: main.
 
 .PARAMETER ArchiveExisting
-    Archive the currently-live file when posting this one. Default: $true.
+    Archive the currently-live file when posting this one. Default: $false.
+    Pass -ArchiveExisting:$true for a normal replacement after the new upload is
+    approved and ready to become the current file.
 
 .PARAMETER DryRun
     Validate inputs and print the planned calls without uploading anything.
@@ -90,7 +93,7 @@ param(
     # Additional files to include alongside the installer in the -ZipAs archive
     # (e.g. INSTALL-*.txt, .kwinrule). Only used when -ZipAs is also provided.
     [string[]]$IncludeFiles    = @(),
-    [bool]  $ArchiveExisting   = $true,
+    [bool]  $ArchiveExisting   = $false,
     [string]$BaseUrl           = "https://api.nexusmods.com/v3",
     [int]   $MaxPollAttempts   = 60,
     [switch]$DryRun
@@ -104,7 +107,7 @@ function Fail($msg) { Write-Error "[nexus] $msg"; exit 1 }
 
 # --- Validate inputs ---------------------------------------------------------
 # Process env may not carry persistent USER-scope vars (e.g. when launched via
-# WSL interop) — fall back to reading them straight from the User environment.
+# WSL interop) - fall back to reading them straight from the User environment.
 if (-not $ApiKey)      { $ApiKey      = [Environment]::GetEnvironmentVariable('NEXUS_API_KEY','User') }
 if (-not $FileGroupId) { $FileGroupId = [Environment]::GetEnvironmentVariable('NEXUS_FILE_GROUP_ID','User') }
 if (-not $ApiKey)      { Fail "No API key. Pass -ApiKey or set NEXUS_API_KEY (https://www.nexusmods.com/settings/api-keys)." }
@@ -119,7 +122,7 @@ if ($ZipAs) {
     # Prefer a temp dir on the same drive as the source file to avoid cross-drive
     # copies and to use available space (C: may be full on dev machines).
     # Same-drive staging is a Windows optimization (C: may be full). On Linux,
-    # GetPathRoot() returns "/" which Test-Path passes but isn't writable — so the
+    # GetPathRoot() returns "/" which Test-Path passes but isn't writable - so the
     # zip lands at "/<name>" (denied). Only use drive-root staging on Windows.
     $srcDrive  = [System.IO.Path]::GetPathRoot($FilePath)
     $tempBase  = if ($IsWindows -and $srcDrive -and (Test-Path $srcDrive)) { $srcDrive } else { [System.IO.Path]::GetTempPath() }
@@ -165,7 +168,7 @@ if ($DryRun) {
 # Surface RFC 9457 problem+json bodies from failed v3 calls.
 function Invoke-Nexus {
     param([string]$Method, [string]$Uri, $Body)
-    # Use curl.exe (ships with Windows 10+) — Invoke-RestMethod may mangle
+    # Use curl.exe (ships with Windows 10+) - Invoke-RestMethod may mangle
     # Content-Type (charset suffix) or swallow error response bodies on 4xx.
     # Write JSON body to a temp file to avoid PowerShell argument quoting issues.
     $bodyFile = $null
@@ -199,7 +202,7 @@ function Invoke-Nexus {
     if ($null -ne $Body) {
         $jsonBody = $Body | ConvertTo-Json -Depth 6 -Compress
         $bodyFile = [System.IO.Path]::GetTempFileName()
-        # Use UTF8 WITHOUT BOM — [System.Text.Encoding]::UTF8 includes a BOM which
+        # Use UTF8 WITHOUT BOM - [System.Text.Encoding]::UTF8 includes a BOM which
         # makes the JSON invalid (server sees 0xEF 0xBB 0xBF before the '{').
         $utf8NoBom = New-Object System.Text.UTF8Encoding $false
         [System.IO.File]::WriteAllText($bodyFile, $jsonBody, $utf8NoBom)
@@ -264,7 +267,7 @@ try {
         $buffer = New-Object byte[] $partSize
         $read   = $stream.Read($buffer, 0, $partSize)
         # For the last (shorter) part, slice to exact size using Array.Copy into a
-        # properly-typed byte[] — PowerShell range $buffer[0..n] gives Object[], not
+        # properly-typed byte[] - PowerShell range $buffer[0..n] gives Object[], not
         # byte[], and Invoke-WebRequest serialises it wrong (wrong ETag / wrong size).
         if ($read -lt $partSize) {
             $trimmed = New-Object byte[] $read
@@ -284,7 +287,7 @@ try {
         if ($etag -is [array]) { $etag = $etag[0] }
         if (-not $etag) { Fail "S3 PUT for part $partNumber returned no ETag" }
         # S3 returns ETags with surrounding double-quotes (e.g. `"abc123"`).
-        # The CompleteMultipartUpload XML must contain the bare hex value — strip them.
+        # The CompleteMultipartUpload XML must contain the bare hex value - strip them.
         $etag = $etag.Trim().Trim('"')
         $completedParts += [pscustomobject]@{ PartNumber = $partNumber; ETag = $etag }
         Write-Host "[nexus]   part $partNumber/$($partUrls.Count) uploaded ($read bytes) etag=$etag"
@@ -347,9 +350,10 @@ for ($attempt = 1; $attempt -le $MaxPollAttempts; $attempt++) {
 }
 if ($state -ne "available") { Fail "Upload did not reach 'available' within $MaxPollAttempts attempts (last state: $state)" }
 
-# --- Step 6: attach as the new MAIN file + archive the previous one -----------
-Write-Host "[nexus] 6/6 attaching new version + archiving previous file ..."
-# Nexus auto-appends ".zip" to names for zip uploads — strip it to avoid ".zip.zip".
+# --- Step 6: attach the new file + optionally archive the previous one --------
+$archiveLabel = if ($ArchiveExisting) { "archiving previous file" } else { "preserving previous file" }
+Write-Host "[nexus] 6/6 attaching new version + $archiveLabel ..."
+# Nexus auto-appends ".zip" to names for zip uploads - strip it to avoid ".zip.zip".
 $displayName = [System.IO.Path]::GetFileNameWithoutExtension($fileName)
 $result = Invoke-Nexus -Method Post -Uri "$BaseUrl/mod-file-update-groups/$FileGroupId/versions" -Body @{
     upload_id                    = $uploadId
@@ -363,5 +367,6 @@ $result = Invoke-Nexus -Method Post -Uri "$BaseUrl/mod-file-update-groups/$FileG
     show_requirements_pop_up     = $false
 }
 $result = if ($result.data) { $result.data } else { $result }
-Write-Host "[nexus] DONE - new file uid=$($result.id) is now the current MAIN download; previous file archived=$ArchiveExisting"
+$categoryLabel = $FileCategory.ToUpperInvariant()
+Write-Host "[nexus] DONE - new file uid=$($result.id) attached as $categoryLabel; previous file archived=$ArchiveExisting"
 exit 0

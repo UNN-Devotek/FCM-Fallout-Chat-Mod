@@ -1,6 +1,20 @@
 # Moderation Subsystem Overview
 
-The moderation subsystem covers: role-based access control, content filtering (word filter + automod rules), spam detection, user reports, ban management with evidence storage, audit logging, and name validation.
+The moderation subsystem covers: role-based access control, content filtering (AI classifier + word filter + automod rules), spam detection, user reports, ban management with evidence storage, audit logging, and name validation.
+
+> **AI content moderation:** chat, usernames, and party names are classified by the
+> [OpenAI Moderation API](https://developers.openai.com/api/docs/guides/moderation). While enabled
+> and reachable it is the **primary** content check, but chat enforcement is limited to
+> high-confidence targeted attacks; ordinary Fallout profanity and gameplay violence are not
+> chat violations by themselves. The keyword denylists become an offline fallback. This sends
+> message text to a third party — see
+> [ai-moderation.md](ai-moderation.md) for the privacy disclosure, the admin kill switch, and the
+> shadow-mode rollout procedure.
+
+> **Multi-surface chat moderation (kick / mute / ban):** for how these actions work across the
+> dashboard, overlay, and the new in-game **chat.v1** `.ba2` under the Nexus/Discord auth lockdown —
+> including the cross-surface eviction signal and the account-level ban target — see
+> [kick-mute-ban.md](kick-mute-ban.md).
 
 ## Role Model
 
@@ -12,7 +26,19 @@ There are three staff roles, determined by Discord guild membership:
 | `admin` | Full mod actions, dashboard access | `ADMIN_ROLE_ID` |
 | `moderator` | Kick, mute, ban, report resolution | `MODERATOR_ROLE_ID` |
 
-Regular users default to `'user'`. A `'supporter'` level exists in the type definition (`userRoleService.ts:17`) but is not currently assigned by the role verification flow.
+Regular users default to `'user'`. A `'supporter'` level exists in the `EffectiveRole`
+type definition (`userRoleService.ts:17`) but is **still not assigned by the role
+verification flow, and deliberately so** — it survives only as a dev-login persona.
+
+The paid supporter tier is tracked on a **separate, orthogonal axis** (`SupporterTier`
+in `utils/supporterTier.ts`, persisted in `supporter_entitlements`), not through
+`EffectiveRole` and not in `admin_users`. That table is reserved for elevated staff
+identities, and `isPrivilegedRole()` must keep returning false for supporters: a paying
+customer is not a moderator, and conflating the two would risk treating one as the
+other. Supporter status gates cosmetics and nothing else.
+
+See [Supporter tier](../product/supporter-tier.md) and
+[monetization policy](../legal/monetization-policy.md).
 
 ### Server-Authoritative Roles
 

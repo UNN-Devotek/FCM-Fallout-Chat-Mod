@@ -82,6 +82,8 @@ jest.mock('../src/services/latestReleaseVersion', () => ({
 
 const VALID_VERSION = '1.3.99';
 const VALID_DOWNLOAD_URL = `https://falloutchatmod.com/downloads/electron/${encodeURIComponent('Fallout Chat Mod Setup 1.3.99.exe (Windows).zip')}`;
+const VALID_HUD_MOD_VERSION = '2.10.8';
+const VALID_HUD_MOD_URL = `https://falloutchatmod.com/downloads/electron/${encodeURIComponent('ZFE FCM HUD Mod-2.10.8 (PROD).zip')}`;
 const RELEASE_TOKEN = 'test-release-token-abc';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -176,6 +178,8 @@ beforeEach(() => {
     version: VALID_VERSION,
     downloadUrl: VALID_DOWNLOAD_URL,
     releaseNotes: 'Test release',
+    hudModVersion: VALID_HUD_MOD_VERSION,
+    hudModUrl: VALID_HUD_MOD_URL,
     publishedAt: new Date('2026-06-01T00:00:00Z'),
     downloadCount: 0,
   });
@@ -217,6 +221,19 @@ describe('POST /admin/releases — publish gate', () => {
         version: VALID_VERSION,
         downloadUrl: 'https://evil.com/malware.exe',
         releaseNotes: 'notes',
+      });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 when only one HUD package field is provided', async () => {
+    const res = await request(app)
+      .post('/admin/releases')
+      .set('Authorization', `Bearer ${RELEASE_TOKEN}`)
+      .send({
+        version: VALID_VERSION,
+        downloadUrl: VALID_DOWNLOAD_URL,
+        releaseNotes: 'notes',
+        hudModVersion: VALID_HUD_MOD_VERSION,
       });
     expect(res.status).toBe(400);
   });
@@ -264,12 +281,47 @@ describe('POST /admin/releases — successful publish refreshes cache', () => {
       .set('Authorization', `Bearer ${RELEASE_TOKEN}`)
       .send({ version: VALID_VERSION, downloadUrl: VALID_DOWNLOAD_URL, releaseNotes: 'Test release' });
 
-    // postReleaseAnnouncement(version, releaseNotes) — the download link is now
-    // derived env-aware inside the announcement, no longer passed in (#235).
+    // The download link is derived env-aware inside the announcement, and the
+    // controller makes the channel-wide mention policy explicit.
     expect(discordService.postReleaseAnnouncement).toHaveBeenCalledWith(
       VALID_VERSION,
       'Test release',
+      undefined,
+      { mentionEveryone: true },
     );
+  });
+
+  it('verifies and passes the target HUD package to Discord and persists its metadata', async () => {
+    const discordService = require('../src/services/discordService');
+
+    const res = await request(app)
+      .post('/admin/releases')
+      .set('Authorization', `Bearer ${RELEASE_TOKEN}`)
+      .send({
+        version: VALID_VERSION,
+        downloadUrl: VALID_DOWNLOAD_URL,
+        hudModVersion: VALID_HUD_MOD_VERSION,
+        hudModUrl: VALID_HUD_MOD_URL,
+        releaseNotes: 'HUD package included',
+      });
+
+    expect(res.status).toBe(200);
+    expect(global.fetch).toHaveBeenCalledWith(
+      VALID_HUD_MOD_URL,
+      { method: 'HEAD', redirect: 'error' },
+    );
+    expect(discordService.postReleaseAnnouncement).toHaveBeenCalledWith(
+      VALID_VERSION,
+      'HUD package included',
+      { url: VALID_HUD_MOD_URL, version: VALID_HUD_MOD_VERSION },
+      { mentionEveryone: true },
+    );
+    expect(prismaMock.release.upsert).toHaveBeenCalledWith(expect.objectContaining({
+      update: expect.objectContaining({
+        hudModUrl: VALID_HUD_MOD_URL,
+        hudModVersion: VALID_HUD_MOD_VERSION,
+      }),
+    }));
   });
 });
 
@@ -303,7 +355,33 @@ describe('POST /admin/releases — announce flag (quiet publish)', () => {
       .set('Authorization', `Bearer ${RELEASE_TOKEN}`)
       .send({ version: VALID_VERSION, downloadUrl: VALID_DOWNLOAD_URL, releaseNotes: 'Normal release' });
 
-    expect(discordService.postReleaseAnnouncement).toHaveBeenCalledWith(VALID_VERSION, 'Normal release');
+    expect(discordService.postReleaseAnnouncement).toHaveBeenCalledWith(
+      VALID_VERSION,
+      'Normal release',
+      undefined,
+      { mentionEveryone: true },
+    );
+  });
+
+  it('passes mentionEveryone=false through to the Discord announcement', async () => {
+    const discordService = require('../src/services/discordService');
+
+    await request(app)
+      .post('/admin/releases')
+      .set('Authorization', `Bearer ${RELEASE_TOKEN}`)
+      .send({
+        version: VALID_VERSION,
+        downloadUrl: VALID_DOWNLOAD_URL,
+        releaseNotes: 'Dev release without a channel-wide mention',
+        mentionEveryone: false,
+      });
+
+    expect(discordService.postReleaseAnnouncement).toHaveBeenCalledWith(
+      VALID_VERSION,
+      'Dev release without a channel-wide mention',
+      undefined,
+      { mentionEveryone: false },
+    );
   });
 });
 
@@ -314,6 +392,8 @@ describe('GET /api/releases', () => {
         version: '1.3.85',
         downloadUrl: 'https://falloutchatmod.com/downloads/electron/setup.zip',
         releaseNotes: 'Stable',
+        hudModVersion: VALID_HUD_MOD_VERSION,
+        hudModUrl: VALID_HUD_MOD_URL,
         publishedAt: new Date('2026-05-01T00:00:00Z'),
         downloadCount: 42,
       },
@@ -323,5 +403,7 @@ describe('GET /api/releases', () => {
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body.data)).toBe(true);
     expect(res.body.data[0].version).toBe('1.3.85');
+    expect(res.body.data[0].hudModVersion).toBe(VALID_HUD_MOD_VERSION);
+    expect(res.body.data[0].hudModUrl).toBe(VALID_HUD_MOD_URL);
   });
 });

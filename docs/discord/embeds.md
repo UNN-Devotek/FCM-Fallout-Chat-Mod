@@ -77,16 +77,20 @@ alphabetically. Used by the dashboard channel picker.
 Internal helper. Converts `EmbedData` to a discord.js `EmbedBuilder` with all
 Discord character limits applied.
 
-### `postReleaseAnnouncement(version, releaseNotes)` — `discordService.ts`
+### `postReleaseAnnouncement(version, releaseNotes, hudMod?, options?)` — `discordService.ts`
 
 Posted to the **Updates** channel (`DISCORD_UPDATES_CHANNEL_ID`) by `publishRelease`
 on every release. It is a **required** publish step — if it fails after retries the
 publish 502s and no release is recorded.
 
-- **Pings `@everyone`.** The message `content` is `@everyone` with
+- **Pings `@everyone` by default.** The message `content` is `@everyone` with
   `allowedMentions: { parse: ['everyone'] }`; the ping only fires if the bot holds
-  **Mention Everyone** in that channel (otherwise it posts silently).
-- **Download field** — direct 🪟 Windows / 🐧 Linux ZIP links + a Download-page link.
+  **Mention Everyone** in that channel (otherwise it posts silently). Pass
+  `{ mentionEveryone: false }` for a replacement or corrected announcement that keeps
+  the embed but omits both the content and the mention permission.
+- **Download field** — direct 🪟 Windows ZIP / 🐧 Linux AppImage / Linux `.deb` links, the
+  Linux ZIP with install docs, the Download-page link, and the versioned **ZFE FCM HUD Mod ZIP**
+  link when the release includes HUD metadata.
   The URLs are **environment-aware** (`utils/releaseAnnouncement.ts` →
   `releaseDownloadUrls.ts`, `RELEASE_DOWNLOAD_HOST`), so a dev/QA release links to the
   dev host instead of prod (where the dev artifacts would 404).

@@ -1,6 +1,6 @@
 // Unit tests for the KDE KWin rule scripts:
-//   • buildKwinKeepAboveScript  — clean stale FCM rules + install the two current rules
-//     (keep-above on the overlay, fullscreen-demote on the game) on Plasma 6.
+//   • buildKwinKeepAboveScript  — clean stale FCM rules + install the one current rule
+//     (keep-above + force-Layer combined, on the OVERLAY) on Plasma 6.
 //   • buildKwinRemoveRulesScript — strip ALL FCM rules (for the uninstaller), keeping the
 //     user's own rules.
 // Verified format on KWin 6.6.5: [General] rules= is the authoritative comma-separated
@@ -9,7 +9,33 @@
 
 import core from '../overlay-core.js';
 
-const { buildKwinKeepAboveScript, buildKwinRemoveRulesScript } = core;
+const { buildKwinKeepAboveScript, buildKwinRemoveRulesScript, shouldInstallKeepAboveRule } = core;
+
+describe('shouldInstallKeepAboveRule', () => {
+  it('{gameRunning:true, sameOutput:true} → true', () => {
+    expect(shouldInstallKeepAboveRule({ gameRunning: true, sameOutput: true })).toBe(true);
+  });
+
+  it('{gameRunning:true, sameOutput:false} → false (explicit false blocks)', () => {
+    expect(shouldInstallKeepAboveRule({ gameRunning: true, sameOutput: false })).toBe(false);
+  });
+
+  it('{gameRunning:false, sameOutput:true} → false', () => {
+    expect(shouldInstallKeepAboveRule({ gameRunning: false, sameOutput: true })).toBe(false);
+  });
+
+  it('{gameRunning:true} (sameOutput omitted) → false (display unknown fails closed)', () => {
+    expect(shouldInstallKeepAboveRule({ gameRunning: true })).toBe(false);
+  });
+
+  it('{gameRunning:false} (sameOutput omitted) → false', () => {
+    expect(shouldInstallKeepAboveRule({ gameRunning: false })).toBe(false);
+  });
+
+  it('{gameRunning:true, sameOutput:"unknown"} → false', () => {
+    expect(shouldInstallKeepAboveRule({ gameRunning: true, sameOutput: 'unknown' })).toBe(false);
+  });
+});
 
 describe('buildKwinKeepAboveScript', () => {
   const script = buildKwinKeepAboveScript();
@@ -23,12 +49,6 @@ describe('buildKwinKeepAboveScript', () => {
     expect(script).toContain('*) KEEP="${KEEP:+$KEEP,}$g"');
   });
 
-  it('is idempotent only when the active FCM rules are EXACTLY our two named groups', () => {
-    expect(script).toContain('case " $FCM " in *" fcm-keepabove "*) A=1');
-    expect(script).toContain('case " $FCM " in *" fcm-game-demote "*) D=1');
-    expect(script).toContain('if [ "$N" = "2" ] && [ "$A" = "1" ] && [ "$D" = "1" ]; then echo fcm-rule-present; exit 0; fi');
-  });
-
   it('awk-strips stale FCM sections before re-writing (kwriteconfig CANNOT delete a section)', () => {
     expect(script).toContain('awk -v drop=" $FCM "');
     expect(script).toContain('> "$RULES.fcmtmp" && mv "$RULES.fcmtmp" "$RULES"');
@@ -36,29 +56,52 @@ describe('buildKwinKeepAboveScript', () => {
     expect(script).not.toContain('--key Description --delete');
   });
 
-  it('writes the overlay keep-above rule and the game fullscreen-demote rule', () => {
+  it('always writes the overlay keep-above property', () => {
     expect(script).toContain('--group fcm-keepabove --key above true');
-    expect(script).toContain('--group fcm-keepabove --key wmclass "fallout"');
-    expect(script).toContain('--group fcm-game-demote --key wmclass "steam_app_1151340"');
-    expect(script).toContain('--group fcm-game-demote --key fullscreen false');
-    expect(script).toContain('--group fcm-game-demote --key fullscreenrule 2');
+    expect(script).toContain('--group fcm-keepabove --key wmclass "fallout-chat-mod"');
   });
 
-  it('does NOT rely on layer/layerrule (ignored by KWin 6)', () => {
-    expect(script).not.toContain('--key layer ');
-    expect(script).not.toContain('--key layerrule ');
+  it('always writes the overlay force-Layer=Overlay property on the SAME rule (KWin 6 — above fullscreen, no demotion)', () => {
+    expect(script).toContain('--group fcm-keepabove --key layer overlay');
+    expect(script).toContain('--group fcm-keepabove --key layerrule 2');
   });
 
-  it('rebuilds rules= as preserved-user-rules + our two, and sets count to its length', () => {
-    expect(script).toContain('NEWR="${KEEP:+$KEEP,}fcm-keepabove,fcm-game-demote"');
-    expect(script).toContain('--group General --key rules "$NEWR"');
-    expect(script).toContain('--group General --key count "$COUNT"');
+  it('supports a custom overlay layer (e.g. critical-notification)', () => {
+    const s = buildKwinKeepAboveScript({ overlayLayer: 'critical-notification' });
+    expect(s).toContain('--group fcm-keepabove --key layer critical-notification');
   });
 
   it('reconfigures KWin with distro/Qt-tolerant qdbus fallbacks', () => {
     expect(script).toContain('qdbus org.kde.KWin /KWin reconfigure');
     expect(script).toContain('qdbus6 org.kde.KWin /KWin reconfigure');
     expect(script).toContain('qdbus-qt6 org.kde.KWin /KWin reconfigure');
+  });
+
+  it('never writes the retired flicker-prone fullscreen-demote rule', () => {
+    expect(script).not.toContain('fcm-game-demote');
+  });
+
+  // ── game demotion is fully removed: force-Layer only, never a game keep-below rule ──
+
+  it('never writes the removed game keep-below rule', () => {
+    expect(script).not.toContain('--group fcm-game-below --key below true');
+    expect(script).not.toContain('belowrule');
+  });
+
+  it('strips a STALE fcm-game-below or pre-merge fcm-overlay-layer from old installs (idempotency requires exactly the one combined rule)', () => {
+    // The partition/strip logic clears any FCM-authored group (matched by Description),
+    // including a leftover fcm-game-below or a pre-merge fcm-overlay-layer — and the
+    // idempotency guard only short-circuits when EXACTLY the one combined rule is present,
+    // so a stale second/third rule forces the strip + rewrite path.
+    expect(script).toContain('if [ "$N" = "1" ] && [ "$A" = "1" ]; then echo fcm-rule-present; exit 0; fi');
+    expect(script).toContain('awk -v drop=" $FCM "');
+  });
+
+  it('rebuilds rules= as preserved-user-rules + the one combined keep-above rule', () => {
+    expect(script).toContain('NEWR="${KEEP:+$KEEP,}fcm-keepabove"');
+    // must NOT add fcm-game-below or a separate fcm-overlay-layer to the active rules= list:
+    expect(script).not.toContain(',fcm-game-below"');
+    expect(script).not.toContain('fcm-overlay-layer');
   });
 });
 

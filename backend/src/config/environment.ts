@@ -45,18 +45,25 @@ export interface Environment {
   MINIO_ROOT_PASSWORD: string;
   MINIO_BUCKET: string;
   MINIO_PUBLIC_URL: string;
+  FCM_PUBLIC_BASE_URL: string;
   VIRUSTOTAL_URL: string;
   // Tenor GIF search proxy
   TENOR_API_KEY: string;
+  // OpenAI Moderation API (optional — absent key degrades to the keyword filter)
+  OPENAI_API_KEY: string;
   // Dev-only fake personas
   DEV_USER_ROLE: string;
   DEV_MOD_ROLE: string;
   DEV_ADMIN_ROLE: string;
   DEV_SUPPORTER_ROLE: string;
   DEV_DEVELOPER_ROLE: string;
-  // Positive opt-in for the credential-less dev-login + simulation routes.
+  // Positive opt-in for browser-only credential-less dev-login aliases and
+  // simulation routes. Overlay persona login is separately NODE_ENV-gated.
   // Only honored when NODE_ENV === 'development'; never in production.
   ENABLE_DEV_LOGIN: boolean;
+  // Optional shared key for remote hosted-DEV DevAccount requests. Loopback
+  // local-dev requests do not need it; remote requests fail closed when unset.
+  DEV_PERSONA_LOGIN_SECRET: string;
   // Explicit opt-in to expose /api/mcp/sim/* routes. Must be 'true' AND
   // NODE_ENV must not be 'production'. Default off — both conditions required.
   ENABLE_SIM_ROUTES: boolean;
@@ -89,6 +96,8 @@ export interface Environment {
   HUD_PUSH_DIAG_LOG: boolean;
   // HUD push — WebSocket front-end (Path B)
   HUD_PUSH_WS_ENABLED: boolean;
+  // chat.v1 relay is default-off in production; a reviewed rollout must enable it.
+  RELAY_PRODUCTION_ENABLED: boolean;
   // M7 two-way chat: HMAC-SHA256 key used to derive identityHash from FO76 accountName.
   // Required when HUD_PUSH_TCP_ENABLED=true and inbound parsing is active.
   // Dev default is allowed here; must be a strong secret in production.
@@ -110,6 +119,15 @@ export interface Environment {
   // read the prod guild without the dev bot.
   PROD_VERIFY_URL: string;
   PROD_VERIFY_TOKEN: string;
+  // QA tester gate — dev guild only. The QA role ID in the DEV Discord guild.
+  DEV_QA_ROLE_ID: string;
+  // Optional explicit redirect URI for the QA OAuth callback; falls back to the
+  // request's proto+host + /auth/discord/qa/callback when empty.
+  DISCORD_QA_REDIRECT_URI: string;
+  // Golden-build version lock (dev-only). The single currently-active QA build
+  // version, and the on/off switch for the lock.
+  QA_ACTIVE_VERSION: string;
+  QA_BUILD_LOCK: boolean;
   // GitHub ticketing (Discord <-> GitHub Issues/Projects). GITHUB_PAT is a
   // fine-grained PAT (owner UNN-Devotek) needing Issues:R/W + Projects:R/W.
   // Projects v2 are GraphQL-only; the *_NUMBER values are the /users/<owner>/projects/<N> numbers.
@@ -124,6 +142,32 @@ export interface Environment {
   DEVELOPER_ROLE_ID: string;
   // Role @-pinged in bug/suggestion ticket threads (support team).
   SUPPORT_ROLE_ID: string;
+  // Nexus OAuth 2.0 + PKCE (feature-flagged: disabled when creds are absent)
+  // Confidential client: client_secret required at token endpoint alongside PKCE.
+  // Registration: email Nexus support (https://nexusmods.com/users/myaccount?tab=api).
+  // OIDC discovery: https://users.nexusmods.com/.well-known/openid-configuration
+  NEXUS_OAUTH_CLIENT_ID: string;
+  NEXUS_OAUTH_CLIENT_SECRET: string;
+  NEXUS_OAUTH_REDIRECT_URI: string;
+  // HUD identity hash secret (M6+): HMAC-SHA256 key for identityHash = HMAC(secret, userId)
+  // Replaces HUD_IDENTITY_SECRET for account-derived (unforgeable) identity hashes.
+  HUD_IDENTITY_HASH_SECRET: string;
+  // ── Supporter tier (cosmetics entitlement) ────────────────────────────────
+  // Discord Server Subscription tier roles. Discord assigns these automatically on
+  // purchase and removes them on cancellation, so the ROLE is the entitlement signal
+  // (see supporterService.resolveSupporterTier). Deliberately NOT part of the
+  // owner/admin/moderator cascade in roleVerificationService — supporter is an
+  // orthogonal axis to EffectiveRole and must never grant moderation privileges.
+  SUPPORTER_ROLE_ID: string;
+  OVERSEER_CIRCLE_ROLE_ID: string;
+  // Master switch for the commercial tier. When false the cosmetics system still runs
+  // (free presets, admin-granted entitlements) but no purchase CTA is surfaced. Lets the
+  // code ship to prod well ahead of the commercial switch-on.
+  SUPPORTER_TIER_ENABLED: boolean;
+  // Public URL of the Discord server shop / subscription page, used by the pricing CTA
+  // and the /cosmetics upsell copy. Point at the WEB purchase path — mobile purchases
+  // net materially less after the app-store cut.
+  DISCORD_SERVER_SHOP_URL: string;
 }
 
 const env: Environment = {
@@ -179,6 +223,10 @@ const env: Environment = {
   OWNER_ROLE_ID: process.env.OWNER_ROLE_ID || '',
   ADMIN_ROLE_ID: process.env.ADMIN_ROLE_ID || '',
   MODERATOR_ROLE_ID: process.env.MODERATOR_ROLE_ID || '',
+  SUPPORTER_ROLE_ID: process.env.SUPPORTER_ROLE_ID || '',
+  OVERSEER_CIRCLE_ROLE_ID: process.env.OVERSEER_CIRCLE_ROLE_ID || '',
+  SUPPORTER_TIER_ENABLED: (process.env.SUPPORTER_TIER_ENABLED || 'false').toLowerCase() === 'true',
+  DISCORD_SERVER_SHOP_URL: process.env.DISCORD_SERVER_SHOP_URL || '',
 
   SESSION_SECRET: process.env.SESSION_SECRET || '',
 
@@ -199,11 +247,19 @@ const env: Environment = {
   MINIO_ROOT_PASSWORD: process.env.MINIO_ROOT_PASSWORD || '',
   MINIO_BUCKET: process.env.MINIO_BUCKET || 'avatars',
   MINIO_PUBLIC_URL: process.env.MINIO_PUBLIC_URL || '',
+  // Public web base for user-facing links (e.g. the chat link-flow URL the in-game HUD shows).
+  // Prod default; the dev stack sets this to https://dev.falloutchatmod.com via its compose env.
+  FCM_PUBLIC_BASE_URL: process.env.FCM_PUBLIC_BASE_URL || 'https://falloutchatmod.com',
 
   VIRUSTOTAL_URL: process.env.VIRUSTOTAL_URL || '',
 
   // Tenor GIF search proxy (optional — without it, /api/tenor-search returns 503)
   TENOR_API_KEY: process.env.TENOR_API_KEY || '',
+
+  // OpenAI Moderation API key. DELIBERATELY NOT in the production `missing[]`
+  // startup guard below: AI moderation is fail-open by design, so an absent key
+  // must degrade to the keyword denylists rather than refuse to boot.
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY || '',
 
   // Dev-only fake personas — only used when NODE_ENV !== 'production'
   DEV_USER_ROLE: process.env.DEV_USER_ROLE || 'user',
@@ -212,6 +268,7 @@ const env: Environment = {
   DEV_SUPPORTER_ROLE: process.env.DEV_SUPPORTER_ROLE || 'supporter',
   DEV_DEVELOPER_ROLE: process.env.DEV_DEVELOPER_ROLE || 'developer',
   ENABLE_DEV_LOGIN: process.env.ENABLE_DEV_LOGIN === 'true',
+  DEV_PERSONA_LOGIN_SECRET: process.env.DEV_PERSONA_LOGIN_SECRET || '',
   ENABLE_SIM_ROUTES: process.env.ENABLE_SIM_ROUTES === 'true',
   WIKI_SYNC_INTERVAL_HOURS: parseFloat(process.env.WIKI_SYNC_INTERVAL_HOURS || '0'),
   CAMP_SYNC_INTERVAL_HOURS: parseFloat(process.env.CAMP_SYNC_INTERVAL_HOURS || '0'),
@@ -225,6 +282,7 @@ const env: Environment = {
   HUD_PUSH_DIAG_LOG: (process.env.HUD_PUSH_DIAG_LOG || 'false').toLowerCase() === 'true',
   // HUD push — WebSocket front-end (Path B)
   HUD_PUSH_WS_ENABLED: (process.env.HUD_PUSH_WS_ENABLED || 'false').toLowerCase() === 'true',
+  RELAY_PRODUCTION_ENABLED: (process.env.RELAY_PRODUCTION_ENABLED || 'false').toLowerCase() === 'true',
   // HUD default send channel (General leaf channel)
   HUD_DEFAULT_CHANNEL_ID: process.env.HUD_DEFAULT_CHANNEL_ID || '00000000-0000-0000-0000-000000000005',
   // M7 two-way chat identity secret (HMAC-SHA256 key for identityHash derivation)
@@ -237,6 +295,10 @@ const env: Environment = {
   DEV_DEVELOPER_ROLE_ID: process.env.DEV_DEVELOPER_ROLE_ID || '',
   PROD_VERIFY_URL: process.env.PROD_VERIFY_URL || '',
   PROD_VERIFY_TOKEN: process.env.PROD_VERIFY_TOKEN || '',
+  DEV_QA_ROLE_ID: process.env.DEV_QA_ROLE_ID || '',
+  DISCORD_QA_REDIRECT_URI: process.env.DISCORD_QA_REDIRECT_URI || '',
+  QA_ACTIVE_VERSION: process.env.QA_ACTIVE_VERSION || '',
+  QA_BUILD_LOCK: process.env.QA_BUILD_LOCK === 'true',
 
   // GitHub ticketing
   GITHUB_PAT: process.env.GITHUB_PAT || '',
@@ -246,6 +308,13 @@ const env: Environment = {
   GITHUB_WEBHOOK_SECRET: process.env.GITHUB_WEBHOOK_SECRET || '',
   DEVELOPER_ROLE_ID: process.env.DEVELOPER_ROLE_ID || '',
   SUPPORT_ROLE_ID: process.env.SUPPORT_ROLE_ID || '',
+  // Nexus OAuth 2.0 + PKCE (feature-flagged: disabled when creds are absent)
+  NEXUS_OAUTH_CLIENT_ID: process.env.NEXUS_OAUTH_CLIENT_ID || '',
+  NEXUS_OAUTH_CLIENT_SECRET: process.env.NEXUS_OAUTH_CLIENT_SECRET || '',
+  // Empty means derive the callback from the forwarded request host. A
+  // localhost default can send production users back to a developer machine.
+  NEXUS_OAUTH_REDIRECT_URI: process.env.NEXUS_OAUTH_REDIRECT_URI || '',
+  HUD_IDENTITY_HASH_SECRET: process.env.HUD_IDENTITY_HASH_SECRET || '',
 };
 
 // The dev fallback value for HUD_IDENTITY_SECRET (the HMAC key that derives
@@ -274,6 +343,36 @@ export function hudIdentitySecretGuardFails(opts: {
   if (opts.nodeEnv !== 'production') return false;
   if (!opts.hudPushTcpEnabled) return false;
   return !opts.hudIdentitySecret || opts.hudIdentitySecret === DEV_DEFAULT_HUD_IDENTITY_SECRET;
+}
+
+/**
+ * Pure predicate: collect the reasons the production startup guard would refuse to
+ * boot the supporter tier (empty array = OK). Exported (and re-attached to
+ * module.exports below) so the unit test asserts the REAL guard rather than a copy.
+ *
+ * The tier is a PAID product: if SUPPORTER_TIER_ENABLED is true but the tier role IDs
+ * are missing, Discord would happily take a subscriber's money while
+ * resolveSupporterTier could never match a role — the buyer pays and receives nothing,
+ * silently and indefinitely. Refuse to boot instead. Same reasoning for the shop URL:
+ * without it the purchase CTA has nowhere to send anyone.
+ *
+ * Only fires when the tier is actually switched on, so the code can ship to production
+ * with SUPPORTER_TIER_ENABLED=false long before the roles exist.
+ */
+export function collectSupporterTierProductionErrors(opts: {
+  nodeEnv: string;
+  supporterTierEnabled: boolean;
+  supporterRoleId: string | undefined | null;
+  overseerCircleRoleId: string | undefined | null;
+  discordServerShopUrl: string | undefined | null;
+}): string[] {
+  if (opts.nodeEnv !== 'production') return [];
+  if (!opts.supporterTierEnabled) return [];
+  const errors: string[] = [];
+  if (!opts.supporterRoleId) errors.push('SUPPORTER_ROLE_ID');
+  if (!opts.overseerCircleRoleId) errors.push('OVERSEER_CIRCLE_ROLE_ID');
+  if (!opts.discordServerShopUrl) errors.push('DISCORD_SERVER_SHOP_URL');
+  return errors;
 }
 
 // Insecure/dev defaults the production MinIO guard rejects. Hoisted to single
@@ -341,6 +440,13 @@ if (env.NODE_ENV === 'production') {
   if (!env.DISCORD_CLIENT_SECRET) missing.push('DISCORD_CLIENT_SECRET');
   if (!env.REDIS_PASSWORD && !env.REDIS_URL) missing.push('REDIS_PASSWORD');
   missing.push(...collectMinioProductionErrors(env));
+  missing.push(...collectSupporterTierProductionErrors({
+    nodeEnv: env.NODE_ENV,
+    supporterTierEnabled: env.SUPPORTER_TIER_ENABLED,
+    supporterRoleId: env.SUPPORTER_ROLE_ID,
+    overseerCircleRoleId: env.OVERSEER_CIRCLE_ROLE_ID,
+    discordServerShopUrl: env.DISCORD_SERVER_SHOP_URL,
+  }));
   if (missing.length > 0) {
     console.error(`FATAL: Missing required env vars in production: ${missing.join(', ')}`);
     process.exit(1);
@@ -400,4 +506,5 @@ export default env;
 (env as unknown as Record<string, unknown>).hudIdentitySecretGuardFails = hudIdentitySecretGuardFails;
 (env as unknown as Record<string, unknown>).DEV_DEFAULT_HUD_IDENTITY_SECRET = DEV_DEFAULT_HUD_IDENTITY_SECRET;
 (env as unknown as Record<string, unknown>).collectMinioProductionErrors = collectMinioProductionErrors;
+(env as unknown as Record<string, unknown>).collectSupporterTierProductionErrors = collectSupporterTierProductionErrors;
 module.exports = env;

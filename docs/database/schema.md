@@ -14,6 +14,7 @@ Central user record created at first overlay registration.
 |---|---|---|
 | `id` | UUID PK | `gen_random_uuid()` |
 | `username` | TEXT UNIQUE | FO76 in-game name; validated against `name_blacklist` |
+| `chat_name` | TEXT nullable | Optional free FCM chat name. Set from Profile → **Chat name** or Discord `/name`; null falls back to the ordinary resolved identity. |
 | `install_token` | TEXT UNIQUE | Per-install anonymous identity token (24h ephemeral sessions in Redis) |
 | `discord_id_link` | TEXT UNIQUE | Discord user ID after OAuth link |
 | `discord_username` / `discord_display_name` / `discord_avatar` | TEXT | Updated on every Discord OAuth callback |
@@ -26,7 +27,8 @@ Central user record created at first overlay registration.
 | `saved_discord_roles` | JSON | Role IDs stripped at ban time; restored on unban |
 | `created_at` / `updated_at` | TIMESTAMPTZ | Standard audit fields |
 
-Display-name priority (applied in code, not a DB column): `username` if set and not `'Wanderer'`, then `discord_display_name`, then `discord_username`.
+Display-name priority (applied in code): `chat_name` when set, then `username` if set
+and not `'Wanderer'`, then `discord_display_name`, then `discord_username`.
 
 ### `sessions` (`Session`)
 
@@ -96,7 +98,8 @@ TimescaleDB hypertable (`init.sql:94`). Composite PK `(id, created_at)` required
 |---|---|
 | `channel_id` FK → `channels` | RESTRICT on delete |
 | `parent_channel_id` | Denormalized for combined-feed queries |
-| `source` | `'game'` \| `'discord'` |
+| `source` | `'game'` \| `'discord'` \| `'hud'` \| `'relay'` \| `'mcp'` \| `'ws'` |
+| `relay_seq` | Optional monotonic relay cursor used to join push and poll/history; ordinary chat may omit it during degraded Redis availability |
 | `is_deleted` | Soft delete; message content retained for moderation |
 | `metadata` | Optional JSON payload (e.g. party invite embeds) |
 
@@ -134,6 +137,14 @@ Status: `pending` \| `accepted` \| `declined` \| `expired`. Unique `(party_id, i
 
 Composite PK `(id, created_at)` (TimescaleDB candidate). Denormalizes `username` for read performance.
 Both FKs are **CASCADE on delete**: `party_id` → `parties` (a deleted party takes its messages with it — required so the `owner_id` owner-delete cascade does not stall on another member's messages) and `user_id` → `users` (a deleted author's messages are removed).
+
+### `private_conversations` (`PrivateConversation`)
+
+One row per sorted user pair (`user_a_id`, `user_b_id`) for overlay private messages. `last_message_at` drives inbox ordering. `user_a_last_read_at` / `user_b_last_read_at` track unread counts per participant. Unique `(user_a_id, user_b_id)` guarantees exactly one conversation per pair. Inbox responses are capped at 50 conversations and unread counts are returned by one aggregate query rather than one count query per row.
+
+### `private_messages` (`PrivateMessage`)
+
+Separate storage for PM traffic. Composite PK `(id, created_at)` matches the main/party message tables. `conversation_id` cascades on delete to `private_conversations`; `sender_id` cascades on delete to `users`. PMs are intentionally **not** stored in `messages` or `party_messages`, so they never enter public channel history, party history, or the Discord relay path.
 
 ---
 
@@ -209,7 +220,7 @@ Key-value store for admin-configurable thresholds. Seeded defaults:
 
 ### `word_filter` (`WordFilter`)
 
-Admin-configurable phrase/regex denylist for chat content. `test_mode=true` rows log matches but do not block. The baseline hardcoded denylist in `autoModService.ts:15-31` always runs regardless of whether this table has rows.
+Admin-configurable phrase/regex denylist for chat content. `test_mode=true` rows log matches but do not block. The baseline hardcoded denylist in `autoModService.ts:17-29` is always available; chat baseline matches require an explicit target, while identifier checks remain strict.
 
 ### `name_blacklist` (`NameBlacklistEntry`)
 
@@ -228,8 +239,8 @@ Admin-configured auto-moderation rules.
 
 | Column | Notes |
 |---|---|
-| `trigger_type` | `KEYWORD` \| `SPAM` \| `KEYWORD_PRESET` \| `MENTION_SPAM` \| `LINK` |
-| `trigger_metadata` | JSON: `{ keyword_filter[], regex_patterns[], allow_list[], mention_total_limit, presets[] }` |
+| `trigger_type` | `AI_MODERATION` \| `KEYWORD` \| `SPAM` \| `KEYWORD_PRESET` \| `MENTION_SPAM` \| `LINK` |
+| `trigger_metadata` | JSON: `{ thresholds?, keyword_filter[], regex_patterns[], allow_list[], mention_total_limit, presets[], require_target? }` |
 | `actions` | JSON array: `[{ type: 'BLOCK'\|'ALERT'\|'TIMEOUT'\|'MUTE_OVERLAY', metadata: {...} }]` |
 | `exempt_channel_ids` | Overlay channel UUIDs exempt from this rule |
 | `exempt_roles` | Discord role IDs exempt from this rule |
@@ -413,3 +424,50 @@ Per-entity error log from the ingestion job. A failed entity is written here and
 | `attempted_at` | TIMESTAMPTZ | When the attempt was made |
 
 **Indexes:** `page_id` B-tree; `attempted_at DESC` B-tree.
+
+
+---
+
+## `user_cosmetics`
+
+Opt-in chat display customization. Deliberately a separate 1:1 table rather than columns
+on `users`: cosmetics are read rarely (resolved once per message and Redis-cached) while
+`users` is on the hot path for every auth check, so this keeps that row lean. **Most
+users have no row at all**, which is the default-identity state.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `user_id` | UUID PK/FK | → `users.id`, `ON DELETE CASCADE` |
+| `custom_display_name` | TEXT | **Deprecated.** Backfilled into `users.chat_name` by `20260812193000_free_chat_name`; retained temporarily for safe rollout and no longer read or written. |
+| `color_preset_id` | TEXT | Catalog preset id; wins over `custom_color_hex` |
+| `custom_color_hex` | TEXT | From the bounded HSL picker |
+| `effect_id` | TEXT | Desktop-only render effect |
+| `custom_tag` | TEXT | Overseer tier |
+| `cosmetics_enabled` | BOOLEAN | User-facing master switch; also what a moderator reset flips |
+| `display_name_changed_at` | TIMESTAMPTZ | **Deprecated** with `custom_display_name`; no runtime cooldown exists. |
+
+## `supporter_entitlements`
+
+Keyed by `discord_id` (like `admin_users`, unlike most tables) because the entitlement
+signal arrives from Discord and can exist before — or entirely without — a linked FCM
+user row.
+
+**Deliberately NOT stored in `admin_users`:** that table is reserved for elevated staff
+identities, and `isPrivilegedRole()` must keep returning false for supporters. Supporter
+tier is an axis orthogonal to `EffectiveRole`.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | SERIAL PK | |
+| `discord_id` | TEXT UNIQUE | |
+| `tier` | TEXT | `supporter` \| `overseer` |
+| `source` | TEXT | `discord_sub` \| `patreon` \| `stripe` \| `manual` — keeps the payment provider swappable |
+| `external_id` | TEXT | Provider-side reference |
+| `status` | TEXT | `active` \| `lapsed` \| `cancelled` |
+| `granted_at` / `last_verified_at` / `expires_at` | TIMESTAMPTZ | |
+| `notes` | TEXT | |
+
+**Indexes:** `discord_id` unique; `status` B-tree (the reconcile sweep filters on it).
+
+Lapsed rows are **retained**, not deleted: the entitlement survives a user leaving the
+Discord so privileges restore on rejoin without re-purchasing.

@@ -4,7 +4,8 @@
  * See docs/deployment/hosted-dev-environment.md ("Dev Discord provisioning").
  * Reads a SOURCE guild's roles + channels/categories (incl. permission
  * overwrites) and recreates anything MISSING in a TARGET guild, then prints the
- * new role-ID env mapping for the dev backend.
+ * new role-ID env mapping for the dev backend, including the supporter-tier roles.
+ * It also ensures every FCM colour/effect role from the catalog exists in the target.
  *
  * Why: a Discord Server Template copies structure but the cloned roles get
  * BRAND-NEW IDs, so the dev backend's OWNER_ROLE_ID / ADMIN_ROLE_ID /
@@ -40,6 +41,18 @@ import {
   type OverwriteResolvable,
 } from 'discord.js';
 import { formatRoleEnvLines, type ClonedRole } from '../src/utils/devSeedHelpers';
+import { COSMETIC_ROLE_DEFINITIONS } from '../src/services/cosmetics/roleDefinitions';
+
+/**
+ * Tier roles are not guaranteed to exist in the source guild yet: the paid
+ * supporter product may be provisioned after the base Discord layout. Ensure
+ * them in the target so the dev guild can be made testable in one idempotent run.
+ * These colours are Discord-only and deliberately avoid FCM's reserved colours.
+ */
+const SUPPORTER_TIER_ROLE_SPECS = [
+  { name: 'Supporter', color: '#4A6FA5' },
+  { name: "Overseer's Circle", color: '#2E8B8B' },
+] as const;
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -81,6 +94,51 @@ async function cloneRoles(source: Guild, target: Guild): Promise<ClonedRole[]> {
     result.push({ name: targetRole.name, id: targetRole.id });
   }
   return result;
+}
+
+/** Create the two entitlement roles when the target does not already have them. */
+async function ensureSupporterTierRoles(target: Guild): Promise<ClonedRole[]> {
+  const result: ClonedRole[] = [];
+  for (const spec of SUPPORTER_TIER_ROLE_SPECS) {
+    let targetRole = target.roles.cache.find(
+      (role) => !role.managed && role.name.toLowerCase() === spec.name.toLowerCase(),
+    );
+    if (!targetRole) {
+      console.log(`[clone-discord] creating tier role: ${spec.name}`);
+      targetRole = await target.roles.create({
+        name: spec.name,
+        color: spec.color,
+        hoist: false,
+        mentionable: false,
+        reason: 'clone-discord-layout: ensure supporter tier roles for dev testing',
+      });
+    } else {
+      console.log(`[clone-discord] tier role exists, skipping: ${spec.name}`);
+    }
+    result.push({ name: targetRole.name, id: targetRole.id });
+  }
+  return result;
+}
+
+/** Create the catalog roles used to mirror saved colours/effects in Discord. */
+async function ensureCosmeticRoles(target: Guild): Promise<void> {
+  for (const spec of COSMETIC_ROLE_DEFINITIONS) {
+    const targetRole = target.roles.cache.find(
+      (role) => !role.managed && role.name.toLowerCase() === spec.name.toLowerCase(),
+    );
+    if (targetRole) {
+      console.log(`[clone-discord] cosmetic role exists, skipping: ${spec.name}`);
+      continue;
+    }
+    console.log(`[clone-discord] creating cosmetic role: ${spec.name}`);
+    await target.roles.create({
+      name: spec.name,
+      color: spec.color,
+      hoist: false,
+      mentionable: false,
+      reason: 'clone-discord-layout: ensure FCM appearance role',
+    });
+  }
 }
 
 /**
@@ -187,17 +245,21 @@ async function main(): Promise<void> {
     console.log(`[clone-discord] SOURCE: ${source.name}  →  TARGET: ${target.name}`);
 
     const clonedRoles = await cloneRoles(source, target);
+    const supporterTierRoles = await ensureSupporterTierRoles(target);
+    await ensureCosmeticRoles(target);
     // Re-fetch target roles so overwrite remapping sees the new roles.
     await target.roles.fetch();
     await cloneChannels(source, target);
 
-    const envLines = formatRoleEnvLines(clonedRoles);
+    const envLines = formatRoleEnvLines([...clonedRoles, ...supporterTierRoles]);
     console.log('\n[clone-discord] ===== ready-to-paste env (TARGET guild role IDs) =====');
     if (envLines.length === 0) {
-      console.log('[clone-discord] (no roles matched OWNER/ADMIN/MODERATOR/DEVELOPER)');
+      console.log('[clone-discord] (no configured role names were found)');
     } else {
       for (const line of envLines) console.log(line);
     }
+    console.log('[clone-discord] For a dev target, set SUPPORTER_TIER_ENABLED=true; leave DISCORD_SERVER_SHOP_URL empty.');
+    console.log('[clone-discord] Cosmetic role names are matched to the FCM catalog and need no extra env vars.');
     console.log('[clone-discord] =========================================================');
   } finally {
     await client.destroy();

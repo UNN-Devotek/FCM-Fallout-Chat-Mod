@@ -223,7 +223,12 @@ describe('filterContent — canonical (NFD + strip-marks) matching', () => {
   it('blocks a BASELINE_DENYLIST slur padded with a combining diacritic', async () => {
     // "fuck" with a combining acute on the u — bypasses a bare NFC/ASCII filter,
     // canon collapses it back to "fuck" which the baseline denylist catches.
-    const result = await filterContent('go fu' + ACUTE + 'ck yourself');
+    const result = await filterContent('you fa' + ACUTE + 'g');
+    expect(result.blocked).toBe(true);
+  });
+
+  it('blocks a baseline hate term without an explicit target', async () => {
+    const result = await filterContent('fa' + ACUTE + 'g');
     expect(result.blocked).toBe(true);
   });
 

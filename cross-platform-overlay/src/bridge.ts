@@ -47,7 +47,7 @@ interface RelayBridge {
   // Set the FO76 character name as the chat display name (re-registers with the
   // backend). Resolves with the outcome; 'taken' means another user owns it.
   setIdentityName?(name: string): Promise<{ ok: boolean; reason?: string; displayName?: string; message?: string }>;
-  collapse(headerHeight: number): void;
+  collapse(headerHeight: number, fullAutoHide?: boolean): void;
   expand(focusInput: boolean): void;
   onFocusInput(cb: (on: boolean) => void): void;
   onForceExpand(cb: () => void): void;
@@ -101,6 +101,13 @@ interface RelayBridge {
    *  not running (unless the user is privileged / forceVisible). userHidden is
    *  cleared the same way game-launch does so a single mention un-hides once. */
   showForMention?(): void;
+  /** Main notifies the renderer once per session when a newer version is available
+   *  (fired after the OS toast). The renderer uses this to show a red-dot indicator
+   *  on the version string in the settings panel. */
+  onUpdateAvailable?(cb: (payload: { latestVersion: string }) => void): void;
+  /** Query main for a pending update version - catches update signals that fired
+   *  before the onUpdateAvailable listener was registered on startup. */
+  getPendingUpdate?(): Promise<string | null>;
   /** Dev-only: log in as a system persona, bypassing Discord OAuth.
    *  Hard-gated by !app.isPackaged in main.js — always { ok: false } in prod. */
   devLoginAs?(persona: string): Promise<{ ok: boolean; error?: string }>;

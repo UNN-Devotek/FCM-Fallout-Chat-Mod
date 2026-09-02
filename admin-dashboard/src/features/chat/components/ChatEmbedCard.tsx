@@ -62,6 +62,9 @@ export interface ChatEmbedCardProps {
   onShareToChat?: () => void;
   /** Disables the "Send to chat" button (e.g. during the post cooldown). */
   shareDisabled?: boolean;
+  /** Optional node pinned to the bottom-LEFT of the action row (e.g. a "more info"
+      link). Shares the row with the "Send to chat" button when both are present. */
+  footerLeft?: React.ReactNode;
 }
 
 export const ChatEmbedCard: React.FC<ChatEmbedCardProps> = ({
@@ -82,6 +85,7 @@ export const ChatEmbedCard: React.FC<ChatEmbedCardProps> = ({
   dimText,
   onShareToChat,
   shareDisabled = false,
+  footerLeft,
 }) => {
   // Theme-driven values flow in as CSS custom properties; layout lives in CSS.
   const rootVars = {
@@ -142,15 +146,18 @@ export const ChatEmbedCard: React.FC<ChatEmbedCardProps> = ({
 
       {footer && <div className="fcm-embed__footer">{footer}</div>}
 
-      {onShareToChat && (
-        <div className="fcm-embed__share">
-          <button
-            className="fcm-embed__share-btn"
-            style={{ fontFamily, opacity: shareDisabled ? 0.4 : undefined, cursor: shareDisabled ? 'default' : 'pointer' }}
-            onClick={shareDisabled ? undefined : onShareToChat}
-            disabled={shareDisabled}
-            title={shareDisabled ? 'Please wait a minute between shares' : undefined}
-          >{shareDisabled ? 'Shared — cooling down…' : 'Send to chat ↗'}</button>
+      {(footerLeft || onShareToChat) && (
+        <div className={`fcm-embed__share${footerLeft ? ' fcm-embed__share--split' : ''}`}>
+          {footerLeft ? <span className="fcm-embed__footer-left">{footerLeft}</span> : null}
+          {onShareToChat && (
+            <button
+              className="fcm-embed__share-btn"
+              style={{ fontFamily, opacity: shareDisabled ? 0.4 : undefined, cursor: shareDisabled ? 'default' : 'pointer' }}
+              onClick={shareDisabled ? undefined : onShareToChat}
+              disabled={shareDisabled}
+              title={shareDisabled ? 'Please wait a minute between shares' : undefined}
+            >{shareDisabled ? 'Shared — cooling down…' : 'Send to chat ↗'}</button>
+          )}
         </div>
       )}
     </div>

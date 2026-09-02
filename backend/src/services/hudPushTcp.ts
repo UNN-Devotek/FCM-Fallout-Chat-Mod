@@ -31,6 +31,7 @@ import logger from '../config/logger';
 import { registerClient, unregisterClientPublic, switchClientChannel, type HudPushClient } from './hudPush';
 import { deriveIdentityHash, resolveHudIdentity, getActiveBlock, usingDefaultIdentitySecret } from './hudIdentityService';
 import { ingestMessage } from './ingestMessage';
+import { refreshSupporterFromHudSend } from './supporterSyncService';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -282,6 +283,11 @@ async function handleLine(
 
         if (text.trim().length === 0) return;
 
+        // Keep the legacy authenticated HUD ingress on the same supporter-role
+        // freshness path as chat.v1 /relay sends. The helper derives any Discord
+        // identity from the resolved FCM user and is bounded per account.
+        await refreshSupporterFromHudSend({ userId: state.userId });
+
         const result = await ingestMessage({
           userId:       state.userId,
           channelId,
@@ -349,11 +355,21 @@ function loadTlsPems(certPath: string, keyPath: string): TlsPems | undefined {
       `Got cert="${certPath}" key="${keyPath}".`,
     );
   }
-  const resolvedCert = resolvePemPath(certPath);
-  const resolvedKey  = resolvePemPath(keyPath);
-  const cert = fs.readFileSync(resolvedCert);
-  const key  = fs.readFileSync(resolvedKey);
+  // Accept either inline PEM content or a file path. Inline content (a value
+  // containing a PEM header) keeps the private key out of the image/repo — set
+  // it directly in the deploy env. `\n` escapes are restored so the PEM can live
+  // on a single env line (Dokploy stores env as newline-separated KEY=VALUE).
+  const cert = readPemValue(certPath);
+  const key  = readPemValue(keyPath);
   return { cert, key };
+}
+
+/** Read a PEM from inline content (contains `-----BEGIN`) or a file path. */
+export function readPemValue(value: string): Buffer {
+  if (value.includes('-----BEGIN')) {
+    return Buffer.from(value.replace(/\\n/g, '\n'));
+  }
+  return fs.readFileSync(resolvePemPath(value));
 }
 
 // ── Server factory (accepts optional port override for tests) ─────────────────

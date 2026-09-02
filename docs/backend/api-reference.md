@@ -21,12 +21,18 @@ These routes are outside `/api/` and not subject to `apiLimiter`.
 |--------|------|------|-------------|
 | GET | `/auth/discord` | public | Initiate Discord OAuth2 (admin dashboard) |
 | GET | `/auth/discord/callback` | public | OAuth2 callback; sets session |
+| GET | `/auth/nexus` | public | Initiate Nexus OAuth2 + PKCE (feature-flagged) |
+| GET | `/auth/nexus/callback` | public | Validate Nexus OAuth2 state, provision/link identity, set session |
+| DELETE | `/auth/nexus` | requireAuth | Unlink Nexus identity unless it is the last provider |
 | GET | `/auth/discord/link` | public | Initiate Discord link for desktop client (`?installToken=`) |
 | GET | `/auth/discord/link/callback` | public | OAuth2 callback for desktop link |
 | GET | `/auth/logout` | public | Destroy session |
 | GET | `/auth/me` | Discord session | Current admin user identity + avatarUrl |
 | GET | `/auth/ws-ticket` | Discord session | Issue 60s single-use WS ticket |
 | GET | `/api/auth/discord-status/:installToken` | public | Poll Discord link status for desktop client |
+| POST | `/api/dev/login-as` | loopback or `X-Dev-Persona-Key`, DEV-only | Issue an immediate synthetic persona session for an unpackaged local or hosted DEV overlay (`{ persona, installToken }`) |
+| GET | `/auth/discord/dev-login` | public, DEV-only | Legacy OAuth-gated persona login (`?installToken=&persona=`); not used by the overlay DevAccount buttons |
+| GET | `/api/auth/dev-login-status/:installToken` | public, DEV-only | Consume the one-time legacy hosted DEV persona session grant |
 
 See [auth.md](./auth.md) for full details.
 
@@ -247,6 +253,68 @@ Player reports and bug reports submitted via the web form.
 
 ---
 
+## Cosmetics & Supporter tier (`/api/cosmetics`, `/api/supporter`)
+
+Chat appearance personalisation and the paid supporter entitlement. Design record:
+[docs/product/supporter-tier.md](../product/supporter-tier.md).
+
+| Method | Path | Auth | Description |
+| ------ | ---- | ---- | ----------- |
+| GET | `/api/supporter/tiers` | public | Pricing data for the marketing page (tier labels, prices, option counts) |
+| GET | `/api/cosmetics/catalog` | requireDashboardAuth | Colour + effect catalog, reserved colours, picker bounds and contrast floor. **Single source of truth** — the web picker, the Discord `/cosmetics` autocomplete and the user guide all render from this rather than re-declaring it |
+| GET | `/api/supporter/status` | requireDashboardAuth | Caller's tier, entitled tier, whether privileges are active, and whether they need to rejoin the Discord |
+| GET | `/api/overlay/cosmetics` | requireAuth (`X-Auth-Token`) | Electron overlay's self-only appearance payload: catalog, resolved/stored cosmetics and active Discord tier. The target comes solely from the install session, never from a renderer-supplied user id. |
+| PATCH | `/api/overlay/cosmetics` | requireAuth (`X-Auth-Token`) + rate limit | Electron overlay's self-only cosmetic update. Uses the same `applyCosmetics()` service and PATCH semantics as the profile and Discord bot. |
+| GET | `/api/users/:id/cosmetics` | requireDashboardAuth | Resolved + stored cosmetics. Self, or moderator+ |
+| PATCH | `/api/users/:id/cosmetics` | requireDashboardAuth + rate limit | Self only. Applies a partial patch |
+| POST | `/api/admin/users/:id/cosmetics/reset` | requireDiscordRole(owner/admin/moderator) | Reset an abusive colour, effect or tag to defaults (#232) |
+
+### PATCH semantics
+
+An **absent** key means "leave unchanged"; an explicit **`null`** means "clear". The two
+are distinct and the service relies on that.
+
+Appearance patches include `starColorPresetId`, which is independent of
+`colorPresetId`. It accepts the same catalog and tier rules as a username colour. The
+fixed supporter marker remains `★`; clients never accept a glyph from the API. Clear it
+with `starColorPresetId: null` (or Discord `/cosmetics clear field:star`).
+
+```json
+{ "colorPresetId": "cryo", "effectId": null }
+```
+
+`colorPresetId` and `customColorHex` are mutually exclusive — setting one clears the other.
+
+### Error responses
+
+RFC 7807 as usual, with a machine-readable `code` matching the service's rejection reason:
+
+| Reason | Status | Meaning |
+| --- | --- | --- |
+| `tier_locked` | 403 | Option requires a higher supporter tier |
+| `blacklisted` | 400 | Name/tag rejected by the blacklist or automod. **Deliberately does not say which pattern matched** — that would make the endpoint an oracle for probing the filters |
+| `invalid_tag` | 400 | Length or charset |
+| `invalid_color` | 400 | Unparseable, below the contrast floor, or too close to a reserved colour |
+| `not_found` | 404 | No such user |
+
+The cosmetic appearance PATCH routes are rate-limited at **120 / 5 min per IP**
+(`cosmeticsAppearanceLimiter`; 500 for an unpackaged dev overlay). They do not submit
+candidate display names to blacklist/automod matching, so the free chat-name endpoint
+retains its separate, stricter 20 / 5 min anti-probing bucket.
+
+## Free chat name (`/api/users/:id/chat-name`)
+
+| Method | Path | Auth | Description |
+| ------ | ---- | ---- | ----------- |
+| PATCH | `/api/users/:id/chat-name` | `requireDashboardAuth` + write rate limit | Self only. Sets the user's free account chat name; `{ "chatName": null }` clears it and restores the Fallout 76 / Discord-derived name. No supporter tier or calendar cooldown applies. Names are 2–32 characters after sanitisation and pass the same blacklist/automod checks as other visible identity fields. |
+
+### Note on ownership
+
+`requireDashboardAuth` does **not** enforce ownership, so these controllers scope by the
+caller's `discordId` themselves.
+
+---
+
 ## Commands (`/api/commands`)
 
 | Method | Path | Auth | Description |
@@ -268,9 +336,11 @@ Mounted at both paths. Auth is handled inside `releasesController` using `ADMIN_
 | GET | `/admin/releases` or `/api/releases` | public | List releases (current version + notes) |
 | DELETE | `/admin/releases/:version` | Bearer `ADMIN_RELEASE_TOKEN` | Remove release entry |
 
-**POST body:** `{ version, downloadUrl, releaseNotes, announce? }`. `announce` defaults to `true`;
-set it `false` for a **quiet publish** that skips the Discord `@everyone` post (the site download,
-`latestVersion` cache / in-app `app:update-available`, and the GitHub Release still update). See
+**POST body:** `{ version, downloadUrl, releaseNotes, announce?, mentionEveryone? }`. Both
+`announce` and `mentionEveryone` default to `true`. Set `announce` to `false` to skip Discord
+entirely, or set `mentionEveryone` to `false` to post the embed without the channel-wide
+`@everyone` mention. The site download, `latestVersion` cache / in-app `app:update-available`,
+and GitHub Release still update in either quiet mode. See
 [releasing-the-overlay.md](../deployment/releasing-the-overlay.md) → Step 6.
 
 ---
@@ -316,6 +386,13 @@ See [../moderation/](../moderation/) for full moderation documentation.
 Documented in [../moderation/](../moderation/). Covers:
 - Bans, kicks, mutes (`/api/moderation/kicks`, `/mutes`, `/bans`, `/evidence`, `/users/lookup`)
 - AutoMod rules (`/api/moderation/automod-rules`, `/automod-violations`)
+- Settings (`GET`/`PATCH /api/moderation/settings`) — the key/value `moderation_settings` store.
+  `PATCH` has three validation paths: `mod_log_channel_id` (Discord snowflake),
+  the AI moderation keys (`ai_moderation_enabled` boolean string,
+  `ai_moderation_mode` = `shadow`|`enforce`, `ai_moderation_thresholds` /
+  `ai_moderation_identifier_thresholds` JSON of category → score in `(0,1]`),
+  and everything else (positive integers). See
+  [../moderation/ai-moderation.md](../moderation/ai-moderation.md).
 - Voice settings, embed builder, reaction-role panels — see [../discord/](../discord/)
 
 ---
@@ -630,6 +707,8 @@ core (`hudPush.ts`). Both are **off by default** and must be explicitly enabled.
 
 None. No `Origin` check on `/ws/hud`. The game client sends no/odd `Origin` headers; this is a
 public read-only feed. Per-IP connection cap: **3** concurrent connections on each transport.
+The production guard currently refuses to attach this unauthenticated WebSocket listener in
+`NODE_ENV=production`, and disabled/unknown upgrade paths are rejected by the shared router.
 
 ### FCMHUD/1 line protocol
 
@@ -665,8 +744,9 @@ await initHudPushTcp();
 initHudPushWs(server);
 ```
 
-The `/ws/hud` upgrade handler coexists with the `/ws` WebSocketServer. It leaves all non-`/ws/hud`
-upgrade requests untouched so the two servers do not race.
+The `/ws/hud` upgrade handler coexists with the `/ws` WebSocketServer. The shared upgrade router
+leaves `/ws/hud` untouched only when `HUD_PUSH_WS_ENABLED=true` in a non-production process;
+disabled and unknown upgrade paths are destroyed promptly.
 
 **M7 identity env var:** `HUD_IDENTITY_SECRET` — HMAC-SHA256 key for deriving `identityHash` from FO76 `accountName`. Dev default in `.env.example`; must be a strong random secret before production use.
 

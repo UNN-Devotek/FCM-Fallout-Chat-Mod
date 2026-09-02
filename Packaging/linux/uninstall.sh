@@ -3,7 +3,8 @@
 # Fallout Chat Mod — Linux uninstaller
 #   curl -fsSL https://falloutchatmod.com/uninstall.sh | bash
 #
-# Removes the AppImage, the desktop launcher, and the icon. By default it KEEPS
+# Removes the per-user AppImage, the desktop launcher, and the icon. A .deb install
+# is owned by apt/dpkg and should be removed with the package manager. By default it KEEPS
 # your config/login (~/.config/Fallout Chat Mod). Pass --purge to remove that too.
 #
 set -euo pipefail
@@ -26,19 +27,31 @@ command -v update-desktop-database >/dev/null 2>&1 && \
 say "Removed app, launcher, and icon."
 
 # --- Remove the KWin window rules we installed (KDE only) ---------------------
-# On KDE+Wayland the overlay installs two KWin rules (keep-above on the overlay +
-# fullscreen-demote on the GAME). The demote rule forces FO76 out of the fullscreen
-# stacking layer, so we MUST strip it on uninstall — otherwise FO76 stays demoted
-# after FCM is gone. We match FCM's rules by their "Fallout Chat Mod" Description
-# (catches both the current named groups AND any numbered groups older builds wrote)
-# and keep the user's own rules. Mirrors cross-platform-overlay/overlay-core.js
-# buildKwinRemoveRulesScript. Best-effort: no-ops without the KDE config tools.
+# On KDE+Wayland the overlay installs ONE KWin rule (fcm-keepabove, overlay-only,
+# above=true + layer=overlay/layerrule=2) while FO76 runs and shares the
+# overlay's display; removed automatically on game exit or a monitor change, so
+# normally nothing is left to clean up here. This block is a safety net for a
+# rule left installed at quit time (crash, kill -9) or by an older build with
+# different rule names/game-side rules. Matches FCM's rules by "Fallout Chat
+# Mod" Description (current + legacy/numbered groups), keeps the user's own.
+# Mirrors overlay-core.js buildKwinRemoveRulesScript. Best-effort: no-ops
+# without the KDE config tools.
+KWIN_READ_BIN=""
+KWIN_WRITE_BIN=""
 if command -v kreadconfig6 >/dev/null 2>&1 && command -v kwriteconfig6 >/dev/null 2>&1; then
+  KWIN_READ_BIN="kreadconfig6"
+  KWIN_WRITE_BIN="kwriteconfig6"
+elif command -v kreadconfig5 >/dev/null 2>&1 && command -v kwriteconfig5 >/dev/null 2>&1; then
+  KWIN_READ_BIN="kreadconfig5"
+  KWIN_WRITE_BIN="kwriteconfig5"
+fi
+
+if [ -n "$KWIN_READ_BIN" ] && [ -n "$KWIN_WRITE_BIN" ]; then
   RULES="${XDG_CONFIG_HOME:-$HOME/.config}/kwinrulesrc"
-  R="$(kreadconfig6 --file kwinrulesrc --group General --key rules 2>/dev/null || true)"
+  R="$("$KWIN_READ_BIN" --file kwinrulesrc --group General --key rules 2>/dev/null || true)"
   KEEP=""; FCM=""
   for g in $(printf '%s' "$R" | tr ',' ' '); do
-    d="$(kreadconfig6 --file kwinrulesrc --group "$g" --key Description 2>/dev/null || true)"
+    d="$("$KWIN_READ_BIN" --file kwinrulesrc --group "$g" --key Description 2>/dev/null || true)"
     case "$d" in
       "Fallout Chat Mod"*) FCM="$FCM $g" ;;
       *) KEEP="${KEEP:+$KEEP,}$g" ;;
@@ -49,9 +62,9 @@ if command -v kreadconfig6 >/dev/null 2>&1 && command -v kwriteconfig6 >/dev/nul
     # delete a section (neither `--key X --delete` nor `--group G --delete` works — both
     # silently no-op), so per-key deletion left orphaned [section] cruft behind.
     awk -v drop=" $FCM " '/^\[.*\]$/{name=$0;sub(/^\[/,"",name);sub(/\]$/,"",name);skip=index(drop," " name " ")>0} !skip' "$RULES" > "$RULES.fcmtmp" && mv "$RULES.fcmtmp" "$RULES"
-    kwriteconfig6 --file kwinrulesrc --group General --key rules "$KEEP"
+    "$KWIN_WRITE_BIN" --file kwinrulesrc --group General --key rules "$KEEP"
     COUNT="$(printf '%s' "$KEEP" | tr ',' '\n' | grep -c . || true)"
-    kwriteconfig6 --file kwinrulesrc --group General --key count "$COUNT"
+    "$KWIN_WRITE_BIN" --file kwinrulesrc --group General --key count "$COUNT"
     (qdbus org.kde.KWin /KWin reconfigure || qdbus6 org.kde.KWin /KWin reconfigure || qdbus-qt6 org.kde.KWin /KWin reconfigure) 2>/dev/null || true
     say "Removed Fallout Chat Mod KWin rules (KDE) — FO76 fullscreen restored."
   fi

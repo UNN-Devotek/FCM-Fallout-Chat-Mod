@@ -114,7 +114,7 @@ check  -jest   (matrix)     -smoke-linux    -windows-nsis
 | `lint-typecheck` | `ubuntu-latest` | **Required** | `tsc --noEmit` matrix over backend, admin-dashboard, cross-platform-overlay |
 | `backend-jest` | `ubuntu-latest` | **Required** | `postgres:16` + `redis:7` service containers; service containers on `localhost` (hosted) or `docker` hostname (self-hosted DinD); `prisma generate` + `db push`; `npm run build` then `npm test` + `npm run test:unit` |
 | `unit-vitest` | `ubuntu-latest` | **Required** | **Consolidated matrix** (`cross-platform-overlay`, `admin-dashboard`); replaced the former `overlay-unit-component` + `dashboard-unit-component` jobs |
-| `overlay-launch-smoke-linux` | `ubuntu-latest` | **Required** | Builds once, runs packaged-launch smoke (`ci-launch-smoke.mjs`); the former auto-update E2E step was removed when auto-update was retired; replaced former `overlay-e2e-linux` |
+| `overlay-launch-smoke-linux` | `ubuntu-latest` | **Required** | Validates the Linux installer decision path (`bash -n`, `--help`, `--print-plan`), then builds once and runs packaged-launch smoke (`ci-launch-smoke.mjs`); the former auto-update E2E step was removed when auto-update was retired; replaced former `overlay-e2e-linux` |
 | `overlay-build-windows-nsis` | `windows-latest` | **Required** (prod+PRs) | Builds the NSIS installer **natively** on `windows-latest` (no Wine/Docker/GHCR); runs `.github/scripts/win-artifacts-check.mjs` — asserts the installer + exe are present and that `app-update.yml` / `latest*.yml` are **absent** (the overlay no longer auto-updates); renamed from `overlay-autoupdate-e2e-windows` |
 | `ci-summary` | `ubuntu-latest` | **The single required gate** | `if: always()`; fails if any listed job is `failure`, `cancelled`, or `skipped` |
 
@@ -165,6 +165,40 @@ branch. Dependabot **security** updates always target the repo's **default branc
 enabled separately under repo **Settings → Security → Dependabot alerts** — turn that on to get alerts as
 new advisories land. Note: a Dependabot PR does **not** auto-run CI — like a fork PR it needs a maintainer
 to apply the `ci-approved` label.
+
+### Transitive advisories — `overrides` in `package.json`
+
+Dependabot only opens PRs for **direct** dependencies. When an advisory lands on a *nested transitive*
+(something pulled in by `nodemon`, `glob`, `@electron/asar`, `dir-compare`, `test-exclude`, …) no version
+bump reaches it, and the alert sits open indefinitely. Those are pinned with an npm
+[`overrides`](https://docs.npmjs.com/cli/v11/configuring-npm/package-json#overrides) block in the owning
+workspace's `package.json`.
+
+Use the **version-selector form** (`"pkg@<major>": "<range>"`) whenever a package has several majors live
+in one tree — a blanket `"pkg": "^5"` would force consumers pinned to `^1` onto an incompatible major:
+
+```jsonc
+// cross-platform-overlay/package.json
+"overrides": {
+  "brace-expansion@1": "^1.1.16",   // GHSA-3jxr-9vmj-r5cp — under glob / @electron/asar / dir-compare
+  "brace-expansion@2": "^2.1.4",    // second advisory, range 2.0.0 - 2.1.2
+  "brace-expansion@5": "^5.0.7",    // root resolution
+  "js-yaml@4": "^4.3.0"             // GHSA-52cp-r559-cp3m
+}
+```
+
+> **Do not delete these entries** during dependency cleanups. Each one is holding a transitive off a known
+> advisory; removing it silently reopens the alert. Drop an entry only once the parent package's own
+> resolution has moved past the patched version on its own.
+
+**Prefer bumping the parent when it can reach the fix.** `@hono/node-server` (GHSA-frvp-7c67-39w9, patched
+in 2.0.5) was pinned by `@modelcontextprotocol/sdk@1.29.0` at `^1.19.9`; an override would have violated
+that contract. SDK `1.30.0` widened to `^1.19.9 || ^2.0.5`, so bumping the SDK was the correct fix and no
+override was needed.
+
+**Verify with `npm audit`, not just the GitHub alert list.** The two are not equivalent — the alert feed
+listed only the `<1.1.16` and `>=3.0.0,<5.0.7` `brace-expansion` ranges, while `npm audit` also surfaced a
+second advisory covering `2.0.0 - 2.1.2`. Run `npm audit` in each workspace after any override change.
 
 ## `ci-summary` — no false greens on skipped jobs
 

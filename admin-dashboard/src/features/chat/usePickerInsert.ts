@@ -13,16 +13,22 @@ export function usePickerInsert(
     (token: string) => {
       const el = inputRef.current;
       if (!el) return;
-      // Read el.value directly -- React state (inputText) may be stale if
-      // the user picks a second emoji before the first state update flushes,
-      // which caused emojis to insert in reverse order (issue #97).
-      const start = el.selectionStart ?? 0;
+      // Read and update el.value directly -- React state (inputText) may be
+      // stale if the user picks another emoji before the first state update
+      // flushes. Advancing the DOM value/caret synchronously prevents the next
+      // insert from reusing the old caret and placing emojis in reverse order.
+      const start = el.selectionStart ?? el.value.length;
       const end = el.selectionEnd ?? start;
       const next = el.value.slice(0, start) + token + el.value.slice(end);
-      setInputText(next.slice(0, 255));
+      const clamped = next.slice(0, 255);
+      const pos = Math.min(clamped.length, start + token.length);
+
+      el.value = clamped;
+      el.setSelectionRange(pos, pos);
+      setInputText(clamped);
+
       requestAnimationFrame(() => {
         el.focus();
-        const pos = Math.min(255, start + token.length);
         el.setSelectionRange(pos, pos);
       });
     },

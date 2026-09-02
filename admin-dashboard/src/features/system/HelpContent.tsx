@@ -35,17 +35,23 @@ interface BuiltIn {
   notes?: string;
 }
 
-const BUILTIN_COMMANDS: BuiltIn[] = [
+// NOTE: this list is user-facing documentation and MUST match the backend, which is the
+// source of truth: `commandService.ts` CHANNEL_SHORTCUTS + the trigger branches. The
+// channel shortcuts are PUBLIC channels and relay to Discord — never describe one as a
+// party command. (`/r` was previously documented here as "most recent party"; it is the
+// public Raids channel. The party alias is `/rp`.)
+export const BUILTIN_COMMANDS: BuiltIn[] = [
   { trigger: '/help',          description: 'List all available commands',                                        notes: 'Always enabled — cannot be disabled' },
-  // ── Channel commands ──────────────────────────────────────────────────────────
+  // ── Channel commands (PUBLIC — these also relay to Discord) ───────────────────
   { trigger: '/g',             description: 'Send a message to the General channel'                                                                           },
   { trigger: '/t',             description: 'Send a message to the Trading channel'                                                                           },
   { trigger: '/e',             description: 'Send a message to the Events channel'                                                                            },
-  { trigger: '/raid',          description: 'Send a message to the Raids channel'                                                                             },
-  { trigger: '/s',             description: 'Send a message to your server channel'                                                                           },
-  // ── Party commands ────────────────────────────────────────────────────────────
+  { trigger: '/r',             description: 'Send a message to the Raids channel',                                 notes: 'Public channel — alias: /raid'      },
+  { trigger: '/i',             description: 'Send a message to the Infests channel'                                                                           },
+  { trigger: '/s',             description: 'Send a message to your server channel',                               notes: 'Currently disabled'                 },
+  // ── Party commands (PRIVATE — only your party sees these) ─────────────────────
   { trigger: '/recent',        description: 'Send a message to your most recent party'                                                                        },
-  { trigger: '/r',             description: 'Send a message to your most recent party (short for /recent)'                                                    },
+  { trigger: '/rp',            description: 'Send a message to your most recent party (short for /recent)'                                                    },
   { trigger: '/p1',            description: 'Send a message to your 1st joined party (Party-tab order, left to right)'                                        },
   { trigger: '/p2',            description: 'Send a message to your 2nd joined party (Party-tab order, left to right)'                                        },
   { trigger: '/p3',            description: 'Send a message to your 3rd joined party (Party-tab order, left to right)'                                        },
@@ -54,9 +60,19 @@ const BUILTIN_COMMANDS: BuiltIn[] = [
   { trigger: '/report player', description: 'Submit a player report (player name, reason, description)'                                                       },
   { trigger: '/apply',         description: 'Open the staff application form'                                                                                 },
   // ── Fallout 76 lookups ────────────────────────────────────────────────────────
-  { trigger: '/serverstatus',  description: 'Show Fallout 76 server status (up/down)'                                                                          },
-  { trigger: '/nukecodes',     description: "Show this week's nuke launch codes (Alpha/Bravo/Charlie)"                                                   },
+  { trigger: '/online',        description: 'Show total users online in chat'                                                                               },
+  { trigger: '/serverstatus',  description: 'Show Fallout 76 server status (up/down)',                             notes: 'alias: /server-status'              },
+  { trigger: '/nukecodes',     description: "Show this week's nuke launch codes (Alpha/Bravo/Charlie)",            notes: 'alias: /codes'                      },
+  { trigger: '/minerva',       description: "Show Minerva's current or next Big Sale — location, list, and dates"                                             },
+  { trigger: '/camp',          description: 'Look up a CAMP item — category, sub-category, budget cost, plan requirement'                                     },
   { trigger: '/wiki',          description: 'Search the Fallout 76 wiki — type a name (weapons, armor, items, creatures, locations, quests); pick a result with ↑↓ + Enter/Tab or click' },
+  // ── Giveaways ─────────────────────────────────────────────────────────────────
+  { trigger: '/giveaway start', description: 'Start a community item raffle (1–60 min, default 5)'                                                            },
+  { trigger: '/giveaway list',  description: 'Show all active giveaways'                                                                                      },
+  { trigger: '/giveaway last',  description: 'Show results of the last 1–10 giveaways (default 5)'                                                            },
+  { trigger: '/giveaway join',  description: 'Enter a giveaway by its short ID'                                                                               },
+  { trigger: '/giveaway leave', description: 'Leave a giveaway you entered'                                                                                   },
+  { trigger: '/giveaway stop',  description: 'Cancel your giveaway (creator or mod only)'                                                                     },
 ];
 
 // ── Prop types ────────────────────────────────────────────────────────────────

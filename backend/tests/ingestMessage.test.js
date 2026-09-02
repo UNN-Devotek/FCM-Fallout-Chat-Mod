@@ -6,7 +6,7 @@
  * messageQueue, broadcast) and call ingestMessage() directly.
  *
  * Coverage:
- *  - Happy path: ok=true, broadcast called, messageQueue.add called, relayToDiscord called
+ *  - Happy path: ok=true, persistence completes before broadcast, relayToDiscord called
  *  - Muted user (isMuted=true): returns { ok: false, reason: 'muted' }
  *  - Expired mute auto-lifted: proceeds normally
  *  - HUD identity block (active mute block): returns muted
@@ -16,7 +16,7 @@
  *  - Invalid channelId (not UUID): returns invalid-channel
  *  - Channel not found: returns channel-not-found
  *  - Automod blocks: returns automod
- *  - Slash command from HUD source: returns slash-command-dropped
+ *  - Slash command from HUD/relay sources: returns slash-command-dropped
  *  - Slash command from ws source: NOT dropped (handled by WS path)
  */
 
@@ -73,6 +73,10 @@ jest.mock('../src/services/discordService', () => ({
   relayToDiscord: jest.fn().mockResolvedValue(undefined),
 }));
 
+jest.mock('../src/services/cosmetics/cosmeticsService', () => ({
+  attachCosmetics: jest.fn(async (payload) => payload),
+}));
+
 jest.mock('../src/queues/messagePersist', () => ({
   add: jest.fn().mockResolvedValue({}),
   process: jest.fn(),
@@ -120,6 +124,7 @@ const messageQueue = require('../src/queues/messagePersist');
 const { engineEvaluate } = require('../src/services/autoModEngine');
 const { getActiveBlock } = require('../src/services/hudIdentityService');
 const { getRedisClient } = require('../src/config/redis');
+const { attachCosmetics } = require('../src/services/cosmetics/cosmeticsService');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -146,6 +151,8 @@ beforeEach(() => {
 
   // Default rate-limit multi: count = 1 (under limit of 5).
   getRedisClient.mockResolvedValue({
+    // incr backs nextRelaySeq() — every ingested message assigns a relaySeq.
+    incr: jest.fn().mockResolvedValue(1),
     multi: jest.fn().mockReturnValue({
       zRemRangeByScore: jest.fn().mockReturnThis(),
       zAdd: jest.fn().mockReturnThis(),
@@ -158,7 +165,8 @@ beforeEach(() => {
   engineEvaluate.mockResolvedValue({ block: false, matches: [] });
   broadcast.mockReset();
   relayToDiscord.mockResolvedValue(undefined);
-  messageQueue.add.mockResolvedValue({});
+  attachCosmetics.mockImplementation(async (payload) => payload);
+  messageQueue.add.mockResolvedValue({ finished: jest.fn().mockResolvedValue(undefined) });
   getActiveBlock.mockResolvedValue(null);
 });
 
@@ -186,7 +194,7 @@ describe('ingestMessage — happy path', () => {
       }),
     }));
 
-    // Write-behind queue
+    // Persistence queue
     expect(messageQueue.add).toHaveBeenCalledWith(expect.objectContaining({
       content: 'Hello vault!',
       userId: 'user-1',
@@ -200,7 +208,61 @@ describe('ingestMessage — happy path', () => {
       expect.any(String),
       'Hello vault!',
       expect.any(String),
+      undefined,
+      undefined,
+      result.messageId,
+      undefined,
     );
+  });
+
+  it('passes the server-resolved supporter identity to the Discord relay', async () => {
+    attachCosmetics.mockImplementation(async (payload) => {
+      payload.badges = ['overseer'];
+      payload.starColor = '#FD4DA6';
+      return payload;
+    });
+
+    const result = await ingestMessage({
+      userId: 'supporter-user',
+      channelId: VALID_CHANNEL_ID,
+      rawContent: 'supporter from HUD',
+      source: 'hud',
+    });
+
+    expect(relayToDiscord).toHaveBeenCalledWith(
+      VALID_CHANNEL_ID,
+      expect.any(String),
+      'supporter from HUD',
+      expect.any(String),
+      undefined,
+      undefined,
+      result.messageId,
+      { badges: ['overseer'] },
+    );
+  });
+
+  it('does not broadcast until the persistence job has completed', async () => {
+    let releasePersistence;
+    const persistenceFinished = new Promise((resolve) => { releasePersistence = resolve; });
+    messageQueue.add.mockResolvedValue({
+      finished: jest.fn().mockReturnValue(persistenceFinished),
+    });
+
+    const sendPromise = ingestMessage({
+      userId: 'user-before-persist',
+      channelId: VALID_CHANNEL_ID,
+      rawContent: 'persist first',
+      source: 'hud',
+    });
+
+    while (messageQueue.add.mock.calls.length === 0) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+
+    expect(broadcast).not.toHaveBeenCalled();
+    releasePersistence();
+    await sendPromise;
+    expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({ type: 'chat:message' }));
   });
 
   it('works with source=ws too', async () => {
@@ -214,6 +276,89 @@ describe('ingestMessage — happy path', () => {
     expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({
       payload: expect.objectContaining({ source: 'ws' }),
     }));
+  });
+});
+
+describe('ingestMessage — relaySeq threading (relay source)', () => {
+  it('threads a provided relaySeq into the broadcast payload AND the persist record', async () => {
+    const result = await ingestMessage({
+      userId: 'relay-user-1',
+      channelId: VALID_CHANNEL_ID,
+      rawContent: 'relay message',
+      source: 'relay',
+      relaySeq: 42,
+    });
+
+    expect(result.ok).toBe(true);
+
+    // Broadcast payload carries relaySeq so the relay pub/sub subscriber forwards it.
+    expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'chat:message',
+      payload: expect.objectContaining({
+        content: 'relay message',
+        source: 'relay',
+        relaySeq: 42,
+      }),
+    }));
+
+    // Persist record carries relaySeq so messages.relay_seq is written
+    // (poll/history filter on relay_seq IS NOT NULL).
+    expect(messageQueue.add).toHaveBeenCalledWith(expect.objectContaining({
+      content: 'relay message',
+      source: 'relay',
+      relaySeq: 42,
+    }));
+  });
+
+  it('best-effort assigns a relaySeq for non-relay sources when Redis is healthy', async () => {
+    // Ordinary chat participates in relay history when the cursor is available,
+    // but cursor allocation is deliberately not a hard dependency.
+    const result = await ingestMessage({
+      userId: 'hud-user-1',
+      channelId: VALID_CHANNEL_ID,
+      rawContent: 'hud message',
+      source: 'hud',
+      // no relaySeq -> nextRelaySeq() assigns one
+    });
+
+    expect(result.ok).toBe(true);
+
+    // Broadcast payload carries the optional cursor.
+    const broadcastArg = broadcast.mock.calls[0][0];
+    expect(broadcastArg.payload).toHaveProperty('relaySeq', 1);
+
+    // Persist record carries the optional cursor.
+    const recordArg = messageQueue.add.mock.calls[0][0];
+    expect(recordArg).toHaveProperty('relaySeq', 1);
+  });
+
+  it('keeps ordinary chat available when optional cursor allocation fails', async () => {
+    const rateRedis = {
+      multi: jest.fn().mockReturnValue({
+        zRemRangeByScore: jest.fn().mockReturnThis(),
+        zAdd: jest.fn().mockReturnThis(),
+        zCard: jest.fn().mockReturnThis(),
+        expire: jest.fn().mockReturnThis(),
+        exec: jest.fn().mockResolvedValue([0, 1, 1, 1]),
+      }),
+    };
+    const cursorRedis = {
+      incr: jest.fn().mockRejectedValue(new Error('redis unavailable')),
+    };
+    getRedisClient
+      .mockResolvedValueOnce(rateRedis)
+      .mockResolvedValueOnce(cursorRedis);
+
+    const result = await ingestMessage({
+      userId: 'hud-user-redis-down',
+      channelId: VALID_CHANNEL_ID,
+      rawContent: 'still available',
+      source: 'hud',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(broadcast.mock.calls[0][0].payload).not.toHaveProperty('relaySeq');
+    expect(messageQueue.add.mock.calls[0][0]).not.toHaveProperty('relaySeq');
   });
 });
 
@@ -273,6 +418,8 @@ describe('ingestMessage — rate limit', () => {
   describe('Redis error during rate-limit check', () => {
     beforeEach(() => {
       getRedisClient.mockResolvedValue({
+        // ws fail-open path proceeds to nextRelaySeq(), which needs incr.
+        incr: jest.fn().mockResolvedValue(1),
         multi: jest.fn().mockReturnValue({
           zRemRangeByScore: jest.fn().mockReturnThis(),
           zAdd: jest.fn().mockReturnThis(),
@@ -345,6 +492,19 @@ describe('ingestMessage — slash command handling', () => {
     const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: '/wiki Nuka-Cola', source: 'hud' });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('slash-command-dropped');
+    expect(broadcast).not.toHaveBeenCalled();
+  });
+
+  it('drops slash command from the chat.v1 relay source', async () => {
+    const result = await ingestMessage({
+      userId: 'relay-user',
+      channelId: VALID_CHANNEL_ID,
+      rawContent: '/not-a-hud-command',
+      source: 'relay',
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe('slash-command-dropped');
+    expect(prismaStub.user.findUnique).not.toHaveBeenCalled();
     expect(broadcast).not.toHaveBeenCalled();
   });
 

@@ -66,7 +66,7 @@ non-confidential **by construction**, remote dev access is safe.
 | Credentials | Own dev DB password, Redis password, MinIO creds, `SESSION_SECRET`, Discord app. **Zero overlap with prod.** A full dev compromise leaks no prod secret. |
 | Resource limits | Memory + CPU caps on every dev service so a runaway/abusive dev container cannot starve prod. |
 | Ingress | Dedicated `cloudflared-dev` tunnel attached only to `fcm-dev-network`. |
-| Access | Cloudflare Access in front of every dev hostname. Per-developer, logged, instantly revocable. |
+| Access | **App-level auth is the gate for the dev website** (the dual dev-Discord `developer` role gate on `dev.falloutchatmod.com` + `dev-hud`), like prod — the Cloudflare Access **edge gate was removed 2026-06-29**. Raw stores (`dev-db` / `dev-s3`) are **still** CF-Access service-token gated. |
 
 Because contributors get **application-level access only** (no SSH, no Dokploy
 rights, no container shell), the usual shared-VPS risk — hostile code execution →
@@ -213,13 +213,23 @@ risk to the live community:
 - `backend-dev` holds the dev token; **contributors never hold it** — they test
   by *interacting* with the dev bot in the dev server. Worst-case malicious
   outcome is a wrecked disposable server, never the production community.
-- `ENABLE_DEV_LOGIN=false` on the **hosted** `backend-dev`. Access to the hosted
-  dev environment is gated by the dual Discord role check (see
-  [Developer authorization](#developer-authorization--dual-discord-role-gate)),
-  so the credential-less persona login must NOT be open on the hosted instance.
-  Personas remain available only on contributors' **fully-local** stacks
-  (`docker-compose.dev.yml`), where there is nothing to protect. The production
-  boot guard already forbids dev-login when `NODE_ENV=production`.
+- `ENABLE_DEV_LOGIN=false` remains set on the **hosted** `backend-dev` for the
+  browser-only developer shortcuts. The overlay's `POST /api/dev/login-as` route
+  is separately gated by `NODE_ENV=development` and a dedicated
+  `DEV_PERSONA_LOGIN_SECRET` for remote callers, so it is available on the
+  isolated hosted DEV stack but never mounts in production. Loopback local-dev
+  requests do not need the key; hosted requests must send it. These synthetic
+  accounts are intentionally limited to the fake hosted DEV database and are not
+  a substitute for normal developer access to protected tooling.
+
+The unpackaged Electron overlay can still be run against hosted DEV with
+`npm run dev:cloud` from `cross-platform-overlay/`. Its **DEV ACCOUNTS** persona
+controls immediately issue synthetic sessions and do not open Discord. Set the
+same `DEV_PERSONA_LOGIN_SECRET` in the shell that launches the overlay so the
+remote request is authorized. The
+controls are shown only by an unpackaged overlay targeting localhost or
+`dev.falloutchatmod.com`; the packaged production overlay does not contain this
+login path. Normal hosted dashboard access remains governed by the dual-role gate.
 
 ---
 
@@ -359,8 +369,9 @@ Two complementary mechanisms:
 2. **Bot-driven provisioning script (repeatable + captures new IDs).**
    `backend/scripts/clone-discord-layout.ts` (discord.js) reads the source guild's
    roles/channels and recreates anything the template missed in the target guild,
-   then **prints the new role-ID mapping**. This is necessary because cloned roles
-   get **brand-new IDs** in the dev server, and the dev backend's
+   ensures the `Supporter` and `Overseer's Circle` tier roles exist, then **prints
+   the new role-ID mapping**. This is necessary because cloned roles get **brand-new
+   IDs** in the dev server, and the dev backend's
    `OWNER_ROLE_ID` / `ADMIN_ROLE_ID` / `MODERATOR_ROLE_ID` env vars must point at
    the **dev** server's IDs, not prod's. The script outputs ready-to-paste env
    lines for the dev Dokploy project.
@@ -421,16 +432,17 @@ through the prod-bot endpoint per the research above).
 Verification gates two things, both **short-lived** so role removal takes effect
 quickly:
 
-1. **App session.** The dev backend issues its dashboard/app session only after
-   both roles verify. No persona login on the hosted instance
-   (`ENABLE_DEV_LOGIN=false`).
+1. **App session.** The dev backend issues its normal dashboard/app session only
+   after both roles verify. The unpackaged overlay also has DEV-only synthetic
+   persona accounts for testing against the isolated fake dataset; those accounts
+   are issued by `POST /api/dev/login-as` and are not available in production.
 2. **Infra credentials (DB / object store).** Currently, the maintainer issues the
    `fcm-dev-access` CF Access service token directly to vetted developers. The
    full broker (backend-minted short-lived credentials + `fcm-dev-cli login`) is
    **deferred** — the core `verifyDualRole` logic is built and tested, but the
-   OAuth flow wiring and credential-issuance endpoints are not yet wired into
-   `server.ts`. `pg_dump`/`pg_restore`/migrations run against the tunnel using the
-   directly-issued service token today.
+   OAuth flow wiring for persona sessions is now in `server.ts`; the full broker
+   for DB/object-store credentials remains deferred. `pg_dump`/`pg_restore`/
+   migrations run against the tunnel using the directly-issued service token today.
 
 ### Expiry and revocation
 
@@ -465,6 +477,151 @@ quickly:
 - **Deferred (not yet built):** dev OAuth flow wiring into `server.ts`; the broker that
   mints/returns short-lived Access + DB credentials; `fcm-dev-cli login`.
 
+## QA tester access
+
+External QA testers need access to the live hosted dev environment but are not developers.
+They install a pre-built QA build of the overlay (the `dist:qa` artifact), log in with
+Discord via the QA OAuth flow, and connect to `dev.falloutchatmod.com`. They never touch
+the dev Discord application credentials, the database, or the object store.
+
+### Cloudflare Access path-bypass policy
+
+> **SUPERSEDED (2026-06-29).** The CF Access **edge gate on the dev website was removed entirely** —
+> `dev.falloutchatmod.com` + `dev-hud` are now open at the edge, with the app-level dual-`developer`-role
+> gate as the only protection (like prod), and all the per-path bypass apps below were deleted. Only
+> `dev-db` + `dev-s3` remain CF-Access (service-token) gated. The section below is retained for history /
+> if the edge gate is ever reinstated. Rationale: app-auth already protects every data path (verified
+> `/api/*` returns 401 without a session even when edge-reachable), and the gate broke the in-game `/link` flow.
+
+The overlay is a native application that makes unauthenticated (no browser cookie/SSO)
+HTTP and WebSocket calls to the backend. Cloudflare Access uses its own HTTPS intercept
+for SSO; that intercept breaks WebSocket upgrades and API calls from non-browser clients.
+The fix is to add CF Access applications that **bypass** Access for the overlay surface
+while keeping SSO enforcement on the human (dashboard) surface.
+
+CF evaluates policies from most-specific path first. On `dev.falloutchatmod.com` configure:
+
+| Policy | Path(s) | Action | Reason |
+|--------|---------|--------|--------|
+| Bypass | `/ws` | Bypass | WebSocket upgrade path |
+| Bypass | `/auth/discord/qa/*` | Bypass | QA OAuth start + callback |
+| Bypass | `/api/auth/qa-status/*` | Bypass | QA login polling endpoint |
+| Bypass | `/api/*` | Bypass | All overlay REST calls (register, channels, messages, etc.) |
+| Access (SSO) | `/` (catch-all) | Require "FCM Developers" group | Dashboard root + static assets |
+
+Note on `/api/admin/*` and `/api/internal/*`: in the live config these are NOT CF-Access
+(SSO) gated — they fall under the wholesale `/api/*` bypass above. They are instead
+protected at the application layer: `/api/admin/*` requires the `ADMIN_API_KEY`
+(`x-admin-api-key`, constant-time compared) and `/api/internal/verify-dev-role` requires
+the `PROD_VERIFY_TOKEN` service token. This is the pre-existing dev posture (the overlay
+needs the whole `/api` prefix bypassed). If you want defense-in-depth SSO on those paths,
+add dedicated, more-specific `/api/admin/*` + `/api/internal/*` Access apps (CF matches
+most-specific first) — but note that would force CF-Access creds on the maintainer's admin
+calls, e.g. flipping the golden build via `POST /api/admin/qa/active-version`.
+
+**Verify WebSocket through the bypass:** after applying the policy, confirm that a WS
+upgrade to `wss://dev.falloutchatmod.com/ws` with a valid `X-Auth-Token` header succeeds
+(HTTP 101). If the upgrade receives HTTP 307 or an HTML redirect page, the `/ws` bypass
+is not applied or the `*` path catch-all is overriding it.
+
+### Security model on the bypassed surface
+
+The overlay surface is bypassed at the CF layer; the application-level gate is the
+security boundary. Two controls enforce it:
+
+1. **QA role gate** - `GET /auth/discord/qa/callback` checks that the authenticated
+   Discord user holds the `DEV_QA_ROLE_ID` role in the dev guild. No role = no session
+   grant.
+2. **Golden-build lock** - when `QA_BUILD_LOCK=true` the backend checks the
+   `x-client-version` header on every WS upgrade and on `GET /api/auth/qa-status/:installToken`.
+   A version that does not match `QA_ACTIVE_VERSION` receives close code `4003` (WS) or
+   HTTP 426 (poll). This ensures only the currently-blessed QA build can connect.
+
+The dev data is fake by construction (no real users, no real chat, no PII) so an attacker
+who bypasses the application gate finds nothing confidential.
+
+### Onboarding a QA tester
+
+1. Invite the tester to the **dev Discord server** and assign them the **QA** role
+   (`DEV_QA_ROLE_ID`).
+2. Send them the `dist:qa` build artifact via the dev Discord updates channel.
+3. They install and run it; the overlay opens the QA OAuth flow in-app.
+4. The backend verifies their QA role and hands back a session token.
+
+No CF Access group membership is needed for QA testers (they use the bypass path).
+No email allowlist entry is needed.
+
+**Revoke access:** remove the QA role from the tester in the dev Discord server. Their
+next login attempt will fail the role check. Existing sessions expire at their natural
+24-hour TTL.
+
+### New env vars (dev backend only)
+
+| Var | Purpose |
+|-----|---------|
+| `DEV_QA_ROLE_ID` | Discord role ID in the dev guild that grants QA tester access |
+| `DISCORD_QA_REDIRECT_URI` | Explicit callback URI for QA OAuth; falls back to `<proto+host>/auth/discord/qa/callback` when empty |
+| `QA_ACTIVE_VERSION` | The single currently-blessed QA build version string |
+| `QA_BUILD_LOCK` | `true` to enforce the golden-build lock; `false` (default) to disable |
+
+These vars are dev-only. The QA endpoints are only mounted when `NODE_ENV=development`
+(see [dev-only endpoints](#dev-only-endpoints-nodeenvdevelopment) in the backend docs).
+
+### AI moderation on dev — shadow-mode calibration
+
+Dev is where AI moderation thresholds get tuned before prod ever sees them, using
+QA-tester traffic against fake users and fake chat.
+
+| Var | Purpose |
+|-----|---------|
+| `OPENAI_API_KEY` | OpenAI key for the Moderation API. Optional — absent means the keyword filters run as before. Dev and prod should use **separate** keys so dev traffic can be revoked independently. |
+
+Then, in the dev dashboard under **Auto-Moderation → SETTINGS**:
+
+1. Set `ai_moderation_enabled` = `true`, `ai_moderation_mode` = `shadow`.
+2. Let QA testers generate traffic for about a week.
+3. Review `GET /api/moderation/automod-violations` sorted by `ai_max_score`. Look
+   specifically for ordinary raid, PvP, and trading talk that would have blocked.
+4. Tune `ai_moderation_thresholds`, then flip to `enforce` on dev.
+5. Only after dev enforces cleanly, repeat the same shadow → review → enforce
+   sequence on prod.
+
+Full detail, including the privacy disclosure and the kill switch:
+[docs/moderation/ai-moderation.md](../moderation/ai-moderation.md).
+
+### Registering the QA OAuth redirect URI
+
+In the Discord developer portal, add `https://dev.falloutchatmod.com/auth/discord/qa/callback`
+as an allowed redirect URI on the **dev Discord application** (not the prod app). If
+`DISCORD_QA_REDIRECT_URI` is set, use that value instead.
+
+### Flipping the golden build
+
+Each `npm run dist:qa` stamps a unique version `<base>-qa.<UTC-timestamp>` and prints it
+on completion (`QA_ACTIVE_VERSION=<version>`). Use that exact string as the blessed
+version below — that uniqueness is what lets the lock retire the previous build.
+
+When a new QA artifact is ready, update the blessed version via the admin API:
+
+```bash
+curl -X POST https://dev.falloutchatmod.com/api/admin/qa/active-version \
+  -H "x-admin-api-key: <ADMIN_API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"version": "1.3.91-qa.20260626014530"}'
+```
+
+Retrieve the current active version:
+
+```bash
+curl https://dev.falloutchatmod.com/api/admin/qa/active-version \
+  -H "x-admin-api-key: <ADMIN_API_KEY>"
+```
+
+Post the new `dist:qa` artifact to the dev Discord updates channel so testers know to
+reinstall before the old build stops connecting.
+
+---
+
 ## Standup checklist
 
 Code artifacts (in repo):
@@ -478,7 +635,8 @@ Code artifacts (in repo):
       `backend/tests/simStream.test.js`)
 - [x] `backend/scripts/clone-discord-layout.ts` — recreate prod roles/channels in
       the dev guild + print the new role-ID env mapping
-- [x] Dual-role auth core: `verify-dual-role` service + tests (OAuth/route wiring deferred)
+- [x] Dual-role auth: `verify-dual-role` service + tests and hosted DEV persona OAuth/session flow
+      (legacy); current unpackaged DevAccount buttons use the DEV-only direct session route
 - [x] `GET /api/internal/verify-dev-role` on prod + prod-bot lookup (only viable
       prod-guild check) — controller/route + dev-side `makeDevSideDeps` fallback +
       `backend/tests/verifyDevRole.test.js`
@@ -487,7 +645,7 @@ Code artifacts (in repo):
 
 Manual (maintainer) — **all done as of 2026-06-11:**
 - [x] Created the `fcm-dev` Dokploy project; stack deployed and healthy
-      (db / redis / discord all connected; builds from `dev` branch; autoDeploy off)
+      (db / redis / discord all connected; builds from `dev` branch; autoDeploy on)
 - [x] Dev secrets set in the Dokploy project env (never in the repo)
 - [x] Dedicated `cloudflared-dev` tunnel stood up on `fcm-dev-network`
 - [x] Cloudflare public hostnames + Access policies live:
@@ -519,3 +677,20 @@ Manual (maintainer) — **all done as of 2026-06-11:**
 
 To revoke access: remove the role in either Discord server (blocks the next login/re-verify)
 **and** remove the email from the CF Access group (blocks the overlay/dashboard immediately).
+
+## Backend image build constraints (`backend/Dockerfile`)
+
+The dev and prod stacks build from `backend/Dockerfile`. Two constraints are load-bearing; both
+broke the dev deploy once already:
+
+- **Node 22+ on every stage.** `react-router` v8 requires Node >= 22.22.0, so a Node 20 base fails
+  the `dashboard-builder` stage. `node:22-alpine` currently ships 22.23.x.
+- **`argon2` has no musl prebuild.** On Alpine, npm falls back to a node-gyp **source build**, which
+  needs `python3` + a C++ toolchain. Without them the build dies with `gyp ERR! find Python` and
+  Dokploy leaves the PREVIOUS container running — so the site silently keeps serving a stale build
+  while the deploy is red. The toolchain is installed as an `apk --virtual .build-deps` package and
+  deleted in the same layer, so it never ships in the runtime image.
+
+A failed compose deploy in Dokploy does **not** roll the site back or take it down — it just leaves
+the old container up. Check `composeStatus` (or `/etc/dokploy/logs/<compose>/`) rather than trusting
+that the site responding means the deploy worked.

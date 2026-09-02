@@ -1,4 +1,5 @@
-import rateLimit from 'express-rate-limit';
+import rateLimit, { MemoryStore } from 'express-rate-limit';
+import type { Store, Options, IncrementResponse, ClientRateLimitInfo } from 'express-rate-limit';
 import { RedisStore } from 'rate-limit-redis';
 import { getRedisClient } from '../config/redis';
 import { clientIp } from '../utils/clientIp';
@@ -30,6 +31,16 @@ function devCap(req: any, normal: number, dev: number): number {
   return isDevOverlay(req) ? dev : normal;
 }
 
+/**
+ * Global API allowance. The dev value is deliberately still bounded: the
+ * X-Overlay-Dev header is convenient for an unpackaged test client but is not a
+ * credential. It just prevents a local/dev overlay from exhausting its small
+ * normal bucket while exercising a settings picker.
+ */
+function apiLimitCap(req: any): number {
+  return devCap(req, req.headers['x-auth-token'] ? 100 : 500, req.headers['x-auth-token'] ? 500 : 1000);
+}
+
 // Shared Redis store -- ensures rate limit counts are consistent across multiple
 // backend replicas (NFR-SCAL: Multi-instance readiness, Fix #9).
 function makeRedisStore(prefix: string): RedisStore {
@@ -40,15 +51,136 @@ function makeRedisStore(prefix: string): RedisStore {
         const client = await getRedisClient();
         return client.sendCommand(args);
       } catch (err) {
-        // Redis is unavailable -- fail open so a Redis outage doesn't take down rate limiting
-        // and cascade into a complete service outage. Log once per store call.
+        // Redis is unavailable. We rethrow so express-rate-limit sees a store error.
+        //
+        // NOTE: express-rate-limit v8 does NOT auto-fall-back to in-memory here.
+        // With the default `passOnStoreError: false`, a thrown store error
+        // propagates to `next(err)` → the Express error handler → HTTP 500. So
+        // for a plain-Redis limiter a Redis outage returns 500 (deny) on every
+        // request through it, not an in-memory fallback. That is acceptable for
+        // the non-security limiters, but the security-critical auth/registration
+        // limiters instead use makeFailoverRedisStore() (below) so a transient
+        // Redis blip degrades to a bounded per-process in-memory cap rather than
+        // 500-ing all logins/registrations. Log once per store call.
         const logger = require('../config/logger');
-        logger.warn({ err, prefix }, 'Rate limit Redis store unavailable, failing open');
-        throw err; // express-rate-limit will fall back to in-memory on store error
+        logger.warn({ err, prefix }, 'Rate limit Redis store unavailable');
+        throw err;
       }
     },
   });
 }
+
+/**
+ * FAIL-CLOSED-BUT-AVAILABLE store for the security-critical limiters (auth +
+ * registration). This is the fix for the deferred security item "make the AUTH
+ * and REGISTRATION rate limiters fail-CLOSED on a Redis outage."
+ *
+ * Problem: express-rate-limit v8 does NOT fall back to in-memory on a store
+ * error. With the default `passOnStoreError: false`, a Redis outage makes the
+ * plain-Redis store throw → `next(err)` → HTTP 500 on EVERY request, so a
+ * transient Redis blip would 500 all logins and registrations (a DoS). The
+ * opposite knob, `passOnStoreError: true`, would fail OPEN — unbounded allow —
+ * which is unacceptable for auth/registration.
+ *
+ * Fix: this store wraps the shared RedisStore (primary) and, only when Redis
+ * errors, transparently delegates to a per-process in-memory MemoryStore
+ * (fallback). express-rate-limit still applies the SAME window + cap on top of
+ * the returned hit count, so during an outage each backend process independently
+ * enforces the configured limit (e.g. authLimiter 20/15min/IP). That is bounded
+ * and conservative — it neither denies everyone (500) nor allows everyone.
+ *
+ * Scoped to auth + registration only; every other limiter keeps the plain
+ * makeRedisStore() and its 500-on-outage behavior unchanged. The primary keeps
+ * the same Redis `prefix`, so nothing else (e.g. the simUsers rl_auth: key
+ * reset) is affected.
+ */
+class FailoverRedisStore implements Store {
+  private readonly primary: RedisStore;
+  private readonly fallback: MemoryStore;
+  private readonly prefixTag: string;
+  private usingFallback = false;
+
+  constructor(prefix: string) {
+    this.primary = makeRedisStore(prefix);
+    this.fallback = new MemoryStore();
+    this.prefixTag = prefix;
+  }
+
+  init(options: Options): void {
+    // Forward init to both so each knows windowMs. RedisStore.init returns a
+    // promise; express-rate-limit does not await store.init, so we don't either.
+    void this.primary.init?.(options);
+    this.fallback.init(options);
+  }
+
+  async increment(key: string): Promise<IncrementResponse> {
+    try {
+      const result = await this.primary.increment(key);
+      if (this.usingFallback) {
+        this.usingFallback = false;
+        logger.info(
+          { prefix: this.prefixTag },
+          '[rateLimiter] Redis store recovered; resuming shared rate-limit counts',
+        );
+      }
+      return result;
+    } catch (err) {
+      if (!this.usingFallback) {
+        this.usingFallback = true;
+        logger.warn(
+          { err, prefix: this.prefixTag },
+          '[rateLimiter] Redis unavailable for a security-critical limiter; ' +
+            'failing over to bounded per-process in-memory counts ' +
+            '(fail-closed to a conservative cap, NOT fail-open)',
+        );
+      }
+      return this.fallback.increment(key);
+    }
+  }
+
+  async decrement(key: string): Promise<void> {
+    try {
+      await this.primary.decrement(key);
+    } catch {
+      await this.fallback.decrement(key);
+    }
+  }
+
+  async resetKey(key: string): Promise<void> {
+    try {
+      await this.primary.resetKey(key);
+    } catch {
+      await this.fallback.resetKey(key);
+    }
+  }
+
+  async get(key: string): Promise<ClientRateLimitInfo | undefined> {
+    try {
+      return await this.primary.get?.(key);
+    } catch {
+      return this.fallback.get(key);
+    }
+  }
+}
+
+/**
+ * Store factory for the security-critical auth + registration limiters — Redis
+ * primary with a bounded per-process in-memory fallback on a Redis outage.
+ */
+function makeFailoverRedisStore(prefix: string): FailoverRedisStore {
+  return new FailoverRedisStore(prefix);
+}
+
+/**
+ * SECURITY: rate-limit bucket key. Always the client IP, never a client-supplied
+ * header. Several of these limiters run on unauthenticated code paths (the global
+ * `/api/` mount, `channelsLimiter`, `playerListLimiter` before `requireClientAuth`,
+ * the public `/api/parties/public` routes), so `x-auth-token` is attacker-controlled
+ * and NOT yet validated when the limiter runs. Keying on it let a caller mint a fresh
+ * bucket per request by rotating a random token, defeating the limit entirely. IP-only
+ * matches the security-critical `authLimiter` / `debugReportLimiter` / registration keys.
+ */
+const ipKey = (req: any) => clientIp(req);
 
 /**
  * REST API rate limiter: 100 req / 15 min per session token (authenticated)
@@ -60,10 +192,10 @@ function makeRedisStore(prefix: string): RedisStore {
  */
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: (req: any) => (req.headers['x-auth-token'] ? 100 : 500),
+  max: apiLimitCap,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_api:'),
   // Skip endpoints that have their own dedicated limiter (player-list) or that
   // are read-mostly with their own caching and are called on every WS reconnect
@@ -91,7 +223,7 @@ const channelsLimiter = rateLimit({
   max: (req: any) => (req.headers['x-auth-token'] ? 500 : 500),
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_chans:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
@@ -113,7 +245,7 @@ const playerListLimiter = rateLimit({
   max: 30,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_plist:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
@@ -134,7 +266,9 @@ const authLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req: any) => clientIp(req),
   skip: devBypassSkip, // secure full skip when a valid X-Dev-Bypass token is sent
-  store: makeRedisStore('rl_auth:'),
+  // Fail-CLOSED-but-available: on a Redis outage this limiter degrades to a
+  // bounded per-process in-memory cap instead of 500-ing all logins.
+  store: makeFailoverRedisStore('rl_auth:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
     title: 'Too Many Requests',
@@ -194,7 +328,9 @@ const registerLimiter = rateLimit({
     return token ?? clientIp(req);
   },
   skip: devBypassSkip, // secure full skip when a valid X-Dev-Bypass token is sent
-  store: makeRedisStore('rl_register:'),
+  // Fail-CLOSED-but-available: bounded per-process in-memory fallback on a
+  // Redis outage rather than 500-ing all registrations.
+  store: makeFailoverRedisStore('rl_register:'),
   handler: (req: any, res: any) => {
     const token = typeof req.body?.installToken === 'string' && req.body.installToken
       ? `token:${req.body.installToken.slice(0, 8)}`
@@ -222,7 +358,9 @@ const registerIpFloodLimiter = rateLimit({
   legacyHeaders: false,
   keyGenerator: (req: any) => clientIp(req),
   skip: devBypassSkip,
-  store: makeRedisStore('rl_register_ip:'),
+  // Fail-CLOSED-but-available: bounded per-process in-memory fallback on a
+  // Redis outage rather than 500-ing all registrations.
+  store: makeFailoverRedisStore('rl_register_ip:'),
   handler: (req: any, res: any) => {
     logger.warn({ ip: clientIp(req), path: req.path }, '[registerIpFloodLimiter] 429 — IP flood on register');
     res.status(429).json({
@@ -266,7 +404,7 @@ const partiesListLimiter = rateLimit({
   max: 120,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_parties_list:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
@@ -282,7 +420,7 @@ const partyCreateLimiter = rateLimit({
   max: 4,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_parties_create:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
@@ -298,7 +436,7 @@ const partyJoinLimiter = rateLimit({
   max: 8,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_parties_join:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
@@ -314,7 +452,7 @@ const partyInviteLimiter = rateLimit({
   max: 15,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_parties_invite:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
@@ -334,7 +472,7 @@ const wikiSearchLimiter = rateLimit({
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_wiki_search:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
@@ -353,7 +491,7 @@ const campSearchLimiter = rateLimit({
   max: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_camp_search:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
@@ -389,7 +527,7 @@ const partyImageUploadLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req: any) => req.headers['x-auth-token'] || clientIp(req),
+  keyGenerator: ipKey,
   store: makeRedisStore('rl_party_img:'),
   message: {
     type: 'https://fo76chat.app/errors/429',
@@ -399,5 +537,58 @@ const partyImageUploadLimiter = rateLimit({
   },
 });
 
-export { apiLimiter, authLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter };
-module.exports = { apiLimiter, authLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter };
+/**
+ * Cosmetics writes: 20 / 5 min per IP.
+ *
+ * Not really about load — a cosmetics PATCH runs the candidate name through the name
+ * blacklist and the automod prohibited-phrase filter, and the response says only
+ * "not allowed" without naming the matched pattern. Without a limit, an attacker could
+ * still binary-search the filters by submitting thousands of candidates and watching
+ * which are rejected. The cap makes that impractical (#232). Generous enough that a
+ * user experimenting with the picker never notices.
+ */
+const cosmeticsWriteLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: (req: any) => devCap(req, 20, 200),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: ipKey,
+  store: makeRedisStore('rl_cosmetics:'),
+  message: {
+    type: 'https://fo76chat.app/errors/429',
+    title: 'Too Many Requests',
+    status: 429,
+    detail: 'Too many cosmetics changes. Please wait a few minutes.',
+  },
+});
+
+/**
+ * Appearance-only writes: 120 / 5 min per IP (500 for an unpackaged dev
+ * overlay). Unlike the free chat-name endpoint, this route does not run a
+ * candidate name through blacklist/automod matching, so it is not a blacklist
+ * oracle. A larger allowance lets people compare colours and effects normally
+ * without weakening the stricter identity-write protection above.
+ */
+function cosmeticsAppearanceCap(req: any): number {
+  return devCap(req, 120, 500);
+}
+
+const cosmeticsAppearanceLimiter = rateLimit({
+  windowMs: 5 * 60 * 1000,
+  max: cosmeticsAppearanceCap,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: ipKey,
+  store: makeRedisStore('rl_cosmetics_appearance:'),
+  message: {
+    type: 'https://fo76chat.app/errors/429',
+    title: 'Too Many Requests',
+    status: 429,
+    detail: 'Too many appearance changes. Please wait a few minutes.',
+  },
+});
+
+// ipKey is exported for unit testing: it encodes the security invariant that a
+// bucket key is ALWAYS the client IP and never the spoofable x-auth-token header.
+export { ipKey, apiLimitCap, cosmeticsAppearanceCap, apiLimiter, authLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter, cosmeticsWriteLimiter, cosmeticsAppearanceLimiter };
+module.exports = { ipKey, apiLimitCap, cosmeticsAppearanceCap, apiLimiter, authLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter, cosmeticsWriteLimiter, cosmeticsAppearanceLimiter };

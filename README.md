@@ -210,6 +210,22 @@ npm run dist:win    # Windows NSIS installer → dist/
 npm run dist:linux  # Linux AppImage → dist/
 ```
 
+### QA builds (hosted-dev testers)
+
+A separate **QA build channel** lets vetted testers run the overlay against the hosted dev
+environment (`dev.falloutchatmod.com`) as regular users — gated by a dev-guild `QA` Discord
+role plus a version-string golden-build lock, with no Cloudflare Access email and no
+developer role.
+
+```bash
+cd cross-platform-overlay
+npm run dist:qa     # "Fallout Chat Mod QA" → dist-electron/ (Linux); prints QA_ACTIVE_VERSION
+```
+
+Windows QA builds run on the self-hosted runner via the **Build Windows QA** GitHub Actions
+workflow. Full build → bless → distribute → retire runbook:
+[docs/deployment/qa-builds.md](docs/deployment/qa-builds.md).
+
 ### 6. Run backend tests
 
 ```bash
@@ -329,18 +345,6 @@ See `cross-platform-overlay/assets/install/INSTALL-LINUX.txt` for the KDE Plasma
 
 ---
 
-## Antivirus / SmartScreen
-
-Unsigned binaries trigger SmartScreen and some AV heuristics by reputation alone — not because of behavior. Fallout Chat Mod does not read game memory, modify game files, inject code, or scan network connections. The only potentially flagged behavior is the global low-level keyboard hook used for hotkeys (classic keylogger heuristic — a migration to `RegisterHotKey` is tracked in `docs/CODE-SIGNING.md`).
-
-Code signing is planned (Azure Trusted Signing). Until signed, if your AV blocks the overlay, add exclusions for:
-- `%LocalAppData%\Programs\Fallout Chat Mod\`
-- `%LocalAppData%\FalloutChatOverlay\`
-
-Code signing is on the roadmap to remove these reputation-based warnings.
-
----
-
 ## EULA Compliance
 
 Fallout Chat Mod ships in two clearly separated forms:
@@ -362,21 +366,19 @@ users/chat, never confidential data). Full design + runbook:
 
 ### Onboarding a developer
 
-Access requires the **developer role in BOTH Discord servers** plus a Cloudflare Access
-allowlist entry. To grant a new developer access (maintainer steps):
+Access requires the **developer role in BOTH Discord servers**. The Cloudflare Access edge gate
+on the dev website was removed 2026-06-29; only direct DB/object-store access remains
+CF-Access gated. To grant a new developer access (maintainer steps):
 
 1. **Prod Discord server** — assign them the **`developer`** role.
 2. **Dev Discord server** — assign them the **`developer`** role.
    *(Both are required — the app's dual-role gate denies anyone missing either.)*
-3. **Cloudflare Access** — add their email to the **"FCM Developers"** Access group
-   (Zero Trust → Access → Groups → *FCM Developers* → Include → add email). This gates
-   `dev.falloutchatmod.com`; they sign in via One-time PIN (email code).
-4. **(Only if they need direct DB / object-store access)** give them the Cloudflare Access
+3. **(Only if they need direct DB / object-store access)** give them the Cloudflare Access
    **service token** (`CF-Access-Client-Id` / `CF-Access-Client-Secret`) so they can run
    `cloudflared access tcp --hostname dev-db.falloutchatmod.com ...`.
 
-To **revoke**: remove the `developer` role in either Discord server (gate denies within the
-token TTL) and/or remove their email from the "FCM Developers" group (instant).
+To **revoke**: remove the `developer` role in either Discord server (the app-level gate denies
+access).
 
 Most contributors don't need any of this — they run the **fully-local stack** (see
 [Dev Setup](#dev-setup)) and submit PRs against `dev`.

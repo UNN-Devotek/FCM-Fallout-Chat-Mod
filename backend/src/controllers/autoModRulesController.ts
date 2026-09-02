@@ -14,13 +14,14 @@
  *     id: string (uuid),
  *     name: string,
  *     enabled: boolean,
- *     triggerType: 'KEYWORD'|'SPAM'|'KEYWORD_PRESET'|'MENTION_SPAM'|'LINK',
+ *     triggerType: 'AI_MODERATION'|'KEYWORD'|'SPAM'|'KEYWORD_PRESET'|'MENTION_SPAM'|'LINK',
  *     triggerMetadata: {
  *       // KEYWORD:        keyword_filter?: string[], regex_patterns?: string[], allow_list?: string[]
  *       // KEYWORD_PRESET: presets?: ('PROFANITY'|'SEXUAL_CONTENT'|'SLURS')[], allow_list?: string[]
  *       // MENTION_SPAM:   mention_total_limit?: number
  *       // SPAM:           dupe_limit?: number, dupe_window_ms?: number, rate_limit?: number, rate_window_ms?: number
  *       // LINK:           allow_list?: string[]  (domain strings, e.g. "youtube.com")
+ *       // AI_MODERATION:  thresholds?: Record<string, number> (global thresholds are used by default)
  *     },
  *     actions: Array<{
  *       type: 'BLOCK'|'ALERT'|'TIMEOUT'|'MUTE_OVERLAY',
@@ -55,6 +56,7 @@
  *     id: string, ruleId: string, userId: string, channelId: string|null,
  *     messageContent: string, matchedKeyword: string|null, matchedSubstr: string|null,
  *     actionsTaken: Array<{ type, success, detail? }>,
+ *     aiCategories: Record<string, number>|null, aiMaxScore: number|null,
  *     createdAt: string,
  *     rule: { name: string, triggerType: string }
  *   }
@@ -69,13 +71,15 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
+import { paramsOf } from '../utils/reqParams';
 import prisma from '../config/prisma';
 import { createError } from '../middleware/errorHandler';
 import { invalidateRulesCache } from '../services/autoModEngine';
+import { resolveInternalActorId } from '../utils/resolveActorId';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const VALID_TRIGGER_TYPES = new Set(['KEYWORD', 'SPAM', 'KEYWORD_PRESET', 'MENTION_SPAM', 'LINK']);
+const VALID_TRIGGER_TYPES = new Set(['AI_MODERATION', 'KEYWORD', 'SPAM', 'KEYWORD_PRESET', 'MENTION_SPAM', 'LINK']);
 const VALID_ACTION_TYPES = new Set(['BLOCK', 'ALERT', 'TIMEOUT', 'MUTE_OVERLAY']);
 
 function validateUuid(id: string): boolean { return UUID_RE.test(id); }
@@ -114,7 +118,7 @@ export async function createAutoModRule(req: Request, res: Response, next: NextF
   if (actionsErr) return next(createError(422, actionsErr));
 
   try {
-    const actorId = (req as any).adminUser?.id ?? null;
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     const rule = await prisma.autoModRule.create({
       data: {
         name: name.trim().slice(0, 100),
@@ -144,7 +148,7 @@ export async function createAutoModRule(req: Request, res: Response, next: NextF
 
 // ── PUT /api/moderation/automod-rules/:id ─────────────────────────────────────
 export async function updateAutoModRule(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const { id } = req.params;
+  const { id } = paramsOf(req);
   if (!validateUuid(id)) return next(createError(400, 'Invalid rule ID'));
 
   const { name, enabled, triggerType, triggerMetadata, actions, exemptChannelIds, exemptRoles } = req.body;
@@ -172,7 +176,7 @@ export async function updateAutoModRule(req: Request, res: Response, next: NextF
 
     const rule = await prisma.autoModRule.update({ where: { id }, data: data as any });
     invalidateRulesCache();
-    const actorId = (req as any).adminUser?.id ?? null;
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     await prisma.auditLog.create({
       data: {
         actorId,
@@ -189,14 +193,14 @@ export async function updateAutoModRule(req: Request, res: Response, next: NextF
 
 // ── DELETE /api/moderation/automod-rules/:id ──────────────────────────────────
 export async function deleteAutoModRule(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const { id } = req.params;
+  const { id } = paramsOf(req);
   if (!validateUuid(id)) return next(createError(400, 'Invalid rule ID'));
   try {
     const existing = await prisma.autoModRule.findUnique({ where: { id } });
     if (!existing) return next(createError(404, 'Rule not found'));
     await prisma.autoModRule.delete({ where: { id } });
     invalidateRulesCache();
-    const actorId = (req as any).adminUser?.id ?? null;
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     await prisma.auditLog.create({
       data: {
         actorId,
@@ -213,14 +217,14 @@ export async function deleteAutoModRule(req: Request, res: Response, next: NextF
 
 // ── PATCH /api/moderation/automod-rules/:id/toggle ────────────────────────────
 export async function toggleAutoModRule(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const { id } = req.params;
+  const { id } = paramsOf(req);
   if (!validateUuid(id)) return next(createError(400, 'Invalid rule ID'));
   const { enabled } = req.body;
   if (typeof enabled !== 'boolean') return next(createError(422, 'enabled must be a boolean'));
   try {
     const rule = await prisma.autoModRule.update({ where: { id }, data: { enabled }, select: { id: true, enabled: true, name: true } });
     invalidateRulesCache();
-    const actorId = (req as any).adminUser?.id ?? null;
+    const actorId = await resolveInternalActorId(req.adminUser?.id);
     await prisma.auditLog.create({
       data: {
         actorId,

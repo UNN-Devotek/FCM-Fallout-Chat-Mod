@@ -45,8 +45,12 @@ export default defineConfig({
   base: './', // Electron loads via file:// — relative asset paths required.
   plugins: [react(), tailwindcss()],
   define: {
-    // Resolved from package.json at build/dev-server start time.
-    __APP_VERSION__: JSON.stringify(pkgVersion),
+    // FCM_BUILD_VERSION (set by scripts/build-qa.mjs for a unique per-build QA
+    // version) wins; otherwise resolved from package.json at build/dev-server
+    // start time. Keeps the renderer's displayed version in lock-step with the
+    // packaged version + the X-Client-Version the golden-build lock checks.
+    __APP_VERSION__: JSON.stringify(process.env.FCM_BUILD_VERSION || pkgVersion),
+    __BUILD_CHANNEL__: JSON.stringify(process.env.BUILD_CHANNEL || 'stable'),
   },
   resolve: {
     alias: [
@@ -57,7 +61,11 @@ export default defineConfig({
     // admin-dashboard/node_modules. We MUST force a single instance of each, or
     // React context (QueryClientProvider, Router, hooks) breaks across the two
     // module trees ("No QueryClient set" / "Invalid hook call").
-    dedupe: ['react', 'react-dom', 'react-router-dom', '@tanstack/react-query'],
+    // react-router v8 removed react-router-dom; dedupe the real package instead.
+    // This matters here: the renderer pulls ChatOverlay from ../admin-dashboard/src,
+    // so two node_modules trees are in play and a duplicated router would mean two
+    // separate router contexts.
+    dedupe: ['react', 'react-dom', 'react-router', '@tanstack/react-query'],
     preserveSymlinks: false,
   },
   build: {

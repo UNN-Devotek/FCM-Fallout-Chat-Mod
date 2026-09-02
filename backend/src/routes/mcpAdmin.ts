@@ -17,6 +17,7 @@ import { createError } from '../middleware/errorHandler';
 import { ingestMessage } from '../services/ingestMessage';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
+import { paramStr } from '../utils/reqParams';
 
 const router = express.Router();
 
@@ -86,7 +87,7 @@ router.post('/channels', async (req: Request, res: Response, next: NextFunction)
 // PATCH /api/mcp-admin/channels/:id
 router.patch('/channels/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { id } = req.params;
+    const id = paramStr(req, 'id');
     const { name, color, sortOrder, discordRelay, allowGifs, allowEmojis, isArchived } = req.body || {};
     const channel = await prisma.channel.update({
       where: { id },
@@ -110,7 +111,7 @@ router.patch('/channels/:id', async (req: Request, res: Response, next: NextFunc
 // DELETE /api/mcp-admin/channels/:id  (archive)
 router.delete('/channels/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { id } = req.params;
+    const id = paramStr(req, 'id');
     await prisma.channel.update({ where: { id }, data: { isArchived: true } });
     res.json({ data: { archived: true } });
   } catch (err) {
@@ -161,7 +162,7 @@ router.post('/commands', async (req: Request, res: Response, next: NextFunction)
 // PATCH /api/mcp-admin/commands/:id
 router.patch('/commands/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const idNum = parseInt(req.params.id, 10);
+    const idNum = parseInt(paramStr(req, 'id'), 10);
     if (isNaN(idNum)) return next(createError(400, 'id must be a number'));
     const { trigger, description, actionType, cooldownSec, requiresArgs, alias, enabled } = req.body || {};
     const cmd = await prisma.chatCommand.update({
@@ -186,7 +187,7 @@ router.patch('/commands/:id', async (req: Request, res: Response, next: NextFunc
 // DELETE /api/mcp-admin/commands/:id
 router.delete('/commands/:id', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const delId = parseInt(req.params.id, 10);
+    const delId = parseInt(paramStr(req, 'id'), 10);
     if (isNaN(delId)) return next(createError(400, 'id must be a number'));
     await prisma.chatCommand.delete({ where: { id: delId } });
     res.json({ data: { deleted: true } });
@@ -538,7 +539,7 @@ router.post('/messages/send', async (req: Request, res: Response, next: NextFunc
 router.delete('/messages/:id', async (req: Request, res: Response, next: NextFunction) => {
   if (!requireConfirm(req, next)) return;
   try {
-    const { id } = req.params;
+    const id = paramStr(req, 'id');
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!UUID_RE.test(id)) return next(createError(400, 'id must be a valid UUID'));
     await prisma.message.updateMany({ where: { id }, data: { isDeleted: true } });
@@ -657,7 +658,7 @@ router.patch('/reports/:id', async (req: Request, res: Response, next: NextFunct
     const actor = req.user as any;
     if (!actor) return next(createError(401, 'MCP user not resolved'));
     const report = await prisma.report.update({
-      where: { id: req.params.id },
+      where: { id: paramStr(req, 'id') },
       data: {
         status: status as any,
         notes: resolution ?? undefined,
@@ -705,7 +706,7 @@ router.post('/name-blacklist', async (req: Request, res: Response, next: NextFun
 router.delete('/name-blacklist/:id', async (req: Request, res: Response, next: NextFunction) => {
   if (!requireConfirm(req, next)) return;
   try {
-    await prisma.nameBlacklistEntry.delete({ where: { id: req.params.id } });
+    await prisma.nameBlacklistEntry.delete({ where: { id: paramStr(req, 'id') } });
     const { refreshBlacklist } = require('../services/nameBlacklistService');
     await refreshBlacklist().catch((e: unknown) => logger.warn({ e }, 'blacklist refresh failed'));
     res.json({ data: { deleted: true } });

@@ -70,12 +70,14 @@ Validation errors include an `errors` array: `[{ "field": "...", "message": "...
 
 ## Rate Limiting Middleware
 
-All rate limiters use `rate-limit-redis` backed by Redis (fail-open on Redis outage) and
-return RFC 7807 `429` responses. Defined in `middleware/rateLimiter.ts`.
+All rate limiters use `rate-limit-redis` backed by Redis and return RFC 7807 `429`
+responses. The security-critical auth and registration limiters fail over to a
+bounded per-process store if Redis is unavailable; the remaining limiters retain
+their normal Redis-store failure behaviour. Defined in `middleware/rateLimiter.ts`.
 
 | Limiter | Route(s) | Cap | Window | Key |
 |---------|---------|-----|--------|-----|
-| `apiLimiter` | `POST /api/*` (most routes); also the non-`/api/` app routes (`/auth/logout`, `/auth/ws-ticket`, `/auth/me`, `/auth/me/public`, `/avatars/*`, `/party-images/*`, `/virustotal`, `/install.sh`/`/uninstall.sh`/`/install.ps1`, and the `/admin/*` + `/admin/debug/*` endpoints) | 100 authed / 500 anon | 15 min | X-Auth-Token or IP |
+| `apiLimiter` | `/api/*` (except routes with their own documented skip) and selected non-`/api/` app routes | 100 authed / 500 anon (500 / 1000 unpackaged dev overlay) | 15 min | IP |
 | `channelsLimiter` | `GET /api/channels` | 500 | 15 min | token or IP |
 | `authLimiter` | `POST /api/users` (register); Discord OAuth routes (`/auth/discord`, `/auth/discord/callback`, `/auth/discord/link`, `/auth/discord/link/callback`) | 20 (500 dev overlay) | 15 min | IP |
 | `registerLimiter` | `POST /api/users` | 10/install-token (60 dev) | 1 min | installToken → IP fallback |
@@ -88,7 +90,14 @@ return RFC 7807 `429` responses. Defined in `middleware/rateLimiter.ts`.
 | `partyJoinLimiter` | `POST /api/parties/:id/join` | 8 | 1 min | token |
 | `partyInviteLimiter` | `POST /api/parties/:id/invite*` | 15 | 1 min | token |
 | `partyImageUploadLimiter` | `POST /api/parties/upload-image` | 10 | 1 min | token |
-Dev overlays (unpackaged Electron, `X-Overlay-Dev: 1`) get a higher cap instead of an outright skip so the header can't be used to bypass production limits. A token-gated `X-Dev-Bypass` header provides a full skip when `DEV_RATELIMIT_BYPASS_TOKEN` is set.
+| `cosmeticsWriteLimiter` | `PATCH /api/users/:id/chat-name` | 20 (200 unpackaged dev overlay) | 5 min | IP |
+| `cosmeticsAppearanceLimiter` | cosmetic profile and Electron-overlay PATCH routes | 120 (500 unpackaged dev overlay) | 5 min | IP |
+
+Unpackaged Electron sends `X-Overlay-Dev: 1` for registration **and every proxied
+API request**, so a dev tester can compare appearance choices without consuming the
+small production-sized bucket. This is a high but bounded allowance, never a bypass;
+packaged builds never add the header. A token-gated `X-Dev-Bypass` header provides a
+full skip when `DEV_RATELIMIT_BYPASS_TOKEN` is set.
 
 ## Security Headers
 
@@ -100,6 +109,27 @@ Helmet is applied globally with a Content Security Policy:
 - `object-src 'none'`
 
 CORS allows `env.CLIENT_ORIGINS` with credentials. The `trust proxy` setting is gated on `TRUST_PROXY` to prevent header spoofing on direct deployments.
+
+## Dev-only endpoints (`NODE_ENV=development`)
+
+The following endpoints are mounted **only** when `NODE_ENV=development`. They are absent
+in production regardless of any other env var. They serve the QA tester workflow and the
+golden-build version lock; see [hosted-dev-environment.md](../deployment/hosted-dev-environment.md#qa-tester-access).
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/auth/discord/qa/start` | none | Initiates Discord OAuth for QA testers; redirects to Discord |
+| `GET` | `/auth/discord/qa/callback` | none (state CSRF) | OAuth callback; verifies `DEV_QA_ROLE_ID`, stores a one-time session grant in Redis |
+| `GET` | `/api/auth/qa-status/:installToken` | none | Polled by the QA overlay; enforces the golden-build lock (checks `x-client-version` header; returns 426 on mismatch); returns the session grant once and deletes it |
+| `POST` | `/api/dev/login-as` | loopback or `X-Dev-Persona-Key`, DEV-only | Issues an immediate synthetic persona session for an unpackaged local or hosted DEV overlay (`{ persona, installToken }`) |
+| `GET` | `/auth/discord/dev-login` | none (state CSRF + dual developer-role gate) | Legacy hosted DEV OAuth for a selected synthetic persona; not used by the overlay DevAccount buttons |
+| `GET` | `/api/auth/dev-login-status/:installToken` | none | Legacy polling endpoint for the hosted OAuth persona flow |
+| `POST` | `/api/admin/qa/active-version` | `x-admin-api-key` | Sets the active QA build version (`QA_ACTIVE_VERSION` in Redis) |
+| `GET` | `/api/admin/qa/active-version` | `x-admin-api-key` | Returns the currently-active QA build version |
+
+All eight routes are also subject to `apiLimiter` or `authLimiter` (same caps as their
+equivalent non-QA paths). The routes are independent of `ENABLE_DEV_LOGIN` — the hosted
+dev environment runs with `ENABLE_DEV_LOGIN=false` while still enabling these endpoints.
 
 ## Related Documentation
 

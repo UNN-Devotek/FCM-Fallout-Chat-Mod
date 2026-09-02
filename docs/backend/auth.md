@@ -2,6 +2,16 @@
 
 There are three distinct auth flows in the backend, each serving a different client type.
 
+> **Direction (locked): mandatory multi-provider auth gate.** Chat access is moving to **require a
+> linked Nexus or Discord account** (one or the other). The overlay already enforces a Discord login
+> wall; **Nexus is being added** as an alternative, and the in-game chat gets a **device-code link**.
+> The install-token flow below stays as the device/session mechanism, but on its own it no longer
+> grants chat — a bare install is **limited** until linked. Public-website read-only stays open;
+> **sending is gated**. The admin dashboard stays Discord-only (elevated roles need Discord, #168).
+> Authoritative design: [hud-chat-auth-design.md](hud-chat-auth-design.md) (multi-provider + pairing /
+> device-code) and epic #163; the chat.v1 in-game gate is in
+> [native-chat-relay/fcm-integration.md](../overlay/zfe/native-chat-relay/fcm-integration.md#mandatory-auth-gate--limited-until-nexusdiscord-linked-locked).
+
 ---
 
 ## 1. Overlay / Desktop Client Auth (install token → session token)
@@ -44,7 +54,7 @@ Every subsequent request from the desktop client includes `X-Auth-Token: <sessio
 
 ### OAuth2 Flow
 
-1. **`GET /auth/discord`** — stores a CSRF state token in Redis (`oauth_state:<state>` → intent JSON, 5-min TTL) and redirects to Discord with scopes `identify guilds.members.read`.
+1. **`GET /auth/discord`** — stores a CSRF state token in Redis (`oauth_state:<state>` → `{ intent, sessionId }`, 5-min TTL), persists the initiating session cookie, and redirects to Discord with scopes `identify guilds.members.read`.
 
 2. **`GET /auth/discord/callback`** — validates the state token (deleted from Redis on use), exchanges the authorization code for an access token, fetches Discord identity and guild membership. Determines the user's role:
    - Compares the user's guild roles against `OWNER_ROLE_ID`, `ADMIN_ROLE_ID`, `MODERATOR_ROLE_ID` environment variables.
@@ -67,9 +77,15 @@ Applied on admin/mod routes. Verification order per request:
 1. `X-API-Key` header bypass — grants `owner` access (same key as `ADMIN_API_KEY`).
 2. `req.session.discordUser` must exist.
 3. Ban lockdown: checks linked game user for active ban; returns structured 403 if banned.
-4. Checks Redis role cache (`role:verified:<discordId>`).
-5. Falls back to `admin_users` DB table.
-6. Falls back to session `roles` array (covers fresh login before first verification cycle).
+4. Checks Redis role cache (`role:verified:<discordId>`), accepting the cached role only when it
+   satisfies the requested gate.
+5. Falls back to `admin_users` DB table with the same privilege check.
+6. Falls back to session `roles` array (covers fresh login before first verification cycle), matching
+   exact configured IDs and the same hierarchy.
+
+Route arguments may be configured Discord role IDs or literal labels (`owner`, `admin`, `moderator`).
+The effective hierarchy is `owner > admin > moderator`, so a higher role satisfies a lower gate but a
+lower cached or persisted role never satisfies an owner/admin-only route.
 
 ### Public Discord Auth (Reports / Applications)
 
@@ -96,9 +112,49 @@ On callback:
 
 The overlay polls `GET /api/auth/discord-status/:installToken` to check whether the link completed and to retrieve the resolved display name and avatar URL.
 
+### DEV persona accounts
+
+The unpackaged overlay's **DEV ACCOUNTS** buttons call
+`POST /api/dev/login-as` with `{ persona, installToken }`. When the relay is either
+the local backend or the isolated hosted DEV backend, the endpoint immediately issues
+a normal 24-hour overlay session for the selected synthetic persona. No Discord
+authentication or browser window is involved.
+
+The route is mounted only when `NODE_ENV=development`, including hosted DEV, and is
+absent from production regardless of `ENABLE_DEV_LOGIN`. The overlay adds the buttons
+only for unpackaged builds targeting a known development relay; packaged production
+builds and the production relay cannot use them.
+
+The local DEV stack accepts loopback requests without another credential so that
+workflow remains immediate. The hosted DEV stack has a required
+`DEV_PERSONA_LOGIN_SECRET`, and therefore every request to it must include
+`X-Dev-Persona-Key`. The unpackaged overlay reads that value from its process
+environment; it is never placed in a URL. Generate it independently for the
+hosted stack and pass it when launching `npm run dev:cloud`.
+
+The older `GET /auth/discord/dev-login` and
+`GET /api/auth/dev-login-status/:installToken` endpoints remain DEV-only for backward
+compatibility with an earlier OAuth-based persona flow. Current DevAccount buttons do
+not call those endpoints.
+
 ---
 
-## 4. Device Keypair Auth (ECDSA P-256)
+## 4. Nexus OAuth2 — Web Link Alternative
+
+`GET /auth/nexus` and `/auth/nexus/callback` implement the optional Nexus OAuth2 + PKCE
+alternative for users who do not use Discord. The one-time Redis state stores both the PKCE
+verifier and the initiating Express session ID; the callback deletes the state and rejects a
+different or missing session. A first Nexus login provisions a lightweight FCM user and a
+`linked_identities(provider='nexus')` row. `/api/link/*` resolves that provider UID server-side,
+so the browser session never supplies an authoritative user ID.
+
+Nexus is feature-flagged: both `NEXUS_OAUTH_CLIENT_ID` and `NEXUS_OAUTH_CLIENT_SECRET` must be set.
+The redirect URI is `NEXUS_OAUTH_REDIRECT_URI` when configured, otherwise it is derived from the
+forwarded request host.
+
+---
+
+## 5. Device Keypair Auth (ECDSA P-256)
 
 **Files:** `services/deviceAuthService.ts`, `middleware/auth.ts` (`requireSignedDevice`), `routes/devices.ts`
 
@@ -116,13 +172,13 @@ The `.NET` client signs in ASN.1 DER format (`DSASignatureFormat.Rfc3279DerSeque
 
 ---
 
-## 5. Admin API Key (`requireAdminKey`)
+## 6. Admin API Key (`requireAdminKey`)
 
 **File:** `middleware/requireAdminKey.ts`
 
 Reads `X-Admin-API-Key` and compares it to `env.ADMIN_API_KEY` using constant-time equality (`utils/constantTimeEquals.ts`). Used exclusively on `/admin/debug/*` endpoints and as a `requireDiscordRole` bypass for CLI tooling. Every use is audit-logged.
 
-## 6. Migration Key (`requireMigrationKey`)
+## 7. Migration Key (`requireMigrationKey`)
 
 **File:** `middleware/requireMigrationKey.ts`
 
@@ -135,16 +191,19 @@ Reads `X-Migration-Key` and gates `/admin/migration/*` (ad-hoc SQL, `pg_dump`, `
 | Key | Value | TTL |
 |-----|-------|-----|
 | `session:<token>` | userId | 24h |
-| `oauth_state:<state>` | JSON `{ intent }` | 5 min |
+| `oauth_state:<state>` | JSON `{ intent, sessionId }` | 5 min |
+| `nexus_oauth_state:<state>` | JSON `{ codeVerifier, sessionId }` | 10 min |
 | `oauth_link_state:<state>` | installToken | 5 min |
 | `discord_link:<installToken>` | JSON Discord identity | 10 min |
+| `dev_persona_oauth_state:<state>` | JSON `{ installToken, persona }` | 5 min |
+| `dev_persona_grant:<installToken>` | JSON session grant | 10 min, single-use |
 | `ws_ticket:<ticket>` | JSON `{ type, discordId, username }` | 60 s |
 | `role:verified:<discordId>` | role string | 5 min |
 | `device:nonce:<nonce>` | `1` | 120 s |
 
 ---
 
-## 7. Dual Discord Role Gate (Hosted Dev Environment)
+## 8. Dual Discord Role Gate (Hosted Dev Environment)
 
 **Files:** `services/devAuthService.ts`, `routes/verifyDevRole.ts`, `controllers/verifyDevRoleController.ts`
 

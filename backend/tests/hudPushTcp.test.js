@@ -105,6 +105,12 @@ jest.mock('../src/services/ingestMessage', () => ({
   ingestMessage: jest.fn().mockResolvedValue({ ok: true, messageId: 'msg-uuid' }),
 }));
 
+jest.mock('../src/services/supporterSyncService', () => ({
+  __esModule: true,
+  refreshSupporterFromHudSend: jest.fn().mockResolvedValue(undefined),
+  default: { refreshSupporterFromHudSend: jest.fn().mockResolvedValue(undefined) },
+}));
+
 // ── Stub websocket handlers broadcast export (needed by ingestMessage transitive import) ──
 jest.mock('../src/websocket/handlers', () => ({
   broadcast: jest.fn(),
@@ -183,11 +189,12 @@ jest.mock('../src/services/hudFeedService', () => {
 
 // ── Import modules under test ─────────────────────────────────────────────────
 
-const { startTcpServer, stopTcpServer } = require('../src/services/hudPushTcp');
+const { startTcpServer, stopTcpServer, readPemValue } = require('../src/services/hudPushTcp');
 const { hudPushNotify, _setChannelResolver } = require('../src/services/hudPush');
 const { buildFeedLines } = require('../src/services/hudFeedService');
 const { ingestMessage } = require('../src/services/ingestMessage');
 const { resolveHudIdentity, getActiveBlock } = require('../src/services/hudIdentityService');
+const { refreshSupporterFromHudSend } = require('../src/services/supporterSyncService');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -246,6 +253,28 @@ function delay(ms) {
 }
 
 // ── Test suite ────────────────────────────────────────────────────────────────
+
+describe('readPemValue (inline PEM vs file path)', () => {
+  const fsNode = require('fs');
+  const osNode = require('os');
+  const pathNode = require('path');
+
+  test('returns inline PEM content, restoring \\n escapes onto separate lines', () => {
+    const inline = '-----BEGIN CERTIFICATE-----\\nLINE1\\nLINE2\\n-----END CERTIFICATE-----\\n';
+    expect(readPemValue(inline).toString())
+      .toBe('-----BEGIN CERTIFICATE-----\nLINE1\nLINE2\n-----END CERTIFICATE-----\n');
+  });
+
+  test('reads from a file path when the value is not inline PEM', () => {
+    const tmp = pathNode.join(osNode.tmpdir(), `pem-test-${process.pid}.pem`);
+    fsNode.writeFileSync(tmp, '-----BEGIN CERTIFICATE-----\nFROMFILE\n-----END CERTIFICATE-----\n');
+    try {
+      expect(readPemValue(tmp).toString()).toContain('FROMFILE');
+    } finally {
+      fsNode.unlinkSync(tmp);
+    }
+  });
+});
 
 describe('hudPushTcp production guard', () => {
   // HUD push is dev-only until the M6 production-exposure decision: the env
@@ -470,6 +499,7 @@ describe('hudPushTcp integration', () => {
 
   it('ingests a message after HELLO + SEND', async () => {
     ingestMessage.mockClear();
+    refreshSupporterFromHudSend.mockClear();
     resolveHudIdentity.mockResolvedValue({ userId: 'user-abc', identityHash: 'hash-abc' });
     getActiveBlock.mockResolvedValue(null);
 
@@ -490,6 +520,7 @@ describe('hudPushTcp integration', () => {
       source: 'hud',
       identityHash: 'hash-abc',
     }));
+    expect(refreshSupporterFromHudSend).toHaveBeenCalledWith({ userId: 'user-abc' });
 
     client.close();
     await delay(100);

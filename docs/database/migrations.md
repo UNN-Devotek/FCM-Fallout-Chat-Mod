@@ -4,14 +4,26 @@
 
 ## Why Idempotency Is Required
 
-`backend/baseline-migrations.sh` runs two steps on every container startup:
+`backend/baseline-migrations.sh` runs the schema sync, compatibility patches, and history
+reconciliation on every container startup:
 
 ```sh
-npx prisma db push --skip-generate --accept-data-loss   # authoritative schema sync
+npx prisma db push --skip-generate                    # authoritative schema sync; failure stops boot
+node dist/scripts/applyPostPushPatches.js              # raw constraints + safe data defaults
 node dist/scripts/reconcileMigrations.js                # record pending migrations as applied (non-fatal)
 ```
 
-`prisma db push` is the authoritative step — it diffs `schema.prisma` against the live DB and applies the difference directly, so the schema is already correct before the second step runs.
+`prisma db push` is the authoritative step — it diffs `schema.prisma` against the live DB and applies the difference directly, so the schema is already correct before the second step runs. `baseline-migrations.sh` uses `set -eu` and refuses to start the backend when this command fails. It deliberately does **not** pass `--accept-data-loss`; destructive schema drift must be reviewed and applied explicitly rather than silently accepted during a production boot.
+
+Some compatibility changes are not represented by Prisma's schema diff: raw `CHECK` constraints
+and data-only repairs. After `db push`, `baseline-migrations.sh` runs
+[`src/scripts/applyPostPushPatches.ts`](../../backend/src/scripts/applyPostPushPatches.ts), and
+the server applies the same patch set during startup. These patches are static, idempotent, and
+fail-closed. The current set keeps `messages.source` aligned with all producers (`game`,
+`discord`, `hud`, `relay`, `mcp`, `ws`), repairs only the untouched stock automod rule to
+target-gated slur protection, removes only the four exact legacy chat-profanity literal rows
+(`fuck`, `shit`, `bastard`, `assh`) once (tracked by a dedicated cleanup marker), and inserts
+disabled/shadow AI moderation defaults.
 
 **The second step reconciles migration *history*, it does NOT re-apply migrations.** Because db push already created every object, the old `prisma migrate deploy` would try to replay each migration's SQL, fail with `42P07` (`already exists`), record a *failed* row, and surface `P3009` ("failed migrations") on every subsequent boot. Instead, [`src/scripts/reconcileMigrations.ts`](../../backend/src/scripts/reconcileMigrations.ts) records each pending or previously-failed migration as **applied** (`prisma migrate resolve --applied`) — history bookkeeping only, no schema change. It resolves *only* the pending ones (steady state = 0), so it is a no-op on normal boots and never reintroduces the ~150s cold-start that a resolve-every-migration loop once caused.
 
@@ -85,7 +97,7 @@ CREATE TABLE "admin_users" ( ... );
 CREATE UNIQUE INDEX "admin_users_discord_id_key" ON "admin_users"("discord_id");
 ```
 
-The older Prisma-generated migrations (before this rule was established) omit `IF NOT EXISTS`. They work because `prisma db push` already applied the schema; `migrate deploy` skips them with `|| true`. **All new migrations must use the idempotent patterns** to avoid log noise and to be safe for manual `migrate deploy` runs.
+The older Prisma-generated migrations (before this rule was established) omit `IF NOT EXISTS`. They work because `prisma db push` already applied the schema; the history reconciliation step records them without replaying their SQL. **All new migrations must use the idempotent patterns** to avoid log noise and to be safe for manual `migrate deploy` runs.
 
 ## Generating a New Migration
 

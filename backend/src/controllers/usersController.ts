@@ -4,6 +4,7 @@ import prisma from '../config/prisma';
 import { Prisma } from '@prisma/client';
 import { getRedisClient } from '../config/redis';
 import { createError } from '../middleware/errorHandler';
+import { paramStr, paramsOf } from '../utils/reqParams';
 import env from '../config/environment';
 import logger from '../config/logger';
 import { computeDiscriminator } from '../utils/discriminator';
@@ -13,6 +14,7 @@ import { setSpamImmunity, findProhibitedPhrase } from '../services/autoModServic
 import { buildAvatarUrl } from '../services/avatarService';
 import { refreshClientIdentity } from '../websocket/handlers';
 import { mergeUserInto } from '../utils/mergeUser';
+import { setChatName } from '../services/chatNameService';
 
 // 24 hours — ephemeral overlay session; the overlay silently re-registers via its install
 // token on reconnect. Discord re-auth enforced separately by the 30-day window (discordAuthedAt).
@@ -96,13 +98,14 @@ export async function mentionSearch(req: Request, res: Response, next: NextFunct
         isBanned: false,
         ...(q.length > 0 && {
           OR: [
+            { chatName: { contains: q, mode: 'insensitive' } },
             { username: { contains: q, mode: 'insensitive' } },
             { discordUsername: { contains: q, mode: 'insensitive' } },
             { discordDisplayName: { contains: q, mode: 'insensitive' } },
           ],
         }),
       },
-      select: { username: true, discordUsername: true, discordDisplayName: true, discordId: true },
+      select: { chatName: true, username: true, discordUsername: true, discordDisplayName: true, discordId: true },
       take: 8,
     });
     const seen = new Set<string>();
@@ -112,9 +115,9 @@ export async function mentionSearch(req: Request, res: Response, next: NextFunct
         && !u.username.startsWith('discord:')
         && !u.username.startsWith('pending-')
         && !/^overlay\d+$/i.test(u.username);
-      const name = isFo76Name
+      const name = u.chatName ?? (isFo76Name
         ? u.username!
-        : (u.discordDisplayName ?? u.discordUsername ?? null);
+        : (u.discordDisplayName ?? u.discordUsername ?? null));
       if (!name) continue;
       if (!seen.has(name)) { seen.add(name); data.push({ displayName: name, discordId: u.discordId ?? null }); }
     }
@@ -303,7 +306,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
     }
 
     // Decide what Discord fields to apply safely. Rules:
-    //  - Cosmetic fields (username/avatar/displayName) always sync from the overlay.
+    //  - Discord profile fields (username/avatar/displayName) always sync from the overlay.
     //  - discordId is the identity anchor and only gets set if (a) this row has no
     //    discordId yet AND (b) no other row already claims that discordId.
     //    This prevents client-provided payloads from overwriting Discord links
@@ -370,7 +373,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
     let dbBlacklistHit: { pattern: string; matchType: string } | null = null;
     if (typeof username === 'string') {
       try {
-        const { findBlacklistMatch } = await import('../services/nameBlacklistService');
+        const { findBlacklistMatch } = await import('../services/nameBlacklistService.js');
         const m = findBlacklistMatch(username);
         if (m) dbBlacklistHit = { pattern: m.pattern, matchType: m.matchType };
       } catch { /* non-fatal — predicate returns false on init failure */ }
@@ -399,7 +402,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
         // user, so the desktop can react even when register is just a
         // periodic refresh (not a fresh connect).
         try {
-          const { pushToUser } = await import('../websocket/handlers');
+          const { pushToUser } = await import('../websocket/handlers.js');
           const userRow = await prisma.user.findUnique({ where: { installToken }, select: { id: true } });
           if (userRow?.id) {
             pushToUser(userRow.id, {
@@ -461,7 +464,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
         installToken,
         ...safePatch,
       },
-      select: { id: true, username: true, isBanned: true, discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true },
+      select: { id: true, username: true, chatName: true, isBanned: true, discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true },
     });
 
     // Record previous username in alias history when it changes to a new real name.
@@ -521,8 +524,8 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
 
     if (user.discordId && isGenuineFo76Name) {
       try {
-        const { setMemberNickname } = require('../services/discordService');
-        setMemberNickname(user.discordId, effectiveUsername).catch((err: Error) => {
+        const { syncSupporterNickname } = require('../services/supporterNicknameService');
+        syncSupporterNickname(user.discordId).catch((err: Error) => {
           logger.warn({ err, userId: user.id, discordId: user.discordId }, '[register] setMemberNickname fire-and-forget error (non-fatal)');
         });
       } catch (err) {
@@ -551,7 +554,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
     // register call — the WS refresh is a nice-to-have, not a hard dep.
     try {
       if (typeof refreshClientIdentity === 'function') {
-        const touched = refreshClientIdentity(user.id, user.username, user.discordUsername, user.discordDisplayName, installToken);
+        const touched = refreshClientIdentity(user.id, user.username, user.discordUsername, user.discordDisplayName, installToken, user.chatName);
         if (touched > 0) {
           logger.info({ userId: user.id, username: user.username, touched }, '[register] refreshed WS identity cache');
         }
@@ -641,10 +644,10 @@ async function deleteSession(req: Request, res: Response, next: NextFunction): P
  * GET /api/users/:id -- moderator+
  */
 async function getUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
     const user = await prisma.user.findUnique({
-      where: { id: req.params.id },
+      where: { id: paramStr(req, 'id') },
       select: {
         id: true, username: true, steamId: true,
         discordId: true, discordUsername: true, discordAvatar: true,
@@ -669,7 +672,7 @@ async function getUserProfile(req: Request, res: Response, next: NextFunction): 
   // The dashboard session stores the Discord snowflake as user.id; the
   // desktop client and internal admin rows use a UUID. Accept either and
   // look up by whichever format the caller sent.
-  const raw = req.params.id;
+  const raw = paramStr(req, 'id');
   const byUuid   = validateUuid(raw);
   const byDiscord = /^\d{15,22}$/.test(raw); // Discord snowflakes are 17-19 digits; allow a little slack
   if (!byUuid && !byDiscord) return next(createError(400, 'Invalid user ID format'));
@@ -679,7 +682,7 @@ async function getUserProfile(req: Request, res: Response, next: NextFunction): 
     const user = await prisma.user.findFirst({
       where,
       select: {
-        id: true, username: true, createdAt: true,
+        id: true, username: true, chatName: true, createdAt: true,
         discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true,
         isBanned: true, isMuted: true, muteExpiresAt: true,
       },
@@ -702,16 +705,52 @@ async function getUserProfile(req: Request, res: Response, next: NextFunction): 
 }
 
 /**
+ * PATCH /api/users/:id/chat-name -- self only
+ *
+ * This is an account identity setting, deliberately outside the supporter feature
+ * flag and cosmetics table. `null` restores the normal FO76/Discord-derived name.
+ */
+export async function updateChatName(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const targetId = paramStr(req, 'id');
+  if (!validateUuid(targetId)) return next(createError(400, 'Invalid user ID format'));
+
+  const discordId = req.dashboardUser?.discordId;
+  if (!discordId) return next(createError(401, 'Sign in with Discord first.'));
+
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  if (!Object.prototype.hasOwnProperty.call(body, 'chatName')) {
+    return next(createError(400, 'Body must include chatName.'));
+  }
+  const chatName = body.chatName;
+  if (chatName !== null && typeof chatName !== 'string') {
+    return next(createError(400, 'chatName must be a string or null.'));
+  }
+
+  try {
+    const caller = await prisma.user.findFirst({ where: { discordId }, select: { id: true } });
+    if (!caller || caller.id !== targetId) {
+      return next(createError(403, 'You can only change your own chat name.'));
+    }
+
+    const result = await setChatName({ userId: targetId, chatName, source: 'website' });
+    if (!result.ok) return next(createError(result.reason === 'not_found' ? 404 : 400, result.message, { code: result.reason, detail: result.code }));
+    res.json({ data: { chatName: result.chatName, changed: result.changed } });
+  } catch (err) {
+    next(err);
+  }
+}
+
+/**
  * GET /api/users/:id/messages -- moderator+
  */
 async function getUserMessages(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   const limit = Math.min(parseInt(req.query.limit as string, 10) || 50, 100);
   const offset = Math.min(Math.max(parseInt(req.query.offset as string, 10) || 0, 0), 10000);
 
   try {
     const messages = await prisma.message.findMany({
-      where: { userId: req.params.id, isDeleted: false },
+      where: { userId: paramStr(req, 'id'), isDeleted: false },
       select: { id: true, content: true, channelId: true, source: true, createdAt: true },
       orderBy: { createdAt: 'desc' },
       take: limit,
@@ -727,20 +766,20 @@ async function getUserMessages(req: Request, res: Response, next: NextFunction):
  * POST /api/users/:id/mute -- moderator+
  */
 async function muteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   const { duration, reason } = req.body;
   const muteExpiresAt = new Date(Date.now() + duration * 60 * 1000);
 
   try {
     await prisma.user.update({
-      where: { id: req.params.id },
+      where: { id: paramStr(req, 'id') },
       data: { isMuted: true, muteExpiresAt },
     });
     await prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'mute',
-        targetId: req.params.id,
+        targetId: paramStr(req, 'id'),
         targetType: 'user',
         reason,
       },
@@ -756,19 +795,19 @@ async function muteUser(req: Request, res: Response, next: NextFunction): Promis
  * Reverses a mute and grants 60-minute spam immunity window.
  */
 async function unmuteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
     await prisma.user.update({
-      where: { id: req.params.id },
+      where: { id: paramStr(req, 'id') },
       data: { isMuted: false, muteExpiresAt: null },
     });
     // Grant spam immunity so the user isn't immediately re-flagged
-    await setSpamImmunity(req.params.id);
+    await setSpamImmunity(paramStr(req, 'id'));
     await prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'unmute',
-        targetId: req.params.id,
+        targetId: paramStr(req, 'id'),
         targetType: 'user',
         reason: 'Moderator reversed mute -- spam immunity granted',
       },
@@ -783,21 +822,21 @@ async function unmuteUser(req: Request, res: Response, next: NextFunction): Prom
  * POST /api/users/:id/kick -- moderator+
  */
 async function kickUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
     // Invalidate all active Redis sessions for this user
     const redis = await getRedisClient();
     const sessions = await prisma.session.findMany({
-      where: { userId: req.params.id, expiresAt: { gt: new Date() } },
+      where: { userId: paramStr(req, 'id'), expiresAt: { gt: new Date() } },
       select: { token: true },
     });
     await Promise.all(sessions.map((s) => redis.del(`session:${s.token}`)));
-    await prisma.session.deleteMany({ where: { userId: req.params.id } });
+    await prisma.session.deleteMany({ where: { userId: paramStr(req, 'id') } });
     await prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'kick',
-        targetId: req.params.id,
+        targetId: paramStr(req, 'id'),
         targetType: 'user',
       },
     });
@@ -811,26 +850,26 @@ async function kickUser(req: Request, res: Response, next: NextFunction): Promis
  * POST /api/users/:id/ban -- admin+
  */
 async function banUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   const { reason } = req.body;
   try {
     await prisma.user.update({
-      where: { id: req.params.id },
+      where: { id: paramStr(req, 'id') },
       data: { isBanned: true, banReason: reason },
     });
     // Kick active sessions
     const redis = await getRedisClient();
     const sessions = await prisma.session.findMany({
-      where: { userId: req.params.id },
+      where: { userId: paramStr(req, 'id') },
       select: { token: true },
     });
     await Promise.all(sessions.map((s) => redis.del(`session:${s.token}`)));
-    await prisma.session.deleteMany({ where: { userId: req.params.id } });
+    await prisma.session.deleteMany({ where: { userId: paramStr(req, 'id') } });
     await prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'ban',
-        targetId: req.params.id,
+        targetId: paramStr(req, 'id'),
         targetType: 'user',
         reason,
       },
@@ -845,17 +884,17 @@ async function banUser(req: Request, res: Response, next: NextFunction): Promise
  * DELETE /api/users/:id/ban -- owner+
  */
 async function unbanUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
     await prisma.user.update({
-      where: { id: req.params.id },
+      where: { id: paramStr(req, 'id') },
       data: { isBanned: false, banReason: null },
     });
     await prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'unban',
-        targetId: req.params.id,
+        targetId: paramStr(req, 'id'),
         targetType: 'user',
       },
     });
@@ -870,29 +909,29 @@ async function unbanUser(req: Request, res: Response, next: NextFunction): Promi
  * Clears PII in users table; message content is preserved for context.
  */
 async function wipeUser(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
     // Use raw query for gen_random_uuid() in the update
     await prisma.$executeRaw`
       UPDATE users
       SET username = 'Anonymized User', steam_id = NULL, install_token = gen_random_uuid()::text,
           is_banned = TRUE, ban_reason = 'Account wiped by admin', updated_at = NOW()
-      WHERE id = ${req.params.id}::uuid`;
+      WHERE id = ${paramStr(req, 'id')}::uuid`;
 
     // Purge all active Redis sessions immediately so wiped user cannot continue chatting
     const redis = await getRedisClient();
     const sessions = await prisma.session.findMany({
-      where: { userId: req.params.id },
+      where: { userId: paramStr(req, 'id') },
       select: { token: true },
     });
     await Promise.all(sessions.map((s) => redis.del(`session:${s.token}`)));
-    await prisma.session.deleteMany({ where: { userId: req.params.id } });
+    await prisma.session.deleteMany({ where: { userId: paramStr(req, 'id') } });
 
     await prisma.auditLog.create({
       data: {
         actorId: req.adminUser?.id || null,
         action: 'wipe',
-        targetId: req.params.id,
+        targetId: paramStr(req, 'id'),
         targetType: 'user',
         reason: 'Data erasure request',
       },
@@ -905,7 +944,7 @@ async function wipeUser(req: Request, res: Response, next: NextFunction): Promis
 
 async function deleteUser(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const { id } = req.params;
+    const { id } = paramsOf(req);
     if (!validateUuid(id)) { next(createError(400, 'Invalid user ID')); return; }
 
     // Delete all related data first (messages, reports, sessions)
@@ -947,12 +986,12 @@ async function deleteUser(req: Request, res: Response, next: NextFunction): Prom
  * Returns the alias history (previous FO76 names) for a user, newest-first.
  */
 async function getUserAliases(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validateUuid(req.params.id)) return next(createError(400, 'Invalid user ID format'));
+  if (!validateUuid(paramStr(req, 'id'))) return next(createError(400, 'Invalid user ID format'));
   try {
     const rows = await (prisma as any).$queryRaw`
       SELECT alias, created_at AS "createdAt"
       FROM user_aliases
-      WHERE user_id = ${req.params.id}::uuid
+      WHERE user_id = ${paramStr(req, 'id')}::uuid
       ORDER BY created_at DESC
     ` as Array<{ alias: string; createdAt: Date }>;
     res.json({ data: { aliases: rows.map((a: { alias: string; createdAt: Date }) => ({ alias: a.alias, createdAt: a.createdAt.toISOString() })) } });
@@ -984,6 +1023,7 @@ module.exports = {
   deleteSession,
   getUser,
   getUserProfile,
+  updateChatName,
   getUserMessages,
   muteUser,
   unmuteUser,

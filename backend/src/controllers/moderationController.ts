@@ -1,11 +1,14 @@
 import { Request, Response, NextFunction } from 'express';
+import { paramStr } from '../utils/reqParams';
 import prisma from '../config/prisma';
 import { query as dbQuery } from '../config/database';
 import { createError } from '../middleware/errorHandler';
 import { resetCache, invalidateSettingsCache } from '../services/autoModService';
+import { invalidateAiModerationCache } from '../services/aiModerationService';
 import { invalidateVoiceCache } from '../services/voiceService';
 import { postEmbed, listTextChannels, listAssignableRoles, invalidateModLogCache, type EmbedData } from '../services/discordService';
 import reactionRoleService, { type ReactionRoleInput } from '../services/reactionRoleService';
+import { resolveInternalActorId } from '../utils/resolveActorId';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function validateUuid(id: string): boolean { return UUID_RE.test(id); }
@@ -47,9 +50,9 @@ async function addWordFilter(req: Request, res: Response, next: NextFunction): P
  * DELETE /api/moderation/word-filter/:id
  */
 async function deleteWordFilter(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validatePosInt(req.params.id)) return next(createError(400, 'Invalid word filter ID'));
+  if (!validatePosInt(paramStr(req, 'id'))) return next(createError(400, 'Invalid word filter ID'));
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(paramStr(req, 'id'), 10);
     const existing = await prisma.wordFilter.findUnique({ where: { id } });
     if (!existing) return next(createError(404, 'Filter entry not found'));
     await prisma.wordFilter.delete({ where: { id } });
@@ -111,9 +114,9 @@ async function createDiscordRelayMapping(req: Request, res: Response, next: Next
  * DELETE /api/moderation/discord-relay-mappings/:id
  */
 async function deleteDiscordRelayMapping(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validatePosInt(req.params.id)) return next(createError(400, 'Invalid relay mapping ID'));
+  if (!validatePosInt(paramStr(req, 'id'))) return next(createError(400, 'Invalid relay mapping ID'));
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(paramStr(req, 'id'), 10);
     const existing = await prisma.discordRelayMapping.findUnique({ where: { id } });
     if (!existing) return next(createError(404, 'Mapping not found'));
     await prisma.discordRelayMapping.delete({ where: { id } });
@@ -214,26 +217,40 @@ async function getSettings(_req: Request, res: Response, next: NextFunction): Pr
 
 const SNOWFLAKE_RE_SETTINGS = /^\d{17,20}$/;
 
+/** moderation_settings keys owned by the AI moderation integration. */
+const AI_SETTING_KEYS = new Set([
+  'ai_moderation_enabled',
+  'ai_moderation_mode',
+  'ai_moderation_thresholds',
+  'ai_moderation_identifier_thresholds',
+]);
+
 /**
- * AuditLog.actorId is @db.Uuid (the internal users.id), but a Discord-OAuth
- * admin's `req.adminUser.id` is the Discord SNOWFLAKE, not a UUID — writing it
- * straight into actorId throws P2023 ("invalid length: expected 32, found 18")
- * and 500s the whole request (this is what broke saving the mod-log channel).
- * Resolve the internal user UUID from the Discord id (same lookup the ban gate
- * uses), returning null when it can't be mapped (e.g. the 'api-key' actor or a
- * Discord account with no linked game user) so the audit write always succeeds.
+ * Validate a thresholds payload: a flat JSON object of OpenAI category name →
+ * score in (0, 1]. Returns an error message, or null when the value is valid.
+ * An empty object is legal and means "no category is enforceable".
  */
-async function resolveActorId(req: Request): Promise<string | null> {
-  const actor = req.adminUser?.id;
-  if (!actor) return null;
-  if (UUID_RE.test(actor)) return actor; // already an internal UUID
-  if (!SNOWFLAKE_RE_SETTINGS.test(actor)) return null; // e.g. 'api-key'
+function validateThresholdsJson(raw: string): string | null {
+  let parsed: unknown;
   try {
-    const linked = await prisma.user.findFirst({ where: { discordId: actor }, select: { id: true } });
-    return linked?.id ?? null;
+    parsed = JSON.parse(raw);
   } catch {
-    return null;
+    return 'Thresholds must be valid JSON';
   }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return 'Thresholds must be a JSON object of category -> score';
+  }
+  for (const [category, score] of Object.entries(parsed as Record<string, unknown>)) {
+    const n = typeof score === 'number' ? score : Number(score);
+    if (!Number.isFinite(n) || n <= 0 || n > 1) {
+      return `Threshold for "${category}" must be a number greater than 0 and at most 1`;
+    }
+  }
+  return null;
+}
+
+async function resolveActorId(req: Request): Promise<string | null> {
+  return resolveInternalActorId(req.adminUser?.id);
 }
 
 /**
@@ -272,6 +289,43 @@ async function updateSettings(req: Request, res: Response, next: NextFunction): 
     return;
   }
 
+  // AI moderation keys: booleans, an enum, and threshold JSON — none of which
+  // survive the positive-integer path below.
+  if (AI_SETTING_KEYS.has(key)) {
+    const strVal = String(value).trim();
+
+    if (key === 'ai_moderation_enabled' && strVal !== 'true' && strVal !== 'false') {
+      return next(createError(422, "ai_moderation_enabled must be 'true' or 'false'"));
+    }
+    if (key === 'ai_moderation_mode' && strVal !== 'shadow' && strVal !== 'enforce') {
+      return next(createError(422, "ai_moderation_mode must be 'shadow' or 'enforce'"));
+    }
+    if (key.endsWith('_thresholds')) {
+      const invalid = validateThresholdsJson(strVal);
+      if (invalid) return next(createError(422, invalid));
+    }
+
+    try {
+      await prisma.moderationSetting.upsert({
+        where: { key },
+        update: { value: strVal },
+        create: { key, value: strVal },
+      });
+      invalidateAiModerationCache();
+      await prisma.auditLog.create({
+        data: {
+          actorId: await resolveActorId(req),
+          action: 'update_setting',
+          targetType: 'moderation_setting',
+          reason: `Updated ${key} to ${strVal.slice(0, 200)}`,
+          metadata: { key, value: strVal.slice(0, 1000) },
+        },
+      }).catch(() => {});
+      res.json({ data: { key, value: strVal } });
+    } catch (err) { next(err); }
+    return;
+  }
+
   // All other keys: must be positive integers
   const numVal = parseInt(value, 10);
   if (isNaN(numVal) || numVal <= 0) return next(createError(422, 'Value must be a positive integer'));
@@ -302,7 +356,7 @@ async function updateSettings(req: Request, res: Response, next: NextFunction): 
  */
 async function updateWordFilter(req: Request, res: Response, next: NextFunction): Promise<void> {
   const { phrase, testMode } = req.body;
-  const id = parseInt(req.params.id, 10);
+  const id = parseInt(paramStr(req, 'id'), 10);
   if (isNaN(id)) return next(createError(400, 'Invalid filter ID'));
 
   // At least one field must be provided
@@ -440,13 +494,13 @@ async function createDiscordEmbed(req: Request, res: Response, next: NextFunctio
 
 /** PUT /api/moderation/discord-embeds/:id — update a template */
 async function updateDiscordEmbed(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validatePosInt(req.params.id)) return next(createError(400, 'Invalid embed ID'));
+  if (!validatePosInt(paramStr(req, 'id'))) return next(createError(400, 'Invalid embed ID'));
   const { name, data } = req.body ?? {};
   if (!name || typeof name !== 'string' || !name.trim()) return next(createError(400, 'name is required'));
   const err = validateEmbed(data);
   if (err) return next(createError(422, err));
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(paramStr(req, 'id'), 10);
     const existing = await prisma.discordEmbed.findUnique({ where: { id } });
     if (!existing) return next(createError(404, 'Embed not found'));
     const row = await prisma.discordEmbed.update({ where: { id }, data: { name: name.trim().slice(0, 100), data } });
@@ -456,9 +510,9 @@ async function updateDiscordEmbed(req: Request, res: Response, next: NextFunctio
 
 /** DELETE /api/moderation/discord-embeds/:id */
 async function deleteDiscordEmbed(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!validatePosInt(req.params.id)) return next(createError(400, 'Invalid embed ID'));
+  if (!validatePosInt(paramStr(req, 'id'))) return next(createError(400, 'Invalid embed ID'));
   try {
-    const id = parseInt(req.params.id, 10);
+    const id = parseInt(paramStr(req, 'id'), 10);
     const existing = await prisma.discordEmbed.findUnique({ where: { id } });
     if (!existing) return next(createError(404, 'Embed not found'));
     await prisma.discordEmbed.delete({ where: { id } });
@@ -566,7 +620,7 @@ async function listReactionRolePanels(_req: Request, res: Response, next: NextFu
 
 /** DELETE /api/moderation/reaction-role-panels/:messageId — stop a panel granting roles */
 async function deleteReactionRolePanel(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const messageId = req.params.messageId;
+  const messageId = paramStr(req, 'messageId');
   if (!/^\d{17,20}$/.test(messageId)) return next(createError(400, 'Invalid message ID'));
   try {
     const ok = await reactionRoleService.deletePanel(messageId);

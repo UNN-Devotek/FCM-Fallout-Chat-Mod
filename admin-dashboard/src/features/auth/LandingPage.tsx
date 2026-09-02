@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 import { Player } from '@remotion/player';
 import { ChatFeedGif } from '@promo/ChatFeedGif';
 import { WikiFlowGif } from '@promo/WikiFlowVideo';
@@ -10,6 +10,7 @@ import ChatOverlay from '../chat/ChatOverlay';
 import { ModerationTab, MODERATION_SUBTABS } from './ModerationTab';
 import CrtLineChart from '../system/components/CrtLineChart';
 import PublicCommandsKeybindsPage from './PublicCommandsKeybindsPage';
+import CosmeticsGuide from '../system/CosmeticsGuide';
 
 // ── Pip-Boy nav bar (matches authed AdminLayout style) ───────────────────────
 function PipboyNav({ activeTab = 'SYSTEM', subTabs = ['HOME'], activeSubTab = 'HOME', onTabClick, onSubTabClick }: {
@@ -178,7 +179,7 @@ const FEATURES = [
   {
     id: 3,
     title: 'COMMUNITY GOVERNED · OPEN MODERATION',
-    body: 'Admins moderate via a browser-based terminal — no client needed. Every message, channel, and report is visible and actionable, with audit logs, auto-mod filters, and role-based access built in.',
+    body: 'Admins moderate via a browser-based terminal — no client needed. Every message, channel, and report is visible and actionable, with audit logs, auto-mod filters, and role-based access built in. To catch hate speech and harassment that word lists miss, message text is screened by OpenAI\'s content-moderation service — the text only, never your username, account, or which channel you posted in.',
   },
   {
     id: 5,
@@ -277,6 +278,8 @@ interface ReleaseEntry {
   version: string;
   downloadUrl: string;
   releaseNotes: string;
+  hudModVersion?: string | null;
+  hudModUrl?: string | null;
   publishedAt: string;
 }
 
@@ -285,11 +288,20 @@ const WINDOWS_CLI = 'irm https://falloutchatmod.com/install.ps1 | iex';
 const LINUX_CLI   = 'curl -fsSL https://falloutchatmod.com/install.sh | bash';
 
 // ── Download URLs ─────────────────────────────────────────────────────────────
-// Windows uses the server-authoritative `latest.downloadUrl`. Linux builds its
-// ZIP URL from the version string. NOTE: `productName` is "Fallout Chat Mod"
-// WITH spaces — a no-space name 404s (see CLAUDE.md).
-const ELECTRON_BASE = 'https://falloutchatmod.com/downloads/electron';
-function electronLinuxUrl(version: string): string {
+// Windows uses the server-authoritative `latest.downloadUrl`. Linux derives its
+// artifact URLs from the version string. Hosted Dev keeps these links on the Dev
+// origin; local dashboard development falls back to production downloads.
+const ELECTRON_BASE = typeof window !== 'undefined' &&
+  (window.location.hostname === 'falloutchatmod.com' || window.location.hostname === 'dev.falloutchatmod.com')
+  ? `${window.location.origin}/downloads/electron`
+  : 'https://falloutchatmod.com/downloads/electron';
+function electronLinuxAppImageUrl(version: string): string {
+  return `${ELECTRON_BASE}/${encodeURIComponent(`Fallout Chat Mod-${version}.AppImage`)}`;
+}
+function electronLinuxDebUrl(version: string): string {
+  return `${ELECTRON_BASE}/${encodeURIComponent(`Fallout Chat Mod-${version}.deb`)}`;
+}
+function electronLinuxZipUrl(version: string): string {
   return `${ELECTRON_BASE}/${encodeURIComponent(`Fallout Chat Mod-${version}.AppImage (Linux).zip`)}`;
 }
 
@@ -358,7 +370,7 @@ function PatchNotesPanel() {
 const LINUX_UNINSTALL_CLI = 'curl -fsSL https://falloutchatmod.com/uninstall.sh | bash';
 const LINUX_PROTON_LAUNCH = 'PROTON_NO_WM_DECORATION=1 %command%';
 const LINUX_KWIN_RECONFIGURE = 'qdbus org.kde.KWin /KWin reconfigure';
-const LINUX_KDOTOOL_INSTALL = 'sudo pacman -S xdotool';
+const LINUX_KDOTOOL_INSTALL = 'paru -S kdotool';
 
 // ── Install panel ─────────────────────────────────────────────────────────────
 function InstallPanel() {
@@ -366,8 +378,15 @@ function InstallPanel() {
   const [copied, setCopied] = useState<CopyKey | null>(null);
   const { latest } = useReleases();
   const winUrl = latest?.downloadUrl ?? null;            // server-authoritative
-  const linUrl = latest?.version ? electronLinuxUrl(latest.version) : null;
+  const linAppImageUrl = latest?.version ? electronLinuxAppImageUrl(latest.version) : null;
+  const linDebUrl = latest?.version ? electronLinuxDebUrl(latest.version) : null;
+  const linZipUrl = latest?.version ? electronLinuxZipUrl(latest.version) : null;
   const verTag = latest?.version ? `v${latest.version}` : '';
+  const hudModUrl = latest?.hudModUrl ?? null;
+  const hudModVersion = latest?.hudModVersion ? `v${latest.hudModVersion}` : '';
+  const hudLinkUrl = typeof window !== 'undefined'
+    ? `${window.location.origin}/link`
+    : 'https://falloutchatmod.com/link';
 
   function copy(text: string, key: CopyKey) {
     navigator.clipboard.writeText(text).then(() => {
@@ -543,8 +562,92 @@ function InstallPanel() {
         </a>
       </div>
 
+      {/* ── Optional in-game HUD mod — keep the download visible at the top ── */}
+      <div style={firstSectionHeaderStyle}>ZFE FCM HUD MOD — OPTIONAL</div>
+      <div style={bodyStyle}>
+        Download the separate opt-in in-game HUD mod here. It includes the FCMChatWidget BA2,
+        both runtime configuration files, the HUDModLoader append snippet, and target-specific
+        installation instructions. It does not install or modify the desktop overlay.
+      </div>
+      <div className="install-dl-row" style={downloadRowStyle}>
+        {hudModUrl ? (
+          <a
+            href={hudModUrl}
+            download
+            target="_blank"
+            rel="noopener noreferrer"
+            className="install-dl-btn"
+            style={downloadBtnStyle}
+            onMouseEnter={dlHoverIn}
+            onMouseLeave={dlHoverOut}
+          >
+            ↓ ZFE FCM HUD Mod ZIP {hudModVersion}
+          </a>
+        ) : (
+          <span className="install-dl-btn" style={{ ...downloadBtnStyle, opacity: 0.5, cursor: 'default' }}>
+            ZFE FCM HUD MOD ZIP — UNAVAILABLE
+          </span>
+        )}
+      </div>
+      <div style={noteStyle}>
+        Follow INSTALL.txt and append its loader line to your existing Data/hudmodloader.ini;
+        do not replace that file.
+      </div>
+
+      <div style={stepStyle}>STEP 1 — PREPARE</div>
+      <div style={bodyStyle}>
+        Install <strong style={{ color: '#C8A840' }}>ZFE with chat.v1 support</strong> and{' '}
+        <strong style={{ color: '#C8A840' }}>HUDModLoader</strong> first. This archive is the
+        explicit opt-in in-game HUD track and is separate from the desktop overlay.
+        It is preconfigured for the environment represented by this install page.
+      </div>
+
+      <div style={stepStyle}>STEP 2 — EXTRACT THE ZIP</div>
+      <div style={bodyStyle}>
+        Exit Fallout 76 completely, then extract the ZIP into the Fallout 76 game
+        installation folder, preserving existing files. It contains:
+      </div>
+      <div style={{ ...bulletStyle, paddingLeft: '16px' }}>
+        <code>Data/FCMChatWidget.ba2</code><br />
+        <code>Data/FCMChat.ini</code> (ZFE/relay settings)<br />
+        <code>Data/ZFE/TextChat/fragments/FCMChatWidget.ini</code> (widget settings)<br />
+        <code>FCMChatWidget.hudmodloader.ini</code> (append-only loader snippet)<br />
+        <code>Fallout76Custom.ini.example</code>
+      </div>
+
+      <div style={stepStyle}>STEP 3 — APPEND HUDMODLOADER</div>
+      <div style={bodyStyle}>
+        Open the existing <code>Data/hudmodloader.ini</code> and append the single line
+        from <code>FCMChatWidget.hudmodloader.ini</code> exactly once. Keep every existing
+        widget entry; do not replace the file.
+      </div>
+
+      <div style={stepStyle}>STEP 4 — REGISTER THE BA2</div>
+      <div style={bodyStyle}>
+        Open <code>Fallout76Custom.ini</code> and append <code>FCMChatWidget.ba2</code> to
+        the existing <code>[Archive]</code> <code>sResourceArchive2List</code> value.
+        Preserve all existing archives. If the section or key is missing, add{' '}
+        <code>sResourceArchive2List=HUDModLoader.ba2,FCMChatWidget.ba2</code>.
+      </div>
+      <div style={noteStyle}>
+        Native Windows normally stores Fallout76Custom.ini in{' '}
+        <code>Documents/My Games/Fallout 76/</code>. Proton/Wine normally stores it in
+        the Steam prefix under <code>compatdata/1151340/pfx/drive_c/users/steamuser/</code>.
+        The Data/ files always belong in the game installation folder. Keep the two INI
+        files at their packaged paths: they are consumed by different HUD/ZFE layers.
+      </div>
+
+      <div style={stepStyle}>STEP 5 — VERIFY AND LINK</div>
+      <div style={bodyStyle}>
+        Start Fallout 76, open the HUDModLoader <strong style={{ color: '#C8A840' }}>F11</strong>{' '}
+        menu, and confirm <code>FCMChatWidget</code> is listed. When the widget shows a
+        fresh 8-character code, open <a href={hudLinkUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#C8A840' }}>the account-link page</a>,
+        sign in with Discord, enter the code, and return to the game. Codes expire after
+        10 minutes; reconnect the widget to request a new one.
+      </div>
+
       {/* ── Windows ─────────────────────────────────────────────────── */}
-      <div style={firstSectionHeaderStyle}>WINDOWS</div>
+      <div style={sectionHeaderStyle}>WINDOWS</div>
 
       <div style={subHeaderStyle}>STEP 1 — DOWNLOAD</div>
       <div style={bodyStyle}>
@@ -593,13 +696,14 @@ function InstallPanel() {
 
       <div style={subHeaderStyle}>STEP 1 — DOWNLOAD</div>
       <div style={bodyStyle}>
-        Download the AppImage ZIP and unzip it. See &ldquo;Run the AppImage&rdquo; below for the
-        commands to make it executable and launch it.
+        Choose the package that matches your Linux setup. The AppImage is portable; the
+        <code>.deb</code> is managed by apt/dpkg. The ZIP contains both packages plus the
+        complete install instructions and KDE helper file.
       </div>
-      <div className="install-dl-row" style={downloadRowStyle}>
-        {linUrl ? (
+      <div className="install-dl-row" style={{ ...downloadRowStyle, gap: '8px', flexWrap: 'wrap' }}>
+        {linAppImageUrl ? (
           <a
-            href={linUrl}
+            href={linAppImageUrl}
             download
             target="_blank"
             rel="noopener noreferrer"
@@ -608,16 +712,48 @@ function InstallPanel() {
             onMouseEnter={dlHoverIn}
             onMouseLeave={dlHoverOut}
           >
-            ↓ DOWNLOAD FOR LINUX {verTag}
+            ↓ LINUX APPIMAGE {verTag}
           </a>
         ) : (
-          <span className="install-dl-btn" style={{ ...downloadBtnStyle, opacity: 0.5, cursor: 'default' }}>↓ LINUX — UNAVAILABLE</span>
+          <span className="install-dl-btn" style={{ ...downloadBtnStyle, opacity: 0.5, cursor: 'default' }}>↓ APPIMAGE — UNAVAILABLE</span>
+        )}
+        {linDebUrl ? (
+          <a
+            href={linDebUrl}
+            download
+            target="_blank"
+            rel="noopener noreferrer"
+            className="install-dl-btn"
+            style={downloadBtnStyle}
+            onMouseEnter={dlHoverIn}
+            onMouseLeave={dlHoverOut}
+          >
+            ↓ LINUX .DEB {verTag}
+          </a>
+        ) : (
+          <span className="install-dl-btn" style={{ ...downloadBtnStyle, opacity: 0.5, cursor: 'default' }}>↓ .DEB — UNAVAILABLE</span>
+        )}
+        {linZipUrl ? (
+          <a
+            href={linZipUrl}
+            download
+            target="_blank"
+            rel="noopener noreferrer"
+            className="install-dl-btn"
+            style={downloadBtnStyle}
+            onMouseEnter={dlHoverIn}
+            onMouseLeave={dlHoverOut}
+          >
+            ↓ LINUX ZIP + DOCS {verTag}
+          </a>
+        ) : (
+          <span className="install-dl-btn" style={{ ...downloadBtnStyle, opacity: 0.5, cursor: 'default' }}>↓ LINUX ZIP — UNAVAILABLE</span>
         )}
       </div>
 
       <div style={stepStyle}>STEP 2 (RECOMMENDED) — ONE-LINE INSTALL</div>
       <div style={bodyStyle}>
-        The easiest path: paste this into a terminal. It downloads the AppImage, adds an
+        The easiest portable path: paste this into a terminal. It downloads the AppImage, adds an
         app-menu launcher, and registers the overlay as a startup application.
       </div>
       <div className="install-cmd-row" style={cmdCenterRowStyle}>
@@ -651,6 +787,30 @@ function InstallPanel() {
         </code>
       </div>
 
+      <div style={sectionHeaderStyle}>LINUX DESKTOP DETECTION — AUTOMATIC</div>
+      <div style={bodyStyle}>
+        The installer and overlay detect the Linux session and compositor automatically;
+        there is no desktop-environment switch to select. Each supported path fails
+        closed and keeps the normal game-running fallback if its helper is unavailable.
+      </div>
+      <div style={bulletStyle}>
+        • <strong style={{ color: '#C8A840' }}>KDE Plasma + Wayland:</strong> the overlay relaunches through XWayland and
+        installs one KWin rule only while Fallout 76 is running on the same display. The
+        rule keeps the overlay in KWin&apos;s Overlay layer without demoting the game, then
+        is removed on game exit or a monitor change. Run Borderless Windowed.
+      </div>
+      <div style={bulletStyle}>
+        • <strong style={{ color: '#C8A840' }}>Hyprland:</strong> the overlay uses <code>hyprctl</code> for focus and
+        same-output detection and pinning. This path is best-effort and has not been
+        verified on real Hyprland hardware; missing or failing <code>hyprctl</code> logs
+        a diagnostic and leaves ordinary stacking plus the Linux heartbeat fallback.
+      </div>
+      <div style={bulletStyle}>
+        • <strong style={{ color: '#C8A840' }}>Plain X11:</strong> <code>xdotool</code> is preferred (with
+        <code>kdotool</code> as fallback) for hide-on-alt-tab and hotkey release. Without
+        either tool, the overlay remains safe and uses the game-running fallback.
+      </div>
+
       <div style={subHeaderStyle}>UNINSTALL</div>
       <div className="install-cmd-row" style={cmdCenterRowStyle}>
         <code style={codeStyle}>{LINUX_UNINSTALL_CLI}</code>
@@ -670,19 +830,18 @@ function InstallPanel() {
 
       <div style={bodyStyle}>
         On KDE Plasma (Wayland) the overlay configures itself on first launch — <strong style={{ color: '#C8A840' }}>nothing
-        to do</strong>. It runs under XWayland and installs two <strong style={{ color: '#C8A840' }}>KWin rules</strong> so
-        it stays above Fallout 76 even while the game is focused: one keeps the overlay above other
-        windows, and one stops KWin promoting the game to the active-fullscreen layer (which would
-        otherwise cover the overlay — borderless games still report themselves as fullscreen). Just run
-        Fallout 76 in <strong style={{ color: '#C8A840' }}>Borderless Windowed</strong>. The game still fills the
-        screen; loading screens and the in-game menus are unaffected.
+        to do</strong>. It runs under XWayland and installs one <strong style={{ color: '#C8A840' }}>KWin rule</strong>
+        on the overlay while Fallout 76 is running on the same display. The rule combines
+        keep-above with KWin&apos;s Overlay layer so it stays above focused Fallout 76 without
+        demoting the game. It is removed on game exit or a monitor change. Just run Fallout 76
+        in <strong style={{ color: '#C8A840' }}>Borderless Windowed</strong>. The game still fills the screen;
+        loading screens and the in-game menus are unaffected.
       </div>
 
       <div style={{ ...subHeaderStyle, marginTop: '14px' }}>IF IT EVER SHOWS BEHIND THE GAME</div>
       <div style={bodyStyle}>
-        Rare — only if the automatic setup couldn&apos;t run. Right-click the tray icon and choose{' '}
-        <strong style={{ color: '#C8A840' }}>KDE: keep overlay above game</strong> (it re-applies the rules and
-        reloads KWin), or import the bundled rule by hand: System Settings → Window Management → Window
+        Rare — only if the automatic setup couldn&apos;t run. Import the bundled rule by hand:
+        System Settings → Window Management → Window
         Rules → Import →{' '}
         <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>~/.config/Fallout Chat Mod/fallout-chatmod-keepabove.kwinrule</code>{' '}
         → Apply, then run (or log out / in):
@@ -704,24 +863,48 @@ function InstallPanel() {
         Uninstalling removes these KWin rules and restores Fallout 76&apos;s fullscreen stacking.
       </div>
 
+      {/* ── Wayland — in-game cursor lock ───────────────────────────── */}
+      <div style={{ ...subHeaderStyle, marginTop: '18px' }}>IN-GAME CURSOR LOCK (WAYLAND)</div>
+      <div style={bodyStyle}>
+        On Wayland the compositor drops Fallout 76&apos;s mouse-lock while the overlay sits on top, so the
+        cursor could drift off the game. The installer never changes the FO76 Proton/Wine
+        prefix automatically. After FO76 exits, the overlay performs a read-only check and
+        can show a one-time notification; use the tray action to apply the fix on demand.
+        X11 sessions don&apos;t need this.
+      </div>
+      <div style={{ ...bodyStyle, marginTop: '8px' }}>
+        Quit Fallout 76 first, then right-click the tray icon and choose{' '}
+        <strong style={{ color: '#C8A840' }}>Fix in-game cursor lock (Wayland)</strong>.
+        The action runs the community-standard protontricks commands; it requires that
+        Fallout 76 has been launched once so its Proton prefix exists.
+      </div>
+      <div style={{ ...bodyStyle, marginTop: '8px' }}>
+        Manual method:{' '}
+        <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>protontricks 1151340 grabfullscreen=y</code>{' '}
+        (GUI equivalent: <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>protontricks 1151340 winecfg</code>{' '}
+        → <strong style={{ color: '#C8A840' }}>Input</strong> tab → tick &ldquo;Automatically capture the
+        mouse in full-screen windows&rdquo;). For Borderless too, also add{' '}
+        <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>GrabPointer=Y</code>{' '}
+        under the same <code style={{ fontFamily: 'monospace', fontSize: '12px', color: 'rgba(200,168,64,0.85)' }}>X11 Driver</code> key. Then run Fallout 76.
+      </div>
+
       <div style={{ ...warningBoxStyle, marginTop: '14px' }}>
         ⚠ <strong style={{ color: 'rgba(200,168,64,0.85)' }}>Do NOT</strong> run the game inside{' '}
         <strong style={{ color: 'rgba(200,168,64,0.85)' }}>gamescope</strong> — its nested compositor
         isolates the game window and the overlay cannot render over it.
       </div>
 
-      {/* ── KDE Plasma (Wayland) — hotkey release in other apps ─────── */}
-      <div style={sectionHeaderStyle}>KDE PLASMA (WAYLAND) — HOTKEYS IN OTHER APPS</div>
+      {/* ── Linux sessions — hotkey release in other apps ───────────── */}
+      <div style={sectionHeaderStyle}>KDE WAYLAND / X11 — HOTKEYS IN OTHER APPS</div>
 
       <div style={bodyStyle}>
-        By default the overlay&apos;s hotkeys (<strong style={{ color: '#C8A840' }}>Insert / Delete / Home</strong>, etc.)
-        stay registered the whole time Fallout 76 is running — so they get intercepted even when
-        you tab away to Konsole, Discord, or a browser. Wayland hides the active window from apps,
-        so the overlay needs <strong style={{ color: '#C8A840' }}>xdotool</strong> to detect when
-        you&apos;re <em>not</em> in the game/overlay and release the keys.
-        (<code style={{ fontFamily: 'monospace', fontSize: '12px' }}>kdotool</code> also works as a fallback.)
+        On KDE Wayland, <strong style={{ color: '#C8A840' }}>kdotool</strong> is preferred because it
+        sees native-Wayland and XWayland windows. <strong style={{ color: '#C8A840' }}>xdotool</strong> is
+        the fallback, but cannot see native-Wayland windows. On plain X11, the preference is
+        reversed: xdotool first, kdotool second. This detection releases the overlay&apos;s{' '}
+        <strong style={{ color: '#C8A840' }}>Insert / Delete / Home</strong> hotkeys when you tab away.
       </div>
-      <div style={{ ...subHeaderStyle, marginTop: '12px' }}>INSTALL XDOTOOL, THEN RELAUNCH THE OVERLAY</div>
+      <div style={{ ...subHeaderStyle, marginTop: '12px' }}>INSTALL KDTOOL, THEN RELAUNCH THE OVERLAY</div>
       <div className="install-cmd-row" style={cmdCenterRowStyle}>
         <code style={codeStyle}>{LINUX_KDOTOOL_INSTALL}</code>
         <button
@@ -735,10 +918,12 @@ function InstallPanel() {
         </button>
       </div>
       <div style={{ ...bodyStyle, marginTop: '8px' }}>
-        Arch / CachyOS shown above. Debian/Ubuntu: <code style={{ fontFamily: 'monospace', fontSize: '12px' }}>sudo apt install xdotool</code>.
-        Fedora: <code style={{ fontFamily: 'monospace', fontSize: '12px' }}>sudo dnf install xdotool</code>.
-        Without xdotool (or kdotool) everything still works <strong style={{ color: 'rgba(200,168,64,0.85)' }}>except</strong> this
-        key-release behavior — the overlay falls back to holding the hotkeys while the game runs (no crash, no other change).
+        Arch / CachyOS: <code style={{ fontFamily: 'monospace', fontSize: '12px' }}>paru -S kdotool</code> (AUR; or{' '}
+        <code style={{ fontFamily: 'monospace', fontSize: '12px' }}>yay -S kdotool</code>). Fedora:{' '}
+        <code style={{ fontFamily: 'monospace', fontSize: '12px' }}>sudo dnf install kdotool</code>.
+        For X11 or a kdotool fallback, install <code style={{ fontFamily: 'monospace', fontSize: '12px' }}>xdotool</code>.
+        Without either tool everything still works except key release when you switch apps; the
+        overlay falls back to holding the hotkeys while the game runs (no crash, no other change).
       </div>
 
       {/* ── Non-KDE compositors (GNOME, wlroots) — conditional ──────── */}
@@ -985,7 +1170,7 @@ function AboutFeaturesPanel() {
 // ── Main landing page ─────────────────────────────────────────────────────────
 export default function LandingPage() {
   const [mainTab, setMainTab] = useState<'SYSTEM' | 'CHAT' | 'MODERATION' | 'ABOUT'>('SYSTEM');
-  const [subTab, setSubTab] = useState<'HOME' | 'INSTALL' | 'PATCH NOTES' | 'CONTACT US' | 'FEATURES' | 'KEYBINDS'>('HOME');
+  const [subTab, setSubTab] = useState<'HOME' | 'INSTALL' | 'PATCH NOTES' | 'CONTACT US' | 'FEATURES' | 'KEYBINDS' | 'APPEARANCE'>('HOME');
   const [moderationSubTab, setModerationSubTab] = useState<string>(MODERATION_SUBTABS[0]);
   const [activeFeature, setActiveFeature] = useState(FEATURES[0].id);
   const [liveVersion, setLiveVersion] = useState<string>('—');
@@ -1063,7 +1248,7 @@ export default function LandingPage() {
         <PipboyNav
           activeTab={mainTab}
           subTabs={
-            mainTab === 'SYSTEM' ? ['HOME', 'INSTALL', 'PATCH NOTES', 'CONTACT US', 'KEYBINDS'] :
+            mainTab === 'SYSTEM' ? ['HOME', 'INSTALL', 'PATCH NOTES', 'CONTACT US', 'KEYBINDS', 'APPEARANCE'] :
             mainTab === 'ABOUT' ? ['FEATURES'] :
             mainTab === 'MODERATION' ? MODERATION_SUBTABS :
             []
@@ -1077,7 +1262,7 @@ export default function LandingPage() {
           }}
           onSubTabClick={(s) => {
             if (mainTab === 'MODERATION') setModerationSubTab(s);
-            else setSubTab(s as 'HOME' | 'INSTALL' | 'PATCH NOTES' | 'CONTACT US' | 'FEATURES' | 'KEYBINDS');
+            else setSubTab(s as 'HOME' | 'INSTALL' | 'PATCH NOTES' | 'CONTACT US' | 'FEATURES' | 'KEYBINDS' | 'APPEARANCE');
           }}
         />
 
@@ -1094,6 +1279,7 @@ export default function LandingPage() {
           {mainTab === 'SYSTEM' && subTab === 'PATCH NOTES' && <PatchNotesPanel />}
           {mainTab === 'SYSTEM' && subTab === 'CONTACT US' && <ContactUsPanel />}
           {mainTab === 'SYSTEM' && subTab === 'KEYBINDS' && <PublicCommandsKeybindsPage />}
+          {mainTab === 'SYSTEM' && subTab === 'APPEARANCE' && <CosmeticsGuide variant="public" />}
 
           {mainTab === 'SYSTEM' && subTab === 'HOME' && <>
           {/* ── Left panel: title + features ─────────────────────────────────── */}

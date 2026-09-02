@@ -44,9 +44,12 @@ cd admin-dashboard && npm run dev   # → http://localhost:7075
 
 # Electron overlay (renderer on port 5290 + Electron shell, targets local backend)
 cd cross-platform-overlay && npm run dev:local
+# On Linux KDE-Wayland, use dev:linux instead (forces --ozone-platform=x11 so the
+# app doesn't self-relaunch to XWayland — single clean process, tray works in dev):
+cd cross-platform-overlay && npm run dev:linux
 ```
 
-> Always use `dev:local` for the overlay — it targets the local backend. `npm start` targets production.
+> Always use `dev:local` (or `dev:linux` on Linux KDE-Wayland) for the overlay — it targets the local backend. `npm start` targets production. Add `--fcm-debug` (or `FCM_DEBUG=1`) for verbose diagnostic logging; see [../overlay/diagnostics-logging.md](../overlay/diagnostics-logging.md).
 
 ---
 

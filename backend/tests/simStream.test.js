@@ -124,6 +124,13 @@ describe('POST /api/admin/sim/stream (dev-only)', () => {
         .send({ count: 1 });
       expect(res.status).toBe(404);
     });
+
+    it('returns 404 for direct DEV persona login when NODE_ENV=production', async () => {
+      const res = await request(prodApp)
+        .post('/api/dev/login-as')
+        .send({ persona: 'admin', installToken: 'install-1' });
+      expect(res.status).toBe(404);
+    });
   });
 
   describe('development', () => {

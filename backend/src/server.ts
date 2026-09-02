@@ -1,9 +1,10 @@
 // dotenv is loaded in config/environment.ts before any env vars are read
 import { constantTimeEquals } from './utils/constantTimeEquals';
 import { clientIp } from './utils/clientIp';
+import { paramStr } from './utils/reqParams';
 import { requireAuth, requireAnyAuthedClient } from './middleware/auth';
 import { mergeUserInto } from './utils/mergeUser';
-import { devPersonaDiscordId, devPersonaUsername } from './utils/devPersonaDiscordId';
+import { buildAuthUserResponse } from './utils/authUserResponse';
 
 import http from 'http';
 
@@ -11,7 +12,7 @@ import express, { Request, Response, NextFunction } from 'express';
 import helmet from 'helmet';
 import cors from 'cors';
 import session from 'express-session';
-import RedisStore from 'connect-redis';
+import { RedisStore } from 'connect-redis';
 import { WebSocketServer } from 'ws';
 import { v4 as uuidv4 } from 'uuid';
 import cron from 'node-cron';
@@ -46,6 +47,7 @@ import nameBlacklistRouter from './routes/nameBlacklist';
 import { loadBlacklist, subscribeBlacklistUpdates } from './services/nameBlacklistService';
 import adminStatusRouter from './routes/adminStatus';
 import commandsRouter from './routes/commands';
+import cosmeticsRouter from './routes/cosmetics';
 import wikiRouter from './routes/wiki';
 import campRouter from './routes/camp';
 import playerReportsRouter from './routes/playerReports';
@@ -71,6 +73,8 @@ import {
 } from './routes/adminCommunityStats';
 import migrationRouter from './routes/migration';
 import { requireMigrationKey } from './middleware/requireMigrationKey';
+import linkRouter from './routes/link';
+import { isBannedIdentity, linkProviderIdentity, unlinkProviderIdentity } from './routes/link';
 
 // Services
 import * as discordService from './services/discordService';
@@ -85,6 +89,7 @@ import { triggerWikiIngest, getWikiUpdates } from './controllers/wikiAdminContro
 import { triggerCampIngest, getCampUpdates } from './controllers/campAdminController';
 import { ingestCampDatabase, isCampTableEmpty } from './services/campService';
 import { startCampSyncSchedule } from './jobs/campSyncSchedule';
+import { shouldStartBackgroundJobs } from './utils/runtimeEnvironment';
 import partiesRouter from './routes/parties';
 import giveawaysRouter, { adminCancelGiveaway } from './routes/giveaways';
 import * as giveawayService from './services/giveawayService';
@@ -98,8 +103,26 @@ import {
 } from './controllers/partiesController';
 import { requireDiscordRole } from './middleware/auth';
 import { initHudPushTcp } from './services/hudPushTcp';
-import { initHudPushWs } from './services/hudPushWs';
+import { initHudPushWs, isHudPushWsEnabled } from './services/hudPushWs';
+import { backfillMissingRelaySeq, seedRelaySeq } from './services/relay/relaySeq';
+import { applyPostPushPatches } from './scripts/applyPostPushPatches';
+import { attachChatUpgradeRouter } from './websocket/upgradeRouter';
 import { initLatestVersion } from './services/latestReleaseVersion';
+import { initActiveQaVersion } from './services/activeQaVersion';
+import { parseBoundOAuthState, serializeBoundOAuthState } from './utils/oauthState';
+import { setQaActiveVersion, getQaActiveVersion } from './controllers/qaVersionController';
+import { qaStart, makeQaCallbackHandler, defaultQaCallbackDeps } from './controllers/qaOAuthController';
+import { makeQaStatusHandler, defaultQaStatusDeps } from './controllers/qaStatusController';
+import {
+  DEV_PRIVILEGED_ROLES,
+  defaultDevPersonaCallbackDeps,
+  defaultDevPersonaStatusDeps,
+  devPersonaStart,
+  completeDevPersonaLogin,
+  getDevPersona,
+  makeDevPersonaStatusHandler,
+  makeDevPersonaLoginAsHandler,
+} from './controllers/devPersonaLoginController';
 import hudFeedRouter from './routes/hudFeed';
 
 const app = express();
@@ -180,33 +203,23 @@ app.use('/api/', apiLimiter);
 
 // -- Discord OAuth2 routes ----------------------------------------------------
 
-// Dev-only persona logins — skips Discord entirely.
+// Browser-only dev shortcuts — skip Discord entirely.
 // Gated POSITIVELY: requires development mode AND an explicit ENABLE_DEV_LOGIN
 // opt-in, so these credential-less admin sessions can never appear in a
 // non-development deploy (even a misconfigured one).
 if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
-  const DEV_PERSONAS: Record<string, { id: string; username: string; role: string }> = {
-    user:      { id: 'dev-user-001',      username: 'System User',      role: env.DEV_USER_ROLE },
-    mod:       { id: 'dev-user-002',      username: 'System Mod',       role: env.DEV_MOD_ROLE },
-    moderator: { id: 'dev-user-002',      username: 'System Moderator', role: env.DEV_MOD_ROLE },
-    admin:     { id: 'dev-user-003',      username: 'System Admin',     role: env.DEV_ADMIN_ROLE },
-    supporter: { id: 'dev-user-004',      username: 'System Supporter', role: env.DEV_SUPPORTER_ROLE },
-    developer: { id: 'dev-user-005',      username: 'System Developer', role: env.DEV_DEVELOPER_ROLE },
-    owner:     { id: 'dev-user-006',      username: 'System Owner',     role: 'owner' },
-  };
-
-  const DEV_PRIVILEGED = ['owner', 'admin', 'moderator', 'supporter', 'developer'];
   app.get('/auth/dev-login/:persona', (req: Request, res: Response) => {
-    const persona = DEV_PERSONAS[req.params.persona];
+    const persona = getDevPersona(paramStr(req, 'persona'));
     if (!persona) { res.status(404).send('Unknown dev persona'); return; }
     (req.session as any).discordUser = { ...persona, avatar: null, roles: [] };
-    const dest = DEV_PRIVILEGED.includes(persona.role) ? 'server-health' : 'chat';
+    const dest = DEV_PRIVILEGED_ROLES.includes(persona.role) ? 'server-health' : 'chat';
     req.session.save(() => res.redirect(`${env.CLIENT_ORIGINS[0].replace(/\/$/, '')}/${dest}`));
   });
 
   // Keep old /auth/dev-login as alias for admin persona
   app.get('/auth/dev-login', (req: Request, res: Response) => {
-    (req.session as any).discordUser = { ...DEV_PERSONAS.admin, avatar: null, roles: [] };
+    const persona = getDevPersona('admin');
+    (req.session as any).discordUser = { ...persona, avatar: null, roles: [] };
     req.session.save(() => res.redirect(`${env.CLIENT_ORIGINS[0].replace(/\/$/, '')}/server-health`));
   });
 
@@ -224,67 +237,57 @@ if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
     req.session.save(() => res.redirect(`${env.CLIENT_ORIGINS[0].replace(/\/$/, '')}/${intent}`));
   });
 
-  // Overlay dev login — returns a session token directly (no Discord OAuth needed).
-  // Called by the unpackaged Electron overlay's onboarding "Login as system user" buttons.
-  app.post('/api/dev/login-as', async (req: Request, res: Response) => {
-    const { persona, installToken } = req.body as { persona?: string; installToken?: string };
-    if (!persona || !installToken) { res.status(400).json({ error: 'Missing persona or installToken' }); return; }
-    const p = DEV_PERSONAS[persona];
-    if (!p) { res.status(404).json({ error: 'Unknown persona' }); return; }
-    try {
-      // Unique per (persona, install) so multiple local installs can each adopt
-      // the same persona without colliding on the discord_id_link unique
-      // constraint. Persona still drives the role via the adminUser upsert below.
-      const fakeDiscordId = devPersonaDiscordId(persona, installToken);
-      await prisma.user.upsert({
-        where: { installToken },
-        create: {
-          installToken,
-          // Canonical username is @unique → must be unique per install; the clean
-          // persona name is preserved in discordDisplayName + the response below.
-          username: devPersonaUsername(p.username, installToken),
-          discordId: fakeDiscordId,
-          discordUsername: p.username,
-          discordDisplayName: p.username,
-          discordAuthedAt: new Date(),
-        },
-        update: {
-          discordId: fakeDiscordId,
-          discordUsername: p.username,
-          discordDisplayName: p.username,
-          discordAuthedAt: new Date(),
-        },
-      });
-      if (DEV_PRIVILEGED.includes(p.role)) {
-        await prisma.adminUser.upsert({
-          where: { discordId: fakeDiscordId },
-          create: { discordId: fakeDiscordId, username: p.username, role: p.role, updatedAt: new Date() },
-          update: { role: p.role, updatedAt: new Date() },
-        });
-      }
-      const user = await prisma.user.findUnique({ where: { installToken }, select: { id: true } });
-      if (!user) throw new Error('User not found after upsert');
-      const redis = await getRedisClient();
-      const token = uuidv4();
-      const SESSION_TTL = 24 * 60 * 60; // 24 hours (was 30 days)
-      await redis.set(`session:${token}`, user.id, { EX: SESSION_TTL });
-      res.json({ data: { token, userId: user.id, displayName: p.username, discordLinked: true, role: p.role } });
-    } catch (err) {
-      logger.error({ err }, '[dev] login-as failed');
-      res.status(500).json({ error: 'Dev login failed' });
-    }
-  });
+}
+
+// QA-tester surface — live only on the dev backend (NODE_ENV=development),
+// independent of ENABLE_DEV_LOGIN (hosted dev runs with it off). Never mounts in
+// production. See docs/deployment/hosted-dev-environment.md (QA tester access).
+if (env.NODE_ENV === 'development') {
+  // Synthetic persona login is a DEV-only convenience for the unpackaged overlay.
+  // It intentionally does not depend on ENABLE_DEV_LOGIN so the hosted isolated
+  // DEV environment exposes the same DevAccount buttons as a local stack.
+  app.post('/api/dev/login-as', makeDevPersonaLoginAsHandler());
+
+  // Legacy browser persona OAuth endpoints remain DEV-only for compatibility;
+  // the overlay DevAccount buttons use the direct endpoint above.
+  app.get('/auth/discord/dev-login', authLimiter, devPersonaStart);
+  app.get('/api/auth/dev-login-status/:installToken', apiLimiter, makeDevPersonaStatusHandler(defaultDevPersonaStatusDeps));
+  app.post('/api/admin/qa/active-version', apiLimiter, requireAdminKey, setQaActiveVersion);
+  app.get('/api/admin/qa/active-version', apiLimiter, requireAdminKey, getQaActiveVersion);
+  app.get('/auth/discord/qa/start', authLimiter, qaStart);
+  app.get('/auth/discord/qa/callback', authLimiter, makeQaCallbackHandler(defaultQaCallbackDeps));
+  app.get('/api/auth/qa-status/:installToken', apiLimiter, makeQaStatusHandler(defaultQaStatusDeps));
 }
 
 app.get('/auth/discord', authLimiter, async (req: Request, res: Response) => {
-  // CSRF protection: store state token in Redis (session cookies unreliable behind reverse proxies)
+  // CSRF protection: store state token in Redis and bind it to the initiating
+  // browser session. A random state alone does not stop a callback captured
+  // from one browser being replayed into another browser's session.
   const intent = (req.query.intent as string) || 'admin';
   const state = uuidv4();
   try {
     const redis = await getRedisClient();
-    await redis.set(`oauth_state:${state}`, JSON.stringify({ intent }), { EX: 300 }); // 5 min TTL
+    await redis.set(
+      `oauth_state:${state}`,
+      serializeBoundOAuthState({ intent, sessionId: req.sessionID }),
+      { EX: 300 },
+    ); // 5 min TTL
   } catch (err) {
     logger.error({ err }, 'Failed to store OAuth state in Redis');
+    res.status(500).send('Internal error');
+    return;
+  }
+  // saveUninitialized is deliberately false, so creating only a Redis state is
+  // not enough to make express-session emit a browser cookie. Touch the session
+  // before saving it; the callback must receive the same session ID for the
+  // CSRF-bound state check below to succeed on a fresh /link visit.
+  (req.session as any).oauthState = state;
+  try {
+    await new Promise<void>((resolve, reject) => {
+      req.session.save((err) => (err ? reject(err) : resolve()));
+    });
+  } catch (err) {
+    logger.error({ err }, 'Failed to persist Discord OAuth browser session');
     res.status(500).send('Internal error');
     return;
   }
@@ -303,7 +306,7 @@ app.get('/auth/discord/callback', authLimiter, async (req: Request, res: Respons
   if (!code) { res.status(400).send('Missing code'); return; }
 
   // Validate CSRF state token from Redis
-  let stateData: { intent: string } = { intent: 'admin' };
+  let stateData: { intent: string; sessionId: string };
   try {
     const redis = await getRedisClient();
     const valid = await redis.get(`oauth_state:${state}`); await redis.del(`oauth_state:${state}`);
@@ -311,7 +314,12 @@ app.get('/auth/discord/callback', authLimiter, async (req: Request, res: Respons
       res.status(403).send('Invalid OAuth state -- possible CSRF. Please try logging in again.');
       return;
     }
-    try { stateData = JSON.parse(valid); } catch { stateData = { intent: 'admin' }; }
+    const parsedState = parseBoundOAuthState(valid, req.sessionID);
+    if (!parsedState) {
+      res.status(403).send('Invalid OAuth state -- session mismatch. Please try logging in again.');
+      return;
+    }
+    stateData = { intent: parsedState.intent || 'admin', sessionId: parsedState.sessionId };
   } catch (err) {
     logger.error({ err }, 'Failed to validate OAuth state');
     res.status(500).send('Internal error');
@@ -446,10 +454,15 @@ app.get('/auth/discord/callback', authLimiter, async (req: Request, res: Respons
       role: adminRole,
     };
 
-    // Redirect to the frontend dashboard. Members (non-admin) land on /chat;
-    // admin/mod roles land on /server-health.
+    // Redirect target. A user completing the in-game link flow (intent=link) must land on
+    // /link (the code-entry screen) regardless of role — otherwise privileged roles get sent to
+    // /server-health and can never enter their code. Otherwise: members → /chat, admin/mod →
+    // /server-health.
+    const dest = stateData.intent === 'link'
+      ? '/link'
+      : (adminRole === 'member' ? '/chat' : '/server-health');
     await new Promise<void>(resolve => req.session.save(() => resolve()));
-    res.redirect(`${frontendBase}${adminRole === 'member' ? '/chat' : '/server-health'}`);
+    res.redirect(`${frontendBase}${dest}`);
   } catch (err) {
     logger.error({ err }, 'Discord OAuth callback error');
     res.status(500).send('Authentication failed.');
@@ -566,14 +579,20 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
   if (!code) { res.status(400).send('Missing code'); return; }
 
   let installToken: string;
+  let hostedDevPersonaPending: { installToken: string; persona: string } | null = null;
   try {
     const redis = await getRedisClient();
-    const stored = await redis.get(`oauth_link_state:${state}`); await redis.del(`oauth_link_state:${state}`);
-    if (!state || !stored) {
+    // The hosted DEV persona flow reuses the already-registered Discord link
+    // callback URI, but keeps its OAuth state in a separate namespace.
+    if (state && env.NODE_ENV === 'development') {
+      hostedDevPersonaPending = await defaultDevPersonaCallbackDeps.consumeState(state);
+    }
+    const stored = hostedDevPersonaPending ? null : await redis.getDel(`oauth_link_state:${state}`);
+    if (!state || (!stored && !hostedDevPersonaPending)) {
       res.status(403).send('Invalid OAuth state — possible CSRF. Please try again.');
       return;
     }
-    installToken = stored;
+    installToken = hostedDevPersonaPending?.installToken || stored!;
   } catch (err) {
     logger.error({ err }, 'Failed to validate OAuth link state');
     res.status(500).send('Internal error');
@@ -628,11 +647,37 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
 
     const redis = await getRedisClient();
 
+    // Legacy hosted DEV persona login is OAuth-gated: the user must have
+    // authenticated with Discord and pass the dual developer-role check before
+    // a synthetic persona session is issued. Current overlay DevAccount buttons
+    // use POST /api/dev/login-as instead.
+    if (hostedDevPersonaPending) {
+      const result = await completeDevPersonaLogin(
+        hostedDevPersonaPending,
+        String(discordUser.id || ''),
+        defaultDevPersonaCallbackDeps,
+      );
+      if (!result.authorized) {
+        res.status(403).send(PIP_BOY_HTML(
+          'DEV Login Denied — Fallout Chat Mod',
+          'Access Denied',
+          '<p>You need the developer role in both the production and DEV Discord servers.</p>',
+        ));
+        return;
+      }
+      res.send(PIP_BOY_HTML(
+        'DEV Login — Fallout Chat Mod',
+        'DEV Access Granted',
+        '<p>Your hosted DEV persona session is ready.</p><p class="dim">You can close this window and return to the overlay.</p>',
+      ));
+      return;
+    }
+
     // Check for any existing row already claiming this Discord ID (placeholder OR real).
     // discordId is now the canonical identity anchor — if ANY row owns it we merge into it.
     const existingAccount = await prisma.user.findFirst({
       where: { discordId: discordUser.id, NOT: { installToken } },
-      select: { id: true, username: true },
+      select: { id: true, username: true, chatName: true },
     });
 
     if (existingAccount) {
@@ -660,6 +705,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
           discordUser.username,
           discordDisplayName,
           installToken,
+          existingAccount.chatName,
         );
       } catch (err) {
         logger.warn({ err, userId: existingAccount.id }, 'Discord link reclaim: refreshClientIdentity failed (non-fatal)');
@@ -733,7 +779,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
         discordDisplayName,
         discordAuthedAt: new Date(),
       },
-      select: { id: true, username: true },
+      select: { id: true, username: true, chatName: true },
     });
 
     // Push updated identity to any open WS sessions so rendered names update live.
@@ -744,6 +790,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
         discordUser.username,
         discordDisplayName,
         installToken,
+        linkedUser.chatName,
       );
     } catch (err) {
       logger.warn({ err, userId: linkedUser.id }, 'Discord link: refreshClientIdentity failed (non-fatal)');
@@ -786,7 +833,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
  * Polling endpoint for desktop clients to check Discord link status.
  */
 app.get('/api/auth/discord-status/:installToken', async (req: Request, res: Response) => {
-  const { installToken } = req.params;
+  const installToken = paramStr(req, 'installToken');
   if (!installToken) { res.status(400).json({ data: { linked: false } }); return; }
 
   try {
@@ -797,7 +844,7 @@ app.get('/api/auth/discord-status/:installToken', async (req: Request, res: Resp
     // clobbering it with a stale local placeholder name.
     const user = await prisma.user.findUnique({
       where: { installToken },
-      select: { username: true, discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true, installToken: true },
+      select: { username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true, installToken: true },
     });
     const isPlaceholder = (u?: string | null) => !u || u === 'Wanderer' || u.startsWith('pending-');
     const fo76Username = user && !isPlaceholder(user.username) ? user.username : null;
@@ -837,6 +884,261 @@ app.get('/api/auth/discord-status/:installToken', async (req: Request, res: Resp
   }
 });
 
+/**
+ * GET /auth/nexus
+ * Initiates Nexus OAuth2 + PKCE flow (confidential client: requires client_secret at token endpoint).
+ * Feature-flagged: only active when NEXUS_OAUTH_CLIENT_ID + NEXUS_OAUTH_CLIENT_SECRET are set.
+ * OIDC issuer: https://users.nexusmods.com (discovery: /.well-known/openid-configuration)
+ * Scopes: openid public (scopes_supported per discovery doc).
+ */
+app.get('/auth/nexus', authLimiter, async (req: Request, res: Response) => {
+  if (!env.NEXUS_OAUTH_CLIENT_ID || !env.NEXUS_OAUTH_CLIENT_SECRET) {
+    res.status(503).send('Nexus OAuth is not configured on this server.');
+    return;
+  }
+
+  const crypto = require('crypto') as typeof import('crypto');
+  const codeVerifier = crypto.randomBytes(32).toString('base64url');
+  const codeChallenge = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+  const state = uuidv4();
+
+  try {
+    const redis = await getRedisClient();
+    // Bind the one-time OAuth state to the initiating browser session. The
+    // state value is still random, but a stolen callback URL cannot be replayed
+    // into a different user's session.
+    await redis.set(
+      `nexus_oauth_state:${state}`,
+      serializeBoundOAuthState({ codeVerifier, sessionId: req.sessionID }),
+      { EX: 600 },
+    );
+  } catch (err) {
+    logger.error({ err }, 'Failed to store Nexus OAuth state');
+    res.status(500).send('Internal error');
+    return;
+  }
+
+  // saveUninitialized=false means an untouched session would otherwise not
+  // receive a cookie, making the callback look like a different browser.
+  try {
+    await new Promise<void>((resolve, reject) => {
+      req.session.save((err) => (err ? reject(err) : resolve()));
+    });
+  } catch (err) {
+    logger.error({ err }, 'Failed to persist Nexus OAuth browser session');
+    res.status(500).send('Internal error');
+    return;
+  }
+
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost:7177';
+  const redirectUri = env.NEXUS_OAUTH_REDIRECT_URI || `${proto}://${host}/auth/nexus/callback`;
+
+  const params = new URLSearchParams({
+    client_id: env.NEXUS_OAUTH_CLIENT_ID,
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: 'openid public',   // scopes_supported per Nexus OIDC discovery
+    state,
+    code_challenge: codeChallenge,
+    code_challenge_method: 'S256',
+  });
+  // authorization_endpoint from Nexus OIDC discovery
+  res.redirect(`https://users.nexusmods.com/oauth/authorize?${params}`);
+});
+
+/**
+ * GET /auth/nexus/callback
+ * Handles Nexus OAuth2 + PKCE callback (confidential client: client_secret_post at token endpoint).
+ * Uses OIDC userinfo endpoint (https://users.nexusmods.com/oauth/userinfo) and `sub` claim as
+ * the stable Nexus user id (stored as providerUid in linked_identities/banned_identities).
+ */
+app.get('/auth/nexus/callback', authLimiter, async (req: Request, res: Response) => {
+  if (!env.NEXUS_OAUTH_CLIENT_ID || !env.NEXUS_OAUTH_CLIENT_SECRET) {
+    res.status(503).send('Nexus OAuth is not configured.');
+    return;
+  }
+
+  const { code, state, error } = req.query as Record<string, string | undefined>;
+
+  if (error) {
+    logger.warn({ error }, 'Nexus OAuth error returned');
+    res.redirect('/link?error=nexus_denied');
+    return;
+  }
+
+  if (!code || !state) {
+    res.redirect('/link?error=nexus_invalid');
+    return;
+  }
+
+  let codeVerifier: string;
+  try {
+    const redis = await getRedisClient();
+    const stored = await redis.get(`nexus_oauth_state:${state}`);
+    await redis.del(`nexus_oauth_state:${state}`);
+    if (!stored) {
+      res.redirect('/link?error=nexus_state');
+      return;
+    }
+    const stateData = parseBoundOAuthState(stored, req.sessionID);
+    if (!stateData?.codeVerifier) {
+      res.redirect('/link?error=nexus_state');
+      return;
+    }
+    codeVerifier = stateData.codeVerifier;
+  } catch (err) {
+    logger.error({ err }, 'Failed to validate Nexus OAuth state');
+    res.status(500).send('Internal error');
+    return;
+  }
+
+  try {
+    const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+    const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost:7177';
+    const redirectUri = env.NEXUS_OAUTH_REDIRECT_URI || `${proto}://${host}/auth/nexus/callback`;
+
+    // Exchange code for tokens (client_secret_post — Nexus supports client_secret_basic and
+    // client_secret_post; we use post so the secret travels in the body alongside PKCE verifier).
+    // token_endpoint: https://users.nexusmods.com/oauth/token (from OIDC discovery)
+    const tokenRes = await fetch('https://users.nexusmods.com/oauth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: redirectUri,
+        client_id: env.NEXUS_OAUTH_CLIENT_ID,
+        client_secret: env.NEXUS_OAUTH_CLIENT_SECRET,  // client_secret_post method
+        code_verifier: codeVerifier,                    // PKCE verifier
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      logger.error({ status: tokenRes.status }, 'Nexus token exchange failed');
+      res.redirect('/link?error=nexus_token');
+      return;
+    }
+
+    const tokens = (await tokenRes.json()) as { access_token: string };
+
+    // Fetch userinfo from OIDC userinfo_endpoint (https://users.nexusmods.com/oauth/userinfo).
+    // `sub` is the stable Nexus user id (string); `name` is the display username.
+    // Other available claims: email, avatar, group_id, membership_roles, premium_expiry, age_verified.
+    const userRes = await fetch('https://users.nexusmods.com/oauth/userinfo', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` },
+    });
+
+    if (!userRes.ok) {
+      logger.error({ status: userRes.status }, 'Nexus userinfo fetch failed');
+      res.redirect('/link?error=nexus_userinfo');
+      return;
+    }
+
+    // `sub` = stable Nexus user id (store as providerUid); `name` = Nexus username
+    const nexusUser = (await userRes.json()) as { sub: string; name: string };
+    const providerUid = nexusUser.sub;  // `sub` is the OIDC stable identifier
+
+    // Check deny-list
+    const banned = await isBannedIdentity('nexus', providerUid);
+    if (banned) {
+      logger.warn({ providerUid }, 'Nexus identity is deny-listed');
+      res.redirect('/link?error=account_banned');
+      return;
+    }
+
+    // If already signed in via Discord, link Nexus to that account
+    const sess = req.session as any;
+    if (sess?.discordUser?.id) {
+      const existing = await prisma.user.findFirst({
+        where: { discordId: sess.discordUser.id },
+        select: { id: true },
+      });
+      if (existing) {
+        await linkProviderIdentity({
+          userId: existing.id,
+          provider: 'nexus',
+          providerUid,
+          username: nexusUser.name,
+        });
+        logger.info({ userId: existing.id, providerUid }, 'Nexus identity linked to existing session user');
+        res.redirect('/link?linked=nexus');
+        return;
+      }
+    }
+
+    // Nexus is a first-class provider for the overlay/in-game path. Provision a
+    // lightweight FCM user on first Nexus login, then bind the provider row to
+    // that user so the cookie session can pass /api/link auth without requiring
+    // a Discord account.
+    let nexusUserId: string | undefined;
+    const existingNexusIdentity = await prisma.linkedIdentity.findUnique({
+      where: { provider_providerUid: { provider: 'nexus', providerUid } },
+      select: { userId: true },
+    });
+    nexusUserId = existingNexusIdentity?.userId;
+
+    if (!nexusUserId) {
+      const safeProviderUid = providerUid.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 24) || uuidv4().slice(0, 12);
+      const provisioned = await prisma.user.create({
+        data: {
+          username: `nexus-${safeProviderUid}-${uuidv4().slice(0, 8)}`,
+          installToken: `nexus-${uuidv4()}`,
+        },
+        select: { id: true },
+      });
+
+      try {
+        await linkProviderIdentity({
+          userId: provisioned.id,
+          provider: 'nexus',
+          providerUid,
+          username: nexusUser.name,
+        });
+        nexusUserId = provisioned.id;
+      } catch (linkErr) {
+        // A concurrent callback may have won the provider unique constraint.
+        // Reuse that account and remove only our unlinked provisional row.
+        const winner = await prisma.linkedIdentity.findUnique({
+          where: { provider_providerUid: { provider: 'nexus', providerUid } },
+          select: { userId: true },
+        });
+        if (!winner) throw linkErr;
+        nexusUserId = winner.userId;
+        await prisma.user.delete({ where: { id: provisioned.id } }).catch(() => {});
+      }
+    }
+
+    sess.nexusUser = { providerUid, name: nexusUser.name, userId: nexusUserId };
+    await new Promise<void>((resolve, reject) => {
+      req.session.save((err) => (err ? reject(err) : resolve()));
+    });
+    res.redirect('/link?provider=nexus');
+  } catch (err) {
+    logger.error({ err }, 'Nexus OAuth callback error');
+    res.redirect('/link?error=nexus_error');
+  }
+});
+
+/**
+ * DELETE /auth/nexus
+ * Unlink Nexus identity (only if at least one other provider remains).
+ */
+app.delete('/auth/nexus', authLimiter, requireAuth, async (req: Request, res: Response, next) => {
+  try {
+    const result = await unlinkProviderIdentity(req.user!.id, 'nexus');
+    if (!result.ok) {
+      if (result.reason === 'last_provider') {
+        return next(createError(409, 'Cannot remove your last linked provider.'));
+      }
+      return next(createError(404, 'Nexus identity not linked.'));
+    }
+    res.json({ data: { success: true } });
+  } catch (err) {
+    next(err);
+  }
+});
+
 app.get('/auth/logout', apiLimiter, (req: Request, res: Response) => {
   req.session.destroy(() => res.redirect('/'));
 });
@@ -850,7 +1152,7 @@ app.get('/auth/ws-ticket', apiLimiter, async (req: Request, res: Response) => {
 
   const discordUser = (req.session as any).discordUser;
   // Role gate: only privileged staff may open admin-observer sockets.
-  const { isPrivilegedRole } = await import('./services/userRoleService').then(m => m.default ?? m);
+  const { isPrivilegedRole } = await import('./services/userRoleService.js').then(m => m.default ?? m);
   if (!isPrivilegedRole(discordUser.role)) {
     res.status(403).json({ data: null });
     return;
@@ -884,11 +1186,13 @@ app.get('/auth/me', apiLimiter, async (req: Request, res: Response) => {
   // so the header/overlay get a real avatarUrl even when this particular session
   // didn't carry an `avatar` field. Fall back to the session avatar.
   let avatarUrl: string | null = null;
+  let authDatabaseUser: { id: string } | null = null;
   try {
     const row = await prisma.user.findFirst({
       where: { discordId: sessionUser.id },
-      select: { username: true, discordDisplayName: true, discordId: true, discordAvatar: true },
+      select: { id: true, username: true, discordDisplayName: true, discordId: true, discordAvatar: true },
     });
+    authDatabaseUser = row ? { id: row.id } : null;
     if (row?.username && row.username.trim() !== '' && row.username !== 'Wanderer' && !row.username.startsWith('discord:')) {
       fo76Name = row.username;
     }
@@ -914,7 +1218,7 @@ app.get('/auth/me', apiLimiter, async (req: Request, res: Response) => {
     avatarUrl = '/avatars/default';
   }
 
-  res.json({ data: { ...sessionUser, fo76Name, discordDisplayName, avatarUrl } });
+  res.json({ data: buildAuthUserResponse(sessionUser, authDatabaseUser, { fo76Name, discordDisplayName, avatarUrl }) });
 });
 
 // -- Served avatars -----------------------------------------------------------
@@ -1047,6 +1351,9 @@ app.use('/api/releases', releasesRouter);
 app.use('/api/admin/name-blacklist', nameBlacklistRouter);
 app.use('/api/admin/status', adminStatusRouter);
 app.use('/api/commands', commandsRouter);
+// Cosmetics + supporter tier. Mounted at /api so the router owns its own sub-paths
+// (/cosmetics/catalog, /users/:id/cosmetics, /supporter/*, /admin/users/:id/...).
+app.use('/api', cosmeticsRouter);
 // MCP token self-service (Discord OAuth session auth — dashboard users manage their own tokens)
 app.use('/api/me/mcp-tokens', mcpTokensRouter);
 // MCP tool API (dev env) — protected by MCP token auth, NOT behind Cloudflare Access
@@ -1064,6 +1371,10 @@ if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
   app.use('/api/admin/sim', simUsersRouter);
 }
 app.use('/api/player-list', playerListRouter);
+// Auth gate: device-code link, provider linking, pairing tokens.
+// Individual routes carry their own requireAuth — this mount is public so /link page
+// can call /api/link/game as a 401-probe before the user signs in.
+app.use('/api/link', apiLimiter, linkRouter);
 // Client performance metrics — 410 tombstone (removed; already-installed clients stop cleanly).
 app.use('/api/client-metrics', clientMetricsIngestRouter);
 
@@ -1172,7 +1483,7 @@ app.get('/admin/debug/presence-audit', apiLimiter, requireAdminKey, async (req: 
       return;
     }
     const limit = Math.min(50, Math.max(1, parseInt((req.query.limit as string) ?? '20', 10) || 20));
-    const { getRedisClient } = await import('./config/redis');
+    const { getRedisClient } = await import('./config/redis.js');
     const redis = await getRedisClient();
     const raws = await redis.lRange(`presence:audit:${userId}`, 0, limit - 1);
     const items = raws.map(r => { try { return JSON.parse(r); } catch { return { parseError: true, raw: r }; } });
@@ -1186,7 +1497,7 @@ app.get('/admin/debug/presence-audit', apiLimiter, requireAdminKey, async (req: 
 //   POST /admin/debug/clear-rate-limit?key=<...>  — clears a specific key
 app.post('/admin/debug/clear-rate-limit', apiLimiter, requireAdminKey, async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { getRedisClient } = await import('./config/redis');
+    const { getRedisClient } = await import('./config/redis.js');
     const redis = await getRedisClient();
     const specificKey = (req.query.key as string | undefined)?.trim();
     let cleared = 0;
@@ -1216,7 +1527,7 @@ app.post('/admin/debug/clear-rate-limit', apiLimiter, requireAdminKey, async (re
 // GET /admin/debug/users/:userId/aliases — alias history mirror (X-Admin-API-Key)
 app.get('/admin/debug/users/:userId/aliases', apiLimiter, requireAdminKey, async (req: Request, res: Response, next: NextFunction) => {
   const UUID_RE_LOCAL = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-  if (!UUID_RE_LOCAL.test(req.params.userId)) {
+  if (!UUID_RE_LOCAL.test(paramStr(req, 'userId'))) {
     res.status(400).json({ error: 'Invalid user ID format' });
     return;
   }
@@ -1259,14 +1570,14 @@ app.post('/admin/debug/set-username', apiLimiter, requireAdminKey, async (req: R
     const updated = await prisma.user.update({
       where: { id: userId },
       data: { username: trimmed },
-      select: { id: true, username: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true },
+      select: { id: true, username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true },
     });
     // Refresh any live WS session's cached displayName so chat renders the
     // new name instantly without requiring the overlay to reconnect.
     try {
       const { refreshClientIdentity } = require('./websocket/handlers');
       if (typeof refreshClientIdentity === 'function') {
-        refreshClientIdentity(updated.id, updated.username, updated.discordUsername, updated.discordDisplayName, updated.installToken);
+        refreshClientIdentity(updated.id, updated.username, updated.discordUsername, updated.discordDisplayName, updated.installToken, updated.chatName);
       }
     } catch { /* non-fatal */ }
     res.json({ data: updated });
@@ -1531,8 +1842,10 @@ app.post('/admin/upload-release', apiLimiter, (req: Request, res: Response, next
 // -- Admin dashboard (SPA) — served from backend when built into the image ----
 const dashboardDist = path.join(__dirname, '../admin-dashboard/dist');
 app.use(express.static(dashboardDist));
-app.get('*', (req: Request, res: Response, next: NextFunction) => {
-  if (req.path.startsWith('/api/') || req.path.startsWith('/auth/') || req.path === '/ws' || req.path.startsWith('/ws/')) {
+// Express 5 (path-to-regexp v8) rejects the bare '*' string path; a RegExp
+// catch-all preserves the SPA-fallback behaviour (matches every path incl. '/').
+app.get(/.*/, (req: Request, res: Response, next: NextFunction) => {
+  if (req.path.startsWith('/api/') || req.path.startsWith('/auth/') || req.path === '/ws' || req.path.startsWith('/ws/') || req.path === '/relay') {
     return next();
   }
   res.sendFile(path.join(dashboardDist, 'index.html'), (err) => {
@@ -1561,9 +1874,13 @@ app.use(errorHandler);
 const MAX_WS_CONNS_PER_IP = parseInt(process.env.MAX_WS_CONNS_PER_IP || '10', 10);
 const wsConnsByIp = new Map<string, number>();
 
+// noServer mode + a manual upgrade router (attachChatUpgradeRouter below).
+// Previously this was `{ server, path: '/ws' }`, but ws's auto-attached handler
+// aborts every non-'/ws' upgrade with HTTP 400 — which killed the HUD live
+// socket at '/ws/hud' before hudPushWs could claim it. verifyClient still runs
+// because it lives inside handleUpgrade(). See websocket/upgradeRouter.ts.
 const wss = new WebSocketServer({
-  server,
-  path: '/ws',
+  noServer: true,
   maxPayload: 8 * 1024,
   verifyClient: (info, cb) => {
     // Origin allow-list — only enforced when an Origin header is present.
@@ -1610,6 +1927,11 @@ const wsHeartbeat = setInterval(() => {
 }, 30_000);
 wss.on('close', () => clearInterval(wsHeartbeat));
 
+// Route HTTP upgrades: '/ws' → this chat server; enabled '/ws/hud' is left for
+// initHudPushWs(); disabled/unknown paths are rejected. Required because `wss`
+// is now in noServer mode (see the WebSocketServer comment above).
+attachChatUpgradeRouter(server, wss, { hudPathEnabled: isHudPushWsEnabled() });
+
 // Expose broadcast fns to routes and Discord service
 (global as any).broadcast = broadcast;
 (global as any).broadcastMessageDeletion = broadcastMessageDeletion;
@@ -1636,43 +1958,47 @@ setInterval(() => {
   );
 }, 60 * 60 * 1000);
 
-// Online-snapshot cron — inserts the live WS client count every 5 min so the
-// public stats endpoint can serve an onlineOverTime chart. Purges rows older
-// than 7 days daily at 04:07 UTC.
-startOnlineSnapshotJob();
-startWikiIngestJob();
-startWikiSyncSchedule();
-startCampSyncSchedule();
+if (shouldStartBackgroundJobs(env.NODE_ENV)) {
+  // Online-snapshot cron — inserts the live WS client count every 5 min so the
+  // public stats endpoint can serve an onlineOverTime chart. Purges rows older
+  // than 7 days daily at 04:07 UTC.
+  startOnlineSnapshotJob();
+  startWikiIngestJob();
+  startWikiSyncSchedule();
+  startCampSyncSchedule();
 
-// CAMP database — auto-populate on first boot if the table is empty.
-// A single 7.6 MB JSON fetch; completes in seconds.
-isCampTableEmpty().then(empty => {
-  if (empty) {
-    logger.info('[camp] camp_items table is empty — running initial ingest');
-    ingestCampDatabase().then(({ fetched, upserted }) => {
-      logger.info({ fetched, upserted }, '[camp] initial CAMP ingest complete');
-    }).catch(err => {
-      logger.error({ err }, '[camp] initial CAMP ingest failed');
-    });
-  }
-}).catch(err => {
-  logger.warn({ err }, '[camp] could not check camp_items table — skipping auto-ingest');
-});
+  // CAMP database — auto-populate on first boot if the table is empty.
+  // A single 7.6 MB JSON fetch; completes in seconds.
+  isCampTableEmpty().then(empty => {
+    if (empty) {
+      logger.info('[camp] camp_items table is empty — running initial ingest');
+      ingestCampDatabase().then(({ fetched, upserted }) => {
+        logger.info({ fetched, upserted }, '[camp] initial CAMP ingest complete');
+      }).catch(err => {
+        logger.error({ err }, '[camp] initial CAMP ingest failed');
+      });
+    }
+  }).catch(err => {
+    logger.warn({ err }, '[camp] could not check camp_items table — skipping auto-ingest');
+  });
 
-// Party reap sweep — ephemeral parties with 0 online members are soft-deleted every ~60s.
-// Also GCs persistent parties with 0 members and expires stale invites.
-startPartyReapJob({
-  prisma: prisma as any,
-  getOnlineUserIds: () => {
-    const ids = new Set<string>();
-    for (const id of getConnectedUserIds()) ids.add(id);
-    return ids;
-  },
-  broadcastToPartyMembers,
-});
+  // Party reap sweep — ephemeral parties with 0 online members are soft-deleted every ~60s.
+  // Also GCs persistent parties with 0 members and expires stale invites.
+  startPartyReapJob({
+    prisma: prisma as any,
+    getOnlineUserIds: () => {
+      const ids = new Set<string>();
+      for (const id of getConnectedUserIds()) ids.add(id);
+      return ids;
+    },
+    broadcastToPartyMembers,
+  });
 
-// Giveaway service — restore draw timers for any in-flight giveaways after restart.
-void giveawayService.init({ prisma: prisma as any, broadcast });
+  // Giveaway service — restore draw timers for any in-flight giveaways after restart.
+  void giveawayService.init({ prisma: prisma as any, broadcast });
+} else {
+  logger.info('Background sync, party reap, and giveaway restore jobs disabled for test runtime');
+}
 
 // Moderation sweeps — every 5 min clear expired bans/mutes/kicks. WS guards
 // also auto-expire on access for connected users; this catches offline ones
@@ -1738,6 +2064,15 @@ async function start(): Promise<void> {
     await initHudPushTcp();
     initHudPushWs(server);
 
+    // db push does not replay raw SQL/data-only migrations. Apply the small,
+    // idempotent compatibility set before any relay message can be persisted.
+    await applyPostPushPatches(prisma);
+
+    // Restore cursors for legacy rows before seeding the counter. Must run after
+    // Redis is connected and before the first relay send.
+    await backfillMissingRelaySeq();
+    await seedRelaySeq();
+
     // Ensure default channels exist regardless of migration state
     try {
       // Structure:
@@ -1786,13 +2121,24 @@ async function start(): Promise<void> {
           id: 'a0000000-0000-0000-0000-000000000002',
           name: 'Block flagged words',
           triggerType: 'KEYWORD_PRESET',
-          triggerMetadata: { presets: ['PROFANITY', 'SEXUAL_CONTENT', 'SLURS'], allow_list: ['ass', 'damn', 'fuck', 'hell', 'shit'] },
+          triggerMetadata: { presets: ['SLURS'], require_target: true },
         },
         {
           id: 'a0000000-0000-0000-0000-000000000003',
           name: 'Block mention spam',
           triggerType: 'MENTION_SPAM',
           triggerMetadata: { mention_total_limit: 20 },
+        },
+        {
+          // AI content moderation (OpenAI Moderation API). Thresholds live in
+          // the moderation_settings key/value rows, not here, so they can be
+          // tuned globally; an empty triggerMetadata means "use the global set".
+          // Like the others this ships DISABLED — enabling it is deliberate, and
+          // ai_moderation_enabled must be turned on too.
+          id: 'a0000000-0000-0000-0000-000000000004',
+          name: 'AI content moderation',
+          triggerType: 'AI_MODERATION',
+          triggerMetadata: {},
         },
       ];
       for (const r of automodDefaults) {
@@ -1882,6 +2228,7 @@ async function start(): Promise<void> {
     // Initialize the latest release version cache from DB so newly connecting
     // overlays receive the app:update-available handshake message immediately.
     await initLatestVersion();
+    await initActiveQaVersion();
 
     // Load name blacklist into in-memory cache and subscribe to cross-instance refresh broadcasts.
     await loadBlacklist();

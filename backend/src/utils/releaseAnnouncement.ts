@@ -8,12 +8,34 @@
  * artifacts 404).
  */
 
-import { windowsZipUrl, linuxZipUrl } from './releaseDownloadUrls';
+import type { MessageCreateOptions } from 'discord.js';
+import {
+  windowsZipUrl,
+  linuxZipUrl,
+  rawLinuxAppImageUrl,
+  rawLinuxDebUrl,
+} from './releaseDownloadUrls';
+
+export interface HudModDownload {
+  version: string;
+  url: string;
+}
 
 /** Message content above the embed — pings the whole Updates channel. Requires
  *  `allowedMentions: { parse: ['everyone'] }` on send AND the bot to hold
  *  "Mention Everyone" in that channel (otherwise it posts but doesn't ping). */
 export const RELEASE_PING = '@everyone';
+
+/** Message options for a release post's optional whole-channel mention. */
+export function releaseAnnouncementMessage(
+  mentionEveryone: boolean,
+): Pick<MessageCreateOptions, 'content' | 'allowedMentions'> {
+  if (!mentionEveryone) return {};
+  return {
+    content: RELEASE_PING,
+    allowedMentions: { parse: ['everyone'] },
+  };
+}
 
 /** FCM's Nexus Mods page (default); overridable so a different mod id can be set. */
 export const DEFAULT_NEXUS_MOD_URL = 'https://www.nexusmods.com/fallout76/mods/4082';
@@ -26,9 +48,17 @@ export function downloadPageUrl(): string {
   return process.env.DOWNLOAD_PAGE_URL || 'https://falloutchatmod.com';
 }
 
-/** Embed "Download" field value — env-aware direct ZIP links + the download page. */
-export function releaseDownloadFieldValue(version: string): string {
-  return `🪟 [Windows](${windowsZipUrl(version)})  ·  🐧 [Linux (Proton)](${linuxZipUrl(version)})  ·  [Download page](${downloadPageUrl()})`;
+/** Embed "Download" field value — env-aware platform links + optional HUD package. */
+export function releaseDownloadFieldValue(version: string, hudMod?: HudModDownload): string {
+  const links = [
+    `🪟 [Windows](${windowsZipUrl(version)})`,
+    `🐧 [Linux AppImage](${rawLinuxAppImageUrl(version)})`,
+    `[Linux .deb](${rawLinuxDebUrl(version)})`,
+    `[Linux ZIP + install docs](${linuxZipUrl(version)})`,
+    `[Download page](${downloadPageUrl()})`,
+  ];
+  if (hudMod) links.push(`[ZFE FCM HUD Mod ZIP v${hudMod.version}](${hudMod.url})`);
+  return links.join('  ·  ');
 }
 
 /** Embed "Endorse on Nexus" field value — encouragement + the download caveat. */

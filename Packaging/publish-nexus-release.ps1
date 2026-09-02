@@ -1,15 +1,15 @@
 <#
 .SYNOPSIS
-    Publishes a built release (Windows .exe + Linux .AppImage) to Nexus Mods,
-    one call per platform, wrapping each installer in a platform-named .zip and
-    attaching it as the new MAIN file (archiving the previous one).
+    Publishes a built release (Linux AppImage + .deb + optional in-game HUD package)
+    to Nexus Mods, attaching each artifact to its own file group.
 
 .DESCRIPTION
     Thin wrapper over publish-nexus.ps1 that knows the per-platform file-group ids
     and descriptions. Finds the version's artifacts in the Electron build output
-    (cross-platform-overlay/dist-electron), publishes both platforms to Nexus, then
-    uploads the Windows .exe to VirusTotal and pushes the permalink to the backend
-    so falloutchatmod.com/virustotal always points at the latest scan.
+    (cross-platform-overlay/dist-electron), publishes the Linux desktop package
+    and the optional HUD package to Nexus, then uploads the Windows .exe to
+    VirusTotal and pushes the permalink to the backend so
+    falloutchatmod.com/virustotal always points at the latest scan.
 
     Release pipeline context (where this script fits):
       1. Build: electron-builder produces the raw .exe (Windows) and .AppImage (Linux)
@@ -22,8 +22,11 @@
          /app/downloads/electron/ on the VPS (see DEPLOY.md for the exact commands).
       5. Size verify: confirm the bytes served by the VPS match the local build artifact size.
       6. Register: POST /admin/releases {version, downloadUrl (Windows ZIP), releaseNotes}.
-      7. Nexus: THIS SCRIPT publishes Windows + Linux ZIPs to Nexus Mods as new MAIN
-         files (archiving the previous ones) via publish-nexus.ps1.
+      7. Nexus: THIS SCRIPT publishes the Linux AppImage ZIP and Linux .deb ZIP as
+         MAIN files and the HUD ZIP as an OPTIONAL file (each replacing its previous
+         version) via publish-nexus.ps1. Pass -PublishWindowsForReview to upload a
+         new Windows ZIP as a MAIN file while preserving the existing Windows file
+         for Nexus support review.
 
     IMPORTANT -- ASCII-ONLY SCRIPT RULE:
       Keep this file ASCII-only. Windows PowerShell 5.1 run via the `-File` flag
@@ -35,13 +38,20 @@
     Env vars (set as Windows USER env vars):
       NEXUS_API_KEY               personal API key (apikey header)
       NEXUS_FILE_GROUP_ID_WINDOWS file-group id for the Windows file
-      NEXUS_FILE_GROUP_ID_LINUX   file-group id for the Linux file
+      NEXUS_FILE_GROUP_ID_LINUX   file-group id for the Linux AppImage file
+      NEXUS_FILE_GROUP_ID_LINUX_DEB file-group id for the Linux .deb file
+      NEXUS_FILE_GROUP_ID_HUD     file-group id for the optional HUD file
       VT_API_KEY                  VirusTotal personal API key
       PROD_ADMIN_RELEASE_TOKEN    falloutchatmod.com admin release token
 
 .PARAMETER Version   e.g. 1.3.73
 .PARAMETER DistDir   build-output dir (default: ..\cross-platform-overlay\dist-electron)
+.PARAMETER HudModDir   HUD package source dir (default: ..\game-mods\FCMBridge\hudmodloader-chat)
 .PARAMETER DryRun    print planned calls (and test the zip step) without uploading
+.PARAMETER PublishWindowsForReview
+    Upload the Windows ZIP as a second MAIN file alongside the existing Windows
+    file without archiving it. Use this when submitting a new Windows build to
+    Nexus support for approval; remove the old file manually after approval.
 #>
 [CmdletBinding()]
 param(
@@ -50,7 +60,9 @@ param(
     # Release notes for this version -- prepended to each Nexus file description as
     # a "What's new in vX.Y.Z" block so the changelog is visible on the file page.
     [string]$ReleaseNotes = "",
-    [switch]$DryRun
+    [string]$HudModDir = "",
+    [switch]$DryRun,
+    [switch]$PublishWindowsForReview
 )
 $ErrorActionPreference = "Stop"
 # Release notes may arrive via the FCM_RELEASE_NOTES env var instead of the
@@ -61,23 +73,54 @@ $ErrorActionPreference = "Stop"
 if (-not $ReleaseNotes -and $env:FCM_RELEASE_NOTES) { $ReleaseNotes = $env:FCM_RELEASE_NOTES }
 # "What's new" block (blank if no notes supplied).
 $notesBlock = if ($ReleaseNotes.Trim()) { "What's new in v${Version}:`n$($ReleaseNotes.Trim())`n`n" } else { "" }
-if (-not $DistDir) { $DistDir = Join-Path $PSScriptRoot "..\cross-platform-overlay\dist-electron" }
+$repoRoot  = Split-Path $PSScriptRoot -Parent
+$overlayDir = Join-Path $repoRoot "cross-platform-overlay"
+if (-not $DistDir) { $DistDir = Join-Path $overlayDir "dist-electron" }
+$gameModsDir = Join-Path $repoRoot "game-mods"
+$fcmBridgeDir = Join-Path $gameModsDir "FCMBridge"
+if (-not $HudModDir) { $HudModDir = Join-Path $fcmBridgeDir "hudmodloader-chat" }
 $nexus     = Join-Path $PSScriptRoot "publish-nexus.ps1"
-$assetsDir = Join-Path $PSScriptRoot "..\cross-platform-overlay\assets"
+$assetsDir = Join-Path $overlayDir "assets"
+$hudPackage = Join-Path $HudModDir "package.py"
 
 $winGroup   = $env:NEXUS_FILE_GROUP_ID_WINDOWS
 $linuxGroup = $env:NEXUS_FILE_GROUP_ID_LINUX
+$linuxDebGroup = $env:NEXUS_FILE_GROUP_ID_LINUX_DEB
+$hudGroup   = $env:NEXUS_FILE_GROUP_ID_HUD
+$publishWindows = [bool]$PublishWindowsForReview
 # Fall back to the persistent USER-scope value (process env may not carry it).
 if (-not $winGroup)   { $winGroup   = [Environment]::GetEnvironmentVariable('NEXUS_FILE_GROUP_ID_WINDOWS','User') }
 if (-not $linuxGroup) { $linuxGroup = [Environment]::GetEnvironmentVariable('NEXUS_FILE_GROUP_ID_LINUX','User') }
-if (-not $winGroup -or -not $linuxGroup) {
-    Write-Error "Set NEXUS_FILE_GROUP_ID_WINDOWS and NEXUS_FILE_GROUP_ID_LINUX env vars first."
+if (-not $linuxDebGroup) { $linuxDebGroup = [Environment]::GetEnvironmentVariable('NEXUS_FILE_GROUP_ID_LINUX_DEB','User') }
+if (-not $hudGroup)   { $hudGroup   = [Environment]::GetEnvironmentVariable('NEXUS_FILE_GROUP_ID_HUD','User') }
+if (-not $linuxGroup -or -not $linuxDebGroup -or -not $hudGroup -or ($publishWindows -and -not $winGroup)) {
+    $requiredGroups = "NEXUS_FILE_GROUP_ID_LINUX, NEXUS_FILE_GROUP_ID_LINUX_DEB, and NEXUS_FILE_GROUP_ID_HUD"
+    if ($publishWindows) { $requiredGroups += ", plus NEXUS_FILE_GROUP_ID_WINDOWS for the Windows upload" }
+    Write-Error "Set $requiredGroups env vars first."
+    exit 1
+}
+
+if (-not (Test-Path $hudPackage)) {
+    Write-Error "HUD package helper not found: $hudPackage"
+    exit 1
+}
+$pythonCommand = Get-Command python3 -ErrorAction SilentlyContinue
+if (-not $pythonCommand) { $pythonCommand = Get-Command python -ErrorAction SilentlyContinue }
+if (-not $pythonCommand) {
+    Write-Error "Python 3 is required to resolve the HUD widget version."
+    exit 1
+}
+$hudVersion = (& $pythonCommand.Source $hudPackage --print-version).Trim()
+if ($LASTEXITCODE -ne 0 -or -not $hudVersion -or $hudVersion -notmatch '^\d+\.\d+\.\d+$') {
+    Write-Error "Could not read a valid FCMChatWidget version from $hudPackage"
     exit 1
 }
 
 # productName is "Fallout Chat Mod" (WITH spaces) -- electron-builder output names.
 $winExe   = Join-Path $DistDir "Fallout Chat Mod Setup $Version.exe"
 $linuxApp = Join-Path $DistDir "Fallout Chat Mod-$Version.AppImage"
+$linuxDeb = Join-Path $DistDir "Fallout Chat Mod-$Version.deb"
+$hudZip   = Join-Path $DistDir "ZFE FCM HUD Mod-$hudVersion (PROD).zip"
 
 # -- FAIL-CLOSED VirusTotal gate -------------------------------------------------
 # Run the VT gate FIRST and ABORT (do not upload anything to Nexus) if it returns
@@ -103,13 +146,10 @@ if (-not $DryRun) {
     Write-Host "[release] DRY RUN - skipping VT gate."
 }
 
-# Per-platform display name for the uploaded .zip (matches the manual naming).
+# Per-platform display names for the uploaded .zip files (matches the manual naming).
 $winZip   = "Fallout Chat Mod Setup $Version (Windows).zip"
-# TEMPORARY (Windows Nexus upload disabled): generic name with no "AppImage (Linux)"
-# so the single Nexus file reads as the mod's main download; the bundled README points
-# Windows users to the site. Revert to "Fallout Chat Mod-$Version.AppImage (Linux).zip"
-# when the Windows file is re-enabled.
-$linuxZip = "Fallout Chat Mod $Version.zip"
+$linuxAppZip = "Fallout Chat Mod $Version (Linux AppImage).zip"
+$linuxDebZip = "Fallout Chat Mod $Version (Linux .deb).zip"
 
 # Windows file: install instructions + CLI option (installer is code-signed; no AV disclaimer).
 $winDesc = $notesBlock + @"
@@ -120,7 +160,7 @@ PREFER THE CLI? One-line install (PowerShell):
 
 Or download this zip, extract, and run "Fallout Chat Mod Setup <version>.exe". See INSTALL-WINDOWS.txt inside the zip.
 "@
-$linuxDesc = $notesBlock + @"
+$linuxAppDesc = $notesBlock + @"
 WINDOWS USERS: the Windows installer is not hosted on Nexus - download it from the official site (same build, scanned clean): https://falloutchatmod.com (SYSTEM -> INSTALL). VirusTotal: https://falloutchatmod.com/virustotal
 
 Full install instructions for every platform: https://falloutchatmod.com (SYSTEM -> INSTALL)
@@ -128,49 +168,83 @@ Full install instructions for every platform: https://falloutchatmod.com (SYSTEM
 PREFER THE CLI? One-line install (adds an app-menu launcher):
     curl -fsSL https://falloutchatmod.com/install.sh | bash
 
-Or download this zip, extract, then: chmod +x the AppImage and run it. See INSTALL-LINUX.txt inside the zip. Requires an X11/XWayland session.
+Download the AppImage package, make it executable, and run it. See INSTALL-LINUX.txt on the official site for the complete KDE Wayland, Hyprland, and X11 setup.
 
 KDE Plasma (Wayland) users: run Fallout 76 in WINDOWED mode (not Borderless) and set your taskbar/panel to Auto-Hide - that's the reliable setup. For a borderless look, use the Steam launch option PROTON_NO_WM_DECORATION=1 %command% instead. Do NOT add a game-side "Fullscreen = No" KWin rule (it breaks the loading screen / in-game UI).
 
 VirusTotal scan (always points to the current build): https://falloutchatmod.com/virustotal
 "@
+$linuxDebDesc = $notesBlock + @"
+WINDOWS USERS: the Windows installer is not hosted on Nexus - download it from the official site: https://falloutchatmod.com (SYSTEM -> INSTALL). The Linux AppImage is also available there.
+
+Full install instructions for every platform: https://falloutchatmod.com (SYSTEM -> INSTALL)
+
+This is the apt/dpkg package. Install the downloaded file with:
+    sudo apt install ./Fallout Chat Mod-$Version.deb
+
+For the portable AppImage package, use the separate Linux AppImage file on the same Nexus mod page or the official download page.
+
+VirusTotal scan (always points to the current build): https://falloutchatmod.com/virustotal
+"@
+$hudDesc = $notesBlock + @"
+OPTIONAL IN-GAME HUD MOD: ZFE FCM HUD Mod v$hudVersion
+
+This is a separate, opt-in Fallout 76 HUD install. It is not required for the
+desktop overlay and must be installed at the user's discretion. The ZIP contains
+the FCMChatWidget BA2, its runtime INI files, an append-only HUDModLoader snippet,
+the version manifest, and INSTALL.txt.
+
+Download and install instructions: https://falloutchatmod.com (SYSTEM -> INSTALL)
+The archive is production-stamped and must not be used with the hosted-dev environment.
+Follow INSTALL.txt and append the loader entry to the existing Data/hudmodloader.ini;
+do not replace that file.
+"@
 
 # Per-platform extra files to bundle into the Nexus zip alongside the installer.
 # Result: Nexus zip = installer + same instruction files as the website zip.
 $winInclude   = @(
-    (Join-Path $assetsDir "install\INSTALL-WINDOWS.txt")
+    (Join-Path (Join-Path $assetsDir "install") "INSTALL-WINDOWS.txt")
 )
 $linuxInclude = @(
-    (Join-Path $assetsDir "install\READ ME FIRST (Windows users).txt"),
-    (Join-Path $assetsDir "install\INSTALL-LINUX.txt"),
+    (Join-Path (Join-Path $assetsDir "install") "READ ME FIRST (Windows users).txt"),
+    (Join-Path (Join-Path $assetsDir "install") "INSTALL-LINUX.txt"),
     (Join-Path $assetsDir "fallout-chatmod-keepabove.kwinrule")
 )
 
-foreach ($p in @(
-    # TEMPORARILY DISABLED (2026-06-20): Nexus auto-quarantines the unsigned Windows
-    # installer (.exe), so we don't publish it to Nexus for now — Windows users get it
-    # from falloutchatmod.com. A support ticket is open to lift the quarantine.
-    # RE-ENABLE: uncomment the Windows line below once the quarantine is lifted or the
-    # installer is code-signed.
-    # @{ Name = "Windows"; File = $winExe;   Zip = $winZip;   Group = $winGroup;   Desc = $winDesc;   Include = $winInclude   },
-    @{ Name = "Linux";   File = $linuxApp; Zip = $linuxZip; Group = $linuxGroup; Desc = $linuxDesc; Include = $linuxInclude }
-)) {
+$platforms = @(
+    @{ Name = "Linux AppImage"; File = $linuxApp; Zip = $linuxAppZip; Group = $linuxGroup; Desc = $linuxAppDesc; Include = $linuxInclude; NexusVersion = $Version; Category = "main"; ArchiveExisting = $true },
+    @{ Name = "Linux .deb"; File = $linuxDeb; Zip = $linuxDebZip; Group = $linuxDebGroup; Desc = $linuxDebDesc; Include = $linuxInclude; NexusVersion = $Version; Category = "main"; ArchiveExisting = $true },
+    # The HUD package is a separate optional file group on the same Nexus mod page.
+    # Its file version follows the widget version, not the desktop overlay version.
+    @{ Name = "HUD"; File = $hudZip; Zip = ""; Group = $hudGroup; Desc = $hudDesc; Include = @(); NexusVersion = $hudVersion; Category = "optional"; ArchiveExisting = $true }
+)
+if ($publishWindows) {
+    # Support-review upload creates a second live Windows file alongside the existing one.
+    # The old file is removed manually only after Nexus support approves the new file.
+    $platforms = @(
+        @{ Name = "Windows (support review)"; File = $winExe; Zip = $winZip; Group = $winGroup; Desc = $winDesc; Include = $winInclude; NexusVersion = $Version; Category = "main"; ArchiveExisting = $false }
+    ) + $platforms
+}
+
+foreach ($p in $platforms) {
     if (-not (Test-Path $p.File)) { Write-Error "[$($p.Name)] artifact not found: $($p.File)"; exit 1 }
     Write-Host "==== Publishing $($p.Name) -> Nexus group $($p.Group) ===="
     $args = @{
         FilePath      = $p.File
-        Version       = $Version
+        Version       = $p.NexusVersion
         FileGroupId   = $p.Group
         ZipAs         = $p.Zip
         Description   = $p.Desc
         IncludeFiles  = $p.Include
-        FileCategory  = "main"
+        FileCategory  = $p.Category
+        ArchiveExisting = $p.ArchiveExisting
     }
     if ($DryRun) { $args.DryRun = $true }
     & $nexus @args
     if ($LASTEXITCODE -ne 0) { Write-Error "[$($p.Name)] publish failed (exit $LASTEXITCODE)"; exit 1 }
 }
-Write-Host "==== Nexus publish complete for v$Version (Windows + Linux) ===="
+$windowsSummary = if ($publishWindows) { " + Windows support-review upload (old file preserved)" } else { "" }
+Write-Host "==== Nexus publish complete for Linux AppImage + .deb v$Version + HUD v$hudVersion$windowsSummary ===="
 
 # -- VirusTotal upload + backend permalink update --------------------------------
 # The Windows .exe is ~81 MB (>32 MB) so we must use the large-file upload URL.

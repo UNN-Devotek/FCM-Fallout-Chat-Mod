@@ -21,6 +21,7 @@ const prismaMock = {
   auditLog: {
     create: jest.fn().mockResolvedValue({}),
   },
+  $executeRaw: jest.fn().mockResolvedValue(1),
 };
 
 jest.mock('../src/config/prisma', () => ({ __esModule: true, default: prismaMock }));
@@ -43,6 +44,7 @@ jest.mock('../src/config/redis', () => ({
 
 jest.mock('../src/websocket/handlers', () => ({
   broadcast: jest.fn(),
+  broadcastMessageDeletion: jest.fn(),
   disconnectByUserId: jest.fn().mockReturnValue(0),
   markClientMuted: jest.fn(),
   notifyAndDisconnect: jest.fn().mockReturnValue(0),
@@ -59,7 +61,7 @@ jest.mock('../src/services/userRoleService', () => ({
 }));
 
 // ── Tests ──────────────────────────────────────────────────────────────────────
-const { reverseBan } = require('../src/services/moderationActionsService');
+const { reverseBan, deleteMessageById } = require('../src/services/moderationActionsService');
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -69,6 +71,7 @@ beforeEach(() => {
   prismaMock.ban.findUnique.mockResolvedValue(null);
   prismaMock.user.findUnique.mockResolvedValue({ isBanned: false, savedDiscordRoles: [], discordId: null });
   prismaMock.user.update.mockResolvedValue({});
+  prismaMock.$executeRaw.mockResolvedValue(1);
 });
 
 describe('reverseBan', () => {
@@ -139,5 +142,30 @@ describe('reverseBan', () => {
     await reverseBan('ban-id', 'actor-id', 'reason');
 
     expect(prismaMock.user.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('deleteMessageById', () => {
+  test('soft-deletes the message, audits, and broadcasts deletion', async () => {
+    await expect(deleteMessageById('11111111-1111-4111-8111-111111111111', 'actor-id', 'spam'))
+      .resolves.toBeUndefined();
+    expect(prismaMock.$executeRaw).toHaveBeenCalled();
+    expect(prismaMock.auditLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        action: 'delete_message',
+        targetId: '11111111-1111-4111-8111-111111111111',
+        targetType: 'message',
+        reason: 'spam',
+      }),
+    });
+    expect(require('../src/websocket/handlers').broadcastMessageDeletion)
+      .toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111');
+  });
+
+  test('does not broadcast when the message is already deleted or missing', async () => {
+    prismaMock.$executeRaw.mockResolvedValueOnce(0);
+    await expect(deleteMessageById('11111111-1111-4111-8111-111111111111', 'actor-id', 'spam'))
+      .rejects.toThrow('Message not found');
+    expect(require('../src/websocket/handlers').broadcastMessageDeletion).not.toHaveBeenCalled();
   });
 });

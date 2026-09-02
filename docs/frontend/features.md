@@ -25,7 +25,7 @@ never passed through `OutletContext` — this is what triggers `isPublicMode`.
 |------|---------|
 | `ChatOverlay.tsx` | **The** single shared chat overlay component. Three surfaces, one file. Includes the inline `WikiPanel`, `WikiAcThumb`, and wiki autocomplete. Full documentation: [chat-overlay.md](./chat-overlay.md). |
 | `LiveFeed.tsx` | Staff-only raw message feed (`/feed` route). Shows all channels unfiltered; requires `moderator` role or higher. |
-| `EmojiPicker.tsx` | Emoji picker popup used by `ChatOverlay`'s input box. |
+| `EmojiPicker.tsx` | Emoji picker popup used by `ChatOverlay`'s input box. "Recent" (max `RECENT_EMOJI_LIMIT` = 16, newest-first, in `localStorage` `fcm-recent-emojis`) is populated both by picker clicks **and** by emoji actually sent in messages — `extractEmojiTokens()` pulls native + custom `<:name:id>` tokens from outgoing chat/party/PM sends. |
 | `GifPicker.tsx` | GIF search / picker popup. |
 | `usePickerInsert.ts` | Hook coordinating emoji/GIF selection → cursor-aware insertion into the message input. |
 

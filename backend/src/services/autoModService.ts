@@ -3,36 +3,83 @@ import { getRedisClient } from '../config/redis';
 import logger from '../config/logger';
 import { compileUserRegex } from '../utils/safeRegex';
 import { canon } from '../utils/textCanon';
+import { hasDirectTarget } from '../utils/targetedAttack';
 
 // ── Baseline hardcoded denylist ──────────────────────────────────────────────
-// These terms are ALWAYS blocked regardless of whether the DB word_filter table
-// is empty. This ensures zero-tolerance for hate speech, slurs, and explicit
-// content even on fresh deployments before any admin-configured rules exist.
+// These terms are recognized regardless of whether the DB word_filter table is
+// empty. Unambiguous hate terms block in chat; ordinary profanity is handled by
+// the targeted-attack extension below. The identifier path remains strict.
 // The list uses whole-word regex matching (case-insensitive, word boundaries).
 // IMPORTANT: Keep terms here; do not remove. Prod DB rules are additive on top.
 //
+// Unambiguous hate terms. These have no ordinary-conversation use, so they hard-
+// block in chat AND in identifiers. Ordinary profanity (fuck/shit/damn/ass) is
+// deliberately NOT here — the policy is "cussing is fine, targeting people is not".
 // Categories: racial/ethnic slurs, sexist/misogynistic terms, homophobic slurs,
-// explicit sexual terms that have no legitimate use in party/user names.
-const BASELINE_DENYLIST: ReadonlyArray<{ phrase: string; compiled: RegExp }> = [
-  // Racial/ethnic slurs
+// and severe abuse terms. Ordinary profanity is handled by the targeted-attack
+// extension below, not as a context-free chat block.
+const BASELINE_CHAT_DENYLIST_PHRASES = [
+  // Racial / ethnic slurs
   'nigger', 'nigga', 'chink', 'spic', 'spick', 'kike', 'wetback', 'gook',
   'towelhead', 'raghead', 'coon', 'jigaboo', 'porch monkey', 'jungle bunny',
-  'beaner', 'cracker', 'honky', 'zipperhead', 'slant', 'squaw', 'redskin',
-  'sandnigger', 'sand nigger', 'uncle tom', 'oreo',
+  'beaner', 'honky', 'zipperhead', 'squaw',
+  'sandnigger', 'sand nigger', 'uncle tom',
   // Sexist / misogynistic slurs
-  'cunt', 'twat', 'bitch', 'whore', 'slut', 'skank', 'ho',
+  'cunt', 'twat', 'whore', 'slut', 'skank',
   // Homophobic / transphobic slurs
-  'faggot', 'fag', 'dyke', 'tranny', 'shemale', 'sissy',
-  // Explicit sexual
+  'faggot', 'fag', 'dyke', 'tranny', 'shemale',
+  // Severe abuse terms that should still hard-block outside optional presets
+  'pedo', 'pedophile', 'rape', 'rapist',
+] as const;
+
+// These words are allowed as ordinary Fallout/game cussing. When one is
+// explicitly addressed at a person, however, it is a targeted attack and must
+// still be caught even with AI moderation disabled or degraded.
+const TARGETED_ATTACK_DENYLIST_PHRASES = [
   'cock', 'dick', 'pussy', 'asshole', 'motherfucker', 'fucker', 'fuck',
-  'shit', 'bastard', 'pedo', 'pedophile', 'rape', 'rapist',
-].map(phrase => ({
-  phrase,
-  // Compile against the canonical (diacritic-stripped) form with the 'u' flag so
-  // Unicode word boundaries behave and so a phrase ever stored with an accent
-  // matches the same canon() form the input is reduced to before testing.
-  compiled: new RegExp(`\\b${canon(phrase).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'iu'),
-}));
+  'shit', 'bastard',
+] as const;
+
+// Context-ambiguous terms: a slur when aimed at someone, but an ordinary word in
+// the overwhelming majority of game chat — "graham cracker" (a real Fallout food
+// item), "slanted", "redskin potatoes", "heave ho", "this quest is a bitch".
+// Word-boundary matching cannot tell those apart from a targeted insult, and
+// hard-blocking them was the main source of the "triggers on way too light of
+// context" complaint, so they no longer block CHAT.
+//
+// They DO still block IDENTIFIERS. A username or party name has no conversational
+// context to be innocent in — picking one of these deliberately is exactly what
+// the identifier check exists to catch.
+//
+// Targeted harassment using these words is still actionable through reports and
+// normal moderation; it is just no longer auto-blocked on the word alone.
+const CONTEXT_AMBIGUOUS_PHRASES = [
+  'cracker', 'oreo', 'slant', 'redskin', 'ho', 'sissy', 'bitch',
+] as const;
+
+const BASELINE_IDENTIFIER_DENYLIST_PHRASES = [
+  ...BASELINE_CHAT_DENYLIST_PHRASES,
+  // Ambiguous-in-chat terms are NOT ambiguous in a username — keep them blocked.
+  ...CONTEXT_AMBIGUOUS_PHRASES,
+  // Identifiers stay stricter than normal chat.
+  'cock', 'dick', 'pussy', 'asshole', 'motherfucker', 'fucker', 'fuck',
+  'shit', 'bastard',
+] as const;
+
+function compileBoundaryPhraseList(phrases: readonly string[]) {
+  return phrases.map((phrase) => ({
+    phrase,
+    compiled: new RegExp(
+      `\\b${canon(phrase).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`,
+      'iu',
+    ),
+  }));
+}
+
+const BASELINE_DENYLIST: ReadonlyArray<{ phrase: string; compiled: RegExp }> =
+  compileBoundaryPhraseList(BASELINE_CHAT_DENYLIST_PHRASES);
+const TARGETED_ATTACK_DENYLIST: ReadonlyArray<{ phrase: string; compiled: RegExp }> =
+  compileBoundaryPhraseList(TARGETED_ATTACK_DENYLIST_PHRASES);
 
 // Substring variant — used for party names and usernames (identifiers) where slurs
 // may be embedded in concatenated strings without spaces (e.g. "nigger76", "slutqueen").
@@ -41,7 +88,7 @@ const BASELINE_DENYLIST: ReadonlyArray<{ phrase: string; compiled: RegExp }> = [
 // words ("school", "raccoon", "grapes", "peacock"). Terms of 5+ chars are unambiguous
 // enough that substring-embedding is the right default.
 const BASELINE_DENYLIST_NAMES: ReadonlyArray<{ phrase: string; compiled: RegExp }> =
-  BASELINE_DENYLIST.map(({ phrase }) => {
+  BASELINE_IDENTIFIER_DENYLIST_PHRASES.map((phrase) => {
     // Match against the canonical (diacritic-stripped) form: identifiers are
     // canon()-reduced before testing, so the pattern must be canonical too.
     const canonPhrase = canon(phrase);
@@ -165,6 +212,11 @@ async function filterContent(content: string, userId?: string): Promise<{ blocke
       return { blocked: true, reason: 'Matched prohibited phrase' };
     }
   }
+  for (const entry of TARGETED_ATTACK_DENYLIST) {
+    if (entry.compiled.test(normalized) && hasDirectTarget(content)) {
+      return { blocked: true, reason: 'Matched targeted prohibited phrase' };
+    }
+  }
 
   const filters = await getWordFilter();
 
@@ -269,8 +321,15 @@ function resetCache(): void {
  * INCLUDING test_mode filters, which are merely logged (allowed) in chat.
  * Party names / usernames get zero tolerance: even words permitted in chat are
  * rejected. Always checks the hardcoded BASELINE_DENYLIST first so the check
- * is never empty even when the DB word_filter table has no rows.
- * Returns the matched phrase, or null if the text is clean.
+ * is never empty even when the DB word_filter table has no rows. Chat baseline
+ * terms require an explicit target; identifier checks remain context-free.
+ * AI screening is ADDITIVE here, unlike the chat path.
+ * ───────────────────────────────────────────────────
+ * In chat, a healthy AI verdict SUPERSEDES the keyword layers. Identifiers do
+ * not work that way — the hardcoded baseline keeps running regardless. Two
+ * reasons: registration and party-rename are low-volume so the list costs
+ * nothing, and a slur that lands in a permanent, public username is far more
+ * damaging than one that scrolls past in chat. Belt and braces is right here.
  */
 async function findProhibitedPhrase(content: string): Promise<string | null> {
   // Match against the CANONICAL form (NFD + strip combining marks) so a slur
@@ -287,6 +346,23 @@ async function findProhibitedPhrase(content: string): Promise<string | null> {
   for (const filter of filters) {
     if (filter.compiled && filter.compiled.test(normalized)) return filter.phrase;
   }
+
+  // Finally the AI screen — catches what no list can (context, evasion, novel
+  // slurs). Lazy require keeps this module's import graph free of discord.js,
+  // which aiModerationService pulls in only when reporting degradation.
+  // Fail-open: any error leaves the identifier allowed by the AI layer, which
+  // is safe because the hardcoded baseline above already had its say.
+  try {
+    const { screenIdentifier } = require('./aiModerationService');
+    const hit = await screenIdentifier(content);
+    if (hit) {
+      logger.info({ category: hit.category, score: hit.score }, 'Identifier rejected by AI moderation');
+      return `ai:${hit.category}`;
+    }
+  } catch (err) {
+    logger.warn({ err }, 'AI identifier screen failed (non-fatal)');
+  }
+
   return null;
 }
 

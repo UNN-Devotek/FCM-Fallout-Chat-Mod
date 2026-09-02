@@ -1,5 +1,5 @@
 # ── Dashboard static build ────────────────────────────────────────────────────
-FROM node:20-alpine AS dashboard-builder
+FROM node:22-alpine AS dashboard-builder
 WORKDIR /dashboard
 COPY admin-dashboard/package*.json ./
 RUN npm ci --include=dev
@@ -9,7 +9,7 @@ COPY marketing/promo/src/ /marketing/promo/src/
 RUN npm run build
 
 # ── TypeScript build ──────────────────────────────────────────────────────────
-FROM node:20-alpine AS ts-builder
+FROM node:22-alpine AS ts-builder
 WORKDIR /app
 COPY backend/package*.json ./
 RUN npm ci
@@ -20,14 +20,21 @@ COPY backend/src ./src
 RUN npx tsc
 
 # ── Production image ─────────────────────────────────────────────────────────
-FROM node:20-alpine
+FROM node:22-alpine
 # openssl: Prisma. postgresql-client: pg_dump/psql for the /admin/migration
 # dump+restore data-migration endpoints.
 RUN apk add --no-cache openssl postgresql-client
 WORKDIR /app
 COPY backend/package*.json ./
 COPY backend/prisma ./prisma
-RUN npm ci --omit=dev && npx prisma generate
+# argon2 ships no musl prebuild, so on Alpine npm falls back to a node-gyp source
+# build — which needs python3 and a C++ toolchain. Without them the image build
+# fails with "gyp ERR! find Python". Installed as a virtual package and deleted in
+# the SAME layer so the toolchain never ships in the runtime image.
+RUN apk add --no-cache --virtual .build-deps python3 make g++ \
+ && npm ci --omit=dev \
+ && npx prisma generate \
+ && apk del .build-deps
 COPY --from=ts-builder /app/dist ./dist
 COPY --from=dashboard-builder /dashboard/dist ./admin-dashboard/dist
 COPY backend/db/init.sql ./db/init.sql

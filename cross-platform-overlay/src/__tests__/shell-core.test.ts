@@ -15,15 +15,24 @@ import {
   textOpacityValue,
   scanlineOpacityValue,
   clampIdleCollapseSeconds,
+  shouldResetIdleOnVisibility,
   IDLE_COLLAPSE_SECONDS_MIN,
   IDLE_COLLAPSE_SECONDS_MAX,
   IDLE_COLLAPSE_SECONDS_DEFAULT,
+  AUTO_HIDE_MODE_DEFAULT,
+  FULL_AUTO_HIDE_HEIGHT,
+  normalizeAutoHideMode,
   shellToWebSettings,
   resolveCollapsedHeight,
+  revealCollapsedElements,
   computeResizeBounds,
   isDragTarget,
+  shouldExitTextEntryOnEscape,
   detectLinuxRenderer,
   BLOCKED_KEYS,
+  GAME_RESERVED_KEYS,
+  gameReservedWarning,
+  mergeKeybindDefaults,
   type Bounds,
   type DragTargetEl,
   type ResizeEdge,
@@ -425,6 +434,34 @@ describe('clampIdleCollapseSeconds', () => {
   });
 });
 
+describe('normalizeAutoHideMode', () => {
+  it('accepts the full-window auto-hide mode', () => {
+    expect(normalizeAutoHideMode('full')).toBe('full');
+  });
+  it('accepts the explicit sub-tabs collapse mode', () => {
+    expect(normalizeAutoHideMode('subtabs')).toBe('subtabs');
+    expect(AUTO_HIDE_MODE_DEFAULT).toBe('full');
+  });
+  it('uses full auto-hide for missing or corrupted settings', () => {
+    expect(normalizeAutoHideMode(undefined)).toBe('full');
+    expect(normalizeAutoHideMode(null)).toBe('full');
+    expect(normalizeAutoHideMode('header')).toBe('full');
+    expect(normalizeAutoHideMode({})).toBe('full');
+  });
+  it('uses a native one-pixel target for full auto-hide', () => {
+    expect(FULL_AUTO_HIDE_HEIGHT).toBe(1);
+  });
+});
+
+describe('shouldResetIdleOnVisibility', () => {
+  it('resets idle only when the overlay becomes visible', () => {
+    expect(shouldResetIdleOnVisibility(true)).toBe(true);
+  });
+  it('does not reset idle on hide (would expand the window while hidden)', () => {
+    expect(shouldResetIdleOnVisibility(false)).toBe(false);
+  });
+});
+
 describe('shellToWebSettings (mirror)', () => {
   const input = {
     themeId: 'amber',
@@ -433,16 +470,41 @@ describe('shellToWebSettings (mirror)', () => {
     showTimestamps: true,
     timestampFormat: '24h' as const,
     channelFilters: ['Trading', 'Events'],
+    mutedPartyIds: ['party-1'],
+    notifyKeywords: ['nuke'],
+    showTypingWhenCollapsed: true,
+    notifySoundEnabled: true,
+    notifySoundVolume: 0.5,
+    disableNameMotion: false,
   };
   it('carries the message-timestamp prefs into the mirror (regression: were dropped on reload)', () => {
     const w = shellToWebSettings(input);
     expect(w.showTimestamps).toBe(true);
     expect(w.timestampFormat).toBe('24h');
   });
+  it('carries showTypingWhenCollapsed into the mirror (#420)', () => {
+    const w = shellToWebSettings(input);
+    expect(w.showTypingWhenCollapsed).toBe(true);
+  });
+  it('defaults showTypingWhenCollapsed to FALSE when the shell value is missing', () => {
+    // Opt-in feature: settings persisted before it existed have no such key and
+    // must stay off, not silently switch on for every existing install.
+    const w = shellToWebSettings({ ...input, showTypingWhenCollapsed: undefined as unknown as boolean });
+    expect(w.showTypingWhenCollapsed).toBe(false);
+  });
+  it('respects an explicit showTypingWhenCollapsed=false', () => {
+    const w = shellToWebSettings({ ...input, showTypingWhenCollapsed: false });
+    expect(w.showTypingWhenCollapsed).toBe(false);
+  });
   it('carries (a copy of) channelFilters into the mirror', () => {
     const w = shellToWebSettings(input);
     expect(w.channelFilters).toEqual(['Trading', 'Events']);
     expect(w.channelFilters).not.toBe(input.channelFilters); // copied, not aliased
+  });
+  it('carries (a copy of) muted party IDs into the mirror', () => {
+    const w = shellToWebSettings(input);
+    expect(w.mutedPartyIds).toEqual(['party-1']);
+    expect(w.mutedPartyIds).not.toBe(input.mutedPartyIds);
   });
   it('forces windowOpacity=1 and base font (shell drives those itself)', () => {
     const w = shellToWebSettings(input);
@@ -664,6 +726,56 @@ describe('isDragTarget', () => {
   });
 });
 
+// ── shouldExitTextEntryOnEscape ──────────────────────────────────────────────
+
+describe('shouldExitTextEntryOnEscape', () => {
+  const root = makeEl({ id: 'root-sentinel' });
+  const host = makeEl({ id: 'shell-overlay-host', parent: root });
+
+  it('returns true for bare Escape from the chat textarea inside the overlay host', () => {
+    const textarea = makeEl({ tag: 'TEXTAREA', parent: host });
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', target: textarea })).toBe(true);
+  });
+
+  it('returns true for bare Escape from a contentEditable chat input descendant', () => {
+    const richInput = makeEl({ contentEditable: true, parent: host });
+    const child = makeEl({ tag: 'SPAN', parent: richInput });
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', target: child })).toBe(true);
+  });
+
+  it('returns false for Escape outside the overlay host', () => {
+    const textarea = makeEl({ tag: 'TEXTAREA', parent: root });
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', target: textarea })).toBe(false);
+  });
+
+  it('returns false for Escape in settings or onboarding inputs', () => {
+    for (const id of ['shell-settings-backdrop', 'shell-onboarding-backdrop']) {
+      const backdrop = makeEl({ id, parent: root });
+      const input = makeEl({ tag: 'INPUT', parent: backdrop });
+      expect(shouldExitTextEntryOnEscape({ key: 'Escape', target: input })).toBe(false);
+    }
+  });
+
+  it('returns false for non-editable overlay UI', () => {
+    const span = makeEl({ tag: 'SPAN', parent: host });
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', target: span })).toBe(false);
+  });
+
+  it('returns false for modified Escape chords', () => {
+    const textarea = makeEl({ tag: 'TEXTAREA', parent: host });
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', shiftKey: true, target: textarea })).toBe(false);
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', ctrlKey: true, target: textarea })).toBe(false);
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', altKey: true, target: textarea })).toBe(false);
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', metaKey: true, target: textarea })).toBe(false);
+  });
+
+  it('returns false for non-Escape keys and already-handled events', () => {
+    const textarea = makeEl({ tag: 'TEXTAREA', parent: host });
+    expect(shouldExitTextEntryOnEscape({ key: 'Enter', target: textarea })).toBe(false);
+    expect(shouldExitTextEntryOnEscape({ key: 'Escape', defaultPrevented: true, target: textarea })).toBe(false);
+  });
+});
+
 // ── exported constants sanity ────────────────────────────────────────────────
 
 describe('shared constants', () => {
@@ -695,5 +807,154 @@ describe('detectLinuxRenderer', () => {
   it('is false when both inputs are empty/nullish', () => {
     expect(detectLinuxRenderer('', '')).toBe(false);
     expect(detectLinuxRenderer(null, undefined)).toBe(false);
+  });
+});
+
+// ── gameReservedWarning (issue #136 §3.2) ────────────────────────────────────
+// The keybind editor warns (does not block) when a user binds a bare FO76 gameplay
+// key — pressing it in-game would trigger BOTH the overlay action AND the game (the
+// reporter bound Tab=nextChannel → every Pip-Boy open popped the overlay). A
+// modifier combo is never reserved (the game won't see Ctrl/Alt/Shift+key).
+
+describe('gameReservedWarning', () => {
+  it('warns for bare Tab (the reporter\'s exact footgun — Pip-Boy)', () => {
+    const w = gameReservedWarning('Tab');
+    expect(w).toBeTruthy();
+    expect(w).toMatch(/Tab/);
+    expect(w).toMatch(/Pip-Boy/);
+  });
+
+  it('warns for the documented core gameplay keys (E, R, Q, Space)', () => {
+    for (const k of ['E', 'R', 'Q', 'Space']) {
+      expect(gameReservedWarning(k)).toBeTruthy();
+    }
+  });
+
+  it('warns for WASD movement keys', () => {
+    for (const k of ['W', 'A', 'S', 'D']) {
+      expect(gameReservedWarning(k)).toBeTruthy();
+    }
+  });
+
+  it('every reserved key has a non-empty warning that names the key', () => {
+    for (const k of Object.keys(GAME_RESERVED_KEYS)) {
+      const w = gameReservedWarning(k);
+      expect(w).toBeTruthy();
+      expect(w).toContain(k);
+    }
+  });
+
+  it('does NOT warn when the key is combined with a modifier (game never sees it)', () => {
+    expect(gameReservedWarning('CommandOrControl+Tab')).toBeNull();
+    expect(gameReservedWarning('Alt+E')).toBeNull();
+    expect(gameReservedWarning('Shift+Space')).toBeNull();
+    expect(gameReservedWarning('Ctrl+W')).toBeNull();
+  });
+
+  it('does NOT warn for non-gameplay keys (Insert/Delete/Home/F-keys/PageUp)', () => {
+    for (const k of ['Insert', 'Delete', 'Home', 'End', 'PageUp', 'PageDown', 'F5']) {
+      expect(gameReservedWarning(k)).toBeNull();
+    }
+  });
+
+  it('returns null for empty / nullish accelerators', () => {
+    expect(gameReservedWarning('')).toBeNull();
+    expect(gameReservedWarning(null)).toBeNull();
+    expect(gameReservedWarning(undefined)).toBeNull();
+  });
+});
+
+// ── mergeKeybindDefaults (issue #136 §3.1) ───────────────────────────────────
+// The one-time keybind reset must be NON-DESTRUCTIVE: it fills only unset/blank
+// binds with the current defaults and preserves every bind the user actually set,
+// so a reinstall (or a KEYBIND_RESET_VERSION bump) never clobbers a working config.
+
+describe('mergeKeybindDefaults', () => {
+  const defaults = {
+    focus: 'Insert', toggle: 'Delete', nextChannel: 'PageDown', goFo76: '',
+  };
+
+  it('preserves a user\'s customised bind instead of overwriting it with the default', () => {
+    const current = { focus: 'F8', toggle: 'Delete', nextChannel: 'PageDown', goFo76: '' };
+    const merged = mergeKeybindDefaults(current, defaults);
+    expect(merged.focus).toBe('F8'); // user's choice kept, NOT reset to Insert
+  });
+
+  it('fills blank / unset binds with the default', () => {
+    const current = { focus: '', toggle: 'Delete', goFo76: '' }; // focus blank, nextChannel missing
+    const merged = mergeKeybindDefaults(current, defaults);
+    expect(merged.focus).toBe('Insert');       // blank → filled
+    expect(merged.nextChannel).toBe('PageDown'); // missing → filled
+  });
+
+  it('keeps a default-blank bind blank when the user also left it blank', () => {
+    const merged = mergeKeybindDefaults({ goFo76: '' }, defaults);
+    expect(merged.goFo76).toBe('');
+  });
+
+  it('keeps a user-set value even for a default that is blank', () => {
+    const merged = mergeKeybindDefaults({ goFo76: 'F9' }, defaults);
+    expect(merged.goFo76).toBe('F9');
+  });
+
+  it('returns a full default map (never partial) and does not mutate inputs', () => {
+    const current = { focus: 'F8' };
+    const merged = mergeKeybindDefaults(current, defaults);
+    expect(Object.keys(merged).sort()).toEqual(Object.keys(defaults).sort());
+    expect(current).toEqual({ focus: 'F8' }); // input untouched
+  });
+
+  it('returns the defaults verbatim when current is undefined/null/garbage', () => {
+    expect(mergeKeybindDefaults(undefined, defaults)).toEqual(defaults);
+    expect(mergeKeybindDefaults(null as unknown as undefined, defaults)).toEqual(defaults);
+  });
+
+  it('ignores non-string user values (treats them as unset)', () => {
+    const current = { focus: 123 as unknown as string, toggle: null as unknown as string };
+    const merged = mergeKeybindDefaults(current, defaults);
+    expect(merged.focus).toBe('Insert');
+    expect(merged.toggle).toBe('Delete');
+  });
+});
+
+// ── revealCollapsedElements (#327: force-expand must fully un-hide) ────────────
+// Both expand paths must remove the root 'collapsed' class AND clear
+// 'fcm-collapsed-hidden' from every element hidden during collapse. The Insert
+// force-expand path used to drop only 'collapsed', leaving the body/input/footer
+// hidden when it won the race against setCollapsed(false) — "everything invisible
+// except the top bar".
+describe('revealCollapsedElements (#327 full reveal on expand)', () => {
+  // Minimal element stub: a real Set behind classList so removals are observable.
+  const elWith = (...classes: string[]) => {
+    const set = new Set(classes);
+    return { set, classList: { remove: (t: string) => { set.delete(t); } } };
+  };
+
+  it('removes "collapsed" from root and "fcm-collapsed-hidden" from every hidden element', () => {
+    const root = elWith('collapsed', 'other');
+    const body = elWith('fcm-collapsed-hidden');
+    const input = elWith('fcm-collapsed-hidden', 'foo');
+    const footer = elWith('fcm-collapsed-hidden');
+
+    revealCollapsedElements(root, [body, input, footer]);
+
+    expect(root.set.has('collapsed')).toBe(false);
+    expect(root.set.has('other')).toBe(true);            // unrelated classes untouched
+    expect(body.set.has('fcm-collapsed-hidden')).toBe(false);
+    expect(input.set.has('fcm-collapsed-hidden')).toBe(false);
+    expect(input.set.has('foo')).toBe(true);
+    expect(footer.set.has('fcm-collapsed-hidden')).toBe(false);
+  });
+
+  it('is null-safe for the root and still un-hides the elements', () => {
+    const body = elWith('fcm-collapsed-hidden');
+    expect(() => revealCollapsedElements(null, [body])).not.toThrow();
+    expect(body.set.has('fcm-collapsed-hidden')).toBe(false);
+  });
+
+  it('handles an empty hidden set (just clears the root class)', () => {
+    const root = elWith('collapsed');
+    expect(() => revealCollapsedElements(root, [])).not.toThrow();
+    expect(root.set.has('collapsed')).toBe(false);
   });
 });

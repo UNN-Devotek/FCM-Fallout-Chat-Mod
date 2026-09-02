@@ -30,7 +30,8 @@ everywhere simultaneously.
   (`ChatOverlay.tsx:2340`).
 - Channel messages fetched from `GET /api/messages/public?channelId=<id>&limit=300`.
 - Public party messages fetched from `GET /api/parties/public/<id>/messages?limit=200`
-  at 4-second intervals (`ChatOverlay.tsx:2764–2817`).
+  at 4-second intervals (`ChatOverlay.tsx:5200+`). The public-party poll is capped at 50 party
+  IDs, never overlaps a previous poll, and ignores results that arrive after the view is unmounted.
 - All write actions and party join/invite actions are disabled (see Public Mode
   Lockdown below).
 
@@ -95,6 +96,7 @@ Server enforcement is primary; these client-side checks are a backstop.
 | Slash commands | Not available |
 | Username context menu | Shows Copy items only; no moderation/account actions |
 | Party tab (PARTY) | Public-only, read-only — lists `isPrivate=false` parties only; action is VIEW not JOIN |
+| PM tab | Hidden entirely — no inbox, no PM conversation view, no `Message` context-menu item |
 | Party join/invite | Disabled; clicking VIEW navigates to party browser |
 | Party right-click | Suppressed (`ChatOverlay.tsx:4168`) |
 | Combined feed party inclusion | Public parties only (`feedPartyIds = publicPartyIdKey.split(',')`, `ChatOverlay.tsx:3464`) |
@@ -110,14 +112,32 @@ The tab bar has two rows, both rendered inside the overlay header:
 channel (`parentId === null`). Clicking a main tab shows the combined feed for
 that main channel plus all its sub-channels.
 
-**Row 2 — Sub-channels + parties**: sub-channel tabs (`children` of the active
-main), followed by dynamically appended joined-party tabs. The active party tab
-can be right-clicked for context actions (Invite, Leave, Delete). An overflow
-ellipsis (`…`) appears when joined-party tabs exceed the available row width
-(`ChatOverlay.tsx:1260–1268`).
+**Row 2 — Sub-channels + special views**: sub-channel tabs (`children` of the
+active main) or the PARTY browser/joined-party row. The **PM tab renders no
+sub-tab row** (inbox is the default view; return-to-inbox lives in the
+open-conversation header). The
+active party tab can be right-clicked for context actions (Invite, Leave,
+Delete). An overflow ellipsis (`…`) appears when joined-party tabs exceed the
+available row width (`ChatOverlay.tsx:1260–1268`).
 
 The special constant `PARTY_MAIN_ID = '__party__'` (`ChatOverlay.tsx:760`) is
 used as the `activeMainId` sentinel when the PARTY main tab is selected.
+`PM_MAIN_ID = '__pm__'` is the matching sentinel for private messages.
+
+## Private messages
+
+The shared `ChatOverlay.tsx` owns PM UI too — there is no separate DM panel or
+forked component.
+
+- **Top-level tab:** `PM` sits beside `FALLOUT 76` and `PARTY`.
+- **Second row:** PM renders **no sub-tab row** at all (the old single `INBOX` sub-tab was removed as redundant). The inbox is the default view; per-user PM tabs are never added.
+- **Inbox view:** search box (`Type to search...`), text-only conversation rows, no avatars, ordered by most-recent `lastMessageAt`, unread badge per row, and a sender-prefixed preview (`You: <message>` when the current user sent the latest PM, otherwise `<OtherUserDisplayName>: <message>`). Inbox filtering matches the participant name, raw preview text, and the sender-prefixed preview text.
+- **Conversation view:** a `< BACK TO INBOX` row, then the other participant's display name as the header, followed by the normal shared message renderer plus the normal 255-character composer/counter.
+- **Composer routing:** when `activeMainId === PM_MAIN_ID` and `pmView !== 'inbox'`, Enter sends `pm:send` only. PM content never reuses `chat:send` or `party:send`.
+- **Context menu:** authenticated message rows add a `Message` item near the top. The label is exactly `Message`; it is hidden for self, missing `userId`, bots/system rows, and public mode.
+- **Self-edit:** authenticated users get an `Edit message` item when right-clicking their own persisted channel, party, or PM message. The composer is prefilled, `Enter` sends `chat:edit`, and a successful update shows an `(edited)` marker. The server re-checks ownership, participation, deletion state, length, mute/rate policy, and AutoMod; bot/system/server-feed messages and public mode never expose the action. Public channel edits mirror the bot-authored Discord copy when one exists, while human edits made in Discord arrive through the same `chat:edit` patch and update the overlay in real time.
+- **WebSocket state:** on connect the overlay requests `pm:list`; opening a conversation requests `pm:history`; incoming `pm:message` frames update the inbox summary and active thread in place; active-thread receives trigger `pm:read`.
+- **Isolation:** PM messages live only in `privateMessages` state. They never merge into the shared `messages` array, so they cannot leak into the combined feed, sub-channel views, party views, or public-mode REST polling.
 
 ## Party moderation visibility
 
@@ -129,12 +149,14 @@ Privileged users (role `owner`, `admin`, or `moderator`) see every party's messa
 - **Rendering:** party messages already carry `[PartyName]` tags via the existing tag logic (each `source === 'party'` message renders its party's name and colour as a prefix). No separate rendering path is needed.
 - **Read/write:** the input bar remains active for the mod's own joined parties. Foreign-party messages are read-only by the nature of how party send works (requires membership — server-enforced).
 - **Server-enforced visibility:** the backend controls which `chat:message` frames reach the client. Privileged users receive foreign-party frames with `_modObserver: true`; regular users never receive them. The client filter is defence-in-depth only.
+- **Per-moderator mute:** authenticated owners, admins, and moderators can choose **Mute in General** from a party tab or party-message context menu. The same list is available under the built-in settings modal's **PARTY FEED** section. Muted IDs are stored in the viewer's `fcm_web_overlay_settings` local preference and are never sent to the backend, so the choice affects only that moderator/device. It removes the party from the aggregate General/Feed view and mention notifications, but never blocks delivery or direct party views; **Show in General** reverses it.
 
 ### Key exported helpers
 
 | Export | Signature | Purpose |
 |--------|-----------|---------|
 | `isPrivilegedRole` | `(role: string) => boolean` | Returns true for owner/admin/moderator. Single source of truth, backed by `MOD_ROLES`. |
+| `isPartyMutedForModerator` | `(m, ctx) => boolean` | Pure gate shared by aggregate-feed rendering and live mention notifications. Only authenticated privileged viewers can mute party-source messages. |
 | `shouldShowInMainFeed` | `(m, ctx) => boolean` | Pure: determines whether a message belongs in the main feed. Handles feedParent, child ids, joined party ids, and mod-observer inclusion. Testable without React. |
 | `formatMessageTimestamp` | `(value, format, opts?) => string` | Pure: formats a message's UTC timestamp in the VIEWER's local time. `format` is `'12h'`/`'24h'`; `opts.timeZone`/`opts.locale` exist for tests only. Returns `''` for missing/unparseable input. |
 | `isProdRelayHost` | `(host) => boolean` | Pure: true only for the prod relay host (`falloutchatmod.com`/`www.`), case-insensitive, port-ignored. Drives the footer `[DEV]` indicator so a build on any non-prod relay self-identifies. |
@@ -148,6 +170,7 @@ set includes:
 - Messages in any child sub-channel of that main
 - Messages from joined parties (auth mode) or public parties (public mode)
 - **Privileged users only (auth mode):** all party messages (`source === 'party'`), including foreign parties observed via `_modObserver`. See [Party moderation visibility](#party-moderation-visibility).
+- **Moderator party mutes:** any party ID in `settings.mutedPartyIds` is excluded for privileged viewers before joined-party or foreign-party inclusion is applied. This does not affect regular users or public mode.
 
 Each message in the combined feed is prefixed with a coloured `[TagName]` label:
 
@@ -238,6 +261,17 @@ local time for every reader, with zero extra wire data.
   `WEB_SETTINGS_KEY` as `showTimestamps` / `timestampFormat`). The 12h/24h picker
   only appears while the toggle is on.
 
+## Moderator Party Feed Mutes
+
+`WebOverlaySettings.mutedPartyIds` is a list of party IDs that an authenticated
+owner/admin/moderator does not want to see in the aggregate General/Feed view.
+It defaults to `[]`, is persisted alongside the other local overlay settings, and
+is mirrored through the Electron shell so shell-setting changes cannot erase it.
+The preference is intentionally client-side: it does not alter server delivery,
+party membership, moderation visibility for anyone else, or the direct party view.
+The Party Feed section in the settings modal and the party/message context menus
+provide the same mute/unmute action.
+
 ## Reconnect / Auth-Terminal Behavior
 
 ### Ticket-fetch retry backoff
@@ -273,6 +307,55 @@ dual-socket reconnect from evicting an id and allowing a duplicate render.
 (`seenMessageIdsRef` / `seenMessageIdQueueRef`, `ChatOverlay.tsx`)
 
 ## @Mention System
+
+### Notification keywords (issue #422)
+
+Beyond `@mentions` of the viewer's own names, users can list arbitrary **notify keywords**
+(`WebOverlaySettings.notifyKeywords`, edited via the overlay shell's "Notify keywords" chip
+field). A message containing one is treated exactly like an `@mention` of the viewer — same
+highlight, same unread badge, same jump-to-mention, same pop-the-overlay-from-tray. No separate
+pipeline.
+
+The matching lives in two exported helpers in `ChatOverlay.tsx`:
+
+| Helper | Purpose |
+| --- | --- |
+| `contentMentionsName(content, name)` | Existing. Hard-codes an `@` prefix, so it can never match a bare word. |
+| `contentMatchesKeyword(content, keyword)` | New. Bare words, case-insensitive. |
+| `messageTriggersNotify(content, myNames, keywords)` | Combines both — this is what the feed and the live WS path call. |
+
+`contentMatchesKeyword` requires a **leading** word boundary but allows trailing word characters.
+That asymmetry is deliberate: `"ore"` must not fire on `"before"`, but a watch on `"nuke"` should
+still catch `"nukes"` / `"nuked"`. Keywords shorter than 2 characters are ignored as too noisy.
+
+The viewer's own `@mentions` always trigger regardless of the keyword list — the feature can never
+switch mention notifications off.
+
+### Notification sound (issue #437)
+
+An optional audible ping fires from the same trigger as the highlight — the live-WS branch that
+already dispatches `fcm-mention-appear`, so it is gated to live messages that are not your own
+(history never pings).
+
+| Setting | Default | Notes |
+| --- | --- | --- |
+| `notifySoundEnabled` | **false** | Opt-in. An unsolicited sound from a game overlay is a bad first impression, and the mirror reads a *missing* key as off so existing installs stay silent after an update. |
+| `notifySoundVolume` | `0.5` | 0..1, applied to the `HTMLAudioElement`. |
+
+**Rate-limited** by the pure `shouldPlayNotifySound(now, lastPlayed, minGap)` — `NOTIFY_SOUND_MIN_GAP_MS`
+is 3000. A busy Trading channel with a common keyword can trigger many times a second; without a
+floor the overlay machine-guns the ping, which is worse than no sound. A 50-message burst collapses
+to exactly one ping (unit-tested).
+
+The asset lives at `src/features/chat/assets/notify.wav` and is imported as a **module asset**, so
+Vite fingerprints it into `dist` for the website *and* `dist-renderer` for the Electron build. That
+deliberately avoids an `electron-builder` `files` entry — `dist-renderer` is already listed, so the
+v1.3.82 class of "asset missing from the package" failure cannot happen here.
+
+`play()` rejection is swallowed: browsers block autoplay before a user gesture, which is expected on
+the website and harmless.
+
+> **In-game HUD widget** still has no highlight concept — tracked separately in #438.
 
 ### Unread badges
 
@@ -508,6 +591,50 @@ a `proxy:ws:close` event).
 `proxy:ws:close` removes the socket from both `relaySockets` and `relaySendBuffers` and calls
 `sock.close()` so the upstream relay connection is always torn down when the renderer's logical
 socket closes.
+
+## Supporter chat cosmetics
+
+`ChatMessage` carries `nameColor`, `effectId`, `tag`, `badges` and `starColor`, resolved server-side
+in `ingestMessage.attachCosmetics()`. Channel and party `chat:history` batches resolve the
+same fields per distinct author before they are sent, and the frontend preserves those
+additive fields while normalising both live and history frames. Switching tabs or reloading
+history therefore cannot flatten a selected appearance. Absent for the vast majority of
+users, who render byte-identically to before the feature existed.
+
+**Render contract** (`nameCosmeticProps()`, exported and unit-tested):
+
+- No effect → inline `color` + `textShadow`, exactly as before.
+- With an effect → a static `.fcm-name-fx--<id>` class plus two CSS custom properties
+  set inline: `--fcm-name-color` and `--fcm-name-outline`. **No inline `textShadow`** —
+  the class owns it, and an inline one would win the cascade and silently flatten every
+  effect to a plain name.
+- `data-fcm-name` carries the rendered name for the glitch effect's `::before`/`::after`
+  copies (`content: attr(...)`).
+
+Effects live in `nameEffects.css` as **pure CSS**. No JS animation library may enter
+this component's import graph — the feed is virtualized and memoized, and the Electron
+overlay draws on top of a running game. `noMotionInOverlay.test.ts` walks the import
+graph transitively and fails CI if Motion ever becomes reachable from ChatOverlay.
+Motion IS used in `CosmeticsPanel`, which the overlay never loads.
+
+Every effect **composes with** the existing multi-layer `textOutline` rather than
+replacing it — names sit over arbitrary game content and are unreadable without it.
+
+Animated effects collapse to a static sibling under `prefers-reduced-motion` and under
+the viewer opt-out (`settings.disableNameMotion` → `fcm-no-name-motion`, applied on the
+same element, hence compound selectors in the CSS).
+
+Tag and badge render **before** the name so the name element's text node stays exactly
+`Name: `. The badge is always the compact star glyph (`★`) for Supporter and Overseer's Circle,
+with an accessible hover label, rather than an unexplained text abbreviation. The channel tag,
+custom tag, star, name, and message body use centered line alignment; the star color is
+independently selected from the catalog. Splitting the colon out broke `getByText(/Name:/)` queries
+in the existing private-messaging tests.
+
+Cosmetics updates arrive on the existing `user:identity_updated` frame, so the handler
+that back-applies renames to rendered history covers colour changes too.
+
+Full design record: [docs/product/supporter-tier.md](../product/supporter-tier.md).
 
 ## Related
 

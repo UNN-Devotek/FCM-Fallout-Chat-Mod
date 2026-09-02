@@ -9,24 +9,62 @@ import { buildAvatarUrl } from '../services/avatarService';
 import { hudPushNotify } from '../services/hudPush';
 import { isSocketSuperseded } from './socketSupersession';
 import { getLatestVersion } from '../services/latestReleaseVersion';
+import { shadowMute } from '../services/autoModService';
+import { engineEvaluate } from '../services/autoModEngine';
+import { relayToDiscord, editDiscordRelayMessage, invalidateRelayMappingsCache } from '../services/discordService';
+import { persistMessage } from '../services/messageService';
+import { finalizeMessage } from '../services/ingestMessage';
+import { attachCosmetics, attachCosmeticsToHistory } from '../services/cosmetics/cosmeticsService';
+import messageQueue from '../queues/messagePersist';
+import logger from '../config/logger';
+import { incrementMessageCount, setFullscreenStatus, removeFullscreenClient } from '../controllers/healthController';
+import { tryHandleCommand } from '../services/commandService';
+import { getServerPlayers } from '../services/playerListService';
+import {
+  notePendingDisconnectSuppressed,
+  noteUserConnected,
+  noteUserDisconnected,
+  noteUserPendingDisconnect,
+  registerLocalPresenceSource,
+} from '../services/onlinePresenceService';
+import {
+  PrivateConversationAccessError,
+  PrivateMessageUnavailableError,
+  getOrCreatePrivateConversation,
+  getPrivateHistory,
+  listPrivateConversations,
+  markPrivateConversationRead,
+  sendPrivateMessage,
+} from '../services/privateMessagingService';
+import { emojifyShortcodes } from '../utils/emoji';
+import { editOwnedMessage, MessageEditError } from '../services/messageEditService';
+import { evaluateBuildGate } from '../services/buildLock';
+import { getActiveQaVersion } from '../services/activeQaVersion';
+import env from '../config/environment';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Resolve the best display name for a user.
- *   1. FO76 in-game name (if set and not the default placeholder)
- *   2. Discord username (fallback)
- *   3. Raw username
+ *   1. Free user-selected chat name
+ *   2. FO76 in-game name (if set and not the default placeholder)
+ *   3. Discord username (fallback)
+ *   4. Raw username
  *
  * NO #XXXX discriminator suffix — uniqueness is guaranteed by the
  * unique constraint on users.username and the Discord link.
  */
 export function resolveDisplayName(user: {
   username: string;
+  chatName?: string | null;
   discordUsername: string | null;
   discordDisplayName?: string | null;
   installToken: string;
 }): string {
+  // A chat name is an account identity setting, not a paid cosmetic. It is already
+  // validated on write, but trim defensively for rows created before that contract.
+  if (user.chatName && user.chatName.trim()) return user.chatName.trim();
+
   // 1. Real FO76 name (skip Wanderer, pending-*, Overlay<digits> auto-handles,
   //    and discord:/pending-discord- synthetic relay usernames).
   const isPlaceholderUsername = (u: string) =>
@@ -166,23 +204,10 @@ export async function broadcastToSession(payload: any, sessionId: string | null 
   }
   return delivered;
 }
-
-
-import { shadowMute } from '../services/autoModService';
-import { engineEvaluate } from '../services/autoModEngine';
-import { relayToDiscord, invalidateRelayMappingsCache } from '../services/discordService';
-import { persistMessage } from '../services/messageService';
-import { finalizeMessage } from '../services/ingestMessage';
-import messageQueue from '../queues/messagePersist';
-import logger from '../config/logger';
-import { incrementMessageCount, setFullscreenStatus, removeFullscreenClient } from '../controllers/healthController';
-import { tryHandleCommand } from '../services/commandService';
-import { getServerPlayers } from '../services/playerListService';
-import { emojifyShortcodes } from '../utils/emoji';
-
 // WebSocket close codes
 const WS_CLOSE_AUTH_FAILED = 4001;
 const WS_CLOSE_BANNED = 4002;
+const WS_CLOSE_OUTDATED_BUILD = 4003;
 
 interface ClientEntry {
   ws: WebSocket;
@@ -211,6 +236,43 @@ interface ClientEntry {
 
 // In-memory client registry
 const clients = new Map<string, ClientEntry>();
+
+export async function broadcastToUsers(
+  payload: any,
+  userIds: string[],
+  excludeWs: WebSocket | null = null,
+): Promise<number> {
+  const userSet = new Set(userIds.filter((id) => typeof id === 'string' && id.length > 0));
+  if (userSet.size === 0) return 0;
+
+  const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
+  let delivered = 0;
+
+  for (const [, client] of clients) {
+    if (!userSet.has(client.userId)) continue;
+    if (client.ws === excludeWs || client.ws.readyState !== WebSocket.OPEN) continue;
+    if (recipientHasBlockedSender(payload, client)) continue;
+    try {
+      if (safeSend(client.ws, data, `broadcastToUsers:${client.userId}`)) delivered++;
+    } catch (err) {
+      logger.warn({ err, userId: client.userId }, 'broadcastToUsers: send failed (non-fatal)');
+    }
+  }
+
+  if (pubsubActive) {
+    const envelope = JSON.stringify({
+      instanceId: INSTANCE_ID,
+      payload,
+      scope: 'users',
+      userIds: [...userSet],
+    });
+    getRedisClient()
+      .then((redis) => redis.publish(PUBSUB_CHANNEL, envelope))
+      .catch((err) => logger.warn({ err }, 'broadcastToUsers: Redis publish failed (non-fatal)'));
+  }
+
+  return delivered;
+}
 
 // ── WS-flap grace window ──────────────────────────────────────────────────────
 // When a WS socket closes and the same user reconnects within WS_FLAP_GRACE_MS,
@@ -269,8 +331,9 @@ export function refreshClientIdentity(
   discordUsername: string | null,
   discordDisplayName: string | null,
   installToken: string,
+  chatName: string | null = null,
 ): number {
-  const displayName = resolveDisplayName({ username, discordUsername, discordDisplayName, installToken });
+  const displayName = resolveDisplayName({ username, chatName, discordUsername, discordDisplayName, installToken });
   let touched = 0;
   for (const c of clients.values()) {
     if (c.userId === userId) {
@@ -279,22 +342,66 @@ export function refreshClientIdentity(
       touched++;
     }
   }
-  // Only broadcast when at least one connected session was touched — no
-  // point waking every overlay for a phantom update. Wrapped in try/catch
-  // so a broadcast failure never breaks the register-path caller.
-  if (touched > 0) {
-    try {
-      if (typeof broadcast === 'function') {
-        broadcast({
-          type: 'user:identity_updated',
-          payload: { userId, username, displayName },
-        });
-      }
-    } catch (err) {
-      logger.warn({ err, userId }, 'refreshClientIdentity: broadcast failed (non-fatal)');
+  // Broadcast unconditionally, NOT gated on `touched > 0`.
+  //
+  // `touched` counts sockets on THIS instance only. The old `if (touched > 0)` guard
+  // looked like a sensible "don't wake everyone for a phantom update" optimization,
+  // but it silently dropped the frame whenever the user's socket lived on a different
+  // instance from the one handling their register/link request — and since broadcast()
+  // fans out over Redis pub/sub, that frame is exactly how the other instance (and
+  // every other viewer's rendered history) learns about the rename. Single-instance
+  // today, so this is latent rather than live, but it breaks the moment replicas > 1.
+  //
+  // The frame is cheap and viewers ignore unknown userIds, so unconditional is both
+  // correct and inexpensive. Wrapped in try/catch so a broadcast failure never breaks
+  // the register-path caller.
+  try {
+    if (typeof broadcast === 'function') {
+      broadcast({
+        type: 'user:identity_updated',
+        payload: { userId, username, displayName },
+      });
     }
+  } catch (err) {
+    logger.warn({ err, userId }, 'refreshClientIdentity: broadcast failed (non-fatal)');
   }
   return touched;
+}
+
+/**
+ * Push updated cosmetics (name colour, effect, tag, badges, star colour) to every viewer so
+ * already-rendered messages re-style without anyone reconnecting.
+ *
+ * Rides the same `user:identity_updated` frame the rename path uses, because
+ * ChatOverlay's handler for it already back-applies to message history — adding the
+ * cosmetic fields there means one handler covers both cases.
+ *
+ * Note what this deliberately does NOT do: mutate any per-socket cached state.
+ * Cosmetics are resolved server-side at message-finalize time from a Redis cache, so a
+ * tier change only needs that cache busted (cosmeticsService does it) plus this frame
+ * for history. `ClientEntry.role` is frozen at connect and stays that way — supporter
+ * tier is resolved fresh per message, never read off the socket.
+ */
+export function refreshClientCosmetics(
+  userId: string,
+  cosmetics: { nameColor?: string | null; effectId?: string | null; tag?: string | null; badges?: string[]; starColor?: string | null },
+): void {
+  try {
+    if (typeof broadcast !== 'function') return;
+    broadcast({
+      type: 'user:identity_updated',
+      payload: {
+        userId,
+        nameColor: cosmetics.nameColor ?? null,
+        effectId: cosmetics.effectId ?? null,
+        tag: cosmetics.tag ?? null,
+        badges: cosmetics.badges ?? [],
+        starColor: cosmetics.starColor ?? null,
+      },
+    });
+  } catch (err) {
+    logger.warn({ err, userId }, 'refreshClientCosmetics: broadcast failed (non-fatal)');
+  }
 }
 
 /**
@@ -361,6 +468,25 @@ export function getConnectedUserIds(): string[] {
   }
   return Array.from(out);
 }
+
+/**
+ * Authoritative set of userIds that are "present" on THIS instance: anyone with
+ * an OPEN socket, plus anyone inside the flap-grace window (pendingDisconnect).
+ * This is the same set getClientCount() sizes, exposed so onlinePresenceService
+ * can flush it to Redis for the cross-instance /online count without keeping a
+ * drift-prone parallel refcount. Order doesn't matter — callers dedup.
+ */
+export function getLocallyPresentUserIds(): string[] {
+  const seen = new Set<string>();
+  for (const c of clients.values()) {
+    if (c.userId && c.ws.readyState === WebSocket.OPEN) seen.add(c.userId);
+  }
+  for (const userId of pendingDisconnect.keys()) seen.add(userId);
+  return Array.from(seen);
+}
+
+// Wire the WS layer in as the single source of truth for local presence.
+registerLocalPresenceSource(getLocallyPresentUserIds);
 
 /** No-op stub retained for call-site compatibility. World-detection was removed. */
 export function updateClientEndpoint(_userId: string, _endpoint: string | null): void {
@@ -471,12 +597,13 @@ async function checkWsRateLimit(userId: string): Promise<boolean> {
  * blocked user is invisible to the blocker — their chat messages, and the bot
  * output of their slash commands, never reach the blocker.
  *
- * Only filters message-bearing frames that carry an author userId (chat:message
- * and bot replies that echo the blocked sender's userId). Frames without a
- * sender userId, or system/global frames, are never filtered.
+ * Only filters message-bearing frames that carry an author id (chat:message and
+ * bot replies echo it as `userId`; private-message frames carry it as `senderId`).
+ * Frames without a sender id, or system/global frames, are never filtered.
  */
 function recipientHasBlockedSender(payload: any, recipient: ClientEntry): boolean {
-  const senderId: unknown = payload?.payload?.userId;
+  // chat/bot frames author the sender as `userId`; PM frames use `senderId`.
+  const senderId: unknown = payload?.payload?.userId ?? payload?.payload?.senderId;
   if (typeof senderId !== 'string' || senderId.length === 0) return false;
   // 'system' is the synthetic id for [Vault-Tec]/system frames — never blocked.
   if (senderId === 'system') return false;
@@ -604,6 +731,17 @@ async function initPubSub(): Promise<void> {
           }
           return;
         }
+        if (envelope.scope === 'users' && Array.isArray(envelope.userIds)) {
+          const userSet = new Set<string>(envelope.userIds);
+          const data = JSON.stringify(envelope.payload);
+          for (const [, client] of clients) {
+            if (client.ws.readyState !== WebSocket.OPEN) continue;
+            if (!userSet.has(client.userId)) continue;
+            if (recipientHasBlockedSender(envelope.payload, client)) continue;
+            try { safeSend(client.ws, data, `pubsub:user:${client.userId}`); } catch { /* non-fatal */ }
+          }
+          return;
+        }
         localBroadcast(envelope.payload);
       } catch (err) {
         logger.warn({ err }, 'Failed to process pub/sub message');
@@ -662,21 +800,134 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
           if (!channelId || !UUID_RE.test(channelId)) break;
           try {
             const result = await dbQuery(
-              `SELECT m.id, m.content, u.username, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at
+              `SELECT m.id, m.content, u.username, u.chat_name, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at, m.edited_at
                FROM messages m JOIN users u ON u.id = m.user_id
                WHERE m.channel_id = $1 AND NOT m.is_deleted
                ORDER BY m.created_at DESC LIMIT $2 OFFSET $3`,
               [channelId, safeLimit, safeOffset]
             );
             const messages = result.rows.map((row: any) => {
-              const dn = resolveDisplayName({ username: row.username, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, installToken: row.install_token });
+              const dn = resolveDisplayName({ username: row.username, chatName: row.chat_name, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, installToken: row.install_token });
               const avatarUrl = buildAvatarUrl(row.discord_id);
-              const { install_token, username, discord_username, discord_display_name, discord_id, metadata, ...rest } = row;
+              const { install_token, username, chat_name, discord_username, discord_display_name, discord_id, metadata, ...rest } = row;
               return { ...rest, username: dn, avatarUrl, metadata: metadata ?? null };
             });
+            await attachCosmeticsToHistory(messages);
             ws.send(JSON.stringify({ type: 'chat:history', payload: { messages: messages.reverse() } }));
           } catch (err) {
             logger.error({ err }, 'Admin observer: failed to load history');
+          }
+          break;
+        }
+
+        case 'chat:edit': {
+          if (!identity.discordId) {
+            sendWsError(ws, 'No linked game account — cannot edit messages.');
+            return;
+          }
+
+          const messageId = frame.payload?.messageId;
+          const content = frame.payload?.content;
+          const source = frame.payload?.source;
+          const channelId = frame.payload?.channelId;
+          const conversationId = frame.payload?.conversationId;
+
+          if (typeof messageId !== 'string' || !UUID_RE.test(messageId)) {
+            sendWsError(ws, 'Invalid messageId.');
+            break;
+          }
+          if (typeof source !== 'string' || source === 'bot' || source === 'system' || source === 'server') {
+            sendWsError(ws, 'This message cannot be edited.');
+            break;
+          }
+          if (source === 'pm') {
+            if (typeof conversationId !== 'string' || !UUID_RE.test(conversationId)) {
+              sendWsError(ws, 'Invalid conversationId.');
+              break;
+            }
+          } else if (source === 'party') {
+            if (typeof channelId !== 'string' || !UUID_RE.test(channelId)) {
+              sendWsError(ws, 'Invalid partyId.');
+              break;
+            }
+          } else if (typeof channelId !== 'string' || !UUID_RE.test(channelId)) {
+            sendWsError(ws, 'Invalid channelId.');
+            break;
+          }
+
+          let gameUser: any;
+          try {
+            gameUser = await prisma.user.findFirst({
+              where: { discordId: identity.discordId },
+              select: {
+                id: true, username: true, discordUsername: true, discordDisplayName: true,
+                installToken: true, isBanned: true, isMuted: true,
+              },
+            });
+          } catch (err) {
+            logger.error({ err }, 'Admin observer: DB error resolving game user for edit');
+            sendWsError(ws, 'Server error.');
+            return;
+          }
+          if (!gameUser) {
+            sendWsError(ws, 'No game account linked to this Discord user.');
+            return;
+          }
+          if (gameUser.isBanned) {
+            sendWsError(ws, 'Your game account is banned.');
+            return;
+          }
+          if (gameUser.isMuted) {
+            sendWsError(ws, 'You are muted.');
+            return;
+          }
+
+          if (await checkWsRateLimit(gameUser.id)) {
+            ws.send(JSON.stringify({ type: 'rate:status', payload: { remaining: 0, retryAfterMs: 1000 } }));
+            sendWsError(ws, 'Rate limit exceeded. Slow down.');
+            break;
+          }
+
+          try {
+            const edited = await editOwnedMessage({
+              userId: gameUser.id,
+              messageId,
+              content,
+              source,
+              channelId: source === 'pm' ? undefined : channelId,
+              conversationId: source === 'pm' ? conversationId : undefined,
+              user: gameUser,
+            });
+            const payload = { ...edited };
+
+            if (edited.source === 'party' && edited.channelId) {
+              const members = await prisma.partyMember.findMany({
+                where: { partyId: edited.channelId },
+                select: { userId: true },
+              });
+              await broadcastToPartyMembers({ type: 'chat:edit', payload }, members.map(m => m.userId));
+              ws.send(JSON.stringify({ type: 'chat:edit', payload }));
+            } else if (edited.source === 'pm' && edited.recipientId) {
+              await broadcastToUsers({ type: 'chat:edit', payload }, [gameUser.id, edited.recipientId]);
+              ws.send(JSON.stringify({ type: 'chat:edit', payload }));
+            } else {
+              broadcast({ type: 'chat:edit', payload });
+            }
+
+            if (edited.source !== 'party' && edited.source !== 'pm') {
+              editDiscordRelayMessage(edited.messageId, edited.content).catch((err) => {
+                logger.warn({ err, messageId: edited.messageId }, '[chat:edit] admin observer Discord mirror failed (non-fatal)');
+              });
+            }
+
+            ws.send(JSON.stringify({ type: 'message:edit:ack', payload }));
+          } catch (err: any) {
+            if (err instanceof MessageEditError) {
+              sendWsError(ws, err.message);
+            } else {
+              logger.warn({ err, userId: gameUser.id, messageId, source }, '[chat:edit] admin observer failed');
+              sendWsError(ws, 'Could not edit message.');
+            }
           }
           break;
         }
@@ -823,18 +1074,20 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
               } else if (cmdResult.actionType === 'relay') {
                 const relayId = uuidv4();
                 const relayTs = new Date().toISOString();
+                const adminRelayPayload: Record<string, unknown> = {
+                  id: relayId,
+                  content: cmdResult.relayContent,
+                  username: displayName,
+                  userId: gameUser.id,
+                  channelId: cmdResult.targetChannelId,
+                  source: 'web',
+                  timestamp: relayTs,
+                  ...(cmdResult.responseColor != null ? { responseColor: cmdResult.responseColor } : {}),
+                };
+                await attachCosmetics(adminRelayPayload);
                 broadcast({
                   type: 'chat:message',
-                  payload: {
-                    id: relayId,
-                    content: cmdResult.relayContent,
-                    username: displayName,
-                    userId: gameUser.id,
-                    channelId: cmdResult.targetChannelId,
-                    source: 'web',
-                    timestamp: relayTs,
-                    ...(cmdResult.responseColor != null ? { responseColor: cmdResult.responseColor } : {}),
-                  },
+                  payload: adminRelayPayload,
                 });
                 const { parentId: adminRelayParent } = await getChannelInfo(cmdResult.targetChannelId);
                 messageQueue.add({
@@ -885,17 +1138,19 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
           const messageId = uuidv4();
           const createdAt = new Date().toISOString();
 
+          const adminMessagePayload: Record<string, unknown> = {
+            id: messageId,
+            content: content.trim(),
+            username: displayName,
+            userId: gameUser.id,
+            channelId,
+            source: 'web',
+            timestamp: createdAt,
+          };
+          await attachCosmetics(adminMessagePayload);
           broadcast({
             type: 'chat:message',
-            payload: {
-              id: messageId,
-              content: content.trim(),
-              username: displayName,
-              userId: gameUser.id,
-              channelId,
-              source: 'web',
-              timestamp: createdAt,
-            },
+            payload: adminMessagePayload,
           });
 
           incrementMessageCount();
@@ -920,7 +1175,7 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
             });
           }
 
-          relayToDiscord(channelId, displayName, content.trim(), adminChannelName ?? undefined, inMentions).catch((err) => {
+          relayToDiscord(channelId, displayName, content.trim(), adminChannelName ?? undefined, inMentions, undefined, messageId).catch((err) => {
             logger.warn({ err }, 'Admin observer Discord relay failed (non-fatal)');
           });
           break;
@@ -1340,6 +1595,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       const decision = decideFlapHandoff({ endpoint: pd.endpoint }, newEp);
       clearTimeout(pd.timer);
       pendingDisconnect.delete(user.id);
+      notePendingDisconnectSuppressed(user.id);
       if (decision.kind === 'fire-old-immediately') {
         try { pd.fire(); } catch { /* non-fatal */ }
         logger.info(
@@ -1400,6 +1656,26 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
   } catch (err) {
     logger.warn({ err, userId: user.id }, '[app:update-available] connect-time send failed (non-fatal)');
   }
+
+  // Golden-build lock (dev-only): reject a stale QA build. No-op in prod, where
+  // QA_BUILD_LOCK is unset. Fail-open when no active version is configured.
+  if (env.QA_BUILD_LOCK) {
+    try {
+      const activeQaVersion = await getActiveQaVersion();
+      const gate = evaluateBuildGate(req.headers as Record<string, unknown>, activeQaVersion, true);
+      if (!gate.allowed) {
+        logger.info({ userId: user.id, clientVersion: gate.clientVersion, activeQaVersion }, '[ws] rejecting outdated build');
+        ws.close(WS_CLOSE_OUTDATED_BUILD, `OUTDATED_BUILD:${activeQaVersion || ''}`);
+        clients.delete(token);
+        noteUserDisconnected(user.id);
+        return;
+      }
+    } catch (err) {
+      logger.warn({ err, userId: user.id }, '[ws] build-gate check failed; failing open');
+    }
+  }
+
+  noteUserConnected(user.id);
 
   // Broadcast room:join (user connected)
   broadcast({ type: 'room:join', payload: { username: displayName, timestamp: new Date().toISOString() } }, ws);
@@ -1475,6 +1751,316 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
           } else {
             logger.warn({ err, type: frame.type }, 'mod WS action failed');
             sendWsError(ws, `${frame.type} failed: ${err?.message ?? 'unknown'}`);
+          }
+        }
+        break;
+      }
+
+      case 'pm:list': {
+        try {
+          const conversations = await listPrivateConversations(user.id);
+          ws.send(JSON.stringify({ type: 'pm:list', payload: { conversations } }));
+        } catch (err) {
+          logger.warn({ err, userId: user.id }, '[pm:list] failed');
+          sendWsError(ws, 'Could not load private messages.');
+        }
+        break;
+      }
+
+      case 'pm:open': {
+        const targetUserId = frame.payload?.targetUserId;
+        if (typeof targetUserId !== 'string' || !UUID_RE.test(targetUserId)) {
+          sendWsError(ws, 'Invalid targetUserId.');
+          break;
+        }
+        try {
+          const conversation = await getOrCreatePrivateConversation(user.id, targetUserId);
+          const conversations = await listPrivateConversations(user.id);
+          ws.send(JSON.stringify({
+            type: 'pm:list',
+            payload: {
+              conversations,
+              openedConversationId: conversation.id,
+            },
+          }));
+        } catch (err: any) {
+          if (err instanceof PrivateMessageUnavailableError) {
+            sendWsError(ws, err.message);
+          } else {
+            logger.warn({ err, userId: user.id, targetUserId }, '[pm:open] failed');
+            sendWsError(ws, 'Could not open private conversation.');
+          }
+        }
+        break;
+      }
+
+      case 'pm:history': {
+        const conversationId = frame.payload?.conversationId;
+        if (typeof conversationId !== 'string' || !UUID_RE.test(conversationId)) {
+          sendWsError(ws, 'Invalid conversationId.');
+          break;
+        }
+        try {
+          const messages = await getPrivateHistory(
+            user.id,
+            conversationId,
+            frame.payload?.limit ?? 100,
+            frame.payload?.offset ?? 0,
+          );
+          await markPrivateConversationRead(user.id, conversationId);
+          ws.send(JSON.stringify({
+            type: 'pm:history',
+            payload: {
+              conversationId,
+              messages,
+            },
+          }));
+          await broadcastToUsers({
+            type: 'pm:read',
+            payload: { conversationId, unreadCount: 0 },
+          }, [user.id]);
+        } catch (err: any) {
+          if (err instanceof PrivateConversationAccessError || err instanceof PrivateMessageUnavailableError) {
+            sendWsError(ws, err.message);
+          } else {
+            logger.warn({ err, userId: user.id, conversationId }, '[pm:history] failed');
+            sendWsError(ws, 'Could not load private conversation.');
+          }
+        }
+        break;
+      }
+
+      case 'pm:read': {
+        const conversationId = frame.payload?.conversationId;
+        if (typeof conversationId !== 'string' || !UUID_RE.test(conversationId)) {
+          sendWsError(ws, 'Invalid conversationId.');
+          break;
+        }
+        try {
+          await markPrivateConversationRead(user.id, conversationId);
+          await broadcastToUsers({
+            type: 'pm:read',
+            payload: { conversationId, unreadCount: 0 },
+          }, [user.id]);
+        } catch (err: any) {
+          if (err instanceof PrivateConversationAccessError || err instanceof PrivateMessageUnavailableError) {
+            sendWsError(ws, err.message);
+          } else {
+            logger.warn({ err, userId: user.id, conversationId }, '[pm:read] failed');
+            sendWsError(ws, 'Could not update private message state.');
+          }
+        }
+        break;
+      }
+
+      case 'pm:send': {
+        const pmClient = clients.get(token);
+        if (!pmClient) break;
+
+        let pmMuteDetail: { until: string | null; reason: string | null; category: string | null } | null = null;
+        if (pmClient.isMuted) {
+          const dbUser = await prisma.user.findUnique({
+            where: { id: user.id },
+            select: { isMuted: true, muteExpiresAt: true, muteReason: true, muteCategory: true },
+          });
+          if (dbUser) {
+            if (dbUser.isMuted && dbUser.muteExpiresAt && new Date(dbUser.muteExpiresAt) < new Date()) {
+              await prisma.user.update({
+                where: { id: user.id },
+                data: { isMuted: false, muteExpiresAt: null, muteReason: null, muteCategory: null, mutedById: null },
+              });
+              pmClient.isMuted = false;
+            } else if (!dbUser.isMuted) {
+              pmClient.isMuted = false;
+            } else {
+              pmMuteDetail = {
+                until: dbUser.muteExpiresAt ? new Date(dbUser.muteExpiresAt).toISOString() : null,
+                reason: dbUser.muteReason ?? null,
+                category: dbUser.muteCategory ?? null,
+              };
+            }
+          }
+        }
+        if (pmClient.isMuted) {
+          ws.send(JSON.stringify({ type: 'user:muted', payload: pmMuteDetail ?? { until: null, reason: null, category: null } }));
+          const detail = pmMuteDetail?.reason
+            ? `${pmMuteDetail.category ? `${pmMuteDetail.category}: ` : ''}${pmMuteDetail.reason}`
+            : '';
+          sendWsError(ws, detail ? `You are muted — ${detail}` : 'You are muted.');
+          break;
+        }
+
+        const rateLimited = await checkWsRateLimit(user.id);
+        if (rateLimited) {
+          ws.send(JSON.stringify({ type: 'rate:status', payload: { remaining: 0, retryAfterMs: 1000 } }));
+          sendWsError(ws, 'Rate limit exceeded. Slow down.');
+          break;
+        }
+
+        const recipientUserId = frame.payload?.recipientUserId;
+        const conversationId = frame.payload?.conversationId;
+        const clientCreatedAt = frame.payload?.clientCreatedAt;
+        let content = frame.payload?.content;
+
+        if (typeof recipientUserId !== 'string' || !UUID_RE.test(recipientUserId)) {
+          sendWsError(ws, 'Invalid recipientUserId.');
+          break;
+        }
+        if (conversationId != null && (typeof conversationId !== 'string' || !UUID_RE.test(conversationId))) {
+          sendWsError(ws, 'Invalid conversationId.');
+          break;
+        }
+        if (typeof content !== 'string' || content.trim().length === 0) {
+          sendWsError(ws, 'Invalid message content.');
+          break;
+        }
+        if (clientCreatedAt) {
+          const clientTime = new Date(clientCreatedAt).getTime();
+          if (isNaN(clientTime) || Math.abs(Date.now() - clientTime) > CLIENT_TIMESTAMP_SKEW_MS) {
+            sendWsError(ws, 'Message timestamp out of range.');
+            break;
+          }
+        }
+
+        content = emojifyShortcodes(content);
+        const pmEngineResult = await engineEvaluate(content, `pm:${recipientUserId}`, user);
+        if (pmEngineResult.block) {
+          if (pmEngineResult.customMessage?.includes('Spam')) {
+            await shadowMute(user.id);
+            pmClient.isMuted = true;
+          }
+          sendWsError(ws, pmEngineResult.customMessage || 'Message blocked by content filter.');
+          break;
+        }
+
+        try {
+          if (conversationId) {
+            const conversation = await getOrCreatePrivateConversation(user.id, recipientUserId);
+            if (conversation.id !== conversationId) {
+              sendWsError(ws, 'Invalid conversationId.');
+              break;
+            }
+          }
+
+          const message = await sendPrivateMessage(user.id, recipientUserId, content);
+          await broadcastToUsers({
+            type: 'pm:message',
+            payload: {
+              ...message,
+              isPrivate: true,
+            },
+          }, [user.id, recipientUserId]);
+        } catch (err: any) {
+          if (err instanceof PrivateConversationAccessError || err instanceof PrivateMessageUnavailableError) {
+            sendWsError(ws, err.message);
+          } else if (err?.statusCode === 400) {
+            sendWsError(ws, err.message);
+          } else {
+            logger.warn({ err, userId: user.id, recipientUserId }, '[pm:send] failed');
+            sendWsError(ws, 'Could not send private message.');
+          }
+        }
+        break;
+      }
+
+      case 'chat:edit': {
+        const editClient = clients.get(token);
+        if (!editClient) break;
+        if (editClient.isMuted) {
+          sendWsError(ws, 'You are muted.');
+          break;
+        }
+
+        const messageId = frame.payload?.messageId;
+        const content = frame.payload?.content;
+        const source = frame.payload?.source;
+        const channelId = frame.payload?.channelId;
+        const conversationId = frame.payload?.conversationId;
+
+        if (typeof messageId !== 'string' || !UUID_RE.test(messageId)) {
+          sendWsError(ws, 'Invalid messageId.');
+          break;
+        }
+        if (typeof source !== 'string' || source === 'bot' || source === 'system' || source === 'server') {
+          sendWsError(ws, 'This message cannot be edited.');
+          break;
+        }
+        if (source === 'pm') {
+          if (typeof conversationId !== 'string' || !UUID_RE.test(conversationId)) {
+            sendWsError(ws, 'Invalid conversationId.');
+            break;
+          }
+        } else if (source === 'party') {
+          if (typeof channelId !== 'string' || !UUID_RE.test(channelId)) {
+            sendWsError(ws, 'Invalid partyId.');
+            break;
+          }
+        } else if (typeof channelId !== 'string' || !UUID_RE.test(channelId)) {
+          // Virtual server feeds and non-persisted system messages are not editable.
+          sendWsError(ws, 'Invalid channelId.');
+          break;
+        }
+
+        if (await checkWsRateLimit(user.id)) {
+          ws.send(JSON.stringify({ type: 'rate:status', payload: { remaining: 0, retryAfterMs: 1000 } }));
+          sendWsError(ws, 'Rate limit exceeded. Slow down.');
+          break;
+        }
+
+        try {
+          const edited = await editOwnedMessage({
+            userId: user.id,
+            messageId,
+            content,
+            source,
+            channelId: source === 'pm' ? undefined : channelId,
+            conversationId: source === 'pm' ? conversationId : undefined,
+            user,
+          });
+          const payload = { ...edited };
+
+          if (edited.source === 'party' && edited.channelId) {
+            const members = await prisma.partyMember.findMany({
+              where: { partyId: edited.channelId },
+              select: { userId: true },
+            });
+            broadcastToPartyMembers({ type: 'chat:edit', payload }, members.map(m => m.userId));
+
+            // Keep privileged observers in sync even when they are not members
+            // of the party, matching the party:send observer fan-out.
+            try {
+              const { isPrivilegedRole } = require('../services/userRoleService') as { isPrivilegedRole: (r: string) => boolean };
+              const memberIds = new Set(members.map(m => m.userId));
+              const observerPayload = JSON.stringify({ type: 'chat:edit', payload: { ...payload, _modObserver: true } });
+              for (const [, observer] of clients) {
+                if (!isPrivilegedRole(observer.role) || memberIds.has(observer.userId)) continue;
+                safeSend(observer.ws, observerPayload, `chat:edit:party-observer:${observer.userId}`);
+              }
+            } catch (err) {
+              logger.warn({ err, partyId: edited.channelId }, '[chat:edit] party observer fan-out failed (non-fatal)');
+            }
+          } else if (edited.source === 'pm' && edited.recipientId) {
+            await broadcastToUsers({ type: 'chat:edit', payload }, [user.id, edited.recipientId]);
+          } else {
+            broadcast({ type: 'chat:edit', payload });
+          }
+
+          // The local edit is authoritative for the overlay. If this channel
+          // message has a bot-authored Discord counterpart, mirror the edit
+          // asynchronously; a Discord outage must not reject the user's edit.
+          if (edited.source !== 'party' && edited.source !== 'pm') {
+            editDiscordRelayMessage(edited.messageId, edited.content).catch((err) => {
+              logger.warn({ err, messageId: edited.messageId }, '[chat:edit] Discord mirror failed (non-fatal)');
+            });
+          }
+
+          ws.send(JSON.stringify({ type: 'message:edit:ack', payload }));
+        } catch (err: any) {
+          if (err instanceof MessageEditError) {
+            sendWsError(ws, err.message);
+          } else {
+            logger.warn({ err, userId: user.id, messageId, source }, '[chat:edit] failed');
+            sendWsError(ws, 'Could not edit message.');
           }
         }
         break;
@@ -1659,7 +2245,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
                   createdAt: relayTs,
                 }).catch((err: unknown) => logger.warn({ err }, 'Relay message queue failed'));
                 if (cmdResult.relayToDiscord) {
-                  relayToDiscord(cmdResult.targetChannelId, displayName, cmdResult.relayContent, relayChannelName ?? undefined).catch((err) => {
+                  relayToDiscord(cmdResult.targetChannelId, displayName, cmdResult.relayContent, relayChannelName ?? undefined, undefined, undefined, relayId).catch((err) => {
                     logger.warn({ err }, 'Discord relay for command failed (non-fatal)');
                   });
                 }
@@ -1737,8 +2323,8 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
           rateRemaining = Math.max(0, 2 - count);
         } catch { /* non-fatal */ }
 
-        // Shared broadcast + write-behind persist + Discord relay (same path the
-        // HUD ingestMessage uses — keeps the wire/persist/relay format in one place).
+        // Shared durable persist + broadcast + Discord relay (same path the HUD
+        // ingestMessage uses — keeps the wire/persist/relay format in one place).
         // WS-specific extras (avatarUrl, metadata, @mentions, source 'game') are
         // passed through so the WS payload is unchanged.
         const { messageId } = await finalizeMessage({
@@ -1758,7 +2344,9 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       }
 
       case 'chat:typing': {
-        // Ephemeral typing indicator — never persisted, never Discord-relayed.
+        // Ephemeral typing indicator — never persisted. In-game typing is not
+        // sent back to Discord; Discord-originated typing enters via the
+        // discordService typingStart listener and uses this same frame shape.
         // Throttle: clients should send at most once every 2s; we enforce a
         // per-user server-side cooldown so a spammy client can't flood peers.
         const typingClient = clients.get(token);
@@ -1782,7 +2370,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
         // Party typing: broadcast only to party members.
         if (typingPartyId && typeof typingPartyId === 'string' && UUID_RE.test(typingPartyId)) {
           try {
-            const { PARTIES_ENABLED } = await import('../config/features');
+            const { PARTIES_ENABLED } = await import('../config/features.js');
             if (PARTIES_ENABLED) {
               const ptMembers = await prisma.partyMember.findMany({
                 where: { partyId: typingPartyId, leftAt: null },
@@ -1813,7 +2401,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
         const safeOffset = Math.min(Math.max(parseInt(offset, 10) || 0, 0), 10000);
         try {
           const result = await dbQuery(
-            `SELECT m.id, m.content, u.username, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at
+            `SELECT m.id, m.content, u.username, u.chat_name, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at, m.edited_at
              FROM messages m JOIN users u ON u.id = m.user_id
              WHERE m.channel_id = $1 AND NOT m.is_deleted
              ORDER BY m.created_at DESC LIMIT $2 OFFSET $3`,
@@ -1831,11 +2419,12 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
           const messages = result.rows
             .filter((row: any) => !histBlocked.has(row.user_id))
             .map((row: any) => {
-              const dn = resolveDisplayName({ username: row.username, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, installToken: row.install_token });
+              const dn = resolveDisplayName({ username: row.username, chatName: row.chat_name, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, installToken: row.install_token });
               const avatarUrl = buildAvatarUrl(row.discord_id);
-              const { install_token, username, discord_username, discord_display_name, discord_id, metadata, ...rest } = row;
+              const { install_token, username, chat_name, discord_username, discord_display_name, discord_id, metadata, ...rest } = row;
               return { ...rest, username: dn, avatarUrl, metadata: metadata ?? null };
             });
+          await attachCosmeticsToHistory(messages);
           ws.send(JSON.stringify({ type: 'chat:history', payload: { messages: messages.reverse() } }));
         } catch (err) {
           logger.error({ err }, 'Failed to load history');
@@ -1867,7 +2456,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       // ── Party chat frames ──────────────────────────────────────────────────
 
       case 'party:send': {
-        const { PARTIES_ENABLED } = await import('../config/features');
+        const { PARTIES_ENABLED } = await import('../config/features.js');
         if (!PARTIES_ENABLED) { sendWsError(ws, 'Party feature is disabled.'); break; }
 
         const { partyId: psSendPartyId, content: psRawContent, clientCreatedAt: psClientTs } = frame.payload || {};
@@ -2020,7 +2609,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       }
 
       case 'party:history': {
-        const { PARTIES_ENABLED: phEnabled } = await import('../config/features');
+        const { PARTIES_ENABLED: phEnabled } = await import('../config/features.js');
         if (!phEnabled) { ws.send(JSON.stringify({ type: 'chat:history', payload: { channelId: null, messages: [] } })); break; }
 
         const { partyId: phPartyId, limit: phLimit = 300, offset: phOffset = 0 } = frame.payload || {};
@@ -2048,7 +2637,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
             select: {
               id: true, content: true, username: true, userId: true,
               partyId: true, source: true, createdAt: true,
-              user: { select: { username: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true } },
+              user: { select: { username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true } },
             },
           });
 
@@ -2073,8 +2662,11 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
               channel_id: phPartyId,
               source: 'party' as const,
               created_at: r.createdAt.toISOString(),
+              edited_at: r.editedAt?.toISOString() ?? null,
               avatarUrl: buildAvatarUrl(r.user?.discordId ?? null),
             }));
+
+          await attachCosmeticsToHistory(phMessages);
 
           ws.send(JSON.stringify({ type: 'chat:history', payload: { channelId: phPartyId, messages: phMessages } }));
         } catch (err) {
@@ -2178,9 +2770,11 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
         }
         pendingDisconnect.delete(user.id);
         if (!stillGone) {
+          notePendingDisconnectSuppressed(user.id);
           logger.info({ userId: user.id, ep }, '[ws-flap] reconnected before timer fired — suppressing');
           return;
         }
+        noteUserDisconnected(user.id);
         fireDeferred(ep);
       }, WS_FLAP_GRACE_MS);
 
@@ -2191,7 +2785,17 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       });
     };
 
-    scheduleDeferred(closingEndpoint);
+    // Flush presence, then decide from the AUTHORITATIVE socket registry whether
+    // this was the user's last live socket. The closing token was already removed
+    // from `clients` above (line ~2439), so isUserWsConnected() is false iff no
+    // other OPEN socket remains. (Previously this relied on a refcount return
+    // value from noteUserPendingDisconnect, which could drift; see
+    // onlinePresenceService for why the refcount was removed.)
+    noteUserPendingDisconnect(user.id);
+    const enteredPresenceGrace = !isUserWsConnected(user.id);
+    if (enteredPresenceGrace) {
+      scheduleDeferred(closingEndpoint);
+    }
     // Do NOT null serverEndpoint/alternateEndpoints/serverJoinedAt on close.
     // Backend deploys drop every WS in flight; clearing on each close caused
     // state loss across deploys (serverEndpoint nulled → reconnect's :3000
@@ -2217,6 +2821,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
     if (!isSocketSuperseded(clients.get(token)?.ws, ws)) {
       clients.delete(token);
       removeFullscreenClient(user.id);
+      noteUserDisconnected(user.id);
     }
   });
 }
@@ -2234,10 +2839,11 @@ module.exports = {
   broadcastMessageDeletion, broadcastReportAlert, broadcastChannelUpdate,
   broadcastCommandsUpdate, getClientCount, initPubSub,
   disconnectByUserId, markClientMuted, notifyAndDisconnect,
-  snapshotActiveClients, refreshClientIdentity,
+  snapshotActiveClients, refreshClientIdentity, refreshClientCosmetics,
   pushToUser, getConnectedUserIds, refreshClientBlocks,
   updateClientEndpoint,
   broadcastToSession,
+  broadcastToUsers,
   resolveDisplayName,
   decideFlapHandoff,
   WS_FLAP_GRACE_MS_EXPORT,

@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { paramsOf } from '../utils/reqParams';
 import { z } from 'zod';
 import { createError } from '../middleware/errorHandler';
 import prisma from '../config/prisma';
@@ -10,6 +11,7 @@ import {
   linuxZipUrl,
   rawWindowsInstallerUrl,
   rawLinuxAppImageUrl,
+  rawLinuxDebUrl,
   assertAllowedDownloadUrl,
   isAllowedDownloadUrl,
 } from '../utils/releaseDownloadUrls';
@@ -24,7 +26,7 @@ import {
  * zero-dependency, environment-aware module (RELEASE_DOWNLOAD_HOST, default
  * prod) so the dev/QA stack can publish + verify dev-hosted artifacts.
  */
-async function verifyDownload(url: string, label: string): Promise<void> {
+async function verifyDownload(url: string, label: string, minimumBytes = 1_000_000): Promise<void> {
   // Allow-list the target before issuing any request (SSRF defense).
   assertAllowedDownloadUrl(url);
   let res: Awaited<ReturnType<typeof fetch>>;
@@ -39,7 +41,7 @@ async function verifyDownload(url: string, label: string): Promise<void> {
     throw new Error(`${label} download is missing (HTTP ${res.status}) — check the filename/upload`);
   }
   const len = Number(res.headers.get('content-length') || '0');
-  if (len < 1_000_000) {
+  if (len < minimumBytes) {
     throw new Error(`${label} download is only ${len} bytes — likely a 404/error page, not the installer`);
   }
 }
@@ -48,6 +50,8 @@ export interface ReleaseEntry {
   version: string;
   downloadUrl: string;
   releaseNotes: string;
+  hudModVersion?: string | null;
+  hudModUrl?: string | null;
   publishedAt: string;
   downloadCount: number;
 }
@@ -61,18 +65,45 @@ const releaseBodySchema = z.object({
       message: 'downloadUrl must be an https URL on the configured downloads host (/downloads/…)',
     }),
   releaseNotes: z.string().min(1),
+  // Optional for backwards-compatible overlay-only releases. When present,
+  // both fields are required so the website can show a truthful versioned HUD
+  // download rather than a link with no version metadata.
+  hudModVersion: z.string().min(1).optional(),
+  hudModUrl: z
+    .string()
+    .url()
+    .refine(isAllowedDownloadUrl, {
+      message: 'hudModUrl must be an https URL on the configured downloads host (/downloads/...)',
+    })
+    .optional(),
   // When false, skip the Discord @everyone announcement for THIS publish (e.g. a
   // code-signing-only release where pinging everyone is noise). Defaults to true —
   // normal releases always announce. The site download + in-app update notification
   // still update; the operator edits the existing announcement by hand.
   announce: z.boolean().optional().default(true),
-});
+  // When false, post the release embed without a channel-wide @everyone mention.
+  // This is useful for corrected follow-up notes while retaining the announcement.
+  mentionEveryone: z.boolean().optional().default(true),
+}).refine(
+  (value) => Boolean(value.hudModVersion) === Boolean(value.hudModUrl),
+  { message: 'hudModVersion and hudModUrl must be provided together' },
+);
 
-function toEntry(r: { version: string; downloadUrl: string; releaseNotes: string; publishedAt: Date; downloadCount: number }): ReleaseEntry {
+function toEntry(r: {
+  version: string;
+  downloadUrl: string;
+  releaseNotes: string;
+  hudModVersion?: string | null;
+  hudModUrl?: string | null;
+  publishedAt: Date;
+  downloadCount: number;
+}): ReleaseEntry {
   return {
     version: r.version,
     downloadUrl: r.downloadUrl,
     releaseNotes: r.releaseNotes,
+    hudModVersion: r.hudModVersion ?? null,
+    hudModUrl: r.hudModUrl ?? null,
     publishedAt: r.publishedAt.toISOString(),
     downloadCount: r.downloadCount,
   };
@@ -125,14 +156,15 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
 
     const parsed = releaseBodySchema.safeParse(req.body);
     if (!parsed.success) {
-      const detail = parsed.error.errors.map((e) => `${e.path.join('.')}: ${e.message}`).join('; ');
+      const detail = parsed.error.issues.map((e) => `${e.path.join('.')}: ${e.message}`).join('; ');
       return next(createError(400, detail));
     }
 
-    const { version, downloadUrl, releaseNotes, announce } = parsed.data;
+    const { version, downloadUrl, releaseNotes, announce, mentionEveryone, hudModUrl, hudModVersion } = parsed.data;
     const publishedAt = new Date();
 
-    // Pipeline gate: verify all four artifacts exist and are full-size on the
+    // Pipeline gate: verify all five overlay artifacts and, when supplied, the
+    // HUD ZIP exist and are full-size on the
     // server BEFORE we announce or record. Stops filename mismatches / truncated
     // uploads from shipping a release whose buttons serve a corrupt file.
     //
@@ -140,6 +172,7 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
     // - linuxZipUrl         = Linux ZIP   (human download — website + Nexus)
     // - rawWindowsInstallerUrl = raw .exe  (CLI installer / direct download)
     // - rawLinuxAppImageUrl    = raw .AppImage (CLI installer / direct download)
+    // - rawLinuxDebUrl         = raw .deb (website / direct download)
     //
     // The zips are >1 MB; raw installers are also well above the 1 MB floor.
     try {
@@ -147,6 +180,12 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
       await verifyDownload(linuxZipUrl(version), 'Linux ZIP');
       await verifyDownload(rawWindowsInstallerUrl(version), 'Windows raw installer (CLI installer / direct download)');
       await verifyDownload(rawLinuxAppImageUrl(version), 'Linux raw AppImage (CLI installer / direct download)');
+      await verifyDownload(rawLinuxDebUrl(version), 'Linux raw .deb (direct download)');
+      if (hudModUrl) {
+        // The HUD ZIP is intentionally much smaller than an Electron installer,
+        // but it must still be a real uploaded artifact rather than an HTML 404.
+        await verifyDownload(hudModUrl, 'ZFE FCM HUD Mod ZIP', 1_000);
+      }
     } catch (e: any) {
       return next(createError(
         400,
@@ -163,7 +202,11 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
     // operator edits the existing announcement by hand.
     if (announce) {
       try {
-        await postReleaseAnnouncement(version, releaseNotes);
+        if (hudModUrl && hudModVersion) {
+          await postReleaseAnnouncement(version, releaseNotes, { url: hudModUrl, version: hudModVersion }, { mentionEveryone });
+        } else {
+          await postReleaseAnnouncement(version, releaseNotes, undefined, { mentionEveryone });
+        }
       } catch (e: any) {
         return next(createError(
           502,
@@ -175,8 +218,13 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
 
     const saved = await prisma.release.upsert({
       where: { version },
-      update: { downloadUrl, releaseNotes, publishedAt },
-      create: { version, downloadUrl, releaseNotes, publishedAt },
+      update: {
+        downloadUrl,
+        releaseNotes,
+        publishedAt,
+        ...(hudModUrl && hudModVersion ? { hudModUrl, hudModVersion } : {}),
+      },
+      create: { version, downloadUrl, releaseNotes, hudModUrl, hudModVersion, publishedAt },
     });
 
     // Refresh the in-memory latest-version cache so newly connecting overlays
@@ -187,7 +235,11 @@ async function publishRelease(req: Request, res: Response, next: NextFunction): 
     // env-aware download links). Never throws — a GitHub API failure must not
     // fail a publish that already announced + recorded. Discord stays the only
     // hard-required channel.
-    await createGitHubRelease(version, releaseNotes);
+    await createGitHubRelease(
+      version,
+      releaseNotes,
+      hudModUrl && hudModVersion ? { hudMod: { url: hudModUrl, version: hudModVersion } } : {},
+    );
 
     res.json({ data: { message: `Release v${version} published`, ...toEntry(saved) } });
   } catch (err) {
@@ -223,7 +275,7 @@ async function deleteRelease(req: Request, res: Response, next: NextFunction): P
     if (!validBearer && !validApiKey) {
       return next(createError(401, 'Unauthorized'));
     }
-    const { version } = req.params;
+    const { version } = paramsOf(req);
     const deleted = await prisma.release.deleteMany({ where: { version } });
     if (deleted.count === 0) return next(createError(404, `Release ${version} not found`));
     res.json({ data: { deleted: true, version } });

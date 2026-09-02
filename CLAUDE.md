@@ -19,11 +19,14 @@ Full architecture and how the pieces connect: **[docs/README.md](docs/README.md)
 | WebSocket relay protocol, presence, sessions | [docs/realtime/](docs/realtime/README.md) |
 | Dashboard, the shared ChatOverlay component, theming | [docs/frontend/](docs/frontend/README.md) |
 | Electron overlay: window mgmt, keybinds, update notification, building | [docs/overlay/](docs/overlay/README.md) |
+| Overlay diagnostics: log file, levels, `--fcm-debug`/`FCM_DEBUG`, rotation | [docs/overlay/diagnostics-logging.md](docs/overlay/diagnostics-logging.md) |
 | In-game HUD feed (ZFE/FCMBridge): wire format, events, env vars | [docs/overlay/zfe/](docs/overlay/zfe/README.md) |
 | Discord bot: bridge, voice, embeds, reaction roles | [docs/discord/](docs/discord/README.md) |
 | Prisma schema, migrations, Redis usage | [docs/database/](docs/database/README.md) |
 | Automod, reports/evidence, role model | [docs/moderation/](docs/moderation/README.md) |
+| AI content moderation (OpenAI), thresholds, kill switch, privacy | [docs/moderation/ai-moderation.md](docs/moderation/ai-moderation.md) |
 | Local dev, release pipeline, packaging, code signing, deploy | [docs/deployment/](docs/deployment/README.md) |
+| QA-tester builds: golden-build lock, build/bless/distribute runbook | [docs/deployment/qa-builds.md](docs/deployment/qa-builds.md) |
 | Marketing assets (Remotion GIFs/stills), re-export commands | [docs/marketing/](docs/marketing/README.md) |
 
 ## CI Infrastructure
@@ -64,19 +67,34 @@ DB/Redis/MinIO, dedicated Cloudflare tunnel, **never** prod data (real wiki/camp
 **fake** users/chat). It tracks the `dev` branch. Full runbook:
 [docs/deployment/hosted-dev-environment.md](docs/deployment/hosted-dev-environment.md).
 
-**Access = dual Discord role gate + Cloudflare Access.** To onboard a developer (maintainer steps):
+**Access = dual Discord role gate (app-level), like prod.** As of 2026-06-29 the **Cloudflare
+Access edge gate on the dev *website* was removed** — `dev.falloutchatmod.com` (and `dev-hud`)
+are now open at the edge and protected only by the app's own auth, exactly like prod. The raw
+data stores (`dev-db` / `dev-s3`) are **still** CF-Access service-token gated. To onboard a
+developer (maintainer steps):
 
 1. Assign the **`developer`** role in the **prod** Discord server.
 2. Assign the **`developer`** role in the **dev** Discord server. *(BOTH required — the app's
    dual-role gate denies anyone missing either; the prod-guild check goes through
-   `GET /api/internal/verify-dev-role` since the dev bot can't read the prod guild.)*
-3. Add their email to the **"FCM Developers"** Cloudflare Access group (gates `dev.falloutchatmod.com`;
-   login via One-time PIN).
-4. Only if they need direct DB/object-store access: share the CF Access **service token** for
-   `cloudflared access tcp` to `dev-db`/`dev-s3`.
+   `GET /api/internal/verify-dev-role` since the dev bot can't read the prod guild.)* This
+   app-level dual-role gate is now the **sole** gate for the dev dashboard/API.
+3. Only if they need direct DB/object-store access: share the CF Access **service token** for
+   `cloudflared access tcp` to `dev-db`/`dev-s3` (these remain edge-gated).
 
-Revoke by removing the `developer` role in either server and/or the email from the Access group.
-Most contributors never need this — they run the local stack and PR against `dev`.
+Revoke by removing the `developer` role in either server. Most contributors never need this —
+they run the local stack and PR against `dev`. *(History: the dev website used to also sit
+behind a "FCM Developers" CF Access group + One-time PIN; that edge gate was removed because the
+app-level auth already protects all data and the gate was breaking the in-game `/link` flow.)*
+
+**QA testers — a lighter, separate path (NOT the developer onboarding above).** Vetted
+end-users run a packaged "golden" QA build against dev, gated by a dev-guild **`QA`** Discord
+role only — **no Cloudflare Access email, no dual `developer` role**. A version-string
+golden-build lock (`QA_BUILD_LOCK` + `QA_ACTIVE_VERSION`, enforced via `x-client-version` →
+HTTP 426 / WS 4003) retires stale builds; the dev website is now open at the edge (no CF Access
+gate — see above), so QA testers reach the overlay + the `/link` page directly, with app-level
+auth as the only gate (no CF Access email needed). The QA build channel is `npm run dist:qa` (Linux) / the
+**Build Windows QA** Actions workflow (self-hosted runner). Full build/bless/distribute
+runbook: [docs/deployment/qa-builds.md](docs/deployment/qa-builds.md).
 
 ---
 
@@ -172,24 +190,22 @@ These are non-negotiable. Each links to the doc with the full context.
   Dev features (e.g. wiki/camp) are LOCAL-ONLY until explicitly deployed — they don't exist on the
   prod overlay, so test them only on the dev surface (dev overlay → 7177, or the dashboard 7075→7177).
 
-## Nexus release state — Windows installer OFF Nexus (TEMPORARY, since 2026-06-20)
+## Nexus release state — Windows publication is support-gated
 
-Nexus **auto-quarantines installer `.exe` files** (a file-type policy, not a real detection — the
-Windows build is **0/72 on VirusTotal**; `https://falloutchatmod.com/virustotal` always redirects to
-the current build's scan). So the Windows installer is **not published to Nexus** right now and a
-support ticket to lift the quarantine is open. In `Packaging/publish-nexus-release.ps1`: the `Windows`
-platform-loop entry is **commented out** (Linux-only publish); the Linux zip is temporarily renamed
-`Fallout Chat Mod <ver>.zip` (no `…AppImage (Linux)`) and bundles `READ ME FIRST (Windows users).txt`
-pointing Windows users to `falloutchatmod.com`, and its description carries the same Windows-download +
-VT link. The website (`falloutchatmod.com`) stays the canonical Windows download — the `.exe` is still
-built + uploaded there every release. **Revert all three** (uncomment the `Windows` entry, restore the
-`…AppImage (Linux).zip` name, drop the README) once the quarantine is lifted or the installer is
-code-signed (Azure Trusted Signing was being evaluated). See
+The Windows installer is **code-signed** (Azure Trusted Signing, `CN=Lance Strickland`) — which
+removed the SmartScreen "unknown publisher" warning on the **website** download. Nexus may still
+quarantine installer `.exe` files, however, so the ordinary release path publishes Linux and HUD
+files to Nexus while the signed Windows `.exe` remains available from the website and VirusTotal.
+
+When Nexus support needs to review a Windows build, use
+`Packaging/publish-nexus-release.ps1 -PublishWindowsForReview`. That uploads the new Windows file
+alongside the existing live Nexus Windows file with `archive_existing_file: false`. After support
+approval, remove the old file manually in the Nexus Files tab. The low-level `publish-nexus.ps1`
+default is also false; normal Linux/HUD replacement calls opt into archiving explicitly. See
 [docs/deployment/releasing-the-overlay.md](docs/deployment/releasing-the-overlay.md) → Step 7.
 
 > Aside: Nexus's `Compress-Archive`-zip → "scan failed" issue was a *separate, fixed* problem (the
-> Linux release path now zips with the `zip` tool, see #242). The quarantine above is the executable
-> policy, which zipping does not affect.
+> Linux release path now zips with the `zip` tool, see #242).
 
 ## Conventions
 

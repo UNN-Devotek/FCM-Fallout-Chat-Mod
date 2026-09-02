@@ -97,7 +97,8 @@ docs/CODE-SIGNING.md
 .playwright-mcp/
 measure.js
 *.png
-_arcwright-output/replay/
+!game-mods/FCMBridge/hudmodloader-chat/assets/supporter-star-*.png
+_arcwright-output/
 
 # Script working dirs
 scripts/node_modules/
@@ -125,6 +126,12 @@ admin-dashboard/.env.development
 
 # FO76 HUDMenu build workspace (Bethesda IP base SWF + build artifacts -- never commit)
 game-mods/FCMBridge/hudmenu-chat/.build/
+
+# Local QA installers and Python bytecode are generated artifacts, not release
+# source. Keeping them out of the worktree makes the promotion diff auditable.
+_dev-test-builds/
+**/__pycache__/
+*.pyc
 
 # HUD mod loader build artifacts -- never commit
 game-mods/FCMBridge/hudmodloader-chat/.build/

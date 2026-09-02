@@ -32,6 +32,15 @@ These are set up in `backend/db/init.sql` (lines 94-105, 166-177). The Prisma sc
 
 Every column named in the Prisma schema carries an explicit `@map("snake_case_name")` so the generated client uses camelCase while the DB stores snake_case. Tables carry `@@map("plural_snake_case")`.
 
+User-authored channel, party, and private messages persist an optional `edited_at` timestamp.
+The overlay displays this as an `(edited)` marker; ownership and moderation checks remain
+server-side.
+
+Bridged public channel messages also use `discord_message_links` to retain the Discord
+message/channel snowflakes and the bot-message prefix. Human-authored Discord rows are
+linked for inbound `messageUpdate` events; bot-authored relay rows are eligible for
+outbound overlay edits.
+
 ## Redis Role
 
 Redis is accessed via `backend/src/config/redis.ts` using the `redis` npm package. It serves three purposes:

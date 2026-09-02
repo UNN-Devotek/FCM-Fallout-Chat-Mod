@@ -3,8 +3,11 @@ import logger from '../config/logger';
 import { getServerStatus } from './serverStatusService';
 import { getNukeCodes } from './nukeCodesService';
 import { getCampItem } from './campService';
+import { getGlobalOnlineCount } from './onlinePresenceService';
+import { getServerPlayersForUser } from './playerListService';
 import * as giveawayService from './giveawayService';
 import { GiveawayError } from './giveawayService';
+import { getMinervaStatus } from './minervaService';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -114,12 +117,20 @@ function substituteTemplate(
 function buildHelpResponse(commands: ChatCommand[]): string {
   const lines: string[] = ['◈ VAULT-TEC COMMAND REFERENCE'];
 
-  lines.push('', '— CHANNEL RELAY —');
+  // PUBLIC channels — these also relay to Discord. Never describe one as a party
+  // command; the private party shortcuts are listed separately below.
+  lines.push('', '— CHANNEL RELAY (public — also posts to Discord) —');
   lines.push('/g <message> — Send to General');
   lines.push('/t <message> — Send to Trading');
   lines.push('/e <message> — Send to Events');
-  lines.push('/r <message> — Send to Raids');
+  lines.push('/r (/raid) <message> — Send to Raids');
   lines.push('/i <message> — Send to Infests');
+
+  lines.push('', '— PARTY (private — only your party sees these) —');
+  lines.push('/recent (/rp) <message> — Send to your most recent party');
+  lines.push('/p1 <message> — Send to your 1st joined party (Party-tab order, left to right)');
+  lines.push('/p2 <message> — Send to your 2nd joined party');
+  lines.push('/p3 <message> — Send to your 3rd joined party');
 
   lines.push('', '— MODERATION —');
   lines.push('/report bug <description> — Report a bug to the team');
@@ -127,8 +138,10 @@ function buildHelpResponse(commands: ChatCommand[]): string {
   lines.push('/apply — Open the staff application form');
 
   lines.push('', '— FALLOUT 76 —');
+  lines.push('/online — Show total users online in chat');
   lines.push('/serverstatus — Show Fallout 76 server status (up/down)');
-  lines.push('/nukecodes — Show this week\'s nuke launch codes (Alpha/Bravo/Charlie)');
+  lines.push('/nukecodes (/codes) — Show this week\'s nuke launch codes (Alpha/Bravo/Charlie)');
+  lines.push('/minerva — Show Minerva\'s current or next Big Sale (location, list number, dates)');
   lines.push('/wiki <name> — Look up a Fallout 76 item, weapon, creature, perk, or location');
   lines.push('/camp <item name> — Look up a CAMP item (budget cost, required plan, category)');
 
@@ -220,6 +233,64 @@ async function buildNukeCodesResponse(): Promise<{ text: string; metadata: Recor
       bravo: data.bravo,
       charlie: data.charlie,
       validUntil: data.validUntil != null ? new Date(data.validUntil * 1000).toISOString() : null,
+    },
+  };
+}
+
+async function buildOnlineResponse(
+  userId: string,
+  localClientCount: number,
+): Promise<{ text: string; metadata: Record<string, unknown> }> {
+  const [totalOnline, worldPlayers] = await Promise.all([
+    getGlobalOnlineCount(localClientCount),
+    getServerPlayersForUser(userId),
+  ]);
+
+  const worldPlayerCount = worldPlayers?.players?.length ?? null;
+  const text = worldPlayerCount === null
+    ? `${totalOnline} users online in chat.`
+    : `${totalOnline} users online in chat. ${worldPlayerCount} players in your world.`;
+
+  return {
+    text,
+    metadata: {
+      type: 'online_status',
+      totalOnline,
+      worldPlayerCount,
+    },
+  };
+}
+
+// ── /minerva Response Builder ─────────────────────────────────────────────────
+
+function buildMinervaResponse(): { text: string; metadata: Record<string, unknown> } {
+  const { active, next } = getMinervaStatus();
+  const fmt = (d: Date) => d.toUTCString().replace(':00 GMT', ' UTC').replace(/:\d\d UTC/, ' UTC');
+  const sale = active ?? next;
+  const superTag = sale.isSuperSale ? ' ★ SUPER SALE' : '';
+  const lines = [
+    `◈ MINERVA'S BIG SALE${superTag}`,
+    '',
+    `LOCATION — ${sale.location}`,
+    `LIST     — #${sale.listNumber}`,
+    `${active ? 'ENDS' : 'STARTS'}    — ${fmt(active ? sale.endUtc : sale.startUtc)}`,
+    '',
+    'More info at falloutbuilds.com/fo76/minerva',
+  ];
+  return {
+    text: lines.join('\n'),
+    metadata: {
+      type: 'minerva',
+      location: sale.location,
+      listNumber: sale.listNumber,
+      isSuperSale: sale.isSuperSale,
+      isActive: !!active,
+      startUtc: sale.startUtc.toISOString(),
+      endUtc: sale.endUtc.toISOString(),
+      nextLocation: active ? next.location : null,
+      nextListNumber: active ? next.listNumber : null,
+      nextIsSuperSale: active ? next.isSuperSale : null,
+      nextStartUtc: active ? next.startUtc.toISOString() : null,
     },
   };
 }
@@ -447,7 +518,7 @@ async function handleGiveawayCommand(
  * @param channelId        Channel the message was sent in (UUID)
  * @param channelName      Human-readable channel name
  * @param serverEndpoint   Unused — retained for call-site compatibility
- * @param playerCount      Unused — retained for call-site compatibility
+ * @param playerCount      Local deduplicated chat-user count from getClientCount()
  * @param parentChannelId  Parent channel UUID (for allowedChannelId check on sub-channels)
  */
 export async function tryHandleCommand(
@@ -492,12 +563,18 @@ export async function tryHandleCommand(
     };
   }
 
-  // Built-in channel relay shortcuts — first letter of each seeded sub/main channel
+  // Built-in channel relay shortcuts — first letter of each seeded sub/main channel.
+  // These are PUBLIC channels and relay to Discord (relayToDiscord: true below). The
+  // private party shortcuts are `/recent` / `/rp` / `/p1..3`, resolved client-side —
+  // never document a shortcut here as a party command.
+  // `/raid` is an alias for `/r`: it was listed in RESERVED_BUILTINS and in the user-facing
+  // help but had no handler, so it fell through and posted as literal text.
   const CHANNEL_SHORTCUTS: Record<string, { id: string; name: string }> = {
     '/g': { id: '00000000-0000-0000-0000-000000000005', name: 'General' },
     '/t': { id: '00000000-0000-0000-0000-000000000002', name: 'Trading' },
     '/e': { id: '00000000-0000-0000-0000-000000000003', name: 'Events' },
     '/r': { id: '00000000-0000-0000-0000-000000000004', name: 'Raids' },
+    '/raid': { id: '00000000-0000-0000-0000-000000000004', name: 'Raids' },
     '/i': { id: '983995c1-f9ab-44c0-9b78-8b4cbf497273', name: 'Infests' },
   };
   if (trigger in CHANNEL_SHORTCUTS) {
@@ -551,6 +628,19 @@ export async function tryHandleCommand(
     };
   }
 
+  // Built-in /online — total chat users online across backend instances plus
+  // the requester's latest world player-list size when available.
+  if (trigger === '/online') {
+    const r = await buildOnlineResponse(userId, playerCount);
+    return {
+      handled: true,
+      actionType: 'private',
+      botMessage: r.text,
+      metadata: r.metadata,
+      targetChannelId: channelId,
+    };
+  }
+
   // Built-in /serverstatus — FO76 server up/down via Bethesda's status endpoint
   if (trigger === '/serverstatus' || trigger === '/server-status') {
     const r = await buildServerStatusResponse();
@@ -566,6 +656,18 @@ export async function tryHandleCommand(
   // Built-in /nukecodes — current week's Alpha/Bravo/Charlie silo codes via NukaCrypt
   if (trigger === '/nukecodes' || trigger === '/codes') {
     const r = await buildNukeCodesResponse();
+    return {
+      handled: true,
+      actionType: 'private',
+      botMessage: r.text,
+      metadata: r.metadata,
+      targetChannelId: channelId,
+    };
+  }
+
+  // Built-in /minerva — current or next Minerva Big Sale location and dates
+  if (trigger === '/minerva') {
+    const r = buildMinervaResponse();
     return {
       handled: true,
       actionType: 'private',

@@ -71,14 +71,16 @@ fix(overlay): a range of reliability and quality fixes across chat connections, 
 
 ## Release Pipeline (in order)
 
-**FAIL-CLOSED ORDER:** build -> **smoke-test (gate)** -> **VirusTotal (gate, must pass)** -> build ZIPs -> upload artifacts -> verify served sizes -> `POST /admin/releases` -> Nexus. If a gate fails, STOP — publish nothing.
+**FAIL-CLOSED ORDER:** build -> **smoke-test (gate)** -> **VirusTotal (gate, must pass)** -> build ZIPs -> upload artifacts -> verify served sizes -> Nexus -> `POST /admin/releases`. Nexus runs before release registration so a missing or failed Nexus upload cannot advertise a release in the client feed. These external operations are still not one transaction: if registration fails after Nexus succeeds, retry registration for the same version rather than uploading a second Nexus file.
 
 **Preferred: use the orchestrator** -- `Packaging/release.ps1` enforces the full sequence automatically and cannot skip gates:
 
 ```powershell
-.\Packaging\release.ps1 -Version X.Y.Z [-ReleaseNotes "..."] [-SkipBuild] [-DryRun]
+.\Packaging\release.ps1 -Version X.Y.Z [-ReleaseNotes "..."] [-SkipBuild] [-DryRun] [-SkipWindowsNexus]
 # -SkipBuild: reuse existing dist-electron artifacts (Linux AppImage must already be present)
 # -DryRun: runs smoke-test + VT gates for real; prints what would run for steps 4-7 without uploading
+# -SkipWindowsNexus: omit the Windows support-review upload; Linux/.deb/HUD still publish
+# Default: upload the new Windows ZIP with -PublishWindowsForReview and preserve the old Nexus file.
 ```
 
 Manual step-by-step (if running gates individually):
@@ -98,7 +100,7 @@ pwsh -NoProfile -File Packaging/release.ps1 -Version X.Y.Z -SkipBuild -ReleaseNo
 ```
 
 OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows`):
-- **`smoke-test.ps1`** launches the **`.AppImage`** on Linux (with `--ozone-platform=x11` to skip the KDE self-relaunch) and reads `~/.config/Fallout Chat Mod/logs/main.log`; on Windows it launches `win-unpacked\*.exe` and reads `%APPDATA%`. Cleanup kills by process **name** (`pkill fallout-chat` / `taskkill`), never the runner or `Fallout76`.
+- **`smoke-test.ps1`** launches the exact requested-version **`.AppImage`** on Linux (with `--appimage-extract-and-run` and `--ozone-platform=x11` to bypass AppImageLauncher and skip the KDE self-relaunch) and reads `~/.config/Fallout Chat Mod/logs/main.log`; on Windows it launches `win-unpacked\*.exe` and reads `%APPDATA%`. The gate clears an inherited `ELECTRON_RUN_AS_NODE` flag so the packaged binary is tested as Electron. Cleanup kills by process **name** (`pkill fallout-chat` / `taskkill`), never the runner or `Fallout76`.
 - **`release.ps1`** uses `ssh`/`scp` (not `ssh.exe`/`scp.exe`) and runs the child gate scripts via `pwsh` on Linux, `powershell.exe` on Windows.
 - **`package-downloads.ps1`** stages ZIPs under `DistDir` (cross-platform; not a Windows temp path).
 
@@ -111,7 +113,8 @@ OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows
 | `FCM_SSH_TARGET` | upload (step 5) | `user@host` of the prod VPS |
 | `FCM_SSH_KEY` | upload (step 5) | path to the SSH private key. On Linux the key must live at a real path with `chmod 600` (a key on `/mnt/*` DrvFs has perms `ssh` rejects — copy it to `~/.ssh/<key>`) |
 | `FCM_BACKEND_CONTAINER` | upload (step 5) | Dokploy backend container, e.g. `chat-mod-fallout-chat-mod-<id>-backend-1` |
-| `NEXUS_API_KEY`, `NEXUS_FILE_GROUP_ID_WINDOWS`, `NEXUS_FILE_GROUP_ID_LINUX` | step 7 (Nexus) | optional; step 7 fail-closed-aborts if unset (the **primary** release in steps 1-6 is already live by then) |
+| `NEXUS_API_KEY`, `NEXUS_FILE_GROUP_ID_LINUX`, `NEXUS_FILE_GROUP_ID_LINUX_DEB`, `NEXUS_FILE_GROUP_ID_HUD` | step 6 (Nexus) | required before the canonical publish path starts |
+| `NEXUS_FILE_GROUP_ID_WINDOWS` | step 6 (Nexus) | required by default for the Windows support-review upload; omit only with `-SkipWindowsNexus` |
 
 ### Step 1 — Build raw artifacts
 
@@ -147,15 +150,15 @@ OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows
 >
 > Each build is **artifacts only** — it does NOT run the smoke-test / VirusTotal gates or publish.
 > Download the artifacts, then continue with the FAIL-CLOSED gate + publish steps below
-> (`smoke-test.ps1` → `vt-gate.ps1` → upload → verify → `POST /admin/releases` → Nexus). The
+> (`smoke-test.ps1` → `vt-gate.ps1` → upload → verify → Nexus → `POST /admin/releases`). The
 > `publish` input is reserved for a future automated publish step and is currently a no-op.
 
 #### Windows code signing (Azure Trusted Signing)
 
 The Windows installer is **code-signed via Azure Trusted Signing** by `build-windows.yml`. This
-removes the SmartScreen "unknown publisher" warning and is what lifts the Nexus installer
-quarantine (see Step 7). Signing happens automatically in the workflow's build step — no manual
-action per release.
+removes the SmartScreen "unknown publisher" warning on the website download. Nexus support review
+of Windows uploads remains a separate step (see Step 6). Signing happens automatically in the
+workflow's build step — no manual action per release.
 
 **How it's wired (and why it's in the workflow, not `package.json`):**
 
@@ -207,7 +210,7 @@ npx electron-builder --win    # produces dist-electron/Fallout Chat Mod Setup X.
 ```bash
 # 1. Stage BOTH projects on native ext4 ($HOME), preserving the sibling layout.
 #    The overlay's vite `@dashboard` alias resolves to ../admin-dashboard/src and
-#    dedupes react / react-dom / react-router-dom / @tanstack/react-query, so BOTH
+#    dedupes react / react-dom / react-router / @tanstack/react-query, so BOTH
 #    node_modules trees must exist, installed for Linux.
 mkdir -p ~/fcm-lxbuild
 rsync -a --exclude node_modules --exclude dist --exclude dist-electron \
@@ -241,7 +244,7 @@ Note: `latest.yml`, `latest-linux.yml`, and `app-update.yml` are not generated (
 
 ### Step 2 — Build download ZIPs
 
-`Packaging/package-downloads.ps1` wraps each raw artifact into a human-download ZIP alongside `INSTALL-*.txt` (and `.kwinrule` for Linux):
+`Packaging/package-downloads.ps1` wraps each raw artifact into a human-download ZIP alongside `INSTALL-*.txt` (and `.kwinrule` for Linux), and invokes the repeatable HUD package helper:
 
 ```powershell
 .\Packaging\package-downloads.ps1 -Version X.Y.Z
@@ -251,12 +254,23 @@ Produces (in `cross-platform-overlay/dist-electron/`):
 - `Fallout Chat Mod Setup X.Y.Z (Windows).zip`
 - `Fallout Chat Mod-X.Y.Z.AppImage (Linux).zip` — now bundles **both** the AppImage and the `.deb`
   (plus `INSTALL-LINUX.txt` + `.kwinrule`), so apt users can `dpkg -i`/`apt install` the package.
+- `ZFE FCM HUD Mod-<widget-version> (PROD).zip` — generated by
+  `game-mods/FCMBridge/hudmodloader-chat/package.py` from the current `FCMChatWidget.hx`
+  version. It contains the BA2, both runtime INIs, the append-only
+  `FCMChatWidget.hudmodloader.ini` snippet, `FCMChatWidget.version.txt`, `INSTALL.txt`, and
+  `HUDMODLOADER-MENU.txt` with the F11 HUDModLoader setup/customization steps.
+  It never replaces the user's `Data/hudmodloader.ini`.
 
-These ZIPs go to the website and Nexus Mods. They are additional to the raw files — do not replace the raw files with them.
+The overlay ZIPs go to the website and Nexus Mods. The HUD ZIP goes to the website, the
+environment's Discord Updates announcement, and its separate optional Nexus file group. It is
+an explicit opt-in mod and is additional to the raw files — do not replace the raw files with it.
+
+For a hosted-dev package, use `-HudTarget dev`; the generated INIs and `INSTALL.txt` then point
+only to `dev.falloutchatmod.com`. Never copy a stamped package between environments.
 
 ### Step 3 — VirusTotal + permalink (via publish-nexus-release.ps1)
 
-`Packaging/publish-nexus-release.ps1` (step 7 below) handles this automatically. It can also be run standalone:
+`Packaging/publish-nexus-release.ps1` (step 6 below) handles this automatically. It can also be run standalone:
 - Uploads the raw Windows `.exe` to VirusTotal using the large-file upload URL (files > 32 MB require this)
 - Computes the SHA-256 permalink (`https://www.virustotal.com/gui/file/<sha256>/detection`)
 - POSTs the permalink to `POST /admin/virustotal-url` so `falloutchatmod.com/virustotal` always redirects to the latest scan
@@ -285,8 +299,8 @@ ssh prod-server "docker cp /tmp/'Fallout Chat Mod Setup X.Y.Z.exe' \
 ```
 
 Upload the raw `.deb` (`Fallout Chat Mod-X.Y.Z.deb`) the same way so apt users can fetch it directly.
-`Packaging/release.ps1` automates this whole step — it uploads the `.exe`, `.AppImage`, **`.deb`**, and
-both ZIPs, then verifies served sizes (step 5) for each.
+`Packaging/release.ps1` automates this whole step — it uploads the `.exe`, `.AppImage`, **`.deb`**,
+both overlay ZIPs, and the `ZFE FCM HUD Mod` ZIP, then verifies served sizes (step 5) for each.
 
 The backend container serves the feed from `/app/downloads/electron/` via the `releases_downloads` Docker volume.
 
@@ -304,7 +318,7 @@ curl -sI "https://falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod%20S
   | grep -i content-length
 ```
 
-### Step 6 — Register the release
+### Step 7 — Register the release
 
 Confirm version and release notes with the user first, then call the admin endpoint. This updates the server's in-memory `latestVersion` cache — newly connecting overlay clients will receive `{ type: 'app:update-available', payload: { latestVersion } }` over the chat WebSocket and show a passive OS notification if the version is newer than their build.
 
@@ -312,10 +326,13 @@ Confirm version and release notes with the user first, then call the admin endpo
 curl -X POST https://falloutchatmod.com/admin/releases \
   -H "Authorization: Bearer $PROD_ADMIN_RELEASE_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"version":"X.Y.Z","downloadUrl":"https://falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod%20Setup%20X.Y.Z%20(Windows).zip","releaseNotes":"..."}'
+  -d '{"version":"X.Y.Z","downloadUrl":"https://falloutchatmod.com/downloads/electron/Fallout%20Chat%20Mod%20Setup%20X.Y.Z%20(Windows).zip","hudModVersion":"<widget-version>","hudModUrl":"https://falloutchatmod.com/downloads/electron/ZFE%20FCM%20HUD%20Mod-<widget-version>%20(PROD).zip","releaseNotes":"..."}'
 ```
 
 `downloadUrl` is the Windows ZIP URL (the website download button uses this).
+`hudModVersion` and `hudModUrl` are required together when publishing the HUD package. The
+website Install page displays the exact `ZFE FCM HUD Mod ZIP` link from `/api/version`, and the
+same metadata is included in the Discord Updates and GitHub release messages.
 
 **Optional `announce: false` — quiet publish (no Discord ping).** By default every publish
 force-posts a new `@everyone` announcement to `#updates`, and the publish *fails* if the post
@@ -336,44 +353,66 @@ else the shared `GITHUB_PAT` (prod already has this); owner/repo default to this
 need `GITHUB_OWNER` / `GITHUB_REPO` to override (e.g. a fork). Skipped cleanly when no token is set.
 
 **Publishing to a non-prod stack (dev/QA).** `publishRelease` builds and verifies all
-four artifact URLs against an **environment-aware** downloads origin
+four overlay artifact URLs plus the optional HUD ZIP against an **environment-aware** downloads origin
 (`backend/src/utils/releaseDownloadUrls.ts`). It defaults to `falloutchatmod.com`, so
 prod is unchanged. A non-prod backend sets `RELEASE_DOWNLOAD_HOST=<that host>` (the dev
 stack defaults it to `dev.falloutchatmod.com` in `deploy/dev/docker-compose.yml`), which
 makes the SSRF allow-list, `verifyDownload`, and the linked artifact URLs all target that
 host's own `/downloads/` origin. To publish on dev: upload the four artifacts to the dev
 backend's downloads volume, then `POST https://dev.falloutchatmod.com/admin/releases` with
-a `downloadUrl` on `dev.falloutchatmod.com/downloads/…` (auth with the dev `ADMIN_API_KEY`
-via `X-Admin-API-Key`). The same fail-closed gates apply — smoke-test the dev build first.
+a `downloadUrl`, `hudModUrl`, and `hudModVersion` on `dev.falloutchatmod.com/downloads/…`
+(auth with the dev `ADMIN_API_KEY` via `X-Admin-API-Key`). Build the package with
+`-HudTarget dev`; the same fail-closed gates apply — smoke-test the dev build first.
+Set `DOWNLOAD_PAGE_URL=https://dev.falloutchatmod.com` so the Dev Discord message links to
+the dev install page. The dev announcement is posted to the dev bot's configured
+`DISCORD_UPDATES_CHANNEL_ID`; production uses its own configured channel.
 
-### Step 7 — Nexus publish
+To publish corrected notes without notifying the entire channel again, keep `announce: true`
+and add `mentionEveryone: false` to the same release request. This posts a replacement embed,
+updates the stored release notes and latest-version cache, and omits the `@everyone` content and
+allowed-mentions setting. Set `announce: false` only when no Discord post should be sent.
+
+### Step 6 — Nexus publish
 
 ```powershell
 .\Packaging\publish-nexus-release.ps1 -Version X.Y.Z [-ReleaseNotes "..."]
 ```
 
-> **Windows Nexus upload is currently DISABLED (since 2026-06-20), but the unblock is now in
-> hand.** Nexus auto-quarantines the *unsigned* Windows installer, so the `Windows` entry in the
-> platform loop is commented out and only the **Linux** file is published to Nexus; Windows users
-> get the `.exe` from `falloutchatmod.com` (still uploaded to the website in steps 4-6).
-> **As of 2026-06-21 the installer is code-signed** via Azure Trusted Signing (see Step 1 →
-> "Windows code signing"), which is the re-enable condition. **Re-enable once the FIRST
-> code-signed `.exe` has shipped and been verified** (signed + smoke + VT): uncomment the
-> `Windows` line in `publish-nexus-release.ps1`, restore the `…AppImage (Linux).zip` name, and
-> drop the `READ ME FIRST (Windows users).txt`. Until that first signed release is out, leave the
-> Linux-only publish in place.
+Nexus may quarantine Windows `.exe` uploads. The canonical `release.ps1` path
+passes `-PublishWindowsForReview` by default and uploads a new Windows ZIP
+alongside the existing live Windows file for support review:
+
+```powershell
+.\Packaging\publish-nexus-release.ps1 -Version X.Y.Z -PublishWindowsForReview
+```
+
+The review path passes `archive_existing_file: false`, so both Windows files remain available.
+After support approves the new file, remove the old Windows file manually in the Nexus Files tab.
+Use `-SkipWindowsNexus` on `release.ps1` only when the Windows support-review
+upload is intentionally deferred. The standalone wrapper still requires the
+explicit `-PublishWindowsForReview` switch.
 
 This script:
-1. Calls `Packaging/publish-nexus.ps1` once for each enabled platform (currently Linux only; Windows ZIP when re-enabled)
-2. Each call implements the 6-step Nexus v3 Upload API: open multipart session → upload chunks to S3 → complete S3 multipart → finalise → poll for `available` state → attach as new MAIN file (archiving the previous one)
-3. Uploads the Windows `.exe` to VirusTotal and pushes the permalink to `/admin/virustotal-url`
+1. Calls `Packaging/publish-nexus.ps1` for the Linux AppImage ZIP and Linux `.deb` ZIP as `main`, and the production `ZFE FCM HUD Mod` ZIP as `optional`; these normal replacement paths archive their previous files
+2. Calls `publish-nexus.ps1` for the Windows ZIP as `main` with `archive_existing_file: false` when the canonical release path enables the support-review upload
+3. Implements the 6-step Nexus v3 Upload API: open multipart session → upload chunks to S3 → complete S3 multipart → finalise → poll for `available` state → attach the new file with the requested archive behavior
+4. Uploads the Windows `.exe` to VirusTotal and pushes the permalink to `/admin/virustotal-url`
 
 Required env vars (set as Windows USER env vars):
 - `NEXUS_API_KEY`
-- `NEXUS_FILE_GROUP_ID_WINDOWS`
+- `NEXUS_FILE_GROUP_ID_WINDOWS` — required by the canonical release path unless `-SkipWindowsNexus` is used; required by the standalone wrapper only with `-PublishWindowsForReview`
 - `NEXUS_FILE_GROUP_ID_LINUX`
+- `NEXUS_FILE_GROUP_ID_LINUX_DEB` — the separate Linux `.deb` file group
+- `NEXUS_FILE_GROUP_ID_HUD` — the separate optional HUD file group on the same Nexus mod page
 - `VT_API_KEY`
 - `PROD_ADMIN_RELEASE_TOKEN`
+
+The HUD package is uploaded from `dist-electron/ZFE FCM HUD Mod-<widget-version> (PROD).zip`.
+Its Nexus file version is the widget version read from `FCMChatWidget.hx`, not the desktop
+overlay version. Create the HUD file group in the Nexus Files tab and set its ID in
+`NEXUS_FILE_GROUP_ID_HUD`; the wrapper then replaces the previous HUD file on each release. The
+low-level uploader defaults to preserving the previous file; normal Linux, `.deb`, and HUD
+replacements explicitly enable archiving.
 
 ---
 

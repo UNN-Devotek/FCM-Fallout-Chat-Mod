@@ -17,6 +17,9 @@ datasource db {
 model User {
   id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   username           String    @unique
+  // Free account-level chat identity. Unlike supporter cosmetics, this remains
+  // available when the supporter tier is disabled and has no tier cooldown.
+  chatName           String?   @map("chat_name")
   steamId            String?   @map("steam_id")
   installToken       String    @unique @map("install_token")
   discordId          String?   @unique @map("discord_id_link")
@@ -68,12 +71,19 @@ model User {
   partyInvitesReceived PartyInvite[]      @relation("PartyInvitesReceived")
   partyInvitesSent     PartyInvite[]      @relation("PartyInvitesSent")
   partyMessages        PartyMessage[]     @relation("PartyMessages")
+  privateConversationsA PrivateConversation[] @relation("PrivateConversationA")
+  privateConversationsB PrivateConversation[] @relation("PrivateConversationB")
+  privateMessagesSent  PrivateMessage[]   @relation("PrivateMessagesSent")
   blocksMade           Block[]            @relation("BlocksMade")
   blocksAgainst        Block[]            @relation("BlocksAgainst")
   mcpApiKeys           McpApiKey[]        @relation("McpApiKeyOwner")
   giveawaysCreated     Giveaway[]         @relation("GiveawaysCreated")
   giveawaysWon         Giveaway[]         @relation("GiveawaysWon")
   giveawayEntries      GiveawayEntry[]    @relation("GiveawayEntries")
+  hudPairingTokensLinked  HudPairingToken[] @relation("HudPairingTokenLinkedUser")
+  linkedIdentities        LinkedIdentity[]
+  redeemedLinkCodes       HudLinkCode[]     @relation("RedeemedLinkCodes")
+  cosmetics               UserCosmetic?     @relation("UserCosmetics")
 
   @@index([installToken])
   @@index([steamId])
@@ -134,9 +144,11 @@ model Message {
   userId          String   @map("user_id") @db.Uuid
   channelId       String   @map("channel_id") @db.Uuid
   parentChannelId String?  @map("parent_channel_id") @db.Uuid
-  source          String   @default("game") // 'game' | 'discord' | 'hud'
+  source          String   @default("game") // 'game' | 'discord' | 'hud' | 'relay' | 'mcp' | 'ws'
   isDeleted       Boolean  @default(false) @map("is_deleted")
+  editedAt        DateTime? @map("edited_at") @db.Timestamptz(6)
   metadata        Json?    // optional structured payload (e.g. party_invite embed)
+  relaySeq        BigInt?  @map("relay_seq") // monotonic cursor when a healthy relay sequence is available
   createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   // Relations
@@ -148,7 +160,30 @@ model Message {
   @@index([parentChannelId, createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
   @@index([isDeleted, channelId, createdAt(sort: Desc)])
+  @@index([relaySeq], map: "messages_relay_seq_idx")
   @@map("messages")
+}
+
+// =============================================================================
+// Discord Relay Message Links
+// =============================================================================
+// A relay can be edited from either surface only when we retain the Discord
+// message snowflake that represents the in-app row.  This is deliberately a
+// separate table because Message uses (id, created_at) as its primary key and
+// inbound Discord messages need the same link for messageUpdate events.
+model DiscordMessageLink {
+  id               Int      @id @default(autoincrement())
+  messageId        String   @map("message_id") @db.Uuid
+  discordMessageId String   @map("discord_message_id")
+  discordChannelId String   @map("discord_channel_id")
+  discordPrefix    String   @map("discord_prefix")
+  isBotMessage     Boolean  @default(false) @map("is_bot_message")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([messageId])
+  @@unique([discordMessageId, discordChannelId])
+  @@index([discordMessageId])
+  @@map("discord_message_links")
 }
 
 // =============================================================================
@@ -240,6 +275,82 @@ model DiscordRelayMapping {
 
   @@unique([inGameChannelId, discordChannelId])
   @@map("discord_relay_mappings")
+}
+
+// =============================================================================
+// User Cosmetics (opt-in chat appearance — colour, effect, tag)
+// =============================================================================
+// Deliberately a separate 1:1 table rather than columns on `users`: cosmetics are
+// read rarely (resolved once per message and Redis-cached) while `users` is on the
+// hot path for every auth check, so this keeps that row lean. Most users have no
+// row at all, which is the "default identity" state.
+model UserCosmetic {
+  userId               String    @id @map("user_id") @db.Uuid
+  // Deprecated after the free chat-name move (20260812). Retained in the Prisma
+  // model for a safe, idempotent backfill; no UI or runtime path reads/writes it.
+  customDisplayName    String?   @map("custom_display_name")
+  // Either a catalog preset id OR a bounded custom hex from the HSL picker.
+  // colorPresetId wins when both are set; validation lives in cosmeticsService.
+  colorPresetId        String?   @map("color_preset_id")
+  customColorHex       String?   @map("custom_color_hex")
+  // Optional catalog preset for the supporter/Overseer star. When unset, the
+  // resolved tier default is used. The glyph itself is never stored or user input.
+  starColorPresetId    String?   @map("star_color_preset_id")
+  // Supporter+ (static) and Overseer (animated) render effects. Desktop-only —
+  // Scaleform cannot render them in-game (crash rule #1 bans .filters).
+  effectId             String?   @map("effect_id")
+  // Overseer-only short tag rendered beside the name. Renders in-game too.
+  customTag            String?   @map("custom_tag")
+  // User-facing master switch: keeps the row (and the entitlement) while rendering
+  // as a default identity. Also what a moderator reset flips.
+  cosmeticsEnabled     Boolean   @default(true) @map("cosmetics_enabled")
+  // Deprecated with customDisplayName; retained until a later cleanup migration.
+  displayNameChangedAt DateTime? @map("display_name_changed_at") @db.Timestamptz(6)
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation("UserCosmetics", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_cosmetics")
+}
+
+// =============================================================================
+// Supporter Entitlements (paid tier — Discord Server Subscriptions)
+// =============================================================================
+// Keyed by discord_id (like admin_users, and unlike most tables) because the
+// entitlement signal arrives from Discord and may exist before — or without — a
+// linked FCM User row.
+//
+// Deliberately NOT stored in admin_users: that table is reserved for elevated staff
+// identities (see server.ts OAuth upsert), and isPrivilegedRole() must keep returning
+// false for supporters. Supporter tier is an axis orthogonal to EffectiveRole and
+// never grants moderation power.
+//
+// Entitlement vs privileges: this row is the ENTITLEMENT and survives the user
+// leaving the Discord. PRIVILEGES additionally require currently holding the tier
+// role in the guild, so cosmetics revert on departure and restore on rejoin.
+model SupporterEntitlement {
+  id             Int       @id @default(autoincrement())
+  discordId      String    @unique @map("discord_id")
+  // 'supporter' | 'overseer'
+  tier           String
+  // 'discord_sub' | 'patreon' | 'stripe' | 'manual' — keeps the provider swappable
+  // (a migration becomes a new adapter, not a rewrite).
+  source         String    @default("manual")
+  // Provider-side reference (Discord SKU/entitlement id, Stripe subscription, …).
+  externalId     String?   @map("external_id")
+  // 'active' | 'lapsed' | 'cancelled'. Lapsed rows are RETAINED so privileges can
+  // restore without the user re-purchasing.
+  status         String    @default("active")
+  grantedAt      DateTime  @default(now()) @map("granted_at") @db.Timestamptz(6)
+  lastVerifiedAt DateTime? @map("last_verified_at") @db.Timestamptz(6)
+  expiresAt      DateTime? @map("expires_at") @db.Timestamptz(6)
+  notes          String?
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([status])
+  @@map("supporter_entitlements")
 }
 
 // =============================================================================
@@ -395,6 +506,8 @@ model Release {
   version       String   @unique
   downloadUrl   String   @map("download_url")
   releaseNotes  String   @map("release_notes")
+  hudModVersion String?  @map("hud_mod_version")
+  hudModUrl     String?  @map("hud_mod_url")
   publishedAt   DateTime @default(now()) @map("published_at") @db.Timestamptz(6)
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
   downloadCount Int      @default(0) @map("download_count")
@@ -508,16 +621,16 @@ model UserAlias {
 // =============================================================================
 // AutoMod Rules — admin-configured auto-moderation rules (mirrors Discord's
 // Auto-Moderation surface with overlay-specific extensions).
-// triggerType: 'KEYWORD' | 'SPAM' | 'KEYWORD_PRESET' | 'MENTION_SPAM' | 'LINK'
-// triggerMetadata: { keyword_filter, regex_patterns, allow_list, mention_total_limit, presets }
+// triggerType: 'AI_MODERATION' | 'KEYWORD' | 'SPAM' | 'KEYWORD_PRESET' | 'MENTION_SPAM' | 'LINK'
+// triggerMetadata: { thresholds, keyword_filter, regex_patterns, allow_list, mention_total_limit, presets, require_target }
 // actions: [{ type: 'BLOCK'|'ALERT'|'TIMEOUT'|'MUTE_OVERLAY', metadata: {...} }]
 // =============================================================================
 model AutoModRule {
   id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   name             String
   enabled          Boolean  @default(true)
-  triggerType      String   @map("trigger_type") // 'KEYWORD' | 'SPAM' | 'KEYWORD_PRESET' | 'MENTION_SPAM' | 'LINK'
-  triggerMetadata  Json     @map("trigger_metadata") // { keyword_filter[], regex_patterns[], allow_list[], mention_total_limit, presets }
+  triggerType      String   @map("trigger_type") // 'AI_MODERATION' | 'KEYWORD' | 'SPAM' | 'KEYWORD_PRESET' | 'MENTION_SPAM' | 'LINK'
+  triggerMetadata  Json     @map("trigger_metadata") // { thresholds?, keyword_filter[], regex_patterns[], allow_list[], mention_total_limit, presets[], require_target? }
   actions          Json // [{ type: 'BLOCK'|'ALERT'|'TIMEOUT'|'MUTE_OVERLAY', metadata: {...} }]
   exemptChannelIds String[] @default([]) @map("exempt_channel_ids") // overlay channel UUIDs
   exemptRoles      String[] @default([]) @map("exempt_roles") // Discord role IDs
@@ -544,6 +657,10 @@ model AutoModViolation {
   matchedKeyword String?  @map("matched_keyword")
   matchedSubstr  String?  @map("matched_substr")
   actionsTaken   Json     @map("actions_taken") // [{ type, success, detail }]
+  // AI_MODERATION rules only — full category→score map from the OpenAI
+  // Moderation API, plus the peak score as a sortable severity.
+  aiCategories   Json?    @map("ai_categories")
+  aiMaxScore     Float?   @map("ai_max_score")
   createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   rule AutoModRule @relation(fields: [ruleId], references: [id], onDelete: Cascade)
@@ -643,6 +760,7 @@ model PartyMessage {
   content   String
   source    String   @default("party")
   isDeleted Boolean  @default(false) @map("is_deleted")
+  editedAt  DateTime? @map("edited_at") @db.Timestamptz(6)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   // Relations
@@ -657,6 +775,46 @@ model PartyMessage {
   @@index([partyId, createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])
   @@map("party_messages")
+}
+
+// =============================================================================
+// Private Messages
+// =============================================================================
+model PrivateConversation {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userAId          String    @map("user_a_id") @db.Uuid
+  userBId          String    @map("user_b_id") @db.Uuid
+  userALastReadAt  DateTime? @map("user_a_last_read_at") @db.Timestamptz(6)
+  userBLastReadAt  DateTime? @map("user_b_last_read_at") @db.Timestamptz(6)
+  lastMessageAt    DateTime? @map("last_message_at") @db.Timestamptz(6)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  userA    User             @relation("PrivateConversationA", fields: [userAId], references: [id], onDelete: Cascade)
+  userB    User             @relation("PrivateConversationB", fields: [userBId], references: [id], onDelete: Cascade)
+  messages PrivateMessage[]
+
+  @@unique([userAId, userBId])
+  @@index([userAId, lastMessageAt(sort: Desc)])
+  @@index([userBId, lastMessageAt(sort: Desc)])
+  @@map("private_conversations")
+}
+
+model PrivateMessage {
+  id             String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String   @map("conversation_id") @db.Uuid
+  senderId       String   @map("sender_id") @db.Uuid
+  content        String
+  isDeleted      Boolean  @default(false) @map("is_deleted")
+  editedAt       DateTime? @map("edited_at") @db.Timestamptz(6)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  conversation PrivateConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User                @relation("PrivateMessagesSent", fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@id([id, createdAt])
+  @@index([conversationId, createdAt(sort: Desc)])
+  @@index([senderId, createdAt(sort: Desc)])
+  @@map("private_messages")
 }
 
 // =============================================================================
@@ -814,6 +972,68 @@ model HudIdentityBlock {
   @@map("hud_identity_blocks")
 }
 
+// =============================================================================
+// Auth gate: linked identities, link codes, and banned identities (#163, #297)
+// =============================================================================
+
+// linked_identities: non-Discord provider links per user.
+// Discord identity stays inline on users (load-bearing for sessions/dashboard).
+// Provider 'nexus' goes here. Future: 'steam', 'bethesda'.
+model LinkedIdentity {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  provider     String    // 'nexus' | future providers
+  providerUid  String    @map("provider_uid")
+  username     String?
+  linkedAt     DateTime  @default(now()) @map("linked_at") @db.Timestamptz(6)
+  lastVerified DateTime? @map("last_verified") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerUid])
+  @@unique([userId, provider])
+  @@index([userId])
+  @@map("linked_identities")
+}
+
+// hud_link_codes: 8-char Crockford base32 device-authorization codes.
+// TTL 10 min, single-use, <=5 attempts, one active per relay identity.
+// Issued by the relay (per relayUserId — the chat.v1 userId of the limited identity).
+// Redeemed by an authed FCM user on /link; redeemedByUserId is set on successful redeem.
+// Integration seam: relay polls WHERE code = $1 AND used_at IS NOT NULL; redeemedByUserId
+// identifies the FCM account to bind the relay token to (limited → linked upgrade).
+model HudLinkCode {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code                String    @unique
+  relayUserId         String    @map("relay_user_id")
+  redeemedByUserId    String?   @map("redeemed_by_user_id") @db.Uuid
+  expiresAt           DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt              DateTime? @map("used_at") @db.Timestamptz(6)
+  attempts            Int       @default(0)
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  redeemedBy User? @relation("RedeemedLinkCodes", fields: [redeemedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([relayUserId])
+  @@index([expiresAt])
+  @@map("hud_link_codes")
+}
+
+// banned_identities: provider-level deny-list (#297).
+// A deny-listed provider identity is refused at OAuth callback and link-code redemption,
+// regardless of which FCM account they attempt to link to.
+model BannedIdentity {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider    String
+  providerUid String   @map("provider_uid")
+  reason      String?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([provider, providerUid])
+  @@index([provider, providerUid])
+  @@map("banned_identities")
+}
+
 // Per-entity error log for the wiki ingestion job.
 // Never aborts the whole run — failed entities land here for targeted retry.
 model WikiIngestError {
@@ -909,4 +1129,43 @@ model GiveawayEntry {
   @@unique([giveawayId, userId])
   @@index([userId])
   @@map("giveaway_entries")
+}
+
+// =============================================================================
+// HUD Pairing Tokens — relay token store for ZFE chat.v1 clients.
+// Each row is a single token issued to a ZFE client. Tokens are argon2id-hashed;
+// the raw token is returned once at mint time and never stored. Prefix (first 8
+// chars of the base64url token) is indexed for fast lookup without scanning all
+// hashes. revokedAt is set by moderation actions or on ban.
+//
+// Identity model:
+//   userId      = relay-owned TEXT identity ("user_"+hex). No FK to users — a fresh
+//                 register is ANONYMOUS (no FCM account yet). This is the relay_user_id
+//                 namespace WT2 references.
+//   linkedUserId = FK→users.id (UUID). NULL = "limited" (receive-only, no send).
+//                 Set to a real FCM users.id by markRelayTokenLinked() when the user
+//                 redeems a link code via /api/link/redeem. Non-null = "authenticated".
+// =============================================================================
+model HudPairingToken {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tokenHash    String    @map("token_hash")
+  tokenPrefix  String    @map("token_prefix")
+  fo76Name     String    @map("fo76_name")
+  revokedAt    DateTime? @map("revoked_at") @db.Timestamptz(6)
+  lastUsedAt   DateTime? @map("last_used_at") @db.Timestamptz(6)
+  // userId is the relay TEXT identity — NOT a FK to users. Anonymous at register.
+  userId       String    @map("user_id")
+  role         String    @default("user")
+  // linkedUserId is NULL until the user redeems a link code via /api/link/redeem.
+  // NULL = "limited" (can receive but not send). Set by markRelayTokenLinked().
+  linkedUserId String?   @map("linked_user_id") @db.Uuid
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Only linkedUserId has a FK to users — it is the FCM account bound on link redemption.
+  linkedUser User? @relation("HudPairingTokenLinkedUser", fields: [linkedUserId], references: [id], onDelete: SetNull)
+
+  @@index([tokenPrefix])
+  @@index([userId])
+  @@index([linkedUserId])
+  @@map("hud_pairing_tokens")
 }

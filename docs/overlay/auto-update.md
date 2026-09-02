@@ -88,12 +88,17 @@ many releases behind (e.g. 5 versions old) lands on the latest in one run, with 
   version can patch directly to current.
 - **In-place overwrite, version-agnostic paths.**
   - **Windows (NSIS):** `assets/install/installer.nsh` `customInit` taskkills the running
-    `Fallout Chat Mod.exe` so NSIS overwrites the install in place; electron-builder NSIS
-    (`oneClick:false`, `perMachine:false`) upgrades the existing per-user install.
+    `Fallout Chat Mod.exe` (and the pre-v1.3.62 compact legacy names) so NSIS overwrites
+    the install in place; it also runs the exact legacy `Fallout ChatMod` uninstaller when
+    that old per-user directory exists. electron-builder NSIS (`oneClick:false`,
+    `perMachine:false`) upgrades the existing per-user install.
   - **Linux:** `install.sh` writes the AppImage to a **stable, version-agnostic path**
     (`$XDG_DATA_HOME/FalloutChatMod/Fallout Chat Mod.AppImage`), overwrites it, and rewrites the
-    `.desktop` `Exec` every run — so there is never a stale launcher pointing at an old binary. The
-    `.deb` upgrades in place via `dpkg`/`apt`.
+    `.desktop` `Exec` every run — so there is never a stale launcher pointing at an old binary. Before
+    either format is installed, it removes only FCM-owned KWin rule groups (matching the FCM
+    description prefix), preserving user rules. The `.deb` upgrades in place via `dpkg`/`apt`; when
+    switching from the per-user AppImage to `.deb`, the old FCM-owned AppImage launcher is removed
+    only after the package install succeeds.
 - **Startup migrations are idempotent across any version jump** — they run on first launch of the new
   build regardless of how far back the user was:
   - userData productName-rename `"Fallout ChatMod"` → `"Fallout Chat Mod"` (`main.js:972-1050`).
@@ -120,7 +125,8 @@ prompt-when-current logic is for the **CLI** path only.
 
 ### `.deb` shipped in the Linux ZIP
 
-The Linux download ZIP bundles both the AppImage and a `.deb` (`Fallout Chat Mod-<version>.deb`) so apt
+The Linux download ZIP bundles both the AppImage and a `.deb` (`Fallout Chat Mod-<version>.deb`, the
+explicit `build.deb.artifactName` output) so apt
 users can manage the install through `dpkg`. `Packaging/package-downloads.ps1` stages the `.deb` into
 the Linux ZIP and `Packaging/release.ps1` verifies + uploads the raw `.deb` alongside the AppImage. See
 `../deployment/packaging.md`.

@@ -41,4 +41,76 @@ describe('planOzoneRelaunch', () => {
     const childArgv = ['/app', ...first.args];
     expect(planOzoneRelaunch({ kdeWayland: true, argv: childArgv })).toBeNull();
   });
+
+  // ── env hint (belt-and-suspenders XWayland force) ────────────────────────────
+
+  it('always carries ELECTRON_OZONE_PLATFORM_HINT=x11 in the plan env', () => {
+    const plan = planOzoneRelaunch({ kdeWayland: true, argv: ['/app'] });
+    expect(plan.env).toEqual({ ELECTRON_OZONE_PLATFORM_HINT: 'x11' });
+  });
+
+  // ── re-exec safety (issue #272: "launches once, then shortcut does nothing") ──
+
+  it('marks the relaunch SAFE for a normal (non-AppImage) install', () => {
+    const plan = planOzoneRelaunch({ kdeWayland: true, argv: ['/usr/lib/fcm/fallout-chat-mod'], execPath: '/usr/lib/fcm/fallout-chat-mod' });
+    expect(plan.safe).toBe(true);
+  });
+
+  it('marks the relaunch SAFE when $APPIMAGE is set even if execPath is a transient mount', () => {
+    const plan = planOzoneRelaunch({
+      kdeWayland: true,
+      argv: ['/tmp/.mount_abc/fallout-chat-mod'],
+      execPath: '/tmp/.mount_abc/fallout-chat-mod',
+      appImagePath: '/home/u/Applications/Fallout Chat Mod.AppImage',
+    });
+    expect(plan.safe).toBe(true);
+    expect(plan.execPath).toBe('/home/u/Applications/Fallout Chat Mod.AppImage');
+  });
+
+  it('marks the relaunch UNSAFE when execPath is a transient /tmp/.mount_* path and $APPIMAGE is unset', () => {
+    // The doomed case: re-execing the mount, then app.exit(0) unmounts it → child dies.
+    const plan = planOzoneRelaunch({
+      kdeWayland: true,
+      argv: ['/tmp/.mount_abc/fallout-chat-mod'],
+      execPath: '/tmp/.mount_abc/fallout-chat-mod',
+      appImagePath: null,
+    });
+    expect(plan.safe).toBe(false);
+    expect(plan.execPath).toBeUndefined(); // caller falls back to process.execPath, but must NOT exit
+  });
+
+  // ── native-Wayland opt-in (Phase-0 spike: FCM_NATIVE_WAYLAND=1) ──────────────
+
+  it('returns null when nativeWaylandOptIn is true, even on KDE-Wayland with a fresh argv', () => {
+    const plan = planOzoneRelaunch({ kdeWayland: true, argv: ['/app', '--no-sandbox'], nativeWaylandOptIn: true });
+    expect(plan).toBeNull();
+  });
+
+  it('nativeWaylandOptIn=true short-circuits before the argv-guard check (order does not matter)', () => {
+    // Same argv that would normally trigger a relaunch plan — opt-in still wins.
+    const plan = planOzoneRelaunch({
+      kdeWayland: true,
+      argv: ['/tmp/.mount_x/fallout-chat-mod', '--no-sandbox'],
+      appImagePath: '/home/u/Applications/Fallout Chat Mod-1.3.91.AppImage',
+      nativeWaylandOptIn: true,
+    });
+    expect(plan).toBeNull();
+  });
+
+  it('defaults nativeWaylandOptIn to false — omitting it plans the relaunch as before (no regression)', () => {
+    const plan = planOzoneRelaunch({ kdeWayland: true, argv: ['/app', '--no-sandbox'] });
+    expect(plan).not.toBeNull();
+    expect(plan.args).toEqual(['--no-sandbox', FLAG]);
+  });
+
+  it('nativeWaylandOptIn=false behaves identically to omitting it', () => {
+    const withFalse = planOzoneRelaunch({ kdeWayland: true, argv: ['/app', '--no-sandbox'], nativeWaylandOptIn: false });
+    const omitted = planOzoneRelaunch({ kdeWayland: true, argv: ['/app', '--no-sandbox'] });
+    expect(withFalse).toEqual(omitted);
+  });
+
+  it('non-KDE-Wayland still returns null regardless of nativeWaylandOptIn', () => {
+    expect(planOzoneRelaunch({ kdeWayland: false, argv: ['/app'], nativeWaylandOptIn: true })).toBeNull();
+    expect(planOzoneRelaunch({ kdeWayland: false, argv: ['/app'], nativeWaylandOptIn: false })).toBeNull();
+  });
 });

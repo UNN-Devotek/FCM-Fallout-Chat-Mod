@@ -15,7 +15,8 @@ name: CI
 # The single required branch-protection check is the `CI Summary` job below.
 # It gates: unit-vitest (overlay + dashboard matrix), overlay-launch-smoke-linux
 # (packaged-launch smoke), overlay-build-windows-nsis (NSIS build verification),
-# lint-typecheck, and backend-jest — all blocking for PRs.
+# lint-typecheck, backend-jest, and gamemod-anchors (in-game .ba2 SWF anchors) —
+# all blocking for PRs.
 #
 # The `overlay-build-windows-nsis` job builds the NSIS installer NATIVELY on
 # `windows-latest` (no Wine, no Docker, no GHCR image — the self-hosted Wine/DinD
@@ -97,8 +98,8 @@ jobs:
       matrix:
         workspace: [backend, admin-dashboard, cross-platform-overlay]
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -153,8 +154,8 @@ jobs:
       # 'test-admin-key'); auth.ts only honours it when env.ADMIN_API_KEY matches.
       ADMIN_API_KEY: test-admin-key
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -195,7 +196,7 @@ jobs:
     env:
       OSV_VERSION: v2.3.8
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install osv-scanner
         run: |
           set -euo pipefail
@@ -251,8 +252,8 @@ jobs:
       matrix:
         workspace: [cross-platform-overlay, admin-dashboard]
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -266,6 +267,72 @@ jobs:
         working-directory: ${{ matrix.workspace }}
         run: npm run test:unit --if-present
 
+  # ── Game-mod SWF anchor tests (Python) — REQUIRED gate ───────────────────────
+  # The in-game HUD .ba2 build patches Bethesda's HUDMenu via apply-patch.py against
+  # fixed anchors in fcm-inject.as. CI checks the source/config contract and the
+  # stdlib BA2 packer fixture; the fresh Bethesda HUDMenu anchor check runs in
+  # build.sh after ffdec decompiles the current live archive (CI cannot legally
+  # redistribute that decompiled input). Pure stdlib — uses system python3.
+  gamemod-anchors:
+    name: Game-mod SWF anchors + config (Python + Haxe)
+    needs: authorize
+    runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Verify promotion-critical sources are tracked
+        run: |
+          set -euo pipefail
+          required=(
+            backend/prisma/migrations/20260803120000_ai_moderation/migration.sql
+            backend/prisma/migrations/20260818120000_relay_persistence_contract/migration.sql
+            backend/prisma/migrations/20260818123000_relax_chat_profanity_word_filters/migration.sql
+            backend/src/services/aiModerationService.ts
+            backend/src/scripts/applyPostPushPatches.ts
+            backend/src/services/relay/wireSanitize.ts
+            backend/src/utils/resolveActorId.ts
+            backend/src/utils/targetedAttack.ts
+            backend/src/utils/oauthState.ts
+            backend/tests/aiModerationService.test.js
+            backend/tests/autoModEngineAi.test.js
+            backend/tests/autoModRulesController.test.js
+            backend/tests/wireSanitize.test.js
+            backend/src/utils/__tests__/oauthState.test.ts
+            game-mods/EasyFishing/test-install.sh
+            game-mods/FCMBridge/FCMBridge.hx
+            game-mods/FCMBridge/hudmenu-chat/test_ba2tool.py
+          )
+          for path in "${required[@]}"; do
+            test -f "$path" || { echo "Missing required source: $path" >&2; exit 1; }
+            git ls-files --error-unmatch "$path" >/dev/null || {
+              echo "Required source is present but not tracked: $path" >&2
+              exit 1
+            }
+          done
+          echo "All promotion-critical sources are tracked."
+      - name: Run FCMBridge anchor tests
+        run: |
+          python3 game-mods/FCMBridge/hudmenu-chat/test_anchors.py
+          python3 game-mods/FCMBridge/hudmenu-chat/test_ba2tool.py
+          python3 game-mods/FCMBridge/hudmodloader-chat/test_package.py
+          python3 Packaging/test-release-scripts.py
+      # FcmConfig parser/clamp unit tests (CAP-001..005, #303/#304) — pure Haxe, --interp.
+      - name: Install Haxe
+        run: sudo apt-get update && sudo apt-get install -y haxe
+      - name: Run FcmConfig unit tests
+        working-directory: game-mods/FCMBridge/hudmodloader-chat
+        run: haxe test-config.hxml
+      - name: Run FcmIdentity unit tests
+        working-directory: game-mods/FCMBridge/hudmodloader-chat
+        run: haxe test-identity.hxml
+      - name: Compile FCMChatWidget
+        working-directory: game-mods/FCMBridge/hudmodloader-chat
+        run: haxe build.hxml
+      - name: Compile legacy FCMBridge
+        working-directory: game-mods/FCMBridge
+        run: haxe --main FCMBridge --swf /tmp/FCMBridge.swf --swf-version 32
+      - name: Run EasyFishing installer tests
+        run: bash game-mods/EasyFishing/test-install.sh
+
   # ── Overlay launch smoke (Linux) — REQUIRED gate ─────────────────────────────
   # Builds the packaged overlay and asserts a clean startup. Catches crash-on-launch
   # (e.g. v1.3.82's missing './overlay-core' in the asar, which bricked users).
@@ -278,14 +345,14 @@ jobs:
     runs-on: ${{ vars.CI_RUNNER && fromJSON(vars.CI_RUNNER) || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: cross-platform-overlay/package-lock.json
       - name: Cache Electron binary
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/electron
           key: electron-${{ hashFiles('cross-platform-overlay/package-lock.json') }}
@@ -299,6 +366,11 @@ jobs:
       - name: Build renderer
         working-directory: cross-platform-overlay
         run: npm run build:renderer
+      - name: Validate Linux installer decision path
+        run: |
+          bash -n Packaging/linux/install.sh
+          bash Packaging/linux/install.sh --help >/dev/null
+          bash Packaging/linux/install.sh --print-plan
       - name: Install Xvfb + Electron system libs
         run: |
           sudo apt-get update -qq
@@ -333,8 +405,8 @@ jobs:
       run:
         shell: powershell
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
@@ -369,6 +441,7 @@ jobs:
       - overlay-build-windows-nsis     # NSIS build verification + no-feed-files assertion (Windows)
       - lint-typecheck                 # Phase 2: now a required blocking gate
       - backend-jest                   # Phase 2: now a required blocking gate
+      - gamemod-anchors                # in-game .ba2 SWF anchor checks (Python)
     steps:
       # Require every listed job to have SUCCEEDED. A skipped job (e.g. an
       # unlabeled fork PR where `authorize` did not run) must NOT pass the gate,

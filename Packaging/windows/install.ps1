@@ -37,9 +37,13 @@ Say "Latest version: $version"
 # Read the installed exe's product version. not installed / installed < latest
 # -> upgrade (fast-forwards from any older version); installed >= latest -> ask.
 $installedExe = Join-Path $env:LOCALAPPDATA 'Programs\Fallout Chat Mod\Fallout Chat Mod.exe'
+$legacyInstalledExe = Join-Path $env:LOCALAPPDATA 'Programs\Fallout ChatMod\Fallout ChatMod.exe'
 $installed = $null
 if (Test-Path $installedExe) {
   try { $installed = ([string](Get-Item $installedExe).VersionInfo.ProductVersion).Trim() } catch { $installed = $null }
+}
+if (Test-Path $legacyInstalledExe) {
+  Say 'A legacy Fallout Chat Mod install was found. The installer will migrate it before installing the current build.'
 }
 if ($installed) {
   $isCurrent = $false

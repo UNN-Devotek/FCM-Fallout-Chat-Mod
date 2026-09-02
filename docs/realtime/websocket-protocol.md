@@ -21,7 +21,7 @@ The `/auth/ws-ticket` REST endpoint issues a 60-second single-use token that upg
 
 ## Backpressure
 
-Broadcast loops (`localBroadcast`, `broadcastToPartyMembers`, `broadcastToSession`) check each socket's `bufferedAmount` before sending. If `bufferedAmount` exceeds `WS_MAX_BUFFERED_BYTES` (5 MB) the frame is skipped for that socket and a warning is logged. This prevents the Node.js event loop from stalling on a slow or stuck client.
+Broadcast loops (`localBroadcast`, `broadcastToPartyMembers`, `broadcastToSession`, `broadcastToUsers`) check each socket's `bufferedAmount` before sending. If `bufferedAmount` exceeds `WS_MAX_BUFFERED_BYTES` (5 MB) the frame is skipped for that socket and a warning is logged. This prevents the Node.js event loop from stalling on a slow or stuck client.
 
 ---
 
@@ -34,6 +34,7 @@ The backend can run as multiple instances behind a load balancer. Broadcasts use
 | *(none)* | Global channel chat | all local clients |
 | `scope:'party'` | Party chat messages | `memberUserIds` array |
 | `scope:'session'` | Server/world-session chat | `sessionId` UUID |
+| `scope:'users'` | Private-message delivery / read receipts | `userIds` array |
 
 Each instance ignores envelopes where `instanceId` matches its own `INSTANCE_ID` (echo suppression). If Redis is unavailable at startup, `initPubSub` retries automatically every 30 s — multi-instance delivery degrades gracefully rather than staying permanently disabled.
 
@@ -168,8 +169,13 @@ Broadcast to all clients (or session members for server-channel messages) when a
     "channelId": "00000000-0000-0000-0000-000000000001",
     "source": "game",
     "timestamp": "2026-06-04T12:00:00.000Z",
+    "editedAt": null,
     "avatarUrl": "https://cdn.discordapp.com/...",
-    "metadata": null
+    "metadata": null,
+    "nameColor": "#57DBDB",
+    "effectId": "glow-soft",
+    "tag": null,
+    "badges": ["supporter"]
   }
 }
 ```
@@ -186,6 +192,36 @@ Broadcast to all clients (or session members for server-channel messages) when a
 | `discord` | Relayed from Discord |
 
 `handlers.ts:2417–2429`
+
+### `chat:edit` (C→S request)
+Edit a message authored by the authenticated user. The client sends `source: "pm"` with
+`conversationId` for private messages, `source: "party"` with the party UUID in `channelId`
+for party messages, or the original source plus a regular channel UUID for channel messages.
+The server verifies ownership (and party/conversation access), rejects deleted/system/server
+messages, reruns AutoMod, and records `edited_at` before broadcasting the patch.
+
+```json
+{
+  "type": "chat:edit",
+  "payload": {
+    "messageId": "<uuid>",
+    "content": "corrected text",
+    "source": "game",
+    "channelId": "<channel-uuid>"
+  }
+}
+```
+
+Successful edits are broadcast as `chat:edit` with `messageId`, normalized `content`,
+`editedAt`, and the source-specific routing fields. The sender also receives
+`message:edit:ack` with the same payload. Invalid, unauthorized, muted, rate-limited, or
+AutoMod-blocked edits return the standard `error` frame.
+
+For bridged public channel messages, the server also retains the Discord message
+snowflake. An edit made in the overlay mirrors to the bot-authored Discord copy.
+An edit made to a human-authored Discord message updates the linked overlay row
+and emits the same `chat:edit` broadcast. The bot cannot edit a Discord user's
+original message, so overlay edits of Discord-origin messages remain local.
 
 Bot messages (source `bot`, userId `system`, username `[Vault-Tec]`) are never block-filtered. `handlers.ts:742–749`
 
@@ -216,19 +252,20 @@ Request historical messages for a channel.
   }
 }
 ```
-Response uses the same `type: 'chat:history'` with `payload.messages` (array, chronological). Limit is capped at 300, offset at 10000.
+Response uses the same `type: 'chat:history'` with `payload.messages` (array, chronological). Limit is capped at 300, offset at 10000. Each row is decorated with the author's **current** resolved `nameColor`, `effectId`, `tag`, and `badges`, just like a live `chat:message`; cosmetics are not frozen into the message row, so changing an appearance remains visible after a tab/history reload.
 
 For server channels (`server:<UUID>`): user must be a member of that session; history is bounded to the session's `createdAt`. `handlers.ts:2510–2688`
 
 ### `chat:typing` (C→S, S→C broadcast)
-Ephemeral typing indicator. Never persisted. Clients should send at most once every 2 s. Server broadcasts to all other clients (for channel typing) or party members only (for party typing).
+Ephemeral typing indicator. Never persisted. Clients should send at most once every 2 s. Server broadcasts to all other clients (for channel typing) or party members only (for party typing). Discord `typingStart` events for mapped relay channels use the same frame and add `source: "discord"`; this field is omitted from client-originated frames. The overlay automatically expires the indicator after four seconds because Discord has no typing-stopped event.
 ```json
 {
   "type": "chat:typing",
   "payload": {
     "channelId": "00000000-0000-0000-0000-000000000001",
     "username": "Devotek",
-    "userId": "<uuid>"
+    "userId": "<uuid>",
+    "source": "discord"
   }
 }
 ```
@@ -243,6 +280,142 @@ Sent when a moderator soft-deletes a message.
 }
 ```
 `handlers.ts:1204–1206`
+
+---
+
+## Private Messages
+
+Private messages use their own tables (`private_conversations`, `private_messages`) and their own WebSocket frames. They are delivered only to the sender and recipient, are never relayed to Discord, and never appear in public channel feeds, party feeds, or public website mode.
+
+### `pm:list` (C→S request, S→C response)
+
+Requests the caller's private-message inbox. The server responds with `payload.conversations`, sorted by most recent `last_message_at`.
+
+```json
+{
+  "type": "pm:list",
+  "payload": {
+    "conversations": [
+      {
+        "conversationId": "<uuid>",
+        "otherUserId": "<uuid>",
+        "otherDisplayName": "Stealthmog",
+        "lastMessagePreview": "meet at whitespring?",
+        "lastMessageSenderId": "<uuid>",
+        "lastMessageAt": "2026-06-25T15:53:00.000Z",
+        "unreadCount": 2
+      }
+    ]
+  }
+}
+```
+
+`lastMessageSenderId` is the user id of the most recent non-deleted private message in the conversation, or `null` when the conversation exists but has no messages yet.
+
+The server returns at most 50 inbox rows, ordered by most recent activity. Unread counts are
+computed in one database aggregate using each participant's read watermark; clients must not
+assume that an omitted conversation is deleted.
+
+`pm:open` reuses the same response frame and adds `openedConversationId` when the server creates or finds the target conversation.
+
+### `pm:open` (C→S)
+
+Creates or returns the sorted-pair conversation for the caller and `targetUserId`.
+
+```json
+{
+  "type": "pm:open",
+  "payload": { "targetUserId": "<uuid>" }
+}
+```
+
+### `pm:history` (C→S request, S→C response)
+
+Loads one private conversation's history. Only participants may request it.
+
+```json
+{
+  "type": "pm:history",
+  "payload": {
+    "conversationId": "<uuid>",
+    "limit": 100,
+    "offset": 0
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "type": "pm:history",
+  "payload": {
+    "conversationId": "<uuid>",
+    "messages": [
+      {
+        "id": "<uuid>",
+        "conversationId": "<uuid>",
+        "senderId": "<uuid>",
+        "senderName": "Stealthmog",
+        "recipientId": "<uuid>",
+        "content": "meet at whitespring?",
+        "createdAt": "2026-06-25T15:52:00.000Z",
+        "editedAt": null
+      }
+    ]
+  }
+}
+```
+
+### `pm:send` (C→S)
+
+Sends a private message to exactly one recipient. Enforcement matches channel chat where applicable: authenticated users only, no self-PM, blocked pairs rejected with the generic error `Message unavailable.`, mute checks, rate limits, participant-only access, automod, and a 255-character content limit.
+
+```json
+{
+  "type": "pm:send",
+  "payload": {
+    "conversationId": "<uuid>",
+    "recipientUserId": "<uuid>",
+    "content": "meet at whitespring?",
+    "clientCreatedAt": "2026-06-25T15:10:00.000Z"
+  }
+}
+```
+
+### `pm:message` (S→C)
+
+Delivered only to the sender and recipient.
+
+```json
+{
+  "type": "pm:message",
+  "payload": {
+    "id": "<uuid>",
+    "conversationId": "<uuid>",
+    "senderId": "<uuid>",
+    "senderName": "Stealthmog",
+    "recipientId": "<uuid>",
+    "content": "meet at whitespring?",
+    "createdAt": "2026-06-25T15:10:00.000Z",
+    "editedAt": null
+  }
+}
+```
+
+### `pm:read` (C→S and S→C)
+
+Marks the caller's read watermark for one conversation. The server echoes a `pm:read` frame to the caller's sockets so multiple overlay windows/tabs keep the unread badge in sync.
+
+```json
+{
+  "type": "pm:read",
+  "payload": {
+    "conversationId": "<uuid>",
+    "unreadCount": 0
+  }
+}
+```
 
 ---
 
@@ -563,3 +736,27 @@ Giveaway announcements and winner results arrive as standard `chat:message` fram
 ```
 
 `winnerName` is `null` when the giveaway ended with no entries. `cancelled: true` when stopped early.
+
+## ZFE wire repair (in-game HUD clients)
+
+ZFE 0.9.12–0.12.1 corrupt every **string value a mod passes through `chat.v1.*`**: each
+character is emitted followed by the literal text `u0000` — the escape for the 0x00 high byte of
+the UTF-16 code unit, with the backslash lost. ZFE's own values (relay token, cursors) are clean,
+and ZFE parses the mod's JSON envelope correctly, so only the extracted values are damaged.
+
+Proven on dev 2026-08-06 with widget v2.9.8: the widget logged `displayName=Abderaan` (8 clean
+ASCII characters) and the relay stored `Au0000bu0000du0000eu0000ru0000au0000au0000n` (43). The
+same transform hits `channel`, so `global` arrived as `gu0000lu0000ou0000bu0000au0000lu0000`,
+failed `ALL_SLUGS.includes(slug)`, and **every in-game send was rejected `invalid_channel`**. The
+`server` slug was mangled identically, so the world/roster control intercept never fired and
+SERVER chat could never bind.
+
+The widget cannot work around this — a clean string goes in and a mangled one comes out — so the
+relay repairs it on receipt. `readWireString()`
+([`wireSanitize.ts`](../../backend/src/services/relay/wireSanitize.ts)) is applied to the
+mod-supplied `channel`, `body`, and `displayName` frame fields.
+
+**It only repairs a string mangled end to end** (every character padded, final character bare).
+Ordinary text that merely contains `u0000` is returned untouched, so message bodies are never
+silently rewritten. Remove this once ZFE ships a fix *and* the affected builds are out of
+circulation.

@@ -8,6 +8,7 @@ import {
   hexToRgba,
   hexAlpha,
   menuBgColor,
+  boundedPublicPartyIds,
   loadSettings,
   saveSettings,
   truncateUrl,
@@ -15,11 +16,16 @@ import {
   splitParts,
   splitMentions,
   contentMentionsName,
+  contentMatchesKeyword,
+  shouldPlayNotifySound,
+  NOTIFY_SOUND_MIN_GAP_MS,
+  messageTriggersNotify,
   backoffDelay,
   nextTicketRetryDelay,
   isAuthTerminal,
   channelTag,
   isPrivilegedRole,
+  isPartyMutedForModerator,
   shouldShowInMainFeed,
   formatMessageTimestamp,
   hiddenChannelIdSet,
@@ -28,7 +34,46 @@ import {
   shouldForceReconnectOnVisible,
   buildRichHtmlImpl,
   escapeHtmlAttr,
+  serializeRichContent,
+  getRichSelectionOffsets,
+  placeRichCaretAtOffset,
+  insertTokenIntoText,
+  resolveExternalSetCaret,
+  isNearBottom,
+  STICK_TO_BOTTOM_THRESHOLD,
+  buildMentionInsert,
+  BUILTIN_FORMS,
+  canEditOwnMessage,
 } from '../ChatOverlay';
+
+describe('canEditOwnMessage', () => {
+  const own = { id: 'message-1', userId: 'user-1', source: 'game' };
+
+  it('allows an authenticated owner to edit ordinary, party, and private messages', () => {
+    expect(canEditOwnMessage(own, 'user-1')).toBe(true);
+    expect(canEditOwnMessage({ ...own, source: 'party' }, 'user-1')).toBe(true);
+    expect(canEditOwnMessage({ ...own, source: 'pm' }, 'user-1')).toBe(true);
+  });
+
+  it('rejects other users, read-only mode, and system-authored messages', () => {
+    expect(canEditOwnMessage(own, 'user-2')).toBe(false);
+    expect(canEditOwnMessage(own, null)).toBe(false);
+    expect(canEditOwnMessage(own, 'user-1', true)).toBe(false);
+    for (const source of ['bot', 'system', 'server']) {
+      expect(canEditOwnMessage({ ...own, source }, 'user-1')).toBe(false);
+    }
+  });
+});
+
+describe('boundedPublicPartyIds', () => {
+  it('caps and removes empty party IDs', () => {
+    expect(boundedPublicPartyIds('party-a,,party-b,party-c', 2)).toEqual(['party-a', 'party-b']);
+  });
+
+  it('fails closed for non-positive limits', () => {
+    expect(boundedPublicPartyIds('party-a', 0)).toEqual([]);
+  });
+});
 
 // ── isProdRelayHost (drives the footer [DEV] indicator) ──────────────────────
 describe('isProdRelayHost', () => {
@@ -50,6 +95,12 @@ describe('isProdRelayHost', () => {
     expect(isProdRelayHost('')).toBe(false);
     expect(isProdRelayHost(null)).toBe(false);
     expect(isProdRelayHost(undefined)).toBe(false);
+  });
+});
+
+describe('slash-command built-ins', () => {
+  it('includes /online in the built-in autocomplete command list', () => {
+    expect(BUILTIN_FORMS.some((cmd) => cmd.trigger === '/online')).toBe(true);
   });
 });
 
@@ -222,8 +273,14 @@ describe('loadSettings / saveSettings', () => {
       showHints: true,
       fontSize: 14,
       showTimestamps: false,
+      disableNameMotion: false,
       timestampFormat: '12h',
       channelFilters: [],
+      mutedPartyIds: [],
+      notifyKeywords: [],
+      showTypingWhenCollapsed: false,
+      notifySoundEnabled: false,
+      notifySoundVolume: 0.5,
     });
   });
 
@@ -235,8 +292,14 @@ describe('loadSettings / saveSettings', () => {
       showHints: false,
       fontSize: 18,
       showTimestamps: true,
+      disableNameMotion: false,
       timestampFormat: '24h' as const,
       channelFilters: ['Trading'],
+      mutedPartyIds: ['party-1'],
+      notifyKeywords: ['fixer'],
+      showTypingWhenCollapsed: false,
+      notifySoundEnabled: true,
+      notifySoundVolume: 0.8,
     };
     saveSettings(custom);
     expect(loadSettings()).toEqual(custom);
@@ -574,6 +637,21 @@ describe('shouldShowInMainFeed', () => {
     expect(shouldShowInMainFeed({ channelId: 'p-foreign', source: 'party' }, ctx)).toBe(true);
   });
 
+  it('excludes a muted joined party from the aggregate feed for a moderator', () => {
+    const ctx = { ...baseCtx, isMod: true, isPublicMode: false, mutedPartyIds: ['p-joined'] };
+    expect(shouldShowInMainFeed({ channelId: 'p-joined', source: 'party' }, ctx)).toBe(false);
+  });
+
+  it('excludes a muted foreign party from the aggregate feed for a moderator', () => {
+    const ctx = { ...baseCtx, isMod: true, isPublicMode: false, mutedPartyIds: ['p-foreign'] };
+    expect(shouldShowInMainFeed({ channelId: 'p-foreign', source: 'party' }, ctx)).toBe(false);
+  });
+
+  it('ignores party mutes outside the privileged authenticated view', () => {
+    const ctx = { ...baseCtx, isMod: false, isPublicMode: false, mutedPartyIds: ['p-joined'] };
+    expect(shouldShowInMainFeed({ channelId: 'p-joined', source: 'party' }, ctx)).toBe(true);
+  });
+
   it('excludes foreign party message for isMod && isPublicMode', () => {
     const ctx = { ...baseCtx, isMod: true, isPublicMode: true };
     expect(shouldShowInMainFeed({ channelId: 'p-foreign', source: 'party' }, ctx)).toBe(false);
@@ -592,6 +670,30 @@ describe('shouldShowInMainFeed', () => {
   it('excludes foreign non-party channel message with undefined source for mod', () => {
     const ctx = { ...baseCtx, isMod: true, isPublicMode: false };
     expect(shouldShowInMainFeed({ channelId: 'ch-foreign' }, ctx)).toBe(false);
+  });
+});
+
+describe('isPartyMutedForModerator', () => {
+  it('only matches party messages for authenticated privileged viewers', () => {
+    expect(isPartyMutedForModerator(
+      { channelId: 'p-1', source: 'party' },
+      { isMod: true, isPublicMode: false, mutedPartyIds: ['p-1'] },
+    )).toBe(true);
+    expect(isPartyMutedForModerator(
+      { channelId: 'p-1', source: 'game' },
+      { isMod: true, isPublicMode: false, mutedPartyIds: ['p-1'] },
+    )).toBe(false);
+  });
+
+  it('is inert for public mode and regular users', () => {
+    expect(isPartyMutedForModerator(
+      { channelId: 'p-1', source: 'party' },
+      { isMod: true, isPublicMode: true, mutedPartyIds: ['p-1'] },
+    )).toBe(false);
+    expect(isPartyMutedForModerator(
+      { channelId: 'p-1', source: 'party' },
+      { isMod: false, isPublicMode: false, mutedPartyIds: ['p-1'] },
+    )).toBe(false);
   });
 });
 
@@ -773,7 +875,47 @@ describe('escapeHtmlAttr', () => {
   });
 });
 
-// ── buildRichHtmlImpl (rich-input HTML builder — XSS sink) ───────────────────
+// ── buildMentionInsert (click-to-mention text transform) ─────────────────────
+describe('buildMentionInsert', () => {
+  it('appends @name to an empty input', () => {
+    expect(buildMentionInsert('', 'Bob', 0, 0)).toBe('@Bob ');
+  });
+
+  it('appends @name with no extra space when input already ends with a space', () => {
+    expect(buildMentionInsert('hello ', 'Bob', 6, 6)).toBe('hello @Bob ');
+  });
+
+  it('inserts a spacer when the character before cursor is not a space', () => {
+    expect(buildMentionInsert('hello', 'Bob', 5, 5)).toBe('hello @Bob ');
+  });
+
+  it('inserts at cursor position mid-string, spacer + original space = two spaces before tail', () => {
+    // cursor is between 'foo' (no trailing space) and ' bar' (leading space) →
+    // spacer is added, mention trailing space + original leading space both preserved
+    expect(buildMentionInsert('foo bar', 'Bob', 3, 3)).toBe('foo @Bob  bar');
+  });
+
+  it('replaces the selected range with the mention', () => {
+    expect(buildMentionInsert('foo SELECTED bar', 'Bob', 4, 12)).toBe('foo @Bob  bar');
+  });
+
+  it('preserves special characters in display names exactly', () => {
+    expect(buildMentionInsert('', 'Ñoño★', 0, 0)).toBe('@Ñoño★ ');
+  });
+
+  it('caps the result at maxLen', () => {
+    const long = 'x'.repeat(250);
+    const result = buildMentionInsert(long, 'Bob', 250, 250, 255);
+    expect(result.length).toBe(255);
+  });
+
+  it('does not add a spacer when the input is empty (cursor at 0)', () => {
+    const result = buildMentionInsert('', 'Alice', 0, 0);
+    expect(result.startsWith('@')).toBe(true);
+    expect(result).not.toContain('  ');
+  });
+});
+
 describe('buildRichHtmlImpl', () => {
   it('HTML-escapes free text so no tag can be injected', () => {
     expect(buildRichHtmlImpl('<script>alert(1)</script>')).toBe('&lt;script&gt;alert(1)&lt;/script&gt;');
@@ -816,5 +958,216 @@ describe('buildRichHtmlImpl', () => {
     expect(out.startsWith('&lt;b&gt;hi&lt;/b&gt; ')).toBe(true);
     expect(out).toContain('<img src="https://cdn.discordapp.com/emojis/1234567890123456.png"');
     expect(out).toContain('&lt;i&gt;bye&lt;/i&gt;');
+  });
+});
+
+// ── isNearBottom (#313: /camp & /nukecodes cards must scroll into view) ───────
+// The auto-scroll effect decides whether to keep the feed pinned to the latest
+// message from the user's tracked stick-to-bottom intent. That intent is sampled
+// via isNearBottom from REAL scroll events — never recomputed right after a tall
+// card is appended, because by then scrollHeight has grown but scrollTop hasn't,
+// so the reading looks like "scrolled up" (the original #313 bug).
+describe('insertTokenIntoText', () => {
+  it('inserts sequential emoji picks after the advanced caret', () => {
+    const first = insertTokenIntoText('', 0, 0, '😀');
+    expect(first.text).toBe('😀');
+    expect(first.caretOffset).toBe('😀'.length);
+
+    const second = insertTokenIntoText(first.text, first.caretOffset, first.caretOffset, '😂');
+    expect(second.text).toBe('😀😂');
+    expect(second.caretOffset).toBe('😀😂'.length);
+  });
+
+  it('replaces the selected range before advancing the caret', () => {
+    const next = insertTokenIntoText('hello world', 0, 5, 'bye');
+    expect(next.text).toBe('bye world');
+    expect(next.caretOffset).toBe(3);
+  });
+});
+
+describe('resolveExternalSetCaret', () => {
+  it('collapses the caret to the end when forceToEnd is set (slash-command completion)', () => {
+    // type "/min" (caret at 4) -> complete to "/minerva " (len 9). Without the
+    // flag the saved offset (4) would land mid-command "/min|erva".
+    expect(resolveExternalSetCaret(9, 4, true)).toBe(9);
+  });
+
+  it('restores the saved offset (clamped) for ordinary external sets', () => {
+    expect(resolveExternalSetCaret(11, 5, false)).toBe(5);
+  });
+
+  it('clamps a stale saved offset to the new text length', () => {
+    expect(resolveExternalSetCaret(3, 8, false)).toBe(3);
+  });
+
+  it('never returns a negative offset', () => {
+    expect(resolveExternalSetCaret(5, -2, false)).toBe(0);
+  });
+});
+
+describe('rich composer caret helpers', () => {
+  it('serializes custom emoji images back to their token text', () => {
+    const el = document.createElement('div');
+    el.innerHTML = buildRichHtmlImpl('😀 <:vault:1234567890123456>');
+
+    expect(serializeRichContent(el)).toBe('😀 <:vault:1234567890123456>');
+  });
+
+  it('restores a caret offset after rebuilding rich composer HTML', () => {
+    const el = document.createElement('div');
+    el.contentEditable = 'true';
+    el.innerHTML = buildRichHtmlImpl('😀😂');
+    document.body.appendChild(el);
+
+    placeRichCaretAtOffset(el, '😀'.length);
+    expect(getRichSelectionOffsets(el)).toEqual({
+      start: '😀'.length,
+      end: '😀'.length,
+    });
+  });
+});
+
+describe('isNearBottom (#313 stick-to-bottom intent)', () => {
+  it('is true when the viewport is exactly at the bottom', () => {
+    // scrollHeight 1000, scrolled fully (1000 - 200 clientHeight = 800), distance 0.
+    expect(isNearBottom(1000, 800, 200)).toBe(true);
+  });
+
+  it('is true within the threshold of the bottom', () => {
+    // distance = 1000 - 760 - 200 = 40 (≤ 80).
+    expect(isNearBottom(1000, 760, 200)).toBe(true);
+  });
+
+  it('is false once the user has scrolled up past the threshold to read history', () => {
+    // distance = 2000 - 500 - 200 = 1300 — a deliberate scroll-up; must NOT yank.
+    expect(isNearBottom(2000, 500, 200)).toBe(false);
+  });
+
+  it('treats a tall freshly-appended card as the bug it is — sampling AFTER the append is wrong', () => {
+    // The user is pinned at the bottom: scrollHeight 1000, scrollTop 800, clientHeight 200.
+    expect(isNearBottom(1000, 800, 200)).toBe(true);
+    // A ~300px /camp card is appended. The browser hasn't moved scrollTop yet, but
+    // scrollHeight already grew to 1300. Re-measuring NOW yields distance 300, which
+    // isNearBottom would (correctly, for this position) call "not at bottom" — this is
+    // precisely why intent must be sampled during scroll, not recomputed post-append.
+    expect(isNearBottom(1300, 800, 200)).toBe(false);
+    // Intent captured BEFORE the append (the values the scroll listener recorded) stays
+    // true, so the effect keeps pinning and the tall card scrolls fully into view.
+  });
+
+  it('honours a custom threshold', () => {
+    expect(isNearBottom(1000, 700, 200, 120)).toBe(true);  // distance 100 ≤ 120
+    expect(isNearBottom(1000, 700, 200, 50)).toBe(false);  // distance 100 > 50
+  });
+
+  it('exposes a sane default threshold', () => {
+    expect(STICK_TO_BOTTOM_THRESHOLD).toBe(80);
+  });
+});
+
+// ── contentMatchesKeyword / messageTriggersNotify (#422) ─────────────────────
+//
+// Keyword triggers reuse the whole existing @mention pipeline (highlight, unread
+// badge, jump-to-mention, overlay pop-from-tray). The ONLY new logic is the
+// matcher, because contentMentionsName hard-codes an '@' prefix and can never
+// match a bare word.
+describe('contentMatchesKeyword', () => {
+  it('matches a bare keyword anywhere in the message', () => {
+    expect(contentMatchesKeyword('anyone selling a fixer?', 'fixer')).toBe(true);
+  });
+
+  it('is case-insensitive both ways', () => {
+    expect(contentMatchesKeyword('WTS FIXER', 'fixer')).toBe(true);
+    expect(contentMatchesKeyword('wts fixer', 'FIXER')).toBe(true);
+  });
+
+  // The whole point of the boundary rule: "ore" must not fire on "before".
+  it('does NOT match mid-word (no false positive on a substring)', () => {
+    expect(contentMatchesKeyword('this happened before the raid', 'ore')).toBe(false);
+    expect(contentMatchesKeyword('scoreboard update', 'core')).toBe(false);
+  });
+
+  // Trailing letters ARE allowed, so a watch on "nuke" still catches the plural.
+  it('matches a trailing inflection (nuke -> nukes/nuked)', () => {
+    expect(contentMatchesKeyword('two nukes incoming', 'nuke')).toBe(true);
+    expect(contentMatchesKeyword('they nuked whitespring', 'nuke')).toBe(true);
+  });
+
+  it('matches after punctuation and at the start of the message', () => {
+    expect(contentMatchesKeyword('raid! nuke?', 'nuke')).toBe(true);
+    expect(contentMatchesKeyword('nuke launched', 'nuke')).toBe(true);
+  });
+
+  it('ignores keywords shorter than 2 characters (too noisy)', () => {
+    expect(contentMatchesKeyword('a quick message', 'a')).toBe(false);
+    expect(contentMatchesKeyword('', 'nuke')).toBe(false);
+  });
+
+  it('trims surrounding whitespace on the keyword', () => {
+    expect(contentMatchesKeyword('selling a fixer', '  fixer  ')).toBe(true);
+  });
+});
+
+describe('messageTriggersNotify', () => {
+  it('still triggers on an @mention of one of my names', () => {
+    expect(messageTriggersNotify('hey @devotek look', ['devotek'], [])).toBe(true);
+  });
+
+  it('triggers on a configured keyword with no @ anywhere', () => {
+    expect(messageTriggersNotify('WTS fixer 5k', [], ['fixer'])).toBe(true);
+  });
+
+  it('does not trigger on unrelated chatter', () => {
+    expect(messageTriggersNotify('good morning wasteland', ['devotek'], ['fixer'])).toBe(false);
+  });
+
+  // @mentions of the viewer must keep working even with an empty keyword list —
+  // the keyword feature must never be able to disable mention notifications.
+  it('mentions work with an empty keyword list', () => {
+    expect(messageTriggersNotify('@devotek ping', ['devotek'], [])).toBe(true);
+  });
+
+  it('matches any one of several keywords', () => {
+    expect(messageTriggersNotify('raid starting', [], ['nuke', 'raid', 'fixer'])).toBe(true);
+  });
+});
+
+// ── shouldPlayNotifySound (#437) ─────────────────────────────────────────────
+// A busy Trading channel with a common keyword can trigger many times a second.
+// Without a floor the overlay would machine-gun the ping, which is worse than no
+// sound at all.
+describe('shouldPlayNotifySound', () => {
+  it('plays the very first time (no previous ping)', () => {
+    expect(shouldPlayNotifySound(1_000_000, null)).toBe(true);
+  });
+
+  it('suppresses a second ping inside the gap', () => {
+    const t = 1_000_000;
+    expect(shouldPlayNotifySound(t + NOTIFY_SOUND_MIN_GAP_MS - 1, t)).toBe(false);
+  });
+
+  it('allows a ping exactly at the gap boundary', () => {
+    const t = 1_000_000;
+    expect(shouldPlayNotifySound(t + NOTIFY_SOUND_MIN_GAP_MS, t)).toBe(true);
+  });
+
+  it('allows a ping well after the gap', () => {
+    expect(shouldPlayNotifySound(2_000_000, 1_000_000)).toBe(true);
+  });
+
+  it('honours a custom gap', () => {
+    expect(shouldPlayNotifySound(1500, 1000, 1000)).toBe(false);
+    expect(shouldPlayNotifySound(2000, 1000, 1000)).toBe(true);
+  });
+
+  // A burst of 50 messages in one second must produce exactly one ping.
+  it('collapses a rapid burst to a single ping', () => {
+    let last: number | null = null;
+    let plays = 0;
+    for (let i = 0; i < 50; i++) {
+      const now = 1_000_000 + i * 20; // 50 messages over 1s
+      if (shouldPlayNotifySound(now, last)) { plays++; last = now; }
+    }
+    expect(plays).toBe(1);
   });
 });

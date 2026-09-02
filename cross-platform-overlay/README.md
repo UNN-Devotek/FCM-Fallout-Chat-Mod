@@ -4,8 +4,9 @@ A **cross-platform Electron shell** (Windows / macOS / Linux X11) that mounts th
 **actual** Fallout Chat Mod web-overlay React component — the very same
 `admin-dashboard/src/features/chat/ChatOverlay.tsx` that renders on the website —
 and feeds it live chat from the Fallout Chat Mod relay. The **shipped** binary
-connects to the production relay; for **development you run it against your own
-local backend** (see "Run it" below) — never point a dev build at production.
+connects to the production relay; for development, use your own local backend or
+the isolated hosted DEV backend (see "Run it" below) — never point a dev build at
+the production relay.
 
 Because it renders the real component (not a lookalike), it is visually identical
 to the website overlay **by construction**: same Pip-Boy two-row tab bar, the
@@ -37,6 +38,22 @@ npm run start:local
 
 Both `:local` scripts point the overlay at `http://localhost:7076`. Develop
 **only** against your local backend.
+
+### Hosted DEV overlay
+
+To run the hot-reloading overlay against the isolated hosted DEV environment:
+
+```bash
+export DEV_PERSONA_LOGIN_SECRET='<value from the hosted fcm-dev Dokploy env>'
+npm run dev:cloud
+```
+
+This is still an unpackaged Electron build. The **DEV ACCOUNTS** buttons work here
+and immediately issue synthetic DEV sessions; they do not open Discord. The
+`DEV_PERSONA_LOGIN_SECRET` export is required for this remote hosted-DEV request;
+local `npm run dev:local` requests use loopback and do not need it. They are
+available only in unpackaged builds targeting the local backend or the exact hosted
+DEV relay, and are never available in packaged production builds.
 
 > `npm start` and `npm run dist:*` build the **shipped end-user binary**, which
 > targets the production relay. They are a release step, **not** a dev workflow —
@@ -80,6 +97,10 @@ sub-channels (GENERAL / TRADING / EVENTS / RAIDS) are in the row below.
 - **`Ctrl/Cmd+Shift+\`** → toggle the overlay **show/hide**.
 - **`Ctrl/Cmd+Shift+X`** → toggle **click-through** (`INTERACTIVE` ↔ clicks pass
   to whatever is behind the overlay). Use click-through in-game; toggle back to type.
+
+When the overlay is visible over another desktop app, it remains clickable so a
+click can focus it and bring it above that app. Automatic click-through is reserved
+for the game foreground; manual click-through still always passes clicks through.
 - **`Ctrl/Cmd+Shift+]`** / **`Ctrl/Cmd+Shift+[`** → **next / previous channel**
   (drives the sub-tab row).
 - **`Ctrl/Cmd+Shift+,`** → **open settings** (the full desktop-parity panel).
@@ -90,7 +111,8 @@ scrolls internally). Exposes, mapped from the desktop `SettingsForm.cs` /
 `OverlayConfig.cs`:
 - **Appearance:** Theme (default **Fallout 76 amber**; also Vault-Tec Green /
   Amber / White), Window Opacity, Text Opacity, **Background Dim**, **Scanline
-  Intensity**, Font Size.
+  Intensity**, Font Size, and supporter star colour when the account has a
+  supporter badge.
 - **Behaviour:** Show hint bar, **Fade / collapse when idle** (on by default).
 - **Filters:** Blocked users, Hidden channels.
 - **Keybinds:** the global-shortcut set (toggle / focus / click-through / next /
@@ -101,7 +123,11 @@ All settings persist (localStorage + the Electron state file) and apply live
 **Auto-collapse (idle fade — desktop `_idleFaded` parity):** after ~25 s with no
 activity the overlay folds to just the header / tab strip; it expands again on
 any interaction (mouse / key / scroll) **or** a new message in the active
-channel. Toggle via **Fade when idle** in Settings.
+channel. Toggle via **Fade when idle** in Settings. **Auto-hide mode** next to
+that toggle selects either **Full auto-hide** (the default; hides the whole
+overlay, including the navigation, while keeping the relay connected so a new
+message can restore the window) or **Sub-tabs collapse** (leaves the navigation
+visible).
 
 **Window size / position:**
 - Default size is **520 × 500** (kept modest so the channel-tab bar at the top
@@ -113,9 +139,9 @@ channel. Toggle via **Fade when idle** in Settings.
   `skipTaskbar:false`, and `minimizable/maximizable:true` (the Electron-supported
   equivalent of `WS_EX_APPWINDOW` — a normal, non-tool window), so a
   transparent/frameless window still appears in the OS taskbar and alt-tab switcher.
-- **Always-on-top:** `setAlwaysOnTop(true, 'screen-saver')` is **re-asserted** on
-  focus/blur/show and on a 2 s timer, so the overlay stays above a
-  fullscreen-borderless game (native only — see WSLg note).
+- **Always-on-top:** `setAlwaysOnTop(true, 'screen-saver')` is **re-asserted**
+  while the overlay is visible, so it can be clicked above normal desktop windows
+  and stays above a fullscreen-borderless game (native only — see WSLg note).
 
 **Popovers stay in-frame:** the emoji picker, GIF picker, right-click context
 menu, @mention / slash-command autocomplete, and the settings modal all reposition
@@ -278,7 +304,7 @@ the same controls without any hotkey. See the WSLg-vs-native table above.
 - **Linux Wayland:** native Wayland can't stack over the game or do click-through
   reliably, so on **KDE+Wayland the app auto-forces XWayland** via a one-time argv
   relaunch (`--ozone-platform=x11`) — `appendSwitch` is too late on Electron 39+ — and
-  installs two KWin rules (keep-above + game fullscreen-demote). See `docs/overlay/window-management.md`.
+  installs one KWin rule on the overlay (keep-above + force-Layer, combined). See `docs/overlay/window-management.md`.
 - **Steam Deck:** Desktop-Mode / second-screen tool, **not** a Game-Mode
   (gamescope) overlay.
 - **Exclusive Fullscreen (any OS):** no window can render above a true

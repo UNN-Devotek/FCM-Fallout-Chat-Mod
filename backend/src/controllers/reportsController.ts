@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
+import { paramStr } from '../utils/reqParams';
 import prisma from '../config/prisma';
 import { query as dbQuery } from '../config/database';
 import { createError } from '../middleware/errorHandler';
@@ -124,10 +125,10 @@ async function listReports(req: Request, res: Response, next: NextFunction): Pro
  * GET /api/reports/:id -- with surrounding message context (5 before + 5 after)
  */
 async function getReport(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!UUID_RE.test(req.params.id)) return next(createError(400, 'Invalid report ID format'));
+  if (!UUID_RE.test(paramStr(req, 'id'))) return next(createError(400, 'Invalid report ID format'));
   try {
     const report = await prisma.report.findUnique({
-      where: { id: req.params.id },
+      where: { id: paramStr(req, 'id') },
     });
     if (!report) return next(createError(404, 'Report not found'));
 
@@ -172,7 +173,7 @@ async function getReport(req: Request, res: Response, next: NextFunction): Promi
  * PATCH /api/reports/:id -- moderator+
  */
 async function resolveReport(req: Request, res: Response, next: NextFunction): Promise<void> {
-  if (!UUID_RE.test(req.params.id)) return next(createError(400, 'Invalid report ID format'));
+  if (!UUID_RE.test(paramStr(req, 'id'))) return next(createError(400, 'Invalid report ID format'));
   const { status } = req.body;
   try {
     const result = await dbQuery(
@@ -180,7 +181,7 @@ async function resolveReport(req: Request, res: Response, next: NextFunction): P
        SET status = $1, resolved_by = $2,
            resolved_at = CASE WHEN $1 IN ('resolved', 'dismissed') THEN NOW() ELSE resolved_at END
        WHERE id = $3 RETURNING *`,
-      [status, req.adminUser?.id || null, req.params.id]
+      [status, req.adminUser?.id || null, paramStr(req, 'id')]
     );
     if (result.rows.length === 0) return next(createError(404, 'Report not found'));
     // Notify all admin observers that a report status changed

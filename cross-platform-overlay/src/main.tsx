@@ -9,13 +9,16 @@ import '@dashboard/index.css';
 import React, { useEffect, useRef, useState } from 'react';
 import ReactDOM from 'react-dom/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { MemoryRouter, Routes, Route, Outlet } from 'react-router-dom';
+import { MemoryRouter, Routes, Route, Outlet } from 'react-router';
 
 // Desktop-overlay parity shell: settings panel, idle auto-collapse, channel-nav
 // commands, click-through hover reporting. (cross-platform-overlay-only.)
 import { initShell, openSettings } from './shell';
 // First-run onboarding overlay.
 import { showOnboarding } from './onboarding';
+import { focusChatInput } from './focus-chat';
+import { shouldExitTextEntryOnEscape, shellToWebSettings } from './shell-core';
+import { shouldShowDevPersonaLogins } from './bridge-core';
 
 // 3) THE REAL COMPONENT — unmodified, imported straight from the dashboard source.
 import ChatOverlay from '@dashboard/features/chat/ChatOverlay';
@@ -46,19 +49,10 @@ try {
 } catch { /* ignore */ }
 try {
   const s = loadShellSettings();
-  localStorage.setItem('fcm_web_overlay_settings', JSON.stringify({
-    themeId: s.themeId,
-    // Chrome opacity is applied as whole-window translucency by the shell
-    // (window.setOpacity), so the component renders its chrome fully opaque to
-    // avoid double-dimming. Text opacity stays native (the component fades text).
-    windowOpacity: 1,
-    textOpacity: s.textOpacity,
-    // The shell scales the whole UI live via CSS zoom (see applyScale in
-    // shell.ts), so the component always renders at a fixed BASE font; otherwise
-    // the native font size + the zoom would compound.
-    fontSize: 14,
-    showHints: s.showHints,
-  }));
+  // Keep every component-facing setting in the mirror, including the
+  // moderator party-feed mute preference. A hand-maintained subset here would
+  // silently reset new settings on every Electron boot.
+  localStorage.setItem('fcm_web_overlay_settings', JSON.stringify(shellToWebSettings(s)));
 } catch { /* ignore */ }
 
 const queryClient = new QueryClient({
@@ -142,6 +136,58 @@ function mountShellBar() {
 // the document level: if the user types `/hide` and presses Enter, hide the
 // window before the component would try to send it as a message.
 function wireShellInputBehaviour() {
+  const focusRetrySteps = [
+    { label: 'immediate', kind: 'immediate' as const },
+    { label: 'requestAnimationFrame', kind: 'raf' as const },
+    { label: '50ms', kind: 'timeout' as const, delayMs: 50 },
+    { label: '150ms', kind: 'timeout' as const, delayMs: 150 },
+    { label: '300ms', kind: 'timeout' as const, delayMs: 300 },
+    { label: '600ms', kind: 'timeout' as const, delayMs: 600 },
+  ];
+  let focusRequestSeq = 0;
+  const focusTimeouts = new Set<number>();
+  const focusRafs = new Set<number>();
+
+  const clearPendingFocusRetries = () => {
+    for (const id of focusTimeouts) clearTimeout(id);
+    focusTimeouts.clear();
+    for (const id of focusRafs) cancelAnimationFrame(id);
+    focusRafs.clear();
+  };
+
+  const logFocusAttempt = (msg: string) => window.relayBridge.logDiag?.(msg);
+
+  const runFocusAttempt = (requestId: number, attemptIndex: number): boolean => {
+    if (requestId !== focusRequestSeq) return true;
+    const step = focusRetrySteps[attemptIndex];
+    const result = focusChatInput(document);
+    const prefix = `[focus-chat] attempt ${attemptIndex + 1}/${focusRetrySteps.length} ${step.label}`;
+
+    if (result.state === 'focused') {
+      logFocusAttempt(`${prefix} success target=${result.targetLabel ?? result.targetKind ?? 'unknown'}`);
+      window.relayBridge.notifyInputFocusState?.(true);
+      clearPendingFocusRetries();
+      return true;
+    }
+
+    if (result.state === 'blocked') {
+      logFocusAttempt(`${prefix} blocked: ${result.reason}`);
+      window.relayBridge.notifyInputFocusState?.(false);
+      clearPendingFocusRetries();
+      return true;
+    }
+
+    if (attemptIndex === focusRetrySteps.length - 1) {
+      logFocusAttempt(`${prefix} failed: ${result.reason}`);
+      window.relayBridge.notifyInputFocusState?.(false);
+      clearPendingFocusRetries();
+      return true;
+    }
+
+    logFocusAttempt(`${prefix} pending: ${result.reason}`);
+    return false;
+  };
+
   document.addEventListener(
     'keydown',
     (e) => {
@@ -166,16 +212,48 @@ function wireShellInputBehaviour() {
     true, // capture: run before the component's own Enter handler
   );
 
+  // Escape exits text-entry mode only after the overlay already has DOM focus.
+  // This is intentionally not an Electron globalShortcut, so Escape remains
+  // untouched while the game or any other app is focused.
+  document.addEventListener('keydown', (e) => {
+    if (!shouldExitTextEntryOnEscape(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const active = document.activeElement;
+    if (active instanceof HTMLElement) active.blur();
+    else if (e.target instanceof HTMLElement) e.target.blur();
+    window.relayBridge.notifyInputFocusState?.(false);
+    window.relayBridge.returnToGame?.();
+  });
+
   // Focus-to-chat (Insert / tray): focus the component's input textarea or
   // rich contentEditable div (overlay-only, when custom emoji input is active).
   window.relayBridge.onFocusInput(() => {
-    // Prefer the contenteditable rich-input (overlay path), then fall back to
-    // the last textarea/input (website path and muted state).
-    const richInput = document.querySelector<HTMLElement>('#shell-overlay-host [contenteditable]');
-    if (richInput) { richInput.focus(); return; }
-    const inputs = document.querySelectorAll<HTMLTextAreaElement>('#shell-overlay-host textarea, #shell-overlay-host input');
-    const target = inputs[inputs.length - 1];
-    if (target) { target.focus(); }
+    const requestId = ++focusRequestSeq;
+    clearPendingFocusRetries();
+    logFocusAttempt('[focus-chat] request received');
+
+    for (const [attemptIndex, step] of focusRetrySteps.entries()) {
+      if (step.kind === 'immediate') {
+        if (runFocusAttempt(requestId, attemptIndex)) break;
+        continue;
+      }
+
+      if (step.kind === 'raf') {
+        const rafId = requestAnimationFrame(() => {
+          focusRafs.delete(rafId);
+          runFocusAttempt(requestId, attemptIndex);
+        });
+        focusRafs.add(rafId);
+        continue;
+      }
+
+      const timeoutId = window.setTimeout(() => {
+        focusTimeouts.delete(timeoutId);
+        runFocusAttempt(requestId, attemptIndex);
+      }, step.delayMs);
+      focusTimeouts.add(timeoutId);
+    }
   });
 }
 
@@ -195,6 +273,8 @@ function Shell() {
   // Whether this is an unpackaged dev build (populated from getInfo once on mount).
   // Stored as a ref so the onStatus callback closure always reads the current value.
   const isDevRef = useRef(false);
+  // Synthetic persona login is limited to unpackaged builds on a known DEV relay.
+  const [showDevPersonaLogins, setShowDevPersonaLogins] = useState(false);
   // Bumping this key remounts the ChatOverlay so it re-reads its settings from
   // localStorage (the component only loads them on mount). Driven by the shell
   // settings panel and the header refresh button.
@@ -377,6 +457,7 @@ function Shell() {
     // Populate the isDev flag from the main-process info (set once per session).
     window.relayBridge.getInfo().then((info) => {
       if (info?.isDev) isDevRef.current = true;
+      setShowDevPersonaLogins(shouldShowDevPersonaLogins(!!info?.isDev, info?.relayHost || ''));
     }).catch(() => { /* non-fatal */ });
 
     // Init the desktop-parity shell once. When settings change, remount the
@@ -446,10 +527,10 @@ function Shell() {
         <div style={{ opacity: 0.4, fontSize: 10, lineHeight: '1.5' }}>
           After authorizing in your browser, the overlay will unlock automatically.
         </div>
-        {isDevRef.current && typeof window.relayBridge?.devLoginAs === 'function' && (
+        {showDevPersonaLogins && typeof window.relayBridge?.devLoginAs === 'function' && (
           <div style={{ marginTop: 12, borderTop: `1px solid ${themePrimary}22`, paddingTop: 12 }}>
             <div style={{ opacity: 0.5, fontSize: 10, letterSpacing: '0.12em', marginBottom: 8 }}>DEV ACCOUNTS</div>
-            <div style={{ opacity: 0.5, fontSize: 10, marginBottom: 8 }}>Skip Discord — log in as a system user for local testing.</div>
+            <div style={{ opacity: 0.5, fontSize: 10, marginBottom: 8 }}>DEV accounts grant synthetic test access immediately. These controls are unavailable in production.</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {(['user', 'developer', 'moderator', 'admin', 'owner'] as const).map((persona) => (
                 <button key={persona}
@@ -514,10 +595,10 @@ function Shell() {
         <div style={{ color: themeText, opacity: 0.5, fontSize: 10, marginTop: 10 }}>
           (Or quit and relaunch after a minute)
         </div>
-        {isDevRef.current && typeof window.relayBridge?.devLoginAs === 'function' && (
+        {showDevPersonaLogins && typeof window.relayBridge?.devLoginAs === 'function' && (
           <div style={{ marginTop: 12, borderTop: `1px solid ${themePrimary}22`, paddingTop: 12 }}>
             <div style={{ opacity: 0.5, fontSize: 10, letterSpacing: '0.12em', marginBottom: 8 }}>DEV ACCOUNTS</div>
-            <div style={{ opacity: 0.5, fontSize: 10, marginBottom: 8 }}>Skip relay — log in as a system user for local testing.</div>
+            <div style={{ opacity: 0.5, fontSize: 10, marginBottom: 8 }}>DEV accounts grant synthetic test access immediately. These controls are unavailable in production.</div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {(['user', 'developer', 'moderator', 'admin', 'owner'] as const).map((persona) => (
                 <button key={persona}

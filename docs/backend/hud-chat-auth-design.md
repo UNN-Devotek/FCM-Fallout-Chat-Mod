@@ -1,11 +1,50 @@
 # M6: HUD Chat Auth System — Design Document
 
-**Status:** Proposal / Pre-implementation  
+**Status:** **Implemented** (2026-06-24, worktree `chatv1-auth`). Core auth gate, provider linking, device-code flow, /link page, and deny-list are in the working tree awaiting integration review. The §9 Open Decisions are resolved (OD-3/OD-6) or carried as recommendations.
 **Milestone:** M6 (production-exposure gate)  
 **Author:** Design session 2026-06-11  
-**Depends on:** M7 (two-way chat, landed), existing Discord OAuth flow
+**Depends on:** existing Discord OAuth flow; ZFE `chat.v1` relay (epic #282); multi-provider identity (epic #163)
 
 ---
+
+> ## Update (2026-06-23): chat.v1 transport + lockdown decisions
+>
+> This doc was written for the **FCMHUD/1** transport (`/ws/hud`, `tcp:4001`, the `HELLO~<token>~<char>`
+> wire, `fcm.ini [FCMBridge] PairingToken`). That transport is the **active in-game transport we ship
+> on now** (#302); the **ZFE `chat.v1` native chat relay**
+> ([`docs/overlay/zfe/native-chat-relay/`](../overlay/zfe/native-chat-relay/README.md), epic #282)
+> supersedes it **later** (re-sequenced). **Both flavors of this auth design apply:** the pairing-token
+> `HELLO~<token>` gate ships on FCMHUD/1 now; the device-code refinement lands with chat.v1. The
+> **core of this design is unchanged and still authoritative** — the multi-provider
+> account model (§3.1 `linked_identities`), the provider **access gate** (§3.1: Discord **or** Nexus
+> required), Nexus OAuth2 + PKCE (§5.2), collision/recovery (§6), migration (§7), and the security
+> analysis (§8) all carry over. What changes is the **transport + pairing UX**, and the lockdown adds a
+> hard access requirement:
+>
+> **Locked decisions (supersede the §9 recommendations where noted):**
+> - **Mandatory gate (new).** Chat access **requires** a linked provider — **no anonymous chat**. A
+>   bare chat.v1 `register` mints a **limited** identity that cannot `send` until linked (relay returns
+>   `permission_denied`). Public-website read-only stays open; **sending requires auth**.
+> - **OD-3 → IMPLEMENT (was "defer").** Ship the **device-authorization (short code)** UX. Under
+>   chat.v1 there is **no token to paste at all**: the SWF does `register` (ZFE stores the token via
+>   DPAPI), shows a short **link code**, the user signs in at `falloutchatmod.com/link` (Discord **or**
+>   Nexus) and enters the code, and the relay **upgrades the existing token's account in place**.
+> - **OD-6 → Nexus for the OVERLAY too (was "game-link only").** Nexus is a first-class login for the
+>   **overlay** + in-game basic chat (Nexus **or** Discord). The **admin dashboard stays Discord-only**
+>   — elevated/mod/dev roles require Discord (#168); linking Nexus never grants them.
+>
+> **chat.v1 mapping of the pairing model:**
+>
+> | This doc (FCMHUD/1) | chat.v1 equivalent |
+> |---|---|
+> | `HELLO~<pairingToken>~<char>` (§4.3) | chat.v1 `register` (anonymous, **limited**) → **device-code link** upgrades the token |
+> | `fcm.ini [FCMBridge] PairingToken=` | **none** — ZFE holds the token (DPAPI); nothing is pasted |
+> | "mint token → copy-paste" (§4.5) | "register → show link code → sign in (Discord/Nexus) → relay binds account" |
+> | `identityHash = HMAC(secret, userId)` (§3.3) | **unchanged** — keyed on the authed account `userId` |
+> | Access gate (§3.1: Discord **or** Nexus) | **unchanged** — required before `send` |
+>
+> Read §3–§8 as-is for the account model, Nexus OAuth, collision/recovery, and security; substitute the
+> transport/UX per the table above. The §9 table is annotated inline (OD-3, OD-6).
 
 ## 1. Problem Statement
 
@@ -99,6 +138,8 @@ model LinkedIdentity {
 ```
 
 **Chat access gate:** a pairing token may only be minted for a `User` where EITHER `discordId IS NOT NULL` OR a `linked_identities` row exists for that user. A user who has never authenticated with any provider cannot obtain a pairing token. This is enforced in `POST /api/link/pairing-token`.
+
+**Ban deny-list (the inverse gate):** a permanent ban deny-lists the account's provider IDs in a `banned_identities` table (`provider` + `provider_uid`), checked at the **same gate** and at the device-code link / OAuth callbacks — a deny-listed Discord/Nexus ID cannot mint or upgrade a token **even on a fresh FCM account or after the original is deleted**. This is the durable, account-independent ban layer; see [moderation/kick-mute-ban.md §5](../moderation/kick-mute-ban.md) and #297.
 
 ### 3.2 FO76 name claim
 
@@ -194,7 +235,7 @@ The SWF reads `PairingToken` from the ini on startup and substitutes it into the
 1. Parse HELLO~<token>~<charName>
 2. Look up token candidate:
    a. Search hud_pairing_tokens WHERE revoked_at IS NULL
-      - Use the first 6 chars of the token as a lookup hint (stored alongside hash as token_prefix)
+      - Use the first 8 chars of the token as a lookup hint (stored alongside hash as token_prefix)
         to avoid full-table argon2 verification — see performance note below.
    b. argon2.verify(row.token_hash, receivedToken)
    c. If no match or revoked → destroy socket (send ERROR~AUTH_FAILED\n first, then close)
@@ -479,7 +520,86 @@ All of the following are unmodified by M6. They apply **after** successful token
 |---|---|---|---|
 | OD-1 | Token hash algorithm: argon2id vs bcrypt | argon2id: winner of PHC, better memory-hardness; bcrypt: widely supported, simpler | **argon2id** (use `@node-rs/argon2` or `argon2` npm package). bcrypt is fine but argon2id is the current standard. |
 | OD-2 | Nexus OAuth token storage: Redis vs encrypted DB columns | Redis: auto-expiry, no migration, simpler rotation; DB: survives Redis flush, easier audit | **Redis** with AES-256-GCM encryption, TTL = Nexus token expiry. Add `nexus_token_enc` Redis key `user:<userId>:nexus_token`. |
-| OD-3 | Pairing-code UX (device-authorization style short code) | Implement now vs defer | **Defer.** The paste is a one-time event. Ship the 43-char copy-paste first; add the device-code UX as a follow-up once the base auth is stable. |
+| OD-3 | Pairing-code UX (device-authorization style short code) | Implement now vs defer | ~~Defer~~ → **RESOLVED 2026-06-23: IMPLEMENT.** Under chat.v1 there is no token to paste — the SWF `register`s and shows a short link code; the user signs in (Discord/Nexus) and enters it; the relay upgrades the token in place. See the Update banner. |
 | OD-4 | `token_prefix` length: 6, 8, or 10 chars | Shorter = less entropy leaked; longer = fewer false positives before argon2 | **8 chars** (48 bits leaked; 208 bits remain; with argon2id protecting the hash, risk is negligible). |
 | OD-5 | Retroactive `HudIdentityBlock` migration: Option A (re-derive blocks) vs Option B (accept orphan) | See Section 7.2 | **Option B** if prod has never had HUD auth enabled; **Option A** if any blocks were issued in dev/staging. Confirm with operator. |
-| OD-6 | Nexus as sole provider (no Discord) — should it also be allowed for the main dashboard session, or only for the game link? | Dashboard currently requires Discord for role sync, embed management, etc. | Nexus auth for **game link only** in M6. Dashboard session remains Discord-only. This avoids reworking the admin/mod role pipeline. A subsequent milestone can extend Nexus to full dashboard access if needed. |
+| OD-6 | Nexus as sole provider (no Discord) — game-link only, or also overlay/dashboard? | Dashboard currently requires Discord for role sync, embed management, etc. | ~~Game-link only~~ → **RESOLVED 2026-06-23.** Nexus is a first-class login for the **overlay + in-game basic chat** (Nexus **or** Discord), per the lockdown. The **admin dashboard stays Discord-only** — elevated/mod/dev roles require Discord (#168); a Nexus-only account is a basic user and never holds elevated roles. |
+
+---
+
+## 10. Implementation Notes (2026-06-24)
+
+Implemented in worktree `chatv1-auth` (branch `feat/ingame-chatv1-auth`). Awaiting integration review.
+
+### Schema additions (3 additive idempotent migrations)
+
+| Migration | Table | Purpose |
+|---|---|---|
+| `20260624000000_auth_linked_identities` | `linked_identities` | Non-Discord provider links per user (Nexus, future providers). Discord stays inline on `users`. |
+| `20260624000001_auth_hud_link_codes` | `hud_link_codes` | 8-char Crockford base32 device-auth codes. Issued by the relay per `relay_user_id` (chat.v1 identity). TTL 10 min, single-use, <=5 attempts, one active per relay identity. `redeemed_by_user_id` is set by `POST /api/link/redeem` to the authed FCM user. |
+| `20260624000002_auth_banned_identities` | `banned_identities` | Provider-level deny-list (#297). Checked at OAuth callback and code redemption. |
+
+Prisma models: `LinkedIdentity`, `HudLinkCode`, `BannedIdentity`. `User` gains `redeemedLinkCodes HudLinkCode[]` (optional FK on `redeemed_by_user_id`).
+
+### New env vars
+
+| Var | Default | Purpose |
+|---|---|---|
+| `NEXUS_OAUTH_CLIENT_ID` | `''` | Nexus OAuth client ID (confidential client). Feature-flag: Nexus routes return 503 when empty. |
+| `NEXUS_OAUTH_CLIENT_SECRET` | `''` | Nexus OAuth client secret. Sent via `client_secret_post` alongside PKCE verifier. |
+| `NEXUS_OAUTH_REDIRECT_URI` | derived from request host | Nexus OAuth redirect URI. Falls back to `${proto}://${host}/auth/nexus/callback`. |
+| `HUD_IDENTITY_HASH_SECRET` | `''` | HMAC-SHA256 key for M6+ `identityHash = HMAC(secret, userId)`. Required before lifting production guard. |
+
+### New endpoints
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/link/game` | requireAuth | Current link state: `{ hasLinkedProvider, fo76AccountName, providers[] }` |
+| `POST` | `/api/link/redeem` | requireAuth | Redeem relay-issued code; provider gate required; binds authed FCM user to relay identity via `markRelayTokenLinked` (rate: 10/min/IP). Returns `{ success: true }`. |
+| `POST` | `/api/link/pairing-token` | requireAuth + provider gate | Mint/rotate FCMHUD/1 pairing token. Body: `{ fo76Name }`. Returns `{ token }` once. (503 until relay WT1 merges `hud_pairing_tokens` + argon2.) |
+| `DELETE` | `/api/link/pairing-token` | requireAuth | Revoke active pairing token. (503 until relay WT1 merges.) |
+| `DELETE` | `/api/link/provider/:provider` | requireAuth | Unlink a non-Discord provider (refuses if last remaining, 409). |
+| `GET` | `/auth/nexus` | none | Nexus OAuth2+PKCE initiation. `scope=openid public`, S256, `client_secret_post`. 503 when `NEXUS_OAUTH_CLIENT_ID`/`NEXUS_OAUTH_CLIENT_SECRET` absent. |
+| `GET` | `/auth/nexus/callback` | none | Nexus OAuth2+PKCE callback. Token endpoint: `https://users.nexusmods.com/oauth/token`. Userinfo: `https://users.nexusmods.com/oauth/userinfo` (`sub` = stable providerUid). Binds state to the initiating session, provisions/links a lightweight FCM user, and stores only the provider UID in the session for `/link`. |
+| `DELETE` | `/auth/nexus` | requireAuth | Unlink Nexus identity (refuses if last provider). |
+
+Note: `POST /api/link/code` does **not exist**. Code issuance is relay-driven — the relay calls `issueLinkCode(relayUserId)` from `linkCodeService.ts` directly. There is no HTTP issuance endpoint.
+
+### Integration seam for relay agent (WT1)
+
+**Code issuance (relay → auth gate):**
+The relay calls `issueLinkCode(relayUserId: string): Promise<string>` (exported from `backend/src/services/linkCodeService.ts`). `relayUserId` is the chat.v1 identity string minted by `register`. The returned raw code is shown in-game as `XXXX-XXXX`. One active code per `relayUserId` — a new call supersedes the old.
+
+**Code redemption (auth gate → relay):**
+1. User signs in at `/link` (Discord or Nexus OAuth), enters the code.
+2. `POST /api/link/redeem` (requireAuth) runs provider gate, calls `redeemLinkCode(code, fcmUserId)`, which sets `hud_link_codes.used_at = NOW()` and `redeemed_by_user_id = fcmUserId`.
+3. Auth gate immediately calls `markRelayTokenLinked(relayUserId, fcmUserId)` via dynamic import of `relay/relayIdentityService` (WT1). If that module is absent (WT1 not yet merged), logs a warning and continues — the relay's own poll is the fallback.
+4. Writes audit log: `action = 'hud_link_code_redeemed'`, `metadata.relayUserId`.
+
+**Relay fallback poll contract:**
+```sql
+SELECT relay_user_id, redeemed_by_user_id
+FROM hud_link_codes
+WHERE code = $1 AND used_at IS NOT NULL
+```
+Or call `validateAndConsume(rawCode)` from `linkCodeService.ts` (exported read-only seam) — returns `{ ok: true, relayUserId, redeemedByUserId }` or `{ ok: false, reason }`.
+
+Once the relay has `redeemedByUserId`, it checks `users.discord_id IS NOT NULL OR EXISTS linked_identities WHERE user_id = $redeemedByUserId` to confirm at least one provider, then upgrades the relay identity from `limited` to `linked` (allows `send`).
+
+### Discord vs Nexus status
+
+- **Discord OAuth**: testable now using existing `DISCORD_CLIENT_ID` / `DISCORD_CLIENT_SECRET`.
+- **Nexus OAuth2+PKCE**: fully scaffolded. OIDC issuer: `https://users.nexusmods.com`. Confidential client — `client_secret_post` at token endpoint alongside PKCE. `scope=openid public`. Identity: `sub` claim as `providerUid`, `name` as `username`. Feature-flagged (503) when `NEXUS_OAUTH_CLIENT_ID` / `NEXUS_OAUTH_CLIENT_SECRET` absent. Testable once OAuth app is registered at `nexusmods.com/users/myaccount?tab=api`.
+
+### Frontend
+
+`admin-dashboard/src/features/link/LinkPage.tsx` — public route `/link`. Pip-Boy terminal aesthetic (matches `LoginPage.tsx`). States: loading, need-auth (Discord + Nexus sign-in buttons), ready (code entry form — user enters the code shown in-game), submitting, result (success/error). URL params: `?error=`, `?linked=nexus`.
+
+### Test results
+
+```
+backend/tests/authLink.test.js    — 18 tests, all passing
+  (generateLinkCode ×3, normalizeLinkCode ×3, isBannedIdentity ×2,
+   unlinkProviderIdentity ×2, redeemLinkCode ×5, validateAndConsume ×3)
+admin-dashboard/src/features/link/__tests__/LinkPage.test.tsx — 8 tests, all passing
+```

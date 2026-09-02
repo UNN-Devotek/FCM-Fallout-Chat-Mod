@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, Partials, TextChannel, EmbedBuilder, ActivityType, type Message } from 'discord.js';
+import { Client, GatewayIntentBits, Partials, TextChannel, EmbedBuilder, ActivityType, type Message, type MessageCreateOptions, type Typing } from 'discord.js';
 import { v4 as uuidv4 } from 'uuid';
 import env from '../config/environment';
 import prisma from '../config/prisma';
@@ -7,14 +7,21 @@ import logger from '../config/logger';
 import voiceService from './voiceService';
 import reactionRoleService from './reactionRoleService';
 import ticketService from './ticketService';
+import supporterSyncService from './supporterSyncService';
+import cosmeticsCommandService from './cosmeticsCommandService';
+import chatNameCommandService from './chatNameCommandService';
+import { attachCosmetics } from './cosmetics/cosmeticsService';
+import { nextRelaySeq } from './relay/relaySeq';
 import { getEntry, bestMatch } from './wikiCatalogService';
 import { canon } from '../utils/textCanon';
+import { buildOverLengthDm } from '../utils/overLengthDm';
 import {
-  RELEASE_PING,
   downloadPageUrl,
+  releaseAnnouncementMessage,
   releaseDownloadFieldValue,
   nexusEndorseFieldValue,
 } from '../utils/releaseAnnouncement';
+import type { HudModDownload } from '../utils/releaseAnnouncement';
 
 let discordClient: Client | null = null;
 let broadcastFn: ((payload: any, excludeWs?: any) => void) | null = null; // Injected from WS handler to avoid circular deps
@@ -23,6 +30,17 @@ let discordStatus = 'disconnected';
 // ZWS watermark -- inserted into all outbound relay messages (game->Discord)
 // so inbound handler can detect and reject echo loops (defense-in-depth)
 const ZWS = '\u200B';
+
+// Discord typing is an ephemeral signal. Keep a small local cooldown so a burst
+// of gateway packets cannot fan out more often than the in-app typing protocol.
+const DISCORD_TYPING_THROTTLE_MS = 2_000;
+const DISCORD_TYPING_IDENTITY_TTL_MS = 30_000;
+const MAX_DISCORD_TYPING_STATE_ENTRIES = 4096;
+const discordTypingLastSentAt = new Map<string, number>();
+const discordTypingIdentityCache = new Map<string, {
+  identity: { userId: string; username: string } | null;
+  expiresAt: number;
+}>();
 
 // Outbound rate-limit queue -- drains at 4 msg/sec (250ms interval)
 const outboundQueue: Array<() => Promise<void>> = [];
@@ -66,6 +84,30 @@ function stripMentions(text: string): string {
     .replace(/<@!?\d+>/g, '[user]')
     .replace(/<@&\d+>/g, '[role]')
     .replace(/<#\d+>/g, '[channel]');
+}
+
+export type RelayAuthorCosmetics = {
+  /** Server-resolved supporter tiers only; arbitrary badge text is ignored. */
+  badges?: readonly string[] | null;
+};
+
+const SUPPORTER_STAR_GLYPH = '★' as const;
+
+/**
+ * Build the stable Discord author prefix used for messages originating in FCM.
+ * Discord cannot colour individual characters in ordinary message content, so the
+ * shared supporter identity is represented by the same immutable star glyph; the
+ * colour remains a web/HUD-only presentation detail.
+ */
+export function buildDiscordRelayPrefix(
+  channelName: string | undefined,
+  username: string,
+  badges?: readonly string[] | null,
+): string {
+  const isSupporter = badges?.includes('supporter') || badges?.includes('overseer');
+  const marker = isSupporter ? `${SUPPORTER_STAR_GLYPH} ` : '';
+  const tag = channelName ? `**[${channelName}]** ` : '';
+  return `${tag}**${marker}${stripMentions(username)}**: `;
 }
 
 /**
@@ -201,7 +243,12 @@ async function resolveAppMentions(text: string): Promise<string> {
     for (const n of [u.username, u.discordUsername, u.discordDisplayName]) {
       if (!n) continue;
       const trimmed = n.trim();
-      if (trimmed.length < 2 || trimmed === 'Wanderer' || trimmed.startsWith('pending-')) continue;
+      if (
+        trimmed.length < 2
+        || trimmed === 'Wanderer'
+        || trimmed.startsWith('pending-')
+        || trimmed.startsWith('discord:')
+      ) continue;
       candidates.push({ name: trimmed, id: u.discordId });
     }
   }
@@ -231,6 +278,120 @@ let defaultChannelPromise: Promise<string | null> | null = null; // in-flight gu
 
 function setBroadcast(fn: (payload: any, excludeWs?: any) => void): void { broadcastFn = fn; }
 function getStatus(): string { return discordStatus; }
+
+function isSyntheticRelayUsername(username: string | null | undefined): boolean {
+  return !username
+    || username === 'Wanderer'
+    || username.startsWith('pending-')
+    || username.startsWith('discord:')
+    || /^overlay\d+$/i.test(username);
+}
+
+function typingDisplayName(typing: Typing): string {
+  const memberName = typing.member?.displayName?.trim();
+  if (memberName) return memberName;
+  const user = typing.user as { globalName?: string | null; username?: string | null };
+  return user.globalName?.trim() || user.username?.trim() || typing.user.id;
+}
+
+function pruneDiscordTypingState(now: number): void {
+  for (const [key, sentAt] of discordTypingLastSentAt) {
+    if (now - sentAt > DISCORD_TYPING_IDENTITY_TTL_MS) discordTypingLastSentAt.delete(key);
+  }
+  for (const [key, cached] of discordTypingIdentityCache) {
+    if (cached.expiresAt <= now) discordTypingIdentityCache.delete(key);
+  }
+  while (discordTypingLastSentAt.size > MAX_DISCORD_TYPING_STATE_ENTRIES) {
+    const first = discordTypingLastSentAt.keys().next().value as string | undefined;
+    if (!first) break;
+    discordTypingLastSentAt.delete(first);
+  }
+  while (discordTypingIdentityCache.size > MAX_DISCORD_TYPING_STATE_ENTRIES) {
+    const first = discordTypingIdentityCache.keys().next().value as string | undefined;
+    if (!first) break;
+    discordTypingIdentityCache.delete(first);
+  }
+}
+
+async function resolveDiscordTypingIdentity(
+  typing: Typing,
+): Promise<{ userId: string; username: string } | null> {
+  const discordId = typing.user.id;
+  const now = Date.now();
+  const cached = discordTypingIdentityCache.get(discordId);
+  if (cached && cached.expiresAt > now) return cached.identity;
+
+  let identity: { userId: string; username: string } | null = null;
+  try {
+    // Do not create a database user for a typing event alone. The normal inbound
+    // message path creates synthetic Discord users when they actually post.
+    const linked = await prisma.user.findFirst({
+      where: { discordId },
+      select: {
+        id: true,
+        username: true,
+        chatName: true,
+        discordUsername: true,
+        discordDisplayName: true,
+      },
+    });
+    if (linked) {
+      const fallbackName = typingDisplayName(typing);
+      const username = linked.chatName?.trim()
+        || (!isSyntheticRelayUsername(linked.username) ? linked.username.trim() : '')
+        || linked.discordDisplayName?.trim()
+        || linked.discordUsername?.trim()
+        || fallbackName;
+      if (username) identity = { userId: linked.id, username };
+    }
+  } catch (err) {
+    logger.debug({ err, discordId }, '[discord-typing] identity lookup failed');
+  }
+
+  discordTypingIdentityCache.set(discordId, {
+    identity,
+    expiresAt: now + DISCORD_TYPING_IDENTITY_TTL_MS,
+  });
+  pruneDiscordTypingState(now);
+  return identity;
+}
+
+/** Relay a Discord typing event through the existing overlay typing protocol. */
+async function relayDiscordTyping(typing: Typing): Promise<boolean> {
+  if (!broadcastFn || !env.DISCORD_SERVER_ID || !typing.guild || typing.guild.id !== env.DISCORD_SERVER_ID) return false;
+  if (!typing.channel?.id || !typing.user?.id || typing.user.bot) return false;
+
+  const key = `${typing.channel.id}:${typing.user.id}`;
+  const now = Date.now();
+  const lastSentAt = discordTypingLastSentAt.get(key) ?? 0;
+  if (lastSentAt + DISCORD_TYPING_THROTTLE_MS > now) return false;
+  // Set the cooldown before the async mapping/identity lookups so concurrent
+  // gateway packets cannot race and duplicate the fan-out.
+  discordTypingLastSentAt.set(key, now);
+  pruneDiscordTypingState(now);
+
+  const mappings = await loadRelayMappings().catch(() => new Map<string, string>());
+  let channelId = mappings.get(typing.channel.id);
+  if (!channelId && typing.channel.id === env.DISCORD_CHANNEL_ID) {
+    channelId = await getDefaultChannelId().catch(() => null) || undefined;
+  }
+  // Only configured relay channels may expose activity to the overlay.
+  if (!channelId) return false;
+
+  const identity = await resolveDiscordTypingIdentity(typing);
+  if (!identity) return false;
+
+  broadcastFn({
+    type: 'chat:typing',
+    payload: {
+      channelId,
+      username: identity.username,
+      userId: identity.userId,
+      source: 'discord',
+    },
+  });
+  return true;
+}
 
 /**
  * Live "Watching N dwellers tune the Vault-Tec airwaves" presence. Pulled from the
@@ -318,6 +479,156 @@ async function getDefaultChannelId(): Promise<string | null> {
   return defaultChannelPromise;
 }
 
+type DiscordRelayLink = {
+  messageId: string;
+  discordMessageId: string;
+  discordChannelId: string;
+  discordPrefix: string;
+  isBotMessage: boolean;
+};
+
+async function saveDiscordMessageLink(link: DiscordRelayLink): Promise<void> {
+  try {
+    await prisma.discordMessageLink.upsert({
+      where: { messageId: link.messageId },
+      update: {
+        discordMessageId: link.discordMessageId,
+        discordChannelId: link.discordChannelId,
+        discordPrefix: link.discordPrefix,
+        isBotMessage: link.isBotMessage,
+      },
+      create: link,
+    });
+  } catch (err) {
+    logger.warn({ err, messageId: link.messageId, discordMessageId: link.discordMessageId }, 'Failed to persist Discord relay message link');
+  }
+}
+
+function queueDiscordSend(
+  discordChannel: TextChannel,
+  formatted: string,
+  link?: Omit<DiscordRelayLink, 'discordMessageId'>,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    outboundQueue.push(async () => {
+      try {
+        const sent = await discordChannel.send(formatted) as Message;
+        if (link) {
+          await saveDiscordMessageLink({ ...link, discordMessageId: sent.id });
+        }
+        resolve();
+      } catch (err) {
+        reject(err);
+        throw err;
+      }
+    });
+    startDrain();
+  });
+}
+
+const DISCORD_LINK_RETRY_DELAYS_MS = [0, 100, 250, 500, 1000] as const;
+
+/**
+ * Outbound Discord sends are rate-limited through a separate queue, so the
+ * relay link can be created shortly after the local message is visible. Give
+ * an immediate edit a bounded chance to find that link before treating the
+ * message as having no bot-authored Discord counterpart.
+ */
+async function findDiscordMessageLinkWithRetry(messageId: string): Promise<DiscordRelayLink | null> {
+  for (let attempt = 0; attempt < DISCORD_LINK_RETRY_DELAYS_MS.length; attempt++) {
+    const delay = DISCORD_LINK_RETRY_DELAYS_MS[attempt];
+    if (delay > 0) await new Promise<void>((resolve) => setTimeout(resolve, delay));
+
+    const link = await prisma.discordMessageLink.findUnique({ where: { messageId } });
+    if (link) return link;
+  }
+  return null;
+}
+
+/**
+ * Edit the bot-authored Discord copy of an in-app message, when one exists.
+ * Discord does not allow the bot to edit a user's original Discord message,
+ * so inbound user messages are linked for reverse sync but are intentionally
+ * skipped here.
+ */
+async function editDiscordRelayMessage(
+  messageId: string,
+  content: string,
+  clientOverride?: import('discord.js').Client | null,
+): Promise<boolean> {
+  const client = clientOverride ?? discordClient;
+  if (!client || (clientOverride === undefined && discordStatus !== 'connected')) return false;
+
+  const link = await findDiscordMessageLinkWithRetry(messageId);
+  if (!link || !link.isBotMessage) return false;
+
+  const stripped = stripMentions(content);
+  const safeContent = markdownifyLinks(await resolveAppMentions(stripped));
+  const watermarked = safeContent.length > 0 ? safeContent + ZWS : safeContent;
+  const discordChannel = await client.channels.fetch(link.discordChannelId);
+  if (!discordChannel?.isTextBased()) return false;
+  const discordMessage = await (discordChannel as TextChannel).messages.fetch(link.discordMessageId);
+  await discordMessage.edit({ content: `${link.discordPrefix}${watermarked}` });
+  return true;
+}
+
+/** Apply a human Discord message edit to its linked overlay row. */
+async function syncDiscordMessageUpdate(rawMessage: Message | any): Promise<boolean> {
+  let msg = rawMessage;
+  if (msg?.partial && typeof msg.fetch === 'function') msg = await msg.fetch();
+  if (!msg?.id || msg.author?.bot || msg.webhookId) return false;
+
+  const link = await prisma.discordMessageLink.findUnique({
+    where: {
+      discordMessageId_discordChannelId: {
+        discordMessageId: msg.id,
+        discordChannelId: msg.channelId,
+      },
+    },
+  });
+  if (!link || link.isBotMessage) return false;
+
+  let content = typeof msg.content === 'string' ? msg.content : '';
+  if (!content.trim() || content.length > 255) return false;
+  content = await resolveInboundUserMentions(content, msg);
+
+  const existing = await prisma.message.findFirst({
+    where: { id: link.messageId, isDeleted: false },
+    select: { userId: true, channelId: true },
+  });
+  if (!existing) return false;
+
+  try {
+    const { engineEvaluate } = require('./autoModEngine') as typeof import('./autoModEngine');
+    const result = await engineEvaluate(content.trim(), existing.channelId, { id: existing.userId, username: 'discord' } as any);
+    if (result.block) return false;
+  } catch (err) {
+    logger.warn({ err, messageId: link.messageId }, '[discord-relay] edit automod error — allowing edit (fail-open)');
+  }
+
+  const editedAt = new Date();
+  const updated = await prisma.$executeRaw`
+    UPDATE messages
+    SET content = ${content.trim()}, edited_at = ${editedAt}
+    WHERE id = ${link.messageId}::uuid
+      AND channel_id = ${existing.channelId}::uuid
+      AND NOT is_deleted`;
+  if (updated === 0) return false;
+
+  broadcastFn?.({
+    type: 'chat:edit',
+    payload: {
+      messageId: link.messageId,
+      userId: existing.userId,
+      content: content.trim(),
+      source: 'discord',
+      channelId: existing.channelId,
+      editedAt: editedAt.toISOString(),
+    },
+  });
+  return true;
+}
+
 async function start(onStatusChange?: (status: string) => void): Promise<void> {
   if (!env.DISCORD_TOKEN) {
     logger.warn('DISCORD_TOKEN not set -- Discord bridge disabled');
@@ -328,9 +639,16 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
     intents: [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.GuildMessageTyping, // Discord → overlay typing indicators
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.GuildVoiceStates, // temp "join-to-create" voice channels
       GatewayIntentBits.GuildMessageReactions, // reaction roles
+      // PRIVILEGED intent. Required for guildMemberUpdate/guildMemberRemove, which is
+      // how supporterSyncService learns that Discord granted or removed a Server
+      // Subscription tier role. Must be enabled in the Discord Developer Portal for
+      // EACH application — dev and prod are separate apps, so this is done twice.
+      // Without it the gateway connection is rejected outright, not silently degraded.
+      GatewayIntentBits.GuildMembers,
     ],
     // Partials let reaction events fire for messages posted before the last
     // restart (uncached) — required for reaction roles to survive a redeploy.
@@ -342,6 +660,9 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
   voiceService.register(discordClient);
   reactionRoleService.register(discordClient);
   ticketService.register(discordClient);
+  supporterSyncService.register(discordClient);
+  cosmeticsCommandService.register(discordClient);
+  chatNameCommandService.register(discordClient);
 
   // Invalidate the emoji cache whenever the guild's emoji set changes.
   // Lazy-require to avoid circular deps (discordEmojisController imports us too).
@@ -397,6 +718,7 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
 
     if (!channelId) return;
 
+    // (see buildOverLengthDm above for the DM copy-back behaviour)
     // Hard length cap for the bridged channel. Messages of MORE than
     // MAX_RELAY_CHARS characters are deleted and NOT relayed to the in-game
     // overlay — long posts flood the small transparent overlay window and bypass
@@ -407,16 +729,17 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
     // the **Manage Messages** permission in this channel.
     const MAX_RELAY_CHARS = 255;
     if (msg.content && msg.content.length > MAX_RELAY_CHARS) {
+      // Capture the content BEFORE deleting. discord.js keeps `content` on the
+      // local object after delete(), but reading it first makes that explicit
+      // rather than load-bearing on library behaviour.
+      const originalContent = msg.content;
       try {
         await msg.delete();
       } catch (err) {
         logger.warn({ err, channelId: msg.channelId }, 'Over-length relay message: delete failed (bot missing Manage Messages?)');
       }
       try {
-        await msg.author.send(
-          `Your message in the in-game chat channel was too long and was not posted. ` +
-          `Please keep it to ${MAX_RELAY_CHARS} characters or fewer (yours was ${msg.content.length}).`,
-        );
+        await msg.author.send(buildOverLengthDm(originalContent, MAX_RELAY_CHARS));
       } catch (err) {
         logger.warn({ err, userId: msg.author.id }, 'Over-length relay message: DM to author failed (DMs likely closed)');
       }
@@ -605,14 +928,17 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
     try {
       const linked = await prisma.user.findFirst({
         where: { discordId: msg.author.id },
-        select: { id: true, username: true },
+        select: { id: true, username: true, chatName: true },
       });
       const hasFo76Name =
-        !!linked?.username && linked.username !== 'Wanderer' && !linked.username.startsWith('pending-');
+        !!linked?.username
+        && linked.username !== 'Wanderer'
+        && !linked.username.startsWith('pending-')
+        && !linked.username.startsWith('discord:');
 
-      if (linked && hasFo76Name) {
+      if (linked && (hasFo76Name || linked.chatName)) {
         relayUserId = linked.id;
-        relayUsername = linked.username; // FO76 name
+        relayUsername = linked.chatName ?? linked.username;
       } else {
         // Synthetic Discord-relay user. username = `pending-discord-<id>` so
         // resolveDisplayName() skips it and falls through to discordDisplayName.
@@ -723,19 +1049,41 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
       logger.debug({ err }, '[discord-relay] wiki URL resolution error (non-fatal)');
     }
 
+    // Discord-originated messages are part of the native relay stream too. Allocate
+    // the same monotonic cursor used by HUD/WS messages before broadcasting or
+    // persisting; the relay subscriber and history query both require relaySeq.
+    let relaySeq: number;
+    try {
+      relaySeq = await nextRelaySeq();
+    } catch (err) {
+      // Without Redis there is no safe cursor, so do not create a Discord message
+      // that the HUD cannot deliver or recover through history.
+      logger.warn({ err, discordMessageId: msg.id }, '[discord-relay] relay cursor allocation failed — message not relayed');
+      return;
+    }
+
+    const discordPayload: Record<string, unknown> = {
+      id: messageId,
+      content: broadcastContent,
+      username: relayUsername,
+      userId: relayUserId,
+      channelId,
+      source: 'discord',
+      timestamp: createdAt,
+      metadata: inboundMetadata,
+      relaySeq,
+    };
+
+    // Discord-originated messages must use the exact same resolved cosmetics as
+    // messages typed in-game or in the dashboard. History resolves cosmetics on
+    // read, but the live broadcast needs the decoration before it leaves this
+    // process or supporters see an unstyled message until a reload.
+    await attachCosmetics(discordPayload);
+
     if (broadcastFn) {
       broadcastFn({
         type: 'chat:message',
-        payload: {
-          id: messageId,
-          content: broadcastContent,
-          username: relayUsername,
-          userId: relayUserId,
-          channelId,
-          source: 'discord',
-          timestamp: createdAt,
-          metadata: inboundMetadata,
-        },
+        payload: discordPayload,
       });
     }
 
@@ -747,9 +1095,40 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
       source: 'discord',
       createdAt,
       metadata: inboundMetadata,
+      relaySeq,
     }).catch((err: Error) => logger.error({ err }, 'Failed to queue Discord message'));
 
+    await prisma.discordMessageLink.upsert({
+      where: {
+        discordMessageId_discordChannelId: {
+          discordMessageId: msg.id,
+          discordChannelId: msg.channelId,
+        },
+      },
+      update: { messageId, isBotMessage: false, discordPrefix: '' },
+      create: {
+        messageId,
+        discordMessageId: msg.id,
+        discordChannelId: msg.channelId,
+        discordPrefix: '',
+        isBotMessage: false,
+      },
+    }).catch((err: Error) => logger.warn({ err, discordMessageId: msg.id }, 'Failed to link inbound Discord message'));
+
   });
+
+  discordClient.on('messageUpdate', (_oldMessage, newMessage) => {
+    syncDiscordMessageUpdate(newMessage).catch((err) => {
+      logger.warn({ err, discordMessageId: newMessage?.id }, 'Failed to sync Discord message edit to overlay');
+    });
+  });
+
+  discordClient.on(
+    'typingStart',
+    (typing) => relayDiscordTyping(typing).catch((err) => {
+      logger.warn({ err, discordChannelId: typing.channel?.id, discordUserId: typing.user?.id }, '[discord-typing] relay failed');
+    }),
+  );
 
   discordClient.on('error', (err: Error) => {
     logger.error({ err }, 'Discord client error');
@@ -880,7 +1259,7 @@ async function resolveWikiUrlFromContent(text: string): Promise<{
 
 // ── Outbound relay ────────────────────────────────────────────────────────────
 
-async function relayToDiscord(channelId: string, username: string, content: string, channelName?: string, mentions?: Array<{ name: string; discordId: string }>, metadata?: Record<string, unknown> | null): Promise<void> {
+async function relayToDiscord(channelId: string, username: string, content: string, channelName?: string, mentions?: Array<{ name: string; discordId: string }>, metadata?: Record<string, unknown> | null, sourceMessageId?: string, authorCosmetics?: RelayAuthorCosmetics): Promise<void> {
   if (!discordClient || discordStatus !== 'connected') return;
 
   // Drop synthetic relay health-check probes so test traffic never appears in the
@@ -920,8 +1299,8 @@ async function relayToDiscord(channelId: string, username: string, content: stri
     const withExplicit = applyExplicitMentions(stripped, mentions);
     const safeContent = markdownifyLinks(await resolveAppMentions(withExplicit));
     const watermarked = safeContent.length > 0 ? safeContent + ZWS : safeContent;
-    const tag = channelName ? `**[${channelName}]** ` : '';
-    const formatted = `${tag}**${stripMentions(username)}**: ${watermarked}`;
+    const discordPrefix = buildDiscordRelayPrefix(channelName, username, authorCosmetics?.badges);
+    const formatted = `${discordPrefix}${watermarked}`;
 
     const mappings = await loadRelayMappings();
     let sent = false;
@@ -933,8 +1312,12 @@ async function relayToDiscord(channelId: string, username: string, content: stri
         if (!discordChannel?.isTextBased()) {
           logger.warn({ discordChannelId }, 'Discord relay channel is not a text channel -- skipping');
         } else {
-          outboundQueue.push(async () => { await (discordChannel as TextChannel).send(formatted); });
-          startDrain();
+          await queueDiscordSend(discordChannel as TextChannel, formatted, sourceMessageId ? {
+            messageId: sourceMessageId,
+            discordChannelId,
+            discordPrefix,
+            isBotMessage: true,
+          } : undefined);
           sent = true;
         }
         break;
@@ -947,8 +1330,12 @@ async function relayToDiscord(channelId: string, username: string, content: stri
     if (!sent && env.DISCORD_CHANNEL_ID) {
       const discordChannel = await discordClient.channels.fetch(env.DISCORD_CHANNEL_ID);
       if (discordChannel?.isTextBased()) {
-        outboundQueue.push(async () => { await (discordChannel as TextChannel).send(formatted); });
-        startDrain();
+        await queueDiscordSend(discordChannel as TextChannel, formatted, sourceMessageId ? {
+          messageId: sourceMessageId,
+          discordChannelId: env.DISCORD_CHANNEL_ID,
+          discordPrefix,
+          isBotMessage: true,
+        } : undefined);
       }
     }
   } catch (err) {
@@ -976,9 +1363,15 @@ const UPDATES_CHANNEL_ID = process.env.DISCORD_UPDATES_CHANNEL_ID || '1479531502
  * Discord-bridge unavailability (the bot may still be connecting when the
  * publish lands).
  */
-async function postReleaseAnnouncement(version: string, releaseNotes: string): Promise<void> {
+async function postReleaseAnnouncement(
+  version: string,
+  releaseNotes: string,
+  hudMod?: HudModDownload,
+  options: { mentionEveryone?: boolean } = {},
+): Promise<void> {
   const attemptDelays = [0, 500, 1500, 3000, 5000]; // 5 tries, ~10s total
   let lastErr: unknown = null;
+  const mentionEveryone = options.mentionEveryone ?? true;
 
   for (let i = 0; i < attemptDelays.length; i++) {
     if (attemptDelays[i] > 0) await new Promise((r) => setTimeout(r, attemptDelays[i]));
@@ -998,19 +1391,16 @@ async function postReleaseAnnouncement(version: string, releaseNotes: string): P
         .setColor(0xF1C40F) // gold/yellow — matches the Securitron role color
         .setDescription((releaseNotes || 'A new version is available.').slice(0, 4000))
         .addFields(
-          { name: '📥 Download', value: releaseDownloadFieldValue(version) },
+          { name: '📥 Download', value: releaseDownloadFieldValue(version, hudMod) },
           { name: '❤️ Endorse on Nexus', value: nexusEndorseFieldValue() },
         )
         .setTimestamp(new Date());
-      // Ping @everyone in the Updates channel. allowedMentions is REQUIRED for the
-      // ping to actually fire, and the bot must hold "Mention Everyone" in the
-      // channel — without the perm the message still posts, just without the ping.
-      await (channel as TextChannel).send({
-        content: RELEASE_PING,
+      const message = {
         embeds: [embed],
-        allowedMentions: { parse: ['everyone'] },
-      });
-      logger.info({ version, channelId: UPDATES_CHANNEL_ID, attempt: i + 1 }, 'Posted release announcement to Discord');
+        ...releaseAnnouncementMessage(mentionEveryone),
+      } satisfies MessageCreateOptions;
+      await (channel as TextChannel).send(message);
+      logger.info({ version, channelId: UPDATES_CHANNEL_ID, attempt: i + 1, mentionEveryone }, 'Posted release announcement to Discord');
       return; // success
     } catch (err) {
       lastErr = err;
@@ -1207,7 +1597,11 @@ async function postModAlert(embed: EmbedData): Promise<void> {
  *   - If nickname is null/empty, the member's nickname is CLEARED (reverts to
  *     their Discord username). We pass the FO76 name, so this is intentional.
  */
-async function setMemberNickname(discordId: string, nickname: string): Promise<boolean> {
+async function setMemberNickname(
+  discordId: string,
+  nickname: string,
+  reason = 'FO76 character name sync',
+): Promise<boolean> {
   if (!discordClient || discordStatus !== 'connected') {
     logger.debug({ discordId }, '[nickname-sync] bot not connected, skipping nickname set');
     return false;
@@ -1219,10 +1613,20 @@ async function setMemberNickname(discordId: string, nickname: string): Promise<b
   }
   try {
     const guild = await discordClient.guilds.fetch(guildId);
+    // Discord never lets a bot rename the guild owner, even when the bot has every
+    // relevant permission. Treat it as an expected no-op rather than a 50013 error.
+    if (guild.ownerId === discordId) {
+      logger.debug({ discordId }, '[nickname-sync] skipped — Discord does not permit renaming the guild owner');
+      return false;
+    }
     const member = await guild.members.fetch(discordId);
-    // Truncate to Discord's 32-char nickname limit.
-    const truncated = nickname.slice(0, 32);
-    await member.setNickname(truncated, 'FO76 character name sync');
+    // Discord's 32-character cap applies to Unicode characters, not UTF-16 units.
+    const truncated = Array.from(nickname).slice(0, 32).join('');
+    if ((member.nickname ?? '') === truncated) {
+      logger.debug({ discordId, nickname: truncated }, '[nickname-sync] nickname already current');
+      return true;
+    }
+    await member.setNickname(truncated || null, reason);
     logger.info({ discordId, nickname: truncated }, '[nickname-sync] set guild member nickname');
     return true;
   } catch (err: any) {
@@ -1246,6 +1650,6 @@ function invalidateRelayMappingsCache(): void {
   mappingsLastLoaded = 0;
 }
 
-export { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, invalidateRelayMappingsCache, loadRelayMappings, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };
+export { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, editDiscordRelayMessage, syncDiscordMessageUpdate, invalidateRelayMappingsCache, loadRelayMappings, relayDiscordTyping, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };
 export type { };
-module.exports = { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, invalidateRelayMappingsCache, loadRelayMappings, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };
+module.exports = { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, buildDiscordRelayPrefix, editDiscordRelayMessage, syncDiscordMessageUpdate, invalidateRelayMappingsCache, loadRelayMappings, relayDiscordTyping, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };

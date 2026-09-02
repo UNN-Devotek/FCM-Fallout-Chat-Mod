@@ -65,6 +65,16 @@ const { app } = require('../src/server');
 // ── Auth contract tests ──────────────────────────────────────────────────────
 
 describe('Auth middleware contract', () => {
+  it('sets a browser session cookie before the Discord OAuth redirect', async () => {
+    const res = await request(app).get('/auth/discord?intent=link');
+
+    expect(res.status).toBe(302);
+    expect(decodeURIComponent(res.headers.location)).toContain('/auth/discord/callback');
+    expect(res.headers['set-cookie']).toEqual(
+      expect.arrayContaining([expect.stringContaining('connect.sid=')]),
+    );
+  });
+
   it('returns 401 RFC 7807 when X-Auth-Token is missing on protected route', async () => {
     const res = await request(app).get('/api/users/some-id');
     expect(res.status).toBe(401);

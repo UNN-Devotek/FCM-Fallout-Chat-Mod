@@ -1,5 +1,9 @@
 import React from 'react';
-import { createBrowserRouter, RouterProvider, Navigate, Outlet, useRouteError } from 'react-router-dom';
+// react-router v8 removed the `react-router-dom` package entirely. Everything now
+// comes from `react-router`, except the DOM-specific entrypoints — `RouterProvider`
+// lives in `react-router/dom`.
+import { createBrowserRouter, Navigate, Outlet, useRouteError } from 'react-router';
+import { RouterProvider } from 'react-router/dom';
 import { useAuth } from './contexts/AuthContext';
 
 function RouteErrorDisplay() {
@@ -33,6 +37,7 @@ import Evidence from './features/moderation/Evidence';
 import Voice from './features/moderation/Voice';
 import EmbedBuilder from './features/moderation/EmbedBuilder';
 import HelpPage from './features/system/HelpPage';
+import CosmeticsGuide from './features/system/CosmeticsGuide';
 import KeybindsPage from './features/system/KeybindsPage';
 import AuditLog from './features/system/AuditLog';
 import ServerHealth from './features/system/ServerHealth';
@@ -42,6 +47,7 @@ import ReportPage from './features/public/ReportPage';
 import ApplyPage from './features/public/ApplyPage';
 import Devices from './features/system/Devices';
 import WikiSync from './features/wiki/WikiSync';
+import LinkPage from './features/link/LinkPage';
 
 const MOD_ROLES = ['owner', 'admin', 'moderator'];
 
@@ -80,6 +86,7 @@ const router = createBrowserRouter([
   /* Public routes */
   { path: '/', element: <LandingPage /> },
   { path: '/login', element: <LoginPage /> },
+  { path: '/link', element: <LinkPage /> },
   { path: '/report', element: <ReportPage /> },
   { path: '/apply', element: <ApplyPage /> },
 
@@ -110,6 +117,7 @@ const router = createBrowserRouter([
       { path: '/voice', element: <RoleGuard allowedRoles={MOD_ROLES}><Voice /></RoleGuard> },
       { path: '/discord-embeds', element: <RoleGuard allowedRoles={MOD_ROLES}><EmbedBuilder /></RoleGuard> },
       { path: '/help', element: <HelpPage /> },
+      { path: '/appearance', element: <CosmeticsGuide /> },
       { path: '/audit-log', element: <RoleGuard allowedRoles={MOD_ROLES}><AuditLog /></RoleGuard> },
       { path: '/server-health', element: <RoleGuard allowedRoles={MOD_ROLES}><ServerHealth /></RoleGuard> },
       { path: '/devices', element: <RoleGuard allowedRoles={MOD_ROLES}><Devices /></RoleGuard> },

@@ -1,39 +1,27 @@
 # Fallout Chat Mod — KDE/KWin window rules (manual-import fallback)
 #
-# The overlay applies these AUTOMATICALLY on startup (KDE+Wayland). This file is a
-# fallback you can import by hand if the automatic path didn't work:
+# The overlay applies this AUTOMATICALLY (KDE+Wayland) while FO76 runs and shares
+# the overlay's display, removing it on game exit or a monitor change, not just
+# once at startup. This file is the manual-import fallback. It always applies,
+# with no game-running/same-monitor gating, since a hand-imported rule can't
+# be conditional:
 #   System Settings -> Window Management -> Window Rules -> Import...  (pick this file)
 #   then:  qdbus org.kde.KWin /KWin reconfigure   (or log out / in)
 #
-# TWO rules are needed on Plasma 6 (KWin 6):
+# ONE rule on the OVERLAY window (wmclass=fallout-chat-mod), combining two KWin
+# properties:
 #
-# 1) Keep the OVERLAY above other windows (above=true). NOTE: on KWin 6 the older
-#    layer=8 / layerrule=2 "CriticalNotification" force is IGNORED, so keep-above ALONE
-#    loses to a FOCUSED fullscreen game — that is why rule 2 is required. (layer/layerrule
-#    are left below only for older KWin builds that still honor them.)
+# 1) Keep the OVERLAY above other windows (above=true) — belt-and-suspenders.
+# 2) Force the OVERLAY into KWin's Overlay layer (layer=overlay, Force) — the
+#    sanctioned KWin-6 way (KDE Bug 441074) to stay above a FOCUSED fullscreen game.
+#    The game is NOT demoted: FO76 keeps its normal fullscreen stacking (above the
+#    panel), and the overlay stays a normal, focusable, alt-tab-able window.
 [Fallout Chat Mod - keep above games]
 Description=Fallout Chat Mod - keep above games
-title=Fallout Chat Mod
-titlematch=2
-wmclass=fallout
+wmclass=fallout-chat-mod
 wmclassmatch=2
 wmclasscomplete=false
 above=true
 aboverule=3
-layer=8
+layer=overlay
 layerrule=2
-fsplevel=0
-fsplevelrule=2
-
-# 2) THE FIX on KWin 6: stop KWin promoting the GAME to the active-fullscreen stacking
-#    layer (which outranks keep-above). Forcing fullscreen=false demotes Fallout 76 to the
-#    normal layer, so the overlay's keep-above wins even while the game has focus. The game
-#    still renders full-screen-sized in Borderless — only its KWin stacking layer changes.
-#    (Class steam_app_1151340 is FO76 on Steam; substring match also covers similar IDs.)
-[Fallout Chat Mod - demote game from fullscreen layer]
-Description=Fallout Chat Mod - demote game from fullscreen layer
-wmclass=steam_app_1151340
-wmclassmatch=2
-wmclasscomplete=false
-fullscreen=false
-fullscreenrule=2

@@ -8,6 +8,7 @@ import logger from '../config/logger';
 
 const PLAYER_LIST_TTL_SEC = 90;
 const REDIS_KEY_PREFIX = 'fo76:players:';
+const USER_KEY_PREFIX = 'fo76:players:user:';
 
 // Validation limits — player names come from an uncontrolled Flash mod.
 // FO76 worlds hold 24 players; cap the stored list at 24 so welcome and
@@ -44,6 +45,27 @@ export async function getServerPlayers(endpoint: string): Promise<ServerPlayerLi
   try {
     const redis = await getRedisClient();
     const raw = await redis.get(`${REDIS_KEY_PREFIX}${endpoint}`);
+    if (!raw) return null;
+    return JSON.parse(raw) as ServerPlayerList;
+  } catch {
+    return null;
+  }
+}
+
+export async function setServerPlayersForUser(userId: string, players: string[], endpoint: string | null): Promise<void> {
+  try {
+    const redis = await getRedisClient();
+    const value = JSON.stringify({ endpoint: endpoint ?? `user:${userId}`, players, updatedAt: Date.now() });
+    await redis.set(`${USER_KEY_PREFIX}${userId}`, value, { EX: PLAYER_LIST_TTL_SEC });
+  } catch (err) {
+    logger.warn({ err, userId }, 'Failed to store user player list in Redis');
+  }
+}
+
+export async function getServerPlayersForUser(userId: string): Promise<ServerPlayerList | null> {
+  try {
+    const redis = await getRedisClient();
+    const raw = await redis.get(`${USER_KEY_PREFIX}${userId}`);
     if (!raw) return null;
     return JSON.parse(raw) as ServerPlayerList;
   } catch {

@@ -66,9 +66,11 @@ This folder is the central documentation hub. Each domain lives in its own subfo
 - **Auth.** Overlay clients use an anonymous UUID install token → an ephemeral session token in Redis.
   The admin dashboard uses Discord OAuth2 with server-authoritative role re-verification on every
   request (owner/admin/moderator). See [backend/auth.md](backend/auth.md).
-- **Message persistence is off the hot path.** WS broadcast happens immediately; a Bull/Redis queue
-  (`messagePersist`) writes to Postgres asynchronously. Cross-instance fan-out uses Redis pub/sub, so
-  the backend scales horizontally with no sticky sessions. See [architecture/data-flow.md](architecture/data-flow.md).
+- **Canonical message persistence completes before visibility.** WS/HUD sends enqueue the Postgres
+  write through the Bull/Redis `messagePersist` queue and wait for the job to finish before broadcasting
+  or acknowledging the message, so self-edit cannot race a missing row. Cross-instance fan-out uses
+  Redis pub/sub, so the backend scales horizontally with no sticky sessions. See
+  [architecture/data-flow.md](architecture/data-flow.md).
 - **Migrations must be idempotent.** `baseline-migrations.sh` runs `prisma db push` before
   `migrate deploy`, so every migration must use `IF NOT EXISTS` / constraint guards / `ON CONFLICT DO
   NOTHING`. See [database/migrations.md](database/migrations.md).
@@ -99,6 +101,10 @@ These were surfaced by the code while documenting and have since been reconciled
 ## Reference documents (existing)
 
 - [TERMS.md](TERMS.md) — terms of service
+- [PRIVACY.md](PRIVACY.md) — privacy policy
+- [product/supporter-tier.md](product/supporter-tier.md) — supporter tier + chat cosmetics design record
+- [legal/monetization-policy.md](legal/monetization-policy.md) — binding rules for what may and may not be monetized
+- [legal/nexus-disclosure-supporter-tier.md](legal/nexus-disclosure-supporter-tier.md) — proactive Nexus Mods disclosure (draft)
 
 ---
 

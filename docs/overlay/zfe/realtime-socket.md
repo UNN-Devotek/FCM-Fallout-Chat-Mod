@@ -1,5 +1,12 @@
 # ZFE Real-Time Socket (FCMHUD/1)
 
+> **ACTIVE TRANSPORT (re-sequenced 2026-06-24).** FCMHUD/1 (this `color~channel~user~content` push
+> bridge + the M7 inbound parser) is the **transport we ship the in-game HUD mod on now** — feature
+> work is built on it today (epic #302), and it is being **exposed to production** (#139), **not**
+> retired. The ZFE **`chat.v1`** native chat relay ([native-chat-relay/](native-chat-relay/README.md))
+> is a **later transport swap**, not a current replacement; because ZFE's publish date is unknown we
+> ship on FCMHUD/1 first. FCMHUD/1 retires (#291) **only after** chat.v1 ships AND is validated.
+
 ZFE's `readRemoteData` has a 300 s cache floor — the feed can never be real-time on that path.
 ZFE ships a "Text Chat bridge" (live since dxgi.dll 0.9.1) that drives a native TCP socket or a
 WebSocket from AS3. FCMBridge rides that bridge to receive a live push feed from the backend.
@@ -32,8 +39,16 @@ is an explicit step of the M6 production-exposure milestone. Guard tests:
 |------|-------------------------------|---------------------|
 | Dev TCP | `127.0.0.1:4001` | local :7177, `HUD_PUSH_TCP_ENABLED=true` |
 | Dev WS | `ws://127.0.0.1:7177/ws/hud` | local :7177, `HUD_PUSH_WS_ENABLED=true` (ws:// support UNVERIFIED — see Probe findings below) |
+| Hosted Dev WS | `wss://dev.falloutchatmod.com:443/ws/hud` | `cloudflared-dev` tunnel; `HUD_PUSH_WS_ENABLED=true` set in `deploy/dev/docker-compose.yml`; `NODE_ENV=development` so the prod guard permits it. **Receive-only** (inbound bytes discarded — no in-game send over WS). |
+| Hosted Dev TCP (two-way) | `localhost:4001` (via `cloudflared access tcp --hostname dev-hud.falloutchatmod.com --url localhost:4001`) | backend-dev `HUD_PUSH_TCP_ENABLED=true` + `HUD_PUSH_TCP_HOST=0.0.0.0` + inline-PEM cert (`HUD_PUSH_TCP_TLS_CERT/KEY`, see `readPemValue`) + non-default `HUD_IDENTITY_SECRET`; a cloudflared **TCP route** `dev-hud.falloutchatmod.com → tcp://backend-dev:4001` (Access service-token). The **only** dev path that accepts inbound **SEND**. |
+
+> **ZFE endpoint format requires an explicit port** (verified against 0.9.1/0.9.2):
+> `ZFE_TEXT_CHAT_ENDPOINT` must be `host:port` or `wss://host:port/target` — a
+> portless `wss://host/path` is rejected with `endpoint must be host:port`. ZFE
+> wraps **every** endpoint (including `host:port`) in Schannel TLS and does not
+> validate the cert (self-signed is fine).
 | Prod TCP | `tcp.falloutchatmod.com:4001` | direct host port, unproxied DNS |
-| Prod WS | `wss://falloutchatmod.com/ws/hud` | existing cloudflared tunnel, `HUD_PUSH_WS_ENABLED=true` |
+| Prod WS | `wss://falloutchatmod.com/ws/hud` | disabled by the production guard until the M6 exposure decision; do not enable by env flag alone |
 
 Switching transport requires only a `ZFE_TEXT_CHAT_ENDPOINT` change + Steam restart.
 The backend runs both front-ends simultaneously; no backend change needed to switch.
@@ -225,7 +240,19 @@ The SWF default send target must be a leaf channel (see `HUD_DEFAULT_CHANNEL_ID`
 ### hudPushWs.ts (Path B)
 
 - `noServer: true` WebSocketServer; manual `server.on('upgrade')` handling
-- Routes only `pathname === '/ws/hud'`; leaves all other paths untouched (avoids racing the `/ws` server)
+- Routes only `pathname === '/ws/hud'`; the shared upgrade router rejects `/ws/hud` too when the HUD listener is disabled
+
+> **Upgrade routing (fixed 2026-06-21).** The main chat server was
+> `new WebSocketServer({ server, path: '/ws' })`, whose auto-attached upgrade
+> handler aborts **every** non-`/ws` upgrade with **HTTP 400** — and it runs
+> before hudPushWs's listener, so `/ws/hud` was killed before it could be
+> claimed. Path B was therefore never reachable end-to-end (hence the earlier
+> "ws:// UNVERIFIED" note). Fix: the chat server is now `noServer: true` behind
+> `backend/src/websocket/upgradeRouter.ts` (`attachChatUpgradeRouter`) — `/ws` →
+> chat (`verifyClient` still runs inside `handleUpgrade`), enabled `/ws/hud` is left for
+> hudPushWs, and disabled/unknown paths are rejected. Tests:
+> `backend/tests/upgradeRouter.test.js`.
+
 - Enabled only when `HUD_PUSH_WS_ENABLED=true`
 - Per-IP cap: 3 concurrent connections (`wsHudConnsByIp` Map)
 - No auth, no Origin check — game client sends no/odd Origin; feed is public read-only

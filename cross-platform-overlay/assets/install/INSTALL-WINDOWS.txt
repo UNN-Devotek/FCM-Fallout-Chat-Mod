@@ -4,6 +4,9 @@ Fallout Chat Mod — Windows install
 1. Double-click "Fallout Chat Mod Setup <version>.exe" (in this folder).
 2. The installer is per-user — no administrator prompt. It installs to:
      %LocalAppData%\Programs\Fallout Chat Mod\
+   If you are upgrading from the older pre-v1.3.62 build, it stops and removes
+   the legacy %LocalAppData%\Programs\Fallout ChatMod\ installation first.
+   Your account, settings and keybinds remain in your user data.
 3. Launch "Fallout Chat Mod" from the Start Menu (or the desktop shortcut).
 4. Sign in with Discord and finish the short onboarding (enter your Fallout 76
    name when asked).

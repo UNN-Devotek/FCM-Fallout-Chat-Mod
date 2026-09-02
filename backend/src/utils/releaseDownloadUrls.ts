@@ -3,7 +3,7 @@
  *
  * This is a deliberately ZERO-DEPENDENCY module: the publish-verify gate
  * (`releasesController.publishRelease`) calls these to build and validate the
- * four artifact URLs it HEAD-checks before recording a release. A module with no
+ * five artifact URLs it HEAD-checks before recording a release. A module with no
  * imports can never fail to resolve, so the gate's robustness intent ("never
  * depend on another module's export resolving") is preserved — while making the
  * logic unit-testable without pulling in Prisma/Discord.
@@ -45,6 +45,9 @@ export function rawWindowsInstallerUrl(version: string): string {
 }
 export function rawLinuxAppImageUrl(version: string): string {
   return `${electronDownloadsBase()}/${encodeURIComponent(`Fallout Chat Mod-${version}.AppImage`)}`;
+}
+export function rawLinuxDebUrl(version: string): string {
+  return `${electronDownloadsBase()}/${encodeURIComponent(`Fallout Chat Mod-${version}.deb`)}`;
 }
 
 /**

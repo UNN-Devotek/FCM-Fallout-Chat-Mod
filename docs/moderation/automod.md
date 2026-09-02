@@ -1,20 +1,34 @@
 # Auto-Moderation
 
-All content moderation on `chat:send` goes through a single entry point: `engineEvaluate()` in `backend/src/services/autoModEngine.ts`. This consolidates the legacy word filter, the Redis spam detector, and the database-driven rule engine into one call so the WS handler never double-blocks.
+All content moderation on `chat:send` goes through a single entry point: `engineEvaluate()` in `backend/src/services/autoModEngine.ts`. This consolidates the AI classifier, the legacy word filter, the Redis spam detector, and the database-driven rule engine into one call so the WS handler never double-blocks.
+
+> **The AI classifier is the primary targeted-attack check.** When AI moderation is enabled, reachable, and enforcing, the hand-maintained keyword layers below (the legacy `word_filter` **and** `KEYWORD_PRESET` rules) are **skipped** — they run only as an offline fallback. In `shadow` mode they remain active while AI only records calibration data. Ordinary Fallout profanity and gameplay violence are outside the chat AI policy. Full detail: **[ai-moderation.md](ai-moderation.md)**.
 
 ## Evaluation Order
 
 `engineEvaluate(content, channelId, user)` runs checks in this sequence, short-circuiting on the first `BLOCK` match:
 
-1. **Staff exemption** — `isProtectedTarget(user.id)` is checked first. Moderators, admins, and the owner bypass ALL content moderation. (`autoModEngine.ts:336-343`)
+0. **Staff exemption** — `isProtectedTarget(user.id)` is checked first. Moderators, admins, and the owner bypass ALL content moderation. This runs **before** classification, so staff content is never transmitted to OpenAI.
 
-2. **Legacy word filter** — calls `filterContent(content, userId)` from `autoModService.ts`. Checks the hardcoded baseline denylist first, then the `word_filter` DB table.
+1. **AI classification** — calls `classifyContent()` from `aiModerationService.ts` (OpenAI Moderation API, `omni-moderation-latest`, 800 ms timeout). The verdict is computed once here and reused by the `AI_MODERATION` rule at step 4 — never a second API call. A `null` verdict means **degraded** and is never read as "clean".
 
-3. **Legacy spam detection** — calls `detectSpam(userId)` from `autoModService.ts`. Uses a Redis sorted-set sliding window.
+2. **Legacy word filter** — **fallback or shadow mode.** Calls `filterContent(content, userId)` from `autoModService.ts`. Checks the hardcoded chat baseline denylist first (target-gated), then the `word_filter` DB table (an explicit admin override).
+
+3. **Legacy spam detection** — calls `detectSpam(userId)` from `autoModService.ts`. Uses a Redis sorted-set sliding window. **Always runs** — the classifier has no concept of message rate.
 
 4. **AutoMod rules** — evaluates all enabled rows from `automod_rules` in order. Short-circuits on the first BLOCK action.
 
 Any match at step 4 writes an `automod_violations` row and an `audit_logs` row (both fire-and-forget).
+
+### What the AI supersedes, and what it does not
+
+| Layer | AI mode behavior |
+|---|---|
+| Legacy `word_filter` + baseline denylist (chat) | **skipped in enforce; active in shadow** |
+| `KEYWORD_PRESET` rules (`PROFANITY`/`SEXUAL_CONTENT`/`SLURS`) | **skipped in enforce; active in shadow** |
+| `KEYWORD` rules (admin-authored) | still run — a moderator's escape hatch for terms the classifier misses |
+| `SPAM`, `MENTION_SPAM`, `LINK` | still run — outside the classifier's remit |
+| Identifier denylist (`findProhibitedPhrase`) | still runs — the AI screen is **additive** there, not superseding |
 
 ## Unicode Canonicalization (bypass defense)
 
@@ -46,11 +60,24 @@ Baseline-denylist, `word_filter`, and name-blacklist regexes are compiled with t
 
 ## Legacy Word Filter (`autoModService.ts`)
 
-### Baseline Denylist
+### Baseline Denylists
 
-A hardcoded array of ~40 slurs and explicit terms compiled at startup as word-boundary regexes (`\bphrase\b`, case-insensitive, `u` flag) against the **canonical form** of each phrase (see [Unicode Canonicalization](#unicode-canonicalization-bypass-defense)). This list is checked before any DB query and cannot be disabled by admins. It also has a substring-match variant (`BASELINE_DENYLIST_NAMES`) used for identifiers like party names and usernames where slurs may appear without spaces.
+`autoModService.ts` keeps three hardcoded baseline lists:
 
-Source: `autoModService.ts:15-57`.
+- `BASELINE_CHAT_DENYLIST_PHRASES` — **unambiguous** hate speech / slurs plus a small set of severe abuse terms (`pedo`, `pedophile`, `rape`, `rapist`). Always blocks, in chat **and** in identifiers.
+- `TARGETED_ATTACK_DENYLIST_PHRASES` — ordinary profanity (`fuck`, `shit`, `bastard`, and related terms) blocks chat only when the message explicitly targets a person.
+- `CONTEXT_AMBIGUOUS_PHRASES` — terms that are slurs when aimed at a person but ordinary words in almost all game chat: `cracker`, `oreo`, `slant`, `redskin`, `ho`, `sissy`, `bitch`. These **do not block chat**, but they **do** block identifiers.
+- `BASELINE_IDENTIFIER_DENYLIST_PHRASES` — used by `findProhibitedPhrase()` for usernames / party names. Spreads in *both* lists above, then adds explicit profanity (`fuck`, `shit`, `cock`, …) that chat allows.
+
+**The governing policy: cussing is fine, targeting people is not.**
+
+Ordinary profanity (`fuck`, `shit`, `damn`, `ass`, `bastard`) is intentionally **not** in the chat baseline, so common cussing is never hard-blocked before the rule engine runs.
+
+Context-ambiguous terms were moved out of the chat baseline because word-boundary matching cannot distinguish `graham cracker` (a real Fallout food item), `the wall is slanted`, `redskin potatoes`, `heave ho`, or `this quest is a bitch` from a targeted insult — and hard-blocking them was the dominant source of false positives. Targeted harassment using those words is still actionable through reports and normal moderation; it is simply no longer auto-blocked on the word alone.
+
+> **Do not "simplify" `BASELINE_IDENTIFIER_DENYLIST_PHRASES` by dropping the `...CONTEXT_AMBIGUOUS_PHRASES` spread.** That spread is the only thing keeping those terms blocked in usernames and party names, where there is no innocent context. `tests/autoModService.test.js` has regression cases that fail if it is removed.
+
+Listed slur and hate-speech terms still block normally. This does not try to solve every deliberate slur-evasion variant.
 
 ### `word_filter` Table
 
@@ -61,7 +88,11 @@ Each entry has:
 - `is_regex` — if true, compiled via `compileUserRegex()` (ReDoS guards applied; max length 500 chars)
 - `test_mode` — if true, the match is logged to `audit_logs` as `auto_mod_test_match` but the message is NOT blocked
 
-`filterContent()` blocks on any non-test-mode match. `findProhibitedPhrase()` is a stricter variant for identifiers that blocks even on test-mode entries.
+`filterContent()` blocks on any non-test-mode match in this table. The rollout removes only the
+exact legacy literal rows `fuck`, `shit`, `bastard`, and `assh`; future rows are explicit
+moderator overrides and therefore remain context-free. Audit production rows if the goal is
+targeted attacks only. `findProhibitedPhrase()` is a stricter
+variant for identifiers that blocks even on test-mode entries.
 
 ### Spam Detection (Redis Sliding Window)
 
@@ -91,7 +122,8 @@ Rules are stored in the DB and cached in memory for 30 seconds (`RULES_CACHE_TTL
     "regex_patterns": ["\\b\\d{4}-\\d{4}\\b"],
     "allow_list": ["allowedterm"],
     "mention_total_limit": 5,               // for MENTION_SPAM
-    "presets": ["PROFANITY", "SLURS"]       // for KEYWORD_PRESET
+    "presets": ["SLURS"],                  // default seeded KEYWORD_PRESET
+    "require_target": true                  // default for chat preset fallback
   },
   "actions": [
     { "type": "BLOCK", "metadata": { "customMessage": "Not allowed." } },
@@ -108,8 +140,9 @@ Rules are stored in the DB and cached in memory for 30 seconds (`RULES_CACHE_TTL
 
 | Type | How it evaluates |
 |---|---|
-| `KEYWORD` | Matches `keyword_filter[]` (wildcard `*` → `.*`) and `regex_patterns[]`; skips if any `allow_list` entry matches |
-| `KEYWORD_PRESET` | Same matching as KEYWORD against the in-code `PRESET_LISTS` (`PROFANITY`, `SEXUAL_CONTENT`, `SLURS`) |
+| `AI_MODERATION` | Compares the step-1 OpenAI verdict against the targeted-attack category boundary and thresholds. Only a flagged, threshold-breaching category matches; below-threshold and non-target categories are ignored, with no alert-only violation. Harassment also requires an explicit target. Thresholds come from `moderation_settings`, or from `triggerMetadata.thresholds` for a per-rule override; broad categories in either source remain ineligible. Skipped entirely when the verdict is degraded. See [ai-moderation.md](ai-moderation.md). |
+| `KEYWORD` | Matches `keyword_filter[]` (wildcard `*` → `.*`) and `regex_patterns[]`; skips if any `allow_list` entry matches. **Always runs**, even while AI is healthy. This is an explicit moderator override and is intentionally context-free. |
+| `KEYWORD_PRESET` | Same matching as KEYWORD against the in-code `PRESET_LISTS` (`PROFANITY`, `SEXUAL_CONTENT`, `SLURS`). The default seeded flagged-words rule uses `SLURS` only; generic profanity and sexual-content presets require deliberate admin opt-in. **Skipped while the AI verdict is healthy.** In fallback mode it requires an explicit target unless `require_target: false` is set deliberately. |
 | `MENTION_SPAM` | Counts unique `@username` and `<@id>` mentions; triggers if count ≥ `mention_total_limit` |
 | `SPAM` | Re-uses the Redis window from step 2 (no duplicate check); effectively a no-op rule at step 4 since step 2 already handled it |
 | `LINK` | Finds `https?://` URLs; blocks unless the hostname matches an entry in `allow_list` |
@@ -142,11 +175,20 @@ Every triggered rule writes an `automod_violations` row:
   "userId": "...",
   "channelId": "...",
   "messageContent": "... the ORIGINAL message (capped at 4000 chars) — never the canon match form",
-  "matchedKeyword": "the keyword or regex that matched",
-  "matchedSubstr": "the actual matched substring",
-  "actionsTaken": [{ "type": "BLOCK", "success": true }]
+  "matchedKeyword": "the keyword, regex, or AI category that matched",
+  "matchedSubstr": "the actual matched substring, or the AI score comparison",
+  "actionsTaken": [{ "type": "BLOCK", "success": true }],
+
+  // AI_MODERATION rules only — NULL for every other trigger type
+  "aiCategories": { "hate": 0.91, "violence": 0.02, "...": 0.0 },
+  "aiMaxScore": 0.91
 }
 ```
+
+`aiMaxScore` is indexed descending (partial index, AI rows only) so the dashboard
+can sort the violation queue by severity — the gradation keyword rules never had.
+In shadow mode `actionsTaken` is `[{ "type": "SHADOW", "success": true }]` and no
+action is executed.
 
 An `audit_logs` row with `action = 'automod_violation'` is also written.
 
@@ -154,6 +196,8 @@ An `audit_logs` row with `action = 'automod_violation'` is also written.
 
 | Cache | Location | TTL | Invalidation |
 |---|---|---|---|
+| AI moderation settings | In-process memory | 60 seconds | `invalidateAiModerationCache()` after a settings PATCH |
+| AI verdicts | Redis (`aimod:v1:<sha256>`) | 1 hour | none — content-addressed by canonical text hash |
 | `automod_rules` | In-process memory | 30 seconds | `invalidateRulesCache()` after rule CRUD |
 | `word_filter` | In-process memory | 60 seconds | `resetCache()` after filter CRUD |
 | Spam settings | In-process memory | 60 seconds | `invalidateSettingsCache()` after settings change |

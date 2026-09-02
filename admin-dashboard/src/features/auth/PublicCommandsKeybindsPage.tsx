@@ -9,6 +9,7 @@
  */
 
 import React from 'react';
+import HudKeybindGuide from '../system/HudKeybindGuide';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 
@@ -59,22 +60,43 @@ interface CmdRow {
   note?: string;
 }
 
-const CHANNEL_CMDS: CmdRow[] = [
+// NOTE: these lists are user-facing documentation. The backend is the source of truth
+// (`commandService.ts` CHANNEL_SHORTCUTS + trigger branches) — keep them in sync.
+// Channel shortcuts are PUBLIC and relay to Discord; the party shortcuts below are private.
+export const CHANNEL_CMDS: CmdRow[] = [
   { trigger: '/g', args: '<message>', description: 'Send to General' },
   { trigger: '/t', args: '<message>', description: 'Send to Trading' },
   { trigger: '/e', args: '<message>', description: 'Send to Events' },
-  { trigger: '/r', args: '<message>', description: 'Send to Raids' },
+  { trigger: '/r', args: '<message>', description: 'Send to Raids', note: 'alias: /raid' },
   { trigger: '/i', args: '<message>', description: 'Send to Infests' },
 ];
 
-const FO76_CMDS: CmdRow[] = [
-  { trigger: '/serverstatus', description: 'Show Fallout 76 server status (up / down)' },
+export const PARTY_CMDS: CmdRow[] = [
+  { trigger: '/recent', args: '<message>', description: 'Send to your most recent party', note: 'alias: /rp' },
+  { trigger: '/p1', args: '<message>', description: 'Send to your 1st joined party (Party-tab order, left to right)' },
+  { trigger: '/p2', args: '<message>', description: 'Send to your 2nd joined party' },
+  { trigger: '/p3', args: '<message>', description: 'Send to your 3rd joined party' },
+];
+
+export const FO76_CMDS: CmdRow[] = [
+  { trigger: '/online', description: 'Show total users online in chat' },
+  { trigger: '/serverstatus', description: 'Show Fallout 76 server status (up / down)', note: 'alias: /server-status' },
   { trigger: '/nukecodes', args: '', description: 'Show this week\'s nuke launch codes (Alpha / Bravo / Charlie)', note: 'alias: /codes' },
+  { trigger: '/minerva', description: 'Show Minerva\'s current or next Big Sale — location, list number, and dates' },
   { trigger: '/wiki', args: '<name>', description: 'Look up a Fallout 76 item, weapon, creature, perk, or location' },
   { trigger: '/camp', args: '<item name>', description: 'Look up a CAMP item — budget cost, required plan, category' },
 ];
 
-const UTILITY_CMDS: CmdRow[] = [
+export const GIVEAWAY_CMDS: CmdRow[] = [
+  { trigger: '/giveaway start', args: '<item> [minutes]', description: 'Start a community item raffle (1–60 min, default 5)' },
+  { trigger: '/giveaway list', description: 'Show all active giveaways' },
+  { trigger: '/giveaway last', args: '[1-10]', description: 'Show results of the last giveaways (default 5)' },
+  { trigger: '/giveaway join', args: '<id>', description: 'Enter a giveaway by its short ID' },
+  { trigger: '/giveaway leave', args: '<id>', description: 'Leave a giveaway you entered' },
+  { trigger: '/giveaway stop', args: '<id>', description: 'Cancel your giveaway (creator or mod only)' },
+];
+
+export const UTILITY_CMDS: CmdRow[] = [
   { trigger: '/help', description: 'List all available commands in a private reply' },
   { trigger: '/report bug', args: '<description>', description: 'Report a bug to the dev team' },
   { trigger: '/report player', args: '<name + reason>', description: 'Report a player to moderators' },
@@ -132,6 +154,8 @@ export default function PublicCommandsKeybindsPage() {
       fontFamily: FONT, color: GOLD,
     }}>
 
+      <HudKeybindGuide variant="public" />
+
       {/* ── COMMANDS ───────────────────────────────────────────────────────── */}
 
       <h1 style={{ fontSize: '22px', fontWeight: 'bold', letterSpacing: '4px', marginBottom: '6px', textShadow: '0 0 10px rgba(200,168,64,0.4)' }}>
@@ -148,12 +172,21 @@ export default function PublicCommandsKeybindsPage() {
       </p>
       <CmdTable rows={CHANNEL_CMDS} />
 
+      <p style={sSection}>PARTY SHORTCUTS</p>
+      <p style={{ fontSize: '12px', color: MUTED, marginBottom: '10px' }}>
+        Private — only members of that party see the message. These never relay to Discord.
+      </p>
+      <CmdTable rows={PARTY_CMDS} />
+
       <p style={sSection}>FALLOUT 76 TOOLS</p>
       <p style={{ fontSize: '12px', color: MUTED, marginBottom: '10px' }}>
         Live data pulled directly from Bethesda's status endpoints and the Fallout Wiki / CAMP Database.
         Responses are private — only you see the result.
       </p>
       <CmdTable rows={FO76_CMDS} />
+
+      <p style={sSection}>GIVEAWAYS</p>
+      <CmdTable rows={GIVEAWAY_CMDS} />
 
       <p style={sSection}>UTILITY</p>
       <CmdTable rows={UTILITY_CMDS} />

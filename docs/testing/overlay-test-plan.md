@@ -10,6 +10,14 @@
 > public-mode lockdown RTL, bridge+onboarding core logic, shell-core helpers.
 > **What's next:** P1 main-process IPC handlers (register/relay/discord/keybinds/visibility),
 > stateful shell helpers (applyScale, tickIdle, navChannel), and E2E once the mock relay exists.
+>
+> **In-game HUD chat (chat.v1) — 2026-06-26:** the `FCMChatWidget.hx` pure-logic suite
+> (`fcm-chat-widget-logic.test.js`) is ✅ Done and runs in the `unit-vitest` matrix (see the table
+> below). Live in-game validation is **PASS on native Windows** (ZFE 0.9.9+, relay fixes #334/#335 —
+> send round-trips end-to-end) and **BLOCKED on Proton/Wine** by an upstream Zig TLS bug (#326), so
+> in-game send is validated manually on the Windows VM only. The SWF/transport layer remains
+> manual-test (no automated in-game harness); see
+> [../overlay/zfe/native-chat-relay/proton-status.md](../overlay/zfe/native-chat-relay/proton-status.md).
 
 This plan covers the four overlay-related modules:
 
@@ -33,6 +41,7 @@ This plan covers the four overlay-related modules:
 | Group 3 — `onboarding-core.ts` state machine | ✅ Done | `src/__tests__/onboarding-core.test.ts` |
 | Group 4 — `ChatOverlay.tsx` P0 pure helpers | ✅ Done | `src/features/chat/__tests__/chatOverlayHelpers.test.ts` |
 | Group 4 — `ChatOverlay.tsx` public-mode lockdown | ✅ Done | `src/features/chat/__tests__/publicModeLockdown.test.tsx` |
+| In-game HUD widget — `FCMChatWidget.hx` pure logic (normChannel, optimistic-echo dedup/expiry, send-error→message map, slash parse/consume, empty-feed notice priority) | ✅ Done | `__tests__/fcm-chat-widget-logic.test.js` (+ ported `fcm-chat-widget-logic.js`) — runs in the `cross-platform-overlay` leg of the `unit-vitest` CI matrix |
 | Group 1 P1 — main.js IPC handlers (register/relay/discord/keybinds/visibility) | ⏳ Backlog | — |
 | Group 2 P1 — shell.ts stateful (applyScale, tickIdle, navChannel, auth machine) | ⏳ Backlog | — |
 | Group 3 P1 — `ProxiedWebSocket` lifecycle, onboarding IPC/UI | ⏳ Backlog | — |
@@ -72,7 +81,7 @@ pipeline with zero extra config). Backend keeps Jest. Electron + browser E2E use
 | `resolveAppClientKey` precedence | main.js:632 | stateful | `vi.stubEnv` + `vi.mock('fs')`; env > backend/.env > ../.env > default; trimming | P0 |
 | `resolveAppVersion` (extract from IIFE) | main.js:256 | stateful | Extract `resolveAppVersion(fs,dir)`; csproj `<Version>` → package.json → '0.0.0' | P0 |
 | `canShowOverlay` / `isPrivileged` cartesian | main.js:435 | stateful | Make pure `canShowOverlay(state)`; exhaustive 4-input table (forceVisible/role/gameRunning/chatActive) | P0 |
-| `onGamePresenceChanged` hysteresis (PRESENCE_FLIP_SCANS=2) | main.js:544 | stateful | Extract to state-machine `{applyScan(found)}→{flipped,value}`; assert no flip on single differing scan, flip on 2 consecutive, candidate reset, userHidden clear on →running | P0 |
+| ~~`onGamePresenceChanged` hysteresis~~ ✅ DONE | overlay-core `nextPresenceState` | pure | Extracted to pure `nextPresenceState({found,gameRunning,candidate,stableCount,appearScans,disappearScans})`; tested in `overlay-core-visibility.test.js` (asymmetric on/off thresholds, failed-scan=null keeps state, consecutive-reset). | — |
 | `clampToWorkArea` clamping | main.js:795 | pure | Inject `screen`-like stub w/ fixed workArea; width/height MIN clamp, x/y defaults, edges never exceed | P0 |
 | `loadState`/`saveState` self-heal | main.js:644 | stateful | `vi.mock('fs')` + inject STATE_FILE; generates installToken+username, tolerates corrupt JSON→{}, merge-on-patch | P0 |
 | `migrateLegacyUserData` decision matrix | main.js:721 | stateful | Mock fs + synthetic 'Fallout Chat Mod' userData; legacy-real × current(missing/pristine/real); never overwrite real | P0 |
@@ -227,7 +236,7 @@ tests they enable** — otherwise the test depends on an electron mock or a full
 | **Move top-level side effects behind `init()`** (process.on handlers, `app.commandLine` switches, `STATE_FILE=app.getPath(...)`, APP_VERSION IIFE, ipcMain registrations, `app.whenReady`) | Importing the module under vitest without firing timers/handlers | HIGH — easy to drop a switch and change prod behavior. Guard with `if (require.main===module) init()`. |
 | Extract deps-free helpers: `stateHasRealData`, `isCfChallenge`, `isSinglePrintableChar`, `resolveAppVersion(fs,dir)`, `resolveAppClientKey(env,fs,dir)` | 5× P0 pure tests, zero electron mock | LOW |
 | Make `clampToWorkArea`, `desiredTopmost`, `canShowOverlay`, ignore-decision, `refreshShortcuts` active/overlayFocused calc **pure** (take state args, not module lets) | P0 gating tests | MED — must thread state through callers. |
-| Convert game-presence hysteresis to a state-machine object w/ injected callbacks | P0 hysteresis test (flip timing) | MED — module-level `let`s (`gameRunning`/`_presenceCandidate`/`_presenceStableCount`) must move into the object. |
+| ~~Convert game-presence hysteresis to a state-machine object~~ ✅ DONE — extracted the decision to the pure `overlayCore.nextPresenceState()` reducer (module `let`s stay in `onGamePresenceChanged`, which is now a thin wrapper) | — | — |
 | Inject `http` module + `sendToRenderer` + `loadState/saveState` into `registerForToken`/`startRelay`/`refreshDiscordStatus`/`identity:set-name` | All HTTP/IPC P1 tests with fakes | MED — they close over module globals + the `httpModule()` switch. |
 | Expose `mainWindow`, `relaySockets`, `currentKeybinds`, `_allBinds`, visibility flags via accessors/injection | window-driven tests against mock BrowserWindow | MED |
 | Factor `buildTrayTemplate(state)` pure builder | tray menu test | LOW |
@@ -310,11 +319,12 @@ start **non-required** in branch protection; promote once green-stable (~20 runs
 18. **Public website lockdown** — no auth + no shell → no composer/member panel/party browser/mod actions; authed WS never opened (no `ws://` upgrade).
 19. **Authed dashboard happy path** — login as member → WS connects, channels load, send in General, appears with correct [Trade]/[Discord]/[Server] tags.
 20. **Mod actions visible only to mods** — moderator right-click shows mute/delete; member does not.
-21. **Reconnect resilience** — kill WS → retries with growing (≤16s) jittered backoff, resubscribes party chat without dup (ID dedup).
-22. **Block flow** — Settings → block via search → messages disappear; unblock → reappear after refresh.
-23. **Auth state machine via mocked IPC** — authenticated/discord_required/error(429)/stuck-25s → correct screen; second authenticated same identity does NOT remount, changed identity DOES.
-24. **No auto-update artifacts** — packaged build contains no `updater.js`, no `updater-ui.ts`, no `electron-updater` dep, no `app-update.yml`, no `latest*.yml` (asserted by `no-autoupdate.test.js`).
-25. **chat-smoke repointed to mock** — `/api/health` 200, `/api/channels`→`{data:[]}`, `/api/users` requires `X-App-Client-Key` (403), unknown discord token→`linked:false`.
+21. **Self-edit ownership and Discord sync** — an authenticated user can right-click and edit their own channel, party, and PM message; another user's message, bot/system/server message, and public mode do not show Edit. A bridged channel edit mirrors the bot copy in Discord, and a human Discord `messageUpdate` patches the overlay row.
+22. **Reconnect resilience** — kill WS → retries with growing (≤16s) jittered backoff, resubscribes party chat without dup (ID dedup).
+23. **Block flow** — Settings → block via search → messages disappear; unblock → reappear after refresh.
+24. **Auth state machine via mocked IPC** — authenticated/discord_required/error(429)/stuck-25s → correct screen; second authenticated same identity does NOT remount, changed identity DOES.
+25. **No auto-update artifacts** — packaged build contains no `updater.js`, no `updater-ui.ts`, no `electron-updater` dep, no `app-update.yml`, no `latest*.yml` (asserted by `no-autoupdate.test.js`).
+26. **chat-smoke repointed to mock** — `/api/health` 200, `/api/channels`→`{data:[]}`, `/api/users` requires `X-App-Client-Key` (403), unknown discord token→`linked:false`.
 
 ---
 

@@ -129,6 +129,69 @@ export function prettyAccel(a: string, isMac: boolean): string {
     .replace(/\+/g, ' + ');
 }
 
+/**
+ * Fallout 76 default gameplay/UI keys. Binding the overlay to one of these as a
+ * BARE (modifier-less) key means pressing it in-game triggers BOTH the overlay
+ * action AND the game (issue #136: the reporter bound Tab=nextChannel, so every
+ * Pip-Boy open also popped the overlay). The editor WARNS — it does not block — so
+ * a user who really wants it can still bind it. The value is a short human label of
+ * what the game uses the key for, used to build the warning. Keys are in Electron
+ * accelerator form (single letters upper-cased; 'Space'/'Tab' named) so they match
+ * accelFromEvent output exactly.
+ */
+export const GAME_RESERVED_KEYS: Record<string, string> = {
+  Tab: 'the Pip-Boy',
+  Space: 'jump',
+  E: 'use / interact',
+  R: 'reload',
+  Q: 'quick-action',
+  F: 'melee / take-all',
+  C: 'crouch',
+  V: 'melee bash',
+  T: 'voice / push-to-talk',
+  // WASD movement
+  W: 'move forward',
+  A: 'move left',
+  S: 'move back',
+  D: 'move right',
+};
+
+/**
+ * If `accel` is a bare FO76 gameplay key, return a human warning string; otherwise
+ * null. A modifier combo (Ctrl/Alt/Shift/Cmd/Super + key) is never reserved — the
+ * game won't see it — so those always return null. See GAME_RESERVED_KEYS / #136.
+ */
+export function gameReservedWarning(accel: string | null | undefined): string | null {
+  if (!accel || typeof accel !== 'string') return null;
+  // Any modifier-prefixed combo is safe (game never receives Ctrl/Alt/Shift+key).
+  if (/^(CommandOrControl|Ctrl|Control|Cmd|Command|Shift|Alt|Option|Super|Meta|Hyper)\+/i.test(accel)) return null;
+  const use = GAME_RESERVED_KEYS[accel];
+  if (!use) return null;
+  return `Fallout 76 uses ${accel} for ${use}. Binding it will also trigger the game in-game. Pick another key or add a modifier (e.g. Alt+${accel}).`;
+}
+
+/**
+ * Non-destructive keybind reset (issue #136 §3.1). The one-time reset must NOT wipe
+ * a user's customised binds. It returns a full keybind map that starts from the
+ * defaults and then keeps every bind the user actually SET (a non-empty string),
+ * filling only the unset/blank ones. So a reinstall — or a KEYBIND_RESET_VERSION
+ * bump that adds a new default action — never clobbers a working config. Inputs are
+ * not mutated; non-string user values are treated as unset.
+ */
+export function mergeKeybindDefaults<T extends Record<string, string>>(
+  current: Partial<T> | null | undefined,
+  defaults: T,
+): T {
+  const out: T = { ...defaults };
+  if (current && typeof current === 'object') {
+    for (const k of Object.keys(out) as (keyof T)[]) {
+      const v = current[k];
+      if (typeof v === 'string' && v.trim() !== '') out[k] = v as T[keyof T];
+    }
+  }
+  return out;
+}
+
 // ── Channel normalization ──────────────────────────────────────────────────────
 
 /**
@@ -194,6 +257,18 @@ export const IDLE_COLLAPSE_SECONDS_MIN = 5;
 export const IDLE_COLLAPSE_SECONDS_MAX = 120;
 export const IDLE_COLLAPSE_SECONDS_DEFAULT = 25;
 
+// Idle auto-hide modes are shell-only preferences. The default preserves the
+// full mode is the default; the legacy two-row header collapse remains an
+// explicit choice. Full mode hides the renderer and lets the native shell shrink
+// to a one-pixel strip without disconnecting the relay.
+export type AutoHideMode = 'subtabs' | 'full';
+export const AUTO_HIDE_MODE_DEFAULT: AutoHideMode = 'full';
+export const FULL_AUTO_HIDE_HEIGHT = 1;
+
+export function normalizeAutoHideMode(value: unknown): AutoHideMode {
+  return value === 'full' || value === 'subtabs' ? value : AUTO_HIDE_MODE_DEFAULT;
+}
+
 /**
  * Clamp/sanitise the idle-collapse delay (seconds). Non-finite or out-of-range
  * values fall back to the default (NaN/undefined) or the nearest bound.
@@ -202,6 +277,16 @@ export function clampIdleCollapseSeconds(seconds: number | undefined | null): nu
   const n = typeof seconds === 'number' ? seconds : NaN;
   if (!Number.isFinite(n)) return IDLE_COLLAPSE_SECONDS_DEFAULT;
   return Math.max(IDLE_COLLAPSE_SECONDS_MIN, Math.min(IDLE_COLLAPSE_SECONDS_MAX, Math.round(n)));
+}
+
+/**
+ * True when an overlay:visibility update should reset the idle-collapse timer.
+ * Only `true` (shown) resets. The idle tick keeps running while hidden, so a
+ * long tab-away would otherwise re-show already collapsed. `false` must not
+ * call markActivity, which would send overlay:expand while hiding.
+ */
+export function shouldResetIdleOnVisibility(isVisible: boolean): boolean {
+  return isVisible === true;
 }
 
 // ── Idle-collapse header-strip height math ──────────────────────────────────────
@@ -235,6 +320,25 @@ export function resolveCollapsedHeight(o: CollapsedHeightInput): number {
   return Math.round(o.barH + Math.ceil(headerVisual)) + 1;
 }
 
+// Minimal element shape for the reveal helper — just the classList.remove we use.
+// HTMLElement satisfies this, so shell.ts passes real elements unchanged, and the
+// helper stays DOM-free for unit tests.
+export interface ClassListTarget {
+  classList: { remove(token: string): void };
+}
+// Fully reveal collapsed content: drop the root 'collapsed' class AND clear
+// 'fcm-collapsed-hidden' from every element hidden during collapse. Both expand
+// paths (setCollapsed's deferred reveal and the force-expand/Insert handler) must
+// funnel through this so they can't diverge — the divergence was #327, where the
+// force-expand path removed 'collapsed' but left the body/input/footer hidden.
+export function revealCollapsedElements(
+  root: ClassListTarget | null,
+  hidden: Iterable<ClassListTarget>,
+): void {
+  root?.classList.remove('collapsed');
+  for (const el of hidden) el.classList.remove('fcm-collapsed-hidden');
+}
+
 // ── Shell → React-component settings mirror ─────────────────────────────────────
 // The Electron shell owns the full ShellSettings, but the shared ChatOverlay
 // component reads a SUBSET from its own localStorage key (WEB_SETTINGS_KEY). The
@@ -247,7 +351,13 @@ export interface WebMirrorInput {
   showHints: boolean;
   showTimestamps: boolean;
   timestampFormat: '12h' | '24h';
+  disableNameMotion: boolean;
   channelFilters: string[];
+  mutedPartyIds?: string[];
+  notifyKeywords: string[];
+  showTypingWhenCollapsed: boolean;
+  notifySoundEnabled: boolean;
+  notifySoundVolume: number;
 }
 export interface WebMirrorSettings {
   themeId: string;
@@ -257,7 +367,13 @@ export interface WebMirrorSettings {
   showHints: boolean;
   showTimestamps: boolean;
   timestampFormat: '12h' | '24h';
+  disableNameMotion: boolean;
   channelFilters: string[];
+  mutedPartyIds: string[];
+  notifyKeywords: string[];
+  showTypingWhenCollapsed: boolean;
+  notifySoundEnabled: boolean;
+  notifySoundVolume: number;
 }
 export function shellToWebSettings(s: WebMirrorInput): WebMirrorSettings {
   return {
@@ -272,9 +388,31 @@ export function shellToWebSettings(s: WebMirrorInput): WebMirrorSettings {
     showHints: s.showHints,
     showTimestamps: s.showTimestamps,
     timestampFormat: s.timestampFormat,
+    // Viewer opt-out for animated supporter name effects. MUST be carried here — a
+    // field that exists in ShellSettings but is missing from the mirror persists fine
+    // and never reaches ChatOverlay, which is the classic silent failure for this
+    // pattern (see the mirror-completeness test below).
+    disableNameMotion: s.disableNameMotion,
     // Hidden-channel names — the component filters these out of the feed and
     // per-channel views (case-insensitive). Copied so the array can't alias.
     channelFilters: Array.isArray(s.channelFilters) ? s.channelFilters.slice() : [],
+    // Moderator-only party IDs muted from the aggregate General/feed. Keep a
+    // defensive copy so shell and renderer state cannot alias one another.
+    mutedPartyIds: Array.isArray(s.mutedPartyIds) ? s.mutedPartyIds.slice() : [],
+    // Words that highlight a message like an @mention of you (#422). Copied so
+    // the array can't alias back into shell state.
+    notifyKeywords: Array.isArray(s.notifyKeywords) ? s.notifyKeywords.slice() : [],
+    // Keep the typing indicator in the tab strip while collapsed (#420).
+    // Opt-in: `=== true` so a MISSING key (settings persisted before this
+    // existed) resolves to false and matches the default. Using `!== false`
+    // here would silently switch the feature ON for every existing install.
+    showTypingWhenCollapsed: s.showTypingWhenCollapsed === true,
+    // Opt-in like the typing indicator: a MISSING key must read as off, so
+    // existing installs never start making noise after an update (#437).
+    notifySoundEnabled: s.notifySoundEnabled === true,
+    notifySoundVolume: typeof s.notifySoundVolume === 'number'
+      ? Math.max(0, Math.min(1, s.notifySoundVolume))
+      : 0.5,
   };
 }
 
@@ -381,6 +519,58 @@ export function isDragTarget(
     if (el.style.webkitAppRegion === 'drag') return true;
 
     el = el.parentElement;
+  }
+  return false;
+}
+
+// ── Text-entry Escape handling ────────────────────────────────────────────────
+
+/** Minimal element shape walked by shouldExitTextEntryOnEscape. */
+export interface TextEntryTargetEl {
+  tagName?: string;
+  isContentEditable?: boolean;
+  id?: string;
+  parentElement?: TextEntryTargetEl | null;
+}
+
+/** The subset of a DOM KeyboardEvent needed for text-entry Escape decisions. */
+export interface TextEntryEscapeEvent {
+  key: string;
+  ctrlKey?: boolean;
+  metaKey?: boolean;
+  altKey?: boolean;
+  shiftKey?: boolean;
+  defaultPrevented?: boolean;
+  target?: unknown;
+}
+
+function asTextEntryTargetEl(value: unknown): TextEntryTargetEl | null {
+  if (!value || typeof value !== 'object') return null;
+  const el = value as TextEntryTargetEl;
+  if (typeof el.tagName !== 'string' && typeof el.id !== 'string' && !('parentElement' in el)) return null;
+  return el;
+}
+
+/**
+ * Returns true only for an unmodified Escape keydown that originated from an
+ * editable chat input inside the overlay host. This intentionally stays
+ * renderer-local; Escape must never be registered as an Electron globalShortcut.
+ */
+export function shouldExitTextEntryOnEscape(e: TextEntryEscapeEvent): boolean {
+  if (e.key !== 'Escape') return false;
+  if (e.defaultPrevented) return false;
+  if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) return false;
+
+  let el = asTextEntryTargetEl(e.target);
+  let sawEditable = false;
+  while (el) {
+    const tag = (el.tagName || '').toUpperCase();
+    if (tag === 'TEXTAREA' || tag === 'INPUT' || el.isContentEditable === true) {
+      sawEditable = true;
+    }
+    if (el.id === 'shell-settings-backdrop' || el.id === 'shell-onboarding-backdrop') return false;
+    if (el.id === 'shell-overlay-host') return sawEditable;
+    el = asTextEntryTargetEl(el.parentElement);
   }
   return false;
 }

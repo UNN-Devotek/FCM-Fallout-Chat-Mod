@@ -1,148 +1,282 @@
-# FCMChatWidget — Build & Install Guide
+# FCMChatWidget build, install, and verification
 
-## What this builds
+> **Widget version:** 2.10.28. This is the optional in-game HUD-mod track. It is
+> never installed or modified by the desktop overlay.
 
-`FCMChatWidget.swf` — a HUDModLoader widget that adds an interactive amber-themed
-chat UI to Fallout 76's HUD. It receives the FCM community feed (same socket as
-FCMBridge) and lets the player send messages using the HUDModLoader text-entry API.
+## What it does
 
-> **Untested caveat:** The `SharedHUDTools.TextEdit` / `FormatTextEdit` input path
-> has not yet been tested in-game. Bridge discovery, receive, and send protocol are
-> all proven by FCMBridge and the hudmenu-chat patch. The SharedHUDTools call path
-> is architecturally new for this project. See "Known gaps" below.
+`FCMChatWidget.ba2` contains `interface/FCMChatWidget.swf`, a HUDModLoader child
+widget. It calls ZFE's sanctioned `chat.v1` API for authenticated community chat.
+It only uses HUD UI data that Fallout 76 already exposes to its HUD; it does not
+read game memory, inject code, alter game state, or scan local ports/networks.
+Message timestamps are not displayed in the in-game feed; legacy timestamp settings are ignored.
 
----
+The widget's community tabs are deliberately a **single static text strip**. They
+are navigated with the configured control-map actions and slash commands; do not
+add HUDButton instances over that strip. Doing so creates the overlapping labels
+that v2.9.2 removed.
 
-## Prerequisites
+The `SERVER` room uses an authenticated relay session. The widget sends a bounded
+nearby-player roster control from HUD UI data; the backend derives a short-lived
+room from it. New controls use printable `FCMCTL/1/*` framing; the relay retains
+legacy NUL framing for deployed widgets. There is no client-side relay-control HMAC
+or shared secret in the distributed SWF. `worldId` controls are a guarded
+compatibility fallback.
 
-| Tool | Version | How to get |
-|------|---------|-----------|
-| Haxe | 4.3+ | `scoop install haxe` (Windows) or haxe.org |
-| Python 3 | any | for the mandatory SWF version-byte patch |
-| HUDModLoader | latest | Nexus — required at runtime |
-| ZFE (dxgi.dll + zfe.ini) | latest | required at runtime for socket |
-| ffdec (JPEXS) | 21.0.5+ | optional — for SWF inspection only |
+On every widget initialization, v2.10.1 sends the authenticated `FCMCTL/1/RESYNC`
+control. This restores static-feed history even if HUDModLoader recreated the SWF while
+ZFE kept its native subscriber alive. Server-room history waits for the next confirmed
+roster/world bind, so history from the previous world cannot leak into the new one.
 
----
+The widget resolves the sender identity from HUD-published `AccountInfoData.name`, which is the
+public Fallout/Bethesda account handle other players see. Punctuation is preserved.
+`PlayerListData` and `CharacterInfoData` expose character labels and cannot satisfy the relay
+identity gate. Because account data may be populated late, the widget waits and retries before its
+first relay handshake rather than connecting with `Wanderer` or a character-name substitute. Once
+connected, later HUD reads update local identity state only; they never issue a second native
+`chat.v1.connect`, and empty reads do not erase a known name.
 
-## Build steps
+The HUD deliberately renders the server-validated channel and identity tags only. Supporter-star
+metadata may still arrive in the transport for shared relay compatibility, but the HUD widget does
+not render a glyph, bitmap, HTML image, or substitution token. The former embedded supporter-star
+renderer source and image catalog have been removed from the build tree. This prevents Fallout 76's missing
+star glyph and GFx image behavior from producing tofu blocks. Feed paragraph leading is zero, and
+the feed keeps only a 4px safety gap above the top-level HUDTools input so rows stay compact while
+new content remains above the input field.
+After a successful send, one deferred poll fetches the authoritative live echo immediately;
+ordinary background polling remains controlled by `pollMs`.
 
-Run from the `game-mods/FCMBridge/hudmodloader-chat/` directory.
+ZFE's native `chat.v1` bridge filters unknown JSON members before the SWF receives an event. The
+v2.10.28 widget therefore reads the validated `tag` and transport envelope from an
+`FCMHUD/1;...` envelope carried in the existing known `targetUserId` field. For ordinary channel
+chat this field is an empty transport slot, not a real recipient. The relay only emits the
+envelope to v2.10.16+ clients; older BA2 files receive no transport data. Raw relay consumers
+still receive the additive fields described in the protocol spec.
 
-### 1. Compile
+## Requirements
 
-```bash
-# Windows (Scoop Haxe path — adjust if installed elsewhere)
-/mnt/c/Users/<YourName>/scoop/shims/haxe.exe build.hxml
+| Component | Requirement |
+| --- | --- |
+| Haxe | 4.3+ |
+| Python | 3 (stdlib only) |
+| HUDModLoader | installed by the user |
+| ZFE | 0.9.9+ with `zfe-chat-online-v1` capability |
+| Fallout 76 | native Windows or Proton/Wine installation with the current ZFE chat.v1 support; do not treat this as a requirement for the desktop overlay |
 
-# Or on Linux with system Haxe
-haxe build.hxml
+## Configuration and install layout
+
+Install the opt-in mod assets into the Fallout 76 `Data` directory. The recommended
+distribution is the target-specific ZIP produced by `package.py`; it includes the
+BA2, both configuration files, an append-only HUDModLoader snippet, `INSTALL.txt`,
+and `HUDMODLOADER-MENU.txt`.
+It deliberately does not include a replacement `Data/hudmodloader.ini`.
+
+```text
+Data/FCMChatWidget.ba2
+Data/FCMChat.ini
+Data/ZFE/TextChat/fragments/FCMChatWidget.ini
+FCMChatWidget.hudmodloader.ini       # root-level append snippet, not Data/hudmodloader.ini
+Documents/My Games/Fallout 76/Fallout76Custom.ini
 ```
 
-This produces `FCMChatWidget.swf`.
+After extracting the package, append `FCMChatWidget` exactly once to the user's
+existing `Data/hudmodloader.ini`. Preserve all other widget entries. Append
+`FCMChatWidget.ba2` to the existing `sResourceArchive2List` value in
+`Fallout76Custom.ini`; do not replace the user's BA2 list.
 
-### 2. Patch the SWF version byte (MANDATORY)
-
-Haxe writes SWF version byte 43 (Flash Player 32 in one encoding). FO76's Scaleform
-expects version byte 32. Without this patch the game ignores or crashes on the SWF.
-
-```bash
-python3 -c "
-with open('FCMChatWidget.swf','r+b') as f:
-    d = bytearray(f.read()); d[3]=32; f.seek(0); f.write(d)
-"
-```
-
-### 3. Copy the SWF
-
-HUDModLoader loads SWFs from the path listed in `hudmodloader.ini`. Default path
-matches what ships in the FCMBridge BA2:
-
-```
-Data/MCM/Config/FCMBridge/hudmodloader-chat/FCMChatWidget.swf
-```
-
-On Linux/WSL2:
-
-```bash
-cp FCMChatWidget.swf \
-   "/mnt/d/SteamLibrary/steamapps/common/Fallout76/Data/MCM/Config/FCMBridge/hudmodloader-chat/FCMChatWidget.swf"
-```
-
-Create the directory first if it does not exist:
-
-```bash
-mkdir -p "/mnt/d/SteamLibrary/steamapps/common/Fallout76/Data/MCM/Config/FCMBridge/hudmodloader-chat/"
-```
-
-### 4. Copy the config file
-
-```bash
-cp FCMChat.ini \
-   "/mnt/d/SteamLibrary/steamapps/common/Fallout76/Data/FCMChat.ini"
-```
-
-The widget loads `../FCMChat.ini` relative to the SWF, which resolves to
-`Data/FCMChat.ini`. Edit x/y/width/height/fontSize/openKey/channel to taste.
-
-### 5. Add to hudmodloader.ini
-
-Append the entry from `hudmodloader.ini` in this directory to the game's
-`Data/hudmodloader.ini`. FCMChatWidget should appear **after** FCMBridge so it
-renders on top:
+`Fallout76Custom.ini` needs the archive listed with HUDModLoader, for example:
 
 ```ini
-[FCMChatWidget]
-file=Data/MCM/Config/FCMBridge/hudmodloader-chat/FCMChatWidget.swf
-reloadable=true
+[Archive]
+sResourceArchive2List=HUDModLoader.ba2,FCMChatWidget.ba2
 ```
 
-### 6. Launch the game
+The shipped fragment uses `OpenChatKey=INSERT` and the production endpoint by
+default. The endpoint is **always** `/relay`,
+not `/zfe-relay`. Local and hosted-dev users override the exact endpoint key in
+`Data/configuration/zfe.ini`:
 
-Boot Fallout 76 with HUDModLoader active. The widget should appear at startup.
+```ini
+[TextChat]
+Endpoint=wss://dev.falloutchatmod.com/relay
+```
 
----
+The included `FCMChat.ini` controls position, colors, size, polling cadence and
+key bindings. Its open-key setting is separate from ZFE's authoritative
+`OpenChatKey`; keep both settings aligned. ZFE reads Text Chat fragments at game
+startup, so restart Fallout 76 after replacing the BA2 or fragment; hot-reloading
+the widget cannot reload native relay configuration.
 
-## Verifying it loaded
+HUDModLoader's F11 menu exposes **FCM → Customize → Reset all settings**. The action
+restores the `FcmConfig` defaults live, saves them in vendor-scoped ZFE storage
+(`FCMChatWidget/settings.ini`), and retains the environment-owned link URL. The generated ZIP
+includes `HUDMODLOADER-MENU.txt` with the same menu and input steps. Press **F11** to open the
+menu, use **FCM → Customize...** for appearance/settings, and **FCM → Scroll to newest** for the
+feed. The loader reload control applies live widget changes; replacing the BA2 or ZFE fragment
+requires exiting and restarting Fallout 76.
 
-1. Press **F12** in-game to open the HUDTools menu.
-2. FCMChatWidget should appear in the widget list marked "reloadable".
-3. Use the HUDTools reload button to hot-reload after a SWF change (no game restart needed).
-4. Check `%LocalAppData%\zfe.log` for lines tagged `[FCMChatWidget]` — they appear as
-   `Mod API [FCMChatWidget]` entries from `zfeLog()`.
-5. Press `~` (tilde) to open the chat input. Type a message and press Enter.
-6. Watch `backend/hud-diag.log` on the server for `HELLO-ACCEPTED` and `SEND ok=true` lines.
+### Target-specific packages
 
----
+Do not assemble a DEV package by copying the production INIs. The package helper
+stamps both environment-owned values together: the relay endpoint and the account
+link host. Run it from this directory after building `FCMChatWidget.ba2`:
 
-## Packaging into FCMBridge.ba2
+```bash
+python3 package.py --target dev --output /tmp/FCMChatWidget-dev.zip
+python3 test_package.py
+```
 
-If you want to distribute the widget inside the FCMBridge BA2 rather than as a
-loose file:
+Use `--target prod` for production. The helper refuses to package a stale BA2
+whose embedded version does not match `FCMChatWidget.hx`. Each generated archive contains only its
+target's endpoint and account-link details. Never copy a configuration file
+between targets. `INSTALL.txt` in the generated archive repeats the matching
+URL and installation steps, and `FCMChatWidget.version.txt` records the embedded
+widget version. The output can be regenerated at any time from the current
+`FCMChatWidget.hx` version:
 
-1. The BA2 swapping toolchain lives in `game-mods/FCMBridge/tools/`.
-2. Add `FCMChatWidget.swf` and `FCMChat.ini` as new records using the same
-   GNRL packing approach documented in `hudmenu-chat/BUILD.md`.
-3. The loose-file path (`Data/MCM/Config/…`) is reliable for HUDModLoader widgets;
-   the BA2 path is optional but avoids loose-file loading quirks.
+```bash
+python3 package.py --print-version
+python3 package.py --target prod --output "/tmp/ZFE FCM HUD Mod-$(python3 package.py --print-version) (PROD).zip"
+```
 
----
+## Input-path acceptance
 
-## Known gaps / follow-ups
+The current Windows package tries ZFE native input lazily when Insert opens the editor. It clears
+and verifies the native buffer immediately after `setChatInputActive("true")`; the startup
+activation probe is intentionally absent because some supported Windows/ZFE builds expose that
+bare payload as literal text. If activation, cleanup, or the engine edit lock is unsupported, the
+widget disables native input for the session and uses `SharedHUDTools.TextEdit`. A package is not
+acceptable unless Insert opens an editable field, typing `hello` visibly becomes `hello`, Escape
+cancels, and Enter sends the complete text.
 
-- **SharedHUDTools.TextEdit untested in-game.** The call goes through `Reflect`
-  to avoid a compile-time class reference. If HUDModLoader's `SharedHUDTools` class
-  exposes `TextEdit` and `FormatTextEdit` under different names, update
-  `FCMChatWidget.hx` accordingly after inspecting a decompiled HUDModLoader SWF
-  with ffdec.
-- **Scroll keybind.** `scrollUp()` / `scrollDown()` / `scrollToBottom()` are
-  implemented but no HUDModUserEvent is wired to them yet. Wire via `onUserEvent`
-  once the best control-map action is confirmed (e.g. `"PipBoy"` held for scroll).
-- **Identity.** BSUIDataManager `AccountInfoData` / `CharacterInfoData` is read
-  lazily on first send. If the data isn't populated yet at that moment the identity
-  fields will be empty strings — the backend auto-provisions. Confirm timing in-game.
-- **Channel selector.** Only one channel (`FCMChat.ini channel=`) is supported.
-  Multi-channel tab UI is a future iteration.
-- **Pending-echo dedup.** The local echo record uses `PENDING_HEX` color to dim it.
-  When the server broadcasts the real record back, both appear. Dedup (match
-  user+content, replace pending) is a follow-up.
+## Build the archive
+
+Run from this directory.
+
+```bash
+haxe test-config.hxml
+haxe build.hxml
+python3 - <<'PY'
+import struct, zlib
+path = 'FCMChatWidget.swf'
+raw = open(path, 'rb').read()
+if raw[:3] == b'CWS':
+    body = zlib.decompress(raw[8:])
+    raw = bytearray(b'FWS' + raw[3:4] + struct.pack('<I', 8 + len(body)) + body)
+else:
+    raw = bytearray(raw)
+raw[3] = 32
+open(path, 'wb').write(raw)
+PY
+python3 ../hudmenu-chat/ba2tool.py create FCMChatWidget.ba2 \
+  interface/FCMChatWidget.swf=FCMChatWidget.swf
+```
+
+The Scaleform artifact must have `FWS` bytes and SWF version 32. Verify the BA2
+contains the same SWF before distributing it.
+
+## Required checks
+
+```bash
+haxe test-config.hxml
+haxe test-identity.hxml
+python3 ../hudmenu-chat/test_anchors.py
+cd ../../../cross-platform-overlay
+npm run test:unit -- --run __tests__/fcm-chat-widget-logic.test.js
+cd ../backend
+npm run build
+npm test -- --runTestsByPath tests/relayHandler.test.js
+```
+
+The source-level anchor test prevents the tab-renderer regression, rejects a
+compiled relay-control HMAC, and ensures release diagnostics do not log chat text
+or relay identities. The JavaScript test covers JSON event boundaries,
+including braces and escaped quotes in message bodies. Backend tests cover relay
+availability, authenticated controls, validation, and roster membership.
+
+## Production rollout
+
+The backend refuses `/relay` in production unless
+`RELAY_PRODUCTION_ENABLED=true`. It defaults to `false`; setting the value is an
+explicit deployment action, not part of building this BA2. Before enabling it,
+deploy the matching backend, run its relay tests, and perform an authenticated
+WebSocket handshake against the production endpoint. If that handshake fails,
+leave the flag off and do not distribute a production-configured build.
+
+## Hosted-dev tester handoff (verified 2026-07-19)
+
+The hosted-dev stack tracks `dev` at `dev.falloutchatmod.com` and its direct
+relay endpoint. The relay accepts both control formats during the transition.
+Current widgets emit printable `FCMCTL/1/*` frames; legacy NUL-framed controls
+remain accepted for older installations. A player with an older build can obtain
+the `SERVER` tab after reconnecting and the next roster update.
+
+The relay must acknowledge every accepted control with a non-empty synthetic
+`messageId`; an empty ID violates ZFE's send-response contract and is surfaced to
+the widget as `relay_rejected`, leaving `SERVER` hidden even though membership was
+updated successfully.
+
+Copy the matching BA2 into `Fallout 76/Data` only after Fallout 76 has fully
+exited, then restart the game so ZFE reloads the archive and fragment. Never
+overwrite an in-use BA2.
+
+HUDModLoader's upstream menu hotkey is **F11**, outside the Pip-Boy. F12 is the
+game's `DiagnosticSnapshot` action and is not a reliable route to the loader menu.
+
+### Staff moderation commands
+
+The HUD derives moderation availability from `chat.v1.getAuthState`; only a linked Discord
+`moderator`, `admin`, or `owner` sees a `[#XXXXXXXX]` reference beside visible messages and the
+**FCM → Moderation commands** F11 menu item. Enter an exact visible player name for a quick action,
+or quote a multi-word name. The HUD resolves that local display-name match to the immutable relay
+message and account IDs. If two visible accounts have the same name, it refuses the action and you
+must use the `[#XXXXXXXX]` reference instead.
+
+Open chat and enter one of the following, supplying a non-empty reason for every action:
+
+```text
+/mod Alice mute <minutes> <reason>
+/mod "Alice Smith" kick <reason>
+/mod #XXXXXXXX delete <reason>
+/mod #XXXXXXXX kick <reason>
+/mod #XXXXXXXX mute <minutes> <reason>
+/mod #XXXXXXXX unmute <reason>
+/mod #XXXXXXXX ban <minutes|permanent> <reason>
+/mod #XXXXXXXX unban <reason>
+```
+
+`mute` and temporary `ban` accept 1–43,200 minutes (30 days). `ban` requires an explicit duration
+or `permanent`, preventing an accidental permanent ban. Slow mode deliberately has no HUD command:
+FCM has no per-channel slow-mode primitive. The relay repeats role, target, reason, and protected-
+staff validation on every request; the HUD permission is only a visibility hint.
+
+## In-game acceptance checklist
+
+1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.10.28`. If
+   `AccountInfoData` is late, the widget waits and retries. The sender label and a newly sent
+   message use the exact public Fallout 76 account handle, including punctuation; neither
+   `Wanderer` nor the local character name is used for the relay handshake.
+2. The tab row contains one label for each visible channel—no boxed duplicate labels.
+3. Switch channels, join/leave a world, and switch again; the tab row remains single-rendered.
+4. Send a body containing `{`, `}`, quotes, and backslashes; later events still render.
+5. Temporarily disconnect the relay. After three failed polls the widget shows reconnecting,
+   then reconnects once the relay returns.
+6. Confirm `SERVER` remains hidden until the relay acknowledges the printable roster/world control,
+   then remains isolated to its derived room while static channels still work. Change worlds and confirm
+   static history returns while only the newly bound server-room history appears.
+7. While typing, confirm the native or fallback editor has only one visible text renderer; type
+   `hello` and confirm the complete buffer remains visible; game movement/actions are locked;
+   Page Down/Page Up switch channels without closing the input or losing its draft; Enter/Esc
+   restore game input.
+8. Outside the Pip-Boy, press F11 and confirm the HUDModLoader menu opens and lists FCMChatWidget.
+9. Open **FCM → Customize → Reset all settings**; confirm the default size, position, opacity,
+   amber theme, and auto-hide behavior return immediately and remain after restarting the game.
+10. On the DEV relay, sign in with a linked moderator account. Confirm staff references and
+    **FCM → Moderation commands** appear; submit actions against disposable test accounts by exact
+    visible name (including a quoted multi-word name). Verify a duplicate visible name is rejected
+    until its `[#XXXXXXXX]` reference is used. Submit delete, kick, mute, unmute, temporary ban,
+    permanent ban, and unban. Confirm each action creates an audit entry and has the same Discord
+    timeout/lockdown/role restoration outcome as the dashboard.
+
+Do not copy the new BA2 into a live game installation or publish it until these
+checks have passed on the intended environment.
