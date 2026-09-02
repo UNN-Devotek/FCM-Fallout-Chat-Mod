@@ -304,13 +304,15 @@
 
 /* One shared inline flex context keeps every message prefix token on the same
    optical center: channel tag, timestamp, Overseer tag, supporter star, and
-   username. The body remains a sibling so wrapped message text starts after the
-   identity run instead of being vertically centered against the whole message. */
+   username. The parent message line is an inline formatting context, so body
+   text wraps back to the row's left edge instead of staying indented after the
+   identity run. */
 .fcm-message-prefix {
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
   line-height: inherit;
+  vertical-align: middle;
   white-space: nowrap;
 }
 

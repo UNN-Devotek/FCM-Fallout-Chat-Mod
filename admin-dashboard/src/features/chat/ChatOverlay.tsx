@@ -3778,6 +3778,7 @@ export default function ChatOverlay() {
   const [pmSearch, setPmSearch] = useState('');
   const [pmSearchResults, setPmSearchResults] = useState<PrivateUserSearchResult[]>([]);
   const [pmSearchLoading, setPmSearchLoading] = useState(false);
+  const [privateMessagingError, setPrivateMessagingError] = useState<string | null>(null);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
@@ -5309,7 +5310,11 @@ export default function ChatOverlay() {
                   editPendingRef.current = false;
                   setEditPending(false);
                 }
-                if (frame.payload?.message) showActionToast('err', frame.payload.message);
+                if (frame.payload?.message === 'Could not load private messages.') {
+                  setPrivateMessagingError('Private messages are temporarily unavailable.');
+                } else if (frame.payload?.message) {
+                  showActionToast('err', frame.payload.message);
+                }
               } else if (frame.type === 'mod:report') {
                 setReportAlerts(prev => [frame.payload, ...prev].slice(0, 5));
               } else if (frame.type === 'channels:refresh') {
@@ -5377,6 +5382,7 @@ export default function ChatOverlay() {
                 const nextConversations = Array.isArray(frame.payload?.conversations)
                   ? frame.payload.conversations as PrivateConversationSummary[]
                   : [];
+                setPrivateMessagingError(null);
                 setPrivateConversations(nextConversations);
                 if (typeof frame.payload?.openedConversationId === 'string') {
                   setActiveMainId(PM_MAIN_ID);
@@ -6394,10 +6400,26 @@ export default function ChatOverlay() {
   }, [recordSentEmojis]);
 
   const openPrivateConversation = useCallback((targetUserId: string) => {
+    setActiveMainId(PM_MAIN_ID);
+    setPmView('inbox');
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      showActionToast('err', 'Private messaging is still connecting. Please try again.');
+      return;
+    }
+    setPrivateMessagingError(null);
     ws.send(JSON.stringify({ type: 'pm:open', payload: { targetUserId } }));
-  }, []);
+  }, [showActionToast]);
+
+  const retryPrivateConversationList = useCallback(() => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      showActionToast('err', 'Private messaging is still connecting. Please try again.');
+      return;
+    }
+    setPrivateMessagingError(null);
+    ws.send(JSON.stringify({ type: 'pm:list', payload: {} }));
+  }, [showActionToast]);
 
   const sendPrivateMessageFrame = useCallback((conversationId: string, recipientUserId: string, content: string) => {
     const ws = wsRef.current;
@@ -7836,6 +7858,33 @@ export default function ChatOverlay() {
             outline: 'none',
           }}
         />
+        {privateMessagingError && (
+          <div role="status" style={{
+            marginBottom: '8px',
+            padding: '6px 4px',
+            color: '#FF9A9A',
+            border: '1px solid rgba(255,96,96,0.45)',
+            fontSize: `${Math.max(10, fontSize - 1)}px`,
+          }}>
+            {privateMessagingError}
+            <button
+              type="button"
+              onClick={retryPrivateConversationList}
+              style={{
+                display: 'block',
+                marginTop: '5px',
+                padding: '2px 0',
+                background: 'transparent',
+                border: 0,
+                color: primaryColor,
+                cursor: 'pointer',
+                fontFamily: theme.fontFamily,
+                fontSize: `${Math.max(9, fontSize - 2)}px`,
+                letterSpacing: '0.06em',
+              }}
+            >RETRY</button>
+          </div>
+        )}
         {privateSearchResults.length > 0 && (
           <div style={{ marginBottom: '8px' }}>
             <div style={{ color: hexAlpha(dimText, 0.8), fontSize: '10px', letterSpacing: '0.08em', marginBottom: '4px' }}>
@@ -7844,7 +7893,11 @@ export default function ChatOverlay() {
             {privateSearchResults.map(result => (
               <div
                 key={`pm-user-${result.userId}`}
-                onClick={() => openPrivateConversation(result.userId)}
+                onClick={() => {
+                  setPmSearch('');
+                  setPmSearchResults([]);
+                  openPrivateConversation(result.userId);
+                }}
                 style={{
                   padding: '6px 4px',
                   cursor: 'pointer',
@@ -8484,7 +8537,10 @@ export default function ChatOverlay() {
                       borderLeft: mentionsMe ? `2px solid ${primaryColor}` : '2px solid transparent',
                   }}
                   >
-                    <span style={{ flex: 1, minWidth: 0, lineHeight: 'inherit', display: 'flex', alignItems: 'flex-start' }}>
+                    <span
+                      data-fcm-message-line="true"
+                      style={{ display: 'block', minWidth: 0, lineHeight: 'inherit', wordBreak: 'break-word' }}
+                    >
                       <span className="fcm-message-prefix">
                         {channelTagEl}
                         {timestampEl}
@@ -8534,12 +8590,12 @@ export default function ChatOverlay() {
                           </>;
                         })()}
                       </span>
-                      <span style={{
-                        flex: '1 1 auto',
-                        minWidth: 0,
+                      <span data-fcm-message-body="true" style={{
+                        display: 'inline',
                         color: contentColor,
                         fontWeight: 600,
                         lineHeight: 'inherit',
+                        verticalAlign: 'middle',
                         textShadow: glowEnabled ? `0 0 2px ${hexAlpha(primaryColor, 0.3 * textAlpha)}, ${textOutline}` : textOutline,
                       }}>
                         {inlineContent ?? renderContent(msg.content, activeMainId === PARTY_MAIN_ID && partyView !== 'browser')}

@@ -131,13 +131,22 @@ forked component.
 
 - **Top-level tab:** `PM` sits beside `FALLOUT 76` and `PARTY`.
 - **Second row:** PM renders **no sub-tab row** at all (the old single `INBOX` sub-tab was removed as redundant). The inbox is the default view; per-user PM tabs are never added.
-- **Inbox view:** search box (`Type to search...`), text-only conversation rows, no avatars, ordered by most-recent `lastMessageAt`, unread badge per row, and a sender-prefixed preview (`You: <message>` when the current user sent the latest PM, otherwise `<OtherUserDisplayName>: <message>`). Inbox filtering matches the participant name, raw preview text, and the sender-prefixed preview text.
+- **Inbox view:** search box (`Type to search...`), text-only conversation rows, no avatars, ordered by most-recent `lastMessageAt`, unread badge per row, and a sender-prefixed preview (`You: <message>` when the current user sent the latest PM, otherwise `<OtherUserDisplayName>: <message>`). Inbox filtering matches the participant name, raw preview text, and the sender-prefixed preview text. Typing at least two characters also searches eligible users through `GET /api/block/search`; selecting a result clears the search and sends `pm:open` with the returned database user UUID.
 - **Conversation view:** a `< BACK TO INBOX` row, then the other participant's display name as the header, followed by the normal shared message renderer plus the normal 255-character composer/counter.
 - **Composer routing:** when `activeMainId === PM_MAIN_ID` and `pmView !== 'inbox'`, Enter sends `pm:send` only. PM content never reuses `chat:send` or `party:send`.
-- **Context menu:** authenticated message rows add a `Message` item near the top. The label is exactly `Message`; it is hidden for self, missing `userId`, bots/system rows, and public mode.
+- **Context menu:** authenticated message rows add a `Message` item near the top. Selecting it switches to PM and sends `pm:open` for the sender's database user UUID; it is hidden for self, missing `userId`, bots/system rows, and public mode. If the socket is still connecting, the action reports that state instead of silently doing nothing.
 - **Self-edit:** authenticated users get an `Edit message` item when right-clicking their own persisted channel, party, or PM message. The composer is prefilled, `Enter` sends `chat:edit`, and a successful update shows an `(edited)` marker. The server re-checks ownership, participation, deletion state, length, mute/rate policy, and AutoMod; bot/system/server-feed messages and public mode never expose the action. Public channel edits mirror the bot-authored Discord copy when one exists, while human edits made in Discord arrive through the same `chat:edit` patch and update the overlay in real time.
-- **WebSocket state:** on connect the overlay requests `pm:list`; opening a conversation requests `pm:history`; incoming `pm:message` frames update the inbox summary and active thread in place; active-thread receives trigger `pm:read`.
+- **WebSocket state:** on connect the overlay requests `pm:list`; opening a conversation requests `pm:history`; incoming `pm:message` frames update the inbox summary and active thread in place; active-thread receives trigger `pm:read`. A background `pm:list` failure is kept out of the startup action-toast stream; the PM tab shows an inline temporary-unavailable message with a `RETRY` action so transient hydration failures do not interrupt every overlay open.
 - **Isolation:** PM messages live only in `privateMessages` state. They never merge into the shared `messages` array, so they cannot leak into the combined feed, sub-channel views, party views, or public-mode REST polling.
+
+### Message-line wrapping
+
+Each rendered message keeps its channel tag, timestamp, supporter/moderation badges, name, and
+body in one inline formatting context. The identity prefix is a non-wrapping inline-flex run,
+while the body remains inline; long body text therefore wraps from the message row's left edge
+instead of starting every continuation line at a flex-sibling offset to the right. The shared
+`data-fcm-message-line` and `data-fcm-message-body` markers are covered by the chat identity
+alignment test.
 
 ## Party moderation visibility
 

@@ -138,10 +138,11 @@ describe('chat identity alignment', () => {
   it('centres the channel tag, star, name, and body on the same line', () => {
     const component = readFileSync(resolve(__dirname, '..', 'ChatOverlay.tsx'), 'utf8');
     const css = readFileSync(resolve(__dirname, '..', 'nameEffects.css'), 'utf8');
-    expect(component).toContain("display: 'flex', alignItems: 'flex-start'");
+    expect(component).toContain("data-fcm-message-line=\"true\"");
     expect(component).toContain('className="fcm-message-prefix"');
     expect(component).toContain("display: 'inline-flex', alignItems: 'center', height: '1em', lineHeight: 1");
-    expect(component).toContain("flex: '1 1 auto'");
+    expect(component).toContain("data-fcm-message-body=\"true\"");
+    expect(component).toContain("display: 'inline'");
     expect(css).toContain('.fcm-message-prefix {\n  display: inline-flex;\n  align-items: center;\n  flex: 0 0 auto;');
     expect(css).toContain('.fcm-name-identity {\n  display: inline-flex;\n  align-items: center;');
     expect(css).toContain('vertical-align: middle;');
