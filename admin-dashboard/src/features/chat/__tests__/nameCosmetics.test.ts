@@ -167,7 +167,10 @@ describe('supporter effect readability', () => {
   it('assigns glitch a stable pseudo-random cadence inside the longer interval bounds', () => {
     const one = nameEffectMotion('glitch', 'message-1');
     const two = nameEffectMotion('glitch', 'message-2');
-    const duration = (value: string) => Number.parseFloat(value);
+    const duration = (value: string | undefined) => {
+      if (value === undefined) throw new Error('Expected an effect duration');
+      return Number.parseFloat(value);
+    };
 
     expect(duration(one['--fcm-glitch-duration'])).toBeGreaterThanOrEqual(NAME_EFFECT_MOTION_BOUNDS.glitchMinSeconds);
     expect(duration(one['--fcm-glitch-duration'])).toBeLessThanOrEqual(NAME_EFFECT_MOTION_BOUNDS.glitchMaxSeconds);
