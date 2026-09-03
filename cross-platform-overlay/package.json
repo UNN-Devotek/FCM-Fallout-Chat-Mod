@@ -1,6 +1,6 @@
 {
   "name": "fallout-chatmod-cross-platform-overlay",
-  "version": "1.3.98-dev",
+  "version": "1.3.99",
   "productName": "Fallout Chat Mod",
   "desktopName": "fallout-chat-mod.desktop",
   "//desktopName": "Read by Electron at runtime (app.setDesktopName) to pin the Linux X11 WM_CLASS / native-Wayland app_id to fallout-chat-mod, matching build.linux.executableName. The KWin/Hyprland rules in main.js key off this exact string. Do not remove.",
