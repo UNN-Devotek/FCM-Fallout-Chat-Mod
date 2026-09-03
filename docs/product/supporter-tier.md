@@ -67,8 +67,8 @@ credentialless synthetic System Admin account in hosted DEV, which has no real D
 role ID. This grants the full supporter-effects catalog, including Overseer's Circle
 effects, tags, star colors, and name colors. It does not alter `EffectiveRole`,
 moderation permissions, or the paid Discord subscription roles. Removing a real admin
-role removes the bypass when the verified admin identity is updated; Dev persona access
-is controlled by the DEV-only persona gate.
+role removes the bypass on the next gateway/reconcile/HUD refresh; Dev persona access is
+controlled by the DEV-only persona gate.
 
 ### Entitlement vs privileges (#230's hard rule)
 
