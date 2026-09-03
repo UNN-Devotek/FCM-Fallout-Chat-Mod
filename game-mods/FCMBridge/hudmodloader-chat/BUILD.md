@@ -40,7 +40,8 @@ connected, later HUD reads update local identity state only; they never issue a 
 The HUD renders the server-validated channel and identity tags plus an optional supporter marker.
 The marker is a five-point vector `Shape` placed from the author's `TextField.getCharBoundaries()`;
 its TextField-local bounds are transformed through global space into the sibling marker layer, and
-the marker sits between the channel tag and the first author glyph, middle-aligned to that glyph;
+the marker sits immediately after the measured channel tag (before optional moderation/custom
+tags), middle-aligned to the author bounds;
 it uses the validated `starColor` and never renders a Unicode glyph, bitmap, HTML image, or
 substitution token. This avoids Fallout 76's missing star glyph and GFx image behavior producing
 tofu blocks. Feed paragraph leading is zero, and
@@ -292,8 +293,9 @@ staff validation on every request; the HUD permission is only a visibility hint.
 3. Switch channels, join/leave a world, and switch again; the tab row remains single-rendered.
 4. Send a body containing `{`, `}`, quotes, and backslashes; later events still render.
 5. On DEV, use a linked supporter account and confirm each supporter message has exactly one
-   colored vector star immediately before the author name in every channel. The marker must follow
-   the actual rendered name when channel/moderation/custom tags are present. Confirm non-supporter
+   colored vector star immediately after the channel tag in every channel. The marker must remain
+   middle-aligned to the actual rendered author when channel/moderation/custom tags are present.
+   Confirm non-supporter
    messages have no marker, and that neither `FCMHUD/1;`, `FCMSTAR`, `★`, nor tofu blocks appear.
 6. Temporarily disconnect the relay. After three failed polls the widget shows reconnecting,
    then reconnects once the relay returns.
