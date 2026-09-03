@@ -175,11 +175,14 @@ Work through all four surfaces before promoting to prod.
 25. Colours, effects, tags and badges render.
 26. Settings → Appearance → **Disable animated name effects** collapses animated
     effects to their static form.
+27. Send several messages with animated effects visible at once; their phases should be
+    offset rather than synchronized. Glitch bursts should be occasional and vary in
+    cadence between messages.
 
 ### Regression
 
-27. A user with no `user_cosmetics` row renders exactly as before.
-28. Public-mode chat still leaks no private data.
+28. A user with no `user_cosmetics` row renders exactly as before.
+29. Public-mode chat still leaks no private data.
 
 ### In-game
 

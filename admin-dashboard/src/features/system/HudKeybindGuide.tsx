@@ -23,6 +23,8 @@ export const HUD_KEYBIND_ROWS: HudKeybindRow[] = [
   },
   { key: 'Enter', config: 'native game input', description: 'Send the message.' },
   { key: 'Escape', config: 'native game input', description: 'Cancel typing and close the input.' },
+  { key: 'Arrow Up / Down', config: 'Insert-open session', description: 'Scroll the HUD feed up or down. Ignored until Insert opens a typing session.' },
+  { key: 'Home / End', config: 'Insert-open session', description: 'Jump to the newest HUD messages. Ignored until Insert opens a typing session.' },
   { key: 'Page Down', config: 'channelNextKey=NextPage', description: 'Switch to the next channel.' },
   { key: 'Page Up', config: 'channelPrevKey=PrevPage', description: 'Switch to the previous channel.' },
   { key: '/hide', config: 'slash command', description: 'Hide the HUD feed. Press Insert to restore it.' },
@@ -70,7 +72,7 @@ export default function HudKeybindGuide({ variant = 'dashboard' }: HudKeybindGui
       </h1>
       <p style={{ fontSize: isPublic ? '13px' : '11px', color: muted, marginBottom: '12px' }}>
         This is the separate, optional Fallout 76 HUD-mod track. It is not an Electron overlay
-        keybind and requires ZFE plus HUDModLoader.
+        keybind and requires ZFE or xScal plus HUDModLoader (or the documented standalone HUDMenu path).
       </p>
 
       <div style={{
@@ -124,10 +126,10 @@ export default function HudKeybindGuide({ variant = 'dashboard' }: HudKeybindGui
 
       <p style={sectionStyle}>HUDMODLOADER MENU</p>
       <ol style={{ fontSize: isPublic ? '12px' : '11px', lineHeight: '1.7', paddingLeft: '20px', margin: 0, color: gold }}>
-        <li>Start Fallout 76 with ZFE and HUDModLoader enabled.</li>
+        <li>Start Fallout 76 with ZFE or xScal and HUDModLoader enabled.</li>
         <li>Press <code style={codeStyle}>F11</code> to open the HUDModLoader menu.</li>
         <li>Choose <code style={codeStyle}>FCM</code> → <code style={codeStyle}>Customize...</code> to resize, move, change opacity/theme, or reset settings.</li>
-        <li>Use <code style={codeStyle}>FCM</code> → <code style={codeStyle}>Scroll to newest</code> after reviewing history; channel entries are also available in this menu.</li>
+        <li>After pressing <code style={codeStyle}>Insert</code>, use <code style={codeStyle}>Arrow Up</code> / <code style={codeStyle}>Arrow Down</code> to review history and <code style={codeStyle}>Home</code> / <code style={codeStyle}>End</code> to return to the newest message; channel entries are also available in this menu.</li>
         <li>Select <code style={codeStyle}>FCM</code> → <code style={codeStyle}>Customize...</code> → <code style={codeStyle}>Reset all settings</code> only when you want the packaged defaults restored.</li>
       </ol>
       <p style={{ fontSize: isPublic ? '12px' : '11px', color: muted, marginTop: '8px', marginBottom: '0' }}>

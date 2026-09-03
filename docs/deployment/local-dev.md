@@ -51,6 +51,24 @@ cd cross-platform-overlay && npm run dev:linux
 
 > Always use `dev:local` (or `dev:linux` on Linux KDE-Wayland) for the overlay — it targets the local backend. `npm start` targets production. Add `--fcm-debug` (or `FCM_DEBUG=1`) for verbose diagnostic logging; see [../overlay/diagnostics-logging.md](../overlay/diagnostics-logging.md).
 
+### Hosted Dev overlay
+
+To test against the isolated hosted Dev environment instead of the local backend:
+
+```bash
+cd cross-platform-overlay
+npm run dev:cloud
+```
+
+`dev:cloud` loads the Dev-only `DEV_PERSONA_LOGIN_SECRET` from the Linux desktop
+keyring (`secret-tool`, attributes `service=fcm-overlay` and
+`environment=dev`) or the macOS Keychain. Windows/CI may provide the variable in
+the process environment. The script deliberately removes `ELECTRON_RUN_AS_NODE`,
+which can make Electron run as a plain Node process, and gives the Dev overlay a
+separate `~/.fcm/hosted-dev` profile so it cannot reuse or modify the installed
+Prod overlay's session. Never copy this key into the repository or use it with a
+packaged production build.
+
 ---
 
 ## Per-Platform Setup

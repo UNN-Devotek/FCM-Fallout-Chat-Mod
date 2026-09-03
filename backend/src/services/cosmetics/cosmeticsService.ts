@@ -440,18 +440,15 @@ export async function applyCosmetics(input: {
 
   await pushCosmeticsUpdate(userId, cosmetics);
 
-  // Apply the role-backed Discord presentation before returning from the save. This
-  // gives preset colours a real Discord name colour and records the selected effect
-  // as a Discord role. The sync is deliberately non-fatal: FCM remains usable when
-  // Discord is unavailable or production has not finished provisioning its roles.
+  // Persisted cosmetics and the live FCM update are the request's critical path.
+  // Discord role presentation is deliberately queued in the background with bounded
+  // retries: Discord's API can be slow or briefly unavailable, and holding the
+  // overlay save open makes the UI look stuck even though the name already changed.
   if (user.discordId) {
     const discordId = user.discordId;
-    try {
-      const { syncCosmeticDiscordRoles } = await import('./discordRoleSyncService.js');
-      await syncCosmeticDiscordRoles(discordId, cosmetics);
-    } catch (err: unknown) {
-      logger.warn({ err, userId, discordId }, '[cosmetics] Discord role sync failed (non-fatal)');
-    }
+    void import('./discordRoleSyncService.js')
+      .then(({ queueCosmeticDiscordRoleSync }) => queueCosmeticDiscordRoleSync(discordId, cosmetics))
+      .catch((err: unknown) => logger.warn({ err, userId, discordId }, '[cosmetics] could not queue Discord role sync (non-fatal)'));
 
     // The Discord server nickname mirrors the same star/tag presentation. Keep this
     // separate because nickname failures must never affect the role-backed colour.

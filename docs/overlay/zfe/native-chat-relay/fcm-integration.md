@@ -134,21 +134,26 @@ envelope only to v2.10.16+; older widgets receive no envelope. The relay records
 beside a short-lived one-way token digest in Redis so separate connect and subscribe sockets use
 the same capability decision. `tag` and `starColor` are already validated by the cosmetics
 service, and `supporterStar` is derived only from an active Supporter or Overseer entitlement.
-Widget v2.10.30 renders supporter fields with a fixed five-point vector `Shape` positioned from
-the author's text bounds. It uses the validated `starColor` and never trusts a Unicode glyph,
-bitmap, HTML image, or substitution token from the wire. The desktop/web `nameColor` and effect fields
-remain outside this HUD extension. A self-authored in-game message
-is rendered from its authoritative decorated relay echo before it is admitted to the feed; this is
-intentional because ZFE strips cosmetic fields from native send acknowledgements. It therefore
-receives the same fields as Discord-originated and other in-game messages without a transient
-untagged self-row.
+Widget v2.10.38 renders supporter fields with a fixed five-point vector `Shape` positioned from
+the row's measured HTML prefix and adjusted for the feed's current `scrollV`. Keeping the marker
+layer in feed-local coordinates avoids Scaleform's mixed-font character-x ambiguity; it clips
+markers to the feed viewport so off-screen history cannot leak into the header or input area. It uses the validated
+`starColor` and never trusts a Unicode glyph, bitmap, HTML image, or substitution token from the
+wire. The desktop/web `nameColor` and effect fields remain outside this HUD extension. A
+self-authored in-game message is rendered as a temporary local row before the synchronous native
+send RPC runs, so a slow TLS/socket call cannot block the first visible feedback. Failed sends remove
+that row; successful sends keep it until the later authoritative decorated relay echo replaces it
+and supplies supporter cosmetics because ZFE strips those fields from native send acknowledgements. It therefore receives
+the same fields as Discord-originated and other in-game messages without duplicate rows.
 
 Successful static and server `chat.v1.sendMessage` responses also include the same
 HUD-safe `tag`, `supporterStar`, and `starColor` fields when present. For v2.10.16+
 widgets, those fields are also mirrored in an `FCMHUD/1;...` envelope carried by the
 known `targetUserId` member. ZFE currently strips that carrier from native RPC responses, so the
-widget records the confirmed send and waits for the asynchronous subscriber echo; the authoritative
-event is then rendered exactly once with the supporter cosmetics.
+widget keeps the local row only until the asynchronous subscriber echo arrives; the authoritative
+event then replaces it exactly once with the supporter cosmetics. The provider RPC itself is queued
+one timer tick after the local render because both ZFE and xScal expose a synchronous call surface;
+this avoids making a socket timeout look like a missing local message.
 The shared finalizer passes the server-resolved supporter tier to the outbound Discord
 relay, which renders the immutable `★` beside the author; Discord cannot reproduce the
 web/HUD star colour in ordinary message text.
@@ -220,10 +225,13 @@ frames on one connection receive `already_subscribed`.
 The widget treats the relay response to a roster/world control as the membership
 acknowledgement. It does not expose or send to the `server` tab merely because
 the game HUD reports nearby players: it waits for `{ "success": true }`. A
-rejected control keeps `server` unavailable, records the relay error, and retries
-on the normal world timer. An empty but received roster is valid for a solo world,
-so it is also acknowledged and bound. This prevents a stale or mismatched relay deployment
-from presenting a selectable but unusable Server channel.
+rejected control keeps `server` unavailable, records the relay error, and backs
+off retries for 60 seconds; it does not issue the same synchronous native call
+on every 5-second world tick. Roster controls are also suppressed while the
+account is unlinked or not authenticated. An empty but received roster is valid
+for a solo world, so it is also acknowledged and bound. This prevents a stale or
+mismatched relay deployment from presenting a selectable but unusable Server
+channel, and prevents a slow relay timeout from repeatedly stalling the HUD.
 
 ## Widget resilience rules
 

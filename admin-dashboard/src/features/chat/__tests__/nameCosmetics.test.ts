@@ -14,6 +14,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { nameCosmeticProps } from '../ChatOverlay';
 import { supporterBadge, supporterStarColor, SUPPORTER_STAR_GLYPH } from '../supporterBadge';
+import { nameEffectMotion, NAME_EFFECT_MOTION_BOUNDS } from '../nameEffectMotion';
 
 const THEME = {
   primaryText: 'rgba(245,203,91,0.9)',
@@ -143,8 +144,117 @@ describe('chat identity alignment', () => {
     expect(component).toContain("display: 'inline-flex', alignItems: 'center', height: '1em', lineHeight: 1");
     expect(component).toContain("data-fcm-message-body=\"true\"");
     expect(component).toContain("display: 'inline'");
+    expect(component).toContain("marginLeft: '0.25em'");
     expect(css).toContain('.fcm-message-prefix {\n  display: inline-flex;\n  align-items: center;\n  flex: 0 0 auto;');
     expect(css).toContain('.fcm-name-identity {\n  display: inline-flex;\n  align-items: center;');
     expect(css).toContain('vertical-align: middle;');
+  });
+});
+
+describe('supporter effect readability', () => {
+  it('gives each animated effect a stable, per-message phase', () => {
+    const first = nameEffectMotion('glow-pulse', 'message-1');
+    const same = nameEffectMotion('glow-pulse', 'message-1');
+    const next = nameEffectMotion('glow-pulse', 'message-2');
+
+    expect(first).toEqual(same);
+    expect(first['--fcm-effect-delay']).toMatch(/^-[0-9.]+s$/);
+    expect(next['--fcm-effect-delay']).toMatch(/^-[0-9.]+s$/);
+    expect(next['--fcm-effect-delay']).not.toBe(first['--fcm-effect-delay']);
+    expect(nameEffectMotion('glow-soft', 'message-1')).toEqual({});
+  });
+
+  it('assigns glitch a stable pseudo-random cadence inside the longer interval bounds', () => {
+    const one = nameEffectMotion('glitch', 'message-1');
+    const two = nameEffectMotion('glitch', 'message-2');
+    const duration = (value: string) => Number.parseFloat(value);
+
+    expect(duration(one['--fcm-glitch-duration'])).toBeGreaterThanOrEqual(NAME_EFFECT_MOTION_BOUNDS.glitchMinSeconds);
+    expect(duration(one['--fcm-glitch-duration'])).toBeLessThanOrEqual(NAME_EFFECT_MOTION_BOUNDS.glitchMaxSeconds);
+    expect(duration(two['--fcm-glitch-duration'])).toBeGreaterThanOrEqual(NAME_EFFECT_MOTION_BOUNDS.glitchMinSeconds);
+    expect(duration(two['--fcm-glitch-duration'])).toBeLessThanOrEqual(NAME_EFFECT_MOTION_BOUNDS.glitchMaxSeconds);
+    expect(two['--fcm-glitch-duration']).not.toBe(one['--fcm-glitch-duration']);
+  });
+
+  it('keeps the heavy glow and pulse within the restrained readability budget', () => {
+    const css = readFileSync(resolve(__dirname, '..', 'nameEffects.css'), 'utf8');
+    const heavyGlow = css.match(/\.fcm-name-fx--glow-hard \{([\s\S]*?)\n\}/)?.[1] ?? '';
+    const pulse = css.match(/@keyframes fcm-glow-pulse \{([\s\S]*?)\n\}/)?.[1] ?? '';
+    const pulseBase = css.match(/\.fcm-name-fx--glow-pulse \{([\s\S]*?)\n\}/)?.[1] ?? '';
+
+    expect(heavyGlow).toContain('0 0 5px color-mix(in srgb, var(--fcm-fx-color) 65%, transparent)');
+    expect(heavyGlow).toContain('0 0 10px color-mix(in srgb, var(--fcm-fx-color) 28%, transparent)');
+    expect(heavyGlow).not.toContain('0 0 16px');
+
+    expect(pulse).toContain('0 0 5px color-mix(in srgb, var(--fcm-fx-color) 72%, transparent)');
+    expect(pulse).toContain('0 0 16px color-mix(in srgb, var(--fcm-fx-color) 22%, transparent)');
+    expect(pulse).not.toContain('0 0 28px');
+    expect(pulse).not.toContain('var(--fcm-fx-color) 100%');
+    expect(pulseBase).toContain('animation: fcm-glow-pulse 2.8s ease-in-out infinite alternate');
+  });
+
+  it('makes chroma split visibly separate the channels while preserving the base name', () => {
+    const css = readFileSync(resolve(__dirname, '..', 'nameEffects.css'), 'utf8');
+    const chroma = css.match(/\.fcm-name-fx--chroma-split \{([\s\S]*?)\n\}/)?.[1] ?? '';
+
+    expect(chroma).toContain('-1px 0 0 rgba(255, 0, 64, 0.28)');
+    expect(chroma).toContain('1px 0 0 rgba(0, 224, 255, 0.28)');
+    expect(chroma).toContain('color: var(--fcm-fx-color);');
+    expect(chroma).toContain('var(--fcm-fx-outline)');
+  });
+
+  it('gives chroma split a dim resting state and an occasional offset burst', () => {
+    const css = readFileSync(resolve(__dirname, '..', 'nameEffects.css'), 'utf8');
+    const chroma = css.match(/\.fcm-name-fx--chroma-split \{([\s\S]*?)\n\}/)?.[1] ?? '';
+    const burst = css.match(/@keyframes fcm-chroma-shift \{([\s\S]*?)\n\}/)?.[1] ?? '';
+
+    expect(chroma).toContain('animation: fcm-chroma-shift var(--fcm-chroma-duration, 12s) steps(1, end) infinite;');
+    expect(chroma).toContain('animation-delay: var(--fcm-effect-delay, 0s);');
+    expect(burst).toContain('82%');
+    expect(burst).toContain('-2px 1px 0 rgba(255, 0, 64, 0.46)');
+    expect(burst).toContain('2px -1px 0 rgba(0, 224, 255, 0.46)');
+    expect(chroma).not.toContain('0 0 3px color-mix(in srgb, var(--fcm-fx-color) 68%, transparent)');
+    expect(css).toContain('.fcm-name-fx--chroma-split.fcm-no-name-motion');
+  });
+
+  it('assigns chroma split a stable per-message cadence and phase', () => {
+    const one = nameEffectMotion('chroma-split', 'message-1');
+    const same = nameEffectMotion('chroma-split', 'message-1');
+    const two = nameEffectMotion('chroma-split', 'message-2');
+    const duration = (value: unknown) => Number.parseFloat(String(value));
+
+    expect(one).toEqual(same);
+    expect(duration(one['--fcm-chroma-duration'])).toBeGreaterThanOrEqual(NAME_EFFECT_MOTION_BOUNDS.chromaMinSeconds);
+    expect(duration(one['--fcm-chroma-duration'])).toBeLessThanOrEqual(NAME_EFFECT_MOTION_BOUNDS.chromaMaxSeconds);
+    expect(two['--fcm-chroma-duration']).not.toBe(one['--fcm-chroma-duration']);
+    expect(two['--fcm-effect-delay']).not.toBe(one['--fcm-effect-delay']);
+  });
+
+  it('sweeps a slow readable gradient across shimmer glyphs without transparent text clipping', () => {
+    const css = readFileSync(resolve(__dirname, '..', 'nameEffects.css'), 'utf8');
+
+    expect(css).toContain('@keyframes fcm-shimmer-letter');
+    expect(css).toContain('.fcm-name-fx--shimmer .fcm-shimmer-letter');
+    expect(css).toContain('animation: fcm-shimmer-letter 8s linear infinite');
+    expect(css).toContain('animation-delay: calc(var(--fcm-effect-delay, 0s) - (var(--fcm-shimmer-index) * 0.22s))');
+    expect(css).toContain('35% {\n    color: color-mix(in srgb, var(--fcm-fx-color) 72%, #fff);');
+    expect(css).toContain('50% {\n    color: #fff;');
+    expect(css).toContain('var(--fcm-fx-outline)');
+    expect(css).not.toContain('color: transparent');
+    expect(css).not.toContain('-webkit-text-fill-color: transparent');
+    expect(css).not.toContain('.fcm-name-fx--shimmer::after');
+    expect(css).toContain('.fcm-name-fx--shimmer.fcm-no-name-motion .fcm-shimmer-letter');
+
+    const component = readFileSync(resolve(__dirname, '..', 'ChatOverlay.tsx'), 'utf8');
+    expect(component).toContain("Array.from(displayName).map((character, index)");
+    expect(component).toContain('className="fcm-shimmer-letter"');
+    expect(component).toContain("['--fcm-shimmer-index' as string]: index");
+  });
+
+  it('routes every animated effect through the shared motion variables', () => {
+    const css = readFileSync(resolve(__dirname, '..', 'nameEffects.css'), 'utf8');
+    expect(css).toContain('animation-delay: var(--fcm-effect-delay, 0s);');
+    expect(css).toContain('var(--fcm-glitch-duration, 11.5s)');
+    expect(css.match(/animation-delay: var\(--fcm-effect-delay, 0s\);/g)?.length).toBeGreaterThanOrEqual(4);
   });
 });

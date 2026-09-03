@@ -94,6 +94,8 @@ class FCMBridge extends MovieClip {
     var _worldTimer:Timer     = null;
     var _activeChannelIdx:Int = 0;   // index into CHANNEL_SLUGS / CHANNEL_NAMES
     var _records:Array<String>= [];  // ring of "slug|displayName|body" strings
+    var _bScrolling:Bool      = false;
+    var _newWhileScrolled:Int = 0;
 
     // ── chat.v1 session state ─────────────────────────────────────────────────
     var _connected:Bool       = false;  // true after a successful chat.v1.connect
@@ -846,6 +848,14 @@ class FCMBridge extends MovieClip {
         zfeLog("info", "chan", "switched to " + CHANNEL_SLUGS[idx]);
     }
 
+    /** Select the previous channel in the same display order as the HUD widget. */
+    public function fcmSwitchChannelPrev():Void {
+        var order:Array<Int> = _inWorld ? [0, 5, 1, 2, 3, 4] : [0, 1, 2, 3, 4];
+        var pos:Int = order.indexOf(_activeChannelIdx);
+        if (pos < 0) pos = 0;
+        fcmSwitchChannelTo(order[(pos - 1 + order.length) % order.length]);
+    }
+
     public function fcmActiveChannelSlug():String {
         return CHANNEL_SLUGS[_activeChannelIdx];
     }
@@ -877,7 +887,45 @@ class FCMBridge extends MovieClip {
         }
         if (lines.length == 0) { setText("no messages in " + CHANNEL_NAMES[_activeChannelIdx] + " yet"); return; }
         setText(lines.join("\n"));
+        if (!_bScrolling) {
+            try { _tf.scrollV = _tf.maxScrollV; } catch (e:Dynamic) {}
+        }
+    }
+
+    /** Keyboard-scroll entry points used by the patched HUDMenu standalone path. */
+    public function fcmScrollUp():Void {
+        if (_tf == null) return;
+        try {
+            if (_tf.scrollV > 1) {
+                _tf.scrollV--;
+                _bScrolling = true;
+            }
+        } catch (e:Dynamic) {}
+    }
+
+    public function fcmScrollDown():Void {
+        if (_tf == null) return;
+        try {
+            var max:Int = _tf.maxScrollV;
+            if (max <= 1) {
+                _bScrolling = false;
+                _newWhileScrolled = 0;
+            } else {
+                if (_tf.scrollV < max) _tf.scrollV++;
+                if (_tf.scrollV >= max) {
+                    _tf.scrollV = max;
+                    _bScrolling = false;
+                    _newWhileScrolled = 0;
+                }
+            }
+        } catch (e:Dynamic) {}
+    }
+
+    public function fcmScrollToBottom():Void {
+        if (_tf == null) return;
         try { _tf.scrollV = _tf.maxScrollV; } catch (e:Dynamic) {}
+        _bScrolling = false;
+        _newWhileScrolled = 0;
     }
 
     function setText(s:String):Void {

@@ -1,6 +1,6 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.33. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.38. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
@@ -44,11 +44,13 @@ substitution token. This avoids Fallout 76's missing star glyph and GFx image be
 tofu blocks. Feed paragraph leading is zero, and
 the feed keeps only a 4px safety gap above the top-level HUDTools input so rows stay compact while
 new content remains above the input field.
-After a successful send, one deferred poll fetches the authoritative live echo immediately;
-ordinary background polling remains controlled by `pollMs`.
+Before entering the synchronous native send RPC, the widget paints a temporary local echo (even
+during the short interval before `getAuthState` supplies the relay user id). Failed sends remove
+that row; successful sends retain it until the authoritative live echo arrives. One deferred poll
+fetches that echo immediately; ordinary background polling remains controlled by `pollMs`.
 
 ZFE's native `chat.v1` bridge filters unknown JSON members before the SWF receives an event. The
-v2.10.33 widget therefore reads the validated `tag` and transport envelope from an
+v2.10.38 widget therefore reads the validated `tag` and transport envelope from an
 `FCMHUD/1;...` envelope carried in the existing known `targetUserId` field. For ordinary channel
 chat this field is an empty transport slot, not a real recipient. The relay only emits the
 envelope to v2.10.16+ clients; older BA2 files receive no transport data. Raw relay consumers
@@ -151,8 +153,9 @@ bare payload as literal text. If activation, cleanup, or the engine edit lock is
 widget disables native input for the session and uses `SharedHUDTools.TextEdit`. A package is not
 acceptable unless Insert opens an editable field, typing `hello` visibly becomes `hello` (including
 on builds that return one native character per read), Escape cancels, Enter sends the complete text,
-and named Quick Actions/Friends focus transitions do not leave the editor stuck. Page Up/Page Down
-must switch channels both while idle and while preserving an open draft.
+and named Quick Actions/Friends focus transitions do not leave the editor stuck.
+Page Up/Page Down must switch channels both while idle and while preserving an open draft; the
+widget accepts either the first key-down or a key-up-only loader event without double-switching.
 
 ### Relinking a Discord account
 
@@ -273,7 +276,7 @@ staff validation on every request; the HUD permission is only a visibility hint.
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE or xScal loaded, the startup log identifies `chatv1-widget-v2.10.33`. If
+1. With HUDModLoader and ZFE or xScal loaded, the startup log identifies `chatv1-widget-v2.10.38`. If
    `AccountInfoData` is late, the widget waits and retries. The sender label and a newly sent
    message use the exact public Fallout 76 account handle, including punctuation; neither
    `Wanderer` nor the local character name is used for the relay handshake.
@@ -281,7 +284,8 @@ staff validation on every request; the HUD permission is only a visibility hint.
 3. Switch channels, join/leave a world, and switch again; the tab row remains single-rendered.
 4. Send a body containing `{`, `}`, quotes, and backslashes; later events still render.
 5. On DEV, use a linked supporter account and confirm each supporter message has exactly one
-   colored vector star immediately before the author name in every channel. Confirm non-supporter
+   colored vector star immediately before the author name in every channel. The marker must follow
+   the actual rendered name when channel/moderation/custom tags are present. Confirm non-supporter
    messages have no marker, and that neither `FCMHUD/1;`, `FCMSTAR`, `★`, nor tofu blocks appear.
 6. Temporarily disconnect the relay. After three failed polls the widget shows reconnecting,
    then reconnects once the relay returns.
@@ -290,7 +294,11 @@ staff validation on every request; the HUD permission is only a visibility hint.
    static history returns while only the newly bound server-room history appears.
 8. While typing, confirm the native or fallback editor has only one visible text renderer; type
    `hello` and confirm the complete buffer remains visible; game movement/actions are locked;
-   Page Down/Page Up switch channels without closing the input or losing its draft; Enter/Esc
+   Page Down/Page Up switch channels on both key-down and key-up-only loader builds. A successful
+   send should appear locally without waiting for the next regular poll, then reconcile to one
+   authoritative row. After Insert opens the typing session, Arrow Up/Down scroll
+   the feed and Home/End return to newest without closing the input or losing its draft; before
+   Insert they remain game controls. Enter/Esc
    restore game input.
 9. Outside the Pip-Boy, press F11 and confirm the HUDModLoader menu opens and lists FCMChatWidget.
 10. Open **FCM → Customize → Reset all settings**; confirm the default size, position, opacity,

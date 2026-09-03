@@ -106,7 +106,8 @@ export const EFFECT_PRESETS: readonly EffectPreset[] = [
     description: 'No effect — just your colour.',
     inGameSupported: false, animated: false,
   },
-  // ── Supporter: static. Cheap to paint, no animation frames at all. ──────────
+  // ── Supporter: readability-first. No continuous motion; Chroma Split has a
+  // brief, infrequent desktop burst while remaining a supporter entitlement. ──
   {
     id: 'glow-soft', label: 'Soft Glow', tier: 'supporter',
     description: 'A gentle halo in your colour.',
@@ -124,7 +125,7 @@ export const EFFECT_PRESETS: readonly EffectPreset[] = [
   },
   {
     id: 'chroma-split', label: 'Chroma Split', tier: 'supporter',
-    description: 'Static CRT colour fringing — a red/cyan split on the edges.',
+    description: 'A dim red/cyan fringe with a brief, occasional offset burst.',
     inGameSupported: false, animated: false,
   },
   // ── Overseer: animated. Collapse to a static sibling under reduced motion. ──
@@ -140,7 +141,7 @@ export const EFFECT_PRESETS: readonly EffectPreset[] = [
   },
   {
     id: 'glitch', label: 'Glitch', tier: 'overseer',
-    description: 'Your name tears and re-assembles in a short burst every few seconds.',
+    description: 'Your name tears and re-assembles in an occasional burst on a varied cadence.',
     inGameSupported: false, animated: true,
   },
   {

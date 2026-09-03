@@ -78,6 +78,58 @@ function resolveAvatarUrl(url: string | null | undefined): string | undefined {
   return base.replace(/\/$/, '') + (url.startsWith('/') ? url : `/${url}`);
 }
 
+const DEV_PERSONAS = ['user', 'developer', 'moderator', 'admin', 'owner'] as const;
+
+function DevPersonaLoginButtons({ themePrimary }: { themePrimary: string }) {
+  const [pendingPersona, setPendingPersona] = useState<string | null>(null);
+  const [loginError, setLoginError] = useState<string | null>(null);
+
+  return (
+    <div style={{ marginTop: 12, borderTop: `1px solid ${themePrimary}22`, paddingTop: 12 }}>
+      <div style={{ opacity: 0.5, fontSize: 10, letterSpacing: '0.12em', marginBottom: 8 }}>DEV ACCOUNTS</div>
+      <div style={{ opacity: 0.5, fontSize: 10, marginBottom: 8 }}>
+        DEV accounts grant synthetic test access immediately. These controls are unavailable in production.
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        {DEV_PERSONAS.map((persona) => (
+          <button key={persona}
+            disabled={pendingPersona !== null}
+            onClick={async () => {
+              setPendingPersona(persona);
+              setLoginError(null);
+              try {
+                const { applyOnboardingSettings } = await import('./shell');
+                const result = await window.relayBridge.devLoginAs!(persona);
+                if (result?.ok) {
+                  applyOnboardingSettings({ onboarded: true, discordLinked: true });
+                } else {
+                  setLoginError(result?.error || 'Dev login was rejected by the hosted Dev relay.');
+                }
+              } catch (err) {
+                setLoginError(err instanceof Error ? err.message : 'Dev login failed unexpectedly.');
+              } finally {
+                setPendingPersona(null);
+              }
+            }}
+            style={{
+              background: 'rgba(20,32,20,0.9)', border: `1px solid ${themePrimary}55`,
+              color: themePrimary, fontFamily: '"Courier New", monospace', cursor: pendingPersona ? 'wait' : 'pointer',
+              fontSize: 10, padding: '4px 10px', opacity: 0.7, fontWeight: 'normal',
+            }}
+          >
+            {pendingPersona === persona ? '…' : persona.toUpperCase()}
+          </button>
+        ))}
+      </div>
+      {loginError && (
+        <div role="alert" style={{ color: '#FF6644', opacity: 0.9, fontSize: 10, lineHeight: '1.5', marginTop: 8 }}>
+          Dev login failed: {loginError.slice(0, 240)}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Shell control strip ──────────────────────────────────────────────────────
 // The web ChatOverlay renders NO window chrome (no close / minimize). For the
 // frameless Electron window we provide a slim draggable strip with a − (minimize)
@@ -528,31 +580,7 @@ function Shell() {
           After authorizing in your browser, the overlay will unlock automatically.
         </div>
         {showDevPersonaLogins && typeof window.relayBridge?.devLoginAs === 'function' && (
-          <div style={{ marginTop: 12, borderTop: `1px solid ${themePrimary}22`, paddingTop: 12 }}>
-            <div style={{ opacity: 0.5, fontSize: 10, letterSpacing: '0.12em', marginBottom: 8 }}>DEV ACCOUNTS</div>
-            <div style={{ opacity: 0.5, fontSize: 10, marginBottom: 8 }}>DEV accounts grant synthetic test access immediately. These controls are unavailable in production.</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {(['user', 'developer', 'moderator', 'admin', 'owner'] as const).map((persona) => (
-                <button key={persona}
-                  onClick={async (e) => {
-                    const btn = e.currentTarget;
-                    btn.disabled = true; btn.textContent = '…';
-                    try {
-                      const { applyOnboardingSettings } = await import('./shell');
-                      const result = await window.relayBridge.devLoginAs!(persona);
-                      if (result?.ok) {
-                        applyOnboardingSettings({ onboarded: true, discordLinked: true });
-                      } else {
-                        btn.disabled = false; btn.textContent = persona.toUpperCase();
-                      }
-                    } catch { btn.disabled = false; btn.textContent = persona.toUpperCase(); }
-                  }}
-                  style={{ ...btnBase, fontSize: 10, padding: '4px 10px', opacity: 0.7, fontWeight: 'normal', border: `1px solid ${themePrimary}55` }}>
-                  {persona.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          </div>
+          <DevPersonaLoginButtons themePrimary={themePrimary} />
         )}
       </div>
     );
@@ -596,33 +624,7 @@ function Shell() {
           (Or quit and relaunch after a minute)
         </div>
         {showDevPersonaLogins && typeof window.relayBridge?.devLoginAs === 'function' && (
-          <div style={{ marginTop: 12, borderTop: `1px solid ${themePrimary}22`, paddingTop: 12 }}>
-            <div style={{ opacity: 0.5, fontSize: 10, letterSpacing: '0.12em', marginBottom: 8 }}>DEV ACCOUNTS</div>
-            <div style={{ opacity: 0.5, fontSize: 10, marginBottom: 8 }}>DEV accounts grant synthetic test access immediately. These controls are unavailable in production.</div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-              {(['user', 'developer', 'moderator', 'admin', 'owner'] as const).map((persona) => (
-                <button key={persona}
-                  onClick={async (e) => {
-                    const btn = e.currentTarget;
-                    btn.disabled = true; btn.textContent = '…';
-                    try {
-                      const { applyOnboardingSettings } = await import('./shell');
-                      const result = await window.relayBridge.devLoginAs!(persona);
-                      if (result?.ok) {
-                        applyOnboardingSettings({ onboarded: true, discordLinked: true });
-                      } else {
-                        btn.disabled = false; btn.textContent = persona.toUpperCase();
-                      }
-                    } catch { btn.disabled = false; btn.textContent = persona.toUpperCase(); }
-                  }}
-                  style={{ background: 'rgba(20,32,20,0.9)', border: `1px solid ${themePrimary}55`,
-                    color: themePrimary, fontFamily: '"Courier New", monospace',
-                    fontSize: 10, padding: '4px 10px', cursor: 'pointer', opacity: 0.7, fontWeight: 'normal' }}>
-                  {persona.toUpperCase()}
-                </button>
-              ))}
-            </div>
-          </div>
+          <DevPersonaLoginButtons themePrimary={themePrimary} />
         )}
       </div>
     );

@@ -165,7 +165,7 @@ describe('effect catalog', () => {
     }
   });
 
-  test('animated effects are Overseer-only and static effects are Supporter-or-free', () => {
+  test('animated effects are Overseer-only and readability effects remain Supporter-or-free', () => {
     for (const effect of EFFECT_PRESETS) {
       if (effect.animated) assert.equal(effect.tier, 'overseer', `${effect.id} animates but is not Overseer`);
     }

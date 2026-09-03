@@ -15,7 +15,7 @@ in the website's Cosmetics guide and in `/cosmetics help`, not here.
 | Price (web) | $0 | $4/mo | $10/mo |
 | Curated palette | 12 colours | 12 + 11 | 12 + 11 |
 | Bounded HSL picker | yes | yes | yes |
-| Static effects | — | Soft/Hard Glow, Heavy Outline, Chroma Split | same |
+| Readability effects | — | Soft/Hard Glow, Heavy Outline, Chroma Split (occasional burst) | same |
 | Chat badge | — | `★` (hover: Supporter), color selectable in Appearance | `★` (hover: Overseer's Circle), color selectable in Appearance |
 | Animated effects | — | — | Pulse Glow, CRT Phosphor, Glitch, Shimmer |
 | Custom tag | — | — | yes |
@@ -41,6 +41,12 @@ Effects can never render in-game. Scaleform crashes *Fallout 76* on any `.filter
 assignment (`FCMChatWidget.hx` crash rule #1 — "violations crashed the game in
 production") and bans `StyleSheet`. This is a permanent platform limit. Every surface
 that offers an effect says so before purchase.
+
+Desktop effects use stable per-message phase offsets, so a burst of messages does not
+animate in lockstep. Chroma Split stays dim and mostly static, with a brief offset burst
+on a deterministic varied cadence of 10.5–15.5 seconds per message. The Overseer's
+animated effects use the same scheduling helper; Glitch receives a deterministic varied
+cadence of 9.5–13.5 seconds. All variation remains stable across rerenders and reconnects.
 
 ---
 
@@ -90,6 +96,11 @@ controller and the Discord command only marshal input and translate the returned
 Settings → **Appearance** editor are equivalent self-service surfaces. The overlay
 uses its install-bound `X-Auth-Token` and a self-only `/api/overlay/cosmetics` route;
 it never sends a target user id. The two surfaces are structurally incapable of drifting.
+The native overlay applies picker changes to its local preview immediately, then reconciles
+with the server response. Its request path uses bounded retries for transient failures,
+rolls back permanent validation or entitlement failures, and always releases its busy state;
+Discord role presentation is serialized per member and retried separately in the background
+so Discord latency does not hold the FCM save open.
 
 The chat name is deliberately not a cosmetic or a supporter feature. It lives on
 `users.chat_name`, has no tier gate or calendar cooldown, and is changed through
@@ -149,7 +160,7 @@ future provider change an adapter rather than a rewrite.
 | Free `/name` command | `backend/src/services/chatNameCommandService.ts` |
 | Free chat-name write path | `backend/src/services/chatNameService.ts` |
 | REST | `backend/src/routes/cosmetics.ts`, `controllers/cosmeticsController.ts` |
-| Effect CSS | `admin-dashboard/src/features/chat/nameEffects.css` |
+| Effect CSS and motion scheduler | `admin-dashboard/src/features/chat/nameEffects.css`, `nameEffectMotion.ts` |
 | Editor UI | `admin-dashboard/src/features/profile/CosmeticsPanel.tsx` |
 | Native overlay editor | `cross-platform-overlay/src/supporterAppearance.ts` (mounted in Settings → Appearance) |
 | Star marker contract | `backend/src/services/cosmetics/star.ts`, `admin-dashboard/src/features/chat/supporterBadge.ts` |

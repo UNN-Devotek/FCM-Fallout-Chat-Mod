@@ -88,11 +88,126 @@ export function isLocked(actual: SupporterTier, required: SupporterTier): boolea
   return !tierAtLeast(actual, required);
 }
 
+/** Project a valid picker change into the payload used by the preview. The server
+ * remains authoritative; this is only the immediate local state shown while the
+ * PATCH (and its Discord presentation sync) completes. */
+export function applyOptimisticCosmetics(
+  data: OverlayCosmeticsPayload,
+  patch: Record<string, unknown>,
+): OverlayCosmeticsPayload {
+  const stored = {
+    colorPresetId: null,
+    customColorHex: null,
+    starColorPresetId: null,
+    effectId: null,
+    customTag: null,
+    cosmeticsEnabled: true,
+    ...(data.cosmetics.stored ?? {}),
+  } as NonNullable<OverlayCosmeticsPayload['cosmetics']['stored']>;
+
+  if (Object.prototype.hasOwnProperty.call(patch, 'colorPresetId')) {
+    stored.colorPresetId = typeof patch.colorPresetId === 'string' ? patch.colorPresetId : null;
+    if (stored.colorPresetId) stored.customColorHex = null;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'customColorHex')) {
+    stored.customColorHex = typeof patch.customColorHex === 'string' ? patch.customColorHex : null;
+    if (stored.customColorHex) stored.colorPresetId = null;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'starColorPresetId')) {
+    stored.starColorPresetId = typeof patch.starColorPresetId === 'string' ? patch.starColorPresetId : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'effectId')) {
+    stored.effectId = typeof patch.effectId === 'string' ? patch.effectId : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'customTag')) {
+    stored.customTag = typeof patch.customTag === 'string' ? patch.customTag : null;
+  }
+  if (Object.prototype.hasOwnProperty.call(patch, 'cosmeticsEnabled')) {
+    stored.cosmeticsEnabled = patch.cosmeticsEnabled !== false;
+  }
+
+  const tier = data.supporter.tier;
+  const colorPreset = data.catalog.colors.find(preset => preset.id === stored.colorPresetId);
+  const nameColor = stored.cosmeticsEnabled === false
+    ? null
+    : colorPreset && tierAtLeast(tier, colorPreset.tier)
+      ? colorPreset.hex
+      : stored.customColorHex;
+
+  const starPreset = data.catalog.colors.find(preset => preset.id === stored.starColorPresetId);
+  const starColor = tier === 'none'
+    ? null
+    : safeSupporterStarColor(tier, starPreset && tierAtLeast(tier, starPreset.tier) ? starPreset.hex : null);
+
+  const effectPreset = data.catalog.effects.find(preset => preset.id === stored.effectId);
+  const effectId = stored.cosmeticsEnabled !== false && effectPreset && effectPreset.id !== 'none'
+    && tierAtLeast(tier, effectPreset.tier)
+    ? effectPreset.id
+    : null;
+  const tag = stored.cosmeticsEnabled !== false && stored.customTag && tierAtLeast(tier, 'overseer')
+    ? stored.customTag
+    : null;
+
+  return {
+    ...data,
+    cosmetics: {
+      ...data.cosmetics,
+      nameColor,
+      starColor,
+      effectId,
+      tag,
+      stored,
+    },
+  };
+}
+
 export function problemText(problem: unknown): string {
   if (problem && typeof problem === 'object' && 'detail' in problem && typeof problem.detail === 'string') {
     return problem.detail;
   }
   return 'Could not save that change. Please try again.';
+}
+
+const APPEARANCE_RETRY_DELAYS_MS = [0, 250, 1000] as const;
+const APPEARANCE_REQUEST_TIMEOUT_MS = 10_000;
+
+function statusCode(error: unknown): number | null {
+  if (!error || typeof error !== 'object') return null;
+  const value = (error as { status?: unknown }).status;
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/** Network and server-side failures are safe to retry; validation and entitlement
+ * failures are not. This keeps a rejected picker choice from generating noise. */
+export function isRetryableAppearanceError(error: unknown): boolean {
+  const status = statusCode(error);
+  return status === null || status === 408 || status === 425 || status === 429 || status >= 500;
+}
+
+export interface AppearanceRetryOptions {
+  delaysMs?: readonly number[];
+  sleep?: (delayMs: number) => Promise<void>;
+  shouldRetry?: (error: unknown) => boolean;
+}
+
+/** Execute a request a bounded number of times with small exponential backoff. */
+export async function retryAppearanceRequest<T>(
+  operation: () => Promise<T>,
+  options: AppearanceRetryOptions = {},
+): Promise<T> {
+  const delays = options.delaysMs?.length ? options.delaysMs : APPEARANCE_RETRY_DELAYS_MS;
+  const sleep = options.sleep ?? ((delayMs: number) => new Promise<void>(resolve => window.setTimeout(resolve, delayMs)));
+  const shouldRetry = options.shouldRetry ?? isRetryableAppearanceError;
+
+  for (let attempt = 0; attempt < delays.length; attempt += 1) {
+    if (attempt > 0 && delays[attempt] > 0) await sleep(delays[attempt]);
+    try {
+      return await operation();
+    } catch (error) {
+      if (attempt === delays.length - 1 || !shouldRetry(error)) throw error;
+    }
+  }
+  throw new Error('Appearance request exhausted its retry budget.');
 }
 
 /** One native-settings request at a time. Prevents rapid swatch clicks from
@@ -126,27 +241,41 @@ function node<K extends keyof HTMLElementTagNameMap>(
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(path, init);
-  const json = await response.json().catch(() => null) as { data?: T; detail?: string; title?: string } | null;
-  if (!response.ok) {
-    throw {
-      status: response.status,
-      detail: json?.detail || json?.title || `Request failed (${response.status}).`,
-    } satisfies ApiProblem;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), APPEARANCE_REQUEST_TIMEOUT_MS);
+  try {
+    const response = await fetch(path, { ...init, signal: controller.signal });
+    const json = await response.json().catch(() => null) as { data?: T; detail?: string; title?: string } | null;
+    if (!response.ok) {
+      throw {
+        status: response.status,
+        detail: json?.detail || json?.title || `Request failed (${response.status}).`,
+      } satisfies ApiProblem;
+    }
+    return (json?.data ?? json) as T;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw {
+        status: 408,
+        detail: 'The appearance service took too long to respond. Please try again.',
+      } satisfies ApiProblem;
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
   }
-  return (json?.data ?? json) as T;
 }
 
 async function loadCosmetics(): Promise<OverlayCosmeticsPayload> {
-  return request<OverlayCosmeticsPayload>('/api/overlay/cosmetics');
+  return retryAppearanceRequest(() => request<OverlayCosmeticsPayload>('/api/overlay/cosmetics'));
 }
 
 async function saveCosmetics(patch: Record<string, unknown>): Promise<OverlayCosmeticsPayload> {
-  return request<OverlayCosmeticsPayload>('/api/overlay/cosmetics', {
+  return retryAppearanceRequest(() => request<OverlayCosmeticsPayload>('/api/overlay/cosmetics', {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch),
-  });
+  }));
 }
 
 /**
@@ -157,6 +286,8 @@ async function saveCosmetics(patch: Record<string, unknown>): Promise<OverlayCos
  */
 export function mountSupporterAppearance(parent: HTMLElement): HTMLElement {
   const root = node('div', 'ss-cosmetics');
+  root.dataset.saving = 'false';
+  root.setAttribute('aria-busy', 'false');
   parent.append(root);
   const requestGate = createAppearanceRequestGate();
 
@@ -188,7 +319,7 @@ export function mountSupporterAppearance(parent: HTMLElement): HTMLElement {
     );
   };
 
-  const render = (data: OverlayCosmeticsPayload, feedback = '') => {
+  const render = (data: OverlayCosmeticsPayload, feedback = '', feedbackKind: 'saved' | 'pending' | 'error' = 'saved') => {
     const tier = data.supporter.tier;
     const stored = data.cosmetics.stored;
     root.replaceChildren();
@@ -217,12 +348,12 @@ export function mountSupporterAppearance(parent: HTMLElement): HTMLElement {
       setRequestBusy(true);
       try {
         const fresh = await loadCosmetics();
-        requestGate.finish();
         render(fresh, 'Role status refreshed.');
       } catch (err) {
+        renderError(err);
+      } finally {
         requestGate.finish();
         setRequestBusy(false);
-        renderError(err);
       }
     });
     tierLine.append(refresh);
@@ -254,23 +385,27 @@ export function mountSupporterAppearance(parent: HTMLElement): HTMLElement {
     preview.append(identity, document.createTextNode(': preview message'));
     root.append(node('div', 'ss-cosmetics-caption', 'Desktop preview'), preview);
 
-    const state = node('div', feedback ? 'ss-cosmetics-status saved' : 'ss-cosmetics-status');
+    const state = node('div', `ss-cosmetics-status${feedbackKind === 'saved' ? ' saved' : feedbackKind === 'error' ? ' error' : ''}`);
     state.textContent = feedback;
 
     const mutate = async (patch: Record<string, unknown>) => {
       if (!requestGate.tryStart()) return;
+      const previous = data;
+      // Render the selected value immediately. The response still replaces this
+      // optimistic snapshot with the server-authoritative payload, and failures
+      // roll it back so the UI never claims a rejected choice was saved.
+      render(applyOptimisticCosmetics(data, patch), 'Saving…', 'pending');
       setRequestBusy(true);
-      state.className = 'ss-cosmetics-status';
-      state.textContent = 'Saving…';
       try {
         const saved = await saveCosmetics(patch);
-        requestGate.finish();
         render(saved, 'Saved. The chat updates without reconnecting.');
       } catch (err) {
+        render(previous, problemText(err), 'error');
+      } finally {
         requestGate.finish();
+        // `render` replaces the children, not this root. Always clear the root
+        // busy state after success, rollback, or an exhausted retry budget.
         setRequestBusy(false);
-        state.className = 'ss-cosmetics-status error';
-        state.textContent = problemText(err);
       }
     };
 

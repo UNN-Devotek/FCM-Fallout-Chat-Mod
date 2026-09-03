@@ -233,7 +233,7 @@
          this._fcmIniH = 30;
          this._fcmIniFontSize = 14;
          // OpenChatKey matches [TextChat] OpenChatKey in FCM.ini fragment.
-         this._fcmIniOpenKey = "PAGE_DOWN";
+         this._fcmIniOpenKey = "INSERT";
          this._fcmIniLoaded = true;
          // Default channel index (0 = global).
          this._fcmChannelIdx = 0;
@@ -352,7 +352,7 @@
       // Cycle the active channel in DISPLAY order. In a world, SERVER sits right
       // of GENERAL: General -> Server -> Trading -> Events -> Infests -> Raids.
       // Out of a world SERVER is skipped entirely.
-      // Triggered by the NextPage control-map action (Page Down key — dead in FO76 HUD).
+      // Triggered by the NextPage control-map action (Page Down) or its physical alias.
       public function fcmSwitchChannel() : void
       {
          var order:Array = this.fcmInWorldNow() ? [0,5,1,2,3,4] : [0,1,2,3,4];
@@ -365,15 +365,17 @@
 
       public function fcmEvent(action:String, pressed:Boolean) : void
       {
-         // Chat-open hotkey: PAGE_DOWN (dead in FO76 HUD, matches OpenChatKey in FCM.ini).
-         // Also accept TeamChat and Console (legacy) as aliases. Open on key-UP only.
-         var openKey:String = (this._fcmIniOpenKey != null && this._fcmIniOpenKey.length > 0) ? this._fcmIniOpenKey : "PAGE_DOWN";
+         // Chat-open hotkey: INSERT (matches the shipped OpenChatKey in FCM.ini).
+         // Also accept TeamChat and Console (legacy) as aliases. Open on key-UP only so the
+         // opening action never leaks a character into the newly focused native field.
+         var openKey:String = (this._fcmIniOpenKey != null && this._fcmIniOpenKey.length > 0) ? this._fcmIniOpenKey : "INSERT";
          if((action == openKey || action == "Console" || action == "ConsoleToggles" || action == "TeamChat") && !pressed)
          {
             this.fcmLog("info","open",action + " -> enterChatMode");
             try
             {
                this.enterChatMode();
+               this._fcmInputActive = true;
                this.fcmStyleInput();
             }
             catch(eOpen:Error)
@@ -382,10 +384,56 @@
             }
             return;
          }
-         // Channel cycle: NextPage (Page Down key — dead in FO76 HUD), key-UP only.
-         if(action == "NextPage" && !pressed)
+         // Loader builds differ: some emit both edges and some only emit key-UP. Handle the
+         // first edge available and ignore the matching second edge.
+         var isNextPage:Boolean = action == "NextPage" || action == "PAGE_DOWN" || action == "PageDown";
+         var isPrevPage:Boolean = action == "PrevPage" || action == "PAGE_UP" || action == "PageUp";
+         var isFeedNav:Boolean = action == "Up" || action == "ArrowUp" || action == "CursorUp"
+            || action == "Down" || action == "ArrowDown" || action == "CursorDown"
+            || action == "Home" || action == "End";
+         if(isNextPage || isPrevPage || isFeedNav)
          {
-            this.fcmSwitchChannel();
+            if(pressed)
+            {
+               if(this._fcmNavigationAction == action) { return; }
+               this._fcmNavigationAction = action;
+            }
+            else if(this._fcmNavigationAction == action)
+            {
+               this._fcmNavigationAction = "";
+               return;
+            }
+
+            if(isNextPage)
+            {
+               this.fcmSwitchChannel();
+               return;
+            }
+            if(isPrevPage)
+            {
+               this.fcmSwitchChannelPrev();
+               return;
+            }
+            // Feed navigation is unlocked only after Insert successfully opens the native chat
+            // editor. Before that, arrows remain ordinary game controls.
+            if(this._fcmInputActive && this._fcmBridge != null)
+            {
+               if(action == "Up" || action == "ArrowUp" || action == "CursorUp")
+               {
+                  try { this._fcmBridge.fcmScrollUp(); } catch(eSu:Error) {}
+                  return;
+               }
+               if(action == "Down" || action == "ArrowDown" || action == "CursorDown")
+               {
+                  try { this._fcmBridge.fcmScrollDown(); } catch(eSd:Error) {}
+                  return;
+               }
+               if(action == "Home" || action == "End")
+               {
+                  try { this._fcmBridge.fcmScrollToBottom(); } catch(eSb:Error) {}
+                  return;
+               }
+            }
             return;
          }
          // Suppress noisy repeated / high-frequency actions.

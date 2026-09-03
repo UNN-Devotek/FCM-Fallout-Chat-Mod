@@ -1106,6 +1106,9 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     rawContent: body,
     source:    'relay',
     relaySeq,
+    // The relay acknowledges once the durable queue accepts the message; waiting
+    // for a worker to finish makes the synchronous HUD send inherit queue latency.
+    waitForPersistence: false,
     // Show the in-game CHARACTER name in chat (not the linked FCM account's Discord name).
     displayName: identity.fo76Name,
   });

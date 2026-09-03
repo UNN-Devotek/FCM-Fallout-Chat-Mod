@@ -46,6 +46,7 @@ import { incrementMessageCount } from '../controllers/healthController';
 import { attachCosmetics } from './cosmetics/cosmeticsService';
 import { shadowMute } from './autoModService';
 import { getActiveBlock } from './hudIdentityService';
+import { shouldWaitForPersistence } from './messagePersistencePolicy';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -137,6 +138,7 @@ export async function ingestMessage(opts: {
   source: IngestSource;
   identityHash?: string;
   relaySeq?: number;
+  waitForPersistence?: boolean;
   // Explicit display-name override. The relay/HUD path passes the in-game CHARACTER name
   // (identity.fo76Name, e.g. "Wanderer") so chat shows that, not the linked FCM account's
   // Discord name (the message is still attributed to the linked user UUID for moderation).
@@ -256,6 +258,7 @@ export async function ingestMessage(opts: {
     // A supplied relay cursor is authoritative. For ordinary producers the
     // finalizer makes a best-effort allocation without making chat depend on Redis.
     relaySeq,
+    waitForPersistence: opts.waitForPersistence ?? shouldWaitForPersistence(source),
   });
 
   return { ok: true, messageId };
@@ -273,8 +276,9 @@ export async function ingestMessage(opts: {
  *
  * Optional fields are included ONLY when the caller provides them, so the HUD
  * payload stays lean (no avatarUrl/metadata/mentions) while the WS payload keeps
- * its richer shape unchanged. Persistence completes before broadcast/ack so a
- * message cannot be selected for editing before its database row exists.
+ * its richer shape unchanged. Ordinary producers persist before broadcast/ack;
+ * the native relay broadcasts after queue acceptance so its synchronous RPC is
+ * not held open by worker completion.
  */
 export async function finalizeMessage(opts: {
   userId: string;
@@ -288,6 +292,7 @@ export async function finalizeMessage(opts: {
   metadata?: Record<string, unknown> | null;
   mentions?: Array<{ name: string; discordId: string }>;
   relaySeq?: number;      // relay path only — monotonic cursor assigned by nextRelaySeq()
+  waitForPersistence?: boolean;
 }): Promise<{ messageId: string; createdAt: string }> {
   const messageId   = opts.messageId ?? uuidv4();
   const createdAt   = opts.createdAt ?? new Date().toISOString();
@@ -317,9 +322,10 @@ export async function finalizeMessage(opts: {
   // majority of users who have no cosmetics row and can never block delivery.
   await attachCosmetics(payload);
 
-  // Persist before broadcast/ack. Bull still provides retries and backoff, but
-  // waiting for job completion closes the edit race: clients never receive a
-  // message whose canonical row is still missing from PostgreSQL.
+  // Queue acceptance is enough for the relay path: Bull provides retries and
+  // backoff, and waiting for a worker to finish would hold the synchronous HUD
+  // RPC open. Other producers retain persist-before-broadcast behavior so
+  // ordinary web traffic keeps the edit-race protection.
   const { parentId: parentChannelId, name: channelName } = await getChannelInfo(opts.channelId);
   const record: Record<string, unknown> = {
     id: messageId,
@@ -335,7 +341,7 @@ export async function finalizeMessage(opts: {
 
   try {
     const persistJob = await messageQueue.add(record as any);
-    if (typeof persistJob?.finished === 'function') {
+    if (opts.waitForPersistence !== false && typeof persistJob?.finished === 'function') {
       await persistJob.finished();
     }
   } catch (qErr) {

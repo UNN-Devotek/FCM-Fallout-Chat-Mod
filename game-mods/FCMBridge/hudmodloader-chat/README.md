@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-09-02):** v2.10.33 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-09-02):** v2.10.38 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -20,14 +20,17 @@ A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's H
   HUD data arrives.
 - Lets the player send messages. Press the configured open key (default: `INSERT`) to open the
   chat input, type a message, and press Enter to send (`chat.v1.sendMessage`, slug-based channels).
-- Sends the player's own message and renders the authoritative live relay event once it arrives;
-  this avoids showing an untagged row because ZFE strips cosmetics from native send acknowledgements.
+- Paints the player's own message before entering the synchronous native send RPC, then replaces
+  the temporary row with the authoritative live relay event once it arrives. This prevents a
+  slow TLS/socket call from hiding a locally accepted message; failed sends remove the temporary
+  row, while successful sends still take cosmetics from the relay because ZFE can strip them from
+  native acknowledgements.
 - Supports a scrolling read-back mode: while the user scrolls up, a "N new messages below"
   indicator appears and auto-scroll is suppressed.
 - Renders the server-resolved Overseer tag in the HUD when the relay negotiates widget capability.
   Self-authored messages use the same authoritative live event as Discord and other in-game
   messages, so the tag is not lost to the native send ACK boundary.
-  ZFE strips unknown event members before the SWF receives them, so v2.10.33 decodes validated
+ZFE strips unknown event members before the SWF receives them, so v2.10.38 decodes validated
   cosmetics from the `FCMHUD/1;...` envelope in the known empty `targetUserId` slot. Older widget
   builds receive no envelope. The HUD renders server-validated channel and identity tags plus a
   supporter marker as a five-point vector `Shape` positioned from the author's text bounds. The
@@ -35,8 +38,9 @@ A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's H
   substitution token, so missing Scaleform font glyphs cannot become tofu blocks. Feed leading is zero to keep rows compact, and the feed clip
   rectangle reserves only a 4px safety gap above the top-level HUDTools input field. New content
   snaps to the end of the feed after each reflow.
-  After a successful send, the widget schedules one next-tick event poll so the authoritative
-  cosmetics-bearing echo appears without waiting for the normal background poll interval.
+  After queuing the local row, the widget enters the synchronous send RPC on the next timer tick,
+  then schedules one next-tick event poll after success so the authoritative cosmetics-bearing
+  echo appears without waiting for the normal background poll interval.
 - Converts Discord custom-emoji markup (`<:name:id>` and `<a:name:id>`) to a readable `:name:`
   label on the HUD. The web overlay may use Discord CDN images, but the Scaleform HUD does not
   load remote emoji images and therefore never exposes the numeric Discord snowflake ID.
@@ -133,8 +137,10 @@ The channel-tab row is one static text strip. It must not create HUDButton insta
 HUDButton labels share the same coordinates and would overlap the strip. Switch channels using
 the configured control-map actions or slash commands. `SERVER` appears only after the relay
 acknowledges the player's roster/world binding; observing nearby players alone never enables it.
-Forwarded `NextPage` / `PrevPage` actions switch channels whether the feed is idle or input is
-open. While input is open, the draft remains in place. Named Quick Actions/Friends/Escape actions
+Forwarded `NextPage` / `PrevPage` actions (plus PageUp/PageDown aliases) switch channels whether the
+feed is idle or input is open. After Insert opens the typing session, ArrowUp/ArrowDown (plus
+Up/Down aliases) scroll the feed and Home/End return to the newest message; before Insert they
+remain game controls. While input is open, the draft remains in place. Named Quick Actions/Friends/Escape actions
 close a native session before the game takes focus, preventing a stale editor from trapping input.
 
 ### isReloadable
@@ -187,10 +193,11 @@ restart; the loader reload control is for live widget changes.
 | `../FcmNativeApi.hx` | Shared ZFE/xScal discovery and verb adapter |
 | `FcmConfig.hx` | User-config model + INI parser/clamp (pure, unit-tested) |
 | `FcmCommand.hx` / `TestFcmCommand.hx` / `test-command.hxml` | Pure slash-command matching and tests |
+| `FcmWire.hx` / `TestFcmWire.hx` / `test-wire.hxml` | Whitespace-safe native event-array detection and tests |
 | `TestFcmConfig.hx` / `test-config.hxml` | `FcmConfig` unit tests (`haxe --interp`; run in CI) |
 | `build.hxml` | Haxe build file |
 | `FCMChat.ini` | Per-user config — position, size, colors, font, limits, keybinds, toggles |
-| `FCMChatWidget.ini` | ZFE TextChat fragment (endpoint default, `OpenChatKey`) |
+| `FCMChatWidget.ini` | ZFE TextChat fragment (endpoint default, `OpenChatKey=INSERT`) |
 | `xscal.ini.example` | Target-specific xScal `[Chat]` settings emitted by `package.py` |
 | `hudmodloader.ini` | Source line for the append-only loader entry; packages emit it as `FCMChatWidget.hudmodloader.ini` |
 | `package.py` | Creates a target-specific, versioned install ZIP with instructions and all widget files |

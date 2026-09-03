@@ -59,9 +59,9 @@ if inject_src:
     check("_fcmChannelSlug" in inject_src,
           "fcm-inject.as tracks active channel as slug string")
 
-    # OpenChatKey must use PAGE_DOWN (matches FCM.ini fragment).
-    check('"PAGE_DOWN"' in inject_src,
-          'fcm-inject.as default OpenChatKey is PAGE_DOWN (matches FCM.ini)')
+    # OpenChatKey must use INSERT (matches the shipped FCM.ini fragment).
+    check('"INSERT"' in inject_src,
+          'fcm-inject.as default OpenChatKey is INSERT (matches FCM.ini)')
 
     # FCMHUD/1 socket verbs must be GONE.
     check("writeUTFBytes" not in inject_src,
@@ -98,8 +98,8 @@ if inject_src:
           "fcm-inject.as defines fcmPassZfeToBridge (host ZFE pass-down for child_bridge_access=disabled)")
     check("hostZfe" in inject_src,
           "fcm-inject.as discovers hostZfe at HUDMenu level before passing")
-    check("fcmSetZfe" in inject_src,
-          "fcm-inject.as calls fcmSetZfe on the bridge (injects __ZFE reference)")
+    check("fcmSetNativeApi" in inject_src,
+          "fcm-inject.as calls fcmSetNativeApi on the bridge (injects either provider)")
     check("__SFECodeObj" in inject_src and "fcmSetNativeApi" in inject_src,
           "fcm-inject.as passes the xScal chat bridge when ZFE is absent")
 
@@ -119,6 +119,11 @@ if inject_src:
     # Slugs ship to ZFE; the relay owns the UUID mapping.
     check("000000000005" not in inject_src,
           "fcm-inject.as does NOT contain raw channel UUIDs (relay owns mapping)")
+
+    check("_fcmInputActive" in inject_src
+          and "_fcmInputActive && this._fcmBridge" in inject_src
+          and "_fcmNavigationAction" in inject_src,
+          "fcm-inject.as gates feed navigation on Insert and de-duplicates action edges")
 
 # ---------------------------------------------------------------------------
 # 2. Verify apply-patch.py FIELDS block uses chat.v1 field names
@@ -147,6 +152,8 @@ if patch_src:
             fields_block = eval(m_fields.group(0).split("=", 1)[1].strip())
         except Exception:
             fields_block = m_fields.group(1)
+    check("_fcmInputActive:Boolean = false" in fields_block,
+          "apply-patch.py FIELDS includes Insert-gated input state")
     check("_fcmHelloSent" not in fields_block,
           "apply-patch.py FIELDS constant does NOT include _fcmHelloSent (removed)")
     check("_fcmChannelId:" not in fields_block and '"_fcmChannelId"' not in fields_block,
@@ -169,8 +176,8 @@ if ini_src:
           "FCM.ini has AllowedChannels key")
     check("DefaultChannel=global" in ini_src,
           "FCM.ini DefaultChannel is global")
-    check("OpenChatKey=PAGE_DOWN" in ini_src,
-          "FCM.ini OpenChatKey is PAGE_DOWN")
+    check("OpenChatKey=INSERT" in ini_src,
+          "FCM.ini OpenChatKey is INSERT")
     check("EnableTimestamps=true" in ini_src,
           "FCM.ini EnableTimestamps=true")
     check("Endpoint=" in ini_src,
@@ -391,8 +398,8 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.33";' in widget_src,
-          "FCMChatWidget bumps the automatic provider selection build to version 2.10.33")
+    check('static inline var VERSION:String  = "2.10.38";' in widget_src,
+          "FCMChatWidget bumps the measured-star and low-latency relay build to version 2.10.38")
     check("FcmNativeApi.discover" in widget_src and "supportsNativeInput" in widget_src,
           "FCMChatWidget selects the provider and avoids ZFE-only input on xScal")
     check('MENU_ACTION_TIMEOUT_MS' in widget_src
@@ -426,16 +433,30 @@ if widget_src:
     check('function isOwnEcho' in widget_src
           and 'ownEchoMatched=' in widget_src,
           "FCMChatWidget reconciles self-sends against authoritative live events")
+    check('pending:Bool' in widget_src
+          and 'addOptimisticEcho' in widget_src
+          and 'pending: true' in widget_src
+          and 'removeOptimisticRecord' in widget_src,
+          "FCMChatWidget renders a successful send immediately and replaces it with the authoritative echo")
     check('var ackSupporterStar:Bool = FcmConfig.supporterStarPresent(' in widget_src
           and 'FcmConfig.hudTransportHasStar(ackHudTransport)' in widget_src
           and 'FcmConfig.hudTransportStarColor(ackHudTransport)' in widget_src
           and 'awaiting authoritative live echo' in widget_src
           and 'ackCosmetics=' in widget_src,
-          "FCMChatWidget waits for authoritative live cosmetics after a stripped send acknowledgement")
+          "FCMChatWidget keeps authoritative cosmetics as the source of truth after a stripped send acknowledgement")
     check('function renderLogHtml(lines:Array<String>):Bool' in widget_src
           and 'Reflect.field(ext, "appendHtml")' in widget_src
           and '_logTf.htmlText = ""' in widget_src,
           "FCMChatWidget rebuilds the feed through guarded TextFieldEx.appendHtml fragments")
+    check('getTextScrollOffsetY' in widget_src
+          and 'scrollV - 1' in widget_src
+          and '- scrollOffsetY' in widget_src
+          and 'authorText:' in widget_src
+          and 'var authorStart:Int = plain.indexOf(anchor.authorText, rowStart);' in widget_src
+          and 'var starX:Float = bounds.x - size - 3;' in widget_src
+          and '_starLayer.x = _logTf.x' in widget_src
+          and 'starY + size < 0' in widget_src,
+          "FCMChatWidget keeps supporter stars attached to author bounds and inside the feed viewport")
     check('static inline var LOG_INPUT_GAP:Int     = 4;' in widget_src
           and 'var logBottom:Int = h - INPUT_H - LOG_INPUT_GAP;' in widget_src
           and '_logTf.height = logHeight;' in widget_src
@@ -449,6 +470,17 @@ if widget_src:
           and '_sendEchoPollTimer' in widget_src
           and 'scheduleEchoPoll();' in widget_src,
           "FCMChatWidget polls immediately after a successful send for the authoritative echo")
+    check('var localUserId:String = _relayUserId.length > 0 ? _relayUserId : _userId;' in widget_src
+          and 'addOptimisticEcho(slug, raw, "", "", false, "", localUserId);' in widget_src
+          and 'new Timer(1, 1)' in widget_src
+          and 'updateOptimisticRecord(slug, raw, localUserId, messageId, ackTag,' in widget_src
+          and 'senderUserId: senderUserId' in widget_src,
+          "FCMChatWidget paints before the synchronous send and reconciles after the ACK")
+    wire_path = os.path.join(HERE, '..', 'hudmodloader-chat', 'FcmWire.hx')
+    check('FcmWire.findEventsArrayStart(rs)' in widget_src
+          and os.path.exists(wire_path)
+          and 'class FcmWire' in open(wire_path, encoding='utf-8').read(),
+          "FCMChatWidget accepts whitespace-safe chat.v1 events responses")
     fallout_name_match = re.search(
         r"function readFalloutDisplayName\([^)]*\):String \{(.*?)\n    \}\n\n    function hasResolvedDisplayName",
         widget_src,
@@ -525,10 +557,30 @@ if widget_src:
           and 'Reflect.field(e, "EventName")' in widget_src
           and 'Reflect.field(e, "IsKeyDown")' in widget_src,
           "FCMChatWidget accepts current and legacy HUDModLoader event field names")
-    check("action == _cfg.channelNextKey" in widget_src
-          and "action == _cfg.channelPrevKey" in widget_src
+    check("FcmCommand.isNextChannel" in widget_src
+          and "FcmCommand.isPreviousChannel" in widget_src
+          and "_navigationActionsDown" in widget_src
+          and "FcmCommand.actionKey(action)" in widget_src
           and "function isExternalInputAction" in widget_src,
-          "FCMChatWidget handles channel actions and external focus recovery")
+          "FCMChatWidget handles key-down and key-up channel actions with edge de-duplication")
+    check("_inputOpen && !_hidden" in widget_src
+          and "FcmCommand.scrollDirection" in widget_src
+          and "FcmCommand.isScrollToBottom" in widget_src
+          and "function scrollUp" in widget_src
+          and "function scrollDown" in widget_src,
+          "FCMChatWidget maps arrow actions to feed scrolling and Home/End to newest")
+    check("_fcmNavigationAction:String = \"\"" in patch_src
+          and "_fcmNavigationAction = \"\"" in patch_src,
+          "HUDMenu patch carries the standalone navigation edge latch")
+    check('action == "PrevPage"' in inject_src
+          and "fcmSwitchChannelPrev" in bridge_src,
+          "standalone HUD path handles previous-page channel switching")
+    check('action == "ArrowUp"' in inject_src
+          and 'action == "ArrowDown"' in inject_src
+          and "fcmScrollUp" in bridge_src
+          and "fcmScrollDown" in bridge_src
+          and "fcmScrollToBottom" in bridge_src,
+          "standalone HUD path handles arrow scrolling and Home/End newest")
     check("function mergeNativeInputText" in widget_src
           and "_inProgress + observed" in widget_src,
           "FCMChatWidget preserves native drafts when ZFE returns one character at a time")
@@ -540,6 +592,10 @@ if widget_src:
     check('WORLD_ROSTER_PREFIX:String = "FCMCTL/1/ROSTER:"' in widget_src
           and 'var body:String = WORLD_ROSTER_PREFIX + namesField;' in widget_src,
           "FCMChatWidget sends printable roster controls")
+    check('if (_needsLink || _authState != "authenticated") return;' in widget_src
+          and 'ROSTER_RETRY_MS' in widget_src
+          and 'now - _lastRosterSentAt' in widget_src,
+          "FCMChatWidget suppresses unlinked and rapid retry roster sends")
     check('NUL:String      = ctrlChar(0)' in widget_src
           and 'UNIT_SEP:String = ctrlChar(31)' in widget_src,
           "FCMChatWidget builds compatibility control bytes at runtime, not in the SWF string pool")

@@ -128,7 +128,9 @@ sign in with Discord, enter the code, and return to the game. Codes expire after
 
 HUD input and commands:
   Press Insert while Fallout 76 is focused to start typing. Press Enter to send
-  or Escape to cancel. Page Down / Page Up switch channels. Type /g, /t, /e,
+  or Escape to cancel. Page Down / Page Up switch channels. After Insert opens
+  the typing session, Arrow Up / Down scroll the feed, and Home / End return to
+  the newest message; before Insert they remain game controls. Type /g, /t, /e,
   /i, or /r before a message to route it to General, Trading, Events, Infests,
   or Raids. /s (or /server) is available after the current server/world session
   is confirmed. Type /hide by itself to hide the feed; press Insert to restore it.
@@ -190,7 +192,9 @@ def build_package(target: str, output: Path) -> None:
             "-----------------------\n"
             "Press Insert while Fallout 76 is focused to start typing. Press\n"
             "Enter to send or Escape to cancel. Page Down / Page Up switch\n"
-            "channels. Type /g, /t, /e, /i, or /r before a message to route it\n"
+            "channels. After Insert opens the typing session, Arrow Up / Down scroll\n"
+            "the feed and Home / End return to the newest message; before Insert they\n"
+            "remain game controls. Type /g, /t, /e, /i, or /r before a message to route it\n"
             "to General, Trading, Events, Infests, or Raids. /s (or /server)\n"
             "is available after the current server/world session is confirmed.\n"
             "Type /hide by itself to hide the feed; press Insert to restore it.\n"

@@ -45,7 +45,7 @@ Data/ZFE/TextChat/fragments/FCM.ini
 ```
 
 Contents: `AllowedChannels=global,trade,server,events,raids,infests`,
-`DefaultChannel=global`, `OpenChatKey=PAGE_DOWN`, `EnableTimestamps=true`,
+`DefaultChannel=global`, `OpenChatKey=INSERT`, `EnableTimestamps=true`,
 and the `Endpoint` URL. **Update `Endpoint` before each release:**
 
 ```ini

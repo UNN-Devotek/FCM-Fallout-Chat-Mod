@@ -50,6 +50,8 @@ FIELDS = ('      \n'
           '      public var _fcmBridge:* = null;\n      \n'
           '      public var _fcmInited:Boolean = false;\n      \n'
           '      public var _fcmLastEvent:String = "";\n      \n'
+          '      public var _fcmNavigationAction:String = "";\n      \n'
+          '      public var _fcmInputActive:Boolean = false;\n      \n'
           '      public var _fcmChannelSlug:String = "global";\n      \n'
           '      public var _fcmChannelIdx:int = 0;\n      \n'
           '      public var _fcmInpRef:* = null;\n      \n'
@@ -107,7 +109,9 @@ src = src.replace(m5.group(1), m5.group(1) + '\n         this.fcmEvent(String(' 
 m6 = re.search(r'(internal function chatEntryKeyUp\((\w+):KeyboardEvent\) : void\n      \{)', src)
 if not m6:
     die("Anchor 6 (chatEntryKeyUp) not found in " + f)
-hook6 = ('\n         this.fcmLog("info","type","kc=" + ' + m6.group(2) + '.keyCode);'
+hook6 = ('\n         if (' + m6.group(2) + '.keyCode == 13 || ' + m6.group(2) + '.keyCode == 27)'
+         '\n         { this._fcmInputActive = false; this._fcmNavigationAction = ""; }'
+         '\n         this.fcmLog("info","type","kc=" + ' + m6.group(2) + '.keyCode);'
          '\n         this.fcmCheckLength();')
 src = src.replace(m6.group(1), m6.group(1) + hook6, 1)
 

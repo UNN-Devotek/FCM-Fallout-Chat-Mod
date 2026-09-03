@@ -70,6 +70,11 @@ while Supporter and Overseer's Circle choices stay visible but locked until the 
 Discord role is active. The supporter marker is always a `★`, with its colour chosen
 independently from the username colour. Colour and tag render in the in-game HUD; visual
 effects are honestly labelled desktop-only because Scaleform cannot render them safely.
+Selecting a value updates the local preview immediately. The save then replaces that preview
+with the server-authoritative result; transient network/server failures retry a bounded number
+of times, while validation or entitlement errors roll the preview back and release the busy
+state with an actionable message. Discord role presentation is queued separately, so a slow
+Discord API cannot leave the settings panel waiting after the FCM appearance is saved.
 
 ---
 

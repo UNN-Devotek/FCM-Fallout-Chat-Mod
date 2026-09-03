@@ -25,6 +25,15 @@ def main() -> None:
         r'static inline var VERSION:String\s*=\s*"([^"]+)"', source_hx
     )
     assert version_match, "FCMChatWidget.hx must define VERSION"
+    assert "queued local row; transport deferred" in source_hx, (
+        "send path must queue transport after painting the optimistic row"
+    )
+    assert "new Timer(1, 1)" in source_hx, (
+        "send path must defer the synchronous native RPC by one timer tick"
+    )
+    assert source_hx.index("queued local row; transport deferred") < source_hx.index(
+        'var rs:String = Std.string(_api.call("chat.v1.sendMessage", payload));'
+    ), "optimistic row must be queued before the native send call"
     swf_artifact = (ROOT / "FCMChatWidget.swf").read_bytes()
     assert swf_artifact[:3] == b"FWS" and swf_artifact[3] == 32, (
         "FCMChatWidget.swf must be an uncompressed Flash v32 artifact"
@@ -93,12 +102,16 @@ def main() -> None:
                 assert f"relayEndpoint={expected['endpoint']}\n".encode() in xscal_config
                 assert b"Press F11" in install
                 assert b"Press Insert" in install
+                assert b"Arrow Up / Down" in install
+                assert b"Home / End" in install
                 assert b"/g, /t, /e" in install
                 assert b"/relink" in install
                 assert b"Reset all settings" in install
                 assert b"F11" in menu
                 assert b"FCM -> Customize..." in menu
                 assert b"Press Insert" in menu
+                assert b"Arrow Up / Down" in menu
+                assert b"Home / End" in menu
                 assert b"/g, /t, /e" in menu
                 assert b"/relink" in menu
                 assert b"Auto-hide" in menu

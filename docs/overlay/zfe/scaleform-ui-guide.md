@@ -179,6 +179,9 @@ unless we need row interactivity.
   `stage.addEventListener("HUDMod::UserEvent", …)` to receive every control-map action (e.g. `"TeamChat"`,
   `"DiagnosticSnapshot"`=F12, `"L3"`). This is the conflict-free way for a *widget* to get input without
   patching HUDMenu.
+- Loader builds do not all expose the same edge: FCMChatWidget accepts the first key-down or a
+  key-up-only HUDMod::UserEvent for Page Up/Page Down and feed navigation, with a per-action latch
+  preventing a key-down plus key-up pair from switching twice.
 - **`SharedHUDTools` IPC + text entry:** a message bus (`Register`, `SendMessage`) plus
   **`TextEdit(callback, startText)` + `FormatTextEdit(x,y,w,h,font,size,color,bg,alpha)`** — HUDTools'
   own text-entry machinery that handles gamepad OSK + the StartEditText/EndEditText cycle for you. A

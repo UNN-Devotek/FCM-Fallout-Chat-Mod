@@ -24,6 +24,7 @@ import { ChatInlineEmbed } from './components/ChatInlineEmbed';
 import ImageLightbox from './components/ImageLightbox';
 import { OutboxQueue } from './outboxQueue';
 import { supporterBadge, supporterStarColor, SUPPORTER_STAR_GLYPH } from './supporterBadge';
+import { nameEffectMotion } from './nameEffectMotion';
 
 /**
  * Web-based chat overlay — identical to the desktop SkiaSharp overlay.
@@ -1579,7 +1580,7 @@ interface ChatMessage {
  * Exported for unit tests.
  */
 export function nameCosmeticProps(
-  msg: { nameColor?: string | null; effectId?: string | null },
+  msg: { id?: string; userId?: string; timestamp?: string; nameColor?: string | null; effectId?: string | null },
   theme: {
     primaryText: string;
     primaryColor: string;
@@ -1607,6 +1608,8 @@ export function nameCosmeticProps(
     };
   }
 
+  const messageKey = msg.id || `${msg.userId || ''}:${msg.timestamp || ''}:${displayName}`;
+
   return {
     className: `fcm-name-fx--${effect}`,
     style: {
@@ -1617,6 +1620,7 @@ export function nameCosmeticProps(
       // No inline textShadow — the effect class composes it with the outline below.
       ['--fcm-name-color' as string]: color,
       ['--fcm-name-outline' as string]: theme.textOutline,
+      ...nameEffectMotion(effect, messageKey),
     } as React.CSSProperties,
     dataName: displayName,
   };
@@ -5028,7 +5032,6 @@ export default function ChatOverlay() {
             if (pv && pv !== 'browser') {
               ws!.send(JSON.stringify({ type: 'party:history', payload: { partyId: pv, limit: 200 } }));
             }
-            ws!.send(JSON.stringify({ type: 'pm:list', payload: {} }));
             // Refetch channels on every (re)connect so the list is always current
             // even if channels:refresh events were missed during a disconnect.
             refetchChannelsRef.current?.();
@@ -5324,10 +5327,16 @@ export default function ChatOverlay() {
                   editPendingRef.current = false;
                   setEditPending(false);
                 }
-                if (frame.payload?.message === 'Could not load private messages.') {
+                if (frame.payload?.message === 'Could not load private messages.'
+                  && activeMainIdRef.current === PM_MAIN_ID) {
                   setPrivateMessagingError('Private messages are temporarily unavailable.');
                 } else if (frame.payload?.message) {
-                  showActionToast('err', frame.payload.message);
+                  // A PM-list failure is intentionally silent outside the PM tab;
+                  // PM hydration is lazy and must not turn overlay activation or a
+                  // focus recovery into an unrelated warning.
+                  if (frame.payload?.message !== 'Could not load private messages.') {
+                    showActionToast('err', frame.payload.message);
+                  }
                 }
               } else if (frame.type === 'mod:report') {
                 setReportAlerts(prev => [frame.payload, ...prev].slice(0, 5));
@@ -5775,6 +5784,18 @@ export default function ChatOverlay() {
     }));
   }, [activeMainId, pmView]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // PM inbox hydration is demand-driven. Loading it on every socket connection
+  // made ordinary overlay activation depend on the PM database path and could
+  // surface a transient PM warning while the user was only opening chat. The
+  // active-tab + connected guards also rehydrate the inbox after a real socket
+  // reconnect when the user is actually using PMs.
+  useEffect(() => {
+    if (activeMainId !== PM_MAIN_ID || !connected) return;
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'pm:list', payload: {} }));
+  }, [activeMainId, connected]);
+
   // Load history for all joined parties so the General feed can show party
   // messages that arrived before this session (not just live messages).
   // Runs when WS connects and whenever the joined-party set changes.
@@ -5910,22 +5931,6 @@ export default function ChatOverlay() {
     cont.addEventListener('scroll', onScroll, { passive: true });
     return () => cont.removeEventListener('scroll', onScroll);
   }, []);
-
-  // (a2) Activating the chat by clicking/focusing the input box → land at the
-  // bottom (latest message). Covers the "click the chat input to type" path
-  // (the Insert hotkey path is handled by the shell dispatching fcm-scroll-bottom
-  // via onFocusInput). We listen for focusin on the input elements specifically
-  // (NOT the message body) so clicking a message to read older history does NOT
-  // yank the view to the bottom — only an explicit input activation does.
-  useEffect(() => {
-    const onFocusIn = (e: FocusEvent) => {
-      const t = e.target as Node | null;
-      if (!t) return;
-      if (t === richInputRef.current || t === inputRef.current) scrollToBottom();
-    };
-    document.addEventListener('focusin', onFocusIn);
-    return () => document.removeEventListener('focusin', onFocusIn);
-  }, [scrollToBottom]);
 
   // (a3) The typing indicator is a flexShrink:0 sibling BELOW the flex:1 message
   // scroll area, so when it appears/disappears the message area resizes. If the
@@ -8579,25 +8584,31 @@ export default function ChatOverlay() {
                           ? <span className={`fcm-name-badge fcm-name-badge--${badge.tier}`} role="img" title={badge.label} aria-label={badge.label} data-fcm-supporter-star="true"
                               style={{ color: supporterStarColor(msg.badges, msg.starColor) ?? undefined }}>{SUPPORTER_STAR_GLYPH}</span>
                           : null;
+                        const nameLabel = fx.className.includes('fcm-name-fx--shimmer')
+                          ? <>{Array.from(displayName).map((character, index) => (
+                              <span key={`${index}-${character}`} className="fcm-shimmer-letter"
+                                style={{ ['--fcm-shimmer-index' as string]: index } as React.CSSProperties}>{character}</span>
+                            ))}:{' '}</>
+                          : <>{displayName}:{' '}</>;
                         // Tag and badge render BEFORE the name, which keeps the name
-                        // element's text node exactly `${displayName}: ` as it has
-                        // always been. Splitting the colon into its own element broke
-                        // getByText(/Name:/) queries and made the bare name match twice.
+                        // element's text content exactly `${displayName}: ` as it has
+                        // always been. The shimmer glyph spans are presentation-only
+                        // and preserve that same text content for mentions and tests.
                         const nameEl = msg.userId && msg.userId !== 'system' ? (
                           isPublicMode ? (
                             <Link to={`/profile/${msg.userId}`} className={`username-chip ${fx.className}`} style={fx.style} data-fcm-name={fx.dataName}>
-                              {displayName}:{' '}
+                              {nameLabel}
                             </Link>
                           ) : (
                             <span role="button" tabIndex={0} className={`username-chip username-chip--mention ${fx.className}`}
                               style={{ ...fx.style, cursor: 'pointer' }} data-fcm-name={fx.dataName}
                               onClick={() => insertMentionFromClick(displayName)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') insertMentionFromClick(displayName); }}>
-                              {displayName}:{' '}
+                              {nameLabel}
                             </span>
                           )
                         ) : (
                           <span style={fx.style} className={fx.className} data-fcm-name={fx.dataName}>
-                            {displayName}:{' '}
+                            {nameLabel}
                           </span>
                         );
                         // Keep the star and username in one middle-aligned identity
@@ -8611,6 +8622,10 @@ export default function ChatOverlay() {
                       </span>
                       <span data-fcm-message-body="true" style={{
                         display: 'inline',
+                        // The username is inside an inline-flex identity run, so its
+                        // trailing text whitespace can collapse at this boundary.
+                        // Keep the separator explicit on the body instead.
+                        marginLeft: '0.25em',
                         color: contentColor,
                         fontWeight: 600,
                         lineHeight: 'inherit',

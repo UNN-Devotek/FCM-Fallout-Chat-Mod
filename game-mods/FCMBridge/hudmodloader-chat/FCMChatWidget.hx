@@ -21,11 +21,13 @@ private typedef ChatRecord = {
     var body:String;
     var messageId:String;
     var senderUserId:String;
+    var pending:Bool;
 }
 
 private typedef StarAnchor = {
     var rowText:String;
-    var userOffset:Int;
+    // Plain author token, used to ask GFx for the actual rendered name bounds.
+    var authorText:String;
     var color:Int;
 }
 
@@ -143,7 +145,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.33"; // automatic ZFE/xScal chat bridge selection
+    static inline var VERSION:String  = "2.10.38"; // measured supporter-star placement + low-latency relay send
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -280,6 +282,10 @@ class FCMChatWidget extends MovieClip {
     static inline var HISTORY_RESYNC_PREFIX:String = "FCMCTL/1/RESYNC";
     static inline var ROSTER_FRESH_MS:Float = 60000;   // observation freshness window
     static inline var ROSTER_SEND_MS:Float  = 30000;   // periodic roster resend
+    // Server controls use the synchronous native RPC surface. Do not retry a rejected or
+    // timed-out control on every 5s world tick; older ZFE builds can block the HUD for the
+    // full socket timeout while the relay is unavailable or the account is still unlinked.
+    static inline var ROSTER_RETRY_MS:Float = 60000;
 
     // ── Config (FcmConfig — parsed from Data/FCMChat.ini; see FcmConfig.hx) ─────
     var _cfg:FcmConfig = new FcmConfig();
@@ -307,6 +313,9 @@ class FCMChatWidget extends MovieClip {
     var _starAnchors:Array<StarAnchor> = [];
     var _starLayoutWarned:Bool = false;
     var _newWhileScrolled:Int    = 0;
+    // Loader versions differ in whether they emit key-down, key-up, or both. Feed/channel
+    // navigation is handled on the first edge available, then the matching key-up is ignored.
+    var _navigationActionsDown:Map<String,Bool> = new Map();
 
     // ── Channel state ─────────────────────────────────────────────────────────
     var _chanIdx:Int             = 0;   // 0=global
@@ -541,7 +550,12 @@ class FCMChatWidget extends MovieClip {
         _starLayer = new Sprite();
         _starLayer.mouseEnabled = false;
         _starLayer.mouseChildren = false;
-        _starLayer.scrollRect = new Rectangle(_logTf.x, _logTf.y, _logTf.width, _logTf.height);
+        // Keep marker coordinates in the feed's local space. The previous sibling
+        // layer used parent-space coordinates plus a parent-space scrollRect, which
+        // made GFx's mixed HTML bounds land on top of the name/tag prefix.
+        _starLayer.x = _logTf.x;
+        _starLayer.y = _logTf.y;
+        _starLayer.scrollRect = new Rectangle(0, 0, _logTf.width, _logTf.height);
         addChild(_starLayer);
 
         // Mouse-wheel over the log scrolls history (CAP-008, VER-2). HUD-availability
@@ -868,8 +882,6 @@ class FCMChatWidget extends MovieClip {
             closeInputNative();
             return;
         }
-        if (isDown) return;
-
         // HUDModLoader's RegisterMenu() does not bind the F11 hotkey. The loader forwards
         // the key as a HUDMod::UserEvent, so explicitly open the shared menu here. Keep the
         // guard narrow: "Unmapped" represents every unbound key and must never open menus.
@@ -881,8 +893,36 @@ class FCMChatWidget extends MovieClip {
         // Keep the active input session and its buffer intact while changing the destination
         // channel. Channel cycling also works while the feed is idle; this is the HUDModLoader
         // equivalent of the legacy Text Chat mod's Tab switch.
-        if (action == _cfg.channelNextKey) { cycleChannel(); return; }
-        if (action == _cfg.channelPrevKey) { cyclePrev(); return; }
+        // Feed navigation is unlocked only for the active Insert-open chat session. Before
+        // that, arrows remain game controls; while the session is open, arrows/Home/End
+        // operate on the FCM feed instead of leaking into the game control map.
+        var scroll:Int = FcmCommand.scrollDirection(action);
+        var jumpToBottom:Bool = FcmCommand.isScrollToBottom(action);
+        var nextChannel:Bool = FcmCommand.isNextChannel(action, _cfg.channelNextKey);
+        var previousChannel:Bool = FcmCommand.isPreviousChannel(action, _cfg.channelPrevKey);
+        var isNavigation:Bool = scroll != 0 || jumpToBottom || nextChannel || previousChannel;
+        if (isNavigation) {
+            var navKey:String = FcmCommand.actionKey(action);
+            if (isDown) {
+                if (_navigationActionsDown.exists(navKey)) return;
+                _navigationActionsDown.set(navKey, true);
+            } else if (_navigationActionsDown.exists(navKey)) {
+                // We already handled the key-down edge. A key-up-only loader has no latch entry
+                // and therefore reaches the same actions below.
+                _navigationActionsDown.remove(navKey);
+                return;
+            }
+            if (_inputOpen && !_hidden) {
+                if (scroll < 0) { scrollUp(); return; }
+                if (scroll > 0) { scrollDown(); return; }
+                if (jumpToBottom) { scrollToBottom(); return; }
+            }
+            // Page actions switch channels while idle or while typing. The draft stays intact.
+            if (nextChannel) { cycleChannel(); return; }
+            if (previousChannel) { cyclePrev(); return; }
+        }
+
+        if (isDown) return;
 
         // Open only on a real action used as the open key (never on "Unmapped", which would
         // open on ANY unbound key). INSERT etc. open via the native poll, not here.
@@ -1921,12 +1961,63 @@ class FCMChatWidget extends MovieClip {
 
         var slug:String = CHAN_SLUGS[_chanIdx];
         if (slug == "server" && !_serverSessionReady) {
+            setLogText(_serverSessionError.length > 0
+                ? ("Server chat is unavailable: " + _serverSessionError)
+                : "Server chat is initializing...");
+            zfeLog("warn", "server", "ordinary send blocked; session not ready");
+            return;
+        }
+
+        // The native provider call is synchronous. Paint the temporary row first, then enter
+        // the provider on the next timer tick so a slow TLS/socket operation cannot hold the
+        // Scaleform frame before the player sees their own message.
+        var localUserId:String = _relayUserId.length > 0 ? _relayUserId : _userId;
+        var pendingKey:String = echoSbKey(localUserId, slug, raw);
+        var nativeSubmit:Bool = _nativeSubmitInFlight;
+        _pendingEchoes.push({ key: pendingKey, ts: flash.Lib.getTimer() });
+        addOptimisticEcho(slug, raw, "", "", false, "", localUserId);
+        zfeLog("info", "echo", "queued local row; transport deferred ch=" + slug);
+
+        var sendTimer:Timer = new Timer(1, 1);
+        sendTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
+            sendMessageTransport(slug, raw, nativeSubmit, pendingKey, localUserId);
+        });
+        sendTimer.start();
+    }
+
+    /** Execute the synchronous provider RPC after the optimistic row had a paint opportunity. */
+    function sendMessageTransport(slug:String, raw:String, nativeSubmit:Bool, pendingKey:String,
+            localUserId:String):Void {
+        if (_api == null || !_connected) {
+            removePendingKey(pendingKey);
+            removeOptimisticRecord("", localUserId, slug, raw);
+            if (slug == CHAN_SLUGS[_chanIdx]) renderRecords();
+            zfeLog("warn", "send", "not connected; cannot send");
+            return;
+        }
+        if (_authState != "authenticated") {
+            removePendingKey(pendingKey);
+            removeOptimisticRecord("", localUserId, slug, raw);
+            if (slug == CHAN_SLUGS[_chanIdx]) renderRecords();
+            zfeLog("warn", "send", "send blocked; authState=" + _authState + " (account not linked)");
+            setLogText(linkHint());
+            return;
+        }
+
+        if (raw.length > _cfg.maxSendLen) raw = raw.substr(0, _cfg.maxSendLen);
+        raw = fcmClean(raw);
+        if (raw.length == 0) return;
+
+        if (slug == "server" && !_serverSessionReady) {
             // Never send ordinary server traffic until the same relay has acknowledged the
             // roster/world control. This avoids presenting a selectable dead tab during a
             // delayed deploy, reconnect, or rejected control.
             setLogText(_serverSessionError.length > 0
                 ? ("Server chat is unavailable: " + _serverSessionError)
                 : "Server chat is initializing...");
+            removePendingKey(pendingKey);
+            removeOptimisticRecord("", localUserId, slug, raw);
+            if (slug == CHAN_SLUGS[_chanIdx]) renderRecords();
             zfeLog("warn", "server", "ordinary send blocked; session not ready");
             return;
         }
@@ -1943,8 +2034,7 @@ class FCMChatWidget extends MovieClip {
             // message, a quote becomes an escape, and ZFE's writer truncates at the backslash.
             // v2.5.3 diagnostic: when this send is from a just-closed native session,
             // log the FULL raw result so we learn whether send works in that context.
-            if (_nativeSubmitInFlight) {
-                _nativeSubmitInFlight = false;
+            if (nativeSubmit) {
                 zfeLog("info", "nativein", "send-in-session raw=" + clip200(rs));
             }
             var success:Bool = (rs.indexOf('"success":true') >= 0 || rs.indexOf('success:true') >= 0);
@@ -1952,12 +2042,13 @@ class FCMChatWidget extends MovieClip {
                 zfeLog("info", "send", "sent ch=" + slug + " len=" + raw.length);
                 // A successful send proves this identity is LINKED — clear the link gate.
                 if (_needsLink) { clearLinkGate("successful send"); }
-                // Register the confirmed send for authoritative live-echo reconciliation
-                // (only when we know our id). ZFE strips the additive fields and targetUserId
-                // carrier from this native RPC response, so an optimistic row here would be
-                // visibly untagged until the subscriber echo arrived. The live event is the
-                // first reliable source for the sender's resolved cosmetics.
-                if (_relayUserId.length > 0) {
+                // Register the confirmed send for authoritative live-echo reconciliation.
+                // Prefer the relay id, but retain the authenticated native id during the brief
+                // window before getAuthState has populated the relay-specific field. ZFE strips
+                // the additive fields and targetUserId carrier from this native RPC response,
+                // so the optimistic row is temporary;
+                // the live event remains the first reliable source for resolved cosmetics.
+                {
                     var messageId:String = extractJsonString(rs, "messageId");
                     var ackTag:String = extractJsonString(rs, "tag");
                     var ackStarColor:String = extractJsonString(rs, "starColor");
@@ -1976,18 +2067,19 @@ class FCMChatWidget extends MovieClip {
                         + " tag=" + (ackTag.length > 0 ? "y" : "n")
                         + " star=" + (ackSupporterStar ? "y" : "n")
                         + " color=" + (ackStarColor.length > 0 ? "y" : "n"));
-                    var dedupKey:String = (messageId.length > 0)
-                        ? echoIdKey(messageId)
-                        : echoSbKey(_relayUserId, slug, raw);
-                    _pendingEchoes.push({ key: dedupKey, ts: flash.Lib.getTimer() });
-                    // Do not paint a second-class local row when the native ACK has no
-                    // authoritative cosmetics. The subscriber event below is rendered as
-                    // the canonical row, preserving tag/star data for new messages.
+                    updateOptimisticRecord(slug, raw, localUserId, messageId, ackTag,
+                        ackSupporterStar, ackStarColor);
+                    if (messageId.length > 0) {
+                        _pendingEchoes.push({ key: echoIdKey(messageId), ts: flash.Lib.getTimer() });
+                    }
                     zfeLog("info", "echo", "awaiting authoritative live echo ch=" + slug
                         + " ackCosmetics=" + ((ackTag.length > 0 || ackSupporterStar) ? "y" : "n"));
                 }
                 scheduleEchoPoll();
             } else {
+                removePendingKey(pendingKey);
+                removeOptimisticRecord("", localUserId, slug, raw);
+                if (slug == CHAN_SLUGS[_chanIdx]) renderRecords();
                 // Surface the relay error code to the user.
                 var code:String = extractJsonString(rs, "code");
                 // Failure only: the untruncated response. This is the line that finally exposed
@@ -2036,6 +2128,9 @@ class FCMChatWidget extends MovieClip {
                 }
             }
         } catch (e:Dynamic) {
+            removePendingKey(pendingKey);
+            removeOptimisticRecord("", localUserId, slug, raw);
+            if (slug == CHAN_SLUGS[_chanIdx]) renderRecords();
             zfeLog("warn", "send", "sendMessage threw: " + Std.string(e));
             setLogText("Send failed (no relay).");
         }
@@ -2463,8 +2558,7 @@ class FCMChatWidget extends MovieClip {
     }
 
     function parseAndRenderEvents(rs:String):Void {
-        var evStart:Int = rs.indexOf('"events":[');
-        if (evStart < 0) evStart = rs.indexOf('events:[');
+        var evStart:Int = FcmWire.findEventsArrayStart(rs);
         if (evStart < 0) return;
 
         // Expire stale optimistic-echo dedup keys (>15s) so a never-arriving
@@ -2547,12 +2641,10 @@ class FCMChatWidget extends MovieClip {
 
             // Reconcile a pending self-send with the authoritative relay event before
             // deduping it. The relay is the source of truth for supporterStar, starColor,
-            // and tag. If the native ACK was stripped and no optimistic row exists, fall
-            // through so this canonical event is stored and rendered normally.
+            // and tag. Remove any temporary local row, then store this canonical event normally.
             if (isOwnEcho(messageId, senderUserId, channel, body)) {
                 ownEchoMatchedCount++;
-                // There was no optimistic row because the native ACK did not preserve
-                // cosmetics. Fall through and store this authoritative event normally.
+                // Fall through so the authoritative event is stored with its cosmetics.
             }
 
             // Store ALL known channels (renderRecords filters to the active tab).
@@ -2565,7 +2657,7 @@ class FCMChatWidget extends MovieClip {
             _records.push({
                 color: hx(_cfg.senderColor), channel: channel, user: displayName,
                 tag: tag, supporterStar: supporterStar, starColor: starColor, body: displayBody,
-                messageId: messageId, senderUserId: senderUserId,
+                messageId: messageId, senderUserId: senderUserId, pending: false,
             });
             while (_records.length > _cfg.maxMessages) _records.shift();
             if (_bScrolling) _newWhileScrolled++;
@@ -2656,6 +2748,7 @@ class FCMChatWidget extends MovieClip {
         // Strong signal: the relay told us our own id and it's coming back.
         if (_relayUserId.length > 0 && senderUserId == _relayUserId) {
             removePendingMatch(messageId, senderUserId, channel, body);
+            removeOptimisticRecord(messageId, senderUserId, channel, body);
             return true;
         }
         // Otherwise match against pending keys.
@@ -2666,10 +2759,68 @@ class FCMChatWidget extends MovieClip {
             var pk:String = _pendingEchoes[k].key;
             if ((idK.length > 0 && pk == idK) || pk == sbK) {
                 _pendingEchoes.splice(k, 1);
+                removeOptimisticRecord(messageId, senderUserId, channel, body);
                 return true;
             }
         }
         return false;
+    }
+
+    /** Paint a local send immediately; the later chat.message event supplies authoritative cosmetics. */
+    function addOptimisticEcho(channel:String, body:String, messageId:String, tag:String,
+            supporterStar:Bool, starColor:String, senderUserId:String):Void {
+        if (senderUserId == null) senderUserId = "";
+        _records.push({
+            color: hx(_cfg.senderColor), channel: channel, user: _displayName,
+            tag: tag, supporterStar: supporterStar, starColor: starColor,
+            body: FcmConfig.normalizeDiscordEmojiMarkup(body),
+            messageId: messageId, senderUserId: senderUserId, pending: true,
+        });
+        while (_records.length > _cfg.maxMessages) _records.shift();
+        if (_bScrolling) _newWhileScrolled++;
+        if (channel == CHAN_SLUGS[_chanIdx]) renderRecords();
+    }
+
+    function updateOptimisticRecord(channel:String, body:String, senderUserId:String,
+            messageId:String, tag:String, supporterStar:Bool, starColor:String):Void {
+        var normalized:String = FcmConfig.normalizeDiscordEmojiMarkup(body);
+        for (rec in _records) {
+            if (!rec.pending || rec.channel != channel || rec.senderUserId != senderUserId) continue;
+            if (rec.body != body && rec.body != normalized) continue;
+            rec.messageId = messageId;
+            rec.tag = tag;
+            rec.supporterStar = supporterStar;
+            rec.starColor = starColor;
+            if (channel == CHAN_SLUGS[_chanIdx]) renderRecords();
+            return;
+        }
+    }
+
+    function removePendingKey(key:String):Void {
+        if (key == null || key.length == 0) return;
+        for (i in 0..._pendingEchoes.length) {
+            if (_pendingEchoes[i].key == key) {
+                _pendingEchoes.splice(i, 1);
+                return;
+            }
+        }
+    }
+
+    /** Remove only the temporary local row that the authoritative event supersedes. */
+    function removeOptimisticRecord(messageId:String, senderUserId:String,
+            channel:String, body:String):Void {
+        var normalized:String = FcmConfig.normalizeDiscordEmojiMarkup(body);
+        for (i in 0..._records.length) {
+            var rec:ChatRecord = _records[i];
+            if (!rec.pending) continue;
+            var idMatch:Bool = messageId.length > 0 && rec.messageId == messageId;
+            var bodyMatch:Bool = rec.senderUserId == senderUserId && rec.channel == channel
+                && (rec.body == body || rec.body == normalized);
+            if (idMatch || bodyMatch) {
+                _records.splice(i, 1);
+                return;
+            }
+        }
     }
 
     function removePendingMatch(messageId:String, senderUserId:String, channel:String, body:String):Void {
@@ -2756,6 +2907,9 @@ class FCMChatWidget extends MovieClip {
      *  driven by the relay acknowledgement, not by this local observation. */
     function tickRoster():Void {
         if (_api == null || !_connected || _relayUserId.length == 0) return;
+        // An unlinked account cannot be admitted to the server room. In particular, do not
+        // keep issuing synchronous roster calls while the one-shot link notice is being shown.
+        if (_needsLink || _authState != "authenticated") return;
         var now:Float = flash.Lib.getTimer();
         var names:Array<String> = freshRosterNames();
         var wasInWorld:Bool = _inWorld;
@@ -2770,7 +2924,11 @@ class FCMChatWidget extends MovieClip {
         _inWorld = (names.length > 0 || rosterObserved);
         if (_inWorld) {
             var namesField:String = names.join("|");
-            if (!_serverSessionReady || (now - _lastRosterSentAt) >= ROSTER_SEND_MS || namesField != _lastRosterSent) {
+            var retrySuppressed:Bool = !_serverSessionReady && _lastRosterSentAt > 0
+                && (now - _lastRosterSentAt) < ROSTER_RETRY_MS;
+            if (!retrySuppressed && (!_serverSessionReady
+                    || (now - _lastRosterSentAt) >= ROSTER_SEND_MS
+                    || namesField != _lastRosterSent)) {
                 _lastRosterSentAt = now;
                 _lastRosterSent = namesField;
                 var body:String = WORLD_ROSTER_PREFIX + namesField;
@@ -2924,7 +3082,7 @@ class FCMChatWidget extends MovieClip {
             if (rec.supporterStar && rawUser.length > 0) {
                 starAnchors.push({
                     rowText: rowPrefix + rawUser + ": " + rawBody,
-                    userOffset: rowPrefix.length,
+                    authorText: rawUser + ":",
                     color: FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor)
                 });
             }
@@ -3019,16 +3177,34 @@ class FCMChatWidget extends MovieClip {
 
     public function scrollUp():Void {
         if (_logTf == null) return;
-        if (_logTf.scrollV > 1) { _logTf.scrollV--; _bScrolling = true; positionStarOverlays(); }
+        try {
+            if (_logTf.scrollV > 1) {
+                _logTf.scrollV--;
+                _bScrolling = true;
+                positionStarOverlays();
+            }
+        } catch (e:Dynamic) {
+            zfeLog("warn", "scroll", "scrollUp threw: " + Std.string(e));
+        }
     }
 
     public function scrollDown():Void {
         if (_logTf == null) return;
-        _logTf.scrollV++;
-        if (_logTf.scrollV >= _logTf.maxScrollV) {
-            _bScrolling = false; _newWhileScrolled = 0;
+        try {
+            var max:Int = _logTf.maxScrollV;
+            if (max <= 1) {
+                _bScrolling = false; _newWhileScrolled = 0;
+            } else {
+                if (_logTf.scrollV < max) _logTf.scrollV++;
+                if (_logTf.scrollV >= max) {
+                    _logTf.scrollV = max;
+                    _bScrolling = false; _newWhileScrolled = 0;
+                }
+            }
+            positionStarOverlays();
+        } catch (e:Dynamic) {
+            zfeLog("warn", "scroll", "scrollDown threw: " + Std.string(e));
         }
-        positionStarOverlays();
     }
 
     public function scrollToBottom():Void {
@@ -3095,9 +3271,10 @@ class FCMChatWidget extends MovieClip {
     }
 
     /**
-     * Locate each supporter author's first character in the rendered TextField and place a
-     * vector star immediately before it. Missing bounds are treated as a safe no-op because
-     * off-screen characters can return null on some GFx builds.
+     * Locate each supporter row in the rendered TextField and place a vector star immediately
+     * before the author's name. Both coordinates come from the actual author glyph bounds in
+     * the laid-out TextField; this keeps the marker attached to the name across channel tags,
+     * moderation refs, custom tags, and mixed-font HTML runs.
      */
     function positionStarOverlays():Void {
         if (_starLayer == null || _logTf == null) return;
@@ -3108,6 +3285,7 @@ class FCMChatWidget extends MovieClip {
         if (plain == null || plain.length == 0) return;
         var searchFrom:Int = 0;
         var size:Float = Math.max(8, Math.min(16, _cfg.fontSize * 0.95));
+        var scrollOffsetY:Float = getTextScrollOffsetY();
         for (anchor in _starAnchors) {
             var rowStart:Int = plain.indexOf(anchor.rowText, searchFrom);
             if (rowStart < 0) {
@@ -3118,8 +3296,16 @@ class FCMChatWidget extends MovieClip {
                 continue;
             }
             searchFrom = rowStart + anchor.rowText.length;
+            var authorStart:Int = plain.indexOf(anchor.authorText, rowStart);
+            if (authorStart < rowStart || authorStart >= rowStart + anchor.rowText.length) {
+                if (!_starLayoutWarned) {
+                    _starLayoutWarned = true;
+                    zfeLog("warn", "render", "supporter star author not found after GFx HTML layout");
+                }
+                continue;
+            }
             var bounds:Rectangle = null;
-            try { bounds = _logTf.getCharBoundaries(rowStart + anchor.userOffset); } catch (e:Dynamic) {}
+            try { bounds = _logTf.getCharBoundaries(authorStart); } catch (e:Dynamic) {}
             if (bounds == null || bounds.height <= 0) {
                 if (!_starLayoutWarned) {
                     _starLayoutWarned = true;
@@ -3128,12 +3314,29 @@ class FCMChatWidget extends MovieClip {
                 continue;
             }
             var star:Shape = makeSupporterStar(anchor.color, size);
-            star.x = _logTf.x + bounds.x - size - 2;
-            star.y = _logTf.y + bounds.y + (bounds.height - size) / 2;
+            var starX:Float = bounds.x - size - 3;
+            var starY:Float = bounds.y - scrollOffsetY + (bounds.height - size) / 2;
+            // GFx can ignore a sibling Sprite's scrollRect. Explicitly reject markers outside
+            // the feed so off-screen history cannot leak into the header or input area.
+            if (starY + size < 0 || starY > _logTf.height) continue;
+            star.x = starX;
+            star.y = starY;
             _starLayer.addChild(star);
             _starShapes.push(star);
         }
         if (_starShapes.length > 0) _starLayoutWarned = false;
+    }
+
+    /** TextField character bounds are document-relative on GFx; convert them to the visible feed. */
+    function getTextScrollOffsetY():Float {
+        if (_logTf == null) return 0;
+        try {
+            var firstVisibleLine:Int = _logTf.scrollV - 1;
+            if (firstVisibleLine <= 0) return 0;
+            var lineHeight:Float = _logTf.getLineMetrics(0).height;
+            if (lineHeight > 0) return firstVisibleLine * lineHeight;
+        } catch (e:Dynamic) {}
+        return 0;
     }
 
     // =========================================================================

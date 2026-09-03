@@ -9,6 +9,9 @@
  * Contract with ChatOverlay:
  *   --fcm-name-color    the user's resolved colour (inline, per element)
  *   --fcm-name-outline  the existing multi-layer black halo (inline, per element)
+ *   --fcm-effect-delay  stable per-message phase offset (inline, per element)
+ *   --fcm-glitch-duration stable per-message glitch cadence (inline, per element)
+ *   --fcm-chroma-duration stable per-message Chroma Split cadence (inline, per element)
  *   data-fcm-name       the rendered name, needed by ::before/::after for glitch
  *
  * EVERY effect composes with var(--fcm-name-outline) rather than replacing it.
@@ -33,7 +36,7 @@
   --fcm-fx-outline: var(--fcm-name-outline, 0 0 2px #000);
 }
 
-/* ── Supporter: static ───────────────────────────────────────────────────── */
+/* ── Supporter: readable with occasional motion ─────────────────────────── */
 
 .fcm-name-fx--glow-soft {
   text-shadow:
@@ -44,10 +47,11 @@
 }
 
 .fcm-name-fx--glow-hard {
+  /* Keep the stronger supporter preset legible over bright game scenes. */
   text-shadow:
-    0 0 3px var(--fcm-fx-color),
-    0 0 8px color-mix(in srgb, var(--fcm-fx-color) 90%, transparent),
-    0 0 16px color-mix(in srgb, var(--fcm-fx-color) 50%, transparent),
+    0 0 2px var(--fcm-fx-color),
+    0 0 5px color-mix(in srgb, var(--fcm-fx-color) 65%, transparent),
+    0 0 10px color-mix(in srgb, var(--fcm-fx-color) 28%, transparent),
     var(--fcm-fx-outline);
 }
 
@@ -66,15 +70,49 @@
     var(--fcm-fx-outline);
 }
 
-/* Static CRT colour fringing. The selected base colour stays explicit and
-   dominant; the red/cyan offsets are a fringe, not a replacement palette. */
+/* Chroma Split is deliberately quiet at rest. Each message gets a short,
+   occasional CRT offset burst through nameEffectMotion; it should read as a
+   subtle signal, not a permanently bright or vibrating name. */
+@keyframes fcm-chroma-shift {
+  0%, 78%, 90%, 100% {
+    text-shadow:
+      0 0 2px color-mix(in srgb, var(--fcm-fx-color) 38%, transparent),
+      -1px 0 0 rgba(255, 0, 64, 0.28),
+      1px 0 0 rgba(0, 224, 255, 0.28),
+      var(--fcm-fx-outline);
+  }
+  82% {
+    text-shadow:
+      0 0 2px color-mix(in srgb, var(--fcm-fx-color) 42%, transparent),
+      -2px 1px 0 rgba(255, 0, 64, 0.46),
+      2px -1px 0 rgba(0, 224, 255, 0.46),
+      var(--fcm-fx-outline);
+  }
+  84% {
+    text-shadow:
+      0 0 2px color-mix(in srgb, var(--fcm-fx-color) 42%, transparent),
+      -3px 0 0 rgba(255, 0, 64, 0.46),
+      3px 0 0 rgba(0, 224, 255, 0.46),
+      var(--fcm-fx-outline);
+  }
+  86% {
+    text-shadow:
+      0 0 2px color-mix(in srgb, var(--fcm-fx-color) 40%, transparent),
+      -1px -1px 0 rgba(255, 0, 64, 0.36),
+      1px 1px 0 rgba(0, 224, 255, 0.36),
+      var(--fcm-fx-outline);
+  }
+}
+
 .fcm-name-fx--chroma-split {
   color: var(--fcm-fx-color);
   text-shadow:
-    0 0 3px color-mix(in srgb, var(--fcm-fx-color) 68%, transparent),
-    -1px 0 0 rgba(255, 0, 64, 0.32),
-    1px 0 0 rgba(0, 224, 255, 0.32),
+    0 0 2px color-mix(in srgb, var(--fcm-fx-color) 38%, transparent),
+    -1px 0 0 rgba(255, 0, 64, 0.28),
+    1px 0 0 rgba(0, 224, 255, 0.28),
     var(--fcm-fx-outline);
+  animation: fcm-chroma-shift var(--fcm-chroma-duration, 12s) steps(1, end) infinite;
+  animation-delay: var(--fcm-effect-delay, 0s);
 }
 
 /* ── Overseer: animated ──────────────────────────────────────────────────── */
@@ -82,25 +120,26 @@
 @keyframes fcm-glow-pulse {
   from {
     text-shadow:
-      0 0 4px color-mix(in srgb, var(--fcm-fx-color) 60%, transparent),
-      0 0 10px color-mix(in srgb, var(--fcm-fx-color) 35%, transparent),
+      0 0 2px color-mix(in srgb, var(--fcm-fx-color) 45%, transparent),
+      0 0 6px color-mix(in srgb, var(--fcm-fx-color) 24%, transparent),
       var(--fcm-fx-outline);
   }
   to {
     text-shadow:
-      0 0 8px color-mix(in srgb, var(--fcm-fx-color) 100%, transparent),
-      0 0 18px color-mix(in srgb, var(--fcm-fx-color) 68%, transparent),
-      0 0 28px color-mix(in srgb, var(--fcm-fx-color) 34%, transparent),
+      0 0 5px color-mix(in srgb, var(--fcm-fx-color) 72%, transparent),
+      0 0 11px color-mix(in srgb, var(--fcm-fx-color) 42%, transparent),
+      0 0 16px color-mix(in srgb, var(--fcm-fx-color) 22%, transparent),
       var(--fcm-fx-outline);
   }
 }
 
 .fcm-name-fx--glow-pulse {
   text-shadow:
-    0 0 5px color-mix(in srgb, var(--fcm-fx-color) 82%, transparent),
-    0 0 11px color-mix(in srgb, var(--fcm-fx-color) 48%, transparent),
+    0 0 3px color-mix(in srgb, var(--fcm-fx-color) 58%, transparent),
+    0 0 8px color-mix(in srgb, var(--fcm-fx-color) 34%, transparent),
     var(--fcm-fx-outline);
-  animation: fcm-glow-pulse 2.4s ease-in-out infinite alternate;
+  animation: fcm-glow-pulse 2.8s ease-in-out infinite alternate;
+  animation-delay: var(--fcm-effect-delay, 0s);
 }
 
 /* CRT phosphor: chroma fringing + scanlines + a slow flicker.
@@ -122,6 +161,7 @@
     0 0 6px color-mix(in srgb, var(--fcm-fx-color) 58%, transparent),
     var(--fcm-fx-outline);
   animation: fcm-crt-flicker 6s steps(1, end) infinite;
+  animation-delay: var(--fcm-effect-delay, 0s);
 }
 
 /* Scanlines are drawn as an overlay clipped to the glyphs. pointer-events:none keeps
@@ -140,9 +180,10 @@
 }
 
 /* Glitch.
-   A BURST, not a loop: ~250ms of tearing on a 7s cycle. A permanently glitching name
-   in a live chat feed is unreadable and genuinely irritating to sit next to, which
-   defeats the point of buying it. */
+   A BURST, not a loop: a short tear on a per-message 9.5–13.5s cadence. A permanently
+   glitching name in a live chat feed is unreadable and genuinely irritating to sit
+   next to, which defeats the point of buying it. The cadence and phase are supplied
+   by the shared nameEffectMotion helper. */
 @keyframes fcm-glitch-r {
   0%, 92%, 100% { clip-path: inset(0 0 0 0); transform: translate(0); opacity: 0; }
   93% { clip-path: inset(10% 0 62% 0); transform: translate(-2px, -1px); opacity: 0.85; }
@@ -179,39 +220,54 @@
 
 .fcm-name-fx--glitch::before {
   color: rgba(255, 0, 64, 0.9);
-  animation: fcm-glitch-r 7s steps(1, end) infinite;
+  animation: fcm-glitch-r var(--fcm-glitch-duration, 11.5s) steps(1, end) infinite;
+  animation-delay: var(--fcm-effect-delay, 0s);
 }
 
 .fcm-name-fx--glitch::after {
   color: rgba(0, 224, 255, 0.9);
-  animation: fcm-glitch-c 7s steps(1, end) infinite;
+  animation: fcm-glitch-c var(--fcm-glitch-duration, 11.5s) steps(1, end) infinite;
+  animation-delay: var(--fcm-effect-delay, 0s);
 }
 
-/* Shimmer: a highlight sweeps across the name.
-   background-clip:text needs a transparent fill, so the glyph itself carries no
-   colour — but text-shadow is painted from the glyph GEOMETRY, not its fill, so the
-   outline still renders and the name stays readable. */
-@keyframes fcm-shimmer {
-  from { background-position: -150% 0; }
-  to   { background-position: 250% 0; }
+/* Shimmer: a slow, overlapping highlight wave across the real glyphs. The name is
+   rendered as one span per character by ChatOverlay so adjacent letters interpolate
+   through the selected colour toward white. This avoids background-clipped text:
+   Electron's Linux/X11 renderer can paint transparent text-fill as a black glyph. */
+@keyframes fcm-shimmer-letter {
+  0%, 20%, 100% {
+    color: var(--fcm-fx-color);
+    text-shadow: var(--fcm-fx-outline);
+  }
+  35% {
+    color: color-mix(in srgb, var(--fcm-fx-color) 72%, #fff);
+    text-shadow:
+      0 0 3px color-mix(in srgb, var(--fcm-fx-color) 58%, transparent),
+      var(--fcm-fx-outline);
+  }
+  50% {
+    color: #fff;
+    text-shadow:
+      0 0 4px color-mix(in srgb, var(--fcm-fx-color) 70%, transparent),
+      var(--fcm-fx-outline);
+  }
+  65% {
+    color: color-mix(in srgb, var(--fcm-fx-color) 72%, #fff);
+    text-shadow:
+      0 0 3px color-mix(in srgb, var(--fcm-fx-color) 58%, transparent),
+      var(--fcm-fx-outline);
+  }
 }
 
 .fcm-name-fx--shimmer {
-  background-image: linear-gradient(
-    100deg,
-    var(--fcm-fx-color) 0%,
-    var(--fcm-fx-color) 38%,
-    #ffffff 50%,
-    var(--fcm-fx-color) 62%,
-    var(--fcm-fx-color) 100%
-  );
-  background-size: 250% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  -webkit-text-fill-color: transparent;
+  color: var(--fcm-fx-color);
   text-shadow: var(--fcm-fx-outline);
-  animation: fcm-shimmer 3.6s linear infinite;
+}
+
+.fcm-name-fx--shimmer .fcm-shimmer-letter {
+  color: var(--fcm-fx-color);
+  animation: fcm-shimmer-letter 8s linear infinite;
+  animation-delay: calc(var(--fcm-effect-delay, 0s) - (var(--fcm-shimmer-index) * 0.22s));
 }
 
 /* ── Reduced motion / viewer opt-out ─────────────────────────────────────── */
@@ -224,11 +280,23 @@
   .fcm-name-fx--glow-pulse,
   .fcm-name-fx--crt-phosphor,
   .fcm-name-fx--glitch,
-  .fcm-name-fx--shimmer {
+  .fcm-name-fx--chroma-split {
     animation: none !important;
   }
 
-  .fcm-name-fx--glow-pulse,
+  .fcm-name-fx--shimmer .fcm-shimmer-letter {
+    animation: none !important;
+    color: var(--fcm-fx-color);
+    text-shadow: var(--fcm-fx-outline);
+  }
+
+  .fcm-name-fx--glow-pulse {
+    text-shadow:
+      0 0 3px color-mix(in srgb, var(--fcm-fx-color) 58%, transparent),
+      0 0 8px color-mix(in srgb, var(--fcm-fx-color) 34%, transparent),
+      var(--fcm-fx-outline);
+  }
+
   .fcm-name-fx--shimmer {
     text-shadow:
       0 0 5px color-mix(in srgb, var(--fcm-fx-color) 90%, transparent),
@@ -246,12 +314,6 @@
       var(--fcm-fx-outline);
   }
 
-  .fcm-name-fx--shimmer {
-    background-image: none;
-    color: var(--fcm-fx-color);
-    -webkit-text-fill-color: var(--fcm-fx-color);
-  }
-
   .fcm-name-fx--glitch::before,
   .fcm-name-fx--glitch::after,
   .fcm-name-fx--crt-phosphor::after {
@@ -266,11 +328,23 @@
 .fcm-name-fx--glow-pulse.fcm-no-name-motion,
 .fcm-name-fx--crt-phosphor.fcm-no-name-motion,
 .fcm-name-fx--glitch.fcm-no-name-motion,
-.fcm-name-fx--shimmer.fcm-no-name-motion {
+.fcm-name-fx--chroma-split.fcm-no-name-motion {
   animation: none !important;
 }
 
-.fcm-name-fx--glow-pulse.fcm-no-name-motion,
+.fcm-name-fx--shimmer.fcm-no-name-motion .fcm-shimmer-letter {
+  animation: none !important;
+  color: var(--fcm-fx-color);
+  text-shadow: var(--fcm-fx-outline);
+}
+
+.fcm-name-fx--glow-pulse.fcm-no-name-motion {
+  text-shadow:
+    0 0 3px color-mix(in srgb, var(--fcm-fx-color) 58%, transparent),
+    0 0 8px color-mix(in srgb, var(--fcm-fx-color) 34%, transparent),
+    var(--fcm-fx-outline);
+}
+
 .fcm-name-fx--shimmer.fcm-no-name-motion {
   text-shadow:
     0 0 5px color-mix(in srgb, var(--fcm-fx-color) 90%, transparent),
@@ -286,12 +360,6 @@
     -1px 0 0 rgba(255, 0, 64, 0.32),
     1px 0 0 rgba(0, 224, 255, 0.32),
     var(--fcm-fx-outline);
-}
-
-.fcm-name-fx--shimmer.fcm-no-name-motion {
-  background-image: none;
-  color: var(--fcm-fx-color);
-  -webkit-text-fill-color: var(--fcm-fx-color);
 }
 
 .fcm-name-fx--glitch.fcm-no-name-motion::before,

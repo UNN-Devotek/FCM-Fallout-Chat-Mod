@@ -44,16 +44,28 @@ Both `:local` scripts point the overlay at `http://localhost:7076`. Develop
 To run the hot-reloading overlay against the isolated hosted DEV environment:
 
 ```bash
-export DEV_PERSONA_LOGIN_SECRET='<value from the hosted fcm-dev Dokploy env>'
 npm run dev:cloud
 ```
 
 This is still an unpackaged Electron build. The **DEV ACCOUNTS** buttons work here
-and immediately issue synthetic DEV sessions; they do not open Discord. The
-`DEV_PERSONA_LOGIN_SECRET` export is required for this remote hosted-DEV request;
-local `npm run dev:local` requests use loopback and do not need it. They are
-available only in unpackaged builds targeting the local backend or the exact hosted
-DEV relay, and are never available in packaged production builds.
+and immediately issue synthetic DEV sessions; they do not open Discord. On Linux,
+store the key once in the desktop keyring (the maintainer can copy the value from
+the `fcm-dev` Dokploy environment without putting it in this repository):
+
+```bash
+printf '%s' '<value from the hosted fcm-dev Dokploy env>' \
+  | secret-tool store --label='FCM hosted Dev persona login key' \
+      service fcm-overlay environment dev
+```
+
+On macOS, save the same value in Keychain under account `fcm-overlay` and service
+`fcm-hosted-dev-persona`. Windows/CI can provide `DEV_PERSONA_LOGIN_SECRET` in the
+process environment. `dev:cloud` loads the saved value automatically and uses a
+separate `~/.fcm/hosted-dev` user-data directory, so it cannot reuse or overwrite
+the installed Prod overlay's session. Local `npm run dev:local` requests use
+loopback and do not need the key. Dev-account controls are available only in
+unpackaged builds targeting the local backend or the exact hosted DEV relay, and
+are never available in packaged production builds.
 
 > `npm start` and `npm run dist:*` build the **shipped end-user binary**, which
 > targets the production relay. They are a release step, **not** a dev workflow —

@@ -132,8 +132,10 @@ describe('command list drift guards', () => {
     expect(start?.config).toContain('OpenChatKey=INSERT');
     expect(start?.description).toMatch(/start typing/i);
     expect(HUD_KEYBIND_ROWS.map(row => row.key)).toEqual(
-      expect.arrayContaining(['Enter', 'Escape', 'Page Down', 'Page Up', 'F11']),
+      expect.arrayContaining(['Enter', 'Escape', 'Arrow Up / Down', 'Home / End', 'Page Down', 'Page Up', 'F11']),
     );
+    expect(HUD_KEYBIND_ROWS.find(row => row.key === 'Arrow Up / Down')?.description).toMatch(/ignored until Insert/i);
+    expect(HUD_KEYBIND_ROWS.find(row => row.key === 'Home / End')?.description).toMatch(/ignored until Insert/i);
     expect(HUD_CHANNEL_COMMANDS).toEqual(['/g', '/t', '/e', '/i', '/r', '/s']);
   });
 });

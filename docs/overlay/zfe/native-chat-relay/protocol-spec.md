@@ -368,9 +368,10 @@ For ordinary channel messages this is an empty transport slot, never a real reci
 envelope is capability-gated to v2.10.16+; older widgets receive an empty `targetUserId` and no
 transport data. The relay records the negotiated token/version across separate connect and
 subscribe sockets so the same gate applies to live, poll, and history delivery. The current Dev
-widget v2.10.30 parses the supporter fields and renders a fixed five-point vector `Shape` beside
-the author using the validated `starColor`. It must never place U+2605 in `senderDisplayName` or
-`body`, nor use a bitmap, HTML image, or substitution token; see the [Dev wire capture](dev-supporter-star-wire-capture-2026-09-02.md).
+widget v2.10.38 parses the supporter fields and renders a fixed five-point vector `Shape` immediately
+before the actual rendered author glyph using the validated `starColor`. It must never place U+2605
+in `senderDisplayName` or `body`, nor use a bitmap, HTML image, or substitution token; see the
+[Dev wire capture](dev-supporter-star-wire-capture-2026-09-02.md).
 
 The event `body` remains the canonical raw text for web and relay consumers. The Dev HUD applies
 one display-only normalization for Discord custom-emoji tokens: `<:name:id>` and `<a:name:id>`
