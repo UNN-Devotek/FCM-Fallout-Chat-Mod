@@ -60,6 +60,7 @@ interface SupporterStatus {
   tierLabel: string;
   shopUrl: string | null;
   tierEnabled: boolean;
+  isAdminBypass: boolean;
 }
 
 interface Cosmetics {
@@ -154,7 +155,19 @@ export default function CosmeticsPanel({ userId, previewName }: { userId: string
 
       {/* Entitled but not in the Discord: privileges are paused, not lost. */}
       <AnimatePresence>
-        {status?.needsDiscordRejoin && (
+        {status?.isAdminBypass && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+            style={{
+              padding: '10px 12px', marginBottom: '16px', borderRadius: '4px',
+              border: '1px solid var(--phosphor-color)', background: 'rgba(212,176,64,0.08)',
+              color: 'var(--phosphor-color)', fontSize: '13px',
+            }}
+          >
+            System Admin access is active — all supporter and Overseer's Circle appearance benefits are unlocked.
+          </motion.div>
+        )}
+        {status?.needsDiscordRejoin && !status.isAdminBypass && (
           <motion.div
             initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
             style={{

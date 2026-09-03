@@ -137,7 +137,7 @@ confirmation step; not a code blocker.
 - Editing the channel list / `AllowedChannels` (ZFE fragment territory — #299, #314).
 - Raising the message length cap above the server-enforced maximum.
 - Binding arbitrary physical keys directly (arrows, `\`, `DELETE`) — impossible for a HUD widget without a FO76 control remap (see Constraints). Only the open key is a true free key.
-- Keyboard scroll-back key — scroll is mouse-wheel + menu, not a keybind.
+- Keyboard scroll-back — Arrow Up/Down scroll the idle feed; Home/End returns to newest. Mouse-wheel + menu remain available.
 
 ---
 
@@ -157,7 +157,7 @@ SS-5: Every visible message shows a proper-cased channel tag matching the active
 - D-02 (locked 2026-06-25): color value format accepts `#RRGGBB`, `RRGGBB`, or `0xRRGGBB`; invalid → key default.
 - D-03 (locked 2026-06-25): channel-key config values use the deliverable action-name set (`NextPage`, `PrevPage`, `Console`, `TeamChat`, `DiagnosticSnapshot`); invalid → key default.
 - D-04 (locked 2026-06-25): v1 layout exposes geometry + font size + retention; row-heights + leading stay fixed (advanced, deferred to v2).
-- D-05 (revised 2026-07-16): keymap — `INSERT` = open AND restore-from-hidden (the one native ZFE key, `OpenChatKey=INSERT`); `Page Down`/`Page Up` (`NextPage`/`PrevPage`) = channel next/prev; `/hide` slash command + F11 HUDModLoader menu = hide; mouse-wheel + F11 "Scroll to newest" + auto-scroll = scroll (no scroll keybind).
+- D-05 (revised 2026-09-02): keymap — `INSERT` = open AND restore-from-hidden; `Page Down`/`Page Up` (`NextPage`/`PrevPage`) = channel next/prev; Arrow Up/Down = idle feed scroll; Home/End = newest; `/hide` + F11 = hide; mouse-wheel + auto-scroll remain available.
 - D-06 (revised 2026-07-16): optional `hideKey=<action>` config (default UNSET) lets power users bind a key by remapping it to a free action in FO76 controls. Hide is always available via `/hide` + the F11 menu.
 - D-07 (locked 2026-06-25): default open key changes `PAGE_DOWN` → `INSERT` (`FCMChatWidget.ini` `OpenChatKey`, `FCMChat.ini` `openKey`, `_cfgOpenKey`). VM-verify ZFE accepts `INSERT` (Text Chat mod default = INSERT, so expected); `PAGE_DOWN` is the known-good fallback.
 - D-08 (locked 2026-06-25): timestamps come from the relay forwarding `createdAt` in the chat.v1 `chat.message` event (data already exists, `fcm-integration.md:358`; event omits it today, `protocol-spec.md:315`). Accurate for live AND history. NO client-receipt-time fallback — the widget renders the event `ts` only. Relay change tracked as its own backend issue (paired dependency, under #289/#288). Widget timestamps land once the relay ships `createdAt`.
@@ -246,8 +246,8 @@ overrides team chat), `DiagnosticSnapshot` (F12). Everything else
 is gameplay-critical and not bindable. For any other physical key, the user maps key→action in
 FO76 controls, then sets the matching action here.
 
-- **Scroll:** NOT a keybind. Mouse-wheel over the panel (VER-2) + F11 "Scroll to newest" :528
-  + auto-scroll/"N new" indicator. `Page Up` is now `channelPrevKey`, so it no longer scrolls.
+- **Scroll:** Arrow Up/Down actions and mouse-wheel move through feed history; Home/End and F11
+  "Scroll to newest" return to the latest message. `Page Up` remains `channelPrevKey`.
 - **Hide / restore:** `/hide` (slash command) or F11 "Hide chat" hides (`this.visible=false`,
   timers + listeners keep running so the feed stays current). `openKey` (`INSERT`) restores +
   opens — guaranteed, it is the one natively-polled key.

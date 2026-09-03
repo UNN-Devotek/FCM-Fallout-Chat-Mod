@@ -8,7 +8,7 @@ const apiGet = vi.fn();
 const apiPost = vi.fn();
 const apiDelete = vi.fn();
 
-vi.mock('../../services/api', () => ({
+vi.mock('../../../services/api', () => ({
   api: {
     get: (...args: unknown[]) => apiGet(...args),
     post: (...args: unknown[]) => apiPost(...args),
@@ -25,6 +25,7 @@ import ChatOverlay from '../ChatOverlay';
 type FakeWsFrame = { type: string; payload?: Record<string, unknown> };
 
 const wsInstances: FakeWebSocket[] = [];
+let searchResultsForTest: Array<{ userId: string; displayName: string }> = [];
 
 class FakeWebSocket {
   static OPEN = 1;
@@ -126,6 +127,7 @@ describe('ChatOverlay private messaging', () => {
 
   beforeEach(() => {
     wsInstances.length = 0;
+    searchResultsForTest = [];
     if (!Element.prototype.scrollIntoView) {
       Element.prototype.scrollIntoView = () => {};
     } else {
@@ -162,7 +164,9 @@ describe('ChatOverlay private messaging', () => {
       }
       if (path.startsWith('/api/parties/invites')) return Promise.resolve({ invites: [] });
       if (path.startsWith('/api/parties')) return Promise.resolve({ parties: [] });
-      if (path.startsWith('/api/block/search')) return Promise.resolve({ results: [] });
+      if (path.startsWith('/api/block/search')) {
+        return Promise.resolve({ results: searchResultsForTest });
+      }
       return Promise.resolve([]);
     });
     apiPost.mockResolvedValue({});
@@ -361,6 +365,124 @@ describe('ChatOverlay private messaging', () => {
     expect(await screen.findByText('Message')).toBeTruthy();
     expect(screen.queryByText(/Message Stealthmog/i)).toBeNull();
     expect(screen.queryByText(/Message .*privately/i)).toBeNull();
+
+    fireEvent.mouseDown(screen.getByText('Message'));
+    expect(wsInstances[wsInstances.length - 1]?.sentFrames.some((frame: FakeWsFrame) =>
+      frame.type === 'pm:open' && frame.payload?.targetUserId === 'user-other',
+    )).toBe(true);
+  });
+
+  it('opens a searched user through the PM socket action', async () => {
+    const targetUserId = '11111111-1111-4111-8111-111111111111';
+    searchResultsForTest = [{ userId: targetUserId, displayName: 'NewFriend' }];
+    renderOverlay({ id: '22222222-2222-4222-8222-222222222222', username: 'You', role: 'user' });
+    await screen.findByText('PM');
+
+    // Let the initial channel query settle before selecting PM. This mirrors
+    // the real overlay's first-open sequence and avoids racing its default
+    // channel selection effect.
+    await screen.findByText('Fallout 76');
+    fireEvent.click(screen.getByText('PM'));
+    const search = await screen.findByPlaceholderText('Type to search...');
+    fireEvent.change(search, { target: { value: 'NewFriend' } });
+
+    fireEvent.click(await screen.findByText('NewFriend'));
+    expect(wsInstances[wsInstances.length - 1]?.sentFrames.some((frame: FakeWsFrame) =>
+      frame.type === 'pm:open' && frame.payload?.targetUserId === targetUserId,
+    )).toBe(true);
+    expect(screen.queryByDisplayValue('NewFriend')).toBeNull();
+  });
+
+  it('keeps background PM hydration failures out of the startup toast', async () => {
+    renderOverlay({ id: 'user-me', username: 'You', role: 'user' });
+    await screen.findByText('PM');
+
+    await act(async () => {
+      emitWs({ type: 'error', payload: { message: 'Could not load private messages.' } });
+    });
+
+    expect(screen.queryByText('Could not load private messages.')).toBeNull();
+    fireEvent.click(screen.getByText('PM'));
+    // A background PM failure must not become a warning merely because the
+    // user later opens the tab. The PM request is now made on tab activation.
+    expect(screen.queryByText('Private messages are temporarily unavailable.')).toBeNull();
+
+    await act(async () => {
+      emitWs({ type: 'error', payload: { message: 'Could not load private messages.' } });
+    });
+    expect(await screen.findByText('Private messages are temporarily unavailable.')).toBeTruthy();
+  });
+
+  it('does not request the PM inbox during ordinary startup, but hydrates it when PM is opened', async () => {
+    renderOverlay({ id: 'user-me', username: 'You', role: 'user' });
+    await screen.findByText('PM');
+
+    // Let the ticket fetch and socket open settle. Normal channel startup must
+    // not make PM hydration part of the overlay activation path.
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20));
+    });
+    const ws = wsInstances[wsInstances.length - 1];
+    expect(ws.sentFrames.some(frame => frame.type === 'pm:list')).toBe(false);
+
+    fireEvent.click(screen.getByText('PM'));
+    await waitFor(() => {
+      expect(ws.sentFrames.some(frame => frame.type === 'pm:list')).toBe(true);
+    });
+  });
+
+  it('does not scroll the message feed just because the composer receives focus', async () => {
+    const { container } = renderOverlay({ id: 'user-me', username: 'You', role: 'user' });
+    await screen.findByPlaceholderText('Type a message...');
+
+    await act(async () => {
+      emitWs({
+        type: 'chat:history',
+        payload: {
+          messages: [{
+            id: 'chat-1',
+            content: 'older message',
+            username: 'OtherUser',
+            user_id: 'user-other',
+            channel_id: 'general',
+            source: 'game',
+            created_at: '2026-06-25T15:52:00.000Z',
+          }],
+        },
+      });
+      await new Promise(resolve => setTimeout(resolve, 500));
+    });
+
+    const feed = container.querySelector('.fcm-scrollbar') as HTMLDivElement;
+    expect(feed).toBeTruthy();
+    let scrollTop = 240;
+    let writes = 0;
+    Object.defineProperties(feed, {
+      scrollHeight: { configurable: true, value: 1000 },
+      clientHeight: { configurable: true, value: 200 },
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => { writes += 1; scrollTop = value; },
+      },
+    });
+
+    fireEvent.focus(screen.getByPlaceholderText('Type a message...'));
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 180));
+    });
+
+    expect(writes).toBe(0);
+    expect(scrollTop).toBe(240);
+
+    // Explicit Insert/focus-to-chat activation still requests the latest
+    // message position through the dedicated shell event.
+    await act(async () => {
+      window.dispatchEvent(new Event('fcm-scroll-bottom'));
+      await new Promise(resolve => setTimeout(resolve, 180));
+    });
+    expect(writes).toBeGreaterThan(0);
+    expect(scrollTop).toBe(1000);
   });
 
   it('does not expose PM controls in public mode', async () => {

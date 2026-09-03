@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { NavLink, useNavigate, useLocation, Link } from 'react-router';
+import { devPersonaUiEnabled } from '../lib/devPersonaAccess';
+import { useAuth } from '../contexts/AuthContext';
 
 // Maps each admin route to its Title-Case browser-tab name. The tab title is
 // `${name}.FCM` (e.g. "Chat.FCM"). For sub-paths or unknown routes we fall back
@@ -554,6 +556,7 @@ interface AdminLayoutProps {
 export default function AdminLayout({ user, children }: AdminLayoutProps) {
   const [version, setVersion] = useState('—');
   const location = useLocation();
+  const { canImpersonate } = useAuth();
 
   // Central browser-tab title for every admin route: `<Name> - FCM`.
   useEffect(() => {
@@ -596,7 +599,7 @@ export default function AdminLayout({ user, children }: AdminLayoutProps) {
 
         <PipboyStatusBar version={version} user={user} />
       </div>
-      {import.meta.env.DEV && import.meta.env.VITE_DEV_PERSONAS === 'true' && <DevPersonaSwitcher user={user} />}
+      {devPersonaUiEnabled && canImpersonate && <DevPersonaSwitcher user={user} />}
       {/* Prod "view as role" switcher — visible to real owners/admins only. */}
       <RoleViewSwitcher />
     </div>

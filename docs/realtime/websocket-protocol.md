@@ -131,7 +131,7 @@ Reports fullscreen mode and whether FO76 is currently running. The `inGame` flag
 ## Chat Messages
 
 ### `chat:send` (C→S)
-Send a message to a channel. `channelId` is either a UUID (regular channel) or `server:<endpoint-or-UUID>` (virtual server channel). Optional `mentions` array maps display names to Discord IDs for the Discord relay. Optional `metadata` object is persisted (JSONB) and echoed back on `chat:message` / `chat:history` — used for rich cards (e.g. `{ "type": "wiki_share", "wikiTitle": "...", "name": "...", "kind": "..." }`, which the overlay renders as a glowing in-overlay link that opens the entry in the WikiPanel).
+Send a message to a channel. `channelId` is either a UUID (regular channel) or `server:<endpoint-or-UUID>` (virtual server channel). Optional `mentions` array maps display names to Discord IDs for the Discord relay. Optional `metadata` object is persisted (JSONB) and echoed back on `chat:message` / `chat:history` — used for rich cards (e.g. `{ "type": "wiki_share", "wikiTitle": "...", "name": "...", "kind": "..." }`, which the overlay renders as a glowing in-overlay link that opens the entry in the WikiPanel). Card-share metadata includes the command and attribution fields, for example `{ "type": "card_share", "command": "/minerva", "label": "Minerva's Big Sale", "sourceName": "Fallout Builds", "sourceUrl": "https://www.falloutbuilds.com/fo76/minerva" }`.
 ```json
 {
   "type": "chat:send",
@@ -152,6 +152,7 @@ Validation rules:
 - `clientCreatedAt` must be within ±5 minutes of server time
 - `channelId` must be a UUID or start with `server:`
 - `metadata` capped at 2 KB serialized (oversized → dropped to `null`); rendered as plain text nodes client-side (no HTML injection)
+- Shared-card title actions re-run only supported card commands (`/nukecodes`, `/serverstatus`, `/camp`, `/minerva`) against the clicked message's `channelId`. This preserves delivery in aggregate feeds where the selected parent channel differs from the message's child channel.
 - Rate-limited to 5 msg/s
 
 `handlers.ts:1836–2461`

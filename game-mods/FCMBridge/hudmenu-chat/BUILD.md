@@ -5,7 +5,7 @@ This guide builds the **all-in-one standalone** archive: the patched
 **feed** renderer + chat.v1 ZFE client), packed into a single `FCM-standalone.ba2`
 that users install with one ini line. **No HUDModLoader required.**
 
-Transport: **ZFE chat.v1** (ZFE 0.9.8+). The legacy FCMHUD/1 socket layer
+Transport: **ZFE chat.v1** (ZFE 0.9.8+) or **xScal `chatInterface`**. The legacy FCMHUD/1 socket layer
 (`__SFCodeObj`, `writeUTFBytes`/`readUTFBytes`, `HELLO/SEND/CHAN` verbs) is
 fully removed from both SWFs. FCMBridge now calls `__ZFE.call("chat.v1.*")`
 directly; the patched HUDMenu delegates sends to FCMBridge via
@@ -35,17 +35,17 @@ So the **same** `HUDMenu.swf` works both standalone and alongside HUDModLoader.
 
 ---
 
-## Also ship the TextChat fragment
+## Provider configuration
 
 ZFE 0.9.8+ reads the TextChat fragment alongside the SWF to configure the
-chat.v1 endpoint and channel list. Ship:
+chat.v1 endpoint and channel list. Ship this when ZFE is used:
 
 ```
 Data/ZFE/TextChat/fragments/FCM.ini
 ```
 
 Contents: `AllowedChannels=global,trade,server,events,raids,infests`,
-`DefaultChannel=global`, `OpenChatKey=PAGE_DOWN`, `EnableTimestamps=true`,
+`DefaultChannel=global`, `OpenChatKey=INSERT`, `EnableTimestamps=true`,
 and the `Endpoint` URL. **Update `Endpoint` before each release:**
 
 ```ini
@@ -58,6 +58,12 @@ Endpoint=wss://falloutchatmod.com/relay
 
 Users can override any key per-key in `Data/configuration/zfe.ini` — the
 fragment is only the default.
+
+When xScal is used, merge the `[Chat]` section from
+`hudmodloader-chat/xscal.ini.example` into the existing `xscal.ini` beside the
+Fallout 76 executable. Keep the existing `xScalPriority` and other sections.
+The runtime detects `__SFECodeObj.chatInterface` automatically; the ZFE fragment
+and `zfe.ini` are not required for the xScal transport.
 
 ---
 

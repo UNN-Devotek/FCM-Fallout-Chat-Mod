@@ -4,8 +4,8 @@
 // it must force the fields grid into the single-column modifier class, and the
 // default (multi-column) behavior must be unaffected.
 
-import { describe, it, expect, afterEach } from 'vitest';
-import { render, cleanup } from '@testing-library/react';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { render, cleanup, fireEvent } from '@testing-library/react';
 import React from 'react';
 import { ChatEmbedCard } from '../ChatEmbedCard';
 
@@ -42,5 +42,15 @@ describe('ChatEmbedCard singleColumn', () => {
   it('renders one field cell per field', () => {
     const { container } = render(<ChatEmbedCard {...baseProps} singleColumn />);
     expect(container.querySelectorAll('.fcm-embed__field')).toHaveLength(2);
+  });
+
+  it('exposes an actual button for a clickable title', () => {
+    const onTitleClick = vi.fn();
+    const { getByRole } = render(<ChatEmbedCard {...baseProps} onTitleClick={onTitleClick} />);
+
+    const title = getByRole('button', { name: 'Test card' });
+    fireEvent.click(title);
+
+    expect(onTitleClick).toHaveBeenCalledTimes(1);
   });
 });

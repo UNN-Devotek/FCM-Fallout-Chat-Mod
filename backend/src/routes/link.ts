@@ -170,7 +170,7 @@ router.get('/game', requireLinkAuth, async (req: Request, res: Response, next) =
  * On success:
  *   - Sets hud_link_codes.used_at + redeemed_by_user_id = req.user.id
  *   - Calls relay's markRelayTokenLinked(relayUserId, fcmUserId) to upgrade limited→linked
- *     (dynamic import — graceful 503 if relay WT1 not yet merged)
+ *     (a successful response requires at least one active relay token to be updated)
  *   - Writes audit log entry
  */
 router.post('/redeem', requireLinkAuth, redemptionIpLimiter, async (req: Request, res: Response, next) => {
@@ -212,32 +212,38 @@ router.post('/redeem', requireLinkAuth, redemptionIpLimiter, async (req: Request
     const { relayUserId } = result;
 
     // Notify the relay so it can upgrade the identity from limited → linked immediately.
-    // markRelayTokenLinked is owned by relay agent WT1; dynamic import so this module compiles
-    // and deploys solo before WT1 merges.
+    // Keep the import dynamic for the separately deployable relay module, but fail
+    // closed: consuming a code without binding an active token strands the HUD in
+    // limited mode while the website falsely reports success.
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      // NOTE: '../services/...' (NOT '../../src/...') so this resolves in the COMPILED build
-      // (dist/routes -> dist/services), not just under tsx dev. The old path threw
-      // MODULE_NOT_FOUND in prod, so the token was never actually linked (code marked used only).
       const relayService: any = await import('../services/relay/relayIdentityService.js');
-      await relayService.markRelayTokenLinked(relayUserId, actorId);
-      logger.info({ relayUserId, actorId }, 'Relay identity upgraded to linked');
-      // Handshake: tell the user's live in-game subscriber it's now linked, so an
-      // already-connected widget transitions from the link screen to chat immediately
-      // (no reconnect needed). Optional-chained: a no-op if the relay module lacks it.
-      await relayService.notifyLinkComplete?.(relayUserId);
-    } catch (relayErr: any) {
-      // If the relay service module isn't present yet (WT1 not merged), log and continue.
-      // The relay will also poll hud_link_codes.used_at as its own fallback.
-      if (
-        relayErr?.code === 'MODULE_NOT_FOUND' ||
-        (relayErr?.message && relayErr.message.includes('Cannot find module'))
-      ) {
-        logger.warn({ relayUserId }, 'relay/relayIdentityService not yet available — relay will poll used_at');
-      } else {
-        // Unexpected relay error: log but don't fail the user-facing redeem
-        logger.error({ err: relayErr, relayUserId }, 'markRelayTokenLinked failed unexpectedly');
+      const linkedCount = await relayService.markRelayTokenLinked(relayUserId, actorId);
+      if (typeof linkedCount !== 'number') {
+        logger.error({ relayUserId }, 'Relay link promotion returned no acknowledgement');
+        return next(createError(503, 'Chat relay is updating. Please retry this code shortly.'));
       }
+      if (linkedCount < 1) {
+        logger.warn({ relayUserId }, 'Link code has no active relay token to promote');
+        return next(createError(409, 'This HUD session is no longer active. Request a new code in-game.'));
+      }
+      logger.info({ relayUserId, actorId }, 'Relay identity upgraded to linked');
+    } catch (relayErr: any) {
+      // redeemLinkCode is idempotent for the same actor, so a transient relay or
+      // deployment error can be retried without issuing another code.
+      logger.error({ err: relayErr, relayUserId }, 'Relay link promotion failed');
+      return next(createError(503, 'Chat relay is temporarily unavailable. Please retry shortly.'));
+    }
+
+    // Handshake delivery is best-effort after the durable token promotion. A
+    // missed notification is recoverable through the widget's reconnect path;
+    // it must not undo or hide an already successful link.
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const relayService: any = await import('../services/relay/relayIdentityService.js');
+      await relayService.notifyLinkComplete?.(relayUserId);
+    } catch (notifyErr) {
+      logger.warn({ err: notifyErr, relayUserId }, 'Relay link completion notification failed (non-fatal)');
     }
 
     // Write audit log

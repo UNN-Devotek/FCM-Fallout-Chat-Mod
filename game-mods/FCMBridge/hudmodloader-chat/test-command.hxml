@@ -1,0 +1,3 @@
+## Run from the hudmodloader-chat/ directory: haxe test-command.hxml
+--main TestFcmCommand
+--interp

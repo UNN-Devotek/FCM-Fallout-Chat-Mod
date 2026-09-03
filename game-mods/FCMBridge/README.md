@@ -1,14 +1,14 @@
 # FCMBridge
 
 A Fallout 76 HUDModLoader widget that displays the Fallout Chat Mod community chat feed inside
-the in-game HUD. Connects to the FCM backend via **ZFE chat.v1** (ZFE 0.9.8+) — not to the
+the in-game HUD. Connects to the FCM backend via **ZFE chat.v1** or xScal `chatInterface` — not to the
 game's memory or network state.
 
-## Transport: ZFE chat.v1 (ZFE 0.9.8+)
+## Transport: automatic ZFE/xScal selection
 
-FCMBridge uses ZFE's **standardized native chat relay protocol** (`chat.v1`) instead of the
-legacy bespoke FCMHUD/1 socket layer. ZFE handles all networking (TLS, DPAPI token storage,
-reconnect); the SWF calls:
+FCMBridge uses ZFE's **standardized native chat relay protocol** (`chat.v1`) or xScal's
+`__SFECodeObj.chatInterface` instead of the legacy bespoke FCMHUD/1 socket layer. The SWF
+normalizes both provider surfaces to the same connect/poll/send/auth flow:
 
 ```actionscript
 __ZFE.call("chat.v1.connect",    payload)  // register + connect; displayName from AccountInfoData
@@ -19,6 +19,11 @@ __ZFE.call("chat.v1.getAuthState","{}") // connection health check
 
 The SWF never sees the raw relay token. ZFE stores it in a DPAPI-protected file and
 re-presents it via `hello` on each session.
+
+At startup the SWF probes exposed Scaleform bridge objects, prefers a valid ZFE bridge for
+backwards compatibility, and otherwise selects xScal. xScal's chat bridge does not expose
+ZFE's native text-edit buffer, so the HUD widget uses SharedHUDTools input on xScal and does
+not send unsupported editor commands to it.
 
 ## What it does
 
@@ -84,6 +89,7 @@ intercepts, never broadcasts, and uses to bind the subscriber to the correct wor
 | File | Purpose |
 |------|---------|
 | `FCMBridge.hx` | Main SWF source — chat.v1 client, render loop, worldId read + HMAC |
+| `FcmNativeApi.hx` | Shared automatic ZFE/xScal discovery and verb adapter |
 | `FCMBridge.swf` | Compiled + version-byte-patched output (SWF v32, deploy to game) |
 | `Data/ZFE/TextChat/fragments/FCM.ini` | TextChat fragment (AllowedChannels, Endpoint, OpenChatKey) |
 | `hudmenu-chat/apply-patch.py` | Injects `fcm-inject.as` into vanilla HUDMenu.as |
@@ -96,7 +102,8 @@ intercepts, never broadcasts, and uses to bind the subscriber to the correct wor
 
 - Haxe 4.3+ (`scoop install haxe` on Windows)
 - Python 3 (for `apply-patch.py`, `test_anchors.py`, and the version-byte patch)
-- ZFE 0.9.8+ installed in the game (requires `zfe-chat-online-v1` capability)
+- ZFE 0.9.8+ installed in the game (requires `zfe-chat-online-v1`) **or** xScal
+  installed with its `[Chat]` relay configuration and `chatInterface` enabled
 - Archive2.exe (ships with CK) to pack the `.ba2`
 
 **Haxe is Windows-only in this project.** The Linux CI can run `test_anchors.py` and the
@@ -143,7 +150,9 @@ All 78 assertions should pass. Run this before patching any new `HUDMenu.as`.
    ```
    sResourceArchive2List = FCM-standalone.ba2
    ```
-3. Ensure ZFE 0.9.8+ (`dxgi.dll`) is installed. No env vars needed for prod.
+3. Ensure ZFE 0.9.8+ (`dxgi.dll`) **or xScal** is installed and its chat relay is enabled.
+   No env vars are needed for prod. If using xScal, merge the `[Chat]` section from
+   `hudmodloader-chat/xscal.ini.example` into the existing `xscal.ini` beside the game executable.
 4. For dev/localhost testing, set in `Data/configuration/zfe.ini`:
    ```ini
    [TextChat]

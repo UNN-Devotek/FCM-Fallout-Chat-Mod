@@ -165,6 +165,11 @@ class FcmConfig {
         return serverFlag || parseHexColor(serverColor, -1) >= 0;
     }
 
+    /** Return the validated server colour used by the vector HUD supporter marker. */
+    public static function supporterStarColor(serverColor:String, fallback:Int):Int {
+        return parseHexColor(serverColor, fallback);
+    }
+
     /**
      * Read one value from the FCMHUD/1 envelope carried in targetUserId. The
      * envelope is only accepted with the exact prefix and exact key match; this
@@ -390,6 +395,77 @@ class FcmConfig {
         s = StringTools.replace(s, ">", "&#62;");
         s = StringTools.replace(s, "\"", "&#34;");
         return s;
+    }
+
+    /**
+     * Replace Discord custom-emoji markup with a HUD-safe readable shortcode.
+     *
+     * GFx cannot render the Discord CDN image used by the web client, and escaping
+     * the raw token leaves the snowflake ID visible in the in-game feed. Keep the
+     * emoji name while dropping only the transport wrapper and ID:
+     *   <:vaultboy:123456789012345678> -> :vaultboy:
+     *   <a:wave:123456789012345678>     -> :wave:
+     *
+     * This is deliberately a scanner rather than a RegExp: the widget runs in the
+     * Fallout Scaleform VM, where complex RegExp operations are unreliable.
+     */
+    public static function normalizeDiscordEmojiMarkup(s:String):String {
+        if (s == null || s.indexOf("<") < 0) return s;
+        var out:StringBuf = new StringBuf();
+        var i:Int = 0;
+        while (i < s.length) {
+            var animated:Bool = i + 3 <= s.length && s.substr(i, 3) == "<a:";
+            // The static form is "<:name:id>"; avoid treating an unrelated "<::" as one.
+            if (!animated && !(i + 2 <= s.length && s.substr(i, 2) == "<:")) {
+                out.add(s.charAt(i));
+                i++;
+                continue;
+            }
+            var nameStart:Int = i + (animated ? 3 : 2);
+            var nameEnd:Int = s.indexOf(":", nameStart);
+            if (nameEnd <= nameStart) {
+                out.add(s.charAt(i));
+                i++;
+                continue;
+            }
+            var idEnd:Int = s.indexOf(">", nameEnd + 1);
+            if (idEnd <= nameEnd + 1) {
+                out.add(s.charAt(i));
+                i++;
+                continue;
+            }
+            var name:String = s.substring(nameStart, nameEnd);
+            var id:String = s.substring(nameEnd + 1, idEnd);
+            if (name.length > 64 || id.length > 22 || !isDiscordEmojiName(name) || !isDigits(id)) {
+                out.add(s.charAt(i));
+                i++;
+                continue;
+            }
+            out.add(":");
+            out.add(name);
+            out.add(":");
+            i = idEnd + 1;
+        }
+        return out.toString();
+    }
+
+    static function isDiscordEmojiName(s:String):Bool {
+        if (s == null || s.length == 0) return false;
+        for (i in 0...s.length) {
+            var c:Null<Int> = s.charCodeAt(i);
+            if (c == null || !((c >= 48 && c <= 57) || (c >= 65 && c <= 90)
+                    || (c >= 97 && c <= 122) || c == 95)) return false;
+        }
+        return true;
+    }
+
+    static function isDigits(s:String):Bool {
+        if (s == null || s.length == 0) return false;
+        for (i in 0...s.length) {
+            var c:Null<Int> = s.charCodeAt(i);
+            if (c == null || c < 48 || c > 57) return false;
+        }
+        return true;
     }
 
     public static function clampInt(v:Int, lo:Int, hi:Int):Int {

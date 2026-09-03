@@ -241,7 +241,7 @@ export async function verifyToken(token: string): Promise<RelayToken | null> {
  * user. If the relay userId doesn't exist (stale / already revoked), this is a
  * no-op (updateMany count = 0 is not an error).
  */
-export async function markRelayTokenLinked(relayUserId: string, fcmUserId: string): Promise<void> {
+export async function markRelayTokenLinked(relayUserId: string, fcmUserId: string): Promise<number> {
   const result = await prisma.hudPairingToken.updateMany({
     where:  { userId: relayUserId, revokedAt: null },
     data:   { linkedUserId: fcmUserId },
@@ -263,6 +263,12 @@ export async function markRelayTokenLinked(relayUserId: string, fcmUserId: strin
   } catch (err) {
     logger.warn({ err, relayUserId, fcmUserId }, '[tokenService] fo76AccountName propagation failed (non-fatal)');
   }
+
+  // The redeem route uses this count as the commit acknowledgement. Returning
+  // success when no active token matched would strand a consumed link code in a
+  // permanently limited state, which is indistinguishable from a successful web
+  // redeem to the user.
+  return result.count;
 }
 
 /**

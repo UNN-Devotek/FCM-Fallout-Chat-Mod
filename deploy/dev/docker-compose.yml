@@ -110,9 +110,9 @@ services:
   # ---------------------------------------------------------------------------
   # backend-dev — the dev API, built from the SAME backend Dockerfile as prod.
   #   - NODE_ENV=development
-  #   - ENABLE_DEV_LOGIN=false  → browser-only dev-login aliases stay disabled on
-  #     the HOSTED instance. The unpackaged overlay's direct DevAccount endpoint
-  #     is separately gated by NODE_ENV=development and uses only fake dev data.
+  #   - ENABLE_DEV_LOGIN=true   → browser-only DevAccount aliases are available on
+  #     this isolated hosted-DEV instance. They use only fake DEV data and the
+  #     production compose keeps them unavailable because NODE_ENV=production.
   #     The prod boot guard forbids every dev-only route under NODE_ENV=production.
   #   - All secrets from ${VAR} (Dokploy fcm-dev project env), never prod's.
   #   - No host port — reached only via cloudflared-dev (dev.falloutchatmod.com).
@@ -121,6 +121,10 @@ services:
     build:
       context: ../..
       dockerfile: backend/Dockerfile
+      args:
+        # The dashboard is built in production mode inside the backend image;
+        # use the explicit target flag so the hosted Dev buttons are included.
+        VITE_DEV_PERSONAS: "true"
     restart: unless-stopped
     depends_on:
       postgres-dev:
@@ -131,9 +135,10 @@ services:
         condition: service_healthy
     environment:
       NODE_ENV: development
-      # Keep browser-only dev-login aliases disabled; overlay DevAccount login is
-      # mounted separately by NODE_ENV=development and is limited to fake DEV data.
-      ENABLE_DEV_LOGIN: "false"
+      # Browser-only DevAccount aliases are safe here because this stack is
+      # isolated, fake-data-only, and NODE_ENV=development. Production does not
+      # mount these routes.
+      ENABLE_DEV_LOGIN: "true"
       PORT: 7676
 
       # --- Data stores (all internal on fcm-dev-network) ---

@@ -24,7 +24,7 @@
 | `express-session` + `connect-redis` | Cookie-based sessions backed by Redis (4 h TTL) |
 | `ws` | Raw WebSocket server (no Socket.IO) |
 | `prisma` | ORM for PostgreSQL; migrations in `backend/prisma/migrations/` |
-| `bull` | Redis-backed message persistence queue; canonical sends await completion before broadcast |
+| `bull` | Redis-backed message persistence queue; web sends await completion, native relay sends broadcast after queue acceptance |
 | `node-cron` | Scheduled cleanup (purge messages + audit logs > 90 days, sweep expired mutes/bans) |
 | `zod` | Input validation schemas (live in backend, not a shared package) |
 | `pino` / `pino-pretty` | Structured JSON logging |

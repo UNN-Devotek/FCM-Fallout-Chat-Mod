@@ -47,16 +47,16 @@
          }
       }
 
-      // Pass the __ZFE reference we hold at the HUDMenu (parent) level down to
-      // the FCMBridge child SWF. ZFE 0.9.8 sets child_bridge_access=disabled so
-      // it does NOT inject __ZFE into child SWFs; the parent holds it normally.
+      // Pass the native chat bridge we hold at the HUDMenu (parent) level down
+      // to the FCMBridge child SWF. ZFE and xScal both attach their bridge to
+      // the parent movie, while child SWFs may not inherit it.
       // Sharing it here lets FCMBridge connect even without HUDModLoader.
       public function fcmPassZfeToBridge() : void
       {
          if(this._fcmBridge == null) { return; }
          try
          {
-            // Discover __ZFE using the documented order at the HUDMenu level.
+            // Prefer ZFE for backwards compatibility, then probe xScal.
             var hostZfe:* = null;
             try { hostZfe = this["__ZFE"]; } catch(e0:Error) {}
             if(hostZfe == null)
@@ -75,14 +75,29 @@
             {
                try { hostZfe = __SFCodeObj; } catch(e4:Error) {}
             }
-            var found:String = (hostZfe != null) ? "found" : "absent";
-            this.fcmLog("info","zfe","hostZfe=" + found);
-            if(hostZfe != null)
+            var hostNative:* = hostZfe;
+            var provider:String = "zfe";
+            if(hostNative == null)
             {
-               try { this._fcmBridge.fcmSetZfe(hostZfe); }
+               try { hostNative = this["__SFECodeObj"]; } catch(eX0:Error) {}
+               if(hostNative == null)
+               {
+                  try { if(this.parent != null) { hostNative = this.parent["__SFECodeObj"]; } } catch(eX1:Error) {}
+               }
+               if(hostNative == null)
+               {
+                  try { if(this.root != null) { hostNative = this.root["__SFECodeObj"]; } } catch(eX2:Error) {}
+               }
+               provider = "xscal";
+            }
+            var found:String = (hostNative != null) ? "found" : "absent";
+            this.fcmLog("info","native","provider=" + provider + " bridge=" + found);
+            if(hostNative != null)
+            {
+               try { this._fcmBridge.fcmSetNativeApi(hostNative); }
                catch(eSet:Error)
                {
-                  this.fcmLog("warn","zfe","fcmSetZfe threw: " + eSet.message);
+                  this.fcmLog("warn","native","fcmSetNativeApi threw: " + eSet.message);
                }
             }
          }
@@ -99,6 +114,14 @@
       // CONDITIONAL: bails out immediately if the bridge is already present.
       public function fcmSelfLoadBridge() : void
       {
+         // HUDModLoader may place FCMChatWidget below its loader root rather than as a direct
+         // stage child. Detect the widget by its stable marker before loading the legacy feed;
+         // stage-name-only detection allowed both renderers to run and duplicated every send.
+         if(this.fcmStageHasChatWidget())
+         {
+            this.fcmLog("info","selfload","FCMChatWidget present — skip legacy FCMBridge self-load");
+            return;
+         }
          // Scan stage children for an existing FCMBridge instance.
          try
          {
@@ -168,6 +191,36 @@
          }
       }
 
+      public function fcmStageHasChatWidget() : Boolean
+      {
+         try
+         {
+            return this.fcmDisplayTreeHasChatWidget(this.stage, 0);
+         }
+         catch(eWidgetScan:Error)
+         {
+            this.fcmLog("warn","selfload","chat widget scan threw: " + eWidgetScan.message);
+         }
+         return false;
+      }
+
+      private function fcmDisplayTreeHasChatWidget(node:*, depth:int) : Boolean
+      {
+         if(node == null || depth > 8) { return false; }
+         var sn:String = "";
+         try { sn = String(node.name); } catch(eName:Error) {}
+         if(sn == "FCMChatWidget") { return true; }
+         try { if(Boolean(node["fcmChatWidgetMarker"])) { return true; } } catch(eMarker:Error) {}
+         var n:int = 0;
+         try { n = int(node.numChildren); } catch(eCount:Error) { return false; }
+         for(var i:int = 0; i < n; i++)
+         {
+            try { if(this.fcmDisplayTreeHasChatWidget(node.getChildAt(i), depth + 1)) return true; }
+            catch(eChild:Error) {}
+         }
+         return false;
+      }
+
       // Called when FCMBridge.swf finishes loading (standalone path only).
       public function fcmOnBridgeLoaded(evt:*) : void
       {
@@ -218,7 +271,7 @@
          this._fcmIniH = 30;
          this._fcmIniFontSize = 14;
          // OpenChatKey matches [TextChat] OpenChatKey in FCM.ini fragment.
-         this._fcmIniOpenKey = "PAGE_DOWN";
+         this._fcmIniOpenKey = "INSERT";
          this._fcmIniLoaded = true;
          // Default channel index (0 = global).
          this._fcmChannelIdx = 0;
@@ -337,7 +390,7 @@
       // Cycle the active channel in DISPLAY order. In a world, SERVER sits right
       // of GENERAL: General -> Server -> Trading -> Events -> Infests -> Raids.
       // Out of a world SERVER is skipped entirely.
-      // Triggered by the NextPage control-map action (Page Down key — dead in FO76 HUD).
+      // Triggered by the NextPage control-map action (Page Down) or its physical alias.
       public function fcmSwitchChannel() : void
       {
          var order:Array = this.fcmInWorldNow() ? [0,5,1,2,3,4] : [0,1,2,3,4];
@@ -350,15 +403,17 @@
 
       public function fcmEvent(action:String, pressed:Boolean) : void
       {
-         // Chat-open hotkey: PAGE_DOWN (dead in FO76 HUD, matches OpenChatKey in FCM.ini).
-         // Also accept TeamChat and Console (legacy) as aliases. Open on key-UP only.
-         var openKey:String = (this._fcmIniOpenKey != null && this._fcmIniOpenKey.length > 0) ? this._fcmIniOpenKey : "PAGE_DOWN";
+         // Chat-open hotkey: INSERT (matches the shipped OpenChatKey in FCM.ini).
+         // Also accept TeamChat and Console (legacy) as aliases. Open on key-UP only so the
+         // opening action never leaks a character into the newly focused native field.
+         var openKey:String = (this._fcmIniOpenKey != null && this._fcmIniOpenKey.length > 0) ? this._fcmIniOpenKey : "INSERT";
          if((action == openKey || action == "Console" || action == "ConsoleToggles" || action == "TeamChat") && !pressed)
          {
             this.fcmLog("info","open",action + " -> enterChatMode");
             try
             {
                this.enterChatMode();
+               this._fcmInputActive = true;
                this.fcmStyleInput();
             }
             catch(eOpen:Error)
@@ -367,10 +422,56 @@
             }
             return;
          }
-         // Channel cycle: NextPage (Page Down key — dead in FO76 HUD), key-UP only.
-         if(action == "NextPage" && !pressed)
+         // Loader builds differ: some emit both edges and some only emit key-UP. Handle the
+         // first edge available and ignore the matching second edge.
+         var isNextPage:Boolean = action == "NextPage" || action == "PAGE_DOWN" || action == "PageDown";
+         var isPrevPage:Boolean = action == "PrevPage" || action == "PAGE_UP" || action == "PageUp";
+         var isFeedNav:Boolean = action == "Up" || action == "ArrowUp" || action == "CursorUp"
+            || action == "Down" || action == "ArrowDown" || action == "CursorDown"
+            || action == "Home" || action == "End";
+         if(isNextPage || isPrevPage || isFeedNav)
          {
-            this.fcmSwitchChannel();
+            if(pressed)
+            {
+               if(this._fcmNavigationAction == action) { return; }
+               this._fcmNavigationAction = action;
+            }
+            else if(this._fcmNavigationAction == action)
+            {
+               this._fcmNavigationAction = "";
+               return;
+            }
+
+            if(isNextPage)
+            {
+               this.fcmSwitchChannel();
+               return;
+            }
+            if(isPrevPage)
+            {
+               this.fcmSwitchChannelPrev();
+               return;
+            }
+            // Feed navigation is unlocked only after Insert successfully opens the native chat
+            // editor. Before that, arrows remain ordinary game controls.
+            if(this._fcmInputActive && this._fcmBridge != null)
+            {
+               if(action == "Up" || action == "ArrowUp" || action == "CursorUp")
+               {
+                  try { this._fcmBridge.fcmScrollUp(); } catch(eSu:Error) {}
+                  return;
+               }
+               if(action == "Down" || action == "ArrowDown" || action == "CursorDown")
+               {
+                  try { this._fcmBridge.fcmScrollDown(); } catch(eSd:Error) {}
+                  return;
+               }
+               if(action == "Home" || action == "End")
+               {
+                  try { this._fcmBridge.fcmScrollToBottom(); } catch(eSb:Error) {}
+                  return;
+               }
+            }
             return;
          }
          // Suppress noisy repeated / high-frequency actions.

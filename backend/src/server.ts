@@ -122,6 +122,8 @@ import {
   getDevPersona,
   makeDevPersonaStatusHandler,
   makeDevPersonaLoginAsHandler,
+  isBrowserDevPersonaLoginAuthorized,
+  markBrowserDevPersonaAccess,
 } from './controllers/devPersonaLoginController';
 import hudFeedRouter from './routes/hudFeed';
 
@@ -203,14 +205,19 @@ app.use('/api/', apiLimiter);
 
 // -- Discord OAuth2 routes ----------------------------------------------------
 
-// Browser-only dev shortcuts — skip Discord entirely.
-// Gated POSITIVELY: requires development mode AND an explicit ENABLE_DEV_LOGIN
-// opt-in, so these credential-less admin sessions can never appear in a
-// non-development deploy (even a misconfigured one).
+// Browser-only dev shortcuts — skip Discord for local development and for an
+// already-admitted advanced operator on hosted DEV. Gated POSITIVELY: requires
+// development mode AND an explicit ENABLE_DEV_LOGIN opt-in, so these synthetic
+// sessions can never appear in a non-development deploy (even a misconfigured one).
 if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
   app.get('/auth/dev-login/:persona', (req: Request, res: Response) => {
+    if (!isBrowserDevPersonaLoginAuthorized(req)) {
+      res.status(403).send('Dev persona login requires a local development request or an owner/admin session.');
+      return;
+    }
     const persona = getDevPersona(paramStr(req, 'persona'));
     if (!persona) { res.status(404).send('Unknown dev persona'); return; }
+    markBrowserDevPersonaAccess(req);
     (req.session as any).discordUser = { ...persona, avatar: null, roles: [] };
     const dest = DEV_PRIVILEGED_ROLES.includes(persona.role) ? 'server-health' : 'chat';
     req.session.save(() => res.redirect(`${env.CLIENT_ORIGINS[0].replace(/\/$/, '')}/${dest}`));
@@ -218,7 +225,12 @@ if (env.NODE_ENV === 'development' && env.ENABLE_DEV_LOGIN) {
 
   // Keep old /auth/dev-login as alias for admin persona
   app.get('/auth/dev-login', (req: Request, res: Response) => {
+    if (!isBrowserDevPersonaLoginAuthorized(req)) {
+      res.status(403).send('Dev persona login requires a local development request or an owner/admin session.');
+      return;
+    }
     const persona = getDevPersona('admin');
+    markBrowserDevPersonaAccess(req);
     (req.session as any).discordUser = { ...persona, avatar: null, roles: [] };
     req.session.save(() => res.redirect(`${env.CLIENT_ORIGINS[0].replace(/\/$/, '')}/server-health`));
   });

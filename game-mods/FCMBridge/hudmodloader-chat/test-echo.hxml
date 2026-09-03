@@ -1,0 +1,5 @@
+--main TestFcmEcho
+--interp
+FcmEcho.hx
+FcmStarLayout.hx
+TestFcmEcho.hx

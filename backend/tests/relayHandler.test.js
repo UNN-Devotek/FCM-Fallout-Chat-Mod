@@ -2882,6 +2882,7 @@ describe('auth gate integration', () => {
     expect(res).toMatchObject({
       success:     true,
       state:       'authenticated',
+      linkedUserId: 'fcm-user-linked-xyz',
       permissions: { canSend: true, canReport: true },
     });
     ws.close();

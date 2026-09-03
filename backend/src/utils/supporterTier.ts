@@ -17,6 +17,19 @@ export const TIER_ORDER: readonly SupporterTier[] = ['none', 'supporter', 'overs
 
 export const PAID_TIERS: readonly SupporterTier[] = ['supporter', 'overseer'] as const;
 
+/** Elevated staff roles that receive the complete supporter catalog. */
+export const SUPPORTER_BYPASS_ROLES: readonly string[] = ['owner', 'admin'] as const;
+
+/**
+ * Staff cosmetics bypass for identities that have already passed the normal
+ * admin-role gate. This is separate from `isPrivilegedRole`: it grants only
+ * supporter appearance benefits and never changes moderation authorization.
+ */
+export function isSupporterBenefitsAdminRole(role: string | null | undefined): boolean {
+  const normalized = (role ?? '').trim().toLowerCase();
+  return SUPPORTER_BYPASS_ROLES.includes(normalized);
+}
+
 /** Entitlement row lifecycle. Lapsed rows are retained so privileges can restore. */
 export type EntitlementStatus = 'active' | 'lapsed' | 'cancelled';
 
@@ -102,6 +115,8 @@ export function privilegesActive(status: EntitlementStatus | string | null | und
 export default {
   TIER_ORDER,
   PAID_TIERS,
+  SUPPORTER_BYPASS_ROLES,
+  isSupporterBenefitsAdminRole,
   resolveSupporterTier,
   hasConfiguredCosmeticsRole,
   normalizeTier,
@@ -112,6 +127,8 @@ export default {
 module.exports = {
   TIER_ORDER,
   PAID_TIERS,
+  SUPPORTER_BYPASS_ROLES,
+  isSupporterBenefitsAdminRole,
   resolveSupporterTier,
   hasConfiguredCosmeticsRole,
   normalizeTier,

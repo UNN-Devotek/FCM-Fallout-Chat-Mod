@@ -57,8 +57,9 @@ export interface Environment {
   DEV_ADMIN_ROLE: string;
   DEV_SUPPORTER_ROLE: string;
   DEV_DEVELOPER_ROLE: string;
-  // Positive opt-in for browser-only credential-less dev-login aliases and
-  // simulation routes. Overlay persona login is separately NODE_ENV-gated.
+  // Positive opt-in for browser-only DEV persona aliases and simulation routes.
+  // Remote browser aliases still require an owner/admin session; local loopback
+  // and overlay persona login are separately gated.
   // Only honored when NODE_ENV === 'development'; never in production.
   ENABLE_DEV_LOGIN: boolean;
   // Optional shared key for remote hosted-DEV DevAccount requests. Loopback

@@ -7,5 +7,6 @@
 ## Then patch version byte (see BUILD.md).
 
 --main FCMChatWidget
+--class-path ..
 --swf FCMChatWidget.swf
 --swf-version 32

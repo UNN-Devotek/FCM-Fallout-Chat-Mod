@@ -1,7 +1,8 @@
-# FCM integration with ZFE `chat.v1`
+# FCM integration with ZFE `chat.v1` and xScal `chatInterface`
 
-This document describes the current FCM adapter for ZFE's `chat.v1` API. It is
-used by the optional `FCMChatWidget.ba2` HUDModLoader widget; it does not change
+This document describes the current FCM adapter for ZFE's `chat.v1` API and xScal's
+equivalent `__SFECodeObj.chatInterface` surface. It is used by the optional
+`FCMChatWidget.ba2` HUDModLoader widget; it does not change
 the EULA-safe desktop overlay.
 
 ## Boundaries
@@ -16,6 +17,19 @@ the EULA-safe desktop overlay.
 - `FCMChatWidget.ba2` is an explicit, user-installed mod. The Electron overlay
   remains the default non-mod track.
 
+## Automatic provider selection
+
+The same SWF supports either script extender. It probes the Scaleform objects already exposed
+by the active HUD movie, preferring a validated ZFE dispatcher and falling back to a validated
+xScal `chatInterface` with `connect`, `pollEvents`, and `sendMessage`. No DLL is loaded or
+inspected by the SWF. The adapter maps FCM's canonical `chat.v1.*` verbs to xScal's unprefixed
+methods, including `getAuthState`, `reportMessage`, `moderationAction`, and `clearChatAuth`.
+
+xScal does not provide ZFE's native chat editor commands. On xScal the widget therefore uses
+the SharedHUDTools input path; ZFE keeps its existing lazy native-input attempt with the same
+fallback. The relay payloads, channel slugs, server-room controls, auth gate, and cursor polling
+remain shared.
+
 ## Connection and authentication
 
 The backend upgrade router dispatches `/relay` to `relayHandler`. A ZFE client
@@ -26,6 +40,21 @@ its actor from this verified token, never from a client-supplied ID.
 `getAuthState` is used by the widget to show authenticated chat or its limited,
 receive-only linking state. The token can be linked after a web device-code flow;
 the normal relay event flow then refreshes the widget state.
+
+### Explicit relink/reset
+
+Widget v2.10.30 accepts the standalone `/relink` command and the matching FCM HUDModLoader menu
+action. Relinking is intentionally a local ZFE operation: the widget calls the top-level
+`clearChatAuth` command with `{}` and never attempts to write `Data/ZFE/chat-auth.bin` through
+FCM's vendor-scoped settings storage. When ZFE returns success, the widget reconnects with
+`autoRegister:true`, causing the relay to issue a new limited-session link code.
+
+`clearChatAuth` is an FCM/ZFE extension and is not a `chat.v1` relay operation. It must delete the
+ZFE-owned local token atomically and return either bare `true` or a success envelope containing
+`cleared:true`; it must not return the token to the SWF. If an older ZFE rejects the command, the
+widget leaves the existing token untouched and shows the manual recovery path: exit Fallout 76,
+delete `Data/ZFE/chat-auth.bin`, and restart. This fail-closed fallback prevents a false “relinked”
+state and is required until the current ZFE build exposes the command.
 
 The widget resolves `displayName` from HUD-published `BSUIDataManager` data.
 `AccountInfoData.name` (or the older nested `account.name` shape) is authoritative because it is
@@ -51,6 +80,7 @@ token in logs or cache keys.
 | `chat.v1.subscribe` | Register a live subscriber and enqueue bounded static/current-world history after its initial cursor |
 | `chat.v1.sendMessage` | Send a static-channel message or an authenticated reserved server control |
 | `chat.v1.getAuthState` | Refresh linked/limited state |
+| `clearChatAuth` (top-level ZFE extension) | Delete ZFE's local relay token for explicit relink |
 | `chat.v1.report` | Submit a report for a persisted chat message |
 | `chat.v1.moderationAction` | Submit a staff-gated delete, kick, mute, unmute, ban, or unban |
 
@@ -104,19 +134,26 @@ envelope only to v2.10.16+; older widgets receive no envelope. The relay records
 beside a short-lived one-way token digest in Redis so separate connect and subscribe sockets use
 the same capability decision. `tag` and `starColor` are already validated by the cosmetics
 service, and `supporterStar` is derived only from an active Supporter or Overseer entitlement.
-The HUD renders a fixed embedded five-point star image and never trusts a glyph from the wire. The desktop/web
-`nameColor` and effect fields remain outside this HUD extension. A self-authored in-game message
-is rendered from its authoritative decorated relay echo before it is admitted to the feed; this is
-intentional because ZFE strips cosmetic fields from native send acknowledgements. It therefore
-receives the same fields as Discord-originated and other in-game messages without a transient
-untagged self-row.
+Widget v2.10.39 renders supporter fields with a fixed five-point vector `Shape` positioned from
+the row's measured HTML prefix and adjusted for the feed's current `scrollV`. Keeping the marker
+layer in feed-local coordinates avoids Scaleform's mixed-font character-x ambiguity; it clips
+markers to the feed viewport so off-screen history cannot leak into the header or input area. It uses the validated
+`starColor` and never trusts a Unicode glyph, bitmap, HTML image, or substitution token from the
+wire. The desktop/web `nameColor` and effect fields remain outside this HUD extension. A
+self-authored in-game message is rendered as a temporary local row before the synchronous native
+send RPC runs, so a slow TLS/socket call cannot block the first visible feedback. Failed sends remove
+that row; successful sends keep it until the later authoritative decorated relay echo replaces it
+and supplies supporter cosmetics because ZFE strips those fields from native send acknowledgements. It therefore receives
+the same fields as Discord-originated and other in-game messages without duplicate rows.
 
 Successful static and server `chat.v1.sendMessage` responses also include the same
 HUD-safe `tag`, `supporterStar`, and `starColor` fields when present. For v2.10.16+
 widgets, those fields are also mirrored in an `FCMHUD/1;...` envelope carried by the
 known `targetUserId` member. ZFE currently strips that carrier from native RPC responses, so the
-widget records the confirmed send and waits for the asynchronous subscriber echo; the authoritative
-event is then rendered exactly once with the supporter cosmetics.
+widget keeps the local row only until the asynchronous subscriber echo arrives; the authoritative
+event then replaces it exactly once with the supporter cosmetics. The provider RPC itself is queued
+one timer tick after the local render because both ZFE and xScal expose a synchronous call surface;
+this avoids making a socket timeout look like a missing local message.
 The shared finalizer passes the server-resolved supporter tier to the outbound Discord
 relay, which renders the immutable `★` beside the author; Discord cannot reproduce the
 web/HUD star colour in ordinary message text.
@@ -188,10 +225,13 @@ frames on one connection receive `already_subscribed`.
 The widget treats the relay response to a roster/world control as the membership
 acknowledgement. It does not expose or send to the `server` tab merely because
 the game HUD reports nearby players: it waits for `{ "success": true }`. A
-rejected control keeps `server` unavailable, records the relay error, and retries
-on the normal world timer. An empty but received roster is valid for a solo world,
-so it is also acknowledged and bound. This prevents a stale or mismatched relay deployment
-from presenting a selectable but unusable Server channel.
+rejected control keeps `server` unavailable, records the relay error, and backs
+off retries for 60 seconds; it does not issue the same synchronous native call
+on every 5-second world tick. Roster controls are also suppressed while the
+account is unlinked or not authenticated. An empty but received roster is valid
+for a solo world, so it is also acknowledged and bound. This prevents a stale or
+mismatched relay deployment from presenting a selectable but unusable Server
+channel, and prevents a slow relay timeout from repeatedly stalling the HUD.
 
 ## Widget resilience rules
 

@@ -137,6 +137,13 @@ The older `GET /auth/discord/dev-login` and
 compatibility with an earlier OAuth-based persona flow. Current DevAccount buttons do
 not call those endpoints.
 
+The hosted dashboard's browser aliases (`GET /auth/dev-login/:persona` and
+`GET /auth/dev-login`) are also DEV-only. They are never rendered on the public login page
+and require either a loopback local-dev request or an already authenticated real
+`owner`/`admin` session. After admission, a server-side session marker allows the operator
+to switch between synthetic personas without re-authenticating on every click; logging out
+destroys the marker with the session.
+
 ---
 
 ## 4. Nexus OAuth2 — Web Link Alternative

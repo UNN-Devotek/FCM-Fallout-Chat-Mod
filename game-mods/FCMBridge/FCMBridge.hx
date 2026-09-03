@@ -9,7 +9,7 @@ import flash.text.TextFormat;
 /**
  * FCMBridge — HUD chat feed widget for Fallout 76.
  *
- * Transport: ZFE chat.v1 native API (ZFE 0.9.8+).
+ * Transport: ZFE chat.v1 or xScal chatInterface, selected automatically.
  *   __ZFE.call("chat.v1.connect",   payload)   — register + connect
  *   __ZFE.call("chat.v1.pollEvents",payload)   — poll for new events (cursor-based)
  *   __ZFE.call("chat.v1.sendMessage",payload)  — send a message
@@ -84,7 +84,7 @@ class FCMBridge extends MovieClip {
     static var CHANNEL_NAMES:Array<String>  = ["GENERAL", "TRADING", "EVENTS", "INFESTS", "RAIDS", "SERVER"];
 
     // ── Core display state ─────────────────────────────────────────────────────
-    var _api:Dynamic          = null;
+    var _api:FcmNativeApi     = null;
     var _bg:Shape;
     var _tf:TextField;
     var _subTf:TextField;
@@ -94,6 +94,8 @@ class FCMBridge extends MovieClip {
     var _worldTimer:Timer     = null;
     var _activeChannelIdx:Int = 0;   // index into CHANNEL_SLUGS / CHANNEL_NAMES
     var _records:Array<String>= [];  // ring of "slug|displayName|body" strings
+    var _bScrolling:Bool      = false;
+    var _newWhileScrolled:Int = 0;
 
     // ── chat.v1 session state ─────────────────────────────────────────────────
     var _connected:Bool       = false;  // true after a successful chat.v1.connect
@@ -321,14 +323,14 @@ class FCMBridge extends MovieClip {
     // =========================================================================
 
     function init():Void {
-        _api = findZfeApi(this);
+        _api = FcmNativeApi.discover(this);
         if (_api == null) {
             // ZFE attaches to the in-world HUD movie AFTER we load (we boot from
             // fcmInit at the very start of HUDMenu's construction), so a single
             // early probe misses it. Retry every BOOT_MS up to BOOT_MAX (~60s) —
             // same pattern as the widget's proven ZFE search loop. fcmSetZfe()
             // (host handover) can still win the race at any point.
-            setText("searching for ZFE (" + _bootTries + "/" + BOOT_MAX + ")...");
+            setText("searching for ZFE/xScal (" + _bootTries + "/" + BOOT_MAX + ")...");
             if (_bootTimer == null) {
                 _bootTimer = new Timer(BOOT_MS);
                 _bootTimer.addEventListener(TimerEvent.TIMER, function(_) { bootRetry(); });
@@ -342,7 +344,7 @@ class FCMBridge extends MovieClip {
     function bootRetry():Void {
         if (_api != null) { stopBootTimer(); return; } // host handover won the race
         _bootTries++;
-        _api = findZfeApi(this);
+        _api = FcmNativeApi.discover(this);
         if (_api != null) {
             stopBootTimer();
             postDiscoveryInit();
@@ -350,10 +352,10 @@ class FCMBridge extends MovieClip {
         }
         if (_bootTries >= BOOT_MAX) {
             stopBootTimer();
-            setText("ZFE not found\nInstall dxgi.dll + zfe.ini");
+            setText("ZFE/xScal not found\nInstall one script extender");
             return;
         }
-        setText("searching for ZFE (" + _bootTries + "/" + BOOT_MAX + ")...\n" + diagZfe(this));
+        setText("searching for ZFE/xScal (" + _bootTries + "/" + BOOT_MAX + ")...\n" + diagZfe(this));
     }
 
     function stopBootTimer():Void {
@@ -361,12 +363,13 @@ class FCMBridge extends MovieClip {
     }
 
     /**
-     * Called by the patched HUDMenu (fcm-inject.as) to inject the __ZFE
-     * reference that ZFE attached at the top-level (parent) SWF.
+     * Called by the patched HUDMenu (fcm-inject.as) to inject the native
+     * provider reference attached at the top-level (parent) SWF.
      *
      * ZFE 0.9.8 sets child_bridge_access=disabled — it does NOT auto-inject
-     * __ZFE into child SWFs. The parent HUDMenu holds __ZFE normally; sharing
-     * it here lets FCMBridge function fully without HUDModLoader.
+     * __ZFE into child SWFs. xScal likewise exposes __SFECodeObj on the host
+     * HUD movie. Sharing either reference here lets FCMBridge function fully
+     * without relying on child-SWF global lookup.
      *
      * Safe to call even if self-discovery already succeeded (no-op in that case).
      * Safe to call before self-discovery finishes (drives boot if api is null).
@@ -376,8 +379,26 @@ class FCMBridge extends MovieClip {
         if (api == null) return;
         if (_api != null) return;             // self-discovery already succeeded
         _zfeInjectedByHost = true;
-        _api = api;
-        zfeLog("info", "zfe", "api injected by host");
+        var detected:FcmNativeApi = FcmNativeApi.fromExposed(api);
+        if (detected == null) {
+            _zfeInjectedByHost = false;
+            return;
+        }
+        _api = detected;
+        zfeLog("info", _api.provider, "api injected by host");
+        postDiscoveryInit();
+    }
+
+    /** Host handover for either script extender. */
+    public function fcmSetNativeApi(api:Dynamic):Void {
+        if (_zfeInjectedByHost || api == null || _api != null) return;
+        _zfeInjectedByHost = true;
+        _api = FcmNativeApi.fromExposed(api);
+        if (_api == null) {
+            _zfeInjectedByHost = false;
+            return;
+        }
+        zfeLog("info", _api.provider, "api injected by host");
         postDiscoveryInit();
     }
 
@@ -393,12 +414,13 @@ class FCMBridge extends MovieClip {
         // Verify the chat.v1 capability is available.
         try {
             var info:String = Std.string(_api.call("getRuntimeInfo", "{}"));
-            if (info.indexOf("zfe-chat-online-v1") < 0) {
+            if (_api.provider == FcmNativeApi.ZFE && info.indexOf("zfe-chat-online-v1") < 0) {
                 zfeLog("warn", "startup", "zfe-chat-online-v1 capability not present; check ZFE version (need 0.9.8+)");
-                setText("ZFE 0.9.8+ required\nfor chat.v1");
+                setText("ZFE 0.9.8+ or xScal chat\ninterface required");
                 return;
             }
-            zfeLog("info", "startup", "zfe-chat-online-v1 OK");
+            zfeLog("info", _api.provider == FcmNativeApi.ZFE ? "zfe" : "xscal",
+                _api.provider == FcmNativeApi.ZFE ? "zfe-chat-online-v1 OK" : "xscal-chat-interface OK");
         } catch (e:Dynamic) {
             zfeLog("warn", "startup", "getRuntimeInfo threw: " + Std.string(e));
         }
@@ -826,6 +848,14 @@ class FCMBridge extends MovieClip {
         zfeLog("info", "chan", "switched to " + CHANNEL_SLUGS[idx]);
     }
 
+    /** Select the previous channel in the same display order as the HUD widget. */
+    public function fcmSwitchChannelPrev():Void {
+        var order:Array<Int> = _inWorld ? [0, 5, 1, 2, 3, 4] : [0, 1, 2, 3, 4];
+        var pos:Int = order.indexOf(_activeChannelIdx);
+        if (pos < 0) pos = 0;
+        fcmSwitchChannelTo(order[(pos - 1 + order.length) % order.length]);
+    }
+
     public function fcmActiveChannelSlug():String {
         return CHANNEL_SLUGS[_activeChannelIdx];
     }
@@ -857,7 +887,45 @@ class FCMBridge extends MovieClip {
         }
         if (lines.length == 0) { setText("no messages in " + CHANNEL_NAMES[_activeChannelIdx] + " yet"); return; }
         setText(lines.join("\n"));
+        if (!_bScrolling) {
+            try { _tf.scrollV = _tf.maxScrollV; } catch (e:Dynamic) {}
+        }
+    }
+
+    /** Keyboard-scroll entry points used by the patched HUDMenu standalone path. */
+    public function fcmScrollUp():Void {
+        if (_tf == null) return;
+        try {
+            if (_tf.scrollV > 1) {
+                _tf.scrollV--;
+                _bScrolling = true;
+            }
+        } catch (e:Dynamic) {}
+    }
+
+    public function fcmScrollDown():Void {
+        if (_tf == null) return;
+        try {
+            var max:Int = _tf.maxScrollV;
+            if (max <= 1) {
+                _bScrolling = false;
+                _newWhileScrolled = 0;
+            } else {
+                if (_tf.scrollV < max) _tf.scrollV++;
+                if (_tf.scrollV >= max) {
+                    _tf.scrollV = max;
+                    _bScrolling = false;
+                    _newWhileScrolled = 0;
+                }
+            }
+        } catch (e:Dynamic) {}
+    }
+
+    public function fcmScrollToBottom():Void {
+        if (_tf == null) return;
         try { _tf.scrollV = _tf.maxScrollV; } catch (e:Dynamic) {}
+        _bScrolling = false;
+        _newWhileScrolled = 0;
     }
 
     function setText(s:String):Void {

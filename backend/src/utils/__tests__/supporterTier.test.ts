@@ -13,6 +13,7 @@ import {
   tierLabel,
   privilegesActive,
   TIER_ORDER,
+  isSupporterBenefitsAdminRole,
 } from '../supporterTier';
 
 const ROLES = {
@@ -68,6 +69,21 @@ describe('resolveSupporterTier', () => {
       resolveSupporterTier(['ROLE_OVR'], { supporterRoleId: '', overseerCircleRoleId: 'ROLE_OVR', adminRoleId: '' }),
       'overseer',
     );
+  });
+});
+
+describe('isSupporterBenefitsAdminRole', () => {
+  test('recognizes authenticated owner/admin identities regardless of casing', () => {
+    assert.equal(isSupporterBenefitsAdminRole('admin'), true);
+    assert.equal(isSupporterBenefitsAdminRole('  ADMIN '), true);
+    assert.equal(isSupporterBenefitsAdminRole('owner'), true);
+  });
+
+  test('does not grant supporter benefits to lower or unknown roles', () => {
+    assert.equal(isSupporterBenefitsAdminRole('moderator'), false);
+    assert.equal(isSupporterBenefitsAdminRole('developer'), false);
+    assert.equal(isSupporterBenefitsAdminRole(null), false);
+    assert.equal(isSupporterBenefitsAdminRole(undefined), false);
   });
 });
 

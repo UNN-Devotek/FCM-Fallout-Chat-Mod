@@ -44,7 +44,18 @@ import {
   buildMentionInsert,
   BUILTIN_FORMS,
   canEditOwnMessage,
+  resolveSharedCardChannelId,
 } from '../ChatOverlay';
+
+describe('resolveSharedCardChannelId', () => {
+  it('reopens a shared card in the channel that owns the clicked message', () => {
+    expect(resolveSharedCardChannelId('child-channel', 'parent-feed')).toBe('child-channel');
+  });
+
+  it('falls back to the active channel when a legacy card has no message channel', () => {
+    expect(resolveSharedCardChannelId('', 'active-channel')).toBe('active-channel');
+  });
+});
 
 describe('canEditOwnMessage', () => {
   const own = { id: 'message-1', userId: 'user-1', source: 'game' };

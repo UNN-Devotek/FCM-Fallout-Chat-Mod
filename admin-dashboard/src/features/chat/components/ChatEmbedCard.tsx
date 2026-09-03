@@ -112,14 +112,12 @@ export const ChatEmbedCard: React.FC<ChatEmbedCardProps> = ({
         {tag ? <span className="fcm-embed__tag" style={{ fontFamily }}>{tag}</span> : null}
 
         {onTitleClick ? (
-          <span
+          <button
+            type="button"
             className={titleClass}
             style={{ fontFamily }}
-            role="button"
-            tabIndex={0}
-            onClick={onTitleClick}
-            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onTitleClick(); } }}
-          >{title}</span>
+            onClick={e => { e.stopPropagation(); onTitleClick(); }}
+          >{title}</button>
         ) : (
           <span className={titleClass} style={{ fontFamily }}>{title}</span>
         )}

@@ -1,5 +1,7 @@
 # ── Dashboard static build ────────────────────────────────────────────────────
 FROM node:22-alpine AS dashboard-builder
+ARG VITE_DEV_PERSONAS=false
+ENV VITE_DEV_PERSONAS=$VITE_DEV_PERSONAS
 WORKDIR /dashboard
 COPY admin-dashboard/package*.json ./
 RUN npm ci --include=dev

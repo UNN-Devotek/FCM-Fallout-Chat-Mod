@@ -65,8 +65,36 @@ export interface DevPersonaCompletionDeps {
 
 export const DEV_PRIVILEGED_ROLES = ['owner', 'admin', 'moderator', 'supporter', 'developer'];
 
-function isLoopbackAddress(address: string): boolean {
+export function isLoopbackAddress(address: string): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';
+}
+
+const ADVANCED_DEV_ROLES = new Set(['owner', 'admin']);
+
+/** Only real owner/admin sessions may use browser persona aliases remotely. */
+export function isAdvancedDevPersonaRole(role: unknown): boolean {
+  return typeof role === 'string' && ADVANCED_DEV_ROLES.has(role.trim().toLowerCase());
+}
+
+/**
+ * Browser persona aliases are useful for a local loopback stack. On hosted DEV,
+ * the public login page must never be a credentialless entry point: a remote
+ * caller must already have an owner/admin session. Once admitted, the marker
+ * lets that session switch to a lower synthetic persona without locking the
+ * operator out of the switcher on the next click.
+ */
+export function isBrowserDevPersonaLoginAuthorized(req: Request): boolean {
+  const session = req.session as any;
+  if (session?.devPersonaAccess === true) return true;
+  // Use the actual TCP peer for this local-only exception. A forwarded client
+  // IP is appropriate for rate limiting, but must not turn a remote browser
+  // request into a credentialless persona login when proxy headers are wrong.
+  if (isLoopbackAddress(req.socket?.remoteAddress || '')) return true;
+  return isAdvancedDevPersonaRole(session?.discordUser?.role);
+}
+
+export function markBrowserDevPersonaAccess(req: Request): void {
+  (req.session as any).devPersonaAccess = true;
 }
 
 /**

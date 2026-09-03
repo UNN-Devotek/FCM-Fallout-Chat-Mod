@@ -1,12 +1,13 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.28. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.39. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
 
 `FCMChatWidget.ba2` contains `interface/FCMChatWidget.swf`, a HUDModLoader child
-widget. It calls ZFE's sanctioned `chat.v1` API for authenticated community chat.
+widget. It calls the active script extender's sanctioned chat API for authenticated community
+chat: ZFE's `chat.v1` dispatcher or xScal's `__SFECodeObj.chatInterface`.
 It only uses HUD UI data that Fallout 76 already exposes to its HUD; it does not
 read game memory, inject code, alter game state, or scan local ports/networks.
 Message timestamps are not displayed in the in-game feed; legacy timestamp settings are ignored.
@@ -36,18 +37,28 @@ first relay handshake rather than connecting with `Wanderer` or a character-name
 connected, later HUD reads update local identity state only; they never issue a second native
 `chat.v1.connect`, and empty reads do not erase a known name.
 
-The HUD deliberately renders the server-validated channel and identity tags only. Supporter-star
-metadata may still arrive in the transport for shared relay compatibility, but the HUD widget does
-not render a glyph, bitmap, HTML image, or substitution token. The former embedded supporter-star
-renderer source and image catalog have been removed from the build tree. This prevents Fallout 76's missing
-star glyph and GFx image behavior from producing tofu blocks. Feed paragraph leading is zero, and
+The HUD renders the server-validated channel and identity tags plus an optional supporter marker.
+The marker is a five-point vector `Shape` placed from the author's `TextField.getCharBoundaries()`;
+its TextField-local bounds are transformed through global space into the sibling marker layer, and
+the marker sits between the channel tag and the first author glyph, middle-aligned to that glyph;
+it uses the validated `starColor` and never renders a Unicode glyph, bitmap, HTML image, or
+substitution token. This avoids Fallout 76's missing star glyph and GFx image behavior producing
+tofu blocks. Feed paragraph leading is zero, and
 the feed keeps only a 4px safety gap above the top-level HUDTools input so rows stay compact while
 new content remains above the input field.
-After a successful send, one deferred poll fetches the authoritative live echo immediately;
-ordinary background polling remains controlled by `pollMs`.
+Before entering the synchronous native send RPC, the widget paints a temporary local echo (even
+during the short interval before `getAuthState` supplies the relay user id). Failed sends remove
+that row; successful sends reconcile that same row in place until the authoritative live echo arrives,
+including when the extender changes the temporary native identity to the relay identity. One deferred poll
+fetches that echo immediately; ordinary background polling remains controlled by `pollMs`.
+
+The relay auth-state response exposes both the relay-text `userId` and the linked account
+`linkedUserId`. HUD chat events use the linked account UUID as `senderUserId`, so the widget keeps
+both aliases locally when matching its own authoritative echo; the linked ID is never sent back
+as a client-supplied identity.
 
 ZFE's native `chat.v1` bridge filters unknown JSON members before the SWF receives an event. The
-v2.10.28 widget therefore reads the validated `tag` and transport envelope from an
+v2.10.39 widget therefore reads the validated `tag` and transport envelope from an
 `FCMHUD/1;...` envelope carried in the existing known `targetUserId` field. For ordinary channel
 chat this field is an empty transport slot, not a real recipient. The relay only emits the
 envelope to v2.10.16+ clients; older BA2 files receive no transport data. Raw relay consumers
@@ -141,13 +152,33 @@ python3 package.py --target prod --output "/tmp/ZFE FCM HUD Mod-$(python3 packag
 
 ## Input-path acceptance
 
-The current Windows package tries ZFE native input lazily when Insert opens the editor. It clears
+The current Windows package tries ZFE native input lazily when Insert opens the editor. When xScal
+is selected, its chat interface has no equivalent native editor and the widget goes directly to
+SharedHUDTools. The ZFE path clears
 and verifies the native buffer immediately after `setChatInputActive("true")`; the startup
 activation probe is intentionally absent because some supported Windows/ZFE builds expose that
 bare payload as literal text. If activation, cleanup, or the engine edit lock is unsupported, the
 widget disables native input for the session and uses `SharedHUDTools.TextEdit`. A package is not
-acceptable unless Insert opens an editable field, typing `hello` visibly becomes `hello`, Escape
-cancels, and Enter sends the complete text.
+acceptable unless Insert opens an editable field, typing `hello` visibly becomes `hello` (including
+on builds that return one native character per read), Escape cancels, Enter sends the complete text,
+and named Quick Actions/Friends focus transitions do not leave the editor stuck.
+Page Up/Page Down must switch channels both while idle and while preserving an open draft; the
+widget accepts either the first key-down or a key-up-only loader event without double-switching.
+
+### Relinking a Discord account
+
+Type `/relink` as a standalone HUD command, or choose **F11 -> FCM -> Relink account...**. The
+widget requests ZFE's top-level `clearChatAuth` command, which is the only supported owner of the
+DPAPI/local relay token at `Data/ZFE/chat-auth.bin`. When ZFE confirms the clear, the widget
+reconnects and displays a newly issued link code. The command does not accept arguments, and the
+widget never tries to write the auth file through `writeStorage`.
+
+`clearChatAuth` is an optional ZFE-side extension. If the installed ZFE returns an unsupported
+command or otherwise rejects it, the widget leaves the saved token untouched and displays:
+"Exit Fallout 76, delete Data/ZFE/chat-auth.bin, then restart." This fallback is intentional: a
+HUD SWF cannot safely delete an arbitrary local file, and it must not report a successful relink
+when the old token remains. The current ZFE build must implement this command before the automatic
+part of `/relink` is available to players.
 
 ## Build the archive
 
@@ -155,6 +186,7 @@ Run from this directory.
 
 ```bash
 haxe test-config.hxml
+haxe test-command.hxml
 haxe build.hxml
 python3 - <<'PY'
 import struct, zlib
@@ -252,26 +284,38 @@ staff validation on every request; the HUD permission is only a visibility hint.
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE loaded, the startup log identifies `chatv1-widget-v2.10.28`. If
+1. With HUDModLoader and ZFE or xScal loaded, the startup log identifies `chatv1-widget-v2.10.39`. If
    `AccountInfoData` is late, the widget waits and retries. The sender label and a newly sent
    message use the exact public Fallout 76 account handle, including punctuation; neither
    `Wanderer` nor the local character name is used for the relay handshake.
 2. The tab row contains one label for each visible channel—no boxed duplicate labels.
 3. Switch channels, join/leave a world, and switch again; the tab row remains single-rendered.
 4. Send a body containing `{`, `}`, quotes, and backslashes; later events still render.
-5. Temporarily disconnect the relay. After three failed polls the widget shows reconnecting,
+5. On DEV, use a linked supporter account and confirm each supporter message has exactly one
+   colored vector star immediately before the author name in every channel. The marker must follow
+   the actual rendered name when channel/moderation/custom tags are present. Confirm non-supporter
+   messages have no marker, and that neither `FCMHUD/1;`, `FCMSTAR`, `★`, nor tofu blocks appear.
+6. Temporarily disconnect the relay. After three failed polls the widget shows reconnecting,
    then reconnects once the relay returns.
-6. Confirm `SERVER` remains hidden until the relay acknowledges the printable roster/world control,
+7. Confirm `SERVER` remains hidden until the relay acknowledges the printable roster/world control,
    then remains isolated to its derived room while static channels still work. Change worlds and confirm
    static history returns while only the newly bound server-room history appears.
-7. While typing, confirm the native or fallback editor has only one visible text renderer; type
+8. While typing, confirm the native or fallback editor has only one visible text renderer; type
    `hello` and confirm the complete buffer remains visible; game movement/actions are locked;
-   Page Down/Page Up switch channels without closing the input or losing its draft; Enter/Esc
+   Page Down/Page Up switch channels on both key-down and key-up-only loader builds. A successful
+   send should appear locally without waiting for the next regular poll, then reconcile to one
+   authoritative row. After Insert opens the typing session, Arrow Up/Down scroll
+   the feed and Home/End return to newest without closing the input or losing its draft; before
+   Insert they remain game controls. Enter/Esc
    restore game input.
-8. Outside the Pip-Boy, press F11 and confirm the HUDModLoader menu opens and lists FCMChatWidget.
-9. Open **FCM → Customize → Reset all settings**; confirm the default size, position, opacity,
+9. Outside the Pip-Boy, press F11 and confirm the HUDModLoader menu opens and lists FCMChatWidget.
+10. Open **FCM → Customize → Reset all settings**; confirm the default size, position, opacity,
    amber theme, and auto-hide behavior return immediately and remain after restarting the game.
-10. On the DEV relay, sign in with a linked moderator account. Confirm staff references and
+11. Use **F11 → FCM → Relink account...** and type `/relink` once each. On a ZFE build with
+    `clearChatAuth`, confirm the local token is cleared, the relay reconnects, and a new link code
+    appears. On an older ZFE build, confirm the widget shows the manual reset instruction and does
+    not reconnect or claim that the token was cleared.
+12. On the DEV relay, sign in with a linked moderator account. Confirm staff references and
     **FCM → Moderation commands** appear; submit actions against disposable test accounts by exact
     visible name (including a quoted multi-word name). Verify a duplicate visible name is rejected
     until its `[#XXXXXXXX]` reference is used. Submit delete, kick, mute, unmute, temporary ban,

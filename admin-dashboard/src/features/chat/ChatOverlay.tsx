@@ -24,6 +24,7 @@ import { ChatInlineEmbed } from './components/ChatInlineEmbed';
 import ImageLightbox from './components/ImageLightbox';
 import { OutboxQueue } from './outboxQueue';
 import { supporterBadge, supporterStarColor, SUPPORTER_STAR_GLYPH } from './supporterBadge';
+import { nameEffectMotion } from './nameEffectMotion';
 
 /**
  * Web-based chat overlay — identical to the desktop SkiaSharp overlay.
@@ -864,6 +865,17 @@ export function boundedPublicPartyIds(key: string, max = 50): string[] {
 }
 
 /**
+ * Shared card replies must be addressed to the channel that owns the clicked
+ * message. In an aggregate feed, activeSubId can be the parent feed channel;
+ * using it would deliver the private card outside the visible child channel.
+ * Keep the fallback for older/partial message payloads.
+ */
+export function resolveSharedCardChannelId(messageChannelId: string | null | undefined, activeChannelId: string): string {
+  const messageChannel = typeof messageChannelId === 'string' ? messageChannelId.trim() : '';
+  return messageChannel || activeChannelId;
+}
+
+/**
  * openUrl — open a URL via the Electron relay bridge (if present) or window.open.
  * Centralises the openExternal / window.open pattern used throughout the component.
  */
@@ -1459,7 +1471,10 @@ interface MinervaMetadata {
   nextListNumber: number | null;
   nextIsSuperSale: boolean | null;
   nextStartUtc: string | null;
+  sourceName?: string;
+  sourceUrl?: string;
 }
+export const MINERVA_SOURCE_URL = 'https://www.falloutbuilds.com/fo76/minerva';
 interface CardShareMetadata {
   type: 'card_share';
   command: string;
@@ -1565,7 +1580,7 @@ interface ChatMessage {
  * Exported for unit tests.
  */
 export function nameCosmeticProps(
-  msg: { nameColor?: string | null; effectId?: string | null },
+  msg: { id?: string; userId?: string; timestamp?: string; nameColor?: string | null; effectId?: string | null },
   theme: {
     primaryText: string;
     primaryColor: string;
@@ -1593,6 +1608,8 @@ export function nameCosmeticProps(
     };
   }
 
+  const messageKey = msg.id || `${msg.userId || ''}:${msg.timestamp || ''}:${displayName}`;
+
   return {
     className: `fcm-name-fx--${effect}`,
     style: {
@@ -1603,6 +1620,7 @@ export function nameCosmeticProps(
       // No inline textShadow — the effect class composes it with the outline below.
       ['--fcm-name-color' as string]: color,
       ['--fcm-name-outline' as string]: theme.textOutline,
+      ...nameEffectMotion(effect, messageKey),
     } as React.CSSProperties,
     dataName: displayName,
   };
@@ -3778,6 +3796,7 @@ export default function ChatOverlay() {
   const [pmSearch, setPmSearch] = useState('');
   const [pmSearchResults, setPmSearchResults] = useState<PrivateUserSearchResult[]>([]);
   const [pmSearchLoading, setPmSearchLoading] = useState(false);
+  const [privateMessagingError, setPrivateMessagingError] = useState<string | null>(null);
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [hoveredBtn, setHoveredBtn] = useState<string | null>(null);
@@ -5013,7 +5032,6 @@ export default function ChatOverlay() {
             if (pv && pv !== 'browser') {
               ws!.send(JSON.stringify({ type: 'party:history', payload: { partyId: pv, limit: 200 } }));
             }
-            ws!.send(JSON.stringify({ type: 'pm:list', payload: {} }));
             // Refetch channels on every (re)connect so the list is always current
             // even if channels:refresh events were missed during a disconnect.
             refetchChannelsRef.current?.();
@@ -5309,7 +5327,17 @@ export default function ChatOverlay() {
                   editPendingRef.current = false;
                   setEditPending(false);
                 }
-                if (frame.payload?.message) showActionToast('err', frame.payload.message);
+                if (frame.payload?.message === 'Could not load private messages.'
+                  && activeMainIdRef.current === PM_MAIN_ID) {
+                  setPrivateMessagingError('Private messages are temporarily unavailable.');
+                } else if (frame.payload?.message) {
+                  // A PM-list failure is intentionally silent outside the PM tab;
+                  // PM hydration is lazy and must not turn overlay activation or a
+                  // focus recovery into an unrelated warning.
+                  if (frame.payload?.message !== 'Could not load private messages.') {
+                    showActionToast('err', frame.payload.message);
+                  }
+                }
               } else if (frame.type === 'mod:report') {
                 setReportAlerts(prev => [frame.payload, ...prev].slice(0, 5));
               } else if (frame.type === 'channels:refresh') {
@@ -5377,6 +5405,7 @@ export default function ChatOverlay() {
                 const nextConversations = Array.isArray(frame.payload?.conversations)
                   ? frame.payload.conversations as PrivateConversationSummary[]
                   : [];
+                setPrivateMessagingError(null);
                 setPrivateConversations(nextConversations);
                 if (typeof frame.payload?.openedConversationId === 'string') {
                   setActiveMainId(PM_MAIN_ID);
@@ -5755,6 +5784,18 @@ export default function ChatOverlay() {
     }));
   }, [activeMainId, pmView]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // PM inbox hydration is demand-driven. Loading it on every socket connection
+  // made ordinary overlay activation depend on the PM database path and could
+  // surface a transient PM warning while the user was only opening chat. The
+  // active-tab + connected guards also rehydrate the inbox after a real socket
+  // reconnect when the user is actually using PMs.
+  useEffect(() => {
+    if (activeMainId !== PM_MAIN_ID || !connected) return;
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'pm:list', payload: {} }));
+  }, [activeMainId, connected]);
+
   // Load history for all joined parties so the General feed can show party
   // messages that arrived before this session (not just live messages).
   // Runs when WS connects and whenever the joined-party set changes.
@@ -5890,22 +5931,6 @@ export default function ChatOverlay() {
     cont.addEventListener('scroll', onScroll, { passive: true });
     return () => cont.removeEventListener('scroll', onScroll);
   }, []);
-
-  // (a2) Activating the chat by clicking/focusing the input box → land at the
-  // bottom (latest message). Covers the "click the chat input to type" path
-  // (the Insert hotkey path is handled by the shell dispatching fcm-scroll-bottom
-  // via onFocusInput). We listen for focusin on the input elements specifically
-  // (NOT the message body) so clicking a message to read older history does NOT
-  // yank the view to the bottom — only an explicit input activation does.
-  useEffect(() => {
-    const onFocusIn = (e: FocusEvent) => {
-      const t = e.target as Node | null;
-      if (!t) return;
-      if (t === richInputRef.current || t === inputRef.current) scrollToBottom();
-    };
-    document.addEventListener('focusin', onFocusIn);
-    return () => document.removeEventListener('focusin', onFocusIn);
-  }, [scrollToBottom]);
 
   // (a3) The typing indicator is a flexShrink:0 sibling BELOW the flex:1 message
   // scroll area, so when it appears/disappears the message area resizes. If the
@@ -6394,10 +6419,26 @@ export default function ChatOverlay() {
   }, [recordSentEmojis]);
 
   const openPrivateConversation = useCallback((targetUserId: string) => {
+    setActiveMainId(PM_MAIN_ID);
+    setPmView('inbox');
     const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      showActionToast('err', 'Private messaging is still connecting. Please try again.');
+      return;
+    }
+    setPrivateMessagingError(null);
     ws.send(JSON.stringify({ type: 'pm:open', payload: { targetUserId } }));
-  }, []);
+  }, [showActionToast]);
+
+  const retryPrivateConversationList = useCallback(() => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      showActionToast('err', 'Private messaging is still connecting. Please try again.');
+      return;
+    }
+    setPrivateMessagingError(null);
+    ws.send(JSON.stringify({ type: 'pm:list', payload: {} }));
+  }, [showActionToast]);
 
   const sendPrivateMessageFrame = useCallback((conversationId: string, recipientUserId: string, content: string) => {
     const ws = wsRef.current;
@@ -6494,6 +6535,8 @@ export default function ChatOverlay() {
         ? { sourceName: 'NukaCrypt', sourceUrl: 'https://nukacrypt.com' }
         : opts.command.startsWith('/serverstatus')
           ? { sourceName: 'Bethesda', sourceUrl: 'https://bethesda.net/en/status' }
+          : opts.command.startsWith('/minerva')
+            ? { sourceName: 'Fallout Builds', sourceUrl: 'https://www.falloutbuilds.com/fo76/minerva' }
           : { sourceName: undefined, sourceUrl: undefined };
     sendOrQueueChat({
       type: 'chat:send',
@@ -6522,15 +6565,16 @@ export default function ChatOverlay() {
   }, [activeSubId]);
 
   /** Re-run a shared card command on the caller's own client (produces an ephemeral card). */
-  const openSharedCard = useCallback((command: string) => {
+  const openSharedCard = useCallback((command: string, messageChannelId?: string) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
-    if (!activeSubId) return;
+    const targetChannelId = resolveSharedCardChannelId(messageChannelId, activeSubId);
+    if (!targetChannelId) return;
     if (!/^\/(nukecodes|serverstatus|camp|minerva)\b/.test(command)) return;
     wsRef.current.send(JSON.stringify({
       type: 'chat:send',
       payload: {
         content: command,
-        channelId: activeSubId,
+        channelId: targetChannelId,
         clientCreatedAt: new Date().toISOString(),
         mentions: [],
       },
@@ -7836,6 +7880,33 @@ export default function ChatOverlay() {
             outline: 'none',
           }}
         />
+        {privateMessagingError && (
+          <div role="status" style={{
+            marginBottom: '8px',
+            padding: '6px 4px',
+            color: '#FF9A9A',
+            border: '1px solid rgba(255,96,96,0.45)',
+            fontSize: `${Math.max(10, fontSize - 1)}px`,
+          }}>
+            {privateMessagingError}
+            <button
+              type="button"
+              onClick={retryPrivateConversationList}
+              style={{
+                display: 'block',
+                marginTop: '5px',
+                padding: '2px 0',
+                background: 'transparent',
+                border: 0,
+                color: primaryColor,
+                cursor: 'pointer',
+                fontFamily: theme.fontFamily,
+                fontSize: `${Math.max(9, fontSize - 2)}px`,
+                letterSpacing: '0.06em',
+              }}
+            >RETRY</button>
+          </div>
+        )}
         {privateSearchResults.length > 0 && (
           <div style={{ marginBottom: '8px' }}>
             <div style={{ color: hexAlpha(dimText, 0.8), fontSize: '10px', letterSpacing: '0.08em', marginBottom: '4px' }}>
@@ -7844,7 +7915,11 @@ export default function ChatOverlay() {
             {privateSearchResults.map(result => (
               <div
                 key={`pm-user-${result.userId}`}
-                onClick={() => openPrivateConversation(result.userId)}
+                onClick={() => {
+                  setPmSearch('');
+                  setPmSearchResults([]);
+                  openPrivateConversation(result.userId);
+                }}
                 style={{
                   padding: '6px 4px',
                   cursor: 'pointer',
@@ -8024,7 +8099,7 @@ export default function ChatOverlay() {
                       accent={cs.accent}
                       icon={cs.icon}
                       title={cs.label}
-                      onTitleClick={() => openSharedCard(cs.command)}
+                      onTitleClick={() => openSharedCard(cs.command, msg.channelId)}
                       titleGlow={glowEnabled}
                       meta={cs.sourceUrl ? {
                         label: `${cs.sourceName} ↗`,
@@ -8164,6 +8239,8 @@ export default function ChatOverlay() {
                 if (md && md.type === 'minerva') {
                   const mv = md as unknown as MinervaMetadata;
                   const mvAccent = '#F1C40F';
+                  const minervaSourceUrl = mv.sourceUrl || MINERVA_SOURCE_URL;
+                  const minervaSourceName = mv.sourceName || 'Fallout Builds';
                   const fmtDate = (iso: string) => new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
                   const fmtDuration = (iso: string) => {
                     const diffMs = new Date(iso).getTime() - Date.now();
@@ -8199,12 +8276,12 @@ export default function ChatOverlay() {
                         onShareToChat={() => shareCardToChat({ command: '/minerva', label: "Minerva's Big Sale", accent: mvAccent, icon: '⛟' })}
                         shareDisabled={cardShareCooldown}
                         fields={mvFields}
-                        footerLeft={
-                          <span role="button" tabIndex={0} title="More info at falloutbuilds.com"
-                            onClick={() => openUrl('https://www.falloutbuilds.com/fo76/minerva')}
-                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') openUrl('https://www.falloutbuilds.com/fo76/minerva'); }}
+                        inlineMeta={
+                          <span role="button" tabIndex={0} title={`Source: ${minervaSourceName}`}
+                            onClick={() => openUrl(minervaSourceUrl)}
+                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') openUrl(minervaSourceUrl); }}
                             style={{ color: hexAlpha(mvAccent, 0.85), textDecoration: 'underline', cursor: 'pointer' }}
-                          >more info &#8599;</span>
+                          >via {minervaSourceName} &#8599;</span>
                         }
                         hexAlpha={hexAlpha}
                         fontFamily={theme.fontFamily}
@@ -8484,7 +8561,10 @@ export default function ChatOverlay() {
                       borderLeft: mentionsMe ? `2px solid ${primaryColor}` : '2px solid transparent',
                   }}
                   >
-                    <span style={{ flex: 1, minWidth: 0, lineHeight: 'inherit', display: 'flex', alignItems: 'flex-start' }}>
+                    <span
+                      data-fcm-message-line="true"
+                      style={{ display: 'block', minWidth: 0, lineHeight: 'inherit', wordBreak: 'break-word' }}
+                    >
                       <span className="fcm-message-prefix">
                         {channelTagEl}
                         {timestampEl}
@@ -8504,25 +8584,31 @@ export default function ChatOverlay() {
                           ? <span className={`fcm-name-badge fcm-name-badge--${badge.tier}`} role="img" title={badge.label} aria-label={badge.label} data-fcm-supporter-star="true"
                               style={{ color: supporterStarColor(msg.badges, msg.starColor) ?? undefined }}>{SUPPORTER_STAR_GLYPH}</span>
                           : null;
+                        const nameLabel = fx.className.includes('fcm-name-fx--shimmer')
+                          ? <>{Array.from(displayName).map((character, index) => (
+                              <span key={`${index}-${character}`} className="fcm-shimmer-letter"
+                                style={{ ['--fcm-shimmer-index' as string]: index } as React.CSSProperties}>{character}</span>
+                            ))}:{' '}</>
+                          : <>{displayName}:{' '}</>;
                         // Tag and badge render BEFORE the name, which keeps the name
-                        // element's text node exactly `${displayName}: ` as it has
-                        // always been. Splitting the colon into its own element broke
-                        // getByText(/Name:/) queries and made the bare name match twice.
+                        // element's text content exactly `${displayName}: ` as it has
+                        // always been. The shimmer glyph spans are presentation-only
+                        // and preserve that same text content for mentions and tests.
                         const nameEl = msg.userId && msg.userId !== 'system' ? (
                           isPublicMode ? (
                             <Link to={`/profile/${msg.userId}`} className={`username-chip ${fx.className}`} style={fx.style} data-fcm-name={fx.dataName}>
-                              {displayName}:{' '}
+                              {nameLabel}
                             </Link>
                           ) : (
                             <span role="button" tabIndex={0} className={`username-chip username-chip--mention ${fx.className}`}
                               style={{ ...fx.style, cursor: 'pointer' }} data-fcm-name={fx.dataName}
                               onClick={() => insertMentionFromClick(displayName)} onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') insertMentionFromClick(displayName); }}>
-                              {displayName}:{' '}
+                              {nameLabel}
                             </span>
                           )
                         ) : (
                           <span style={fx.style} className={fx.className} data-fcm-name={fx.dataName}>
-                            {displayName}:{' '}
+                            {nameLabel}
                           </span>
                         );
                         // Keep the star and username in one middle-aligned identity
@@ -8534,12 +8620,16 @@ export default function ChatOverlay() {
                           </>;
                         })()}
                       </span>
-                      <span style={{
-                        flex: '1 1 auto',
-                        minWidth: 0,
+                      <span data-fcm-message-body="true" style={{
+                        display: 'inline',
+                        // The username is inside an inline-flex identity run, so its
+                        // trailing text whitespace can collapse at this boundary.
+                        // Keep the separator explicit on the body instead.
+                        marginLeft: '0.25em',
                         color: contentColor,
                         fontWeight: 600,
                         lineHeight: 'inherit',
+                        verticalAlign: 'middle',
                         textShadow: glowEnabled ? `0 0 2px ${hexAlpha(primaryColor, 0.3 * textAlpha)}, ${textOutline}` : textOutline,
                       }}>
                         {inlineContent ?? renderContent(msg.content, activeMainId === PARTY_MAIN_ID && partyView !== 'browser')}

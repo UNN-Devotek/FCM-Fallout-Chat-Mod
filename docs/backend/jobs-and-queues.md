@@ -198,8 +198,9 @@ Discord and rejoins gets their cosmetics back without re-purchasing. See
 
 **Defined in:** `backend/src/queues/messagePersist.ts`
 
-Built on **Bull** (Redis-backed). Canonical chat sends use it to persist messages before broadcasting,
-while background and simulation producers may use it asynchronously.
+Built on **Bull** (Redis-backed). Ordinary canonical chat sends use it to persist messages before
+broadcasting, while the native `chat.v1` relay broadcasts after the durable queue accepts the job so
+the synchronous in-game RPC is not held open by worker completion.
 
 **Configuration:**
 - Queue name: `message-persist`
@@ -210,9 +211,11 @@ while background and simulation producers may use it asynchronously.
 
 **Worker:** calls `persistMessage(job.data)` from `services/messageService.ts`. The persist uses `INSERT ... ON CONFLICT (id, created_at) DO NOTHING` so retries are safe.
 
-**Producer:** the shared WS/HUD ingestion path enqueues a job before broadcasting and awaits its
-completion. This ensures an immediately editable message always has a durable database row. Background
-and simulation producers that explicitly use the queue directly may still enqueue asynchronously.
+**Producer:** the shared ingestion path enqueues a job before broadcasting. Web/WS producers await its
+completion so an immediately editable message has a durable database row. Native `relay` producers
+acknowledge and broadcast after queue acceptance; Bull's worker remains responsible for retries and
+the eventual database write, reducing in-game send latency. Background and simulation producers that
+explicitly use the queue directly may also enqueue asynchronously.
 
 Failed jobs are logged at error level with `jobId`.
 

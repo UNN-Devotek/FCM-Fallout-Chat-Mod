@@ -114,7 +114,8 @@ These are **separate** from the Electron overlay's global shortcuts above. The i
 widget (`FCMChatWidget`, the explicit-opt-in `.ba2` install) runs on a Scaleform HUD layer that
 receives **no raw keyboard events** — its input surface is restricted to (1) the one native open
 key polled by ZFE and (2) named Fallout 76 control-map **actions** the loader forwards as
-`HUDMod::UserEvent`. Configure them in `Data/FCMChat.ini` (`[FCMChat]` section).
+`HUDMod::UserEvent`. The current loader fields are `actionName`/`isDown`; the widget also accepts
+the legacy `EventName`/`IsKeyDown` aliases. Configure them in `Data/FCMChat.ini` (`[FCMChat]` section).
 
 ### Start typing and HUDModLoader menu
 
@@ -128,6 +129,11 @@ for the feed, and `FCM → Customize... → Reset all settings` to restore the p
 the loader reload control for live widget changes; replacing the BA2 or ZFE fragment requires
 exiting and restarting Fallout 76.
 
+Customize actions are repeatable while the submenu remains open. The HUDTools one-shot behavior is
+given a short cooldown by FCM, so position, size, opacity, and theme controls no longer become
+permanently grey after one activation. Auto-hide reports its live state on the next F11 open; the
+menu closes after a toggle to force that label to be rebuilt.
+
 After opening input, `/g`, `/t`, `/e`, `/i`, `/r`, and `/s` (or `/server` after a current
 server/world binding is confirmed) switch the destination channel before the rest of the message
 is sent; `/hide` hides the feed and the open key restores it. The generated HUD ZIP includes these
@@ -136,11 +142,13 @@ steps in both `INSTALL.txt` and `HUDMODLOADER-MENU.txt`.
 | Default | Action / config key | Behavior |
 |---------|---------------------|----------|
 | `Insert` | `openKey` (native ZFE key) | **Open / restore.** Opens the native chat input; if the panel is hidden, restores it first. The only freely-choosable physical key (ZFE `isChatKeyPressed`). `PAGE_DOWN` is the known-good fallback if `INSERT` does not fire in-game. |
-| `Page Down` | `channelNextKey` = `NextPage` | Advance to the next channel. When HUDModLoader forwards the action during input, it keeps the draft/session open. |
-| `Page Up` | `channelPrevKey` = `PrevPage` | Go to the previous channel. When HUDModLoader forwards the action during input, it keeps the draft/session open. |
+| `Page Down` | `channelNextKey` = `NextPage` | Advance to the next channel. Physical `PageDown` aliases are accepted. Works while idle or while input is open; an open draft is preserved. |
+| `Page Up` | `channelPrevKey` = `PrevPage` | Go to the previous channel. Physical `PageUp` aliases are accepted. Works while idle or while input is open; an open draft is preserved. |
+| `Arrow Up` / `Arrow Down` | runtime HUD actions | After `Insert` opens the typing session, scroll the active feed one line. Before then they remain game controls. |
+| `Home` / `End` | runtime HUD actions | After `Insert` opens the typing session, return the feed to the newest message. Before then they remain game controls. |
 | `/hide` + `F11` | (`/hide` slash command; F11 HUDModLoader menu) | Hide the panel. Feed keeps running in the background; restore with the open key (`Insert`). |
 | (optional) `hideKey` | `hideKey` = `<action>` | Optional power-user hide bind; default **UNSET**. Accepts a forwarded action only; hide is always available via `/hide` + the F11 menu regardless. |
-| Mouse-wheel | (not a keybind) | Scroll the feed history. F11 "Scroll to newest" + auto-scroll are the menu fallbacks. |
+| Mouse-wheel | (not a keybind) | Scroll the feed history. F11 "Scroll to newest" + Home/End are the jump-to-newest fallbacks. |
 
 `Enter` (send) and `Esc` (cancel) stay native to the game's chat input session and are **not**
 rebindable. While a native session is active, the widget requires the engine's edit-text lock;
@@ -148,7 +156,8 @@ game movement/actions are restored on Enter, Esc, or a terminal relay/input fail
 
 **Deliverable action set** — the only values `channelNextKey` / `channelPrevKey` / `hideKey`
 accept (forwarded by the loader as `HUDMod::UserEvent`): `NextPage` (Page Down), `PrevPage`
-(Page Up), `Console` (`~`), `TeamChat` (`T`), `DiagnosticSnapshot` (F12). Any other physical key must be remapped to one of these
+(Page Up), `Console` (`~`), `TeamChat` (`T`), `DiagnosticSnapshot` (F12). Arrow and Home/End
+scroll actions are recognized at runtime and do not change the config action set. Any other physical key must be remapped to one of these
 actions in Fallout 76's control settings, then set the matching action name here.
 
 Two open-key bindings must agree: `Data/ZFE/TextChat/fragments/FCMChatWidget.ini` `OpenChatKey`
