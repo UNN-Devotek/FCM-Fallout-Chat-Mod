@@ -163,12 +163,13 @@ current member roles at most once per minute per deployment, coordinated by a Re
 `SET NX EX` slot (with a local fallback if Redis is temporarily unavailable). The
 Discord ID comes from the linked FCM account resolved by the relay token; the HUD cannot
 provide or forge it. A successful role read updates the shared supporter entitlement and
-clears caches only when the effective tier changes, so the message broadcast and send
-acknowledgement carry the current supporter marker to every connected HUD subscriber. Gateway
-events and the 15-minute bulk reconcile remain in place for changes
-that do not coincide with a HUD send. Discord timeouts, rate limits, and other transient
-failures preserve the last known entitlement; only a successful no-role read or definitive
-member removal can lapse it.
+clears the tier/cosmetics read caches even when the effective tier is unchanged, so a
+stale pre-reenable `none` value cannot hide a current role. Gateway events, the immediate
+startup reconcile, and the 15-minute bulk reconcile remain in place for changes that do
+not coincide with a HUD send; login, link-status polling, and overlay/dashboard reads use
+the same bounded check. Discord timeouts, rate limits, and other transient failures
+preserve the last known entitlement; only a successful no-role read or definitive member
+removal can lapse it.
 
 ## Ephemeral `server` rooms
 

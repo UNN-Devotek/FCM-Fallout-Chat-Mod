@@ -2,9 +2,88 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   HUD_ROLE_REFRESH_INTERVAL_MS,
+  refreshSupporterFromDiscord,
   refreshSupporterFromHudSend,
   resetHudRoleRefreshState,
+  runReconcile,
 } from '../supporterSyncService';
+import { resolveSupporterTier } from '../../utils/supporterTier';
+
+test('explicit account refresh restores access from either configured Discord tier role', async () => {
+  const roleIds = {
+    supporterRoleId: 'ROLE_SUPPORTER',
+    overseerCircleRoleId: 'ROLE_OVERSEER',
+    adminRoleId: null,
+  };
+  const cases = [
+    { discordId: 'discord-supporter-role', userId: 'fcm-supporter-role', roles: ['ROLE_SUPPORTER'], tier: 'supporter' as const },
+    { discordId: 'discord-overseer-role', userId: 'fcm-overseer-role', roles: ['ROLE_OVERSEER'], tier: 'overseer' as const },
+  ];
+  const syncCalls: Array<{ discordId: string; roles: readonly string[] }> = [];
+
+  for (const currentCase of cases) {
+    resetHudRoleRefreshState();
+    await refreshSupporterFromDiscord({
+      userId: currentCase.userId,
+      discordId: currentCase.discordId,
+    }, {
+      now: () => 10_000,
+      isConfigured: () => true,
+      acquireSlot: async () => true,
+      fetchRoles: async () => currentCase.roles,
+      syncRoles: async (discordId, roles) => {
+        syncCalls.push({ discordId, roles: roles ?? [] });
+        return {
+          tier: resolveSupporterTier(roles, roleIds),
+          changed: true,
+        };
+      },
+      bustCosmetics: async () => {},
+      refreshPresentation: async () => true,
+    });
+  }
+
+  assert.deepEqual(syncCalls, [
+    { discordId: 'discord-supporter-role', roles: ['ROLE_SUPPORTER'] },
+    { discordId: 'discord-overseer-role', roles: ['ROLE_OVERSEER'] },
+  ]);
+  assert.deepEqual(cases.map(({ roles }) => resolveSupporterTier(roles, roleIds)), cases.map(({ tier }) => tier));
+});
+
+test('startup reconcile grants every live tier role, including Supporter and Overseer roles', async () => {
+  const roleIds = {
+    supporterRoleId: 'ROLE_SUPPORTER',
+    overseerCircleRoleId: 'ROLE_OVERSEER',
+    adminRoleId: null,
+  };
+  const roleMembers = new Map<string, readonly string[]>([
+    ['discord-supporter-bulk', ['ROLE_SUPPORTER']],
+    ['discord-overseer-bulk', ['ROLE_OVERSEER']],
+  ]);
+  const syncCalls: Array<{ discordId: string; roles: readonly string[] }> = [];
+  const presentationCalls: string[] = [];
+
+  const result = await runReconcile({
+    fetchMembers: async () => roleMembers,
+    listEntitlements: async () => [],
+    resolveTier: (roles) => resolveSupporterTier(roles, roleIds),
+    syncRoles: async (discordId, roles) => {
+      syncCalls.push({ discordId, roles: roles ?? [] });
+      return { tier: resolveSupporterTier(roles, roleIds), changed: true };
+    },
+    refreshPresentation: async (discordId) => {
+      presentationCalls.push(discordId);
+      return true;
+    },
+  });
+
+  assert.deepEqual(result, { granted: 2, lapsed: 0, checked: 2 });
+  assert.deepEqual(syncCalls, [
+    { discordId: 'discord-supporter-bulk', roles: ['ROLE_SUPPORTER'] },
+    { discordId: 'discord-overseer-bulk', roles: ['ROLE_OVERSEER'] },
+  ]);
+  assert.deepEqual(presentationCalls, ['discord-supporter-bulk', 'discord-overseer-bulk']);
+});
 
 test('refreshes HUD senders from Discord roles and enforces a one-minute cooldown', async () => {
   resetHudRoleRefreshState();
@@ -54,6 +133,8 @@ test('coalesces concurrent HUD sends for the same Discord account', async () => 
   let releaseFetch!: () => void;
   const fetchGate = new Promise<void>((resolve) => { releaseFetch = resolve; });
   let fetchCount = 0;
+  let tierBustCount = 0;
+  let cosmeticsBustCount = 0;
 
   const deps = {
     now: () => 20_000,
@@ -66,7 +147,8 @@ test('coalesces concurrent HUD sends for the same Discord account', async () => 
       return ['supporter-role'];
     },
     syncRoles: async () => ({ tier: 'supporter' as const, changed: false }),
-    bustCosmetics: async () => {},
+    bustTier: async () => { tierBustCount++; },
+    bustCosmetics: async () => { cosmeticsBustCount++; },
     refreshPresentation: async () => true,
   };
 
@@ -77,6 +159,8 @@ test('coalesces concurrent HUD sends for the same Discord account', async () => 
   await Promise.all([first, second]);
 
   assert.equal(fetchCount, 1);
+  assert.equal(tierBustCount, 1);
+  assert.equal(cosmeticsBustCount, 1);
 });
 
 test('does not call Discord when another backend owns the Redis refresh slot', async () => {
@@ -124,6 +208,8 @@ test('uses a trusted Discord ID supplied by the relay without another user looku
     },
     fetchRoles: async () => [],
     syncRoles: async () => ({ tier: 'none' as const, changed: false }),
+    bustTier: async () => {},
+    bustCosmetics: async () => {},
   });
 
   assert.equal(userLookupCount, 0);

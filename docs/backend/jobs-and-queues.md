@@ -162,7 +162,7 @@ Runs every **5 minutes** (`VERIFICATION_INTERVAL_MS = 5 * 60 * 1000`). Re-fetche
 
 **Defined in:** `backend/src/services/supporterSyncService.ts`
 
-Runs every **15 minutes** (first pass 60s after `ready`), wrapped in `makeJobTracker`.
+Runs immediately after `ready` and then every **15 minutes**, wrapped in `makeJobTracker`.
 Re-derives every supporter entitlement from the guild's live paid-tier or admin-role
 assignments: grants/refreshes anyone holding a qualifying role, and lapses any `active`
 row whose holder no longer does. Disabled entirely when the feature is off or no paid
@@ -171,9 +171,10 @@ tier/admin cosmetics role is configured.
 This is the **backstop**. The fast path is the `guildMemberUpdate` /
 `guildMemberRemove` gateway listeners in the same service, which pick up a purchase or
 cancellation within seconds. The sweep exists because gateway events are lossy across
-restarts and outages. Authenticated HUD sends also trigger an authoritative member-role
-read at most once per linked Discord account per minute across the deployment via a
-Redis distributed slot, before the
+restarts and outages. Authenticated login, link-status, overlay/dashboard reads,
+Discord `/cosmetics` interactions, and HUD sends also trigger an authoritative
+member-role read at most once per linked Discord account per minute across the
+deployment via a Redis distributed slot, before the
 message is decorated. This closes the freshness gap when a role changes while the gateway
 event is missed; transient Discord failures preserve the last known entitlement.
 
@@ -233,5 +234,5 @@ Failed jobs are logged at error level with `jobId`.
 | Wiki full ingest | node-cron + on-demand | Weekly Sun 03:00 UTC | Walk Fandom categories, upsert wiki_entries, mirror images |
 | Wiki incremental sync | setInterval (opt-in) | Every N hours (WIKI_SYNC_INTERVAL_HOURS) | recentchanges diff since last sync, targeted upsert |
 | Role re-verification | setInterval | Every 5 min | Re-verify Discord roles, revoke stale sessions |
-| Supporter reconcile | setInterval | Every 15 min | Re-derive supporter entitlements from live paid-tier/admin cosmetics roles (bulk fetch, not per-user); HUD sends also use a Redis-coordinated once-per-minute-per-user role refresh |
+| Supporter reconcile | setInterval | Startup + every 15 min | Re-derive supporter entitlements from live paid-tier/admin cosmetics roles (bulk fetch, not per-user); login, overlay/dashboard reads, Discord `/cosmetics` interactions, and HUD sends also use a Redis-coordinated once-per-minute-per-user role refresh |
 | message-persist | Bull (Redis) | Event-driven | Persist chat messages to Postgres |

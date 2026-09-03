@@ -31,6 +31,8 @@ export interface BridgeWs {
 export interface ShellHookBridge {
   minimizeWindow(): void;
   closeWindow(): void;
+  /** Re-check Discord link and supporter-role state before remounting the chat. */
+  refreshDiscordStatus?(): void;
 }
 
 export interface OverlayShellHook {
@@ -93,8 +95,9 @@ export function applyRelayBase(hook: OverlayShellHook | undefined, host: string)
 
 /**
  * Build the __FCM_OVERLAY_SHELL__ hook object. Refresh/settings dispatch
- * CustomEvents on the supplied event target (window in prod); minimize/close go
- * straight to the bridge IPC.
+ * CustomEvents on the supplied event target (window in prod); refresh also polls
+ * Discord status so the backend can repair supporter-role state before the chat
+ * remounts. Minimize/close go straight to the bridge IPC.
  */
 export function buildShellHook(
   bridge: ShellHookBridge,
@@ -102,7 +105,10 @@ export function buildShellHook(
 ): OverlayShellHook {
   return {
     title: 'FALLOUT 76',
-    onRefresh: () => eventTarget.dispatchEvent(new CustomEvent('fcm-shell-refresh')),
+    onRefresh: () => {
+      bridge.refreshDiscordStatus?.();
+      eventTarget.dispatchEvent(new CustomEvent('fcm-shell-refresh'));
+    },
     onSettings: () => eventTarget.dispatchEvent(new CustomEvent('fcm-shell-settings')),
     onMinimize: () => bridge.minimizeWindow(),
     onClose: () => bridge.closeWindow(),

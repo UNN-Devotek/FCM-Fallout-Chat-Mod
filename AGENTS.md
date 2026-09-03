@@ -152,7 +152,7 @@ These are non-negotiable. Each links to the doc with the full context.
   `Start-Process powershell -NoExit -File …`, also close the PowerShell window it ran in (match by the
   launcher script — never blanket-kill all `powershell`). Stale `-NoExit` windows conflict on ports.
   One launcher window at a time. See [docs/deployment/local-dev.md](docs/deployment/local-dev.md).
-- **Overlay processes — DEV vs PROD are distinct; only ever touch DEV (HARD RULE).** The developer
+- **Overlay processes — DEV vs PROD are distinct; Prod operations require explicit user authorization (HARD RULE).** The developer
   runs BOTH overlays at the same time, distinguished by process name:
   - **DEV overlay = `electron` / `electron.exe`** — launched via `cd cross-platform-overlay && npm run
     dev:local`, points at the LOCAL backend (`localhost:7177`). **This one is yours to manage** —
@@ -160,7 +160,11 @@ These are non-negotiable. Each links to the doc with the full context.
     `Get-Process -Name 'electron' -EA SilentlyContinue | Stop-Process -Force`
   - **PROD overlay = `Fallout Chat Mod` / `Fallout Chat Mod.exe`** — the packaged/installed app
     connected to PROD (`falloutchatmod.com`). This is the developer's live, everyday overlay.
-    **NEVER kill, launch, or touch it.** Do NOT lump it into a `Stop-Process` with `electron`.
+    Do not kill, launch, install, update, or otherwise touch it by default. An explicit user request
+    may authorize a one-off local Prod install, launch, update, or restart for validation; before
+    doing so, identify the exact executable/path and process, operate only on that exact target,
+    and never use a broad process-name kill or include `electron`. Do NOT lump it into a
+    `Stop-Process` with `electron`.
   - **NEVER kill `Fallout76`** — that's the game.
   Dev features (e.g. wiki/camp) are LOCAL-ONLY until explicitly deployed — they don't exist on the
   prod overlay, so test them only on the dev surface (dev overlay → 7177, or the dashboard 7075→7177).

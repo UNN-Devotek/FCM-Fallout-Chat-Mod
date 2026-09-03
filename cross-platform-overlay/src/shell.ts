@@ -1343,7 +1343,7 @@ function buildSettingsPanel() {
     const relinkBtn = el('button', { className: 'ss-fbtn' }, 'RELINK');
     relinkBtn.addEventListener('click', () => { window.relayBridge.linkDiscord?.(); });
     const refreshStatusBtn = el('button', { className: 'ss-fbtn' }, 'REFRESH STATUS');
-    refreshStatusBtn.title = 'Re-check your Discord link status from the server';
+    refreshStatusBtn.title = 'Re-check your Discord link and supporter role status from the server';
     refreshStatusBtn.addEventListener('click', () => {
       refreshStatusBtn.textContent = '…';
       refreshStatusBtn.setAttribute('disabled', 'disabled');

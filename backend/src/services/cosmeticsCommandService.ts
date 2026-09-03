@@ -27,6 +27,7 @@ import logger from '../config/logger';
 import env from '../config/environment';
 import { getUserByDiscordId } from './userLookup';
 import { getSupporterStatus } from './supporterService';
+import { refreshSupporterFromDiscord } from './supporterSyncService';
 import { applyCosmetics, resolveCosmetics, type CosmeticPatch } from './cosmetics/cosmeticsService';
 import { COLOR_PRESETS, EFFECT_PRESETS, findColorPreset, findEffectPreset } from './cosmetics/presets';
 import { TAG_MAX_LENGTH } from './cosmetics/validation';
@@ -85,6 +86,9 @@ async function requireLinkedUser(interaction: any): Promise<{ userId: string; di
     );
     return null;
   }
+  // A role may have been granted while the gateway listener or tier feature was
+  // disabled. Reconcile the live member before any supporter-gated write.
+  await refreshSupporterFromDiscord({ userId: user.id, discordId });
   return { userId: user.id, discordId };
 }
 
@@ -97,6 +101,9 @@ async function handleShow(interaction: any): Promise<void> {
     await ephem(interaction, `${target.id === interaction.user.id ? 'You have' : 'That user has'} no linked Fallout Chat Mod account.`);
     return;
   }
+
+  // Keep `/cosmetics show` accurate for both self and another linked member.
+  await refreshSupporterFromDiscord({ userId: user.id, discordId: target.id });
 
   const [cosmetics, status] = await Promise.all([
     resolveCosmetics(user.id),
@@ -252,7 +259,10 @@ async function handleAutocomplete(interaction: any): Promise<void> {
     const focused = interaction.options.getFocused?.(true);
     const query: string = typeof focused === 'string' ? focused : focused?.value ?? '';
 
-    const status = await getSupporterStatus(interaction.user?.id);
+    const discordId = interaction.user?.id;
+    const user = discordId ? await getUserByDiscordId(discordId) : null;
+    if (user) await refreshSupporterFromDiscord({ userId: user.id, discordId });
+    const status = await getSupporterStatus(discordId);
     const choices =
       sub === 'effect'
         ? buildEffectChoices(EFFECT_PRESETS, status.tier, query)

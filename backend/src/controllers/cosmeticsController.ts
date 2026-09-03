@@ -25,6 +25,7 @@ import { RESERVED_COLORS, RESERVED_MIN_DISTANCE } from '../services/cosmetics/re
 import { MIN_CONTRAST, CONTRAST_BACKGROUNDS } from '../utils/colorContrast';
 import { TAG_MAX_LENGTH } from '../services/cosmetics/validation';
 import { getSupporterStatus } from '../services/supporterService';
+import { refreshSupporterFromDiscord } from '../services/supporterSyncService';
 import { tierLabel } from '../utils/supporterTier';
 
 /** Map a service rejection onto an HTTP status. */
@@ -137,6 +138,10 @@ export async function getUserCosmetics(req: Request, res: Response, next: NextFu
       if (!isStaff) return next(createError(403, 'You can only view your own cosmetics'));
     }
 
+    if (caller.userId === targetId) {
+      await refreshSupporterFromDiscord(caller);
+    }
+
     const [cosmetics, row] = await Promise.all([
       resolveCosmetics(targetId),
       prisma.userCosmetic.findUnique({ where: { userId: targetId } }),
@@ -166,6 +171,9 @@ export async function patchUserCosmetics(req: Request, res: Response, next: Next
     if (caller.userId !== targetId) {
       return next(createError(403, 'You can only change your own cosmetics'));
     }
+
+    // Reconcile the live Discord roles before applying a supporter-gated change.
+    await refreshSupporterFromDiscord(caller);
 
     const patch = parseCosmeticPatch(req.body);
 
@@ -213,10 +221,11 @@ export async function adminResetCosmetics(req: Request, res: Response, next: Nex
 /** GET /api/supporter/status — the caller's own tier and privilege state. */
 export async function getSupporterStatusHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
-    const discordId = (req as unknown as { dashboardUser?: { discordId?: string } }).dashboardUser?.discordId;
-    if (!discordId) return next(createError(401, 'No linked account'));
+    const caller = await callerUserId(req);
+    if (!caller) return next(createError(401, 'No linked account'));
 
-    const status = await getSupporterStatus(discordId);
+    await refreshSupporterFromDiscord(caller);
+    const status = await getSupporterStatus(caller.discordId);
     res.json({ data: supporterStatusPayload(status) });
   } catch (err) {
     next(err);
@@ -253,6 +262,7 @@ export async function getOverlayCosmetics(req: Request, res: Response, next: Nex
   try {
     const caller = await overlayCaller(req);
     if (!caller) return next(createError(401, 'No linked account'));
+    await refreshSupporterFromDiscord(caller);
     res.json({ data: await overlayPayload(caller) });
   } catch (err) {
     next(err);
@@ -264,6 +274,7 @@ export async function patchOverlayCosmetics(req: Request, res: Response, next: N
   try {
     const caller = await overlayCaller(req);
     if (!caller) return next(createError(401, 'No linked account'));
+    await refreshSupporterFromDiscord(caller);
 
     const result = await applyCosmetics({
       userId: caller.userId,
