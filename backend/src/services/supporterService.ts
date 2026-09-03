@@ -27,6 +27,7 @@ import {
   SupporterTier,
   EntitlementStatus,
   resolveSupporterTier,
+  isSupporterBenefitsAdminRole,
   normalizeTier,
   privilegesActive,
 } from '../utils/supporterTier';
@@ -48,6 +49,8 @@ export interface SupporterStatus {
   hasEntitlement: boolean;
   status: EntitlementStatus | null;
   source: EntitlementSource | null;
+  /** True when owner/admin staff access is granting the tier without payment. */
+  isAdminBypass: boolean;
 }
 
 const NO_ENTITLEMENT: SupporterStatus = {
@@ -57,6 +60,17 @@ const NO_ENTITLEMENT: SupporterStatus = {
   hasEntitlement: false,
   status: null,
   source: null,
+  isAdminBypass: false,
+};
+
+const ADMIN_BYPASS_STATUS: SupporterStatus = {
+  tier: 'overseer',
+  entitledTier: 'overseer',
+  privilegesActive: true,
+  hasEntitlement: false,
+  status: null,
+  source: null,
+  isAdminBypass: true,
 };
 
 /** Re-export so callers need only one import. */
@@ -98,6 +112,21 @@ async function cacheStatus(discordId: string, status: SupporterStatus): Promise<
   }
 }
 
+/**
+ * Synthetic Dev personas do not hold a real Discord role ID. Their already
+ * authenticated `admin_users.role` is still an authoritative staff identity,
+ * so resolve it as the same cosmetics-only Overseer bypass as ADMIN_ROLE_ID.
+ */
+async function hasAdminCosmeticsBypass(discordId: string): Promise<boolean> {
+  try {
+    const admin = await prisma.adminUser.findUnique({ where: { discordId }, select: { role: true } });
+    return isSupporterBenefitsAdminRole(admin?.role);
+  } catch (err) {
+    logger.warn({ err, discordId }, '[supporter] admin cosmetics bypass lookup failed (non-fatal)');
+    return false;
+  }
+}
+
 /** Drop the cached tier so the next read reflects a just-applied change. */
 export async function bustTierCache(discordId: string): Promise<void> {
   if (!discordId) return;
@@ -119,7 +148,16 @@ export async function bustTierCache(discordId: string): Promise<void> {
 export async function getSupporterStatus(discordId: string | null | undefined): Promise<SupporterStatus> {
   if (!discordId) return NO_ENTITLEMENT;
 
-  const cached = await getCachedStatus(discordId);
+  // Check the staff identity before the tier cache. This keeps a newly-created
+  // synthetic System Admin session from being stuck behind a cached "none" tier.
+  const [cached, adminBypass] = await Promise.all([
+    getCachedStatus(discordId),
+    hasAdminCosmeticsBypass(discordId),
+  ]);
+  if (adminBypass) {
+    await cacheStatus(discordId, ADMIN_BYPASS_STATUS);
+    return ADMIN_BYPASS_STATUS;
+  }
   if (cached) return cached;
 
   try {
@@ -141,6 +179,7 @@ export async function getSupporterStatus(discordId: string | null | undefined): 
         hasEntitlement: true,
         status: row.status as EntitlementStatus,
         source: row.source as EntitlementSource,
+        isAdminBypass: false,
       };
     }
 

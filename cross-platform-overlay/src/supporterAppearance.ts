@@ -48,6 +48,7 @@ export interface OverlayCosmeticsPayload {
     tierLabel: string;
     entitledTierLabel: string;
     shopUrl: string | null;
+    isAdminBypass: boolean;
   };
   cosmetics: {
     nameColor: string | null;
@@ -198,7 +199,9 @@ export function mountSupporterAppearance(parent: HTMLElement): HTMLElement {
 
     const tierLine = node('div', 'ss-cosmetics-tier');
     tierLine.append(node('span', 'ss-cosmetics-tier-label', `Discord tier: ${data.supporter.tierLabel}`));
-    if (data.supporter.needsDiscordRejoin) {
+    if (data.supporter.isAdminBypass) {
+      tierLine.append(node('span', 'ss-cosmetics-active', "System Admin access — all supporter benefits unlocked."));
+    } else if (data.supporter.needsDiscordRejoin) {
       tierLine.append(node('span', 'ss-cosmetics-paused', `Perks paused — rejoin Discord to restore ${data.supporter.entitledTierLabel}.`));
     } else if (tier === 'none') {
       tierLine.append(node('span', 'ss-cosmetics-subtle', 'Free colours are ready now.'));

@@ -141,7 +141,9 @@ discordClient created (intents + partials)
 ## Supporter tier + `/cosmetics`
 
 `supporterSyncService` keeps supporter entitlements in lockstep with Discord tier roles
-(and treats the configured `ADMIN_ROLE_ID` as an Overseer-level cosmetics bypass).
+(and treats the configured `ADMIN_ROLE_ID` plus authenticated owner/admin identities as an
+Overseer-level cosmetics bypass). The bypass grants appearance benefits only and does not
+change moderation authorization or paid entitlement records.
 Discord Server Subscriptions grant/revoke the role on purchase/cancellation, so the
 role IS the entitlement signal and no payment webhook exists). `cosmeticsCommandService`
 registers the guild-scoped `/cosmetics` command.

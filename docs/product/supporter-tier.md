@@ -55,11 +55,14 @@ keep returning false for supporters. This is a deliberate deviation from the wor
 issue #230.
 
 When `SUPPORTER_TIER_ENABLED=true`, a member holding the configured `ADMIN_ROLE_ID` is
-resolved as `Overseer` for cosmetics. This grants the full supporter-effects catalog,
-including Overseer's Circle effects, tags, star colors, and name colors. It is a
-cosmetics-only bypass: it does not alter `EffectiveRole`, moderation permissions, or
-the paid Discord subscription roles. Admin access is still live-role based, so removing
-the admin role removes the bypass on the next gateway/reconcile/HUD refresh.
+resolved as `Overseer` for cosmetics. An already-authenticated `owner` or `admin`
+identity in `admin_users` receives the same cosmetics-only bypass; this covers the
+credentialless synthetic System Admin account in hosted DEV, which has no real Discord
+role ID. This grants the full supporter-effects catalog, including Overseer's Circle
+effects, tags, star colors, and name colors. It does not alter `EffectiveRole`,
+moderation permissions, or the paid Discord subscription roles. Removing a real admin
+role removes the bypass when the verified admin identity is updated; Dev persona access
+is controlled by the DEV-only persona gate.
 
 ### Entitlement vs privileges (#230's hard rule)
 
