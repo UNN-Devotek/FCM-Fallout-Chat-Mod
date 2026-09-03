@@ -75,10 +75,10 @@ contextBridge.exposeInMainWorld('relayBridge', {
   openExternal: (url) => ipcRenderer.send('shell:open-external', url),
   // Surface a renderer-side diagnostic line into the main-process log file.
   logDiag: (msg) => ipcRenderer.send('shell:diag', msg),
-  // Trigger a real-time Discord link status poll from the backend.
+  // Trigger a real-time Discord link/supporter-role status poll from the backend.
   // Main responds with 'relay:discord-status' when the result arrives.
   refreshDiscordStatus: () => ipcRenderer.send('discord:refresh-status'),
-  // Called when main has a fresh Discord link status (post-link or on focus).
+  // Called when main has a fresh Discord link/supporter-role status (post-link or on focus).
   onDiscordStatus: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('relay:discord-status', h); return () => ipcRenderer.removeListener('relay:discord-status', h); },
 
   // Lifecycle.

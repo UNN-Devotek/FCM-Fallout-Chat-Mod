@@ -2749,9 +2749,11 @@ function pollQaStatus(attempt = 0) {
 
 ipcMain.handle('overlay:qa-login', async () => { startQaLogin(); return { ok: true }; });
 
-// Discord link status refresh: poll /api/auth/discord-status/:installToken and
-// broadcast the real linked state to the renderer as 'relay:discord-status'. The
-// renderer calls this (via ipcMain 'discord:refresh-status') after returning from
+// Discord link/supporter-role status refresh: poll
+// /api/auth/discord-status/:installToken and broadcast the real linked state to
+// the renderer as 'relay:discord-status'. The backend also reconciles the linked
+// member's supporter role during this bounded request.
+// The renderer calls this (via ipcMain 'discord:refresh-status') after returning from
 // the OAuth flow. Poll with BOUNDED RETRIES — the user has just returned from the
 // OAuth flow, so a single failed poll must NOT strand them on the login wall —
 // retry a few times with short backoff before giving up. On final failure we tell

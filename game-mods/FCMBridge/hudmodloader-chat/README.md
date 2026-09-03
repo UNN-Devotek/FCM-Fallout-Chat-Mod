@@ -36,8 +36,9 @@ ZFE strips unknown event members before the SWF receives them, so v2.10.39 decod
   supporter marker as a five-point vector `Shape` positioned from the author's text bounds. The
   marker uses the validated `starColor`; it never inserts U+2605, a bitmap, an HTML image, or a
   substitution token, so missing Scaleform font glyphs cannot become tofu blocks. Its bounds are
-  transformed into the sibling marker layer and it sits between the channel tag and first author
-  glyph, middle-aligned to that glyph. Feed leading is zero to keep rows compact, and the feed clip
+  transformed into the sibling marker layer and it sits immediately after the measured channel tag
+  (before optional moderation/custom tags), middle-aligned to the author bounds. Feed leading is zero
+  to keep rows compact, and the feed clip
   rectangle reserves only a 4px safety gap above the top-level HUDTools input field. New content
   snaps to the end of the feed after each reflow.
   After queuing the local row, the widget enters the synchronous send RPC on the next timer tick,

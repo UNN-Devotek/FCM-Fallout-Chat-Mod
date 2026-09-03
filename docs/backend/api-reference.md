@@ -29,7 +29,7 @@ These routes are outside `/api/` and not subject to `apiLimiter`.
 | GET | `/auth/logout` | public | Destroy session |
 | GET | `/auth/me` | Discord session | Current admin user identity + avatarUrl |
 | GET | `/auth/ws-ticket` | Discord session | Issue 60s single-use WS ticket |
-| GET | `/api/auth/discord-status/:installToken` | public | Poll Discord link status for desktop client |
+| GET | `/api/auth/discord-status/:installToken` | public | Poll Discord link status for desktop client; when linked, also performs the bounded live supporter-role reconciliation |
 | POST | `/api/dev/login-as` | loopback or `X-Dev-Persona-Key`, DEV-only | Issue an immediate synthetic persona session for an unpackaged local or hosted DEV overlay (`{ persona, installToken }`) |
 | GET | `/auth/discord/dev-login` | public, DEV-only | Legacy OAuth-gated persona login (`?installToken=&persona=`); not used by the overlay DevAccount buttons |
 | GET | `/api/auth/dev-login-status/:installToken` | public, DEV-only | Consume the one-time legacy hosted DEV persona session grant |
@@ -262,11 +262,11 @@ Chat appearance personalisation and the paid supporter entitlement. Design recor
 | ------ | ---- | ---- | ----------- |
 | GET | `/api/supporter/tiers` | public | Pricing data for the marketing page (tier labels, prices, option counts) |
 | GET | `/api/cosmetics/catalog` | requireDashboardAuth | Colour + effect catalog, reserved colours, picker bounds and contrast floor. **Single source of truth** — the web picker, the Discord `/cosmetics` autocomplete and the user guide all render from this rather than re-declaring it |
-| GET | `/api/supporter/status` | requireDashboardAuth | Caller's tier, entitled tier, whether privileges are active, and whether they need to rejoin the Discord |
-| GET | `/api/overlay/cosmetics` | requireAuth (`X-Auth-Token`) | Electron overlay's self-only appearance payload: catalog, resolved/stored cosmetics and active Discord tier. The target comes solely from the install session, never from a renderer-supplied user id. |
-| PATCH | `/api/overlay/cosmetics` | requireAuth (`X-Auth-Token`) + rate limit | Electron overlay's self-only cosmetic update. Uses the same `applyCosmetics()` service and PATCH semantics as the profile and Discord bot. |
-| GET | `/api/users/:id/cosmetics` | requireDashboardAuth | Resolved + stored cosmetics. Self, or moderator+ |
-| PATCH | `/api/users/:id/cosmetics` | requireDashboardAuth + rate limit | Self only. Applies a partial patch |
+| GET | `/api/supporter/status` | requireDashboardAuth | Caller's tier, entitled tier, whether privileges are active, and whether they need to rejoin the Discord; refreshes the caller's live tier role first |
+| GET | `/api/overlay/cosmetics` | requireAuth (`X-Auth-Token`) | Electron overlay's self-only appearance payload: catalog, resolved/stored cosmetics and active Discord tier. Performs a bounded live role check first. The target comes solely from the install session, never from a renderer-supplied user id. |
+| PATCH | `/api/overlay/cosmetics` | requireAuth (`X-Auth-Token`) + rate limit | Electron overlay's self-only cosmetic update. Rechecks the live role before applying the same `applyCosmetics()` service and PATCH semantics as the profile and Discord bot. |
+| GET | `/api/users/:id/cosmetics` | requireDashboardAuth | Resolved + stored cosmetics. Self, or moderator+. A self-read refreshes the live tier role first. |
+| PATCH | `/api/users/:id/cosmetics` | requireDashboardAuth + rate limit | Self only. Refreshes the live tier role before applying a partial patch |
 | POST | `/api/admin/users/:id/cosmetics/reset` | requireDiscordRole(owner/admin/moderator) | Reset an abusive colour, effect or tag to defaults (#232) |
 
 ### PATCH semantics

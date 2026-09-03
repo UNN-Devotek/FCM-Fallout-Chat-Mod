@@ -135,7 +135,7 @@ beside a short-lived one-way token digest in Redis so separate connect and subsc
 the same capability decision. `tag` and `starColor` are already validated by the cosmetics
 service, and `supporterStar` is derived only from an active Supporter or Overseer entitlement.
 Widget v2.10.39 renders supporter fields with a fixed five-point vector `Shape` positioned from
-the row's measured HTML prefix and adjusted for the feed's current `scrollV`. Keeping the marker
+the measured channel-tag closing bracket for X and the author bounds for Y. Keeping the marker
 layer in feed-local coordinates avoids Scaleform's mixed-font character-x ambiguity; it clips
 markers to the feed viewport so off-screen history cannot leak into the header or input area. It uses the validated
 `starColor` and never trusts a Unicode glyph, bitmap, HTML image, or substitution token from the
@@ -163,12 +163,13 @@ current member roles at most once per minute per deployment, coordinated by a Re
 `SET NX EX` slot (with a local fallback if Redis is temporarily unavailable). The
 Discord ID comes from the linked FCM account resolved by the relay token; the HUD cannot
 provide or forge it. A successful role read updates the shared supporter entitlement and
-clears caches only when the effective tier changes, so the message broadcast and send
-acknowledgement carry the current supporter marker to every connected HUD subscriber. Gateway
-events and the 15-minute bulk reconcile remain in place for changes
-that do not coincide with a HUD send. Discord timeouts, rate limits, and other transient
-failures preserve the last known entitlement; only a successful no-role read or definitive
-member removal can lapse it.
+clears the tier/cosmetics read caches even when the effective tier is unchanged, so a
+stale pre-reenable `none` value cannot hide a current role. Gateway events, the immediate
+startup reconcile, and the 15-minute bulk reconcile remain in place for changes that do
+not coincide with a HUD send; login, link-status polling, and overlay/dashboard reads use
+the same bounded check. Discord timeouts, rate limits, and other transient failures
+preserve the last known entitlement; only a successful no-role read or definitive member
+removal can lapse it.
 
 ## Ephemeral `server` rooms
 

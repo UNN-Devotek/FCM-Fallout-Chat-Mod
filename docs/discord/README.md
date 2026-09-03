@@ -153,7 +153,11 @@ the Developer Portal — dev and prod are separate applications, so this must be
 twice. Without it the gateway connection is rejected outright.
 
 Both are gated on `SUPPORTER_TIER_ENABLED` (default `false`): with the tier off the
-command is never registered and no listener attaches.
+command is never registered and no listener attaches. When enabled, the startup
+reconcile runs immediately after the gateway is ready; linked login/link-status,
+overlay/dashboard refreshes, and `/cosmetics` interactions also perform a bounded
+live role check, so roles granted while the feature was off do not depend on a
+replayed gateway event.
 
 The appearance subcommands are `/cosmetics color`, `/cosmetics star`,
 `/cosmetics effect`, `/cosmetics tag`, `/cosmetics show`, `/cosmetics clear`, and

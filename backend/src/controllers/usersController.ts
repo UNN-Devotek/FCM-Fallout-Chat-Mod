@@ -15,6 +15,7 @@ import { buildAvatarUrl } from '../services/avatarService';
 import { refreshClientIdentity } from '../websocket/handlers';
 import { mergeUserInto } from '../utils/mergeUser';
 import { setChatName } from '../services/chatNameService';
+import { refreshSupporterFromDiscord } from '../services/supporterSyncService';
 
 // 24 hours — ephemeral overlay session; the overlay silently re-registers via its install
 // token on reconnect. Discord re-auth enforced separately by the 30-day window (discordAuthedAt).
@@ -565,6 +566,15 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
 
     if (user.isBanned) {
       return next(createError(403, 'This account is banned.'));
+    }
+
+    // A role may have been granted while supporter sync was disabled, so no
+    // GuildMemberUpdate event exists to replay after re-enabling the feature.
+    // Recheck the linked account before issuing the session; the bounded helper
+    // restores lapsed/missing entitlements without making Discord part of the
+    // chat-message hot path.
+    if (user.discordId) {
+      await refreshSupporterFromDiscord({ userId: user.id, discordId: user.discordId });
     }
 
     // Discriminator returned for back-compat but no longer appended to displayed names.

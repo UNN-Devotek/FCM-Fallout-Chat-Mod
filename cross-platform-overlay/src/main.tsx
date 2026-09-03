@@ -516,7 +516,7 @@ function Shell() {
     // component so theme/opacity/font/hints take effect immediately.
     initShell({ onSettingsChange: () => setMountKey(k => k + 1) });
 
-    // Auto-refresh Discord link status when the window regains focus (the user
+    // Auto-refresh Discord link/supporter-role status when the window regains focus (the user
     // may have just returned from the OAuth browser flow). Throttled to once
     // per minute so a focus-heavy workflow doesn't spam the backend.
     let lastDiscordCheck = 0;
@@ -529,7 +529,8 @@ function Shell() {
     };
     window.addEventListener('focus', onWindowFocus);
 
-    // Header refresh button → remount (re-fetches channels + history).
+    // Header refresh button → refresh Discord/supporter state, then remount
+    // (re-fetches channels + history).
     const onRefresh = () => setMountKey(k => k + 1);
     window.addEventListener('fcm-shell-refresh', onRefresh);
     // Header gear → open the full desktop-parity settings panel.

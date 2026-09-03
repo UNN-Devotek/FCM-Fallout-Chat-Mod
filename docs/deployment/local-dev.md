@@ -145,6 +145,11 @@ WSL2 is fine for: `git`, file edits, `curl` tests, `prisma migrate`, `npm test`.
 
 When you kill an overlay or front-end that was started with `Start-Process powershell -NoExit -File ...`, you **must also close the PowerShell window it ran in**. The `-NoExit` window and its child processes (`concurrently`, Vite) survive killing Electron and pile up, conflicting on ports (especially 5290).
 
+By default, do not launch, install, update, or kill the packaged Prod overlay. A one-off local Prod
+operation is allowed only when the user explicitly requests it for validation. Resolve the exact
+executable path and PID first, operate only on that target, and never use a broad process-name
+kill or include the Dev `electron` process. Never kill `Fallout76`.
+
 Kill Electron and matching launcher windows together:
 
 ```powershell
@@ -154,10 +159,17 @@ Get-CimInstance Win32_Process -Filter "name='powershell.exe'" |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue }
 ```
 
-To kill a running installed overlay (not `electron.exe`):
+To inspect an installed Prod overlay before an explicitly authorized one-off operation:
 
 ```powershell
-Get-Process -Name 'Fallout Chat Mod','electron' -EA SilentlyContinue | Stop-Process -Force
+Get-CimInstance Win32_Process -Filter "name='Fallout Chat Mod.exe'" |
+  Select-Object ProcessId,ExecutablePath,CommandLine
+```
+
+If the user explicitly authorized replacing that exact Prod process, stop only its verified PID:
+
+```powershell
+Stop-Process -Id <verified-prod-pid> -Force
 ```
 
 **Never kill `Fallout76` — that is the game.**

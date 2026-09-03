@@ -78,6 +78,7 @@ import { isBannedIdentity, linkProviderIdentity, unlinkProviderIdentity } from '
 
 // Services
 import * as discordService from './services/discordService';
+import { refreshSupporterFromDiscord } from './services/supporterSyncService';
 import { captureAvatar, buildAvatarUrl } from './services/avatarService';
 import { getAvatarObject, getPartyImageObject } from './config/storage';
 import * as roleVerificationService from './services/roleVerificationService';
@@ -856,8 +857,14 @@ app.get('/api/auth/discord-status/:installToken', async (req: Request, res: Resp
     // clobbering it with a stale local placeholder name.
     const user = await prisma.user.findUnique({
       where: { installToken },
-      select: { username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true, installToken: true },
+      select: { id: true, username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true, installToken: true },
     });
+    if (user?.discordId) {
+      // Focus/login refreshes reach this endpoint even when the link itself did
+      // not change. Use that existing signal to repair entitlements whose role
+      // event was missed while the supporter feature was disabled.
+      await refreshSupporterFromDiscord({ userId: user.id, discordId: user.discordId });
+    }
     const isPlaceholder = (u?: string | null) => !u || u === 'Wanderer' || u.startsWith('pending-');
     const fo76Username = user && !isPlaceholder(user.username) ? user.username : null;
     const displayName = user ? resolveDisplayName(user) : null;

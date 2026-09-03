@@ -72,7 +72,7 @@ interface RelayBridge {
   openExternal?(url: string): void;
   /** Surface a renderer-side diagnostic line into the main-process log (main.log). */
   logDiag?(msg: string): void;
-  // Discord link status refresh: asks main to poll the backend and fires onDiscordStatus.
+  // Discord link/supporter-role refresh: asks main to poll the backend and fires onDiscordStatus.
   refreshDiscordStatus?(): void;
   onDiscordStatus?(cb: (status: { linked: boolean; discordName: string }) => void): void;
   /** Show the OS right-click context menu on the chat input (cut/copy/paste/select-all). */

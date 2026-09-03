@@ -2,7 +2,7 @@
  * Keeps supporter entitlements in lockstep with Discord tier roles and the
  * admin-role cosmetics bypass.
  *
- * Two paths, deliberately funnelled through the same
+ * Three paths, deliberately funnelled through the same
  * supporterService.syncFromDiscordRoles() so they cannot diverge:
  *
  *   1. GuildMemberUpdate — near-instant. Fires when Discord grants or removes a
@@ -12,6 +12,11 @@
  *
  *   2. Periodic reconcile — the safety net. Gateway events are lossy across restarts
  *      and outages, so a sweep re-derives every entitlement from the live role list.
+ *
+ *   3. Explicit account refresh — login, link-status polling, overlay/dashboard
+ *      reads, Discord `/cosmetics` interactions, and HUD sends use a bounded live
+ *      member lookup so a role granted while the listeners were disabled is restored
+ *      without waiting for another event.
  *
  * The reconcile sweep deliberately does NOT copy roleVerificationService's
  * one-second-sleep-per-user pacing. That is fine for the handful of rows in
@@ -29,6 +34,7 @@ import {
   syncFromDiscordRolesWithResult,
   tierFromDiscordRoles,
   tierRoleIds,
+  bustTierCache,
   lapseEntitlement,
 } from './supporterService';
 import type { DiscordRoleSyncResult, EntitlementSource } from './supporterService';
@@ -39,10 +45,10 @@ import { getRedisClient } from '../config/redis';
 
 /** 15 minutes. The gateway listener covers the fast path; this is the backstop. */
 const RECONCILE_INTERVAL_MS = 15 * 60 * 1000;
-/** Delay the first sweep so it does not pile onto boot. */
-const FIRST_RUN_DELAY_MS = 60 * 1000;
+/** Reconcile immediately after Discord reports ready so re-enabled roles are restored at boot. */
+const FIRST_RUN_DELAY_MS = 0;
 /**
- * HUD sends need a faster role refresh than the periodic sweep, but a busy HUD
+ * Live account refreshes need a faster role refresh than the periodic sweep, but a busy HUD
  * must not turn every chat message into a Discord API request. One refresh per
  * linked Discord account per minute is enough to make role changes visible
  * promptly while keeping the request rate bounded.
@@ -96,6 +102,7 @@ export type HudRoleRefreshDependencies = {
     discordRoles: readonly string[] | null | undefined,
     source?: EntitlementSource,
   ) => Promise<DiscordRoleSyncResult>;
+  bustTier?: (discordId: string) => Promise<void>;
   bustCosmetics?: (userId: string) => Promise<void>;
   refreshPresentation?: (discordId: string, options?: { syncNickname?: boolean; syncRoles?: boolean }) => Promise<boolean>;
 };
@@ -179,10 +186,17 @@ async function applyHudRoleResult(
   const syncRoles = deps.syncRoles ?? ((id, roleIds, source) =>
     syncFromDiscordRolesWithResult(id, roleIds, source, { skipUnchanged: true }));
   const result = await syncRoles(discordId, roles, 'discord_sub');
-  if (!result.changed) return;
+  if (!result.changed) {
+    // A role read is an authoritative consistency boundary even when the DB row was
+    // already active. This matters after the feature flag has been re-enabled: a
+    // stale Redis "none" value must not survive a successful Discord verification.
+    await (deps.bustTier ?? bustTierCache)(discordId);
+    await (deps.bustCosmetics ?? bustCosmeticsCache)(request.userId);
+    return;
+  }
 
   // Tier writes already invalidate the tier cache. Clear the resolved cosmetics
-  // cache only after a real tier transition, then push the refreshed identity to
+  // cache after a real tier transition, then push the refreshed identity to
   // connected web/overlay sessions. The HUD message itself is decorated after
   // this helper returns.
   await (deps.bustCosmetics ?? bustCosmeticsCache)(request.userId);
@@ -193,20 +207,23 @@ async function applyHudRoleResult(
 }
 
 /**
- * Refresh a linked HUD sender's supporter roles before its message is decorated.
+ * Refresh a linked account's supporter roles from the live Discord member record.
  *
- * The client never supplies the Discord ID or role list. Both are resolved from
- * the verified relay identity and the bot's configured guild. Discord outages,
+ * The client never supplies the role list. The Discord ID is either loaded from
+ * the verified FCM account or supplied by a trusted relay caller. Discord outages,
  * rate limits, and other transient failures preserve the last known entitlement;
  * only a successful role read (or a definitive member-not-found response) can
  * change privileges. Redis coordinates the cooldown across backend replicas;
  * the in-process state is only a low-cost fast path and fallback. The periodic
- * reconcile remains the cross-restart safety net.
+ * reconcile remains the cross-restart safety net. Login, link-status, overlay,
+ * dashboard, and Discord `/cosmetics` refreshes use this same bounded path, so a
+ * role re-added while the sync listener was disabled is restored without waiting
+ * for a gateway event.
  *
  * Dependencies are injectable so the bounded-refresh behavior can be tested
  * without a Discord gateway or database connection.
  */
-export async function refreshSupporterFromHudSend(
+export async function refreshSupporterFromDiscord(
   request: HudRoleRefreshRequest,
   deps: HudRoleRefreshDependencies = {},
 ): Promise<void> {
@@ -218,7 +235,7 @@ export async function refreshSupporterFromHudSend(
   try {
     discordId = await resolveHudRequestDiscordId(request, deps, now);
   } catch (err) {
-    logger.warn({ err, userId: request.userId }, '[supporterSync] HUD role refresh user lookup failed (non-fatal)');
+    logger.warn({ err, userId: request.userId }, '[supporterSync] live role refresh user lookup failed (non-fatal)');
     return;
   }
 
@@ -241,7 +258,7 @@ export async function refreshSupporterFromHudSend(
       // optional enhancement. Preserve availability and use this process's
       // cooldown if Redis briefly disappears; the normal reconcile remains the
       // cross-process safety net.
-      logger.warn({ err, userId: request.userId, discordId }, '[supporterSync] HUD role refresh slot unavailable; using local cooldown (non-fatal)');
+      logger.warn({ err, userId: request.userId, discordId }, '[supporterSync] live role refresh slot unavailable; using local cooldown (non-fatal)');
     }
     if (!acquired) return;
 
@@ -256,18 +273,18 @@ export async function refreshSupporterFromHudSend(
         try {
           await applyHudRoleResult(request, discordId, [], deps);
         } catch (syncErr) {
-          logger.warn({ err: syncErr, userId: request.userId, discordId }, '[supporterSync] HUD member removal refresh failed (non-fatal)');
+          logger.warn({ err: syncErr, userId: request.userId, discordId }, '[supporterSync] live member removal refresh failed (non-fatal)');
         }
         return;
       }
-      logger.warn({ err, userId: request.userId, discordId }, '[supporterSync] HUD role fetch failed (non-fatal)');
+      logger.warn({ err, userId: request.userId, discordId }, '[supporterSync] live role fetch failed (non-fatal)');
       return;
     }
 
     try {
       await applyHudRoleResult(request, discordId, roles, deps);
     } catch (err) {
-      logger.warn({ err, userId: request.userId, discordId }, '[supporterSync] HUD role reconciliation failed (non-fatal)');
+      logger.warn({ err, userId: request.userId, discordId }, '[supporterSync] live role reconciliation failed (non-fatal)');
     }
   })();
 
@@ -282,6 +299,14 @@ export async function refreshSupporterFromHudSend(
     // throws outside the helper's non-fatal guards.
     if (hudRoleRefreshState.get(discordId) === state) state.inFlight = null;
   }
+}
+
+/** Refresh hook retained for the authenticated HUD relay path. */
+export async function refreshSupporterFromHudSend(
+  request: HudRoleRefreshRequest,
+  deps: HudRoleRefreshDependencies = {},
+): Promise<void> {
+  return refreshSupporterFromDiscord(request, deps);
 }
 
 /** Test/shutdown helper for the in-process HUD refresh limiter. */
@@ -351,10 +376,22 @@ async function onGuildMemberRemove(member: GuildMember | PartialGuildMember): Pr
  *
  * Exported (and dependency-injected) so it can be unit-tested without a gateway.
  */
-export async function runReconcile(deps?: {
+export type SupporterReconcileDependencies = {
   fetchMembers?: () => Promise<Map<string, readonly string[]>>;
   listEntitlements?: () => Promise<Array<{ discordId: string; status: string }>>;
-}): Promise<{ granted: number; lapsed: number; checked: number }> {
+  resolveTier?: (roles: readonly string[] | null | undefined) => ReturnType<typeof tierFromDiscordRoles>;
+  syncRoles?: (
+    discordId: string,
+    discordRoles: readonly string[] | null | undefined,
+    source?: EntitlementSource,
+  ) => Promise<DiscordRoleSyncResult>;
+  refreshPresentation?: (discordId: string) => Promise<boolean>;
+  lapse?: (opts: Parameters<typeof lapseEntitlement>[0]) => Promise<boolean>;
+};
+
+export async function runReconcile(
+  deps: SupporterReconcileDependencies = {},
+): Promise<{ granted: number; lapsed: number; checked: number }> {
   const fetchMembers = deps?.fetchMembers ?? defaultFetchMembers;
   const listEntitlements =
     deps?.listEntitlements ??
@@ -363,6 +400,12 @@ export async function runReconcile(deps?: {
         where: { status: 'active' },
         select: { discordId: true, status: true },
       }));
+  const resolveTier = deps.resolveTier ?? tierFromDiscordRoles;
+  const syncRoles = deps.syncRoles ?? ((discordId, roles, source) =>
+    syncFromDiscordRolesWithResult(discordId, roles, source));
+  const refreshPresentation = deps.refreshPresentation ?? ((discordId: string) =>
+    refreshSupporterPresentation(discordId));
+  const lapse = deps.lapse ?? lapseEntitlement;
 
   const roleMembers = await fetchMembers();
   let granted = 0;
@@ -370,11 +413,11 @@ export async function runReconcile(deps?: {
 
   // Anyone currently holding a paid tier or admin cosmetics role: grant or refresh.
   for (const [discordId, roles] of roleMembers) {
-    const tier = tierFromDiscordRoles(roles);
+    const tier = resolveTier(roles);
     if (tier === 'none') continue;
-    const result = await syncFromDiscordRolesWithResult(discordId, roles, 'discord_sub');
+    const result = await syncRoles(discordId, roles, 'discord_sub');
     if (result.changed) {
-      await refreshSupporterPresentation(discordId);
+      await refreshPresentation(discordId);
       granted++;
     }
   }
@@ -384,12 +427,12 @@ export async function runReconcile(deps?: {
   const active = await listEntitlements();
   for (const row of active) {
     if (roleMembers.has(row.discordId)) {
-      const tier = tierFromDiscordRoles(roleMembers.get(row.discordId) ?? []);
+      const tier = resolveTier(roleMembers.get(row.discordId) ?? []);
       if (tier !== 'none') continue;
     }
-    const changed = await lapseEntitlement({ discordId: row.discordId, reason: 'reconcile: tier role not held' });
+    const changed = await lapse({ discordId: row.discordId, reason: 'reconcile: tier role not held' });
     if (changed) {
-      await refreshSupporterPresentation(row.discordId);
+      await refreshPresentation(row.discordId);
       lapsed++;
     }
   }
@@ -465,6 +508,7 @@ export default {
   register,
   stop,
   runReconcile,
+  refreshSupporterFromDiscord,
   refreshSupporterFromHudSend,
   resetHudRoleRefreshState,
 };
@@ -472,6 +516,7 @@ module.exports = {
   register,
   stop,
   runReconcile,
+  refreshSupporterFromDiscord,
   refreshSupporterFromHudSend,
   resetHudRoleRefreshState,
 };

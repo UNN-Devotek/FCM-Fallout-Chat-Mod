@@ -111,7 +111,8 @@ The dev stack tracks the `dev` branch and **auto-deploys on push**, so merging t
 supporter-tier branch into `dev` deploys it. The migration is idempotent and runs
 through `baseline-migrations.sh` as usual.
 
-Verify in the backend-dev logs:
+Verify in the backend-dev logs. The first reconcile starts immediately after the Discord
+gateway reports ready, so existing role holders are restored during deployment:
 
 ```
 [supporterSync] registered (GuildMemberUpdate + periodic reconcile)
@@ -167,6 +168,9 @@ Work through all four surfaces before promoting to prod.
 22. The `supporter_entitlements` row still exists with `status='lapsed'` — **not
     deleted**.
 23. Re-add the role. The user's **exact previous look** returns with no reconfiguration.
+    Confirm the same result after a restart with `SUPPORTER_TIER_ENABLED=true` (simulating
+    a missed gateway event): log in or use the overlay header refresh, then verify both
+    Supporter and Overseer's Circle role holders are restored.
 
 ### Overlay
 

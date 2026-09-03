@@ -110,7 +110,7 @@ On callback:
 - Stores the result in Redis (`discord_link:<installToken>`, 10-min TTL).
 - Returns a Pip-Boy-styled HTML success/error page (displayed in the browser window).
 
-The overlay polls `GET /api/auth/discord-status/:installToken` to check whether the link completed and to retrieve the resolved display name and avatar URL.
+The overlay polls `GET /api/auth/discord-status/:installToken` to check whether the link completed and to retrieve the resolved display name and avatar URL. For an already-linked account, the same bounded request also reconciles the live Supporter or Overseer's Circle role, so focus and manual refresh can restore a missed entitlement without requiring a new OAuth link.
 
 ### DEV persona accounts
 

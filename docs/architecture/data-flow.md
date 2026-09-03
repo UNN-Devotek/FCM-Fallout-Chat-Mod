@@ -104,7 +104,7 @@ The overlay can link its anonymous install token to a Discord identity via an in
 3. Discord calls back to `/auth/discord/link/callback`.
 4. Backend validates state, exchanges code, verifies guild membership, upserts the `users` row with `discordId` / `discordUsername` / `discordDisplayName`.
 5. If another row already owns that `discordId` (account reclaim), `mergeUserInto()` re-points all FK tables and deletes the placeholder.
-6. Backend stores `discord_link:<installToken>` in Redis (10 min); overlay polls `GET /api/auth/discord-status/:installToken` until it sees `linked:true`.
+6. Backend stores `discord_link:<installToken>` in Redis (10 min); overlay polls `GET /api/auth/discord-status/:installToken` until it sees `linked:true`. For linked users, that request also performs the bounded live Supporter/Overseer's Circle role reconciliation used to repair missed entitlement events.
 
 ---
 
