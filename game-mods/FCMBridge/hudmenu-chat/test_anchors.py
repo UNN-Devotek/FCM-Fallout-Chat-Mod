@@ -91,6 +91,10 @@ if inject_src:
           "fcm-inject.as retains fcmSelfLoadBridge (standalone self-loader)")
     check("FCMBridge.swf" in inject_src,
           "fcm-inject.as loads FCMBridge.swf via Loader (standalone path)")
+    check("fcmStageHasChatWidget" in inject_src
+          and "fcmChatWidgetMarker" in inject_src
+          and "FCMChatWidget present" in inject_src,
+          "fcm-inject.as skips the legacy feed when the HUDModLoader widget is active")
 
     # ZFE host-pass: HUDMenu shares __ZFE with the child bridge (ZFE 0.9.8
     # child_bridge_access=disabled fix).
@@ -430,13 +434,16 @@ if widget_src:
           and widget_src.find('moderationRefHtml =') < widget_src.find('if (rawTag.length > 0) rowPrefix')
           and 'U+2605' in widget_src,
           "FCMChatWidget renders supporter stars as guarded vector geometry, never as a HUD glyph or image")
-    check('function isOwnEcho' in widget_src
+    check('function reconcileOwnEcho' in widget_src
+          and 'FcmEcho.matches' in widget_src
+          and 'rec.pending = false' in widget_src
           and 'ownEchoMatched=' in widget_src,
           "FCMChatWidget reconciles self-sends against authoritative live events")
     check('pending:Bool' in widget_src
           and 'addOptimisticEcho' in widget_src
           and 'pending: true' in widget_src
-          and 'removeOptimisticRecord' in widget_src,
+          and 'removeAllPendingMatches' in widget_src
+          and 'continue;' in widget_src,
           "FCMChatWidget renders a successful send immediately and replaces it with the authoritative echo")
     check('var ackSupporterStar:Bool = FcmConfig.supporterStarPresent(' in widget_src
           and 'FcmConfig.hudTransportHasStar(ackHudTransport)' in widget_src
@@ -448,12 +455,12 @@ if widget_src:
           and 'Reflect.field(ext, "appendHtml")' in widget_src
           and '_logTf.htmlText = ""' in widget_src,
           "FCMChatWidget rebuilds the feed through guarded TextFieldEx.appendHtml fragments")
-    check('getTextScrollOffsetY' in widget_src
-          and 'scrollV - 1' in widget_src
-          and '- scrollOffsetY' in widget_src
+    check('localToGlobal' in widget_src
+          and 'globalToLocal' in widget_src
+          and 'Do not estimate scroll from' in widget_src
           and 'authorText:' in widget_src
           and 'var authorStart:Int = plain.indexOf(anchor.authorText, rowStart);' in widget_src
-          and 'var starX:Float = bounds.x - size - 3;' in widget_src
+          and 'var starX:Float = layerPoint.x - size - 4;' in widget_src
           and '_starLayer.x = _logTf.x' in widget_src
           and 'starY + size < 0' in widget_src,
           "FCMChatWidget keeps supporter stars attached to author bounds and inside the feed viewport")

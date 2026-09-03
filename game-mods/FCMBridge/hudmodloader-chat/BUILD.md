@@ -39,6 +39,8 @@ connected, later HUD reads update local identity state only; they never issue a 
 
 The HUD renders the server-validated channel and identity tags plus an optional supporter marker.
 The marker is a five-point vector `Shape` placed from the author's `TextField.getCharBoundaries()`;
+its TextField-local bounds are transformed through global space into the sibling marker layer, and
+the marker sits between the channel tag and the first author glyph, middle-aligned to that glyph;
 it uses the validated `starColor` and never renders a Unicode glyph, bitmap, HTML image, or
 substitution token. This avoids Fallout 76's missing star glyph and GFx image behavior producing
 tofu blocks. Feed paragraph leading is zero, and
@@ -46,7 +48,8 @@ the feed keeps only a 4px safety gap above the top-level HUDTools input so rows 
 new content remains above the input field.
 Before entering the synchronous native send RPC, the widget paints a temporary local echo (even
 during the short interval before `getAuthState` supplies the relay user id). Failed sends remove
-that row; successful sends retain it until the authoritative live echo arrives. One deferred poll
+that row; successful sends reconcile that same row in place until the authoritative live echo arrives,
+including when the extender changes the temporary native identity to the relay identity. One deferred poll
 fetches that echo immediately; ordinary background polling remains controlled by `pollMs`.
 
 ZFE's native `chat.v1` bridge filters unknown JSON members before the SWF receives an event. The

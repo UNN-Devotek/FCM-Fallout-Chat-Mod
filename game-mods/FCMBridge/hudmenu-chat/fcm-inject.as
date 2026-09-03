@@ -114,6 +114,14 @@
       // CONDITIONAL: bails out immediately if the bridge is already present.
       public function fcmSelfLoadBridge() : void
       {
+         // HUDModLoader may place FCMChatWidget below its loader root rather than as a direct
+         // stage child. Detect the widget by its stable marker before loading the legacy feed;
+         // stage-name-only detection allowed both renderers to run and duplicated every send.
+         if(this.fcmStageHasChatWidget())
+         {
+            this.fcmLog("info","selfload","FCMChatWidget present — skip legacy FCMBridge self-load");
+            return;
+         }
          // Scan stage children for an existing FCMBridge instance.
          try
          {
@@ -181,6 +189,36 @@
          {
             this.fcmLog("warn","selfload","Loader instantiation threw: " + eLdr.message);
          }
+      }
+
+      public function fcmStageHasChatWidget() : Boolean
+      {
+         try
+         {
+            return this.fcmDisplayTreeHasChatWidget(this.stage, 0);
+         }
+         catch(eWidgetScan:Error)
+         {
+            this.fcmLog("warn","selfload","chat widget scan threw: " + eWidgetScan.message);
+         }
+         return false;
+      }
+
+      private function fcmDisplayTreeHasChatWidget(node:*, depth:int) : Boolean
+      {
+         if(node == null || depth > 8) { return false; }
+         var sn:String = "";
+         try { sn = String(node.name); } catch(eName:Error) {}
+         if(sn == "FCMChatWidget") { return true; }
+         try { if(Boolean(node["fcmChatWidgetMarker"])) { return true; } } catch(eMarker:Error) {}
+         var n:int = 0;
+         try { n = int(node.numChildren); } catch(eCount:Error) { return false; }
+         for(var i:int = 0; i < n; i++)
+         {
+            try { if(this.fcmDisplayTreeHasChatWidget(node.getChildAt(i), depth + 1)) return true; }
+            catch(eChild:Error) {}
+         }
+         return false;
       }
 
       // Called when FCMBridge.swf finishes loading (standalone path only).

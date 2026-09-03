@@ -35,12 +35,16 @@ ZFE strips unknown event members before the SWF receives them, so v2.10.38 decod
   builds receive no envelope. The HUD renders server-validated channel and identity tags plus a
   supporter marker as a five-point vector `Shape` positioned from the author's text bounds. The
   marker uses the validated `starColor`; it never inserts U+2605, a bitmap, an HTML image, or a
-  substitution token, so missing Scaleform font glyphs cannot become tofu blocks. Feed leading is zero to keep rows compact, and the feed clip
+  substitution token, so missing Scaleform font glyphs cannot become tofu blocks. Its bounds are
+  transformed into the sibling marker layer and it sits between the channel tag and first author
+  glyph, middle-aligned to that glyph. Feed leading is zero to keep rows compact, and the feed clip
   rectangle reserves only a 4px safety gap above the top-level HUDTools input field. New content
   snaps to the end of the feed after each reflow.
   After queuing the local row, the widget enters the synchronous send RPC on the next timer tick,
   then schedules one next-tick event poll after success so the authoritative cosmetics-bearing
-  echo appears without waiting for the normal background poll interval.
+  echo appears without waiting for the normal background poll interval. The echo reconciles the
+  pending row in place, including when the extender changes the temporary native identity into the
+  relay identity, so one send produces exactly one feed row.
 - Converts Discord custom-emoji markup (`<:name:id>` and `<a:name:id>`) to a readable `:name:`
   label on the HUD. The web overlay may use Discord CDN images, but the Scaleform HUD does not
   load remote emoji images and therefore never exposes the numeric Discord snowflake ID.

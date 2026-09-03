@@ -6,6 +6,7 @@ import flash.events.TimerEvent;
 import flash.utils.Timer;
 import flash.text.TextField;
 import flash.text.TextFormat;
+import flash.geom.Point;
 import flash.geom.Rectangle;
 import flash.net.URLLoader;
 import flash.net.URLRequest;
@@ -152,6 +153,8 @@ class FCMChatWidget extends MovieClip {
     static inline var CLEAR_AUTH_COMMAND:String = "clearChatAuth";
     // Expose for HUDModLoader hot-reload
     public var isReloadable:Bool      = true;
+    // Stable marker for the legacy HUDMenu self-loader's duplicate-renderer guard.
+    public var fcmChatWidgetMarker:Bool = true;
 
     // ── Font aliases — HUDModLoader engine-registered GFx fonts (NO embed) ────
     // These are GFx aliases registered by HUDModLoader (HUDTools.as entry_tf uses
@@ -421,6 +424,7 @@ class FCMChatWidget extends MovieClip {
 
     public function new() {
         super();
+        name = "FCMChatWidget";
         addEventListener(Event.ADDED_TO_STAGE, onStage);
     }
 
@@ -2639,12 +2643,15 @@ class FCMChatWidget extends MovieClip {
                 continue;
             }
 
-            // Reconcile a pending self-send with the authoritative relay event before
-            // deduping it. The relay is the source of truth for supporterStar, starColor,
-            // and tag. Remove any temporary local row, then store this canonical event normally.
-            if (isOwnEcho(messageId, senderUserId, channel, body)) {
+            // Reconcile a pending self-send in place. The relay is the source of truth for
+            // cosmetics, but appending a second canonical row would duplicate the message when
+            // the event arrives after the optimistic row.
+            if (reconcileOwnEcho(messageId, senderUserId, channel, body, displayName, tag,
+                    supporterStar, starColor)) {
                 ownEchoMatchedCount++;
-                // Fall through so the authoritative event is stored with its cosmetics.
+                markSeenEvent(evId, messageId);
+                newRecords = true;
+                continue;
             }
 
             // Store ALL known channels (renderRecords filters to the active tab).
@@ -2652,7 +2659,7 @@ class FCMChatWidget extends MovieClip {
             // channel's one-shot subscribe backfill — history looked empty on
             // Trading/Events/Raids/Infests forever after connect.
             if (CHAN_SLUGS.indexOf(channel) < 0) continue;
-            if (!shouldRenderReplayMessage(messageId)) continue;
+            if (!markSeenEvent(evId, messageId)) continue;
 
             _records.push({
                 color: hx(_cfg.senderColor), channel: channel, user: displayName,
@@ -2688,6 +2695,17 @@ class FCMChatWidget extends MovieClip {
             _seenMessageIds.remove(oldest);
         }
         return true;
+    }
+
+    /** Mark both relay message ids and event ids; older providers may omit messageId. */
+    function markSeenEvent(eventId:Int, messageId:String):Bool {
+        if (eventId > 0) {
+            var key:String = "event:" + eventId;
+            if (_seenMessageIds.exists(key)) return false;
+            _seenMessageIds.set(key, true);
+            _seenMessageOrder.push(key);
+        }
+        return shouldRenderReplayMessage(messageId);
     }
 
     /**
@@ -2739,31 +2757,53 @@ class FCMChatWidget extends MovieClip {
         _pendingEchoes = kept;
     }
 
-    /**
-     * Returns true if an incoming chat.message is our own pending self-send.
-     * Consumes the matched _pendingEchoes entry so the canonical live event is
-     * stored exactly once.
-     */
-    function isOwnEcho(messageId:String, senderUserId:String, channel:String, body:String):Bool {
-        // Strong signal: the relay told us our own id and it's coming back.
-        if (_relayUserId.length > 0 && senderUserId == _relayUserId) {
-            removePendingMatch(messageId, senderUserId, channel, body);
-            removeOptimisticRecord(messageId, senderUserId, channel, body);
-            return true;
-        }
-        // Otherwise match against pending keys.
-        var idK:String = (messageId.length > 0) ? echoIdKey(messageId) : "";
-        var sbUser:String = (_relayUserId.length > 0) ? _relayUserId : senderUserId;
-        var sbK:String = echoSbKey(sbUser, channel, body);
-        for (k in 0..._pendingEchoes.length) {
-            var pk:String = _pendingEchoes[k].key;
-            if ((idK.length > 0 && pk == idK) || pk == sbK) {
-                _pendingEchoes.splice(k, 1);
-                removeOptimisticRecord(messageId, senderUserId, channel, body);
-                return true;
+    /** Reconcile one pending row with authoritative fields, without appending a duplicate. */
+    function reconcileOwnEcho(messageId:String, senderUserId:String, channel:String, body:String,
+            displayName:String, tag:String, supporterStar:Bool, starColor:String):Bool {
+        var normalized:String = FcmConfig.normalizeDiscordEmojiMarkup(body);
+        var localUserId:String = _relayUserId.length > 0 ? _relayUserId : _userId;
+        var candidate:Int = -1;
+        // An ACK may have attached the authoritative id to exactly one of several
+        // identical optimistic rows. Prefer that exact row before identity fallback.
+        if (messageId != null && messageId.length > 0) {
+            for (i in 0..._records.length) {
+                var identified:ChatRecord = _records[i];
+                if (identified.pending && identified.messageId == messageId
+                        && identified.channel == channel && identified.body == normalized) {
+                    candidate = i;
+                    break;
+                }
             }
         }
-        return false;
+        if (candidate < 0) {
+            for (i in 0..._records.length) {
+                var rec:ChatRecord = _records[i];
+                if (!rec.pending) continue;
+                if (!FcmEcho.matches(messageId, senderUserId, channel, normalized,
+                        rec.messageId, rec.senderUserId, rec.channel, rec.body,
+                        _relayUserId, localUserId)) continue;
+                if (candidate >= 0) {
+                    // Identical simultaneous sends are ambiguous without a message id. Keep both
+                    // optimistic rows and wait for an id-bearing event rather than mis-associating.
+                    return false;
+                }
+                candidate = i;
+            }
+        }
+        if (candidate < 0) return false;
+
+        var rec:ChatRecord = _records[candidate];
+        rec.messageId = messageId.length > 0 ? messageId : rec.messageId;
+        rec.senderUserId = senderUserId.length > 0 ? senderUserId : rec.senderUserId;
+        if (displayName != null && displayName.length > 0) rec.user = displayName;
+        rec.tag = tag;
+        rec.supporterStar = supporterStar;
+        rec.starColor = starColor;
+        rec.body = normalized;
+        rec.pending = false;
+        removeAllPendingMatches(messageId, senderUserId, channel, body, rec);
+        if (channel == CHAN_SLUGS[_chanIdx]) renderRecords();
+        return true;
     }
 
     /** Paint a local send immediately; the later chat.message event supplies authoritative cosmetics. */
@@ -2785,8 +2825,10 @@ class FCMChatWidget extends MovieClip {
             messageId:String, tag:String, supporterStar:Bool, starColor:String):Void {
         var normalized:String = FcmConfig.normalizeDiscordEmojiMarkup(body);
         for (rec in _records) {
-            if (!rec.pending || rec.channel != channel || rec.senderUserId != senderUserId) continue;
-            if (rec.body != body && rec.body != normalized) continue;
+            if (!rec.pending || rec.channel != channel) continue;
+            if (!FcmEcho.matches(messageId, senderUserId, channel, normalized,
+                    rec.messageId, rec.senderUserId, rec.channel, rec.body,
+                    _relayUserId, senderUserId)) continue;
             rec.messageId = messageId;
             rec.tag = tag;
             rec.supporterStar = supporterStar;
@@ -2834,6 +2876,21 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
         }
+    }
+
+    /** Remove all aliases for the reconciled row (send key plus any ACK message-id key). */
+    function removeAllPendingMatches(messageId:String, senderUserId:String, channel:String,
+            body:String, rec:ChatRecord):Void {
+        var normalized:String = FcmConfig.normalizeDiscordEmojiMarkup(body);
+        var kept:Array<{key:String, ts:Float}> = [];
+        for (pending in _pendingEchoes) {
+            var idMatch:Bool = messageId.length > 0 && pending.key == echoIdKey(messageId);
+            var bodyMatch:Bool = pending.key == echoSbKey(rec.senderUserId, channel, body)
+                || pending.key == echoSbKey(senderUserId, channel, body)
+                || pending.key == echoSbKey(rec.senderUserId, channel, normalized);
+            if (!idMatch && !bodyMatch) kept.push(pending);
+        }
+        _pendingEchoes = kept;
     }
 
     function updateCursorFromEvent(obj:String):Void {
@@ -3285,7 +3342,6 @@ class FCMChatWidget extends MovieClip {
         if (plain == null || plain.length == 0) return;
         var searchFrom:Int = 0;
         var size:Float = Math.max(8, Math.min(16, _cfg.fontSize * 0.95));
-        var scrollOffsetY:Float = getTextScrollOffsetY();
         for (anchor in _starAnchors) {
             var rowStart:Int = plain.indexOf(anchor.rowText, searchFrom);
             if (rowStart < 0) {
@@ -3314,8 +3370,14 @@ class FCMChatWidget extends MovieClip {
                 continue;
             }
             var star:Shape = makeSupporterStar(anchor.color, size);
-            var starX:Float = bounds.x - size - 3;
-            var starY:Float = bounds.y - scrollOffsetY + (bounds.height - size) / 2;
+            // getCharBoundaries() is TextField-local. Convert through global space before
+            // entering the sibling marker layer; this remains correct after panel movement,
+            // HUD scaling, and loader-owned parent transforms. Do not estimate scroll from
+            // scrollV: GFx line heights vary with wrapping and that estimate caused drift.
+            var authorPoint:Point = _logTf.localToGlobal(new Point(bounds.x, bounds.y));
+            var layerPoint:Point = _starLayer.globalToLocal(authorPoint);
+            var starX:Float = layerPoint.x - size - 4;
+            var starY:Float = layerPoint.y + (bounds.height - size) / 2;
             // GFx can ignore a sibling Sprite's scrollRect. Explicitly reject markers outside
             // the feed so off-screen history cannot leak into the header or input area.
             if (starY + size < 0 || starY > _logTf.height) continue;
@@ -3325,18 +3387,6 @@ class FCMChatWidget extends MovieClip {
             _starShapes.push(star);
         }
         if (_starShapes.length > 0) _starLayoutWarned = false;
-    }
-
-    /** TextField character bounds are document-relative on GFx; convert them to the visible feed. */
-    function getTextScrollOffsetY():Float {
-        if (_logTf == null) return 0;
-        try {
-            var firstVisibleLine:Int = _logTf.scrollV - 1;
-            if (firstVisibleLine <= 0) return 0;
-            var lineHeight:Float = _logTf.getLineMetrics(0).height;
-            if (lineHeight > 0) return firstVisibleLine * lineHeight;
-        } catch (e:Dynamic) {}
-        return 0;
     }
 
     // =========================================================================

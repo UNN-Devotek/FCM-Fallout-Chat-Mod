@@ -333,6 +333,9 @@ jobs:
       - name: Run FcmWire unit tests
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe test-wire.hxml
+      - name: Run FcmEcho unit tests
+        working-directory: game-mods/FCMBridge/hudmodloader-chat
+        run: haxe test-echo.hxml
       - name: Run native bridge compatibility tests
         working-directory: game-mods/FCMBridge
         run: haxe test-native-api.hxml
