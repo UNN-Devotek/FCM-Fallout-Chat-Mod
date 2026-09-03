@@ -196,6 +196,7 @@ Use `chat.v1.getAuthState` to show connection and push health:
   "state": "authenticated",
   "connected": true,
   "userId": "user_123",
+  "linkedUserId": "fcm-account-123",
   "displayName": "CharacterName",
   "roles": ["user"],
   "permissions": {
@@ -216,6 +217,11 @@ Use `chat.v1.getAuthState` to show connection and push health:
   }
 }
 ```
+
+FCM's implementation returns `linkedUserId` only in the authenticated caller's own auth-state
+response. Persisted chat events identify authors with that linked account UUID in `senderUserId`,
+while `userId` remains the relay-text session identity. HUD clients must retain both values for
+self-echo reconciliation; clients must never supply either identity in a send payload.
 
 > **Never display or log the raw token.** ZFE intentionally never returns it to the SWF.
 
@@ -368,7 +374,7 @@ For ordinary channel messages this is an empty transport slot, never a real reci
 envelope is capability-gated to v2.10.16+; older widgets receive an empty `targetUserId` and no
 transport data. The relay records the negotiated token/version across separate connect and
 subscribe sockets so the same gate applies to live, poll, and history delivery. The current Dev
-widget v2.10.38 parses the supporter fields and renders a fixed five-point vector `Shape` immediately
+widget v2.10.39 parses the supporter fields and renders a fixed five-point vector `Shape` immediately
 before the actual rendered author glyph using the validated `starColor`. It must never place U+2605
 in `senderDisplayName` or `body`, nor use a bitmap, HTML image, or substitution token; see the
 [Dev wire capture](dev-supporter-star-wire-capture-2026-09-02.md).

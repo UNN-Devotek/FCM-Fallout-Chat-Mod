@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-09-02):** v2.10.38 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-09-03):** v2.10.39 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -30,7 +30,7 @@ A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's H
 - Renders the server-resolved Overseer tag in the HUD when the relay negotiates widget capability.
   Self-authored messages use the same authoritative live event as Discord and other in-game
   messages, so the tag is not lost to the native send ACK boundary.
-ZFE strips unknown event members before the SWF receives them, so v2.10.38 decodes validated
+ZFE strips unknown event members before the SWF receives them, so v2.10.39 decodes validated
   cosmetics from the `FCMHUD/1;...` envelope in the known empty `targetUserId` slot. Older widget
   builds receive no envelope. The HUD renders server-validated channel and identity tags plus a
   supporter marker as a five-point vector `Shape` positioned from the author's text bounds. The
@@ -196,6 +196,7 @@ restart; the loader reload control is for live widget changes.
 | `FCMChatWidget.hx` | Main widget source (Haxe → AS3 SWF) |
 | `../FcmNativeApi.hx` | Shared ZFE/xScal discovery and verb adapter |
 | `FcmConfig.hx` | User-config model + INI parser/clamp (pure, unit-tested) |
+| `FcmStarLayout.hx` | Pure measured supporter-marker placement geometry + tests |
 | `FcmCommand.hx` / `TestFcmCommand.hx` / `test-command.hxml` | Pure slash-command matching and tests |
 | `FcmWire.hx` / `TestFcmWire.hx` / `test-wire.hxml` | Whitespace-safe native event-array detection and tests |
 | `TestFcmConfig.hx` / `test-config.hxml` | `FcmConfig` unit tests (`haxe --interp`; run in CI) |

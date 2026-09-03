@@ -27,6 +27,8 @@ private typedef ChatRecord = {
 
 private typedef StarAnchor = {
     var rowText:String;
+    // Plain channel token; its measured closing bracket is the marker's x anchor.
+    var channelText:String;
     // Plain author token, used to ask GFx for the actual rendered name bounds.
     var authorText:String;
     var color:Int;
@@ -146,7 +148,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.38"; // measured supporter-star placement + low-latency relay send
+    static inline var VERSION:String  = "2.10.39"; // self-echo identity bridge + measured supporter-star placement
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -338,6 +340,10 @@ class FCMChatWidget extends MovieClip {
     var _connected:Bool          = false;
     var _userId:String           = "";
     var _relayUserId:String      = "";
+    // Persisted chat rows use the linked FCM account UUID as senderUserId, while
+    // getAuthState.userId is the relay-text identity. Keep both local aliases so
+    // self-echo reconciliation can bridge those two authenticated namespaces.
+    var _linkedUserId:String     = "";
     var _displayName:String      = "Wanderer";
     // True only after AccountInfoData supplies the public Fallout/Bethesda account handle.
     // CharacterInfoData is the local character name and must never set this flag.
@@ -2392,11 +2398,13 @@ class FCMChatWidget extends MovieClip {
         try {
             var state:String = Std.string(_api.call("chat.v1.getAuthState", "{}"));
             var uid:String = extractJsonString(state, "userId");
+            var linkedUid:String = extractJsonString(state, "linkedUserId");
             if (uid.length > 0) {
                 _userId = uid;
                 _relayUserId = uid;
                 zfeLog("info", "auth", "relay identity available");
             }
+            if (linkedUid.length > 0) _linkedUserId = linkedUid;
             var prevAuth:String = _authState;
             var prevCanModerate:Bool = _canModerate;
             if (state.indexOf('"state":"authenticated"') >= 0 || state.indexOf('state:"authenticated"') >= 0) {
@@ -2404,6 +2412,7 @@ class FCMChatWidget extends MovieClip {
             } else {
                 _authState = "limited";
             }
+            if (_authState != "authenticated") _linkedUserId = "";
             _canModerate = extractJsonBool(state, "canDeleteMessage")
                 || extractJsonBool(state, "canKickUser")
                 || extractJsonBool(state, "canMuteUser")
@@ -2781,7 +2790,7 @@ class FCMChatWidget extends MovieClip {
                 if (!rec.pending) continue;
                 if (!FcmEcho.matches(messageId, senderUserId, channel, normalized,
                         rec.messageId, rec.senderUserId, rec.channel, rec.body,
-                        _relayUserId, localUserId)) continue;
+                        _relayUserId, localUserId, _linkedUserId)) continue;
                 if (candidate >= 0) {
                     // Identical simultaneous sends are ambiguous without a message id. Keep both
                     // optimistic rows and wait for an id-bearing event rather than mis-associating.
@@ -2828,7 +2837,7 @@ class FCMChatWidget extends MovieClip {
             if (!rec.pending || rec.channel != channel) continue;
             if (!FcmEcho.matches(messageId, senderUserId, channel, normalized,
                     rec.messageId, rec.senderUserId, rec.channel, rec.body,
-                    _relayUserId, senderUserId)) continue;
+                    _relayUserId, senderUserId, _linkedUserId)) continue;
             rec.messageId = messageId;
             rec.tag = tag;
             rec.supporterStar = supporterStar;
@@ -3139,6 +3148,7 @@ class FCMChatWidget extends MovieClip {
             if (rec.supporterStar && rawUser.length > 0) {
                 starAnchors.push({
                     rowText: rowPrefix + rawUser + ": " + rawBody,
+                    channelText: _cfg.showChannelTag ? "[" + FcmConfig.chanLabel(rec.channel) + "]" : "",
                     authorText: rawUser + ":",
                     color: FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor)
                 });
@@ -3329,9 +3339,9 @@ class FCMChatWidget extends MovieClip {
 
     /**
      * Locate each supporter row in the rendered TextField and place a vector star immediately
-     * before the author's name. Both coordinates come from the actual author glyph bounds in
-     * the laid-out TextField; this keeps the marker attached to the name across channel tags,
-     * moderation refs, custom tags, and mixed-font HTML runs.
+     * after the measured channel tag. The x coordinate is anchored to the tag's closing
+     * bracket, while the y coordinate is middle-aligned to the actual author bounds. This
+     * avoids GFx's mixed-font author advance rectangle placing every marker over the prefix.
      */
     function positionStarOverlays():Void {
         if (_starLayer == null || _logTf == null) return;
@@ -3369,6 +3379,14 @@ class FCMChatWidget extends MovieClip {
                 }
                 continue;
             }
+            var channelBounds:Rectangle = null;
+            if (anchor.channelText.length > 0) {
+                var channelStart:Int = plain.indexOf(anchor.channelText, rowStart);
+                var channelClose:Int = channelStart + anchor.channelText.length - 1;
+                if (channelStart >= rowStart && channelClose < rowStart + anchor.rowText.length) {
+                    try { channelBounds = _logTf.getCharBoundaries(channelClose); } catch (e:Dynamic) {}
+                }
+            }
             var star:Shape = makeSupporterStar(anchor.color, size);
             // getCharBoundaries() is TextField-local. Convert through global space before
             // entering the sibling marker layer; this remains correct after panel movement,
@@ -3376,8 +3394,16 @@ class FCMChatWidget extends MovieClip {
             // scrollV: GFx line heights vary with wrapping and that estimate caused drift.
             var authorPoint:Point = _logTf.localToGlobal(new Point(bounds.x, bounds.y));
             var layerPoint:Point = _starLayer.globalToLocal(authorPoint);
-            var starX:Float = layerPoint.x - size - 4;
-            var starY:Float = layerPoint.y + (bounds.height - size) / 2;
+            var channelEndX:Float = layerPoint.x - size - 4;
+            if (channelBounds != null && channelBounds.width > 0) {
+                var channelPoint:Point = _logTf.localToGlobal(
+                    new Point(channelBounds.x + channelBounds.width, channelBounds.y));
+                channelEndX = _starLayer.globalToLocal(channelPoint).x;
+            }
+            var placement = FcmStarLayout.betweenChannelAndAuthor(
+                channelEndX, layerPoint.y, bounds.height, size, 4);
+            var starX:Float = placement.x;
+            var starY:Float = placement.y;
             // GFx can ignore a sibling Sprite's scrollRect. Explicitly reject markers outside
             // the feed so off-screen history cannot leak into the header or input area.
             if (starY + size < 0 || starY > _logTf.height) continue;

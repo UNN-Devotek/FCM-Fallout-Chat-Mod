@@ -1,6 +1,6 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.38. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.39. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
@@ -52,8 +52,13 @@ that row; successful sends reconcile that same row in place until the authoritat
 including when the extender changes the temporary native identity to the relay identity. One deferred poll
 fetches that echo immediately; ordinary background polling remains controlled by `pollMs`.
 
+The relay auth-state response exposes both the relay-text `userId` and the linked account
+`linkedUserId`. HUD chat events use the linked account UUID as `senderUserId`, so the widget keeps
+both aliases locally when matching its own authoritative echo; the linked ID is never sent back
+as a client-supplied identity.
+
 ZFE's native `chat.v1` bridge filters unknown JSON members before the SWF receives an event. The
-v2.10.38 widget therefore reads the validated `tag` and transport envelope from an
+v2.10.39 widget therefore reads the validated `tag` and transport envelope from an
 `FCMHUD/1;...` envelope carried in the existing known `targetUserId` field. For ordinary channel
 chat this field is an empty transport slot, not a real recipient. The relay only emits the
 envelope to v2.10.16+ clients; older BA2 files receive no transport data. Raw relay consumers
@@ -279,7 +284,7 @@ staff validation on every request; the HUD permission is only a visibility hint.
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE or xScal loaded, the startup log identifies `chatv1-widget-v2.10.38`. If
+1. With HUDModLoader and ZFE or xScal loaded, the startup log identifies `chatv1-widget-v2.10.39`. If
    `AccountInfoData` is late, the widget waits and retries. The sender label and a newly sent
    message use the exact public Fallout 76 account handle, including punctuation; neither
    `Wanderer` nor the local character name is used for the relay handshake.

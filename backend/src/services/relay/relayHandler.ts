@@ -881,6 +881,10 @@ async function handleGetAuthState(ws: WebSocket, frame: Record<string, unknown>)
     success: true,
     // identity.userId is relay TEXT ("user_"+hex) — pass through directly.
     userId:  identity.userId,
+    // Chat events identify persisted authors by the linked FCM account UUID.
+    // This authenticated-session alias lets HUD clients reconcile their optimistic
+    // row without confusing the two identity namespaces.
+    linkedUserId: identity.linkedUserId,
     state,
     permissions: {
       canSend:   identity.isLinked,

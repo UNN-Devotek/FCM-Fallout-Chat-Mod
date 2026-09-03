@@ -134,7 +134,7 @@ envelope only to v2.10.16+; older widgets receive no envelope. The relay records
 beside a short-lived one-way token digest in Redis so separate connect and subscribe sockets use
 the same capability decision. `tag` and `starColor` are already validated by the cosmetics
 service, and `supporterStar` is derived only from an active Supporter or Overseer entitlement.
-Widget v2.10.38 renders supporter fields with a fixed five-point vector `Shape` positioned from
+Widget v2.10.39 renders supporter fields with a fixed five-point vector `Shape` positioned from
 the row's measured HTML prefix and adjusted for the feed's current `scrollV`. Keeping the marker
 layer in feed-local coordinates avoids Scaleform's mixed-font character-x ambiguity; it clips
 markers to the feed viewport so off-screen history cannot leak into the header or input area. It uses the validated

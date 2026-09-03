@@ -402,8 +402,8 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.38";' in widget_src,
-          "FCMChatWidget bumps the measured-star and low-latency relay build to version 2.10.38")
+    check('static inline var VERSION:String  = "2.10.39";' in widget_src,
+          "FCMChatWidget bumps the self-echo and measured-star build to version 2.10.39")
     check("FcmNativeApi.discover" in widget_src and "supportsNativeInput" in widget_src,
           "FCMChatWidget selects the provider and avoids ZFE-only input on xScal")
     check('MENU_ACTION_TIMEOUT_MS' in widget_src
@@ -458,12 +458,16 @@ if widget_src:
     check('localToGlobal' in widget_src
           and 'globalToLocal' in widget_src
           and 'Do not estimate scroll from' in widget_src
+          and 'channelText:' in widget_src
+          and 'var channelClose:Int = channelStart + anchor.channelText.length - 1;' in widget_src
+          and 'FcmStarLayout.betweenChannelAndAuthor' in widget_src
           and 'authorText:' in widget_src
           and 'var authorStart:Int = plain.indexOf(anchor.authorText, rowStart);' in widget_src
-          and 'var starX:Float = layerPoint.x - size - 4;' in widget_src
+          and 'channelEndX = _starLayer.globalToLocal(channelPoint).x;' in widget_src
+          and 'var starX:Float = placement.x;' in widget_src
           and '_starLayer.x = _logTf.x' in widget_src
           and 'starY + size < 0' in widget_src,
-          "FCMChatWidget keeps supporter stars attached to author bounds and inside the feed viewport")
+          "FCMChatWidget anchors supporter stars after the channel tag and inside the feed viewport")
     check('static inline var LOG_INPUT_GAP:Int     = 4;' in widget_src
           and 'var logBottom:Int = h - INPUT_H - LOG_INPUT_GAP;' in widget_src
           and '_logTf.height = logHeight;' in widget_src
