@@ -120,17 +120,16 @@ class FCMBridge extends MovieClip {
     // Rendered above the feed when non-empty and auth is limited.
     var _pinnedSystemBody:String = "";
 
-    // ── Boot retry for ZFE API discovery ──────────────────────────────────────
+    // ── Boot retry for native provider discovery ──────────────────────────────
     var _bootTimer:Timer      = null;
     var _bootTries:Int        = 0;
     static inline var BOOT_MS:Int  = 1500;
     static inline var BOOT_MAX:Int = 40;
 
-    // ── Host-injected ZFE reference ───────────────────────────────────────────
-    // The patched HUDMenu holds __ZFE at the top (parent) level even when
-    // ZFE's child_bridge_access=disabled prevents ZFE from auto-injecting into
-    // child SWFs. fcmSetZfe() lets the parent share its reference directly,
-    // bypassing the need for self-discovery in the child SWF.
+    // ── Host-injected native reference ────────────────────────────────────────
+    // The patched HUDMenu holds the provider at the top (parent) level even
+    // when child bridge access is disabled. The host shares that reference
+    // directly, bypassing child-SWF visibility differences.
     var _zfeInjectedByHost:Bool = false;
 
     // ── Auto-hide ─────────────────────────────────────────────────────────────
@@ -328,8 +327,8 @@ class FCMBridge extends MovieClip {
             // ZFE attaches to the in-world HUD movie AFTER we load (we boot from
             // fcmInit at the very start of HUDMenu's construction), so a single
             // early probe misses it. Retry every BOOT_MS up to BOOT_MAX (~60s) —
-            // same pattern as the widget's proven ZFE search loop. fcmSetZfe()
-            // (host handover) can still win the race at any point.
+            // same pattern as the widget's proven provider search loop. Host
+            // handover can still win the race at any point.
             setText("searching for ZFE/xScal (" + _bootTries + "/" + BOOT_MAX + ")...");
             if (_bootTimer == null) {
                 _bootTimer = new Timer(BOOT_MS);
@@ -369,7 +368,8 @@ class FCMBridge extends MovieClip {
      * ZFE 0.9.8 sets child_bridge_access=disabled — it does NOT auto-inject
      * __ZFE into child SWFs. xScal likewise exposes __SFECodeObj on the host
      * HUD movie. Sharing either reference here lets FCMBridge function fully
-     * without relying on child-SWF global lookup.
+     * without relying on child-SWF global lookup. The provider hint prevents
+     * xScal's generic __SFCodeObj callback object from being mislabeled as ZFE.
      *
      * Safe to call even if self-discovery already succeeded (no-op in that case).
      * Safe to call before self-discovery finishes (drives boot if api is null).
@@ -379,7 +379,7 @@ class FCMBridge extends MovieClip {
         if (api == null) return;
         if (_api != null) return;             // self-discovery already succeeded
         _zfeInjectedByHost = true;
-        var detected:FcmNativeApi = FcmNativeApi.fromExposed(api);
+        var detected:FcmNativeApi = FcmNativeApi.fromExposed(api, FcmNativeApi.ZFE);
         if (detected == null) {
             _zfeInjectedByHost = false;
             return;
@@ -390,10 +390,10 @@ class FCMBridge extends MovieClip {
     }
 
     /** Host handover for either script extender. */
-    public function fcmSetNativeApi(api:Dynamic):Void {
+    public function fcmSetNativeApi(api:Dynamic, providerHint:String = ""):Void {
         if (_zfeInjectedByHost || api == null || _api != null) return;
         _zfeInjectedByHost = true;
-        _api = FcmNativeApi.fromExposed(api);
+        _api = FcmNativeApi.fromExposed(api, providerHint);
         if (_api == null) {
             _zfeInjectedByHost = false;
             return;
@@ -411,19 +411,19 @@ class FCMBridge extends MovieClip {
         zfeLog("info", "startup", "FCMBridge loaded");
         zfeLog("info", "startup", "BUILD=chatv1");
 
-        // Verify the chat.v1 capability is available.
-        try {
-            var info:String = Std.string(_api.call("getRuntimeInfo", "{}"));
-            if (_api.provider == FcmNativeApi.ZFE && info.indexOf("zfe-chat-online-v1") < 0) {
+        // Probe only the selected provider. In particular, never send the ZFE
+        // chat.v1 runtime verb through xScal's generic __SFCodeObj.call.
+        if (!_api.probeChatCapability()) {
+            if (_api.provider == FcmNativeApi.ZFE) {
                 zfeLog("warn", "startup", "zfe-chat-online-v1 capability not present; check ZFE version (need 0.9.8+)");
-                setText("ZFE 0.9.8+ or xScal chat\ninterface required");
-                return;
+            } else {
+                zfeLog("warn", "startup", "xscal-chat-interface capability probe failed");
             }
-            zfeLog("info", _api.provider == FcmNativeApi.ZFE ? "zfe" : "xscal",
-                _api.provider == FcmNativeApi.ZFE ? "zfe-chat-online-v1 OK" : "xscal-chat-interface OK");
-        } catch (e:Dynamic) {
-            zfeLog("warn", "startup", "getRuntimeInfo threw: " + Std.string(e));
+            setText("ZFE 0.9.8+ or xScal chat\ninterface required");
+            return;
         }
+        zfeLog("info", _api.provider == FcmNativeApi.ZFE ? "zfe" : "xscal",
+            _api.provider == FcmNativeApi.ZFE ? "zfe-chat-online-v1 OK" : "xscal-chat-interface OK");
 
         // Read the character / account display name for the connect call. Only
         // overwrite when the SELF-read succeeds: in the standalone build the host

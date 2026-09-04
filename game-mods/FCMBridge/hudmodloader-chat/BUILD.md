@@ -7,7 +7,9 @@
 
 `FCMChatWidget.ba2` contains `interface/FCMChatWidget.swf`, a HUDModLoader child
 widget. It calls the active script extender's sanctioned chat API for authenticated community
-chat: ZFE's `chat.v1` dispatcher or xScal's `__SFECodeObj.chatInterface`.
+chat: ZFE's `chat.v1` dispatcher or xScal's `__SFECodeObj.chatInterface`. Current xScal builds
+also expose a generic `__SFCodeObj.call` callback object on the movie root; it is not the chat
+surface and must not be classified as ZFE.
 It only uses HUD UI data that Fallout 76 already exposes to its HUD; it does not
 read game memory, inject code, alter game state, or scan local ports/networks.
 Message timestamps are not displayed in the in-game feed; legacy timestamp settings are ignored.
@@ -98,6 +100,7 @@ still receive the additive fields described in the protocol spec.
 | Python | 3 (stdlib only) |
 | HUDModLoader | installed by the user |
 | ZFE | 0.9.9+ with `zfe-chat-online-v1` capability |
+| xScal | `[Chat] enabled=true` and `__SFECodeObj.chatInterface` with `connect`, `pollEvents`, and `sendMessage` |
 | Fallout 76 | native Windows or Proton/Wine installation with the current ZFE chat.v1 support; do not treat this as a requirement for the desktop overlay |
 
 ## Configuration and install layout

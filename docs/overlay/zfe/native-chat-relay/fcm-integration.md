@@ -1,7 +1,9 @@
 # FCM integration with ZFE `chat.v1` and xScal `chatInterface`
 
 This document describes the current FCM adapter for ZFE's `chat.v1` API and xScal's
-equivalent `__SFECodeObj.chatInterface` surface. It is used by the optional
+equivalent `__SFECodeObj.chatInterface` surface. Current xScal builds may also expose a
+generic `__SFCodeObj.call` callback object for other callbacks; it is not the chat surface.
+It is used by the optional
 `FCMChatWidget.ba2` HUDModLoader widget; it does not change
 the EULA-safe desktop overlay.
 
@@ -21,9 +23,12 @@ the EULA-safe desktop overlay.
 
 The same SWF supports either script extender. It probes the Scaleform objects already exposed
 by the active HUD movie, preferring a validated ZFE dispatcher and falling back to a validated
-xScal `chatInterface` with `connect`, `pollEvents`, and `sendMessage`. No DLL is loaded or
-inspected by the SWF. The adapter maps FCM's canonical `chat.v1.*` verbs to xScal's unprefixed
-methods, including `getAuthState`, `reportMessage`, `moderationAction`, and `clearChatAuth`.
+xScal `chatInterface` with `connect`, `pollEvents`, and `sendMessage`. A legacy
+`__SFCodeObj` is accepted as ZFE only after a positive capability probe, and xScal's
+`GetXSRuntimeInfo` marker is checked first so xScal never receives a ZFE chat probe. No DLL is
+loaded or inspected by the SWF. The adapter maps FCM's canonical `chat.v1.*` verbs to xScal's
+unprefixed methods, including `getAuthState`, `reportMessage`, `moderationAction`, and
+`clearChatAuth`.
 
 xScal does not provide ZFE's native chat editor commands. Both providers therefore use the
 SharedHUDTools input path first: its host-domain `TextEdit` owns the balanced game-control lock.

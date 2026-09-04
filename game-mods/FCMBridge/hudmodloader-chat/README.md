@@ -69,8 +69,11 @@ ZFE strips unknown event members before the SWF receives them, so v2.10.46 decod
 
 The widget discovers a validated ZFE bridge or xScal's `__SFECodeObj.chatInterface` on the parent
 HUDMenu frame. ZFE is preferred for backwards compatibility; xScal is selected when ZFE is absent.
-ZFE is gated on `zfe-chat-online-v1`; xScal is gated on the required `connect`, `pollEvents`, and
-`sendMessage` methods. Both providers use the same relay payloads and cursor polling.
+Current xScal builds also expose a generic `__SFCodeObj.call` on the movie root for unrelated
+callbacks. The widget never treats that object as ZFE by name alone. ZFE is gated on
+`zfe-chat-online-v1`; xScal is gated on the required `connect`, `pollEvents`, and `sendMessage`
+methods plus its positive runtime response when `getRuntimeInfo` is available. Both providers use
+the same relay payloads and cursor polling.
 
 The `SERVER` sub-tab is backed by the current in-game roster session. After subscribing to
 `BSUIDataManager`, v2.10.46 also reads the cached values of `PlayerListData`, `TeamMarkers`,

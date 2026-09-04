@@ -6,8 +6,10 @@ This guide builds the **all-in-one standalone** archive: the patched
 that users install with one ini line. **No HUDModLoader required.**
 
 Transport: **ZFE chat.v1** (ZFE 0.9.8+) or **xScal `chatInterface`**. The legacy FCMHUD/1 socket layer
-(`__SFCodeObj`, `writeUTFBytes`/`readUTFBytes`, `HELLO/SEND/CHAN` verbs) is
-fully removed from both SWFs. FCMBridge now calls `__ZFE.call("chat.v1.*")`
+(`writeUTFBytes`/`readUTFBytes`, `HELLO/SEND/CHAN` verbs) is
+fully removed from both SWFs. xScal may still expose a generic `__SFCodeObj.call` for its
+own callback registry; it is not the chat surface and is not classified as ZFE by name alone.
+FCMBridge calls `__ZFE.call("chat.v1.*")`
 directly; the patched HUDMenu delegates sends to FCMBridge via
 `fcmBridge.fcmSendMessage()`.
 
@@ -62,7 +64,8 @@ fragment is only the default.
 When xScal is used, merge the `[Chat]` section from
 `hudmodloader-chat/xscal.ini.example` into the existing `xscal.ini` beside the
 Fallout 76 executable. Keep the existing `xScalPriority` and other sections.
-The runtime detects `__SFECodeObj.chatInterface` automatically; the ZFE fragment
+The runtime detects `__SFECodeObj.chatInterface` automatically; xScal's separate
+`__SFCodeObj.call` is ignored unless it positively answers the legacy ZFE capability probe. The ZFE fragment
 and `zfe.ini` are not required for the xScal transport.
 
 ---
@@ -188,8 +191,9 @@ If any anchor is missing, the script exits with `ERROR: Anchor N ... not found` 
 fix the anchor and re-run.
 
 > `fcm-inject.as` is the **source of truth** for the injected AS3. It no longer
-> contains `writeUTFBytes`, `HELLO~`, `SEND~`, `CHAN~`, or any `__SFCodeObj`
-> bridge lookup — those belonged to the FCMHUD/1 era. Send now delegates to
+> contains `writeUTFBytes`, `HELLO~`, `SEND~`, or `CHAN~`. Its `__SFCodeObj`
+> lookup is only a last-resort provider-identity probe; it does not implement the old
+> FCMHUD/1 socket layer. Send now delegates to
 > `FCMBridge.fcmSendMessage(body, channelSlug)`.
 
 ---
@@ -225,9 +229,11 @@ with open('FCMBridge.swf','r+b') as f:
 
 Verify the version byte: `python3 -c "print(open('FCMBridge.swf','rb').read(4)[3])"` -> `32`.
 
-FCMBridge.hx requires **ZFE 0.9.8+** (needs the `zfe-chat-online-v1` capability).
-At startup FCMBridge calls `getRuntimeInfo` and refuses to connect if the capability
-is missing, logging a clear error to `zfe.log`.
+FCMBridge requires either **ZFE 0.9.8+** (with `zfe-chat-online-v1`) or xScal with
+`[Chat] enabled=true` and `__SFECodeObj.chatInterface`. At startup it probes only the
+selected provider: ZFE receives `chat.v1.getRuntimeInfo`; xScal receives `getRuntimeInfo`
+through `chatInterface` when available. A missing capability refuses connection and logs a
+provider-specific error to `zfe.log`.
 
 ---
 
@@ -288,8 +294,8 @@ all ZFE env vars.
 
 ## Step 9 -- Smoke test
 
-1. Launch the game. `zfe.log` shows `FCMBridge loaded`, `BUILD=chatv1`, and
-   `zfe-chat-online-v1 OK`. The feed panel renders community chat.
+1. Launch the game. `zfe.log` shows `FCMBridge loaded`, `BUILD=chatv1`, and either
+   `zfe-chat-online-v1 OK` or `xscal-chat-interface OK`. The feed panel renders community chat.
 2. Press the chat key (PAGE_DOWN by default). The input box appears; WASD is
    suspended.
 3. Type + ENTER -> the relay logs a `send` op; the message echoes back into the

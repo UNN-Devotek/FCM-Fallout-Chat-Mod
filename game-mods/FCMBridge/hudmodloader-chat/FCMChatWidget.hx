@@ -96,9 +96,11 @@ private typedef ModerationTargetResolution = {
  *   Without FormatOnScreenKeyboard, HUDTools sends ERROR|TXT → callback(null)
  *   immediately (the v2.0.3 "immediately released" bug).
  *
- * ZFE API discovery: widget runs in HUDModLoader's ApplicationDomain (shared with
- * HUDMenu). ZFE attaches __ZFE to the HUDMenu top-level frame — findZfeApi()
- * walks parent/root/stage to find it.
+ * Native provider discovery: widget runs in HUDModLoader's ApplicationDomain
+ * (shared with HUDMenu). FcmNativeApi walks the widget's parent/root chain for
+ * an explicit ZFE bridge or xScal's __SFECodeObj.chatInterface. xScal also
+ * installs a generic __SFCodeObj.call on the movie root; that object is not a
+ * ZFE bridge and is never selected by name alone.
  *
  * Channel slugs (AllowedChannels in Data/ZFE/TextChat/fragments/FCMChatWidget.ini):
  *   global, trade, events, infests, raids, server
@@ -133,7 +135,8 @@ private typedef ModerationTargetResolution = {
  *   7. No fl.motion.*, shaders, gradient masks, networking classes.
  *   8. No TextField update per-frame; event-driven only.
  *   9. NO getChildAt/numChildren on arbitrary native Scaleform objects (VM crash).
- *  10. NO hard casts (MovieClip(...)) — dynamic untyped access only in findZfeApi.
+ *  10. NO hard casts (MovieClip(...)) — native-provider access is isolated in
+ *      FcmNativeApi, which performs the guarded parent/root discovery.
  *
  * Docs:
  *   docs/overlay/zfe/native-chat-relay/protocol-spec.md  — chat.v1 call surface
@@ -2128,24 +2131,24 @@ class FCMChatWidget extends MovieClip {
     function onZfeFound():Void {
         if (_zfeSearchTimer != null) { _zfeSearchTimer.stop(); _zfeSearchTimer = null; }
 
-        // ZFE has an explicit capability string; xScal's validated chatInterface
-        // discovery is its capability gate.
-        try {
-            var info:String = Std.string(_api.call("chat.v1.getRuntimeInfo", "{}"));
-            if (_api.provider == FcmNativeApi.ZFE && info.indexOf("zfe-chat-online-v1") < 0) {
+        // Probe only the provider selected by FcmNativeApi. Calling the ZFE
+        // chat.v1 runtime verb on xScal's generic __SFCodeObj is a dispatch
+        // failure and was the source of the reported xScal log line.
+        if (!_api.probeChatCapability()) {
+            if (_api.provider == FcmNativeApi.ZFE) {
                 zfeLog("warn", "startup", "zfe-chat-online-v1 not present; need ZFE 0.9.8+");
-                setLogText("ZFE 0.9.8+ or xScal chat\ninterface required");
-                return;
+            } else {
+                zfeLog("warn", "startup", "xscal-chat-interface capability probe failed");
             }
-            zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-            zfeLog("info", "startup", "BUILD=chatv1-widget-v" + VERSION);
-            zfeLog("info", "startup", _api.provider == FcmNativeApi.ZFE
-                ? "zfe-chat-online-v1 OK"
-                : "xscal-chat-interface OK");
-            zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
-        } catch (e:Dynamic) {
-            zfeLog("warn", "startup", "getRuntimeInfo threw: " + Std.string(e));
+            setLogText("ZFE 0.9.8+ or xScal chat\ninterface required");
+            return;
         }
+        zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
+        zfeLog("info", "startup", "BUILD=chatv1-widget-v" + VERSION);
+        zfeLog("info", "startup", _api.provider == FcmNativeApi.ZFE
+            ? "zfe-chat-online-v1 OK"
+            : "xscal-chat-interface OK");
+        zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
 
         loadPersistedConfig();
         startConnect();
@@ -4078,82 +4081,4 @@ class FCMChatWidget extends MovieClip {
         } catch (e:Dynamic) {}
     }
 
-    // =========================================================================
-    // findZfeApi — minimal, bulletproof ZFE bridge discovery
-    // =========================================================================
-
-    /**
-     * findZfeApi — finds the ZFE bridge object on the HUDMenu root.
-     *
-     * ZFE (dxgi.dll) installs __ZFE on the HUDMenu root (stage.getChildAt(0)).
-     *
-     * SAFETY RULES:
-     *   - Every property read and child access is in its own try/catch.
-     *   - NO getChildAt loop on arbitrary objects.
-     *   - NO BFS over stage descendants — Scaleform crashes on numChildren/getChildAt.
-     *   - NO hard casts — dynamic untyped access only.
-     */
-    static function findZfeApi(scope:Dynamic):Dynamic {
-        var NAMES:Array<String> = ["__ZFE", "ZFECodeObj", "__SFCodeObj"];
-
-        function check(obj:Dynamic):Dynamic {
-            if (obj == null) return null;
-            for (nm in NAMES) {
-                try {
-                    var z:Dynamic = untyped obj[nm];
-                    if (z != null) {
-                        try { if (untyped z.call != null) return z; } catch (_:Dynamic) {}
-                    }
-                } catch (_:Dynamic) {}
-            }
-            return null;
-        }
-
-        // Strategy 1: stage.getChildAt(0) = HUDMenu root (most reliable)
-        try {
-            var st:Dynamic = scope.stage;
-            if (st != null) {
-                var hudMenuRoot:Dynamic = null;
-                try { hudMenuRoot = st.getChildAt(0); } catch (_:Dynamic) {}
-                if (hudMenuRoot != null) {
-                    var z:Dynamic = check(hudMenuRoot);
-                    if (z != null) return z;
-                }
-            }
-        } catch (_:Dynamic) {}
-
-        // Strategy 2: parent-chain walk (up to 25 levels)
-        var cur:Dynamic = scope;
-        var depth:Int = 0;
-        while (cur != null && depth < 25) {
-            var z:Dynamic = check(cur);
-            if (z != null) return z;
-            var next:Dynamic = null;
-            try { next = cur.parent; } catch (_:Dynamic) {}
-            cur = next;
-            depth++;
-        }
-
-        // Strategy 3: scope.root
-        try {
-            var r:Dynamic = null;
-            try { r = scope.root; } catch (_:Dynamic) {}
-            if (r != null) {
-                var z:Dynamic = check(r);
-                if (z != null) return z;
-            }
-        } catch (_:Dynamic) {}
-
-        // Strategy 4: scope.stage direct property
-        try {
-            var st:Dynamic = null;
-            try { st = scope.stage; } catch (_:Dynamic) {}
-            if (st != null) {
-                var z:Dynamic = check(st);
-                if (z != null) return z;
-            }
-        } catch (_:Dynamic) {}
-
-        return null;
-    }
 }

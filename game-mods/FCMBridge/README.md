@@ -21,9 +21,15 @@ The SWF never sees the raw relay token. ZFE stores it in a DPAPI-protected file 
 re-presents it via `hello` on each session.
 
 At startup the SWF probes exposed Scaleform bridge objects, prefers a valid ZFE bridge for
-backwards compatibility, and otherwise selects xScal. xScal's chat bridge does not expose
-ZFE's native text-edit buffer, so the HUD widget uses SharedHUDTools input on xScal and does
-not send unsupported editor commands to it.
+backwards compatibility, and otherwise selects xScal. xScal exposes both the chat surface
+(`__SFECodeObj.chatInterface`) and, in current builds, a separate generic
+`__SFCodeObj.call` callback object. The latter is not treated as ZFE. xScal's chat bridge does not
+expose ZFE's native text-edit buffer, so the HUD widget uses SharedHUDTools input on xScal and
+does not send unsupported editor commands to it.
+
+The capability probe is provider-specific: ZFE receives `chat.v1.getRuntimeInfo`, while xScal
+receives `getRuntimeInfo` through `chatInterface` (when available). The widget never sends a
+ZFE verb through xScal's generic callback object.
 
 ## What it does
 

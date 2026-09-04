@@ -106,6 +106,9 @@ if inject_src:
           "fcm-inject.as calls fcmSetNativeApi on the bridge (injects either provider)")
     check("__SFECodeObj" in inject_src and "fcmSetNativeApi" in inject_src,
           "fcm-inject.as passes the xScal chat bridge when ZFE is absent")
+    check('fcmSetNativeApi(hostNative, provider)' in inject_src
+          and 'provider = (hostNative != null) ? "legacy" : ""' in inject_src,
+          "fcm-inject.as passes the provider hint and quarantines ambiguous __SFCodeObj")
 
     # Channel table uses slugs, not UUIDs.
     check('"global"' in inject_src or "'global'" in inject_src,
@@ -202,6 +205,13 @@ except FileNotFoundError:
     bridge_src = ""
 
 if bridge_src:
+    post_init_match = re.search(
+        r"function postDiscoveryInit\(\):Void \{(.*?)\n    \}",
+        bridge_src,
+        re.DOTALL,
+    )
+    post_init_body = post_init_match.group(1) if post_init_match else ""
+
     # chat.v1 API calls.
     check('"chat.v1.connect"' in bridge_src,
           "FCMBridge.hx calls chat.v1.connect")
@@ -315,6 +325,10 @@ if bridge_src:
           "FCMBridge.hx tracks _zfeInjectedByHost to guard against double-init")
     check("FcmNativeApi.discover" in bridge_src and "fcmSetNativeApi" in bridge_src,
           "FCMBridge.hx discovers and accepts either native chat provider")
+    check("probeChatCapability" in bridge_src
+          and "if (!_api.probeChatCapability())" in post_init_body
+          and "chat.v1.getRuntimeInfo" not in post_init_body,
+          "FCMBridge.hx probes the selected provider without an unconditional ZFE runtime call")
 
 # ---------------------------------------------------------------------------
 # 4c. Verify FCMChatWidget tab renderer lifecycle
@@ -418,6 +432,9 @@ if widget_src:
           "FCMChatWidget closes SharedHUDTools before named social/input actions")
     check("FcmNativeApi.discover" in widget_src and "supportsNativeInput" in widget_src,
           "FCMChatWidget selects the provider and avoids ZFE-only input on xScal")
+    check("probeChatCapability" in widget_src
+          and "if (!_api.probeChatCapability())" in widget_src,
+          "FCMChatWidget probes only the selected provider capability")
     check('MENU_ACTION_TIMEOUT_MS' in widget_src
           and 'true, false, MENU_ACTION_TIMEOUT_MS' in widget_src,
           "FCMChatWidget uses a positive repeatable HUDTools menu timeout")
