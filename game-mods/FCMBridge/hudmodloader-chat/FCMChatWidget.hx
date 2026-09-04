@@ -152,7 +152,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.46"; // host-domain input ownership; native input is no-lock fallback
+    static inline var VERSION:String  = "2.10.47"; // async xScal auth lifecycle + provider diagnostics
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -370,6 +370,9 @@ class FCMChatWidget extends MovieClip {
     var _inWorld:Bool            = false;
     var _serverSessionReady:Bool = false;
     var _serverSessionError:String = "";
+    // History resync is a send operation and must wait until xScal's async
+    // subscriber has reached an authenticated state.
+    var _historyResyncSent:Bool  = false;
 
     // ── ZFE search retry ──────────────────────────────────────────────────────
     var _zfeSearchTimer:Timer    = null;
@@ -394,6 +397,8 @@ class FCMChatWidget extends MovieClip {
     var _linkNoticeAt:Float = 0;
     // Guards one reconnect per stale code — cleared once a fresh notice lands.
     var _linkRefreshPending:Bool = false;
+    // Provider state used to avoid repeating the same diagnostic every poll.
+    var _lastAuthObservation:String = "";
 
     // ── Input state ───────────────────────────────────────────────────────────
     var _inputOpen:Bool          = false;
@@ -2210,7 +2215,10 @@ class FCMChatWidget extends MovieClip {
             return;
         }
 
-        _connected = true;
+        var connectStatus:String = extractJsonString(rs, "status");
+        var connectCode:String = extractJsonString(rs, "code");
+        var connectDecision:String = FcmAuthFlow.classify(_api.provider, "", connectStatus, connectCode);
+        _connected = true; // native transport accepted; _authState separately gates chat sends
         // Native input is probed lazily on the first open. Never activate it at startup:
         // legacy Windows/ZFE builds can expose the bare probe payload as editable text.
         _nativeInputUsable = _api.supportsNativeInput();
@@ -2221,21 +2229,28 @@ class FCMChatWidget extends MovieClip {
         _lastRosterSent = "";
         resetRosterObservation("relay connection", true);
         _lastWorldId = ""; // force the legacy worldId fallback to rebind after reconnect
+        _historyResyncSent = false;
+        _lastAuthObservation = "";
         _connectDelay = CONNECT_RETRY_MS;
         // The link gate is NOT cleared here (v2.9.7). The relay's link notice is a one-shot
         // push, so "no notice arrived on this connect" does not mean "linked" — it usually
         // means the push was missed. Staying unlinked until proven otherwise keeps the link
         // screen reachable; a "LINK COMPLETE" notice or a successful send clears it, and the
         // relay re-pushes a fresh code on subscribe while the identity is still limited.
-        zfeLog("info", "connect", "connected"
-            + (_needsLink ? " (link gate still up)" : ""));
-        setLogText(_needsLink ? linkHint() : "connected. loading...");
+        if (_api.provider == FcmNativeApi.XSCAL && connectDecision == FcmAuthFlow.PENDING) {
+            zfeLog("info", "connect", "transport accepted; xScal auth pending");
+            setLogText("connecting to chat...");
+        } else {
+            zfeLog("info", "connect", "connected"
+                + (_needsLink ? " (link gate still up)" : ""));
+            setLogText(_needsLink ? linkHint() : "connected. loading...");
+        }
 
         bumpAutoHide();   // start the idle countdown (hides after autoHideSec if nothing happens)
         refreshAuthState();
         _cursor = 0;
         startPollTimer();
-        requestHistoryResync();
+        maybeRequestHistoryResync();
         startWorldTimer();
         startOpenKeyTimer();
     }
@@ -2354,6 +2369,18 @@ class FCMChatWidget extends MovieClip {
         if (_api == null) return;
         try {
             var state:String = Std.string(_api.call("chat.v1.getAuthState", "{}"));
+            var observedState:String = extractJsonString(state, "state");
+            var observedStatus:String = extractJsonString(state, "status");
+            var observedCode:String = extractJsonString(state, "code");
+            var authDecision:String = FcmAuthFlow.classify(_api.provider,
+                observedState, observedStatus, observedCode);
+            var observation:String = observedState + "/" + observedStatus + "/" + observedCode;
+            if (_api.provider == FcmNativeApi.XSCAL && observation != _lastAuthObservation) {
+                _lastAuthObservation = observation;
+                zfeLog("info", "auth", "xscal state=" + logSafe(observedState)
+                    + " status=" + logSafe(observedStatus)
+                    + " code=" + logSafe(observedCode));
+            }
             var uid:String = extractJsonString(state, "userId");
             var linkedUid:String = extractJsonString(state, "linkedUserId");
             if (uid.length > 0) {
@@ -2371,11 +2398,8 @@ class FCMChatWidget extends MovieClip {
             }
             var prevAuth:String = _authState;
             var prevCanModerate:Bool = _canModerate;
-            if (state.indexOf('"state":"authenticated"') >= 0 || state.indexOf('state:"authenticated"') >= 0) {
-                _authState = "authenticated";
-            } else {
-                _authState = "limited";
-            }
+            _authState = authDecision == FcmAuthFlow.AUTHENTICATED
+                ? "authenticated" : "limited";
             if (_authState != "authenticated") _linkedUserId = "";
             _canModerate = extractJsonBool(state, "canDeleteMessage")
                 || extractJsonBool(state, "canKickUser")
@@ -2387,7 +2411,22 @@ class FCMChatWidget extends MovieClip {
                 zfeLog("info", "auth", "authState=" + _authState + " moderation=" + (_canModerate ? "yes" : "no"));
                 renderRecords();
             }
-            if (_authState != "authenticated" && _connected) {
+            if (authDecision == FcmAuthFlow.AUTHENTICATED) {
+                maybeRequestHistoryResync();
+            } else if (_api.provider == FcmNativeApi.XSCAL
+                    && _connected && authDecision == FcmAuthFlow.RECONNECT) {
+                forceReconnect("xScal auth state "
+                    + (observedState.length > 0 ? observedState : observedCode));
+            } else if (_api.provider == FcmNativeApi.XSCAL
+                    && authDecision == FcmAuthFlow.PENDING) {
+                // xScal returns status=connecting while its worker performs the
+                // async hello/register flow. Keep the transport alive and let
+                // pollEvents call us again on the normal cadence.
+                setLogText("connecting to chat...");
+            } else if (_authState != "authenticated" && _connected) {
+                // Preserve the established ZFE behavior. Its getAuthState
+                // contract is synchronous and a non-authenticated result is a
+                // dead session rather than an in-flight connection.
                 forceReconnect("ZFE auth state not authenticated");
             }
         } catch (e:Dynamic) {
@@ -2481,11 +2520,12 @@ class FCMChatWidget extends MovieClip {
      * submitting a fresh roster/world bind for the new game server.
      */
     function requestHistoryResync():Void {
-        if (_api == null || !_connected) return;
+        if (_api == null || !_connected || _historyResyncSent) return;
         var payload:String = '{"channel":"server","targetUserId":"","body":"' + HISTORY_RESYNC_PREFIX + '"}';
         try {
             var raw:String = Std.string(_api.call("chat.v1.sendMessage", payload));
             if (raw.indexOf('"success":true') >= 0 || raw.indexOf('success:true') >= 0) {
+                _historyResyncSent = true;
                 zfeLog("info", "history", "resync requested");
             } else {
                 zfeLog("warn", "history", "resync rejected raw=" + clip200(raw));
@@ -2495,12 +2535,25 @@ class FCMChatWidget extends MovieClip {
         }
     }
 
+    function maybeRequestHistoryResync():Void {
+        if (_api == null || !_connected) return;
+        if (_api.provider == FcmNativeApi.XSCAL && _authState != "authenticated") return;
+        requestHistoryResync();
+    }
+
     function pollEvents():Void {
         if (_api == null || !_connected) return;
         // Swap an expired link code for a fresh one before doing anything else — the reconnect
         // this may trigger tears down the poll timer we are running on.
         maybeRefreshLinkCode();
         if (!_connected) return;
+        // xScal's connect() is asynchronous. Refreshing here advances its
+        // pending -> authenticated transition without issuing another connect.
+        if (_api.provider == FcmNativeApi.XSCAL) {
+            refreshAuthState();
+            if (!_connected) return;
+            maybeRequestHistoryResync();
+        }
         var payload:String = '{"max":64,"cursor":' + _cursor + '}';
         var result:Dynamic = null;
         try {
@@ -2516,6 +2569,12 @@ class FCMChatWidget extends MovieClip {
             if (rs.indexOf('auth_token_invalid') >= 0 || rs.indexOf('auth_token_revoked') >= 0
                     || rs.indexOf('user_banned') >= 0) {
                 forceReconnect("relay returned an auth error on poll");
+            } else if (_api.provider == FcmNativeApi.XSCAL
+                    && FcmAuthFlow.isPendingTransportResponse(rs)) {
+                // The xScal worker has not opened its subscriber yet. This is
+                // expected while connect() reports status=connecting; do not
+                // spend the poll-failure budget or restart the worker.
+                return;
             } else {
                 notePollFailure("relay returned an unsuccessful response");
             }

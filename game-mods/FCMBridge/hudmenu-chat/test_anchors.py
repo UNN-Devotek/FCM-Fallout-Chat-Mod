@@ -107,9 +107,12 @@ if inject_src:
     check("__SFECodeObj" in inject_src and "__SFCodeObj" in inject_src
           and "chatInterface" in inject_src and "fcmSetNativeApi" in inject_src,
           "fcm-inject.as passes either xScal chat surface when ZFE is absent")
-    check('fcmSetNativeApi(hostNative, provider)' in inject_src
+    check('fcmSetNativeApi(hostNative, provider, hostLogger)' in inject_src
           and 'provider = (hostNative != null) ? "legacy" : ""' in inject_src,
-          "fcm-inject.as passes the provider hint and quarantines ambiguous __SFCodeObj")
+          "fcm-inject.as passes the provider hint and quarantines ambiguous __SFCodeObj/logger")
+    check('var stage:* = scope.stage' in inject_src
+          and 'stageCandidate' in inject_src,
+          "fcm-inject.as can find xScal diagnostics on the main stage")
 
     # Channel table uses slugs, not UUIDs.
     check('"global"' in inject_src or "'global'" in inject_src,
@@ -417,8 +420,16 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.46";' in widget_src,
-          "FCMChatWidget bumps the host-domain input ownership fix build to version 2.10.46")
+    check('static inline var VERSION:String  = "2.10.47";' in widget_src,
+          "FCMChatWidget bumps the async xScal auth lifecycle build to version 2.10.47")
+    check('FcmAuthFlow.classify' in widget_src
+          and 'transport accepted; xScal auth pending' in widget_src
+          and 'xScal auth state' in widget_src,
+          "FCMChatWidget keeps xScal transport alive while auth is pending and reconnects only on terminal state")
+    check('if (_api.provider == FcmNativeApi.XSCAL)' in widget_src
+          and 'refreshAuthState();' in widget_src
+          and 'isPendingTransportResponse' in widget_src,
+          "FCMChatWidget refreshes xScal auth during polling and ignores pending transport responses")
     shared_input = widget_src.find("        openInputSharedHudTools();")
     native_input = widget_src.find("        if (USE_NATIVE_INPUT && _nativeInputUsable)")
     check(shared_input >= 0 and native_input > shared_input,

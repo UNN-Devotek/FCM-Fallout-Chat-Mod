@@ -16,10 +16,21 @@ class FcmNativeApi {
 
     public var provider(default, null):String;
     var _raw:Dynamic;
+    // xScal owns chat under chatInterface, while its optional diagnostics
+    // callback is commonly exposed as a separate __SFCodeObj.call. Keep that
+    // callback out of chat routing and retain it only for the FCM log verb.
+    var _loggerRaw:Dynamic;
 
-    function new(raw:Dynamic, providerName:String) {
+    function new(raw:Dynamic, providerName:String, loggerRaw:Dynamic = null) {
         _raw = raw;
         provider = providerName;
+        _loggerRaw = loggerRaw;
+        if (_loggerRaw == null && providerName == XSCAL && zfeRaw(raw)) {
+            // Some xScal builds put chatInterface and call on the same
+            // __SFCodeObj. In that shape the object is both surfaces, but the
+            // call method is still used only for diagnostics.
+            _loggerRaw = raw;
+        }
     }
 
     public static function fromZfe(raw:Dynamic):FcmNativeApi {
@@ -38,11 +49,11 @@ class FcmNativeApi {
      * explicit `chatInterface` is xScal; a bare `__SFCodeObj` has no trustworthy
      * provider identity and is accepted only after a positive runtime probe.
      */
-    public static function fromExposed(raw:Dynamic, providerHint:String = ""):FcmNativeApi {
+    public static function fromExposed(raw:Dynamic, providerHint:String = "", loggerRaw:Dynamic = null):FcmNativeApi {
         if (raw == null) return null;
-        if (providerHint == XSCAL) return xscalRaw(raw) ? new FcmNativeApi(raw, XSCAL) : null;
+        if (providerHint == XSCAL) return xscalRaw(raw) ? new FcmNativeApi(raw, XSCAL, loggerRaw) : null;
         if (providerHint == ZFE) return zfeRaw(raw) ? new FcmNativeApi(raw, ZFE) : null;
-        if (xscalRaw(raw)) return new FcmNativeApi(raw, XSCAL);
+        if (xscalRaw(raw)) return new FcmNativeApi(raw, XSCAL, loggerRaw);
         if (zfeRaw(raw) && isLegacyZfeDispatcher(raw)) return new FcmNativeApi(raw, ZFE);
         return null;
     }
@@ -56,7 +67,7 @@ class FcmNativeApi {
         var z:Dynamic = findZfe(scope);
         if (z != null && isZfeChatDispatcher(z)) return new FcmNativeApi(z, ZFE);
         var x:Dynamic = findXscal(scope);
-        if (x != null) return new FcmNativeApi(x, XSCAL);
+        if (x != null) return new FcmNativeApi(x, XSCAL, findGenericCallback(scope));
         var legacy:Dynamic = findLegacyZfe(scope);
         if (legacy != null) return new FcmNativeApi(legacy, ZFE);
         return null;
@@ -106,7 +117,7 @@ class FcmNativeApi {
         if (method == "getAuthState" && !hasChatMethod("getAuthState")) {
             method = "getConnectionState";
         }
-        if (method == "log") return ""; // xScal has no FCM vendor log command.
+        if (method == "log") return callLogger(payload);
         if (!hasChatMethod(method)) return unsupported();
         var chat:Dynamic = Reflect.field(_raw, "chatInterface");
         var fn:Dynamic = Reflect.field(chat, method);
@@ -120,6 +131,17 @@ class FcmNativeApi {
         } catch (e:Dynamic) {
             return false;
         }
+    }
+
+    /**
+     * Forward diagnostics through xScal's optional generic callback only. This
+     * is deliberately separate from chatInterface: a generic callback may
+     * receive `log`, but it must never receive chat.v1 transport verbs.
+     */
+    function callLogger(payload:String):Dynamic {
+        if (!zfeRaw(_loggerRaw)) return "";
+        var result:Dynamic = callDispatcher(_loggerRaw, "log", payload);
+        return result == null ? "" : result;
     }
 
     static function unsupported():String {
@@ -165,6 +187,44 @@ class FcmNativeApi {
                 if (candidate != null && xscalRaw(candidate)) return candidate;
             } catch (e:Dynamic) {}
         }
+        return null;
+    }
+
+    /** Find xScal's optional generic callback without making it a chat candidate. */
+    static function findGenericCallback(scope:Dynamic):Dynamic {
+        var cur:Dynamic = scope;
+        var depth:Int = 0;
+        while (cur != null && depth < 25) {
+            try {
+                if (xscalRaw(cur) && zfeRaw(cur)) return cur;
+                var candidate:Dynamic = Reflect.field(cur, "__SFCodeObj");
+                if (zfeRaw(candidate)) return candidate;
+            } catch (e:Dynamic) {}
+            try { cur = cur.parent; } catch (e:Dynamic) { cur = null; }
+            depth++;
+        }
+        try {
+            var stage:Dynamic = scope.stage;
+            if (stage != null && stage != scope) {
+                if (xscalRaw(stage) && zfeRaw(stage)) return stage;
+                var stageCandidate:Dynamic = Reflect.field(stage, "__SFCodeObj");
+                if (zfeRaw(stageCandidate)) return stageCandidate;
+            }
+        } catch (e:Dynamic) {}
+        try {
+            var root:Dynamic = scope.root;
+            if (root != null && root != scope) {
+                if (xscalRaw(root) && zfeRaw(root)) return root;
+                var rootCandidate:Dynamic = Reflect.field(root, "__SFCodeObj");
+                if (zfeRaw(rootCandidate)) return rootCandidate;
+            }
+        } catch (e:Dynamic) {}
+        #if flash
+        try {
+            var globalSf:Dynamic = untyped __global__["__SFCodeObj"];
+            if (zfeRaw(globalSf)) return globalSf;
+        } catch (e:Dynamic) {}
+        #end
         return null;
     }
 
@@ -242,6 +302,11 @@ class FcmNativeApi {
             try { cur = cur.parent; } catch (e:Dynamic) { cur = null; }
             depth++;
         }
+        try {
+            var stage:Dynamic = scope.stage;
+            var stageHit:Dynamic = zfeCandidate(stage);
+            if (stageHit != null) return stageHit;
+        } catch (e:Dynamic) {}
         try { var root:Dynamic = scope.root; var hit:Dynamic = zfeCandidate(root); if (hit != null) return hit; } catch (e:Dynamic) {}
         #if flash
         try { var globalZfe:Dynamic = untyped __global__["__ZFE"]; if (globalZfe != null) return globalZfe; } catch (e:Dynamic) {}
@@ -259,6 +324,11 @@ class FcmNativeApi {
             try { cur = cur.parent; } catch (e:Dynamic) { cur = null; }
             depth++;
         }
+        try {
+            var stage:Dynamic = scope.stage;
+            var stageHit:Dynamic = xscalCandidate(stage);
+            if (stageHit != null) return stageHit;
+        } catch (e:Dynamic) {}
         try { var root:Dynamic = scope.root; var hit:Dynamic = xscalCandidate(root); if (hit != null) return hit; } catch (e:Dynamic) {}
         #if flash
         try {
@@ -284,6 +354,11 @@ class FcmNativeApi {
             try { cur = cur.parent; } catch (e:Dynamic) { cur = null; }
             depth++;
         }
+        try {
+            var stage:Dynamic = scope.stage;
+            var stageHit:Dynamic = legacyZfeCandidate(stage);
+            if (stageHit != null) return stageHit;
+        } catch (e:Dynamic) {}
         try {
             var root:Dynamic = scope.root;
             var hit:Dynamic = legacyZfeCandidate(root);

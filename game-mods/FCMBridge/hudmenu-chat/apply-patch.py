@@ -47,6 +47,7 @@ if IMPORT_ANCHOR in src:
 # ---------------------------------------------------------------------------
 FIELDS = ('      \n'
           '      public var _fcmZfe:Object = null;\n      \n'
+          '      public var _fcmLogger:Object = null;\n      \n'
           '      public var _fcmBridge:* = null;\n      \n'
           '      public var _fcmInited:Boolean = false;\n      \n'
           '      public var _fcmLastEvent:String = "";\n      \n'

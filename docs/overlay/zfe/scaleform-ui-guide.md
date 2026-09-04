@@ -127,7 +127,7 @@ This is the subtlety that cost us the most, now fully explained:
   in-progress text) + `consumeChatInputSubmitted` (Enter) + `isChatInputActive` (Esc) → on submit
   `chat.v1.sendMessage` the `readChatInput` text → `clearChatInput` + `setChatInputActive("false")`. A
   low-rate `isChatKeyPressed` edge poll opens chat on the OpenChatKey (INSERT). Current
-  FCMChatWidget v2.10.46 tries SharedHUDTools first; the native path is used only when that host
+  FCMChatWidget v2.10.47 tries SharedHUDTools first; the native path is used only when that host
   editor is unavailable and never dispatches child-owned `ControlMap` events. See
   `game-mods/FCMBridge/hudmodloader-chat/BUILD.md` → "Input-path acceptance".
 - **Native Windows only — Proton/Wine is BLOCKED (2026-06-26, tracked in #326).** chat.v1 works

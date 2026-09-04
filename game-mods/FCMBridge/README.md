@@ -33,6 +33,12 @@ The capability probe is provider-specific: ZFE receives `chat.v1.getRuntimeInfo`
 receives `getRuntimeInfo` through `chatInterface` (when available). The widget never sends a
 ZFE verb through xScal's generic callback object.
 
+xScal's `connect` completes asynchronously. FCM treats
+`success:true,status:"connecting"` as a pending native transport, keeps polling its auth state,
+and does not call `connect` again until xScal reports a terminal failure. A separate generic
+`__SFCodeObj.call` may be used for the `log` diagnostic only; it is never a fallback chat
+dispatcher. This policy is shared by the modern HUDModLoader widget and the legacy bridge.
+
 ## What it does
 
 FCMBridge renders live community chat (General / Trading / Events / Infests / Raids) as styled

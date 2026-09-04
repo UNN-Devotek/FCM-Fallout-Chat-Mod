@@ -392,10 +392,10 @@ class FCMBridge extends MovieClip {
     }
 
     /** Host handover for either script extender. */
-    public function fcmSetNativeApi(api:Dynamic, providerHint:String = ""):Void {
+    public function fcmSetNativeApi(api:Dynamic, providerHint:String = "", loggerRaw:Dynamic = null):Void {
         if (_zfeInjectedByHost || api == null || _api != null) return;
         _zfeInjectedByHost = true;
-        _api = FcmNativeApi.fromExposed(api, providerHint);
+        _api = FcmNativeApi.fromExposed(api, providerHint, loggerRaw);
         if (_api == null) {
             _zfeInjectedByHost = false;
             return;
@@ -465,8 +465,13 @@ class FCMBridge extends MovieClip {
 
         _connected = true;
         _connectDelay = CONNECT_RETRY_MS; // reset backoff on success
-        zfeLog("info", "connect", "connected");
-        setText("connected. loading...");
+        var connectStatus:String = extractJsonString(rs, "status");
+        var connectCode:String = extractJsonString(rs, "code");
+        var connectPending:Bool = _api.provider == FcmNativeApi.XSCAL
+            && FcmAuthFlow.classify(_api.provider, "", connectStatus, connectCode) == FcmAuthFlow.PENDING;
+        zfeLog("info", "connect", connectPending
+            ? "connection pending (xScal async)" : "connected");
+        setText(connectPending ? "connecting..." : "connected. loading...");
 
         // Read userId from auth state (needed for worldId HMAC).
         refreshAuthState();
@@ -498,6 +503,15 @@ class FCMBridge extends MovieClip {
         if (_api == null) return;
         try {
             var state:String = Std.string(_api.call("chat.v1.getAuthState", "{}"));
+            var observedState:String = extractJsonString(state, "state");
+            var observedStatus:String = extractJsonString(state, "status");
+            var observedCode:String = extractJsonString(state, "code");
+            var authDecision:String = FcmAuthFlow.classify(_api.provider,
+                observedState, observedStatus, observedCode);
+            if (_api.provider == FcmNativeApi.XSCAL) {
+                zfeLog("info", "auth", "xscal state=" + observedState
+                    + " status=" + observedStatus + " code=" + observedCode);
+            }
             // Extract userId — looks for "userId":"user_…" or userId:"user_…"
             var uid:String = extractJsonString(state, "userId");
             if (uid.length > 0) {
@@ -509,24 +523,29 @@ class FCMBridge extends MovieClip {
             // "authenticated" → player may send. "limited" → account not yet linked;
             // sendMessage is blocked and the pinned link-code notice is shown.
             var prevAuthState:String = _authState;
-            if (state.indexOf('"state":"authenticated"') >= 0 || state.indexOf('state:"authenticated"') >= 0) {
-                _authState = "authenticated";
-            } else {
-                _authState = "limited";
-            }
+            _authState = authDecision == FcmAuthFlow.AUTHENTICATED
+                ? "authenticated" : "limited";
             if (_authState != prevAuthState) {
                 zfeLog("info", "auth", "authState=" + _authState);
                 // Re-render so the pinned notice or cleared state is reflected immediately.
                 renderRecords(_records);
             }
-            // Detect disconnection.
-            if (_authState != "authenticated") {
-                if (_connected) {
-                    zfeLog("warn", "auth", "state not authenticated; reconnecting");
+            // xScal completes hello/register asynchronously. Keep its native
+            // transport alive for connecting/pending/unauthenticated states;
+            // only an explicit terminal state requests a reconnect. ZFE keeps
+            // its original synchronous contract.
+            if (_api.provider == FcmNativeApi.XSCAL) {
+                if (_connected && authDecision == FcmAuthFlow.RECONNECT) {
+                    zfeLog("warn", "auth", "xScal terminal auth state; reconnecting");
                     _connected = false;
                     stopPollTimer();
                     scheduleConnectRetry();
                 }
+            } else if (_authState != "authenticated" && _connected) {
+                zfeLog("warn", "auth", "state not authenticated; reconnecting");
+                _connected = false;
+                stopPollTimer();
+                scheduleConnectRetry();
             }
         } catch (e:Dynamic) {
             zfeLog("warn", "auth", "getAuthState threw: " + Std.string(e));
@@ -573,6 +592,11 @@ class FCMBridge extends MovieClip {
     function pollEvents():Void {
         if (_api == null || !_connected) return;
 
+        if (_api.provider == FcmNativeApi.XSCAL) {
+            refreshAuthState();
+            if (!_connected) return;
+        }
+
         var payload:String = '{"max":64,"cursor":' + _cursor + '}';
         var result:Dynamic = null;
         try {
@@ -590,6 +614,11 @@ class FCMBridge extends MovieClip {
                 _connected = false;
                 stopPollTimer();
                 scheduleConnectRetry();
+            } else if (_api.provider == FcmNativeApi.XSCAL
+                    && FcmAuthFlow.isPendingTransportResponse(rs)) {
+                // The xScal subscriber is still being created by its worker.
+                // Leave the connection alive and let the next poll refresh auth.
+                return;
             }
             return;
         }

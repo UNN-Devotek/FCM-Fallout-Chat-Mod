@@ -38,6 +38,15 @@ ZFE's native editor is retained only as a no-lock fallback when SharedHUDTools i
 cannot open. The child widget never dispatches `ControlMap` events itself. The relay payloads,
 channel slugs, server-room controls, auth gate, and cursor polling remain shared.
 
+The provider lifecycle is not identical: xScal's `connect` is asynchronous and may return
+`{"success":true,"status":"connecting"}` while its worker performs hello/register. FCM records
+that as an accepted-but-pending transport, does not immediately reconnect, and refreshes
+`getAuthState` during the normal poll loop. `authenticated` enables chat; `connecting`/`pending`
+are retained as intermediate states; only explicit terminal states (`rejected`, `disconnected`,
+token failure, or equivalent) tear down the session. This prevents a three-second reconnect loop.
+The generic xScal `__SFCodeObj.call` callback is optional diagnostics only: FCM routes `log` there
+when exposed, while all `chat.v1.*` verbs go exclusively to `chatInterface`.
+
 ## Connection and authentication
 
 The backend upgrade router dispatches `/relay` to `relayHandler`. A ZFE client

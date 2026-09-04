@@ -1,5 +1,5 @@
 // Vitest coverage for the pure logic of the in-game HUD chat widget
-// (game-mods/FCMBridge/hudmodloader-chat/FCMChatWidget.hx, v2.10.46). The .hx compiles
+// (game-mods/FCMBridge/hudmodloader-chat/FCMChatWidget.hx, v2.10.47). The .hx compiles
 // to a SWF and is not testable in-process; the pure algorithms are mirrored in
 // fcm-chat-widget-logic.js and asserted here. Keep both in lockstep with the .hx.
 

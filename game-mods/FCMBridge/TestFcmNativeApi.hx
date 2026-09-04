@@ -60,6 +60,7 @@ class TestFcmNativeApi {
             Std.string(xApi.call("chat.v1.notACommand", "{}")).indexOf("unsupported_command") >= 0);
         check("xScal capability probe uses chatInterface", xApi.probeChatCapability()
             && xCalls[xCalls.length - 1] == "getRuntimeInfo|{}");
+        check("xScal without a logger fails log calls closed", Std.string(xApi.call("log", "{}")) == "");
 
         // xScal v0.1.14 exposes both its chat interface and a generic
         // __SFCodeObj.call callback object on the movie root. The generic
@@ -93,6 +94,43 @@ class TestFcmNativeApi {
             sfChatApi != null && sfChatApi.provider == FcmNativeApi.XSCAL);
         check("does not probe direct __SFCodeObj xScal callback",
             genericXscalCalls.length == 0);
+
+        var loggerCalls:Array<String> = [];
+        var logger:Dynamic = {};
+        logger.call = function(verb:String, payload:String):String {
+            loggerCalls.push(verb + "|" + payload);
+            return "{" + '"success":true' + "}";
+        };
+        var loggingScope:Dynamic = {};
+        Reflect.setField(loggingScope, "__SFECodeObj", { chatInterface: chat });
+        Reflect.setField(loggingScope, "__SFCodeObj", logger);
+        var loggingApi:FcmNativeApi = FcmNativeApi.discover(loggingScope);
+        check("xScal chat discovery keeps the generic callback only as a logger",
+            loggingApi != null && loggingApi.provider == FcmNativeApi.XSCAL);
+        check("xScal diagnostics use the optional generic logger",
+            Std.string(loggingApi.call("log", "{\"message\":\"boot\"}"))
+                .indexOf('"success":true') >= 0
+            && loggerCalls.length == 1
+            && loggerCalls[0] == "log|{\"message\":\"boot\"}");
+        check("xScal chat calls do not use the generic logger",
+            loggerCalls.length == 1);
+
+        // The widget can be a child SWF whose root is not the movie root. The
+        // active xScal chat surface and its generic logger must still be found
+        // from the shared main-stage object.
+        var stageScope:Dynamic = {};
+        var stageRoot:Dynamic = { chatInterface: chat };
+        Reflect.setField(stageRoot, "call", genericXscal.call);
+        var stage:Dynamic = {};
+        Reflect.setField(stage, "__SFECodeObj", stageRoot);
+        Reflect.setField(stage, "__SFCodeObj", logger);
+        Reflect.setField(stageScope, "stage", stage);
+        var stageApi:FcmNativeApi = FcmNativeApi.discover(stageScope);
+        check("discovers xScal from the main-stage surface",
+            stageApi != null && stageApi.provider == FcmNativeApi.XSCAL);
+        stageApi.call("log", "{\"message\":\"stage\"}");
+        check("finds the main-stage generic callback as diagnostics only",
+            loggerCalls.length == 2 && genericXscalCalls.length == 0);
 
         // A legacy __SFCodeObj remains supported only when it positively
         // answers the ZFE chat capability probe.

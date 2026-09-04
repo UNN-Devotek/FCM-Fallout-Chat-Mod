@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-09-04):** v2.10.46 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-09-04):** v2.10.47 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -75,6 +75,12 @@ treats that object as ZFE by name alone. ZFE is gated on
 `zfe-chat-online-v1`; xScal is gated on the required `connect`, `pollEvents`, and `sendMessage`
 methods plus its positive runtime response when `getRuntimeInfo` is available. Both providers use
 the same relay payloads and cursor polling.
+
+xScal's `connect` is asynchronous: `success:true,status:"connecting"` means the native worker
+accepted the request, not that relay authentication is complete. v2.10.47 keeps the transport
+polling, refreshes `getAuthState` on each xScal poll, and reconnects only for an explicit terminal
+state. Its optional generic `__SFCodeObj.call` is retained only for FCM diagnostics (`log`); no
+chat verb is ever routed through that callback.
 
 The `SERVER` sub-tab is backed by the current in-game roster session. After subscribing to
 `BSUIDataManager`, v2.10.46 also reads the cached values of `PlayerListData`, `TeamMarkers`,

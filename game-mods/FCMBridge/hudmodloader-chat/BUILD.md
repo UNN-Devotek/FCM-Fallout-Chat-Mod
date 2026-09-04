@@ -1,6 +1,6 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.46. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.47. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
@@ -14,6 +14,13 @@ be classified as ZFE.
 It only uses HUD UI data that Fallout 76 already exposes to its HUD; it does not
 read game memory, inject code, alter game state, or scan local ports/networks.
 Message timestamps are not displayed in the in-game feed; legacy timestamp settings are ignored.
+
+xScal connection is asynchronous. A successful `connect` response with
+`status:"connecting"` is an accepted start request, not authenticated readiness. The widget keeps
+the native transport alive, polls `getAuthState` until it reaches `authenticated`, and only
+reconnects for terminal xScal states such as `rejected` or `disconnected`. The generic
+`__SFCodeObj.call` callback, when present beside `chatInterface`, is diagnostic-only and receives
+FCM's `log` calls, never chat transport calls.
 
 The widget's community tabs are deliberately a **single static text strip**. They
 are navigated with the configured control-map actions and slash commands; do not
@@ -316,7 +323,7 @@ staff validation on every request; the HUD permission is only a visibility hint.
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE or xScal loaded, the startup log identifies `chatv1-widget-v2.10.46`. If
+1. With HUDModLoader and ZFE or xScal loaded, the startup log identifies `chatv1-widget-v2.10.47`. If
    `AccountInfoData` is late, the widget waits and retries. The sender label and a newly sent
    message use the exact public Fallout 76 account handle, including punctuation; neither
    `Wanderer` nor the local character name is used for the relay handshake.

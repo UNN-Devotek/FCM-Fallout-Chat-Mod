@@ -13,6 +13,7 @@
          {
          }
          this._fcmZfe = this.fcmFindZfe(this);
+         this._fcmLogger = this.fcmFindGenericCallback(this);
          this.fcmLog("info","load","hudmenu-init zfe=" + (this._fcmZfe != null));
          this.fcmApplyIniDefaults();
          // Standalone variant: self-load FCMBridge.swf when HUDModLoader is absent.
@@ -120,6 +121,14 @@
                   if(hostSfChat2 != null && hostSfChat2["chatInterface"] != null) { hostXscal = hostSfChat2; }
                } catch(eX5:Error) {}
             }
+            var hostLogger:* = null;
+            if(hostXscal != null)
+            {
+               // xScal chatInterface and its generic diagnostic callback are
+               // separate surfaces on most builds. Pass the latter only as a
+               // logger; FCMBridge never routes chat.v1 verbs through it.
+               hostLogger = this.fcmFindGenericCallback(this);
+            }
             var hostNative:* = hostZfe;
             var provider:String = (hostZfe != null) ? "zfe" : "";
             if(hostNative == null)
@@ -152,7 +161,7 @@
             this.fcmLog("info","native","provider=" + provider + " bridge=" + found);
             if(hostNative != null)
             {
-               try { this._fcmBridge.fcmSetNativeApi(hostNative, provider); }
+               try { this._fcmBridge.fcmSetNativeApi(hostNative, provider, hostLogger); }
                catch(eSet:Error)
                {
                   this.fcmLog("warn","native","fcmSetNativeApi threw: " + eSet.message);
@@ -847,13 +856,57 @@
       public function fcmLog(level:String, cat:String, msg:String) : void
       {
          if(this._fcmZfe == null) { this._fcmZfe = this.fcmFindZfe(this); }
-         if(this._fcmZfe == null) { return; }
+         if(this._fcmLogger == null) { this._fcmLogger = this.fcmFindGenericCallback(this); }
+         var logger:* = this._fcmZfe != null ? this._fcmZfe : this._fcmLogger;
+         if(logger == null) { return; }
          var safeMsg:String = this.fcmClean(msg);
          try
          {
-            this._fcmZfe.call("log","{\"vendor\":\"HUDMenuChat\",\"level\":\"" + level + "\",\"category\":\"" + cat + "\",\"message\":\"" + safeMsg + "\"}");
+            logger.call("log","{\"vendor\":\"HUDMenuChat\",\"level\":\"" + level + "\",\"category\":\"" + cat + "\",\"message\":\"" + safeMsg + "\"}");
          }
          catch(eLog:Error) {}
+      }
+
+      // xScal's __SFCodeObj.call is a diagnostic callback registry, not the
+      // chat transport. Find it for log forwarding without ever making it a
+      // provider candidate on its own.
+      public function fcmFindGenericCallback(scope:*) : Object
+      {
+         var cur:* = scope;
+         var depth:int = 0;
+         while(cur != null && depth < 25)
+         {
+            try
+            {
+               var candidate:* = cur["__SFCodeObj"];
+               if(candidate != null && candidate.call != null) { return candidate; }
+            }
+            catch(eCandidate:Error) {}
+            try { cur = cur.parent; }
+            catch(eParent:Error) { cur = null; }
+            depth = depth + 1;
+         }
+         try
+         {
+            var stage:* = scope.stage;
+            if(stage != null && stage != scope)
+            {
+               var stageCandidate:* = stage["__SFCodeObj"];
+               if(stageCandidate != null && stageCandidate.call != null) { return stageCandidate; }
+            }
+         }
+         catch(eStage:Error) {}
+         try
+         {
+            var root:* = scope.root;
+            if(root != null && root != scope)
+            {
+               var rootCandidate:* = root["__SFCodeObj"];
+               if(rootCandidate != null && rootCandidate.call != null) { return rootCandidate; }
+            }
+         }
+         catch(eRoot:Error) {}
+         return null;
       }
 
       public function fcmFindZfe(scope:*) : Object

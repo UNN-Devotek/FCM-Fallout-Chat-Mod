@@ -7,10 +7,16 @@ selected automatically. Depending on the xScal build, that surface may be
 under `__SFECodeObj` or `__SFCodeObj`. A call-only `__SFCodeObj` remains a
 separate generic callback object and is not a ZFE discriminator.
 
-> **Current widget (2026-09-04):** `FCMChatWidget` v2.10.46 targets `/relay` through
+> **Current widget (2026-09-04):** `FCMChatWidget` v2.10.47 targets `/relay` through
 > ZFE `chat.v1` or xScal `chatInterface`. If both providers are present, ZFE is
 > preferred for its native text-input path; xScal uses SharedHUDTools text input.
 > The desktop overlay remains independent of this optional mod path.
+
+xScal `connect` is asynchronous. `success:true,status:"connecting"` is a pending-start response;
+the FCM widget keeps the accepted transport alive, refreshes xScal auth state from the poll loop,
+and reconnects only on explicit terminal states. If xScal exposes a separate generic
+`__SFCodeObj.call`, FCM uses it only for the optional `log` diagnostic path and never for chat
+verbs.
 
 ## Provider paths and automatic detection
 
