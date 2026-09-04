@@ -14,9 +14,11 @@
  * before process.exit(1) — so reverting the guard makes them fail.
  *
  * Coverage:
+ *  - a missing or malformed switch is reported in production instead of silently
+ *    disabling the paid feature
  *  - each missing role var is reported, individually and together
  *  - a fully configured production tier is accepted
- *  - the guard fires ONLY when SUPPORTER_TIER_ENABLED=true
+ *  - an explicit false remains a supported kill switch
  *  - the guard fires ONLY when NODE_ENV=production
  */
 
@@ -45,6 +47,7 @@ const { collectSupporterTierProductionErrors } = env;
 const FULLY_CONFIGURED = {
   nodeEnv: 'production',
   supporterTierEnabled: true,
+  supporterTierEnabledConfigured: true,
   supporterRoleId: '111111111111111111',
   overseerCircleRoleId: '222222222222222222',
   discordServerShopUrl: 'https://discord.com/servers/example/shop',
@@ -87,6 +90,7 @@ describe('collectSupporterTierProductionErrors — production + tier enabled', (
       collectSupporterTierProductionErrors({
         nodeEnv: 'production',
         supporterTierEnabled: true,
+        supporterTierEnabledConfigured: true,
         supporterRoleId: '',
         overseerCircleRoleId: '',
         discordServerShopUrl: '',
@@ -96,13 +100,25 @@ describe('collectSupporterTierProductionErrors — production + tier enabled', (
 });
 
 describe('collectSupporterTierProductionErrors — guard scoping', () => {
-  it('does NOT fire when the tier is disabled, even with nothing configured', () => {
-    // This is the whole point of the flag: the code ships to production long before
-    // the roles exist or Discord monetization is approved.
+  it('reports a missing switch instead of silently treating it as disabled', () => {
     expect(
       collectSupporterTierProductionErrors({
         nodeEnv: 'production',
         supporterTierEnabled: false,
+        supporterTierEnabledConfigured: false,
+        supporterRoleId: '',
+        overseerCircleRoleId: '',
+        discordServerShopUrl: '',
+      }),
+    ).toEqual(['SUPPORTER_TIER_ENABLED']);
+  });
+
+  it('accepts an explicit false kill switch, even with no role IDs', () => {
+    expect(
+      collectSupporterTierProductionErrors({
+        nodeEnv: 'production',
+        supporterTierEnabled: false,
+        supporterTierEnabledConfigured: true,
         supporterRoleId: '',
         overseerCircleRoleId: '',
         discordServerShopUrl: '',
@@ -115,6 +131,7 @@ describe('collectSupporterTierProductionErrors — guard scoping', () => {
       collectSupporterTierProductionErrors({
         nodeEnv,
         supporterTierEnabled: true,
+        supporterTierEnabledConfigured: true,
         supporterRoleId: '',
         overseerCircleRoleId: '',
         discordServerShopUrl: '',

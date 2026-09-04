@@ -389,4 +389,5 @@ record; this is the service-level map.
 | `userLookup.ts` | Shared `getUserByDiscordId()`. Replaces a lookup that was copy-pasted ~15 times. |
 
 `cosmeticsEnabled()` is the master kill switch (`SUPPORTER_TIER_ENABLED`, default
-`false`). With it off the entire surface is inert — see the supporter-tier doc.
+`false` outside production). Production must declare the switch explicitly; with it off
+the entire surface is inert — see the supporter-tier doc.

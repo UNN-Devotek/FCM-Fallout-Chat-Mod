@@ -152,8 +152,9 @@ registers the guild-scoped `/cosmetics` command.
 the Developer Portal — dev and prod are separate applications, so this must be done
 twice. Without it the gateway connection is rejected outright.
 
-Both are gated on `SUPPORTER_TIER_ENABLED` (default `false`): with the tier off the
-command is never registered and no listener attaches. When enabled, the startup
+Both are gated on `SUPPORTER_TIER_ENABLED` (default `false` outside production): with
+the tier off the command is never registered and no listener attaches. Production must
+declare the switch explicitly. When enabled, the startup
 reconcile runs immediately after the gateway is ready; linked login/link-status,
 overlay/dashboard refreshes, and `/cosmetics` interactions also perform a bounded
 live role check, so roles granted while the feature was off do not depend on a

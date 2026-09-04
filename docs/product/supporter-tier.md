@@ -209,13 +209,13 @@ and silently flatten every effect to a plain name.
 | `SUPPORTER_ROLE_ID` | Discord role for the Supporter tier |
 | `OVERSEER_CIRCLE_ROLE_ID` | Discord role for Overseer's Circle |
 | `ADMIN_ROLE_ID` | Staff role that receives the full Overseer-level cosmetics catalog while the feature is enabled; does not grant moderation access |
-| `SUPPORTER_TIER_ENABLED` | **Master kill switch. Defaults to `false`, including in production.** |
+| `SUPPORTER_TIER_ENABLED` | Master kill switch. Defaults to `false` outside production; production must explicitly set `true` or `false`. |
 | `DISCORD_SERVER_SHOP_URL` | Web purchase URL for the CTA |
 
 ### The kill switch
 
 `SUPPORTER_TIER_ENABLED` gates the WHOLE feature, not just the purchase CTA. With it
-off — the default everywhere, including production — the feature is completely inert
+off — the default outside production — the feature is completely inert
 for everyone, including members with `ADMIN_ROLE_ID`:
 
 - no cosmetics are attached to any chat message (chat renders byte-identically to
@@ -228,8 +228,10 @@ for everyone, including members with `ADMIN_ROLE_ID`:
 - the Profile editor and the Appearance guide render nothing (the catalog fetch 404s)
 
 Stored rows are never touched while off, so flipping it on restores everyone's previous
-look exactly. This means the branch can be merged and deployed to production with zero
-observable change, and the commercial launch is a separate, deliberate act.
+look exactly. In production, the switch must be explicitly present: an omitted or
+malformed value is a fatal startup error rather than silently disabling the feature after
+a deployment regenerates `.env`. An explicit `false` remains available for a deliberate
+commercial hold.
 
 `supporterKillSwitch.test.js` asserts all of the above, plus one regression: the route
 guard must be applied PER ROUTE, never as `router.use()`. This router is mounted at
@@ -237,10 +239,18 @@ guard must be applied PER ROUTE, never as `router.use()`. This router is mounted
 every request under `/api` and 404'd the entire API whenever the tier was off. The
 integration suites caught it (23 failures across health, mcp and wiki).
 
-Production **refuses to boot** if the tier is enabled while either required role ID is
-unset — otherwise Discord would take a subscriber's money while no role could ever
-match. `DISCORD_SERVER_SHOP_URL` is optional; when it is unset, the purchase CTA is
-omitted and cosmetics still work. Guard: `collectSupporterTierProductionErrors()`.
+Production **refuses to boot** if `SUPPORTER_TIER_ENABLED` is omitted or malformed, or
+if the tier is enabled while either required role ID is unset — otherwise a deploy could
+silently disable the paid feature, or Discord could take a subscriber's money while no
+role could ever match. `DISCORD_SERVER_SHOP_URL` is optional; when it is unset, the
+purchase CTA is omitted and cosmetics still work. Guard:
+`collectSupporterTierProductionErrors()`.
+
+For Prod, save all three supporter settings in the Dokploy Compose project's persistent
+Environment editor (`SUPPORTER_TIER_ENABLED`, `SUPPORTER_ROLE_ID`, and
+`OVERSEER_CIRCLE_ROLE_ID`). Do not edit the generated `.env` inside Dokploy's checkout:
+Dokploy regenerates that file on redeploy from its saved environment, so an ad-hoc edit is
+lost on the next deployment.
 
 Requires the **`GuildMembers` privileged intent**, enabled per Discord application —
 dev and prod are separate apps, so twice.

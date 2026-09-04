@@ -3,6 +3,14 @@ import { existsSync } from 'fs';
 dotenv.config();
 if (existsSync('.env.local')) dotenv.config({ path: '.env.local', override: true });
 
+// Keep the raw value long enough to distinguish an intentional `false` from a
+// missing or malformed production setting. The parsed boolean alone would
+// silently disable the paid supporter feature when a deployment regenerates
+// `.env` without this variable.
+const rawSupporterTierEnabled = process.env.SUPPORTER_TIER_ENABLED?.trim().toLowerCase();
+const supporterTierEnabledConfigured = rawSupporterTierEnabled === 'true'
+  || rawSupporterTierEnabled === 'false';
+
 export interface Environment {
   NODE_ENV: string;
   PORT: number;
@@ -227,7 +235,7 @@ const env: Environment = {
   MODERATOR_ROLE_ID: process.env.MODERATOR_ROLE_ID || '',
   SUPPORTER_ROLE_ID: process.env.SUPPORTER_ROLE_ID || '',
   OVERSEER_CIRCLE_ROLE_ID: process.env.OVERSEER_CIRCLE_ROLE_ID || '',
-  SUPPORTER_TIER_ENABLED: (process.env.SUPPORTER_TIER_ENABLED || 'false').toLowerCase() === 'true',
+  SUPPORTER_TIER_ENABLED: rawSupporterTierEnabled === 'true',
   DISCORD_SERVER_SHOP_URL: process.env.DISCORD_SERVER_SHOP_URL || '',
 
   SESSION_SECRET: process.env.SESSION_SECRET || '',
@@ -352,26 +360,29 @@ export function hudIdentitySecretGuardFails(opts: {
  * boot the supporter tier (empty array = OK). Exported (and re-attached to
  * module.exports below) so the unit test asserts the REAL guard rather than a copy.
  *
- * The tier is a PAID product: if SUPPORTER_TIER_ENABLED is true but the tier role IDs
- * are missing, Discord would happily take a subscriber's money while
- * resolveSupporterTier could never match a role — the buyer pays and receives nothing,
- * silently and indefinitely. Refuse to boot instead. The shop URL is optional: when it
- * is absent, the purchase CTA is omitted while supporter cosmetics remain available.
- *
- * Only fires when the tier is actually switched on, so the code can ship to production
- * with SUPPORTER_TIER_ENABLED=false long before the roles exist.
+ * The tier is a PAID product: production must explicitly declare the master switch.
+ * An omitted or malformed switch otherwise parses as false and silently disables the
+ * feature after a deployment platform regenerates `.env`. An explicit `false` remains
+ * supported as a deliberate kill switch. When enabled, missing tier role IDs would let
+ * Discord take a subscriber's money while resolveSupporterTier could never match a role
+ * — the buyer pays and receives nothing, silently and indefinitely. Refuse to boot
+ * instead. The shop URL is optional: when it is absent, the purchase CTA is omitted
+ * while supporter cosmetics remain available.
  */
 export function collectSupporterTierProductionErrors(opts: {
   nodeEnv: string;
   supporterTierEnabled: boolean;
+  /** True only when SUPPORTER_TIER_ENABLED is an explicit `true` or `false`. */
+  supporterTierEnabledConfigured: boolean;
   supporterRoleId: string | undefined | null;
   overseerCircleRoleId: string | undefined | null;
   /** Optional purchase CTA destination; it must never block supporter cosmetics. */
   discordServerShopUrl?: string | null;
 }): string[] {
   if (opts.nodeEnv !== 'production') return [];
-  if (!opts.supporterTierEnabled) return [];
   const errors: string[] = [];
+  if (!opts.supporterTierEnabledConfigured) errors.push('SUPPORTER_TIER_ENABLED');
+  if (!opts.supporterTierEnabled) return errors;
   if (!opts.supporterRoleId) errors.push('SUPPORTER_ROLE_ID');
   if (!opts.overseerCircleRoleId) errors.push('OVERSEER_CIRCLE_ROLE_ID');
   return errors;
@@ -445,6 +456,7 @@ if (env.NODE_ENV === 'production') {
   missing.push(...collectSupporterTierProductionErrors({
     nodeEnv: env.NODE_ENV,
     supporterTierEnabled: env.SUPPORTER_TIER_ENABLED,
+    supporterTierEnabledConfigured,
     supporterRoleId: env.SUPPORTER_ROLE_ID,
     overseerCircleRoleId: env.OVERSEER_CIRCLE_ROLE_ID,
     discordServerShopUrl: env.DISCORD_SERVER_SHOP_URL,
