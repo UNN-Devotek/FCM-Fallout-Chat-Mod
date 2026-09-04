@@ -1,5 +1,5 @@
 // Vitest coverage for the pure logic of the in-game HUD chat widget
-// (game-mods/FCMBridge/hudmodloader-chat/FCMChatWidget.hx, v2.10.4). The .hx compiles
+// (game-mods/FCMBridge/hudmodloader-chat/FCMChatWidget.hx, v2.10.46). The .hx compiles
 // to a SWF and is not testable in-process; the pure algorithms are mirrored in
 // fcm-chat-widget-logic.js and asserted here. Keep both in lockstep with the .hx.
 
@@ -18,8 +18,8 @@ const {
   serverSessionResult,
   serverSendDecision,
   shouldSendRosterControl,
-  nativeLockAdmission,
-  nativeLockRelease,
+  shouldRebindRosterSession,
+  inputOwnerAdmission,
   hudUserEventAction,
   hudUserEventIsDown,
   isExternalInputAction,
@@ -50,7 +50,6 @@ const {
   worldControlBody,
   jsonEscape,
   sharedHudPromptMode,
-  customEventDefinitionNames,
   parseInputSubmit,
   emptyFeedNotice,
   chatVerbFailed,
@@ -62,6 +61,7 @@ const {
   nativeTruthy,
   probeUsable,
   parseInputText,
+  nativeInputBufferIsClear,
   jsonObjectEnd,
   parseModerationCommand,
   findModerationTarget,
@@ -378,6 +378,12 @@ describe('server-room acknowledgement gating', () => {
       lastWorldId: 'legacy-world', currentWorldId: '', freshRosterObservation: false,
     })).toBe(false);
   });
+  it('recognizes a disjoint roster as a new server session', () => {
+    expect(shouldRebindRosterSession('Ada|Beck', 'Cy|Dana')).toBe(true);
+    expect(shouldRebindRosterSession('Ada|Beck', 'Ada|Cy')).toBe(false);
+    expect(shouldRebindRosterSession('Ada|Beck', '')).toBe(true);
+    expect(shouldRebindRosterSession('', 'Ada')).toBe(false);
+  });
   it('emits a PRINTABLE control frame that needs no escaping at all', () => {
     // Retired the NUL-delimited legacy frame. Control bytes must never appear in the SWF:
     // a NUL constant cannot be split() on under GFx, and that is what caused the 2026-08
@@ -401,24 +407,16 @@ describe('server-room acknowledgement gating', () => {
   });
 });
 
-describe('native input requires a balanced game-input lock', () => {
-  it('opens native input only when activation and StartEditText both succeed', () => {
-    expect(nativeLockAdmission(true, true)).toEqual({ nativeOpen: true, fallback: false, deactivate: false, ownsLock: true });
+describe('input ownership and game-control safety', () => {
+  it('uses the host-domain SharedHUDTools editor when available', () => {
+    expect(inputOwnerAdmission(true, true)).toEqual({
+      path: 'shared-hud-tools', ownsGameInputLock: true, childControlMapDispatch: false,
+    });
   });
-  it('closes the half-open native session and falls back when StartEditText fails', () => {
-    expect(nativeLockAdmission(true, false)).toEqual({ nativeOpen: false, fallback: true, deactivate: true, ownsLock: false });
-  });
-  it('falls back without deactivation when native activation itself fails', () => {
-    expect(nativeLockAdmission(false, false)).toEqual({ nativeOpen: false, fallback: true, deactivate: false, ownsLock: false });
-  });
-  it('emits EndEditText exactly once only for a lock owned by this widget', () => {
-    expect(nativeLockRelease(true)).toEqual({ dispatchEndEditText: true, ownsLockAfter: false, retry: false });
-    expect(nativeLockRelease(false)).toEqual({ dispatchEndEditText: false, ownsLockAfter: false, retry: false });
-  });
-  it('retains lock ownership and schedules recovery when EndEditText fails', () => {
-    expect(nativeLockRelease(true, false)).toEqual({ dispatchEndEditText: true, ownsLockAfter: true, retry: true });
-    // A later successful retry is the only transition that clears ownership.
-    expect(nativeLockRelease(true, true)).toEqual({ dispatchEndEditText: true, ownsLockAfter: false, retry: false });
+  it('keeps the native fallback explicitly no-lock', () => {
+    expect(inputOwnerAdmission(false, false)).toEqual({
+      path: 'native-chat-input', ownsGameInputLock: false, childControlMapDispatch: false,
+    });
   });
 });
 
@@ -452,25 +450,31 @@ describe('HUDModLoader event compatibility and native-input recovery', () => {
     expect(hudUserEventAction({ actionName: '', EventName: 'PrevPage' })).toBe('PrevPage');
   });
   it('recognizes external focus actions without treating channel actions as dismissal', () => {
+    expect(isExternalInputAction('OpenSocial')).toBe(true);
     expect(isExternalInputAction('QuickActionsMenu')).toBe(true);
     expect(isExternalInputAction('FriendsList')).toBe(true);
     expect(isExternalInputAction('Escape')).toBe(true);
     expect(isExternalInputAction('NextPage')).toBe(false);
   });
-  it('accumulates a one-character native stream without duplicating a repeated poll', () => {
+  it('accepts a bare boolean as an empty post-clear native buffer', () => {
+    expect(nativeInputBufferIsClear('true', 'true')).toBe(true);
+    expect(nativeInputBufferIsClear('', 'true')).toBe(true);
+    expect(nativeInputBufferIsClear('hello', 'true')).toBe(false);
+    expect(nativeInputBufferIsClear('true', 'false')).toBe(false);
+    expect(nativeInputBufferIsClear('', 'false')).toBe(false);
+  });
+  it('accumulates a one-character native stream, including repeated characters', () => {
     expect(mergeNativeInputText('', 'h')).toBe('h');
     expect(mergeNativeInputText('h', 'e')).toBe('he');
-    expect(mergeNativeInputText('he', 'e')).toBe('e');
+    expect(mergeNativeInputText('he', 'e')).toBe('hee');
+    expect(mergeNativeInputText('hee', 'l')).toBe('heel');
     expect(mergeNativeInputText('he', '')).toBe('');
   });
 });
 
-describe('HUDModLoader fallback presentation and menu routing', () => {
+describe('HUDModLoader host presentation and menu routing', () => {
   it('does not mirror a SharedHUDTools field into the widget prompt', () => {
     expect(sharedHudPromptMode()).toBe('label-only');
-  });
-  it('prefers the game-qualified CustomEvent class required by ControlMap', () => {
-    expect(customEventDefinitionNames()[0]).toBe('Shared.AS3.Events.CustomEvent');
   });
 });
 

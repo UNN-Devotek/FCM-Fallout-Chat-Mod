@@ -28,6 +28,7 @@ import { getRedisClient, getSubscriberClient } from '../../config/redis';
 import prisma from '../../config/prisma';
 import logger from '../../config/logger';
 import env from '../../config/environment';
+import { INSTANCE_ID } from '../../config/instanceIdentity';
 import { clientIp } from '../../utils/clientIp';
 import { mintToken, verifyToken, updateDisplayName, markRelayTokenLinked } from './tokenService';
 import { slugToChannelId, channelIdToSlug, ALL_SLUGS } from './channelMap';
@@ -51,6 +52,10 @@ import {
   relayHudSendAck,
   type RelayHudCosmetics,
 } from './relayCosmetics';
+import {
+  fanoutRelayLiveChatMessage,
+  registerRelayLiveFanout,
+} from './relayLiveFanout';
 import { engineEvaluate } from '../autoModEngine';
 import { getEffectiveRole, isPrivilegedRole } from '../userRoleService';
 import {
@@ -102,7 +107,9 @@ const RELAY_CONTROL_CHANNEL     = 'relay:control';
 const MAX_SOCKET_BUFFER_BYTES    = 1_048_576;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HISTORY_RESYNC_BIND_WINDOW_MS = 60_000;
-const relayInstanceId = uuidv4();
+// Share the process identity with websocket/handlers.ts. This lets the Redis
+// fallback skip an event that the direct same-process path already delivered.
+const relayInstanceId = INSTANCE_ID;
 
 /**
  * Build the human-facing link-flow URL (bare host + /link) from the public base URL.
@@ -448,6 +455,12 @@ interface SubscriberState {
 const subscribers = new Set<SubscriberState>();
 const pendingSubscriptions = new WeakSet<WebSocket>();
 
+registerRelayLiveFanout((payload) => fanoutRelayLiveChatMessage(
+  payload,
+  subscribers,
+  (subscriber, frame) => sendRaw(subscriber.ws, frame),
+));
+
 function hasSubscriberSocket(ws: WebSocket): boolean {
   for (const subscriber of subscribers) {
     if (subscriber.ws === ws) return true;
@@ -610,7 +623,15 @@ async function ensurePubSub(): Promise<void> {
     const sub = await getSubscriberClient();
     await sub.subscribe(REDIS_BROADCAST_CHANNEL, (message: string) => {
       let parsed: Record<string, unknown>;
-      try { parsed = JSON.parse(message); } catch { return; }
+      try {
+        const value: unknown = JSON.parse(message);
+        if (value === null || typeof value !== 'object' || Array.isArray(value)) return;
+        parsed = value as Record<string, unknown>;
+      } catch { return; }
+
+      // The direct local path already delivered this event. Without this guard,
+      // the same Redis publish would produce a second HUD event on this process.
+      if (parsed.instanceId === INSTANCE_ID) return;
 
       // The WS handler's broadcast() publishes a wrapped envelope on this same
       // Redis channel: { instanceId, payload: { type:'chat:message', payload:{…} } }.
@@ -622,47 +643,8 @@ async function ensurePubSub(): Promise<void> {
 
       // We only forward chat:message events.
       if (envelope.type !== 'chat:message') return;
-      const p = envelope.payload as Record<string, unknown>;
-      if (!p) return;
-
-      const relaySeq    = typeof p.relaySeq === 'number' ? p.relaySeq : null;
-      const channelId   = typeof p.channelId === 'string' ? p.channelId : null;
-      const slug        = channelId ? channelIdToSlug(channelId) : null;
-
-      // No relaySeq = not a relay-originating message; skip
-      if (relaySeq === null) return;
-
-      // The broadcast() payload carries the server time as `timestamp` (ISO 8601 UTC,
-      // set by finalizeMessage). Forward it as `createdAt` so clients can render times.
-      const createdAt = typeof p.timestamp === 'string'
-        ? p.timestamp
-        : (typeof p.createdAt === 'string' ? p.createdAt : '');
-
-      const eventObj = {
-        id:                relaySeq,
-        kind:              'chat.message',
-        messageId:         p.id,
-        channel:           slug ?? channelId, // fall back to UUID if no slug
-        senderUserId:      p.userId,
-        senderDisplayName: p.username,
-        body:              p.content,
-        targetUserId:      '',
-        createdAt,
-        ...relayHudCosmetics(p),
-      };
-
-      // Static channels only. The worldId-scoped 'server' room is fanned out via
-      // SERVER_EVENTS_CHANNEL below (server messages never hit chat:broadcast).
-      for (const sub of subscribers) {
-        if (sub.cursor >= relaySeq) continue; // already seen
-        const event = relayHudEventForClient(eventObj, sub.supportsHudCosmeticsTransport);
-        const frame = JSON.stringify({ op: 'event', cursor: relaySeq, event });
-        if (sendRaw(sub.ws, frame)) {
-          sub.cursor = relaySeq;
-        } else {
-          subscribers.delete(sub);
-        }
-      }
+      fanoutRelayLiveChatMessage(envelope, subscribers,
+        (subscriber, frame) => sendRaw(subscriber.ws, frame));
     });
 
     await sub.subscribe(RELAY_CONTROL_CHANNEL, (message: string) => {

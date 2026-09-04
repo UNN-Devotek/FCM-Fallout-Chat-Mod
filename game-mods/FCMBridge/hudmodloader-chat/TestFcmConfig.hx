@@ -39,7 +39,8 @@ class TestFcmConfig {
         eqb("supporter marker rejects unsafe colour", FcmConfig.supporterStarPresent(false, "url(evil)"), false);
         eqi("supporter color validates server value", FcmConfig.supporterStarColor("#FD4DA6", 0), 0xFD4DA6);
         eqi("supporter color falls back safely", FcmConfig.supporterStarColor("url(evil)", 0xF5CB5B), 0xF5CB5B);
-        var hudWire:String = "FCMHUD/1;s=1;c=%23FD4DA6;t=X%3BY";
+        var hudWire:String = "FCMHUD/1;m=m-1;s=1;c=%23FD4DA6;t=X%3BY";
+        eqs("HUD transport decodes message id", FcmConfig.hudTransportMessageId(hudWire), "m-1");
         eqb("HUD transport recognizes prefix", FcmConfig.hudTransportHasStar(hudWire), true);
         eqs("HUD transport decodes tag", FcmConfig.hudTransportTag(hudWire), "X;Y");
         eqs("HUD transport validates color", FcmConfig.hudTransportStarColor(hudWire), "#FD4DA6");

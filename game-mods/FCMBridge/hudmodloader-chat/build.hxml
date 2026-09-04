@@ -4,7 +4,7 @@
 ##
 ## Prerequisites: Haxe 4.3+
 ## Build: haxe build.hxml
-## Then patch version byte (see BUILD.md).
+## Then normalize: python3 normalize_swf.py FCMChatWidget.swf (see BUILD.md).
 
 --main FCMChatWidget
 --class-path ..

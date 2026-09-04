@@ -99,14 +99,15 @@ This is the subtlety that cost us the most, now fully explained:
 - **Typed text needs the engine's "edit text" gate.** Bethesda games gate text entry through
   `InputManager::AllowTextInput(true)` (SKSE/F4SE expose it; vanilla triggers it via the chat flow). It
   ref-counts: while >0 the engine stops feeding keys to gameplay and routes them to Scaleform's
-  CharEvent pipeline. **This is exactly why we reuse the native `enterChatMode()`** — it runs FO76's own
-  text-entry flow (`stage.focus = ChatEntryText_tf` + `BSUIDataManager "ControlMap::StartEditText"`),
-  which trips the engine's text-input gate for us. Building our own input field means we'd have to
-  trip that gate ourselves (no SKSE-equivalent on FO76 → we'd lean on `StartEditText`/`EndEditText`).
+  CharEvent pipeline. The vanilla `HUDMenu` flow (`stage.focus = ChatEntryText_tf` plus
+  `BSUIDataManager "ControlMap::StartEditText"`) is an in-domain reference, not a safe recipe for
+  a child widget. FCMChatWidget uses HUDModLoader's host-domain `SharedHUDTools.TextEdit`, which
+  owns the balanced Start/Edit and End/Edit lifecycle. A child SWF must not dynamically resolve
+  and dispatch those `ControlMap` events itself.
 - **The native bridge / code-object pattern:** AS↔C++ goes through a code object (vanilla `BGSCodeObj`;
   ours is ZFE's `__SFCodeObj`/`BRG_OBJ`). It exposes named functions callable from AS
   (`call("writeUTFBytes", …)`). Only Null/Bool/Int/Number/String cross — strings for everything.
-- **ZFE native chat-input session (ZFE 0.9.9+) — the sanctioned way to capture text.** ZFE's
+- **ZFE native chat-input session (ZFE 0.9.9+) — no-lock fallback for FCMChatWidget.** ZFE's
   `dxgi.dll` exposes a native chat-input API as **TOP-LEVEL** ZFE commands (called bare, like
   `getRuntimeInfo` / `readStorage` — **NOT** `chat.v1.` commands): **`setChatInputActive`**,
   **`isChatInputActive`**, **`readChatInput`**, **`clearChatInput`**, **`consumeChatInputSubmitted`**,
@@ -118,14 +119,17 @@ This is the subtlety that cost us the most, now fully explained:
   `consumeChatInputSubmitted("{}")` → a bare boolean (`true` = Enter pressed since last check — **not**
   the text); `readChatInput("{}")` → the in-progress buffer text (this is where the message text comes
   from); `isChatInputActive`/`isChatKeyPressed` → `true`/`false`; `clearChatInput("{}")` → `true`. ZFE
-  drives FO76's own text-input gate for you, so you do **not** roll your own input field. `sendMessage`
+  exposes a bridge-owned buffer, but this fallback does not provide FCMChatWidget's game-control
+  lock. `sendMessage`
   is the one command that IS `chat.v1.`-prefixed (never bare — a bare `sendMessage` hits the legacy
   bridge and returns literal `false`). FCMChatWidget v2.5.3 runs the real flow when a clean
   self-resetting probe proves it usable: `setChatInputActive("true")` → poll `readChatInput` (show
   in-progress text) + `consumeChatInputSubmitted` (Enter) + `isChatInputActive` (Esc) → on submit
   `chat.v1.sendMessage` the `readChatInput` text → `clearChatInput` + `setChatInputActive("false")`. A
-  low-rate `isChatKeyPressed` edge poll opens chat on the OpenChatKey (PAGE_DOWN); SharedHUDTools
-  remains the fallback. See `game-mods/FCMBridge/hudmodloader-chat/BUILD.md` → "Native chat input (v2.5.3)".
+  low-rate `isChatKeyPressed` edge poll opens chat on the OpenChatKey (INSERT). Current
+  FCMChatWidget v2.10.46 tries SharedHUDTools first; the native path is used only when that host
+  editor is unavailable and never dispatches child-owned `ControlMap` events. See
+  `game-mods/FCMBridge/hudmodloader-chat/BUILD.md` → "Input-path acceptance".
 - **Native Windows only — Proton/Wine is BLOCKED (2026-06-26, tracked in #326).** chat.v1 works
   end-to-end on native Windows but **crashes the game under Proton/Wine** at `chat.v1.connect` (a Zig
   `__fastfail` panic). Root cause is an upstream Zig TLS bug — `std.crypto.tls.Client.readvAdvanced`
@@ -179,13 +183,19 @@ unless we need row interactivity.
   `stage.addEventListener("HUDMod::UserEvent", …)` to receive every control-map action (e.g. `"TeamChat"`,
   `"DiagnosticSnapshot"`=F12, `"L3"`). This is the conflict-free way for a *widget* to get input without
   patching HUDMenu.
+- **Modal handoff:** the in-game Ctrl+Tab social shortcut is delivered at this boundary as the named
+  `OpenSocial` action on the current HUDModLoader path. A widget that owns text input must directly
+  deactivate the no-lock native fallback or call `SharedHUDTools.EndTextEdit()` for the host-owned
+  editor before `HUDMenu.ProcessUserEvent` continues; clearing only a local `inputOpen` flag leaves
+  the `ControlMap::StartEditText` gate and can lock the social menu/Escape path.
 - Loader builds do not all expose the same edge: FCMChatWidget accepts the first key-down or a
   key-up-only HUDMod::UserEvent for Page Up/Page Down and feed navigation, with a per-action latch
   preventing a key-down plus key-up pair from switching twice.
 - **`SharedHUDTools` IPC + text entry:** a message bus (`Register`, `SendMessage`) plus
   **`TextEdit(callback, startText)` + `FormatTextEdit(x,y,w,h,font,size,color,bg,alpha)`** — HUDTools'
-  own text-entry machinery that handles gamepad OSK + the StartEditText/EndEditText cycle for you. A
-  cleaner path than re-skinning the native green box, IF the user runs HUDModLoader.
+  own text-entry machinery that handles gamepad OSK + the StartEditText/EndEditText cycle for you.
+  This is the lock-owning primary path for FCMChatWidget, and a cleaner path than re-skinning the
+  native green box when HUDModLoader is present.
 - **HUD-mode filtering** (`HUDModes.All`, suppress in `VATS`/`ScopeMenu`), **`isReloadable=true`**
   (hot-reload from the F11 HUDModLoader menu during dev). Coordinate space is **always 1920×1080**.
 - **Position config convention:** a per-widget `Data/<Widget>.ini` read via `URLLoader("../X.ini")` —

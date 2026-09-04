@@ -1,5 +1,5 @@
 /**
- * The small cosmetic subset understood by the in-game HUD widget.
+ * The small HUD projection understood by the in-game HUD widget.
  *
  * The web clients receive the complete cosmetics object. The HUD only needs the
  * validated custom tag and the immutable supporter marker, so keeping this
@@ -44,7 +44,7 @@ export function withoutRelayHudCosmetics<T extends Record<string, unknown>>(even
 }
 
 /**
- * Encode the HUD cosmetic projection in the existing, native-known targetUserId
+ * Encode the HUD message identity and cosmetic projection in the existing, native-known targetUserId
  * member. ZFE's native chat bridge filters unknown JSON members before returning
  * an event to Scaleform, while targetUserId is already part of the chat.v1 event
  * schema and is empty for ordinary channel messages.
@@ -54,8 +54,15 @@ export function withoutRelayHudCosmetics<T extends Record<string, unknown>>(even
  * JSON contract. The version-gated caller is responsible for sending this only
  * to widgets that know how to decode it.
  */
-export function relayHudCosmeticTransport(cosmetics: RelayHudCosmetics): string {
+export function relayHudCosmeticTransport(
+  cosmetics: RelayHudCosmetics,
+  messageId?: string,
+): string {
   const fields: string[] = [];
+  const stableMessageId = typeof messageId === 'string' ? messageId.trim() : '';
+  if (stableMessageId && stableMessageId.length <= 128) {
+    fields.push(`m=${encodeURIComponent(stableMessageId)}`);
+  }
   if (cosmetics.supporterStar) fields.push('s=1');
   if (cosmetics.starColor && HEX_COLOR.test(cosmetics.starColor)) {
     fields.push(`c=${encodeURIComponent(cosmetics.starColor)}`);
@@ -91,14 +98,18 @@ export function relayHudEventForClient<T extends Record<string, unknown>>(
   }
   if (!supportsCosmeticTransport) return event;
 
-  const transport = relayHudCosmeticTransport(cosmetics);
+  const transport = relayHudCosmeticTransport(
+    cosmetics,
+    typeof event.messageId === 'string' ? event.messageId : '',
+  );
   return transport
     ? ({ ...event, targetUserId: transport } as T)
     : event;
 }
 
 /**
- * Adapt a send acknowledgement for the native HUD bridge.
+ * Adapt a send acknowledgement for the native HUD bridge, including its stable
+ * message ID so the widget can reconcile its optimistic local row.
  *
  * ZFE preserves the established `targetUserId` member but may discard newer
  * cosmetic members from RPC responses. Keep the additive fields for raw relay
@@ -113,7 +124,10 @@ export function relayHudSendAck<T extends Record<string, unknown>>(
   const next = { ...ack, ...cosmetics } as T;
   if (!supportsCosmeticTransport) return next;
 
-  const transport = relayHudCosmeticTransport(cosmetics);
+  const transport = relayHudCosmeticTransport(
+    cosmetics,
+    typeof next.messageId === 'string' ? next.messageId : '',
+  );
   return transport
     ? ({ ...next, targetUserId: transport } as T)
     : next;
