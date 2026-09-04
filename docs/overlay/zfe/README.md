@@ -2,10 +2,10 @@
 
 ZFE (Zeroed Fallout Extender) and xScal are supported script-extender providers
 for Fallout 76's Scaleform HUD. FCM's optional `FCMChatWidget` HUDModLoader mod
-uses ZFE's sanctioned `chat.v1` surface or xScal's
-`__SFECodeObj.chatInterface` surface, selected automatically. xScal may also
-install a separate generic `__SFCodeObj.call` callback object; that object is
-not the xScal chat API and is not a ZFE discriminator.
+uses ZFE's sanctioned `chat.v1` surface or xScal's `chatInterface` surface,
+selected automatically. Depending on the xScal build, that surface may be
+under `__SFECodeObj` or `__SFCodeObj`. A call-only `__SFCodeObj` remains a
+separate generic callback object and is not a ZFE discriminator.
 
 > **Current widget (2026-09-04):** `FCMChatWidget` v2.10.46 targets `/relay` through
 > ZFE `chat.v1` or xScal `chatInterface`. If both providers are present, ZFE is
@@ -17,7 +17,7 @@ not the xScal chat API and is not a ZFE discriminator.
 | Provider | Runtime object | Configuration path | FCM code path |
 |---|---|---|---|
 | ZFE | `__ZFE` or `ZFECodeObj` with `.call`; legacy `__SFCodeObj` is accepted only after a positive `chat.v1.getRuntimeInfo` probe | `Data/configuration/zfe.ini` or `Documents/My Games/Fallout 76/configuration/zfe.ini`; FCM fragment at `Data/ZFE/TextChat/fragments/FCM.ini` | `FcmNativeApi.hx` calls canonical `chat.v1.*` verbs and preserves ZFE native input |
-| xScal | `__SFECodeObj.chatInterface` with `connect`, `pollEvents`, and `sendMessage`; its separate `__SFCodeObj.call` is not used for chat | `xscal.ini` beside the Fallout 76 executable, using the `[Chat]` section; package example is `xscal.ini.example` | `FcmNativeApi.hx` removes `chat.v1.`, maps `report` → `reportMessage`, and uses SharedHUDTools input |
+| xScal | `__SFECodeObj.chatInterface` or `__SFCodeObj.chatInterface` with `connect`, `pollEvents`, and `sendMessage`; a call-only `__SFCodeObj` is not used for chat | `xscal.ini` beside the Fallout 76 executable, using the `[Chat]` section; package example is `xscal.ini.example` | `FcmNativeApi.hx` removes `chat.v1.`, maps `report` → `reportMessage`, and uses SharedHUDTools input |
 
 The shared widget files are `Data/FCMChatWidget.ba2`, `Data/FCMChat.ini`, and the
 HUDModLoader registry entry. `hudmenu-chat/fcm-inject.as` passes the host's ZFE or

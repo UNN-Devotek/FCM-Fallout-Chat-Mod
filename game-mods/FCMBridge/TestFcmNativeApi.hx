@@ -81,6 +81,19 @@ class TestFcmNativeApi {
         check("does not probe xScal generic callback when chat surface exists",
             genericXscalCalls.length == 0);
 
+        // Some xScal builds expose the same explicit chat surface directly on
+        // __SFCodeObj. That property is the positive xScal discriminator; the
+        // call-only shape remains ambiguous and must stay quarantined.
+        var sfChatScope:Dynamic = {};
+        var sfChatObject:Dynamic = { chatInterface: chat };
+        Reflect.setField(sfChatObject, "call", genericXscal.call);
+        Reflect.setField(sfChatScope, "__SFCodeObj", sfChatObject);
+        var sfChatApi:FcmNativeApi = FcmNativeApi.discover(sfChatScope);
+        check("discovers xScal chatInterface under __SFCodeObj",
+            sfChatApi != null && sfChatApi.provider == FcmNativeApi.XSCAL);
+        check("does not probe direct __SFCodeObj xScal callback",
+            genericXscalCalls.length == 0);
+
         // A legacy __SFCodeObj remains supported only when it positively
         // answers the ZFE chat capability probe.
         var legacyZfeCalls:Array<String> = [];

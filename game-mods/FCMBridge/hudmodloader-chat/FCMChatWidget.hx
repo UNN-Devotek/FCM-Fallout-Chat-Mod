@@ -98,9 +98,9 @@ private typedef ModerationTargetResolution = {
  *
  * Native provider discovery: widget runs in HUDModLoader's ApplicationDomain
  * (shared with HUDMenu). FcmNativeApi walks the widget's parent/root chain for
- * an explicit ZFE bridge or xScal's __SFECodeObj.chatInterface. xScal also
- * installs a generic __SFCodeObj.call on the movie root; that object is not a
- * ZFE bridge and is never selected by name alone.
+ * an explicit ZFE bridge or xScal's chatInterface under __SFECodeObj or
+ * __SFCodeObj. xScal may also install a generic call-only __SFCodeObj.call on
+ * the movie root; that object is not a ZFE bridge and is never selected by name alone.
  *
  * Channel slugs (AllowedChannels in Data/ZFE/TextChat/fragments/FCMChatWidget.ini):
  *   global, trade, events, infests, raids, server

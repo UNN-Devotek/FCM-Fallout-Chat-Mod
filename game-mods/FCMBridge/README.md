@@ -7,7 +7,8 @@ game's memory or network state.
 ## Transport: automatic ZFE/xScal selection
 
 FCMBridge uses ZFE's **standardized native chat relay protocol** (`chat.v1`) or xScal's
-`__SFECodeObj.chatInterface` instead of the legacy bespoke FCMHUD/1 socket layer. The SWF
+`chatInterface` under `__SFECodeObj` or `__SFCodeObj` instead of the legacy bespoke FCMHUD/1
+socket layer. The SWF
 normalizes both provider surfaces to the same connect/poll/send/auth flow:
 
 ```actionscript
@@ -22,9 +23,10 @@ re-presents it via `hello` on each session.
 
 At startup the SWF probes exposed Scaleform bridge objects, prefers a valid ZFE bridge for
 backwards compatibility, and otherwise selects xScal. xScal exposes both the chat surface
-(`__SFECodeObj.chatInterface`) and, in current builds, a separate generic
-`__SFCodeObj.call` callback object. The latter is not treated as ZFE. xScal's chat bridge does not
-expose ZFE's native text-edit buffer, so the HUD widget uses SharedHUDTools input on xScal and
+(`chatInterface` under either `__SFECodeObj` or `__SFCodeObj`) and, in current builds, may also
+expose a separate call-only `__SFCodeObj` callback object. The latter is not treated as ZFE.
+xScal's chat bridge does not expose ZFE's native text-edit buffer, so the HUD widget uses
+SharedHUDTools input on xScal and
 does not send unsupported editor commands to it.
 
 The capability probe is provider-specific: ZFE receives `chat.v1.getRuntimeInfo`, while xScal

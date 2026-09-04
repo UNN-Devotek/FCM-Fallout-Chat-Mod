@@ -104,8 +104,9 @@ if inject_src:
           "fcm-inject.as discovers hostZfe at HUDMenu level before passing")
     check("fcmSetNativeApi" in inject_src,
           "fcm-inject.as calls fcmSetNativeApi on the bridge (injects either provider)")
-    check("__SFECodeObj" in inject_src and "fcmSetNativeApi" in inject_src,
-          "fcm-inject.as passes the xScal chat bridge when ZFE is absent")
+    check("__SFECodeObj" in inject_src and "__SFCodeObj" in inject_src
+          and "chatInterface" in inject_src and "fcmSetNativeApi" in inject_src,
+          "fcm-inject.as passes either xScal chat surface when ZFE is absent")
     check('fcmSetNativeApi(hostNative, provider)' in inject_src
           and 'provider = (hostNative != null) ? "legacy" : ""' in inject_src,
           "fcm-inject.as passes the provider hint and quarantines ambiguous __SFCodeObj")

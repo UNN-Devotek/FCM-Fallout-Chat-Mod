@@ -67,10 +67,11 @@ ZFE strips unknown event members before the SWF receives them, so v2.10.46 decod
 
 ## Automatic ZFE/xScal chat + keyboard input
 
-The widget discovers a validated ZFE bridge or xScal's `__SFECodeObj.chatInterface` on the parent
-HUDMenu frame. ZFE is preferred for backwards compatibility; xScal is selected when ZFE is absent.
-Current xScal builds also expose a generic `__SFCodeObj.call` on the movie root for unrelated
-callbacks. The widget never treats that object as ZFE by name alone. ZFE is gated on
+The widget discovers a validated ZFE bridge or xScal's `chatInterface` under either
+`__SFECodeObj` or `__SFCodeObj` on the parent HUDMenu frame. ZFE is preferred for backwards
+compatibility; xScal is selected when ZFE is absent. Current xScal builds may also expose a
+generic call-only `__SFCodeObj` on the movie root for unrelated callbacks. The widget never
+treats that object as ZFE by name alone. ZFE is gated on
 `zfe-chat-online-v1`; xScal is gated on the required `connect`, `pollEvents`, and `sendMessage`
 methods plus its positive runtime response when `getRuntimeInfo` is available. Both providers use
 the same relay payloads and cursor polling.

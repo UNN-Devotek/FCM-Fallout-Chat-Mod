@@ -2,10 +2,11 @@
  * Provider-neutral wrapper for the native HUD chat bridge.
  *
  * ZFE exposes a command dispatcher (`api.call(verb, payload)`). xScal exposes
- * the relay operations as methods on `__SFECodeObj.chatInterface` and also
- * installs an unrelated generic callback object at `__SFCodeObj.call`.
- * `__SFCodeObj.call` is therefore ambiguous and must never be treated as ZFE
- * merely because it has a `call` member.
+ * the relay operations as methods on a `chatInterface` object, normally under
+ * `__SFECodeObj` and, in some builds, under `__SFCodeObj`. xScal may also
+ * install an unrelated generic callback object at `__SFCodeObj.call`.
+ * A bare `__SFCodeObj.call` is therefore ambiguous and must never be treated
+ * as ZFE merely because it has a `call` member.
  * Discovery only inspects objects already exposed to the Scaleform movie; it
  * never loads DLLs, reads files, scans ports, or reads game memory.
  */
@@ -33,9 +34,9 @@ class FcmNativeApi {
      * Wrap one already-exposed provider object.
      *
      * The optional hint is supplied by the patched host movie when it knows
-     * which named property it is handing down. A bare `__SFCodeObj` has no
-     * trustworthy provider identity, so it is accepted only after a positive
-     * runtime probe.
+     * which named property it is handing down. A `__SFCodeObj` with an
+     * explicit `chatInterface` is xScal; a bare `__SFCodeObj` has no trustworthy
+     * provider identity and is accepted only after a positive runtime probe.
      */
     public static function fromExposed(raw:Dynamic, providerHint:String = ""):FcmNativeApi {
         if (raw == null) return null;
@@ -48,8 +49,8 @@ class FcmNativeApi {
 
     /**
      * Discover a single active provider. Explicit ZFE objects retain priority;
-     * xScal's chat object is checked before the ambiguous legacy
-     * `__SFCodeObj` compatibility slot.
+     * an explicit xScal `chatInterface` is checked before the ambiguous legacy
+     * `__SFCodeObj.call` compatibility slot.
      */
     public static function discover(scope:Dynamic):FcmNativeApi {
         var z:Dynamic = findZfe(scope);
@@ -79,15 +80,18 @@ class FcmNativeApi {
      *
      * This is intentionally provider-aware: calling the ZFE runtime verb on
      * xScal's generic `__SFCodeObj.call` produces the dispatch failure seen in
-     * xScal logs. xScal's required method surface is already a capability gate;
-     * when it exposes getRuntimeInfo, its positive response is checked too.
+     * xScal logs. xScal's required method surface is a capability gate; when it
+     * exposes getRuntimeInfo, its positive response is checked too.
      */
     public function probeChatCapability():Bool {
         try {
             if (provider == ZFE) {
                 return isZfeChatRuntimeInfo(Std.string(call("chat.v1.getRuntimeInfo", "{}")));
             }
-            if (!xscalRaw(_raw)) return false;
+            if (!xscalRaw(_raw)
+                || !hasChatMethod("connect")
+                || !hasChatMethod("pollEvents")
+                || !hasChatMethod("sendMessage")) return false;
             if (!hasChatMethod("getRuntimeInfo")) return true;
             return isXscalChatRuntimeInfo(Std.string(call("chat.v1.getRuntimeInfo", "{}")));
         } catch (e:Dynamic) {
@@ -144,11 +148,7 @@ class FcmNativeApi {
     static function xscalRaw(obj:Dynamic):Bool {
         if (obj == null) return false;
         try {
-            var chat:Dynamic = Reflect.field(obj, "chatInterface");
-            return chat != null
-                && Reflect.isFunction(Reflect.field(chat, "connect"))
-                && Reflect.isFunction(Reflect.field(chat, "pollEvents"))
-                && Reflect.isFunction(Reflect.field(chat, "sendMessage"));
+            return Reflect.field(obj, "chatInterface") != null;
         } catch (e:Dynamic) {
             return false;
         }
@@ -159,13 +159,12 @@ class FcmNativeApi {
         try {
             if (xscalRaw(obj)) return obj;
         } catch (e:Dynamic) {}
-        try {
-            var candidate:Dynamic = Reflect.field(obj, "__SFECodeObj");
-            if (candidate != null) {
-                var chat:Dynamic = Reflect.field(candidate, "chatInterface");
-                if (xscalRaw(candidate)) return candidate;
-            }
-        } catch (e:Dynamic) {}
+        for (name in ["__SFECodeObj", "__SFCodeObj"]) {
+            try {
+                var candidate:Dynamic = Reflect.field(obj, name);
+                if (candidate != null && xscalRaw(candidate)) return candidate;
+            } catch (e:Dynamic) {}
+        }
         return null;
     }
 
@@ -262,7 +261,16 @@ class FcmNativeApi {
         }
         try { var root:Dynamic = scope.root; var hit:Dynamic = xscalCandidate(root); if (hit != null) return hit; } catch (e:Dynamic) {}
         #if flash
-        try { var globalX:Dynamic = untyped __global__["__SFECodeObj"]; if (globalX != null && xscalCandidate(globalX) != null) return globalX; } catch (e:Dynamic) {}
+        try {
+            var globalX:Dynamic = untyped __global__["__SFECodeObj"];
+            var hitX:Dynamic = xscalCandidate(globalX);
+            if (hitX != null) return hitX;
+        } catch (e:Dynamic) {}
+        try {
+            var globalSf:Dynamic = untyped __global__["__SFCodeObj"];
+            var hitSf:Dynamic = xscalCandidate(globalSf);
+            if (hitSf != null) return hitSf;
+        } catch (e:Dynamic) {}
         #end
         return null;
     }
