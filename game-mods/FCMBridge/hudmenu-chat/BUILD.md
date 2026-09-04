@@ -64,8 +64,9 @@ fragment is only the default.
 When xScal is used, merge the `[Chat]` section from
 `hudmodloader-chat/xscal.ini.example` into the existing `xscal.ini` beside the
 Fallout 76 executable. Keep the existing `xScalPriority` and other sections.
-The runtime detects `__SFECodeObj.chatInterface` automatically; xScal's separate
-`__SFCodeObj.call` is ignored unless it positively answers the legacy ZFE capability probe. The ZFE fragment
+The runtime detects `chatInterface` automatically under either `__SFECodeObj` or
+`__SFCodeObj`; xScal's separate call-only `__SFCodeObj.call` is ignored unless it
+positively answers the legacy ZFE capability probe. The ZFE fragment
 and `zfe.ini` are not required for the xScal transport.
 
 ---
@@ -230,7 +231,7 @@ with open('FCMBridge.swf','r+b') as f:
 Verify the version byte: `python3 -c "print(open('FCMBridge.swf','rb').read(4)[3])"` -> `32`.
 
 FCMBridge requires either **ZFE 0.9.8+** (with `zfe-chat-online-v1`) or xScal with
-`[Chat] enabled=true` and `__SFECodeObj.chatInterface`. At startup it probes only the
+`[Chat] enabled=true` and `chatInterface` under `__SFECodeObj` or `__SFCodeObj`. At startup it probes only the
 selected provider: ZFE receives `chat.v1.getRuntimeInfo`; xScal receives `getRuntimeInfo`
 through `chatInterface` when available. A missing capability refuses connection and logs a
 provider-specific error to `zfe.log`.

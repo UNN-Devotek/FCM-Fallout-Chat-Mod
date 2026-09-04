@@ -366,10 +366,12 @@ class FCMBridge extends MovieClip {
      * provider reference attached at the top-level (parent) SWF.
      *
      * ZFE 0.9.8 sets child_bridge_access=disabled — it does NOT auto-inject
-     * __ZFE into child SWFs. xScal likewise exposes __SFECodeObj on the host
-     * HUD movie. Sharing either reference here lets FCMBridge function fully
-     * without relying on child-SWF global lookup. The provider hint prevents
-     * xScal's generic __SFCodeObj callback object from being mislabeled as ZFE.
+     * __ZFE into child SWFs. xScal exposes chatInterface under __SFECodeObj or
+     * __SFCodeObj on the host HUD movie, depending on the build. Sharing either
+     * reference here lets FCMBridge function fully without relying on child-SWF
+     * global lookup. The provider hint prevents xScal's generic call-only
+     * __SFCodeObj callback object from being mislabeled as ZFE; a __SFCodeObj
+     * that contains chatInterface is treated as xScal instead.
      *
      * Safe to call even if self-discovery already succeeded (no-op in that case).
      * Safe to call before self-discovery finishes (drives boot if api is null).

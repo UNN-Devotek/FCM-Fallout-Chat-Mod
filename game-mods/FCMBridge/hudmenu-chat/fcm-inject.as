@@ -56,9 +56,9 @@
          if(this._fcmBridge == null) { return; }
          try
          {
-            // Keep provider identities separate. xScal installs BOTH an
-            // __SFECodeObj.chatInterface and a generic __SFCodeObj.call on the
-            // movie root; the latter is not a ZFE object.
+            // Keep provider identities separate. xScal exposes chatInterface
+            // under __SFECodeObj in some builds and directly under __SFCodeObj
+            // in others. A bare __SFCodeObj.call is not a ZFE object.
             var hostZfe:* = null;
             try { hostZfe = this["__ZFE"]; } catch(e0:Error) {}
             if(hostZfe == null)
@@ -95,6 +95,30 @@
             if(hostXscal == null)
             {
                try { if(this.root != null) { hostXscal = this.root["__SFECodeObj"]; } } catch(eX2:Error) {}
+            }
+            // Some xScal builds attach chatInterface directly to __SFCodeObj.
+            // Only classify that slot as xScal when the explicit chat surface
+            // exists; a generic call-only object remains legacy/ambiguous.
+            if(hostXscal == null)
+            {
+               try {
+                  var hostSfChat0:* = this["__SFCodeObj"];
+                  if(hostSfChat0 != null && hostSfChat0["chatInterface"] != null) { hostXscal = hostSfChat0; }
+               } catch(eX3:Error) {}
+            }
+            if(hostXscal == null)
+            {
+               try {
+                  var hostSfChat1:* = this.parent != null ? this.parent["__SFCodeObj"] : null;
+                  if(hostSfChat1 != null && hostSfChat1["chatInterface"] != null) { hostXscal = hostSfChat1; }
+               } catch(eX4:Error) {}
+            }
+            if(hostXscal == null)
+            {
+               try {
+                  var hostSfChat2:* = this.root != null ? this.root["__SFCodeObj"] : null;
+                  if(hostSfChat2 != null && hostSfChat2["chatInterface"] != null) { hostXscal = hostSfChat2; }
+               } catch(eX5:Error) {}
             }
             var hostNative:* = hostZfe;
             var provider:String = (hostZfe != null) ? "zfe" : "";
