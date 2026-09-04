@@ -41,6 +41,8 @@ import { editOwnedMessage, MessageEditError } from '../services/messageEditServi
 import { evaluateBuildGate } from '../services/buildLock';
 import { getActiveQaVersion } from '../services/activeQaVersion';
 import env from '../config/environment';
+import { INSTANCE_ID } from '../config/instanceIdentity';
+import { notifyRelayLiveChatMessage } from '../services/relay/relayLiveFanout';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -560,8 +562,6 @@ function safeSend(ws: WebSocket, data: string, label: string): boolean {
   return true;
 }
 
-// Unique identifier for this backend instance
-const INSTANCE_ID = uuidv4();
 const PUBSUB_CHANNEL = 'chat:broadcast';
 
 // Tracks whether Redis pub/sub is active; when false, broadcast is local-only.
@@ -618,8 +618,19 @@ function recipientHasBlockedSender(payload: any, recipient: ClientEntry): boolea
  * Deliver a payload to all local WebSocket clients and admin observers.
  * This is the low-level send -- it does NOT publish to Redis.
  */
-function localBroadcast(payload: any, excludeWs: WebSocket | null = null): void {
+function localBroadcast(
+  payload: any,
+  excludeWs: WebSocket | null = null,
+  notifyRelay: boolean = true,
+): void {
   try { hudPushNotify(payload); } catch { /* hud push must never break chat */ }
+  if (notifyRelay && payload?.type === 'chat:message') {
+    // The native relay subscriber lives in this same process. Deliver the event
+    // directly before Redis; Redis remains the cross-instance path. Keeping this
+    // callback in a dependency-free module avoids handlers <-> relayHandler's
+    // existing ingest initialization cycle.
+    try { notifyRelayLiveChatMessage(payload); } catch { /* relay fan-out must not break web chat */ }
+  }
   const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
   for (const [, client] of clients) {
     if (client.ws === excludeWs || client.ws.readyState !== WebSocket.OPEN) continue;
@@ -742,7 +753,9 @@ async function initPubSub(): Promise<void> {
           }
           return;
         }
-        localBroadcast(envelope.payload);
+        // The relay module receives this same cross-instance envelope directly;
+        // do not notify its local subscribers a second time from this web path.
+        localBroadcast(envelope.payload, null, false);
       } catch (err) {
         logger.warn({ err }, 'Failed to process pub/sub message');
       }

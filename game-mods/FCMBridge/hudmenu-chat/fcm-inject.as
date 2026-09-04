@@ -56,7 +56,9 @@
          if(this._fcmBridge == null) { return; }
          try
          {
-            // Prefer ZFE for backwards compatibility, then probe xScal.
+            // Keep provider identities separate. xScal installs BOTH an
+            // __SFECodeObj.chatInterface and a generic __SFCodeObj.call on the
+            // movie root; the latter is not a ZFE object.
             var hostZfe:* = null;
             try { hostZfe = this["__ZFE"]; } catch(e0:Error) {}
             if(hostZfe == null)
@@ -69,32 +71,64 @@
             }
             if(hostZfe == null)
             {
-               try { hostZfe = ZFECodeObj; } catch(e3:Error) {}
+               try { hostZfe = this["ZFECodeObj"]; } catch(e3:Error) {}
             }
             if(hostZfe == null)
             {
-               try { hostZfe = __SFCodeObj; } catch(e4:Error) {}
+               try { if(this.parent != null) { hostZfe = this.parent["ZFECodeObj"]; } } catch(e4:Error) {}
+            }
+            if(hostZfe == null)
+            {
+               try { if(this.root != null) { hostZfe = this.root["ZFECodeObj"]; } } catch(e5:Error) {}
+            }
+            if(hostZfe == null)
+            {
+               try { hostZfe = ZFECodeObj; } catch(e6:Error) {}
+            }
+
+            var hostXscal:* = null;
+            try { hostXscal = this["__SFECodeObj"]; } catch(eX0:Error) {}
+            if(hostXscal == null)
+            {
+               try { if(this.parent != null) { hostXscal = this.parent["__SFECodeObj"]; } } catch(eX1:Error) {}
+            }
+            if(hostXscal == null)
+            {
+               try { if(this.root != null) { hostXscal = this.root["__SFECodeObj"]; } } catch(eX2:Error) {}
             }
             var hostNative:* = hostZfe;
-            var provider:String = "zfe";
+            var provider:String = (hostZfe != null) ? "zfe" : "";
             if(hostNative == null)
             {
-               try { hostNative = this["__SFECodeObj"]; } catch(eX0:Error) {}
+               hostNative = hostXscal;
+               provider = (hostNative != null) ? "xscal" : "";
+            }
+
+            // __SFCodeObj is a last-resort legacy compatibility candidate.
+            // FcmNativeApi positively probes it before accepting it as ZFE, so
+            // xScal's generic callback surface cannot receive chat.v1 calls.
+            if(hostNative == null)
+            {
+               try { hostNative = this["__SFCodeObj"]; } catch(eL0:Error) {}
                if(hostNative == null)
                {
-                  try { if(this.parent != null) { hostNative = this.parent["__SFECodeObj"]; } } catch(eX1:Error) {}
+                  try { if(this.parent != null) { hostNative = this.parent["__SFCodeObj"]; } } catch(eL1:Error) {}
                }
                if(hostNative == null)
                {
-                  try { if(this.root != null) { hostNative = this.root["__SFECodeObj"]; } } catch(eX2:Error) {}
+                  try { if(this.root != null) { hostNative = this.root["__SFCodeObj"]; } } catch(eL2:Error) {}
                }
-               provider = "xscal";
+               if(hostNative == null)
+               {
+                  try { hostNative = __SFCodeObj; } catch(eL3:Error) {}
+               }
+               provider = (hostNative != null) ? "legacy" : "";
             }
             var found:String = (hostNative != null) ? "found" : "absent";
             this.fcmLog("info","native","provider=" + provider + " bridge=" + found);
             if(hostNative != null)
             {
-               try { this._fcmBridge.fcmSetNativeApi(hostNative); }
+               try { this._fcmBridge.fcmSetNativeApi(hostNative, provider); }
                catch(eSet:Error)
                {
                   this.fcmLog("warn","native","fcmSetNativeApi threw: " + eSet.message);

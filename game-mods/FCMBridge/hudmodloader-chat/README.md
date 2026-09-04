@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-09-03):** v2.10.39 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-09-04):** v2.10.46 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -20,32 +20,37 @@ A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's H
   HUD data arrives.
 - Lets the player send messages. Press the configured open key (default: `INSERT`) to open the
   chat input, type a message, and press Enter to send (`chat.v1.sendMessage`, slug-based channels).
-- Paints the player's own message before entering the synchronous native send RPC, then replaces
-  the temporary row with the authoritative live relay event once it arrives. This prevents a
-  slow TLS/socket call from hiding a locally accepted message; failed sends remove the temporary
-  row, while successful sends still take cosmetics from the relay because ZFE can strip them from
-  native acknowledgements.
+- Paints the player's own message before entering the synchronous native send RPC. The current
+  relay's successful ACK carries the server-resolved tag/star and message ID, so the exact row is
+  decorated immediately; if the live event wins the race, it completes that same row. A legacy
+  Dev ACK without cosmetics preserves only an unambiguous historical own-cosmetics snapshot until
+  the authoritative event arrives. Failed sends remove the temporary row.
 - Supports a scrolling read-back mode: while the user scrolls up, a "N new messages below"
   indicator appears and auto-scroll is suppressed.
 - Renders the server-resolved Overseer tag in the HUD when the relay negotiates widget capability.
   Self-authored messages use the same authoritative live event as Discord and other in-game
   messages, so the tag is not lost to the native send ACK boundary.
-ZFE strips unknown event members before the SWF receives them, so v2.10.39 decodes validated
-  cosmetics from the `FCMHUD/1;...` envelope in the known empty `targetUserId` slot. Older widget
+ZFE strips unknown event members before the SWF receives them, so v2.10.46 decodes the stable
+  message ID and validated cosmetics from the `FCMHUD/1;...` envelope in the known empty
+  `targetUserId` slot. Older widget
   builds receive no envelope. The HUD renders server-validated channel and identity tags plus a
-  supporter marker as a five-point vector `Shape` positioned from the author's text bounds. The
-  marker uses the validated `starColor`; it never inserts U+2605, a bitmap, an HTML image, or a
-  substitution token, so missing Scaleform font glyphs cannot become tofu blocks. Its bounds are
-  transformed into the sibling marker layer and it sits immediately after the measured channel tag
-  (before optional moderation/custom tags), middle-aligned to the author bounds. Feed leading is zero
-  to keep rows compact, and the feed clip
-  rectangle reserves only a 4px safety gap above the top-level HUDTools input field. New content
-  snaps to the end of the feed after each reflow.
-  After queuing the local row, the widget enters the synchronous send RPC on the next timer tick,
-  then schedules one next-tick event poll after success so the authoritative cosmetics-bearing
-  echo appears without waiting for the normal background poll interval. The echo reconciles the
-  pending row in place, including when the extender changes the temporary native identity into the
-  relay identity, so one send produces exactly one feed row.
+  supporter marker as a five-point vector `Shape` in the same row `Sprite` as the channel and
+  message fields. The row measures the channel field, reserves a marker slot, and places the
+  marker immediately after the channel tag, centered on the first message line with a small
+  right/down visual nudge. It
+  never uses `getCharBoundaries()`, document indices, or global/local transforms. The marker uses
+  the validated `starColor`; it never inserts U+2605, a bitmap, an HTML image, or a substitution
+  token, so missing Scaleform font glyphs cannot become tofu blocks. Feed leading is zero to keep
+  rows compact, and the feed clip rectangle reserves only a 4px safety gap above the top-level
+  HUDTools input field. New content snaps to the end of the feed after each reflow.
+  After creating one canonical local send row, the widget enters the synchronous send RPC on the
+  next timer tick. The ACK decorates that row immediately when the relay provides cosmetics; a
+  live event arriving first can complete the same row when it carries a stable ID. The echo
+  reconciles by stable message ID, proven identity, or (for old Dev bridges) a unique
+  ACK-accepted 15-second display-name/channel/body fallback. Ambiguous or stale candidates are
+  never guessed, so one send produces exactly one feed row. The backend direct-fans out finalized
+  events to same-process native subscribers and uses Redis for other instances, with a shared
+  instance guard preventing a direct event from being sent twice.
 - Converts Discord custom-emoji markup (`<:name:id>` and `<a:name:id>`) to a readable `:name:`
   label on the HUD. The web overlay may use Discord CDN images, but the Scaleform HUD does not
   load remote emoji images and therefore never exposes the numeric Discord snowflake ID.
@@ -64,8 +69,20 @@ ZFE strips unknown event members before the SWF receives them, so v2.10.39 decod
 
 The widget discovers a validated ZFE bridge or xScal's `__SFECodeObj.chatInterface` on the parent
 HUDMenu frame. ZFE is preferred for backwards compatibility; xScal is selected when ZFE is absent.
-ZFE is gated on `zfe-chat-online-v1`; xScal is gated on the required `connect`, `pollEvents`, and
-`sendMessage` methods. Both providers use the same relay payloads and cursor polling.
+Current xScal builds also expose a generic `__SFCodeObj.call` on the movie root for unrelated
+callbacks. The widget never treats that object as ZFE by name alone. ZFE is gated on
+`zfe-chat-online-v1`; xScal is gated on the required `connect`, `pollEvents`, and `sendMessage`
+methods plus its positive runtime response when `getRuntimeInfo` is available. Both providers use
+the same relay payloads and cursor polling.
+
+The `SERVER` sub-tab is backed by the current in-game roster session. After subscribing to
+`BSUIDataManager`, v2.10.46 also reads the cached values of `PlayerListData`, `TeamMarkers`,
+`PartyMenuList`, and `VoiceChatAreaData`; `Subscribe()` itself only registers a change callback
+and does not replay the cached value. Provider values are stored as replaceable snapshots. An
+empty or completely disjoint snapshot triggers `LEAVE`, clears only local ephemeral server rows,
+and causes a fresh roster bind on the next poll. Once that bind is acknowledged, the relay
+replays the current room's bounded recent server history and the sub-tab becomes available again.
+Static channel history remains durable; server history is intentionally ephemeral.
 
 Player identity is read only from HUD-published `BSUIDataManager` data.
 `AccountInfoData.name` is authoritative because it is the public Fallout/Bethesda handle other
@@ -74,8 +91,14 @@ as relay identity fallbacks. HUD data can be late, so the widget waits for a usa
 before its first relay handshake and retries without opening a second native connection. An empty
 read never overwrites a known name.
 
-Text entry tries ZFE's **native chat-input API** lazily when Insert opens the editor. With xScal,
-the widget uses SharedHUDTools directly because xScal does not expose the ZFE editor commands.
+Text entry uses HUDModLoader's **SharedHUDTools editor first** when Insert opens the editor. This
+is the host-domain implementation that owns Fallout's `StartEditText`/`EndEditText` lifecycle and
+keeps movement/gameplay controls from leaking into the chat field. The v2.10.45 widget had
+reintroduced a child-SWF `ControlMap` dispatch for ZFE native input; that produced repeated
+`Error #1014` uncaught events and could leave the player-control lock active. v2.10.46 removes
+that child dispatch. With xScal, the same SharedHUDTools path is always used because xScal does
+not expose the ZFE editor commands. ZFE's native editor remains a no-lock fallback only when
+SharedHUDTools is unavailable or cannot open.
 ZFE's **native chat-input API** — **top-level / bare** ZFE commands (NOT
 `chat.v1.`-prefixed) that take **bare-value payloads** (`"true"` / `"false"`, NOT JSON) and return
 **bare booleans/strings**:
@@ -89,14 +112,16 @@ ZFE's **native chat-input API** — **top-level / bare** ZFE commands (NOT
 | `consumeChatInputSubmitted` | `"{}"` | bool | `true` = Enter pressed (NOT the text) |
 | `clearChatInput` | `"{}"` | `true` | reset the buffer |
 
-The flow is **activate → clear/verify → lock game input → read → consume → send → clear → deactivate → unlock**:
+The SharedHUDTools flow is **format → focus → lock game input → type → send/cancel → end edit**.
+When that host editor is unavailable, the ZFE fallback flow is **activate → clear/verify → read →
+consume → send → clear → deactivate** and deliberately does not dispatch `ControlMap` events from
+the child widget:
 `setChatInputActive("true")`,
 immediately `clearChatInput` and verify `readChatInput` is empty, then poll `readChatInput` (show in-progress) + `consumeChatInputSubmitted` (Enter) + `isChatInputActive`
 (Esc), on submit `chat.v1.sendMessage` the `readChatInput` text, then `clearChatInput("{}")` +
-`setChatInputActive("false")`. The native path proceeds only when it can dispatch the engine's
-balanced `ControlMap::StartEditText` / `EndEditText` pair; otherwise it closes the native session
-and uses HUDModLoader's `SharedHUDTools.TextEdit` fallback. The fallback owns the only visible
-text field; the widget never mirrors it into the prompt. `sendMessage` is the one command that stays `chat.v1.`-prefixed —
+`setChatInputActive("false")`. The native path never tries to synthesize the engine's
+`ControlMap::StartEditText` / `EndEditText` pair from the child SWF. The SharedHUDTools editor owns
+the only visible text field; the widget never mirrors it into the prompt. `sendMessage` is the one command that stays `chat.v1.`-prefixed —
 called bare it hits the legacy bridge and returns literal `false`. A low-rate `isChatKeyPressed`
 edge poll opens chat on INSERT. Full contract: [BUILD.md](BUILD.md).
 
@@ -117,15 +142,15 @@ the HUD layer (documented in `docs/overlay/zfe/scaleform-ui-guide.md §5`). The
 HUDModLoader menu itself is opened with **F11** (outside the Pip-Boy); the widget
 registers its build/select callbacks with that upstream menu.
 
-### SharedHUDTools.TextEdit / FormatTextEdit (fallback)
+### SharedHUDTools.TextEdit / FormatTextEdit (primary)
 
 ```
 SharedHUDTools.FormatTextEdit(x, y, w, h, font, size, color, bgColor, bgAlpha)
 SharedHUDTools.TextEdit(callback, startText)
 ```
 
-HUDModLoader's built-in text-entry machinery is retained as the fallback for unsupported native
-input/platform combinations. The widget never runs the startup activation probe because some
+HUDModLoader's built-in text-entry machinery is the primary input path because its host-domain
+`TextEdit` owns the engine's control-map lock. The widget never runs the startup activation probe because some
 Windows/ZFE builds expose the bare payload `true` as literal text. On native activation, it clears
 and verifies the buffer before making the session visible. Affected ZFE/Steam Input builds can
 return only the newest character from `readChatInput`; the widget accumulates that stream while
@@ -134,7 +159,15 @@ handles the `ControlMap::StartEditText` / `EndEditText` engine cycle (which susp
 WASD and routes typed characters to the field); the callback fires with the text on ENTER, or
 an empty string on cancel. `SharedHUDTools` is resolved at runtime via
 `flash.utils.getDefinitionByName` so the widget needs no compile-time stub. If HUDModLoader is
-absent, the widget degrades to receive-only and shows an explanatory prompt.
+absent or its editor cannot open, the widget may use ZFE native input as a no-lock fallback; it
+does not attempt the unsafe child-domain ControlMap dispatch.
+
+The native clear check is fail-closed: a bare `true` from `readChatInput` is accepted as an empty
+status only when `clearChatInput` also returned success. A one-character observation is treated as
+a delta and appended to the draft, including repeated characters; a multi-character observation
+remains the cumulative buffer. The exact three-argument `PlatformChangeEvent` fallback is used
+when the keyboard platform must be forced. The exact three-argument event is sent only to the
+host HUDTools path; it is not used to manufacture a child-owned game-control lock.
 
 ### Channel tabs
 
@@ -145,8 +178,13 @@ acknowledges the player's roster/world binding; observing nearby players alone n
 Forwarded `NextPage` / `PrevPage` actions (plus PageUp/PageDown aliases) switch channels whether the
 feed is idle or input is open. After Insert opens the typing session, ArrowUp/ArrowDown (plus
 Up/Down aliases) scroll the feed and Home/End return to the newest message; before Insert they
-remain game controls. While input is open, the draft remains in place. Named Quick Actions/Friends/Escape actions
-close a native session before the game takes focus, preventing a stale editor from trapping input.
+remain game controls. While input is open, the draft remains in place. Named external actions close the
+active input owner before the game takes focus: `OpenSocial` (the in-game Ctrl+Tab social shortcut),
+friend-list/quick-action aliases, and Escape/Cancel. Native ZFE input is deactivated directly; the
+SharedHUDTools primary path uses its public `EndTextEdit()` API. The no-lock native fallback is
+deactivated directly. This handoff must happen before
+`HUDMenu.ProcessUserEvent` handles the modal action, preventing a stale editor or
+`ControlMap::StartEditText` lock from trapping the social menu.
 
 ### isReloadable
 

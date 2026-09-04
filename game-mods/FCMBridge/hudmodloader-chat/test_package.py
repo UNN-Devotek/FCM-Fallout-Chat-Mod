@@ -25,13 +25,28 @@ def main() -> None:
         r'static inline var VERSION:String\s*=\s*"([^"]+)"', source_hx
     )
     assert version_match, "FCMChatWidget.hx must define VERSION"
-    assert "queued local row; transport deferred" in source_hx, (
-        "send path must queue transport after painting the optimistic row"
+    assert "created canonical local row; transport deferred" in source_hx, (
+        "send path must create one canonical row before transport"
+    )
+    assert "ownCosmeticsForSend()" in source_hx and "var ackCosmeticsKnown:Bool" in source_hx, (
+        "send path must paint known own cosmetics immediately and recognize legacy ACKs"
+    )
+    assert "FcmEcho.choose" in source_hx and "_userId, _linkedUserId, true" in source_hx, (
+        "event path must handle a stable live event that arrives before its ACK"
+    )
+    assert "externalInputClosePath" in source_hx, (
+        "input handoff must classify named external modal actions before normal navigation"
+    )
+    assert "function closeInputSharedHudTools" in source_hx and "EndTextEdit" in source_hx, (
+        "external modal actions must cancel the SharedHUDTools editor"
+    )
+    assert "_inputOpen && _nativeInput && isExternalInputAction(action)" not in source_hx, (
+        "external modal actions must also close the primary SharedHUDTools editor"
     )
     assert "new Timer(1, 1)" in source_hx, (
         "send path must defer the synchronous native RPC by one timer tick"
     )
-    assert source_hx.index("queued local row; transport deferred") < source_hx.index(
+    assert source_hx.index("created canonical local row; transport deferred") < source_hx.index(
         'var rs:String = Std.string(_api.call("chat.v1.sendMessage", payload));'
     ), "optimistic row must be queued before the native send call"
     swf_artifact = (ROOT / "FCMChatWidget.swf").read_bytes()
@@ -44,14 +59,17 @@ def main() -> None:
     assert b"setimagesubstitutions" not in swf_artifact.lower(), (
         "FCMChatWidget.swf must not use the HUD supporter-star substitution path"
     )
-    assert b"getcharboundaries" in swf_artifact.lower(), (
-        "FCMChatWidget.swf must position supporter markers from text character bounds"
+    assert b"getcharboundaries" not in swf_artifact.lower(), (
+        "FCMChatWidget.swf must not use the drifting text-boundary star renderer"
     )
     widget_artifact = (ROOT / "FCMChatWidget.ba2").read_bytes()
     widget_version = version_match.group(1).encode("ascii")
     assert widget_version in widget_artifact, "FCMChatWidget.ba2 embeds the current VERSION"
     assert b"awaiting authoritative live echo" in widget_artifact, (
         "FCMChatWidget.ba2 must wait for an authoritative self-echo"
+    )
+    assert b"sendAccepted" in widget_artifact, (
+        "FCMChatWidget.ba2 must retain an ACK-accepted send transaction"
     )
     assert b"reconcileDisplayName" not in widget_artifact, (
         "FCMChatWidget.ba2 must not contain the unsafe late-identity reconnect symbol"

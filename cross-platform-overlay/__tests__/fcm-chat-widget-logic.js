@@ -1,5 +1,5 @@
 // Pure logic ported from game-mods/FCMBridge/hudmodloader-chat/FCMChatWidget.hx
-// (FCMChatWidget v2.10.4). The .hx (Haxe → SWF) is not unit-tested directly; per the
+// (FCMChatWidget v2.10.46). The .hx (Haxe → SWF) is not unit-tested directly; per the
 // repo HARD RULE the pure algorithms are mirrored here in JS and covered by Vitest
 // (fcm-chat-widget-logic.test.js). Keep these in lockstep with the .hx — they are the
 // same algorithms, not a re-design.
@@ -148,6 +148,19 @@ function shouldSendRosterControl({ rosterObserved, serverSessionReady, now, last
   return !serverSessionReady || now - lastSentAt >= 30000 || namesField !== lastSentNames;
 }
 
+// Mirrors FcmCommand.shouldRebindRosterSession. Roster rooms are derived from
+// sightings; an empty or completely disjoint update is a world-session boundary.
+function shouldRebindRosterSession(previousNamesField, currentNamesField) {
+  const names = (field) => String(field == null ? '' : field).trim().toLowerCase()
+    .split('|').map((name) => name.trim()).filter(Boolean)
+    .filter((name, index, all) => all.indexOf(name) === index);
+  const previous = names(previousNamesField);
+  if (previous.length === 0) return false;
+  const current = names(currentNamesField);
+  if (current.length === 0) return true;
+  return current.every((name) => previous.indexOf(name) < 0);
+}
+
 // ── Relay-control framing (FCMChatWidget world controls) ───────────────────────
 // PRINTABLE frames (v2.9.6+). The NUL-delimited legacy form is gone: control bytes must never
 // appear in this SWF at all. A NUL cannot even be split() on under GFx (see stripControlChars),
@@ -190,20 +203,14 @@ function jsonEscape(s) {
     .replace(/\t/g, '\\t');
 }
 
-// ── Native-input lock lifecycle (FCMChatWidget.open/closeInputNative) ──────────
-function nativeLockAdmission(nativeActivated, startEditTextDispatched) {
-  if (!nativeActivated) return { nativeOpen: false, fallback: true, deactivate: false, ownsLock: false };
-  if (!startEditTextDispatched) return { nativeOpen: false, fallback: true, deactivate: true, ownsLock: false };
-  return { nativeOpen: true, fallback: false, deactivate: false, ownsLock: true };
-}
-
-function nativeLockRelease(ownsLock, endDispatched = true) {
-  if (!ownsLock) return { dispatchEndEditText: false, ownsLockAfter: false, retry: false };
-  return {
-    dispatchEndEditText: true,
-    ownsLockAfter: !endDispatched,
-    retry: !endDispatched,
-  };
+// ── Input-owner policy (FCMChatWidget.openInput/closeInput*) ───────────────────
+// SharedHUDTools is the only path allowed to own the engine ControlMap lock. Native ZFE input
+// is a bridge-buffer fallback and must never manufacture a child-SWF Start/EndEditText pair.
+function inputOwnerAdmission(sharedAvailable, sharedOpen) {
+  if (sharedAvailable && sharedOpen) {
+    return { path: 'shared-hud-tools', ownsGameInputLock: true, childControlMapDispatch: false };
+  }
+  return { path: 'native-chat-input', ownsGameInputLock: false, childControlMapDispatch: false };
 }
 
 function shouldRebindWorldId(lastWorldIdAfterReconnect, currentWorldId) {
@@ -251,18 +258,27 @@ function mergeNativeInputText(previous, observed) {
   previous = String(previous == null ? '' : previous);
   observed = String(observed == null ? '' : observed);
   if (!observed) return '';
-  if (previous && observed.length === 1 && !previous.endsWith(observed)) return previous + observed;
+  if (previous && observed.length === 1) return previous + observed;
   return observed;
+}
+
+// Mirrors FcmCommand.nativeInputBufferIsClear. ZFE 0.12.x returns bare `true`
+// from readChatInput immediately after a successful clear; that is an empty
+// status response, not a literal draft.
+function nativeInputBufferIsClear(readRaw, clearRaw) {
+  const read = String(readRaw == null ? '' : readRaw).trim().toLowerCase();
+  const clear = String(clearRaw == null ? '' : clearRaw).trim().toLowerCase();
+  const clearSucceeded = clear === 'true' || clear === '1' || clear.includes('"success":true');
+  // Do not admit a native session when the clear operation itself was rejected or unsupported.
+  // An empty read alone does not prove that this widget owns a clean native buffer.
+  if (!clearSucceeded) return false;
+  return read.length === 0 || ['true', 'false', '1', '0'].includes(read);
 }
 
 // SharedHUDTools owns and renders the fallback TextField, so the widget must leave
 // its overlapping prompt as a label rather than mirroring the same typed string.
 function sharedHudPromptMode() {
   return 'label-only';
-}
-
-function customEventDefinitionNames() {
-  return ['Shared.AS3.Events.CustomEvent', 'CustomEvent'];
 }
 
 // ── Slash parse + consume (FCMChatWidget.onInputSubmit) ─────────────────────────
@@ -817,22 +833,22 @@ module.exports = {
   serverSessionResult,
   serverSendDecision,
   shouldSendRosterControl,
+  shouldRebindRosterSession,
   WORLD_CONTROL_PREFIXES,
   worldControlBody,
   historyResyncControlBody,
   shouldRenderReplayMessage,
   jsonEscape,
-  nativeLockAdmission,
-  nativeLockRelease,
+  inputOwnerAdmission,
   hudUserEventAction,
   hudUserEventIsDown,
   isExternalInputAction,
   mergeNativeInputText,
+  nativeInputBufferIsClear,
   shouldRebindWorldId,
   shouldIgnoreBlankWorldId,
   inputChannelAction,
   sharedHudPromptMode,
-  customEventDefinitionNames,
   parseInputSubmit,
   emptyFeedNotice,
   LINK_CODE_REFRESH_MS,

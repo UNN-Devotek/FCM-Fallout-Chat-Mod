@@ -138,6 +138,8 @@ HUD input and commands:
   a new link code. This requires clearChatAuth support; older builds will show a manual recovery
   instruction. Keep FCMChat.ini openKey aligned with the ZFE fragment OpenChatKey when ZFE is used. A
   Data/configuration/zfe.ini [TextChat] OpenChatKey override must match too.
+  While a draft is active, Control-Tab opens the game's social menu after the widget
+  cancels its native or SharedHUDTools editor; Escape can then close the social menu normally.
   Customize actions can be repeated without backing out to the parent menu.
   Auto-hide is shown with its current ON/OFF state the next time F11 opens.
   Discord custom emojis appear on the HUD as readable :name: labels; public
@@ -201,6 +203,8 @@ def build_package(target: str, output: Path) -> None:
             "Type /relink by itself to clear local chat auth and request a new\n"
             "link code. This requires clearChatAuth support; older builds must\n"
             "be reset using that extender's documented local-auth recovery.\n"
+            "While a draft is active, Control-Tab opens the game's social menu\n"
+            "after the widget cancels its editor; Escape can close the menu normally.\n"
             "Keep FCMChat.ini openKey aligned with the ZFE fragment OpenChatKey\n"
             "when ZFE is used. xScal uses its own chat configuration.\n"
             "A Data/configuration/zfe.ini [TextChat] OpenChatKey override must\n"

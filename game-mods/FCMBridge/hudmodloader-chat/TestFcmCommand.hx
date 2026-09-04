@@ -25,6 +25,32 @@ class TestFcmCommand {
         check("page down selects next channel", FcmCommand.isNextChannel("Page Down", "NextPage"));
         check("page up selects previous channel", FcmCommand.isPreviousChannel("Page Up", "PrevPage"));
         check("ordinary action does not scroll", FcmCommand.scrollDirection("NextPage") == 0);
+        check("social shortcut is an external input action", FcmCommand.isExternalInputAction("OpenSocial"));
+        check("friends action is an external input action", FcmCommand.isExternalInputAction("OpenFriendList"));
+        check("quick action is an external input action", FcmCommand.isExternalInputAction("QuickActionsMenu"));
+        check("external action does not match channel navigation", !FcmCommand.isExternalInputAction("NextPage"));
+        check("native session selects native close path",
+            FcmCommand.externalInputClosePath(true, true, "OpenSocial") == "native");
+        check("shared editor session selects SharedHUDTools close path",
+            FcmCommand.externalInputClosePath(true, false, "OpenSocial") == "shared");
+        check("closed input ignores external action",
+            FcmCommand.externalInputClosePath(false, false, "OpenSocial") == "");
+        check("disjoint roster forces a new server session",
+            FcmCommand.shouldRebindRosterSession("Ada|Beck", "Cy|Dana"));
+        check("overlapping roster stays in the current server session",
+            !FcmCommand.shouldRebindRosterSession("Ada|Beck", "Ada|Cy"));
+        check("empty roster clears the previous server session",
+            FcmCommand.shouldRebindRosterSession("Ada|Beck", ""));
+        check("initial roster does not force a rebind",
+            !FcmCommand.shouldRebindRosterSession("", "Ada"));
+        check("bare true after a successful clear is an empty native buffer",
+            FcmCommand.nativeInputBufferIsClear("true", "true"));
+        check("a rejected clear does not admit an empty native buffer",
+            !FcmCommand.nativeInputBufferIsClear("", "false"));
+        check("real text after a successful clear is not empty",
+            !FcmCommand.nativeInputBufferIsClear("hello", "true"));
+        check("repeated one-character reads are accumulated",
+            FcmCommand.mergeNativeInputText("he", "e") == "hee");
         if (failures > 0) Sys.exit(1);
     }
 }
