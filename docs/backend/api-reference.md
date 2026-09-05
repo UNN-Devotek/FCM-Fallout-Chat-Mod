@@ -26,10 +26,14 @@ These routes are outside `/api/` and not subject to `apiLimiter`.
 | DELETE | `/auth/nexus` | requireAuth | Unlink Nexus identity unless it is the last provider |
 | GET | `/auth/discord/link` | public | Initiate Discord link for desktop client (`?installToken=`) |
 | GET | `/auth/discord/link/callback` | public | OAuth2 callback for desktop link |
+| GET | `/auth/steam` | public | Initiate Steam OpenID sign-in for `/link` |
+| GET | `/auth/steam/link` | public | Initiate Steam OpenID link for desktop client (`?installToken=`) |
+| GET | `/auth/steam/callback` | public | Validate Steam OpenID assertion and establish/link the account |
 | GET | `/auth/logout` | public | Destroy session |
 | GET | `/auth/me` | Discord session | Current admin user identity + avatarUrl |
 | GET | `/auth/ws-ticket` | Discord session | Issue 60s single-use WS ticket |
 | GET | `/api/auth/discord-status/:installToken` | public | Poll Discord link status for desktop client; when linked, also performs the bounded live supporter-role reconciliation |
+| GET | `/api/auth/steam-status/:installToken` | public | Poll verified Steam link status for the desktop client |
 | POST | `/api/dev/login-as` | loopback or `X-Dev-Persona-Key`, DEV-only | Issue an immediate synthetic persona session for an unpackaged local or hosted DEV overlay (`{ persona, installToken }`) |
 | GET | `/auth/discord/dev-login` | public, DEV-only | Legacy OAuth-gated persona login (`?installToken=&persona=`); not used by the overlay DevAccount buttons |
 | GET | `/api/auth/dev-login-status/:installToken` | public, DEV-only | Consume the one-time legacy hosted DEV persona session grant |

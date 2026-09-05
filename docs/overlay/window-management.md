@@ -219,7 +219,7 @@ Returns true when ANY of the following is true:
 - Game-detection state changes (`onGamePresenceChanged`)
 - `chatActive` changes (`overlay:chat-active` IPC)
 - Onboarding completion (`overlay:onboarding-complete` IPC)
-- Authentication role update (after `startRelay` or Discord link)
+- Authentication/provider update (after `startRelay`, Discord link, or Steam link)
 
 On KDE-Wayland a **second** gate sits on top: `nextGameFocusState` hides the overlay when FO76 loses focus, even while `canShowOverlay()` is true. See [Focus-gated visibility](#focus-gated-visibility-hide--show).
 

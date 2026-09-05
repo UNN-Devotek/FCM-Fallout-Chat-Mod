@@ -57,6 +57,8 @@ export interface ShellSettings {
   // Discord link state; the real link happens via browser OAuth (linkDiscord()).
   discordLinked: boolean;
   discordName: string;
+  // Steam OpenID link state; the server stores the verified SteamID64.
+  steamLinked: boolean;
   // Profile fields recalled from the latest relay:status — persist across settings opens.
   discordAvatarUrl: string;    // Discord CDN avatar URL or ''
   discordDisplayName: string;  // Discord display name (may differ from discordName)
@@ -141,6 +143,7 @@ export const DEFAULT_SHELL_SETTINGS: ShellSettings = {
   fo76Name: '',
   discordLinked: false,
   discordName: '',
+  steamLinked: false,
   discordAvatarUrl: '',
   discordDisplayName: '',
   discordUsername: '',
@@ -1253,11 +1256,15 @@ function buildSettingsPanel() {
         el('span', { className: 'ss-profile-label' }, 'Discord'),
         el('span', { className: 'ss-profile-value' }, currentSettings.discordDisplayName || currentSettings.discordName || '—'),
       );
-      const linked = !!currentSettings.discordLinked;
+      const linkedProviders = [
+        currentSettings.discordLinked ? 'Discord' : '',
+        currentSettings.steamLinked ? 'Steam' : '',
+      ].filter(Boolean);
+      const linked = linkedProviders.length > 0;
       profileLinkedBadge.className = 'ss-profile-linked' + (linked ? ' linked' : '');
       profileLinkedBadge.replaceChildren(
         el('span', { className: 'ss-dot' }),
-        document.createTextNode(linked ? '✓ Account linked' : 'Not linked'),
+        document.createTextNode(linked ? `✓ ${linkedProviders.join(' + ')} linked` : 'Not linked'),
       );
     };
     renderProfile();
@@ -1312,7 +1319,7 @@ function buildSettingsPanel() {
 
     nameRow.append(nameInput, saveNameBtn, saveNameFeedback);
     s.append(nameRow);
-    hint(s, 'Required for playing Fallout 76. Please use your in-game name. (If left blank, your Discord display name is used.) Click SAVE NAME to register the name with the server.');
+    hint(s, 'Required for playing Fallout 76. Please use your in-game name. (If left blank, your linked provider display name is used.) Click SAVE NAME to register the name with the server.');
 
     const fo76Block = [s.querySelector('.ss-sec'), nameRow, s.querySelector('.ss-note')] as HTMLElement[];
     const applyOpt = () => { const show = currentSettings.playsFo76 || !!currentSettings.fo76Name; fo76Block.forEach(e => { if (e) e.style.display = show ? '' : 'none'; }); };
@@ -1372,6 +1379,44 @@ function buildSettingsPanel() {
       renderProfile();
     });
 
+    // ── STEAM ACCOUNT ──
+    heading(s, 'STEAM ACCOUNT');
+    const steamStatus = el('div', { className: 'ss-discord-status' });
+    const renderSteamStatus = () => {
+      const linked = !!currentSettings.steamLinked;
+      steamStatus.classList.toggle('linked', linked);
+      steamStatus.replaceChildren(
+        el('span', { className: 'ss-dot' }),
+        document.createTextNode(linked ? 'Linked' : 'Not linked'),
+      );
+    };
+    renderSteamStatus();
+    s.append(steamStatus);
+
+    const steamBtns = el('div', { className: 'ss-discord-btns' });
+    const steamLinkBtn = el('button', { className: 'ss-fbtn ss-discord-link' }, 'LINK STEAM');
+    steamLinkBtn.addEventListener('click', () => { window.relayBridge.linkSteam?.(); });
+    const steamRefreshBtn = el('button', { className: 'ss-fbtn' }, 'REFRESH STATUS');
+    steamRefreshBtn.title = 'Re-check your Steam link status from the server';
+    steamRefreshBtn.addEventListener('click', () => {
+      steamRefreshBtn.textContent = '…';
+      steamRefreshBtn.setAttribute('disabled', 'disabled');
+      window.relayBridge.refreshSteamStatus?.();
+      setTimeout(() => {
+        steamRefreshBtn.textContent = 'REFRESH STATUS';
+        steamRefreshBtn.removeAttribute('disabled');
+      }, 3000);
+    });
+    steamBtns.append(steamLinkBtn, steamRefreshBtn);
+    s.append(steamBtns);
+    hint(s, 'Linking opens Steam in your browser to authorise this install. Return to the overlay and refresh status if it does not update automatically.');
+
+    window.relayBridge.onSteamStatus?.((status) => {
+      commit({ steamLinked: !!(status.steamLinked ?? status.linked) });
+      renderSteamStatus();
+      renderProfile();
+    });
+
     window.relayBridge.onStatus?.((s) => {
       if (s.state !== 'authenticated') return;
       const patch: Partial<ShellSettings> = {};
@@ -1381,9 +1426,11 @@ function buildSettingsPanel() {
       if (s.discordUsername)    patch.discordUsername = s.discordUsername;
       if (s.discordDisplayName) patch.discordDisplayName = s.discordDisplayName;
       if (s.discordAvatarUrl != null) patch.discordAvatarUrl = s.discordAvatarUrl || '';
+      if (s.steamLinked != null) patch.steamLinked = !!s.steamLinked;
       if (s.username)           patch.fo76Name = s.username;
       if (Object.keys(patch).length) commit(patch);
       renderDiscordStatus();
+      renderSteamStatus();
       renderProfile();
     });
   }

@@ -16,6 +16,7 @@ export interface OnboardingState {
   discordLinked: boolean;
   discordName: string;
   discordDisplayName: string;
+  steamLinked: boolean;
   skipNameOnNextFinish?: boolean;
   discordAvatarUrl?: string;
 }
@@ -28,6 +29,7 @@ export interface OnboardingSourceSettings {
   discordLinked: boolean;
   discordName?: string;
   discordDisplayName?: string;
+  steamLinked: boolean;
 }
 
 /**
@@ -61,6 +63,7 @@ export function deriveInitialOnboardingState(
     discordLinked: s.discordLinked,
     discordName: s.discordName || '',
     discordDisplayName: resolvedDiscordDisplayName,
+    steamLinked: s.steamLinked,
   };
 }
 
@@ -116,6 +119,7 @@ export interface FinishPatch {
   discordLinked: boolean;
   discordName: string;
   discordDisplayName?: string;
+  steamLinked: boolean;
   onboarded: true;
 }
 
@@ -128,6 +132,7 @@ export function buildFinishPatch(state: OnboardingState): FinishPatch {
     discordLinked: state.discordLinked,
     discordName: state.discordName,
     discordDisplayName: state.discordDisplayName || undefined,
+    steamLinked: state.steamLinked,
     onboarded: true,
   };
 }

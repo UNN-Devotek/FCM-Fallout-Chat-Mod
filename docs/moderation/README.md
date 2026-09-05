@@ -12,7 +12,7 @@ The moderation subsystem covers: role-based access control, content filtering (A
 > shadow-mode rollout procedure.
 
 > **Multi-surface chat moderation (kick / mute / ban):** for how these actions work across the
-> dashboard, overlay, and the new in-game **chat.v1** `.ba2` under the Nexus/Discord auth lockdown —
+> dashboard, overlay, and the new in-game **chat.v1** `.ba2` under the Discord/Nexus/Steam auth lockdown —
 > including the cross-surface eviction signal and the account-level ban target — see
 > [kick-mute-ban.md](kick-mute-ban.md).
 

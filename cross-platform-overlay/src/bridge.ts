@@ -32,6 +32,7 @@ interface RelayBridge {
     discordUsername?: string;
     discordDisplayName?: string;
     discordAvatarUrl?: string | null;
+    steamLinked?: boolean;
     username?: string;
   }) => void): void;
   onClickThrough(cb: (on: boolean) => void): void;
@@ -54,7 +55,7 @@ interface RelayBridge {
   onCommand(cb: (cmd: string) => void): void;
   // Live keybind map pushed from main on (re)register — for the footer help text.
   onKeybinds?(cb: (kb: Record<string, string>) => void): void;
-  // Position presets + Discord OAuth.
+  // Position presets + provider OAuth.
   getBounds?(): Promise<{ x: number; y: number; width: number; height: number } | null>;
   setBounds?(bounds: { x: number; y: number; width: number; height: number }): void;
   resizeBounds?(bounds: { x: number; y: number; width: number; height: number }): void;
@@ -69,12 +70,16 @@ interface RelayBridge {
   moveEnd?(): void;
   setWindowOpacity?(v: number): void;
   linkDiscord?(): void;
+  linkSteam?(): void;
   openExternal?(url: string): void;
   /** Surface a renderer-side diagnostic line into the main-process log (main.log). */
   logDiag?(msg: string): void;
   // Discord link/supporter-role refresh: asks main to poll the backend and fires onDiscordStatus.
   refreshDiscordStatus?(): void;
   onDiscordStatus?(cb: (status: { linked: boolean; discordName: string }) => void): void;
+  /** Steam OpenID link/status refresh for the desktop install. */
+  refreshSteamStatus?(): void;
+  onSteamStatus?(cb: (status: { linked: boolean; steamLinked?: boolean }) => void): void;
   /** Show the OS right-click context menu on the chat input (cut/copy/paste/select-all). */
   showInputContextMenu?(x?: number, y?: number): void;
   /** Return focus to Fallout 76 after sending a message. Blurs the overlay window. */

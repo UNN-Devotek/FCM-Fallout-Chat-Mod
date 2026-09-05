@@ -47,7 +47,7 @@ Each backend instance subscribes to the Redis `chat:broadcast` pub/sub channel. 
 
 ## Auth Flows
 
-### Overlay client (anonymous install token)
+### Overlay client (provider-linked install token)
 
 ```mermaid
 sequenceDiagram
@@ -58,6 +58,9 @@ sequenceDiagram
 
     Note over O: First launch — generates UUID installToken, stored in overlay-state.json
     O->>API: POST /api/auth/register { installToken, username }
+    API-->>O: 403 auth_required when no Discord/Steam provider is linked
+    O->>API: GET /auth/steam/link?installToken=… (or Discord link)
+    API-->>O: Provider callback verifies identity and binds installToken
     API->>DB: UPSERT users WHERE installToken=…
     API->>Redis: SET session:<token> userId EX 86400 (24 h)
     API-->>O: { data: { token } }
@@ -105,6 +108,16 @@ The overlay can link its anonymous install token to a Discord identity via an in
 4. Backend validates state, exchanges code, verifies guild membership, upserts the `users` row with `discordId` / `discordUsername` / `discordDisplayName`.
 5. If another row already owns that `discordId` (account reclaim), `mergeUserInto()` re-points all FK tables and deletes the placeholder.
 6. Backend stores `discord_link:<installToken>` in Redis (10 min); overlay polls `GET /api/auth/discord-status/:installToken` until it sees `linked:true`. For linked users, that request also performs the bounded live Supporter/Overseer's Circle role reconciliation used to repair missed entitlement events.
+
+### Steam OpenID — overlay and HUD provider link
+
+The overlay uses `GET /auth/steam/link?installToken=<token>` and the website `/link` uses
+`GET /auth/steam`. Both redirect to Steam OpenID 2.0, store one-time state in Redis, and return
+to `/auth/steam/callback`. The backend posts the complete OpenID assertion back to Steam's fixed
+`https://steamcommunity.com/openid/login` endpoint, requires `is_valid:true`, checks the canonical
+SteamID64 against both identity URLs, and then binds `users.steam_id`. The desktop client polls
+`GET /api/auth/steam-status/:installToken`; a newly linked install re-registers to obtain the
+normal session token. The same Steam browser session can then redeem a HUD device code at `/link`.
 
 ---
 

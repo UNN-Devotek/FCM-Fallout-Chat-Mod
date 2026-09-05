@@ -86,7 +86,7 @@ export default function LinkPage() {
       if (status === 404) message = 'Link code not found. Check the code and try again.';
       if (status === 429) message = 'Too many attempts. Wait a moment before trying again.';
       if (status === 403)
-        message = 'You must sign in with Discord or Nexus before activating chat.';
+        message = 'You must sign in with Discord, Nexus, or Steam before activating chat.';
 
       setState({ kind: 'result', success: false, message });
     } catch {
@@ -200,6 +200,19 @@ export default function LinkPage() {
     gap: '10px',
   };
 
+  const steamBtnStyle: React.CSSProperties = {
+    ...btnStyle,
+    background: 'rgba(27,40,56,0.55)',
+    border: '1px solid #66C0F4',
+    color: '#C7D5E0',
+    textDecoration: 'none',
+    textAlign: 'center',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '10px',
+  };
+
   const errorColor = 'rgba(255,68,68,0.9)';
   const successColor = '#18FF62';
 
@@ -249,13 +262,18 @@ export default function LinkPage() {
                   'This account is not permitted to use FCM Chat.'}
                 {errorParam === 'nexus_token' &&
                   'Failed to exchange Nexus authorization code. Try again.'}
-                {!['nexus_denied', 'account_banned', 'nexus_token'].includes(errorParam) &&
+                {errorParam === 'steam_denied' && 'Steam authorization was denied. Try again.'}
+                {errorParam === 'steam_invalid' && 'Steam returned an invalid sign-in. Try again.'}
+                {errorParam === 'steam_state' && 'Steam sign-in expired. Start again.'}
+                {errorParam === 'steam_validation' && 'Steam could not validate the sign-in. Try again.'}
+                {errorParam === 'steam_conflict' && 'That Steam account is already linked to another FCM account.'}
+                {!['nexus_denied', 'account_banned', 'nexus_token', 'steam_denied', 'steam_invalid', 'steam_state', 'steam_validation', 'steam_conflict'].includes(errorParam) &&
                   'Authentication error. Please try again.'}
               </div>
             </div>
           )}
 
-          {linkedParam === 'nexus' && (
+          {(linkedParam === 'nexus' || linkedParam === 'steam') && (
             <div
               style={{
                 background: 'rgba(24,255,98,0.06)',
@@ -272,12 +290,12 @@ export default function LinkPage() {
                   fontWeight: 'bold',
                 }}
               >
-                NEXUS ACCOUNT LINKED
+                {linkedParam === 'steam' ? 'STEAM ACCOUNT LINKED' : 'NEXUS ACCOUNT LINKED'}
               </div>
               <div
                 style={{ fontSize: '11px', color: 'rgba(24,255,98,0.7)', marginTop: '4px' }}
               >
-                Your Nexus identity has been linked. Enter your in-game code below.
+                Your {linkedParam === 'steam' ? 'Steam' : 'Nexus'} identity has been linked. Enter your in-game code below.
               </div>
             </div>
           )}
@@ -299,7 +317,7 @@ export default function LinkPage() {
                   lineHeight: '1.7',
                 }}
               >
-                To activate in-game chat, sign in with Discord or Nexus Mods first. Then enter
+                To activate in-game chat, sign in with Discord, Nexus Mods, or Steam first. Then enter
                 the 8-character code shown in-game.
               </div>
 
@@ -315,6 +333,11 @@ export default function LinkPage() {
                   SIGN IN WITH NEXUS MODS
                 </a>
               )}
+
+              <a href="/auth/steam?intent=link" style={steamBtnStyle}>
+                <span aria-hidden="true" style={{ fontSize: '16px' }}>◈</span>
+                SIGN IN WITH STEAM
+              </a>
 
               <div style={{ textAlign: 'center', marginTop: '16px' }}>
                 <a

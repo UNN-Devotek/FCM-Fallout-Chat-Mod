@@ -72,6 +72,8 @@ contextBridge.exposeInMainWorld('relayBridge', {
   // Discord OAuth: open the desktop-client link/relink flow (or any URL) in the
   // user's default browser.
   linkDiscord: () => ipcRenderer.send('discord:link'),
+  // Steam OpenID: link the desktop install to a verified SteamID64.
+  linkSteam: () => ipcRenderer.send('steam:link'),
   openExternal: (url) => ipcRenderer.send('shell:open-external', url),
   // Surface a renderer-side diagnostic line into the main-process log file.
   logDiag: (msg) => ipcRenderer.send('shell:diag', msg),
@@ -80,6 +82,9 @@ contextBridge.exposeInMainWorld('relayBridge', {
   refreshDiscordStatus: () => ipcRenderer.send('discord:refresh-status'),
   // Called when main has a fresh Discord link/supporter-role status (post-link or on focus).
   onDiscordStatus: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('relay:discord-status', h); return () => ipcRenderer.removeListener('relay:discord-status', h); },
+  // Trigger and receive Steam link status for the desktop install.
+  refreshSteamStatus: () => ipcRenderer.send('steam:refresh-status'),
+  onSteamStatus: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('relay:steam-status', h); return () => ipcRenderer.removeListener('relay:steam-status', h); },
 
   // Lifecycle.
   onStatus:      (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('relay:status',          h); return () => ipcRenderer.removeListener('relay:status',          h); },

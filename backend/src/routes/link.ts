@@ -16,6 +16,7 @@ import { getRedisClient } from '../config/redis';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
 import { paramStr } from '../utils/reqParams';
+import { isValidSteamId } from '../services/steamAuthService';
 
 // Re-export for use in server.ts Nexus OAuth routes
 export { isBannedIdentity, linkProviderIdentity, unlinkProviderIdentity };
@@ -50,11 +51,11 @@ const redemptionIpLimiter = rateLimit({
 
 /**
  * Link-flow auth: resolves req.user from EITHER the overlay install session (X-Auth-Token)
- * OR a signed-in dashboard/web Discord or Nexus cookie session (resolved server-side to the
+ * OR a signed-in dashboard/web Discord, Nexus, or Steam cookie session (resolved server-side to the
  * FCM user by provider identity).
  * The web /link page authenticates by COOKIE, so the token-only requireAuth would 401 it into a
  * sign-in loop and the code-entry screen would never show. This implements the routes' documented
- * "X-Auth-Token or Discord session" contract. Mirrors requireAuth's ban auto-lift + reject.
+ * "X-Auth-Token or provider session" contract. Mirrors requireAuth's ban auto-lift + reject.
  */
 async function requireLinkAuth(req: Request, _res: Response, next: NextFunction): Promise<void> {
   try {
@@ -89,6 +90,16 @@ async function requireLinkAuth(req: Request, _res: Response, next: NextFunction)
           select: { userId: true },
         });
         userId = identity?.userId ?? null;
+      }
+
+      // Steam OpenID sessions are backed by the canonical steam_id column. Resolve
+      // the ID server-side; never trust a client-supplied user ID from the cookie.
+      if (!userId && isValidSteamId(sess?.steamUser?.steamId)) {
+        const u = await prisma.user.findFirst({
+          where: { steamId: String(sess.steamUser.steamId) },
+          select: { id: true },
+        });
+        userId = u?.id ?? null;
       }
     }
 
@@ -137,12 +148,15 @@ router.get('/game', requireLinkAuth, async (req: Request, res: Response, next) =
     const identities = await getLinkedIdentities(userId);
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { discordId: true, discordUsername: true, fo76AccountName: true },
+      select: { discordId: true, discordUsername: true, steamId: true, fo76AccountName: true },
     });
 
     const providers: Array<{ provider: string; username?: string | null; linkedAt: Date }> = [];
     if (user?.discordId) {
       providers.push({ provider: 'discord', username: user.discordUsername, linkedAt: new Date(0) });
+    }
+    if (isValidSteamId(user?.steamId)) {
+      providers.push({ provider: 'steam', username: null, linkedAt: new Date(0) });
     }
     for (const id of identities) {
       providers.push({ provider: id.provider, username: id.username, linkedAt: id.linkedAt });
@@ -163,7 +177,7 @@ router.get('/game', requireLinkAuth, async (req: Request, res: Response, next) =
 /**
  * POST /api/link/redeem
  * Redeems a relay-issued link code, binding the signed-in FCM user to the relay identity.
- * Auth: requireAuth — the user must be signed in via Discord or Nexus first.
+ * Auth: requireAuth — the user must be signed in via Discord, Nexus, or Steam first.
  * Body: { code: string }  (accepts "XXXXXXXX" or "XXXX-XXXX")
  * Rate: <=10/min per IP.
  *
@@ -186,7 +200,7 @@ router.post('/redeem', requireLinkAuth, redemptionIpLimiter, async (req: Request
     const hasProvider = await hasLinkedProvider(actorId);
     if (!hasProvider) {
       return next(
-        createError(403, 'You must link a Discord or Nexus account before activating in-game chat.'),
+        createError(403, 'You must link a Discord, Nexus, or Steam account before activating in-game chat.'),
       );
     }
 
@@ -286,14 +300,14 @@ router.post('/pairing-token', requireAuth, async (req: Request, res: Response, n
     const hasProvider = await hasLinkedProvider(userId);
     if (!hasProvider) {
       return next(
-        createError(403, 'You must link a Discord or Nexus account before minting a pairing token.'),
+        createError(403, 'You must link a Discord, Nexus, or Steam account before minting a pairing token.'),
       );
     }
 
     // Check if this fo76Name is claimed by another user (collision)
     const existing = await prisma.user.findFirst({
       where: { fo76AccountName: fo76Name.trim(), id: { not: userId } },
-      select: { id: true, discordId: true },
+      select: { id: true, discordId: true, steamId: true },
     });
     if (existing) {
       return next(
@@ -306,7 +320,11 @@ router.post('/pairing-token', requireAuth, async (req: Request, res: Response, n
             code: 'NAME_CLAIMED',
             detail: 'This FO76 name is already linked to another account.',
             hint: {
-              providers_on_existing_account: existing.discordId ? ['discord'] : ['nexus'],
+              providers_on_existing_account: [
+                ...(existing.discordId ? ['discord'] : []),
+                ...(existing.steamId ? ['steam'] : []),
+                ...(!existing.discordId && !existing.steamId ? ['nexus'] : []),
+              ],
             },
           }),
         ),
@@ -420,6 +438,24 @@ router.delete('/provider/:provider', requireAuth, async (req: Request, res: Resp
       return next(
         createError(400, 'Cannot unlink Discord via this endpoint. Use the account settings.'),
       );
+    }
+
+    // Steam is the canonical inline provider on users (rather than a
+    // linked_identities row), so handle it before the generic provider path.
+    if (provider === 'steam') {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { steamId: true, discordId: true },
+      });
+      if (!isValidSteamId(user?.steamId)) return next(createError(404, 'Steam identity not linked.'));
+      const otherIdentities = await prisma.linkedIdentity.count({ where: { userId } });
+      if (!user.discordId && otherIdentities < 1) {
+        return next(createError(409, 'Cannot remove your last linked provider. Link another account first.'));
+      }
+      await prisma.user.update({ where: { id: userId }, data: { steamId: null } });
+      logger.info({ userId, provider }, 'Provider identity unlinked');
+      res.json({ data: { success: true } });
+      return;
     }
 
     const result = await unlinkProviderIdentity(userId, provider);

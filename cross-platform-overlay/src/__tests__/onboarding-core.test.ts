@@ -17,6 +17,7 @@ import {
 const baseSettings = (over: Partial<OnboardingSourceSettings> = {}): OnboardingSourceSettings => ({
   playsFo76: false,
   discordLinked: false,
+  steamLinked: false,
   ...over,
 });
 
@@ -27,6 +28,7 @@ const baseState = (over: Partial<OnboardingState> = {}): OnboardingState => ({
   discordLinked: false,
   discordName: '',
   discordDisplayName: '',
+  steamLinked: false,
   ...over,
 });
 
@@ -87,6 +89,10 @@ describe('deriveInitialOnboardingState', () => {
     expect(st.discordLinked).toBe(true);
     expect(st.discordName).toBe('handle');
   });
+
+  it('passes through the Steam link state', () => {
+    expect(deriveInitialOnboardingState(baseSettings({ steamLinked: true })).steamLinked).toBe(true);
+  });
 });
 
 describe('computeNavView', () => {
@@ -143,6 +149,7 @@ describe('buildFinishPatch', () => {
       discordLinked: false,
       discordName: '',
       discordDisplayName: undefined,
+      steamLinked: false,
       onboarded: true,
     });
   });

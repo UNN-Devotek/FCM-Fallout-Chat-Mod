@@ -46,6 +46,7 @@ describe('stateHasRealData', () => {
     ['non-object (number)', 5, false],
     ['empty object', {}, false],
     ['discordLinked true', { discordLinked: true }, true],
+    ['steamLinked true', { steamLinked: true }, true],
     ['discordLinked false', { discordLinked: false }, false],
     ['default username Overlay1234', { username: 'Overlay1234' }, false],
     ['default username Overlay0', { username: 'Overlay0' }, false],

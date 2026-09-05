@@ -37,7 +37,7 @@ All three surfaces render the **same** `ChatOverlay` React component from `admin
 |---------|--------------|------------|-----------|
 | **Auth dashboard** | `/chat` (React Router) | Discord OAuth2 session | WebSocket (`chat:history` / `chat:message`) |
 | **Public website** | Landing-page CHAT tab | None — `isPublicMode=true` | REST poll every ~3 s |
-| **Electron overlay** | Loaded by `cross-platform-overlay` via `@dashboard/*` alias | Anonymous install token → 24 h Redis session token | WebSocket |
+| **Electron overlay** | Loaded by `cross-platform-overlay` via `@dashboard/*` alias | Provider-linked install token (Discord or Steam) → 24 h Redis session token | WebSocket |
 
 ### ONE component, three surfaces (parity rule)
 

@@ -41,8 +41,9 @@ everywhere simultaneously.
   `window.__FCM_OVERLAY_SHELL__` (type `OverlayShell`) before React mounts
   (`ChatOverlay.tsx:152–165`).
 - `getOverlayShell()` returns the shell object (`ChatOverlay.tsx:166–169`).
-- `isPublicMode` is `false` — the overlay authenticates via an install-token
-  session (anonymous UUID → 24h ephemeral token in Redis).
+- `isPublicMode` is `false` — the overlay authenticates via a provider-linked install-token
+  session (Discord or verified Steam UUID → 24h session token in Redis). A fresh install is
+  held at a sign-in wall until one of those providers is linked.
 - Connects over WSS; `wsGameActive` / `wsOverlayVisible` gate the connection to
   avoid unnecessary traffic when the game is closed or the window is hidden.
 - The Electron shell owns window chrome (drag, resize, minimize, close); the
@@ -615,8 +616,9 @@ users, who render byte-identically to before the feature existed.
 **Render contract** (`nameCosmeticProps()`, exported and unit-tested):
 
 - No effect → inline `color` + `textShadow`, exactly as before.
-- With an effect → a static `.fcm-name-fx--<id>` class plus two CSS custom properties
-  set inline: `--fcm-name-color` and `--fcm-name-outline`. **No inline `textShadow`** —
+- With an effect → a static `.fcm-name-fx--<id>` class plus three CSS custom properties
+  set inline: `--fcm-name-color`, `--fcm-name-outline`, and the opacity-aware
+  `--fcm-name-effect-outline`. **No inline `textShadow`** —
   the class owns it, and an inline one would win the cascade and silently flatten every
   effect to a plain name.
 - `data-fcm-name` carries the rendered name for the glitch effect's `::before`/`::after`
@@ -628,8 +630,10 @@ overlay draws on top of a running game. `noMotionInOverlay.test.ts` walks the im
 graph transitively and fails CI if Motion ever becomes reachable from ChatOverlay.
 Motion IS used in `CosmeticsPanel`, which the overlay never loads.
 
-Every effect **composes with** the existing multi-layer `textOutline` rather than
-replacing it — names sit over arbitrary game content and are unreadable without it.
+Animated effects compose with the opacity-aware halo; static names keep the existing
+multi-layer `textOutline`. The effect halo becomes lighter with transparent overlay chrome,
+and CRT no longer uses a box-wide multiply pseudo-element, so shimmer/CRT/glow names do not
+turn into black blobs over the game.
 
 Animated effects collapse to a static sibling under `prefers-reduced-motion` and under
 the viewer opt-out (`settings.disableNameMotion` → `fcm-no-name-motion`, applied on the

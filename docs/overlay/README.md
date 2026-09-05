@@ -18,7 +18,7 @@ cross-platform-overlay/
 │   ├── supporterAppearance.ts — Settings → Appearance cosmetics editor; reads the signed-in overlay account only
 │   ├── bridge.ts    — Renderer-side shims: patches global fetch + WebSocket to route
 │   │                   through IPC proxy; sets window.__FCM_OVERLAY_SHELL__ flag
-│   └── onboarding.ts — Onboarding UI component and notifyOnboardingComplete() IPC call
+│   └── onboarding.ts — Onboarding UI (Discord/Steam link, theme, identity) and completion IPC
 ├── assets/          — App icons (fcm.ico, fcm-linux.png, fcm.icns) + KWin rule
 └── vite.config.ts   — @dashboard alias → ../admin-dashboard/src; dedupes React/TanStack
 ```
@@ -35,6 +35,7 @@ The Electron shell provides everything the web `ChatOverlay.tsx` component does 
 - **Click-through** — `setIgnoreMouseEvents` so clicks pass through to the game behind
 - **Update notification** — passive OS toast (Windows / Linux libnotify / macOS) when a newer version is available; version delivered over the chat WebSocket (`app:update-available`); downloads/installs nothing; clicking opens Nexus Mods for a manual download. See `auto-update.md`.
 - **HTTP + WebSocket proxy** — shimmed `fetch`/`WebSocket` in the renderer route through IPC so the main process can inject `X-Auth-Token` (browsers cannot set WS headers). Renderer-supplied HTTP headers are **allowlisted** before forwarding (`filterProxyHeaders` in `overlay-core.js`: only `content-type`, `accept`, `accept-language`, `cache-control`, `x-requested-with`, with CRLF stripped); the main process then sets `X-Auth-Token`/`User-Agent`/`Origin` *after* filtering, so a compromised renderer cannot override the auth headers or inject others. The renderer-supplied request **path** is likewise resolved strictly against the relay origin (`resolveRelayProxyUrl`) and refused if it points anywhere else, so it cannot redirect the request — and the attached `X-Auth-Token` — to another host. Every proxied HTTP request has a 15-second deadline: a stalled relay becomes an error rather than leaving a settings control in a permanent saving state.
+- **Provider sign-in** — first-run onboarding, the login wall, and Settings can open the server-verified Steam OpenID link flow; Discord remains available alongside it. The Electron main process never receives or trusts a Steam ID from the renderer. After the browser callback binds the install token, the overlay polls status, re-registers, and opens the authenticated chat session.
 - **In-game cursor lock (Linux, opt-in)** — tray → "Fix FO76 cursor lock (Wayland)" runs `protontricks` to set FO76's own Wine `GrabFullscreen`/`GrabPointer` registry values **on demand**, only when the user presses it (FO76 must be closed). After FO76 exits, a read-only check of the prefix can show a one-time system notification whose click runs that same tray action. See below and [linux-overlay-approaches.md](linux-overlay-approaches.md).
 
 **No game-memory reading, no game-file modification, no code injection, no network/port scanning.** The only game interaction is a process-name check (`Fallout76.exe`) to drive show/hide. This includes Fallout 76's Proton/Wine prefix — the overlay never writes to it **automatically** (not on install, not on launch, not from the one-time detection nudge); it offers an **explicit, user-initiated action** (tray item, or a click on the post-exit notification) that applies the community-standard `protontricks` setting **on demand** — a Wine/Proton compatibility-layer setting, not a game-file modification (see [linux-overlay-approaches.md](linux-overlay-approaches.md)).
@@ -59,6 +60,21 @@ import '@dashboard/index.css';
 The `@dashboard` alias in `vite.config.ts` resolves to `../admin-dashboard/src`. The component runs unmodified, wrapped in the same React providers the dashboard gives it (`QueryClientProvider`, `MemoryRouter`, outlet context). Any change to `ChatOverlay.tsx` is automatically reflected in the Electron overlay.
 
 The global `window.__FCM_OVERLAY_SHELL__` (set in `bridge.ts`) gates desktop-only header chrome (refresh/min/close icons, amber main-tab style). On the website that global is absent, so the header keeps its original appearance.
+
+## Provider sign-in and HUD linking
+
+The overlay requires a verified Discord or Steam provider before the backend issues its
+install session. On a fresh install, the login wall and first-run onboarding expose both
+options. **LINK STEAM** opens `/auth/steam/link?installToken=<uuid>`; the backend validates
+Steam's OpenID assertion server-side, checks the provider deny-list, and binds the verified
+SteamID64 to the FCM account. Returning to the overlay triggers a status poll and session
+re-registration automatically; **REFRESH STATUS** is available if the external browser was
+used.
+
+The optional `.ba2` HUD track remains separate from this desktop overlay. To link it, the user
+opens the website `/link`, signs in with Discord, Nexus, or Steam, and redeems the device code
+shown by the HUD mod. Steam-only users receive basic chat access; dashboard and in-game
+moderation roles remain Discord-role gated.
 
 ## Chat appearance in Settings
 

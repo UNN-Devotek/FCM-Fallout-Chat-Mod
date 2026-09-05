@@ -1,16 +1,16 @@
 # Authentication Model
 
-There are three distinct auth flows in the backend, each serving a different client type.
+The backend has distinct auth flows for the dashboard, desktop overlay, HUD linking, and device sessions.
 
-> **Direction (locked): mandatory multi-provider auth gate.** Chat access is moving to **require a
-> linked Nexus or Discord account** (one or the other). The overlay already enforces a Discord login
-> wall; **Nexus is being added** as an alternative, and the in-game chat gets a **device-code link**.
+> **Direction (locked): mandatory multi-provider auth gate.** Chat access requires **a linked
+> Discord, Nexus, or Steam account** (one or more). The overlay enforces a provider sign-in wall;
+> Steam OpenID is available as a direct alternative, and the in-game chat gets a **device-code link**.
 > The install-token flow below stays as the device/session mechanism, but on its own it no longer
 > grants chat — a bare install is **limited** until linked. Public-website read-only stays open;
 > **sending is gated**. The admin dashboard stays Discord-only (elevated roles need Discord, #168).
 > Authoritative design: [hud-chat-auth-design.md](hud-chat-auth-design.md) (multi-provider + pairing /
 > device-code) and epic #163; the chat.v1 in-game gate is in
-> [native-chat-relay/fcm-integration.md](../overlay/zfe/native-chat-relay/fcm-integration.md#mandatory-auth-gate--limited-until-nexusdiscord-linked-locked).
+> [native-chat-relay/fcm-integration.md](../overlay/zfe/native-chat-relay/fcm-integration.md#mandatory-auth-gate--limited-until-a-provider-linked-fcm-account).
 
 ---
 
@@ -20,7 +20,7 @@ There are three distinct auth flows in the backend, each serving a different cli
 
 ### Step 1 — Registration (`POST /api/users`)
 
-A fresh Electron install generates a random UUID `installToken` locally and sends it to `POST /api/users/register` with the static `X-App-Client-Key` header (a shared secret that gates first registration). The backend upserts a `users` row keyed on `installToken`.
+A fresh Electron install generates a random UUID `installToken` locally and sends it to `POST /api/users` with the static `X-App-Client-Key` header (a shared secret that gates first registration). The backend upserts a `users` row keyed on `installToken`. A new install must first complete Discord or Steam linking; the provider callback creates or binds the row before registration issues a session.
 
 ### Step 2 — Session Issue (`POST /api/auth/session`)
 
@@ -159,6 +159,33 @@ Nexus is feature-flagged: both `NEXUS_OAUTH_CLIENT_ID` and `NEXUS_OAUTH_CLIENT_S
 The redirect URI is `NEXUS_OAUTH_REDIRECT_URI` when configured, otherwise it is derived from the
 forwarded request host.
 
+### 4.1 Steam OpenID 2.0 — overlay and HUD linking
+
+Steam uses OpenID 2.0 rather than an OAuth client secret. `GET /auth/steam/link?installToken=<uuid>`
+starts the desktop flow used by onboarding, the login wall, and Settings. `GET /auth/steam` starts
+the browser flow used by `/link`. Both flows store one-time state in Redis for 10 minutes.
+
+`GET /auth/steam/callback` fails closed unless the callback state is valid, the OpenID endpoint is
+Steam's fixed canonical endpoint, both identity URLs contain the same canonical 17-digit SteamID64,
+and Steam returns `is_valid:true` from its server-side `check_authentication` verification. The
+callback then checks the Steam deny-list and attaches `steam_id` to the existing FCM user (or
+provisions a Steam-only account). A desktop callback also refreshes the install status; Electron
+re-registers the install and receives the normal 24-hour session token.
+
+Steam-only accounts can use the basic overlay and redeem the HUD device-code link. Steam does not
+grant dashboard staff roles; elevated dashboard and HUD moderation actions remain Discord-role gated.
+
+Set these explicitly in each hosted deployment when the public proxy host is not discoverable from
+forwarded headers. Use the matching origin for each Dokploy Compose service:
+
+| Deployment | `STEAM_OPENID_REALM` | `STEAM_OPENID_RETURN_URI` |
+|---|---|---|
+| Hosted Dev (`fcm-dev-stack`) | `https://dev.falloutchatmod.com/` | `https://dev.falloutchatmod.com/auth/steam/callback` |
+| Production (`Fallout Chat Mod`) | `https://falloutchatmod.com/` | `https://falloutchatmod.com/auth/steam/callback` |
+
+The Compose files explicitly forward these variables to the backend. A Steam Web API key is not
+used by the OpenID sign-in flow.
+
 ---
 
 ## 5. Device Keypair Auth (ECDSA P-256)
@@ -202,6 +229,9 @@ Reads `X-Migration-Key` and gates `/admin/migration/*` (ad-hoc SQL, `pg_dump`, `
 | `nexus_oauth_state:<state>` | JSON `{ codeVerifier, sessionId }` | 10 min |
 | `oauth_link_state:<state>` | installToken | 5 min |
 | `discord_link:<installToken>` | JSON Discord identity | 10 min |
+| `steam_oauth_state:<state>` | JSON `{ intent, sessionId }` | 10 min |
+| `steam_link_state:<state>` | installToken | 10 min |
+| `steam_link:<installToken>` | JSON Steam link status | 10 min |
 | `dev_persona_oauth_state:<state>` | JSON `{ installToken, persona }` | 5 min |
 | `dev_persona_grant:<installToken>` | JSON session grant | 10 min, single-use |
 | `ws_ticket:<ticket>` | JSON `{ type, discordId, username }` | 60 s |

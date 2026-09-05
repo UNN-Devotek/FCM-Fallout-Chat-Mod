@@ -80,6 +80,11 @@ services:
       DATABASE_URL: postgresql://${DB_USER:-fo76_user}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-fo76_chat}
       TRUST_PROXY: "true"
       ALLOWED_ORIGINS: https://falloutchatmod.com
+      # Steam OpenID callback configuration. Dokploy stores these in the
+      # Compose environment; the empty fallback keeps local development on
+      # forwarded-host derivation when no explicit value is supplied.
+      STEAM_OPENID_REALM: ${STEAM_OPENID_REALM:-}
+      STEAM_OPENID_RETURN_URI: ${STEAM_OPENID_RETURN_URI:-}
       # Reach THIS project's MinIO unambiguously (see the minio service alias).
       # The default http://minio:9700 resolves to OTHER projects' MinIO on the
       # shared dokploy-network -> ECONNREFUSED -> silent image-upload failures

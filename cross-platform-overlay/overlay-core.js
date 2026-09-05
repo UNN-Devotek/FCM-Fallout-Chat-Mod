@@ -30,11 +30,11 @@ function isGameProcess(name) {
   return GAME_PROCESSES.some(p => p.toLowerCase() === lower);
 }
 
-// "Has real data" = discordLinked true OR a non-default username (not
+// "Has real data" = a verified provider link OR a non-default username (not
 // /^Overlay\d+$/) OR a populated settings object (a non-empty plain object).
 function stateHasRealData(s) {
   if (!s || typeof s !== 'object') return false;
-  if (s.discordLinked === true) return true;
+  if (s.discordLinked === true || s.steamLinked === true) return true;
   if (typeof s.username === 'string' && s.username && !/^Overlay\d+$/.test(s.username)) return true;
   if (s.settings && typeof s.settings === 'object' && Object.keys(s.settings).length > 0) return true;
   return false;

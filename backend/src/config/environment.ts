@@ -158,6 +158,10 @@ export interface Environment {
   NEXUS_OAUTH_CLIENT_ID: string;
   NEXUS_OAUTH_CLIENT_SECRET: string;
   NEXUS_OAUTH_REDIRECT_URI: string;
+  // Steam OpenID 2.0. The realm/return URI are derived from the request when
+  // unset; set them explicitly for the public HTTPS deployment.
+  STEAM_OPENID_REALM: string;
+  STEAM_OPENID_RETURN_URI: string;
   // HUD identity hash secret (M6+): HMAC-SHA256 key for identityHash = HMAC(secret, userId)
   // Replaces HUD_IDENTITY_SECRET for account-derived (unforgeable) identity hashes.
   HUD_IDENTITY_HASH_SECRET: string;
@@ -324,6 +328,10 @@ const env: Environment = {
   // Empty means derive the callback from the forwarded request host. A
   // localhost default can send production users back to a developer machine.
   NEXUS_OAUTH_REDIRECT_URI: process.env.NEXUS_OAUTH_REDIRECT_URI || '',
+  // Empty means derive from the forwarded request host. Steam requires the
+  // realm to be an origin owned by this deployment.
+  STEAM_OPENID_REALM: process.env.STEAM_OPENID_REALM || '',
+  STEAM_OPENID_RETURN_URI: process.env.STEAM_OPENID_RETURN_URI || '',
   HUD_IDENTITY_HASH_SECRET: process.env.HUD_IDENTITY_HASH_SECRET || '',
 };
 

@@ -12,7 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { nameCosmeticProps } from '../ChatOverlay';
+import { nameCosmeticProps, nameEffectOutline } from '../ChatOverlay';
 import { supporterBadge, supporterStarColor, SUPPORTER_STAR_GLYPH } from '../supporterBadge';
 import { nameEffectMotion, NAME_EFFECT_MOTION_BOUNDS } from '../nameEffectMotion';
 
@@ -96,6 +96,22 @@ describe('nameCosmeticProps — with an effect', () => {
   it('renders Heavy Outline as a visibly heavier face with a real dark stroke', () => {
     expect(nameCosmeticProps({ effectId: 'outline-heavy' }, THEME, 'A').style.fontWeight).toBe(900);
     expect(nameCosmeticProps({ effectId: 'glow-soft' }, THEME, 'A').style.fontWeight).toBe('bold');
+  });
+
+  it('uses a lighter effect outline when the overlay chrome is transparent', () => {
+    const outline = nameEffectOutline(1, 0.3);
+    const normal = nameEffectOutline(1, 1);
+
+    expect(outline).toMatch(/^0 0 1px rgba\(0,0,0,0\.306\), 0 0 2px rgba\(0,0,0,0\.177\)$/);
+    expect(outline).not.toBe(normal);
+
+    const props = nameCosmeticProps(
+      { effectId: 'shimmer' },
+      { ...THEME, chromeBgAlpha: 0.3 },
+      'Wanderer',
+    );
+    expect((props.style as Record<string, unknown>)['--fcm-name-effect-outline'])
+      .toBe(nameEffectOutline(THEME.textAlpha, 0.3));
   });
 });
 
@@ -246,6 +262,10 @@ describe('supporter effect readability', () => {
     expect(css).not.toContain('color: transparent');
     expect(css).not.toContain('-webkit-text-fill-color: transparent');
     expect(css).not.toContain('.fcm-name-fx--shimmer::after');
+    expect(css).not.toContain('mix-blend-mode: multiply');
+    expect(css).not.toContain('background: repeating-linear-gradient');
+    expect(css).toContain('  .fcm-name-fx--shimmer {\n    /* The static fallback is painted by the letter spans; do not add a second\n       parent halo after the overlay has already adapted each letter\'s outline. */\n    text-shadow: none;\n  }');
+    expect(css).toContain('.fcm-name-fx--shimmer.fcm-no-name-motion {\n  /* Keep viewer opt-out consistent with the reduced-motion fallback. */\n  text-shadow: none;\n}');
     expect(css).toContain('.fcm-name-fx--shimmer.fcm-no-name-motion .fcm-shimmer-letter');
 
     const component = readFileSync(resolve(__dirname, '..', 'ChatOverlay.tsx'), 'utf8');

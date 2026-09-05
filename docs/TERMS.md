@@ -70,9 +70,10 @@ game-memory access. Neither feature is part of the shipping app.
 
 ## 2. Your account and data
 
-To use the Service you log in via Discord OAuth. The Service stores:
+To use the Service you log in via Discord OAuth or Steam OpenID. The Service stores:
 
 - Your Discord ID, username, and display name;
+- Your SteamID64 when you choose Steam sign-in;
 - A Fallout 76 character name that you supply (optional);
 - An optional free FCM chat name that you set in your Profile or with Discord `/name`;
 - The chat messages you send through the Service.

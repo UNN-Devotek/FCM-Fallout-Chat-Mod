@@ -61,7 +61,7 @@ describe('relayBase derivation', () => {
 // ── shell hook ────────────────────────────────────────────────────────────────
 describe('buildShellHook', () => {
   it('refresh/settings dispatch CustomEvents; minimize/close call the bridge', () => {
-    const bridge = { minimizeWindow: vi.fn(), closeWindow: vi.fn(), refreshDiscordStatus: vi.fn() };
+    const bridge = { minimizeWindow: vi.fn(), closeWindow: vi.fn(), refreshDiscordStatus: vi.fn(), refreshSteamStatus: vi.fn() };
     const dispatched: string[] = [];
     const target = { dispatchEvent: (e: Event) => { dispatched.push(e.type); return true; } };
 
@@ -72,6 +72,7 @@ describe('buildShellHook', () => {
     hook.onSettings!();
     expect(dispatched).toEqual(['fcm-shell-refresh', 'fcm-shell-settings']);
     expect(bridge.refreshDiscordStatus).toHaveBeenCalledOnce();
+    expect(bridge.refreshSteamStatus).toHaveBeenCalledOnce();
 
     hook.onMinimize!();
     hook.onClose!();

@@ -69,6 +69,14 @@ its actor from this verified token, never from a client-supplied ID.
 receive-only linking state. The token can be linked after a web device-code flow;
 the normal relay event flow then refreshes the widget state.
 
+### Mandatory auth gate — limited until a provider-linked FCM account
+
+The relay permits a bare install to register only as a limited identity so it can
+display a one-time device code. It cannot send messages until the code is redeemed
+at `/link` by an FCM account with a linked Discord, Nexus, or server-verified Steam
+identity. Steam-only accounts receive basic chat; staff actions remain Discord-role
+gated. The desktop overlay has a separate direct Discord/Steam provider-link flow.
+
 ### Explicit relink/reset
 
 Widget v2.10.30 accepts the standalone `/relink` command and the matching FCM HUDModLoader menu

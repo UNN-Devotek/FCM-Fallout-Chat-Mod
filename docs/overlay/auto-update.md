@@ -104,7 +104,7 @@ many releases behind (e.g. 5 versions old) lands on the latest in one run, with 
   - userData productName-rename `"Fallout ChatMod"` → `"Fallout Chat Mod"` (`main.js:972-1050`).
   - keybind reset, gated on `keybindsResetVersion < KEYBIND_RESET_VERSION` (`main.js:3440-3453`) —
     any-to-any safe.
-- **Settings survive.** `userData` lives outside the app package, so keybinds, the Discord link, and
+- **Settings survive.** `userData` lives outside the app package, so keybinds, the Discord/Steam links, and
   overlay state persist across every reinstall.
 
 ### Prompt-when-current (CLI installers)

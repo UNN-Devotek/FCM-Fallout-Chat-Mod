@@ -313,8 +313,8 @@ function wireShellInputBehaviour() {
 function Shell() {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // When the backend Discord-gate fires (install not linked to Discord yet),
-  // show a blocking login wall. Cleared only when we receive 'authenticated'.
+  // When the backend provider gate fires (install has no verified Discord/Steam
+  // link yet), show a blocking login wall. Cleared only on authentication.
   const [discordRequired, setDiscordRequired] = useState(false);
   // Watchdog: true when we've been stuck on the "Authenticating…" screen with no
   // terminal state (authenticated / error / discord_required) for too long. The
@@ -359,7 +359,7 @@ function Shell() {
   useEffect(() => {
     // Wait until the main process has registered + has a session token before
     // mounting the component (so its first /api/channels + WS calls succeed).
-    window.relayBridge.onStatus((s: { state: string; message?: string; displayName?: string; discordLinked?: boolean; discordName?: string; role?: string | null; avatarUrl?: string | null; username?: string | null; userId?: string | null }) => {
+    window.relayBridge.onStatus((s: { state: string; message?: string; displayName?: string; discordLinked?: boolean; discordName?: string; steamLinked?: boolean; role?: string | null; avatarUrl?: string | null; username?: string | null; userId?: string | null }) => {
       if (s.state === 'authenticated') {
         // Reactively update the signed-in user so ChatOverlay's mod-control gating
         // (user.role ∈ {owner, admin, moderator}) reflects the real backend role.
@@ -373,9 +373,9 @@ function Shell() {
         }));
         // Pre-populate fo76Name in settings from the register response displayName
         // if the user hasn't set one yet (i.e. it's still the default empty string).
-        // Also seed real Discord link state (discordLinked / discordName) from the
-        // register response so the settings panel shows the correct status on launch.
-        if (s.displayName || s.discordLinked != null) {
+        // Also seed real provider link state from the register response so the
+        // settings panel/onboarding show the correct status on launch.
+        if (s.displayName || s.discordLinked != null || s.steamLinked != null) {
           try {
             const SHELL_KEY = 'fcm_shell_settings';
             const raw = localStorage.getItem(SHELL_KEY);
@@ -383,12 +383,13 @@ function Shell() {
             const patch: Record<string, unknown> = {};
             // Only set fo76Name if blank — don't overwrite a user-set name.
             if (s.displayName && !current.fo76Name) patch.fo76Name = s.displayName;
-            // Always overwrite discordLinked / discordName from the authoritative
-            // backend response — this corrects the "Not linked on first launch" bug.
+            // Always overwrite provider state from the authoritative backend
+            // response — this corrects the "Not linked on first launch" bug.
             if (s.discordLinked != null) {
               patch.discordLinked = !!s.discordLinked;
               patch.discordName = s.discordName || '';
             }
+            if (s.steamLinked != null) patch.steamLinked = !!s.steamLinked;
             if (Object.keys(patch).length > 0) {
               localStorage.setItem(SHELL_KEY, JSON.stringify({ ...current, ...patch }));
             }
@@ -409,7 +410,7 @@ function Shell() {
         const prevDisplayName = prevParts[1] ?? '';
         const stableRole = (s.role || !prevRole) ? (s.role || '') : prevRole;
         const stableDisplayName = (s.displayName || !prevDisplayName) ? (s.displayName || '') : prevDisplayName;
-        const idKey = `${s.userId || ''}|${stableDisplayName}|${!!s.discordLinked}|${stableRole}`;
+        const idKey = `${s.userId || ''}|${stableDisplayName}|${!!s.discordLinked}|${stableRole}|${!!s.steamLinked}`;
         if (hasAuthedRef.current && idKey !== lastIdentityRef.current) {
           // This remounts <ChatOverlay> (WS teardown + chat:history reload) — i.e. a
           // visible "chat reloaded". Log WHY so we can confirm/deny it from main.log
@@ -420,7 +421,7 @@ function Shell() {
         lastIdentityRef.current = idKey;
         hasAuthedRef.current = true;
         setReady(true);
-        // Successful auth clears both the error screen and the discord-required wall.
+        // Successful auth clears both the error screen and the provider-required wall.
         setDiscordRequired(false);
         // A successful (re)connection must clear any latched error screen.
         // The relay can emit a transient 'error' (e.g. a register 429 during
@@ -492,8 +493,8 @@ function Shell() {
         // min/close) are now visible, so fold the top strip to a thin invisible
         // drag handle to avoid doubling the window controls.
         document.getElementById('shell-bar')?.classList.add('mounted');
-      } else if (s.state === 'discord_required') {
-        // Backend Discord-gate: this install has no linked Discord account.
+      } else if (s.state === 'discord_required' || s.state === 'auth_required' || s.state === 'provider_required') {
+        // Backend provider gate: this install has no linked Discord or Steam account.
         // Show the blocking login wall and suppress the normal chat UI.
         setDiscordRequired(true);
         setError(null);
@@ -516,20 +517,21 @@ function Shell() {
     // component so theme/opacity/font/hints take effect immediately.
     initShell({ onSettingsChange: () => setMountKey(k => k + 1) });
 
-    // Auto-refresh Discord link/supporter-role status when the window regains focus (the user
+    // Auto-refresh provider link/supporter-role status when the window regains focus (the user
     // may have just returned from the OAuth browser flow). Throttled to once
     // per minute so a focus-heavy workflow doesn't spam the backend.
-    let lastDiscordCheck = 0;
+    let lastProviderCheck = 0;
     const onWindowFocus = () => {
       const now = Date.now();
-      if (now - lastDiscordCheck > 60_000) {
-        lastDiscordCheck = now;
+      if (now - lastProviderCheck > 60_000) {
+        lastProviderCheck = now;
         window.relayBridge.refreshDiscordStatus?.();
+        window.relayBridge.refreshSteamStatus?.();
       }
     };
     window.addEventListener('focus', onWindowFocus);
 
-    // Header refresh button → refresh Discord/supporter state, then remount
+    // Header refresh button → refresh provider/supporter state, then remount
     // (re-fetches channels + history).
     const onRefresh = () => setMountKey(k => k + 1);
     window.addEventListener('fcm-shell-refresh', onRefresh);
@@ -543,8 +545,8 @@ function Shell() {
     };
   }, []);
 
-  // ── Discord login wall ───────────────────────────────────────────────────────
-  // Shown when the backend requires a Discord link before issuing a session token.
+  // ── Provider login wall ──────────────────────────────────────────────────────
+  // Shown when the backend requires a verified provider before issuing a session token.
   // This is a HARD block: no chat, no settings, no dismiss. The only action is
   // "Log in with Discord" which opens the OAuth flow. When the link completes,
   // main.js fires refreshDiscordStatus → re-registers → emits 'authenticated' →
@@ -563,11 +565,11 @@ function Shell() {
           FALLOUT CHAT MOD
         </div>
         <div style={{ opacity: 0.8, lineHeight: '1.6' }}>
-          A Discord account is required to use the overlay.
+          Sign in with Steam or Discord to use the overlay.
         </div>
         <div style={{ opacity: 0.6, fontSize: 11, lineHeight: '1.5' }}>
-          You must be a member of the Fallout Chat Mod Discord server to use the chat.
-          Join the server first, then log in below.
+          Steam sign-in verifies your Steam account directly. Discord sign-in also
+          requires membership in the Fallout Chat Mod Discord server.
         </div>
         <button onClick={() => window.relayBridge.openExternal?.('https://discord.gg/NJBJqyvRJC')}
           style={{ ...btnBase, fontSize: 12, padding: '8px 18px', background: 'rgba(88,101,242,0.18)', borderColor: '#5865F2', color: '#c2cbff' }}>
@@ -576,6 +578,10 @@ function Shell() {
         <button onClick={() => window.relayBridge.linkDiscord?.()}
           style={{ ...btnBase, fontSize: 12, padding: '8px 18px' }}>
           LOG IN WITH DISCORD
+        </button>
+        <button onClick={() => window.relayBridge.linkSteam?.()}
+          style={{ ...btnBase, fontSize: 12, padding: '8px 18px', background: 'rgba(27,40,56,0.55)', borderColor: '#66C0F4', color: '#C7D5E0' }}>
+          LOG IN WITH STEAM
         </button>
         <div style={{ opacity: 0.4, fontSize: 10, lineHeight: '1.5' }}>
           After authorizing in your browser, the overlay will unlock automatically.

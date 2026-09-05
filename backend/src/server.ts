@@ -115,6 +115,13 @@ import { setQaActiveVersion, getQaActiveVersion } from './controllers/qaVersionC
 import { qaStart, makeQaCallbackHandler, defaultQaCallbackDeps } from './controllers/qaOAuthController';
 import { makeQaStatusHandler, defaultQaStatusDeps } from './controllers/qaStatusController';
 import {
+  buildSteamOpenIdUrl,
+  extractSteamId,
+  isValidSteamId,
+  STEAM_OPENID_ENDPOINT,
+  validateSteamAssertion,
+} from './services/steamAuthService';
+import {
   DEV_PRIVILEGED_ROLES,
   defaultDevPersonaCallbackDeps,
   defaultDevPersonaStatusDeps,
@@ -900,6 +907,325 @@ app.get('/api/auth/discord-status/:installToken', async (req: Request, res: Resp
   } catch (err) {
     logger.error({ err }, 'Failed to check discord-status');
     res.status(500).json({ data: { linked: false } });
+  }
+});
+
+// -- Steam OpenID 2.0 --------------------------------------------------------
+// Steam does not provide an OAuth client secret for this flow. The browser is
+// redirected to Steam, then the callback validates Steam's signed assertion
+// server-side before the returned SteamID64 is attached to an FCM account.
+const STEAM_INSTALL_TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function forwardedOrigin(req: Request): string {
+  const proto = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || 'localhost:7177').split(',')[0].trim();
+  return `${proto}://${host}`;
+}
+
+function steamReturnTo(req: Request, state: string): string {
+  const configured = env.STEAM_OPENID_RETURN_URI || `${forwardedOrigin(req)}/auth/steam/callback`;
+  const returnTo = new URL(configured);
+  // The state is kept server-side and must round-trip through Steam's callback.
+  returnTo.searchParams.set('state', state);
+  return returnTo.toString();
+}
+
+function steamRealm(req: Request): string {
+  return env.STEAM_OPENID_REALM || `${forwardedOrigin(req)}/`;
+}
+
+function steamFailure(
+  res: Response,
+  installToken: string | null,
+  code: string,
+  title: string,
+  message: string,
+): void {
+  if (installToken) {
+    res.status(403).send(PIP_BOY_HTML(
+      `${title} — Fallout Chat Mod`,
+      title,
+      `<p>${message}</p><p class="dim">You can close this window and try again from the overlay.</p>`,
+    ));
+    return;
+  }
+  res.redirect(`/link?error=${encodeURIComponent(code)}`);
+}
+
+/**
+ * GET /auth/steam
+ * Starts a browser Steam sign-in. The resulting session can redeem a HUD link
+ * code and, unlike the old Discord-only gate, may be the user's only provider.
+ */
+app.get('/auth/steam', authLimiter, async (req: Request, res: Response) => {
+  const intent = typeof req.query.intent === 'string' ? req.query.intent : 'link';
+  const state = uuidv4();
+  try {
+    const redis = await getRedisClient();
+    await redis.set(
+      `steam_oauth_state:${state}`,
+      serializeBoundOAuthState({ intent, sessionId: req.sessionID }),
+      { EX: 600 },
+    );
+    // saveUninitialized=false means the browser must receive the session cookie
+    // before Steam redirects back to the callback.
+    (req.session as any).steamOAuthState = state;
+    await new Promise<void>((resolve, reject) => {
+      req.session.save((err) => (err ? reject(err) : resolve()));
+    });
+  } catch (err) {
+    logger.error({ err }, 'Failed to store Steam OpenID state');
+    res.status(500).send('Internal error');
+    return;
+  }
+
+  res.redirect(buildSteamOpenIdUrl({
+    returnTo: steamReturnTo(req, state),
+    realm: steamRealm(req),
+  }));
+});
+
+/**
+ * GET /auth/steam/link
+ * Starts Steam linking for a desktop install. This flow has no browser session;
+ * the one-time Redis state binds the eventual Steam identity to installToken.
+ */
+app.get('/auth/steam/link', authLimiter, async (req: Request, res: Response) => {
+  const installToken = typeof req.query.installToken === 'string' ? req.query.installToken : '';
+  if (!STEAM_INSTALL_TOKEN_RE.test(installToken)) {
+    res.status(400).send('Missing or invalid installToken');
+    return;
+  }
+
+  const state = uuidv4();
+  try {
+    const redis = await getRedisClient();
+    await redis.set(`steam_link_state:${state}`, installToken, { EX: 600 });
+  } catch (err) {
+    logger.error({ err }, 'Failed to store Steam desktop link state');
+    res.status(500).send('Internal error');
+    return;
+  }
+
+  res.redirect(buildSteamOpenIdUrl({
+    returnTo: steamReturnTo(req, state),
+    realm: steamRealm(req),
+  }));
+});
+
+/**
+ * GET /auth/steam/callback
+ * Validates a Steam OpenID assertion, then either links a desktop install or
+ * establishes a browser session for the HUD /link page.
+ */
+app.get('/auth/steam/callback', authLimiter, async (req: Request, res: Response) => {
+  const query = req.query as Record<string, unknown>;
+  const state = typeof query.state === 'string' ? query.state : '';
+  let installToken: string | null = null;
+  let browserState: { intent?: string; sessionId: string } | null = null;
+
+  if (!state) {
+    res.redirect('/link?error=steam_invalid');
+    return;
+  }
+
+  try {
+    const redis = await getRedisClient();
+    // Desktop state is intentionally checked first because that flow has no
+    // browser session to bind. Both namespaces are one-time consumed.
+    const desktopState = await redis.getDel(`steam_link_state:${state}`);
+    if (desktopState) {
+      installToken = desktopState;
+    } else {
+      const browserStateRaw = await redis.getDel(`steam_oauth_state:${state}`);
+      browserState = parseBoundOAuthState(browserStateRaw, req.sessionID);
+      if (!browserState) {
+        res.redirect('/link?error=steam_state');
+        return;
+      }
+    }
+  } catch (err) {
+    logger.error({ err }, 'Failed to validate Steam OpenID state');
+    res.status(500).send('Internal error');
+    return;
+  }
+
+  if (installToken && !STEAM_INSTALL_TOKEN_RE.test(installToken)) {
+    steamFailure(res, installToken, 'steam_invalid', 'Invalid Install', 'The overlay install token is invalid.');
+    return;
+  }
+
+  const mode = typeof query['openid.mode'] === 'string' ? query['openid.mode'] : '';
+  if (mode === 'cancel') {
+    steamFailure(res, installToken, 'steam_denied', 'Steam Sign-in Cancelled', 'Steam sign-in was cancelled.');
+    return;
+  }
+
+  const assertion: Record<string, string> = {};
+  for (const [key, value] of Object.entries(query)) {
+    if (key.startsWith('openid.') && typeof value === 'string') assertion[key] = value;
+  }
+  const claimedId = typeof query['openid.claimed_id'] === 'string' ? query['openid.claimed_id'] : '';
+  const identityId = typeof query['openid.identity'] === 'string' ? query['openid.identity'] : '';
+  const steamId = extractSteamId(claimedId);
+  if (
+    mode !== 'id_res'
+    || query['openid.op_endpoint'] !== STEAM_OPENID_ENDPOINT
+    || !steamId
+    || !identityId
+    || extractSteamId(identityId) !== steamId
+  ) {
+    steamFailure(res, installToken, 'steam_invalid', 'Invalid Steam Response', 'Steam returned an invalid identity response.');
+    return;
+  }
+
+  try {
+    if (!await validateSteamAssertion(assertion)) {
+      steamFailure(res, installToken, 'steam_validation', 'Steam Verification Failed', 'Steam could not validate this sign-in.');
+      return;
+    }
+
+    if (await isBannedIdentity('steam', steamId)) {
+      logger.warn({ steamId }, 'Steam identity is deny-listed');
+      steamFailure(res, installToken, 'account_banned', 'Account Not Permitted', 'This Steam account is not permitted to use FCM Chat.');
+      return;
+    }
+
+    if (installToken) {
+      const installAccount = await prisma.user.findUnique({
+        where: { installToken },
+        select: { id: true, username: true, chatName: true, discordId: true, steamId: true, isBanned: true, bannedUntil: true },
+      });
+      const existingAccount = await prisma.user.findFirst({
+        where: { steamId, NOT: { installToken } },
+        select: { id: true, username: true, chatName: true, discordId: true, steamId: true, isBanned: true, bannedUntil: true },
+      });
+      const installLinkedIdentity = existingAccount && installAccount && existingAccount.id !== installAccount.id
+        ? await prisma.linkedIdentity.findFirst({ where: { userId: installAccount.id }, select: { id: true } })
+        : null;
+
+      const activeBan = (u: { isBanned: boolean; bannedUntil: Date | null } | null) =>
+        !!u?.isBanned && (!u.bannedUntil || u.bannedUntil.getTime() > Date.now());
+      if (activeBan(installAccount) || activeBan(existingAccount)) {
+        steamFailure(res, installToken, 'account_banned', 'Account Not Permitted', 'This Steam account is not permitted to use FCM Chat.');
+        return;
+      }
+      // Do not merge an already-linked account into another Steam account. A
+      // deliberate relink must first unlink the old Steam identity, preventing
+      // an install with another provider from silently crossing accounts.
+      if (installAccount?.steamId && installAccount.steamId !== steamId) {
+        steamFailure(res, installToken, 'steam_conflict', 'Steam Already Linked', 'This install is already linked to a different Steam account.');
+        return;
+      }
+      if (existingAccount && installAccount && existingAccount.id !== installAccount.id && (installAccount.discordId || installLinkedIdentity)) {
+        steamFailure(res, installToken, 'steam_conflict', 'Steam Account Already Linked', 'This Steam account is already linked to another FCM account.');
+        return;
+      }
+
+      let targetId = existingAccount?.id || installAccount?.id;
+      await prisma.$transaction(async (tx) => {
+        if (existingAccount && installAccount && existingAccount.id !== installAccount.id) {
+          await mergeUserInto(existingAccount.id, installAccount.id, tx);
+        }
+        if (targetId) {
+          await tx.user.update({ where: { id: targetId }, data: { installToken, steamId } });
+        } else {
+          const created = await tx.user.create({
+            data: { username: `pending-${installToken.slice(0, 8)}`, installToken, steamId },
+            select: { id: true },
+          });
+          targetId = created.id;
+        }
+      });
+
+      const target = await prisma.user.findUnique({
+        where: { id: targetId! },
+        select: { id: true, username: true, chatName: true, discordUsername: true, discordDisplayName: true },
+      });
+      if (target) {
+        refreshClientIdentity(target.id, target.username, target.discordUsername, target.discordDisplayName, installToken, target.chatName);
+      }
+      const redis = await getRedisClient();
+      await redis.set(`steam_link:${installToken}`, JSON.stringify({ linked: true, steamLinked: true }), { EX: 600 });
+      logger.info({ installToken, steamId }, 'Steam account linked to game client');
+      res.send(PIP_BOY_HTML(
+        'Steam Linked — Fallout Chat Mod',
+        'Steam Linked Successfully',
+        '<p>Your Steam account has been linked to your game client.</p><p class="dim">You can close this window and return to the overlay.</p>',
+      ));
+      return;
+    }
+
+    // Browser sign-in: if Discord/Nexus/Steam is already active, link Steam to that
+    // server-resolved account. Otherwise find or provision the Steam account.
+    const sess = req.session as any;
+    let sessionUserId: string | null = null;
+    if (sess?.discordUser?.id || sess?.publicUser?.discordId) {
+      const discordId = String(sess.discordUser?.id || sess.publicUser.discordId);
+      const existing = await prisma.user.findFirst({ where: { discordId }, select: { id: true } });
+      sessionUserId = existing?.id ?? null;
+    }
+    if (!sessionUserId && sess?.nexusUser?.providerUid) {
+      const identity = await prisma.linkedIdentity.findUnique({
+        where: { provider_providerUid: { provider: 'nexus', providerUid: String(sess.nexusUser.providerUid) } },
+        select: { userId: true },
+      });
+      sessionUserId = identity?.userId ?? null;
+    }
+
+    const existingSteam = await prisma.user.findFirst({
+      where: { steamId },
+      select: { id: true, isBanned: true, bannedUntil: true },
+    });
+    if (existingSteam?.isBanned && (!existingSteam.bannedUntil || existingSteam.bannedUntil.getTime() > Date.now())) {
+      steamFailure(res, null, 'account_banned', 'Account Not Permitted', 'This Steam account is not permitted to use FCM Chat.');
+      return;
+    }
+    if (sessionUserId && existingSteam && sessionUserId !== existingSteam.id) {
+      steamFailure(res, null, 'steam_conflict', 'Steam Account Already Linked', 'This Steam account is already linked to another FCM account.');
+      return;
+    }
+
+    const userId = sessionUserId || existingSteam?.id || (
+      await prisma.user.create({
+        data: {
+          username: `pending-${uuidv4().slice(0, 8)}`,
+          installToken: `steam-${uuidv4()}`,
+          steamId,
+        },
+        select: { id: true },
+      })
+    ).id;
+    if (sessionUserId || existingSteam) {
+      await prisma.user.update({ where: { id: userId }, data: { steamId } });
+    }
+    sess.steamUser = { steamId, userId };
+    await new Promise<void>((resolve, reject) => {
+      req.session.save((err) => (err ? reject(err) : resolve()));
+    });
+    const intent = browserState?.intent || 'link';
+    res.redirect(intent === 'admin' ? '/chat' : '/link?linked=steam');
+  } catch (err) {
+    logger.error({ err, installToken, steamId }, 'Steam OpenID callback error');
+    steamFailure(res, installToken, 'steam_error', 'Authentication Failed', 'Something went wrong linking your Steam account.');
+  }
+});
+
+/** GET /api/auth/steam-status/:installToken — desktop link polling endpoint. */
+app.get('/api/auth/steam-status/:installToken', async (req: Request, res: Response) => {
+  const installToken = paramStr(req, 'installToken');
+  if (!installToken) { res.status(400).json({ data: { linked: false, steamLinked: false } }); return; }
+  try {
+    const user = await prisma.user.findUnique({
+      where: { installToken },
+      select: { steamId: true, username: true, chatName: true, discordUsername: true, discordDisplayName: true, installToken: true },
+    });
+    const linked = isValidSteamId(user?.steamId);
+    const displayName = user ? resolveDisplayName(user) : null;
+    res.json({ data: { linked, steamLinked: linked, displayName } });
+  } catch (err) {
+    logger.error({ err }, 'Failed to check steam-status');
+    res.status(500).json({ data: { linked: false, steamLinked: false } });
   }
 });
 

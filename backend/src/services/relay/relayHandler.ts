@@ -9,7 +9,7 @@
  *
  * Identity model:
  *   - register: server mints userId + token; stores argon2id hash; returns token
- *     ONCE (never again). User is "limited" until linked (no Discord/Nexus account).
+ *     ONCE (never again). User is "limited" until linked (no Discord/Nexus/Steam account).
  *   - hello: token re-auth; may update displayName. Never returns the token.
  *   - Every subsequent op re-validates the token per frame.
  *
