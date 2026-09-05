@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-09-04):** v2.10.47 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-09-04):** v2.10.50 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -30,7 +30,7 @@ A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's H
 - Renders the server-resolved Overseer tag in the HUD when the relay negotiates widget capability.
   Self-authored messages use the same authoritative live event as Discord and other in-game
   messages, so the tag is not lost to the native send ACK boundary.
-ZFE strips unknown event members before the SWF receives them, so v2.10.46 decodes the stable
+ZFE strips unknown event members before the SWF receives them, so v2.10.50 decodes the stable
   message ID and validated cosmetics from the `FCMHUD/1;...` envelope in the known empty
   `targetUserId` slot. Older widget
   builds receive no envelope. The HUD renders server-validated channel and identity tags plus a
@@ -68,8 +68,9 @@ ZFE strips unknown event members before the SWF receives them, so v2.10.46 decod
 ## Automatic ZFE/xScal chat + keyboard input
 
 The widget discovers a validated ZFE bridge or xScal's `chatInterface` under either
-`__SFECodeObj` or `__SFCodeObj` on the parent HUDMenu frame. ZFE is preferred for backwards
-compatibility; xScal is selected when ZFE is absent. Current xScal builds may also expose a
+`__SFECodeObj` or `__SFCodeObj` on the parent HUDMenu frame. An explicit xScal
+`chatInterface` is authoritative when both extenders are installed; ZFE is selected only when
+that positive xScal marker is absent. Current xScal builds may also expose a
 generic call-only `__SFCodeObj` on the movie root for unrelated callbacks. The widget never
 treats that object as ZFE by name alone. ZFE is gated on
 `zfe-chat-online-v1`; xScal is gated on the required `connect`, `pollEvents`, and `sendMessage`
@@ -77,19 +78,47 @@ methods plus its positive runtime response when `getRuntimeInfo` is available. B
 the same relay payloads and cursor polling.
 
 xScal's `connect` is asynchronous: `success:true,status:"connecting"` means the native worker
-accepted the request, not that relay authentication is complete. v2.10.47 keeps the transport
+accepted the request, not that relay authentication is complete. v2.10.50 keeps the transport
 polling, refreshes `getAuthState` on each xScal poll, and reconnects only for an explicit terminal
 state. Its optional generic `__SFCodeObj.call` is retained only for FCM diagnostics (`log`); no
 chat verb is ever routed through that callback.
 
+Both providers receive the same complete bounded history from the long-lived relay subscription.
+On a fresh cursor-zero subscription, the relay sends up to 15 recent rows for each static feed
+(`global`, `trade`, `events`, `infests`, and `raids`) plus up to 50 rows from the current `server`
+room: 125 events total. The native poll limit remains 64, so ZFE and xScal drain the ordered
+snapshot over multiple polls. The widget drains xScal's asynchronous subscriber with a 250 ms
+warm-up for at most 20 polls, and performs a short second ZFE drain only when the first native
+batch is full, so the initial feed does not wait for the normal background interval. ZFE uses
+the same subscription stream; only a recreated ZFE widget uses
+`FCMCTL/1/RESYNC` recovery only when the first ZFE poll is empty or reports queue loss; the
+fallback is delayed so a normal subscribe snapshot is not duplicated. xScal never receives that
+ZFE control.
+After a roster/world bind, the widget performs a separate 150 ms server-history drain through two
+consecutive empty polls (hard-capped at eight attempts), which covers xScal's delayed publication
+of the current room without waiting for the normal five-second poll.
+
 The `SERVER` sub-tab is backed by the current in-game roster session. After subscribing to
-`BSUIDataManager`, v2.10.46 also reads the cached values of `PlayerListData`, `TeamMarkers`,
+`BSUIDataManager`, v2.10.50 also reads the cached values of `PlayerListData`, `TeamMarkers`,
 `PartyMenuList`, and `VoiceChatAreaData`; `Subscribe()` itself only registers a change callback
 and does not replay the cached value. Provider values are stored as replaceable snapshots. An
 empty or completely disjoint snapshot triggers `LEAVE`, clears only local ephemeral server rows,
 and causes a fresh roster bind on the next poll. Once that bind is acknowledged, the relay
 replays the current room's bounded recent server history and the sub-tab becomes available again.
 Static channel history remains durable; server history is intentionally ephemeral.
+
+Input ownership is edge-based, not a persistent channel-selection mode. `INSERT` must successfully
+open the editor before Arrow Up/Down and Home/End are consumed for feed navigation; while idle,
+those keys remain Fallout controls. Page Up/Page Down are one-shot previous/next channel actions,
+with matching key-up events latched and ignored. Escape, Control-Tab/social, and friends-menu
+actions first close the FCM editor and then return `false` so the game can open its own modal.
+Reload/removal calls the widget's idempotent `shutdown()` path, which stops every timer, removes
+stage/scroll listeners, ends an active HUDTools edit, unregisters HUDTools, and detaches feed rows.
+
+The native ZFE fallback auto-detects cumulative versus one-character input buffers per edit session
+and handles control-character backspace. xScal never uses that fallback because xScal owns the
+transport but does not expose ZFE's native edit buffer; it uses the host-domain SharedHUDTools
+editor.
 
 Player identity is read only from HUD-published `BSUIDataManager` data.
 `AccountInfoData.name` is authoritative because it is the public Fallout/Bethesda handle other
@@ -172,9 +201,9 @@ does not attempt the unsafe child-domain ControlMap dispatch.
 The native clear check is fail-closed: a bare `true` from `readChatInput` is accepted as an empty
 status only when `clearChatInput` also returned success. A one-character observation is treated as
 a delta and appended to the draft, including repeated characters; a multi-character observation
-remains the cumulative buffer. The exact three-argument `PlatformChangeEvent` fallback is used
-when the keyboard platform must be forced. The exact three-argument event is sent only to the
-host HUDTools path; it is not used to manufacture a child-owned game-control lock.
+remains the cumulative buffer. The widget deliberately does not construct or dispatch a
+`PlatformChangeEvent`: that event's constructor varies across HUDModLoader builds and caused the
+observed `Error #1063`. Keyboard/controller selection remains HUDTools' responsibility.
 
 ### Channel tabs
 
@@ -182,10 +211,11 @@ The channel-tab row is one static text strip. It must not create HUDButton insta
 HUDButton labels share the same coordinates and would overlap the strip. Switch channels using
 the configured control-map actions or slash commands. `SERVER` appears only after the relay
 acknowledges the player's roster/world binding; observing nearby players alone never enables it.
-Forwarded `NextPage` / `PrevPage` actions (plus PageUp/PageDown aliases) switch channels whether the
-feed is idle or input is open. After Insert opens the typing session, ArrowUp/ArrowDown (plus
-Up/Down aliases) scroll the feed and Home/End return to the newest message; before Insert they
-remain game controls. While input is open, the draft remains in place. Named external actions close the
+Forwarded `NextPage` / `PrevPage` actions (plus PageUp/PageDown aliases) are stateless,
+edge-deduplicated commands that switch channels whether the feed is idle or input is open; they
+never enter a persistent channel-selection mode. After Insert opens the typing session,
+ArrowUp/ArrowDown (plus Up/Down aliases) scroll the feed and Home/End return to the newest message;
+before Insert they remain game controls. While input is open, the draft remains in place. Named external actions close the
 active input owner before the game takes focus: `OpenSocial` (the in-game Ctrl+Tab social shortcut),
 friend-list/quick-action aliases, and Escape/Cancel. Native ZFE input is deactivated directly; the
 SharedHUDTools primary path uses its public `EndTextEdit()` API. The no-lock native fallback is

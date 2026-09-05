@@ -63,6 +63,12 @@ This archive is the explicit opt-in in-game HUD-mod track. It is separate from
 the desktop overlay. It connects to {config['label'].lower()} through ZFE chat.v1
 or xScal chatInterface, selected automatically.
 Install either a supported ZFE build or xScal, plus HUDModLoader, before installing this archive.
+On first subscribe, both providers receive the same complete bounded history: up to
+15 recent messages for each static channel and up to 50 messages from the current
+server room (125 events total). The native poll limit is 64. xScal's asynchronous
+subscriber is drained across multiple short warm-up polls; ZFE gets a short second
+drain only when its first queue batch is full. Do not expect xScal to receive the
+ZFE-only RESYNC control.
 
 1. Exit Fallout 76 completely.
 2. Extract this archive into the Fallout 76 installation folder, preserving all
@@ -190,6 +196,15 @@ def build_package(target: str, output: Path) -> None:
             "9. Use the loader reload control for live widget changes. Replacing\n"
             "   the BA2 or a script-extender configuration fragment requires exiting and restarting\n"
             "   Fallout 76 so native configuration is reloaded.\n\n"
+            "Initial history\n"
+            "---------------\n"
+            "Both ZFE and xScal receive the initial feed from the long-lived\n"
+            "subscription: up to 15 recent messages for each static channel\n"
+            "and up to 50 from the current SERVER room (125 events total).\n"
+            "The native poll limit is 64. The xScal widget drains its\n"
+            "asynchronous subscriber across multiple short warm-up polls; ZFE\n"
+            "performs a short second drain only when its first queue batch is\n"
+            "full. xScal never receives the ZFE-only RESYNC control.\n\n"
             "HUD input and commands\n"
             "-----------------------\n"
             "Press Insert while Fallout 76 is focused to start typing. Press\n"

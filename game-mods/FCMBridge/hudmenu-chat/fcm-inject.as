@@ -16,25 +16,43 @@
          this._fcmLogger = this.fcmFindGenericCallback(this);
          this.fcmLog("info","load","hudmenu-init zfe=" + (this._fcmZfe != null));
          this.fcmApplyIniDefaults();
-         // Standalone variant: self-load FCMBridge.swf when HUDModLoader is absent.
-         // fcmSelfLoadBridge is conditional — it checks whether the bridge is already
-         // present (HUDModLoader loaded it) before issuing a Loader.load so the SAME
-         // HUDMenu.swf works under both the WITH-HUDModLoader and standalone builds.
-         this.fcmSelfLoadBridge();
-         // Feed worldId + player name to the bridge every 5 s from HUDMenu scope
-         // (server chat join/leave rides this — see fcmPollWorldId).
-         // Uses the flash.utils.Timer CLASS (proven under Scaleform/GFx — FCMBridge
-         // uses it throughout). Do NOT use flash.utils.setInterval here: it is a
-         // package-level function outside GFx's AS3 subset and verify-kills fcmInit.
-         try
+         this._fcmNavigationDown = [];
+         this._fcmNavigationAction = "";
+         if(!this._fcmModernWidgetActive)
          {
-            this._fcmWorldTimer = new flash.utils.Timer(5000);
-            this._fcmWorldTimer.addEventListener("timer", this.fcmOnWorldTick);
-            this._fcmWorldTimer.start();
+            // Standalone variant: give HUDModLoader time to instantiate the modern
+            // FCMChatWidget before falling back to the legacy renderer. The old
+            // immediate fallback raced the loader and painted an untagged duplicate
+            // feed beside the modern row-local widget.
+            this.fcmScheduleStandaloneFallback();
+            // Feed worldId + player name to the bridge every 5 s from HUDMenu scope
+            // (server chat join/leave rides this — see fcmPollWorldId).
+            // Uses the flash.utils.Timer CLASS (proven under Scaleform/GFx — FCMBridge
+            // uses it throughout). Do NOT use flash.utils.setInterval here: it is a
+            // package-level function outside GFx's AS3 subset and verify-kills fcmInit.
+            try
+            {
+               this._fcmWorldTimer = new flash.utils.Timer(5000);
+               this._fcmWorldTimer.addEventListener("timer", this.fcmOnWorldTick);
+               this._fcmWorldTimer.start();
+            }
+            catch(eWt:Error)
+            {
+               this.fcmLog("warn","world","world timer setup threw: " + eWt.message);
+            }
          }
-         catch(eWt:Error)
+      }
+
+      // ProcessUserEvent / HUDMenu construction are engine-owned callback boundaries.
+      // Keep the injected helpers fail-closed so a target-build exception cannot bubble into
+      // the game's global UncaughtErrorEvent handler and strand the player in a modal state.
+      public function fcmInitSafe() : void
+      {
+         try { this.fcmInit(); }
+         catch(eInit:Error)
          {
-            this.fcmLog("warn","world","world timer setup threw: " + eWt.message);
+            try { this.fcmLog("warn","load","fcmInit threw: " + eInit.message); }
+            catch(eLog:Error) {}
          }
       }
 
@@ -46,6 +64,45 @@
          {
             this.fcmLog("warn","world","fcmPollWorldId threw: " + eP.message);
          }
+      }
+
+      // HUDModLoader's modern FCMChatWidget calls this as soon as it reaches the
+      // stage. Claim renderer ownership immediately instead of waiting for the
+      // five-second world timer to notice the child. The old FCMBridge renderer
+      // produces the untagged duplicate row, so it must be retired before the
+      // modern widget can receive its first message.
+      public function fcmNotifyModernWidget(widget:*) : void
+      {
+         this._fcmModernWidgetActive = true;
+         try
+         {
+            if(this._fcmSelfLoadTimer != null) { this._fcmSelfLoadTimer.stop(); }
+         }
+         catch(eStopFallback:Error) {}
+         this._fcmSelfLoadTimer = null;
+         try
+         {
+            if(this._fcmWorldTimer != null) { this._fcmWorldTimer.stop(); }
+         }
+         catch(eStopWorld:Error) {}
+         this._fcmWorldTimer = null;
+
+         var legacy:* = this._fcmBridge;
+         if(legacy == null)
+         {
+            try { legacy = this.fcmFindLegacyBridge(this.stage, 0); }
+            catch(eFindLegacy:Error) { legacy = null; }
+         }
+         if(legacy != null)
+         {
+            try { legacy.fcmDisableForModernWidget(); }
+            catch(eDisableLegacy:Error)
+            {
+               this.fcmLog("warn","selfload","legacy renderer handoff threw: " + eDisableLegacy.message);
+            }
+         }
+         this._fcmBridge = null;
+         this.fcmLog("info","selfload","modern FCMChatWidget claimed renderer");
       }
 
       // Pass the native chat bridge we hold at the HUDMenu (parent) level down
@@ -129,12 +186,15 @@
                // logger; FCMBridge never routes chat.v1 verbs through it.
                hostLogger = this.fcmFindGenericCallback(this);
             }
-            var hostNative:* = hostZfe;
-            var provider:String = (hostZfe != null) ? "zfe" : "";
+            // An explicit xScal chatInterface is the strongest provider signal.
+            // ZFE and xScal may be co-installed and expose objects on the same
+            // HUDMenu; ZFE must not win just because __ZFE is checked first.
+            var hostNative:* = hostXscal;
+            var provider:String = (hostXscal != null) ? "xscal" : "";
             if(hostNative == null)
             {
-               hostNative = hostXscal;
-               provider = (hostNative != null) ? "xscal" : "";
+               hostNative = hostZfe;
+               provider = (hostNative != null) ? "zfe" : "";
             }
 
             // __SFCodeObj is a last-resort legacy compatibility candidate.
@@ -174,6 +234,68 @@
          }
       }
 
+      // HUDModLoader may load FCMChatWidget asynchronously. Give it a grace
+      // period before the standalone legacy fallback is allowed to load.
+      private function fcmScheduleStandaloneFallback() : void
+      {
+         if(this._fcmSelfLoadTimer != null) { return; }
+         try
+         {
+            this._fcmSelfLoadTimer = new flash.utils.Timer(8000, 1);
+            this._fcmSelfLoadTimer.addEventListener("timerComplete", this.fcmOnStandaloneFallback);
+            this._fcmSelfLoadTimer.start();
+            this.fcmLog("info","selfload","legacy fallback delayed 8s for HUDModLoader");
+         }
+         catch(eSchedule:Error)
+         {
+            this._fcmSelfLoadTimer = null;
+            this.fcmLog("warn","selfload","fallback timer setup threw: " + eSchedule.message);
+            try { if(!this.fcmStageHasChatWidget()) { this.fcmSelfLoadBridge(); } }
+            catch(eFallback:Error) { this.fcmLog("warn","selfload","fallback launch threw: " + eFallback.message); }
+         }
+      }
+
+      public function fcmOnStandaloneFallback(evt:*) : void
+      {
+         this._fcmSelfLoadTimer = null;
+         try
+         {
+            if(this.fcmStageHasChatWidget())
+            {
+               this.fcmLog("info","selfload","FCMChatWidget appeared — legacy fallback cancelled");
+               return;
+            }
+            this.fcmSelfLoadBridge();
+         }
+         catch(eFallback:Error)
+         {
+            this.fcmLog("warn","selfload","standalone fallback threw: " + eFallback.message);
+         }
+      }
+
+      // Find the legacy bridge through Loader/content wrappers as well as a
+      // direct stage child. Do not treat the modern widget as a bridge.
+      private function fcmFindLegacyBridge(node:*, depth:int) : *
+      {
+         if(node == null || depth > 8) { return null; }
+         try { if(Boolean(node["fcmChatWidgetMarker"])) { return null; } }
+         catch(eMarker:Error) {}
+         try { if(node["fcmSendMessage"] != null) { return node; } }
+         catch(eMethod:Error) {}
+         var n:int = 0;
+         try { n = int(node.numChildren); } catch(eCount:Error) { return null; }
+         for(var i:int = 0; i < n; i++)
+         {
+            try
+            {
+               var found:* = this.fcmFindLegacyBridge(node.getChildAt(i), depth + 1);
+               if(found != null) { return found; }
+            }
+            catch(eChild:Error) {}
+         }
+         return null;
+      }
+
       // Self-load FCMBridge.swf into the HUD when HUDModLoader is NOT present.
       // Uses flash.display.Loader (SWF loader — works in GFx) NOT URLLoader
       // (data loader — sandbox-blocked in GFx). Shares ApplicationDomain so
@@ -189,32 +311,16 @@
             this.fcmLog("info","selfload","FCMChatWidget present — skip legacy FCMBridge self-load");
             return;
          }
-         // Scan stage children for an existing FCMBridge instance.
+         // Scan through Loader/content wrappers for an existing legacy bridge.
          try
          {
-            var st:* = this.stage;
-            if(st != null)
+            var existing:* = this.fcmFindLegacyBridge(this.stage, 0);
+            if(existing != null)
             {
-               var nc:int = int(st.numChildren);
-               var si:int = 0;
-               while(si < nc)
-               {
-                  try
-                  {
-                     var sc:* = st.getChildAt(si);
-                     var sn:String = "";
-                     try { sn = String(sc.name); } catch(eN:Error) {}
-                     if(sn == "FCMBridge" || sn == "FCMBridgeClip")
-                     {
-                        this.fcmLog("info","selfload","FCMBridge child found on stage by name — skip self-load");
-                        this._fcmBridge = sc;
-                        this.fcmPassZfeToBridge();
-                        return;
-                     }
-                  }
-                  catch(eSc:Error) {}
-                  si = si + 1;
-               }
+               this.fcmLog("info","selfload","FCMBridge child found — skip self-load");
+               this._fcmBridge = existing;
+               this.fcmPassZfeToBridge();
+               return;
             }
          }
          catch(eSt:Error)
@@ -260,6 +366,7 @@
 
       public function fcmStageHasChatWidget() : Boolean
       {
+         if(this._fcmModernWidgetActive) { return true; }
          try
          {
             return this.fcmDisplayTreeHasChatWidget(this.stage, 0);
@@ -269,6 +376,35 @@
             this.fcmLog("warn","selfload","chat widget scan threw: " + eWidgetScan.message);
          }
          return false;
+      }
+
+      // Return the actual modern widget, not just its marker. ProcessUserEvent runs before
+      // HUDMenu dispatches HUDMod::UserEvent, so the host can give the widget first refusal and
+      // set the function's consumed return value. That is the only reliable way to stop vanilla
+      // TeamChat from opening a second editor after SharedHUDTools already owns the focus.
+      private function fcmFindChatWidget(node:*, depth:int) : *
+      {
+         if(node == null || depth > 8) { return null; }
+         var sn:String = "";
+         try { sn = String(node.name); } catch(eName:Error) {}
+         try
+         {
+            if(sn == "FCMChatWidget" || Boolean(node["fcmChatWidgetMarker"])) { return node; }
+         }
+         catch(eMarker:Error) {}
+         var n:int = 0;
+         try { n = int(node.numChildren); } catch(eCount:Error) { return null; }
+         for(var i:int = 0; i < n; i++)
+         {
+            try
+            {
+               var child:* = node.getChildAt(i);
+               var found:* = this.fcmFindChatWidget(child, depth + 1);
+               if(found != null) { return found; }
+            }
+            catch(eChild:Error) {}
+         }
+         return null;
       }
 
       private function fcmDisplayTreeHasChatWidget(node:*, depth:int) : Boolean
@@ -291,30 +427,23 @@
       // Called when FCMBridge.swf finishes loading (standalone path only).
       public function fcmOnBridgeLoaded(evt:*) : void
       {
+         if(this._fcmModernWidgetActive)
+         {
+            // A Loader request may already be in flight when HUDModLoader wins
+            // the race. Re-scan and retire that late legacy child as well.
+            this.fcmNotifyModernWidget(null);
+            return;
+         }
          this.fcmLog("info","selfload","FCMBridge.swf load complete — re-scanning for bridge");
          try
          {
-            var st:* = this.stage;
-            if(st != null)
+            var found:* = this.fcmFindLegacyBridge(this.stage, 0);
+            if(found != null)
             {
-               var n:int = int(st.numChildren);
-               for(var i:int = 0; i < n; i++)
-               {
-                  try
-                  {
-                     var sc:* = st.getChildAt(i);
-                     var sn:String = "";
-                     try { sn = String(sc.name); } catch(eN:Error) {}
-                     if(sn == "FCMBridge" || sn == "FCMBridgeClip" || sc.fcmSendMessage != null)
-                     {
-                        this._fcmBridge = sc;
-                        this.fcmLog("info","selfload","bridge found after self-load OK");
-                        this.fcmPassZfeToBridge();
-                        return;
-                     }
-                  }
-                  catch(eC:Error) {}
-               }
+               this._fcmBridge = found;
+               this.fcmLog("info","selfload","bridge found after self-load OK");
+               this.fcmPassZfeToBridge();
+               return;
             }
          }
          catch(eSt:Error) {}
@@ -386,6 +515,22 @@
       // Stateless on purpose: FCMBridge dedupes; empty worldId = "left the world".
       public function fcmPollWorldId() : void
       {
+         // If HUDModLoader appeared after the standalone fallback, retire the
+         // legacy renderer before it can consume another poll or paint another row.
+         if(this.fcmStageHasChatWidget())
+         {
+            if(this._fcmSelfLoadTimer != null)
+            {
+               try { this._fcmSelfLoadTimer.stop(); } catch(eStopFallback:Error) {}
+               this._fcmSelfLoadTimer = null;
+            }
+            if(this._fcmBridge != null)
+            {
+               try { this._fcmBridge.fcmDisableForModernWidget(); } catch(eDisable:Error) {}
+               this._fcmBridge = null;
+            }
+            return;
+         }
          if(this._fcmBridge == null) { return; }
          // Late __ZFE handover: ZFE attaches to the HUD movie AFTER fcmInit ran,
          // so the load-time fcmPassZfeToBridge can miss it. Re-find on this tick
@@ -468,8 +613,60 @@
          this.fcmPublishChannel();
       }
 
-      public function fcmEvent(action:String, pressed:Boolean) : void
+      // Page Up uses the same display order as Page Down, but travels in the
+      // opposite direction. Keep this helper in HUDMenu itself: the patched
+      // host must not call a method that exists only on FCMBridge.
+      public function fcmSwitchChannelPrev() : void
       {
+         var order:Array = this.fcmInWorldNow() ? [0,5,1,2,3,4] : [0,1,2,3,4];
+         var pos:int = order.indexOf(this._fcmChannelIdx);
+         if(pos < 0) { pos = 0; }
+         this._fcmChannelIdx = int(order[(pos + order.length - 1) % order.length]);
+         this._fcmChannelSlug = this.fcmChannelSlug(this._fcmChannelIdx);
+         this.fcmPublishChannel();
+      }
+
+      // HUDMenu receives aliases with different spelling across loader/game builds. Normalize
+      // only the named action token; this never touches the focused TextField's characters.
+      private function fcmNormalizeAction(action:String) : String
+      {
+         if(action == null) { return ""; }
+         var normalized:String = action.toLowerCase();
+         normalized = normalized.split(" ").join("");
+         normalized = normalized.split("_").join("");
+         normalized = normalized.split("-").join("");
+         return normalized;
+      }
+
+      public function fcmEvent(action:String, pressed:Boolean) : Boolean
+      {
+         // HUDModLoader's modern widget receives the same bubbling event before
+         // HUDMenu.ProcessUserEvent. Let it handle the event BEFORE vanilla dispatches the
+         // bubbling copy. The widget records that host-handled edge and ignores the later copy,
+         // preventing Page actions from switching twice and TeamChat from opening a second
+         // editor. A false result deliberately lets vanilla keep ordinary gameplay/external
+         // modal actions.
+         if(this.fcmStageHasChatWidget())
+         {
+            try
+            {
+               var modern:* = this.fcmFindChatWidget(this.stage, 0);
+               if(modern != null)
+               {
+                  var modernHandler:* = modern["fcmHandleHostUserEvent"];
+                  if(modernHandler != null)
+                  {
+                     return Boolean(Reflect.callMethod(modern, modernHandler, [action, pressed]));
+                  }
+               }
+            }
+            catch(eModern:Error)
+            {
+               this.fcmLog("warn","event","modern host event threw: " + eModern.message);
+            }
+            return false;
+         }
+         var normalized:String = this.fcmNormalizeAction(action);
          // Chat-open hotkey: INSERT (matches the shipped OpenChatKey in FCM.ini).
          // Also accept TeamChat and Console (legacy) as aliases. Open on key-UP only so the
          // opening action never leaks a character into the newly focused native field.
@@ -477,82 +674,130 @@
          if((action == openKey || action == "Console" || action == "ConsoleToggles" || action == "TeamChat") && !pressed)
          {
             this.fcmLog("info","open",action + " -> enterChatMode");
+            this.fcmResetNavigation();
             try
             {
                this.enterChatMode();
-               this._fcmInputActive = true;
                this.fcmStyleInput();
+               // Do not announce an input session until the host editor setup completed. A
+               // failed open must leave arrows/page actions and typed characters to the game.
+               this._fcmInputActive = true;
             }
             catch(eOpen:Error)
             {
+               this._fcmInputActive = false;
+               this.fcmResetNavigation();
                this.fcmLog("warn","open","enterChatMode threw: " + eOpen.message);
             }
-            return;
+            return this._fcmInputActive;
          }
          // Loader builds differ: some emit both edges and some only emit key-UP. Handle the
-         // first edge available and ignore the matching second edge.
-         var isNextPage:Boolean = action == "NextPage" || action == "PAGE_DOWN" || action == "PageDown";
-         var isPrevPage:Boolean = action == "PrevPage" || action == "PAGE_UP" || action == "PageUp";
-         var isFeedNav:Boolean = action == "Up" || action == "ArrowUp" || action == "CursorUp"
-            || action == "Down" || action == "ArrowDown" || action == "CursorDown"
-            || action == "Home" || action == "End";
+         // first edge available and ignore the matching second edge. Page actions are one-shot
+         // channel commands; there is no persistent channel-selection mode.
+         var isNextPage:Boolean = normalized == "nextpage" || normalized == "pagedown";
+         var isPrevPage:Boolean = normalized == "prevpage" || normalized == "pageup";
+         var isFeedNav:Boolean = normalized == "up" || normalized == "arrowup" || normalized == "cursorup"
+            || normalized == "down" || normalized == "arrowdown" || normalized == "cursordown"
+            || normalized == "home" || normalized == "end";
          if(isNextPage || isPrevPage || isFeedNav)
          {
+            var navigationWasDown:Boolean = this.fcmNavigationIsDown(normalized);
             if(pressed)
             {
-               if(this._fcmNavigationAction == action) { return; }
-               this._fcmNavigationAction = action;
+               if(navigationWasDown) { return true; }
+               this.fcmNavigationMarkDown(normalized);
             }
-            else if(this._fcmNavigationAction == action)
+            else if(navigationWasDown)
             {
-               this._fcmNavigationAction = "";
-               return;
+               this.fcmNavigationClear(normalized);
+               return true;
             }
 
             if(isNextPage)
             {
                this.fcmSwitchChannel();
-               return;
+               return true;
             }
             if(isPrevPage)
             {
                this.fcmSwitchChannelPrev();
-               return;
+               return true;
             }
             // Feed navigation is unlocked only after Insert successfully opens the native chat
             // editor. Before that, arrows remain ordinary game controls.
             if(this._fcmInputActive && this._fcmBridge != null)
             {
-               if(action == "Up" || action == "ArrowUp" || action == "CursorUp")
+               if(normalized == "up" || normalized == "arrowup" || normalized == "cursorup")
                {
                   try { this._fcmBridge.fcmScrollUp(); } catch(eSu:Error) {}
-                  return;
+                  return true;
                }
-               if(action == "Down" || action == "ArrowDown" || action == "CursorDown")
+               if(normalized == "down" || normalized == "arrowdown" || normalized == "cursordown")
                {
                   try { this._fcmBridge.fcmScrollDown(); } catch(eSd:Error) {}
-                  return;
+                  return true;
                }
-               if(action == "Home" || action == "End")
+               if(normalized == "home" || normalized == "end")
                {
                   try { this._fcmBridge.fcmScrollToBottom(); } catch(eSb:Error) {}
-                  return;
+                  return true;
                }
             }
-            return;
+            // The action was a feed command, but FCM does not own navigation until Insert has
+            // opened a live editor. Let the game retain its normal arrow controls in that state.
+            return false;
          }
          // Suppress noisy repeated / high-frequency actions.
          if(action == "Console" || action == "ConsoleToggles" || action == "Unmapped" || action == "DISABLED")
          {
-            return;
+            return false;
          }
          if(action == "Forward" || action == "Back" || action == "StrafeLeft" || action == "StrafeRight" || action == "Move" || action == "Look" || action == "Turn" || action == "Melee" || action == "ReadyWeapon" || action == "Attack" || action == "Run" || action == "Sprint" || action == "Jump" || action == "Ping" || action == "Activate" || action == "Sneak" || action == "ToggleRun" || action == "AutoMove")
          {
-            return;
+            return false;
          }
-         if(this._fcmLastEvent == action) { return; }
+         if(this._fcmLastEvent == action) { return false; }
          this._fcmLastEvent = action;
          this.fcmLog("info","event",action + "~" + pressed);
+         return false;
+      }
+
+      public function fcmEventSafe(action:String, pressed:Boolean) : Boolean
+      {
+         try { return this.fcmEvent(action, pressed); }
+         catch(eEvent:Error)
+         {
+            try { this.fcmLog("warn","event","fcmEvent threw: " + eEvent.message); }
+            catch(eLog:Error) {}
+            return false;
+         }
+      }
+
+      private function fcmResetNavigation() : void
+      {
+         this._fcmNavigationDown = [];
+         this._fcmNavigationAction = "";
+      }
+
+      private function fcmNavigationIsDown(key:String) : Boolean
+      {
+         if(this._fcmNavigationDown == null) { this._fcmNavigationDown = []; }
+         return this._fcmNavigationDown.indexOf(key) >= 0;
+      }
+
+      private function fcmNavigationMarkDown(key:String) : void
+      {
+         if(this._fcmNavigationDown == null) { this._fcmNavigationDown = []; }
+         if(this._fcmNavigationDown.indexOf(key) < 0) { this._fcmNavigationDown.push(key); }
+         this._fcmNavigationAction = key;
+      }
+
+      private function fcmNavigationClear(key:String) : void
+      {
+         if(this._fcmNavigationDown == null) { this._fcmNavigationDown = []; }
+         var idx:int = this._fcmNavigationDown.indexOf(key);
+         if(idx >= 0) { this._fcmNavigationDown.splice(idx, 1); }
+         if(this._fcmNavigationDown.length == 0) { this._fcmNavigationAction = ""; }
       }
 
       public function fcmStyleInput() : void
@@ -710,6 +955,14 @@
       public function fcmForward(Message:String) : void
       {
          if(Message == null || Message.length == 0) { return; }
+         // FCMChatWidget's SharedHUDTools callback already submits this message.
+         // The original HUDMenu send hook still fires on some loader builds; do
+         // not forward that same text through the legacy bridge a second time.
+         if(this.fcmStageHasChatWidget())
+         {
+            this.fcmLog("info","send","modern widget owns submit; legacy forward skipped");
+            return;
+         }
          // Auth state gate: only allow sending when the account is linked.
          // FCMBridge.fcmCanSend() returns false when authState is "limited".
          if(this._fcmBridge != null)
@@ -787,20 +1040,8 @@
             // Re-scan stage for the bridge in case it loaded late.
             try
             {
-               var stg:* = this.stage;
-               if(stg != null)
-               {
-                  var nc:int = int(stg.numChildren);
-                  for(var si:int = 0; si < nc; si++)
-                  {
-                     try
-                     {
-                        var sc:* = stg.getChildAt(si);
-                        if(sc != null && sc.fcmSendMessage != null) { this._fcmBridge = sc; this.fcmPassZfeToBridge(); break; }
-                     }
-                     catch(eC:Error) {}
-                  }
-               }
+               this._fcmBridge = this.fcmFindLegacyBridge(this.stage, 0);
+               if(this._fcmBridge != null) { this.fcmPassZfeToBridge(); }
             }
             catch(eSt:Error) {}
          }
@@ -816,6 +1057,16 @@
          catch(eSend:Error)
          {
             this.fcmLog("warn","send","fcmSendMessage threw: " + eSend.message);
+         }
+      }
+
+      public function fcmForwardSafe(Message:String) : void
+      {
+         try { this.fcmForward(Message); }
+         catch(eForward:Error)
+         {
+            try { this.fcmLog("warn","send","fcmForward threw: " + eForward.message); }
+            catch(eLog:Error) {}
          }
       }
 

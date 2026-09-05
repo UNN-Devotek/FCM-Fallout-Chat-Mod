@@ -2,6 +2,10 @@
 class TestFcmNativeApi {
     static var failures:Int = 0;
 
+    static function payloadText(payload:Dynamic):String {
+        return payload == null ? "<none>" : haxe.Json.stringify(payload);
+    }
+
     static function check(name:String, condition:Bool):Void {
         if (condition) Sys.println("ok   - " + name);
         else { Sys.println("FAIL - " + name); failures++; }
@@ -24,6 +28,8 @@ class TestFcmNativeApi {
         check("routes canonical ZFE verb", Std.string(zApi.call("chat.v1.sendMessage", "{}"))
             .indexOf('"provider":"zfe"') >= 0);
         check("ZFE uses native input", zApi.supportsNativeInput());
+        check("ZFE widget requests retained-subscriber history resync",
+            FcmNativeApi.widgetMustRequestHistoryResync(FcmNativeApi.ZFE));
         check("ZFE capability probe uses the ZFE chat verb", zCalls.length == 2
             && zCalls[0] == "chat.v1.getRuntimeInfo|{}");
         check("ZFE verb and payload preserved", zCalls[1] == "chat.v1.sendMessage|{}");
@@ -31,15 +37,15 @@ class TestFcmNativeApi {
 
         var xCalls:Array<String> = [];
         var chat:Dynamic = {};
-        chat.connect = function(payload:String):String { xCalls.push("connect|" + payload); return '{"success":true}'; };
-        chat.pollEvents = function(payload:String):String { xCalls.push("pollEvents|" + payload); return '{"success":true}'; };
-        chat.sendMessage = function(payload:String):String { xCalls.push("sendMessage|" + payload); return '{"success":true}'; };
-        chat.getRuntimeInfo = function(payload:String):String {
-            xCalls.push("getRuntimeInfo|" + payload);
+        chat.connect = function(payload:Dynamic):String { xCalls.push("connect|" + payloadText(payload)); return '{"success":true}'; };
+        chat.pollEvents = function(payload:Dynamic):String { xCalls.push("pollEvents|" + payloadText(payload)); return '{"success":true}'; };
+        chat.sendMessage = function(payload:Dynamic):String { xCalls.push("sendMessage|" + payloadText(payload)); return '{"success":true}'; };
+        chat.getRuntimeInfo = function():String {
+            xCalls.push("getRuntimeInfo|<none>");
             return '{"success":true,"runtime":"xScal Chat","capabilities":["xscal-chat-interface"]}';
         };
-        chat.getAuthState = function(payload:String):String { xCalls.push("getAuthState|" + payload); return '{"state":"authenticated"}'; };
-        chat.reportMessage = function(payload:String):String { xCalls.push("reportMessage|" + payload); return '{"success":true}'; };
+        chat.getAuthState = function(payload:Dynamic):String { xCalls.push("getAuthState|" + payloadText(payload)); return '{"state":"authenticated"}'; };
+        chat.reportMessage = function(payload:Dynamic):String { xCalls.push("reportMessage|" + payloadText(payload)); return '{"success":true}'; };
         var xScope:Dynamic = {};
         Reflect.setField(xScope, "__SFECodeObj", { chatInterface: chat });
         var xApi:FcmNativeApi = FcmNativeApi.discover(xScope);
@@ -48,7 +54,7 @@ class TestFcmNativeApi {
             .indexOf('"success":true') >= 0);
         xApi.call("chat.v1.getAuthState", "{}");
         xApi.call("chat.v1.pollEvents", "{\"cursor\":0}");
-        check("maps xScal methods without chat.v1 prefix", xCalls.length == 3
+        check("maps xScal methods with object payloads", xCalls.length == 3
             && xCalls[0] == "connect|{}"
             && xCalls[1] == "getAuthState|{}"
             && xCalls[2] == "pollEvents|{\"cursor\":0}");
@@ -56,11 +62,45 @@ class TestFcmNativeApi {
         check("maps xScal report to reportMessage", xCalls.length == 4
             && xCalls[3] == "reportMessage|{\"messageId\":\"m1\"}");
         check("xScal does not claim ZFE native input", !xApi.supportsNativeInput());
+        check("xScal subscriber owns initial history backfill",
+            !FcmNativeApi.widgetMustRequestHistoryResync(FcmNativeApi.XSCAL));
         check("unsupported xScal command fails closed",
             Std.string(xApi.call("chat.v1.notACommand", "{}")).indexOf("unsupported_command") >= 0);
         check("xScal capability probe uses chatInterface", xApi.probeChatCapability()
-            && xCalls[xCalls.length - 1] == "getRuntimeInfo|{}");
+            && xCalls[xCalls.length - 1] == "getRuntimeInfo|<none>");
         check("xScal without a logger fails log calls closed", Std.string(xApi.call("log", "{}")) == "");
+
+        // xScal builds that do not expose getAuthState use the documented no-argument
+        // connection-state method. This must not receive the JSON placeholder payload.
+        var connectionStateCalls:Array<String> = [];
+        var connectionStateChat:Dynamic = {};
+        connectionStateChat.getConnectionState = function():String {
+            connectionStateCalls.push("getConnectionState|<none>");
+            return '{"success":true,"status":"authenticated"}';
+        };
+        var connectionStateApi:FcmNativeApi = FcmNativeApi.fromXscal({
+            chatInterface: connectionStateChat,
+        });
+        check("xScal auth fallback calls no-argument getConnectionState",
+            connectionStateApi != null
+            && Std.string(connectionStateApi.call("chat.v1.getAuthState", "{}"))
+                .indexOf('"status":"authenticated"') >= 0
+            && connectionStateCalls.length == 1
+            && connectionStateCalls[0] == "getConnectionState|<none>");
+
+        // A stale host-side ZFE hint must not override xScal's positive
+        // chatInterface marker. This is the exact __SFCodeObj collision shape
+        // seen when both extenders are installed.
+        var hintedXscal:Dynamic = { chatInterface: chat };
+        hintedXscal.call = function(verb:String, payload:String):String {
+            return '{"success":false,"error":{"code":"dispatch_failed"}}';
+        };
+        var hintedApi:FcmNativeApi = FcmNativeApi.fromExposed(
+            hintedXscal, FcmNativeApi.ZFE);
+        check("xScal marker overrides a stale ZFE provider hint",
+            hintedApi != null && hintedApi.provider == FcmNativeApi.XSCAL);
+        check("fromZfe rejects an xScal chat surface",
+            FcmNativeApi.fromZfe(hintedXscal) == null);
 
         // xScal v0.1.14 exposes both its chat interface and a generic
         // __SFCodeObj.call callback object on the movie root. The generic
@@ -81,6 +121,27 @@ class TestFcmNativeApi {
             collisionApi != null && collisionApi.provider == FcmNativeApi.XSCAL);
         check("does not probe xScal generic callback when chat surface exists",
             genericXscalCalls.length == 0);
+
+        // If both extenders are installed, the explicit xScal chat surface is
+        // the stronger identity signal. A valid ZFE object must not win merely
+        // because it appears under the conventional name first.
+        var coinstalledZfeCalls:Array<String> = [];
+        var coinstalledZfe:Dynamic = {};
+        coinstalledZfe.call = function(verb:String, payload:String):String {
+            coinstalledZfeCalls.push(verb + "|" + payload);
+            return verb == "chat.v1.getRuntimeInfo"
+                ? '{"success":true,"capabilities":["zfe-chat-online-v1"]}'
+                : '{"success":true,"provider":"zfe"}';
+        };
+        var coinstalledScope:Dynamic = {};
+        Reflect.setField(coinstalledScope, "__ZFE", coinstalledZfe);
+        Reflect.setField(coinstalledScope, "__SFECodeObj", { chatInterface: chat });
+        var coinstalledApi:FcmNativeApi = FcmNativeApi.discover(coinstalledScope);
+        check("prefers explicit xScal when ZFE is co-installed",
+            coinstalledApi != null && coinstalledApi.provider == FcmNativeApi.XSCAL);
+        coinstalledApi.call("chat.v1.pollEvents", "{}");
+        check("co-installed discovery never probes or routes through ZFE",
+            coinstalledZfeCalls.length == 0);
 
         // Some xScal builds expose the same explicit chat surface directly on
         // __SFCodeObj. That property is the positive xScal discriminator; the

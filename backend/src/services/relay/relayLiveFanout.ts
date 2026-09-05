@@ -10,8 +10,37 @@ export interface RelayLiveSubscriber {
   supportsHudCosmeticsTransport: boolean;
 }
 
+/** Live frames held while a native subscriber is receiving its cursor-zero snapshot. */
+export interface PendingLiveFrame {
+  cursor: number;
+  frame: string;
+}
+
+export const MAX_PENDING_LIVE_FRAMES = 128;
+export const MAX_PENDING_LIVE_BYTES = 512 * 1024;
+
+/**
+ * Bounded subscribe barrier. A slow database/Redis read must not turn a busy server into an
+ * unbounded per-socket memory sink. The caller closes the subscriber when this returns false so
+ * the client can reconnect from a clean cursor instead of receiving an incomplete stream.
+ */
+export function enqueuePendingLiveFrame(
+  queue: PendingLiveFrame[],
+  currentBytes: number,
+  item: PendingLiveFrame,
+  maxFrames = MAX_PENDING_LIVE_FRAMES,
+  maxBytes = MAX_PENDING_LIVE_BYTES,
+): { accepted: boolean; bytes: number } {
+  const frameBytes = Buffer.byteLength(item.frame, 'utf8');
+  if (queue.length >= maxFrames || frameBytes > maxBytes || currentBytes + frameBytes > maxBytes) {
+    return { accepted: false, bytes: currentBytes };
+  }
+  queue.push(item);
+  return { accepted: true, bytes: currentBytes + frameBytes };
+}
+
 export type RelayLiveFrameSender<T extends RelayLiveSubscriber> =
-  (subscriber: T, frame: string) => boolean;
+  (subscriber: T, frame: string, relaySeq: number) => boolean;
 
 export interface RelayLiveChatEvent {
   relaySeq: number;
@@ -86,7 +115,7 @@ export function fanoutRelayLiveChatMessage<T extends RelayLiveSubscriber>(
       subscriber.supportsHudCosmeticsTransport,
     );
     const frame = JSON.stringify({ op: 'event', cursor: built.relaySeq, event });
-    if (sendFrame(subscriber, frame)) {
+    if (sendFrame(subscriber, frame, built.relaySeq)) {
       subscriber.cursor = built.relaySeq;
       pushed++;
     } else {

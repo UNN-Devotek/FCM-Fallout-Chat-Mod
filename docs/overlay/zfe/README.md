@@ -7,9 +7,10 @@ selected automatically. Depending on the xScal build, that surface may be
 under `__SFECodeObj` or `__SFCodeObj`. A call-only `__SFCodeObj` remains a
 separate generic callback object and is not a ZFE discriminator.
 
-> **Current widget (2026-09-04):** `FCMChatWidget` v2.10.47 targets `/relay` through
-> ZFE `chat.v1` or xScal `chatInterface`. If both providers are present, ZFE is
-> preferred for its native text-input path; xScal uses SharedHUDTools text input.
+> **Current widget (2026-09-04):** `FCMChatWidget` v2.10.50 targets `/relay` through
+> ZFE `chat.v1` or xScal `chatInterface`. If both providers are present, the explicit xScal
+> `chatInterface` marker wins; ZFE is selected only when that marker is absent. Both providers
+> use SharedHUDTools text input when available.
 > The desktop overlay remains independent of this optional mod path.
 
 xScal `connect` is asynchronous. `success:true,status:"connecting"` is a pending-start response;
@@ -18,11 +19,20 @@ and reconnects only on explicit terminal states. If xScal exposes a separate gen
 `__SFCodeObj.call`, FCM uses it only for the optional `log` diagnostic path and never for chat
 verbs.
 
+Both providers receive the same complete bounded history on the long-lived relay subscription. A
+fresh cursor-zero subscription sends up to 15 recent rows for each static feed (`global`, `trade`,
+`events`, `infests`, and `raids`) plus up to 50 rows from the current `server` room: 125 events
+total. The native poll limit remains 64, so the widget drains this ordered snapshot over multiple
+polls. xScal's asynchronous subscriber is drained with a 250 ms warm-up for at most 20 polls.
+ZFE uses the same subscribe-time stream; it requests authenticated `FCMCTL/1/RESYNC` recovery
+only as a delayed fallback after an empty or dropped initial poll, and xScal is never sent that
+ZFE control.
+
 ## Provider paths and automatic detection
 
 | Provider | Runtime object | Configuration path | FCM code path |
 |---|---|---|---|
-| ZFE | `__ZFE` or `ZFECodeObj` with `.call`; legacy `__SFCodeObj` is accepted only after a positive `chat.v1.getRuntimeInfo` probe | `Data/configuration/zfe.ini` or `Documents/My Games/Fallout 76/configuration/zfe.ini`; FCM fragment at `Data/ZFE/TextChat/fragments/FCM.ini` | `FcmNativeApi.hx` calls canonical `chat.v1.*` verbs and preserves ZFE native input |
+| ZFE | `__ZFE` or `ZFECodeObj` with `.call`; legacy `__SFCodeObj` is accepted only after a positive `chat.v1.getRuntimeInfo` probe | `Data/configuration/zfe.ini` or `Documents/My Games/Fallout 76/configuration/zfe.ini`; FCM fragment at `Data/ZFE/TextChat/fragments/FCM.ini` | `FcmNativeApi.hx` calls canonical `chat.v1.*` verbs; SharedHUDTools input is primary and ZFE native input is no-lock fallback |
 | xScal | `__SFECodeObj.chatInterface` or `__SFCodeObj.chatInterface` with `connect`, `pollEvents`, and `sendMessage`; a call-only `__SFCodeObj` is not used for chat | `xscal.ini` beside the Fallout 76 executable, using the `[Chat]` section; package example is `xscal.ini.example` | `FcmNativeApi.hx` removes `chat.v1.`, maps `report` → `reportMessage`, and uses SharedHUDTools input |
 
 The shared widget files are `Data/FCMChatWidget.ba2`, `Data/FCMChat.ini`, and the
@@ -30,9 +40,9 @@ HUDModLoader registry entry. `hudmenu-chat/fcm-inject.as` passes the host's ZFE 
 xScal object to `FCMBridge.hx` with a provider hint; `FCMChatWidget.hx` and
 `FCMBridge.hx` also retry self-discovery on their parent/root chain. Detection is capability-based and
 does not load `dxgi.dll`, read extender files, scan ports, inject code, or read
-game memory. When both objects are exposed, a valid explicit ZFE bridge is selected first;
-otherwise the validated xScal chat surface is selected. A bare `__SFCodeObj` is only
-considered after xScal has been ruled out and its ZFE capability is confirmed.
+game memory. When both objects are exposed, an explicit xScal `chatInterface` is selected first;
+otherwise the validated ZFE bridge is selected. A bare `__SFCodeObj` is only considered after
+both positive surfaces have been ruled out and its ZFE capability is confirmed.
 
 ## Guides
 
@@ -47,6 +57,7 @@ considered after xScal has been ruled out and its ZFE capability is confirmed.
 | [Environment Variables](env-vars.md) | Dev/testing only — normal users never need these |
 | [Logs & Troubleshooting](logs-troubleshooting.md) | Finding `zfe.log`, what to look for, support reports |
 | [Scaleform UI Guide](scaleform-ui-guide.md) | GFx execution model, banned features, text rendering, input/focus, toolchain |
+| [HUD surface manifest](hud-surface-manifest.md) | Exact repository/runtime paths, provider markers, ownership, and verification ledger |
 | [In-Game Chat Appearance](ingame-chat-appearance.md) | FCMBridge HUD vs ChatOverlay.tsx reference — gaps, improvements, banned list |
 | [In-Game Send Investigation (2026-08-06)](ingame-send-investigation-2026-08-06.md) | **OPEN** — `invalid_channel` on send / no server chat: findings, four dead hypotheses, current evidence |
 | [HUD Mod Compatibility](hud-mod-compatibility.md) | HUDModLoader coexistence, load-order analysis, mod survey, shipping recommendations |

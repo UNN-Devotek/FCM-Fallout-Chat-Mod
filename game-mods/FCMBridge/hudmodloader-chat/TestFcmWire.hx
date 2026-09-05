@@ -8,6 +8,10 @@ class TestFcmWire {
     }
 
     static function main():Void {
+        check("xScal dropped marker detected", FcmWire.isDroppedEvent('{"kind":"events.dropped","id":9}'));
+        check("ordinary event is not a dropped marker", !FcmWire.isDroppedEvent('{"kind":"chat.message","id":9}'));
+        check("dropped marker text in a chat body is not a dropped event",
+            !FcmWire.isDroppedEvent('{"kind":"chat.message","body":"events.dropped"}'));
         check("compact quoted events", FcmWire.findEventsArrayStart('{"events":[{"id":1}]}') == 10);
         check("pretty quoted events", FcmWire.findEventsArrayStart('{\n  "events" : [\n  ]\n}') == 15);
         check("native unquoted events", FcmWire.findEventsArrayStart('{events: [ ]}') == 9);

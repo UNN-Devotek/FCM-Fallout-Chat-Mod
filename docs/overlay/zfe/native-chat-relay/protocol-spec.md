@@ -413,6 +413,13 @@ size is relay policy, not a ZFE rule — a relay can return no history, five mes
 messages, or another bounded count. Returned events still use their **real relay cursors** so the
 client can continue from the newest event it received.
 
+FCM's native subscriber implementation uses a separate bounded subscribe-time backfill so the
+HUD receives context on first load. A cursor-zero subscription sends up to 15 recent rows for
+each static feed (`global`, `trade`, `events`, `infests`, and `raids`) and up to 50 rows for the
+current ephemeral `server` room: 125 events total. This is an FCM relay policy chosen to fit
+xScal's 128-event queue; the native `pollEvents` limit remains 64, so the widget drains the
+ordered snapshot over multiple polls. Other relay consumers must not assume this exact window.
+
 ### Subscribe
 
 ```json
@@ -452,8 +459,14 @@ Push new events as they become visible to that user:
 }
 ```
 
-> `subscribe` must **not** drain poll history. A client may reconnect with the last cursor and
-> expect to receive only **newer** events.
+The `subscribed` acknowledgement is followed by the subscription's initial history events when
+the supplied cursor is `0`, then by live events. A nonzero cursor resumes after that cursor. This
+subscription backfill is distinct from a short-lived `poll` response; it does not consume or alter
+the cursor of any other connection. The relay holds live frames behind the initial snapshot and
+flushes them in cursor order, preventing a live event from overtaking or duplicating the backfill.
+FCM's xScal widget drains this stream with a bounded warm-up. A ZFE widget uses the authenticated
+`FCMCTL/1/RESYNC` control only as a delayed fallback after an empty or dropped initial poll, which
+prevents a normal subscribe snapshot from being appended twice when the native queue is still full.
 
 ### Report
 

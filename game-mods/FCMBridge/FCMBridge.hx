@@ -55,7 +55,9 @@ class FCMBridge extends MovieClip {
     static inline var HDR_H:Int        = 45;
     static inline var INPUT_H:Int      = 22;
     static inline var FONT_SIZE:Int    = 14;
-    static inline var MAX_MSGS:Int     = 8;
+    // Retain the complete bounded subscribe snapshot so every channel can be selected after
+    // startup. The visible TextField still scrolls; this is a history cap, not a row count.
+    static inline var MAX_MSGS:Int     = 125;
 
     // ── chat.v1 poll / connect timing ─────────────────────────────────────────
     // Poll every 2 s during normal operation; ZFE returns events newer than the
@@ -63,6 +65,11 @@ class FCMBridge extends MovieClip {
     static inline var POLL_MS:Int           = 2000;
     static inline var CONNECT_RETRY_MS:Int  = 3000;
     static inline var CONNECT_MAX_MS:Int    = 30000;
+    // A cursor-zero subscriber can contain 125 events while each native poll returns at most 64.
+    // Drain only when the first batch proves that more history is queued; xScal also needs a
+    // bounded async warm-up because its connect response precedes subscriber creation.
+    static inline var INITIAL_DRAIN_MS:Int  = 250;
+    static inline var INITIAL_DRAIN_MAX:Int = 20;
     // worldId re-read interval (ms). BSUIDataManager worldId changes when the
     // player transitions between worlds; we poll it rather than waiting for an event.
     static inline var WORLD_POLL_MS:Int     = 5000;
@@ -90,15 +97,24 @@ class FCMBridge extends MovieClip {
     var _subTf:TextField;
     var _fmt:TextFormat;
     var _pollTimer:Timer      = null;
+    var _initialDrainTimer:Timer = null;
+    var _initialDrainAttempts:Int = 0;
     var _connectTimer:Timer   = null;
     var _worldTimer:Timer     = null;
     var _activeChannelIdx:Int = 0;   // index into CHANNEL_SLUGS / CHANNEL_NAMES
     var _records:Array<String>= [];  // ring of "slug|displayName|body" strings
+    var _seenEventKeys:Map<String,Bool> = new Map();
+    var _seenEventOrder:Array<String> = [];
+    static inline var SEEN_EVENT_CAP:Int = 512;
     var _bScrolling:Bool      = false;
     var _newWhileScrolled:Int = 0;
 
     // ── chat.v1 session state ─────────────────────────────────────────────────
     var _connected:Bool       = false;  // true after a successful chat.v1.connect
+    // The legacy renderer is a standalone fallback. HUDModLoader's modern
+    // FCMChatWidget can appear after it, so the host may retire this instance
+    // without unloading the containing SWF.
+    var _legacyDisabled:Bool   = false;
     var _userId:String        = "";     // relay-issued userId (from connect/auth state)
     var _relayUserId:String   = "";     // alias for worldId HMAC (same as _userId)
     var _connectDelay:Int     = CONNECT_RETRY_MS;
@@ -157,11 +173,13 @@ class FCMBridge extends MovieClip {
 
     /** Called by the patched HUDMenu when the player opens chat — un-hides the feed. */
     public function fcmWake():Void {
+        if (_legacyDisabled) return;
         _lastActivityAt = flash.Lib.getTimer();
         if (alpha < 1) alpha = 1;
     }
 
     function onHideTick(e:TimerEvent):Void {
+        if (_legacyDisabled) return;
         if (flash.Lib.getTimer() - _lastActivityAt <= AUTOHIDE_MS) return;
         if (alpha > 0) {
             alpha -= FADE_STEP;
@@ -181,16 +199,28 @@ class FCMBridge extends MovieClip {
     }
 
     function onStage(e:Event):Void {
-        removeEventListener(Event.ADDED_TO_STAGE, onStage);
-        buildPanel();
-        _lastActivityAt = flash.Lib.getTimer();
-        _hideTimer = new Timer(FADE_TICK_MS);
-        _hideTimer.addEventListener(TimerEvent.TIMER, onHideTick);
-        _hideTimer.start();
-        // ZFE needs a few seconds after game load before its API is ready.
-        var delay = new Timer(3000, 1);
-        delay.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) { init(); });
-        delay.start();
+        try {
+            removeEventListener(Event.ADDED_TO_STAGE, onStage);
+            buildPanel();
+            _lastActivityAt = flash.Lib.getTimer();
+            _hideTimer = new Timer(FADE_TICK_MS);
+            _hideTimer.addEventListener(TimerEvent.TIMER, runHideTickSafely);
+            _hideTimer.start();
+            // ZFE needs a few seconds after game load before its API is ready.
+            var delay = new Timer(3000, 1);
+            delay.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) { runInitSafely(); });
+            delay.start();
+        } catch (err:Dynamic) {
+            zfeLog("warn", "startup", "legacy stage init isolated: " + Std.string(err));
+        }
+    }
+
+    function runHideTickSafely(e:TimerEvent):Void {
+        try {
+            onHideTick(e);
+        } catch (err:Dynamic) {
+            zfeLog("warn", "hide", "legacy fade timer isolated: " + Std.string(err));
+        }
     }
 
     // =========================================================================
@@ -322,6 +352,7 @@ class FCMBridge extends MovieClip {
     // =========================================================================
 
     function init():Void {
+        if (_legacyDisabled) return;
         _api = FcmNativeApi.discover(this);
         if (_api == null) {
             // ZFE attaches to the in-world HUD movie AFTER we load (we boot from
@@ -332,12 +363,28 @@ class FCMBridge extends MovieClip {
             setText("searching for ZFE/xScal (" + _bootTries + "/" + BOOT_MAX + ")...");
             if (_bootTimer == null) {
                 _bootTimer = new Timer(BOOT_MS);
-                _bootTimer.addEventListener(TimerEvent.TIMER, function(_) { bootRetry(); });
+                _bootTimer.addEventListener(TimerEvent.TIMER, function(_) { runBootRetrySafely(); });
                 _bootTimer.start();
             }
             return;
         }
         postDiscoveryInit();
+    }
+
+    function runInitSafely():Void {
+        try {
+            init();
+        } catch (err:Dynamic) {
+            zfeLog("warn", "startup", "legacy init timer isolated: " + Std.string(err));
+        }
+    }
+
+    function runBootRetrySafely():Void {
+        try {
+            bootRetry();
+        } catch (err:Dynamic) {
+            zfeLog("warn", "startup", "legacy provider search isolated: " + Std.string(err));
+        }
     }
 
     function bootRetry():Void {
@@ -377,6 +424,7 @@ class FCMBridge extends MovieClip {
      * Safe to call before self-discovery finishes (drives boot if api is null).
      */
     public function fcmSetZfe(api:Dynamic):Void {
+        if (_legacyDisabled) return;
         if (_zfeInjectedByHost) return;       // already injected
         if (api == null) return;
         if (_api != null) return;             // self-discovery already succeeded
@@ -393,6 +441,7 @@ class FCMBridge extends MovieClip {
 
     /** Host handover for either script extender. */
     public function fcmSetNativeApi(api:Dynamic, providerHint:String = "", loggerRaw:Dynamic = null):Void {
+        if (_legacyDisabled) return;
         if (_zfeInjectedByHost || api == null || _api != null) return;
         _zfeInjectedByHost = true;
         _api = FcmNativeApi.fromExposed(api, providerHint, loggerRaw);
@@ -442,6 +491,7 @@ class FCMBridge extends MovieClip {
     // =========================================================================
 
     function startConnect():Void {
+        if (_legacyDisabled) return;
         if (_api == null) return;
         _connectAttempts++;
         zfeLog("info", "connect", "attempt=" + _connectAttempts + " displayName=" + _displayName);
@@ -490,9 +540,18 @@ class FCMBridge extends MovieClip {
         _connectTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
             _connectTimer = null;
             _connectDelay = Std.int(Math.min(_connectDelay * 2, CONNECT_MAX_MS));
-            startConnect();
+            runStartConnectSafely();
         });
         _connectTimer.start();
+    }
+
+    function runStartConnectSafely():Void {
+        try {
+            startConnect();
+        } catch (err:Dynamic) {
+            zfeLog("warn", "connect", "legacy connect timer isolated: " + Std.string(err));
+            try { scheduleConnectRetry(); } catch (_:Dynamic) {}
+        }
     }
 
     // =========================================================================
@@ -580,21 +639,95 @@ class FCMBridge extends MovieClip {
     function startPollTimer():Void {
         stopPollTimer();
         _pollTimer = new Timer(POLL_MS);
-        _pollTimer.addEventListener(TimerEvent.TIMER, function(_) { pollEvents(); });
+        _pollTimer.addEventListener(TimerEvent.TIMER, function(_) { runPollSafely(); });
         _pollTimer.start();
-        pollEvents(); // immediate first poll for history
+        var initialCount:Int = runPollSafely(); // immediate first poll for history
+        if (_api != null && _api.provider == FcmNativeApi.XSCAL) {
+            // xScal's connect result precedes its asynchronous subscriber. Keep polling the
+            // bounded startup window even when the first response is still empty/pending.
+            startInitialHistoryDrain();
+        } else if (initialCount >= 64) {
+            // ZFE exposes the queue synchronously. A full first batch proves that a second
+            // native poll is needed; drain it promptly instead of waiting for POLL_MS.
+            startInitialHistoryDrain();
+        }
+    }
+
+    function runPollSafely():Int {
+        try {
+            return pollEvents();
+        } catch (err:Dynamic) {
+            zfeLog("warn", "poll", "legacy poll timer isolated: " + Std.string(err));
+            return 0;
+        }
     }
 
     function stopPollTimer():Void {
         if (_pollTimer != null) { _pollTimer.stop(); _pollTimer = null; }
+        stopInitialHistoryDrain();
     }
 
-    function pollEvents():Void {
+    /**
+     * Drain the complete cursor-zero subscription snapshot without making xScal's
+     * asynchronous subscriber look like a failed connection. xScal may accept
+     * connect() before its worker has attached the subscriber, so the first few
+     * polls are deliberately short, guarded, and independent of the steady-state
+     * poll timer.
+     */
+    function startInitialHistoryDrain():Void {
+        stopInitialHistoryDrain();
         if (_api == null || !_connected) return;
+        _initialDrainAttempts = 0;
+        scheduleInitialHistoryDrain();
+    }
+
+    function scheduleInitialHistoryDrain():Void {
+        if (_initialDrainTimer != null || _initialDrainAttempts >= INITIAL_DRAIN_MAX
+                || _api == null || !_connected) return;
+        _initialDrainTimer = new Timer(INITIAL_DRAIN_MS, 1);
+        _initialDrainTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
+            runInitialHistoryDrainSafely();
+        });
+        _initialDrainTimer.start();
+    }
+
+    function runInitialHistoryDrainSafely():Void {
+        try {
+            _initialDrainTimer = null;
+            if (_api == null || !_connected) return;
+            _initialDrainAttempts++;
+            var count:Int = runPollSafely();
+            if (!_connected || _api == null) return;
+
+            if (_api.provider == FcmNativeApi.XSCAL) {
+                // xScal's worker may take a few ticks to publish its subscriber
+                // queue, including an empty first response. Keep this bounded.
+                if (_initialDrainAttempts < INITIAL_DRAIN_MAX) scheduleInitialHistoryDrain();
+            } else if (count >= 64 && _initialDrainAttempts < 4) {
+                // ZFE is synchronous; only keep draining while it returns a full
+                // native batch. The relay's bounded startup window is < 128.
+                scheduleInitialHistoryDrain();
+            }
+        } catch (err:Dynamic) {
+            zfeLog("warn", "history", "initial drain isolated: " + Std.string(err));
+        }
+    }
+
+    function stopInitialHistoryDrain():Void {
+        if (_initialDrainTimer != null) {
+            _initialDrainTimer.stop();
+            _initialDrainTimer = null;
+        }
+        _initialDrainAttempts = 0;
+    }
+
+    function pollEvents():Int {
+        if (_legacyDisabled) return 0;
+        if (_api == null || !_connected) return 0;
 
         if (_api.provider == FcmNativeApi.XSCAL) {
             refreshAuthState();
-            if (!_connected) return;
+            if (!_connected) return 0;
         }
 
         var payload:String = '{"max":64,"cursor":' + _cursor + '}';
@@ -603,7 +736,7 @@ class FCMBridge extends MovieClip {
             result = _api.call("chat.v1.pollEvents", payload);
         } catch (e:Dynamic) {
             zfeLog("warn", "poll", "call threw: " + Std.string(e));
-            return;
+            return 0;
         }
 
         var rs:String = Std.string(result);
@@ -618,25 +751,26 @@ class FCMBridge extends MovieClip {
                     && FcmAuthFlow.isPendingTransportResponse(rs)) {
                 // The xScal subscriber is still being created by its worker.
                 // Leave the connection alive and let the next poll refresh auth.
-                return;
+                return 0;
             }
-            return;
+            return 0;
         }
 
         // Parse events array. Each event is a JSON object; we pull out the fields
         // we need using simple string scanning (no JSON parser in Scaleform AS3).
-        parseAndRenderEvents(rs);
+        return parseAndRenderEvents(rs);
     }
 
-    function parseAndRenderEvents(rs:String):Void {
+    function parseAndRenderEvents(rs:String):Int {
         // Find the events array. Look for '"events":[' or 'events:['.
         var evStart:Int = rs.indexOf('"events":[');
         if (evStart < 0) evStart = rs.indexOf('events:[');
-        if (evStart < 0) return; // no events key
+        if (evStart < 0) return 0; // no events key
 
         // Scan individual event objects in the array.
         // Each event: {...} separated by commas within the array.
         var newRecords:Bool = false;
+        var eventCount:Int = 0;
         var i:Int = evStart;
         while (i < rs.length) {
             var objStart:Int = rs.indexOf('{', i);
@@ -652,6 +786,7 @@ class FCMBridge extends MovieClip {
             if (j >= rs.length) break;
             var obj:String = rs.substring(objStart, j + 1);
             i = j + 1;
+            eventCount++;
 
             // Only process chat.message events.
             if (obj.indexOf('"chat.message"') < 0 && obj.indexOf('chat.message') < 0) {
@@ -663,11 +798,17 @@ class FCMBridge extends MovieClip {
             var channel:String      = extractJsonString(obj, "channel");
             var senderUserId:String = extractJsonString(obj, "senderUserId");
             var displayName:String  = extractJsonString(obj, "senderDisplayName");
+            var messageId:String    = extractJsonString(obj, "messageId");
             var body:String         = extractJsonString(obj, "body");
             var evId:Int            = extractJsonInt(obj, "id");
 
             // Advance cursor so next poll continues from here.
             if (evId > _cursor) _cursor = evId;
+
+            // The native subscriber can replay an event during startup/backfill and the same
+            // message can also arrive through a live fan-out. Deduplicate by both stable keys
+            // when available so legacy fallback behavior matches the modern widget.
+            if (!markSeenLegacyEvent(evId, messageId)) continue;
 
             // Skip empty bodies.
             if (body.length == 0) continue;
@@ -699,11 +840,38 @@ class FCMBridge extends MovieClip {
             renderRecords(_records);
             fcmWake();
         }
+        return eventCount;
     }
 
     function updateCursorFromEvent(obj:String):Void {
         var evId:Int = extractJsonInt(obj, "id");
         if (evId > _cursor) _cursor = evId;
+    }
+
+    /**
+     * The legacy bridge can see the same relay message through a subscribe-time
+     * backfill and a live fan-out. Prefer the relay event id, but also remember
+     * messageId because a provider may assign a different native cursor when it
+     * replays the same persisted message.
+     */
+    function markSeenLegacyEvent(eventId:Int, messageId:String):Bool {
+        var keys:Array<String> = [];
+        if (eventId > 0) keys.push("event:" + eventId);
+        if (messageId != null && messageId.length > 0) keys.push("message:" + messageId);
+        if (keys.length == 0) return true;
+
+        for (key in keys) {
+            if (_seenEventKeys.exists(key)) return false;
+        }
+        for (key in keys) {
+            _seenEventKeys.set(key, true);
+            _seenEventOrder.push(key);
+        }
+        while (_seenEventOrder.length > SEEN_EVENT_CAP) {
+            var oldest:String = _seenEventOrder.shift();
+            _seenEventKeys.remove(oldest);
+        }
+        return true;
     }
 
     // =========================================================================
@@ -713,12 +881,21 @@ class FCMBridge extends MovieClip {
     function startWorldTimer():Void {
         if (_worldTimer != null) { _worldTimer.stop(); _worldTimer = null; }
         _worldTimer = new Timer(WORLD_POLL_MS);
-        _worldTimer.addEventListener(TimerEvent.TIMER, function(_) { checkWorldId(); });
+        _worldTimer.addEventListener(TimerEvent.TIMER, function(_) { runWorldPollSafely(); });
         _worldTimer.start();
-        checkWorldId(); // immediate
+        runWorldPollSafely(); // immediate
+    }
+
+    function runWorldPollSafely():Void {
+        try {
+            checkWorldId();
+        } catch (err:Dynamic) {
+            zfeLog("warn", "world", "legacy world timer isolated: " + Std.string(err));
+        }
     }
 
     function checkWorldId():Void {
+        if (_legacyDisabled) return;
         if (_api == null || !_connected) return;
         // Fallback self-read from BSUIDataManager — the same sanctioned UI-layer
         // data source the game itself uses for HUD display. EULA §4(F)-safe.
@@ -739,13 +916,36 @@ class FCMBridge extends MovieClip {
      * __ZFE is handed over). Empty string = the player LEFT their world.
      */
     public function fcmSetWorldId(worldId:String):Void {
+        if (_legacyDisabled) return;
         if (worldId == null) worldId = "";
         applyWorldId(worldId);
     }
 
     /** True while the player is in a world — the patched HUDMenu gates /server on this. */
     public function fcmInWorld():Bool {
-        return _inWorld;
+        return !_legacyDisabled && _inWorld;
+    }
+
+    /**
+     * Retire this legacy fallback once HUDModLoader's FCMChatWidget is present.
+     * The containing Loader may remain in the HUD tree, so every timer and public
+     * forwarding method also observes _legacyDisabled. This is the duplicate-feed
+     * boundary: only the modern row-local renderer is allowed to paint after handover.
+     */
+    public function fcmDisableForModernWidget():Void {
+        if (_legacyDisabled) return;
+        zfeLog("info", "selfload", "legacy renderer disabled because FCMChatWidget is active");
+        _legacyDisabled = true;
+        _connected = false;
+        stopBootTimer();
+        stopPollTimer();
+        if (_worldTimer != null) { _worldTimer.stop(); _worldTimer = null; }
+        if (_connectTimer != null) { _connectTimer.stop(); _connectTimer = null; }
+        if (_hideTimer != null) { _hideTimer.stop(); _hideTimer = null; }
+        _api = null;
+        _records = [];
+        visible = false;
+        alpha = 0;
     }
 
     /**
@@ -754,6 +954,7 @@ class FCMBridge extends MovieClip {
      * Used at (re)connect time — chat.v1.connect passes displayName to the relay.
      */
     public function fcmSetPlayerName(name:String):Void {
+        if (_legacyDisabled) return;
         if (name == null) return;
         name = StringTools.trim(name);
         if (name.length == 0 || name == _displayName) return;
@@ -779,6 +980,13 @@ class FCMBridge extends MovieClip {
     function applyWorldId(worldId:String):Void {
         if (worldId == _lastWorldId) return;   // no change
         var wasInWorld:Bool = _inWorld;
+        var previousWorldId:String = _lastWorldId;
+        if (previousWorldId.length > 0 && previousWorldId != worldId) {
+            // Server rows belong to the old ephemeral room. Keeping them in the
+            // local ring makes a later SERVER tab look like the new world has
+            // inherited the previous world's history.
+            clearServerRecords("world changed");
+        }
         _lastWorldId = worldId;
         _inWorld     = (worldId.length > 0);
         if (_api != null && _connected) {
@@ -794,6 +1002,22 @@ class FCMBridge extends MovieClip {
         if (!_inWorld && _activeChannelIdx == 5) _activeChannelIdx = 0;
         renderSubTabs();
         renderRecords(_records);
+    }
+
+    /** Drop only ephemeral SERVER rows before a new world room is shown. */
+    function clearServerRecords(reason:String):Void {
+        var kept:Array<String> = [];
+        var removed:Int = 0;
+        for (rec in _records) {
+            var fields:Array<String> = rec.split("|");
+            if (fields.length > 0 && fields[0] == "server") removed++;
+            else kept.push(rec);
+        }
+        if (removed == 0) return;
+        _records = kept;
+        _newWhileScrolled = 0;
+        zfeLog("info", "history", "cleared server feed rows=" + removed + " reason=" + reason);
+        if (_activeChannelIdx == 5) renderRecords(_records);
     }
 
     function sendWorldIdControl(worldId:String):Void {
@@ -844,6 +1068,7 @@ class FCMBridge extends MovieClip {
      * also enforces the gate defensively.
      */
     public function fcmSendMessage(body:String, channelSlug:String):Void {
+        if (_legacyDisabled) return;
         if (_api == null || !_connected) {
             zfeLog("warn", "send", "not connected; cannot send");
             return;
@@ -868,6 +1093,7 @@ class FCMBridge extends MovieClip {
     // =========================================================================
 
     public function fcmSwitchChannelTo(idx:Int):Void {
+        if (_legacyDisabled) return;
         // SERVER (idx 5) is selectable only while in a world; anything else invalid -> GENERAL.
         if (idx < 0 || idx > 5 || (idx == 5 && !_inWorld)) idx = 0;
         _activeChannelIdx = idx;
@@ -881,6 +1107,7 @@ class FCMBridge extends MovieClip {
 
     /** Select the previous channel in the same display order as the HUD widget. */
     public function fcmSwitchChannelPrev():Void {
+        if (_legacyDisabled) return;
         var order:Array<Int> = _inWorld ? [0, 5, 1, 2, 3, 4] : [0, 1, 2, 3, 4];
         var pos:Int = order.indexOf(_activeChannelIdx);
         if (pos < 0) pos = 0;
@@ -888,6 +1115,7 @@ class FCMBridge extends MovieClip {
     }
 
     public function fcmActiveChannelSlug():String {
+        if (_legacyDisabled) return "global";
         return CHANNEL_SLUGS[_activeChannelIdx];
     }
 
@@ -925,6 +1153,7 @@ class FCMBridge extends MovieClip {
 
     /** Keyboard-scroll entry points used by the patched HUDMenu standalone path. */
     public function fcmScrollUp():Void {
+        if (_legacyDisabled) return;
         if (_tf == null) return;
         try {
             if (_tf.scrollV > 1) {
@@ -935,6 +1164,7 @@ class FCMBridge extends MovieClip {
     }
 
     public function fcmScrollDown():Void {
+        if (_legacyDisabled) return;
         if (_tf == null) return;
         try {
             var max:Int = _tf.maxScrollV;
@@ -953,6 +1183,7 @@ class FCMBridge extends MovieClip {
     }
 
     public function fcmScrollToBottom():Void {
+        if (_legacyDisabled) return;
         if (_tf == null) return;
         try { _tf.scrollV = _tf.maxScrollV; } catch (e:Dynamic) {}
         _bScrolling = false;

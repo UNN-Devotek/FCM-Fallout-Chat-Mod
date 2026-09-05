@@ -51,7 +51,9 @@ class FcmConfig {
     public var chanColorServer:Int  = 0xECBB51;   // Server / world (Fallout 76 parent)
 
     // ── Limits ─────────────────────────────────────────────────────────────────
-    public var maxMessages:Int  = 100;
+    // Keep the complete bounded subscribe backfill: up to 15 rows per static channel
+    // plus the current-world window. The HUD still clamps this to 10..500.
+    public var maxMessages:Int  = 200;
     public var maxSendLen:Int   = 225;
 
     // Event-poll interval (ms). Each poll opens a fresh wss connection — a full TLS handshake

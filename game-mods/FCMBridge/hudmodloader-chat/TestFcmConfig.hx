@@ -97,7 +97,7 @@ class TestFcmConfig {
         eqi("default textColor", d.textColor, 0xFAF4DA);
         eqi("default channelTagColor", d.channelTagColor, 0x8FBC8F);
         check("default bgAlpha", d.bgAlpha == 0.94);
-        eqi("default maxMessages", d.maxMessages, 100);
+        eqi("default maxMessages", d.maxMessages, 200);
         eqi("default maxSendLen", d.maxSendLen, 225);
         eqi("default pollMs", d.pollMs, 5000);
         eqi("parse pollMs", FcmConfig.parse("[FCMChat]\npollMs=8000\n").pollMs, 8000);

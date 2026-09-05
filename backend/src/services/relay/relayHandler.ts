@@ -24,6 +24,7 @@
 import type WebSocket from 'ws';
 import type http from 'http';
 import { v4 as uuidv4 } from 'uuid';
+import { Prisma } from '@prisma/client';
 import { getRedisClient, getSubscriberClient } from '../../config/redis';
 import prisma from '../../config/prisma';
 import logger from '../../config/logger';
@@ -31,7 +32,7 @@ import env from '../../config/environment';
 import { INSTANCE_ID } from '../../config/instanceIdentity';
 import { clientIp } from '../../utils/clientIp';
 import { mintToken, verifyToken, updateDisplayName, markRelayTokenLinked } from './tokenService';
-import { slugToChannelId, channelIdToSlug, ALL_SLUGS } from './channelMap';
+import { slugToChannelId, channelIdToSlug, ALL_SLUGS, SLUG_TO_UUID } from './channelMap';
 import { repairChannel, repairBody, readWireDisplayName } from './wireSanitize';
 import { setWorldId, getWorldId, clearWorldId } from './worldIdService';
 import { setRoster, clearRoster, computeRooms } from './worldRosterService';
@@ -54,6 +55,8 @@ import {
 } from './relayCosmetics';
 import {
   fanoutRelayLiveChatMessage,
+  enqueuePendingLiveFrame,
+  type PendingLiveFrame,
   registerRelayLiveFanout,
 } from './relayLiveFanout';
 import { engineEvaluate } from '../autoModEngine';
@@ -102,6 +105,26 @@ const MAX_REPORTS_PER_WINDOW = 5;
 const RELAY_FIRST_FRAME_TIMEOUT_MS = 10_000;
 const RELAY_RPC_IDLE_CLOSE_MS = 250;
 const POLL_HISTORY_LIMIT        = 75;    // SQL initial history window on cursor=0; handlePoll applies the caller's final max after merging server history
+// Reserve an equal initial slice for every durable static feed. Without this,
+// a busy General channel can consume the entire cursor-zero window before the
+// HUD ever receives Trading, Events, Infests, or Raids history.
+const STATIC_HISTORY_CHANNEL_IDS = Object.values(SLUG_TO_UUID);
+const STATIC_HISTORY_PER_CHANNEL = Math.max(
+  1,
+  Math.floor(POLL_HISTORY_LIMIT / STATIC_HISTORY_CHANNEL_IDS.length),
+);
+// xScal retains at most 128 queued events and asks for at most 64 per poll.
+// The complete bounded relay history fits in that queue: 15 rows for each of
+// the five durable channels (the 75-row SQL window) plus the 50-row Redis
+// window for the current SERVER room. The widget drains this in multiple
+// pollEvents calls; truncating it to one poll made xScal and ZFE show different
+// initial history.
+const NATIVE_SUBSCRIBE_HISTORY_LIMIT = 125;
+const SUBSCRIBE_STATIC_HISTORY_PER_CHANNEL = STATIC_HISTORY_PER_CHANNEL;
+const SUBSCRIBE_STATIC_HISTORY_LIMIT =
+  SUBSCRIBE_STATIC_HISTORY_PER_CHANNEL * STATIC_HISTORY_CHANNEL_IDS.length;
+const SUBSCRIBE_SERVER_HISTORY_LIMIT =
+  NATIVE_SUBSCRIBE_HISTORY_LIMIT - SUBSCRIBE_STATIC_HISTORY_LIMIT;
 const REDIS_BROADCAST_CHANNEL   = 'chat:broadcast';
 const RELAY_CONTROL_CHANNEL     = 'relay:control';
 const MAX_SOCKET_BUFFER_BYTES    = 1_048_576;
@@ -449,6 +472,12 @@ interface SubscriberState {
   cursor: number;
   worldId: string | null;
   supportsHudCosmeticsTransport: boolean;
+  // Keep live events out of the socket while the cursor-zero history snapshot is being built.
+  // Without this barrier a live frame can arrive before older backfill rows, and the same event
+  // is then replayed again by the initial-history loop (or displayed out of order by a native HUD).
+  initializing: boolean;
+  pendingLiveFrames: PendingLiveFrame[];
+  pendingLiveBytes: number;
 }
 
 // Module-level subscriber set — cleared on disconnect.
@@ -458,7 +487,7 @@ const pendingSubscriptions = new WeakSet<WebSocket>();
 registerRelayLiveFanout((payload) => fanoutRelayLiveChatMessage(
   payload,
   subscribers,
-  (subscriber, frame) => sendRaw(subscriber.ws, frame),
+  (subscriber, frame, cursor) => sendSubscriberFrame(subscriber, frame, cursor),
 ));
 
 function hasSubscriberSocket(ws: WebSocket): boolean {
@@ -466,6 +495,34 @@ function hasSubscriberSocket(ws: WebSocket): boolean {
     if (subscriber.ws === ws) return true;
   }
   return false;
+}
+
+/** Queue live frames behind subscribe-time history so the native cursor stream stays ordered. */
+function sendSubscriberFrame(
+  subscriber: SubscriberState,
+  frame: string,
+  cursor: number,
+): boolean {
+  if (subscriber.initializing) {
+    const queued = enqueuePendingLiveFrame(
+      subscriber.pendingLiveFrames,
+      subscriber.pendingLiveBytes,
+      { cursor, frame },
+    );
+    if (!queued.accepted) {
+      logger.warn({
+        userId: subscriber.userId,
+        cursor,
+        pendingFrames: subscriber.pendingLiveFrames.length,
+        pendingBytes: subscriber.pendingLiveBytes,
+      }, '[relayHandler] subscribe history barrier overflow; closing subscriber');
+      try { subscriber.ws.close(1013, 'subscriber history backlog overflow'); } catch { /* closing */ }
+      return false;
+    }
+    subscriber.pendingLiveBytes = queued.bytes;
+    return true;
+  }
+  return sendRaw(subscriber.ws, frame);
 }
 
 function evictLocalRelayUser(linkedUserId: string, code: string, message: string): number {
@@ -533,7 +590,7 @@ function rebindLocalSubscribers(userId: string, worldId: string | null): void {
 
 /** Push a world's recent history to a user's live subscriber(s) on join. */
 async function backfillWorldToUser(userId: string, worldId: string): Promise<void> {
-  const history = await getServerHistory(worldId, 0, POLL_HISTORY_LIMIT);
+  const history = await getServerHistory(worldId, 0, SUBSCRIBE_SERVER_HISTORY_LIMIT);
   if (history.length === 0) return;
   for (const sub of subscribers) {
     if (sub.userId !== userId || sub.ws.readyState !== 1) continue;
@@ -542,7 +599,8 @@ async function backfillWorldToUser(userId: string, worldId: string): Promise<voi
         ev as unknown as Record<string, unknown>,
         sub.supportsHudCosmeticsTransport,
       );
-      if (!sendRaw(sub.ws, JSON.stringify({ op: 'event', cursor: ev.id, event }))) {
+      const frame = JSON.stringify({ op: 'event', cursor: ev.id, event });
+      if (!sendSubscriberFrame(sub, frame, ev.id)) {
         subscribers.delete(sub);
         break;
       }
@@ -560,7 +618,12 @@ async function backfillStaticHistoryToUser(userId: string): Promise<void> {
     if (sub.userId !== userId || sub.ws.readyState !== 1) continue;
     for (const ev of history) {
       const event = relayHudEventForClient(ev, sub.supportsHudCosmeticsTransport);
-      send(sub.ws, { op: 'event', cursor: ev.id as number, event });
+      const cursor = ev.id as number;
+      if (!sendSubscriberFrame(sub, JSON.stringify({ op: 'event', cursor, event }), cursor)) {
+        subscribers.delete(sub);
+        break;
+      }
+      sub.cursor = Math.max(sub.cursor, cursor);
     }
   }
 }
@@ -644,7 +707,7 @@ async function ensurePubSub(): Promise<void> {
       // We only forward chat:message events.
       if (envelope.type !== 'chat:message') return;
       fanoutRelayLiveChatMessage(envelope, subscribers,
-        (subscriber, frame) => sendRaw(subscriber.ws, frame));
+        (subscriber, frame, cursor) => sendSubscriberFrame(subscriber, frame, cursor));
     });
 
     await sub.subscribe(RELAY_CONTROL_CHANNEL, (message: string) => {
@@ -720,7 +783,7 @@ async function ensurePubSub(): Promise<void> {
           const rawEvent = parsed.event as Record<string, unknown>;
           const event = relayHudEventForClient(rawEvent, sub.supportsHudCosmeticsTransport);
           const frame = JSON.stringify({ op: 'event', cursor, event });
-          if (sendRaw(sub.ws, frame)) {
+          if (sendSubscriberFrame(sub, frame, cursor)) {
             sub.cursor = cursor;
           } else {
             subscribers.delete(sub);
@@ -1494,6 +1557,7 @@ async function handleModerationAction(ws: WebSocket, frame: Record<string, unkno
 async function fetchHistoryEvents(
   cursor: number,
   max: number,
+  initialPerChannel: number = STATIC_HISTORY_PER_CHANNEL,
 ): Promise<Array<Record<string, unknown>>> {
   let rows: Array<{
     id: string;
@@ -1508,19 +1572,30 @@ async function fetchHistoryEvents(
 
   if (cursor === 0) {
     rows = await prisma.$queryRaw`
-      SELECT m.id, m.relay_seq, m.content, m.user_id,
-             m.channel_id, m.created_at,
-             COALESCE(u.fo76_account_name, u.discord_display_name, u.username) AS username,
-             u.fo76_account_name
-      FROM   messages m
-      JOIN   users    u ON u.id = m.user_id
-      JOIN   channels c ON c.id = m.channel_id
-      WHERE  m.relay_seq IS NOT NULL
-        AND  c.parent_id IS NOT NULL
-        AND  NOT c.is_archived
-        AND  NOT m.is_deleted
-      ORDER BY m.relay_seq DESC
-      LIMIT  ${POLL_HISTORY_LIMIT}
+      WITH ranked AS (
+        SELECT m.id, m.relay_seq, m.content, m.user_id,
+               m.channel_id, m.created_at,
+               COALESCE(u.fo76_account_name, u.discord_display_name, u.username) AS username,
+               u.fo76_account_name,
+               ROW_NUMBER() OVER (
+                 PARTITION BY m.channel_id
+                 ORDER BY m.relay_seq DESC
+               ) AS channel_rank
+        FROM   messages m
+        JOIN   users    u ON u.id = m.user_id
+        JOIN   channels c ON c.id = m.channel_id
+        WHERE  m.relay_seq IS NOT NULL
+          AND  m.channel_id IN (${Prisma.join(
+            STATIC_HISTORY_CHANNEL_IDS.map((channelId) => Prisma.sql`${channelId}::uuid`),
+          )})
+          AND  c.parent_id IS NOT NULL
+          AND  NOT c.is_archived
+          AND  NOT m.is_deleted
+      )
+      SELECT id, relay_seq, content, user_id, channel_id, created_at, username, fo76_account_name
+      FROM ranked
+      WHERE channel_rank <= ${initialPerChannel}
+      ORDER BY relay_seq DESC
     `;
     rows = rows.reverse(); // oldest first
   } else {
@@ -1604,6 +1679,9 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
     cursor,
     worldId,
     supportsHudCosmeticsTransport,
+    initializing: true,
+    pendingLiveFrames: [],
+    pendingLiveBytes: 0,
   };
   subscribers.add(state);
 
@@ -1623,17 +1701,17 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
   // Backfill on THIS long-lived connection. The in-game widget consumes events from
   // ZFE's native subscriber queue, so history returned only from handlePoll cannot
   // reach the HUD on initial load. Respect the supplied cursor for non-ZFE clients
-  // that resume an already-established position.
+  // that resume an already-established position. Collect both sources first so the
+  // initial stream is globally cursor-ordered; emitting static rows and then server
+  // rows can move the cursor backwards when the two histories interleave.
+  const initialHistory: Array<Record<string, unknown>> = [];
   try {
-    const history = await fetchHistoryEvents(cursor, POLL_HISTORY_LIMIT);
-    for (const ev of history) {
-      const event = relayHudEventForClient(ev, supportsHudCosmeticsTransport);
-      if (!sendRaw(ws, JSON.stringify({ op: 'event', cursor: ev.id as number, event }))) {
-        subscribers.delete(state);
-        return;
-      }
-      state.cursor = Math.max(state.cursor, Number(ev.id));
-    }
+    const history = await fetchHistoryEvents(
+      cursor,
+      SUBSCRIBE_STATIC_HISTORY_LIMIT,
+      SUBSCRIBE_STATIC_HISTORY_PER_CHANNEL,
+    );
+    initialHistory.push(...history);
   } catch (err) {
     logger.warn({ err, userId: identity.userId }, '[relayHandler] history backfill on subscribe failed');
   }
@@ -1642,21 +1720,42 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
   // query above. Backfill only the subscriber's current room using the same cursor.
   if (worldId) {
     try {
-      const serverHistory = await getServerHistory(worldId, cursor, POLL_HISTORY_LIMIT);
-      for (const ev of serverHistory) {
-        const event = relayHudEventForClient(
-          ev as unknown as Record<string, unknown>,
-          supportsHudCosmeticsTransport,
-        );
-        if (!sendRaw(ws, JSON.stringify({ op: 'event', cursor: ev.id, event }))) {
-          subscribers.delete(state);
-          return;
-        }
-        state.cursor = Math.max(state.cursor, ev.id);
-      }
+      const serverHistory = await getServerHistory(worldId, cursor, SUBSCRIBE_SERVER_HISTORY_LIMIT);
+      initialHistory.push(...serverHistory as unknown as Array<Record<string, unknown>>);
     } catch (err) {
       logger.warn({ err, userId: identity.userId }, '[relayHandler] server history backfill on subscribe failed');
     }
+  }
+
+  initialHistory.sort((a, b) => Number(a.id) - Number(b.id));
+  const initialCursors = new Set<number>();
+  for (const ev of initialHistory) {
+    const event = relayHudEventForClient(ev, supportsHudCosmeticsTransport);
+    const eventCursor = Number(ev.id);
+    if (!sendRaw(ws, JSON.stringify({ op: 'event', cursor: eventCursor, event }))) {
+      subscribers.delete(state);
+      return;
+    }
+    initialCursors.add(eventCursor);
+    state.cursor = Math.max(state.cursor, eventCursor);
+  }
+
+  // Release the barrier only after the complete snapshot is on the socket. Live events that
+  // arrived during the database/Redis reads are sorted and replayed once, skipping any cursor
+  // already included in the snapshot. This closes the subscribe/backfill race without dropping
+  // a message or relying on each HUD renderer to deduplicate it.
+  state.initializing = false;
+  const pendingLiveFrames = state.pendingLiveFrames.splice(0);
+  state.pendingLiveBytes = 0;
+  pendingLiveFrames.sort((a, b) => a.cursor - b.cursor);
+  for (const pending of pendingLiveFrames) {
+    if (initialCursors.has(pending.cursor)) continue;
+    if (!sendRaw(ws, pending.frame)) {
+      subscribers.delete(state);
+      return;
+    }
+    initialCursors.add(pending.cursor);
+    state.cursor = Math.max(state.cursor, pending.cursor);
   }
 
   // If still LIMITED (not linked), push the link-code notice on THIS long-lived subscribe

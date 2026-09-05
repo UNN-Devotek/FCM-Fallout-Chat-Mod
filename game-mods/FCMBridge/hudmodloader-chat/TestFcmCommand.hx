@@ -25,9 +25,37 @@ class TestFcmCommand {
         check("page down selects next channel", FcmCommand.isNextChannel("Page Down", "NextPage"));
         check("page up selects previous channel", FcmCommand.isPreviousChannel("Page Up", "PrevPage"));
         check("ordinary action does not scroll", FcmCommand.scrollDirection("NextPage") == 0);
+        check("page down is a one-shot next-channel command",
+            FcmCommand.navigationAction("Page Down", "NextPage", "PrevPage") == "next-channel");
+        check("page up is a one-shot previous-channel command",
+            FcmCommand.navigationAction("Page Up", "NextPage", "PrevPage") == "previous-channel");
+        check("arrow navigation is classified as feed-only",
+            FcmCommand.navigationAction("ArrowUp", "NextPage", "PrevPage") == "feed-up");
+        check("ordinary text never enters channel selection",
+            FcmCommand.navigationAction("A", "NextPage", "PrevPage") == "");
+        check("Unmapped never enters channel selection",
+            FcmCommand.navigationAction("Unmapped", "NextPage", "PrevPage") == "");
+        check("feed navigation requires an open editor",
+            FcmCommand.feedNavigationEnabled(true, false));
+        check("feed navigation is disabled while idle",
+            !FcmCommand.feedNavigationEnabled(false, false));
+        check("feed navigation is disabled while hidden",
+            !FcmCommand.feedNavigationEnabled(true, true));
+        check("first navigation edge is new",
+            FcmCommand.navigationEdgeIsNew(false));
+        check("latched navigation edge is ignored",
+            !FcmCommand.navigationEdgeIsNew(true));
+        check("boolean key-down edge is accepted", FcmCommand.eventIsDown(true));
+        check("numeric key-down edge is accepted", FcmCommand.eventIsDown(1));
+        check("string key-down edge is accepted", FcmCommand.eventIsDown("true"));
+        check("descriptive key-down edge is accepted", FcmCommand.eventIsDown("pressed"));
+        check("boolean key-up edge is released", !FcmCommand.eventIsDown(false));
+        check("unknown key edge fails closed", !FcmCommand.eventIsDown("unknown"));
         check("social shortcut is an external input action", FcmCommand.isExternalInputAction("OpenSocial"));
         check("friends action is an external input action", FcmCommand.isExternalInputAction("OpenFriendList"));
         check("quick action is an external input action", FcmCommand.isExternalInputAction("QuickActionsMenu"));
+        check("Control-Tab alias is an external input action", FcmCommand.isExternalInputAction("Control-Tab"));
+        check("CtrlTab alias is an external input action", FcmCommand.isExternalInputAction("CtrlTab"));
         check("external action does not match channel navigation", !FcmCommand.isExternalInputAction("NextPage"));
         check("native session selects native close path",
             FcmCommand.externalInputClosePath(true, true, "OpenSocial") == "native");
@@ -51,6 +79,18 @@ class TestFcmCommand {
             !FcmCommand.nativeInputBufferIsClear("hello", "true"));
         check("repeated one-character reads are accumulated",
             FcmCommand.mergeNativeInputText("he", "e") == "hee");
+        check("cumulative native reads are detected",
+            FcmCommand.detectNativeInputMode("h", "he", "unknown") == "cumulative");
+        check("cumulative native reads replace the draft",
+            FcmCommand.mergeNativeInputTextWithMode("h", "h", "he", "unknown") == "he");
+        check("delta native reads are detected",
+            FcmCommand.detectNativeInputMode("h", "e", "unknown") == "delta");
+        check("delta native reads append a changed character",
+            FcmCommand.mergeNativeInputTextWithMode("h", "h", "e", "unknown") == "he");
+        check("delta native reads preserve repeated characters",
+            FcmCommand.mergeNativeInputTextWithMode("he", "e", "e", "delta") == "hee");
+        check("native backspace removes one draft character",
+            FcmCommand.mergeNativeInputTextWithMode("hello", "o", String.fromCharCode(8), "delta") == "hell");
         if (failures > 0) Sys.exit(1);
     }
 }

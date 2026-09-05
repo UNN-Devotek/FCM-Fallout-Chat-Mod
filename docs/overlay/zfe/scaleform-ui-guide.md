@@ -127,8 +127,10 @@ This is the subtlety that cost us the most, now fully explained:
   in-progress text) + `consumeChatInputSubmitted` (Enter) + `isChatInputActive` (Esc) → on submit
   `chat.v1.sendMessage` the `readChatInput` text → `clearChatInput` + `setChatInputActive("false")`. A
   low-rate `isChatKeyPressed` edge poll opens chat on the OpenChatKey (INSERT). Current
-  FCMChatWidget v2.10.47 tries SharedHUDTools first; the native path is used only when that host
-  editor is unavailable and never dispatches child-owned `ControlMap` events. See
+  FCMChatWidget v2.10.50 tries SharedHUDTools first; the native path is used only when that host
+  editor is unavailable and never dispatches child-owned `ControlMap` events. It also does not
+  construct `PlatformChangeEvent` dynamically: that class's constructor is not stable across
+  HUDModLoader builds and caused the observed Error #1063. See
   `game-mods/FCMBridge/hudmodloader-chat/BUILD.md` → "Input-path acceptance".
 - **Native Windows only — Proton/Wine is BLOCKED (2026-06-26, tracked in #326).** chat.v1 works
   end-to-end on native Windows but **crashes the game under Proton/Wine** at `chat.v1.connect` (a Zig

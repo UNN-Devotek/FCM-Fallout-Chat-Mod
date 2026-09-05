@@ -93,8 +93,8 @@ Use `build.sh` in `game-mods/FCMBridge/` instead of running the steps below manu
 
 ```bash
 cd game-mods/FCMBridge
-./build.sh --target dev    # wss://dev.falloutchatmod.com/relay
-./build.sh --target prod   # wss://falloutchatmod.com/relay
+./build.sh --target dev --hudmenu-sha256 <fresh-vanilla-HUDMenu-SHA256>
+./build.sh --target prod --hudmenu-sha256 <fresh-vanilla-HUDMenu-SHA256>
 ```
 
 The script:
@@ -170,8 +170,14 @@ ActionScript 3 source.) The main file is `<work>\src\...\HUDMenu.as`.
 The patch is **automated** — do not hand-paste blocks. Run:
 
 ```
-python3 apply-patch.py "<work>\src\...\HUDMenu.as"
+python3 apply-patch.py "<work>\src\...\HUDMenu.as" \
+  --source-swf "<work>\HUDMenu_vanilla.swf" \
+  --expected-sha256 "<fresh-vanilla-HUDMenu-SHA256>"
 ```
+
+The hash must be calculated from the exact fresh `HUDMenu.swf` that was exported. The build script
+verifies it before decompilation and passes the same pin to the patcher, so a stale export or a
+different game build stops before any source is modified.
 
 `apply-patch.py` injects, against six asserted anchors (it auto-detects the
 vanilla vs. HUDModLoader function-signature style, so the same script works on

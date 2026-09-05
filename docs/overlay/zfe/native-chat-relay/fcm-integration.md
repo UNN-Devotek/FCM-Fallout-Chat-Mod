@@ -23,8 +23,10 @@ the EULA-safe desktop overlay.
 ## Automatic provider selection
 
 The same SWF supports either script extender. It probes the Scaleform objects already exposed
-by the active HUD movie, preferring a validated ZFE dispatcher and falling back to a validated
-xScal `chatInterface` with `connect`, `pollEvents`, and `sendMessage`, whether it is under
+by the active HUD movie, selecting a validated xScal `chatInterface` first when its explicit
+`chatInterface` marker is present, even if ZFE is installed alongside it. When that marker is
+absent, it selects a validated ZFE dispatcher or falls back to a validated xScal `chatInterface`
+with `connect`, `pollEvents`, and `sendMessage`, whether it is under
 `__SFECodeObj` or `__SFCodeObj`. A call-only `__SFCodeObj` is accepted as ZFE only after a
 positive capability probe, and xScal's
 `GetXSRuntimeInfo` marker is checked first so xScal never receives a ZFE chat probe. No DLL is
@@ -46,6 +48,15 @@ are retained as intermediate states; only explicit terminal states (`rejected`, 
 token failure, or equivalent) tear down the session. This prevents a three-second reconnect loop.
 The generic xScal `__SFCodeObj.call` callback is optional diagnostics only: FCM routes `log` there
 when exposed, while all `chat.v1.*` verbs go exclusively to `chatInterface`.
+
+Fresh subscribe-time history is the initial-history source for both providers. The relay sends up
+to 15 recent rows for each static channel and up to 50 rows for the current world room: 125 events
+total. The native poll limit is 64, so both widgets drain the ordered bounded snapshot over
+multiple polls. xScal's widget runs a bounded 250 ms warm-up for up to 20 polls after an accepted
+connect so asynchronous subscriber history is drained promptly; it does not receive
+`FCMCTL/1/RESYNC`. The widget delays that ZFE-only control until the first poll is empty or reports
+queue loss, so a fresh subscribe snapshot is not duplicated; this remains the recovery path when
+a recreated ZFE widget has an existing native subscriber whose queue was already drained.
 
 ## Connection and authentication
 
@@ -203,7 +214,7 @@ removal can lapse it.
 ## Verified HUD regressions and input handoff
 
 The v2.10.43 HUD regression fixes and the v2.10.46 input ownership fix are now part of the
-v2.10.46 package contract:
+v2.10.50 package contract:
 
 - a send creates one optimistic row before the synchronous provider call and reconciles the
   authoritative ACK/live event into that row, so one send produces one feed row;
@@ -224,14 +235,18 @@ v2.10.46 package contract:
   channel history remains durable; `server` history remains the bounded recent Redis history
   described below, not permanent Postgres history.
 
-Widget v2.10.46 also closes the input owner before Fallout opens another modal input surface. The
+Widget v2.10.50 also closes the input owner before Fallout opens another modal input surface. The
 HUDModLoader event path delivers the in-game Ctrl+Tab shortcut as the named `OpenSocial` action
 (with `OpenFriendList`, quick-action aliases, and `Escape`/`Cancel` handled by the same rule). The
 widget's `FCMChatWidget.hx` classifies that action before normal navigation: the no-lock native
 fallback is cleared/deactivated; the SharedHUDTools primary path calls the public `EndTextEdit()`
 cancellation API. The local input state is closed before `HUDMenu.ProcessUserEvent` continues into
 the game's social-menu handler. Only SharedHUDTools owns the engine's `ControlMap::StartEditText`
-gate; the child widget does not synthesize a matching event pair.
+gate; the child widget does not synthesize a matching event pair. For FCM-owned named actions,
+the patch invokes the widget after vanilla initializes its local consumed flag and writes the
+widget's Boolean result back to that flag before `HUDModUserEvent` dispatch. This prevents
+TeamChat/Page actions from entering a second editor or switching twice; external modal actions
+return false after FCM closes its editor so Fallout can open the social/friends surface.
 
 The v2.10.45 input regression was different: its native-first path dynamically dispatched
 `ControlMap::StartEditText` from the child SWF. The in-game HUDModLoader error surface reported
@@ -272,12 +287,13 @@ Each accepted control returns a non-empty, synthetic UUID in `messageId`. ZFE's
 the UUID acknowledges the operation only and does not represent a persisted chat
 message.
 
-`RESYNC` is emitted once after widget initialization. It replays the bounded static
-history to the long-lived native subscriber, including when the SWF was recreated but
-ZFE retained and drained that subscriber. The relay marks server-room history pending
-and releases it only after the next accepted roster/world bind. This keeps the previous
-world's ephemeral messages out of a newly joined world. Replay records are deduplicated
-by `messageId` in the widget.
+Fresh subscription sends the complete bounded initial history directly to the long-lived native
+subscriber: up to 15 recent rows for each static channel and up to 50 rows from the current server
+room, for 125 events total. The native poll limit is 64, so the widgets drain the snapshot over
+multiple polls. `RESYNC` is a delayed ZFE-only recovery control for a widget recreated while ZFE
+retained and drained its subscriber; it replays bounded static history, while server-room history
+remains pending until the next accepted roster/world bind. xScal owns its subscriber history and is
+never sent this control. Replay records are deduplicated by `messageId` in the widget.
 
 `worldRosterService` stores short-lived rosters and builds connected components
 from mutually observed names. The stable room key feeds the existing Redis
@@ -305,7 +321,7 @@ for a solo world, so it is also acknowledged and bound. This prevents a stale or
 mismatched relay deployment from presenting a selectable but unusable Server
 channel, and prevents a slow relay timeout from repeatedly stalling the HUD.
 
-Widget v2.10.46 also pulls the current values of `PlayerListData`, `TeamMarkers`,
+Widget v2.10.50 also pulls the current values of `PlayerListData`, `TeamMarkers`,
 `PartyMenuList`, and `VoiceChatAreaData` after subscribing. This is intentional: the upstream
 `BSUIDataManager.Subscribe()` implementation only attaches the callback and does not invoke it for
 the provider value already in the cache. Provider snapshots are replaced on every refresh, so a

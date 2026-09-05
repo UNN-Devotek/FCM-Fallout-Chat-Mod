@@ -34,7 +34,10 @@ class FcmNativeApi {
     }
 
     public static function fromZfe(raw:Dynamic):FcmNativeApi {
-        return zfeRaw(raw) ? new FcmNativeApi(raw, ZFE) : null;
+        // xScal may expose a diagnostic call member on the same object as its
+        // chatInterface. The explicit chat surface always wins, even when a
+        // legacy caller reaches this compatibility constructor.
+        return zfeRaw(raw) && !xscalRaw(raw) ? new FcmNativeApi(raw, ZFE) : null;
     }
 
     public static function fromXscal(raw:Dynamic):FcmNativeApi {
@@ -51,23 +54,29 @@ class FcmNativeApi {
      */
     public static function fromExposed(raw:Dynamic, providerHint:String = "", loggerRaw:Dynamic = null):FcmNativeApi {
         if (raw == null) return null;
+        // The xScal marker is authoritative. Do this before honoring a stale
+        // legacy ZFE hint so __SFCodeObj.chatInterface can never be routed via
+        // its generic call dispatcher as chat.v1.
+        if (xscalRaw(raw)) return new FcmNativeApi(raw, XSCAL, loggerRaw);
         if (providerHint == XSCAL) return xscalRaw(raw) ? new FcmNativeApi(raw, XSCAL, loggerRaw) : null;
         if (providerHint == ZFE) return zfeRaw(raw) ? new FcmNativeApi(raw, ZFE) : null;
-        if (xscalRaw(raw)) return new FcmNativeApi(raw, XSCAL, loggerRaw);
         if (zfeRaw(raw) && isLegacyZfeDispatcher(raw)) return new FcmNativeApi(raw, ZFE);
         return null;
     }
 
     /**
-     * Discover a single active provider. Explicit ZFE objects retain priority;
-     * an explicit xScal `chatInterface` is checked before the ambiguous legacy
-     * `__SFCodeObj.call` compatibility slot.
+     * Discover a single active provider. An explicit xScal `chatInterface` is
+     * authoritative when present, even if ZFE is installed alongside it. The
+     * two extenders can both expose objects on the same movie root; choosing
+     * xScal first is what prevents a valid chat interface from being routed
+     * through the wrong callback family. The ambiguous legacy
+     * `__SFCodeObj.call` slot is checked last.
      */
     public static function discover(scope:Dynamic):FcmNativeApi {
-        var z:Dynamic = findZfe(scope);
-        if (z != null && isZfeChatDispatcher(z)) return new FcmNativeApi(z, ZFE);
         var x:Dynamic = findXscal(scope);
         if (x != null) return new FcmNativeApi(x, XSCAL, findGenericCallback(scope));
+        var z:Dynamic = findZfe(scope);
+        if (z != null && isZfeChatDispatcher(z)) return new FcmNativeApi(z, ZFE);
         var legacy:Dynamic = findLegacyZfe(scope);
         if (legacy != null) return new FcmNativeApi(legacy, ZFE);
         return null;
@@ -84,6 +93,17 @@ class FcmNativeApi {
     /** xScal provides chat transport, not ZFE's native edit buffer. */
     public function supportsNativeInput():Bool {
         return provider == ZFE;
+    }
+
+    /**
+     * ZFE can retain a subscriber when the HUD widget is recreated, so the
+     * widget asks its relay to replay static history once. xScal owns its
+     * subscriber lifecycle and performs that initial backfill itself; sending
+     * the ZFE control there replays the queue and can evict history from
+     * xScal's bounded native queue.
+     */
+    public static function widgetMustRequestHistoryResync(providerName:String):Bool {
+        return providerName == ZFE;
     }
 
     /**
@@ -121,7 +141,17 @@ class FcmNativeApi {
         if (!hasChatMethod(method)) return unsupported();
         var chat:Dynamic = Reflect.field(_raw, "chatInterface");
         var fn:Dynamic = Reflect.field(chat, method);
-        return Reflect.callMethod(chat, fn, [payload]);
+        // xScal's documented chat surface receives an ActionScript object, not the JSON
+        // string accepted by ZFE's dispatcher. Runtime/cancellation methods are no-argument;
+        // sending "{}" to those methods is what produced the Scaleform argument-count errors.
+        if (method == "getRuntimeInfo" || method == "getConnectionState" || method == "disconnect"
+                || method == "logout" || method == "clearChatAuth") {
+            return Reflect.callMethod(chat, fn, []);
+        }
+        var args:Dynamic = payload;
+        try { args = haxe.Json.parse(payload == null || payload.length == 0 ? "{}" : payload); }
+        catch (e:Dynamic) {}
+        return Reflect.callMethod(chat, fn, [args]);
     }
 
     function hasChatMethod(method:String):Bool {

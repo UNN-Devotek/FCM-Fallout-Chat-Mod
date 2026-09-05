@@ -107,6 +107,10 @@ if inject_src:
     check("__SFECodeObj" in inject_src and "__SFCodeObj" in inject_src
           and "chatInterface" in inject_src and "fcmSetNativeApi" in inject_src,
           "fcm-inject.as passes either xScal chat surface when ZFE is absent")
+    check('var hostNative:* = hostXscal' in inject_src
+          and 'provider:String = (hostXscal != null) ? "xscal" : ""' in inject_src
+          and 'hostNative = hostZfe' in inject_src,
+          "fcm-inject.as gives explicit xScal chatInterface priority when both extenders are present")
     check('fcmSetNativeApi(hostNative, provider, hostLogger)' in inject_src
           and 'provider = (hostNative != null) ? "legacy" : ""' in inject_src,
           "fcm-inject.as passes the provider hint and quarantines ambiguous __SFCodeObj/logger")
@@ -379,8 +383,9 @@ if widget_src:
     check('var finalRaw:String = callTop("readChatInput", "{}");' in widget_src
           and "final read helper failed; dropping submit" in widget_src,
           "FCMChatWidget drops a submit when the final native buffer read fails")
-    check("ev = untyped __new__(cls, 0, false, 0);" in widget_src,
-          "FCMChatWidget supports the three-argument PlatformChangeEvent API")
+    check("PlatformChangeEvent" not in widget_src
+          and "forceKeyboardPlatform" not in widget_src,
+          "FCMChatWidget does not inject an undocumented platform-change event")
     check("function showHudLoaderMenu" in widget_src
           and 'Reflect.field(_hudTools, "ShowMenu")' in widget_src
           and 'Reflect.field(_hudTools, "CloseMenu")' in widget_src
@@ -420,8 +425,8 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.47";' in widget_src,
-          "FCMChatWidget bumps the async xScal auth lifecycle build to version 2.10.47")
+    check('static inline var VERSION:String  = "2.10.50";' in widget_src,
+          "FCMChatWidget ships ordered all-channel history and host-owned input build 2.10.50")
     check('FcmAuthFlow.classify' in widget_src
           and 'transport accepted; xScal auth pending' in widget_src
           and 'xScal auth state' in widget_src,
@@ -616,34 +621,105 @@ if widget_src:
           and 'Reflect.field(e, "EventName")' in widget_src
           and 'Reflect.field(e, "IsKeyDown")' in widget_src,
           "FCMChatWidget accepts current and legacy HUDModLoader event field names")
-    check("FcmCommand.isNextChannel" in widget_src
-          and "FcmCommand.isPreviousChannel" in widget_src
+    check("FcmCommand.navigationAction" in widget_src
+          and "FcmCommand.navigationEdgeIsNew" in widget_src
           and "_navigationActionsDown" in widget_src
           and "FcmCommand.actionKey(action)" in widget_src
-          and "function isExternalInputAction" in widget_src,
-          "FCMChatWidget handles key-down and key-up channel actions with edge de-duplication")
-    check("_inputOpen && !_hidden" in widget_src
-          and "FcmCommand.scrollDirection" in widget_src
-          and "FcmCommand.isScrollToBottom" in widget_src
+          and "function clearNavigationLatches" in widget_src
+          and "Page actions switch channels" in widget_src,
+          "FCMChatWidget handles one-shot channel actions without a selection mode")
+    check("FcmCommand.feedNavigationEnabled(_inputOpen, _hidden)" in widget_src
+          and "navAction == \"feed-up\"" in widget_src
+          and "navAction == \"feed-down\"" in widget_src
+          and "navAction == \"feed-bottom\"" in widget_src
           and "function scrollUp" in widget_src
           and "function scrollDown" in widget_src,
-          "FCMChatWidget maps arrow actions to feed scrolling and Home/End to newest")
+          "FCMChatWidget maps arrows/Home/End only while Insert owns the feed")
     check("_fcmNavigationAction:String = \"\"" in patch_src
-          and "_fcmNavigationAction = \"\"" in patch_src,
-          "HUDMenu patch carries the standalone navigation edge latch")
-    check('action == "PrevPage"' in inject_src
+          and "_fcmNavigationDown:Array = []" in patch_src
+          and "fcmNavigationIsDown" in inject_src
+          and "fcmNavigationMarkDown" in inject_src
+          and "fcmNavigationClear" in inject_src
+          and "_fcmNavigationAction = \"\"" in inject_src,
+          "HUDMenu patch carries independent standalone navigation edge latches")
+    check('normalized == "prevpage"' in inject_src
+          and 'normalized == "pageup"' in inject_src
+          and "public function fcmSwitchChannelPrev" in inject_src
           and "fcmSwitchChannelPrev" in bridge_src,
           "standalone HUD path handles previous-page channel switching")
-    check('action == "ArrowUp"' in inject_src
-          and 'action == "ArrowDown"' in inject_src
+    check('normalized == "arrowup"' in inject_src
+          and 'normalized == "arrowdown"' in inject_src
           and "fcmScrollUp" in bridge_src
           and "fcmScrollDown" in bridge_src
           and "fcmScrollToBottom" in bridge_src,
           "standalone HUD path handles arrow scrolling and Home/End newest")
+    check('function runEventPollSafely' in widget_src
+          and 'function runWorldPollSafely' in widget_src
+          and 'runEventPollSafely();' in widget_src
+          and 'runWorldPollSafely();' in widget_src
+          and 'function(_) { pollEvents(); }' not in widget_src
+          and 'function(_) { checkWorldId(); }' not in widget_src
+          and 'isolated timer exception phase=' in widget_src,
+          "FCMChatWidget isolates both five-second timer boundaries with phase diagnostics")
+    check('function startXscalWarmup' in widget_src
+          and 'function runXscalWarmupSafely' in widget_src
+          and 'XSCAL_WARMUP_MS:Int = 250' in widget_src
+          and 'XSCAL_WARMUP_MAX:Int = 20' in widget_src
+          and 'startXscalWarmup();' in widget_src,
+          "FCMChatWidget drains xScal initial history during a bounded warm-up")
+    check('function fcmHandleHostUserEvent' in widget_src
+          and 'return _inputOpen;' in widget_src
+          and 'fcmFindChatWidget' in inject_src
+          and 'Reflect.callMethod(modern, modernHandler' in inject_src,
+          "HUDMenu hands named actions to the modern widget before vanilla consumption")
+    check('var eventCount:Int = 0;' in bridge_src
+          and 'function startInitialHistoryDrain' in bridge_src
+          and 'function markSeenLegacyEvent' in bridge_src
+          and 'MAX_MSGS:Int     = 125' in bridge_src,
+          "legacy bridge drains the bounded history and deduplicates provider replay")
+    check('if (previousWorldId.length > 0 && previousWorldId != worldId)' in bridge_src
+          and 'clearServerRecords("world changed")' in bridge_src,
+          "legacy bridge clears ephemeral server history on world changes")
+    check('widgetMustRequestHistoryResync' in widget_src
+          and 'provider=xscal; subscriber owns initial history; RESYNC suppressed' in widget_src
+          and 'FcmWire.isDroppedEvent' in widget_src
+          and 'droppedCount' in widget_src,
+          "FCMChatWidget lets xScal own initial history and advances over dropped markers")
+    check('function runAfterConfigSafely' in widget_src
+          and 'function runInitSafely' in widget_src
+          and 'function onInputSubmitSafely' in widget_src,
+          "FCMChatWidget guards config, startup, and input callback boundaries")
+    check('var e0:Dynamic = arr[i];' in widget_src
+          and 'skippedEntries++' in widget_src
+          and 'snapshot phase threw' in widget_src,
+          "FCMChatWidget hardens native roster enumeration")
+    check('clearNavigationLatches();' in widget_src
+          and 'clearNavigationLatches();\n        _inputOpen = true;' in widget_src,
+          "FCMChatWidget resets navigation ownership at input open/close boundaries")
+    check('function fcmNormalizeAction' in inject_src
+          and 'normalized == "pagedown"' in inject_src
+          and 'normalized == "pageup"' in inject_src
+          and 'there is no persistent channel-selection mode' in inject_src,
+          "standalone HUD path normalizes aliases without creating a channel-selection mode")
+    check('fcmScheduleStandaloneFallback' in inject_src
+          and 'fcmDisableForModernWidget' in inject_src
+          and 'fcmNotifyModernWidget' in inject_src
+          and 'fcmInitSafe' in inject_src
+          and 'fcmEventSafe' in inject_src
+          and 'fcmForwardSafe' in inject_src
+          and '_fcmModernWidgetActive' in inject_src
+          and 'modern widget owns submit; legacy forward skipped' in inject_src,
+          "standalone HUD path defers and retires the legacy renderer around the modern widget")
+    check("announceModernWidgetSafely" in widget_src
+          and 'Reflect.field(current, "fcmNotifyModernWidget")' in widget_src
+          and "announceModernWidgetSafely();\n            loadConfig();" in widget_src,
+          "modern widget claims HUDMenu renderer ownership immediately on stage attach")
+    command_src = open(os.path.join(HERE, '..', 'hudmodloader-chat', 'FcmCommand.hx'), encoding='utf-8').read()
     check("function mergeNativeInputText" in widget_src
-          and "FcmCommand.mergeNativeInputText(_inProgress, observed)" in widget_src
-          and "return before + current" in open(os.path.join(HERE, '..', 'hudmodloader-chat', 'FcmCommand.hx'), encoding='utf-8').read(),
-          "FCMChatWidget preserves native drafts when ZFE returns one character at a time")
+          and "mergeNativeInputTextWithMode" in widget_src
+          and "detectNativeInputMode" in command_src
+          and "return before + current" in command_src,
+          "FCMChatWidget preserves native drafts across cumulative and one-character ZFE reads")
     check("applyServerControlResult" in widget_src
           and "_serverSessionReady" in widget_src,
           "FCMChatWidget gates SERVER on an acknowledged relay control")
@@ -667,8 +743,10 @@ if widget_src:
           and '"msg from=" + sender + " body="' not in widget_src
           and '"relay identity available aliases=relay/"' in widget_src,
           "FCMChatWidget diagnostics avoid logging HUD text and relay identifiers")
-    check('"FCMCTL/1/RESYNC"' in widget_src and 'function requestHistoryResync' in widget_src,
-          "FCMChatWidget requests history replay after HUD reload")
+    check('"FCMCTL/1/RESYNC"' in widget_src and 'function requestHistoryResync' in widget_src
+          and 'function scheduleHistoryResyncFallback' in widget_src
+          and 'HISTORY_RESYNC_FALLBACK_MS' in widget_src,
+          "FCMChatWidget delays ZFE history replay until an empty or dropped initial poll")
     check('function shouldRenderReplayMessage' in widget_src and '_seenMessageIds' in widget_src,
           "FCMChatWidget deduplicates replayed history records")
     check('return FcmConfig.extractJsonString(json, key);' in widget_src
@@ -774,6 +852,11 @@ if len(sys.argv) > 1:
         m5 = re.search(r'public function ProcessUserEvent\((\w+):String, (\w+):Boolean\) : Boolean\n      \{', hm_src)
         check(m5 is not None,
               "Anchor 5: ProcessUserEvent function present")
+        if m5 is not None:
+            hook_body = hm_src[m5.end():]
+            check('fcmEventSafe(String(' + m5.group(1) + '),' + m5.group(2) + ')' in hook_body
+                  and ' = true;' in hook_body,
+                  "Anchor 5: FCM event hook can set vanilla's consumed flag")
 
         # Anchor 6: chatEntryKeyUp.
         m6 = re.search(r'internal function chatEntryKeyUp\((\w+):KeyboardEvent\) : void\n      \{', hm_src)

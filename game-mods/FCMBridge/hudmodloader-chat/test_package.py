@@ -37,6 +37,40 @@ def main() -> None:
     assert "externalInputClosePath" in source_hx, (
         "input handoff must classify named external modal actions before normal navigation"
     )
+    assert "PlatformChangeEvent" not in source_hx and "forceKeyboardPlatform" not in source_hx, (
+        "widget must not construct the target-variant platform event"
+    )
+    assert "runEventPollSafely" in source_hx and "runWorldPollSafely" in source_hx, (
+        "five-second poll callbacks must be isolated at their timer boundaries"
+    )
+    assert "public function shutdown()" in source_hx and "onRemovedFromStage" in source_hx and "cleanup isolated" in source_hx, (
+        "reloadable widgets must expose an idempotent, guarded removal teardown"
+    )
+    assert "startServerHistoryDrain" in source_hx and "SERVER_HISTORY_DRAIN_MAX" in source_hx, (
+        "server-room backfill must be drained promptly after a fresh bind"
+    )
+    assert "mergeNativeInputTextWithMode" in source_hx and "detectNativeInputMode" in source_hx, (
+        "native input must distinguish cumulative and delta provider buffers"
+    )
+    assert "startXscalWarmup" in source_hx and "becameAuthenticated" in source_hx and "startZfeInitialHistoryDrain" in source_hx and "provider=xscal; subscriber owns initial history" in source_hx, (
+        "both providers' initial subscriber history must be drained promptly without a duplicate RESYNC"
+    )
+    assert "SERVER_HISTORY_DRAIN_IDLE_MAX" in source_hx and "server backfill drain complete" in source_hx, (
+        "server-room history must drain through an idle window, not stop after its first row"
+    )
+    assert "unsubscribeRoster();" in source_hx and "_rosterManager = null;" in source_hx, (
+        "widget teardown must release BSUI roster callbacks on reload"
+    )
+    assert "scheduleHistoryResyncFallback" in source_hx and "HISTORY_RESYNC_FALLBACK_MS" in source_hx, (
+        "ZFE RESYNC must be delayed until an empty or dropped initial poll"
+    )
+    legacy_bridge = (ROOT.parent / "FCMBridge.hx").read_text(encoding="utf-8")
+    assert "startInitialHistoryDrain" in legacy_bridge and "MAX_MSGS:Int     = 125" in legacy_bridge, (
+        "legacy initial subscriber history must be drained promptly"
+    )
+    assert "navigationAction" in source_hx and "feedNavigationEnabled" in source_hx, (
+        "navigation must be classified as stateless commands with Insert-gated feed access"
+    )
     assert "function closeInputSharedHudTools" in source_hx and "EndTextEdit" in source_hx, (
         "external modal actions must cancel the SharedHUDTools editor"
     )
@@ -121,6 +155,9 @@ def main() -> None:
                 assert b"Press F11" in install
                 assert b"Press Insert" in install
                 assert b"Arrow Up / Down" in install
+                assert b"15 recent messages" in install
+                assert b"50 messages" in install
+                assert b"125 events total" in install
                 assert b"Home / End" in install
                 assert b"/g, /t, /e" in install
                 assert b"/relink" in install
@@ -129,6 +166,9 @@ def main() -> None:
                 assert b"FCM -> Customize..." in menu
                 assert b"Press Insert" in menu
                 assert b"Arrow Up / Down" in menu
+                assert b"15 recent messages" in menu
+                assert b"50 from the current SERVER room" in menu
+                assert b"125 events total" in menu
                 assert b"Home / End" in menu
                 assert b"/g, /t, /e" in menu
                 assert b"/relink" in menu

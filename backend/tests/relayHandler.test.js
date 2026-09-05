@@ -294,6 +294,7 @@ const {
 } = require('../src/websocket/upgradeRouter');
 
 const { deriveLinkUrl, isRelayAvailable, evictRelayUser } = require('../src/services/relay/relayHandler');
+const { enqueuePendingLiveFrame } = require('../src/services/relay/relayLiveFanout');
 
 describe('relay production rollout gate', () => {
   test('keeps the relay available in development and test', () => {
@@ -304,6 +305,34 @@ describe('relay production rollout gate', () => {
   test('fails closed in production until explicitly enabled', () => {
     expect(isRelayAvailable({ nodeEnv: 'production', productionEnabled: false })).toBe(false);
     expect(isRelayAvailable({ nodeEnv: 'production', productionEnabled: true })).toBe(true);
+  });
+});
+
+describe('subscribe history live-frame barrier', () => {
+  test('accepts a frame and tracks its UTF-8 byte budget', () => {
+    const queue = [];
+    const result = enqueuePendingLiveFrame(queue, 0, { cursor: 7, frame: 'hello' });
+    expect(result.accepted).toBe(true);
+    expect(result.bytes).toBe(Buffer.byteLength('hello', 'utf8'));
+    expect(queue).toHaveLength(1);
+  });
+
+  test('rejects a frame when the frame-count budget is full', () => {
+    const queue = [];
+    const first = enqueuePendingLiveFrame(queue, 0, { cursor: 1, frame: 'a' }, 1, 100);
+    const second = enqueuePendingLiveFrame(queue, first.bytes, { cursor: 2, frame: 'b' }, 1, 100);
+    expect(first.accepted).toBe(true);
+    expect(second.accepted).toBe(false);
+    expect(queue).toHaveLength(1);
+  });
+
+  test('rejects a frame when the UTF-8 byte budget is full', () => {
+    const queue = [];
+    const first = enqueuePendingLiveFrame(queue, 0, { cursor: 1, frame: 'é' }, 10, 2);
+    const second = enqueuePendingLiveFrame(queue, first.bytes, { cursor: 2, frame: 'x' }, 10, 2);
+    expect(first.accepted).toBe(true);
+    expect(second.accepted).toBe(false);
+    expect(first.bytes).toBe(2);
   });
 });
 
@@ -1996,6 +2025,129 @@ describe('relay WebSocket ops', () => {
       cursor: 1,
       event: { id: 1, channel: 'global', body: 'hist' },
     });
+    wsSub.close();
+  });
+
+  test('subscribe reserves the initial history window for every static channel', async () => {
+    // A busy General feed must not consume the entire cursor-zero window. The
+    // subscriber backfill is the source of initial HUD history for both ZFE
+    // and xScal, so every durable channel must be represented in that batch.
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'AllChannelHistoryPlayer' }),
+    );
+    wsReg.close();
+    const { token } = regRes;
+    const rawId = lastRawUserId();
+    _userMap[rawId] = { id: rawId, discordId: 'disc-all-channel-history', steamId: null, isBanned: false, isMuted: false };
+
+    const staticRows = [
+      ['global', '00000000-0000-0000-0000-000000000005'],
+      ['trade', '00000000-0000-0000-0000-000000000002'],
+      ['events', '00000000-0000-0000-0000-000000000003'],
+      ['infests', '983995c1-f9ab-44c0-9b78-8b4cbf497273'],
+      ['raids', '00000000-0000-0000-0000-000000000004'],
+    ].map(([slug, channelId], index) => ({
+      id: `all-channel-history-${slug}`,
+      relay_seq: BigInt(index + 1),
+      content: `${slug} history`,
+      user_id: 'u-all-channel-history',
+      channel_id: channelId,
+      username: 'HistoryPlayer',
+      fo76_account_name: null,
+    }));
+    require('../src/config/prisma').default.$queryRaw.mockResolvedValueOnce(staticRows);
+
+    const { ws: wsSub, msgs: msgsSub } = await conn();
+    await waitForMsg(wsSub, msgsSub, () =>
+      send(wsSub, { op: 'subscribe', token, cursor: 0 }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const channels = new Set(msgsSub
+      .filter((msg) => msg.op === 'event' && msg.event?.kind === 'chat.message')
+      .map((msg) => msg.event.channel));
+    expect([...channels].sort()).toEqual(['events', 'global', 'infests', 'raids', 'trade']);
+    wsSub.close();
+  });
+
+  test('subscribe keeps the native initial batch bounded while covering static and server history', async () => {
+    // xScal retains 128 queued events and polls at most 64. The complete
+    // bounded relay history is 75 static rows plus 50 current-world rows;
+    // the widget drains that 125-event subscription in multiple polls.
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'BoundedHistoryPlayer' }),
+    );
+    wsReg.close();
+    const { token } = regRes;
+    const rawId = lastRawUserId();
+    _userMap[rawId] = { id: rawId, discordId: 'disc-bounded-history', steamId: null, isBanned: false, isMuted: false };
+
+    const staticChannels = [
+      ['global', '00000000-0000-0000-0000-000000000005'],
+      ['trade', '00000000-0000-0000-0000-000000000002'],
+      ['events', '00000000-0000-0000-0000-000000000003'],
+      ['infests', '983995c1-f9ab-44c0-9b78-8b4cbf497273'],
+      ['raids', '00000000-0000-0000-0000-000000000004'],
+    ];
+    let relaySeq = 1000;
+    const staticRows = [];
+    for (const [slug, channelId] of staticChannels) {
+      for (let i = 0; i < 15; i += 1) {
+        staticRows.push({
+          id: `bounded-static-${slug}-${i}`,
+          relay_seq: BigInt(relaySeq),
+          content: `${slug} history ${i}`,
+          user_id: 'u-bounded-history',
+          channel_id: channelId,
+          username: 'HistoryPlayer',
+          fo76_account_name: null,
+        });
+        relaySeq += 2;
+      }
+    }
+    require('../src/config/prisma').default.$queryRaw.mockResolvedValueOnce(staticRows);
+
+    const worldId = 'world-bounded-history';
+    await setWorldId(rawId, worldId);
+    const serverEvents = [];
+    for (let i = 0; i < 50; i += 1) {
+      serverEvents.push(JSON.stringify({
+        // Interleave the two sources so the subscription implementation must
+        // preserve the global relay cursor order.
+        id: 1001 + (i * 2),
+        kind: 'chat.message',
+        messageId: `server:${worldId}:${i}`,
+        channel: 'server',
+        senderUserId: 'u-bounded-history',
+        senderDisplayName: 'HistoryPlayer',
+        body: `server history ${i}`,
+        targetUserId: '',
+        createdAt: '2026-08-10T00:00:00.000Z',
+      }));
+    }
+    _lists[`relay:serverchat:${worldId}`] = serverEvents.reverse();
+
+    const { ws: wsSub, msgs: msgsSub } = await conn();
+    await waitForMsg(wsSub, msgsSub, () =>
+      send(wsSub, { op: 'subscribe', token, cursor: 0 }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const initial = msgsSub.filter((msg) =>
+      msg.op === 'event' && msg.event?.kind === 'chat.message',
+    );
+    expect(initial).toHaveLength(125);
+    const counts = initial.reduce((result, msg) => {
+      const channel = msg.event.channel;
+      result[channel] = (result[channel] || 0) + 1;
+      return result;
+    }, {});
+    expect(counts).toMatchObject({ global: 15, trade: 15, events: 15, infests: 15, raids: 15, server: 50 });
+    expect(initial.map((msg) => msg.event.id)).toEqual(
+      [...initial].map((msg) => msg.event.id).sort((a, b) => a - b),
+    );
     wsSub.close();
   });
 

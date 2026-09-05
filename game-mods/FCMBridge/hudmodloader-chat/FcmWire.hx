@@ -1,6 +1,21 @@
 /** Small, Flash-free helpers for the native chat.v1 wire format. */
 class FcmWire {
     /**
+     * xScal may report a queue-loss marker as an event rather than returning a
+     * transport error. Keep this detector independent of the provider so the
+     * widget can advance its cursor and leave a useful diagnostic breadcrumb.
+     */
+    public static function isDroppedEvent(raw:String):Bool {
+        if (raw == null) return false;
+        // Match the event kind, not an arbitrary body/metadata string. A chat
+        // message is allowed to contain the words "events.dropped".
+        return raw.indexOf("\"kind\":\"events.dropped\"") >= 0
+            || raw.indexOf("\"kind\": \"events.dropped\"") >= 0
+            || raw.indexOf("kind:events.dropped") >= 0
+            || raw.indexOf("kind: events.dropped") >= 0;
+    }
+
+    /**
      * Find the opening bracket of the events array in compact, pretty-printed,
      * quoted-key, or native unquoted-key responses.
      */

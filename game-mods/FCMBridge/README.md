@@ -21,8 +21,9 @@ __ZFE.call("chat.v1.getAuthState","{}") // connection health check
 The SWF never sees the raw relay token. ZFE stores it in a DPAPI-protected file and
 re-presents it via `hello` on each session.
 
-At startup the SWF probes exposed Scaleform bridge objects, prefers a valid ZFE bridge for
-backwards compatibility, and otherwise selects xScal. xScal exposes both the chat surface
+At startup the SWF probes exposed Scaleform bridge objects. An explicit xScal `chatInterface`
+is selected first because it is the positive provider identity; ZFE is selected only when that
+surface is absent and its own capability probe succeeds. xScal exposes both the chat surface
 (`chatInterface` under either `__SFECodeObj` or `__SFCodeObj`) and, in current builds, may also
 expose a separate call-only `__SFCodeObj` callback object. The latter is not treated as ZFE.
 xScal's chat bridge does not expose ZFE's native text-edit buffer, so the HUD widget uses
@@ -30,14 +31,17 @@ SharedHUDTools input on xScal and
 does not send unsupported editor commands to it.
 
 The capability probe is provider-specific: ZFE receives `chat.v1.getRuntimeInfo`, while xScal
-receives `getRuntimeInfo` through `chatInterface` (when available). The widget never sends a
+receives a no-argument `getRuntimeInfo()` through `chatInterface` (when available). xScal command
+methods receive parsed ActionScript objects, not ZFE's JSON strings. The widget never sends a
 ZFE verb through xScal's generic callback object.
 
 xScal's `connect` completes asynchronously. FCM treats
 `success:true,status:"connecting"` as a pending native transport, keeps polling its auth state,
 and does not call `connect` again until xScal reports a terminal failure. A separate generic
 `__SFCodeObj.call` may be used for the `log` diagnostic only; it is never a fallback chat
-dispatcher. This policy is shared by the modern HUDModLoader widget and the legacy bridge.
+dispatcher. The positive `chatInterface` marker also overrides a stale legacy provider hint, so a
+combined xScal/ZFE installation cannot route chat through the generic callback. This policy is
+shared by the modern HUDModLoader widget and the legacy bridge.
 
 ## What it does
 

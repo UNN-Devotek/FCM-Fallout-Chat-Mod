@@ -42,6 +42,48 @@ class FcmCommand {
     }
 
     /**
+     * Classify a named HUD action without entering a persistent navigation mode.
+     *
+     * The widget receives control-map actions in the same stage as the text editor. Keeping
+     * this classification pure makes it impossible for an ordinary character/Unmapped event to
+     * fall through into channel selection. The returned value is intentionally a one-shot command.
+     */
+    public static function navigationAction(raw:String, nextChannel:String, previousChannel:String):String {
+        var scroll:Int = scrollDirection(raw);
+        if (scroll < 0) return "feed-up";
+        if (scroll > 0) return "feed-down";
+        if (isScrollToBottom(raw)) return "feed-bottom";
+        if (isNextChannel(raw, nextChannel)) return "next-channel";
+        if (isPreviousChannel(raw, previousChannel)) return "previous-channel";
+        return "";
+    }
+
+    /** Feed navigation is scoped to an active, visible Insert-open editor session. */
+    public static function feedNavigationEnabled(inputOpen:Bool, hidden:Bool):Bool {
+        return inputOpen && !hidden;
+    }
+
+    /** A latched action has already been handled; this accepts key-up-only loaders as well. */
+    public static function navigationEdgeIsNew(alreadyLatched:Bool):Bool {
+        return !alreadyLatched;
+    }
+
+    /**
+     * Normalize the key-edge field emitted by HUDModLoader variants.
+     *
+     * The documented field is a boolean, but some loader bridges expose the
+     * value as 1/0 or as a descriptive string. Treat unknown values as a key
+     * release so an unfamiliar payload cannot repeatedly trigger navigation.
+     */
+    public static function eventIsDown(raw:Dynamic):Bool {
+        if (raw == true || raw == 1) return true;
+        if (raw == null) return false;
+        var value:String = StringTools.trim(Std.string(raw)).toLowerCase();
+        return value == "true" || value == "1" || value == "down"
+            || value == "keydown" || value == "pressed";
+    }
+
+    /**
      * True when Fallout is about to hand keyboard focus to another modal input surface.
      * OpenSocial is the named action emitted for the in-game Ctrl+Tab social shortcut;
      * the token matching also covers loader/game-version aliases for quick actions and
@@ -52,7 +94,9 @@ class FcmCommand {
         return action == "escape" || action == "cancel"
             || action.indexOf("quick") >= 0
             || action.indexOf("friend") >= 0
-            || action.indexOf("social") >= 0;
+            || action.indexOf("social") >= 0
+            || action == "controltab"
+            || action == "ctrltab";
     }
 
     /**
@@ -112,6 +156,58 @@ class FcmCommand {
         var current:String = observed == null ? "" : observed;
         if (current.length == 0) return "";
         if (before.length > 0 && current.length == 1) return before + current;
+        return current;
+    }
+
+    /**
+     * Infer whether a native input provider returns a cumulative buffer or one-character
+     * deltas. The provider contract changed between ZFE builds, so this decision is made from
+     * two logical reads and then held for the lifetime of the edit session.
+     */
+    public static function detectNativeInputMode(previousObserved:String, observed:String,
+            currentMode:String):String {
+        if (currentMode == "cumulative" || currentMode == "delta") return currentMode;
+        var before:String = previousObserved == null ? "" : previousObserved;
+        var current:String = observed == null ? "" : observed;
+        if (before.length == 0 || current.length == 0) return "unknown";
+        if (current.length > before.length && StringTools.startsWith(current, before)) {
+            return "cumulative";
+        }
+        if (before.length == 1 && current.length == 1 && before != current) return "delta";
+        return "unknown";
+    }
+
+    /**
+     * Merge one parsed native read using the detected provider mode. Keep the old helper above
+     * for legacy callers/tests; new callers must supply the prior observed value so a cumulative
+     * provider never turns the second character into an accidental append.
+     */
+    public static function mergeNativeInputTextWithMode(previous:String, previousObserved:String,
+            observed:String, currentMode:String):String {
+        var before:String = previous == null ? "" : previous;
+        var priorRead:String = previousObserved == null ? "" : previousObserved;
+        var current:String = observed == null ? "" : observed;
+        if (current.length == 0) return "";
+
+        // Some native builds report backspace as a control character rather than a shorter
+        // cumulative buffer. Treat it as an edit operation in either mode.
+        if (current == String.fromCharCode(8)
+                || current == String.fromCharCode(127)) {
+            return before.length > 0 ? before.substr(0, before.length - 1) : "";
+        }
+
+        var mode:String = detectNativeInputMode(priorRead, current, currentMode);
+        if (mode == "cumulative") return current;
+        if (mode == "delta") return before + current;
+
+        // Before the mode is known, a growing value with the previous value as its prefix is
+        // cumulative; a changed one-character value is a delta. Otherwise fail closed and use
+        // the provider's value rather than manufacturing text.
+        if (priorRead.length > 0 && current.length >= priorRead.length
+                && StringTools.startsWith(current, priorRead)) return current;
+        if (priorRead.length == 1 && current.length == 1 && priorRead != current) {
+            return before + current;
+        }
         return current;
     }
 

@@ -2,8 +2,8 @@
 # build.sh — Build FCM-standalone.ba2 for dev or prod.
 #
 # Usage:
-#   ./build.sh --target dev       # wss://dev.falloutchatmod.com/relay
-#   ./build.sh --target prod      # wss://falloutchatmod.com/relay
+#   ./build.sh --target dev --hudmenu-sha256 <fresh-vanilla-hash>
+#   ./build.sh --target prod --hudmenu-sha256 <fresh-vanilla-hash>
 #
 # Tool-path overrides (env or staged defaults):
 #   BUILDTOOLS_ROOT directory containing the staged compiler/runtime tools
@@ -21,14 +21,21 @@ set -euo pipefail
 # Arguments
 # ---------------------------------------------------------------------------
 TARGET=""
+HUDMENU_SHA256="${FCM_HUDMENU_SHA256:-}"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --target) TARGET="$2"; shift 2 ;;
+        --hudmenu-sha256) HUDMENU_SHA256="$2"; shift 2 ;;
         *) echo "Unknown arg: $1" >&2; exit 1 ;;
     esac
 done
 if [[ "$TARGET" != "dev" && "$TARGET" != "prod" ]]; then
-    echo "Usage: $0 --target dev|prod" >&2
+    echo "Usage: $0 --target dev|prod --hudmenu-sha256 <64-hex-hash>" >&2
+    exit 1
+fi
+if [[ ! "$HUDMENU_SHA256" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    echo "ERROR: a SHA-256 hash of the freshly extracted vanilla HUDMenu.swf is required" >&2
+    echo "       pass --hudmenu-sha256 <hash> or set FCM_HUDMENU_SHA256" >&2
     exit 1
 fi
 
@@ -79,6 +86,7 @@ echo "==> FCM-standalone.ba2 build [target=$TARGET endpoint=$ENDPOINT]"
 echo "    SRC=$SRC_DIR"
 echo "    OUT=$OUT"
 echo "    GAME=$GAME"
+echo "    HUDMenu vanilla SHA-256 pin=$HUDMENU_SHA256"
 
 # ---------------------------------------------------------------------------
 # Step a: Compile FCMBridge.hx -> FCMBridge.swf (CWS, any version)
@@ -108,6 +116,8 @@ PYEOF
 
 FCM_BRIDGE_SIZE=$(wc -c < "$OUT/FCMBridge.swf")
 echo "    FCMBridge.swf: $FCM_BRIDGE_SIZE bytes, version=$(python3 -c "print(open('$OUT/FCMBridge.swf','rb').read(4)[3])")"
+python3 "$SRC_DIR/tools/validate_swf.py" "$OUT/FCMBridge.swf" \
+    --require-signature FWS --require-version 32
 
 # ---------------------------------------------------------------------------
 # Step c: Extract vanilla HUDMenu.swf from SeventySix - Interface.ba2
@@ -119,6 +129,14 @@ python3 "$SRC_DIR/hudmenu-chat/ba2tool.py" extract \
     "interface/HUDMenu.swf" \
     "$OUT/HUDMenu_vanilla.swf"
 echo "    extracted: $(wc -c < "$OUT/HUDMenu_vanilla.swf") bytes"
+ACTUAL_HUDMENU_SHA256=$(sha256sum "$OUT/HUDMenu_vanilla.swf" | awk '{print $1}')
+if [[ "$ACTUAL_HUDMENU_SHA256" != "${HUDMENU_SHA256,,}" ]]; then
+    echo "ERROR: extracted HUDMenu.swf hash mismatch" >&2
+    echo "       expected: ${HUDMENU_SHA256,,}" >&2
+    echo "       actual:   $ACTUAL_HUDMENU_SHA256" >&2
+    exit 1
+fi
+echo "    hash verified: $ACTUAL_HUDMENU_SHA256"
 
 # ---------------------------------------------------------------------------
 # Step d: Decompile HUDMenu_vanilla.swf -> AS3 source
@@ -146,7 +164,9 @@ python3 "$SRC_DIR/hudmenu-chat/test_anchors.py" "$HUDMENU_AS"
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- f: apply-patch.py"
-python3 "$SRC_DIR/hudmenu-chat/apply-patch.py" "$HUDMENU_AS"
+python3 "$SRC_DIR/hudmenu-chat/apply-patch.py" "$HUDMENU_AS" \
+    --source-swf "$OUT/HUDMenu_vanilla.swf" \
+    --expected-sha256 "$HUDMENU_SHA256"
 
 # ---------------------------------------------------------------------------
 # Step g: ffdec recompile patched HUDMenu.as -> HUDMenu.swf
@@ -172,6 +192,8 @@ print('    version byte:', d[3])
 "
 HUD_SIZE=$(wc -c < "$OUT/HUDMenu.swf")
 echo "    HUDMenu.swf: $HUD_SIZE bytes"
+python3 "$SRC_DIR/tools/validate_swf.py" "$OUT/HUDMenu.swf" \
+    --require-signature FWS --require-version 32
 
 # ---------------------------------------------------------------------------
 # Step i: Pack FCM-standalone.ba2 (blob-swap: reuse vanilla archive records)

@@ -152,7 +152,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.47"; // async xScal auth lifecycle + provider diagnostics
+    static inline var VERSION:String  = "2.10.50"; // ordered all-channel history + host-owned input
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -161,6 +161,12 @@ class FCMChatWidget extends MovieClip {
     public var isReloadable:Bool      = true;
     // Stable marker for the legacy HUDMenu self-loader's duplicate-renderer guard.
     public var fcmChatWidgetMarker:Bool = true;
+
+    // HUDModLoader can remove and recreate a reloadable widget while the old movie's
+    // timers/callbacks are still queued. Every asynchronous boundary checks this flag,
+    // and shutdown() is deliberately idempotent so both the loader and REMOVED_FROM_STAGE
+    // may call it safely.
+    var _disposed:Bool = false;
 
     // ── Font aliases — HUDModLoader engine-registered GFx fonts (NO embed) ────
     // These are GFx aliases registered by HUDModLoader (HUDTools.as entry_tf uses
@@ -328,6 +334,10 @@ class FCMChatWidget extends MovieClip {
     // Loader versions differ in whether they emit key-down, key-up, or both. Feed/channel
     // navigation is handled on the first edge available, then the matching key-up is ignored.
     var _navigationActionsDown:Map<String,Bool> = new Map();
+    // Patched HUDMenu calls the widget before it dispatches HUDMod::UserEvent. The matching
+    // bubbling event is still useful for unpatched hosts, but must be ignored after the host
+    // path has already handled it or Page/TeamChat would execute twice.
+    var _hostEventSuppressionKey:String = "";
 
     // ── Channel state ─────────────────────────────────────────────────────────
     var _chanIdx:Int             = 0;   // 0=global
@@ -359,11 +369,34 @@ class FCMChatWidget extends MovieClip {
     var _connectAttempts:Int     = 0;
     var _cursor:Int              = 0;
     var _consecutivePollFailures:Int = 0;
+    // Timer callbacks are native event boundaries. Keep the last phase visible to the guarded
+    // wrapper so a target-build exception is logged and isolated instead of escaping as an
+    // UncaughtErrorEvent into the game.
+    var _eventPollPhase:String   = "idle";
     var _pollTimer:Timer         = null;
     var _sendEchoPollTimer:flash.utils.Timer = null;
+    // xScal accepts connect asynchronously. Drain its subscriber promptly after the
+    // accepted response so the initial all-channel history does not wait for the
+    // normal (much slower) steady-state poll interval.
+    var _xscalWarmupTimer:flash.utils.Timer = null;
+    var _xscalWarmupAttempts:Int = 0;
+    static inline var XSCAL_WARMUP_MS:Int = 250;
+    static inline var XSCAL_WARMUP_MAX:Int = 20;
+    var _zfeInitialDrainTimer:flash.utils.Timer = null;
+    var _zfeInitialDrainAttempts:Int = 0;
+    static inline var ZFE_INITIAL_DRAIN_MS:Int = 250;
+    static inline var ZFE_INITIAL_DRAIN_MAX:Int = 4;
     var _connectTimer:Timer      = null;
     var _worldTimer:Timer        = null;
+    var _serverHistoryDrainTimer:Timer = null;
+    var _serverHistoryDrainAttempts:Int = 0;
+    var _serverHistoryDrainIdleAttempts:Int = 0;
+    var _serverHistoryPending:Bool = false;
+    static inline var SERVER_HISTORY_DRAIN_MS:Int = 150;
+    static inline var SERVER_HISTORY_DRAIN_MAX:Int = 8;
+    static inline var SERVER_HISTORY_DRAIN_IDLE_MAX:Int = 2;
     var _lastWorldId:String      = "";
+    var _worldPollPhase:String   = "idle";
     // Observation and relay membership are deliberately separate. Nearby-player HUD data only
     // means a server-room bind *can* be requested; SERVER becomes selectable only after the
     // relay acknowledges that request.
@@ -373,6 +406,19 @@ class FCMChatWidget extends MovieClip {
     // History resync is a send operation and must wait until xScal's async
     // subscriber has reached an authenticated state.
     var _historyResyncSent:Bool  = false;
+    // xScal owns initial subscriber backfill; keep the suppression diagnostic one-shot.
+    var _historyResyncSuppressedLogged:Bool = false;
+    // A fresh cursor-zero subscription already contains the complete bounded snapshot. Delay the
+    // ZFE-only recovery control until that first snapshot has had a chance to arrive; sending it
+    // immediately would append a second static snapshot and overflow the native 128-event queue.
+    var _historyResyncFallbackTimer:Timer = null;
+    var _initialHistoryEventsSeen:Bool = false;
+    var _initialHistoryDropped:Bool = false;
+    static inline var HISTORY_RESYNC_FALLBACK_MS:Int = 1500;
+
+    // Config completion is reached from both COMPLETE and IO_ERROR fallbacks on some GFx builds.
+    // Keep the panel/timers single-instanced if a target build emits both callbacks.
+    var _configStarted:Bool = false;
 
     // ── ZFE search retry ──────────────────────────────────────────────────────
     var _zfeSearchTimer:Timer    = null;
@@ -409,6 +455,8 @@ class FCMChatWidget extends MovieClip {
     var _nativeInput:Bool        = false;          // true while a native session owns input
     var _inputTimer:flash.utils.Timer = null;      // in-session native input poll (~100 ms)
     var _inProgress:String       = "";             // last readChatInput buffer text
+    var _nativeInputMode:String   = "unknown";    // cumulative, delta, or unknown
+    var _lastObservedInput:String = "";           // raw logical buffer from the prior changed read
     var _lastReadRaw:String      = "";             // throttle [nativein] read logging
     var _nativeSubmitInFlight:Bool = false;        // mark a send originating from a native submit (diagnostic log)
     // Reset true on each relay connection; a failed native open disables native input until
@@ -425,6 +473,11 @@ class FCMChatWidget extends MovieClip {
 
     // ── SharedHUDTools (HUDModLoader text-entry + F11 menu integration) ───────
     var _hudTools:Dynamic        = null;
+    var _hudToolsRegistered:Bool = false;
+    var _hudEventStage:Dynamic   = null;
+    var _configLoader:URLLoader  = null;
+    var _configTimer:Timer       = null;
+    var _sendTimers:Array<Timer> = [];
 
     // ── Self-send transaction state ──────────────────────────────────────────
     // Legacy Dev ACKs do not carry the server-resolved cosmetic projection. Once
@@ -446,6 +499,7 @@ class FCMChatWidget extends MovieClip {
         super();
         name = "FCMChatWidget";
         addEventListener(Event.ADDED_TO_STAGE, onStage);
+        addEventListener(Event.REMOVED_FROM_STAGE, onRemovedFromStage);
     }
 
     // =========================================================================
@@ -453,36 +507,266 @@ class FCMChatWidget extends MovieClip {
     // =========================================================================
 
     function onStage(e:Event):Void {
-        removeEventListener(Event.ADDED_TO_STAGE, onStage);
-        loadConfig();
-    }
-
-    function loadConfig():Void {
-        var ul:URLLoader = new URLLoader();
-        ul.addEventListener(Event.COMPLETE, onConfigLoaded);
-        ul.addEventListener(IOErrorEvent.IO_ERROR, function(_) { afterConfig(); });
+        if (_disposed) return;
         try {
-            ul.load(new URLRequest("../FCMChat.ini"));
-        } catch (e:Dynamic) {
-            afterConfig();
+            removeEventListener(Event.ADDED_TO_STAGE, onStage);
+            announceModernWidgetSafely();
+            loadConfig();
+        } catch (err:Dynamic) {
+            zfeLog("warn", "config", "stage init isolated: " + clip200(Std.string(err)));
+            runAfterConfigSafely();
         }
     }
 
+    function onRemovedFromStage(e:Event):Void {
+        // REMOVED_FROM_STAGE is itself a Scaleform callback boundary. Keep a
+        // defensive outer guard here in case a target build rejects one of the
+        // optional timer/listener cleanup calls during reload.
+        try {
+            shutdown();
+        } catch (err:Dynamic) {
+            try { zfeLog("warn", "lifecycle", "removed-from-stage cleanup isolated: " + clip200(Std.string(err))); }
+            catch (_:Dynamic) {}
+            _api = null;
+            _connected = false;
+        }
+    }
+
+    /**
+     * Balance every resource acquired by this reloadable child movie.
+     *
+     * HUDModLoader's public reload flag means the old instance is not guaranteed to
+     * receive a second lifecycle callback before the new instance starts. Keep this
+     * method safe to call more than once and make the disposed check the first line of
+     * every async callback's ownership boundary.
+     */
+    public function shutdown():Void {
+        if (_disposed) return;
+        _disposed = true;
+
+        // Mark ownership lost before EndTextEdit: some loader builds invoke the cancel
+        // callback synchronously, and that callback must not submit the draft or reopen
+        // the channel/navigation path during teardown.
+        if (_inputOpen) {
+            try {
+                if (_nativeInput) closeInputNative(true);
+                else closeInputSharedHudTools("widget shutdown");
+            } catch (e:Dynamic) {
+                zfeLog("warn", "lifecycle", "input shutdown isolated: " + clip200(Std.string(e)));
+            }
+        }
+
+        stopAutoHideTimer();
+        stopConfigTimer();
+        stopPollTimer();
+        stopEchoPollTimer();
+        stopServerHistoryDrain();
+        stopWorldTimer();
+        stopOpenKeyTimer();
+        stopConnectRetry();
+        stopZfeSearchTimer();
+        stopInputTimer();
+
+        for (timer in _sendTimers) {
+            try { timer.stop(); } catch (e:Dynamic) {}
+        }
+        _sendTimers = [];
+
+        if (_configLoader != null) {
+            try {
+                _configLoader.removeEventListener(Event.COMPLETE, onConfigLoaded);
+                _configLoader.removeEventListener(IOErrorEvent.IO_ERROR, onConfigIoError);
+            } catch (e:Dynamic) {}
+            _configLoader = null;
+        }
+
+        if (_hudEventStage != null) {
+            try { _hudEventStage.removeEventListener("HUDMod::UserEvent", onUserEventSafe); }
+            catch (e:Dynamic) {}
+            _hudEventStage = null;
+        }
+        // BSUIDataManager retains callback references independently of the child SWF. Remove
+        // every subscription before releasing the manager so an old reload instance cannot
+        // continue processing world/roster updates after the replacement is live.
+        try { unsubscribeRoster(); } catch (e:Dynamic) {}
+        _rosterManager = null;
+        _bsui = null;
+        try { removeEventListener(Event.ADDED_TO_STAGE, onStage); } catch (e:Dynamic) {}
+        try { removeEventListener(Event.REMOVED_FROM_STAGE, onRemovedFromStage); } catch (e:Dynamic) {}
+
+        // SharedHUDTools.Shutdown unregisters both the message and menu callbacks for
+        // this vendor. EndTextEdit above handles the active editor before Shutdown.
+        if (_hudTools != null) {
+            try {
+                var close:Dynamic = Reflect.field(_hudTools, "CloseMenu");
+                if (close != null) Reflect.callMethod(_hudTools, close, []);
+            } catch (e:Dynamic) {}
+            try {
+                var stop:Dynamic = Reflect.field(_hudTools, "Shutdown");
+                if (stop != null) Reflect.callMethod(_hudTools, stop, []);
+            } catch (e:Dynamic) {
+                zfeLog("warn", "lifecycle", "SharedHUDTools shutdown isolated: " + clip200(Std.string(e)));
+            }
+            _hudTools = null;
+            _hudToolsRegistered = false;
+        }
+
+        detachPanelChildren();
+        zfeLog("info", "lifecycle", "widget shutdown complete");
+        _api = null;
+        _connected = false;
+        _serverHistoryPending = false;
+        _navigationActionsDown = new Map();
+    }
+
+    function stopAutoHideTimer():Void {
+        if (_autoHideTimer != null) { _autoHideTimer.stop(); _autoHideTimer = null; }
+    }
+
+    function stopConfigTimer():Void {
+        if (_configTimer != null) { _configTimer.stop(); _configTimer = null; }
+    }
+
+    function stopConnectRetry():Void {
+        if (_connectTimer != null) { _connectTimer.stop(); _connectTimer = null; }
+    }
+
+    function stopZfeSearchTimer():Void {
+        if (_zfeSearchTimer != null) { _zfeSearchTimer.stop(); _zfeSearchTimer = null; }
+    }
+
+    function stopInputTimer():Void {
+        if (_inputTimer != null) { _inputTimer.stop(); _inputTimer = null; }
+    }
+
+    function stopWorldTimer():Void {
+        if (_worldTimer != null) { _worldTimer.stop(); _worldTimer = null; }
+        _worldPollPhase = "idle";
+    }
+
+    function stopServerHistoryDrain():Void {
+        if (_serverHistoryDrainTimer != null) {
+            _serverHistoryDrainTimer.stop();
+            _serverHistoryDrainTimer = null;
+        }
+        _serverHistoryDrainAttempts = 0;
+        _serverHistoryDrainIdleAttempts = 0;
+        _serverHistoryPending = false;
+    }
+
+    function detachPanelChildren():Void {
+        clearFeedRows();
+        if (_feedLayer != null) {
+            try { _feedLayer.removeEventListener(flash.events.MouseEvent.MOUSE_WHEEL, onLogWheel); }
+            catch (e:Dynamic) {}
+        }
+        var kids:Array<flash.display.DisplayObject> = [_bg, _tabTf, _subTf, _logTf, _feedLayer, _promptTf];
+        for (child in kids) {
+            try { if (child != null && child.parent == this) removeChild(child); } catch (e:Dynamic) {}
+        }
+        _bg = null;
+        _tabTf = null;
+        _subTf = null;
+        _logTf = null;
+        _feedLayer = null;
+        _promptTf = null;
+        _feedRows = [];
+    }
+
+    /**
+     * Claim renderer ownership from the patched HUDMenu as soon as this child
+     * SWF is attached. The HUDMenu fallback has an intentionally delayed scan,
+     * but waiting for that timer leaves the legacy untagged renderer alive long
+     * enough to duplicate sends and rows. Keep this callback optional so the
+     * widget remains compatible with an unpatched HUDModLoader host.
+     */
+    function announceModernWidgetSafely():Void {
+        try {
+            var current:Dynamic = this;
+            var depth:Int = 0;
+            while (current != null && depth < 24) {
+                var notify:Dynamic = null;
+                try { notify = Reflect.field(current, "fcmNotifyModernWidget"); }
+                catch (_:Dynamic) {}
+                if (notify != null && Reflect.isFunction(notify)) {
+                    Reflect.callMethod(current, notify, [this]);
+                    return;
+                }
+                try { current = Reflect.field(current, "parent"); }
+                catch (_:Dynamic) { current = null; }
+                depth++;
+            }
+        } catch (err:Dynamic) {
+            // Renderer handoff is a compatibility hook. It must never prevent
+            // the modern widget from loading its own config.
+            zfeLog("warn", "selfload", "modern renderer handoff isolated: " + clip200(Std.string(err)));
+        }
+    }
+
+    function loadConfig():Void {
+        if (_disposed) return;
+        if (_configLoader != null) return;
+        var ul:URLLoader = new URLLoader();
+        _configLoader = ul;
+        ul.addEventListener(Event.COMPLETE, onConfigLoaded);
+        ul.addEventListener(IOErrorEvent.IO_ERROR, onConfigIoError);
+        try {
+            ul.load(new URLRequest("../FCMChat.ini"));
+        } catch (e:Dynamic) {
+            runAfterConfigSafely();
+        }
+    }
+
+    function onConfigIoError(e:IOErrorEvent):Void {
+        if (_disposed) return;
+        runAfterConfigSafely();
+    }
+
     function onConfigLoaded(e:Event):Void {
-        var ul:URLLoader = cast e.target;
-        _cfg = FcmConfig.parse(Std.string(ul.data));
-        afterConfig();
+        if (_disposed) return;
+        try {
+            var ul:URLLoader = cast e.target;
+            _cfg = FcmConfig.parse(Std.string(ul.data));
+            afterConfig();
+        } catch (err:Dynamic) {
+            zfeLog("warn", "config", "config parse isolated: " + clip200(Std.string(err)));
+            _cfg = new FcmConfig();
+            runAfterConfigSafely();
+        }
     }
 
     function afterConfig():Void {
+        if (_disposed || _configStarted) return;
+        _configStarted = true;
+        if (_configLoader != null) {
+            try {
+                _configLoader.removeEventListener(Event.COMPLETE, onConfigLoaded);
+                _configLoader.removeEventListener(IOErrorEvent.IO_ERROR, onConfigIoError);
+            } catch (e:Dynamic) {}
+            _configLoader = null;
+        }
         _autoHideOn = (_cfg != null && _cfg.autoHideSec > 0);   // default from config (60s)
         // Register HUDModLoader listeners before building the static panel.
         attachHUDModListeners();
         buildPanel();
         // Delay ZFE init 3 s — ZFE API may not be ready at SWF load time.
-        var t:Timer = new Timer(3000, 1);
-        t.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) { init(); });
-        t.start();
+        stopConfigTimer();
+        _configTimer = new Timer(3000, 1);
+        _configTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
+            _configTimer = null;
+            runInitSafely();
+        });
+        _configTimer.start();
+    }
+
+    function runAfterConfigSafely():Void {
+        if (_disposed) return;
+        try {
+            if (_cfg == null) _cfg = new FcmConfig();
+            afterConfig();
+        } catch (err:Dynamic) {
+            zfeLog("warn", "config", "afterConfig isolated: " + clip200(Std.string(err)));
+        }
     }
 
     // =========================================================================
@@ -657,18 +941,28 @@ class FCMChatWidget extends MovieClip {
 
     function setLogText(s:String):Void {
         if (_logTf == null) return;
-        clearFeedRows();
-        _feedScrollY = 0;
-        _bScrolling = false;
-        _newWhileScrolled = 0;
-        _logTf.visible = true;
-        if (_feedLayer != null) _feedLayer.visible = false;
-        _logTf.htmlText = '<font face="' + FONT_BODY + '" size="' + _cfg.fontSize + '" color="' + hx(_cfg.textColor) + '">' + s + '</font>';
+        try {
+            clearFeedRows();
+            _feedScrollY = 0;
+            _bScrolling = false;
+            _newWhileScrolled = 0;
+            _logTf.visible = true;
+            if (_feedLayer != null) _feedLayer.visible = false;
+            _logTf.htmlText = '<font face="' + FONT_BODY + '" size="' + _cfg.fontSize + '" color="' + hx(_cfg.textColor) + '">' + s + '</font>';
+        } catch (err:Dynamic) {
+            try { _logTf.text = s; } catch (_:Dynamic) {}
+            zfeLog("warn", "render", "status text isolated: " + clip200(Std.string(err)));
+        }
     }
 
     function setPrompt(html:String):Void {
         if (_promptTf == null) return;
-        _promptTf.htmlText = html;
+        try {
+            _promptTf.htmlText = html;
+        } catch (err:Dynamic) {
+            try { _promptTf.text = html; } catch (_:Dynamic) {}
+            zfeLog("warn", "render", "prompt text isolated: " + clip200(Std.string(err)));
+        }
     }
 
     /** Snap the row layer after a feed rebuild. */
@@ -684,8 +978,12 @@ class FCMChatWidget extends MovieClip {
     // =========================================================================
 
     function attachHUDModListeners():Void {
+        if (_disposed) return;
         try {
-            stage.addEventListener("HUDMod::UserEvent", onUserEvent);
+            _hudEventStage = stage;
+            if (_hudEventStage != null) {
+                _hudEventStage.addEventListener("HUDMod::UserEvent", onUserEventSafe);
+            }
         } catch (e:Dynamic) {
             zfeLog("warn", "hud", "stageListenerFailed: " + Std.string(e));
         }
@@ -700,6 +998,7 @@ class FCMChatWidget extends MovieClip {
      * RegisterMenu(build, select) adds us to the HUDModLoader menu (F11 upstream).
      */
     function constructHudTools():Void {
+        if (_disposed || _hudTools != null) return;
         // Extensions.enabled is required before any scaleform.gfx.* use.
         try {
             var ext:Dynamic = untyped __global__["scaleform.gfx.Extensions"];
@@ -710,11 +1009,15 @@ class FCMChatWidget extends MovieClip {
             var cls:Dynamic = untyped __global__["flash.utils.getDefinitionByName"]("SharedHUDTools");
             if (cls != null) {
                 _hudTools = untyped __new__(cls, VENDOR, "All");
-                Reflect.callMethod(_hudTools, Reflect.field(_hudTools, "Register"),
-                    [function(sender:String, msg:String):Void { onHudMessage(sender, msg); }]);
-                Reflect.callMethod(_hudTools, Reflect.field(_hudTools, "RegisterMenu"),
-                    [function(parentItem:String):Void { onBuildMenu(parentItem); },
-                     function(item:String):Void { onSelectMenu(item); }]);
+                var register:Dynamic = Reflect.field(_hudTools, "Register");
+                var registerMenu:Dynamic = Reflect.field(_hudTools, "RegisterMenu");
+                if (register == null || registerMenu == null) throw "SharedHUDTools registration API missing";
+                Reflect.callMethod(_hudTools, register,
+                    [function(sender:String, msg:String):Void { onHudMessageSafe(sender, msg); }]);
+                Reflect.callMethod(_hudTools, registerMenu,
+                    [function(parentItem:String):Void { onBuildMenuSafe(parentItem); },
+                     function(item:String):Void { onSelectMenuSafe(item); }]);
+                _hudToolsRegistered = true;
                 // Position the HUDModLoader menu just under the channel-tab row.
                 try {
                     Reflect.callMethod(_hudTools, Reflect.field(_hudTools, "FormatMenu"),
@@ -724,6 +1027,14 @@ class FCMChatWidget extends MovieClip {
             }
         } catch (e:Dynamic) {
             zfeLog("warn", "hud", "SharedHUDToolsMissing: " + Std.string(e));
+            if (_hudTools != null) {
+                try {
+                    var stop:Dynamic = Reflect.field(_hudTools, "Shutdown");
+                    if (stop != null) Reflect.callMethod(_hudTools, stop, []);
+                } catch (_:Dynamic) {}
+                _hudTools = null;
+                _hudToolsRegistered = false;
+            }
         }
 
     }
@@ -733,6 +1044,14 @@ class FCMChatWidget extends MovieClip {
         // without persisting message content or identity data in zfe.log.
         var bodyLen:Int = (msg == null) ? 0 : msg.length;
         zfeLog("info", "hud", "HUDTools message received bodyLen=" + bodyLen);
+    }
+
+    function onHudMessageSafe(sender:String, msg:String):Void {
+        try {
+            onHudMessage(sender, msg);
+        } catch (err:Dynamic) {
+            zfeLog("warn", "hud", "HUDTools message isolated: " + clip200(Std.string(err)));
+        }
     }
 
     /**
@@ -807,9 +1126,25 @@ class FCMChatWidget extends MovieClip {
         }
     }
 
+    function onBuildMenuSafe(parentItem:Dynamic):Void {
+        try {
+            onBuildMenu(parentItem);
+        } catch (err:Dynamic) {
+            zfeLog("warn", "menu", "build callback isolated: " + clip200(Std.string(err)));
+        }
+    }
+
     /**
      * HUDModLoader menu select callback. id is the AddMenuItem id string.
      */
+    function onSelectMenuSafe(item:Dynamic):Void {
+        try {
+            onSelectMenu(item);
+        } catch (err:Dynamic) {
+            zfeLog("warn", "menu", "select callback isolated: " + clip200(Std.string(err)));
+        }
+    }
+
     function onSelectMenu(item:Dynamic):Void {
         var id:String = Std.string(item);
         if (StringTools.startsWith(id, "cz_")) {
@@ -855,6 +1190,14 @@ class FCMChatWidget extends MovieClip {
      * capitalized aliases are retained for older loader builds. The primary open trigger still
      * uses the native isChatKeyPressed poll (pollOpenKey).
      */
+    function onUserEventSafe(e:Dynamic):Void {
+        try {
+            onUserEvent(e);
+        } catch (err:Dynamic) {
+            zfeLog("warn", "input", "HUDMod::UserEvent isolated: " + clip200(Std.string(err)));
+        }
+    }
+
     function onUserEvent(e:Dynamic):Void {
         var action:String = "";
         var isDown:Bool   = false;
@@ -870,8 +1213,43 @@ class FCMChatWidget extends MovieClip {
         try {
             var downValue:Dynamic = Reflect.field(e, "isDown");
             if (downValue == null) downValue = Reflect.field(e, "IsKeyDown");
-            isDown = (downValue == true);
+            if (downValue == null) downValue = Reflect.field(e, "isPressed");
+            if (downValue == null) downValue = Reflect.field(e, "pressed");
+            if (downValue == null) downValue = Reflect.field(e, "down");
+            isDown = FcmCommand.eventIsDown(downValue);
         } catch (_:Dynamic) {}
+
+        var eventKey:String = hostEventKey(action, isDown);
+        if (_hostEventSuppressionKey == eventKey) {
+            _hostEventSuppressionKey = "";
+            return;
+        }
+        // If a target host did not dispatch the expected bubbling event, do not let an old
+        // suppression token hide a later real action.
+        if (_hostEventSuppressionKey.length > 0) _hostEventSuppressionKey = "";
+        handleUserEvent(action, isDown);
+    }
+
+    /**
+     * Host-side ProcessUserEvent entry point. The patched HUDMenu invokes this before its own
+     * dispatch so a true result can set the vanilla Boolean consumed flag. External modal
+     * actions intentionally return false after closing FCM input, allowing the game to open the
+     * social/friends menu normally.
+     */
+    public function fcmHandleHostUserEvent(action:String, isDown:Bool):Bool {
+        if (_disposed) return false;
+        var consumed:Bool = handleUserEvent(action, isDown);
+        if (consumed) _hostEventSuppressionKey = hostEventKey(action, isDown);
+        return consumed;
+    }
+
+    function hostEventKey(action:String, isDown:Bool):String {
+        return FcmCommand.actionKey(action) + "|" + (isDown ? "1" : "0");
+    }
+
+    /** Shared implementation for both patched-host and unpatched stage-listener paths. */
+    function handleUserEvent(action:String, isDown:Bool):Bool {
+        if (_disposed) return false;
 
         // Close whichever input owner is active before HUDMenu processes a named modal action.
         // Only the host-domain SharedHUDTools path owns the engine's ControlMap lock; the native
@@ -882,60 +1260,76 @@ class FCMChatWidget extends MovieClip {
         if (externalClosePath == "native") {
             zfeLog("info", "input", "native session closed for external action " + action);
             closeInputNative();
-            return;
+            // Let Fallout open the requested external modal after the FCM owner is released.
+            return false;
         } else if (externalClosePath == "shared") {
             closeInputSharedHudTools("external action " + action);
-            return;
+            return false;
         }
         // HUDModLoader's RegisterMenu() does not bind the F11 hotkey. The loader forwards
         // the key as a HUDMod::UserEvent, so explicitly open the shared menu here. Keep the
         // guard narrow: "Unmapped" represents every unbound key and must never open menus.
         if (action == "F11" || action == "HUDModMenu" || action == "HUDModLoaderMenu") {
             showHudLoaderMenu();
-            return;
+            return true;
         }
 
-        // Keep the active input session and its buffer intact while changing the destination
-        // channel. Channel cycling also works while the feed is idle; this is the HUDModLoader
-        // equivalent of the legacy Text Chat mod's Tab switch.
-        // Feed navigation is unlocked only for the active Insert-open chat session. Before
-        // that, arrows remain game controls; while the session is open, arrows/Home/End
-        // operate on the FCM feed instead of leaking into the game control map.
-        var scroll:Int = FcmCommand.scrollDirection(action);
-        var jumpToBottom:Bool = FcmCommand.isScrollToBottom(action);
-        var nextChannel:Bool = FcmCommand.isNextChannel(action, _cfg.channelNextKey);
-        var previousChannel:Bool = FcmCommand.isPreviousChannel(action, _cfg.channelPrevKey);
-        var isNavigation:Bool = scroll != 0 || jumpToBottom || nextChannel || previousChannel;
-        if (isNavigation) {
+        // Navigation is a set of one-shot commands, never a persistent "channel selection"
+        // mode. This matters because the same stage also hosts the SharedHUDTools editor: an
+        // ordinary character or an Unmapped action must never be routed into channel handling.
+        // Page actions switch channels while idle or while typing; the editor owner and draft are
+        // left untouched. Arrows/Home/End are feed commands only for an active Insert session.
+        var navAction:String = FcmCommand.navigationAction(action,
+            _cfg.channelNextKey, _cfg.channelPrevKey);
+        if (navAction.length > 0) {
+            // Arrow/Home/End remain ordinary gameplay controls until Insert owns a visible
+            // editor. Page actions are FCM channel commands in either visible state.
+            var feedCommand:Bool = navAction == "feed-up" || navAction == "feed-down"
+                || navAction == "feed-bottom";
+            if (feedCommand && !FcmCommand.feedNavigationEnabled(_inputOpen, _hidden)) {
+                return false;
+            }
             var navKey:String = FcmCommand.actionKey(action);
-            if (isDown) {
-                if (_navigationActionsDown.exists(navKey)) return;
-                _navigationActionsDown.set(navKey, true);
-            } else if (_navigationActionsDown.exists(navKey)) {
-                // We already handled the key-down edge. A key-up-only loader has no latch entry
-                // and therefore reaches the same actions below.
-                _navigationActionsDown.remove(navKey);
-                return;
+            var alreadyLatched:Bool = _navigationActionsDown.exists(navKey);
+            if (!FcmCommand.navigationEdgeIsNew(alreadyLatched)) {
+                if (!isDown) _navigationActionsDown.remove(navKey);
+                return true;
             }
-            if (_inputOpen && !_hidden) {
-                if (scroll < 0) { scrollUp(); return; }
-                if (scroll > 0) { scrollDown(); return; }
-                if (jumpToBottom) { scrollToBottom(); return; }
-            }
-            // Page actions switch channels while idle or while typing. The draft stays intact.
-            if (nextChannel) { cycleChannel(); return; }
-            if (previousChannel) { cyclePrev(); return; }
+            if (isDown) _navigationActionsDown.set(navKey, true);
+
+            if (navAction == "feed-up") { scrollUp(); return true; }
+            if (navAction == "feed-down") { scrollDown(); return true; }
+            if (navAction == "feed-bottom") { scrollToBottom(); return true; }
+            if (navAction == "next-channel") { cycleChannel(); return true; }
+            if (navAction == "previous-channel") { cyclePrev(); return true; }
+            // Feed commands are intentionally ignored while idle/hidden; they must remain game
+            // controls and must not fall through to input opening or channel selection.
+            return false;
         }
 
-        if (isDown) return;
-
-        // Open only on a real action used as the open key (never on "Unmapped", which would
-        // open on ANY unbound key). INSERT etc. open via the native poll, not here.
-        if (action == "Console" || action == "ConsoleToggles" || action == "TeamChat"
-                || (action == _cfg.openKey && action != "Unmapped")) {
-            if (_inputOpen && _nativeInput) return;
-            if (!_inputOpen) openInput();   // openInput() restores from hidden first (CAP-011)
+        // Named open actions are consumed only after the FCM editor is actually live. This keeps
+        // Console/TeamChat available when SharedHUDTools is missing, while preventing vanilla
+        // TeamChat from creating a second native editor after FCM has opened successfully.
+        var normalizedAction:String = FcmCommand.actionKey(action);
+        var configuredOpen:String = FcmCommand.actionKey(_cfg.openKey);
+        var isOpenAction:Bool = action == "Console" || action == "ConsoleToggles" || action == "TeamChat"
+            || (normalizedAction.length > 0 && normalizedAction == configuredOpen
+                && normalizedAction != "unmapped");
+        if (isOpenAction) {
+            if (isDown) return _inputOpen;
+            if (_inputOpen) return true;
+            openInput();
+            return _inputOpen;
         }
+
+        // INSERT etc. open via the native poll, not this named-action path. Ordinary actions and
+        // Unmapped must never enter a persistent channel-selection/input mode.
+        return false;
+    }
+
+    /** Reset edge state whenever ownership changes; a held Page/arrow cannot leak into a new edit. */
+    function clearNavigationLatches():Void {
+        _navigationActionsDown = new Map();
     }
 
     /** Named-action compatibility wrapper retained for source-level callers/tests. */
@@ -1000,13 +1394,19 @@ class FCMChatWidget extends MovieClip {
     // =========================================================================
 
     function hide():Void {
+        if (_disposed) return;
+        if (_inputOpen) {
+            if (_nativeInput) closeInputNative();
+            else closeInputSharedHudTools("hide");
+        }
         this.visible = false;
         _hidden = true;
-        if (_autoHideTimer != null) { _autoHideTimer.stop(); _autoHideTimer = null; }
+        stopAutoHideTimer();
         zfeLog("info", "hide", "panel hidden");
     }
 
     function show():Void {
+        if (_disposed) return;
         this.visible = true;
         _hidden = false;
         bumpAutoHide();
@@ -1019,14 +1419,22 @@ class FCMChatWidget extends MovieClip {
      * panel hides. A new message reveals it again (see parseAndRenderEvents). F11-menu toggleable.
      */
     function bumpAutoHide():Void {
-        if (_autoHideTimer != null) { _autoHideTimer.stop(); _autoHideTimer = null; }
+        if (_disposed) return;
+        stopAutoHideTimer();
         if (!_autoHideOn || _cfg == null || _cfg.autoHideSec <= 0) return;
         _autoHideTimer = new Timer(_cfg.autoHideSec * 1000, 1);
-        _autoHideTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
+        _autoHideTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) { runAutoHideSafely(); });
+        _autoHideTimer.start();
+    }
+
+    function runAutoHideSafely():Void {
+        if (_disposed) return;
+        try {
             _autoHideTimer = null;
             if (!_inputOpen && !_hidden) hide();
-        });
-        _autoHideTimer.start();
+        } catch (err:Dynamic) {
+            zfeLog("warn", "hide", "auto-hide callback isolated: " + clip200(Std.string(err)));
+        }
     }
 
     // =========================================================================
@@ -1037,6 +1445,11 @@ class FCMChatWidget extends MovieClip {
     // numChildren/getChildAt (Scaleform VM crash, rule #9). buildPanel re-adds everything
     // and re-applies x/y from _cfg.
     function rebuildPanel():Void {
+        if (_disposed) return;
+        if (_feedLayer != null) {
+            try { _feedLayer.removeEventListener(flash.events.MouseEvent.MOUSE_WHEEL, onLogWheel); }
+            catch (e:Dynamic) {}
+        }
         var kids:Array<flash.display.DisplayObject> = [_bg, _tabTf, _subTf, _logTf, _feedLayer, _promptTf];
         for (c in kids) { try { if (c != null) removeChild(c); } catch (e:Dynamic) {} }
         _feedRows = [];
@@ -1273,11 +1686,21 @@ class FCMChatWidget extends MovieClip {
      * ensures a repeated poll of the same one-character value is not appended twice.
      */
     function mergeNativeInputText(observed:String):String {
-        return FcmCommand.mergeNativeInputText(_inProgress, observed);
+        var current:String = observed == null ? "" : observed;
+        var mode:String = FcmCommand.detectNativeInputMode(_lastObservedInput, current, _nativeInputMode);
+        var merged:String = FcmCommand.mergeNativeInputTextWithMode(
+            _inProgress, _lastObservedInput, current, _nativeInputMode);
+        _nativeInputMode = mode;
+        _lastObservedInput = current;
+        return merged;
     }
 
     function openInput():Void {
+        if (_disposed) return;
         if (_inputOpen) return;
+        // A navigation key may have been held across the Insert edge. Start each edit with a
+        // clean latch so its key-up cannot select a channel or steal the first typed character.
+        clearNavigationLatches();
         // The open key both restores a hidden panel AND opens input (CAP-011, guaranteed).
         if (_hidden) show();
         bumpAutoHide();   // opening input = activity (the timer also never hides while input is open)
@@ -1365,14 +1788,26 @@ class FCMChatWidget extends MovieClip {
         _inputOpen   = true;
         _nativeInput = true;
         _inProgress  = "";
+        _nativeInputMode = "unknown";
+        _lastObservedInput = "";
         _lastReadRaw = "";
         setPrompt(typingPrompt());
         zfeLog("info", "input path", "native-chat-input");
         if (_inputTimer != null) { _inputTimer.stop(); _inputTimer = null; }
         _inputTimer = new flash.utils.Timer(INPUT_POLL_MS);
-        _inputTimer.addEventListener(TimerEvent.TIMER, function(_) { pollNativeInput(); });
+        _inputTimer.addEventListener(TimerEvent.TIMER, function(_) { runNativeInputSafely(); });
         _inputTimer.start();
         return true;
+    }
+
+    function runNativeInputSafely():Void {
+        if (_disposed) return;
+        try {
+            pollNativeInput();
+        } catch (err:Dynamic) {
+            zfeLog("warn", "nativein", "input timer isolated: " + clip200(Std.string(err)));
+            try { closeInputNative(true); } catch (_:Dynamic) {}
+        }
     }
 
     /**
@@ -1381,7 +1816,7 @@ class FCMChatWidget extends MovieClip {
      * Only ever called while a native session is open (never polls outside one).
      */
     function pollNativeInput():Void {
-        if (!_nativeInput) return;
+        if (_disposed || !_nativeInput) return;
         _nativeInputCommandFailed = false;
         try {
             // ── 1. read the in-progress buffer; show it in the prompt ───────
@@ -1396,7 +1831,8 @@ class FCMChatWidget extends MovieClip {
                 _lastReadRaw = rraw;
                 zfeLog("info", "nativein", "read raw=" + clip200(rraw));
             }
-            var text:String = readChanged ? mergeNativeInputText(parseInputText(rraw)) : _inProgress;
+            var observed:String = parseInputText(rraw);
+            var text:String = readChanged ? mergeNativeInputText(observed) : _inProgress;
             _inProgress = text;
             _lastReadRaw = rraw;
             if (text.length > 0) {
@@ -1421,9 +1857,10 @@ class FCMChatWidget extends MovieClip {
                     closeInputNative(true);
                     return;
                 }
+                var finalObserved:String = parseInputText(finalRaw);
                 var textNow:String = (finalRaw == _lastReadRaw)
                     ? _inProgress
-                    : mergeNativeInputText(parseInputText(finalRaw));
+                    : mergeNativeInputText(finalObserved);
                 _lastReadRaw = finalRaw;
                 _inProgress = textNow;
                 var fin:String = (textNow.length > 0) ? textNow : _inProgress;
@@ -1463,7 +1900,7 @@ class FCMChatWidget extends MovieClip {
      * the native input (bare "false"), and reset the prompt.
      */
     function closeInputNative(failed:Bool = false):Void {
-        if (_inputTimer != null) { _inputTimer.stop(); _inputTimer = null; }
+        stopInputTimer();
         var closeFailed:Bool = false;
         try {
             var c1:String = callTop("clearChatInput", "{}");
@@ -1481,6 +1918,10 @@ class FCMChatWidget extends MovieClip {
         _inputOpen   = false;
         _nativeInput = false;
         _inProgress  = "";
+        _nativeInputMode = "unknown";
+        _lastObservedInput = "";
+        _lastReadRaw = "";
+        clearNavigationLatches();
         setPrompt(idlePrompt());
     }
 
@@ -1494,7 +1935,18 @@ class FCMChatWidget extends MovieClip {
      * asynchronously with a null value, which is harmless because this method closes the
      * widget state first and does not submit the draft.
      */
+    function resetSharedInputState():Void {
+        _inputOpen = false;
+        _inProgress = "";
+        clearNavigationLatches();
+        setPrompt(idlePrompt());
+    }
+
     function closeInputSharedHudTools(reason:String):Void {
+        // Release local ownership before asking HUDTools to finish. Its callback may be
+        // synchronous on some loader builds; clearing first makes that callback a cancel and
+        // prevents a stale editor event from re-entering channel/input handling.
+        resetSharedInputState();
         var requested:Bool = false;
         try {
             if (_hudTools != null) {
@@ -1513,36 +1965,14 @@ class FCMChatWidget extends MovieClip {
             // not dispatch an unmatched EndEditText, which could release another mod's lock.
             zfeLog("warn", "input", "SharedHUDTools EndTextEdit unavailable (" + reason + ")");
         }
-        _inputOpen = false;
-        _inProgress = "";
-        setPrompt(idlePrompt());
     }
 
     // =========================================================================
     // SharedHUDTools text-entry (PRIMARY)
     // =========================================================================
 
-    // Dispatch the upstream PlatformChangeEvent(PC_KB_MOUSE) constructor so
-    // SharedHUDTools.startTextEdit picks the native keyboard field (stage.focus = entry_tf)
-    // instead of the on-screen-keyboard/controller path. The constructor has exactly three
-    // arguments in the HUDModLoader source; passing a speculative fourth argument can throw
-    // before keyboard mode is applied.
-    function forceKeyboardPlatform():Void {
-        try {
-            var cls:Dynamic = untyped __global__["flash.utils.getDefinitionByName"]("Shared.AS3.Events.PlatformChangeEvent");
-            var ev:Dynamic = null;
-            ev = untyped __new__(cls, 0, false, 0);
-            if (stage != null) {
-                stage.dispatchEvent(ev);
-                zfeLog("info", "input", "forced PC_KB_MOUSE platform (keyboard editing/backspace)");
-            }
-        } catch (e:Dynamic) {
-            zfeLog("warn", "input", "forceKeyboardPlatform threw: " + Std.string(e));
-        }
-    }
-
     function openInputSharedHudTools():Void {
-        if (_inputOpen) return;
+        if (_disposed || _inputOpen) return;
         if (_hudTools == null) {
             constructHudTools();
             if (_hudTools == null) {
@@ -1550,18 +1980,10 @@ class FCMChatWidget extends MovieClip {
                 return;
             }
         }
+        clearNavigationLatches();
         _inputOpen = true;
         setPrompt(typingPrompt());
         zfeLog("info", "input path", "shared-hud-tools");
-
-        // ── Step 0: force KEYBOARD input mode (fixes backspace) ─────────────
-        // SharedHUDTools.startTextEdit uses stage.focus = entry_tf (native TextField editing,
-        // incl. Backspace) ONLY when isInputKeyboard() is true — i.e. uiController ==
-        // PLATFORM_PC_KB_MOUSE (0). Under Proton/Steam Input the game reports a controller, so it
-        // falls to the on-screen-keyboard path (we push off-screen) and Backspace does nothing.
-        // Dispatch a PlatformChangeEvent(PC_KB_MOUSE) on the stage BEFORE TextEdit so HUDTools
-        // switches to keyboard mode (must be before entryMode — the same handler ends an active edit).
-        forceKeyboardPlatform();
 
         // ── Step 1: FormatTextEdit — position + style the entry box ─────────
         // x/y are stage coordinates (1920×1080 space). Position at widget's lower edge.
@@ -1570,9 +1992,16 @@ class FCMChatWidget extends MovieClip {
         var editY:Float = y + _cfg.height - INPUT_H + 4;
         var editW:Float = _cfg.width - 12;
         var editH:Float = INPUT_H - 6;
+        var textEditStarted:Bool = false;
 
         try {
-            Reflect.callMethod(_hudTools, Reflect.field(_hudTools, "FormatTextEdit"),
+            var formatEdit:Dynamic = Reflect.field(_hudTools, "FormatTextEdit");
+            var formatOsk:Dynamic = Reflect.field(_hudTools, "FormatOnScreenKeyboard");
+            var textEdit:Dynamic = Reflect.field(_hudTools, "TextEdit");
+            if (formatEdit == null || formatOsk == null || textEdit == null) {
+                throw "SharedHUDTools text-edit API incomplete";
+            }
+            Reflect.callMethod(_hudTools, formatEdit,
                 [editX, editY, editW, editH,
                  FONT_BODY,                  // engine alias — matches HUDTools' entry_tf default ($MAIN_Font_Light)
                  _cfg.fontSize,
@@ -1580,34 +2009,29 @@ class FCMChatWidget extends MovieClip {
                  nh(_cfg.tabRowColor),       // bg color — no '#'
                  0.96]);                    // bg alpha (>0 triggers background rendering)
             zfeLog("info", "input", "FormatTextEdit ok");
-        } catch (e:Dynamic) {
-            zfeLog("warn", "input", "FormatTextEdit threw: " + Std.string(e));
-        }
 
-        // ── Step 2: FormatOnScreenKeyboard — REQUIRED even on PC/KB/mouse ───
-        // Position off-screen (y=-300) so the gamepad OSK is invisible on PC.
-        try {
-            Reflect.callMethod(_hudTools, Reflect.field(_hudTools, "FormatOnScreenKeyboard"),
+            // ── Step 2: FormatOnScreenKeyboard — REQUIRED even on PC/KB/mouse ───
+            // Position off-screen (y=-300) so the gamepad OSK is invisible on PC.
+            Reflect.callMethod(_hudTools, formatOsk,
                 [0.0, -300.0]);
             zfeLog("info", "input", "FormatOnScreenKeyboard ok");
-        } catch (e:Dynamic) {
-            zfeLog("warn", "input", "FormatOnScreenKeyboard threw: " + Std.string(e));
-        }
 
-        // ── Step 3: TextEdit — open the entry; callback fires on submit ──────
-        try {
-            Reflect.callMethod(_hudTools, Reflect.field(_hudTools, "TextEdit"),
-                [function(text:Dynamic):Void { onInputSubmit(text); }, ""]);
+            // ── Step 3: TextEdit — open the entry; callback fires on submit ──────
+            textEditStarted = true;
+            Reflect.callMethod(_hudTools, textEdit,
+                [function(text:Dynamic):Void { onInputSubmitSafely(text); }, ""]);
+            // HUDTools renders its own focused entry field at this exact input position.
+            // Do not mirror that same field into _promptTf, or every character appears twice.
+            setPrompt(typingPrompt());
+            zfeLog("info", "input", "opened");
         } catch (e:Dynamic) {
-            zfeLog("warn", "input", "TextEdit threw: " + Std.string(e));
-            _inputOpen = false;
-            setPrompt(idlePrompt());
-            return;
+            // A partial Format/OSK/TextEdit sequence is not a usable editor. EndTextEdit is
+            // only requested after TextEdit was entered; otherwise the local state is enough
+            // and the native no-lock fallback may be attempted by openInput().
+            zfeLog("warn", "input", "SharedHUDTools open failed: " + clip200(Std.string(e)));
+            if (textEditStarted) closeInputSharedHudTools("open failure");
+            else resetSharedInputState();
         }
-        // HUDTools renders its own focused entry field at this exact input position.
-        // Do not mirror that same field into _promptTf, or every character appears twice.
-        setPrompt(typingPrompt());
-        zfeLog("info", "input", "opened");
     }
 
     /**
@@ -1617,10 +2041,24 @@ class FCMChatWidget extends MovieClip {
      * Fires exactly once; textFunction is nulled by SharedHUDTools after.
      */
     function onInputSubmit(text:Dynamic):Void {
+        if (_disposed) return;
         _inputOpen = false;
+        clearNavigationLatches();
         setPrompt(idlePrompt());
         var s:String = (text == null) ? "" : Std.string(text);
         handleSubmittedText(s);
+    }
+
+    function onInputSubmitSafely(text:Dynamic):Void {
+        if (_disposed) return;
+        try {
+            onInputSubmit(text);
+        } catch (err:Dynamic) {
+            _inputOpen = false;
+            clearNavigationLatches();
+            zfeLog("warn", "input", "TextEdit callback isolated: " + clip200(Std.string(err)));
+            try { setPrompt(idlePrompt()); } catch (_:Dynamic) {}
+        }
     }
 
     /**
@@ -1902,6 +2340,7 @@ class FCMChatWidget extends MovieClip {
     // =========================================================================
 
     function sendMessage(raw:String):Void {
+        if (_disposed) return;
         if (_api == null || !_connected) {
             zfeLog("warn", "send", "not connected; cannot send");
             return;
@@ -1938,9 +2377,26 @@ class FCMChatWidget extends MovieClip {
 
         var sendTimer:Timer = new Timer(1, 1);
         sendTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
-            sendMessageTransport(slug, raw, nativeSubmit, localSendId, localUserId);
+            _sendTimers.remove(sendTimer);
+            if (_disposed) return;
+            runSendTransportSafely(slug, raw, nativeSubmit, localSendId, localUserId);
         });
+        _sendTimers.push(sendTimer);
         sendTimer.start();
+    }
+
+    function runSendTransportSafely(slug:String, raw:String, nativeSubmit:Bool,
+            localSendId:String, localUserId:String):Void {
+        if (_disposed) return;
+        try {
+            sendMessageTransport(slug, raw, nativeSubmit, localSendId, localUserId);
+        } catch (err:Dynamic) {
+            removeOptimisticRecord(localSendId);
+            zfeLog("warn", "send", "send timer isolated: " + clip200(Std.string(err)));
+            try {
+                if (slug == CHAN_SLUGS[_chanIdx]) renderRecords();
+            } catch (_:Dynamic) {}
+        }
     }
 
     /** Execute the synchronous provider RPC after the optimistic row had a paint opportunity. */
@@ -1962,7 +2418,14 @@ class FCMChatWidget extends MovieClip {
 
         if (raw.length > _cfg.maxSendLen) raw = raw.substr(0, _cfg.maxSendLen);
         raw = fcmClean(raw);
-        if (raw.length == 0) return;
+        if (raw.length == 0) {
+            // sendMessage() creates the optimistic row before deferring transport. A
+            // control-character-only draft must remove that exact transaction rather than
+            // leaving a permanent phantom message in the feed.
+            removeOptimisticRecord(localSendId);
+            if (slug == CHAN_SLUGS[_chanIdx]) renderRecords();
+            return;
+        }
 
         if (slug == "server" && !_serverSessionReady) {
             // Never send ordinary server traffic until the same relay has acknowledged the
@@ -2108,11 +2571,23 @@ class FCMChatWidget extends MovieClip {
      * dxgi.dll loads. Retry every ZFE_SEARCH_MS ms up to ZFE_SEARCH_MAX times.
      */
     function init():Void {
+        if (_disposed) return;
         _zfeSearchTries = 0;
         tryFindZfe();
     }
 
+    function runInitSafely():Void {
+        if (_disposed) return;
+        try {
+            init();
+        } catch (err:Dynamic) {
+            zfeLog("warn", "startup", "init timer isolated: " + clip200(Std.string(err)));
+            try { runTryFindSafely(); } catch (_:Dynamic) {}
+        }
+    }
+
     function tryFindZfe():Void {
+        if (_disposed) return;
         _zfeSearchTries++;
         _api = FcmNativeApi.discover(this);
         if (_api != null) {
@@ -2128,12 +2603,22 @@ class FCMChatWidget extends MovieClip {
         _zfeSearchTimer = new Timer(ZFE_SEARCH_MS, 1);
         _zfeSearchTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
             _zfeSearchTimer = null;
-            tryFindZfe();
+            runTryFindSafely();
         });
         _zfeSearchTimer.start();
     }
 
+    function runTryFindSafely():Void {
+        if (_disposed) return;
+        try {
+            tryFindZfe();
+        } catch (err:Dynamic) {
+            zfeLog("warn", "startup", "provider search timer isolated: " + clip200(Std.string(err)));
+        }
+    }
+
     function onZfeFound():Void {
+        if (_disposed) return;
         if (_zfeSearchTimer != null) { _zfeSearchTimer.stop(); _zfeSearchTimer = null; }
 
         // Probe only the provider selected by FcmNativeApi. Calling the ZFE
@@ -2173,6 +2658,7 @@ class FCMChatWidget extends MovieClip {
     }
 
     function startConnect():Void {
+        if (_disposed) return;
         resetFalloutIdentity();
         if (_api == null) return;
         _connectAttempts++;
@@ -2230,6 +2716,10 @@ class FCMChatWidget extends MovieClip {
         resetRosterObservation("relay connection", true);
         _lastWorldId = ""; // force the legacy worldId fallback to rebind after reconnect
         _historyResyncSent = false;
+        _historyResyncSuppressedLogged = false;
+        _initialHistoryEventsSeen = false;
+        _initialHistoryDropped = false;
+        stopHistoryResyncFallback();
         _lastAuthObservation = "";
         _connectDelay = CONNECT_RETRY_MS;
         // The link gate is NOT cleared here (v2.9.7). The relay's link notice is a one-shot
@@ -2250,6 +2740,7 @@ class FCMChatWidget extends MovieClip {
         refreshAuthState();
         _cursor = 0;
         startPollTimer();
+        startXscalWarmup();
         maybeRequestHistoryResync();
         startWorldTimer();
         startOpenKeyTimer();
@@ -2260,8 +2751,10 @@ class FCMChatWidget extends MovieClip {
      * this same four-step sequence; keeping it in one place stops the paths from drifting.
      */
     function forceReconnect(reason:String):Void {
+        if (_disposed) return;
         zfeLog("warn", "connect", "reconnecting: " + reason);
         resetFalloutIdentity();
+        clearNavigationLatches();
         if (_inputOpen) {
             if (_nativeInput) closeInputNative();
             else closeInputSharedHudTools("relay reconnect");
@@ -2270,6 +2763,9 @@ class FCMChatWidget extends MovieClip {
         _connected = false;
         stopPollTimer();
         stopEchoPollTimer();
+        stopServerHistoryDrain();
+        stopWorldTimer();
+        stopOpenKeyTimer();
         scheduleConnectRetry();
     }
 
@@ -2350,15 +2846,26 @@ class FCMChatWidget extends MovieClip {
     }
 
     function scheduleConnectRetry():Void {
+        if (_disposed) return;
         if (_connectTimer != null) return;
         _connectTimer = new Timer(_connectDelay, 1);
         _connectTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
             _connectTimer = null;
             _connectDelay = Std.int(Math.min(_connectDelay * 2, CONNECT_MAX_MS));
-            startConnect();
+            runStartConnectSafely();
         });
         _connectTimer.start();
         setLogText("retrying in " + Std.int(_connectDelay / 1000) + "s...");
+    }
+
+    function runStartConnectSafely():Void {
+        if (_disposed) return;
+        try {
+            startConnect();
+        } catch (err:Dynamic) {
+            zfeLog("warn", "connect", "connect timer isolated: " + clip200(Std.string(err)));
+            try { scheduleConnectRetry(); } catch (_:Dynamic) {}
+        }
     }
 
     // =========================================================================
@@ -2398,6 +2905,8 @@ class FCMChatWidget extends MovieClip {
             }
             var prevAuth:String = _authState;
             var prevCanModerate:Bool = _canModerate;
+            var becameAuthenticated:Bool = prevAuth != "authenticated"
+                && authDecision == FcmAuthFlow.AUTHENTICATED;
             _authState = authDecision == FcmAuthFlow.AUTHENTICATED
                 ? "authenticated" : "limited";
             if (_authState != "authenticated") _linkedUserId = "";
@@ -2412,6 +2921,12 @@ class FCMChatWidget extends MovieClip {
                 renderRecords();
             }
             if (authDecision == FcmAuthFlow.AUTHENTICATED) {
+                // xScal may complete its worker-side handshake after the initial bounded
+                // warm-up has elapsed. Restart that drain once at the transition, not on every
+                // steady-state poll, so delayed subscribe history is still prompt and bounded.
+                if (becameAuthenticated && _api.provider == FcmNativeApi.XSCAL) {
+                    startXscalWarmup();
+                }
                 maybeRequestHistoryResync();
             } else if (_api.provider == FcmNativeApi.XSCAL
                     && _connected && authDecision == FcmAuthFlow.RECONNECT) {
@@ -2443,12 +2958,22 @@ class FCMChatWidget extends MovieClip {
     // =========================================================================
 
     function startOpenKeyTimer():Void {
+        if (_disposed || _api == null || !_connected) return;
         if (_openKeyTimer != null) { _openKeyTimer.stop(); _openKeyTimer = null; }
         _lastChatKey = false;
         _openKeyTimer = new flash.utils.Timer(OPEN_KEY_MS);
-        _openKeyTimer.addEventListener(TimerEvent.TIMER, function(_) { pollOpenKey(); });
+        _openKeyTimer.addEventListener(TimerEvent.TIMER, function(_) { runOpenKeySafely(); });
         _openKeyTimer.start();
         zfeLog("info", "nativein", "open-key poll started (" + OPEN_KEY_MS + "ms)");
+    }
+
+    function runOpenKeySafely():Void {
+        if (_disposed) return;
+        try {
+            pollOpenKey();
+        } catch (err:Dynamic) {
+            zfeLog("warn", "nativein", "open-key timer isolated: " + clip200(Std.string(err)));
+        }
     }
 
     function stopOpenKeyTimer():Void {
@@ -2485,29 +3010,146 @@ class FCMChatWidget extends MovieClip {
     // =========================================================================
 
     function startPollTimer():Void {
+        if (_disposed || _api == null || !_connected) return;
         stopPollTimer();
         _pollTimer = new Timer(_cfg.pollMs);
-        _pollTimer.addEventListener(TimerEvent.TIMER, function(_) { pollEvents(); });
+        _pollTimer.addEventListener(TimerEvent.TIMER, function(_) { runEventPollSafely(); });
         _pollTimer.start();
-        pollEvents(); // immediate first poll for history
+        var initialCount:Int = runEventPollSafely(); // immediate first poll for history
+        if (_api != null && _api.provider == FcmNativeApi.ZFE && initialCount >= 64) {
+            // ZFE exposes the queue synchronously. A full first batch proves that a second
+            // native poll is needed; drain it promptly instead of waiting for pollMs.
+            startZfeInitialHistoryDrain();
+        }
+    }
+
+    /**
+     * xScal's connect response only acknowledges starting its async subscriber.
+     * Poll a short, bounded warm-up window so subscribe-time history reaches the
+     * widget promptly while keeping ZFE on its existing lifecycle.
+     */
+    function startXscalWarmup():Void {
+        if (_disposed) return;
+        stopXscalWarmup();
+        if (_api == null || _api.provider != FcmNativeApi.XSCAL || !_connected) return;
+        _xscalWarmupAttempts = 0;
+        scheduleXscalWarmup();
+    }
+
+    function scheduleXscalWarmup():Void {
+        if (_disposed) return;
+        if (_xscalWarmupTimer != null
+                || _api == null
+                || _api.provider != FcmNativeApi.XSCAL
+                || !_connected
+                || _xscalWarmupAttempts >= XSCAL_WARMUP_MAX) return;
+        _xscalWarmupTimer = new flash.utils.Timer(XSCAL_WARMUP_MS, 1);
+        _xscalWarmupTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
+            runXscalWarmupSafely();
+        });
+        _xscalWarmupTimer.start();
+    }
+
+    function runXscalWarmupSafely():Void {
+        if (_disposed) return;
+        try {
+            _xscalWarmupTimer = null;
+            if (_api == null || _api.provider != FcmNativeApi.XSCAL || !_connected) return;
+            _xscalWarmupAttempts++;
+            runEventPollSafely();
+            if (_connected && _xscalWarmupAttempts < XSCAL_WARMUP_MAX) {
+                scheduleXscalWarmup();
+            }
+        } catch (err:Dynamic) {
+            zfeLog("warn", "history", "xscal warmup isolated: " + clip200(Std.string(err)));
+        }
+    }
+
+    function stopXscalWarmup():Void {
+        if (_xscalWarmupTimer != null) {
+            _xscalWarmupTimer.stop();
+            _xscalWarmupTimer = null;
+        }
+        _xscalWarmupAttempts = 0;
+    }
+
+    /** Drain a second ZFE startup batch without turning steady-state polling into a hot loop. */
+    function startZfeInitialHistoryDrain():Void {
+        stopZfeInitialHistoryDrain();
+        if (_disposed || _api == null || _api.provider != FcmNativeApi.ZFE || !_connected) return;
+        _zfeInitialDrainAttempts = 0;
+        scheduleZfeInitialHistoryDrain();
+    }
+
+    function scheduleZfeInitialHistoryDrain():Void {
+        if (_disposed || _zfeInitialDrainTimer != null || _api == null
+                || _api.provider != FcmNativeApi.ZFE || !_connected
+                || _zfeInitialDrainAttempts >= ZFE_INITIAL_DRAIN_MAX) return;
+        _zfeInitialDrainTimer = new flash.utils.Timer(ZFE_INITIAL_DRAIN_MS, 1);
+        _zfeInitialDrainTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
+            runZfeInitialHistoryDrainSafely();
+        });
+        _zfeInitialDrainTimer.start();
+    }
+
+    function runZfeInitialHistoryDrainSafely():Void {
+        if (_disposed) return;
+        try {
+            _zfeInitialDrainTimer = null;
+            if (_api == null || _api.provider != FcmNativeApi.ZFE || !_connected) return;
+            _zfeInitialDrainAttempts++;
+            var count:Int = runEventPollSafely();
+            // A short batch means the bounded cursor-zero snapshot is drained. Continue only
+            // while the provider returns full 64-event batches, with a hard attempt cap.
+            if (count >= 64 && _zfeInitialDrainAttempts < ZFE_INITIAL_DRAIN_MAX) {
+                scheduleZfeInitialHistoryDrain();
+            } else {
+                stopZfeInitialHistoryDrain();
+            }
+        } catch (err:Dynamic) {
+            zfeLog("warn", "history", "zfe initial drain isolated: " + clip200(Std.string(err)));
+            stopZfeInitialHistoryDrain();
+        }
+    }
+
+    function stopZfeInitialHistoryDrain():Void {
+        if (_zfeInitialDrainTimer != null) {
+            _zfeInitialDrainTimer.stop();
+            _zfeInitialDrainTimer = null;
+        }
+        _zfeInitialDrainAttempts = 0;
     }
 
     /** Poll once on the next event tick after a successful send for a fast authoritative echo. */
     function scheduleEchoPoll():Void {
+        if (_disposed) return;
         if (_sendEchoPollTimer != null) return;
         _sendEchoPollTimer = new flash.utils.Timer(SEND_ECHO_POLL_DELAY_MS, 1);
         _sendEchoPollTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
-            _sendEchoPollTimer = null;
-            if (_api != null && _connected) {
-                zfeLog("info", "echo", "polling after send");
-                pollEvents();
-            }
+            runEchoPollSafely();
         });
         _sendEchoPollTimer.start();
     }
 
+    /** Keep the post-send timer inside the same exception boundary as normal polling. */
+    function runEchoPollSafely():Void {
+        if (_disposed) return;
+        try {
+            _sendEchoPollTimer = null;
+            if (_api != null && _connected) {
+                zfeLog("info", "echo", "polling after send");
+                runEventPollSafely();
+            }
+        } catch (err:Dynamic) {
+            zfeLog("warn", "echo", "send echo timer isolated: " + clip200(Std.string(err)));
+        }
+    }
+
     function stopPollTimer():Void {
         if (_pollTimer != null) { _pollTimer.stop(); _pollTimer = null; }
+        stopXscalWarmup();
+        stopZfeInitialHistoryDrain();
+        stopHistoryResyncFallback();
     }
 
     function stopEchoPollTimer():Void {
@@ -2521,6 +3163,7 @@ class FCMChatWidget extends MovieClip {
      */
     function requestHistoryResync():Void {
         if (_api == null || !_connected || _historyResyncSent) return;
+        stopHistoryResyncFallback();
         var payload:String = '{"channel":"server","targetUserId":"","body":"' + HISTORY_RESYNC_PREFIX + '"}';
         try {
             var raw:String = Std.string(_api.call("chat.v1.sendMessage", payload));
@@ -2535,25 +3178,94 @@ class FCMChatWidget extends MovieClip {
         }
     }
 
-    function maybeRequestHistoryResync():Void {
-        if (_api == null || !_connected) return;
-        if (_api.provider == FcmNativeApi.XSCAL && _authState != "authenticated") return;
-        requestHistoryResync();
+    /** Schedule ZFE recovery only after a fresh subscription has had time to deliver its snapshot. */
+    function scheduleHistoryResyncFallback():Void {
+        if (_historyResyncFallbackTimer != null || _historyResyncSent
+                || _api == null || !_connected || _api.provider != FcmNativeApi.ZFE) return;
+        _historyResyncFallbackTimer = new Timer(HISTORY_RESYNC_FALLBACK_MS, 1);
+        _historyResyncFallbackTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
+            runHistoryResyncFallbackSafely();
+        });
+        _historyResyncFallbackTimer.start();
     }
 
-    function pollEvents():Void {
+    function runHistoryResyncFallbackSafely():Void {
+        if (_disposed) return;
+        try {
+            _historyResyncFallbackTimer = null;
+            if (_api == null || !_connected || _api.provider != FcmNativeApi.ZFE
+                    || _historyResyncSent) return;
+            if (_initialHistoryEventsSeen && !_initialHistoryDropped) {
+                zfeLog("info", "history", "initial subscribe history arrived; RESYNC skipped");
+                return;
+            }
+            zfeLog("info", "history", _initialHistoryDropped
+                ? "initial queue reported loss; requesting ZFE RESYNC"
+                : "initial subscribe poll empty; requesting ZFE RESYNC");
+            requestHistoryResync();
+        } catch (err:Dynamic) {
+            zfeLog("warn", "history", "resync fallback isolated: " + clip200(Std.string(err)));
+        }
+    }
+
+    function stopHistoryResyncFallback():Void {
+        if (_historyResyncFallbackTimer != null) {
+            _historyResyncFallbackTimer.stop();
+            _historyResyncFallbackTimer = null;
+        }
+    }
+
+    function maybeRequestHistoryResync():Void {
         if (_api == null || !_connected) return;
+        if (!FcmNativeApi.widgetMustRequestHistoryResync(_api.provider)) {
+            if (!_historyResyncSuppressedLogged) {
+                _historyResyncSuppressedLogged = true;
+                zfeLog("info", "history", "provider=xscal; subscriber owns initial history; RESYNC suppressed");
+            }
+            return;
+        }
+        if (_initialHistoryEventsSeen && !_initialHistoryDropped) return;
+        scheduleHistoryResyncFallback();
+    }
+
+    /**
+     * Timer/event boundaries must not let a target-build native or render exception escape into
+     * Scaleform's global UncaughtErrorEvent handler. Keep the timer alive and identify the phase
+     * so a later in-game log can distinguish transport, auth, and render failures.
+     */
+    function runEventPollSafely():Int {
+        if (_disposed) return 0;
+        _eventPollPhase = "timer";
+        try {
+            var count:Int = pollEvents();
+            _eventPollPhase = "idle";
+            return count;
+        } catch (e:Dynamic) {
+            zfeLog("warn", "poll", "isolated timer exception phase=" + _eventPollPhase
+                + " error=" + clip200(Std.string(e)));
+        }
+        _eventPollPhase = "idle";
+        return 0;
+    }
+
+    function pollEvents():Int {
+        _eventPollPhase = "guard";
+        if (_api == null || !_connected) return 0;
         // Swap an expired link code for a fresh one before doing anything else — the reconnect
         // this may trigger tears down the poll timer we are running on.
+        _eventPollPhase = "link-refresh";
         maybeRefreshLinkCode();
-        if (!_connected) return;
+        if (!_connected) return 0;
         // xScal's connect() is asynchronous. Refreshing here advances its
         // pending -> authenticated transition without issuing another connect.
         if (_api.provider == FcmNativeApi.XSCAL) {
+            _eventPollPhase = "auth-refresh";
             refreshAuthState();
-            if (!_connected) return;
+            if (!_connected) return 0;
+            _eventPollPhase = "history-resync";
             maybeRequestHistoryResync();
         }
+        _eventPollPhase = "poll-call";
         var payload:String = '{"max":64,"cursor":' + _cursor + '}';
         var result:Dynamic = null;
         try {
@@ -2561,9 +3273,10 @@ class FCMChatWidget extends MovieClip {
         } catch (e:Dynamic) {
             zfeLog("warn", "poll", "call threw: " + Std.string(e));
             notePollFailure("call threw");
-            return;
+            return 0;
         }
 
+        _eventPollPhase = "response";
         var rs:String = Std.string(result);
         if (rs.indexOf('"success":false') >= 0 || rs.indexOf('success:false') >= 0) {
             if (rs.indexOf('auth_token_invalid') >= 0 || rs.indexOf('auth_token_revoked') >= 0
@@ -2574,15 +3287,18 @@ class FCMChatWidget extends MovieClip {
                 // The xScal worker has not opened its subscriber yet. This is
                 // expected while connect() reports status=connecting; do not
                 // spend the poll-failure budget or restart the worker.
-                return;
+                return 0;
             } else {
                 notePollFailure("relay returned an unsuccessful response");
             }
-            return;
+            return 0;
         }
 
         _consecutivePollFailures = 0;
-        parseAndRenderEvents(rs);
+        _eventPollPhase = "render";
+        var parsed:Int = parseAndRenderEvents(rs);
+        _eventPollPhase = "complete";
+        return parsed;
     }
 
     /** Reconnect instead of leaving the HUD in a permanently stale "connected" state. */
@@ -2593,9 +3309,9 @@ class FCMChatWidget extends MovieClip {
         forceReconnect("poll failure threshold reached");
     }
 
-    function parseAndRenderEvents(rs:String):Void {
+    function parseAndRenderEvents(rs:String):Int {
         var evStart:Int = FcmWire.findEventsArrayStart(rs);
-        if (evStart < 0) return;
+        if (evStart < 0) return 0;
 
         // Keep the pending rows as the canonical transaction records. Their eligibility
         // window is enforced by FcmEcho.choose(), so a stale send cannot consume a newer
@@ -2603,6 +3319,8 @@ class FCMChatWidget extends MovieClip {
 
         var newRecords:Bool = false;
         var parsedCount:Int = 0;   // diagnostic: events seen this poll (logged below)
+        var droppedCount:Int = 0;  // provider queue-loss markers still advance the cursor
+        var chatEventCount:Int = 0;
         var wireStarCount:Int = 0;
         var wireStarColorCount:Int = 0;
         var wireTagCount:Int = 0;
@@ -2623,6 +3341,14 @@ class FCMChatWidget extends MovieClip {
             if (j >= rs.length) break;
             var obj:String = rs.substring(objStart, j + 1);
             i = j + 1;
+
+            if (FcmWire.isDroppedEvent(obj)) {
+                updateCursorFromEvent(obj);
+                parsedCount++;
+                droppedCount++;
+                _initialHistoryDropped = true;
+                continue;
+            }
 
             if (obj.indexOf('"chat.message"') < 0 && obj.indexOf('chat.message') < 0) {
                 updateCursorFromEvent(obj);
@@ -2668,6 +3394,8 @@ class FCMChatWidget extends MovieClip {
             // Always advance the cursor, even for skipped/deduped events.
             if (evId > _cursor) _cursor = evId;
             parsedCount++;
+            chatEventCount++;
+            _initialHistoryEventsSeen = true;
             if (body.length == 0) continue;
 
             // System channel — link handshake. "LINK COMPLETE" means the web redeem finished
@@ -2721,6 +3449,7 @@ class FCMChatWidget extends MovieClip {
 
         if (parsedCount > 0) zfeLog("info", "recv", "events=" + parsedCount + " cursor=" + _cursor
             + " newRecords=" + (newRecords ? "y" : "n")
+            + " dropped=" + droppedCount
             + " wireStars=" + wireStarCount + " wireStarColors=" + wireStarColorCount
             + " wireTags=" + wireTagCount + " wireTransport=" + wireTransportCount
             + " wireMessageIds=" + wireMessageIdCount
@@ -2731,12 +3460,21 @@ class FCMChatWidget extends MovieClip {
             + " ownEchoFallback=" + ownEchoFallbackMatchCount
             + " ownEchoAmbiguous=" + ownEchoAmbiguousCount
             + " recordsBefore=" + recordsBefore + " recordsAfter=" + _records.length);
+        if (droppedCount > 0) {
+            zfeLog("warn", "recv", "provider reported dropped events; cursor advanced without replay");
+            if (_api != null && _api.provider == FcmNativeApi.ZFE) scheduleHistoryResyncFallback();
+        } else if (chatEventCount > 0) {
+            // A fresh subscribe snapshot has arrived. Do not issue an immediate recovery replay;
+            // the duplicate would consume the remaining native queue capacity.
+            stopHistoryResyncFallback();
+        }
         seedOwnCosmeticsFromHistory();
         if (newRecords) {
             if (_autoHideOn && _hidden) show();   // auto-hide: pop back up on a new message
             renderRecords();
             bumpAutoHide();                        // any new message counts as activity
         }
+        return parsedCount;
     }
 
     /** Keep replayed history from duplicating records when ZFE also makes a fresh subscribe. */
@@ -2953,6 +3691,7 @@ class FCMChatWidget extends MovieClip {
 
     function updateCursorFromEvent(obj:String):Void {
         var evId:Int = extractJsonInt(obj, "id");
+        if (evId <= 0) evId = extractJsonInt(obj, "cursor");
         if (evId > _cursor) _cursor = evId;
     }
 
@@ -2968,6 +3707,7 @@ class FCMChatWidget extends MovieClip {
         var ok:Bool = raw != null && (raw.indexOf('"success":true') >= 0 || raw.indexOf('success:true') >= 0);
         if (ok) {
             setServerSessionReady(readyOnSuccess, "");
+            if (readyOnSuccess) startServerHistoryDrain();
             zfeLog("info", "world", source + " control acknowledged");
             return true;
         }
@@ -2984,6 +3724,7 @@ class FCMChatWidget extends MovieClip {
         var changed:Bool = (_serverSessionReady != ready);
         _serverSessionReady = ready;
         _serverSessionError = ready ? "" : ((error == null) ? "" : error);
+        if (!ready) stopServerHistoryDrain();
         if (!ready && _chanIdx == 5) _chanIdx = 0;
         if (changed) {
             rebuildChannelTabs();
@@ -2992,11 +3733,86 @@ class FCMChatWidget extends MovieClip {
     }
 
     function startWorldTimer():Void {
+        if (_disposed || _api == null || !_connected) return;
         if (_worldTimer != null) { _worldTimer.stop(); _worldTimer = null; }
         _worldTimer = new Timer(WORLD_POLL_MS);
-        _worldTimer.addEventListener(TimerEvent.TIMER, function(_) { checkWorldId(); });
+        _worldTimer.addEventListener(TimerEvent.TIMER, function(_) { runWorldPollSafely(); });
         _worldTimer.start();
-        checkWorldId();
+        runWorldPollSafely();
+    }
+
+    /** Keep the 5-second world/roster timer alive when GFx rejects a native provider read. */
+    function runWorldPollSafely():Void {
+        if (_disposed) return;
+        _worldPollPhase = "timer";
+        try {
+            checkWorldId();
+        } catch (e:Dynamic) {
+            zfeLog("warn", "world", "isolated timer exception phase=" + _worldPollPhase
+                + " error=" + clip200(Std.string(e)));
+        }
+        _worldPollPhase = "idle";
+    }
+
+    /**
+     * Drain server-room backfill promptly after a roster/world acknowledgement. xScal's
+     * subscriber is asynchronous, so the ordinary poll interval can otherwise leave the
+     * SERVER tab blank for several seconds after a world hop.
+     */
+    function startServerHistoryDrain():Void {
+        if (_disposed || !_connected || _api == null || !_serverSessionReady) return;
+        if (_serverHistoryPending) return;
+        _serverHistoryPending = true;
+        _serverHistoryDrainAttempts = 0;
+        _serverHistoryDrainIdleAttempts = 0;
+        scheduleServerHistoryDrain();
+    }
+
+    function scheduleServerHistoryDrain():Void {
+        if (_disposed || !_serverHistoryPending || _serverHistoryDrainTimer != null
+                || _api == null || !_connected || _serverHistoryDrainAttempts >= SERVER_HISTORY_DRAIN_MAX) return;
+        _serverHistoryDrainTimer = new Timer(SERVER_HISTORY_DRAIN_MS, 1);
+        _serverHistoryDrainTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
+            runServerHistoryDrainSafely();
+        });
+        _serverHistoryDrainTimer.start();
+    }
+
+    function runServerHistoryDrainSafely():Void {
+        if (_disposed) return;
+        try {
+            _serverHistoryDrainTimer = null;
+            if (!_serverHistoryPending || _api == null || !_connected || !_serverSessionReady) {
+                stopServerHistoryDrain();
+                return;
+            }
+            _serverHistoryDrainAttempts++;
+            var count:Int = runEventPollSafely();
+            if (count > 0) {
+                _serverHistoryDrainIdleAttempts = 0;
+            } else {
+                _serverHistoryDrainIdleAttempts++;
+            }
+            // The relay sends the entire server snapshot before acknowledging the roster/world
+            // control, but xScal can publish those frames to its subscriber one tick later. Keep
+            // draining through a short idle window instead of stopping at the first server row;
+            // otherwise the remaining history waits for the normal five-second poll interval.
+            if (_serverHistoryDrainIdleAttempts >= SERVER_HISTORY_DRAIN_IDLE_MAX) {
+                _serverHistoryPending = false;
+                _serverHistoryDrainTimer = null;
+                zfeLog("info", "history", "server backfill drain complete events=" + count);
+            } else if (_serverHistoryPending && _serverHistoryDrainAttempts < SERVER_HISTORY_DRAIN_MAX) {
+                scheduleServerHistoryDrain();
+            } else if (_serverHistoryPending) {
+                _serverHistoryPending = false;
+                zfeLog("warn", "history", "server backfill drain timed out; normal poll remains active");
+            }
+        } catch (err:Dynamic) {
+            zfeLog("warn", "history", "server backfill drain isolated: " + clip200(Std.string(err)));
+            if (_serverHistoryPending && _serverHistoryDrainAttempts < SERVER_HISTORY_DRAIN_MAX) {
+                scheduleServerHistoryDrain();
+            }
+        }
     }
 
     function hasFreshRosterObservation(now:Float):Bool {
@@ -3111,18 +3927,28 @@ class FCMChatWidget extends MovieClip {
     }
 
     function checkWorldId():Void {
+        _worldPollPhase = "guard";
         if (_api == null || !_connected) return;
         _worldPollCount++;
+        _worldPollPhase = "subscribe";
         subscribeRoster();
         // AccountInfoData can be republished during world transitions. Re-read it for local
         // state only; refreshDisplayName never enters the native relay connection path.
+        _worldPollPhase = "identity";
         refreshDisplayName();
         // BSUIDataManager.Subscribe() only installs Event.CHANGE listeners; it does not call
         // them for the provider value already in the cache. Pull the current snapshots so a
         // freshly joined server can bind and replay history even when no further CHANGE fires.
+        _worldPollPhase = "snapshots";
         refreshRosterSnapshots(_rosterManager);
+        _worldPollPhase = "roster";
         tickRoster();
-        if (!_dataInventoryDone && _worldPollCount >= 6) { _dataInventoryDone = true; dumpDataInventory(); }
+        if (!_dataInventoryDone && _worldPollCount >= 6) {
+            _worldPollPhase = "inventory";
+            _dataInventoryDone = true;
+            dumpDataInventory();
+        }
+        _worldPollPhase = "world-id";
         var worldId:String = readWorldId();
         if (worldId == _lastWorldId) return;            // no change since last poll
         // worldId is a compatibility fallback. Some HUD builds leave it blank even while the
@@ -3132,6 +3958,7 @@ class FCMChatWidget extends MovieClip {
             zfeLog("info", "world", "blank worldId ignored; fresh roster session remains authoritative");
             return;
         }
+        _worldPollPhase = "world-transition";
         var wasInWorld:Bool = _inWorld;
         var previousWorldId:String = _lastWorldId;
         _lastWorldId = worldId;
@@ -3150,6 +3977,7 @@ class FCMChatWidget extends MovieClip {
             sendWorldLeaveControl();
             setServerSessionReady(false, "");
         }
+        _worldPollPhase = "complete";
     }
 
     function sendWorldIdControl(worldId:String):Void {
@@ -3323,9 +4151,10 @@ class FCMChatWidget extends MovieClip {
         if (_logTf == null || _feedLayer == null) return;
 
         try {
-            var ext:Dynamic = untyped __global__["scaleform.gfx.Extensions"];
-            if (ext != null) ext.enabled = true;
-        } catch (e:Dynamic) {}
+            try {
+                var ext:Dynamic = untyped __global__["scaleform.gfx.Extensions"];
+                if (ext != null) ext.enabled = true;
+            } catch (e:Dynamic) {}
 
         // First load / not linked: show ONLY the link screen — never the chat history (user
         // request). An unlinked identity can't post, so the link prompt takes the whole feed.
@@ -3374,7 +4203,16 @@ class FCMChatWidget extends MovieClip {
             _feedScrollY = Math.max(0, Math.min(_feedScrollY, _feedMaxScrollY));
             if (_feedMaxScrollY <= 0) { _bScrolling = false; _newWhileScrolled = 0; }
         }
-        applyFeedScroll();
+            applyFeedScroll();
+        } catch (err:Dynamic) {
+            try {
+                clearFeedRows();
+                _logTf.visible = true;
+                _feedLayer.visible = false;
+                _logTf.text = "chat render unavailable";
+            } catch (_:Dynamic) {}
+            zfeLog("warn", "render", "isolated render exception: " + clip200(Std.string(err)));
+        }
     }
 
     /**
@@ -3757,6 +4595,7 @@ class FCMChatWidget extends MovieClip {
     var _lastRosterObservationAt:Float = -ROSTER_FRESH_MS;
     var _lastRosterSentAt:Float = 0;
     var _lastRosterSent:String = "";
+    var _lastRosterReadWarningAt:Float = -30000;
     var _rosterLogCount:Int = 0;
     var _lastRosterLogAt:Float = 0;
 
@@ -3861,22 +4700,32 @@ class FCMChatWidget extends MovieClip {
 
         var snapshot:Array<String> = [];
         var localName:String = bareName(_displayName).toLowerCase();
+        var skippedEntries:Int = 0;
         for (i in 0...n) {
-            var e0:Dynamic = arr[i];
-            if (uiBool(uiField(e0, "isLocalPlayer"))
-                    || uiBool(uiField(e0, "isLocal"))
-                    || uiBool(uiField(e0, "isSelf"))) continue;
-            var nm:String = "";
-            for (cand in ["displayName", "characterName", "name", "playerName"]) {
-                try {
-                    var v:Dynamic = Reflect.field(e0, cand);
+            // GFx native arrays can be replaced between reading length and reading an index
+            // during a world hop. Never let one invalid slot escape the timer boundary.
+            try {
+                var e0:Dynamic = arr[i];
+                if (e0 == null) continue;
+                if (uiBool(uiField(e0, "isLocalPlayer"))
+                        || uiBool(uiField(e0, "isLocal"))
+                        || uiBool(uiField(e0, "isSelf"))) continue;
+                var nm:String = "";
+                for (cand in ["displayName", "characterName", "name", "playerName"]) {
+                    var v:Dynamic = uiField(e0, cand);
                     if (v != null && Std.string(v).length > 0) { nm = Std.string(v); break; }
-                } catch (e:Dynamic) {}
+                }
+                nm = bareName(nm);
+                if (nm.length > 0 && nm.toLowerCase() != localName && snapshot.indexOf(nm) < 0) {
+                    snapshot.push(nm);
+                }
+            } catch (e:Dynamic) {
+                skippedEntries++;
             }
-            nm = bareName(nm);
-            if (nm.length > 0 && nm.toLowerCase() != localName && snapshot.indexOf(nm) < 0) {
-                snapshot.push(nm);
-            }
+        }
+        if (skippedEntries > 0 && now - _lastRosterReadWarningAt >= 30000) {
+            _lastRosterReadWarningAt = now;
+            zfeLog("warn", "roster", key + " skipped native entries=" + skippedEntries);
         }
         snapshot.sort(function(a, b) return (a < b) ? -1 : (a > b ? 1 : 0));
         _rosterSnapshots.set(key, snapshot);
@@ -3977,9 +4826,13 @@ class FCMChatWidget extends MovieClip {
     function refreshRosterSnapshots(mgr:Dynamic):Void {
         if (mgr == null) return;
         for (key in ["PlayerListData", "TeamMarkers", "PartyMenuList", "VoiceChatAreaData"]) {
-            var provider:Dynamic = getBSUIData(mgr, key);
-            var data:Dynamic = uiData(provider);
-            if (data != null) collectRoster(key, data);
+            try {
+                var provider:Dynamic = getBSUIData(mgr, key);
+                var data:Dynamic = uiData(provider);
+                if (data != null) collectRoster(key, data);
+            } catch (e:Dynamic) {
+                zfeLog("warn", "roster", key + " snapshot phase threw: " + clip200(Std.string(e)));
+            }
         }
     }
     var _worldPollCount:Int = 0;
