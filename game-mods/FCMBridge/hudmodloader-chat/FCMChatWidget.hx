@@ -152,7 +152,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.51"; // native HUDModUserEvent accessor fix
+    static inline var VERSION:String  = "2.10.55"; // physical nav via ZFE dispatcher, relay-independent
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -321,8 +321,7 @@ class FCMChatWidget extends MovieClip {
     var _fmt:TextFormat;
     // ── Chat render state ─────────────────────────────────────────────────────
     var _records:Array<ChatRecord> = [];
-    var _seenMessageIds:Map<String,Bool> = new Map();
-    var _seenMessageOrder:Array<String> = [];
+    var _history:FcmHistory = new FcmHistory();
     var _bScrolling:Bool         = false;
     var _feedRows:Array<FeedRowView> = [];
     var _feedContentHeight:Float = 0;
@@ -334,10 +333,18 @@ class FCMChatWidget extends MovieClip {
     // Loader versions differ in whether they emit key-down, key-up, or both. Feed/channel
     // navigation is handled on the first edge available, then the matching key-up is ignored.
     var _navigationActionsDown:Map<String,Bool> = new Map();
+    // Physical-key polling is an extender bookkeeping/read path, not a game-input lock. Page
+    // keys are always eligible for channel navigation; arrows/Home/End are read only while an
+    // Insert-open feed session is active. The map prevents a stage event and the physical path
+    // from handling the same press twice.
+    var _physicalNavigationDown:Map<Int,Bool> = new Map();
     // Patched HUDMenu calls the widget before it dispatches HUDMod::UserEvent. The matching
     // bubbling event is still useful for unpatched hosts, but must be ignored after the host
     // path has already handled it or Page/TeamChat would execute twice.
     var _hostEventSuppressionKey:String = "";
+    // Input diagnostics are deduplicated by action/edge so a bad mapping cannot flood zfe.log.
+    var _userEventDiagnostics:Map<String,Bool> = new Map();
+    var _hudEventListenerAttached:Bool = false;
 
     // ── Channel state ─────────────────────────────────────────────────────────
     var _chanIdx:Int             = 0;   // 0=global
@@ -405,15 +412,10 @@ class FCMChatWidget extends MovieClip {
     var _serverSessionError:String = "";
     // History resync is a send operation and must wait until xScal's async
     // subscriber has reached an authenticated state.
-    var _historyResyncSent:Bool  = false;
-    // xScal owns initial subscriber backfill; keep the suppression diagnostic one-shot.
-    var _historyResyncSuppressedLogged:Bool = false;
     // A fresh cursor-zero subscription already contains the complete bounded snapshot. Delay the
-    // ZFE-only recovery control until that first snapshot has had a chance to arrive; sending it
+    // shared recovery control until that first snapshot has had a chance to arrive; sending it
     // immediately would append a second static snapshot and overflow the native 128-event queue.
     var _historyResyncFallbackTimer:Timer = null;
-    var _initialHistoryEventsSeen:Bool = false;
-    var _initialHistoryDropped:Bool = false;
     static inline var HISTORY_RESYNC_FALLBACK_MS:Int = 1500;
 
     // Config completion is reached from both COMPLETE and IO_ERROR fallbacks on some GFx builds.
@@ -470,6 +472,18 @@ class FCMChatWidget extends MovieClip {
     var _openKeyTimer:flash.utils.Timer = null;    // low-rate (~150 ms) open-trigger poll
     static inline var OPEN_KEY_MS:Int = 150;       // open-key poll interval
     var _lastChatKey:Bool        = false;          // last isChatKeyPressed truthiness (edge detect)
+    // Windows virtual-key fallback for loaders that collapse physical Page keys to Unmapped.
+    static inline var PHYSICAL_NAV_POLL_MS:Int = 75;
+    static inline var VK_PAGEUP:Int = 0x21;
+    static inline var VK_PAGEDOWN:Int = 0x22;
+    static inline var VK_HOME:Int = 0x24;
+    static inline var VK_END:Int = 0x23;
+    static inline var VK_UP:Int = 0x26;
+    static inline var VK_DOWN:Int = 0x28;
+    var _physicalNavTimer:flash.utils.Timer = null;
+    var _physicalNavRegistered:Array<Int> = [];
+    var _physicalNavReady:Bool = false;
+    var _physicalNavProbeLogged:Bool = false;      // one raw IsKeyPressed sample per session
 
     // ── SharedHUDTools (HUDModLoader text-entry + F11 menu integration) ───────
     var _hudTools:Dynamic        = null;
@@ -563,6 +577,7 @@ class FCMChatWidget extends MovieClip {
         stopServerHistoryDrain();
         stopWorldTimer();
         stopOpenKeyTimer();
+        stopPhysicalNavigation();
         stopConnectRetry();
         stopZfeSearchTimer();
         stopInputTimer();
@@ -983,8 +998,12 @@ class FCMChatWidget extends MovieClip {
             _hudEventStage = stage;
             if (_hudEventStage != null) {
                 _hudEventStage.addEventListener("HUDMod::UserEvent", onUserEventSafe);
+                _hudEventListenerAttached = true;
+            } else {
+                _hudEventListenerAttached = false;
             }
         } catch (e:Dynamic) {
+            _hudEventListenerAttached = false;
             zfeLog("warn", "hud", "stageListenerFailed: " + Std.string(e));
         }
         constructHudTools();
@@ -1204,6 +1223,14 @@ class FCMChatWidget extends MovieClip {
         // adapter or every named action is silently reduced to ""/key-up.
         var action:String = FcmUserEvent.action(e);
         var isDown:Bool   = FcmUserEvent.isDown(e);
+
+        var observedAction:String = action.length > 0 ? FcmCommand.actionKey(action) : "<empty>";
+        var observedKey:String = observedAction + "|" + (isDown ? "down" : "up");
+        if (!_userEventDiagnostics.exists(observedKey)) {
+            _userEventDiagnostics.set(observedKey, true);
+            zfeLog("info", "input", "HUDMod::UserEvent observed action=" + observedAction
+                + " edge=" + (isDown ? "down" : "up"));
+        }
 
         var navigation:String = FcmCommand.navigationAction(action,
             _cfg.channelNextKey, _cfg.channelPrevKey);
@@ -2357,7 +2384,7 @@ class FCMChatWidget extends MovieClip {
             return;
         }
 
-        // The native provider call is synchronous. Create one local transaction row first,
+        // Provider calls may block or enqueue work. Create one local transaction row first,
         // then enter the provider on the next timer tick so a slow TLS/socket operation cannot
         // hold the Scaleform frame before the player sees their own message.
         var localUserId:String = _relayUserId.length > 0 ? _relayUserId : _userId;
@@ -2370,9 +2397,18 @@ class FCMChatWidget extends MovieClip {
 
         var sendTimer:Timer = new Timer(1, 1);
         sendTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
-            _sendTimers.remove(sendTimer);
             if (_disposed) return;
-            runSendTransportSafely(slug, raw, nativeSubmit, localSendId, localUserId);
+            try {
+                // Array.remove compiles to Flash 19 removeAt, unavailable on older GFx.
+                // Keep cleanup inside the same exception boundary as transport dispatch.
+                var timerIndex:Int = _sendTimers.indexOf(sendTimer);
+                if (timerIndex >= 0) _sendTimers.splice(timerIndex, 1);
+                zfeLog("info", "send", "deferred callback entered ch=" + slug);
+                runSendTransportSafely(slug, raw, nativeSubmit, localSendId, localUserId);
+            } catch (err:Dynamic) {
+                zfeLog("warn", "send", "deferred callback failed: " + clip200(Std.string(err)));
+                try { removeOptimisticRecord(localSendId); renderRecords(); } catch (_:Dynamic) {}
+            }
         });
         _sendTimers.push(sendTimer);
         sendTimer.start();
@@ -2384,15 +2420,15 @@ class FCMChatWidget extends MovieClip {
         try {
             sendMessageTransport(slug, raw, nativeSubmit, localSendId, localUserId);
         } catch (err:Dynamic) {
-            removeOptimisticRecord(localSendId);
             zfeLog("warn", "send", "send timer isolated: " + clip200(Std.string(err)));
+            try { removeOptimisticRecord(localSendId); } catch (_:Dynamic) {}
             try {
                 if (slug == CHAN_SLUGS[_chanIdx]) renderRecords();
             } catch (_:Dynamic) {}
         }
     }
 
-    /** Execute the synchronous provider RPC after the optimistic row had a paint opportunity. */
+    /** Invoke the provider after the optimistic row had a paint opportunity. */
     function sendMessageTransport(slug:String, raw:String, nativeSubmit:Bool, localSendId:String,
             localUserId:String):Void {
         if (_api == null || !_connected) {
@@ -2632,8 +2668,15 @@ class FCMChatWidget extends MovieClip {
             ? "zfe-chat-online-v1 OK"
             : "xscal-chat-interface OK");
         zfeLog("info", "startup", "found after " + _zfeSearchTries + " attempt(s)");
+        zfeLog(_hudEventListenerAttached ? "info" : "warn", "input",
+            _hudEventListenerAttached
+                ? "HUDMod::UserEvent stage listener attached"
+                : "HUDMod::UserEvent stage listener unavailable; physical input fallback required");
 
         loadPersistedConfig();
+        // Physical Page/arrow polling is provider-level input, not relay state: start it as
+        // soon as the extender is known so channel switching works before (and without) auth.
+        startPhysicalNavigation();
         startConnect();
     }
 
@@ -2708,10 +2751,8 @@ class FCMChatWidget extends MovieClip {
         _lastRosterSent = "";
         resetRosterObservation("relay connection", true);
         _lastWorldId = ""; // force the legacy worldId fallback to rebind after reconnect
-        _historyResyncSent = false;
-        _historyResyncSuppressedLogged = false;
-        _initialHistoryEventsSeen = false;
-        _initialHistoryDropped = false;
+        clearServerRecords("relay connection");
+        _history.startConnection();
         stopHistoryResyncFallback();
         _lastAuthObservation = "";
         _connectDelay = CONNECT_RETRY_MS;
@@ -2973,14 +3014,135 @@ class FCMChatWidget extends MovieClip {
         if (_openKeyTimer != null) { _openKeyTimer.stop(); _openKeyTimer = null; }
     }
 
+    // =========================================================================
+    // Physical navigation fallback — ZFE/xScal Input.* compatibility surface
+    // =========================================================================
+
+    /**
+     * Register and poll the physical keys that HUDModLoader may collapse to
+     * "Unmapped". xScal documents this as Input.RegisterKey/IsKeyPressed, and
+     * current ZFE builds expose the same compatibility surface on the generic
+     * bridge. Registration does not consume a key or lock Fallout controls.
+     */
+    function startPhysicalNavigation():Void {
+        // Channel switching is local HUD state, so this runs from provider discovery on and
+        // deliberately does not wait for (or stop with) the relay session. A player whose
+        // relay auth is rejected can still page through channels and read the link screen.
+        if (_disposed || _api == null) return;
+        stopPhysicalNavigation();
+        if (!_api.supportsPhysicalInput()) {
+            zfeLog("warn", "input", "physical navigation unavailable; no Input.* dispatcher"
+                + " (generic callback or ZFE bridge)");
+            return;
+        }
+
+        var keyCodes:Array<Int> = [VK_PAGEUP, VK_PAGEDOWN, VK_UP, VK_DOWN, VK_HOME, VK_END];
+        for (keyCode in keyCodes) {
+            try {
+                var registered:Bool = _api.registerPhysicalKey(keyCode);
+                zfeLog("info", "input", "physical key registration key=" + keyCode
+                    + " result=" + (registered ? "accepted" : "rejected")
+                    + " via=" + (_api.inputDispatcherName.length > 0 ? _api.inputDispatcherName : "none")
+                    + " raw=" + clip200(_api.lastInputResponse));
+                if (registered) _physicalNavRegistered.push(keyCode);
+            } catch (e:Dynamic) {
+                zfeLog("warn", "input", "Input.RegisterKey threw key=" + keyCode
+                    + " error=" + clip200(Std.string(e)));
+            }
+        }
+        if (_physicalNavRegistered.length == 0) {
+            zfeLog("warn", "input", "physical navigation registration rejected");
+            return;
+        }
+
+        _physicalNavReady = true;
+        _physicalNavigationDown = new Map();
+        _physicalNavTimer = new flash.utils.Timer(PHYSICAL_NAV_POLL_MS);
+        _physicalNavTimer.addEventListener(TimerEvent.TIMER,
+            function(_) { runPhysicalNavigationSafely(); });
+        _physicalNavTimer.start();
+        zfeLog("info", "input", "physical navigation poll started provider="
+            + _api.provider + " interval=" + PHYSICAL_NAV_POLL_MS + "ms keys="
+            + _physicalNavRegistered.join(","));
+    }
+
+    function runPhysicalNavigationSafely():Void {
+        if (_disposed) return;
+        try {
+            pollPhysicalNavigation();
+        } catch (e:Dynamic) {
+            // A target-build Input.* or render failure must not escape a timer callback and
+            // become another global UncaughtErrorEvent. Stop this optional fallback if its
+            // boundary is unhealthy; named HUD actions remain available.
+            zfeLog("warn", "input", "physical navigation timer isolated: " + clip200(Std.string(e)));
+            stopPhysicalNavigation();
+        }
+    }
+
+    function pollPhysicalNavigation():Void {
+        if (_disposed || !_physicalNavReady || _api == null) return;
+        for (keyCode in _physicalNavRegistered) {
+            // Page keys switch channels in either state. Feed-only keys remain ordinary game
+            // controls until the player has opened the editor with Insert.
+            var action:String = FcmCommand.physicalKeyAction(keyCode);
+            if (action == "ArrowUp" || action == "ArrowDown" || action == "Home" || action == "End") {
+                if (!FcmCommand.feedNavigationEnabled(_inputOpen, _hidden)) continue;
+            }
+            var isDown:Bool = _api.isPhysicalKeyPressed(keyCode);
+            if (!_physicalNavProbeLogged && keyCode == VK_PAGEUP) {
+                // One line per session showing the raw IsKeyPressed answer shape, so a live
+                // zfe.log can confirm the decoder without flooding at the poll rate.
+                _physicalNavProbeLogged = true;
+                zfeLog("info", "input", "physical poll probe key=" + keyCode
+                    + " via=" + _api.inputDispatcherName + " raw=" + clip200(_api.lastInputResponse)
+                    + " decoded=" + (isDown ? "down" : "up"));
+            }
+            var wasDown:Bool = _physicalNavigationDown.exists(keyCode)
+                && _physicalNavigationDown.get(keyCode);
+            if (isDown == wasDown) continue;
+            if (isDown) {
+                var command:String = FcmCommand.navigationAction(action,
+                    _cfg.channelNextKey, _cfg.channelPrevKey);
+                var handled:Bool = handleUserEvent(action, true);
+                if (command.length > 0) {
+                    zfeLog("info", "input", "physical key=" + keyCode + " action=" + action
+                        + " edge=down command=" + command + " handled=" + (handled ? "true" : "false"));
+                }
+                _physicalNavigationDown.set(keyCode, true);
+            } else {
+                // The physical API supplies both edges, so release only clears the shared latch.
+                // Do not re-run handleUserEvent on key-up: a bubbling HUD event may already have
+                // cleared that latch, and invoking the key-up-only compatibility path afterward
+                // would switch the channel a second time.
+                _physicalNavigationDown.remove(keyCode);
+                _navigationActionsDown.remove(FcmCommand.actionKey(action));
+            }
+        }
+    }
+
+    function stopPhysicalNavigation():Void {
+        if (_physicalNavTimer != null) {
+            _physicalNavTimer.stop();
+            _physicalNavTimer = null;
+        }
+        if (_api != null) {
+            for (keyCode in _physicalNavRegistered) {
+                try { _api.unregisterPhysicalKey(keyCode); } catch (e:Dynamic) {}
+            }
+        }
+        _physicalNavRegistered = [];
+        _physicalNavigationDown = new Map();
+        _physicalNavReady = false;
+        _physicalNavProbeLogged = false;
+    }
+
     /** Open chat on a false->true edge of isChatKeyPressed. */
     function pollOpenKey():Void {
         if (_api == null || !_connected) return;
         try {
-            // The OpenChatKey is the ONE key a HUD widget can read (isChatKeyPressed). FO76
-            // collapses every other unbound key to "Unmapped" (indistinguishable), so this is
-            // the only key-driven control we get. On its rising edge: open chat when closed;
-            // cycle to the next channel when already open. Slash (/g /t /e /i /r) covers direct
+            // The OpenChatKey is the one configured key exposed by the top-level ZFE chat
+            // helper. Other physical navigation keys use the provider Input.* fallback above.
+            // On its rising edge, open chat when closed. Slash (/g /t /e /i /r) covers direct
             // jumps + reverse. (Hidden: openInput() un-hides first.)
             var kp:Bool = nativeTruthy(callTop("isChatKeyPressed", "{}"));
             if (kp && !_lastChatKey) {
@@ -3150,19 +3312,25 @@ class FCMChatWidget extends MovieClip {
     }
 
     /**
-     * HUDModLoader can recreate this SWF while ZFE retains its native subscriber.
+     * HUDModLoader can recreate this SWF while either provider retains its native subscriber.
      * That subscriber's queue is already drained, so request static history before
      * submitting a fresh roster/world bind for the new game server.
      */
     function requestHistoryResync():Void {
-        if (_api == null || !_connected || _historyResyncSent) return;
+        if (_api == null || !_connected || !_history.needsRecovery(_authState == "authenticated", flash.Lib.getTimer())) return;
         stopHistoryResyncFallback();
+        _history.attempted(flash.Lib.getTimer());
         var payload:String = '{"channel":"server","targetUserId":"","body":"' + HISTORY_RESYNC_PREFIX + '"}';
         try {
             var raw:String = Std.string(_api.call("chat.v1.sendMessage", payload));
             if (raw.indexOf('"success":true') >= 0 || raw.indexOf('success:true') >= 0) {
-                _historyResyncSent = true;
-                zfeLog("info", "history", "resync requested");
+                // Queued/accepted is not completion; await HISTORY-DONE from the subscriber.
+                // RESYNC defers SERVER until a fresh bind, including an unchanged roster.
+                _lastRosterSentAt = -ROSTER_SEND_MS;
+                _lastWorldId = "";
+                if (_api.provider == FcmNativeApi.XSCAL) startXscalWarmup();
+                else startZfeInitialHistoryDrain();
+                zfeLog("info", "history", "resync requested attempt=" + _history.attempts + "; awaiting delivered completion");
             } else {
                 zfeLog("warn", "history", "resync rejected raw=" + clip200(raw));
             }
@@ -3171,10 +3339,11 @@ class FCMChatWidget extends MovieClip {
         }
     }
 
-    /** Schedule ZFE recovery only after a fresh subscription has had time to deliver its snapshot. */
+    /** Give either provider time to deliver its subscription snapshot before recovery. */
     function scheduleHistoryResyncFallback():Void {
-        if (_historyResyncFallbackTimer != null || _historyResyncSent
-                || _api == null || !_connected || _api.provider != FcmNativeApi.ZFE) return;
+        if (_historyResyncFallbackTimer != null || _api == null || !_connected
+                || !FcmNativeApi.widgetMustRequestHistoryResync(_api.provider)
+                || !_history.needsRecovery(_authState == "authenticated", flash.Lib.getTimer())) return;
         _historyResyncFallbackTimer = new Timer(HISTORY_RESYNC_FALLBACK_MS, 1);
         _historyResyncFallbackTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
             runHistoryResyncFallbackSafely();
@@ -3186,15 +3355,11 @@ class FCMChatWidget extends MovieClip {
         if (_disposed) return;
         try {
             _historyResyncFallbackTimer = null;
-            if (_api == null || !_connected || _api.provider != FcmNativeApi.ZFE
-                    || _historyResyncSent) return;
-            if (_initialHistoryEventsSeen && !_initialHistoryDropped) {
-                zfeLog("info", "history", "initial subscribe history arrived; RESYNC skipped");
-                return;
-            }
-            zfeLog("info", "history", _initialHistoryDropped
-                ? "initial queue reported loss; requesting ZFE RESYNC"
-                : "initial subscribe poll empty; requesting ZFE RESYNC");
+            if (_api == null || !_connected
+                    || !_history.needsRecovery(_authState == "authenticated", flash.Lib.getTimer())) return;
+            zfeLog("info", "history", _history.dropped
+                ? "initial queue reported loss; requesting history RESYNC"
+                : "initial subscribe poll empty; requesting history RESYNC");
             requestHistoryResync();
         } catch (err:Dynamic) {
             zfeLog("warn", "history", "resync fallback isolated: " + clip200(Std.string(err)));
@@ -3209,15 +3374,6 @@ class FCMChatWidget extends MovieClip {
     }
 
     function maybeRequestHistoryResync():Void {
-        if (_api == null || !_connected) return;
-        if (!FcmNativeApi.widgetMustRequestHistoryResync(_api.provider)) {
-            if (!_historyResyncSuppressedLogged) {
-                _historyResyncSuppressedLogged = true;
-                zfeLog("info", "history", "provider=xscal; subscriber owns initial history; RESYNC suppressed");
-            }
-            return;
-        }
-        if (_initialHistoryEventsSeen && !_initialHistoryDropped) return;
         scheduleHistoryResyncFallback();
     }
 
@@ -3255,9 +3411,9 @@ class FCMChatWidget extends MovieClip {
             _eventPollPhase = "auth-refresh";
             refreshAuthState();
             if (!_connected) return 0;
-            _eventPollPhase = "history-resync";
-            maybeRequestHistoryResync();
         }
+        _eventPollPhase = "history-resync";
+        maybeRequestHistoryResync();
         _eventPollPhase = "poll-call";
         var payload:String = '{"max":64,"cursor":' + _cursor + '}';
         var result:Dynamic = null;
@@ -3313,7 +3469,6 @@ class FCMChatWidget extends MovieClip {
         var newRecords:Bool = false;
         var parsedCount:Int = 0;   // diagnostic: events seen this poll (logged below)
         var droppedCount:Int = 0;  // provider queue-loss markers still advance the cursor
-        var chatEventCount:Int = 0;
         var wireStarCount:Int = 0;
         var wireStarColorCount:Int = 0;
         var wireTagCount:Int = 0;
@@ -3339,7 +3494,7 @@ class FCMChatWidget extends MovieClip {
                 updateCursorFromEvent(obj);
                 parsedCount++;
                 droppedCount++;
-                _initialHistoryDropped = true;
+                _history.dropped = true;
                 continue;
             }
 
@@ -3372,6 +3527,13 @@ class FCMChatWidget extends MovieClip {
             if (supporterStar) wireStarCount++;
             if (starColor.length > 0) wireStarColorCount++;
             var body:String         = extractJsonString(obj, "body");
+            if (rawChannel == "system" && senderUserId == "system" && body == "FCMCTL/1/HISTORY-DONE") {
+                updateCursorFromEvent(obj);
+                _history.finish();
+                stopHistoryResyncFallback();
+                zfeLog("info", "history", "replay completed");
+                continue;
+            }
             // The web client renders Discord custom emojis from CDN images. The
             // Scaleform HUD cannot safely load those images, so keep the readable
             // emoji name and remove the numeric Discord snowflake from this surface.
@@ -3387,8 +3549,6 @@ class FCMChatWidget extends MovieClip {
             // Always advance the cursor, even for skipped/deduped events.
             if (evId > _cursor) _cursor = evId;
             parsedCount++;
-            chatEventCount++;
-            _initialHistoryEventsSeen = true;
             if (body.length == 0) continue;
 
             // System channel — link handshake. "LINK COMPLETE" means the web redeem finished
@@ -3408,6 +3568,8 @@ class FCMChatWidget extends MovieClip {
                 continue;
             }
 
+            _history.observe(channel);
+
             // Reconcile a pending self-send in place. The relay is the source of truth for
             // cosmetics, but appending a second canonical row would duplicate the message when
             // the event arrives after the optimistic row.
@@ -3416,7 +3578,7 @@ class FCMChatWidget extends MovieClip {
                 ownEchoMatchedCount++;
                 if (_lastEchoMatchMode == "id") ownEchoIdMatchCount++;
                 else ownEchoFallbackMatchCount++;
-                markSeenEvent(evId, messageId);
+                markSeenEvent(channel, evId, messageId);
                 newRecords = true;
                 continue;
             }
@@ -3427,7 +3589,7 @@ class FCMChatWidget extends MovieClip {
             // channel's one-shot subscribe backfill — history looked empty on
             // Trading/Events/Raids/Infests forever after connect.
             if (CHAN_SLUGS.indexOf(channel) < 0) continue;
-            if (!markSeenEvent(evId, messageId)) continue;
+            if (!markSeenEvent(channel, evId, messageId)) continue;
 
             _records.push({
                 color: hx(_cfg.senderColor), channel: channel, user: displayName,
@@ -3455,8 +3617,8 @@ class FCMChatWidget extends MovieClip {
             + " recordsBefore=" + recordsBefore + " recordsAfter=" + _records.length);
         if (droppedCount > 0) {
             zfeLog("warn", "recv", "provider reported dropped events; cursor advanced without replay");
-            if (_api != null && _api.provider == FcmNativeApi.ZFE) scheduleHistoryResyncFallback();
-        } else if (chatEventCount > 0) {
+            scheduleHistoryResyncFallback();
+        } else if (_history.staticEventsSeen && !_history.dropped && !_history.resyncSent) {
             // A fresh subscribe snapshot has arrived. Do not issue an immediate recovery replay;
             // the duplicate would consume the remaining native queue capacity.
             stopHistoryResyncFallback();
@@ -3470,29 +3632,10 @@ class FCMChatWidget extends MovieClip {
         return parsedCount;
     }
 
-    /** Keep replayed history from duplicating records when ZFE also makes a fresh subscribe. */
-    function shouldRenderReplayMessage(messageId:String):Bool {
-        if (messageId == null || messageId.length == 0) return true;
-        if (_seenMessageIds.exists(messageId)) return false;
-        _seenMessageIds.set(messageId, true);
-        _seenMessageOrder.push(messageId);
-        var cap:Int = Std.int(Math.max(256, _cfg.maxMessages * 2));
-        while (_seenMessageOrder.length > cap) {
-            var oldest:String = _seenMessageOrder.shift();
-            _seenMessageIds.remove(oldest);
-        }
-        return true;
-    }
-
-    /** Mark both relay message ids and event ids; older providers may omit messageId. */
-    function markSeenEvent(eventId:Int, messageId:String):Bool {
-        if (eventId > 0) {
-            var key:String = "event:" + eventId;
-            if (_seenMessageIds.exists(key)) return false;
-            _seenMessageIds.set(key, true);
-            _seenMessageOrder.push(key);
-        }
-        return shouldRenderReplayMessage(messageId);
+    /** Keep replay identity scoped to the feed whose records are retained. */
+    function markSeenEvent(channel:String, eventId:Int, messageId:String):Bool {
+        return _history.accept(channel, eventId, messageId,
+            Std.int(Math.max(256, _cfg.maxMessages * 2)));
     }
 
     /**
@@ -3814,31 +3957,12 @@ class FCMChatWidget extends MovieClip {
 
     /** Fresh observed names (within ROSTER_FRESH_MS), unioned from current provider snapshots. */
     function freshRosterNames():Array<String> {
-        var now:Float = flash.Lib.getTimer();
-        var out:Array<String> = [];
-        var stale:Array<String> = [];
-        for (key in _rosterSnapshots.keys()) {
-            var observedAt:Null<Float> = _rosterSnapshotAt.get(key);
-            if (observedAt != null && now - observedAt <= ROSTER_FRESH_MS) {
-                var snapshot:Array<String> = _rosterSnapshots.get(key);
-                if (snapshot != null) {
-                    for (nm in snapshot) if (out.indexOf(nm) < 0) out.push(nm);
-                }
-            } else {
-                stale.push(key);
-            }
-        }
-        for (key in stale) {
-            _rosterSnapshots.remove(key);
-            _rosterSnapshotAt.remove(key);
-        }
-        out.sort(function(a, b) return (a < b) ? -1 : (a > b ? 1 : 0));
-        if (out.length > 16) out = out.slice(0, 16);
-        return out;
+        return _rosterSnapshots.fresh(flash.Lib.getTimer(), ROSTER_FRESH_MS);
     }
 
     /** Drop only ephemeral SERVER rows before a new roster-derived room is bound. */
     function clearServerRecords(reason:String):Void {
+        _history.clearServer();
         var kept:Array<ChatRecord> = [];
         var removed:Int = 0;
         for (rec in _records) {
@@ -3860,7 +3984,9 @@ class FCMChatWidget extends MovieClip {
         // keep issuing synchronous roster calls while the one-shot link notice is being shown.
         if (_needsLink || _authState != "authenticated") return;
         var now:Float = flash.Lib.getTimer();
+        _worldPollPhase = "roster-snapshots";
         var names:Array<String> = freshRosterNames();
+        _worldPollPhase = "roster-binding";
         var wasInWorld:Bool = _inWorld;
         // In-world = we are observing the HUD's nearby-player surfaces. (These publish
         // only while loaded into a world; an empty server still counts once any
@@ -3966,6 +4092,7 @@ class FCMChatWidget extends MovieClip {
             sendWorldIdControl(worldId);
         } else if (wasInWorld) {
             // LEFT the world (worldId cleared) → unbind the server room.
+            clearServerRecords("legacy worldId cleared");
             zfeLog("info", "world", "left world; sending LEAVE control");
             sendWorldLeaveControl();
             setServerSessionReady(false, "");
@@ -4578,8 +4705,8 @@ class FCMChatWidget extends MovieClip {
     var _rosterSubscribed:Bool = false;
     // Keep a replaceable snapshot per UI provider. The old global _seenNames map merged names
     // forever, so names from the previous world remained in the next ROSTER control until TTL.
-    var _rosterSnapshots:Map<String, Array<String>> = new Map();
-    var _rosterSnapshotAt:Map<String, Float> = new Map();
+    var _rosterSnapshots:FcmRoster = new FcmRoster();
+    var _rosterCallbackKeys:Array<String> = [];
     var _rosterCallbacks:Map<String, Dynamic> = new Map();
     var _rosterManager:Dynamic = null;
     // A single provider can publish the new-world roster before another provider refreshes. Keep
@@ -4596,7 +4723,7 @@ class FCMChatWidget extends MovieClip {
     function unsubscribeRoster(mgr:Dynamic = null):Void {
         var target:Dynamic = (mgr != null) ? mgr : _rosterManager;
         if (target != null) {
-            for (key in _rosterCallbacks.keys()) {
+            for (key in _rosterCallbackKeys) {
                 var callback:Dynamic = _rosterCallbacks.get(key);
                 try {
                     var unsubscribe:Dynamic = Reflect.field(target, "Unsubscribe");
@@ -4609,14 +4736,14 @@ class FCMChatWidget extends MovieClip {
             }
         }
         _rosterCallbacks = new Map();
+        _rosterCallbackKeys = [];
         _rosterSubscribed = false;
     }
 
     /** Clear provider snapshots at a session boundary; stale names must never seed a new world. */
     function resetRosterObservation(reason:String, detach:Bool = false):Void {
         if (detach) unsubscribeRoster();
-        _rosterSnapshots = new Map();
-        _rosterSnapshotAt = new Map();
+        _rosterSnapshots = new FcmRoster();
         _rosterBoundaryPending = false;
         _lastRosterObservationAt = -ROSTER_FRESH_MS;
         _rosterLogCount = 0;
@@ -4643,6 +4770,7 @@ class FCMChatWidget extends MovieClip {
             };
             mgr.Subscribe("PlayerListData", playerCallback);
             _rosterCallbacks.set("PlayerListData", playerCallback);
+            _rosterCallbackKeys.push("PlayerListData");
             for (k in ["TeamMarkers", "PartyMenuList", "VoiceChatAreaData"]) {
                 var key:String = k;
                 try {
@@ -4651,12 +4779,13 @@ class FCMChatWidget extends MovieClip {
                     };
                     mgr.Subscribe(key, auxCallback);
                     _rosterCallbacks.set(key, auxCallback);
+                    if (_rosterCallbackKeys.indexOf(key) < 0) _rosterCallbackKeys.push(key);
                 } catch (e:Dynamic) {}
             }
             _rosterSubscribed = true;
             zfeLog("info", "roster", "subscribed to PlayerListData + TeamMarkers/PartyMenuList/VoiceChatAreaData");
         } catch (e:Dynamic) {
-            _rosterCallbacks = new Map();
+            unsubscribeRoster(mgr);
             zfeLog("warn", "roster", "Subscribe threw: " + Std.string(e));
         }
     }
@@ -4721,15 +4850,15 @@ class FCMChatWidget extends MovieClip {
             zfeLog("warn", "roster", key + " skipped native entries=" + skippedEntries);
         }
         snapshot.sort(function(a, b) return (a < b) ? -1 : (a > b ? 1 : 0));
-        _rosterSnapshots.set(key, snapshot);
-        _rosterSnapshotAt.set(key, now);
-        // Do not wait for the union of every provider. During a world hop the primary roster
-        // surface can already be completely replaced while an auxiliary provider still contains
+        var previousSnapshot:Array<String> = _rosterSnapshots.replace(key, snapshot, now);
+        // Compare this provider with its own previous value, not the cross-provider union.
+        // An unchanged empty auxiliary list is normal and must not clear the feed repeatedly.
+        // During a world hop the primary roster surface can already be completely replaced while an auxiliary provider still contains
         // one old name. Remember the disjoint/empty provider snapshot and let tickRoster perform
         // a real LEAVE before the next ROSTER bind.
         var snapshotField:String = snapshot.join("|");
-        if (_serverSessionReady
-                && FcmCommand.shouldRebindRosterSession(_lastRosterSent, snapshotField)) {
+        if (_serverSessionReady && previousSnapshot != null
+                && FcmCommand.shouldRebindRosterSession(previousSnapshot.join("|"), snapshotField)) {
             _rosterBoundaryPending = true;
             zfeLog("info", "roster", key + " marks a new session boundary names=" + snapshot.length);
         }

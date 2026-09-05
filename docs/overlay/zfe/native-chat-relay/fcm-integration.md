@@ -53,10 +53,12 @@ Fresh subscribe-time history is the initial-history source for both providers. T
 to 15 recent rows for each static channel and up to 50 rows for the current world room: 125 events
 total. The native poll limit is 64, so both widgets drain the ordered bounded snapshot over
 multiple polls. xScal's widget runs a bounded 250 ms warm-up for up to 20 polls after an accepted
-connect so asynchronous subscriber history is drained promptly; it does not receive
-`FCMCTL/1/RESYNC`. The widget delays that ZFE-only control until the first poll is empty or reports
-queue loss, so a fresh subscribe snapshot is not duplicated; this remains the recovery path when
-a recreated ZFE widget has an existing native subscriber whose queue was already drained.
+connect so asynchronous subscriber history is drained promptly. Both providers use the same
+1.5-second authenticated `FCMCTL/1/RESYNC` fallback when no static-channel history has arrived or
+the native queue reports loss. SERVER and link notices do not count as static history. A normal
+snapshot suppresses replay; an accepted recovery restarts the bounded drain and forces the next
+roster/world bind so deferred SERVER history is released even for an unchanged roster.
+
 
 ## Connection and authentication
 
@@ -221,8 +223,9 @@ removal can lapse it.
 
 ## Verified HUD regressions and input handoff
 
-The v2.10.43 HUD regression fixes, the v2.10.46 input ownership fix, and the v2.10.51
-HUDModUserEvent accessor fix are now part of the current package contract:
+The v2.10.43 HUD regression fixes, the v2.10.46 input ownership fix, the v2.10.51
+HUDModUserEvent accessor fix, and the v2.10.54 physical-key fallback are now part of the current
+package contract:
 
 - a send creates one optimistic row before the synchronous provider call and reconciles the
   authoritative ACK/live event into that row, so one send produces one feed row;
@@ -243,7 +246,7 @@ HUDModUserEvent accessor fix are now part of the current package contract:
   channel history remains durable; `server` history remains the bounded recent Redis history
   described below, not permanent Postgres history.
 
-Widget v2.10.51 also closes the input owner before Fallout opens another modal input surface. The
+Widget v2.10.54 also closes the input owner before Fallout opens another modal input surface. The
 HUDModLoader event path delivers the in-game Ctrl+Tab shortcut as the named `OpenSocial` action
 (with `OpenFriendList`, quick-action aliases, and `Escape`/`Cancel` handled by the same rule). The
 widget's `FCMChatWidget.hx` classifies that action before normal navigation: the no-lock native
@@ -260,11 +263,47 @@ The v2.10.45 input regression was different: its native-first path dynamically d
 `ControlMap::StartEditText` from the child SWF. The in-game HUDModLoader error surface reported
 repeated `FCMChatWidget: [UncaughtErrorEvent ... Error #1014]` lines immediately after the lock was
 acquired, leaving player controls unavailable. v2.10.46 removes that child dispatch and restores
-the known host-domain ownership model. Raw physical keyboard events are not a reliable HUD-layer
-input contract; the named `OpenSocial` event is the supported boundary. The pure policy is covered
+the known host-domain ownership model. Raw Scaleform `KeyboardEvent` listeners are not a reliable
+HUD-layer input contract; the named `OpenSocial` event is the supported modal boundary. For
+navigation, v2.10.54 additionally uses the extender's documented `Input.RegisterKey`,
+`Input.IsKeyPressed`, and `Input.UnregisterKey` compatibility calls when Page keys are collapsed
+to `Unmapped`. The poll starts at provider discovery, independent of relay auth; the dispatcher is
+the generic callback when one exists, otherwise (under ZFE) `__ZFE` itself; registration keeps
+dispatch success separate from a void/null native return; a ZFE `"success":true` envelope is only a
+key-down when it carries an explicit `pressed`/`down`/`value` flag; and this path does not acquire
+the text-input lock. `TestFcmNativeApi.hx` / `test-native-api.hxml` cover the dispatcher fallback
+and the pressed-state decoding. The pure policy is covered
 by `TestFcmCommand.hx` / `test-command.hxml` (including the native getter regression cases), and
 `test_package.py` plus `test_anchors.py` assert
 that the widget uses SharedHUDTools first and contains no child `ControlMap` dispatch.
+
+### ZFE physical-key contract (verified in-game in v2.10.54)
+
+When HUDModLoader reduces Page Up/Page Down to `Unmapped`, the working ZFE route is:
+
+```text
+Input.RegisterKey(0x21)  # Page Up / VK_PRIOR / 33
+Input.RegisterKey(0x22)  # Page Down / VK_NEXT / 34
+Input.IsKeyPressed(vk)
+Input.UnregisterKey(vk)
+```
+
+The key code is passed as the native integer argument to the dispatcher; it is not wrapped in
+the JSON string used by `chat.v1.*`. FCM first tests a separately discovered generic callback.
+For ZFE, if that callback is absent or explicitly rejects the operation, FCM uses
+`__ZFE.call` itself because ZFE's SFE-compatibility dispatcher serves `Input.*` alongside the
+chat-input helpers and advertises `zfe-input-v1`. A void/`null` response from registration is
+accepted as a successful mutation; explicit false/error/unsupported responses are rejected and
+allow the next candidate to be tried. The accepted dispatcher is locked for the rest of the
+session so registration and polling cannot split across objects.
+
+ZFE's pressed-state response must contain an explicit boolean-like `pressed`, `down`, or `value`
+field. A bare `{"success":true}` response means the call completed, not that the key is down.
+Physical navigation is initialized at provider discovery rather than after relay authentication,
+so Page Up/Page Down remain local channel commands while the relay is connecting or rejected.
+The widget latches the physical edge, accepts named HUD actions when available without double
+handling them, and unregisters the keys during shutdown. The live v2.10.54 smoke test confirmed
+that this route switches channels under ZFE.
 
 ## Ephemeral `server` rooms
 
@@ -299,10 +338,14 @@ message.
 Fresh subscription sends the complete bounded initial history directly to the long-lived native
 subscriber: up to 15 recent rows for each static channel and up to 50 rows from the current server
 room, for 125 events total. The native poll limit is 64, so the widgets drain the snapshot over
-multiple polls. `RESYNC` is a delayed ZFE-only recovery control for a widget recreated while ZFE
-retained and drained its subscriber; it replays bounded static history, while server-room history
-remains pending until the next accepted roster/world bind. xScal owns its subscriber history and is
-never sent this control. Replay records are deduplicated by `messageId` in the widget.
+multiple polls. `RESYNC` is a delayed, authenticated recovery control for either native provider
+when a recreated widget finds a retained subscriber with an empty queue. It replays bounded static
+history, while server-room history remains pending until the next accepted roster/world bind.
+Replay identity is scoped to each feed: clearing SERVER rows clears their event/message IDs while
+static deduplication survives a world change. Reconnecting resets native event IDs (which may
+restart) while retaining durable static message IDs. Each roster provider is compared against its
+own previous snapshot, preventing unchanged empty auxiliary lists from repeatedly clearing SERVER.
+
 
 `worldRosterService` stores short-lived rosters and builds connected components
 from mutually observed names. The stable room key feeds the existing Redis
@@ -330,7 +373,7 @@ for a solo world, so it is also acknowledged and bound. This prevents a stale or
 mismatched relay deployment from presenting a selectable but unusable Server
 channel, and prevents a slow relay timeout from repeatedly stalling the HUD.
 
-Widget v2.10.51 also pulls the current values of `PlayerListData`, `TeamMarkers`,
+Widget v2.10.54 also pulls the current values of `PlayerListData`, `TeamMarkers`,
 `PartyMenuList`, and `VoiceChatAreaData` after subscribing. This is intentional: the upstream
 `BSUIDataManager.Subscribe()` implementation only attaches the callback and does not invoke it for
 the provider value already in the cache. Provider snapshots are replaced on every refresh, so a

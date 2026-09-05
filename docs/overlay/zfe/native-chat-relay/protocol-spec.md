@@ -360,7 +360,10 @@ Response:
 ```
 
 `id` is the **relay cursor**. It must **increase monotonically** for visible events. ZFE uses it to
-avoid duplicate messages between push and poll.
+avoid duplicate messages between push and poll. Recovery replay therefore receives fresh
+transport IDs from `relay:seq`; it retains the original `messageId` and `createdAt`. Stored
+historical cursors are unchanged. Consumers must deduplicate canonical messages by `messageId`
+as well as delivery events by `id`.
 
 `createdAt` is the message's **server send time** as an ISO 8601 UTC string (sourced from
 `messages.created_at`). Clients render timestamps from this field. The system link-notice carries
@@ -612,3 +615,15 @@ Redis, or any other backend, as long as the WebSocket JSON contract stays compat
 - [fcm-integration.md](fcm-integration.md) — how the FCM relay would implement this contract
 - [../realtime-socket.md](../realtime-socket.md) — the existing bespoke FCMHUD/1 push bridge
 - [../two-way-chat-implemented.md](../two-way-chat-implemented.md) — M7 in-game send over FCMHUD/1
+
+
+### Recovery completion (widget v2.10.55)
+
+`FCMCTL/1/RESYNC` replays up to 15 recent rows per static feed with fresh delivery cursors.
+It finishes with a native-known `chat.message` event on `system`, `senderUserId: "system"`,
+and body `FCMCTL/1/HISTORY-DONE`. This marker is emitted even for empty history and must not
+be rendered by the widget. Native send acceptance/queueing is not replay completion.
+The widget retries at most three times with at least ten seconds between attempts until
+completion. World-bind replay also receives fresh delivery IDs, remains scoped to the bound
+room, and does not emit the static-completion marker. A bounded per-subscriber barrier orders
+live traffic alongside replay; overflow closes the subscriber instead of silently losing rows.

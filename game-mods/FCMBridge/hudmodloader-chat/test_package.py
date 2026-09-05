@@ -52,7 +52,7 @@ def main() -> None:
     assert "mergeNativeInputTextWithMode" in source_hx and "detectNativeInputMode" in source_hx, (
         "native input must distinguish cumulative and delta provider buffers"
     )
-    assert "startXscalWarmup" in source_hx and "becameAuthenticated" in source_hx and "startZfeInitialHistoryDrain" in source_hx and "provider=xscal; subscriber owns initial history" in source_hx, (
+    assert "startXscalWarmup" in source_hx and "becameAuthenticated" in source_hx and "startZfeInitialHistoryDrain" in source_hx and '_history.needsRecovery(_authState == "authenticated", flash.Lib.getTimer())' in source_hx, (
         "both providers' initial subscriber history must be drained promptly without a duplicate RESYNC"
     )
     assert "SERVER_HISTORY_DRAIN_IDLE_MAX" in source_hx and "server backfill drain complete" in source_hx, (
@@ -62,7 +62,7 @@ def main() -> None:
         "widget teardown must release BSUI roster callbacks on reload"
     )
     assert "scheduleHistoryResyncFallback" in source_hx and "HISTORY_RESYNC_FALLBACK_MS" in source_hx, (
-        "ZFE RESYNC must be delayed until an empty or dropped initial poll"
+        "Shared RESYNC must be delayed until an empty or dropped initial poll"
     )
     legacy_bridge = (ROOT.parent / "FCMBridge.hx").read_text(encoding="utf-8")
     assert "startInitialHistoryDrain" in legacy_bridge and "MAX_MSGS:Int     = 125" in legacy_bridge, (

@@ -46,11 +46,15 @@ copy of each expected record and each world feed contains only its own records.
   rows for the current-world room (125 events total). ZFE's `pollEvents` limit is 64, so it drains
   that native queue over multiple polls; xScal's widget performs the same drain with a bounded
   warm-up after its asynchronous connect.
-- A widget reload with an already-live ZFE subscriber may send authenticated
-  `FCMCTL/1/RESYNC` after its initial poll is empty or reports queue loss. Static history is
-  replayed immediately; server-room history is released only after the next authenticated
-  roster/world bind, preventing old-world history from crossing a transition. xScal owns its
-  subscriber history and must not receive that ZFE-only control.
+- A widget reload with an already-live native subscriber may send authenticated
+  `FCMCTL/1/RESYNC` after authentication and a 1.5-second grace period if static history is absent
+  or the queue reports loss. Static history is replayed immediately; server-room history is released only after the next authenticated
+  roster/world bind, preventing old-world history from crossing a transition. Both ZFE and xScal
+  use this recovery path; a normal static snapshot suppresses it.
+  An accepted replay forces the next roster/world bind and restarts the bounded drain.
+- Clearing SERVER records also clears SERVER deduplication IDs, allowing a later join to replay
+  those rows. Static deduplication remains intact. Native event IDs reset on reconnect while
+  durable static message IDs remain remembered.
 - History retrieval with an initial cursor returns the bounded recent history for static feeds;
   a later cursor returns only records newer than that cursor.
 - Cursors must move forward monotonically and a record must never be displayed more than once for a
@@ -78,3 +82,31 @@ copy of each expected record and each world feed contains only its own records.
 - In a two-world transition test, 0 records from the old world appear in the new world feed, while
   all expected static-feed records remain visible.
 - The automated checks covering those three scenarios pass on every change to the affected behavior.
+
+
+## v2.10.55 regression closure
+
+RESYNC transport acceptance does not satisfy recovery. The authenticated system
+`FCMCTL/1/HISTORY-DONE` marker completes the bounded snapshot, including empty history.
+The widget allows three attempts at least ten seconds apart. Static and world-bound replay
+use fresh delivery IDs while retaining canonical message identity and timestamps, so a native
+subscriber that survived SWF recreation accepts the replay. Tests retain native cursor state
+across repeated recoveries and exercise live traffic behind the replay barrier.
+The roster tests run through `test-history.hxml` in the existing gamemod CI gate.
+
+
+### 2026-09-05 build/install evidence
+
+Widget v2.10.55 was installed on the developer's Proton desktop and native-Windows MSI
+laptop with adjacent timestamped backups. Both installed BA2 hashes matched
+`92c9e525efab931f053e715efd387a2cc547ec14b003173c42b063ca377e5495` (117676 bytes).
+The single extracted SWF matched the build byte-for-byte, FWS v32, 117587 bytes.
+Both installations retain the hosted-dev endpoint and existing user configuration.
+
+Local validation: 113 relay integration tests, 423 backend TS unit tests, 196 overlay
+widget-logic tests, all eight Haxe test entrypoints (including roster coverage), source
+anchors, package/archive checks, SWF validation, and backend TypeScript build passed.
+The strengthened retained-cursor test failed before the relay fix. FFDec inspection found
+`splice` in the guarded deferred-send callback and array-backed roster snapshot traversal.
+These checks do not constitute a fresh native gameplay run. Send/Discord delivery, repeated
+joins, roster exception absence, and xScal runtime validation remain in-game acceptance items.

@@ -25,6 +25,24 @@ class FcmCommand {
         return 0;
     }
 
+    /**
+     * Map the Windows virtual-key codes polled through ZFE/xScal's documented
+     * Input.* surface to the same canonical actions used by HUDModLoader.
+     * Keeping this mapping pure makes the physical fallback testable without
+     * a live Scaleform runtime.
+     */
+    public static function physicalKeyAction(keyCode:Int):String {
+        switch (keyCode) {
+            case 0x21: return "PageUp";
+            case 0x22: return "PageDown";
+            case 0x24: return "Home";
+            case 0x23: return "End";
+            case 0x26: return "ArrowUp";
+            case 0x28: return "ArrowDown";
+            default: return "";
+        }
+    }
+
     /** Home/End both mean "show the newest messages" when the feed is idle. */
     public static function isScrollToBottom(raw:String):Bool {
         var action:String = normalizeAction(raw);

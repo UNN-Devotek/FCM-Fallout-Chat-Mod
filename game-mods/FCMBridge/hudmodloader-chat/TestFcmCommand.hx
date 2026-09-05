@@ -20,6 +20,11 @@ class TestFcmCommand {
         check("arrow up scrolls feed up", FcmCommand.scrollDirection("ArrowUp") == -1);
         check("bare down scrolls feed down", FcmCommand.scrollDirection("Down") == 1);
         check("underscore arrow alias scrolls", FcmCommand.scrollDirection("arrow_down") == 1);
+        check("physical Page Up maps to previous channel", FcmCommand.physicalKeyAction(0x21) == "PageUp");
+        check("physical Page Down maps to next channel", FcmCommand.physicalKeyAction(0x22) == "PageDown");
+        check("physical Up maps to feed scroll", FcmCommand.physicalKeyAction(0x26) == "ArrowUp");
+        check("physical Down maps to feed scroll", FcmCommand.physicalKeyAction(0x28) == "ArrowDown");
+        check("unknown physical key is ignored", FcmCommand.physicalKeyAction(0x70) == "");
         check("home jumps to newest", FcmCommand.isScrollToBottom("Home"));
         check("end jumps to newest", FcmCommand.isScrollToBottom("End"));
         check("page down selects next channel", FcmCommand.isNextChannel("Page Down", "NextPage"));
@@ -73,6 +78,10 @@ class TestFcmCommand {
             FcmCommand.externalInputClosePath(false, false, "OpenSocial") == "");
         check("disjoint roster forces a new server session",
             FcmCommand.shouldRebindRosterSession("Ada|Beck", "Cy|Dana"));
+        check("an unchanged empty auxiliary roster does not trigger repeated leave/join",
+            !FcmCommand.shouldRebindRosterSession("", ""));
+        check("a stable provider snapshot does not trigger a world hop",
+            !FcmCommand.shouldRebindRosterSession("Ada|Beck", "Ada|Beck"));
         check("overlapping roster stays in the current server session",
             !FcmCommand.shouldRebindRosterSession("Ada|Beck", "Ada|Cy"));
         check("empty roster clears the previous server session",

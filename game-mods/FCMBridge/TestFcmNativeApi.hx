@@ -35,6 +35,121 @@ class TestFcmNativeApi {
         check("ZFE verb and payload preserved", zCalls[1] == "chat.v1.sendMessage|{}");
         check("rejects an unrecognized host object", FcmNativeApi.fromExposed({}) == null);
 
+        // ZFE's explicit chat bridge and its legacy BRG_OBJ compatibility callback can coexist.
+        // Input.* must use the generic callback with the native integer VK argument, while chat
+        // continues to use __ZFE.call and never receives the physical-key operation.
+        var zInputCalls:Array<String> = [];
+        var zInput:Dynamic = {};
+        zInput.call = function(verb:String, keyCode:Dynamic):Dynamic {
+            zInputCalls.push(verb + "|" + Std.string(keyCode));
+            if (verb == "Input.RegisterKey" || verb == "Input.UnregisterKey") return true;
+            if (verb == "Input.IsKeyPressed") return keyCode == 0x22;
+            return false;
+        };
+        Reflect.setField(zScope, "BRG_OBJ", zInput);
+        var zInputApi:FcmNativeApi = FcmNativeApi.discover(zScope);
+        check("ZFE discovers physical input compatibility callback",
+            zInputApi != null && zInputApi.supportsPhysicalInput());
+        check("ZFE registers Page Down with its generic callback",
+            zInputApi.registerPhysicalKey(0x22));
+        check("ZFE reads Page Down pressed state",
+            zInputApi.isPhysicalKeyPressed(0x22));
+        check("ZFE unregisters Page Down with its generic callback",
+            zInputApi.unregisterPhysicalKey(0x22));
+        check("ZFE physical callback receives native VK values",
+            zInputCalls.length == 3
+            && zInputCalls[0] == "Input.RegisterKey|34"
+            && zInputCalls[1] == "Input.IsKeyPressed|34"
+            && zInputCalls[2] == "Input.UnregisterKey|34");
+        check("ZFE chat dispatcher never receives Input.* calls",
+            zCalls.length == 3
+            && zCalls[2].indexOf("Input.") < 0);
+
+        // The real generic compatibility bridge may return null for a successful
+        // RegisterKey/UnregisterKey call. The native wrapper's callSucceeded
+        // result is not exposed through the raw dispatcher, so null must still
+        // count as a successful mutation when no exception was raised.
+        var voidInputCalls:Array<String> = [];
+        var voidInput:Dynamic = {};
+        voidInput.call = function(verb:String, keyCode:Dynamic):Dynamic {
+            voidInputCalls.push(verb + "|" + Std.string(keyCode));
+            if (verb == "Input.IsKeyPressed") return keyCode == 0x21;
+            return null;
+        };
+        var voidInputScope:Dynamic = {};
+        Reflect.setField(voidInputScope, "__ZFE", zfe);
+        Reflect.setField(voidInputScope, "BRG_OBJ", voidInput);
+        var voidInputApi:FcmNativeApi = FcmNativeApi.discover(voidInputScope);
+        check("accepts void physical-key registration responses",
+            voidInputApi != null
+            && voidInputApi.registerPhysicalKey(0x21)
+            && voidInputApi.isPhysicalKeyPressed(0x21)
+            && voidInputApi.unregisterPhysicalKey(0x21)
+            && voidInputCalls.length == 3);
+
+        // ZFE serves Input.* from the same SFE-compatibility dispatcher that answers
+        // setChatInputActive / isChatKeyPressed through __ZFE.call, and 0.12 advertises
+        // zfe-input-v1 on that object. Without a separate generic callback the chat
+        // dispatcher is therefore the physical-input provider, not a dead end.
+        var chatOnlyCalls:Array<String> = [];
+        var chatOnlyZfe:Dynamic = {};
+        chatOnlyZfe.call = function(verb:String, payload:Dynamic):Dynamic {
+            chatOnlyCalls.push(verb + "|" + Std.string(payload));
+            if (verb == "chat.v1.getRuntimeInfo") return '{"success":true,"capabilities":["zfe-chat-online-v1"]}';
+            if (verb == "Input.IsKeyPressed") return '{"success":true,"pressed":false}';
+            return '{"success":true}';
+        };
+        var chatOnlyApi:FcmNativeApi = FcmNativeApi.fromZfe(chatOnlyZfe);
+        check("uses the ZFE dispatcher for physical input when no generic callback exists",
+            chatOnlyApi != null && chatOnlyApi.supportsPhysicalInput());
+        check("ZFE dispatcher registration is accepted with the native VK value",
+            chatOnlyApi.registerPhysicalKey(0x21)
+            && chatOnlyApi.inputDispatcherName == "zfe-dispatcher"
+            && chatOnlyCalls[chatOnlyCalls.length - 1] == "Input.RegisterKey|33");
+        check("a successful ZFE envelope without a pressed flag is not a key-down",
+            !chatOnlyApi.isPhysicalKeyPressed(0x21));
+        check("last Input.* response is retained for diagnostics",
+            chatOnlyApi.lastInputResponse == '{"success":true,"pressed":false}');
+
+        // A generic callback that exists but rejects Input.* (unsupported / error) must
+        // not block the fallback; the first accepting candidate is locked for later calls.
+        var rejectingCalls:Array<String> = [];
+        var rejecting:Dynamic = {};
+        rejecting.call = function(verb:String, payload:Dynamic):Dynamic {
+            rejectingCalls.push(verb + "|" + Std.string(payload));
+            return '{"success":false,"error":{"code":"unsupported_command"}}';
+        };
+        var fallbackCalls:Array<String> = [];
+        var fallbackZfe:Dynamic = {};
+        var fallbackPressed:Bool = false;
+        fallbackZfe.call = function(verb:String, payload:Dynamic):Dynamic {
+            fallbackCalls.push(verb + "|" + Std.string(payload));
+            if (verb == "chat.v1.getRuntimeInfo") return '{"success":true,"capabilities":["zfe-chat-online-v1"]}';
+            if (verb == "Input.IsKeyPressed") return fallbackPressed
+                ? '{"success":true,"pressed":true}' : '{"success":true,"pressed":false}';
+            return '{"success":true}';
+        };
+        var fallbackScope:Dynamic = {};
+        Reflect.setField(fallbackScope, "__ZFE", fallbackZfe);
+        Reflect.setField(fallbackScope, "BRG_OBJ", rejecting);
+        var fallbackApi:FcmNativeApi = FcmNativeApi.discover(fallbackScope);
+        check("falls back to the ZFE dispatcher when the generic callback rejects Input.*",
+            fallbackApi != null && fallbackApi.registerPhysicalKey(0x22)
+            && fallbackApi.inputDispatcherName == "zfe-dispatcher"
+            && rejectingCalls.length == 1 && rejectingCalls[0] == "Input.RegisterKey|34"
+            && fallbackCalls[fallbackCalls.length - 1] == "Input.RegisterKey|34");
+        var beforePoll:Int = rejectingCalls.length;
+        check("ZFE JSON pressed=false decodes as up", !fallbackApi.isPhysicalKeyPressed(0x22));
+        fallbackPressed = true;
+        check("ZFE JSON pressed=true decodes as down", fallbackApi.isPhysicalKeyPressed(0x22));
+        check("polling stays on the locked dispatcher", rejectingCalls.length == beforePoll
+            && fallbackCalls[fallbackCalls.length - 1] == "Input.IsKeyPressed|34");
+        check("second registration reuses the locked dispatcher without re-probing",
+            fallbackApi.registerPhysicalKey(0x21) && rejectingCalls.length == beforePoll);
+        check("unregister goes to the locked dispatcher",
+            fallbackApi.unregisterPhysicalKey(0x22)
+            && fallbackCalls[fallbackCalls.length - 1] == "Input.UnregisterKey|34");
+
         var xCalls:Array<String> = [];
         var chat:Dynamic = {};
         chat.connect = function(payload:Dynamic):String { xCalls.push("connect|" + payloadText(payload)); return '{"success":true}'; };
@@ -62,13 +177,41 @@ class TestFcmNativeApi {
         check("maps xScal report to reportMessage", xCalls.length == 4
             && xCalls[3] == "reportMessage|{\"messageId\":\"m1\"}");
         check("xScal does not claim ZFE native input", !xApi.supportsNativeInput());
-        check("xScal subscriber owns initial history backfill",
-            !FcmNativeApi.widgetMustRequestHistoryResync(FcmNativeApi.XSCAL));
+        check("xScal can recover an empty retained subscriber after a HUD reload",
+            FcmNativeApi.widgetMustRequestHistoryResync(FcmNativeApi.XSCAL));
         check("unsupported xScal command fails closed",
             Std.string(xApi.call("chat.v1.notACommand", "{}")).indexOf("unsupported_command") >= 0);
         check("xScal capability probe uses chatInterface", xApi.probeChatCapability()
             && xCalls[xCalls.length - 1] == "getRuntimeInfo|<none>");
         check("xScal without a logger fails log calls closed", Std.string(xApi.call("log", "{}")) == "");
+
+        var xInputCalls:Array<String> = [];
+        var xInput:Dynamic = {};
+        xInput.call = function(verb:String, keyCode:Dynamic):Dynamic {
+            xInputCalls.push(verb + "|" + Std.string(keyCode));
+            if (verb == "Input.RegisterKey" || verb == "Input.UnregisterKey") return true;
+            if (verb == "Input.IsKeyPressed") return keyCode == 0x21;
+            return false;
+        };
+        var xInputScope:Dynamic = {};
+        Reflect.setField(xInputScope, "__SFECodeObj", { chatInterface: chat });
+        Reflect.setField(xInputScope, "__SFCodeObj", xInput);
+        var xInputApi:FcmNativeApi = FcmNativeApi.discover(xInputScope);
+        check("xScal discovers generic physical input callback",
+            xInputApi != null && xInputApi.supportsPhysicalInput());
+        check("xScal registers Page Up with Input.RegisterKey",
+            xInputApi.registerPhysicalKey(0x21));
+        check("xScal reads Page Up pressed state",
+            xInputApi.isPhysicalKeyPressed(0x21));
+        check("xScal unregisters Page Up with Input.UnregisterKey",
+            xInputApi.unregisterPhysicalKey(0x21));
+        check("xScal physical callback receives native VK values",
+            xInputCalls.length == 3
+            && xInputCalls[0] == "Input.RegisterKey|33"
+            && xInputCalls[1] == "Input.IsKeyPressed|33"
+            && xInputCalls[2] == "Input.UnregisterKey|33");
+        check("xScal physical input does not route through chatInterface",
+            xCalls.length == 5);
 
         // xScal builds that do not expose getAuthState use the documented no-argument
         // connection-state method. This must not receive the JSON placeholder payload.
@@ -221,6 +364,73 @@ class TestFcmNativeApi {
             genericXscalCalls.length == 1
             && genericXscalCalls[0] == "GetXSRuntimeInfo|{}");
 
+        verifyXscalPageKeys(chat);
         if (failures > 0) Sys.exit(1);
+    }
+
+    /** Exercise both Page keys through the native xScal void/boolean contract. */
+    static function verifyXscalPageKeys(chat:Dynamic):Void {
+        for (placement in ["separate", "combined", "stage", "parent"]) {
+            for (withZfe in [false, true]) {
+                var label = "xScal Page keys " + placement + (withZfe ? " with ZFE" : " alone");
+                var registered:Map<Int, Bool> = new Map();
+                var pressed:Map<Int, Bool> = new Map();
+                var unexpectedCalls:Int = 0;
+                var zfeCalls:Int = 0;
+                var callback:Dynamic = {};
+                callback.call = function(verb:String, keyCode:Dynamic):Dynamic {
+                    if (!Std.isOfType(keyCode, Int)) { unexpectedCalls++; return false; }
+                    var key:Int = keyCode;
+                    switch (verb) {
+                        case "Input.RegisterKey": registered.set(key, true); return null;
+                        case "Input.UnregisterKey": registered.remove(key); return null;
+                        case "Input.IsKeyPressed":
+                            return registered.exists(key) && pressed.exists(key) && pressed.get(key);
+                        default: unexpectedCalls++; return false;
+                    }
+                };
+                var host:Dynamic = {};
+                if (placement == "combined") {
+                    Reflect.setField(callback, "chatInterface", chat);
+                    Reflect.setField(host, "__SFCodeObj", callback);
+                } else {
+                    Reflect.setField(host, "__SFECodeObj", { chatInterface: chat });
+                    Reflect.setField(host, "__SFCodeObj", callback);
+                }
+                if (withZfe) Reflect.setField(host, "__ZFE", {
+                    call: function(verb:String, payload:Dynamic):Dynamic {
+                        zfeCalls++;
+                        return '{"success":true}';
+                    }
+                });
+                var scope:Dynamic = placement == "stage" ? { stage: host }
+                    : (placement == "parent" ? { parent: host } : host);
+                var api = FcmNativeApi.discover(scope);
+                check(label + " discovers input", api != null
+                    && api.provider == FcmNativeApi.XSCAL && api.supportsPhysicalInput());
+                if (api == null) continue;
+                for (key in [0x21, 0x22]) {
+                    check(label + " accepts void registration " + key, api.registerPhysicalKey(key));
+                    check(label + " starts released " + key, !api.isPhysicalKeyPressed(key));
+                    for (cycle in 0...2) {
+                        pressed.set(key, true);
+                        check(label + " detects press " + key, api.isPhysicalKeyPressed(key));
+                        check(label + " other Page key stays released " + key,
+                            !api.isPhysicalKeyPressed(key == 0x21 ? 0x22 : 0x21));
+                        pressed.set(key, false);
+                        check(label + " detects release " + key, !api.isPhysicalKeyPressed(key));
+                    }
+                }
+                for (key in [0x21, 0x22]) {
+                    check(label + " unregisters on unload " + key, api.unregisterPhysicalKey(key));
+                    pressed.set(key, true);
+                    check(label + " released registration no longer polls " + key,
+                        !api.isPhysicalKeyPressed(key));
+                }
+                check(label + " keeps the native generic dispatcher",
+                    api.inputDispatcherName == "generic-callback" && unexpectedCalls == 0
+                    && zfeCalls == 0 && !registered.iterator().hasNext());
+            }
+        }
     }
 }

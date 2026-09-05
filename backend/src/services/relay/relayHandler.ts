@@ -589,43 +589,76 @@ function rebindLocalSubscribers(userId: string, worldId: string | null): void {
 }
 
 /** Push a world's recent history to a user's live subscriber(s) on join. */
-async function backfillWorldToUser(userId: string, worldId: string): Promise<void> {
-  const history = await getServerHistory(worldId, 0, SUBSCRIBE_SERVER_HISTORY_LIMIT);
-  if (history.length === 0) return;
-  for (const sub of subscribers) {
-    if (sub.userId !== userId || sub.ws.readyState !== 1) continue;
-    for (const ev of history) {
-      const event = relayHudEventForClient(
-        ev as unknown as Record<string, unknown>,
-        sub.supportsHudCosmeticsTransport,
-      );
-      const frame = JSON.stringify({ op: 'event', cursor: ev.id, event });
-      if (!sendSubscriberFrame(sub, frame, ev.id)) {
-        subscribers.delete(sub);
-        break;
+// Serialize recovery per identity: world binding and static recovery must not release
+// each other's live-frame barriers. Entries are removed when the last task finishes.
+const historyReplayTasks = new Map<string, Promise<void>>();
+
+function replayHistoryToUser(userId: string, worldId: string | null): Promise<void> {
+  const previous = historyReplayTasks.get(userId) ?? Promise.resolve();
+  const task = previous.catch(() => {}).then(async () => {
+    const targets = [...subscribers].filter((sub) => sub.userId === userId
+      && sub.ws.readyState === 1 && !sub.initializing
+      && (worldId === null || sub.worldId === worldId));
+    if (targets.length === 0) return; // Subscribe-time snapshot is already in progress.
+    for (const sub of targets) sub.initializing = true;
+    try {
+      const history: Array<Record<string, unknown>> = worldId === null
+        ? await fetchHistoryEvents(0, SUBSCRIBE_STATIC_HISTORY_LIMIT, SUBSCRIBE_STATIC_HISTORY_PER_CHANNEL)
+        : await getServerHistory(worldId, 0, SUBSCRIBE_SERVER_HISTORY_LIMIT) as unknown as Array<Record<string, unknown>>;
+      // Replay identity is distinct from persisted message identity. Reserve a contiguous
+      // delivery range only after reading the snapshot; pending live frames are merged below.
+      // Original messageId/createdAt and SQL/Redis history cursors remain unchanged.
+      const count = history.length + (worldId === null ? 1 : 0);
+      if (count === 0) return;
+      const redis = await getRedisClient();
+      const end = await redis.incrBy('relay:seq', count);
+      const replay: Array<Record<string, unknown>> = history.map((event, index) => ({ ...event, id: end - count + index + 1 }));
+      if (worldId === null) replay.push({
+        id: end, kind: 'chat.message', channel: 'system', messageId: uuidv4(),
+        senderUserId: 'system', senderDisplayName: 'FCM', targetUserId: '',
+        body: 'FCMCTL/1/HISTORY-DONE', createdAt: new Date().toISOString(),
+      });
+      for (const sub of targets) {
+        if (!subscribers.has(sub) || (worldId !== null && sub.worldId !== worldId)) continue;
+        for (const event of replay) {
+          const cursor = Number(event.id);
+          if (!sendSubscriberFrame(sub, JSON.stringify({ op: 'event', cursor,
+            event: relayHudEventForClient(event, sub.supportsHudCosmeticsTransport) }), cursor)) {
+            subscribers.delete(sub);
+            break;
+          }
+        }
       }
-      sub.cursor = Math.max(sub.cursor, ev.id);
+    } finally {
+      // No awaits while releasing: a live frame cannot overtake the sorted replay.
+      for (const sub of targets) {
+        const pending = sub.pendingLiveFrames.splice(0).sort((a, b) => a.cursor - b.cursor);
+        sub.pendingLiveBytes = 0;
+        sub.initializing = false;
+        if (!subscribers.has(sub)) continue;
+        const delivered = new Set<number>();
+        for (const item of pending) {
+          if (delivered.has(item.cursor)) continue;
+          if (!sendRaw(sub.ws, item.frame)) { subscribers.delete(sub); break; }
+          delivered.add(item.cursor);
+          sub.cursor = Math.max(sub.cursor, item.cursor);
+        }
+      }
     }
-  }
+  });
+  historyReplayTasks.set(userId, task);
+  void task.finally(() => {
+    if (historyReplayTasks.get(userId) === task) historyReplayTasks.delete(userId);
+  }).catch(() => {});
+  return task;
 }
 
-/** Replay the bounded SQL-backed history to every local native subscriber for a user. */
+async function backfillWorldToUser(userId: string, worldId: string): Promise<void> {
+  await replayHistoryToUser(userId, worldId);
+}
+
 async function backfillStaticHistoryToUser(userId: string): Promise<void> {
-  // Resolve cosmetics once, then adapt the native-known transport per subscriber.
-  const history = await fetchHistoryEvents(0, POLL_HISTORY_LIMIT);
-  if (history.length === 0) return;
-  for (const sub of subscribers) {
-    if (sub.userId !== userId || sub.ws.readyState !== 1) continue;
-    for (const ev of history) {
-      const event = relayHudEventForClient(ev, sub.supportsHudCosmeticsTransport);
-      const cursor = ev.id as number;
-      if (!sendSubscriberFrame(sub, JSON.stringify({ op: 'event', cursor, event }), cursor)) {
-        subscribers.delete(sub);
-        break;
-      }
-      sub.cursor = Math.max(sub.cursor, cursor);
-    }
-  }
+  await replayHistoryToUser(userId, null);
 }
 
 /**

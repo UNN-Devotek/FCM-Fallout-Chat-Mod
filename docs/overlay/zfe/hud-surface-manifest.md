@@ -28,8 +28,8 @@ its parent chain, the main stage, and the root movie for already-exposed Scalefo
 | Provider | Positive marker | Calls made by FCM |
 |---|---|---|
 | xScal | `__SFECodeObj.chatInterface` or `__SFCodeObj.chatInterface` with the required methods | `chatInterface.<method>(object)`; `getRuntimeInfo`, `disconnect`, `logout`, and `clearChatAuth` receive no arguments |
-| ZFE | `__ZFE.call` / `ZFECodeObj.call` passing `chat.v1.getRuntimeInfo`; legacy `__SFCodeObj.call` only after a positive ZFE probe | `__ZFE.call("chat.v1.*", jsonString)` |
-| xScal diagnostics | separate call-only `__SFCodeObj.call` | `log` only; never chat transport |
+| ZFE | `__ZFE.call` / `ZFECodeObj.call` passing `chat.v1.getRuntimeInfo`; legacy `__SFCodeObj.call`/`BRG_OBJ.call` only after a positive ZFE probe | `__ZFE.call("chat.v1.*", jsonString)`; physical navigation uses `Input.RegisterKey`/`Input.IsKeyPressed`/`Input.UnregisterKey` on the generic callback when present, otherwise on `__ZFE.call` itself |
+| xScal diagnostics/input | separate call-only `__SFCodeObj.call` | `log` and documented `Input.*` physical-key calls only; never chat transport |
 
 If both providers are present, the explicit xScal `chatInterface` marker wins. A generic
 `__SFCodeObj.call` is never enough to classify xScal or ZFE. The child widget is the caller, but its
@@ -68,6 +68,12 @@ Confirmed by source/tests:
 - initial live frames are ordered behind the snapshot with frame and byte limits;
 - timer callbacks, input teardown, and HUDTools registration have symmetric shutdown paths;
 - generated FWS v32 artifacts have valid frame/tag boundaries and an End tag.
+
+Confirmed by live smoke test:
+
+- `FCMChatWidget` v2.10.54 switches channels with ZFE Page Up/Page Down through the accepted
+  physical `Input.*` dispatcher, including the `__ZFE` fallback when a separate generic callback
+  is not available.
 
 Unknown until a live game smoke test:
 

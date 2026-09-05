@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-09-04):** v2.10.51 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-09-05):** v2.10.55 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -30,7 +30,7 @@ A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's H
 - Renders the server-resolved Overseer tag in the HUD when the relay negotiates widget capability.
   Self-authored messages use the same authoritative live event as Discord and other in-game
   messages, so the tag is not lost to the native send ACK boundary.
-ZFE strips unknown event members before the SWF receives them, so v2.10.51 decodes the stable
+ZFE strips unknown event members before the SWF receives them, so v2.10.54 decodes the stable
   message ID and validated cosmetics from the `FCMHUD/1;...` envelope in the known empty
   `targetUserId` slot. Older widget
   builds receive no envelope. The HUD renders server-validated channel and identity tags plus a
@@ -78,10 +78,29 @@ methods plus its positive runtime response when `getRuntimeInfo` is available. B
 the same relay payloads and cursor polling.
 
 xScal's `connect` is asynchronous: `success:true,status:"connecting"` means the native worker
-accepted the request, not that relay authentication is complete. v2.10.51 keeps the transport
+accepted the request, not that relay authentication is complete. v2.10.54 keeps the transport
 polling, refreshes `getAuthState` on each xScal poll, and reconnects only for an explicit terminal
-state. Its optional generic `__SFCodeObj.call` is retained only for FCM diagnostics (`log`); no
-chat verb is ever routed through that callback.
+state. Its optional generic `__SFCodeObj.call` is retained only for FCM diagnostics (`log`) and
+the documented provider `Input.*` key bookkeeping; no chat verb is ever routed through that callback.
+
+When a loader collapses physical Page Up/Page Down into `Unmapped`, the widget registers their
+Windows virtual-key codes (`0x21`/`0x22`) through `Input.RegisterKey` and polls them with
+`Input.IsKeyPressed`. The same fallback registers Up/Down/Home/End for feed navigation, but those
+four are acted on only after Insert has opened the feed editor. `Input.UnregisterKey` runs at
+shutdown. Since v2.10.54 this polling starts as soon as the extender is discovered and is not tied
+to the relay session: channel switching is local HUD state, so it keeps working while relay auth
+is pending or rejected. The Input.* dispatcher is chosen at the first registration, in order: a
+separately discovered generic callback (`__SFCodeObj`/`BRG_OBJ`), then under ZFE the `__ZFE`
+dispatcher itself (ZFE 0.12 advertises `zfe-input-v1` there and serves `Input.*` from the same
+SFE-compatibility bridge that answers `isChatKeyPressed`). The first candidate that does not return
+an explicit false/error/unsupported answer is locked for all later Input.* calls; a void `null`
+return counts as success because xScal's registration wrapper is void. `Input.IsKeyPressed` answers
+are decoded as a native boolean, a bare `true`/`1`, or a ZFE JSON envelope with an explicit
+`pressed`/`down`/`value` field; a `"success":true` envelope alone is never a key-down. Each
+registration and one IsKeyPressed sample per session are logged with the dispatcher name and raw
+response. Registration is bookkeeping only and does not consume keys or acquire the game's
+text-input lock. Named `NextPage`/`PrevPage` and arrow actions remain supported, and the physical
+and stage paths share the same edge latch.
 
 Both providers receive the same complete bounded history from the long-lived relay subscription.
 On a fresh cursor-zero subscription, the relay sends up to 15 recent rows for each static feed
@@ -90,27 +109,36 @@ room: 125 events total. The native poll limit remains 64, so ZFE and xScal drain
 snapshot over multiple polls. The widget drains xScal's asynchronous subscriber with a 250 ms
 warm-up for at most 20 polls, and performs a short second ZFE drain only when the first native
 batch is full, so the initial feed does not wait for the normal background interval. ZFE uses
-the same subscription stream; only a recreated ZFE widget uses
-`FCMCTL/1/RESYNC` recovery only when the first ZFE poll is empty or reports queue loss; the
-fallback is delayed so a normal subscribe snapshot is not duplicated. xScal never receives that
-ZFE control.
+the same subscription stream. A recreated widget uses
+`FCMCTL/1/RESYNC` recovery for either provider after authentication and a 1.5-second grace period
+when static history is missing or the queue reports loss. A normal static snapshot suppresses
+replay; SERVER/link events do not. Accepted recovery restarts the bounded drain and forces the
+next roster/world bind to release deferred server history.
+
 After a roster/world bind, the widget performs a separate 150 ms server-history drain through two
 consecutive empty polls (hard-capped at eight attempts), which covers xScal's delayed publication
 of the current room without waiting for the normal five-second poll.
 
 The `SERVER` sub-tab is backed by the current in-game roster session. After subscribing to
-`BSUIDataManager`, v2.10.51 also reads the cached values of `PlayerListData`, `TeamMarkers`,
+`BSUIDataManager`, v2.10.54 also reads the cached values of `PlayerListData`, `TeamMarkers`,
 `PartyMenuList`, and `VoiceChatAreaData`; `Subscribe()` itself only registers a change callback
 and does not replay the cached value. Provider values are stored as replaceable snapshots. An
-empty or completely disjoint snapshot triggers `LEAVE`, clears only local ephemeral server rows,
+empty or completely disjoint replacement of that same provider’s nonempty snapshot triggers
+`LEAVE`, clears only local ephemeral server rows,
 and causes a fresh roster bind on the next poll. Once that bind is acknowledged, the relay
 replays the current room's bounded recent server history and the sub-tab becomes available again.
-Static channel history remains durable; server history is intentionally ephemeral.
+Static channel history remains durable; server history is intentionally ephemeral. Clearing server
+rows clears their replay IDs as well, so rejoining can restore those messages. Static message IDs
+remain remembered across transitions; reconnecting resets native event IDs. Unchanged empty
+auxiliary providers do not trigger repeated leaves. The pure `FcmHistory` regression suite runs
+in CI via `haxe test-history.hxml`.
 
 Input ownership is edge-based, not a persistent channel-selection mode. `INSERT` must successfully
 open the editor before Arrow Up/Down and Home/End are consumed for feed navigation; while idle,
 those keys remain Fallout controls. Page Up/Page Down are one-shot previous/next channel actions,
-with matching key-up events latched and ignored. Escape, Control-Tab/social, and friends-menu
+using named HUD actions when available and the provider's physical-key fallback when they are
+collapsed to `Unmapped`; the fallback runs from provider discovery on, independent of relay auth,
+and matching key-up events are latched and ignored. Escape, Control-Tab/social, and friends-menu
 actions first close the FCM editor and then return `false` so the game can open its own modal.
 Reload/removal calls the widget's idempotent `shutdown()` path, which stops every timer, removes
 stage/scroll listeners, ends an active HUDTools edit, unregisters HUDTools, and detaches feed rows.
@@ -212,8 +240,9 @@ HUDButton labels share the same coordinates and would overlap the strip. Switch 
 the configured control-map actions or slash commands. `SERVER` appears only after the relay
 acknowledges the player's roster/world binding; observing nearby players alone never enables it.
 Forwarded `NextPage` / `PrevPage` actions (plus PageUp/PageDown aliases) are stateless,
-edge-deduplicated commands that switch channels whether the feed is idle or input is open; they
-never enter a persistent channel-selection mode. After Insert opens the typing session,
+edge-deduplicated commands that switch channels whether the feed is idle or input is open. If a
+loader does not forward those names, the widget uses the selected extender's `Input.*` physical
+key path (`PAGEUP=0x21`, `PAGEDOWN=0x22`). After Insert opens the typing session,
 ArrowUp/ArrowDown (plus Up/Down aliases) scroll the feed and Home/End return to the newest message;
 before Insert they remain game controls. While input is open, the draft remains in place. Named external actions close the
 active input owner before the game takes focus: `OpenSocial` (the in-game Ctrl+Tab social shortcut),
@@ -285,3 +314,6 @@ restart; the loader reload control is for live widget changes.
 | `package.py` | Creates a target-specific, versioned install ZIP with instructions and all widget files |
 | `BUILD.md` | Full build + install + verification steps |
 | `README.md` | This file |
+
+See [v2.10.55 recovery changes](BUILD.md#v21055-send-and-reload-recovery) for guarded sends,
+array-backed roster snapshots, delivered-history completion, and the matching relay requirement.

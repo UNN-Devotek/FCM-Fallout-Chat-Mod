@@ -67,8 +67,8 @@ On first subscribe, both providers receive the same complete bounded history: up
 15 recent messages for each static channel and up to 50 messages from the current
 server room (125 events total). The native poll limit is 64. xScal's asynchronous
 subscriber is drained across multiple short warm-up polls; ZFE gets a short second
-drain only when its first queue batch is full. Do not expect xScal to receive the
-ZFE-only RESYNC control.
+drain when its first queue batch is full. Both providers use delayed authenticated
+RESYNC recovery if static history is missing or the native queue reports loss.
 
 1. Exit Fallout 76 completely.
 2. Extract this archive into the Fallout 76 installation folder, preserving all
@@ -204,7 +204,8 @@ def build_package(target: str, output: Path) -> None:
             "The native poll limit is 64. The xScal widget drains its\n"
             "asynchronous subscriber across multiple short warm-up polls; ZFE\n"
             "performs a short second drain only when its first queue batch is\n"
-            "full. xScal never receives the ZFE-only RESYNC control.\n\n"
+            "full. Both providers use delayed authenticated RESYNC recovery\n"
+            "when static history is missing or the queue reports loss.\n\n"
             "HUD input and commands\n"
             "-----------------------\n"
             "Press Insert while Fallout 76 is focused to start typing. Press\n"

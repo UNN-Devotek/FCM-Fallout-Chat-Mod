@@ -38,8 +38,8 @@ ZFE verb through xScal's generic callback object.
 xScal's `connect` completes asynchronously. FCM treats
 `success:true,status:"connecting"` as a pending native transport, keeps polling its auth state,
 and does not call `connect` again until xScal reports a terminal failure. A separate generic
-`__SFCodeObj.call` may be used for the `log` diagnostic only; it is never a fallback chat
-dispatcher. The positive `chatInterface` marker also overrides a stale legacy provider hint, so a
+`__SFCodeObj.call` may be used for the `log` diagnostic and documented `Input.*` physical-key
+bookkeeping only; it is never a fallback chat dispatcher. The positive `chatInterface` marker also overrides a stale legacy provider hint, so a
 combined xScal/ZFE installation cannot route chat through the generic callback. This policy is
 shared by the modern HUDModLoader widget and the legacy bridge.
 

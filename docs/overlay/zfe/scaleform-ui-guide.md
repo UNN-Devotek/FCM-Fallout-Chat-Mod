@@ -107,6 +107,15 @@ This is the subtlety that cost us the most, now fully explained:
 - **The native bridge / code-object pattern:** AS↔C++ goes through a code object (vanilla `BGSCodeObj`;
   ours is ZFE's `__SFCodeObj`/`BRG_OBJ`). It exposes named functions callable from AS
   (`call("writeUTFBytes", …)`). Only Null/Bool/Int/Number/String cross — strings for everything.
+  The extender compatibility input surface is the exception to the chat JSON convention: FCM
+  sends the integer Windows virtual-key code directly to `Input.RegisterKey`, reads it with
+  `Input.IsKeyPressed`, and releases it with `Input.UnregisterKey`. The channel keys are
+  `PAGEUP=0x21` and `PAGEDOWN=0x22`; Up/Down/Home/End use `0x26`, `0x28`, `0x24`, and `0x23`.
+  Under ZFE these verbs are served by the SFE-compatibility dispatcher, so they are accepted on
+  `__ZFE.call` as well as on a legacy `__SFCodeObj`/`BRG_OBJ`; FCM tries the generic callback
+  first and falls back to `__ZFE`. ZFE answers `Input.IsKeyPressed` with its JSON envelope, and
+  only an explicit `pressed`/`down`/`value` field means key-down. Registration is bookkeeping only
+  and does not acquire the `ControlMap` text-input lock.
 - **ZFE native chat-input session (ZFE 0.9.9+) — no-lock fallback for FCMChatWidget.** ZFE's
   `dxgi.dll` exposes a native chat-input API as **TOP-LEVEL** ZFE commands (called bare, like
   `getRuntimeInfo` / `readStorage` — **NOT** `chat.v1.` commands): **`setChatInputActive`**,
@@ -127,7 +136,7 @@ This is the subtlety that cost us the most, now fully explained:
   in-progress text) + `consumeChatInputSubmitted` (Enter) + `isChatInputActive` (Esc) → on submit
   `chat.v1.sendMessage` the `readChatInput` text → `clearChatInput` + `setChatInputActive("false")`. A
   low-rate `isChatKeyPressed` edge poll opens chat on the OpenChatKey (INSERT). Current
-  FCMChatWidget v2.10.51 tries SharedHUDTools first; the native path is used only when that host
+FCMChatWidget v2.10.54 tries SharedHUDTools first; the native path is used only when that host
   editor is unavailable and never dispatches child-owned `ControlMap` events. It also does not
   construct `PlatformChangeEvent` dynamically: that class's constructor is not stable across
   HUDModLoader builds and caused the observed Error #1063. See
@@ -194,7 +203,10 @@ unless we need row interactivity.
   the `ControlMap::StartEditText` gate and can lock the social menu/Escape path.
 - Loader builds do not all expose the same edge: FCMChatWidget accepts the first key-down or a
   key-up-only HUDMod::UserEvent for Page Up/Page Down and feed navigation, with a per-action latch
-  preventing a key-down plus key-up pair from switching twice.
+  preventing a key-down plus key-up pair from switching twice. If the loader emits no named Page
+  action and reduces the physical key to `Unmapped`, the widget uses the selected extender's
+  `Input.*` surface as a second path; the physical key-down edge invokes the same command and the
+  physical release only clears the latch, so the two paths cannot double-switch.
 - **`SharedHUDTools` IPC + text entry:** a message bus (`Register`, `SendMessage`) plus
   **`TextEdit(callback, startText)` + `FormatTextEdit(x,y,w,h,font,size,color,bg,alpha)`** — HUDTools'
   own text-entry machinery that handles gamepad OSK + the StartEditText/EndEditText cycle for you.

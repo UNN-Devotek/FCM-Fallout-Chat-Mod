@@ -426,8 +426,8 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.51";' in widget_src,
-          "FCMChatWidget ships ordered all-channel history and native input accessor fix build 2.10.51")
+    check('static inline var VERSION:String  = "2.10.55";' in widget_src,
+          "FCMChatWidget ships physical Page-key navigation fallback build 2.10.55")
     check('FcmAuthFlow.classify' in widget_src
           and 'transport accepted; xScal auth pending' in widget_src
           and 'xScal auth state' in widget_src,
@@ -450,6 +450,23 @@ if widget_src:
           "FCMChatWidget closes SharedHUDTools before named social/input actions")
     check("FcmNativeApi.discover" in widget_src and "supportsNativeInput" in widget_src,
           "FCMChatWidget selects the provider and avoids ZFE-only input on xScal")
+    check("startPhysicalNavigation" in widget_src
+          and "Input.RegisterKey" in widget_src
+          and "isPhysicalKeyPressed" in widget_src
+          and "stopPhysicalNavigation" in widget_src,
+          "FCMChatWidget polls registered physical keys when HUDModLoader collapses Page actions")
+    check(re.search(r"loadPersistedConfig\(\);\s*(//[^\n]*\n\s*)*startPhysicalNavigation\(\);\s*startConnect\(\);",
+                    widget_src) is not None,
+          "FCMChatWidget starts physical navigation at provider discovery, before the relay connect")
+    check("_api == null || !_connected) return;\n        stopPhysicalNavigation();" not in widget_src
+          and "!_physicalNavReady || _api == null || !_connected" not in widget_src,
+          "FCMChatWidget physical navigation is not gated on the relay session")
+    check("inputDispatcherName" in widget_src and "lastInputResponse" in widget_src,
+          "FCMChatWidget logs which Input.* dispatcher accepted registration and the raw response")
+    check("physicalKeyAction" in widget_src
+          and "VK_PAGEUP:Int = 0x21" in widget_src
+          and "VK_PAGEDOWN:Int = 0x22" in widget_src,
+          "FCMChatWidget uses the documented Windows Page Up/Page Down virtual-key codes")
     check("probeChatCapability" in widget_src
           and "if (!_api.probeChatCapability())" in widget_src,
           "FCMChatWidget probes only the selected provider capability")
@@ -685,11 +702,16 @@ if widget_src:
     check('if (previousWorldId.length > 0 && previousWorldId != worldId)' in bridge_src
           and 'clearServerRecords("world changed")' in bridge_src,
           "legacy bridge clears ephemeral server history on world changes")
-    check('widgetMustRequestHistoryResync' in widget_src
-          and 'provider=xscal; subscriber owns initial history; RESYNC suppressed' in widget_src
+    check('_sendTimers.remove(' not in widget_src and '_sendTimers.splice(timerIndex, 1)' in widget_src
+          and 'deferred callback failed:' in widget_src,
+          "deferred send cleanup uses GFx-compatible splice inside a guarded callback")
+    check('_rosterSnapshots.keys()' not in widget_src and '_rosterCallbacks.keys()' not in widget_src,
+          "roster lifecycle avoids runtime Map key iterator dependencies")
+    check('widgetMustRequestHistoryResync'  in widget_src
+          and '_history.needsRecovery(_authState == "authenticated", flash.Lib.getTimer())' in widget_src
           and 'FcmWire.isDroppedEvent' in widget_src
           and 'droppedCount' in widget_src,
-          "FCMChatWidget lets xScal own initial history and advances over dropped markers")
+          "FCMChatWidget gates shared recovery on authentication and advances over dropped markers")
     check('function runAfterConfigSafely' in widget_src
           and 'function runInitSafely' in widget_src
           and 'function onInputSubmitSafely' in widget_src,
@@ -751,9 +773,13 @@ if widget_src:
     check('"FCMCTL/1/RESYNC"' in widget_src and 'function requestHistoryResync' in widget_src
           and 'function scheduleHistoryResyncFallback' in widget_src
           and 'HISTORY_RESYNC_FALLBACK_MS' in widget_src,
-          "FCMChatWidget delays ZFE history replay until an empty or dropped initial poll")
-    check('function shouldRenderReplayMessage' in widget_src and '_seenMessageIds' in widget_src,
-          "FCMChatWidget deduplicates replayed history records")
+          "FCMChatWidget delays history replay until an empty or dropped initial poll")
+    check('_history.accept(channel, eventId, messageId,' in widget_src
+          and '_history.clearServer();' in widget_src
+          and '_history.startConnection();' in widget_src,
+          "FCMChatWidget resets replay identity with the feed and native connection")
+    check('FcmCommand.shouldRebindRosterSession(previousSnapshot.join("|"), snapshotField)' in widget_src,
+          "FCMChatWidget compares each roster provider with its own previous snapshot")
     check('return FcmConfig.extractJsonString(json, key);' in widget_src
           and 'extractJsonString' in widget_src,
           "FCMChatWidget accepts whitespace-formatted JSON string members")

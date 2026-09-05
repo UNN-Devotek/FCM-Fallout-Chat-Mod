@@ -35,6 +35,7 @@ function resetRedisIncrMock() {
 }
 
 const redisMock = {
+  incrBy: jest.fn(async (_key, count) => (_redisSeq += count)),
   get:  jest.fn().mockImplementation(async (key) => _worldStore[key] ?? null),
   set:  jest.fn().mockImplementation(async (key, val) => { _worldStore[key] = val; return 'OK'; }),
   del:  jest.fn().mockImplementation(async (key)      => { delete _worldStore[key]; return 1; }),
@@ -2439,6 +2440,7 @@ describe('server chat (worldId-scoped room)', () => {
 
   test('history resync replays static history but defers server history until a fresh world bind', async () => {
     const a = await registerAndLink('HistoryReload', 'fcm-history-reload');
+    _redisSeq = 100;
     const staticHistory = {
       id: 'static-history', relay_seq: BigInt(7), content: 'static replay', user_id: 'u-static',
       channel_id: '00000000-0000-0000-0000-000000000005', username: 'HistoryReload', fo76_account_name: null,
@@ -2461,23 +2463,72 @@ describe('server chat (worldId-scoped room)', () => {
     const { ws: wsSub, msgs: msgsSub } = await connectWs(srv.port);
     await waitForMsg(wsSub, msgsSub, () => send(wsSub, { op: 'subscribe', token: a.token, cursor: 0 }));
     const beforeResync = msgsSub.length;
+    const nativeCursor = Math.max(0, ...msgsSub.filter((m) => m.op === 'event').map((m) => m.event.id));
 
     expect(await sendCtrl(a, RESYNC_SENTINEL)).toMatchObject({ success: true, messageId: expect.any(String) });
     await new Promise((r) => setTimeout(r, 100));
 
     const replayedStatic = msgsSub.slice(beforeResync).some((m) =>
-      m.op === 'event' && m.event?.messageId === staticHistory.id,
+      m.op === 'event' && m.event?.messageId === staticHistory.id && m.event.id > nativeCursor,
     );
     const replayedServerBeforeBind = msgsSub.slice(beforeResync).some((m) =>
       m.op === 'event' && m.event?.channel === 'server',
     );
     expect(replayedStatic).toBe(true);
+    const recoveryEvents = msgsSub.slice(beforeResync).filter((m) => m.op === 'event');
+    expect(recoveryEvents.at(-1).event.body).toBe('FCMCTL/1/HISTORY-DONE');
+    expect(recoveryEvents.every((m, i) => m.event.id > (i ? recoveryEvents[i - 1].event.id : nativeCursor))).toBe(true);
+    expect(staticHistory.relay_seq).toBe(BigInt(7));
+
     expect(replayedServerBeforeBind).toBe(false);
 
     expect(await sendJoin(a, worldId)).toMatchObject({ success: true });
     await new Promise((r) => setTimeout(r, 100));
     expect(msgsSub.some((m) => m.op === 'event' && m.event?.messageId === worldHistory.messageId)).toBe(true);
+    // Keep the native cursor while recreating only widget state, twice more.
+    let retainedCursor = Math.max(...msgsSub.filter((m) => m.op === 'event').map((m) => m.event.id));
+    for (let hop = 0; hop < 2; hop++) {
+      const before = msgsSub.length;
+      expect(await sendCtrl(a, RESYNC_SENTINEL)).toMatchObject({ success: true });
+      expect(await sendJoin(a, worldId)).toMatchObject({ success: true });
+      await new Promise((r) => setTimeout(r, 100));
+      const accepted = msgsSub.slice(before).filter((m) => m.op === 'event' && m.event.id > retainedCursor);
+      expect(accepted.some((m) => m.event.messageId === staticHistory.id)).toBe(true);
+      expect(accepted.some((m) => m.event.messageId === worldHistory.messageId)).toBe(true);
+      retainedCursor = Math.max(retainedCursor, ...accepted.map((m) => m.event.id));
+    }
     wsSub.close();
+  });
+
+  test('empty recovery completes and live frames cannot overtake an in-flight snapshot', async () => {
+    const a = await registerAndLink('RecoveryBarrier', 'fcm-recovery-barrier');
+    const { ws, msgs } = await connectWs(srv.port);
+    await waitForMsg(ws, msgs, () => send(ws, { op: 'subscribe', token: a.token, cursor: 0 }));
+    await new Promise((r) => setTimeout(r, 50));
+    let release;
+    let entered;
+    const started = new Promise((resolve) => { entered = resolve; });
+    require('../src/config/prisma').default.$queryRaw.mockImplementationOnce(() => {
+      entered();
+      return new Promise((resolve) => { release = resolve; });
+    });
+    const before = msgs.length;
+    const control = sendCtrl(a, RESYNC_SENTINEL);
+    await started;
+    const seq = await redisMock.incr('relay:seq');
+    await redisMock.publish('chat:broadcast', JSON.stringify({ instanceId: 'other-instance', payload: {
+      type: 'chat:message', payload: { id: 'during-recovery', content: 'synthetic', username: 'Synthetic',
+        userId: 'synthetic', channelId: '00000000-0000-0000-0000-000000000005', relaySeq: seq },
+    } }));
+    await new Promise((r) => setTimeout(r, 25));
+    expect(msgs.slice(before).filter((m) => m.op === 'event')).toHaveLength(0);
+    release([]);
+    expect(await control).toMatchObject({ success: true });
+    await new Promise((r) => setTimeout(r, 50));
+    const events = msgs.slice(before).filter((m) => m.op === 'event');
+    expect(events.map((m) => m.event.body)).toEqual(['synthetic', 'FCMCTL/1/HISTORY-DONE']);
+    expect(events[1].event.id).toBeGreaterThan(events[0].event.id);
+    ws.close();
   });
 
   test('world controls are rate-limited per authenticated relay identity', async () => {

@@ -1,6 +1,6 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.51. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.55. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
@@ -43,23 +43,28 @@ A fresh cursor-zero subscription sends up to 15 recent rows for each static feed
 125 events total. The native `pollEvents` limit remains 64, so the widget drains the ordered
 snapshot over multiple polls. xScal's asynchronous subscriber is drained with a 250 ms
 warm-up for at most 20 polls, so history appears promptly after authentication. ZFE uses the
-same subscribe-time stream; a ZFE widget requests `FCMCTL/1/RESYNC` only as a delayed fallback
-when its first poll is empty or reports queue loss, so a normal snapshot is not duplicated. xScal
-never receives that ZFE control. Server-room history released after a fresh roster/world
-bind is still scoped to the current room, so history from the previous world cannot leak into it.
+same subscribe-time stream. Both providers use an authenticated, 1.5-second `FCMCTL/1/RESYNC`
+fallback when static history is absent or the native queue reports loss. SERVER and link notices
+do not suppress recovery; a normal static snapshot does. Accepted recovery restarts the bounded
+drain and forces the next roster/world bind, which releases deferred current-room history.
+
 After the bind acknowledgement, the widget drains the server snapshot every 150 ms until two
 consecutive empty polls (hard cap: eight attempts), covering xScal's delayed subscriber delivery
 without waiting for the normal five-second poll.
 
-The v2.10.51 widget explicitly pulls the cached values for `PlayerListData`,
+The v2.10.54 widget explicitly pulls the cached values for `PlayerListData`,
 `TeamMarkers`, `PartyMenuList`, and `VoiceChatAreaData` after subscribing. The upstream
 `BSUIDataManager.Subscribe()` call installs a change listener but does not replay the current
 provider value, so relying on the callback alone can leave a newly joined world without a
-`SERVER` tab or its history. Each provider is stored as a replaceable snapshot. An empty or
+`SERVER` tab or its history. Each provider is stored as a replaceable snapshot. A provider changing from a nonempty snapshot to an empty or
 completely disjoint snapshot marks a world-session boundary; the widget clears only local
 ephemeral `SERVER` rows, sends `FCMCTL/1/LEAVE`, and submits a fresh roster on the next poll.
 The relay's accepted fresh bind then backfills the current room's recent Redis history. Static
 channel history remains durable; `SERVER` history is intentionally bounded/ephemeral.
+Clearing SERVER also clears its replay IDs so a rejoin can restore those rows. Static message
+IDs stay remembered across world changes/reconnects; native event IDs reset on reconnect.
+An unchanged empty auxiliary snapshot never triggers a new leave. `haxe test-history.hxml`
+exercises shared recovery and repeated transitions in the required game-mod CI job.
 
 The widget resolves the sender identity from HUD-published `AccountInfoData.name`, which is the
 public Fallout/Bethesda account handle other players see. Punctuation is preserved.
@@ -106,11 +111,40 @@ the `FCMHUD/1` message-id carrier, so the bounded fallback is deliberately accep
 same send receives a successful ACK and only when exactly one candidate matches.
 
 ZFE's native `chat.v1` bridge filters unknown JSON members before the SWF receives an event. The
-The v2.10.51 widget therefore reads the stable message ID, validated `tag`, and cosmetic transport from an
+The v2.10.54 widget therefore reads the stable message ID, validated `tag`, and cosmetic transport from an
 `FCMHUD/1;...` envelope carried in the existing known `targetUserId` field. For ordinary channel
 chat this field is an empty transport slot, not a real recipient. The relay only emits the
 envelope to v2.10.16+ clients; older BA2 files receive no transport data. Raw relay consumers
 still receive the additive fields described in the protocol spec.
+
+
+### v2.10.55 send and reload recovery
+
+The send timer removes itself with `splice`, avoiding Haxe's Flash 19 `Array.removeAt`
+bootstrap path. Cleanup and dispatch share an exception boundary; failures are logged before
+attempting pending-row rollback. A local echo is not proof of relay delivery. The new
+`deferred callback entered` diagnostic separates timer dispatch from native transport.
+
+Roster snapshots use a bounded array-backed provider store instead of Map key iterators.
+Replacement, expiry, empty providers, and cross-provider deduplication retain their existing
+semantics. Timer logs now distinguish `roster-snapshots` from `roster-binding` failures.
+
+Both ZFE and xScal recovery wait for `FCMCTL/1/HISTORY-DONE` on an authenticated system
+chat event. Native acceptance alone does not complete recovery. After the initial 1.5-second
+grace period, recovery is attempted at most three times, at least ten seconds apart. The
+relay emits the marker even for an empty static snapshot; it is consumed without rendering.
+A later native queue-loss marker can request recovery again after a completed replay.
+
+The matching backend is required: static and world-bind replay allocate fresh, monotonically
+increasing delivery cursors from `relay:seq`, retaining canonical message IDs and timestamps.
+Replays serialize per relay identity and hold live frames behind a bounded barrier, then emit
+them in cursor order. Static replay balances up to 15 rows per channel; SERVER remains scoped
+to the current room and waits for a fresh bind after RESYNC. Historical database/Redis rows
+are not rewritten. Raw subscribe/poll history continues to use the original cursors.
+
+Regression coverage models a retained native cursor over repeated widget reloads, live traffic
+during recovery, empty-history completion, retry bounds, and snapshot expiry. Native ZFE/xScal
+and Dev Discord end-to-end validation still require a fresh in-game run of this exact build.
 
 ## Requirements
 
@@ -221,9 +255,24 @@ provider array during a world hop.
 HUDModLoader's `HUDModUserEvent` exposes the action and edge through the native AS3 getter
 properties `EventName` and `IsKeyDown`. The widget reads those through `FcmUserEvent`'s
 dynamic-property adapter; `Reflect.field()` alone skips AS3 accessors and silently turns Page
-Up/Page Down (and every other named action) into an empty key-up event. Recognized navigation
-events are logged so a live `zfe.log` can confirm whether the loader is delivering `PageUp`/
-`PageDown` or their `PrevPage`/`NextPage` aliases.
+Up/Page Down (and every other named action) into an empty key-up event. When the loader still
+collapses the physical keys to `Unmapped`, v2.10.54 registers `PAGEUP=0x21` and `PAGEDOWN=0x22`
+(plus the Insert-gated feed keys) through the extender's `Input.*` compatibility surface. The
+poll starts at provider discovery, before and independent of the relay connect, so Page keys
+work even when relay auth is rejected. Registration tries the generic callback
+(`__SFCodeObj`/`BRG_OBJ`) first and, under ZFE, the `__ZFE` dispatcher second; the first
+candidate that does not answer false/error/unsupported is locked for later calls, and a void
+`null` return counts as success (xScal's wrapper is void). `Input.IsKeyPressed` is decoded from a
+native boolean or from an explicit `pressed`/`down`/`value` field of ZFE's JSON envelope; a bare
+`"success":true` is not a key-down. Recognized navigation events, each registration (with
+dispatcher name and raw response), one IsKeyPressed sample per session, and physical edges are
+logged so a live `zfe.log` can confirm which path handled them.
+
+The native adapter CI suite exercises both Page keys against xScal's void registration and
+boolean press/release responses, including repeated presses and unload cleanup. It covers
+separate and combined callback objects, discovery through the main stage or a parent, and
+xScal both alone and selected alongside ZFE. These are mocked contract tests; a live xScal
+smoke test must still confirm channel switching while idle and while preserving an open draft.
 
 The ZFE fallback clears and verifies its native buffer immediately after
 `setChatInputActive("true")`; the startup activation probe is intentionally absent because some
@@ -232,8 +281,12 @@ unless the normal SharedHUDTools path opens one editable field, typing `hello` v
 `hello` (including repeated letters), Escape cancels, Enter sends the complete text, gameplay is
 restored after editing, and named Quick Actions/Friends focus transitions do not leave the editor
 stuck.
-Page Up/Page Down must switch channels both while idle and while preserving an open draft; the
-widget accepts either the first key-down or a key-up-only loader event without double-switching.
+Page Up/Page Down must switch channels both while idle and while preserving an open draft. The
+widget accepts either the first key-down or a key-up-only loader event without double-switching;
+when no named event arrives, the provider-level physical-key fallback handles the key-down edge
+and unregisters all six keys at shutdown. The fallback must switch channels before relay auth
+completes and while it is rejected. Arrow Up/Down and Home/End remain ordinary
+Fallout controls until Insert has opened the feed editor.
 
 On supported ZFE builds, a bare boolean from `readChatInput` immediately after a successful
 `clearChatInput` is an empty/status response, not a one-character draft; the native fallback remains
@@ -278,6 +331,7 @@ contains the same SWF before distributing it.
 ```bash
 haxe test-config.hxml
 haxe test-identity.hxml
+haxe test-history.hxml
 python3 ../hudmenu-chat/test_anchors.py
 cd ../../../cross-platform-overlay
 npm run test:unit -- --run __tests__/fcm-chat-widget-logic.test.js
@@ -350,7 +404,7 @@ staff validation on every request; the HUD permission is only a visibility hint.
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE or xScal loaded, the startup log identifies `chatv1-widget-v2.10.51`. If
+1. With HUDModLoader and ZFE or xScal loaded, the startup log identifies `chatv1-widget-v2.10.55`. If
    `AccountInfoData` is late, the widget waits and retries. The sender label and a newly sent
    message use the exact public Fallout 76 account handle, including punctuation; neither
    `Wanderer` nor the local character name is used for the relay handshake.
@@ -374,8 +428,8 @@ staff validation on every request; the HUD permission is only a visibility hint.
 8. While typing, confirm the SharedHUDTools editor has only one visible text renderer; type
    `hello` and confirm the complete buffer remains visible, including repeated letters; game
    movement/actions are locked and restored after Enter/Escape;
-   Page Down/Page Up switch channels on both key-down and key-up-only loader builds without entering
-   a persistent channel-selection mode. A successful
+   Page Down/Page Up switch channels on both key-down and key-up-only loader builds, including the
+   physical Input.* fallback, without entering a persistent channel-selection mode. A successful
    send should show the tag/star from the ACK or direct live event without waiting for the next
    regular poll, then reconcile to one authoritative row. All connected widgets should receive the
    same event through direct local fan-out or the Redis cross-instance path. For a one-message test,

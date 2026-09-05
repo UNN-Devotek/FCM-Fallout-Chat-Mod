@@ -306,6 +306,11 @@ jobs:
             game-mods/FCMBridge/test-native-api.hxml
             game-mods/FCMBridge/test-auth-flow.hxml
             game-mods/FCMBridge/hudmodloader-chat/FcmUserEvent.hx
+            game-mods/FCMBridge/hudmodloader-chat/FcmHistory.hx
+            game-mods/FCMBridge/hudmodloader-chat/FcmRoster.hx
+            game-mods/FCMBridge/hudmodloader-chat/TestFcmHistory.hx
+            game-mods/FCMBridge/hudmodloader-chat/TestFcmRoster.hx
+            game-mods/FCMBridge/hudmodloader-chat/test-history.hxml
             game-mods/FCMBridge/hudmenu-chat/test_ba2tool.py
             game-mods/FCMBridge/tools/validate_swf.py
             game-mods/FCMBridge/tools/test_validate_swf.py
@@ -343,6 +348,9 @@ jobs:
       - name: Run FcmEcho unit tests
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe test-echo.hxml
+      - name: Test HUD history recovery and world transitions
+        working-directory: game-mods/FCMBridge/hudmodloader-chat
+        run: haxe test-history.hxml
       - name: Run native bridge compatibility tests
         working-directory: game-mods/FCMBridge
         run: haxe test-native-api.hxml
