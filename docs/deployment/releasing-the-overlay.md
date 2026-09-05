@@ -475,3 +475,15 @@ Get-Process -Name 'Fallout Chat Mod','electron' -EA SilentlyContinue | Stop-Proc
 ```
 
 Never kill `Fallout76`.
+
+
+### Standalone hosted-dev HUD testing downloads
+
+The HUD package is shared by ZFE and xScal. The Dev website labels it for both providers;
+install one copy and apply the included configuration for the selected provider. A HUD-only
+publication updates only the existing dev release's `hudModVersion` and `hudModUrl` after
+verifying the served ZIP bytes. It does not create an overlay release or change its version.
+The same validated ZIP may be offered under ZFE and xScal filenames for discoverability.
+Post the HUD testing announcement with the dev bot in its configured Updates channel after
+checking the channel's guild against the dev server configuration. Include the dev download
+links, exact HUD version, installation/restart instructions, and the requested test cases.
