@@ -483,7 +483,11 @@ The HUD package is shared by ZFE and xScal. The Dev website labels it for both p
 install one copy and apply the included configuration for the selected provider. A HUD-only
 publication updates only the existing dev release's `hudModVersion` and `hudModUrl` after
 verifying the served ZIP bytes. It does not create an overlay release or change its version.
-The same validated ZIP may be offered under ZFE and xScal filenames for discoverability.
+Build separately with `package.py --provider zfe` and `--provider xscal` (default: zfe).
+The BA2 is identical; configuration files and install instructions are provider-specific.
+Publish new pairs as `FCM-HUD-<version>-<target>-<revision>-zfe.zip` and the matching
+`-xscal.zip`. Set `hudModUrl` to the ZFE member; the website exposes both sibling URLs.
+Legacy URL naming retains its existing single download. Never rename one provider ZIP as the other.
 Post the HUD testing announcement with the dev bot in its configured Updates channel after
 checking the channel's guild against the dev server configuration. Include the dev download
 links, exact HUD version, installation/restart instructions, and the requested test cases.

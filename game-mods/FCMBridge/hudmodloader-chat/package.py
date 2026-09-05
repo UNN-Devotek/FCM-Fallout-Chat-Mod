@@ -52,17 +52,26 @@ def stamp_configs(target: str, chat_ini: str, widget_ini: str) -> tuple[str, str
     )
 
 
-def install_instructions(target: str) -> str:
+def install_instructions(target: str, provider: str = "zfe") -> str:
     config = TARGETS[target]
     version = widget_version()
+    provider_label = "xScal" if provider == "xscal" else "ZFE"
+    config_file = "xscal.ini.example" if provider == "xscal" else "Data/ZFE/TextChat/fragments/FCMChatWidget.ini"
+    provider_setup = (
+        "Merge the [Chat] section from xscal.ini.example into the existing xscal.ini beside\n"
+        "   the game executable. Preserve xScalPriority and all other sections."
+        if provider == "xscal" else
+        "The ZFE TextChat fragment supplies the relay endpoint and OpenChatKey. Keep\n"
+        "   FCMChat.ini openKey aligned with that key and any Data/configuration/zfe.ini override."
+    )
     return f"""Fallout Chat Mod - optional in-game HUD chat ({config['label']})
 
 FCMChatWidget version: {version}
 
 This archive is the explicit opt-in in-game HUD-mod track. It is separate from
 the desktop overlay. It connects to {config['label'].lower()} through ZFE chat.v1
-or xScal chatInterface, selected automatically.
-Install either a supported ZFE build or xScal, plus HUDModLoader, before installing this archive.
+or xScal chatInterface, selected automatically. The BA2 is identical for both providers.
+This package contains setup files for {provider_label} only. Install {provider_label} and HUDModLoader.
 On first subscribe, both providers receive the same complete bounded history: up to
 15 recent messages for each static channel and up to 50 messages from the current
 server room (125 events total). The native poll limit is 64. xScal's asynchronous
@@ -76,10 +85,10 @@ RESYNC recovery if static history is missing or the native queue reports loss.
 
    Data/FCMChatWidget.ba2
    Data/FCMChat.ini
-   Data/ZFE/TextChat/fragments/FCMChatWidget.ini
-   xscal.ini.example
+   {config_file}
    FCMChatWidget.hudmodloader.ini
    FCMChatWidget.version.txt
+   FCMChatWidget.provider.txt
    HUDMODLOADER-MENU.txt
    Fallout76Custom.ini.example
 
@@ -102,10 +111,7 @@ RESYNC recovery if static history is missing or the native queue reports loss.
    Fallout 76 Steam prefix under `compatdata/1151340/pfx/drive_c/users/steamuser/`.
    The `Data/` files always belong in the Fallout 76 game installation folder.
 
-   If using xScal, merge the `[Chat]` section from `xscal.ini.example` into
-   the existing `xscal.ini` beside the game executable. Preserve xScalPriority
-   and every other existing section; do not replace the full file. ZFE ignores
-   this section and continues to use its own fragment configuration.
+   {provider_setup}
 
 5. Start Fallout 76 and open the HUDModLoader menu:
    a. Press F11 to open the menu.
@@ -116,7 +122,7 @@ RESYNC recovery if static history is missing or the native queue reports loss.
       want the packaged defaults restored. The environment-specific link URL
       is kept.
    d. Use the HUDModLoader reload control for live widget changes. If you replace
-      the BA2 or either ZFE fragment, exit Fallout 76 before copying the files
+      the BA2 or provider configuration, exit Fallout 76 before copying the files
       and restart the game so native configuration is reloaded.
 
    If the widget is not listed under FCM, exit the game and verify that the
@@ -142,10 +148,11 @@ HUD input and commands:
   is confirmed. Type /hide by itself to hide the feed; press Insert to restore it.
   Type /relink by itself to request that the active extender clear its local chat auth and issue
   a new link code. This requires clearChatAuth support; older builds will show a manual recovery
-  instruction. Keep FCMChat.ini openKey aligned with the ZFE fragment OpenChatKey when ZFE is used. A
-  Data/configuration/zfe.ini [TextChat] OpenChatKey override must match too.
+  instruction. Follow the provider configuration instructions above.
   While a draft is active, Control-Tab opens the game's social menu after the widget
   cancels its native or SharedHUDTools editor; Escape can then close the social menu normally.
+  Input.* key polling does not itself suppress gameplay keys. Keyboard suppression
+  is not claimed for xScal builds without a documented suppression API.
   Customize actions can be repeated without backing out to the parent menu.
   Auto-hide is shown with its current ON/OFF state the next time F11 opens.
   Discord custom emojis appear on the HUD as readable :name: labels; public
@@ -162,7 +169,9 @@ def xscal_config_example(target: str) -> str:
     )
 
 
-def build_package(target: str, output: Path) -> None:
+def build_package(target: str, output: Path, provider: str = "zfe") -> None:
+    if provider not in ("zfe", "xscal"):
+        raise ValueError("provider must be zfe or xscal")
     version = widget_version()
     widget_artifact = ROOT / "FCMChatWidget.ba2"
     if version.encode("ascii") not in widget_artifact.read_bytes():
@@ -176,7 +185,7 @@ def build_package(target: str, output: Path) -> None:
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
-        archive.writestr("INSTALL.txt", install_instructions(target))
+        archive.writestr("INSTALL.txt", install_instructions(target, provider))
         archive.writestr(
             "HUDMODLOADER-MENU.txt",
             "FCMChatWidget HUDModLoader menu\n"
@@ -221,10 +230,8 @@ def build_package(target: str, output: Path) -> None:
             "be reset using that extender's documented local-auth recovery.\n"
             "While a draft is active, Control-Tab opens the game's social menu\n"
             "after the widget cancels its editor; Escape can close the menu normally.\n"
-            "Keep FCMChat.ini openKey aligned with the ZFE fragment OpenChatKey\n"
-            "when ZFE is used. xScal uses its own chat configuration.\n"
-            "A Data/configuration/zfe.ini [TextChat] OpenChatKey override must\n"
-            "match too.\n\n"
+            "See INSTALL.txt for this provider's configuration. Input.* polling alone\n"
+            "does not suppress gameplay keys; xScal keyboard suppression is not claimed.\n\n"
             "Discord custom emojis render in the HUD as readable :name: labels;\n"
             "public feed image/GIF attachments are intentionally not relayed.\n\n"
             "If FCM is missing, confirm that FCMChatWidget appears exactly once in\n"
@@ -235,10 +242,13 @@ def build_package(target: str, output: Path) -> None:
             "[Archive]\n"
             "sResourceArchive2List=HUDModLoader.ba2,FCMChatWidget.ba2\n",
         )
-        archive.writestr("xscal.ini.example", xscal_config_example(target))
+        archive.writestr("FCMChatWidget.provider.txt", provider + "\n")
+        if provider == "xscal":
+            archive.writestr("xscal.ini.example", xscal_config_example(target))
         archive.write(widget_artifact, "Data/FCMChatWidget.ba2")
         archive.writestr("Data/FCMChat.ini", chat_ini)
-        archive.writestr("Data/ZFE/TextChat/fragments/FCMChatWidget.ini", widget_ini)
+        if provider == "zfe":
+            archive.writestr("Data/ZFE/TextChat/fragments/FCMChatWidget.ini", widget_ini)
         # This is a user-applied append snippet, not a file to extract over the
         # user's existing HUDModLoader registry. Keeping it at the archive root
         # makes accidental overwrite impossible.
@@ -251,6 +261,8 @@ def build_package(target: str, output: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--provider", choices=["zfe", "xscal"], default="zfe",
+                        help="provider-specific setup files; the auto-detecting BA2 is shared")
     parser.add_argument("--target", choices=sorted(TARGETS))
     parser.add_argument("--output", type=Path)
     parser.add_argument(
@@ -264,7 +276,7 @@ def main() -> None:
         return
     if not args.target or not args.output:
         parser.error("--target and --output are required unless --print-version is used")
-    build_package(args.target, args.output)
+    build_package(args.target, args.output, args.provider)
     print(f"wrote {args.output} ({args.target})")
 
 

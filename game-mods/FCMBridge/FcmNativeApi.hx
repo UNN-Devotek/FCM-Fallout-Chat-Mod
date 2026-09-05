@@ -164,6 +164,7 @@ class FcmNativeApi {
      * for every later Input.* call.
      */
     public function registerPhysicalKey(keyCode:Int):Bool {
+        if (keyCode < 1 || keyCode > 255) return false;
         if (_inputDispatcher != null) {
             var locked:Dynamic = callDispatcherOutcome(_inputDispatcher, "Input.RegisterKey", keyCode);
             recordInputResponse(locked);
@@ -173,9 +174,7 @@ class FcmNativeApi {
         for (candidate in candidates) {
             var outcome:Dynamic = callDispatcherOutcome(candidate, "Input.RegisterKey", keyCode);
             recordInputResponse(outcome);
-            // xScal's registerKey wrapper returns its own callSucceeded flag while
-            // the underlying native call is void, so null is a success here; only
-            // an explicit false / error / unsupported response moves on.
+            // xScal requires Boolean true; ZFE retains its compatibility response decoder.
             if (inputMutationSucceeded(outcome)) {
                 _inputDispatcher = candidate;
                 inputDispatcherName = candidate == _inputRaw ? "generic-callback" : "zfe-dispatcher";
@@ -187,14 +186,17 @@ class FcmNativeApi {
 
     /** Read one registered Windows virtual-key code without swallowing it. */
     public function isPhysicalKeyPressed(keyCode:Int):Bool {
+        if (keyCode < 1 || keyCode > 255) return false;
         var outcome:Dynamic = callDispatcherOutcome(activeInputDispatcher(), "Input.IsKeyPressed", keyCode);
         recordInputResponse(outcome);
         if (outcome == null || outcome.called != true) return false;
+        if (provider == XSCAL) return Std.isOfType(outcome.value, Bool) && outcome.value == true;
         return inputResultIsTrue(outcome.value);
     }
 
     /** Release one previously registered Windows virtual-key code. */
     public function unregisterPhysicalKey(keyCode:Int):Bool {
+        if (keyCode < 1 || keyCode > 255) return false;
         var outcome:Dynamic = callDispatcherOutcome(activeInputDispatcher(), "Input.UnregisterKey", keyCode);
         recordInputResponse(outcome);
         return inputMutationSucceeded(outcome);
@@ -463,12 +465,7 @@ class FcmNativeApi {
         return null;
     }
 
-    /**
-     * Call a generic extender verb and retain both dispatch success and its
-     * return value. Input.RegisterKey/UnregisterKey are void in xScal's
-     * compatibility wrapper, so losing the distinction makes every valid
-     * registration look rejected and prevents the polling timer from starting.
-     */
+    /** Retain dispatch success separately from the provider's return value. */
     static function callDispatcherOutcome(raw:Dynamic, verb:String, value:Dynamic):Dynamic {
         if (raw == null) return { called: false, value: null };
         try {
@@ -483,10 +480,11 @@ class FcmNativeApi {
         }
     }
 
-    /** Mutation calls may be void; reject only an explicit native failure. */
-    static function inputMutationSucceeded(outcome:Dynamic):Bool {
+    /** xScal article 268 requires Boolean results; ZFE may use legacy envelopes/void. */
+    function inputMutationSucceeded(outcome:Dynamic):Bool {
         if (outcome == null || outcome.called != true) return false;
         var value:Dynamic = outcome.value;
+        if (provider == XSCAL) return Std.isOfType(value, Bool) && value == true;
         if (value == null) return true;
         if (value == false || value == 0) return false;
         var text:String = StringTools.trim(Std.string(value)).toLowerCase();

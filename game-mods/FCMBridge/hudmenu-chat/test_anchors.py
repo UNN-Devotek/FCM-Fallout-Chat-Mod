@@ -426,8 +426,8 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.55";' in widget_src,
-          "FCMChatWidget ships physical Page-key navigation fallback build 2.10.55")
+    check('static inline var VERSION:String  = "2.10.56";' in widget_src,
+          "FCMChatWidget ships physical Page-key navigation fallback build 2.10.56")
     check('FcmAuthFlow.classify' in widget_src
           and 'transport accepted; xScal auth pending' in widget_src
           and 'xScal auth state' in widget_src,

@@ -269,7 +269,8 @@ navigation, v2.10.54 additionally uses the extender's documented `Input.Register
 `Input.IsKeyPressed`, and `Input.UnregisterKey` compatibility calls when Page keys are collapsed
 to `Unmapped`. The poll starts at provider discovery, independent of relay auth; the dispatcher is
 the generic callback when one exists, otherwise (under ZFE) `__ZFE` itself; registration keeps
-dispatch success separate from a void/null native return; a ZFE `"success":true` envelope is only a
+dispatch success separate from ZFE legacy void/null returns; xScal v2.10.56 handling requires
+a native Boolean true as specified in article 268; a ZFE `"success":true` envelope is only a
 key-down when it carries an explicit `pressed`/`down`/`value` flag; and this path does not acquire
 the text-input lock. `TestFcmNativeApi.hx` / `test-native-api.hxml` cover the dispatcher fallback
 and the pressed-state decoding. The pure policy is covered

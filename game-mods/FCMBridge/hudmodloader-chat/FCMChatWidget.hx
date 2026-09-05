@@ -152,7 +152,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.55"; // physical nav via ZFE dispatcher, relay-independent
+    static inline var VERSION:String  = "2.10.56"; // physical nav via ZFE dispatcher, relay-independent
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.

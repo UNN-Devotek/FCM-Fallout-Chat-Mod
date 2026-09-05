@@ -122,76 +122,86 @@ def main() -> None:
         ]
 
     with tempfile.TemporaryDirectory() as temp_dir:
+        invalid = Path(temp_dir) / "invalid.zip"
+        try:
+            package.build_package("dev", invalid, "unknown")
+            raise AssertionError("unknown providers must be rejected")
+        except ValueError:
+            assert not invalid.exists()
         assert package.widget_version() == version_match.group(1)
         for target, expected in package.TARGETS.items():
-            output = Path(temp_dir) / f"widget-{target}.zip"
-            package.build_package(target, output)
-            with ZipFile(output) as archive:
-                names = set(archive.namelist())
-                assert "Data/FCMChatWidget.ba2" in names
-                assert "Data/FCMChat.ini" in names
-                assert "Data/ZFE/TextChat/fragments/FCMChatWidget.ini" in names
-                assert "FCMChatWidget.hudmodloader.ini" in names
-                assert "FCMChatWidget.version.txt" in names
-                assert "xscal.ini.example" in names
-                assert "Data/hudmodloader.ini" not in names
-                assert "INSTALL.txt" in names
-                assert "HUDMODLOADER-MENU.txt" in names
-                assert archive.read("Data/FCMChatWidget.ba2") == widget_artifact
-                assert b"chatInterface" in widget_artifact
-                assert b"__SFECodeObj" in widget_artifact
-                assert archive.read("FCMChatWidget.hudmodloader.ini") == b"FCMChatWidget\n"
-                assert archive.read("FCMChatWidget.version.txt") == f"{package.widget_version()}\n".encode()
+            for provider in ("zfe", "xscal"):
+                output = Path(temp_dir) / f"widget-{target}-{provider}.zip"
+                package.build_package(target, output, provider)
+                with ZipFile(output) as archive:
+                    names = set(archive.namelist())
+                    assert "Data/FCMChatWidget.ba2" in names
+                    assert "Data/FCMChat.ini" in names
+                    assert ("Data/ZFE/TextChat/fragments/FCMChatWidget.ini" in names) == (provider == "zfe")
+                    assert "FCMChatWidget.hudmodloader.ini" in names
+                    assert "FCMChatWidget.version.txt" in names
+                    assert ("xscal.ini.example" in names) == (provider == "xscal")
+                    assert archive.read("FCMChatWidget.provider.txt") == (provider + "\n").encode()
+                    if provider == "xscal":
+                        assert not any(n.lower().startswith("data/zfe/") for n in names)
+                    assert "Data/hudmodloader.ini" not in names
+                    assert "INSTALL.txt" in names
+                    assert "HUDMODLOADER-MENU.txt" in names
+                    assert archive.read("Data/FCMChatWidget.ba2") == widget_artifact
+                    assert b"chatInterface" in widget_artifact
+                    assert b"__SFECodeObj" in widget_artifact
+                    assert archive.read("FCMChatWidget.hudmodloader.ini") == b"FCMChatWidget\n"
+                    assert archive.read("FCMChatWidget.version.txt") == f"{package.widget_version()}\n".encode()
 
-                chat_config = archive.read("Data/FCMChat.ini")
-                widget_config = archive.read(
-                    "Data/ZFE/TextChat/fragments/FCMChatWidget.ini"
-                )
-                install = archive.read("INSTALL.txt")
-                menu = archive.read("HUDMODLOADER-MENU.txt")
-                xscal_config = archive.read("xscal.ini.example")
-                assert f"linkUrl={expected['link_url']}\n".encode() in chat_config
-                assert f"Endpoint={expected['endpoint']}\n".encode() in widget_config
-                assert f"  {expected['web_link_url']}\n".encode() in install
-                assert f"  {expected['endpoint']}\n".encode() in install
-                assert f"relayEndpoint={expected['endpoint']}\n".encode() in xscal_config
-                assert b"Press F11" in install
-                assert b"Press Insert" in install
-                assert b"Arrow Up / Down" in install
-                assert b"15 recent messages" in install
-                assert b"50 messages" in install
-                assert b"125 events total" in install
-                assert b"Home / End" in install
-                assert b"/g, /t, /e" in install
-                assert b"/relink" in install
-                assert b"Reset all settings" in install
-                assert b"F11" in menu
-                assert b"FCM -> Customize..." in menu
-                assert b"Press Insert" in menu
-                assert b"Arrow Up / Down" in menu
-                assert b"15 recent messages" in menu
-                assert b"50 from the current SERVER room" in menu
-                assert b"125 events total" in menu
-                assert b"Home / End" in menu
-                assert b"/g, /t, /e" in menu
-                assert b"/relink" in menu
-                assert b"Auto-hide" in menu
-                assert b"SERVER" in menu
-                assert b"Reset all settings" in menu
-                assert b"showTimestamps" not in chat_config
-                assert b"timestampColor" not in chat_config
+                    chat_config = archive.read("Data/FCMChat.ini")
+                    widget_config = archive.read(
+                        "Data/ZFE/TextChat/fragments/FCMChatWidget.ini"
+                    ) if provider == "zfe" else b""
+                    install = archive.read("INSTALL.txt")
+                    menu = archive.read("HUDMODLOADER-MENU.txt")
+                    xscal_config = archive.read("xscal.ini.example") if provider == "xscal" else b""
+                    assert f"linkUrl={expected['link_url']}\n".encode() in chat_config
+                    assert provider != "zfe" or f"Endpoint={expected['endpoint']}\n".encode() in widget_config
+                    assert f"  {expected['web_link_url']}\n".encode() in install
+                    assert f"  {expected['endpoint']}\n".encode() in install
+                    assert provider != "xscal" or f"relayEndpoint={expected['endpoint']}\n".encode() in xscal_config
+                    assert b"Press F11" in install
+                    assert b"Press Insert" in install
+                    assert b"Arrow Up / Down" in install
+                    assert b"15 recent messages" in install
+                    assert b"50 messages" in install
+                    assert b"125 events total" in install
+                    assert b"Home / End" in install
+                    assert b"/g, /t, /e" in install
+                    assert b"/relink" in install
+                    assert b"Reset all settings" in install
+                    assert b"F11" in menu
+                    assert b"FCM -> Customize..." in menu
+                    assert b"Press Insert" in menu
+                    assert b"Arrow Up / Down" in menu
+                    assert b"15 recent messages" in menu
+                    assert b"50 from the current SERVER room" in menu
+                    assert b"125 events total" in menu
+                    assert b"Home / End" in menu
+                    assert b"/g, /t, /e" in menu
+                    assert b"/relink" in menu
+                    assert b"Auto-hide" in menu
+                    assert b"SERVER" in menu
+                    assert b"Reset all settings" in menu
+                    assert b"showTimestamps" not in chat_config
+                    assert b"timestampColor" not in chat_config
 
-                other = package.TARGETS["prod" if target == "dev" else "dev"]
-                assert f"linkUrl={other['link_url']}\n".encode() not in chat_config
-                assert f"Endpoint={other['endpoint']}\n".encode() not in widget_config
-                assert f"  {other['web_link_url']}\n".encode() not in install
-                assert f"  {other['endpoint']}\n".encode() not in install
+                    other = package.TARGETS["prod" if target == "dev" else "dev"]
+                    assert f"linkUrl={other['link_url']}\n".encode() not in chat_config
+                    assert f"Endpoint={other['endpoint']}\n".encode() not in widget_config
+                    assert f"  {other['web_link_url']}\n".encode() not in install
+                    assert f"  {other['endpoint']}\n".encode() not in install
 
-                if target == "prod":
-                    for name in names - {"Data/FCMChatWidget.ba2"}:
-                        assert b"dev" not in archive.read(name).lower(), (
-                            f"production archive mentions DEV in {name}"
-                        )
+                    if target == "prod":
+                        for name in names - {"Data/FCMChatWidget.ba2"}:
+                            assert b"dev" not in archive.read(name).lower(), (
+                                f"production archive mentions DEV in {name}"
+                            )
 
     print("package target tests passed")
 

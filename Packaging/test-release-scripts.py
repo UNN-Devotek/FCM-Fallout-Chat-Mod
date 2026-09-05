@@ -85,7 +85,7 @@ def main() -> None:
     assert install_page.index(hud_marker) < install_page.index(
         "{/* ── Windows ─────────────────────────────────────────────────── */}"
     )
-    assert "↓ FCM HUD Mod ZIP — ZFE / xScal {hudModVersion}" in install_page
+    assert "↓ FCM HUD Mod ZIP — {download.label} {hudModVersion}" in install_page
     for marker in (
         "electronLinuxAppImageUrl",
         "electronLinuxDebUrl",

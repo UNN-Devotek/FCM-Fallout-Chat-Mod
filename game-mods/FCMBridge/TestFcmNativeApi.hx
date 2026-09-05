@@ -364,17 +364,35 @@ class TestFcmNativeApi {
             genericXscalCalls.length == 1
             && genericXscalCalls[0] == "GetXSRuntimeInfo|{}");
 
-        verifyXscalPageKeys(chat);
+        for (invalid in ([null, false, 1, "true", { success: true }]:Array<Dynamic>)) {
+            var api = FcmNativeApi.fromExposed({ chatInterface: chat }, FcmNativeApi.XSCAL,
+                { call: function(verb:String, key:Dynamic):Dynamic { return invalid; } });
+            check("xScal rejects non-true Boolean registration " + Std.string(invalid), !api.registerPhysicalKey(33));
+            check("xScal rejects non-true Boolean poll " + Std.string(invalid), !api.isPhysicalKeyPressed(33));
+        }
+        var keyCalls:Int = 0;
+        var rangeApi = FcmNativeApi.fromExposed({ chatInterface: chat }, FcmNativeApi.XSCAL,
+            { call: function(verb:String, key:Dynamic):Dynamic { keyCalls++; return true; } });
+        for (key in [-1, 0, 256]) {
+            check("invalid VK registration " + key, !rangeApi.registerPhysicalKey(key));
+            check("invalid VK polling " + key, !rangeApi.isPhysicalKeyPressed(key));
+            check("invalid VK unregister " + key, !rangeApi.unregisterPhysicalKey(key));
+        }
+        check("invalid keys never reach native bridge", keyCalls == 0);
+        check("VK lower boundary", rangeApi.registerPhysicalKey(1));
+        check("VK upper boundary", rangeApi.registerPhysicalKey(255));
+        verifyXscalNavigationKeys(chat);
         if (failures > 0) Sys.exit(1);
     }
 
-    /** Exercise both Page keys through the native xScal void/boolean contract. */
-    static function verifyXscalPageKeys(chat:Dynamic):Void {
+    /** Exercise Page, arrow, Home and End keys through the documented xScal Boolean contract. */
+    static function verifyXscalNavigationKeys(chat:Dynamic):Void {
         for (placement in ["separate", "combined", "stage", "parent"]) {
             for (withZfe in [false, true]) {
-                var label = "xScal Page keys " + placement + (withZfe ? " with ZFE" : " alone");
+                var label = "xScal navigation keys " + placement + (withZfe ? " with ZFE" : " alone");
                 var registered:Map<Int, Bool> = new Map();
                 var pressed:Map<Int, Bool> = new Map();
+                var foreground:Bool = true;
                 var unexpectedCalls:Int = 0;
                 var zfeCalls:Int = 0;
                 var callback:Dynamic = {};
@@ -382,10 +400,10 @@ class TestFcmNativeApi {
                     if (!Std.isOfType(keyCode, Int)) { unexpectedCalls++; return false; }
                     var key:Int = keyCode;
                     switch (verb) {
-                        case "Input.RegisterKey": registered.set(key, true); return null;
-                        case "Input.UnregisterKey": registered.remove(key); return null;
+                        case "Input.RegisterKey": registered.set(key, true); return true;
+                        case "Input.UnregisterKey": return registered.remove(key);
                         case "Input.IsKeyPressed":
-                            return registered.exists(key) && pressed.exists(key) && pressed.get(key);
+                            return foreground && registered.exists(key) && pressed.exists(key) && pressed.get(key);
                         default: unexpectedCalls++; return false;
                     }
                 };
@@ -409,9 +427,14 @@ class TestFcmNativeApi {
                 check(label + " discovers input", api != null
                     && api.provider == FcmNativeApi.XSCAL && api.supportsPhysicalInput());
                 if (api == null) continue;
-                for (key in [0x21, 0x22]) {
-                    check(label + " accepts void registration " + key, api.registerPhysicalKey(key));
+                for (key in [0x21, 0x22, 0x26, 0x28, 0x24, 0x23]) {
+                    check(label + " accepts Boolean registration " + key, api.registerPhysicalKey(key));
                     check(label + " starts released " + key, !api.isPhysicalKeyPressed(key));
+                    foreground = false;
+                    pressed.set(key, true);
+                    check(label + " native foreground false is respected " + key, !api.isPhysicalKeyPressed(key));
+                    foreground = true;
+                    pressed.set(key, false);
                     for (cycle in 0...2) {
                         pressed.set(key, true);
                         check(label + " detects press " + key, api.isPhysicalKeyPressed(key));
@@ -421,8 +444,9 @@ class TestFcmNativeApi {
                         check(label + " detects release " + key, !api.isPhysicalKeyPressed(key));
                     }
                 }
-                for (key in [0x21, 0x22]) {
+                for (key in [0x21, 0x22, 0x26, 0x28, 0x24, 0x23]) {
                     check(label + " unregisters on unload " + key, api.unregisterPhysicalKey(key));
+                    check(label + " absent registration returns false " + key, !api.unregisterPhysicalKey(key));
                     pressed.set(key, true);
                     check(label + " released registration no longer polls " + key,
                         !api.isPhysicalKeyPressed(key));

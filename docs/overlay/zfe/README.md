@@ -7,7 +7,7 @@ selected automatically. Depending on the xScal build, that surface may be
 under `__SFECodeObj` or `__SFCodeObj`. A call-only `__SFCodeObj` remains a
 separate generic callback object and is not a ZFE discriminator.
 
-> **Current widget (2026-09-05):** `FCMChatWidget` v2.10.55 targets `/relay` through
+> **Current widget (2026-09-05):** `FCMChatWidget` v2.10.56 targets `/relay` through
 > ZFE `chat.v1` or xScal `chatInterface`. If both providers are present, the explicit xScal
 > `chatInterface` marker wins; ZFE is selected only when that marker is absent. Both providers
 > use SharedHUDTools text input when available.

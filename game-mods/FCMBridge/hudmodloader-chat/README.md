@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-09-05):** v2.10.55 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-09-05):** v2.10.56 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -317,3 +317,9 @@ restart; the loader reload control is for live widget changes.
 
 See [v2.10.55 recovery changes](BUILD.md#v21055-send-and-reload-recovery) for guarded sends,
 array-backed roster snapshots, delivered-history completion, and the matching relay requirement.
+
+
+Provider-specific ZIPs use `package.py --provider zfe` (default) or `--provider xscal`.
+The widget BA2 still auto-detects either extender; only setup files differ. Never copy the
+ZFE ZIP to an xScal filename. xScal packages contain no ZFE fragments.
+Input.* polling supports navigation but does not itself suppress gameplay keys.

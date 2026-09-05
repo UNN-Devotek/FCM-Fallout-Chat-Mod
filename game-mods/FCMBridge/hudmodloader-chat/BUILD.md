@@ -1,6 +1,6 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.55. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.56. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
@@ -404,7 +404,7 @@ staff validation on every request; the HUD permission is only a visibility hint.
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE or xScal loaded, the startup log identifies `chatv1-widget-v2.10.55`. If
+1. With HUDModLoader and ZFE or xScal loaded, the startup log identifies `chatv1-widget-v2.10.56`. If
    `AccountInfoData` is late, the widget waits and retries. The sender label and a newly sent
    message use the exact public Fallout 76 account handle, including punctuation; neither
    `Wanderer` nor the local character name is used for the relay handshake.
@@ -459,3 +459,27 @@ staff validation on every request; the HUD permission is only a visibility hint.
 
 Do not copy the new BA2 into a live game installation or publish it until these
 checks have passed on the intended environment.
+
+
+### Provider-specific packaging
+
+`python3 package.py --target dev --provider zfe --output /tmp/zfe.zip`
+and `python3 package.py --target dev --provider xscal --output /tmp/xscal.zip`
+package the same auto-detecting BA2. The default provider is ZFE for existing release scripts.
+Only ZFE includes `Data/ZFE/TextChat/fragments/FCMChatWidget.ini`; only xScal includes
+`xscal.ini.example`. Merge the example into existing xScal settings; never overwrite them.
+`FCMChatWidget.provider.txt` records the setup target, not a binary runtime restriction.
+
+xScal physical navigation uses the generic callback's `Input.RegisterKey`,
+`Input.IsKeyPressed`, and `Input.UnregisterKey` operations, with virtual-key arguments.
+Registration/polling is not gameplay suppression. The maintainer's supplied note for
+[article 268](https://www.nexusmods.com/fallout76/articles/268) says keyboard suppression
+was not yet implemented. Do not claim suppression without a supported API and runtime test.
+
+
+v2.10.56 follows the supplied xScal article 268 keyboard contract: `Input.*` callbacks
+receive positional arguments and return Boolean values. Non-Boolean results and virtual
+keys outside 1..255 fail closed. xScal supplies false while Fallout 76 is not foreground.
+The widget registers six keys at setup, polls their state, and unregisters those keys at
+teardown. It does not call global `ClearKeys`, which could remove another widget's keys.
+Gamepad suppression is documented separately; this keyboard widget does not enable it.
