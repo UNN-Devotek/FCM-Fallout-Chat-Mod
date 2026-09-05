@@ -152,7 +152,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.50"; // ordered all-channel history + host-owned input
+    static inline var VERSION:String  = "2.10.51"; // native HUDModUserEvent accessor fix
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -1199,25 +1199,18 @@ class FCMChatWidget extends MovieClip {
     }
 
     function onUserEvent(e:Dynamic):Void {
-        var action:String = "";
-        var isDown:Bool   = false;
-        try {
-            var actionValue:Dynamic = Reflect.field(e, "actionName");
-            if (actionValue != null && Std.string(actionValue).length > 0) {
-                action = Std.string(actionValue);
-            } else {
-                actionValue = Reflect.field(e, "EventName");
-                if (actionValue != null) action = Std.string(actionValue);
-            }
-        } catch (_:Dynamic) {}
-        try {
-            var downValue:Dynamic = Reflect.field(e, "isDown");
-            if (downValue == null) downValue = Reflect.field(e, "IsKeyDown");
-            if (downValue == null) downValue = Reflect.field(e, "isPressed");
-            if (downValue == null) downValue = Reflect.field(e, "pressed");
-            if (downValue == null) downValue = Reflect.field(e, "down");
-            isDown = FcmCommand.eventIsDown(downValue);
-        } catch (_:Dynamic) {}
+        // EventName/IsKeyDown are accessors on HUDModUserEvent. Reflect.field()
+        // ignores AS3 getters on Flash, so use the dedicated native-property
+        // adapter or every named action is silently reduced to ""/key-up.
+        var action:String = FcmUserEvent.action(e);
+        var isDown:Bool   = FcmUserEvent.isDown(e);
+
+        var navigation:String = FcmCommand.navigationAction(action,
+            _cfg.channelNextKey, _cfg.channelPrevKey);
+        if (navigation.length > 0) {
+            zfeLog("info", "input", "HUDMod::UserEvent action=" + action
+                + " edge=" + (isDown ? "down" : "up") + " command=" + navigation);
+        }
 
         var eventKey:String = hostEventKey(action, isDown);
         if (_hostEventSuppressionKey == eventKey) {

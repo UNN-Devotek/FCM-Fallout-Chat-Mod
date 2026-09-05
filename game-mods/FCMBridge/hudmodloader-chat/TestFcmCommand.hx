@@ -51,6 +51,14 @@ class TestFcmCommand {
         check("descriptive key-down edge is accepted", FcmCommand.eventIsDown("pressed"));
         check("boolean key-up edge is released", !FcmCommand.eventIsDown(false));
         check("unknown key edge fails closed", !FcmCommand.eventIsDown("unknown"));
+        var nativeEvent:Dynamic = new TestHudUserEvent("PageDown", true);
+        check("native HUD event getter exposes action", FcmUserEvent.action(nativeEvent) == "PageDown");
+        check("native HUD event getter exposes key edge", FcmUserEvent.isDown(nativeEvent));
+        var releasedEvent:Dynamic = new TestHudUserEvent("PageUp", false);
+        check("native HUD event getter exposes key release", !FcmUserEvent.isDown(releasedEvent));
+        var dynamicEvent:Dynamic = { actionName: "NextPage", isDown: true };
+        check("dynamic HUD event fields remain supported", FcmUserEvent.action(dynamicEvent) == "NextPage"
+            && FcmUserEvent.isDown(dynamicEvent));
         check("social shortcut is an external input action", FcmCommand.isExternalInputAction("OpenSocial"));
         check("friends action is an external input action", FcmCommand.isExternalInputAction("OpenFriendList"));
         check("quick action is an external input action", FcmCommand.isExternalInputAction("QuickActionsMenu"));
@@ -93,4 +101,20 @@ class TestFcmCommand {
             FcmCommand.mergeNativeInputTextWithMode("hello", "o", String.fromCharCode(8), "delta") == "hell");
         if (failures > 0) Sys.exit(1);
     }
+}
+
+private class TestHudUserEvent {
+    var _eventName:String;
+    var _isKeyDown:Bool;
+
+    public function new(eventName:String, isKeyDown:Bool) {
+        _eventName = eventName;
+        _isKeyDown = isKeyDown;
+    }
+
+    public var EventName(get, never):String;
+    function get_EventName():String return _eventName;
+
+    public var IsKeyDown(get, never):Bool;
+    function get_IsKeyDown():Bool return _isKeyDown;
 }

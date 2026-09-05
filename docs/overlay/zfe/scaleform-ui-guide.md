@@ -127,7 +127,7 @@ This is the subtlety that cost us the most, now fully explained:
   in-progress text) + `consumeChatInputSubmitted` (Enter) + `isChatInputActive` (Esc) → on submit
   `chat.v1.sendMessage` the `readChatInput` text → `clearChatInput` + `setChatInputActive("false")`. A
   low-rate `isChatKeyPressed` edge poll opens chat on the OpenChatKey (INSERT). Current
-  FCMChatWidget v2.10.50 tries SharedHUDTools first; the native path is used only when that host
+  FCMChatWidget v2.10.51 tries SharedHUDTools first; the native path is used only when that host
   editor is unavailable and never dispatches child-owned `ControlMap` events. It also does not
   construct `PlatformChangeEvent` dynamically: that class's constructor is not stable across
   HUDModLoader builds and caused the observed Error #1063. See
@@ -185,6 +185,8 @@ unless we need row interactivity.
   `stage.addEventListener("HUDMod::UserEvent", …)` to receive every control-map action (e.g. `"TeamChat"`,
   `"DiagnosticSnapshot"`=F12, `"L3"`). This is the conflict-free way for a *widget* to get input without
   patching HUDMenu.
+  The event's `EventName` and `IsKeyDown` values are AS3 getter properties; a Haxe Flash widget
+  must use native dynamic property access (as `FcmUserEvent` does), not `Reflect.field()` alone.
 - **Modal handoff:** the in-game Ctrl+Tab social shortcut is delivered at this boundary as the named
   `OpenSocial` action on the current HUDModLoader path. A widget that owns text input must directly
   deactivate the no-lock native fallback or call `SharedHUDTools.EndTextEdit()` for the host-owned

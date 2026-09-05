@@ -305,6 +305,7 @@ jobs:
             game-mods/FCMBridge/TestFcmAuthFlow.hx
             game-mods/FCMBridge/test-native-api.hxml
             game-mods/FCMBridge/test-auth-flow.hxml
+            game-mods/FCMBridge/hudmodloader-chat/FcmUserEvent.hx
             game-mods/FCMBridge/hudmenu-chat/test_ba2tool.py
             game-mods/FCMBridge/tools/validate_swf.py
             game-mods/FCMBridge/tools/test_validate_swf.py

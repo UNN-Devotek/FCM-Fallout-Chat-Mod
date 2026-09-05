@@ -21,6 +21,7 @@ import sys, re, os
 HERE = os.path.dirname(os.path.abspath(__file__))
 INJECT_AS = os.path.join(HERE, 'fcm-inject.as')
 WIDGET_HX = os.path.join(HERE, '..', 'hudmodloader-chat', 'FCMChatWidget.hx')
+USER_EVENT_HX = os.path.join(HERE, '..', 'hudmodloader-chat', 'FcmUserEvent.hx')
 WIDGET_CONFIG_HX = os.path.join(HERE, '..', 'hudmodloader-chat', 'FcmConfig.hx')
 WIDGET_INI = os.path.join(HERE, '..', 'hudmodloader-chat', 'FCMChatWidget.ini')
 
@@ -425,8 +426,8 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.50";' in widget_src,
-          "FCMChatWidget ships ordered all-channel history and host-owned input build 2.10.50")
+    check('static inline var VERSION:String  = "2.10.51";' in widget_src,
+          "FCMChatWidget ships ordered all-channel history and native input accessor fix build 2.10.51")
     check('FcmAuthFlow.classify' in widget_src
           and 'transport accepted; xScal auth pending' in widget_src
           and 'xScal auth state' in widget_src,
@@ -616,11 +617,15 @@ if widget_src:
           and "SharedHUDTools is the only supported path" in widget_src
           and "no-lock native fallback" in widget_src,
           "FCMChatWidget gives the game-control lock to host HUDTools and keeps native input no-lock")
-    check('Reflect.field(e, "actionName")' in widget_src
-          and 'Reflect.field(e, "isDown")' in widget_src
-          and 'Reflect.field(e, "EventName")' in widget_src
-          and 'Reflect.field(e, "IsKeyDown")' in widget_src,
-          "FCMChatWidget accepts current and legacy HUDModLoader event field names")
+    try:
+        user_event_src = open(USER_EVENT_HX, encoding="utf-8").read()
+    except FileNotFoundError:
+        user_event_src = ""
+    check('FcmUserEvent.action(e)' in widget_src
+          and 'FcmUserEvent.isDown(e)' in widget_src
+          and 'untyped event[field]' in user_event_src
+          and 'Reflect.getProperty(event, field)' in user_event_src,
+          "FCMChatWidget reads native HUDModLoader getter event fields")
     check("FcmCommand.navigationAction" in widget_src
           and "FcmCommand.navigationEdgeIsNew" in widget_src
           and "_navigationActionsDown" in widget_src

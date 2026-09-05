@@ -1,6 +1,6 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.50. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.51. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
@@ -51,7 +51,7 @@ After the bind acknowledgement, the widget drains the server snapshot every 150 
 consecutive empty polls (hard cap: eight attempts), covering xScal's delayed subscriber delivery
 without waiting for the normal five-second poll.
 
-The v2.10.50 widget explicitly pulls the cached values for `PlayerListData`,
+The v2.10.51 widget explicitly pulls the cached values for `PlayerListData`,
 `TeamMarkers`, `PartyMenuList`, and `VoiceChatAreaData` after subscribing. The upstream
 `BSUIDataManager.Subscribe()` call installs a change listener but does not replay the current
 provider value, so relying on the callback alone can leave a newly joined world without a
@@ -106,7 +106,7 @@ the `FCMHUD/1` message-id carrier, so the bounded fallback is deliberately accep
 same send receives a successful ACK and only when exactly one candidate matches.
 
 ZFE's native `chat.v1` bridge filters unknown JSON members before the SWF receives an event. The
-The v2.10.50 widget therefore reads the stable message ID, validated `tag`, and cosmetic transport from an
+The v2.10.51 widget therefore reads the stable message ID, validated `tag`, and cosmetic transport from an
 `FCMHUD/1;...` envelope carried in the existing known `targetUserId` field. For ordinary channel
 chat this field is an empty transport slot, not a real recipient. The relay only emits the
 envelope to v2.10.16+ clients; older BA2 files receive no transport data. Raw relay consumers
@@ -217,6 +217,13 @@ transport/auth/render phase, and the world poll records its BSUI/roster phase; a
 logged and the timer continues instead of escaping as `UncaughtErrorEvent` / Error #1014. Native
 roster arrays are enumerated one slot at a time with per-entry isolation because GFx can replace a
 provider array during a world hop.
+
+HUDModLoader's `HUDModUserEvent` exposes the action and edge through the native AS3 getter
+properties `EventName` and `IsKeyDown`. The widget reads those through `FcmUserEvent`'s
+dynamic-property adapter; `Reflect.field()` alone skips AS3 accessors and silently turns Page
+Up/Page Down (and every other named action) into an empty key-up event. Recognized navigation
+events are logged so a live `zfe.log` can confirm whether the loader is delivering `PageUp`/
+`PageDown` or their `PrevPage`/`NextPage` aliases.
 
 The ZFE fallback clears and verifies its native buffer immediately after
 `setChatInputActive("true")`; the startup activation probe is intentionally absent because some
@@ -343,7 +350,7 @@ staff validation on every request; the HUD permission is only a visibility hint.
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE or xScal loaded, the startup log identifies `chatv1-widget-v2.10.50`. If
+1. With HUDModLoader and ZFE or xScal loaded, the startup log identifies `chatv1-widget-v2.10.51`. If
    `AccountInfoData` is late, the widget waits and retries. The sender label and a newly sent
    message use the exact public Fallout 76 account handle, including punctuation; neither
    `Wanderer` nor the local character name is used for the relay handshake.

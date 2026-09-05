@@ -221,8 +221,8 @@ removal can lapse it.
 
 ## Verified HUD regressions and input handoff
 
-The v2.10.43 HUD regression fixes and the v2.10.46 input ownership fix are now part of the
-v2.10.50 package contract:
+The v2.10.43 HUD regression fixes, the v2.10.46 input ownership fix, and the v2.10.51
+HUDModUserEvent accessor fix are now part of the current package contract:
 
 - a send creates one optimistic row before the synchronous provider call and reconciles the
   authoritative ACK/live event into that row, so one send produces one feed row;
@@ -243,7 +243,7 @@ v2.10.50 package contract:
   channel history remains durable; `server` history remains the bounded recent Redis history
   described below, not permanent Postgres history.
 
-Widget v2.10.50 also closes the input owner before Fallout opens another modal input surface. The
+Widget v2.10.51 also closes the input owner before Fallout opens another modal input surface. The
 HUDModLoader event path delivers the in-game Ctrl+Tab shortcut as the named `OpenSocial` action
 (with `OpenFriendList`, quick-action aliases, and `Escape`/`Cancel` handled by the same rule). The
 widget's `FCMChatWidget.hx` classifies that action before normal navigation: the no-lock native
@@ -262,7 +262,8 @@ repeated `FCMChatWidget: [UncaughtErrorEvent ... Error #1014]` lines immediately
 acquired, leaving player controls unavailable. v2.10.46 removes that child dispatch and restores
 the known host-domain ownership model. Raw physical keyboard events are not a reliable HUD-layer
 input contract; the named `OpenSocial` event is the supported boundary. The pure policy is covered
-by `TestFcmCommand.hx` / `test-command.hxml`, and `test_package.py` plus `test_anchors.py` assert
+by `TestFcmCommand.hx` / `test-command.hxml` (including the native getter regression cases), and
+`test_package.py` plus `test_anchors.py` assert
 that the widget uses SharedHUDTools first and contains no child `ControlMap` dispatch.
 
 ## Ephemeral `server` rooms
@@ -329,7 +330,7 @@ for a solo world, so it is also acknowledged and bound. This prevents a stale or
 mismatched relay deployment from presenting a selectable but unusable Server
 channel, and prevents a slow relay timeout from repeatedly stalling the HUD.
 
-Widget v2.10.50 also pulls the current values of `PlayerListData`, `TeamMarkers`,
+Widget v2.10.51 also pulls the current values of `PlayerListData`, `TeamMarkers`,
 `PartyMenuList`, and `VoiceChatAreaData` after subscribing. This is intentional: the upstream
 `BSUIDataManager.Subscribe()` implementation only attaches the callback and does not invoke it for
 the provider value already in the cache. Provider snapshots are replaced on every refresh, so a

@@ -71,6 +71,9 @@ def main() -> None:
     assert "navigationAction" in source_hx and "feedNavigationEnabled" in source_hx, (
         "navigation must be classified as stateless commands with Insert-gated feed access"
     )
+    assert "FcmUserEvent.action(e)" in source_hx and "FcmUserEvent.isDown(e)" in source_hx, (
+        "HUDModUserEvent accessors must be read through the native-property adapter"
+    )
     assert "function closeInputSharedHudTools" in source_hx and "EndTextEdit" in source_hx, (
         "external modal actions must cancel the SharedHUDTools editor"
     )

@@ -2,7 +2,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-09-04):** v2.10.50 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-09-04):** v2.10.51 — source, relay, and packaged BA2 are kept together. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -30,7 +30,7 @@ A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's H
 - Renders the server-resolved Overseer tag in the HUD when the relay negotiates widget capability.
   Self-authored messages use the same authoritative live event as Discord and other in-game
   messages, so the tag is not lost to the native send ACK boundary.
-ZFE strips unknown event members before the SWF receives them, so v2.10.50 decodes the stable
+ZFE strips unknown event members before the SWF receives them, so v2.10.51 decodes the stable
   message ID and validated cosmetics from the `FCMHUD/1;...` envelope in the known empty
   `targetUserId` slot. Older widget
   builds receive no envelope. The HUD renders server-validated channel and identity tags plus a
@@ -78,7 +78,7 @@ methods plus its positive runtime response when `getRuntimeInfo` is available. B
 the same relay payloads and cursor polling.
 
 xScal's `connect` is asynchronous: `success:true,status:"connecting"` means the native worker
-accepted the request, not that relay authentication is complete. v2.10.50 keeps the transport
+accepted the request, not that relay authentication is complete. v2.10.51 keeps the transport
 polling, refreshes `getAuthState` on each xScal poll, and reconnects only for an explicit terminal
 state. Its optional generic `__SFCodeObj.call` is retained only for FCM diagnostics (`log`); no
 chat verb is ever routed through that callback.
@@ -99,7 +99,7 @@ consecutive empty polls (hard-capped at eight attempts), which covers xScal's de
 of the current room without waiting for the normal five-second poll.
 
 The `SERVER` sub-tab is backed by the current in-game roster session. After subscribing to
-`BSUIDataManager`, v2.10.50 also reads the cached values of `PlayerListData`, `TeamMarkers`,
+`BSUIDataManager`, v2.10.51 also reads the cached values of `PlayerListData`, `TeamMarkers`,
 `PartyMenuList`, and `VoiceChatAreaData`; `Subscribe()` itself only registers a change callback
 and does not replay the cached value. Provider values are stored as replaceable snapshots. An
 empty or completely disjoint snapshot triggers `LEAVE`, clears only local ephemeral server rows,
@@ -274,6 +274,7 @@ restart; the loader reload control is for live widget changes.
 | `FcmConfig.hx` | User-config model + INI parser/clamp (pure, unit-tested) |
 | `FcmStarLayout.hx` | Pure measured supporter-marker placement geometry + tests |
 | `FcmCommand.hx` / `TestFcmCommand.hx` / `test-command.hxml` | Pure slash-command matching and tests |
+| `FcmUserEvent.hx` | Native HUDModLoader getter-property adapter for named input events |
 | `FcmWire.hx` / `TestFcmWire.hx` / `test-wire.hxml` | Whitespace-safe native event-array detection and tests |
 | `TestFcmConfig.hx` / `test-config.hxml` | `FcmConfig` unit tests (`haxe --interp`; run in CI) |
 | `build.hxml` | Haxe build file |
