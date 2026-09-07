@@ -61,6 +61,7 @@ function buildDiscordUnlinkStatePatch() {
 function buildSteamUnlinkStatePatch() {
   return {
     steamLinked: false,
+    steamDisplayName: '',
     avatarUrl: '',
     userRole: null,
   };
@@ -379,6 +380,23 @@ function clampToWorkArea(desired, workArea, minHeight = MIN_HEIGHT) {
   y = Math.max(wa.y, Math.min(y, wa.y + wa.height - height));
 
   return { x, y, width, height };
+}
+
+// Calculate the next top-left position from one renderer pointer movement.
+// PointerEvent.movementX/Y describe the physical cursor motion since the last
+// event, independent of where the window was moved by the previous tick. The
+// caller accumulates the deltas from the drag-start bounds so CSS/client-space
+// coordinates can never feed the window's own movement back into the gesture.
+function resolveMoveDeltaPosition(startWindow, accumulatedDelta) {
+  if (!startWindow || !accumulatedDelta
+    || !Number.isFinite(startWindow.x) || !Number.isFinite(startWindow.y)
+    || !Number.isFinite(accumulatedDelta.x) || !Number.isFinite(accumulatedDelta.y)) {
+    return null;
+  }
+  return {
+    x: Math.round(startWindow.x + accumulatedDelta.x),
+    y: Math.round(startWindow.y + accumulatedDelta.y),
+  };
 }
 
 // ── Window-bounds drift suppression (issue #427) ──────────────────────────────
@@ -1246,6 +1264,7 @@ module.exports = {
   showModeFor,
   ACTIVATING_REASONS,
   clampToWorkArea,
+  resolveMoveDeltaPosition,
   BOUNDS_DRIFT_TOLERANCE_PX,
   resolvePersistedSize,
   MODAL_FIT_WIDTH,

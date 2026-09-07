@@ -1431,14 +1431,14 @@ let expandedBounds = null;        // { x, y, width, height } captured at collaps
 let collapseAnim = null;          // active height-animation interval
 let collapseAnimTarget = null;    // target height of the active animation (null when idle)
 
-// ─── JS drag-move state (Linux) ──────────────────────────────────────────────
-// The renderer's drag handler drives moves through the main process so the math
-// uses screen.getCursorScreenPoint() (authoritative DIP coords) instead of the
-// renderer's screenX/Y, which can drift under fractional scaling. While a move is
-// active we also suppress idle-collapse so the wake-up height animation can't fight
-// the move (that was the "window dances + expands while dragging" bug).
+// ─── JS drag-move state (native Wayland) ─────────────────────────────────────
+// The renderer's drag handler drives moves through the main process. Renderer
+// client coordinates are rebased on the live window position each tick so the
+// window's own movement cannot feed back into the next delta. While a move is
+// active we also suppress idle-collapse so the wake-up height animation can't
+// fight the move (that was the "window dances + expands while dragging" bug).
 let movingActive = false;         // true between overlay:move-start and move-end
-let moveAnchor = null;            // { cursor:{x,y}, win:{x,y} } captured at move-start
+let moveAnchor = null;            // { win:{x,y}, delta:{x,y}, size:{width,height} }
 // ─── Drag-in-progress guard for z-order heartbeat ─────────────────────────────
 // setAlwaysOnTop on a transparent Electron window triggers a DWM recomposition on
 // Windows that causes a visible color flash / dim while the window is being dragged.
@@ -1956,6 +1956,7 @@ function registerForToken(state, clientKey) {
               discordDisplayName: json.data.discordDisplayName || null,
               discordAvatarUrl: json.data.discordAvatarUrl || null,
               steamLinked: !!json.data.steamLinked,
+              steamDisplayName: json.data.steamDisplayName || null,
               username: json.data.username || null,
               // Role field (null for regular users). Added backend v1.3.57.
               userRole: json.data.role || null,
@@ -2386,10 +2387,10 @@ ipcMain.on('overlay:resize-bounds', (_evt, b) => {
   try { setWindowBoundsGuarded(wa); } catch { /* ignore */ }
 });
 
-// WM-independent pointer-drag MOVE (ticket #104). Receives the desired top-left
-// position {x, y} from the renderer (computed from screenX/Y deltas), clamps to
-// the work area, and applies through the same guarded bounds path as every other
-// geometry write. Width/height are kept from the current bounds.
+// WM-independent pointer-drag MOVE (ticket #104). Receives renderer pointer
+// coordinates and computes the desired top-left position, clamps to the work
+// area, and applies through the same guarded bounds path as every other geometry
+// write. Width/height are kept from the captured drag-start bounds.
 // isDragging is already set by the 'will-move' event on WM-driven moves; for the
 // pointer-drag path we don't need to toggle it separately because this IPC fires
 // at pointer-move frequency (not on every frame). The z-order heartbeat skips
@@ -2405,12 +2406,12 @@ ipcMain.on('overlay:move-bounds', (_evt, pos) => {
 });
 
 // ─── Main-process drag-move (Linux) ──────────────────────────────────────────
-  // Renderer sends move-start on pointerdown, move-tick on each pointermove, and
-  // move-end on pointerup. We read the cursor from screen.getCursorScreenPoint()
-  // (authoritative DIP, consistent with getBounds/setBounds) instead of trusting
-  // the renderer's screenX/Y, which can drift under fractional scaling and make the
-  // window jitter ("dance"). The guarded bounds call changes position only here, so
-  // width/height never change.
+// Renderer sends move-start on pointerdown and movementX/Y deltas on each
+// pointermove. Deltas remain valid while the window itself moves, unlike
+// clientX/clientY (which are window-relative) or screenX/screenY (which can use
+// a different scale space from getBounds/setBounds on mixed-DPI Linux). This
+// also works when native Wayland reports an unusable (0, 0) cursor position.
+// The guarded bounds call changes position only here, so width/height never change.
 ipcMain.on('overlay:move-start', () => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   movingActive = true;
@@ -2433,28 +2434,33 @@ ipcMain.on('overlay:move-start', () => {
     sendToRenderer('overlay:force-expand', true); // sync the renderer's collapsed state
   }
   try {
-    const c = screen.getCursorScreenPoint();
     const b = mainWindow.getBounds();
     // Capture the size ONCE at drag-start. On XWayland fractional scaling (mixed-DPI
     // KDE setups) the per-tick move feeds geometry back through KWin's scale and the
     // frameless window GROWS on every move event. We pin this captured size on every
     // tick (below) so the size can't compound — never re-reading getBounds() mid-drag.
-    moveAnchor = { cursor: { x: c.x, y: c.y }, win: { x: b.x, y: b.y }, size: { width: b.width, height: b.height } };
+    moveAnchor = {
+      win: { x: b.x, y: b.y },
+      delta: { x: 0, y: 0 },
+      size: { width: b.width, height: b.height },
+    };
   } catch { moveAnchor = null; }
   diag('[move] start anchor=' + JSON.stringify(moveAnchor));
 });
-ipcMain.on('overlay:move-tick', () => {
+ipcMain.on('overlay:move-tick', (_evt, rendererDelta) => {
   if (!movingActive || !moveAnchor || !mainWindow || mainWindow.isDestroyed()) return;
   try {
-    const c = screen.getCursorScreenPoint();
-    const nx = Math.round(moveAnchor.win.x + (c.x - moveAnchor.cursor.x));
-    const ny = Math.round(moveAnchor.win.y + (c.y - moveAnchor.cursor.y));
+    if (!rendererDelta || !Number.isFinite(rendererDelta.x) || !Number.isFinite(rendererDelta.y)) return;
+    moveAnchor.delta.x += rendererDelta.x;
+    moveAnchor.delta.y += rendererDelta.y;
+    const next = overlayCore.resolveMoveDeltaPosition(moveAnchor.win, moveAnchor.delta);
+    if (!next) return;
     // Use the LOCKED start-size (not getBounds, which may already be inflated by the
     // XWayland scaling feedback) and command it explicitly via setBounds so the window
     // is re-pinned to its real size every tick — position-only writes let it grow on KDE
     // fractional-scaled XWayland.
     const w = moveAnchor.size.width, h = moveAnchor.size.height;
-    const wa = clampToWorkArea({ x: nx, y: ny, width: w, height: h });
+    const wa = clampToWorkArea({ x: next.x, y: next.y, width: w, height: h });
     setWindowBoundsGuarded({ x: wa.x, y: wa.y, width: w, height: h });
   } catch { /* ignore */ }
 });
@@ -2921,6 +2927,7 @@ function refreshDiscordStatus(attempt = 0) {
                   discordDisplayName: r.discordDisplayName || '',
                   discordAvatarUrl: r.discordAvatarUrl || d.discordAvatarUrl || null,
                   steamLinked: !!r.steamLinked,
+                  steamDisplayName: r.steamDisplayName || null,
                   username: r.username || fo76 || '',
                   role: r.userRole || null,
                   avatarUrl: r.avatarUrl || loadState()?.avatarUrl || null,
@@ -3103,8 +3110,8 @@ function refreshSteamStatus(attempt = 0) {
           const d = json?.data || {};
           const linked = !!(d.steamLinked ?? d.linked);
           const wasLinked = !!st.steamLinked;
-          saveState({ steamLinked: linked });
-          sendToRenderer('relay:steam-status', { linked, steamLinked: linked });
+          saveState({ steamLinked: linked, steamDisplayName: linked ? (d.steamDisplayName || '') : '' });
+          sendToRenderer('relay:steam-status', { linked, steamLinked: linked, steamDisplayName: d.steamDisplayName || '' });
 
           if (linked && (!wasLinked || (providerLoginRequested && !sessionToken))) {
             if (d.displayName) saveState({ displayName: d.displayName });
@@ -3121,6 +3128,7 @@ function refreshSteamStatus(attempt = 0) {
                   discordLinked: !!r.discordLinked,
                   discordName: r.discordName || '',
                   steamLinked: !!r.steamLinked,
+                  steamDisplayName: r.steamDisplayName || null,
                 });
                 if (r.username != null) saveState({ username: r.username });
                 if (r.discordAvatarUrl != null) saveState({ discordAvatarUrl: r.discordAvatarUrl || '' });
@@ -3138,6 +3146,7 @@ function refreshSteamStatus(attempt = 0) {
                   discordDisplayName: r.discordDisplayName || '',
                   discordAvatarUrl: r.discordAvatarUrl || null,
                   steamLinked: !!r.steamLinked,
+                  steamDisplayName: r.steamDisplayName || null,
                   username: r.username || '',
                   role: r.userRole || null,
                   avatarUrl: r.avatarUrl || loadState()?.avatarUrl || null,
@@ -3183,14 +3192,14 @@ ipcMain.handle('identity:set-name', async (_evt, rawName) => {
   // installToken }; the backend upserts by installToken so this RENAMES the row.
   const renameState = { ...st, username: name };
   try {
-    const { token, displayName, discordLinked, discordName, discordUsername, discordDisplayName, discordAvatarUrl, steamLinked, username: savedUsername, userRole: renameRole, avatarUrl: renameAvatarUrl } =
+    const { token, displayName, discordLinked, discordName, discordUsername, discordDisplayName, discordAvatarUrl, steamLinked, steamDisplayName, username: savedUsername, userRole: renameRole, avatarUrl: renameAvatarUrl } =
       await registerForToken(renameState, clientKey);
     sessionToken = token;
     flushPendingWsOpens();
     // Persist the new username + resolved display name so future launches use it.
     saveState({ username: name, displayName: displayName || name });
     saveState({ discordLinked: !!discordLinked, discordName: discordName || '' });
-    saveState({ steamLinked: !!steamLinked });
+    saveState({ steamLinked: !!steamLinked, steamDisplayName: steamDisplayName || '' });
     if (discordUsername != null) saveState({ discordUsername: discordUsername || '' });
     if (discordDisplayName != null) saveState({ discordDisplayName: discordDisplayName || '' });
     if (discordAvatarUrl != null) saveState({ discordAvatarUrl: discordAvatarUrl || '' });
@@ -3211,6 +3220,7 @@ ipcMain.handle('identity:set-name', async (_evt, rawName) => {
       discordDisplayName: discordDisplayName || '',
       discordAvatarUrl: discordAvatarUrl || null,
       steamLinked: !!steamLinked,
+      steamDisplayName: steamDisplayName || null,
       username: savedUsername || name,
       role: renameRole || null,
       avatarUrl: renameAvatarUrl || loadState()?.avatarUrl || null,
@@ -3336,7 +3346,7 @@ async function startRelay(retryCount = 0) {
     return;
   }
   try {
-    const { token, userId: regUserId, displayName, discordLinked, discordName, discordUsername, discordDisplayName, discordAvatarUrl, steamLinked, username: regUsername, userRole: role, avatarUrl: regAvatarUrl } = await registerForToken(loadState(), clientKey);
+    const { token, userId: regUserId, displayName, discordLinked, discordName, discordUsername, discordDisplayName, discordAvatarUrl, steamLinked, steamDisplayName, username: regUsername, userRole: role, avatarUrl: regAvatarUrl } = await registerForToken(loadState(), clientKey);
     if (requestGeneration !== authGeneration) return;
     sessionToken = token;
     providerLoginRequested = false;
@@ -3347,7 +3357,7 @@ async function startRelay(retryCount = 0) {
     if (displayName) saveState({ displayName });
     // Persist real provider link state so it survives a renderer reload.
     saveState({ discordLinked: !!discordLinked, discordName: discordName || '' });
-    saveState({ steamLinked: !!steamLinked });
+    saveState({ steamLinked: !!steamLinked, steamDisplayName: steamDisplayName || '' });
     if (discordUsername != null) saveState({ discordUsername: discordUsername || '' });
     if (discordDisplayName != null) saveState({ discordDisplayName: discordDisplayName || '' });
     if (discordAvatarUrl != null) saveState({ discordAvatarUrl: discordAvatarUrl || '' });
@@ -3372,6 +3382,7 @@ async function startRelay(retryCount = 0) {
       discordDisplayName: discordDisplayName || '',
       discordAvatarUrl: discordAvatarUrl || null,
       steamLinked: !!steamLinked,
+      steamDisplayName: steamDisplayName || null,
       username: regUsername || '',
       role: role || null,
       userId: regUserId || null,

@@ -359,7 +359,7 @@ function Shell() {
   useEffect(() => {
     // Wait until the main process has registered + has a session token before
     // mounting the component (so its first /api/channels + WS calls succeed).
-    window.relayBridge.onStatus((s: { state: string; message?: string; displayName?: string; discordLinked?: boolean; discordName?: string; steamLinked?: boolean; role?: string | null; avatarUrl?: string | null; username?: string | null; userId?: string | null }) => {
+    window.relayBridge.onStatus((s: { state: string; message?: string; displayName?: string; discordLinked?: boolean; discordName?: string; steamLinked?: boolean; steamDisplayName?: string; role?: string | null; avatarUrl?: string | null; username?: string | null; userId?: string | null }) => {
       if (s.state === 'authenticated') {
         // Reactively update the signed-in user so ChatOverlay's mod-control gating
         // (user.role ∈ {owner, admin, moderator}) reflects the real backend role.
@@ -382,7 +382,8 @@ function Shell() {
             const current = raw ? { ...DEFAULT_SHELL_SETTINGS, ...JSON.parse(raw) } : { ...DEFAULT_SHELL_SETTINGS };
             const patch: Record<string, unknown> = {};
             // Only set fo76Name if blank — don't overwrite a user-set name.
-            if (s.displayName && !current.fo76Name) patch.fo76Name = s.displayName;
+            if (s.username && !current.fo76Name) patch.fo76Name = s.username;
+            if (s.displayName) patch.resolvedDisplayName = s.displayName;
             // Always overwrite provider state from the authoritative backend
             // response — this corrects the "Not linked on first launch" bug.
             if (s.discordLinked != null) {
@@ -390,6 +391,7 @@ function Shell() {
               patch.discordName = s.discordName || '';
             }
             if (s.steamLinked != null) patch.steamLinked = !!s.steamLinked;
+            if (s.steamDisplayName != null) patch.steamDisplayName = s.steamDisplayName;
             if (Object.keys(patch).length > 0) {
               localStorage.setItem(SHELL_KEY, JSON.stringify({ ...current, ...patch }));
             }

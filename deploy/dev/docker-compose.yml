@@ -168,6 +168,7 @@ services:
       # Steam OpenID must return to this hosted-DEV origin. These are also
       # stored in the Dokploy Compose environment so the callback remains
       # correct when the forwarded Host header is unavailable.
+      STEAM_WEB_API_KEY: ${STEAM_WEB_API_KEY:-}
       STEAM_OPENID_REALM: ${STEAM_OPENID_REALM:-https://dev.falloutchatmod.com/}
       STEAM_OPENID_RETURN_URI: ${STEAM_OPENID_RETURN_URI:-https://dev.falloutchatmod.com/auth/steam/callback}
 

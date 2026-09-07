@@ -120,7 +120,7 @@ export async function searchUsersToBlock(req: Request, res: Response, next: Next
         username: true,
         discordId: true,
         discordUsername: true,
-        discordDisplayName: true,
+        discordDisplayName: true, steamDisplayName: true,
         installToken: true,
       },
       take: 8,

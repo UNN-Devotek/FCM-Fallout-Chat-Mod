@@ -49,7 +49,7 @@ export async function setChatName(input: {
       chatName: true,
       username: true,
       discordUsername: true,
-      discordDisplayName: true,
+      discordDisplayName: true, steamDisplayName: true,
       installToken: true,
       discordId: true,
     },
@@ -80,7 +80,7 @@ export async function setChatName(input: {
       chatName: true,
       username: true,
       discordUsername: true,
-      discordDisplayName: true,
+      discordDisplayName: true, steamDisplayName: true,
       installToken: true,
       discordId: true,
     },
@@ -110,6 +110,7 @@ export async function setChatName(input: {
       updated.discordDisplayName,
       updated.installToken,
       updated.chatName,
+      updated.steamDisplayName,
     );
   } catch (err) {
     logger.warn({ err, userId: updated.id }, '[chatName] live identity push failed (non-fatal)');

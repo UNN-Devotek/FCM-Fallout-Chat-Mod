@@ -152,7 +152,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.59"; // General SERVER feed and PipBoy editor handoff
+    static inline var VERSION:String  = "2.10.60"; // Steam or Discord linking instructions
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -4414,7 +4414,7 @@ class FCMChatWidget extends MovieClip {
             '<font face="' + FONT_BOLD + '" color="' + hx(_cfg.tabActiveColor) + '"><b>LINK YOUR ACCOUNT TO CHAT</b></font><br/>'
             + '<font color="' + hx(_cfg.textColor) + '">'
             + '1) Open ' + url + ' in a web browser<br/>'
-            + '2) Sign in with Discord<br/>'
+            + '2) Sign in with Steam or Discord<br/>'
             + '3) Enter this code:</font> ';
         if (code.length > 0) {
             s += '<font face="' + FONT_BOLD + '" size="' + (_cfg.fontSize + 2)

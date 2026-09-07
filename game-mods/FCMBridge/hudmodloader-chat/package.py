@@ -142,7 +142,7 @@ The relay endpoint is:
   {config['endpoint']}
 
 When the in-game widget shows a fresh 8-character code, open the link above,
-sign in with Discord, enter the code, and return to the game. Codes expire after
+sign in with Steam or Discord, enter the code, and return to the game. Codes expire after
 10 minutes; reconnect the widget to request a new code if needed.
 
 HUD input and commands:

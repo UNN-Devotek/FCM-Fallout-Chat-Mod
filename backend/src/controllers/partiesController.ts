@@ -480,7 +480,7 @@ export async function listInvites(req: Request, res: Response, next: NextFunctio
       where: { inviteeId: callerId, status: 'pending' },
       include: {
         party: { select: { name: true } },
-        inviter: { select: { username: true, discordUsername: true, discordDisplayName: true, installToken: true } },
+        inviter: { select: { username: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, installToken: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -665,7 +665,7 @@ export async function getPartyMembers(req: Request, res: Response, next: NextFun
     const members = await prisma.partyMember.findMany({
       where: { partyId },
       include: {
-        user: { select: { id: true, username: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true } },
+        user: { select: { id: true, username: true, discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, installToken: true } },
       },
     });
 
@@ -901,7 +901,7 @@ export async function inviteToParty(req: Request, res: Response, next: NextFunct
     const { resolveDisplayName } = importHandlers();
     const inviterUser = await prisma.user.findUnique({
       where: { id: callerId },
-      select: { username: true, discordUsername: true, discordDisplayName: true, installToken: true },
+      select: { username: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, installToken: true },
     });
     const inviterName = inviterUser ? resolveDisplayName(inviterUser) : 'Someone';
 
@@ -976,7 +976,7 @@ export async function inviteSearch(req: Request, res: Response, next: NextFuncti
           ],
         }),
       },
-      select: { id: true, username: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true },
+      select: { id: true, username: true, discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, installToken: true },
       take: 8,
     });
 
@@ -1081,7 +1081,7 @@ export async function invitePublic(req: Request, res: Response, next: NextFuncti
     const { resolveDisplayName, broadcast } = importHandlers();
     const inviterUser = await prisma.user.findUnique({
       where: { id: callerId },
-      select: { username: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true },
+      select: { username: true, discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, installToken: true },
     });
     const inviterName = inviterUser ? resolveDisplayName(inviterUser) : 'Someone';
     const inviterAvatarUrl = buildAvatarUrl(inviterUser?.discordId ?? null);
@@ -1502,7 +1502,7 @@ async function emitMemberUpdate(partyId: string): Promise<void> {
     const members = await prisma.partyMember.findMany({
       where: { partyId },
       include: {
-        user: { select: { id: true, username: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true } },
+        user: { select: { id: true, username: true, discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, installToken: true } },
       },
     });
     const { resolveDisplayName, broadcastToPartyMembers } = importHandlers();

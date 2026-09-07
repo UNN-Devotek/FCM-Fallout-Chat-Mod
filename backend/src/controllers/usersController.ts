@@ -12,7 +12,7 @@ import { constantTimeEquals } from '../utils/constantTimeEquals';
 import { SHORT_ALPHA_BLACKLIST, LOOKS_LIKE_PROVIDER, LOOKS_LIKE_CAMELCASE_METHOD } from '../utils/nameBlacklist';
 import { setSpamImmunity, findProhibitedPhrase } from '../services/autoModService';
 import { buildAvatarUrl } from '../services/avatarService';
-import { refreshClientIdentity } from '../websocket/handlers';
+import { refreshClientIdentity, resolveDisplayName } from '../websocket/handlers';
 import { mergeUserInto } from '../utils/mergeUser';
 import { setChatName } from '../services/chatNameService';
 import { refreshSupporterFromDiscord } from '../services/supporterSyncService';
@@ -107,7 +107,7 @@ export async function mentionSearch(req: Request, res: Response, next: NextFunct
           ],
         }),
       },
-      select: { chatName: true, username: true, discordUsername: true, discordDisplayName: true, discordId: true },
+      select: { chatName: true, username: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, discordId: true },
       take: 8,
     });
     const seen = new Set<string>();
@@ -473,7 +473,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
         installToken,
         ...safePatch,
       },
-      select: { id: true, username: true, chatName: true, isBanned: true, discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true, steamId: true },
+      select: { id: true, username: true, chatName: true, isBanned: true, discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, discordAvatar: true, steamId: true },
     });
 
     // Record previous username in alias history when it changes to a new real name.
@@ -563,7 +563,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
     // register call — the WS refresh is a nice-to-have, not a hard dep.
     try {
       if (typeof refreshClientIdentity === 'function') {
-        const touched = refreshClientIdentity(user.id, user.username, user.discordUsername, user.discordDisplayName, installToken, user.chatName);
+        const touched = refreshClientIdentity(user.id, user.username, user.discordUsername, user.discordDisplayName, installToken, user.chatName, user.steamDisplayName);
         if (touched > 0) {
           logger.info({ userId: user.id, username: user.username, touched }, '[register] refreshed WS identity cache');
         }
@@ -587,7 +587,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
 
     // Discriminator returned for back-compat but no longer appended to displayed names.
     const discriminator = computeDiscriminator(installToken);
-    const displayName = username;
+    const displayName = resolveDisplayName({ ...user, installToken });
 
     // Issue a new session token
     const token = uuidv4();
@@ -633,6 +633,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
         username: fo76Username,       // FO76 in-game name, or null if still a placeholder
         discordLinked: !!user.discordId,
         steamLinked: isValidSteamId(user.steamId),
+        steamDisplayName: user.steamDisplayName ?? null,
         discordUsername: user.discordUsername ?? null,
         discordDisplayName: user.discordDisplayName ?? null,
         discordAvatarUrl,             // Discord CDN avatar URL, or null
@@ -702,7 +703,7 @@ async function getUserProfile(req: Request, res: Response, next: NextFunction): 
       where,
       select: {
         id: true, username: true, chatName: true, createdAt: true,
-        discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true,
+        discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, discordAvatar: true,
         isBanned: true, isMuted: true, muteExpiresAt: true,
       },
     });

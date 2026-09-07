@@ -33,6 +33,7 @@ interface RelayBridge {
     discordDisplayName?: string;
     discordAvatarUrl?: string | null;
     steamLinked?: boolean;
+    steamDisplayName?: string;
     username?: string;
   }) => void): void;
   onClickThrough(cb: (on: boolean) => void): void;
@@ -62,11 +63,10 @@ interface RelayBridge {
   /** WM-independent pointer-drag MOVE (ticket #104). Sends the desired window
    *  top-left {x,y}; main clamps to work area and applies setPosition. */
   moveBounds?(pos: { x: number; y: number }): void;
-  /** Main-process drag-move (Linux): main reads the cursor via
-   *  getCursorScreenPoint() so coords stay in DIP and never drift. Renderer just
-   *  signals the gesture — start on pointerdown, tick on each move, end on up. */
+  /** Main-process drag-move (Linux): main uses renderer screen coordinates for
+   *  consistent mixed-DPI scaling and falls back to the OS cursor when absent. */
   moveStart?(): void;
-  moveTick?(): void;
+  moveTick?(delta?: { x: number; y: number }): void;
   moveEnd?(): void;
   setWindowOpacity?(v: number): void;
   linkDiscord?(): void;
@@ -83,7 +83,7 @@ interface RelayBridge {
   onDiscordStatus?(cb: (status: { linked: boolean; discordName: string }) => void): void;
   /** Steam OpenID link/status refresh for the desktop install. */
   refreshSteamStatus?(): void;
-  onSteamStatus?(cb: (status: { linked: boolean; steamLinked?: boolean }) => void): void;
+  onSteamStatus?(cb: (status: { linked: boolean; steamLinked?: boolean; steamDisplayName?: string }) => void): void;
   /** Show the OS right-click context menu on the chat input (cut/copy/paste/select-all). */
   showInputContextMenu?(x?: number, y?: number): void;
   /** Return focus to Fallout 76 after sending a message. Blurs the overlay window. */

@@ -503,7 +503,7 @@ router.delete('/provider/:provider', requireAuth, async (req: Request, res: Resp
       });
       if (!isValidSteamId(user?.steamId)) return next(createError(404, 'Steam identity not linked.'));
       const otherIdentities = await prisma.linkedIdentity.count({ where: { userId } });
-      await prisma.user.update({ where: { id: userId }, data: { steamId: null } });
+      await prisma.user.update({ where: { id: userId }, data: { steamId: null, steamDisplayName: null } });
 
       const loggedOut = !user.discordId && otherIdentities < 1;
       if (loggedOut) {

@@ -19,12 +19,29 @@ const {
   classifyInputGrab,
   filterProxyHeaders,
   resolveRelayProxyUrl,
+  resolveMoveDeltaPosition,
   DEFAULT_APP_CLIENT_KEY,
   DEFAULT_WIDTH,
   DEFAULT_HEIGHT,
   MIN_WIDTH,
   MIN_HEIGHT,
 } = core;
+
+describe('resolveMoveDeltaPosition', () => {
+  it('accumulates renderer movement deltas from the drag-start bounds', () => {
+    expect(resolveMoveDeltaPosition(
+      { x: 100, y: 50 },
+      { x: 37, y: 19 },
+    )).toEqual({ x: 137, y: 69 });
+  });
+
+  it('rejects incomplete coordinates', () => {
+    expect(resolveMoveDeltaPosition(
+      { x: 150, y: 80 },
+      null,
+    )).toBeNull();
+  });
+});
 
 // A throwing fs stub (no files exist).
 const fsMissing = {
@@ -83,6 +100,7 @@ describe('buildSteamUnlinkStatePatch', () => {
   it('clears Steam-only identity state without clearing Discord state', () => {
     expect(buildSteamUnlinkStatePatch()).toEqual({
       steamLinked: false,
+      steamDisplayName: '',
       avatarUrl: '',
       userRole: null,
     });

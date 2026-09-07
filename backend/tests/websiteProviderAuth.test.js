@@ -149,3 +149,16 @@ test('Steam profile can change only its own chat name', async () => {
   expect((await request(app).patch(`/api/users/${id}/chat-name`).send({ chatName: 'Dweller' })).status).toBe(200);
   expect((await request(app).patch('/api/users/123e4567-e89b-12d3-a456-426614174001/chat-name').send({ chatName: 'Dweller' })).status).toBe(403);
 });
+
+
+test.each([
+  [{ username: 'pending-install', steamDisplayName: 'Steam Dweller' }, 'Steam Dweller'],
+  [{ username: 'Chosen Name', steamDisplayName: 'Steam Dweller' }, 'Chosen Name'],
+  [{ username: 'pending-install', chatName: 'Chat Name', steamDisplayName: 'Steam Dweller' }, 'Chat Name'],
+  [{ username: 'pending-install', steamDisplayName: null }, 'Wanderer'],
+])('Steam account display name respects explicit names and safe fallback: %j', async (identity, expected) => {
+  prismaStub.user.findFirst.mockResolvedValueOnce({ id: 'account-a', isBanned: false, ...identity });
+  const response = await request(app).get('/auth/me');
+  expect(response.status).toBe(200);
+  expect(response.body.data.username).toBe(expected);
+});

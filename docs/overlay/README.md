@@ -262,3 +262,8 @@ backend never checks it (`QA_BUILD_LOCK` defaults to false in production).
 - Window management: `window-management.md`
 - In-game HUD chat (separate opt-in `.ba2` track): `zfe/README.md` — ZFE `chat.v1` works on native
   Windows (0.9.9+) but is Proton/Wine-blocked (#326), so this desktop overlay stays the Linux chat path.
+
+Onboarding accepts either Steam or Discord. The in-game name field is optional: leaving it
+blank uses the linked Steam display name (when the backend profile lookup is configured),
+then Discord, then `Wanderer`. A provider default is not saved as a custom in-game name.
+HUD linking instructions likewise offer Steam or Discord at `/link`.

@@ -122,6 +122,7 @@ import {
   STEAM_OPENID_ENDPOINT,
   validateSteamAssertion,
 } from './services/steamAuthService';
+import { fetchSteamDisplayName } from './services/steamProfileService';
 import { resolveSteamLinkTarget, type SteamLinkAccount } from './services/steamAccountLinkService';
 import {
   DEV_PRIVILEGED_ROLES,
@@ -751,7 +752,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
     // discordId is now the canonical identity anchor — if ANY row owns it we merge into it.
     const existingAccount = await prisma.user.findFirst({
       where: { discordId: discordUser.id, NOT: { installToken } },
-      select: { id: true, username: true, chatName: true },
+      select: { id: true, username: true, chatName: true, steamDisplayName: true },
     });
 
     if (existingAccount) {
@@ -780,6 +781,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
           discordDisplayName,
           installToken,
           existingAccount.chatName,
+          existingAccount.steamDisplayName,
         );
       } catch (err) {
         logger.warn({ err, userId: existingAccount.id }, 'Discord link reclaim: refreshClientIdentity failed (non-fatal)');
@@ -853,7 +855,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
         discordDisplayName,
         discordAuthedAt: new Date(),
       },
-      select: { id: true, username: true, chatName: true },
+      select: { id: true, username: true, chatName: true, steamDisplayName: true },
     });
 
     // Push updated identity to any open WS sessions so rendered names update live.
@@ -865,6 +867,7 @@ app.get('/auth/discord/link/callback', authLimiter, async (req: Request, res: Re
         discordDisplayName,
         installToken,
         linkedUser.chatName,
+        linkedUser.steamDisplayName,
       );
     } catch (err) {
       logger.warn({ err, userId: linkedUser.id }, 'Discord link: refreshClientIdentity failed (non-fatal)');
@@ -918,7 +921,7 @@ app.get('/api/auth/discord-status/:installToken', async (req: Request, res: Resp
     // clobbering it with a stale local placeholder name.
     const user = await prisma.user.findUnique({
       where: { installToken },
-      select: { id: true, username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true, installToken: true },
+      select: { id: true, username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, discordAvatar: true, installToken: true },
     });
     if (user?.discordId) {
       // Focus/login refreshes reach this endpoint even when the link itself did
@@ -1177,6 +1180,8 @@ app.get('/auth/steam/callback', authLimiter, async (req: Request, res: Response)
       return;
     }
 
+    const steamDisplayName = await fetchSteamDisplayName(steamId);
+
     if (installToken) {
       const installAccountRow = await prisma.user.findUnique({
         where: { installToken },
@@ -1246,12 +1251,13 @@ app.get('/auth/steam/callback', authLimiter, async (req: Request, res: Response)
         }
       });
 
+      if (steamDisplayName) await prisma.user.update({ where: { id: targetId! }, data: { steamDisplayName } });
       const target = await prisma.user.findUnique({
         where: { id: targetId! },
-        select: { id: true, username: true, chatName: true, discordUsername: true, discordDisplayName: true },
+        select: { id: true, username: true, chatName: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true },
       });
       if (target) {
-        refreshClientIdentity(target.id, target.username, target.discordUsername, target.discordDisplayName, installToken, target.chatName);
+        refreshClientIdentity(target.id, target.username, target.discordUsername, target.discordDisplayName, installToken, target.chatName, target.steamDisplayName);
       }
       const redis = await getRedisClient();
       await redis.set(`steam_link:${installToken}`, JSON.stringify({ linked: true, steamLinked: true }), { EX: 600 });
@@ -1349,6 +1355,7 @@ app.get('/auth/steam/callback', authLimiter, async (req: Request, res: Response)
       }
     });
 
+    if (steamDisplayName) await prisma.user.update({ where: { id: userId! }, data: { steamDisplayName } });
     sess.steamUser = { steamId, userId };
     await new Promise<void>((resolve, reject) => {
       req.session.save((err) => (err ? reject(err) : resolve()));
@@ -1368,11 +1375,11 @@ app.get('/api/auth/steam-status/:installToken', async (req: Request, res: Respon
   try {
     const user = await prisma.user.findUnique({
       where: { installToken },
-      select: { steamId: true, username: true, chatName: true, discordUsername: true, discordDisplayName: true, installToken: true },
+      select: { steamId: true, username: true, chatName: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, installToken: true },
     });
     const linked = isValidSteamId(user?.steamId);
     const displayName = user ? resolveDisplayName(user) : null;
-    res.json({ data: { linked, steamLinked: linked, displayName } });
+    res.json({ data: { linked, steamLinked: linked, steamDisplayName: user?.steamDisplayName ?? null, displayName } });
   } catch (err) {
     logger.error({ err }, 'Failed to check steam-status');
     res.status(500).json({ data: { linked: false, steamLinked: false } });
@@ -1675,11 +1682,11 @@ app.get('/auth/me', apiLimiter, async (req: Request, res: Response) => {
     const steamId = (req.session as any)?.steamUser?.steamId;
     if (!isValidSteamId(steamId)) { res.status(401).json({ data: null }); return; }
     const row = await prisma.user.findFirst({ where: { steamId },
-      select: { id: true, username: true, chatName: true, isBanned: true, bannedUntil: true } });
+      select: { id: true, username: true, chatName: true, steamDisplayName: true, isBanned: true, bannedUntil: true } });
     if (!row || (row.isBanned && (!row.bannedUntil || row.bannedUntil.getTime() > Date.now()))) {
       res.status(401).json({ data: null }); return;
     }
-    res.json({ data: { id: row.id, username: row.chatName || row.username, role: 'member', avatarUrl: '/avatars/default' } });
+    res.json({ data: { id: row.id, username: resolveDisplayName({ ...row, discordUsername: null, installToken: '' }), role: 'member', avatarUrl: '/avatars/default' } });
     return;
   }
 
@@ -1695,7 +1702,7 @@ app.get('/auth/me', apiLimiter, async (req: Request, res: Response) => {
   try {
     const row = await prisma.user.findFirst({
       where: { discordId: sessionUser.id },
-      select: { id: true, username: true, discordDisplayName: true, discordId: true, discordAvatar: true },
+      select: { id: true, username: true, discordDisplayName: true, steamDisplayName: true, discordId: true, discordAvatar: true },
     });
     authDatabaseUser = row ? { id: row.id } : null;
     if (row?.username && row.username.trim() !== '' && row.username !== 'Wanderer' && !row.username.startsWith('discord:')) {
@@ -2075,14 +2082,14 @@ app.post('/admin/debug/set-username', apiLimiter, requireAdminKey, async (req: R
     const updated = await prisma.user.update({
       where: { id: userId },
       data: { username: trimmed },
-      select: { id: true, username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true },
+      select: { id: true, username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, installToken: true },
     });
     // Refresh any live WS session's cached displayName so chat renders the
     // new name instantly without requiring the overlay to reconnect.
     try {
       const { refreshClientIdentity } = require('./websocket/handlers');
       if (typeof refreshClientIdentity === 'function') {
-        refreshClientIdentity(updated.id, updated.username, updated.discordUsername, updated.discordDisplayName, updated.installToken, updated.chatName);
+        refreshClientIdentity(updated.id, updated.username, updated.discordUsername, updated.discordDisplayName, updated.installToken, updated.chatName, updated.steamDisplayName);
       }
     } catch { /* non-fatal */ }
     res.json({ data: updated });
@@ -2119,6 +2126,7 @@ app.post('/admin/debug/merge-users', apiLimiter, requireAdminKey, async (req: Re
     // Copy Discord identity from source → target only if target has none yet
     const patch: any = {};
     if (!target.discordId          && source.discordId)          patch.discordId          = source.discordId;
+    if (!target.steamDisplayName && source.steamDisplayName) patch.steamDisplayName = source.steamDisplayName;
     if (!target.discordUsername    && source.discordUsername)    patch.discordUsername    = source.discordUsername;
     if (!target.discordAvatar      && source.discordAvatar)      patch.discordAvatar      = source.discordAvatar;
     if (!target.discordDisplayName && source.discordDisplayName) patch.discordDisplayName = source.discordDisplayName;
@@ -2133,7 +2141,7 @@ app.post('/admin/debug/merge-users', apiLimiter, requireAdminKey, async (req: Re
     const updated = await prisma.user.update({
       where: { id: targetId },
       data: patch,
-      select: { id: true, username: true, discordId: true, discordUsername: true, discordDisplayName: true },
+      select: { id: true, username: true, discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true },
     });
 
     await prisma.user.delete({ where: { id: sourceId } });
@@ -2190,7 +2198,7 @@ app.get('/auth/me/public', apiLimiter, async (req: Request, res: Response) => {
   try {
     const linked = await prisma.user.findFirst({
       where: { discordId: pub.discordId },
-      select: { username: true, discordDisplayName: true },
+      select: { username: true, discordDisplayName: true, steamDisplayName: true },
     });
     if (linked) {
       const uname = linked.username ?? '';

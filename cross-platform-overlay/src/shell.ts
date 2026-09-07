@@ -59,6 +59,7 @@ export interface ShellSettings {
   discordName: string;
   // Steam OpenID link state; the server stores the verified SteamID64.
   steamLinked: boolean;
+  steamDisplayName: string;
   // Profile fields recalled from the latest relay:status — persist across settings opens.
   discordAvatarUrl: string;    // Discord CDN avatar URL or ''
   discordDisplayName: string;  // Discord display name (may differ from discordName)
@@ -144,6 +145,7 @@ export const DEFAULT_SHELL_SETTINGS: ShellSettings = {
   discordLinked: false,
   discordName: '',
   steamLinked: false,
+  steamDisplayName: '',
   discordAvatarUrl: '',
   discordDisplayName: '',
   discordUsername: '',
@@ -1444,7 +1446,7 @@ function buildSettingsPanel() {
         return;
       }
 
-      commit({ steamLinked: false });
+      commit({ steamLinked: false, steamDisplayName: '' });
       renderSteamStatus();
       renderProfile();
       if (result.loggedOut) closeSettings();
@@ -1455,7 +1457,7 @@ function buildSettingsPanel() {
     hint(s, 'Linking opens Steam in your browser to authorise this install. Return to the overlay and refresh status if it does not update automatically. Unlinking Steam signs you out when it is your only linked provider.');
 
     window.relayBridge.onSteamStatus?.((status) => {
-      commit({ steamLinked: !!(status.steamLinked ?? status.linked) });
+      commit({ steamLinked: !!(status.steamLinked ?? status.linked), steamDisplayName: status.steamDisplayName || '' });
       renderSteamStatus();
       renderProfile();
     });
@@ -1470,6 +1472,7 @@ function buildSettingsPanel() {
       if (s.discordDisplayName) patch.discordDisplayName = s.discordDisplayName;
       if (s.discordAvatarUrl != null) patch.discordAvatarUrl = s.discordAvatarUrl || '';
       if (s.steamLinked != null) patch.steamLinked = !!s.steamLinked;
+      if (s.steamDisplayName != null) patch.steamDisplayName = s.steamDisplayName;
       if (s.username)           patch.fo76Name = s.username;
       if (Object.keys(patch).length) commit(patch);
       renderDiscordStatus();
@@ -2070,9 +2073,9 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
     syncZoneVisibility();
   }
 
-  // ── WM-independent pointer-drag MOVE (Linux/Wayland only) ───────────────────
-  // On KDE Plasma 6 / Wayland, -webkit-app-region:drag is unreliable for frameless
-  // windows. JS pointer-drag via moveStart/moveTick IPC is used instead.
+  // ── WM-independent pointer-drag MOVE (Linux) ────────────────────────────────
+  // On KDE Plasma 6 / Wayland, -webkit-app-region:drag is unreliable for
+  // frameless windows. JS pointer-drag via moveStart/moveTick IPC is used instead.
   //
   // To prevent the WM from starting a competing drag over the same gesture (which
   // caused jitter), a stylesheet forces -webkit-app-region:no-drag !important for
@@ -2080,6 +2083,13 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
   // detection still works. Windows/macOS keep native WM-driven drag; this handler
   // stays off there.
   if (IS_LINUX_RENDERER) {
+    type ShellWindowWithMoveCleanup = Window & { __fcmLinuxMoveCleanup?: () => void };
+    const shellWindow = window as ShellWindowWithMoveCleanup;
+    // React StrictMode and Vite HMR can re-run initShell without reloading the
+    // document. Remove the previous document-level drag listeners first so one
+    // physical gesture cannot be applied twice (which doubles every delta).
+    shellWindow.__fcmLinuxMoveCleanup?.();
+
     // `!important` overrides React's non-important inline webkitAppRegion for the
     // compositor without affecting el.style reads used by isDragTarget.
     const noDragStyle = document.createElement('style');
@@ -2100,8 +2110,12 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
         document.documentElement as unknown as Parameters<typeof isDragTargetCore>[0],
       );
     };
+    // movementX/Y describe the cursor motion since the previous pointer event.
+    // Unlike clientX/Y or screenX/Y, they do not change because the window was
+    // moved by the previous IPC tick.
+    const pointerDelta = (e: PointerEvent) => ({ x: e.movementX, y: e.movementY });
 
-    document.addEventListener('pointerdown', (e: PointerEvent) => {
+    const onMovePointerDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
       if (clickThroughOn) return;
       const modalOpen = !!document.querySelector('#shell-settings-backdrop.open, #shell-onboarding-backdrop.open');
@@ -2120,13 +2134,15 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
       try { window.relayBridge.moveStart?.(); } catch { /* ignore */ }
       e.preventDefault();
       e.stopPropagation();
-    }, true /* capture */);
+    };
+    document.addEventListener('pointerdown', onMovePointerDown, true /* capture */);
 
-    document.addEventListener('pointermove', (e: PointerEvent) => {
+    const onMovePointerMove = (e: PointerEvent) => {
       if (!moveActive) return;
       e.preventDefault();
-      try { window.relayBridge.moveTick?.(); } catch { /* ignore */ }
-    }, true /* capture */);
+      try { window.relayBridge.moveTick?.(pointerDelta(e)); } catch { /* ignore */ }
+    };
+    document.addEventListener('pointermove', onMovePointerMove, true /* capture */);
 
     const endMove = (e: PointerEvent) => {
       if (!moveActive) return;
@@ -2137,6 +2153,18 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
     };
     document.addEventListener('pointerup', endMove, true);
     document.addEventListener('pointercancel', endMove, true);
+
+    const cleanupMove = () => {
+      moveActive = false;
+      moveCaptureEl = null;
+      document.removeEventListener('pointerdown', onMovePointerDown, true);
+      document.removeEventListener('pointermove', onMovePointerMove, true);
+      document.removeEventListener('pointerup', endMove, true);
+      document.removeEventListener('pointercancel', endMove, true);
+      noDragStyle.remove();
+      if (shellWindow.__fcmLinuxMoveCleanup === cleanupMove) shellWindow.__fcmLinuxMoveCleanup = undefined;
+    };
+    shellWindow.__fcmLinuxMoveCleanup = cleanupMove;
   }
 
   // Esc closes the settings panel.

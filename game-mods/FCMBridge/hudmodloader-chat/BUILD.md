@@ -1,9 +1,11 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.59. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.60. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
+
+v2.10.60 updates the unlinked instructions to offer Steam or Discord.
 
 v2.10.59 includes current-room SERVER messages in General, retaining the SERVER label.
 The SERVER tab remains a server-only view. Sending from General still sends to General;
@@ -422,7 +424,7 @@ staff validation on every request; the HUD permission is only a visibility hint.
 
 ## In-game acceptance checklist
 
-1. With HUDModLoader and ZFE or xScal loaded, the startup log identifies `chatv1-widget-v2.10.59`. If
+1. With HUDModLoader and ZFE or xScal loaded, the startup log identifies `chatv1-widget-v2.10.60`. If
    `AccountInfoData` is late, the widget waits and retries. The sender label and a newly sent
    message use the exact public Fallout 76 account handle, including punctuation; neither
    `Wanderer` nor the local character name is used for the relay handshake.

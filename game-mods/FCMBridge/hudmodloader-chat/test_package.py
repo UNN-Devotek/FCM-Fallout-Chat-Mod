@@ -21,6 +21,7 @@ def main() -> None:
     source_chat = (ROOT / "FCMChat.ini").read_text(encoding="utf-8")
     source_widget = (ROOT / "FCMChatWidget.ini").read_text(encoding="utf-8")
     source_hx = (ROOT / "FCMChatWidget.hx").read_text(encoding="utf-8")
+    assert '2) Sign in with Steam or Discord<br/>' in source_hx
     version_match = re.search(
         r'static inline var VERSION:String\s*=\s*"([^"]+)"', source_hx
     )

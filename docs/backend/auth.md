@@ -122,7 +122,7 @@ Discord-derived state, expands/shows the window, and displays the provider login
 FCM user row and Discord-keyed supporter/admin entitlements are retained.
 
 Settings → Steam → **UNLINK** calls the same provider endpoint. If Discord or another linked
-provider remains, only `steam_id` is cleared and the active session stays valid. If Steam was the
+provider remains, `steam_id` and its cached `steam_display_name` are cleared and the active session stays valid. If Steam was the
 last provider, the backend clears `steam_id`, revokes the active session, evicts live relay
 subscribers, returns `loggedOut: true`, and the overlay returns to the provider login wall.
 
@@ -201,7 +201,18 @@ forwarded headers. Use the matching origin for each Dokploy Compose service:
 | Production (`Fallout Chat Mod`) | `https://falloutchatmod.com/` | `https://falloutchatmod.com/auth/steam/callback` |
 
 The Compose files explicitly forward these variables to the backend. A Steam Web API key is not
-used by the OpenID sign-in flow.
+used by the OpenID sign-in flow. Set `STEAM_WEB_API_KEY` in the backend deployment environment
+(and recreate the backend container) to enable display-name lookup. Keep this secret server-side;
+never put it in the overlay, HUD package, or a `VITE_*` variable.
+After verified OpenID authentication, the backend queries Steam `GetPlayerSummaries/v2` for the
+verified Steam ID and stores its sanitized `personaname` in `users.steam_display_name`.
+The request times out after five seconds; missing keys or API failures do not block sign-in
+and do not erase a previously cached name. A subsequent Steam sign-in refreshes the cache.
+Apply migration `20260907190000_add_steam_display_name` before running the updated backend.
+
+When onboarding's name is blank, chat uses the Steam display name, falling back to Discord
+and then `Wanderer` if unavailable. Explicit chat names and existing in-game names take
+precedence. Provider names are display labels, not unique account identifiers.
 
 ---
 

@@ -223,7 +223,7 @@ describe('DELETE /api/link/provider/steam', () => {
     expect(res.body.data).toEqual({ success: true, loggedOut: true });
     expect(prismaStub.user.update).toHaveBeenCalledWith({
       where: { id: 'steam-user' },
-      data: { steamId: null },
+      data: { steamId: null, steamDisplayName: null },
     });
     expect(mockRedis.del).toHaveBeenCalledWith('steam_link:123e4567-e89b-12d3-a456-426614174002');
     expect(mockRedis.del).toHaveBeenCalledWith('session:steam-session-token');
