@@ -31,7 +31,10 @@ describe('LinkPage', () => {
     renderPage();
     await waitFor(() => {
       expect(screen.getAllByText(/SIGN IN WITH DISCORD/i).length).toBeGreaterThan(0);
-      expect(screen.getByText(/SIGN IN WITH STEAM/i)).toBeInTheDocument();
+      const steamLink = screen.getByRole('link', { name: 'SIGN IN WITH STEAM' });
+      expect(steamLink).toHaveAttribute('href', '/auth/steam?intent=link');
+      expect(steamLink.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+      expect(steamLink.querySelector('svg path')).toBeInTheDocument();
     });
   });
 

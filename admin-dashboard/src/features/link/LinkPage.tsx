@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import SteamLogo from '../../components/SteamLogo';
 import { useSearchParams } from 'react-router';
 
 type PageState =
@@ -335,7 +336,7 @@ export default function LinkPage() {
               )}
 
               <a href="/auth/steam?intent=link" style={steamBtnStyle}>
-                <span aria-hidden="true" style={{ fontSize: '16px' }}>◈</span>
+                <SteamLogo />
                 SIGN IN WITH STEAM
               </a>
 
