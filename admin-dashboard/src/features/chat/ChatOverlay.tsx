@@ -1587,6 +1587,8 @@ export function nameCosmeticProps(
     textAlpha: number;
     textOutline: string;
     glowEnabled: boolean;
+    /** Overlay chrome alpha; effect outlines get lighter as the background fades. */
+    chromeBgAlpha?: number;
   },
   displayName: string,
 ): { className: string; style: React.CSSProperties; dataName?: string } {
@@ -1620,10 +1622,24 @@ export function nameCosmeticProps(
       // No inline textShadow — the effect class composes it with the outline below.
       ['--fcm-name-color' as string]: color,
       ['--fcm-name-outline' as string]: theme.textOutline,
+      ['--fcm-name-effect-outline' as string]: nameEffectOutline(theme.textAlpha, theme.chromeBgAlpha),
       ...nameEffectMotion(effect, messageKey),
     } as React.CSSProperties,
     dataName: displayName,
   };
+}
+
+/**
+ * Keep animated names readable without turning into black blobs on a transparent
+ * game overlay. The regular chat outline is intentionally dense for static UI text;
+ * effects add their own glow/colour layers, so they use a smaller adaptive halo.
+ */
+export function nameEffectOutline(textAlpha: number, chromeBgAlpha = 1): string {
+  const safeTextAlpha = Math.max(0, Math.min(1, textAlpha));
+  const safeChromeAlpha = Math.max(0, Math.min(1, chromeBgAlpha));
+  const tightAlpha = (0.18 + 0.42 * safeChromeAlpha) * safeTextAlpha;
+  const softAlpha = tightAlpha * 0.58;
+  return `0 0 1px rgba(0,0,0,${tightAlpha.toFixed(3)}), 0 0 2px rgba(0,0,0,${softAlpha.toFixed(3)})`;
 }
 
 /** Whether an authenticated user may be offered the self-edit action. */
@@ -8574,7 +8590,7 @@ export default function ChatOverlay() {
                         // than on a shared ancestor because the feed rows are the only
                         // element this component reliably owns on all three surfaces.
                         const motionOff = settings.disableNameMotion ? ' fcm-no-name-motion' : '';
-                        const fx = nameCosmeticProps(msg, { primaryText, primaryColor, textAlpha, textOutline, glowEnabled }, displayName);
+                        const fx = nameCosmeticProps(msg, { primaryText, primaryColor, textAlpha, textOutline, glowEnabled, chromeBgAlpha }, displayName);
                         fx.className = fx.className ? fx.className + motionOff : fx.className;
                         const tagEl = msg.tag ? <span className="fcm-name-tag" style={{ color: msg.nameColor || primaryText }}>[{msg.tag}]</span> : null;
                         const badge = supporterBadge(msg.badges);

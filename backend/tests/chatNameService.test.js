@@ -27,6 +27,7 @@ const USER = {
   username: 'FalloutName',
   discordUsername: 'vaultdweller',
   discordDisplayName: 'Vault Dweller',
+  steamDisplayName: 'Steam Dweller',
   installToken: 'install-token',
 };
 
@@ -48,7 +49,7 @@ describe('setChatName', () => {
     }));
     expect(refreshClientIdentity).toHaveBeenCalledWith(
       USER.id, USER.username, USER.discordUsername, USER.discordDisplayName,
-      USER.installToken, 'Vault Dweller',
+      USER.installToken, 'Vault Dweller', USER.steamDisplayName,
     );
     expect(prismaMock.auditLog.create).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({ action: 'chat_name_updated', metadata: { source: 'website', cleared: false } }),
@@ -62,7 +63,7 @@ describe('setChatName', () => {
     expect(result).toEqual({ ok: true, chatName: null, changed: true });
     expect(prismaMock.user.update).toHaveBeenCalledWith(expect.objectContaining({ data: { chatName: null } }));
     expect(refreshClientIdentity).toHaveBeenCalledWith(
-      USER.id, USER.username, USER.discordUsername, USER.discordDisplayName, USER.installToken, null,
+      USER.id, USER.username, USER.discordUsername, USER.discordDisplayName, USER.installToken, null, USER.steamDisplayName,
     );
   });
 

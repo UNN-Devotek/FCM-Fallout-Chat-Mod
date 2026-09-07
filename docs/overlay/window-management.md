@@ -26,7 +26,7 @@ Bounds are loaded from `overlay-state.json` at launch and **clamped to the activ
 
 The renderer's shell strip uses CSS `-webkit-app-region: drag`. Edge resize zones in `shell.ts` compute new bounds on pointer move and send them through IPC (`overlay:resize-bounds`).
 
-On **Linux**, where CSS drag can drift under fractional DPI scaling, move events are routed through `overlay:move-start` / `overlay:move-tick` / `overlay:move-end`. The main process reads the authoritative cursor position via `screen.getCursorScreenPoint()` on each tick and applies the result through the guarded bounds helper (`setWindowBoundsGuarded` in `main.js`).
+On **Linux**, where Chromium's CSS drag region can be unreliable for frameless windows, move events are routed through `overlay:move-start` / `overlay:move-tick` / `overlay:move-end`. The renderer sends `PointerEvent.movementX/movementY` deltas, and the main process accumulates them from the drag-start bounds. Deltas remain valid while the window moves and avoid both client-coordinate feedback and native Wayland's `(0, 0)` cursor reports.
 
 A `isDragging` flag suppresses the z-order heartbeat during drags. `setAlwaysOnTop` on a transparent window triggers a DWM recomposition on Windows that causes a visible flash; skipping it during the drag eliminates the flicker (`main.js:613`).
 
@@ -219,7 +219,7 @@ Returns true when ANY of the following is true:
 - Game-detection state changes (`onGamePresenceChanged`)
 - `chatActive` changes (`overlay:chat-active` IPC)
 - Onboarding completion (`overlay:onboarding-complete` IPC)
-- Authentication role update (after `startRelay` or Discord link)
+- Authentication/provider update (after `startRelay`, Discord link, or Steam link)
 
 On KDE-Wayland a **second** gate sits on top: `nextGameFocusState` hides the overlay when FO76 loses focus, even while `canShowOverlay()` is true. See [Focus-gated visibility](#focus-gated-visibility-hide--show).
 

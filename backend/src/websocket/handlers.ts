@@ -41,6 +41,8 @@ import { editOwnedMessage, MessageEditError } from '../services/messageEditServi
 import { evaluateBuildGate } from '../services/buildLock';
 import { getActiveQaVersion } from '../services/activeQaVersion';
 import env from '../config/environment';
+import { INSTANCE_ID } from '../config/instanceIdentity';
+import { notifyRelayLiveChatMessage } from '../services/relay/relayLiveFanout';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -59,6 +61,7 @@ export function resolveDisplayName(user: {
   chatName?: string | null;
   discordUsername: string | null;
   discordDisplayName?: string | null;
+  steamDisplayName?: string | null;
   installToken: string;
 }): string {
   // A chat name is an account identity setting, not a paid cosmetic. It is already
@@ -79,6 +82,7 @@ export function resolveDisplayName(user: {
   ) {
     return user.username;
   }
+  if (user.steamDisplayName?.trim()) return user.steamDisplayName.trim();
   // 2. Discord display/global name — preferred user-facing label when there's
   //    no FO76 name (e.g. "Devotek" rather than the @handle "devotek").
   if (user.discordDisplayName && user.discordDisplayName.length > 0) {
@@ -332,8 +336,9 @@ export function refreshClientIdentity(
   discordDisplayName: string | null,
   installToken: string,
   chatName: string | null = null,
+  steamDisplayName: string | null = null,
 ): number {
-  const displayName = resolveDisplayName({ username, chatName, discordUsername, discordDisplayName, installToken });
+  const displayName = resolveDisplayName({ username, chatName, discordUsername, discordDisplayName, steamDisplayName, installToken });
   let touched = 0;
   for (const c of clients.values()) {
     if (c.userId === userId) {
@@ -560,8 +565,6 @@ function safeSend(ws: WebSocket, data: string, label: string): boolean {
   return true;
 }
 
-// Unique identifier for this backend instance
-const INSTANCE_ID = uuidv4();
 const PUBSUB_CHANNEL = 'chat:broadcast';
 
 // Tracks whether Redis pub/sub is active; when false, broadcast is local-only.
@@ -618,8 +621,19 @@ function recipientHasBlockedSender(payload: any, recipient: ClientEntry): boolea
  * Deliver a payload to all local WebSocket clients and admin observers.
  * This is the low-level send -- it does NOT publish to Redis.
  */
-function localBroadcast(payload: any, excludeWs: WebSocket | null = null): void {
+function localBroadcast(
+  payload: any,
+  excludeWs: WebSocket | null = null,
+  notifyRelay: boolean = true,
+): void {
   try { hudPushNotify(payload); } catch { /* hud push must never break chat */ }
+  if (notifyRelay && payload?.type === 'chat:message') {
+    // The native relay subscriber lives in this same process. Deliver the event
+    // directly before Redis; Redis remains the cross-instance path. Keeping this
+    // callback in a dependency-free module avoids handlers <-> relayHandler's
+    // existing ingest initialization cycle.
+    try { notifyRelayLiveChatMessage(payload); } catch { /* relay fan-out must not break web chat */ }
+  }
   const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
   for (const [, client] of clients) {
     if (client.ws === excludeWs || client.ws.readyState !== WebSocket.OPEN) continue;
@@ -742,7 +756,9 @@ async function initPubSub(): Promise<void> {
           }
           return;
         }
-        localBroadcast(envelope.payload);
+        // The relay module receives this same cross-instance envelope directly;
+        // do not notify its local subscribers a second time from this web path.
+        localBroadcast(envelope.payload, null, false);
       } catch (err) {
         logger.warn({ err }, 'Failed to process pub/sub message');
       }
@@ -800,16 +816,16 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
           if (!channelId || !UUID_RE.test(channelId)) break;
           try {
             const result = await dbQuery(
-              `SELECT m.id, m.content, u.username, u.chat_name, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at, m.edited_at
+              `SELECT m.id, m.content, u.username, u.chat_name, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.steam_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at, m.edited_at
                FROM messages m JOIN users u ON u.id = m.user_id
                WHERE m.channel_id = $1 AND NOT m.is_deleted
                ORDER BY m.created_at DESC LIMIT $2 OFFSET $3`,
               [channelId, safeLimit, safeOffset]
             );
             const messages = result.rows.map((row: any) => {
-              const dn = resolveDisplayName({ username: row.username, chatName: row.chat_name, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, installToken: row.install_token });
+              const dn = resolveDisplayName({ username: row.username, chatName: row.chat_name, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, steamDisplayName: row.steam_display_name, installToken: row.install_token });
               const avatarUrl = buildAvatarUrl(row.discord_id);
-              const { install_token, username, chat_name, discord_username, discord_display_name, discord_id, metadata, ...rest } = row;
+              const { install_token, username, chat_name, discord_username, discord_display_name, steam_display_name, discord_id, metadata, ...rest } = row;
               return { ...rest, username: dn, avatarUrl, metadata: metadata ?? null };
             });
             await attachCosmeticsToHistory(messages);
@@ -860,7 +876,7 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
             gameUser = await prisma.user.findFirst({
               where: { discordId: identity.discordId },
               select: {
-                id: true, username: true, discordUsername: true, discordDisplayName: true,
+                id: true, username: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true,
                 installToken: true, isBanned: true, isMuted: true,
               },
             });
@@ -943,7 +959,7 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
           try {
             gameUser = await prisma.user.findFirst({
               where: { discordId: identity.discordId },
-              select: { id: true, username: true, discordUsername: true, discordDisplayName: true, installToken: true, isBanned: true, isMuted: true, muteExpiresAt: true, muteReason: true, muteCategory: true },
+              select: { id: true, username: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, installToken: true, isBanned: true, isMuted: true, muteExpiresAt: true, muteReason: true, muteCategory: true },
             });
           } catch (err) {
             logger.error({ err }, 'Admin observer: DB error resolving game user');
@@ -1509,7 +1525,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
   try {
     user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, username: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true, isBanned: true, isMuted: true, muteExpiresAt: true, muteReason: true, muteCategory: true, bannedUntil: true, banCategory: true, banReason: true, kickedUntil: true },
+      select: { id: true, username: true, discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, installToken: true, isBanned: true, isMuted: true, muteExpiresAt: true, muteReason: true, muteCategory: true, bannedUntil: true, banCategory: true, banReason: true, kickedUntil: true },
     });
   } catch (err) {
     logger.error({ err }, 'DB error during WS auth');
@@ -2401,7 +2417,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
         const safeOffset = Math.min(Math.max(parseInt(offset, 10) || 0, 0), 10000);
         try {
           const result = await dbQuery(
-            `SELECT m.id, m.content, u.username, u.chat_name, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at, m.edited_at
+            `SELECT m.id, m.content, u.username, u.chat_name, u.discord_id_link AS discord_id, u.discord_username, u.discord_display_name, u.steam_display_name, u.install_token, m.user_id, m.channel_id, m.source, m.metadata, m.created_at, m.edited_at
              FROM messages m JOIN users u ON u.id = m.user_id
              WHERE m.channel_id = $1 AND NOT m.is_deleted
              ORDER BY m.created_at DESC LIMIT $2 OFFSET $3`,
@@ -2419,9 +2435,9 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
           const messages = result.rows
             .filter((row: any) => !histBlocked.has(row.user_id))
             .map((row: any) => {
-              const dn = resolveDisplayName({ username: row.username, chatName: row.chat_name, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, installToken: row.install_token });
+              const dn = resolveDisplayName({ username: row.username, chatName: row.chat_name, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, steamDisplayName: row.steam_display_name, installToken: row.install_token });
               const avatarUrl = buildAvatarUrl(row.discord_id);
-              const { install_token, username, chat_name, discord_username, discord_display_name, discord_id, metadata, ...rest } = row;
+              const { install_token, username, chat_name, discord_username, discord_display_name, steam_display_name, discord_id, metadata, ...rest } = row;
               return { ...rest, username: dn, avatarUrl, metadata: metadata ?? null };
             });
           await attachCosmeticsToHistory(messages);
@@ -2637,7 +2653,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
             select: {
               id: true, content: true, username: true, userId: true,
               partyId: true, source: true, createdAt: true,
-              user: { select: { username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, installToken: true } },
+              user: { select: { username: true, chatName: true, discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, installToken: true } },
             },
           });
 

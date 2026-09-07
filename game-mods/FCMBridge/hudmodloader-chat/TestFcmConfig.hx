@@ -39,7 +39,8 @@ class TestFcmConfig {
         eqb("supporter marker rejects unsafe colour", FcmConfig.supporterStarPresent(false, "url(evil)"), false);
         eqi("supporter color validates server value", FcmConfig.supporterStarColor("#FD4DA6", 0), 0xFD4DA6);
         eqi("supporter color falls back safely", FcmConfig.supporterStarColor("url(evil)", 0xF5CB5B), 0xF5CB5B);
-        var hudWire:String = "FCMHUD/1;s=1;c=%23FD4DA6;t=X%3BY";
+        var hudWire:String = "FCMHUD/1;m=m-1;s=1;c=%23FD4DA6;t=X%3BY";
+        eqs("HUD transport decodes message id", FcmConfig.hudTransportMessageId(hudWire), "m-1");
         eqb("HUD transport recognizes prefix", FcmConfig.hudTransportHasStar(hudWire), true);
         eqs("HUD transport decodes tag", FcmConfig.hudTransportTag(hudWire), "X;Y");
         eqs("HUD transport validates color", FcmConfig.hudTransportStarColor(hudWire), "#FD4DA6");
@@ -96,7 +97,7 @@ class TestFcmConfig {
         eqi("default textColor", d.textColor, 0xFAF4DA);
         eqi("default channelTagColor", d.channelTagColor, 0x8FBC8F);
         check("default bgAlpha", d.bgAlpha == 0.94);
-        eqi("default maxMessages", d.maxMessages, 100);
+        eqi("default maxMessages", d.maxMessages, 200);
         eqi("default maxSendLen", d.maxSendLen, 225);
         eqi("default pollMs", d.pollMs, 5000);
         eqi("parse pollMs", FcmConfig.parse("[FCMChat]\npollMs=8000\n").pollMs, 8000);

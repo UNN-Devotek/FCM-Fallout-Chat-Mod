@@ -44,7 +44,7 @@ All main API routes mount under `/api/` and are subject to `apiLimiter` (100 req
 - `/admin/debug/*` — admin-key-only diagnostic mirrors (not under `/api/`, not rate-limited by `apiLimiter`)
 - `/admin/migration/*` — gated by `requireMigrationKey`, 10 req/15min per IP
 - `/admin/nuke-users` — gated by `requireAdminKey`
-- `/auth/*` — Discord OAuth2 flows (not under `/api/`)
+- `/auth/*` — Discord, Nexus, and Steam provider flows (not under `/api/`)
 - `/avatars/:discordId` and `/party-images/:imageId` — public static-like asset streams
 
 The dashboard SPA (`admin-dashboard/dist/`) is served as `express.static` from the same origin as the backend in production.
@@ -79,7 +79,7 @@ their normal Redis-store failure behaviour. Defined in `middleware/rateLimiter.t
 |---------|---------|-----|--------|-----|
 | `apiLimiter` | `/api/*` (except routes with their own documented skip) and selected non-`/api/` app routes | 100 authed / 500 anon (500 / 1000 unpackaged dev overlay) | 15 min | IP |
 | `channelsLimiter` | `GET /api/channels` | 500 | 15 min | token or IP |
-| `authLimiter` | `POST /api/users` (register); Discord OAuth routes (`/auth/discord`, `/auth/discord/callback`, `/auth/discord/link`, `/auth/discord/link/callback`) | 20 (500 dev overlay) | 15 min | IP |
+| `authLimiter` | `POST /api/users` (register); Discord, Nexus, and Steam OAuth routes | 20 (500 dev overlay) | 15 min | IP |
 | `registerLimiter` | `POST /api/users` | 10/install-token (60 dev) | 1 min | installToken → IP fallback |
 | `registerIpFloodLimiter` | `POST /api/users` | 30 | 1 min | IP |
 | `playerListLimiter` | `POST /api/player-list` | 30 | 1 min | token or IP |

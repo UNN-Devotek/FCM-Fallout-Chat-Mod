@@ -2,6 +2,7 @@ export interface BoundOAuthState {
   sessionId: string;
   intent?: string;
   codeVerifier?: string;
+  linkUserId?: string;
 }
 
 export function serializeBoundOAuthState(state: BoundOAuthState): string {
@@ -20,6 +21,7 @@ export function parseBoundOAuthState(value: string | null | undefined, sessionId
     return {
       sessionId: parsed.sessionId,
       ...(typeof parsed.intent === 'string' ? { intent: parsed.intent } : {}),
+      ...(typeof parsed.linkUserId === 'string' ? { linkUserId: parsed.linkUserId } : {}),
       ...(typeof parsed.codeVerifier === 'string' ? { codeVerifier: parsed.codeVerifier } : {}),
     };
   } catch {

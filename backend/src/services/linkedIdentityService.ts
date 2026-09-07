@@ -1,5 +1,6 @@
 import prisma from '../config/prisma';
 import logger from '../config/logger';
+import { isValidSteamId } from './steamAuthService';
 
 /** Check if a provider identity is on the deny-list. */
 export async function isBannedIdentity(provider: string, providerUid: string): Promise<boolean> {
@@ -9,13 +10,13 @@ export async function isBannedIdentity(provider: string, providerUid: string): P
   return row !== null;
 }
 
-/** Check whether a user has at least one linked provider (Discord inline or linked_identities row). */
+/** Check whether a user has at least one linked provider (Discord/Steam inline or linked_identities row). */
 export async function hasLinkedProvider(userId: string): Promise<boolean> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { discordId: true },
+    select: { discordId: true, steamId: true },
   });
-  if (user?.discordId) return true;
+  if (user?.discordId || isValidSteamId(user?.steamId)) return true;
 
   const identity = await prisma.linkedIdentity.findFirst({
     where: { userId },
@@ -56,12 +57,12 @@ export async function unlinkProviderIdentity(
   if (!hasProvider) return { ok: false, reason: 'not_found' };
 
   // Count remaining providers after removal
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { discordId: true } });
+  const user = await prisma.user.findUnique({ where: { id: userId }, select: { discordId: true, steamId: true } });
   const otherIdentities = await prisma.linkedIdentity.count({
     where: { userId, provider: { not: provider } },
   });
 
-  const remainingAfterRemoval = (user?.discordId ? 1 : 0) + otherIdentities;
+  const remainingAfterRemoval = (user?.discordId ? 1 : 0) + (isValidSteamId(user?.steamId) ? 1 : 0) + otherIdentities;
   if (remainingAfterRemoval < 1) return { ok: false, reason: 'last_provider' };
 
   const deleted = await prisma.linkedIdentity.deleteMany({

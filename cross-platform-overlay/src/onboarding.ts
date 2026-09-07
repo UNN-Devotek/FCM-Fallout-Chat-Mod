@@ -2,7 +2,7 @@
  * First-run onboarding overlay (vanilla DOM, same pattern as shell.ts settings).
  * Shown once on fresh install (onboarded === false); never re-shown after Finish/Skip.
  *
- * Steps: Discord → Theme → Identity.
+ * Steps: account linking (Discord/Steam) → Theme → Identity.
  * On Finish/Skip: calls applyOnboardingSettings() to persist and remount React.
  */
 
@@ -14,6 +14,7 @@ import {
 import type { ShellSettings } from './shell';
 import {
   TOTAL_STEPS,
+  accountDisplayName,
   deriveInitialOnboardingState,
   computeNavView,
   nextStepIndex,
@@ -211,11 +212,11 @@ function buildStepIdentity(state: OnboardingState, withPrefill?: boolean): HTMLE
     value: state.fo76Name,
     maxLength: 32,
   }) as HTMLInputElement;
-  nameInput.placeholder = 'Your in-game name (e.g. Vault Dweller)';
+  nameInput.placeholder = accountDisplayName(state) || 'Optional in-game name';
   nameInput.addEventListener('input', () => { state.fo76Name = nameInput.value.trim(); });
   nameSection.append(nameInput);
   nameSection.append(el('div', { className: 'ob-note' },
-    'Used as your chat display name. Defaults to your Discord display name if left blank.'
+    'Used as your chat display name. Leave blank to use your Steam display name, or your Discord display name when Steam is not linked.'
   ));
   wrap.append(nameSection);
 
@@ -228,7 +229,7 @@ function buildStepIdentity(state: OnboardingState, withPrefill?: boolean): HTMLE
   playToggle.addEventListener('click', () => {
     state.playsFo76 = !state.playsFo76;
     applyPlayState();
-    if (state.playsFo76 && !nameInput.value.trim()) {
+    if (state.playsFo76 && !state.steamLinked && !nameInput.value.trim()) {
       const discordDefault = state.discordDisplayName || state.discordName;
       if (discordDefault) {
         nameInput.value = discordDefault;
@@ -240,7 +241,8 @@ function buildStepIdentity(state: OnboardingState, withPrefill?: boolean): HTMLE
   if (withPrefill) {
     (wrap as any).__fcmPrefill = () => {
       // Only prefill when: no name typed yet AND Discord is linked.
-      if (nameInput.value.trim()) return;
+      nameInput.placeholder = accountDisplayName(state) || 'Optional in-game name';
+      if (state.steamLinked || nameInput.value.trim()) return;
       const discordDefault = state.discordDisplayName || state.discordName;
       if (!discordDefault) return;
       nameInput.value = discordDefault;
@@ -311,11 +313,11 @@ function buildStepTheme(state: OnboardingState, onThemeChange: () => void): HTML
   return wrap;
 }
 
-// ── Step 1: Discord ───────────────────────────────────────────────────────────
+// ── Step 1: account linking ───────────────────────────────────────────────────
 function buildStepDiscord(state: OnboardingState, _isDev = false, _onDevLogin?: () => void): HTMLElement {
   const wrap = el('div', { className: 'ob-step-wrap' });
 
-  wrap.append(el('div', { className: 'ob-sec' }, 'DISCORD ACCOUNT'));
+  wrap.append(el('div', { className: 'ob-sec' }, 'LINK AN ACCOUNT'));
 
   const joinRow = el('div', { className: 'ob-discord-btns' });
   const joinBtn = el('button', { className: 'ob-fbtn ob-discord-join' }, 'JOIN THE DISCORD SERVER');
@@ -326,10 +328,10 @@ function buildStepDiscord(state: OnboardingState, _isDev = false, _onDevLogin?: 
   joinRow.append(joinBtn);
   wrap.append(joinRow);
   wrap.append(el('div', { className: 'ob-note ob-note-warn' },
-    'You must be a member of the Fallout Chat Mod Discord server to use the chat. Join the server first, then link your account below.'
+    'Sign in with Steam or Discord to activate chat. Discord membership is only needed when signing in with Discord.'
   ));
 
-  wrap.append(el('div', { className: 'ob-note' }, 'Linking your Discord account gives you a verified chat identity and lets you keep your chat history if you reinstall. This is optional — you can link later from Settings.'));
+  wrap.append(el('div', { className: 'ob-note' }, 'Choose either provider below. Steam works without linking Discord; you can add Discord later in your profile.'));
 
   const statusRow = el('div', { className: 'ob-discord-status' });
   const dot = el('span', { className: 'ob-dot' });
@@ -408,6 +410,46 @@ function buildStepDiscord(state: OnboardingState, _isDev = false, _onDevLogin?: 
       state.fo76Name = state.discordDisplayName || state.discordName;
     }
     renderStatus();
+  });
+
+  // Steam is a second, independent provider. It is intentionally rendered next
+  // to Discord rather than replacing it: either verified account satisfies the
+  // overlay gate, and users can link both to the same FCM account.
+  const steamStatusRow = el('div', { className: 'ob-discord-status' });
+  const steamDot = el('span', { className: 'ob-dot' });
+  const steamStatusText = el('span', { className: 'ob-discord-text' });
+  steamStatusRow.append(steamDot, steamStatusText);
+  wrap.append(el('div', { className: 'ob-sec' }, 'STEAM ACCOUNT'), steamStatusRow);
+
+  const steamBtnRow = el('div', { className: 'ob-discord-btns' });
+  const steamNote = el('div', { className: 'ob-note ob-note-discord' },
+    'After clicking LINK STEAM, authorize in the browser, then click REFRESH STATUS.'
+  );
+  const renderSteamStatus = () => {
+    const linked = state.steamLinked;
+    steamStatusRow.classList.toggle('linked', linked);
+    steamStatusText.textContent = linked ? ('✓ Steam linked' + (state.steamDisplayName ? ' - ' + state.steamDisplayName : '')) : 'Not linked';
+    steamBtnRow.style.display = linked ? 'none' : 'flex';
+    steamNote.style.display = linked ? 'none' : '';
+  };
+  const steamLinkBtn = el('button', { className: 'ob-fbtn ob-steam-link' }, 'LINK STEAM');
+  steamLinkBtn.title = 'Opens Steam in your browser to authorize this install';
+  steamLinkBtn.addEventListener('click', () => { window.relayBridge.linkSteam?.(); });
+  const steamRefreshBtn = el('button', { className: 'ob-fbtn' }, 'REFRESH STATUS');
+  steamRefreshBtn.title = 'Re-check whether Steam was linked';
+  steamRefreshBtn.addEventListener('click', () => {
+    steamRefreshBtn.textContent = '…'; steamRefreshBtn.setAttribute('disabled', 'disabled');
+    window.relayBridge.refreshSteamStatus?.();
+    setTimeout(() => { steamRefreshBtn.textContent = 'REFRESH STATUS'; steamRefreshBtn.removeAttribute('disabled'); }, 3000);
+  });
+  steamBtnRow.append(steamLinkBtn, steamRefreshBtn);
+  wrap.append(steamBtnRow, steamNote);
+  renderSteamStatus();
+
+  window.relayBridge.onSteamStatus?.((status) => {
+    state.steamLinked = !!(status.steamLinked ?? status.linked);
+    state.steamDisplayName = status.steamDisplayName || '';
+    renderSteamStatus();
   });
 
   return wrap;

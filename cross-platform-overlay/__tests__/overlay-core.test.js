@@ -7,6 +7,8 @@ import core from '../overlay-core.js';
 
 const {
   stateHasRealData,
+  buildDiscordUnlinkStatePatch,
+  buildSteamUnlinkStatePatch,
   isCfChallenge,
   isSinglePrintableChar,
   resolveAppClientKey,
@@ -17,12 +19,29 @@ const {
   classifyInputGrab,
   filterProxyHeaders,
   resolveRelayProxyUrl,
+  resolveMoveDeltaPosition,
   DEFAULT_APP_CLIENT_KEY,
   DEFAULT_WIDTH,
   DEFAULT_HEIGHT,
   MIN_WIDTH,
   MIN_HEIGHT,
 } = core;
+
+describe('resolveMoveDeltaPosition', () => {
+  it('accumulates renderer movement deltas from the drag-start bounds', () => {
+    expect(resolveMoveDeltaPosition(
+      { x: 100, y: 50 },
+      { x: 37, y: 19 },
+    )).toEqual({ x: 137, y: 69 });
+  });
+
+  it('rejects incomplete coordinates', () => {
+    expect(resolveMoveDeltaPosition(
+      { x: 150, y: 80 },
+      null,
+    )).toBeNull();
+  });
+});
 
 // A throwing fs stub (no files exist).
 const fsMissing = {
@@ -46,6 +65,7 @@ describe('stateHasRealData', () => {
     ['non-object (number)', 5, false],
     ['empty object', {}, false],
     ['discordLinked true', { discordLinked: true }, true],
+    ['steamLinked true', { steamLinked: true }, true],
     ['discordLinked false', { discordLinked: false }, false],
     ['default username Overlay1234', { username: 'Overlay1234' }, false],
     ['default username Overlay0', { username: 'Overlay0' }, false],
@@ -59,6 +79,31 @@ describe('stateHasRealData', () => {
     ['settings array (non-empty)', { settings: ['a'] }, true],
   ])('%s -> %s', (_label, input, expected) => {
     expect(stateHasRealData(input)).toBe(expected);
+  });
+});
+
+describe('buildDiscordUnlinkStatePatch', () => {
+  it('clears Discord-derived identity and role fields for the login wall', () => {
+    expect(buildDiscordUnlinkStatePatch()).toEqual({
+      discordLinked: false,
+      discordName: '',
+      discordUsername: '',
+      discordDisplayName: '',
+      discordAvatarUrl: '',
+      avatarUrl: '',
+      userRole: null,
+    });
+  });
+});
+
+describe('buildSteamUnlinkStatePatch', () => {
+  it('clears Steam-only identity state without clearing Discord state', () => {
+    expect(buildSteamUnlinkStatePatch()).toEqual({
+      steamLinked: false,
+      steamDisplayName: '',
+      avatarUrl: '',
+      userRole: null,
+    });
   });
 });
 

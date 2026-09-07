@@ -57,6 +57,9 @@ export interface ShellSettings {
   // Discord link state; the real link happens via browser OAuth (linkDiscord()).
   discordLinked: boolean;
   discordName: string;
+  // Steam OpenID link state; the server stores the verified SteamID64.
+  steamLinked: boolean;
+  steamDisplayName: string;
   // Profile fields recalled from the latest relay:status — persist across settings opens.
   discordAvatarUrl: string;    // Discord CDN avatar URL or ''
   discordDisplayName: string;  // Discord display name (may differ from discordName)
@@ -141,6 +144,8 @@ export const DEFAULT_SHELL_SETTINGS: ShellSettings = {
   fo76Name: '',
   discordLinked: false,
   discordName: '',
+  steamLinked: false,
+  steamDisplayName: '',
   discordAvatarUrl: '',
   discordDisplayName: '',
   discordUsername: '',
@@ -1253,11 +1258,15 @@ function buildSettingsPanel() {
         el('span', { className: 'ss-profile-label' }, 'Discord'),
         el('span', { className: 'ss-profile-value' }, currentSettings.discordDisplayName || currentSettings.discordName || '—'),
       );
-      const linked = !!currentSettings.discordLinked;
+      const linkedProviders = [
+        currentSettings.discordLinked ? 'Discord' : '',
+        currentSettings.steamLinked ? 'Steam' : '',
+      ].filter(Boolean);
+      const linked = linkedProviders.length > 0;
       profileLinkedBadge.className = 'ss-profile-linked' + (linked ? ' linked' : '');
       profileLinkedBadge.replaceChildren(
         el('span', { className: 'ss-dot' }),
-        document.createTextNode(linked ? '✓ Account linked' : 'Not linked'),
+        document.createTextNode(linked ? `✓ ${linkedProviders.join(' + ')} linked` : 'Not linked'),
       );
     };
     renderProfile();
@@ -1312,7 +1321,7 @@ function buildSettingsPanel() {
 
     nameRow.append(nameInput, saveNameBtn, saveNameFeedback);
     s.append(nameRow);
-    hint(s, 'Required for playing Fallout 76. Please use your in-game name. (If left blank, your Discord display name is used.) Click SAVE NAME to register the name with the server.');
+    hint(s, 'Required for playing Fallout 76. Please use your in-game name. (If left blank, your linked provider display name is used.) Click SAVE NAME to register the name with the server.');
 
     const fo76Block = [s.querySelector('.ss-sec'), nameRow, s.querySelector('.ss-note')] as HTMLElement[];
     const applyOpt = () => { const show = currentSettings.playsFo76 || !!currentSettings.fo76Name; fo76Block.forEach(e => { if (e) e.style.display = show ? '' : 'none'; }); };
@@ -1353,22 +1362,103 @@ function buildSettingsPanel() {
         refreshStatusBtn.removeAttribute('disabled');
       }, 3000);
     });
+    const unlinkFeedback = el('span', { className: 'ss-note ss-discord-unlink-feedback' });
     const unlinkBtn = el('button', { className: 'ss-fbtn ss-discord-unlink' }, 'UNLINK');
-    unlinkBtn.addEventListener('click', () => {
-      if (!confirm('Unlink your Discord account from this overlay?\n\nNote: this only clears the local display — a full server-side unlink is not yet supported.')) return;
-      // TODO: call a backend unlink endpoint when one exists (FR: DELETE /api/users/me/discord).
-      // For now this only clears the local state so the panel shows "Not linked".
-      commit({ discordLinked: false, discordName: '' });
+    unlinkBtn.addEventListener('click', async () => {
+      if (!confirm('Unlink your Discord account from this overlay?\n\nYou will be signed out and returned to the login screen.')) return;
+      unlinkBtn.disabled = true;
+      unlinkBtn.textContent = '…';
+      unlinkFeedback.textContent = 'Signing out…';
+      const result = await window.relayBridge.unlinkDiscord?.();
+      if (!result?.ok) {
+        unlinkBtn.disabled = false;
+        unlinkBtn.textContent = 'UNLINK';
+        unlinkFeedback.textContent = result?.message || 'Could not unlink Discord. Please try again.';
+        return;
+      }
+
+      // The main process has already revoked the server session and sent the
+      // renderer to the provider login wall. Keep the native settings view in
+      // sync, then close it so the login screen is immediately visible.
+      commit({
+        discordLinked: false,
+        discordName: '',
+        discordUsername: '',
+        discordDisplayName: '',
+        discordAvatarUrl: '',
+      });
       renderDiscordStatus();
       renderProfile();
+      closeSettings();
     });
     dBtns.append(linkBtn, relinkBtn, refreshStatusBtn, unlinkBtn);
+    s.append(unlinkFeedback);
     s.append(dBtns);
-    hint(s, 'Linking opens Discord in your browser to authorise this install. Click REFRESH STATUS after returning to update the panel. Your chat display name comes from your FO76 name above, or your Discord display name.');
+    hint(s, 'Linking opens Discord in your browser to authorise this install. Click REFRESH STATUS after returning to update the panel. Unlinking signs you out and returns you to the provider login screen. Your chat display name comes from your FO76 name above, or your Discord display name.');
 
     window.relayBridge.onDiscordStatus?.((status) => {
       commit({ discordLinked: status.linked, discordName: status.discordName || '' });
       renderDiscordStatus();
+      renderProfile();
+    });
+
+    // ── STEAM ACCOUNT ──
+    heading(s, 'STEAM ACCOUNT');
+    const steamStatus = el('div', { className: 'ss-discord-status' });
+    const steamBtns = el('div', { className: 'ss-discord-btns' });
+    const steamLinkBtn = el('button', { className: 'ss-fbtn ss-discord-link' }, 'LINK STEAM');
+    const steamRefreshBtn = el('button', { className: 'ss-fbtn' }, 'REFRESH STATUS');
+    const steamUnlinkFeedback = el('span', { className: 'ss-note ss-discord-unlink-feedback' });
+    const steamUnlinkBtn = el('button', { className: 'ss-fbtn ss-discord-unlink' }, 'UNLINK');
+    const renderSteamStatus = () => {
+      const linked = !!currentSettings.steamLinked;
+      steamStatus.classList.toggle('linked', linked);
+      steamUnlinkBtn.style.display = linked ? '' : 'none';
+      steamStatus.replaceChildren(
+        el('span', { className: 'ss-dot' }),
+        document.createTextNode(linked ? 'Linked' : 'Not linked'),
+      );
+    };
+    renderSteamStatus();
+    s.append(steamStatus);
+
+    steamLinkBtn.addEventListener('click', () => { window.relayBridge.linkSteam?.(); });
+    steamRefreshBtn.title = 'Re-check your Steam link status from the server';
+    steamRefreshBtn.addEventListener('click', () => {
+      steamRefreshBtn.textContent = '…';
+      steamRefreshBtn.setAttribute('disabled', 'disabled');
+      window.relayBridge.refreshSteamStatus?.();
+      setTimeout(() => {
+        steamRefreshBtn.textContent = 'REFRESH STATUS';
+        steamRefreshBtn.removeAttribute('disabled');
+      }, 3000);
+    });
+    steamUnlinkBtn.addEventListener('click', async () => {
+      if (!confirm('Unlink your Steam account from this overlay?\n\nIf Steam is your only linked provider, you will be signed out and returned to the login screen.')) return;
+      steamUnlinkBtn.disabled = true;
+      steamUnlinkBtn.textContent = '…';
+      steamUnlinkFeedback.textContent = 'Unlinking…';
+      const result = await window.relayBridge.unlinkSteam?.();
+      if (!result?.ok) {
+        steamUnlinkBtn.disabled = false;
+        steamUnlinkBtn.textContent = 'UNLINK';
+        steamUnlinkFeedback.textContent = result?.message || 'Could not unlink Steam. Please try again.';
+        return;
+      }
+
+      commit({ steamLinked: false, steamDisplayName: '' });
+      renderSteamStatus();
+      renderProfile();
+      if (result.loggedOut) closeSettings();
+    });
+    steamBtns.append(steamLinkBtn, steamRefreshBtn, steamUnlinkBtn);
+    s.append(steamUnlinkFeedback);
+    s.append(steamBtns);
+    hint(s, 'Linking opens Steam in your browser to authorise this install. Return to the overlay and refresh status if it does not update automatically. Unlinking Steam signs you out when it is your only linked provider.');
+
+    window.relayBridge.onSteamStatus?.((status) => {
+      commit({ steamLinked: !!(status.steamLinked ?? status.linked), steamDisplayName: status.steamDisplayName || '' });
+      renderSteamStatus();
       renderProfile();
     });
 
@@ -1381,9 +1471,12 @@ function buildSettingsPanel() {
       if (s.discordUsername)    patch.discordUsername = s.discordUsername;
       if (s.discordDisplayName) patch.discordDisplayName = s.discordDisplayName;
       if (s.discordAvatarUrl != null) patch.discordAvatarUrl = s.discordAvatarUrl || '';
+      if (s.steamLinked != null) patch.steamLinked = !!s.steamLinked;
+      if (s.steamDisplayName != null) patch.steamDisplayName = s.steamDisplayName;
       if (s.username)           patch.fo76Name = s.username;
       if (Object.keys(patch).length) commit(patch);
       renderDiscordStatus();
+      renderSteamStatus();
       renderProfile();
     });
   }
@@ -1980,9 +2073,9 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
     syncZoneVisibility();
   }
 
-  // ── WM-independent pointer-drag MOVE (Linux/Wayland only) ───────────────────
-  // On KDE Plasma 6 / Wayland, -webkit-app-region:drag is unreliable for frameless
-  // windows. JS pointer-drag via moveStart/moveTick IPC is used instead.
+  // ── WM-independent pointer-drag MOVE (Linux) ────────────────────────────────
+  // On KDE Plasma 6 / Wayland, -webkit-app-region:drag is unreliable for
+  // frameless windows. JS pointer-drag via moveStart/moveTick IPC is used instead.
   //
   // To prevent the WM from starting a competing drag over the same gesture (which
   // caused jitter), a stylesheet forces -webkit-app-region:no-drag !important for
@@ -1990,6 +2083,13 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
   // detection still works. Windows/macOS keep native WM-driven drag; this handler
   // stays off there.
   if (IS_LINUX_RENDERER) {
+    type ShellWindowWithMoveCleanup = Window & { __fcmLinuxMoveCleanup?: () => void };
+    const shellWindow = window as ShellWindowWithMoveCleanup;
+    // React StrictMode and Vite HMR can re-run initShell without reloading the
+    // document. Remove the previous document-level drag listeners first so one
+    // physical gesture cannot be applied twice (which doubles every delta).
+    shellWindow.__fcmLinuxMoveCleanup?.();
+
     // `!important` overrides React's non-important inline webkitAppRegion for the
     // compositor without affecting el.style reads used by isDragTarget.
     const noDragStyle = document.createElement('style');
@@ -2010,8 +2110,12 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
         document.documentElement as unknown as Parameters<typeof isDragTargetCore>[0],
       );
     };
+    // movementX/Y describe the cursor motion since the previous pointer event.
+    // Unlike clientX/Y or screenX/Y, they do not change because the window was
+    // moved by the previous IPC tick.
+    const pointerDelta = (e: PointerEvent) => ({ x: e.movementX, y: e.movementY });
 
-    document.addEventListener('pointerdown', (e: PointerEvent) => {
+    const onMovePointerDown = (e: PointerEvent) => {
       if (e.button !== 0) return;
       if (clickThroughOn) return;
       const modalOpen = !!document.querySelector('#shell-settings-backdrop.open, #shell-onboarding-backdrop.open');
@@ -2030,13 +2134,15 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
       try { window.relayBridge.moveStart?.(); } catch { /* ignore */ }
       e.preventDefault();
       e.stopPropagation();
-    }, true /* capture */);
+    };
+    document.addEventListener('pointerdown', onMovePointerDown, true /* capture */);
 
-    document.addEventListener('pointermove', (e: PointerEvent) => {
+    const onMovePointerMove = (e: PointerEvent) => {
       if (!moveActive) return;
       e.preventDefault();
-      try { window.relayBridge.moveTick?.(); } catch { /* ignore */ }
-    }, true /* capture */);
+      try { window.relayBridge.moveTick?.(pointerDelta(e)); } catch { /* ignore */ }
+    };
+    document.addEventListener('pointermove', onMovePointerMove, true /* capture */);
 
     const endMove = (e: PointerEvent) => {
       if (!moveActive) return;
@@ -2047,6 +2153,18 @@ export function initShell(opts: { onSettingsChange: (s: ShellSettings) => void }
     };
     document.addEventListener('pointerup', endMove, true);
     document.addEventListener('pointercancel', endMove, true);
+
+    const cleanupMove = () => {
+      moveActive = false;
+      moveCaptureEl = null;
+      document.removeEventListener('pointerdown', onMovePointerDown, true);
+      document.removeEventListener('pointermove', onMovePointerMove, true);
+      document.removeEventListener('pointerup', endMove, true);
+      document.removeEventListener('pointercancel', endMove, true);
+      noDragStyle.remove();
+      if (shellWindow.__fcmLinuxMoveCleanup === cleanupMove) shellWindow.__fcmLinuxMoveCleanup = undefined;
+    };
+    shellWindow.__fcmLinuxMoveCleanup = cleanupMove;
   }
 
   // Esc closes the settings panel.

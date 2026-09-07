@@ -31,6 +31,19 @@ describe('LinkPage', () => {
     renderPage();
     await waitFor(() => {
       expect(screen.getAllByText(/SIGN IN WITH DISCORD/i).length).toBeGreaterThan(0);
+      const steamLink = screen.getByRole('link', { name: 'SIGN IN WITH STEAM' });
+      expect(steamLink).toHaveAttribute('href', '/auth/steam?intent=link');
+      expect(steamLink.querySelector('svg')).toHaveAttribute('aria-hidden', 'true');
+      expect(steamLink.querySelector('svg path')).toBeInTheDocument();
+    });
+  });
+
+  it('shows the Steam-linked confirmation state', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ status: 401, ok: false } as Response);
+    renderPage('?linked=steam');
+    await waitFor(() => {
+      expect(screen.getByText(/STEAM ACCOUNT LINKED/i)).toBeInTheDocument();
+      expect(screen.getByText(/Your Steam identity has been linked/i)).toBeInTheDocument();
     });
   });
 

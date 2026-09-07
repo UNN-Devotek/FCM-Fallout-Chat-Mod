@@ -49,7 +49,7 @@ export interface ServerRoomEvent {
 /** Envelope published on SERVER_EVENTS_CHANNEL. */
 export type ServerEventEnvelope =
   | { kind: 'msg'; worldId: string; cursor: number; event: ServerRoomEvent }
-  | { kind: 'rebind'; userId: string; worldId: string | null }
+  | { kind: 'rebind'; userId: string; worldId: string | null; requestId?: string; sourceInstanceId?: string }
   | { kind: 'history-resync'; userId: string; sourceInstanceId: string };
 
 /**
@@ -79,10 +79,10 @@ export async function publishServerMessage(
  * Announce a subscriber's world-membership change so EVERY backend instance
  * re-binds that user's live subscriber(s) to the new world (or unbinds on leave).
  */
-export async function publishRebind(userId: string, worldId: string | null): Promise<void> {
+export async function publishRebind(userId: string, worldId: string | null, requestId?: string, sourceInstanceId?: string): Promise<void> {
   try {
     const redis = await getRedisClient();
-    const envelope: ServerEventEnvelope = { kind: 'rebind', userId, worldId };
+    const envelope: ServerEventEnvelope = { kind: 'rebind', userId, worldId, requestId, sourceInstanceId };
     await redis.publish(SERVER_EVENTS_CHANNEL, JSON.stringify(envelope));
   } catch (err) {
     logger.warn({ err, userId }, '[serverChat] publishRebind failed');

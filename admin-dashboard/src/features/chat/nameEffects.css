@@ -9,14 +9,15 @@
  * Contract with ChatOverlay:
  *   --fcm-name-color    the user's resolved colour (inline, per element)
  *   --fcm-name-outline  the existing multi-layer black halo (inline, per element)
+ *   --fcm-name-effect-outline  a smaller adaptive halo for animated names
  *   --fcm-effect-delay  stable per-message phase offset (inline, per element)
  *   --fcm-glitch-duration stable per-message glitch cadence (inline, per element)
  *   --fcm-chroma-duration stable per-message Chroma Split cadence (inline, per element)
  *   data-fcm-name       the rendered name, needed by ::before/::after for glitch
  *
- * EVERY effect composes with var(--fcm-name-outline) rather than replacing it.
- * Names sit on a transparent overlay over arbitrary game content and are unreadable
- * without that halo — dropping it to "let the effect show" makes chat unusable.
+ * Effects compose with the adaptive --fcm-name-effect-outline. Static chat text keeps
+ * the stronger --fcm-name-outline, while animated names avoid stacking a dense black
+ * halo with their own glow/colour layers when the overlay background is transparent.
  *
  * Reduced motion: each animated effect collapses to its static sibling, mirroring
  * REDUCED_MOTION_FALLBACK in the backend catalog. The viewer opt-out applies the same
@@ -33,7 +34,8 @@
    textShadow when one is present and passes the outline through the variable. */
 [class*='fcm-name-fx--'] {
   --fcm-fx-color: var(--fcm-name-color, currentColor);
-  --fcm-fx-outline: var(--fcm-name-outline, 0 0 2px #000);
+  --fcm-fx-outline: var(--fcm-name-effect-outline, var(--fcm-name-outline, 0 0 2px #000));
+  --fcm-fx-ink: color-mix(in srgb, var(--fcm-fx-color) 48%, #000);
 }
 
 /* ── Supporter: readable with occasional motion ─────────────────────────── */
@@ -61,12 +63,12 @@
   font-weight: 900;
   /* A true solid contour, not a glow. Chromium paints this around the glyph
      before the fill, so the selected name colour remains unchanged. */
-  -webkit-text-stroke: 1px #000;
+  -webkit-text-stroke: 1px var(--fcm-fx-ink);
   paint-order: stroke fill;
   text-shadow:
-    -2px -2px 0 #000, 0 -2px 0 #000, 2px -2px 0 #000,
-    -2px  0   0 #000,                 2px  0   0 #000,
-    -2px  2px 0 #000, 0  2px 0 #000, 2px  2px 0 #000,
+    -2px -2px 0 var(--fcm-fx-ink), 0 -2px 0 var(--fcm-fx-ink), 2px -2px 0 var(--fcm-fx-ink),
+    -2px  0   0 var(--fcm-fx-ink),                         2px  0   0 var(--fcm-fx-ink),
+    -2px  2px 0 var(--fcm-fx-ink), 0  2px 0 var(--fcm-fx-ink), 2px  2px 0 var(--fcm-fx-ink),
     var(--fcm-fx-outline);
 }
 
@@ -164,20 +166,9 @@
   animation-delay: var(--fcm-effect-delay, 0s);
 }
 
-/* Scanlines are drawn as an overlay clipped to the glyphs. pointer-events:none keeps
-   the username click-to-mention affordance working. */
-.fcm-name-fx--crt-phosphor::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    to bottom,
-    rgba(0, 0, 0, 0.28) 0 1px,
-    transparent 1px 3px
-  );
-  mix-blend-mode: multiply;
-}
+/* Do not add a box-wide scanline layer here: an inline pseudo-element covers the
+   entire line box, not just the glyphs, and multiply-compositing it made CRT names
+   black against the game when the overlay background was transparent. */
 
 /* Glitch.
    A BURST, not a loop: a short tear on a per-message 9.5–13.5s cadence. A permanently
@@ -261,7 +252,9 @@
 
 .fcm-name-fx--shimmer {
   color: var(--fcm-fx-color);
-  text-shadow: var(--fcm-fx-outline);
+  /* Each letter owns the shimmer shadow; keeping a second parent shadow doubles the
+     dark halo and is especially visible while the overlay background is transparent. */
+  text-shadow: none;
 }
 
 .fcm-name-fx--shimmer .fcm-shimmer-letter {
@@ -298,11 +291,9 @@
   }
 
   .fcm-name-fx--shimmer {
-    text-shadow:
-      0 0 5px color-mix(in srgb, var(--fcm-fx-color) 90%, transparent),
-      0 0 13px color-mix(in srgb, var(--fcm-fx-color) 63%, transparent),
-      0 0 22px color-mix(in srgb, var(--fcm-fx-color) 32%, transparent),
-      var(--fcm-fx-outline);
+    /* The static fallback is painted by the letter spans; do not add a second
+       parent halo after the overlay has already adapted each letter's outline. */
+    text-shadow: none;
   }
 
   .fcm-name-fx--crt-phosphor,
@@ -346,11 +337,8 @@
 }
 
 .fcm-name-fx--shimmer.fcm-no-name-motion {
-  text-shadow:
-    0 0 5px color-mix(in srgb, var(--fcm-fx-color) 90%, transparent),
-    0 0 13px color-mix(in srgb, var(--fcm-fx-color) 63%, transparent),
-    0 0 22px color-mix(in srgb, var(--fcm-fx-color) 32%, transparent),
-    var(--fcm-fx-outline);
+  /* Keep viewer opt-out consistent with the reduced-motion fallback. */
+  text-shadow: none;
 }
 
 .fcm-name-fx--crt-phosphor.fcm-no-name-motion,

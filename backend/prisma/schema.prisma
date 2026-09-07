@@ -20,6 +20,7 @@ model User {
   // Free account-level chat identity. Unlike supporter cosmetics, this remains
   // available when the supporter tier is disabled and has no tier cooldown.
   chatName           String?   @map("chat_name")
+  steamDisplayName   String?   @map("steam_display_name")
   steamId            String?   @map("steam_id")
   installToken       String    @unique @map("install_token")
   discordId          String?   @unique @map("discord_id_link")
@@ -976,9 +977,9 @@ model HudIdentityBlock {
 // Auth gate: linked identities, link codes, and banned identities (#163, #297)
 // =============================================================================
 
-// linked_identities: non-Discord provider links per user.
-// Discord identity stays inline on users (load-bearing for sessions/dashboard).
-// Provider 'nexus' goes here. Future: 'steam', 'bethesda'.
+// linked_identities: provider links stored outside the inline account columns.
+// Discord and the server-verified SteamID64 stay inline on users (load-bearing for
+// sessions/dashboard and the overlay provider gate). Provider 'nexus' goes here.
 model LinkedIdentity {
   id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId       String    @map("user_id") @db.Uuid

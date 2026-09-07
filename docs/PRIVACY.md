@@ -18,6 +18,9 @@ Contact details are published in the project repository.
 
 - **Discord ID, username, display name, and avatar URL** — obtained via Discord OAuth
   when you sign in. This is how your account is identified.
+- **SteamID64** — obtained from Steam's server-verified OpenID response when you choose
+  Steam sign-in or link Steam to the overlay/HUD account. Steam is an alternative provider;
+  the Service does not receive your Steam password or payment details.
 - **A *Fallout 76* character name that you supply yourself** during onboarding or in
   Settings. This is optional. If you do not supply one, your Discord display name is
   used in chat instead.

@@ -1,5 +1,6 @@
 import express from 'express';
-import { requireAuth, requireDashboardAuth, requireDiscordRole } from '../middleware/auth';
+import { requireLinkAuth } from './link';
+import { requireAuth, requireDiscordRole } from '../middleware/auth';
 import { validate, schemas } from '../middleware/validation';
 import { authLimiter, cosmeticsWriteLimiter, registerLimiter, registerIpFloodLimiter } from '../middleware/rateLimiter';
 import env from '../config/environment';
@@ -34,7 +35,7 @@ router.delete('/session', requireAuth, deleteSession);
 router.get('/:id/profile', getUserProfile);
 // Free account identity, intentionally outside the supporter/cosmetics feature flag.
 // Keep a modest anti-probing rate limit but no calendar cooldown.
-router.patch('/:id/chat-name', requireDashboardAuth, cosmeticsWriteLimiter, updateChatName);
+router.patch('/:id/chat-name', requireLinkAuth, cosmeticsWriteLimiter, updateChatName);
 router.get('/:id', requireDiscordRole(env.OWNER_ROLE_ID, env.ADMIN_ROLE_ID, env.MODERATOR_ROLE_ID), getUser);
 router.get('/:id/aliases', requireDiscordRole(env.OWNER_ROLE_ID, env.ADMIN_ROLE_ID, env.MODERATOR_ROLE_ID), getUserAliases);
 router.get('/:id/messages', requireDiscordRole(env.OWNER_ROLE_ID, env.ADMIN_ROLE_ID, env.MODERATOR_ROLE_ID), getUserMessages);

@@ -16,6 +16,7 @@ import { getRedisClient } from '../config/redis';
 import prisma from '../config/prisma';
 import logger from '../config/logger';
 import { paramStr } from '../utils/reqParams';
+import { isValidSteamId } from '../services/steamAuthService';
 
 // Re-export for use in server.ts Nexus OAuth routes
 export { isBannedIdentity, linkProviderIdentity, unlinkProviderIdentity };
@@ -50,13 +51,13 @@ const redemptionIpLimiter = rateLimit({
 
 /**
  * Link-flow auth: resolves req.user from EITHER the overlay install session (X-Auth-Token)
- * OR a signed-in dashboard/web Discord or Nexus cookie session (resolved server-side to the
+ * OR a signed-in dashboard/web Discord, Nexus, or Steam cookie session (resolved server-side to the
  * FCM user by provider identity).
  * The web /link page authenticates by COOKIE, so the token-only requireAuth would 401 it into a
  * sign-in loop and the code-entry screen would never show. This implements the routes' documented
- * "X-Auth-Token or Discord session" contract. Mirrors requireAuth's ban auto-lift + reject.
+ * "X-Auth-Token or provider session" contract. Mirrors requireAuth's ban auto-lift + reject.
  */
-async function requireLinkAuth(req: Request, _res: Response, next: NextFunction): Promise<void> {
+export async function requireLinkAuth(req: Request, _res: Response, next: NextFunction): Promise<void> {
   try {
     let userId: string | null = null;
 
@@ -89,6 +90,16 @@ async function requireLinkAuth(req: Request, _res: Response, next: NextFunction)
           select: { userId: true },
         });
         userId = identity?.userId ?? null;
+      }
+
+      // Steam OpenID sessions are backed by the canonical steam_id column. Resolve
+      // the ID server-side; never trust a client-supplied user ID from the cookie.
+      if (!userId && isValidSteamId(sess?.steamUser?.steamId)) {
+        const u = await prisma.user.findFirst({
+          where: { steamId: String(sess.steamUser.steamId) },
+          select: { id: true },
+        });
+        userId = u?.id ?? null;
       }
     }
 
@@ -137,12 +148,15 @@ router.get('/game', requireLinkAuth, async (req: Request, res: Response, next) =
     const identities = await getLinkedIdentities(userId);
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { discordId: true, discordUsername: true, fo76AccountName: true },
+      select: { discordId: true, discordUsername: true, steamId: true, fo76AccountName: true },
     });
 
     const providers: Array<{ provider: string; username?: string | null; linkedAt: Date }> = [];
     if (user?.discordId) {
       providers.push({ provider: 'discord', username: user.discordUsername, linkedAt: new Date(0) });
+    }
+    if (isValidSteamId(user?.steamId)) {
+      providers.push({ provider: 'steam', username: null, linkedAt: new Date(0) });
     }
     for (const id of identities) {
       providers.push({ provider: id.provider, username: id.username, linkedAt: id.linkedAt });
@@ -163,7 +177,7 @@ router.get('/game', requireLinkAuth, async (req: Request, res: Response, next) =
 /**
  * POST /api/link/redeem
  * Redeems a relay-issued link code, binding the signed-in FCM user to the relay identity.
- * Auth: requireAuth — the user must be signed in via Discord or Nexus first.
+ * Auth: requireAuth — the user must be signed in via Discord, Nexus, or Steam first.
  * Body: { code: string }  (accepts "XXXXXXXX" or "XXXX-XXXX")
  * Rate: <=10/min per IP.
  *
@@ -186,7 +200,7 @@ router.post('/redeem', requireLinkAuth, redemptionIpLimiter, async (req: Request
     const hasProvider = await hasLinkedProvider(actorId);
     if (!hasProvider) {
       return next(
-        createError(403, 'You must link a Discord or Nexus account before activating in-game chat.'),
+        createError(403, 'You must link a Discord, Nexus, or Steam account before activating in-game chat.'),
       );
     }
 
@@ -286,14 +300,14 @@ router.post('/pairing-token', requireAuth, async (req: Request, res: Response, n
     const hasProvider = await hasLinkedProvider(userId);
     if (!hasProvider) {
       return next(
-        createError(403, 'You must link a Discord or Nexus account before minting a pairing token.'),
+        createError(403, 'You must link a Discord, Nexus, or Steam account before minting a pairing token.'),
       );
     }
 
     // Check if this fo76Name is claimed by another user (collision)
     const existing = await prisma.user.findFirst({
       where: { fo76AccountName: fo76Name.trim(), id: { not: userId } },
-      select: { id: true, discordId: true },
+      select: { id: true, discordId: true, steamId: true },
     });
     if (existing) {
       return next(
@@ -306,7 +320,11 @@ router.post('/pairing-token', requireAuth, async (req: Request, res: Response, n
             code: 'NAME_CLAIMED',
             detail: 'This FO76 name is already linked to another account.',
             hint: {
-              providers_on_existing_account: existing.discordId ? ['discord'] : ['nexus'],
+              providers_on_existing_account: [
+                ...(existing.discordId ? ['discord'] : []),
+                ...(existing.steamId ? ['steam'] : []),
+                ...(!existing.discordId && !existing.steamId ? ['nexus'] : []),
+              ],
             },
           }),
         ),
@@ -409,7 +427,9 @@ router.delete('/pairing-token', requireAuth, async (req: Request, res: Response,
 
 /**
  * DELETE /api/link/provider/:provider
- * Unlink a non-Discord provider. Refuses if it would leave the user with no providers.
+ * Unlink a provider. Discord unlink is deliberately a logout operation: the
+ * current overlay session is revoked and every live relay connection for the
+ * account is evicted before the response is returned.
  */
 router.delete('/provider/:provider', requireAuth, async (req: Request, res: Response, next) => {
   try {
@@ -417,9 +437,112 @@ router.delete('/provider/:provider', requireAuth, async (req: Request, res: Resp
     const provider = paramStr(req, 'provider');
 
     if (provider === 'discord') {
-      return next(
-        createError(400, 'Cannot unlink Discord via this endpoint. Use the account settings.'),
-      );
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { discordId: true, installToken: true },
+      });
+      if (!user?.discordId) return next(createError(404, 'Discord identity not linked.'));
+
+      // Keep the FCM account and its Discord-keyed entitlements/admin record,
+      // but remove the live identity so the next provider login is explicit.
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          discordId: null,
+          discordUsername: null,
+          discordDisplayName: null,
+          discordAvatar: null,
+          discordAuthedAt: null,
+        },
+      });
+
+      // Session/cache cleanup is best-effort after the authoritative identity
+      // update. The relay eviction below ensures the current client is still
+      // forced back to the provider login wall if Redis or session-row cleanup
+      // is temporarily unavailable.
+      try {
+        const redis = await getRedisClient();
+        await redis.del(`discord_link:${user.installToken}`);
+        if (req.sessionToken) await redis.del(`session:${req.sessionToken}`);
+      } catch (sessionErr) {
+        logger.warn({ err: sessionErr, userId }, 'Discord unlink session/cache cleanup failed');
+      }
+      if (req.sessionToken) {
+        await prisma.session.delete({ where: { token: req.sessionToken } }).catch((sessionErr) => {
+          logger.warn({ err: sessionErr, userId }, 'Discord unlink database session cleanup failed');
+        });
+      }
+
+      try {
+        // Keep this late-bound: relayHandler imports the full chat stack and
+        // route initialization should not create an application import cycle.
+        const relay = require('../services/relay/relayHandler') as {
+          evictRelayUser: (linkedUserId: string, options: { code: string; message: string }) => Promise<number>;
+        };
+        await relay.evictRelayUser(userId, {
+          code: 'discord_unlinked',
+          message: 'Discord account unlinked. Sign in again to continue.',
+        });
+      } catch (relayErr) {
+        // The session has already been invalidated. A relay eviction failure
+        // must not turn a successful unlink into a misleading 500 response.
+        logger.warn({ err: relayErr, userId }, 'Discord unlink relay eviction failed');
+      }
+
+      logger.info({ userId }, 'Discord identity unlinked and overlay session revoked');
+      res.json({ data: { success: true, loggedOut: true } });
+      return;
+    }
+
+    // Steam is the canonical inline provider on users (rather than a
+    // linked_identities row), so handle it before the generic provider path.
+    if (provider === 'steam') {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { steamId: true, discordId: true, installToken: true },
+      });
+      if (!isValidSteamId(user?.steamId)) return next(createError(404, 'Steam identity not linked.'));
+      const otherIdentities = await prisma.linkedIdentity.count({ where: { userId } });
+      await prisma.user.update({ where: { id: userId }, data: { steamId: null, steamDisplayName: null } });
+
+      const loggedOut = !user.discordId && otherIdentities < 1;
+      if (loggedOut) {
+        // Steam was the last provider. Invalidate the same overlay session and
+        // relay subscriptions as Discord unlink so the client cannot continue
+        // using a session for an account that no longer has a provider.
+        try {
+          const redis = await getRedisClient();
+          await redis.del(`steam_link:${user.installToken}`);
+          if (req.sessionToken) await redis.del(`session:${req.sessionToken}`);
+        } catch (sessionErr) {
+          logger.warn({ err: sessionErr, userId }, 'Steam unlink session/cache cleanup failed');
+        }
+        if (req.sessionToken) {
+          await prisma.session.delete({ where: { token: req.sessionToken } }).catch((sessionErr) => {
+            logger.warn({ err: sessionErr, userId }, 'Steam unlink database session cleanup failed');
+          });
+        }
+
+        try {
+          const relay = require('../services/relay/relayHandler') as {
+            evictRelayUser: (linkedUserId: string, options: { code: string; message: string }) => Promise<number>;
+          };
+          await relay.evictRelayUser(userId, {
+            code: 'steam_unlinked',
+            message: 'Steam account unlinked. Sign in again to continue.',
+          });
+        } catch (relayErr) {
+          logger.warn({ err: relayErr, userId }, 'Steam unlink relay eviction failed');
+        }
+
+        logger.info({ userId, provider }, 'Steam identity unlinked and overlay session revoked');
+        res.json({ data: { success: true, loggedOut: true } });
+        return;
+      }
+
+      logger.info({ userId, provider }, 'Provider identity unlinked');
+      res.json({ data: { success: true, loggedOut: false } });
+      return;
     }
 
     const result = await unlinkProviderIdentity(userId, provider);

@@ -9,6 +9,11 @@
 
 export const TOTAL_STEPS = 3;
 
+export function accountDisplayName(state: OnboardingState): string {
+  return (state.steamLinked ? state.steamDisplayName : '') || state.discordDisplayName || state.discordName || '';
+}
+
+
 export interface OnboardingState {
   fo76Name: string;
   playsFo76: boolean;
@@ -16,6 +21,8 @@ export interface OnboardingState {
   discordLinked: boolean;
   discordName: string;
   discordDisplayName: string;
+  steamLinked: boolean;
+  steamDisplayName?: string;
   skipNameOnNextFinish?: boolean;
   discordAvatarUrl?: string;
 }
@@ -28,6 +35,8 @@ export interface OnboardingSourceSettings {
   discordLinked: boolean;
   discordName?: string;
   discordDisplayName?: string;
+  steamLinked: boolean;
+  steamDisplayName?: string;
 }
 
 /**
@@ -50,17 +59,20 @@ export function deriveInitialOnboardingState(
     passedDiscordDisplayName || s.discordDisplayName || s.discordName || '';
 
   const savedFo76Name =
-    s.fo76Name && !s.fo76Name.startsWith('discord:') && !s.fo76Name.startsWith('Overlay')
+    s.fo76Name && !s.fo76Name.startsWith('discord:') && !/^overlay\d+$/i.test(s.fo76Name)
+      && !s.fo76Name.startsWith('pending-') && s.fo76Name !== 'Wanderer'
       ? s.fo76Name
       : '';
 
   return {
-    fo76Name: savedFo76Name || resolvedDiscordDisplayName,
+    fo76Name: savedFo76Name || (s.steamLinked ? '' : resolvedDiscordDisplayName),
     playsFo76: s.playsFo76,
     themeId: s.themeId || 'fo76-wasteland',
     discordLinked: s.discordLinked,
     discordName: s.discordName || '',
     discordDisplayName: resolvedDiscordDisplayName,
+    steamLinked: s.steamLinked,
+    steamDisplayName: s.steamDisplayName || '',
   };
 }
 
@@ -116,6 +128,8 @@ export interface FinishPatch {
   discordLinked: boolean;
   discordName: string;
   discordDisplayName?: string;
+  steamLinked: boolean;
+  steamDisplayName?: string;
   onboarded: true;
 }
 
@@ -128,6 +142,8 @@ export function buildFinishPatch(state: OnboardingState): FinishPatch {
     discordLinked: state.discordLinked,
     discordName: state.discordName,
     discordDisplayName: state.discordDisplayName || undefined,
+    steamLinked: state.steamLinked,
+    steamDisplayName: state.steamDisplayName || '',
     onboarded: true,
   };
 }
@@ -212,7 +228,7 @@ export function reduceFinishResult(
 ): FinishUiDirective {
   if (result.nameTaken) {
     return {
-      note: `"${state.fo76Name}" is taken — pick another, or leave blank to use your Discord name.`,
+      note: `"${state.fo76Name}" is taken — pick another, or leave blank to use your linked account display name.`,
       warn: true,
       disabled: false,
       skipNameOnNextFinish: true,

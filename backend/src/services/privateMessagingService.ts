@@ -37,8 +37,10 @@ function resolveDisplayName(user: {
   username?: string | null;
   discordUsername?: string | null;
   discordDisplayName?: string | null;
+  steamDisplayName?: string | null;
 }): string {
   if (!isPlaceholderUsername(user.username)) return String(user.username);
+  if (user.steamDisplayName?.trim()) return user.steamDisplayName.trim();
   if (user.discordDisplayName && user.discordDisplayName.length > 0) return user.discordDisplayName;
   if (user.discordUsername && user.discordUsername.length > 0) return user.discordUsername;
   return user.username || 'Wanderer';
@@ -79,7 +81,7 @@ async function getParticipantConversation(userId: string, conversationId: string
           id: true,
           username: true,
           discordUsername: true,
-          discordDisplayName: true,
+          discordDisplayName: true, steamDisplayName: true,
         },
       },
       userB: {
@@ -87,7 +89,7 @@ async function getParticipantConversation(userId: string, conversationId: string
           id: true,
           username: true,
           discordUsername: true,
-          discordDisplayName: true,
+          discordDisplayName: true, steamDisplayName: true,
         },
       },
     },
@@ -194,7 +196,7 @@ export async function listPrivateConversations(userId: string, limit = PRIVATE_C
             id: true,
             username: true,
             discordUsername: true,
-            discordDisplayName: true,
+            discordDisplayName: true, steamDisplayName: true,
           },
         },
         userB: {
@@ -202,7 +204,7 @@ export async function listPrivateConversations(userId: string, limit = PRIVATE_C
             id: true,
             username: true,
             discordUsername: true,
-            discordDisplayName: true,
+            discordDisplayName: true, steamDisplayName: true,
           },
         },
         messages: {
@@ -257,7 +259,7 @@ export async function getPrivateHistory(userId: string, conversationId: string, 
         select: {
           username: true,
           discordUsername: true,
-          discordDisplayName: true,
+          discordDisplayName: true, steamDisplayName: true,
         },
       },
     },
@@ -334,7 +336,7 @@ export async function sendPrivateMessage(senderId: string, recipientId: string, 
       select: {
         username: true,
         discordUsername: true,
-        discordDisplayName: true,
+        discordDisplayName: true, steamDisplayName: true,
       },
     });
 

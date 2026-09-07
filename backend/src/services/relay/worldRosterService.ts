@@ -1,22 +1,18 @@
 /**
  * worldRosterService.ts — roster-derived world rooms.
  *
- * FO76's UI layer exposes NO unique world/server id (AccountInfoData.worldId never
- * existed — verified against the decompiled HUD). What the HUD DOES publish is the
- * nearby-player roster (TeamMarkers.Markers, VoiceChatAreaData.participants). The
- * widget reports the character names it observes; this service clusters connected
- * relay users into world rooms by SIGHTING edges: if A reports seeing B's character
- * name (or vice versa), A and B are on the same world.
+ * The inspected HUD account data provides no unique world ID. The widget reports
+ * HUD-visible player names; mutual sightings cluster linked relay users. Missing
+ * HUD data can leave same-world users in separate rooms, so this remains inference.
  *
- * The computed roomKey feeds the EXISTING world-room machinery unchanged
- * (setWorldId / subscriber rebind / server:<key> ephemeral Redis room).
- *
- * Redis keys (TTL'd — a silent client falls out of its room):
- *   relay:roster:<relayUserId>  = JSON { name: <own fo76Name, lowercased>, seen: [names…] }
+ * Redis relay:roster:<relayUserId> stores the account name, observed names, a
+ * server-generated session UUID and the current HUD request ID, expiring in 120s.
+ * Room keys use the root session UUID; a solo leave/rejoin cannot reuse old history.
  */
 
 import { getRedisClient } from '../../config/redis';
 import logger from '../../config/logger';
+import { randomUUID } from 'node:crypto';
 
 const KEY_PREFIX = 'relay:roster:';
 const TTL_SECONDS = 120;
@@ -26,11 +22,13 @@ const MAX_ACTIVE_ROSTERS = 500;
 
 export interface RosterEntry {
   userId: string;
-  name: string; // own character name (lowercased)
-  seen: string[]; // observed nearby character names (lowercased)
+  name: string; // own public account name (lowercased)
+  seen: string[]; // observed HUD player names (lowercased)
+  session: string;
+  requestId: string;
 }
 
-export async function setRoster(relayUserId: string, ownName: string, seenNames: string[]): Promise<void> {
+export async function setRoster(relayUserId: string, ownName: string, seenNames: string[], requestId = ''): Promise<void> {
   try {
     const redis = await getRedisClient();
     const seen = [...new Set(seenNames
@@ -38,10 +36,13 @@ export async function setRoster(relayUserId: string, ownName: string, seenNames:
       .filter((n) => n.length > 0 && n.length <= MAX_NAME_LENGTH))]
       .slice(0, MAX_NAMES);
     const name = (ownName || '').trim().toLowerCase().slice(0, MAX_NAME_LENGTH);
-    const value = JSON.stringify({ name, seen });
+    const previous = await readRoster(relayUserId);
+    const session = previous && previous.requestId === requestId ? previous.session : randomUUID();
+    const value = JSON.stringify({ name, seen, session, requestId });
     await redis.set(`${KEY_PREFIX}${relayUserId}`, value, { EX: TTL_SECONDS });
   } catch (err) {
     logger.warn({ err, relayUserId }, '[worldRoster] setRoster failed');
+    throw err;
   }
 }
 
@@ -51,7 +52,17 @@ export async function clearRoster(relayUserId: string): Promise<void> {
     await redis.del(`${KEY_PREFIX}${relayUserId}`);
   } catch (err) {
     logger.warn({ err, relayUserId }, '[worldRoster] clearRoster failed');
+    throw err;
   }
+}
+
+export async function readRoster(userId: string): Promise<RosterEntry | null> {
+  const redis = await getRedisClient();
+  const raw = await redis.get(`${KEY_PREFIX}${userId}`);
+  if (!raw) return null;
+  const value: unknown = JSON.parse(raw);
+  if (!isRosterPayload(value)) return null;
+  return { userId, ...value };
 }
 
 /** All live rosters (TTL-pruned by Redis). */
@@ -75,7 +86,7 @@ async function getAllRosters(): Promise<RosterEntry[]> {
       if (!raw) return null;
       const parsed: unknown = JSON.parse(raw);
       if (!isRosterPayload(parsed)) return null;
-      return { userId: key.slice(KEY_PREFIX.length), name: parsed.name, seen: parsed.seen };
+      return { userId: key.slice(KEY_PREFIX.length), ...parsed };
     } catch {
       return null;
     }
@@ -89,16 +100,18 @@ function scanKeys(value: unknown): string[] {
   return [];
 }
 
-function isRosterPayload(value: unknown): value is { name: string; seen: string[] } {
+function isRosterPayload(value: unknown): value is Omit<RosterEntry, 'userId'> {
   if (!value || typeof value !== 'object' || !('name' in value) || !('seen' in value)) return false;
   return typeof value.name === 'string'
+    && 'session' in value && typeof value.session === 'string' && value.session.length > 0
+    && 'requestId' in value && typeof value.requestId === 'string'
     && Array.isArray(value.seen)
     && value.seen.every((name) => typeof name === 'string');
 }
 
 /**
  * Cluster users into rooms by sighting edges (union-find) and return each user's
- * roomKey. A user with no edges gets a solo room keyed on their own userId —
+ * roomKey. A user with no edges gets a solo room keyed on their session UUID —
  * server chat still works when alone on a world.
  */
 export async function computeRooms(): Promise<Map<string, string>> {
@@ -120,7 +133,7 @@ export async function computeRooms(): Promise<Map<string, string>> {
 
   // Require mutual sightings. A single client can lie about its outgoing
   // roster, so one-sided edges are not enough to merge two private rooms.
-  // Index owners by character name to keep this O(N * MAX_NAMES) instead of
+  // Index owners by public account name to keep this O(N * MAX_NAMES) instead of
   // comparing every roster pair.
   const byName = new Map<string, RosterEntry[]>();
   for (const roster of rosters) {
@@ -139,7 +152,8 @@ export async function computeRooms(): Promise<Map<string, string>> {
   }
 
   const rooms = new Map<string, string>();
-  for (const r of rosters) rooms.set(r.userId, `r:${find(r.userId)}`);
+  const sessions = new Map(rosters.map((r) => [r.userId, r.session]));
+  for (const r of rosters) rooms.set(r.userId, `r:${sessions.get(find(r.userId))}`);
   logger.debug({ rosterCount: rosters.length, elapsedMs: Date.now() - startedAt }, '[worldRoster] rooms recomputed');
   return rooms;
 }

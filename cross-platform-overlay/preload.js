@@ -61,10 +61,11 @@ contextBridge.exposeInMainWorld('relayBridge', {
   // position; main clamps to work area and calls setPosition. Used on Wayland
   // where -webkit-app-region:drag is unreliable for frameless windows.
   moveBounds: (pos) => ipcRenderer.send('overlay:move-bounds', pos),
-  // Main-process drag-move (Linux): renderer only signals the gesture; main reads
-  // the cursor via getCursorScreenPoint() so coords stay in DIP and don't drift.
+  // Main-process drag-move (Linux): the renderer sends PointerEvent movement
+  // deltas. Deltas remain valid while the window itself is moving and avoid
+  // mixed-DPI/client-coordinate feedback loops.
   moveStart: () => ipcRenderer.send('overlay:move-start'),
-  moveTick: () => ipcRenderer.send('overlay:move-tick'),
+  moveTick: (delta) => ipcRenderer.send('overlay:move-tick', delta),
   moveEnd: () => ipcRenderer.send('overlay:move-end'),
   // Chrome Opacity = whole-window translucency (live; affects the modal too).
   setWindowOpacity: (v) => ipcRenderer.send('window:set-opacity', v),
@@ -72,6 +73,13 @@ contextBridge.exposeInMainWorld('relayBridge', {
   // Discord OAuth: open the desktop-client link/relink flow (or any URL) in the
   // user's default browser.
   linkDiscord: () => ipcRenderer.send('discord:link'),
+  // Steam OpenID: link the desktop install to a verified SteamID64.
+  linkSteam: () => ipcRenderer.send('steam:link'),
+  // Revoke the server-side Discord identity and the active overlay session.
+  unlinkDiscord: () => ipcRenderer.invoke('discord:unlink'),
+  // Revoke Steam; when it is the last provider the main process also signs out
+  // and returns the renderer to the provider login wall.
+  unlinkSteam: () => ipcRenderer.invoke('steam:unlink'),
   openExternal: (url) => ipcRenderer.send('shell:open-external', url),
   // Surface a renderer-side diagnostic line into the main-process log file.
   logDiag: (msg) => ipcRenderer.send('shell:diag', msg),
@@ -80,6 +88,9 @@ contextBridge.exposeInMainWorld('relayBridge', {
   refreshDiscordStatus: () => ipcRenderer.send('discord:refresh-status'),
   // Called when main has a fresh Discord link/supporter-role status (post-link or on focus).
   onDiscordStatus: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('relay:discord-status', h); return () => ipcRenderer.removeListener('relay:discord-status', h); },
+  // Trigger and receive Steam link status for the desktop install.
+  refreshSteamStatus: () => ipcRenderer.send('steam:refresh-status'),
+  onSteamStatus: (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('relay:steam-status', h); return () => ipcRenderer.removeListener('relay:steam-status', h); },
 
   // Lifecycle.
   onStatus:      (cb) => { const h = (_e, s) => cb(s); ipcRenderer.on('relay:status',          h); return () => ipcRenderer.removeListener('relay:status',          h); },

@@ -63,6 +63,7 @@ certain user actions) do a secondary `ADMIN_ROLES` check inside the component.
 
 | File | Route | Purpose |
 |------|-------|---------|
+| `ConnectedAccountsPanel.tsx` | Self-profile only | Shows Steam/Discord status and optional, session-bound Discord linking without switching accounts. |
 | `Profile.tsx` | `/profile/:userId` | Public user profile. Shows username, Discord info, message history snippet, moderation notes (staff only). |
 
 ---
@@ -103,3 +104,8 @@ These routes are accessible without authentication.
 | `BannedSplash.tsx` | Full-screen overlay rendered when a banned user lands on any protected route. Shown globally via `App.tsx`. |
 | `ErrorBoundary.tsx` | Generic React error boundary used in the router. |
 | `RoleViewSwitcher.tsx` | Owner/admin UI chip for toggling the "view as role" impersonation mode from `AuthContext`. |
+
+Steam sign-in on `/login` and HUD account linking on `/link` use the shared
+`SteamLogo` SVG component, sourced from [Simple Icons](https://github.com/simple-icons/simple-icons/blob/develop/icons/steam.svg)
+(CC0-1.0). The icon is bundled locally, inherits the button text color, and is decorative;
+the adjacent text supplies the accessible link name.

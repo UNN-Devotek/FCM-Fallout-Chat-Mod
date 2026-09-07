@@ -890,6 +890,8 @@ function setMouseIgnore(ignore, forward) {
 // fully interactive so slider drags etc. work regardless of click-through.
 let modalInteractive = false;
 let sessionToken = null;
+let authGeneration = 0;
+let providerLoginRequested = false;
 let isQuitting = false;
 // Once-per-session guard: prevents the update toast from re-firing on WS reconnects
 // within the same app launch. Reset to false on each app start.
@@ -1429,14 +1431,14 @@ let expandedBounds = null;        // { x, y, width, height } captured at collaps
 let collapseAnim = null;          // active height-animation interval
 let collapseAnimTarget = null;    // target height of the active animation (null when idle)
 
-// ─── JS drag-move state (Linux) ──────────────────────────────────────────────
-// The renderer's drag handler drives moves through the main process so the math
-// uses screen.getCursorScreenPoint() (authoritative DIP coords) instead of the
-// renderer's screenX/Y, which can drift under fractional scaling. While a move is
-// active we also suppress idle-collapse so the wake-up height animation can't fight
-// the move (that was the "window dances + expands while dragging" bug).
+// ─── JS drag-move state (native Wayland) ─────────────────────────────────────
+// The renderer's drag handler drives moves through the main process. Renderer
+// client coordinates are rebased on the live window position each tick so the
+// window's own movement cannot feed back into the next delta. While a move is
+// active we also suppress idle-collapse so the wake-up height animation can't
+// fight the move (that was the "window dances + expands while dragging" bug).
 let movingActive = false;         // true between overlay:move-start and move-end
-let moveAnchor = null;            // { cursor:{x,y}, win:{x,y} } captured at move-start
+let moveAnchor = null;            // { win:{x,y}, delta:{x,y}, size:{width,height} }
 // ─── Drag-in-progress guard for z-order heartbeat ─────────────────────────────
 // setAlwaysOnTop on a transparent Electron window triggers a DWM recomposition on
 // Windows that causes a visible color flash / dim while the window is being dragged.
@@ -1884,7 +1886,7 @@ function registerForToken(state, clientKey) {
     const _isDev = !app.isPackaged;
     const _regBody = { username: state.username, installToken: state.installToken };
     // DEV-ONLY (local backend only): the backend's POST /api/users enforces a
-    // Discord-link gate that can't be satisfied without Discord OAuth, which isn't
+    // provider-link gate that can't be satisfied without OAuth, which isn't
     // configured for local dev. When unpackaged AND the relay is localhost, attach
     // a synthetic, deterministic discordId (derived from the installToken) so a
     // local dev overlay can register without Discord. NEVER sent to a non-local
@@ -1892,7 +1894,7 @@ function registerForToken(state, clientKey) {
     if (_isDev && overlayCore.isLocalRelay(RELAY_HTTP)) {
       _regBody.discordId = overlayCore.syntheticDevDiscordId(state.installToken);
       _regBody.discordUsername = 'LocalDev';
-      try { diag('[relay] LOCAL dev backend — synthetic discordId sent to bypass the Discord-link gate'); } catch { /* ignore */ }
+      try { diag('[relay] LOCAL dev backend — synthetic discordId sent to bypass the provider-link gate'); } catch { /* ignore */ }
     }
     const body = JSON.stringify(_regBody);
     const url = new URL(RELAY_HTTP + '/api/users');
@@ -1927,13 +1929,13 @@ function registerForToken(state, clientKey) {
           if (res.statusCode === 429) {
             return reject(Object.assign(new Error(`register HTTP 429: rate-limited — please wait a moment`), { cfTransient: true, statusCode: 429 }));
           }
-          // Discord-gate: check BEFORE isCfChallenge — the backend returns a JSON 403
-          // for unlinked accounts, which isCfChallenge would otherwise swallow.
+          // Provider-gate: check BEFORE isCfChallenge — the backend returns a JSON
+          // 403 for unlinked accounts, which isCfChallenge would otherwise swallow.
           if (res.statusCode === 403) {
             try {
               const body403 = JSON.parse(data);
-              if (body403 && body403.discord_auth_required) {
-                return reject(Object.assign(new Error('discord_auth_required'), { discordAuthRequired: true }));
+              if (body403 && (body403.auth_required || body403.discord_auth_required)) {
+                return reject(Object.assign(new Error('auth_required'), { authRequired: true, discordAuthRequired: !!body403.discord_auth_required }));
               }
             } catch { /* fall through */ }
           }
@@ -1953,6 +1955,8 @@ function registerForToken(state, clientKey) {
               discordUsername: json.data.discordUsername || null,
               discordDisplayName: json.data.discordDisplayName || null,
               discordAvatarUrl: json.data.discordAvatarUrl || null,
+              steamLinked: !!json.data.steamLinked,
+              steamDisplayName: json.data.steamDisplayName || null,
               username: json.data.username || null,
               // Role field (null for regular users). Added backend v1.3.57.
               userRole: json.data.role || null,
@@ -2383,10 +2387,10 @@ ipcMain.on('overlay:resize-bounds', (_evt, b) => {
   try { setWindowBoundsGuarded(wa); } catch { /* ignore */ }
 });
 
-// WM-independent pointer-drag MOVE (ticket #104). Receives the desired top-left
-// position {x, y} from the renderer (computed from screenX/Y deltas), clamps to
-// the work area, and applies through the same guarded bounds path as every other
-// geometry write. Width/height are kept from the current bounds.
+// WM-independent pointer-drag MOVE (ticket #104). Receives renderer pointer
+// coordinates and computes the desired top-left position, clamps to the work
+// area, and applies through the same guarded bounds path as every other geometry
+// write. Width/height are kept from the captured drag-start bounds.
 // isDragging is already set by the 'will-move' event on WM-driven moves; for the
 // pointer-drag path we don't need to toggle it separately because this IPC fires
 // at pointer-move frequency (not on every frame). The z-order heartbeat skips
@@ -2402,12 +2406,12 @@ ipcMain.on('overlay:move-bounds', (_evt, pos) => {
 });
 
 // ─── Main-process drag-move (Linux) ──────────────────────────────────────────
-  // Renderer sends move-start on pointerdown, move-tick on each pointermove, and
-  // move-end on pointerup. We read the cursor from screen.getCursorScreenPoint()
-  // (authoritative DIP, consistent with getBounds/setBounds) instead of trusting
-  // the renderer's screenX/Y, which can drift under fractional scaling and make the
-  // window jitter ("dance"). The guarded bounds call changes position only here, so
-  // width/height never change.
+// Renderer sends move-start on pointerdown and movementX/Y deltas on each
+// pointermove. Deltas remain valid while the window itself moves, unlike
+// clientX/clientY (which are window-relative) or screenX/screenY (which can use
+// a different scale space from getBounds/setBounds on mixed-DPI Linux). This
+// also works when native Wayland reports an unusable (0, 0) cursor position.
+// The guarded bounds call changes position only here, so width/height never change.
 ipcMain.on('overlay:move-start', () => {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   movingActive = true;
@@ -2430,28 +2434,33 @@ ipcMain.on('overlay:move-start', () => {
     sendToRenderer('overlay:force-expand', true); // sync the renderer's collapsed state
   }
   try {
-    const c = screen.getCursorScreenPoint();
     const b = mainWindow.getBounds();
     // Capture the size ONCE at drag-start. On XWayland fractional scaling (mixed-DPI
     // KDE setups) the per-tick move feeds geometry back through KWin's scale and the
     // frameless window GROWS on every move event. We pin this captured size on every
     // tick (below) so the size can't compound — never re-reading getBounds() mid-drag.
-    moveAnchor = { cursor: { x: c.x, y: c.y }, win: { x: b.x, y: b.y }, size: { width: b.width, height: b.height } };
+    moveAnchor = {
+      win: { x: b.x, y: b.y },
+      delta: { x: 0, y: 0 },
+      size: { width: b.width, height: b.height },
+    };
   } catch { moveAnchor = null; }
   diag('[move] start anchor=' + JSON.stringify(moveAnchor));
 });
-ipcMain.on('overlay:move-tick', () => {
+ipcMain.on('overlay:move-tick', (_evt, rendererDelta) => {
   if (!movingActive || !moveAnchor || !mainWindow || mainWindow.isDestroyed()) return;
   try {
-    const c = screen.getCursorScreenPoint();
-    const nx = Math.round(moveAnchor.win.x + (c.x - moveAnchor.cursor.x));
-    const ny = Math.round(moveAnchor.win.y + (c.y - moveAnchor.cursor.y));
+    if (!rendererDelta || !Number.isFinite(rendererDelta.x) || !Number.isFinite(rendererDelta.y)) return;
+    moveAnchor.delta.x += rendererDelta.x;
+    moveAnchor.delta.y += rendererDelta.y;
+    const next = overlayCore.resolveMoveDeltaPosition(moveAnchor.win, moveAnchor.delta);
+    if (!next) return;
     // Use the LOCKED start-size (not getBounds, which may already be inflated by the
     // XWayland scaling feedback) and command it explicitly via setBounds so the window
     // is re-pinned to its real size every tick — position-only writes let it grow on KDE
     // fractional-scaled XWayland.
     const w = moveAnchor.size.width, h = moveAnchor.size.height;
-    const wa = clampToWorkArea({ x: nx, y: ny, width: w, height: h });
+    const wa = clampToWorkArea({ x: next.x, y: next.y, width: w, height: h });
     setWindowBoundsGuarded({ x: wa.x, y: wa.y, width: w, height: h });
   } catch { /* ignore */ }
 });
@@ -2582,6 +2591,7 @@ ipcMain.on('shell:diag', (_evt, msg) => {
 ipcMain.on('discord:link', () => {
   const st = loadState();
   if (!st || !st.installToken) return;
+  providerLoginRequested = true;
   const linkUrl = `${RELAY_HTTP}/auth/discord/link?installToken=${encodeURIComponent(st.installToken)}`;
   // The backend's success callback lands on /auth/discord/link/callback (any status).
   const callbackPath = '/auth/discord/link/callback';
@@ -2667,6 +2677,79 @@ ipcMain.on('discord:link', () => {
     ipcMain.emit('discord:refresh-status');
   });
 
+  oauthWin.loadURL(linkUrl).catch((e) => oauthFallback(String(e && e.message || e)));
+});
+
+// Steam account link/relink — same in-app browser pattern as Discord, but the
+// backend callback verifies the Steam OpenID assertion and binds the SteamID64
+// to this install token. Steam is an independent provider: either Steam or
+// Discord satisfies the overlay authentication gate.
+ipcMain.on('steam:link', () => {
+  const st = loadState();
+  if (!st || !st.installToken) return;
+  providerLoginRequested = true;
+  const linkUrl = `${RELAY_HTTP}/auth/steam/link?installToken=${encodeURIComponent(st.installToken)}`;
+  const callbackPath = '/auth/steam/callback';
+
+  let oauthWin = null;
+  try {
+    oauthWin = new BrowserWindow({
+      width: 520, height: 720,
+      parent: mainWindow || undefined,
+      modal: false,
+      title: 'Link Steam — Fallout Chat Mod',
+      icon: appIcon() || undefined,
+      resizable: true,
+      center: true,
+      webPreferences: { contextIsolation: true, nodeIntegration: false },
+    });
+  } catch {
+    try { shell.openExternal(linkUrl); } catch { /* ignore */ }
+    return;
+  }
+
+  const wc = oauthWin.webContents;
+  const checkNav = (url) => {
+    try {
+      if (new URL(url).pathname === callbackPath) {
+        setTimeout(() => {
+          if (oauthWin && !oauthWin.isDestroyed()) oauthWin.close();
+        }, 1200);
+      }
+    } catch { /* ignore */ }
+  };
+  wc.on('did-navigate', (_evt, url) => checkNav(url));
+  wc.on('will-redirect', (_evt, url) => checkNav(url));
+  wc.on('did-redirect-navigation', (_evt, url) => checkNav(url));
+
+  let oauthFellBack = false;
+  const oauthFallback = (why) => {
+    if (oauthFellBack) return;
+    oauthFellBack = true;
+    diag('[steam-link] OAuth window failed (' + why + ') — falling back to external browser');
+    try { shell.openExternal(linkUrl); } catch { /* ignore */ }
+    try {
+      if (oauthWin && !oauthWin.isDestroyed()) {
+        const safe = String(why).replace(/[<>&]/g, ' ');
+        oauthWin.webContents.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(
+          '<body style="font-family:system-ui,Segoe UI,sans-serif;background:#101820;color:#c7d5e0;padding:24px;line-height:1.5">' +
+          '<h3 style="margin-top:0">Opening Steam in your browser…</h3>' +
+          '<p>The in-app login could not load (' + safe + '). We opened the link in your default browser instead — ' +
+          'finish linking there, then return to the overlay.</p>' +
+          '<p style="opacity:.6;font-size:12px">You can close this window.</p></body>'
+        )).catch(() => { /* ignore */ });
+      }
+    } catch { /* ignore */ }
+  };
+  wc.on('did-fail-load', (_evt, errorCode, errorDesc, _url, isMainFrame) => {
+    if (!isMainFrame || errorCode === -3) return;
+    oauthFallback('load error ' + errorCode + ' ' + (errorDesc || ''));
+  });
+  wc.on('render-process-gone', (_evt, details) => oauthFallback('render gone: ' + (details && details.reason || 'unknown')));
+  oauthWin.on('closed', () => {
+    oauthWin = null;
+    ipcMain.emit('steam:refresh-status');
+  });
   oauthWin.loadURL(linkUrl).catch((e) => oauthFallback(String(e && e.message || e)));
 });
 
@@ -2760,10 +2843,12 @@ ipcMain.handle('overlay:qa-login', async () => { startQaLogin(); return { ok: tr
 // the renderer the status is unavailable (it keeps the last known link state)
 // rather than silently dropping the result.
 function refreshDiscordStatus(attempt = 0) {
+  const requestGeneration = authGeneration;
   const st = loadState();
   if (!st || !st.installToken) return;
   const MAX_STATUS_ATTEMPTS = 4;
   const retry = (why) => {
+    if (requestGeneration !== authGeneration) return;
     if (attempt + 1 >= MAX_STATUS_ATTEMPTS) {
       diag('[discord-status] giving up after ' + MAX_STATUS_ATTEMPTS + ' attempts (' + why + ')');
       sendToRenderer('relay:discord-status', { linked: !!st.discordLinked, discordName: st.discordName || '', error: 'status-unavailable' });
@@ -2782,6 +2867,7 @@ function refreshDiscordStatus(attempt = 0) {
       let data = '';
       res.on('data', (c) => (data += c));
       res.on('end', () => {
+        if (requestGeneration !== authGeneration) return;
         try {
           const json = JSON.parse(data);
           const d = json?.data || {};
@@ -2805,7 +2891,11 @@ function refreshDiscordStatus(attempt = 0) {
           // status check (throttled to 1/min). Each new session caused the backend
           // to close the existing relay WS connection, producing the "blank chat
           // after return-to-game" symptom (WS dies → user must hit Refresh).
-          if (linked && !st.discordLinked) {
+          // A logout can leave another provider (usually Steam) linked while
+          // clearing the active session. In that case a successful status poll
+          // must still re-register, even though the local provider flag was
+          // already true before logout.
+          if (linked && (!st.discordLinked || (providerLoginRequested && !sessionToken))) {
             const fo76 = (typeof d.username === 'string' && d.username) ? d.username : null;
             if (fo76) saveState({ username: fo76 });
             if (d.displayName) saveState({ displayName: d.displayName });
@@ -2814,9 +2904,11 @@ function refreshDiscordStatus(attempt = 0) {
             const st2 = loadState();
             if (clientKey && st2 && st2.installToken) {
               registerForToken(st2, clientKey).then((r) => {
+                if (requestGeneration !== authGeneration) return;
                 sessionToken = r.token;
+                providerLoginRequested = false;
                 flushPendingWsOpens();
-                saveState({ displayName: r.displayName || st2.displayName, discordLinked: !!r.discordLinked, discordName: r.discordName || discordName });
+                saveState({ displayName: r.displayName || st2.displayName, discordLinked: !!r.discordLinked, discordName: r.discordName || discordName, steamLinked: !!r.steamLinked });
                 if (r.username != null) saveState({ username: r.username });
                 if (r.discordAvatarUrl != null) saveState({ discordAvatarUrl: r.discordAvatarUrl || '' });
                 // Adopt the resolved role + avatar from the re-register so mod
@@ -2834,11 +2926,14 @@ function refreshDiscordStatus(attempt = 0) {
                   discordUsername: r.discordUsername || '',
                   discordDisplayName: r.discordDisplayName || '',
                   discordAvatarUrl: r.discordAvatarUrl || d.discordAvatarUrl || null,
+                  steamLinked: !!r.steamLinked,
+                  steamDisplayName: r.steamDisplayName || null,
                   username: r.username || fo76 || '',
                   role: r.userRole || null,
                   avatarUrl: r.avatarUrl || loadState()?.avatarUrl || null,
                 });
               }).catch((e) => {
+                if (requestGeneration !== authGeneration) return;
                 // The link succeeded on the backend (relay:discord-status already
                 // told the renderer), but rebinding our SESSION to the reclaimed
                 // account failed. Don't leave the user in limbo — recover the
@@ -2860,6 +2955,218 @@ function refreshDiscordStatus(attempt = 0) {
   req.end();
 }
 ipcMain.on('discord:refresh-status', () => refreshDiscordStatus(0));
+
+// Provider unlink is an authenticated, destructive identity action. When the
+// provider was the last linked identity, the backend revokes the current
+// session and evicts relay subscribers; the matching finish handler then
+// deliberately shows the provider login wall.
+function requestProviderUnlink(provider) {
+  const token = sessionToken;
+  if (!token) {
+    return Promise.resolve({ ok: false, reason: 'not-authenticated', message: 'You are already signed out.' });
+  }
+
+  return new Promise((resolve) => {
+    const url = new URL(RELAY_HTTP + '/api/link/provider/' + provider);
+    const headers = {
+      'Content-Type': 'application/json',
+      'X-Auth-Token': token,
+      'X-Client-Version': APP_VERSION,
+      'User-Agent': APP_UA,
+      'Origin': RELAY_HTTP,
+    };
+    if (!app.isPackaged) headers['X-Overlay-Dev'] = '1';
+    const req = httpModule(url).request(
+      {
+        hostname: url.hostname,
+        port: url.port || undefined,
+        path: url.pathname,
+        method: 'DELETE',
+        headers,
+      },
+      (res) => {
+        let data = '';
+        res.on('data', (chunk) => (data += chunk));
+        res.on('end', () => {
+          let json = null;
+          try { json = JSON.parse(data); } catch { /* use the generic message */ }
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300 && json?.data?.success) {
+            resolve({ ok: true, loggedOut: !!json.data.loggedOut });
+            return;
+          }
+          const message = json?.detail || json?.message || json?.error || `Unlink failed (HTTP ${res.statusCode || 0})`;
+          resolve({ ok: false, reason: 'server', message: String(message).slice(0, 240) });
+        });
+      },
+    );
+    req.on('error', (err) => resolve({ ok: false, reason: 'network', message: err.message }));
+    req.setTimeout(15_000, () => req.destroy(new Error('Unlink request timed out.')));
+    req.end();
+  });
+}
+
+function requestDiscordUnlink() {
+  return requestProviderUnlink('discord');
+}
+
+function requestSteamUnlink() {
+  return requestProviderUnlink('steam');
+}
+
+function finishProviderUnlink(provider) {
+  const label = provider === 'steam' ? 'Steam' : 'Discord';
+  const reason = label + ' account unlinked';
+  authGeneration += 1;
+  providerLoginRequested = false;
+  sessionToken = null;
+  forceVisible = false;
+
+  // Close renderer-proxied sockets before the renderer is moved to the login
+  // wall. Closing both CONNECTING and OPEN sockets prevents a stale socket from
+  // carrying the old token after a quick provider re-login.
+  while (pendingWsOpens.length > 0) {
+    const id = pendingWsOpens.shift();
+    sendToRenderer('proxy:ws:close', { id, code: 4001, reason });
+  }
+  for (const sock of relaySockets.values()) {
+    try { sock.close(4001, reason); } catch { /* closing */ }
+  }
+  relaySockets.clear();
+  relaySendBuffers.clear();
+
+  saveState(provider === 'steam'
+    ? overlayCore.buildSteamUnlinkStatePatch()
+    : overlayCore.buildDiscordUnlinkStatePatch());
+  userRole = null;
+  rebuildTray();
+  chatActive = false;
+  userHidden = false;
+  if (collapsed || collapseAnim) {
+    expandFromHeader(false);
+    sendToRenderer('overlay:force-expand', true);
+  }
+  setClickThrough(false);
+  showWindowInactive();
+  sendToRenderer('relay:status', {
+    state: 'auth_required',
+    authRequired: true,
+    requiredProviders: ['discord', 'steam'],
+    message: label + ' account unlinked. Sign in again to continue.',
+  });
+}
+
+function finishDiscordUnlink() {
+  finishProviderUnlink('discord');
+}
+
+function finishSteamUnlink() {
+  finishProviderUnlink('steam');
+}
+
+ipcMain.handle('discord:unlink', async () => {
+  const result = await requestDiscordUnlink();
+  if (!result.ok) return result;
+  finishDiscordUnlink();
+  return result;
+});
+
+ipcMain.handle('steam:unlink', async () => {
+  const result = await requestSteamUnlink();
+  if (!result.ok) return result;
+  if (result.loggedOut) finishSteamUnlink();
+  return result;
+});
+
+// Steam link status refresh: mirrors the Discord post-link re-register path so
+// the overlay session is rebound immediately when a Steam callback reclaimed an
+// existing account onto this install token.
+function refreshSteamStatus(attempt = 0) {
+  const requestGeneration = authGeneration;
+  const st = loadState();
+  if (!st || !st.installToken) return;
+  const MAX_STATUS_ATTEMPTS = 4;
+  const retry = (why) => {
+    if (requestGeneration !== authGeneration) return;
+    if (attempt + 1 >= MAX_STATUS_ATTEMPTS) {
+      diag('[steam-status] giving up after ' + MAX_STATUS_ATTEMPTS + ' attempts (' + why + ')');
+      sendToRenderer('relay:steam-status', { linked: !!st.steamLinked, steamLinked: !!st.steamLinked, error: 'status-unavailable' });
+      return;
+    }
+    const backoff = 1500 * (attempt + 1);
+    diag('[steam-status] ' + why + ' — retry ' + (attempt + 1) + '/' + MAX_STATUS_ATTEMPTS + ' in ' + backoff + 'ms');
+    setTimeout(() => refreshSteamStatus(attempt + 1), backoff);
+  };
+  const url = new URL(RELAY_HTTP + '/api/auth/steam-status/' + encodeURIComponent(st.installToken));
+  const req = httpModule(url).request(
+    { hostname: url.hostname, port: url.port || undefined, path: url.pathname, method: 'GET', headers: { 'Content-Type': 'application/json' } },
+    (res) => {
+      if (res.statusCode && (res.statusCode < 200 || res.statusCode >= 300)) { res.resume(); retry('HTTP ' + res.statusCode); return; }
+      let data = '';
+      res.on('data', (c) => (data += c));
+      res.on('end', () => {
+        if (requestGeneration !== authGeneration) return;
+        try {
+          const json = JSON.parse(data);
+          const d = json?.data || {};
+          const linked = !!(d.steamLinked ?? d.linked);
+          const wasLinked = !!st.steamLinked;
+          saveState({ steamLinked: linked, steamDisplayName: linked ? (d.steamDisplayName || '') : '' });
+          sendToRenderer('relay:steam-status', { linked, steamLinked: linked, steamDisplayName: d.steamDisplayName || '' });
+
+          if (linked && (!wasLinked || (providerLoginRequested && !sessionToken))) {
+            if (d.displayName) saveState({ displayName: d.displayName });
+            const clientKey = resolveAppClientKey();
+            const st2 = loadState();
+            if (clientKey && st2 && st2.installToken) {
+              registerForToken(st2, clientKey).then((r) => {
+                if (requestGeneration !== authGeneration) return;
+                sessionToken = r.token;
+                providerLoginRequested = false;
+                flushPendingWsOpens();
+                saveState({
+                  displayName: r.displayName || st2.displayName,
+                  discordLinked: !!r.discordLinked,
+                  discordName: r.discordName || '',
+                  steamLinked: !!r.steamLinked,
+                  steamDisplayName: r.steamDisplayName || null,
+                });
+                if (r.username != null) saveState({ username: r.username });
+                if (r.discordAvatarUrl != null) saveState({ discordAvatarUrl: r.discordAvatarUrl || '' });
+                if (r.userRole) saveState({ userRole: r.userRole }); else saveState({ userRole: null });
+                if (r.avatarUrl != null) saveState({ avatarUrl: r.avatarUrl || '' });
+                const prevRoleSteam = userRole;
+                userRole = r.userRole || null;
+                if (userRole !== prevRoleSteam) rebuildTray();
+                sendToRenderer('relay:status', {
+                  state: 'authenticated',
+                  displayName: r.displayName || d.displayName || '',
+                  discordLinked: !!r.discordLinked,
+                  discordName: r.discordName || '',
+                  discordUsername: r.discordUsername || '',
+                  discordDisplayName: r.discordDisplayName || '',
+                  discordAvatarUrl: r.discordAvatarUrl || null,
+                  steamLinked: !!r.steamLinked,
+                  steamDisplayName: r.steamDisplayName || null,
+                  username: r.username || '',
+                  role: r.userRole || null,
+                  avatarUrl: r.avatarUrl || loadState()?.avatarUrl || null,
+                });
+              }).catch((e) => {
+                if (requestGeneration !== authGeneration) return;
+                diag('[steam-status] post-link re-register failed: ' + String(e && e.message || e) + ' — recovering via startRelay()');
+                startRelay().catch(() => { /* startRelay surfaces its own errors */ });
+              });
+            }
+          }
+        } catch { retry('parse error'); }
+      });
+    },
+  );
+  req.on('error', () => retry('network error'));
+  req.setTimeout(12000, () => req.destroy(new Error('steam-status timeout')));
+  req.end();
+}
+ipcMain.on('steam:refresh-status', () => refreshSteamStatus(0));
 
 // Identity: set the FO76 character name as the chat display name.
 // Re-registers with the backend using the entered name as `username` (the
@@ -2885,13 +3192,14 @@ ipcMain.handle('identity:set-name', async (_evt, rawName) => {
   // installToken }; the backend upserts by installToken so this RENAMES the row.
   const renameState = { ...st, username: name };
   try {
-    const { token, displayName, discordLinked, discordName, discordUsername, discordDisplayName, discordAvatarUrl, username: savedUsername, userRole: renameRole, avatarUrl: renameAvatarUrl } =
+    const { token, displayName, discordLinked, discordName, discordUsername, discordDisplayName, discordAvatarUrl, steamLinked, steamDisplayName, username: savedUsername, userRole: renameRole, avatarUrl: renameAvatarUrl } =
       await registerForToken(renameState, clientKey);
     sessionToken = token;
     flushPendingWsOpens();
     // Persist the new username + resolved display name so future launches use it.
     saveState({ username: name, displayName: displayName || name });
     saveState({ discordLinked: !!discordLinked, discordName: discordName || '' });
+    saveState({ steamLinked: !!steamLinked, steamDisplayName: steamDisplayName || '' });
     if (discordUsername != null) saveState({ discordUsername: discordUsername || '' });
     if (discordDisplayName != null) saveState({ discordDisplayName: discordDisplayName || '' });
     if (discordAvatarUrl != null) saveState({ discordAvatarUrl: discordAvatarUrl || '' });
@@ -2911,6 +3219,8 @@ ipcMain.handle('identity:set-name', async (_evt, rawName) => {
       discordUsername: discordUsername || '',
       discordDisplayName: discordDisplayName || '',
       discordAvatarUrl: discordAvatarUrl || null,
+      steamLinked: !!steamLinked,
+      steamDisplayName: steamDisplayName || null,
       username: savedUsername || name,
       role: renameRole || null,
       avatarUrl: renameAvatarUrl || loadState()?.avatarUrl || null,
@@ -3029,21 +3339,25 @@ ipcMain.on('overlay:save-settings', (_evt, settings) => {
 // relay:status and schedule an auto-retry with a short backoff so the user sees
 // the retry UI rather than a silent failure. Backoff: 429 → 10 s, other → 5 s.
 async function startRelay(retryCount = 0) {
+  const requestGeneration = authGeneration;
   const clientKey = resolveAppClientKey();
   if (!clientKey) {
     sendToRenderer('relay:status', { state: 'error', message: 'No APP_CLIENT_KEY (set env or run from inside the repo).' });
     return;
   }
   try {
-    const { token, userId: regUserId, displayName, discordLinked, discordName, discordUsername, discordDisplayName, discordAvatarUrl, username: regUsername, userRole: role, avatarUrl: regAvatarUrl } = await registerForToken(loadState(), clientKey);
+    const { token, userId: regUserId, displayName, discordLinked, discordName, discordUsername, discordDisplayName, discordAvatarUrl, steamLinked, steamDisplayName, username: regUsername, userRole: role, avatarUrl: regAvatarUrl } = await registerForToken(loadState(), clientKey);
+    if (requestGeneration !== authGeneration) return;
     sessionToken = token;
+    providerLoginRequested = false;
     flushPendingWsOpens();
-    diag('[relay] registered OK — displayName=' + (displayName || '(none)') + ' discordLinked=' + !!discordLinked + ' role=' + (role || 'user'));
+    diag('[relay] registered OK — displayName=' + (displayName || '(none)') + ' discordLinked=' + !!discordLinked + ' steamLinked=' + !!steamLinked + ' role=' + (role || 'user'));
     // Persist the resolved display name (may be FO76 name or Discord display name)
     // so the settings panel can pre-populate the fo76Name field on next launch.
     if (displayName) saveState({ displayName });
-    // Persist real Discord link state so it survives a renderer reload.
+    // Persist real provider link state so it survives a renderer reload.
     saveState({ discordLinked: !!discordLinked, discordName: discordName || '' });
+    saveState({ steamLinked: !!steamLinked, steamDisplayName: steamDisplayName || '' });
     if (discordUsername != null) saveState({ discordUsername: discordUsername || '' });
     if (discordDisplayName != null) saveState({ discordDisplayName: discordDisplayName || '' });
     if (discordAvatarUrl != null) saveState({ discordAvatarUrl: discordAvatarUrl || '' });
@@ -3067,6 +3381,8 @@ async function startRelay(retryCount = 0) {
       discordUsername: discordUsername || '',
       discordDisplayName: discordDisplayName || '',
       discordAvatarUrl: discordAvatarUrl || null,
+      steamLinked: !!steamLinked,
+      steamDisplayName: steamDisplayName || null,
       username: regUsername || '',
       role: role || null,
       userId: regUserId || null,
@@ -3074,12 +3390,14 @@ async function startRelay(retryCount = 0) {
     });
   } catch (err) {
     const msg = err && err.message ? err.message : String(err);
-    if (err && err.discordAuthRequired) {
-      // Backend Discord-gate: this install has no linked Discord account.
+    if (err && (err.authRequired || err.discordAuthRequired)) {
+      // Backend provider gate: this install has no linked Discord or Steam account.
       // Tell the renderer to show the blocking login wall. Never auto-retry —
-      // the user must complete Discord OAuth first.
-      diag('[relay] discord auth required — showing login wall');
-      sendToRenderer('relay:status', { state: 'discord_required' });
+      // the user must complete a Discord or Steam provider link first.
+      diag('[relay] provider auth required — showing login wall');
+      // Keep the legacy state name for older renderers; the payload/error is
+      // provider-neutral and current renderers accept both names.
+      sendToRenderer('relay:status', { state: 'discord_required', authRequired: true, requiredProviders: ['discord', 'steam'] });
       return;
     }
     if (err && err.cfTransient) {

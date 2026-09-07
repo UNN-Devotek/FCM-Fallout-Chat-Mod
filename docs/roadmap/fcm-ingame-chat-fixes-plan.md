@@ -19,7 +19,8 @@ work into parallelizable workstreams for sub-agents.
 > - **Native chat input decoded:** ZFE's top-level `setChatInputActive` / `isChatInputActive` /
 >   `readChatInput` / `consumeChatInputSubmitted` / `clearChatInput` API (bare-value payloads,
 >   `consumeChatInputSubmitted` returns a bool — read text from `readChatInput`) is understood and used;
->   a `SharedHUDTools` fallback text-entry path is retained.
+>   a `SharedHUDTools` host-owned text-entry path is retained as the primary editor, with a no-lock
+>   native ZFE buffer fallback.
 > - **Remaining:** Proton/Wine is BLOCKED on an upstream Zig TLS bug (fix = ZFE on Zig >= 0.14.0),
 >   tracked in **#326** — see
 >   [../overlay/zfe/native-chat-relay/proton-status.md](../overlay/zfe/native-chat-relay/proton-status.md);

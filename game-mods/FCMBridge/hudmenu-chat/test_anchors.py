@@ -21,6 +21,7 @@ import sys, re, os
 HERE = os.path.dirname(os.path.abspath(__file__))
 INJECT_AS = os.path.join(HERE, 'fcm-inject.as')
 WIDGET_HX = os.path.join(HERE, '..', 'hudmodloader-chat', 'FCMChatWidget.hx')
+USER_EVENT_HX = os.path.join(HERE, '..', 'hudmodloader-chat', 'FcmUserEvent.hx')
 WIDGET_CONFIG_HX = os.path.join(HERE, '..', 'hudmodloader-chat', 'FcmConfig.hx')
 WIDGET_INI = os.path.join(HERE, '..', 'hudmodloader-chat', 'FCMChatWidget.ini')
 
@@ -104,8 +105,19 @@ if inject_src:
           "fcm-inject.as discovers hostZfe at HUDMenu level before passing")
     check("fcmSetNativeApi" in inject_src,
           "fcm-inject.as calls fcmSetNativeApi on the bridge (injects either provider)")
-    check("__SFECodeObj" in inject_src and "fcmSetNativeApi" in inject_src,
-          "fcm-inject.as passes the xScal chat bridge when ZFE is absent")
+    check("__SFECodeObj" in inject_src and "__SFCodeObj" in inject_src
+          and "chatInterface" in inject_src and "fcmSetNativeApi" in inject_src,
+          "fcm-inject.as passes either xScal chat surface when ZFE is absent")
+    check('var hostNative:* = hostXscal' in inject_src
+          and 'provider:String = (hostXscal != null) ? "xscal" : ""' in inject_src
+          and 'hostNative = hostZfe' in inject_src,
+          "fcm-inject.as gives explicit xScal chatInterface priority when both extenders are present")
+    check('fcmSetNativeApi(hostNative, provider, hostLogger)' in inject_src
+          and 'provider = (hostNative != null) ? "legacy" : ""' in inject_src,
+          "fcm-inject.as passes the provider hint and quarantines ambiguous __SFCodeObj/logger")
+    check('var stage:* = scope.stage' in inject_src
+          and 'stageCandidate' in inject_src,
+          "fcm-inject.as can find xScal diagnostics on the main stage")
 
     # Channel table uses slugs, not UUIDs.
     check('"global"' in inject_src or "'global'" in inject_src,
@@ -202,6 +214,13 @@ except FileNotFoundError:
     bridge_src = ""
 
 if bridge_src:
+    post_init_match = re.search(
+        r"function postDiscoveryInit\(\):Void \{(.*?)\n    \}",
+        bridge_src,
+        re.DOTALL,
+    )
+    post_init_body = post_init_match.group(1) if post_init_match else ""
+
     # chat.v1 API calls.
     check('"chat.v1.connect"' in bridge_src,
           "FCMBridge.hx calls chat.v1.connect")
@@ -315,6 +334,10 @@ if bridge_src:
           "FCMBridge.hx tracks _zfeInjectedByHost to guard against double-init")
     check("FcmNativeApi.discover" in bridge_src and "fcmSetNativeApi" in bridge_src,
           "FCMBridge.hx discovers and accepts either native chat provider")
+    check("probeChatCapability" in bridge_src
+          and "if (!_api.probeChatCapability())" in post_init_body
+          and "chat.v1.getRuntimeInfo" not in post_init_body,
+          "FCMBridge.hx probes the selected provider without an unconditional ZFE runtime call")
 
 # ---------------------------------------------------------------------------
 # 4c. Verify FCMChatWidget tab renderer lifecycle
@@ -353,7 +376,7 @@ if widget_src:
         check("activation buffer not clear; falling back" in native_body,
               "FCMChatWidget falls back when native activation leaves text behind")
     check("function openInputSharedHudTools" in widget_src,
-          "FCMChatWidget retains the SharedHUDTools fallback")
+          "FCMChatWidget retains the primary SharedHUDTools editor")
     check("_nativeInputCommandFailed" in widget_src
           and "closeInputNative(true)" in widget_src
           and "_nativeInputUsable = false;" in widget_src,
@@ -361,8 +384,9 @@ if widget_src:
     check('var finalRaw:String = callTop("readChatInput", "{}");' in widget_src
           and "final read helper failed; dropping submit" in widget_src,
           "FCMChatWidget drops a submit when the final native buffer read fails")
-    check("ev = untyped __new__(cls, 0, false, 0);" in widget_src,
-          "FCMChatWidget supports the three-argument PlatformChangeEvent API")
+    check("PlatformChangeEvent" not in widget_src
+          and "forceKeyboardPlatform" not in widget_src,
+          "FCMChatWidget does not inject an undocumented platform-change event")
     check("function showHudLoaderMenu" in widget_src
           and 'Reflect.field(_hudTools, "ShowMenu")' in widget_src
           and 'Reflect.field(_hudTools, "CloseMenu")' in widget_src
@@ -402,10 +426,52 @@ if widget_src:
     check(re.search(r"^\s*function readDisplayNameWithAccountFallback", widget_src,
                     re.MULTILINE) is None,
           "FCMChatWidget has no obsolete compatibility resolver")
-    check('static inline var VERSION:String  = "2.10.39";' in widget_src,
-          "FCMChatWidget bumps the self-echo and measured-star build to version 2.10.39")
+    version_match = re.search(r'static inline var VERSION:String\s*=\s*"(\d+\.\d+\.\d+)";', widget_src)
+    build_doc = open(os.path.join(os.path.dirname(WIDGET_HX), "BUILD.md"), encoding="utf-8").read()
+    check(version_match is not None and f"**Widget version:** {version_match.group(1)}." in build_doc,
+          "FCMChatWidget source version matches the documented test build")
+    check('FcmAuthFlow.classify' in widget_src
+          and 'transport accepted; xScal auth pending' in widget_src
+          and 'xScal auth state' in widget_src,
+          "FCMChatWidget keeps xScal transport alive while auth is pending and reconnects only on terminal state")
+    check('if (_api.provider == FcmNativeApi.XSCAL)' in widget_src
+          and 'refreshAuthState();' in widget_src
+          and 'isPendingTransportResponse' in widget_src,
+          "FCMChatWidget refreshes xScal auth during polling and ignores pending transport responses")
+    shared_input = widget_src.find("        openInputSharedHudTools();")
+    native_input = widget_src.find("        if (USE_NATIVE_INPUT && _nativeInputUsable)")
+    check(shared_input >= 0 and native_input > shared_input,
+          "FCMChatWidget tries the host-domain SharedHUDTools editor before native input")
+    check("function dispatchEditText" not in widget_src
+          and "_editTextLockOwned" not in widget_src
+          and "BSUIDataManager.dispatchEvent" not in widget_src,
+          "FCMChatWidget does not dispatch ControlMap events from the child widget")
+    check('FcmCommand.externalInputClosePath' in widget_src
+          and 'function closeInputSharedHudTools' in widget_src
+          and 'EndTextEdit' in widget_src,
+          "FCMChatWidget closes SharedHUDTools before named social/input actions")
     check("FcmNativeApi.discover" in widget_src and "supportsNativeInput" in widget_src,
           "FCMChatWidget selects the provider and avoids ZFE-only input on xScal")
+    check("startPhysicalNavigation" in widget_src
+          and "Input.RegisterKey" in widget_src
+          and "isPhysicalKeyPressed" in widget_src
+          and "stopPhysicalNavigation" in widget_src,
+          "FCMChatWidget polls registered physical keys when HUDModLoader collapses Page actions")
+    check(re.search(r"loadPersistedConfig\(\);\s*(//[^\n]*\n\s*)*startPhysicalNavigation\(\);\s*startConnect\(\);",
+                    widget_src) is not None,
+          "FCMChatWidget starts physical navigation at provider discovery, before the relay connect")
+    check("_api == null || !_connected) return;\n        stopPhysicalNavigation();" not in widget_src
+          and "!_physicalNavReady || _api == null || !_connected" not in widget_src,
+          "FCMChatWidget physical navigation is not gated on the relay session")
+    check("inputDispatcherName" in widget_src and "lastInputResponse" in widget_src,
+          "FCMChatWidget logs which Input.* dispatcher accepted registration and the raw response")
+    check("physicalKeyAction" in widget_src
+          and "VK_PAGEUP:Int = 0x21" in widget_src
+          and "VK_PAGEDOWN:Int = 0x22" in widget_src,
+          "FCMChatWidget uses the documented Windows Page Up/Page Down virtual-key codes")
+    check("probeChatCapability" in widget_src
+          and "if (!_api.probeChatCapability())" in widget_src,
+          "FCMChatWidget probes only the selected provider capability")
     check('MENU_ACTION_TIMEOUT_MS' in widget_src
           and 'true, false, MENU_ACTION_TIMEOUT_MS' in widget_src,
           "FCMChatWidget uses a positive repeatable HUDTools menu timeout")
@@ -419,74 +485,84 @@ if widget_src:
           and 'function requestRelink' in widget_src
           and 'CLEAR_AUTH_COMMAND:String = "clearChatAuth"' in widget_src,
           "FCMChatWidget exposes a guarded local-auth relink command")
-    check('FcmConfig.hudTransportHasStar(hudTransport)' in widget_src
+    check('FcmConfig.hudTransportMessageId(hudTransport)' in widget_src
+          and 'FcmConfig.hudTransportHasStar(hudTransport)' in widget_src
           and 'FcmConfig.hudTransportStarColor(hudTransport)' in widget_src,
-          "FCMChatWidget decodes native-known HUD cosmetics transport")
+          "FCMChatWidget decodes native-known HUD identity and cosmetics transport")
     check('extractJsonBool(obj, "supporterStar")' in widget_src
           and 'supporterStarPresent' in widget_src
           and 'customTagHtml' in widget_src
           and 'SupporterStarBitmap' not in widget_src
           and 'setImageSubstitutions' not in widget_src
           and 'function makeSupporterStar' in widget_src
-          and 'function positionStarOverlays' in widget_src
-          and 'getCharBoundaries' in widget_src
+          and 'function buildFeedMessageRow' in widget_src
+          and 'FcmStarLayout.row' in widget_src
+          and 'star.x = placement.markerX' in widget_src
+          and 'star.y = placement.markerY' in widget_src
+          and 'STAR_CHANNEL_GAP:Float = 5' in widget_src
+          and 'STAR_MARKER_Y_NUDGE:Float = 2' in widget_src
           and 'FcmConfig.supporterStarColor' in widget_src
-          and widget_src.find('moderationRefHtml =') < widget_src.find('if (rawTag.length > 0) rowPrefix')
-          and 'U+2605' in widget_src,
-          "FCMChatWidget renders supporter stars as guarded vector geometry, never as a HUD glyph or image")
+          and 'row.addChild(star)' in widget_src
+          and 'U+2605' not in widget_src
+          and '★' not in widget_src,
+          "FCMChatWidget renders supporter stars as guarded row-local vector geometry, never as a HUD glyph or image")
     check('function reconcileOwnEcho' in widget_src
-          and 'FcmEcho.matches' in widget_src
+          and 'FcmEcho.choose' in widget_src
+          and 'localSendId' in widget_src
+          and 'sendAccepted' in widget_src
           and 'rec.pending = false' in widget_src
-          and 'ownEchoMatched=' in widget_src,
+          and 'ownEchoMatched=' in widget_src
+          and 'ownEchoFallback=' in widget_src
+          and 'allowPreAck' in open(os.path.join(HERE, '..', 'hudmodloader-chat', 'FcmEcho.hx'), encoding='utf-8').read()
+          and 'optimisticUpdated=' in widget_src,
           "FCMChatWidget reconciles self-sends against authoritative live events")
     check('pending:Bool' in widget_src
           and 'addOptimisticEcho' in widget_src
           and 'pending: true' in widget_src
-          and 'removeAllPendingMatches' in widget_src
+          and 'nextLocalSendId' in widget_src
+          and 'removeOptimisticRecord(localSendId)' in widget_src
           and 'continue;' in widget_src,
-          "FCMChatWidget renders a successful send immediately and replaces it with the authoritative echo")
-    check('var ackSupporterStar:Bool = FcmConfig.supporterStarPresent(' in widget_src
+          "FCMChatWidget creates one canonical send row and completes it in place")
+    check('var ackTransportMessageId:String = FcmConfig.hudTransportMessageId(ackHudTransport);' in widget_src
+          and 'var ackSupporterStar:Bool = FcmConfig.supporterStarPresent(' in widget_src
           and 'FcmConfig.hudTransportHasStar(ackHudTransport)' in widget_src
           and 'FcmConfig.hudTransportStarColor(ackHudTransport)' in widget_src
+          and 'var ackCosmeticsKnown:Bool' in widget_src
           and 'awaiting authoritative live echo' in widget_src
           and 'ackCosmetics=' in widget_src,
           "FCMChatWidget keeps authoritative cosmetics as the source of truth after a stripped send acknowledgement")
-    check('function renderLogHtml(lines:Array<String>):Bool' in widget_src
-          and 'Reflect.field(ext, "appendHtml")' in widget_src
-          and '_logTf.htmlText = ""' in widget_src,
-          "FCMChatWidget rebuilds the feed through guarded TextFieldEx.appendHtml fragments")
-    check('localToGlobal' in widget_src
-          and 'globalToLocal' in widget_src
-          and 'Do not estimate scroll from' in widget_src
-          and 'channelText:' in widget_src
-          and 'var channelClose:Int = channelStart + anchor.channelText.length - 1;' in widget_src
-          and 'FcmStarLayout.betweenChannelAndAuthor' in widget_src
-          and 'authorText:' in widget_src
-          and 'var authorStart:Int = plain.indexOf(anchor.authorText, rowStart);' in widget_src
-          and 'channelEndX = _starLayer.globalToLocal(channelPoint).x;' in widget_src
-          and 'var starX:Float = placement.x;' in widget_src
-          and '_starLayer.x = _logTf.x' in widget_src
-          and 'starY + size < 0' in widget_src,
-          "FCMChatWidget anchors supporter stars after the channel tag and inside the feed viewport")
+    check('_feedLayer' in widget_src
+          and '_feedRows:Array<FeedRowView>' in widget_src
+          and 'row.addChild(channelTf)' in widget_src
+          and 'contentTf.x = placement.contentX' in widget_src
+          and 'row.addChild(contentTf)' in widget_src
+          and 'row.view.y = row.contentY - _feedScrollY' in widget_src
+          and 'getCharBoundaries' not in widget_src
+          and 'localToGlobal' not in widget_src
+          and 'globalToLocal' not in widget_src,
+          "FCMChatWidget keeps text and supporter markers in one deterministic row-local layout")
     check('static inline var LOG_INPUT_GAP:Int     = 4;' in widget_src
           and 'var logBottom:Int = h - INPUT_H - LOG_INPUT_GAP;' in widget_src
           and '_logTf.height = logHeight;' in widget_src
           and 'var editY:Float = y + _cfg.height - INPUT_H + 4;' in widget_src,
           "FCMChatWidget keeps the feed clip rectangle above the top-level HUDTools input")
     check('function snapLogToBottom():Void' in widget_src
-          and '_logTf.setSelection(_logTf.length, _logTf.length)' in widget_src
-          and 'snapLogToBottom();' in widget_src,
-          "FCMChatWidget snaps new messages to the visible area above the input")
+          and '_feedScrollY = _feedMaxScrollY' in widget_src
+          and 'applyFeedScroll();' in widget_src,
+          "FCMChatWidget snaps row-local feed content to the visible area above the input")
     check('function scheduleEchoPoll():Void' in widget_src
           and '_sendEchoPollTimer' in widget_src
           and 'scheduleEchoPoll();' in widget_src,
           "FCMChatWidget polls immediately after a successful send for the authoritative echo")
     check('var localUserId:String = _relayUserId.length > 0 ? _relayUserId : _userId;' in widget_src
-          and 'addOptimisticEcho(slug, raw, "", "", false, "", localUserId);' in widget_src
+          and 'ownCosmeticsForSend()' in widget_src
+          and 'addOptimisticEcho(slug, raw, "", ownCosmetics.tag, ownCosmetics.supporterStar,' in widget_src
           and 'new Timer(1, 1)' in widget_src
-          and 'updateOptimisticRecord(slug, raw, localUserId, messageId, ackTag,' in widget_src
+          and 'updateOptimisticRecord(localSendId, messageId, ackTag,' in widget_src
+          and 'cosmeticsKnown' in widget_src
+          and 'seedOwnCosmeticsFromHistory' in widget_src
           and 'senderUserId: senderUserId' in widget_src,
-          "FCMChatWidget paints before the synchronous send and reconciles after the ACK")
+          "FCMChatWidget paints one tokenized row before the synchronous send and reconciles after the ACK")
     wire_path = os.path.join(HERE, '..', 'hudmodloader-chat', 'FcmWire.hx')
     check('FcmWire.findEventsArrayStart(rs)' in widget_src
           and os.path.exists(wire_path)
@@ -556,45 +632,123 @@ if widget_src:
     check("_lastSentDisplayName" not in widget_src
           and "reconcileDisplayName" not in widget_src,
           "FCMChatWidget has no cached late-identity native reconnect path")
-    check("_editTextLockOwned" in widget_src,
-          "FCMChatWidget tracks ownership of the game-input edit lock")
-    check("if (!start && !_editTextLockOwned)" in widget_src,
-          "FCMChatWidget never sends EndEditText without owning StartEditText")
-    check("function releaseEditTextLock" in widget_src
-          and "if (_editTextLockOwned) releaseEditTextLock()" in widget_src,
-          "FCMChatWidget retries a failed EndEditText until the owned lock is released")
-    check('Reflect.field(e, "actionName")' in widget_src
-          and 'Reflect.field(e, "isDown")' in widget_src
-          and 'Reflect.field(e, "EventName")' in widget_src
-          and 'Reflect.field(e, "IsKeyDown")' in widget_src,
-          "FCMChatWidget accepts current and legacy HUDModLoader event field names")
-    check("FcmCommand.isNextChannel" in widget_src
-          and "FcmCommand.isPreviousChannel" in widget_src
+    check("openInputSharedHudTools();" in widget_src
+          and "SharedHUDTools is the only supported path" in widget_src
+          and "no-lock native fallback" in widget_src,
+          "FCMChatWidget gives the game-control lock to host HUDTools and keeps native input no-lock")
+    try:
+        user_event_src = open(USER_EVENT_HX, encoding="utf-8").read()
+    except FileNotFoundError:
+        user_event_src = ""
+    check('FcmUserEvent.action(e)' in widget_src
+          and 'FcmUserEvent.isDown(e)' in widget_src
+          and 'untyped event[field]' in user_event_src
+          and 'Reflect.getProperty(event, field)' in user_event_src,
+          "FCMChatWidget reads native HUDModLoader getter event fields")
+    check("FcmCommand.navigationAction" in widget_src
+          and "FcmCommand.navigationEdgeIsNew" in widget_src
           and "_navigationActionsDown" in widget_src
           and "FcmCommand.actionKey(action)" in widget_src
-          and "function isExternalInputAction" in widget_src,
-          "FCMChatWidget handles key-down and key-up channel actions with edge de-duplication")
-    check("_inputOpen && !_hidden" in widget_src
-          and "FcmCommand.scrollDirection" in widget_src
-          and "FcmCommand.isScrollToBottom" in widget_src
+          and "function clearNavigationLatches" in widget_src
+          and "Page actions switch channels" in widget_src,
+          "FCMChatWidget handles one-shot channel actions without a selection mode")
+    check("FcmCommand.feedNavigationEnabled(_inputOpen, _hidden)" in widget_src
+          and "navAction == \"feed-up\"" in widget_src
+          and "navAction == \"feed-down\"" in widget_src
+          and "navAction == \"feed-bottom\"" in widget_src
           and "function scrollUp" in widget_src
           and "function scrollDown" in widget_src,
-          "FCMChatWidget maps arrow actions to feed scrolling and Home/End to newest")
+          "FCMChatWidget maps arrows/Home/End only while Insert owns the feed")
     check("_fcmNavigationAction:String = \"\"" in patch_src
-          and "_fcmNavigationAction = \"\"" in patch_src,
-          "HUDMenu patch carries the standalone navigation edge latch")
-    check('action == "PrevPage"' in inject_src
+          and "_fcmNavigationDown:Array = []" in patch_src
+          and "fcmNavigationIsDown" in inject_src
+          and "fcmNavigationMarkDown" in inject_src
+          and "fcmNavigationClear" in inject_src
+          and "_fcmNavigationAction = \"\"" in inject_src,
+          "HUDMenu patch carries independent standalone navigation edge latches")
+    check('normalized == "prevpage"' in inject_src
+          and 'normalized == "pageup"' in inject_src
+          and "public function fcmSwitchChannelPrev" in inject_src
           and "fcmSwitchChannelPrev" in bridge_src,
           "standalone HUD path handles previous-page channel switching")
-    check('action == "ArrowUp"' in inject_src
-          and 'action == "ArrowDown"' in inject_src
+    check('normalized == "arrowup"' in inject_src
+          and 'normalized == "arrowdown"' in inject_src
           and "fcmScrollUp" in bridge_src
           and "fcmScrollDown" in bridge_src
           and "fcmScrollToBottom" in bridge_src,
           "standalone HUD path handles arrow scrolling and Home/End newest")
+    check('function runEventPollSafely' in widget_src
+          and 'function runWorldPollSafely' in widget_src
+          and 'runEventPollSafely();' in widget_src
+          and 'runWorldPollSafely();' in widget_src
+          and 'function(_) { pollEvents(); }' not in widget_src
+          and 'function(_) { checkWorldId(); }' not in widget_src
+          and 'isolated timer exception phase=' in widget_src,
+          "FCMChatWidget isolates both five-second timer boundaries with phase diagnostics")
+    check('function startXscalWarmup' in widget_src
+          and 'function runXscalWarmupSafely' in widget_src
+          and 'XSCAL_WARMUP_MS:Int = 250' in widget_src
+          and 'XSCAL_WARMUP_MAX:Int = 20' in widget_src
+          and 'startXscalWarmup();' in widget_src,
+          "FCMChatWidget drains xScal initial history during a bounded warm-up")
+    check('function fcmHandleHostUserEvent' in widget_src
+          and 'return _inputOpen;' in widget_src
+          and 'fcmFindChatWidget' in inject_src
+          and 'Reflect.callMethod(modern, modernHandler' in inject_src,
+          "HUDMenu hands named actions to the modern widget before vanilla consumption")
+    check('var eventCount:Int = 0;' in bridge_src
+          and 'function startInitialHistoryDrain' in bridge_src
+          and 'function markSeenLegacyEvent' in bridge_src
+          and 'MAX_MSGS:Int     = 125' in bridge_src,
+          "legacy bridge drains the bounded history and deduplicates provider replay")
+    check('if (previousWorldId.length > 0 && previousWorldId != worldId)' in bridge_src
+          and 'clearServerRecords("world changed")' in bridge_src,
+          "legacy bridge clears ephemeral server history on world changes")
+    check('_sendTimers.remove(' not in widget_src and '_sendTimers.splice(timerIndex, 1)' in widget_src
+          and 'deferred callback failed:' in widget_src,
+          "deferred send cleanup uses GFx-compatible splice inside a guarded callback")
+    check('_rosterSnapshots.keys()' not in widget_src and '_rosterCallbacks.keys()' not in widget_src,
+          "roster lifecycle avoids runtime Map key iterator dependencies")
+    check('widgetMustRequestHistoryResync'  in widget_src
+          and '_history.needsRecovery(_authState == "authenticated", flash.Lib.getTimer())' in widget_src
+          and 'FcmWire.isDroppedEvent' in widget_src
+          and 'droppedCount' in widget_src,
+          "FCMChatWidget gates shared recovery on authentication and advances over dropped markers")
+    check('function runAfterConfigSafely' in widget_src
+          and 'function runInitSafely' in widget_src
+          and 'function onInputSubmitSafely' in widget_src,
+          "FCMChatWidget guards config, startup, and input callback boundaries")
+    check('var e0:Dynamic = arr[i];' in widget_src
+          and 'skippedEntries++' in widget_src
+          and 'snapshot phase threw' in widget_src,
+          "FCMChatWidget hardens native roster enumeration")
+    check('clearNavigationLatches();' in widget_src
+          and 'clearNavigationLatches();\n        _inputOpen = true;' in widget_src,
+          "FCMChatWidget resets navigation ownership at input open/close boundaries")
+    check('function fcmNormalizeAction' in inject_src
+          and 'normalized == "pagedown"' in inject_src
+          and 'normalized == "pageup"' in inject_src
+          and 'there is no persistent channel-selection mode' in inject_src,
+          "standalone HUD path normalizes aliases without creating a channel-selection mode")
+    check('fcmScheduleStandaloneFallback' in inject_src
+          and 'fcmDisableForModernWidget' in inject_src
+          and 'fcmNotifyModernWidget' in inject_src
+          and 'fcmInitSafe' in inject_src
+          and 'fcmEventSafe' in inject_src
+          and 'fcmForwardSafe' in inject_src
+          and '_fcmModernWidgetActive' in inject_src
+          and 'modern widget owns submit; legacy forward skipped' in inject_src,
+          "standalone HUD path defers and retires the legacy renderer around the modern widget")
+    check("announceModernWidgetSafely" in widget_src
+          and 'Reflect.field(current, "fcmNotifyModernWidget")' in widget_src
+          and "announceModernWidgetSafely();\n            loadConfig();" in widget_src,
+          "modern widget claims HUDMenu renderer ownership immediately on stage attach")
+    command_src = open(os.path.join(HERE, '..', 'hudmodloader-chat', 'FcmCommand.hx'), encoding='utf-8').read()
     check("function mergeNativeInputText" in widget_src
-          and "_inProgress + observed" in widget_src,
-          "FCMChatWidget preserves native drafts when ZFE returns one character at a time")
+          and "mergeNativeInputTextWithMode" in widget_src
+          and "detectNativeInputMode" in command_src
+          and "return before + current" in command_src,
+          "FCMChatWidget preserves native drafts across cumulative and one-character ZFE reads")
     check("applyServerControlResult" in widget_src
           and "_serverSessionReady" in widget_src,
           "FCMChatWidget gates SERVER on an acknowledged relay control")
@@ -603,6 +757,10 @@ if widget_src:
     check('WORLD_ROSTER_PREFIX:String = "FCMCTL/1/ROSTER:"' in widget_src
           and 'var body:String = WORLD_ROSTER_PREFIX + namesField;' in widget_src,
           "FCMChatWidget sends printable roster controls")
+    check('function refreshRosterSnapshots' in widget_src
+          and 'refreshRosterSnapshots(_rosterManager);' in widget_src
+          and '_rosterBoundaryPending' in widget_src,
+          "FCMChatWidget refreshes cached rosters and detects provider session boundaries")
     check('if (_needsLink || _authState != "authenticated") return;' in widget_src
           and 'ROSTER_RETRY_MS' in widget_src
           and 'now - _lastRosterSentAt' in widget_src,
@@ -612,17 +770,24 @@ if widget_src:
           "FCMChatWidget builds compatibility control bytes at runtime, not in the SWF string pool")
     check('"HUDTools message received bodyLen=" + bodyLen' in widget_src
           and '"msg from=" + sender + " body="' not in widget_src
-          and '"relay identity available"' in widget_src,
+          and '"relay identity available aliases=relay/"' in widget_src,
           "FCMChatWidget diagnostics avoid logging HUD text and relay identifiers")
-    check('"FCMCTL/1/RESYNC"' in widget_src and 'function requestHistoryResync' in widget_src,
-          "FCMChatWidget requests history replay after HUD reload")
-    check('function shouldRenderReplayMessage' in widget_src and '_seenMessageIds' in widget_src,
-          "FCMChatWidget deduplicates replayed history records")
+    check('"FCMCTL/1/RESYNC"' in widget_src and 'function requestHistoryResync' in widget_src
+          and 'function scheduleHistoryResyncFallback' in widget_src
+          and 'HISTORY_RESYNC_FALLBACK_MS' in widget_src,
+          "FCMChatWidget delays history replay until an empty or dropped initial poll")
+    check('_history.accept(channel, eventId, messageId,' in widget_src
+          and '_history.clearServer();' in widget_src
+          and '_history.startConnection();' in widget_src,
+          "FCMChatWidget resets replay identity with the feed and native connection")
+    check('FcmCommand.shouldRebindRosterSession(previousSnapshot.join("|"), snapshotField)' in widget_src,
+          "FCMChatWidget compares each roster provider with its own previous snapshot")
     check('return FcmConfig.extractJsonString(json, key);' in widget_src
           and 'extractJsonString' in widget_src,
           "FCMChatWidget accepts whitespace-formatted JSON string members")
-    check("Shared.AS3.Events.CustomEvent" in widget_src,
-          "FCMChatWidget resolves the game-qualified CustomEvent for the edit lock")
+    check("function dispatchEditText" not in widget_src
+          and "BSUIDataManager.dispatchEvent" not in widget_src,
+          "FCMChatWidget does not synthesize child-domain ControlMap events")
     check("startTypeMirror" not in widget_src,
           "FCMChatWidget does not overlap the HUDTools entry with a duplicate typing mirror")
     check('["cz_reset",   "Reset all settings"' in widget_src,
@@ -720,6 +885,11 @@ if len(sys.argv) > 1:
         m5 = re.search(r'public function ProcessUserEvent\((\w+):String, (\w+):Boolean\) : Boolean\n      \{', hm_src)
         check(m5 is not None,
               "Anchor 5: ProcessUserEvent function present")
+        if m5 is not None:
+            hook_body = hm_src[m5.end():]
+            check('fcmEventSafe(String(' + m5.group(1) + '),' + m5.group(2) + ')' in hook_body
+                  and ' = true;' in hook_body,
+                  "Anchor 5: FCM event hook can set vanilla's consumed flag")
 
         # Anchor 6: chatEntryKeyUp.
         m6 = re.search(r'internal function chatEntryKeyUp\((\w+):KeyboardEvent\) : void\n      \{', hm_src)

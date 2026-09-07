@@ -3,8 +3,8 @@
  *
  * Redis key: relay:world:<relayUserId>  TTL: 60 seconds
  *
- * ZFE clients send their worldId on each SEND frame; the relay handler calls
- * setWorldId() to refresh the TTL, and looks it up via getWorldId() when
+ * Both extenders send authenticated roster/world controls as keepalives. The
+ * relay refreshes the TTL and looks up getWorldId() when
  * routing to the dynamic 'server' channel.
  */
 
@@ -20,8 +20,8 @@ function worldKey(relayUserId: string): string {
 
 /**
  * Store (or refresh) the worldId for a relay user.
- * TTL is reset to 60 s on every call, so clients that are actively sending
- * messages never expire.
+ * TTL is reset by each roster/world keepalive. Mutation failures propagate so
+ * callers cannot acknowledge a binding that was not persisted.
  */
 export async function setWorldId(relayUserId: string, worldId: string): Promise<void> {
   try {
@@ -29,6 +29,7 @@ export async function setWorldId(relayUserId: string, worldId: string): Promise<
     await redis.set(worldKey(relayUserId), worldId, { EX: TTL_SECONDS });
   } catch (err) {
     logger.warn({ err, relayUserId }, '[worldIdService] setWorldId failed');
+    throw err;
   }
 }
 
@@ -55,5 +56,6 @@ export async function clearWorldId(relayUserId: string): Promise<void> {
     await redis.del(worldKey(relayUserId));
   } catch (err) {
     logger.warn({ err, relayUserId }, '[worldIdService] clearWorldId failed');
+    throw err;
   }
 }

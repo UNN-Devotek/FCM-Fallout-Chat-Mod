@@ -2,15 +2,15 @@
 
 > **Status: implemented.** Kick, mute, ban, unban, and message deletion work across **all three chat surfaces**
 > (admin dashboard, desktop overlay, and the new in-game chat.v1 `.ba2`) under the **mandatory
-> Nexus/Discord auth gate** ([auth lockdown](../backend/hud-chat-auth-design.md),
-> [chat.v1 gate](../overlay/zfe/native-chat-relay/fcm-integration.md#mandatory-auth-gate--limited-until-nexusdiscord-linked-locked)).
+> Discord/Nexus/Steam auth gate** ([auth lockdown](../backend/hud-chat-auth-design.md),
+> [chat.v1 gate](../overlay/zfe/native-chat-relay/fcm-integration.md#mandatory-auth-gate--limited-until-a-provider-linked-fcm-account)).
 > The remaining deferred item is per-channel slow mode; it has no FCM primitive and remains unavailable.
 
 ## TL;DR
 
 FCM has account-level **kick / mute / ban** with **immediate** enforcement, Discord propagation,
 evidence, audit, role gating, and protected-target rules. The auth lockdown makes the **ban target
-an account** (`users.id`) tied to Nexus and/or Discord — far stronger than the old anonymous/name-
+an account** (`users.id`) tied to Discord, Nexus, and/or Steam — far stronger than the old anonymous/name-
 derived identity. chat.v1 re-checks that account per operation and per subscriber keepalive, and
 kick/ban fan out over `relay:control` pub/sub so every in-game session is evicted immediately.
 
@@ -59,14 +59,14 @@ See [README](README.md), [automod](automod.md), [reports-and-evidence](reports-a
 
 ## 2. The ban target under the auth lockdown
 
-With the [mandatory Nexus/Discord gate](../overlay/zfe/native-chat-relay/fcm-integration.md#mandatory-auth-gate--limited-until-nexusdiscord-linked-locked),
+With the [mandatory Discord/Nexus/Steam gate](../overlay/zfe/native-chat-relay/fcm-integration.md#mandatory-auth-gate--limited-until-a-provider-linked-fcm-account),
 **every chat participant is a real, bannable account.** This sharpens moderation:
 
-- **Target = `users.id`** (the account), which links Discord and/or Nexus (`linked_identities`) and
+- **Target = `users.id`** (the account), which links Discord, Nexus (`linked_identities`), and/or Steam and
   the device/install token. One ban flag on the account blocks **all** surfaces at once.
 - **Provider-ID deny-list (`banned_identities`, #297).** A **permanent** ban also deny-lists the
-  account's external **Discord and Nexus IDs** (`provider` + `provider_uid`), checked at the
-  **auth/link gate** (device-code link, overlay Discord login, Nexus OAuth callback). This makes the
+  account's external **Discord, Nexus, and Steam IDs** (`provider` + `provider_uid`), checked at the
+  **auth/link gate** (device-code link, overlay Discord/Steam login, Nexus OAuth callback). This makes the
   ban **durable** — it survives FCM-account deletion and blocks re-linking the **same** provider to a
   fresh FCM account. The strongest evasion lever (§5).
 - **`identityHash` rekey** (per [auth design §3.3](../backend/hud-chat-auth-design.md)):
@@ -141,7 +141,7 @@ The lockdown is the main anti-evasion lever — but it's not absolute. Honest pi
 - **Strongest — provider-ID deny-list (#297):** a permanent ban deny-lists the account's Discord +
   Nexus IDs at the **auth/link gate**, so the **same** provider account can never authenticate to FCM
   again — even on a new FCM account, even after the original is deleted. To evade, the user needs a
-  **brand-new** Nexus or Discord account (the highest-cost path; Nexus carries mod-download
+  **brand-new** Nexus, Steam, or Discord account (the highest-cost path; Nexus carries mod-download
   history/reputation).
 - **Residual:** a fresh provider account still works (fundamental — the deny-list keys on *known*
   IDs). Stacked mitigations: device-key revocation, the `register`-limited gate (can't chat before
@@ -196,14 +196,14 @@ chat.v1 moderation issue #288).
    dashboard rather than auto-blocking.
 6. **Slow-mode** stays a deferred, per-channel feature.
 7. **Deny-list external provider IDs on permanent bans** (`banned_identities`, checked at the
-   auth/link gate; #297) — durable, account-independent, blocks re-linking the same Discord/Nexus.
+   auth/link gate; #297) — durable, account-independent, blocks re-linking the same Discord/Nexus/Steam identity.
    The strongest evasion lever.
 
 ## Implementation issues
 
 | Issue | What |
 |---|---|
-| **#163** | Epic — multi-provider identity & account linking (Discord + Nexus) |
+| **#163** | Epic — multi-provider identity & account linking (Discord + Nexus + Steam) |
 | **#282** | Epic — ZFE chat.v1 native chat relay |
 | **#295** | Mandatory auth gate + in-game device-code link (limited-until-linked; link-code/revocation specs) |
 | **#288** | chat.v1 `report` + `moderationAction` mapping + permissions (staff-Discord-gated) |

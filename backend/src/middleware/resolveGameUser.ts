@@ -1,10 +1,12 @@
 import { Request } from 'express';
+import { isValidSteamId } from '../services/steamAuthService';
 import prisma from '../config/prisma';
 
 /**
  * Resolve the game-client `users.id` for the caller, from either:
  *  1) X-Auth-Token header → Redis session → users.id     (desktop overlay path)
  *  2) Discord session cookie → users.discord_id match    (web dashboard path)
+ *  3) Verified Steam session cookie → users.steam_id match (website account)
  *
  * Returns { userId, via } on success, or null if neither auth method
  * resolves to a game user. Callers decide whether that's 401 or a
@@ -12,7 +14,7 @@ import prisma from '../config/prisma';
  */
 export interface ResolvedGameUser {
   userId: string;
-  via: 'x-auth-token' | 'discord-session';
+  via: 'x-auth-token' | 'discord-session' | 'steam-session';
 }
 
 export async function resolveGameUser(req: Request): Promise<ResolvedGameUser | null> {
@@ -39,5 +41,10 @@ export async function resolveGameUser(req: Request): Promise<ResolvedGameUser | 
     } catch { /* fall through */ }
   }
 
+  const steamId = (req.session as { steamUser?: { steamId?: unknown } } | undefined)?.steamUser?.steamId;
+  if (isValidSteamId(steamId)) {
+    const user = await prisma.user.findFirst({ where: { steamId }, select: { id: true } });
+    if (user) return { userId: user.id, via: 'steam-session' };
+  }
   return null;
 }

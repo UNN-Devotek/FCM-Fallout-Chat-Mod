@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import ApiTokensPanel from './ApiTokensPanel';
 import CosmeticsPanel from './CosmeticsPanel';
+import ConnectedAccountsPanel from './ConnectedAccountsPanel';
 import ChatNamePanel from './ChatNamePanel';
 import { useParams, useOutletContext, Link } from 'react-router';
 import { useQuery } from '@tanstack/react-query';
@@ -282,6 +283,7 @@ export default function Profile() {
       {isMod && <MessageHistoryCard userId={profile.id} channelMap={channelMap} />}
 
       {/* API Tokens — self-service panel shown only to the signed-in user */}
+      {isSelf && userId && <ConnectedAccountsPanel userId={userId} />}
       {isSelf && userId && <ChatNamePanel userId={userId} chatName={profile.chatName} />}
       {isSelf && userId && <CosmeticsPanel userId={userId} previewName={displayName} />}
       {isSelf && <ApiTokensPanel />}

@@ -300,9 +300,21 @@ jobs:
             game-mods/EasyFishing/test-install.sh
             game-mods/FCMBridge/FCMBridge.hx
             game-mods/FCMBridge/FcmNativeApi.hx
+            game-mods/FCMBridge/FcmAuthFlow.hx
             game-mods/FCMBridge/TestFcmNativeApi.hx
+            game-mods/FCMBridge/TestFcmAuthFlow.hx
             game-mods/FCMBridge/test-native-api.hxml
+            game-mods/FCMBridge/test-auth-flow.hxml
+            game-mods/FCMBridge/hudmodloader-chat/FcmUserEvent.hx
+            game-mods/FCMBridge/hudmodloader-chat/FcmHistory.hx
+            game-mods/FCMBridge/hudmodloader-chat/FcmRoster.hx
+            game-mods/FCMBridge/hudmodloader-chat/FcmServerSession.hx
+            game-mods/FCMBridge/hudmodloader-chat/TestFcmHistory.hx
+            game-mods/FCMBridge/hudmodloader-chat/TestFcmRoster.hx
+            game-mods/FCMBridge/hudmodloader-chat/test-history.hxml
             game-mods/FCMBridge/hudmenu-chat/test_ba2tool.py
+            game-mods/FCMBridge/tools/validate_swf.py
+            game-mods/FCMBridge/tools/test_validate_swf.py
           )
           for path in "${required[@]}"; do
             test -f "$path" || { echo "Missing required source: $path" >&2; exit 1; }
@@ -317,6 +329,7 @@ jobs:
           python3 game-mods/FCMBridge/hudmenu-chat/test_anchors.py
           python3 game-mods/FCMBridge/hudmenu-chat/test_ba2tool.py
           python3 game-mods/FCMBridge/hudmodloader-chat/test_package.py
+          python3 game-mods/FCMBridge/tools/test_validate_swf.py
           python3 Packaging/test-release-scripts.py
       # FcmConfig parser/clamp unit tests (CAP-001..005, #303/#304) — pure Haxe, --interp.
       - name: Install Haxe
@@ -336,15 +349,27 @@ jobs:
       - name: Run FcmEcho unit tests
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe test-echo.hxml
+      - name: Test HUD history recovery and world transitions
+        working-directory: game-mods/FCMBridge/hudmodloader-chat
+        run: haxe test-history.hxml
       - name: Run native bridge compatibility tests
         working-directory: game-mods/FCMBridge
         run: haxe test-native-api.hxml
+      - name: Run native auth lifecycle tests
+        working-directory: game-mods/FCMBridge
+        run: haxe test-auth-flow.hxml
       - name: Compile FCMChatWidget
         working-directory: game-mods/FCMBridge/hudmodloader-chat
-        run: haxe build.hxml
+        run: |
+          haxe build.hxml
+          python3 normalize_swf.py FCMChatWidget.swf
+          python3 ../tools/validate_swf.py FCMChatWidget.swf --require-signature FWS --require-version 32
       - name: Compile legacy FCMBridge
         working-directory: game-mods/FCMBridge
-        run: haxe --main FCMBridge --swf /tmp/FCMBridge.swf --swf-version 32
+        run: |
+          haxe --main FCMBridge --swf /tmp/FCMBridge.swf --swf-version 32
+          python3 hudmodloader-chat/normalize_swf.py /tmp/FCMBridge.swf
+          python3 tools/validate_swf.py /tmp/FCMBridge.swf --require-signature FWS --require-version 32
       - name: Run EasyFishing installer tests
         run: bash game-mods/EasyFishing/test-install.sh
 
@@ -436,6 +461,8 @@ jobs:
       - name: Build renderer
         run: npm run build:renderer
         working-directory: cross-platform-overlay
+      - name: Verify xScal HUD configuration setup
+        run: '& ./game-mods/FCMBridge/hudmodloader-chat/test-xscal-setup.ps1'
       - name: Build Windows NSIS package (native)
         run: npx electron-builder --win nsis --publish=never
         working-directory: cross-platform-overlay

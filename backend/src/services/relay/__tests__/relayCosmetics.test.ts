@@ -38,12 +38,21 @@ test('native HUD transport encodes the validated projection in targetUserId', ()
     relayHudCosmeticTransport({ tag: 'X;Y', supporterStar: true, starColor: '#FD4DA6' }),
     'FCMHUD/1;s=1;c=%23FD4DA6;t=X%3BY',
   );
+  assert.equal(
+    relayHudCosmeticTransport({ tag: 'X', supporterStar: true, starColor: '#FD4DA6' }, 'm-1'),
+    'FCMHUD/1;m=m-1;s=1;c=%23FD4DA6;t=X',
+  );
   assert.equal(relayHudCosmeticTransport({}), '');
+});
+
+test('native HUD transport carries a stable message id without cosmetics', () => {
+  assert.equal(relayHudCosmeticTransport({}, 'm-2'), 'FCMHUD/1;m=m-2');
 });
 
 test('native HUD transport is capability-gated per event', () => {
   const source = {
     id: 5,
+    messageId: 'm-source',
     body: 'hello',
     targetUserId: '',
     tag: 'X',
@@ -53,10 +62,11 @@ test('native HUD transport is capability-gated per event', () => {
   };
   assert.deepEqual(relayHudEventForClient(source, true), {
     ...source,
-    targetUserId: 'FCMHUD/1;s=1;c=%23FD4DA6;t=X',
+    targetUserId: 'FCMHUD/1;m=m-source;s=1;c=%23FD4DA6;t=X',
   });
   assert.deepEqual(relayHudEventForClient(source, false), {
     id: 5,
+    messageId: 'm-source',
     body: 'hello',
     targetUserId: '',
     tag: 'X',
@@ -73,7 +83,7 @@ test('native HUD transport is carried through send acknowledgements', () => {
     success: true,
     messageId: 'm-1',
     ...cosmetics,
-    targetUserId: 'FCMHUD/1;s=1;c=%23FD4DA6;t=X',
+    targetUserId: 'FCMHUD/1;m=m-1;s=1;c=%23FD4DA6;t=X',
   });
   assert.deepEqual(relayHudSendAck({ success: true, messageId: 'm-1' }, cosmetics, false), {
     success: true,

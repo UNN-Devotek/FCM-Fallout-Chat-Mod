@@ -95,12 +95,12 @@ pipeline with zero extra config). Backend keeps Jest. Electron + browser E2E use
 | `registerHotkeys` + accelToAction map | main.js:1985 | stateful | Mock globalShortcut; defaults for missing keys, goFo76 honors '', party blank→unregistered, isChar flags, presets | P1 |
 | `refreshShortcuts` idempotent gating | main.js:1965 | stateful | Mock globalShortcut + isFocused; stateKey memo no-op, unregister when inactive, char binds skipped while focused; platform branch | P1 |
 | `applyFocusClickThrough`/`desiredTopmost`/`setMouseIgnore` | main.js:2080 | stateful | Extract `desiredTopmost`+ignore-decision pure; fake timers for FOCUS_GUARD_MS; toggle platform | P1 |
-| `registerForToken` response handling | main.js:836 | electron-coupled | Mock http/https req via injectable httpModule; 429→cfTransient, 403 discord_auth_required before CF, success field mapping, 15s timeout | P1 |
+| `registerForToken` response handling | main.js:836 | electron-coupled | Mock http/https req via injectable httpModule; 429→cfTransient, 403 provider `auth_required` (legacy `discord_auth_required` accepted) before CF, Steam link state mapping, success field mapping, 15s timeout | P1 |
 | `startRelay` retry/backoff classification | main.js:1677 | electron-coupled | Stub registerForToken rejecting tagged errors; fake timers; assert relay:status payloads + backoff per error shape | P1 |
 | `proxy:http` IPC handler | main.js:932 | ipc | Capture handler via mocked ipcMain; ws-ticket short-circuit, header forwarding, cf mapping, req error→599 | P1 |
 | `proxy:ws:*` lifecycle + `app:update-available` intercept | main.js:976 | ipc | Mock `ws` EventEmitter; 4001 without token, forward open/msg/close/error, intercept `app:update-available`→`showUpdateNotification` (only when latestVersion > APP_VERSION, once-per-session guard) | P1 |
 | `identity:set-name` handler | main.js:1538 | ipc | Capture handler; empty/no-key/no-token reasons, 409→taken soft-fail, success re-register+rebuildTray | P1 |
-| `refreshDiscordStatus` retry + post-link re-register | main.js:1429 | ipc | Mock http + fake timers; backoff up to MAX_STATUS_ATTEMPTS=4, linked adopts fo76 identity + re-register, recovery via startRelay | P1 |
+| `refreshDiscordStatus` / `refreshSteamStatus` retry + post-link re-register | main.js:1429 | ipc | Mock http + fake timers; backoff up to MAX_STATUS_ATTEMPTS=4, newly linked provider adopts identity + re-register, recovery via startRelay | P1 |
 
 ### P2 — window chrome / tray
 
@@ -300,10 +300,10 @@ start **non-required** in branch protection; promote once green-stable (~20 runs
 2. **Game-scan hysteresis under flaky tasklist** — alternate found/not-found; `gameRunning` does NOT flip until PRESENCE_FLIP_SCANS consecutive agreeing scans; assert no z-order/visibility churn (call counts).
 3. **Explicit hide then game relaunch** — Delete (userHidden=true) → stays hidden though game running, until not-running→running clears userHidden and restores.
 4. **Keybind focus-gating** — overlay focused: '/' and '\\' NOT registered (typeable); game foreground + overlay blurred: registered; other app foreground: all unregistered.
-5. **Discord OAuth link flow** — `discord:link` → callback nav → window closes + `discord:refresh-status` → poll linked=true → re-register → authenticated relay:status with new role; load failure falls back to `shell.openExternal`.
+5. **Provider OAuth link flows** — `discord:link` or `steam:link` → callback nav → window closes + matching status refresh → poll linked=true → re-register → authenticated relay:status; load failure falls back to `shell.openExternal`.
 6. **Update notification happy path** — relay WS `{type:'app:update-available', payload:{latestVersion:'X.Y.Z'}}` with latestVersion > APP_VERSION → OS notification fires (title `Update! vX.Y.Z`, click opens Nexus URL); equal/older version → no notification; second `app:update-available` in same session → once-per-session guard suppresses duplicate toast.
 7. **productName migration** — legacy `Fallout ChatMod/overlay-state.json` (discordLinked, current pristine) → migrate copies; current real never overwritten.
-8. **Relay register resilience** — CF 503→cfTransient + retry 5s; 429→10s; ECONNREFUSED→exp backoff to 8 tries; discord_auth_required 403→login wall, no retry.
+8. **Relay register resilience** — CF 503→cfTransient + retry 5s; 429→10s; ECONNREFUSED→exp backoff to 8 tries; provider `auth_required` (and legacy `discord_auth_required`) 403→login wall, no retry.
 9. **Idle collapse/expand preserving width** — narrow window, idle-collapse to header, hover-expand → restores height only, keeps narrower width.
 10. **Onboarding-without-game handoff (primary)** — fresh install, FO76 not running, complete 3 steps with free name → `setIdentityName` ok, `applyOnboardingSettings` persists, `notifyOnboardingComplete` engages game-gate, tray drop + notification; then start FO76 → auto-appears.
 11. **Onboarding on older main lacking `notifyOnboardingComplete`** — same flow, assert fallback to `notifyChatActive(true)` still engages gate (no crash).
@@ -353,8 +353,8 @@ A tiny in-process fixture under **`tests/mock-relay/`** (historical), intended f
   - `GET /api/messages` → `{ data: [...seeded] }`
   - `POST /auth/discord/*` → configurable `{ linked:false }` / `{ linked:true, role, avatarUrl }`
   - `GET /api/block` + `/api/block/search`, `POST`/`DELETE /api/block` for block-flow tests
-  - `POST /api/register` (overlay token) → `{ data:{ token, userId, userRole, discord* } }`; can be
-    scripted to return 429 / 503-CF / 403-discord_auth_required for resilience scenarios
+  - `POST /api/register` (overlay token) → `{ data:{ token, userId, userRole, discord*, steamLinked } }`; can be
+    scripted to return 429 / 503-CF / 403-auth_required for resilience scenarios
 - **WebSocket (`ws` server on an ephemeral port)**:
   - accepts the authed handshake (asserts `X-Auth-Token`); a connection **without** a token is the
     public-mode regression signal (assert it never arrives)

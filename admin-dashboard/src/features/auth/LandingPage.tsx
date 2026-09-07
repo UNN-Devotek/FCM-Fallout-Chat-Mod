@@ -1,3 +1,4 @@
+import { hudDownloads } from './hudDownloads';
 import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { Player } from '@remotion/player';
@@ -563,16 +564,18 @@ function InstallPanel() {
       </div>
 
       {/* ── Optional in-game HUD mod — keep the download visible at the top ── */}
-      <div style={firstSectionHeaderStyle}>ZFE FCM HUD MOD — OPTIONAL</div>
+      <div style={firstSectionHeaderStyle}>FCM HUD MOD — ZFE / xScal — OPTIONAL</div>
       <div style={bodyStyle}>
-        Download the separate opt-in in-game HUD mod here. It includes the FCMChatWidget BA2,
+        Download the separate opt-in in-game HUD mod for ZFE or xScal here. Choose the package for your
+        installed extender. Both contain the same auto-detecting FCMChatWidget BA2, but include only the matching setup files,
         both runtime configuration files, the HUDModLoader append snippet, and target-specific
         installation instructions. It does not install or modify the desktop overlay.
       </div>
       <div className="install-dl-row" style={downloadRowStyle}>
-        {hudModUrl ? (
+        {hudModUrl ? hudDownloads(hudModUrl).map((download) => (
           <a
-            href={hudModUrl}
+            key={download.label}
+            href={download.url}
             download
             target="_blank"
             rel="noopener noreferrer"
@@ -581,11 +584,11 @@ function InstallPanel() {
             onMouseEnter={dlHoverIn}
             onMouseLeave={dlHoverOut}
           >
-            ↓ ZFE FCM HUD Mod ZIP {hudModVersion}
+            ↓ FCM HUD Mod ZIP — {download.label} {hudModVersion}
           </a>
-        ) : (
+        )) : (
           <span className="install-dl-btn" style={{ ...downloadBtnStyle, opacity: 0.5, cursor: 'default' }}>
-            ZFE FCM HUD MOD ZIP — UNAVAILABLE
+            FCM HUD MOD ZIP — UNAVAILABLE
           </span>
         )}
       </div>

@@ -2,28 +2,92 @@
 
 ZFE (Zeroed Fallout Extender) and xScal are supported script-extender providers
 for Fallout 76's Scaleform HUD. FCM's optional `FCMChatWidget` HUDModLoader mod
-uses ZFE's sanctioned `chat.v1` surface or xScal's
-`__SFECodeObj.chatInterface` surface, selected automatically.
+uses ZFE's sanctioned `chat.v1` surface or xScal's `chatInterface` surface,
+selected automatically. Depending on the xScal build, that surface may be
+under `__SFECodeObj` or `__SFCodeObj`. A call-only `__SFCodeObj` remains a
+separate generic callback object and is not a ZFE discriminator.
 
-> **Current widget (2026-09-02):** `FCMChatWidget` v2.10.33 targets `/relay` through
-> ZFE `chat.v1` or xScal `chatInterface`. If both providers are present, ZFE is
-> preferred for its native text-input path; xScal uses SharedHUDTools text input.
+> **Current widget (2026-09-05):** `FCMChatWidget` v2.10.56 targets `/relay` through
+> ZFE `chat.v1` or xScal `chatInterface`. If both providers are present, the explicit xScal
+> `chatInterface` marker wins; ZFE is selected only when that marker is absent. Both providers
+> use SharedHUDTools text input when available.
 > The desktop overlay remains independent of this optional mod path.
+
+xScal `connect` is asynchronous. `success:true,status:"connecting"` is a pending-start response;
+the FCM widget keeps the accepted transport alive, refreshes xScal auth state from the poll loop,
+and reconnects only on explicit terminal states. If xScal exposes a separate generic
+`__SFCodeObj.call`, FCM uses it only for the optional `log` diagnostic path and the documented
+`Input.*` physical-key bookkeeping path; it never uses that callback for chat verbs.
+
+Both providers receive the same complete bounded history on the long-lived relay subscription. A
+fresh cursor-zero subscription sends up to 15 recent rows for each static feed (`global`, `trade`,
+`events`, `infests`, and `raids`) plus up to 50 rows from the current `server` room: 125 events
+total. The native poll limit remains 64, so the widget drains this ordered snapshot over multiple
+polls. xScal's asynchronous subscriber is drained with a 250 ms warm-up for at most 20 polls.
+Both providers use authenticated `FCMCTL/1/RESYNC` recovery after a 1.5-second grace period
+if static history is absent or the queue reports loss. A normal static snapshot suppresses replay.
+SERVER replay IDs reset with SERVER rows on leave; static IDs remain remembered across world
+changes. An accepted recovery restarts the bounded drain and forces the next roster/world bind.
+
+Widget v2.10.58 waits for a correlated `FCMCTL/1/SERVER-READY` event from the relay before
+showing SERVER or admitting its rows. Native queued success does not enable the tab. HUD
+observations now include map player markers and public-team members (up to 24 names), and
+main-menu state clears membership. Roster-derived rooms use an expiring session identity, so
+leaving and joining a solo world cannot replay the previous solo room's history. See
+[Server session binding](native-chat-relay/server-session-binding.md) for wire fields, failure
+behavior, the inference limits, and the required two-player validation.
 
 ## Provider paths and automatic detection
 
 | Provider | Runtime object | Configuration path | FCM code path |
 |---|---|---|---|
-| ZFE | `__ZFE`, `ZFECodeObj`, or legacy `__SFCodeObj`, each exposing `.call` | `Data/configuration/zfe.ini` or `Documents/My Games/Fallout 76/configuration/zfe.ini`; FCM fragment at `Data/ZFE/TextChat/fragments/FCM.ini` | `FcmNativeApi.hx` calls canonical `chat.v1.*` verbs and preserves ZFE native input |
-| xScal | `__SFECodeObj.chatInterface` with `connect`, `pollEvents`, and `sendMessage` | `xscal.ini` beside the Fallout 76 executable, using the `[Chat]` section; package example is `xscal.ini.example` | `FcmNativeApi.hx` removes `chat.v1.`, maps `report` → `reportMessage`, and uses SharedHUDTools input |
+| ZFE | `__ZFE` or `ZFECodeObj` with `.call`; legacy `__SFCodeObj`/`BRG_OBJ` is accepted only after a positive `chat.v1.getRuntimeInfo` probe | `Data/configuration/zfe.ini` or `Documents/My Games/Fallout 76/configuration/zfe.ini`; FCM fragment at `Data/ZFE/TextChat/fragments/FCM.ini` | `FcmNativeApi.hx` calls canonical `chat.v1.*` verbs; SharedHUDTools input is primary, ZFE native input is no-lock fallback, and physical `Input.*` navigation uses the first accepted dispatcher: generic callback first, then `__ZFE` |
+| xScal | `__SFECodeObj.chatInterface` or `__SFCodeObj.chatInterface` with `connect`, `pollEvents`, and `sendMessage`; a call-only `__SFCodeObj` is not used for chat | `xscal.ini` beside the Fallout 76 executable, using the `[Chat]` section; package example is `xscal.ini.example` | `FcmNativeApi.hx` removes `chat.v1.`, maps `report` → `reportMessage`, uses SharedHUDTools input, and polls physical keys through the generic `Input.*` surface |
 
 The shared widget files are `Data/FCMChatWidget.ba2`, `Data/FCMChat.ini`, and the
 HUDModLoader registry entry. `hudmenu-chat/fcm-inject.as` passes the host's ZFE or
-xScal object to `FCMBridge.hx`; `FCMChatWidget.hx` and `FCMBridge.hx` also retry
-self-discovery on their parent/root chain. Detection is capability-based and
+xScal object to `FCMBridge.hx` with a provider hint; `FCMChatWidget.hx` and
+`FCMBridge.hx` also retry self-discovery on their parent/root chain. Detection is capability-based and
 does not load `dxgi.dll`, read extender files, scan ports, inject code, or read
-game memory. When both objects are exposed, valid ZFE is selected first and
-xScal remains the fallback.
+game memory. When both objects are exposed, an explicit xScal `chatInterface` is selected first;
+otherwise the validated ZFE bridge is selected. A bare `__SFCodeObj`/`BRG_OBJ` is only considered
+after both positive surfaces have been ruled out and its ZFE capability is confirmed. When Page
+keys are collapsed to `Unmapped`, physical navigation uses only `Input.RegisterKey`,
+`Input.IsKeyPressed`, and `Input.UnregisterKey`. The dispatcher is chosen at the first
+registration: a separately discovered generic callback (`__SFCodeObj`/`BRG_OBJ`) first, then under
+ZFE the `__ZFE` dispatcher itself, which serves `Input.*` from the same SFE-compatibility bridge as
+`isChatKeyPressed` (ZFE 0.12 advertises `zfe-input-v1`). A void/null registration return counts as
+success; an explicit false/error/unsupported answer moves to the next candidate. The poll starts at
+provider discovery and does not depend on the relay session. Chat transport remains on the selected
+ZFE or xScal chat surface and never receives Input.* verbs under xScal.
+
+### Verified ZFE physical-navigation pattern (FCMChatWidget v2.10.54)
+
+**Confirmed by live ZFE smoke test:** Page Up and Page Down switch channels when the loader
+collapses those keys to `Unmapped`. This is the correct implementation pattern for ZFE:
+
+1. Discover and validate the ZFE chat bridge with `chat.v1.getRuntimeInfo`; do not identify ZFE
+   from a bare `__SFCodeObj` name.
+2. For physical navigation, try a separately discovered generic callback first. If no generic
+   callback accepts the operation and the selected provider is ZFE, call the same `Input.*`
+   compatibility dispatcher through `__ZFE.call`.
+3. Pass the Windows virtual-key integer directly, not a JSON payload:
+   `PAGEUP=0x21` (33), `PAGEDOWN=0x22` (34), `UP=0x26`, `DOWN=0x28`, `HOME=0x24`, and
+   `END=0x23`.
+4. Register with `Input.RegisterKey`, poll with `Input.IsKeyPressed`, and release with
+   `Input.UnregisterKey`. A successful void/`null` registration response is valid; only an
+   explicit false, error, or unsupported response rejects a dispatcher candidate.
+5. Decode ZFE's `Input.IsKeyPressed` response from an explicit `pressed`, `down`, or `value`
+   field. A response containing only `"success":true` is not proof that the key is down.
+6. Start the physical poll as soon as the provider is discovered, before relay authentication,
+   and keep channel switching local to the HUD. Use an edge latch so a key-down/key-up pair
+   performs one action, and unregister every key during widget shutdown.
+
+The selected chat surface remains separate: `chat.v1.*` transport calls continue through the
+validated ZFE bridge, while `Input.*` is used only for local physical-key bookkeeping. The
+diagnostic log should identify the accepted dispatcher and preserve the clipped raw registration
+and probe responses so a future runtime test can distinguish discovery, registration, decoding, and
+channel-rendering failures.
 
 ## Guides
 
@@ -38,6 +102,7 @@ xScal remains the fallback.
 | [Environment Variables](env-vars.md) | Dev/testing only — normal users never need these |
 | [Logs & Troubleshooting](logs-troubleshooting.md) | Finding `zfe.log`, what to look for, support reports |
 | [Scaleform UI Guide](scaleform-ui-guide.md) | GFx execution model, banned features, text rendering, input/focus, toolchain |
+| [HUD surface manifest](hud-surface-manifest.md) | Exact repository/runtime paths, provider markers, ownership, and verification ledger |
 | [In-Game Chat Appearance](ingame-chat-appearance.md) | FCMBridge HUD vs ChatOverlay.tsx reference — gaps, improvements, banned list |
 | [In-Game Send Investigation (2026-08-06)](ingame-send-investigation-2026-08-06.md) | **OPEN** — `invalid_channel` on send / no server chat: findings, four dead hypotheses, current evidence |
 | [HUD Mod Compatibility](hud-mod-compatibility.md) | HUDModLoader coexistence, load-order analysis, mod survey, shipping recommendations |
@@ -165,3 +230,22 @@ member is an empty transport slot for ordinary channel chat; it is never a real 
 BA2 files receive no envelope, while raw relay consumers retain the additive JSON fields. The
 relay stores only a short-lived one-way digest of the negotiated token/version in Redis; the
 bearer token itself is never stored.
+
+### v2.10.59 General and PipBoy behavior
+
+General includes current-room SERVER rows with their SERVER labels; the SERVER tab remains
+scoped to those rows alone. Room invalidation clears them from both views. This does not
+broadcast server chat to other worlds or to the public Discord General channel.
+PipBoy releases the HUD editor and blocks reopening during transition/while the UI menu
+is present. Late callbacks from a released editor are ignored. Both ZFE and xScal share
+this implementation; live simultaneous-input testing is required on each provider.
+
+### xScal package setup
+
+xScal can ship with `[Chat] enabled=false`. The xScal setup ZIP includes
+`Enable-xScal-Chat.cmd` and `.ps1`: close Fallout 76, extract into the game folder,
+and run the CMD helper. It backs up and edits the existing `xscal.ini`, enables chat,
+and selects the package relay endpoint without replacing unrelated settings.
+Linux/Proton users should merge the example's `enabled=true` and `relayEndpoint`
+into the existing `[Chat]` section manually. Merely extracting the BA2 or the INI
+example does not enable chat. ZFE packages contain neither this helper nor xScal settings.

@@ -12,10 +12,11 @@ import { constantTimeEquals } from '../utils/constantTimeEquals';
 import { SHORT_ALPHA_BLACKLIST, LOOKS_LIKE_PROVIDER, LOOKS_LIKE_CAMELCASE_METHOD } from '../utils/nameBlacklist';
 import { setSpamImmunity, findProhibitedPhrase } from '../services/autoModService';
 import { buildAvatarUrl } from '../services/avatarService';
-import { refreshClientIdentity } from '../websocket/handlers';
+import { refreshClientIdentity, resolveDisplayName } from '../websocket/handlers';
 import { mergeUserInto } from '../utils/mergeUser';
 import { setChatName } from '../services/chatNameService';
 import { refreshSupporterFromDiscord } from '../services/supporterSyncService';
+import { isValidSteamId } from '../services/steamAuthService';
 
 // 24 hours — ephemeral overlay session; the overlay silently re-registers via its install
 // token on reconnect. Discord re-auth enforced separately by the 30-day window (discordAuthedAt).
@@ -106,7 +107,7 @@ export async function mentionSearch(req: Request, res: Response, next: NextFunct
           ],
         }),
       },
-      select: { chatName: true, username: true, discordUsername: true, discordDisplayName: true, discordId: true },
+      select: { chatName: true, username: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, discordId: true },
       take: 8,
     });
     const seen = new Set<string>();
@@ -133,7 +134,7 @@ export async function mentionSearch(req: Request, res: Response, next: NextFunct
  * Returns { data: { userId, token } }
  */
 async function register(req: Request, res: Response, next: NextFunction): Promise<void> {
-  const { username, steamId, installToken } = req.body;
+  const { username, installToken } = req.body;
 
   // ── Device-keypair auth gate ────────────────────────────────────────────────
   // An install authenticates to register by EITHER:
@@ -216,27 +217,29 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
   if (discordDisplayNameRaw)                                     discordPatch.discordDisplayName = discordDisplayNameRaw;
 
   try {
-    // ── Discord-gate: desktop overlay installs MUST have a linked Discord account ──
-    // An installToken that has no row yet, or has a row with no discordId, is
-    // treated as unlinked. We return 403 with a discord_auth_required signal so the
-    // overlay renderer shows a blocking login wall instead of creating an anonymous
-    // user. The user-creation path runs at /auth/discord/link (just before the
-    // OAuth redirect) so the first call here after linking finds an existing row
-    // with a real discordId and proceeds normally.
+    // ── Provider gate: desktop overlay installs MUST have a server-verified provider ──
+    // An installToken that has no row yet, or has a row with neither Discord nor
+    // Steam, is treated as unlinked. We return 403 with an auth_required signal so
+    // the overlay renderer shows a blocking sign-in wall instead of creating an
+    // anonymous user. Discord/Steam callbacks own the identity columns; a client
+    // cannot satisfy this gate by posting an arbitrary steamId in /api/users.
     //
     // Skip this gate when:
-    //  (a) The installToken already belongs to a Discord-linked row → allow (existing users).
-    //  (b) discordId is supplied in the request body (re-register right after OAuth) → allow.
+    //  (a) The installToken already belongs to a linked row → allow (existing users).
+    //  (b) discordId is supplied in the request body (legacy re-register right after OAuth) → allow.
     {
       const existingRow = await prisma.user.findUnique({
         where: { installToken },
-        select: { discordId: true, discordAuthedAt: true },
+        select: { discordId: true, discordAuthedAt: true, steamId: true },
       });
       const incomingDiscordId = discordIdRaw && /^\d{15,22}$/.test(discordIdRaw) ? discordIdRaw : null;
-      // Linked for this load = JUST completed OAuth (incoming discordId) OR an
-      // existing Discord link whose last auth is still inside the 30-day re-auth
-      // window. After 30 days the link goes stale -> 403 -> the overlay shows the
-      // login wall -> a fresh OAuth resets discordAuthedAt. Existing linked users
+      // Linked for this load = JUST completed OAuth (incoming discordId), a
+      // server-linked Steam identity, OR an existing Discord link whose last auth is
+      // still inside the 30-day re-auth window. After 30 days the Discord link goes
+      // stale -> 403 -> the overlay shows the login wall -> a fresh OAuth resets
+      // discordAuthedAt. Steam OpenID is re-validated by its link callback, so its
+      // canonical steam_id remains valid between overlay launches.
+      // Existing linked users
       // were grandfathered to now() in the add_discord_authed_at migration, so this
       // does NOT force a mass re-auth on deploy.
       const REAUTH_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
@@ -245,16 +248,19 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
         && existingRow.discordAuthedAt
         && (Date.now() - new Date(existingRow.discordAuthedAt).getTime()) < REAUTH_WINDOW_MS
       );
-      const isLinked = !!incomingDiscordId || freshAuth;
+      const isLinked = !!incomingDiscordId || freshAuth || isValidSteamId(existingRow?.steamId);
       if (!isLinked) {
-        // No row yet, or row exists but no Discord link. Reject with a clear signal.
-        // HTTP 403 + discord_auth_required flag so the client can show the login wall.
+        // No row yet, or row exists but no provider link. Reject with a clear signal.
+        // Keep discord_auth_required for older overlay builds; new clients use the
+        // provider-neutral auth_required flag.
         res.status(403).json({
           type: 'about:blank',
-          title: 'Discord Authentication Required',
+          title: 'Account Authentication Required',
           status: 403,
-          detail: 'You must link a Discord account before using the overlay.',
+          detail: 'You must sign in with Discord or Steam before using the overlay.',
+          auth_required: true,
           discord_auth_required: true,
+          required_providers: ['discord', 'steam'],
         });
         return;
       }
@@ -456,16 +462,18 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
       where: { installToken },
       update: {
         username: effectiveUsername,
-        steamId: steamId || undefined,
+        // Steam IDs are written only by the server-side Steam OpenID callback.
+        steamId: undefined,
         ...safePatch,
       },
       create: {
         username: effectiveUsername,
-        steamId: steamId || null,
+        // Never trust a client-provided Steam ID as an identity assertion.
+        steamId: null,
         installToken,
         ...safePatch,
       },
-      select: { id: true, username: true, chatName: true, isBanned: true, discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true },
+      select: { id: true, username: true, chatName: true, isBanned: true, discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, discordAvatar: true, steamId: true },
     });
 
     // Record previous username in alias history when it changes to a new real name.
@@ -555,7 +563,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
     // register call — the WS refresh is a nice-to-have, not a hard dep.
     try {
       if (typeof refreshClientIdentity === 'function') {
-        const touched = refreshClientIdentity(user.id, user.username, user.discordUsername, user.discordDisplayName, installToken, user.chatName);
+        const touched = refreshClientIdentity(user.id, user.username, user.discordUsername, user.discordDisplayName, installToken, user.chatName, user.steamDisplayName);
         if (touched > 0) {
           logger.info({ userId: user.id, username: user.username, touched }, '[register] refreshed WS identity cache');
         }
@@ -579,7 +587,7 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
 
     // Discriminator returned for back-compat but no longer appended to displayed names.
     const discriminator = computeDiscriminator(installToken);
-    const displayName = username;
+    const displayName = resolveDisplayName({ ...user, installToken });
 
     // Issue a new session token
     const token = uuidv4();
@@ -624,6 +632,8 @@ async function register(req: Request, res: Response, next: NextFunction): Promis
         displayName,
         username: fo76Username,       // FO76 in-game name, or null if still a placeholder
         discordLinked: !!user.discordId,
+        steamLinked: isValidSteamId(user.steamId),
+        steamDisplayName: user.steamDisplayName ?? null,
         discordUsername: user.discordUsername ?? null,
         discordDisplayName: user.discordDisplayName ?? null,
         discordAvatarUrl,             // Discord CDN avatar URL, or null
@@ -693,7 +703,7 @@ async function getUserProfile(req: Request, res: Response, next: NextFunction): 
       where,
       select: {
         id: true, username: true, chatName: true, createdAt: true,
-        discordId: true, discordUsername: true, discordDisplayName: true, discordAvatar: true,
+        discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, discordAvatar: true,
         isBanned: true, isMuted: true, muteExpiresAt: true,
       },
     });
@@ -725,7 +735,7 @@ export async function updateChatName(req: Request, res: Response, next: NextFunc
   if (!validateUuid(targetId)) return next(createError(400, 'Invalid user ID format'));
 
   const discordId = req.dashboardUser?.discordId;
-  if (!discordId) return next(createError(401, 'Sign in with Discord first.'));
+  if (!req.user && !discordId) return next(createError(401, 'Sign in first.'));
 
   const body = (req.body ?? {}) as Record<string, unknown>;
   if (!Object.prototype.hasOwnProperty.call(body, 'chatName')) {
@@ -737,7 +747,7 @@ export async function updateChatName(req: Request, res: Response, next: NextFunc
   }
 
   try {
-    const caller = await prisma.user.findFirst({ where: { discordId }, select: { id: true } });
+    const caller = req.user ?? await prisma.user.findFirst({ where: { discordId }, select: { id: true } });
     if (!caller || caller.id !== targetId) {
       return next(createError(403, 'You can only change your own chat name.'));
     }

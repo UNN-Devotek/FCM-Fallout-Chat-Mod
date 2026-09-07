@@ -73,6 +73,13 @@ If the tunnel goes down:
 > the prod `.env` defines all three before the next `dev` → `prod` promotion, or the backend will refuse to
 > boot. (`MINIO_BUCKET` may be any non-empty name, including `avatars`.)
 
+> **Persistent supporter-tier configuration:** the Prod Dokploy Compose project's saved Environment
+> must contain `SUPPORTER_TIER_ENABLED` (explicitly `true` or `false`), `SUPPORTER_ROLE_ID`, and
+> `OVERSEER_CIRCLE_ROLE_ID`. Dokploy regenerates the checkout's `.env` from that saved store on
+> every redeploy; editing the generated file or only the running container is not persistent. The
+> backend now refuses to boot when the switch is missing or malformed, preventing a deploy from
+> silently hiding existing supporter cosmetics and entitlements.
+
 **Electron overlay changes** — require a full packaging and publish pipeline. See [releasing-the-overlay.md](releasing-the-overlay.md).
 
 ---

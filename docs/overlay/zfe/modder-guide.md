@@ -16,7 +16,7 @@ ZFE exposes a local API bridge. Preferred call shape:
 __ZFE.call(command:String, payloadJson:String):String
 ```
 
-New mods should look for `__ZFE` first. ZFE also installs compatibility objects for older roots, so the same ZFE commands may be available through `ZFECodeObj.call(...)` or `__SFCodeObj.call(...)`.
+New mods should look for `__ZFE` first. ZFE also installs compatibility objects for older roots, so the same ZFE commands may be available through `ZFECodeObj.call(...)` or `__SFCodeObj.call(...)`. However, xScal also installs a generic `__SFCodeObj.call` on the movie root, so that name alone is not proof of ZFE; require a successful capability response before using it.
 
 ## Finding the Bridge
 
@@ -38,7 +38,18 @@ function findZfeApi(scope:Object):Object {
         api        = bridgeOn(parent, "__ZFE");      if (api != null) return api;
         api        = bridgeOn(root,   "__ZFE");      if (api != null) return api;
         api        = bridgeOn(root,   "ZFECodeObj"); if (api != null) return api;
-    return bridgeOn(root, "__SFCodeObj");
+    var legacy:Object = bridgeOn(root, "__SFCodeObj");
+    if (legacy != null) {
+        // xScal uses this same property for a different callback registry.
+        // Identify that registry before sending any ZFE chat command.
+        var xscalInfo:String = String(legacy.call("GetXSRuntimeInfo", "{}"));
+        if (xscalInfo.indexOf('"runtime":"xScal"') >= 0 ||
+            xscalInfo.indexOf('"runtime": "xScal"') >= 0) return null;
+        var legacyInfo:String = String(legacy.call("chat.v1.getRuntimeInfo", "{}"));
+        if (legacyInfo.indexOf('"success":true') >= 0 &&
+            legacyInfo.indexOf("zfe-chat-online-v1") >= 0) return legacy;
+    }
+    return null;
 }
 
 var api:Object = findZfeApi(this);
@@ -68,7 +79,7 @@ Useful capability names:
 For HUDModLoader AS3 mods, search order:
 1. `this.__ZFE`, `parent.__ZFE`, `root.__ZFE`
 2. `ZFECodeObj` at the same locations
-3. `__SFCodeObj` for legacy compatibility
+3. `__SFCodeObj` for legacy compatibility, but accept it only after a positive ZFE capability probe (xScal uses the same property name for a different callback registry)
 4. First-level children of root if hosted inside another menu
 
 ## Result Shape

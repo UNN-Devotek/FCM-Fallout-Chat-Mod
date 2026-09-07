@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   TOTAL_STEPS,
+  accountDisplayName,
   deriveInitialOnboardingState,
   computeNavView,
   nextStepIndex,
@@ -17,6 +18,7 @@ import {
 const baseSettings = (over: Partial<OnboardingSourceSettings> = {}): OnboardingSourceSettings => ({
   playsFo76: false,
   discordLinked: false,
+  steamLinked: false,
   ...over,
 });
 
@@ -27,6 +29,7 @@ const baseState = (over: Partial<OnboardingState> = {}): OnboardingState => ({
   discordLinked: false,
   discordName: '',
   discordDisplayName: '',
+  steamLinked: false,
   ...over,
 });
 
@@ -87,6 +90,10 @@ describe('deriveInitialOnboardingState', () => {
     expect(st.discordLinked).toBe(true);
     expect(st.discordName).toBe('handle');
   });
+
+  it('passes through the Steam link state', () => {
+    expect(deriveInitialOnboardingState(baseSettings({ steamLinked: true })).steamLinked).toBe(true);
+  });
 });
 
 describe('computeNavView', () => {
@@ -143,6 +150,8 @@ describe('buildFinishPatch', () => {
       discordLinked: false,
       discordName: '',
       discordDisplayName: undefined,
+      steamLinked: false,
+      steamDisplayName: '',
       onboarded: true,
     });
   });
@@ -298,5 +307,26 @@ describe('reduceFinishResult name-taken reducer', () => {
     // Second press must NOT re-attempt the name.
     expect(setIdentityName).not.toHaveBeenCalled();
     expect(reduceFinishResult(stateAfter, res).dismiss).toBe(true);
+  });
+});
+
+
+describe('Steam onboarding identity', () => {
+  it('uses Steam display name without treating it as a manually chosen unique name', async () => {
+    const state = deriveInitialOnboardingState(baseSettings({ steamLinked: true, steamDisplayName: 'Steam Dweller', discordDisplayName: 'Discord Dweller' }));
+    expect(state.fo76Name).toBe('');
+    expect(accountDisplayName(state)).toBe('Steam Dweller');
+    const setIdentityName = vi.fn();
+    const applyOnboardingSettings = vi.fn();
+    await runFinish(state, { setIdentityName, applyOnboardingSettings });
+    expect(setIdentityName).not.toHaveBeenCalled();
+    expect(applyOnboardingSettings).toHaveBeenCalledWith(expect.objectContaining({ steamLinked: true, steamDisplayName: 'Steam Dweller', fo76Name: '' }));
+  });
+  it('preserves a name explicitly entered by the user', () => {
+    const state = deriveInitialOnboardingState(baseSettings({ steamLinked: true, steamDisplayName: 'Steam Dweller', fo76Name: 'My Name' }));
+    expect(state.fo76Name).toBe('My Name');
+  });
+  it('ignores a stale Steam name after unlinking', () => {
+    expect(accountDisplayName(baseState({ steamLinked: false, steamDisplayName: 'Old Steam', discordDisplayName: 'Discord Dweller' }))).toBe('Discord Dweller');
   });
 });

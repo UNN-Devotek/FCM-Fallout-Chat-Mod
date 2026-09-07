@@ -1,0 +1,3 @@
+## FcmAuthFlow unit tests — pure provider lifecycle policy, no flash runtime.
+--main TestFcmAuthFlow
+--interp

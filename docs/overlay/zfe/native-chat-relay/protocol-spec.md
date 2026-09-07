@@ -318,7 +318,7 @@ Response:
   "tag": "X",
   "supporterStar": true,
   "starColor": "#FD4DA6",
-  "targetUserId": "FCMHUD/1;s=1;c=%23FD4DA6;t=X"
+  "targetUserId": "FCMHUD/1;m=msg_1;s=1;c=%23FD4DA6;t=X"
 }
 ```
 
@@ -326,9 +326,11 @@ The additive cosmetic fields appear only when the authenticated sender has the
 corresponding server-resolved identity cosmetics. The HUD uses them to decorate its
 authoritative live self-row; the same resolved supporter identity is also passed to
 the Discord relay, where the immutable `★` is rendered beside the author. For widget
-v2.10.16+, `targetUserId` carries the same validated `FCMHUD/1;...` cosmetic envelope
-used by live events, because ZFE may strip newer JSON members from native RPC responses.
-For older widgets or senders without cosmetics, the additive fields/carrier are omitted.
+v2.10.16+, `targetUserId` carries the stable `messageId` as `m=...` plus the same validated
+`FCMHUD/1;...` cosmetic envelope used by live events, because ZFE may strip newer JSON members
+from native RPC responses. For older widgets the carrier is omitted. For capable widgets, the
+carrier still includes `m=...` when the response has a stable message ID, even if no cosmetic
+fields are present.
 
 ### Poll
 
@@ -358,7 +360,10 @@ Response:
 ```
 
 `id` is the **relay cursor**. It must **increase monotonically** for visible events. ZFE uses it to
-avoid duplicate messages between push and poll.
+avoid duplicate messages between push and poll. Recovery replay therefore receives fresh
+transport IDs from `relay:seq`; it retains the original `messageId` and `createdAt`. Stored
+historical cursors are unchanged. Consumers must deduplicate canonical messages by `messageId`
+as well as delivery events by `id`.
 
 `createdAt` is the message's **server send time** as an ISO 8601 UTC string (sourced from
 `messages.created_at`). Clients render timestamps from this field. The system link-notice carries
@@ -374,8 +379,17 @@ For ordinary channel messages this is an empty transport slot, never a real reci
 envelope is capability-gated to v2.10.16+; older widgets receive an empty `targetUserId` and no
 transport data. The relay records the negotiated token/version across separate connect and
 subscribe sockets so the same gate applies to live, poll, and history delivery. The current Dev
-widget v2.10.39 parses the supporter fields and renders a fixed five-point vector `Shape` immediately
-before the actual rendered author glyph using the validated `starColor`. It must never place U+2605
+widget v2.10.46 parses the stable message ID plus supporter fields and renders a fixed five-point
+vector `Shape` in a row-local `Sprite`: 5px after the measured channel tag and centered on
+the first message line with a 2px visual down-nudge. The marker and text share the same row and scroll offset; no document index
+or global/local transform is used. The stable message ID lets an optimistic local send transaction
+reconcile with its authoritative live echo exactly once, even when the native bridge strips
+additive JSON members. If an extender presents different IDs on the ACK and event, the widget
+first requires a proven local sender identity. For the old Dev bridge, the compatibility fallback
+also requires one successful ACK, one unique candidate, a matching display name/channel/body, and
+a 15-second window; an unknown/conflicting sender or ambiguous candidate is never merged by body
+text alone. A live event may arrive before the send ACK; a stable-ID event can complete the one
+pending local transaction in place, so the client still renders one row. It must never place U+2605
 in `senderDisplayName` or `body`, nor use a bitmap, HTML image, or substitution token; see the
 [Dev wire capture](dev-supporter-star-wire-capture-2026-09-02.md).
 
@@ -390,7 +404,10 @@ member-role refresh before decoration: once per linked Discord account per minut
 the deployment, coordinated by Redis. It derives the Discord ID from the linked FCM user,
 never from the HUD frame. A successful refresh updates the entitlement and invalidates
 resolved cosmetics only when the effective tier changes, before the message is broadcast,
-so every subscriber and the sender's acknowledgement receive current supporter fields.
+so every subscriber and the sender's acknowledgement receive current supporter fields. The backend
+delivers a finalized static-channel event directly to native subscribers on the same process before
+publishing the web broadcast to Redis; other instances use the Redis subscriber path. The shared
+instance guard prevents the direct and Redis paths from delivering the same event twice.
 Transient Discord failures leave the last known entitlement in place; a definitive
 member-not-found result is treated as loss of guild privileges.
 
@@ -398,6 +415,13 @@ When `cursor` is `0`, the server **may** include an initial visible history wind
 size is relay policy, not a ZFE rule — a relay can return no history, five messages, twenty
 messages, or another bounded count. Returned events still use their **real relay cursors** so the
 client can continue from the newest event it received.
+
+FCM's native subscriber implementation uses a separate bounded subscribe-time backfill so the
+HUD receives context on first load. A cursor-zero subscription sends up to 15 recent rows for
+each static feed (`global`, `trade`, `events`, `infests`, and `raids`) and up to 50 rows for the
+current ephemeral `server` room: 125 events total. This is an FCM relay policy chosen to fit
+xScal's 128-event queue; the native `pollEvents` limit remains 64, so the widget drains the
+ordered snapshot over multiple polls. Other relay consumers must not assume this exact window.
 
 ### Subscribe
 
@@ -438,8 +462,14 @@ Push new events as they become visible to that user:
 }
 ```
 
-> `subscribe` must **not** drain poll history. A client may reconnect with the last cursor and
-> expect to receive only **newer** events.
+The `subscribed` acknowledgement is followed by the subscription's initial history events when
+the supplied cursor is `0`, then by live events. A nonzero cursor resumes after that cursor. This
+subscription backfill is distinct from a short-lived `poll` response; it does not consume or alter
+the cursor of any other connection. The relay holds live frames behind the initial snapshot and
+flushes them in cursor order, preventing a live event from overtaking or duplicating the backfill.
+FCM's xScal widget drains this stream with a bounded warm-up. A ZFE widget uses the authenticated
+`FCMCTL/1/RESYNC` control only as a delayed fallback after an empty or dropped initial poll, which
+prevents a normal subscribe snapshot from being appended twice when the native queue is still full.
 
 ### Report
 
@@ -585,3 +615,15 @@ Redis, or any other backend, as long as the WebSocket JSON contract stays compat
 - [fcm-integration.md](fcm-integration.md) — how the FCM relay would implement this contract
 - [../realtime-socket.md](../realtime-socket.md) — the existing bespoke FCMHUD/1 push bridge
 - [../two-way-chat-implemented.md](../two-way-chat-implemented.md) — M7 in-game send over FCMHUD/1
+
+
+### Recovery completion (widget v2.10.55)
+
+`FCMCTL/1/RESYNC` replays up to 15 recent rows per static feed with fresh delivery cursors.
+It finishes with a native-known `chat.message` event on `system`, `senderUserId: "system"`,
+and body `FCMCTL/1/HISTORY-DONE`. This marker is emitted even for empty history and must not
+be rendered by the widget. Native send acceptance/queueing is not replay completion.
+The widget retries at most three times with at least ten seconds between attempts until
+completion. World-bind replay also receives fresh delivery IDs, remains scoped to the bound
+room, and does not emit the static-completion marker. A bounded per-subscriber barrier orders
+live traffic alongside replay; overflow closes the subscriber instead of silently losing rows.

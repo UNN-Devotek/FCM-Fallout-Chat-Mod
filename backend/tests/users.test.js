@@ -6,6 +6,7 @@ const mockRedis = {
   get: jest.fn().mockResolvedValue(null),
   set: jest.fn().mockResolvedValue('OK'),
   del: jest.fn().mockResolvedValue(1),
+  publish: jest.fn().mockResolvedValue(1),
   ping: jest.fn().mockResolvedValue('PONG'),
   connect: jest.fn().mockResolvedValue(undefined),
   on: jest.fn(),
@@ -121,5 +122,161 @@ describe('POST /api/users', () => {
       installToken: '123e4567-e89b-12d3-a456-426614174000',
     });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('DELETE /api/link/provider/discord', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockRedis.get.mockResolvedValue(null);
+    prismaStub.user.findUnique.mockResolvedValue(null);
+  });
+
+  it('clears the Discord identity, revokes the active session, and reports logout', async () => {
+    mockRedis.get.mockResolvedValueOnce('user-uuid');
+    prismaStub.user.findUnique.mockResolvedValue({
+      id: 'user-uuid',
+      username: 'Wanderer76',
+      isBanned: false,
+      bannedUntil: null,
+      banReason: null,
+      banCategory: null,
+      isMuted: false,
+      muteExpiresAt: null,
+      discordId: '123456789012345',
+      installToken: '123e4567-e89b-12d3-a456-426614174000',
+    });
+
+    const res = await request(app)
+      .delete('/api/link/provider/discord')
+      .set('X-Auth-Token', 'session-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({ success: true, loggedOut: true });
+    expect(prismaStub.user.update).toHaveBeenCalledWith({
+      where: { id: 'user-uuid' },
+      data: {
+        discordId: null,
+        discordUsername: null,
+        discordDisplayName: null,
+        discordAvatar: null,
+        discordAuthedAt: null,
+      },
+    });
+    expect(mockRedis.del).toHaveBeenCalledWith('discord_link:123e4567-e89b-12d3-a456-426614174000');
+    expect(mockRedis.del).toHaveBeenCalledWith('session:session-token');
+    expect(prismaStub.session.delete).toHaveBeenCalledWith({ where: { token: 'session-token' } });
+    expect(mockRedis.publish).toHaveBeenCalled();
+  });
+
+  it('does not revoke a session when Discord is already unlinked', async () => {
+    mockRedis.get.mockResolvedValueOnce('user-uuid');
+    prismaStub.user.findUnique.mockResolvedValue({
+      id: 'user-uuid',
+      username: 'Wanderer76',
+      isBanned: false,
+      bannedUntil: null,
+      banReason: null,
+      banCategory: null,
+      isMuted: false,
+      muteExpiresAt: null,
+      discordId: null,
+      installToken: '123e4567-e89b-12d3-a456-426614174000',
+    });
+
+    const res = await request(app)
+      .delete('/api/link/provider/discord')
+      .set('X-Auth-Token', 'session-token');
+
+    expect(res.status).toBe(404);
+    expect(prismaStub.user.update).not.toHaveBeenCalled();
+    expect(prismaStub.session.delete).not.toHaveBeenCalled();
+  });
+});
+
+describe('DELETE /api/link/provider/steam', () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockRedis.get.mockResolvedValue(null);
+    prismaStub.user.findUnique.mockResolvedValue({
+      id: 'steam-user',
+      username: 'SteamUser',
+      isBanned: false,
+      bannedUntil: null,
+      banReason: null,
+      banCategory: null,
+      steamId: '76561198012345678',
+      discordId: null,
+      installToken: '123e4567-e89b-12d3-a456-426614174002',
+    });
+    prismaStub.linkedIdentity.count.mockResolvedValue(0);
+  });
+
+  it('clears Steam, revokes the session, and reports logout when it was the last provider', async () => {
+    mockRedis.get.mockResolvedValueOnce('steam-user');
+
+    const res = await request(app)
+      .delete('/api/link/provider/steam')
+      .set('X-Auth-Token', 'steam-session-token');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({ success: true, loggedOut: true });
+    expect(prismaStub.user.update).toHaveBeenCalledWith({
+      where: { id: 'steam-user' },
+      data: { steamId: null, steamDisplayName: null },
+    });
+    expect(mockRedis.del).toHaveBeenCalledWith('steam_link:123e4567-e89b-12d3-a456-426614174002');
+    expect(mockRedis.del).toHaveBeenCalledWith('session:steam-session-token');
+    expect(prismaStub.session.delete).toHaveBeenCalledWith({ where: { token: 'steam-session-token' } });
+    expect(mockRedis.publish).toHaveBeenCalled();
+  });
+
+  it('keeps the session when Discord is still linked', async () => {
+    prismaStub.user.findUnique.mockResolvedValue({
+      id: 'dual-provider-user',
+      username: 'DualProvider',
+      isBanned: false,
+      bannedUntil: null,
+      banReason: null,
+      banCategory: null,
+      steamId: '76561198012345678',
+      discordId: 'discord-123',
+      installToken: '123e4567-e89b-12d3-a456-426614174003',
+    });
+    mockRedis.get.mockResolvedValueOnce('dual-provider-user');
+
+    const res = await request(app)
+      .delete('/api/link/provider/steam')
+      .set('X-Auth-Token', 'dual-provider-session');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({ success: true, loggedOut: false });
+    expect(prismaStub.session.delete).not.toHaveBeenCalled();
+    expect(mockRedis.del).not.toHaveBeenCalledWith('session:dual-provider-session');
+  });
+
+  it('keeps the session when another non-Discord provider is still linked', async () => {
+    prismaStub.user.findUnique.mockResolvedValue({
+      id: 'nexus-steam-user',
+      username: 'NexusSteamUser',
+      isBanned: false,
+      bannedUntil: null,
+      banReason: null,
+      banCategory: null,
+      steamId: '76561198012345678',
+      discordId: null,
+      installToken: '123e4567-e89b-12d3-a456-426614174004',
+    });
+    prismaStub.linkedIdentity.count.mockResolvedValue(1);
+    mockRedis.get.mockResolvedValueOnce('nexus-steam-user');
+
+    const res = await request(app)
+      .delete('/api/link/provider/steam')
+      .set('X-Auth-Token', 'nexus-steam-session');
+
+    expect(res.status).toBe(200);
+    expect(res.body.data).toEqual({ success: true, loggedOut: false });
+    expect(prismaStub.session.delete).not.toHaveBeenCalled();
+    expect(mockRedis.del).not.toHaveBeenCalledWith('session:nexus-steam-session');
   });
 });

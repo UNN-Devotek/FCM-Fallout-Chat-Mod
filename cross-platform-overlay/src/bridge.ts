@@ -32,6 +32,8 @@ interface RelayBridge {
     discordUsername?: string;
     discordDisplayName?: string;
     discordAvatarUrl?: string | null;
+    steamLinked?: boolean;
+    steamDisplayName?: string;
     username?: string;
   }) => void): void;
   onClickThrough(cb: (on: boolean) => void): void;
@@ -54,27 +56,34 @@ interface RelayBridge {
   onCommand(cb: (cmd: string) => void): void;
   // Live keybind map pushed from main on (re)register — for the footer help text.
   onKeybinds?(cb: (kb: Record<string, string>) => void): void;
-  // Position presets + Discord OAuth.
+  // Position presets + provider OAuth.
   getBounds?(): Promise<{ x: number; y: number; width: number; height: number } | null>;
   setBounds?(bounds: { x: number; y: number; width: number; height: number }): void;
   resizeBounds?(bounds: { x: number; y: number; width: number; height: number }): void;
   /** WM-independent pointer-drag MOVE (ticket #104). Sends the desired window
    *  top-left {x,y}; main clamps to work area and applies setPosition. */
   moveBounds?(pos: { x: number; y: number }): void;
-  /** Main-process drag-move (Linux): main reads the cursor via
-   *  getCursorScreenPoint() so coords stay in DIP and never drift. Renderer just
-   *  signals the gesture — start on pointerdown, tick on each move, end on up. */
+  /** Main-process drag-move (Linux): main uses renderer screen coordinates for
+   *  consistent mixed-DPI scaling and falls back to the OS cursor when absent. */
   moveStart?(): void;
-  moveTick?(): void;
+  moveTick?(delta?: { x: number; y: number }): void;
   moveEnd?(): void;
   setWindowOpacity?(v: number): void;
   linkDiscord?(): void;
+  linkSteam?(): void;
+  /** Unlink Discord, revoke the active session, and return to the login wall. */
+  unlinkDiscord?(): Promise<{ ok: boolean; reason?: string; message?: string }>;
+  /** Unlink Steam; revokes the active session when Steam was the last provider. */
+  unlinkSteam?(): Promise<{ ok: boolean; loggedOut?: boolean; reason?: string; message?: string }>;
   openExternal?(url: string): void;
   /** Surface a renderer-side diagnostic line into the main-process log (main.log). */
   logDiag?(msg: string): void;
   // Discord link/supporter-role refresh: asks main to poll the backend and fires onDiscordStatus.
   refreshDiscordStatus?(): void;
   onDiscordStatus?(cb: (status: { linked: boolean; discordName: string }) => void): void;
+  /** Steam OpenID link/status refresh for the desktop install. */
+  refreshSteamStatus?(): void;
+  onSteamStatus?(cb: (status: { linked: boolean; steamLinked?: boolean; steamDisplayName?: string }) => void): void;
   /** Show the OS right-click context menu on the chat input (cut/copy/paste/select-all). */
   showInputContextMenu?(x?: number, y?: number): void;
   /** Return focus to Fallout 76 after sending a message. Blurs the overlay window. */

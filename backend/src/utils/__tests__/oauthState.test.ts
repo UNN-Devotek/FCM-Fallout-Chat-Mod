@@ -23,3 +23,11 @@ test('bound OAuth state rejects another session and malformed payloads', () => {
   assert.equal(parseBoundOAuthState('{not-json}', 'session-a'), null);
   assert.equal(parseBoundOAuthState(JSON.stringify({ intent: 'admin' }), 'session-a'), null);
 });
+
+test('profile linking binds both the browser and original account', () => {
+  const value = serializeBoundOAuthState({ sessionId: 'browser-a', intent: 'profile', linkUserId: 'account-a' });
+  assert.deepEqual(parseBoundOAuthState(value, 'browser-a'), {
+    sessionId: 'browser-a', intent: 'profile', linkUserId: 'account-a',
+  });
+  assert.equal(parseBoundOAuthState(value, 'browser-b'), null);
+});

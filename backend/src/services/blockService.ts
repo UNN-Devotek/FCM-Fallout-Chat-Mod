@@ -113,7 +113,7 @@ export async function listBlocked(blockerId: string): Promise<BlockedUserEntry[]
           username: true,
           discordId: true,
           discordUsername: true,
-          discordDisplayName: true,
+          discordDisplayName: true, steamDisplayName: true,
           installToken: true,
         },
       },

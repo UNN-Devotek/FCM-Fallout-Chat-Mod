@@ -33,6 +33,8 @@ export interface ShellHookBridge {
   closeWindow(): void;
   /** Re-check Discord link and supporter-role state before remounting the chat. */
   refreshDiscordStatus?(): void;
+  /** Re-check the Steam link state before remounting the chat. */
+  refreshSteamStatus?(): void;
 }
 
 export interface OverlayShellHook {
@@ -107,6 +109,7 @@ export function buildShellHook(
     title: 'FALLOUT 76',
     onRefresh: () => {
       bridge.refreshDiscordStatus?.();
+      bridge.refreshSteamStatus?.();
       eventTarget.dispatchEvent(new CustomEvent('fcm-shell-refresh'));
     },
     onSettings: () => eventTarget.dispatchEvent(new CustomEvent('fcm-shell-settings')),

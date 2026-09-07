@@ -35,6 +35,7 @@ function resetRedisIncrMock() {
 }
 
 const redisMock = {
+  incrBy: jest.fn(async (_key, count) => (_redisSeq += count)),
   get:  jest.fn().mockImplementation(async (key) => _worldStore[key] ?? null),
   set:  jest.fn().mockImplementation(async (key, val) => { _worldStore[key] = val; return 'OK'; }),
   del:  jest.fn().mockImplementation(async (key)      => { delete _worldStore[key]; return 1; }),
@@ -294,6 +295,7 @@ const {
 } = require('../src/websocket/upgradeRouter');
 
 const { deriveLinkUrl, isRelayAvailable, evictRelayUser } = require('../src/services/relay/relayHandler');
+const { enqueuePendingLiveFrame } = require('../src/services/relay/relayLiveFanout');
 
 describe('relay production rollout gate', () => {
   test('keeps the relay available in development and test', () => {
@@ -304,6 +306,34 @@ describe('relay production rollout gate', () => {
   test('fails closed in production until explicitly enabled', () => {
     expect(isRelayAvailable({ nodeEnv: 'production', productionEnabled: false })).toBe(false);
     expect(isRelayAvailable({ nodeEnv: 'production', productionEnabled: true })).toBe(true);
+  });
+});
+
+describe('subscribe history live-frame barrier', () => {
+  test('accepts a frame and tracks its UTF-8 byte budget', () => {
+    const queue = [];
+    const result = enqueuePendingLiveFrame(queue, 0, { cursor: 7, frame: 'hello' });
+    expect(result.accepted).toBe(true);
+    expect(result.bytes).toBe(Buffer.byteLength('hello', 'utf8'));
+    expect(queue).toHaveLength(1);
+  });
+
+  test('rejects a frame when the frame-count budget is full', () => {
+    const queue = [];
+    const first = enqueuePendingLiveFrame(queue, 0, { cursor: 1, frame: 'a' }, 1, 100);
+    const second = enqueuePendingLiveFrame(queue, first.bytes, { cursor: 2, frame: 'b' }, 1, 100);
+    expect(first.accepted).toBe(true);
+    expect(second.accepted).toBe(false);
+    expect(queue).toHaveLength(1);
+  });
+
+  test('rejects a frame when the UTF-8 byte budget is full', () => {
+    const queue = [];
+    const first = enqueuePendingLiveFrame(queue, 0, { cursor: 1, frame: 'é' }, 10, 2);
+    const second = enqueuePendingLiveFrame(queue, first.bytes, { cursor: 2, frame: 'x' }, 10, 2);
+    expect(first.accepted).toBe(true);
+    expect(second.accepted).toBe(false);
+    expect(first.bytes).toBe(2);
   });
 });
 
@@ -734,6 +764,13 @@ describe('worldIdService', () => {
   test('clearWorldId deletes the key', async () => {
     await clearWorldId('user-abc');
     expect(redisMock.del).toHaveBeenCalledWith('relay:world:user-abc');
+  });
+
+  test('membership mutations propagate storage failure instead of acknowledging a binding', async () => {
+    redisMock.set.mockRejectedValueOnce(new Error('storage unavailable'));
+    await expect(setWorldId('user-abc', 'new-world')).rejects.toThrow('storage unavailable');
+    redisMock.del.mockRejectedValueOnce(new Error('storage unavailable'));
+    await expect(clearWorldId('user-abc')).rejects.toThrow('storage unavailable');
   });
 });
 
@@ -1999,6 +2036,129 @@ describe('relay WebSocket ops', () => {
     wsSub.close();
   });
 
+  test('subscribe reserves the initial history window for every static channel', async () => {
+    // A busy General feed must not consume the entire cursor-zero window. The
+    // subscriber backfill is the source of initial HUD history for both ZFE
+    // and xScal, so every durable channel must be represented in that batch.
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'AllChannelHistoryPlayer' }),
+    );
+    wsReg.close();
+    const { token } = regRes;
+    const rawId = lastRawUserId();
+    _userMap[rawId] = { id: rawId, discordId: 'disc-all-channel-history', steamId: null, isBanned: false, isMuted: false };
+
+    const staticRows = [
+      ['global', '00000000-0000-0000-0000-000000000005'],
+      ['trade', '00000000-0000-0000-0000-000000000002'],
+      ['events', '00000000-0000-0000-0000-000000000003'],
+      ['infests', '983995c1-f9ab-44c0-9b78-8b4cbf497273'],
+      ['raids', '00000000-0000-0000-0000-000000000004'],
+    ].map(([slug, channelId], index) => ({
+      id: `all-channel-history-${slug}`,
+      relay_seq: BigInt(index + 1),
+      content: `${slug} history`,
+      user_id: 'u-all-channel-history',
+      channel_id: channelId,
+      username: 'HistoryPlayer',
+      fo76_account_name: null,
+    }));
+    require('../src/config/prisma').default.$queryRaw.mockResolvedValueOnce(staticRows);
+
+    const { ws: wsSub, msgs: msgsSub } = await conn();
+    await waitForMsg(wsSub, msgsSub, () =>
+      send(wsSub, { op: 'subscribe', token, cursor: 0 }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const channels = new Set(msgsSub
+      .filter((msg) => msg.op === 'event' && msg.event?.kind === 'chat.message')
+      .map((msg) => msg.event.channel));
+    expect([...channels].sort()).toEqual(['events', 'global', 'infests', 'raids', 'trade']);
+    wsSub.close();
+  });
+
+  test('subscribe keeps the native initial batch bounded while covering static and server history', async () => {
+    // xScal retains 128 queued events and polls at most 64. The complete
+    // bounded relay history is 75 static rows plus 50 current-world rows;
+    // the widget drains that 125-event subscription in multiple polls.
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'BoundedHistoryPlayer' }),
+    );
+    wsReg.close();
+    const { token } = regRes;
+    const rawId = lastRawUserId();
+    _userMap[rawId] = { id: rawId, discordId: 'disc-bounded-history', steamId: null, isBanned: false, isMuted: false };
+
+    const staticChannels = [
+      ['global', '00000000-0000-0000-0000-000000000005'],
+      ['trade', '00000000-0000-0000-0000-000000000002'],
+      ['events', '00000000-0000-0000-0000-000000000003'],
+      ['infests', '983995c1-f9ab-44c0-9b78-8b4cbf497273'],
+      ['raids', '00000000-0000-0000-0000-000000000004'],
+    ];
+    let relaySeq = 1000;
+    const staticRows = [];
+    for (const [slug, channelId] of staticChannels) {
+      for (let i = 0; i < 15; i += 1) {
+        staticRows.push({
+          id: `bounded-static-${slug}-${i}`,
+          relay_seq: BigInt(relaySeq),
+          content: `${slug} history ${i}`,
+          user_id: 'u-bounded-history',
+          channel_id: channelId,
+          username: 'HistoryPlayer',
+          fo76_account_name: null,
+        });
+        relaySeq += 2;
+      }
+    }
+    require('../src/config/prisma').default.$queryRaw.mockResolvedValueOnce(staticRows);
+
+    const worldId = 'world-bounded-history';
+    await setWorldId(rawId, worldId);
+    const serverEvents = [];
+    for (let i = 0; i < 50; i += 1) {
+      serverEvents.push(JSON.stringify({
+        // Interleave the two sources so the subscription implementation must
+        // preserve the global relay cursor order.
+        id: 1001 + (i * 2),
+        kind: 'chat.message',
+        messageId: `server:${worldId}:${i}`,
+        channel: 'server',
+        senderUserId: 'u-bounded-history',
+        senderDisplayName: 'HistoryPlayer',
+        body: `server history ${i}`,
+        targetUserId: '',
+        createdAt: '2026-08-10T00:00:00.000Z',
+      }));
+    }
+    _lists[`relay:serverchat:${worldId}`] = serverEvents.reverse();
+
+    const { ws: wsSub, msgs: msgsSub } = await conn();
+    await waitForMsg(wsSub, msgsSub, () =>
+      send(wsSub, { op: 'subscribe', token, cursor: 0 }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 100));
+
+    const initial = msgsSub.filter((msg) =>
+      msg.op === 'event' && msg.event?.kind === 'chat.message',
+    );
+    expect(initial).toHaveLength(125);
+    const counts = initial.reduce((result, msg) => {
+      const channel = msg.event.channel;
+      result[channel] = (result[channel] || 0) + 1;
+      return result;
+    }, {});
+    expect(counts).toMatchObject({ global: 15, trade: 15, events: 15, infests: 15, raids: 15, server: 50 });
+    expect(initial.map((msg) => msg.event.id)).toEqual(
+      [...initial].map((msg) => msg.event.id).sort((a, b) => a - b),
+    );
+    wsSub.close();
+  });
+
   test('subscribe includes a recent Discord message in the initial static history', async () => {
     // The Discord inbound path assigns relay_seq before persistence; this verifies
     // the other half of the contract: a HUD cursor=0 subscribe actually receives
@@ -2287,6 +2447,7 @@ describe('server chat (worldId-scoped room)', () => {
 
   test('history resync replays static history but defers server history until a fresh world bind', async () => {
     const a = await registerAndLink('HistoryReload', 'fcm-history-reload');
+    _redisSeq = 100;
     const staticHistory = {
       id: 'static-history', relay_seq: BigInt(7), content: 'static replay', user_id: 'u-static',
       channel_id: '00000000-0000-0000-0000-000000000005', username: 'HistoryReload', fo76_account_name: null,
@@ -2309,23 +2470,72 @@ describe('server chat (worldId-scoped room)', () => {
     const { ws: wsSub, msgs: msgsSub } = await connectWs(srv.port);
     await waitForMsg(wsSub, msgsSub, () => send(wsSub, { op: 'subscribe', token: a.token, cursor: 0 }));
     const beforeResync = msgsSub.length;
+    const nativeCursor = Math.max(0, ...msgsSub.filter((m) => m.op === 'event').map((m) => m.event.id));
 
     expect(await sendCtrl(a, RESYNC_SENTINEL)).toMatchObject({ success: true, messageId: expect.any(String) });
     await new Promise((r) => setTimeout(r, 100));
 
     const replayedStatic = msgsSub.slice(beforeResync).some((m) =>
-      m.op === 'event' && m.event?.messageId === staticHistory.id,
+      m.op === 'event' && m.event?.messageId === staticHistory.id && m.event.id > nativeCursor,
     );
     const replayedServerBeforeBind = msgsSub.slice(beforeResync).some((m) =>
       m.op === 'event' && m.event?.channel === 'server',
     );
     expect(replayedStatic).toBe(true);
+    const recoveryEvents = msgsSub.slice(beforeResync).filter((m) => m.op === 'event');
+    expect(recoveryEvents.at(-1).event.body).toBe('FCMCTL/1/HISTORY-DONE');
+    expect(recoveryEvents.every((m, i) => m.event.id > (i ? recoveryEvents[i - 1].event.id : nativeCursor))).toBe(true);
+    expect(staticHistory.relay_seq).toBe(BigInt(7));
+
     expect(replayedServerBeforeBind).toBe(false);
 
     expect(await sendJoin(a, worldId)).toMatchObject({ success: true });
     await new Promise((r) => setTimeout(r, 100));
     expect(msgsSub.some((m) => m.op === 'event' && m.event?.messageId === worldHistory.messageId)).toBe(true);
+    // Keep the native cursor while recreating only widget state, twice more.
+    let retainedCursor = Math.max(...msgsSub.filter((m) => m.op === 'event').map((m) => m.event.id));
+    for (let hop = 0; hop < 2; hop++) {
+      const before = msgsSub.length;
+      expect(await sendCtrl(a, RESYNC_SENTINEL)).toMatchObject({ success: true });
+      expect(await sendJoin(a, worldId)).toMatchObject({ success: true });
+      await new Promise((r) => setTimeout(r, 100));
+      const accepted = msgsSub.slice(before).filter((m) => m.op === 'event' && m.event.id > retainedCursor);
+      expect(accepted.some((m) => m.event.messageId === staticHistory.id)).toBe(true);
+      expect(accepted.some((m) => m.event.messageId === worldHistory.messageId)).toBe(true);
+      retainedCursor = Math.max(retainedCursor, ...accepted.map((m) => m.event.id));
+    }
     wsSub.close();
+  });
+
+  test('empty recovery completes and live frames cannot overtake an in-flight snapshot', async () => {
+    const a = await registerAndLink('RecoveryBarrier', 'fcm-recovery-barrier');
+    const { ws, msgs } = await connectWs(srv.port);
+    await waitForMsg(ws, msgs, () => send(ws, { op: 'subscribe', token: a.token, cursor: 0 }));
+    await new Promise((r) => setTimeout(r, 50));
+    let release;
+    let entered;
+    const started = new Promise((resolve) => { entered = resolve; });
+    require('../src/config/prisma').default.$queryRaw.mockImplementationOnce(() => {
+      entered();
+      return new Promise((resolve) => { release = resolve; });
+    });
+    const before = msgs.length;
+    const control = sendCtrl(a, RESYNC_SENTINEL);
+    await started;
+    const seq = await redisMock.incr('relay:seq');
+    await redisMock.publish('chat:broadcast', JSON.stringify({ instanceId: 'other-instance', payload: {
+      type: 'chat:message', payload: { id: 'during-recovery', content: 'synthetic', username: 'Synthetic',
+        userId: 'synthetic', channelId: '00000000-0000-0000-0000-000000000005', relaySeq: seq },
+    } }));
+    await new Promise((r) => setTimeout(r, 25));
+    expect(msgs.slice(before).filter((m) => m.op === 'event')).toHaveLength(0);
+    release([]);
+    expect(await control).toMatchObject({ success: true });
+    await new Promise((r) => setTimeout(r, 50));
+    const events = msgs.slice(before).filter((m) => m.op === 'event');
+    expect(events.map((m) => m.event.body)).toEqual(['synthetic', 'FCMCTL/1/HISTORY-DONE']);
+    expect(events[1].event.id).toBeGreaterThan(events[0].event.id);
+    ws.close();
   });
 
   test('world controls are rate-limited per authenticated relay identity', async () => {
@@ -2482,6 +2692,55 @@ describe('roster-derived world rooms', () => {
     const res = await sendRaw(a, makeRosterBody(a.rawId, []));
     expect(res).toMatchObject({ success: true, messageId: expect.any(String) });
     expect(res.messageId).not.toBe('');
+  });
+
+  test('leaving and joining a solo world does not reuse the old server history', async () => {
+    const a = await registerAndLink('SoloHop', 'fcm-solo-hop');
+    await sendRaw(a, makeRosterBody(a.rawId, []));
+    const firstRoom = _worldStore[`relay:world:${a.rawId}`];
+    expect(firstRoom).toBeTruthy();
+    expect(await sendRaw(a, 'old world only')).toMatchObject({ success: true });
+    await sendRaw(a, makeRosterBody(a.rawId, []));
+    expect(_worldStore[`relay:world:${a.rawId}`]).toBe(firstRoom);
+    await sendRaw(a, 'FCMCTL/1/LEAVE');
+    await sendRaw(a, makeRosterBody(a.rawId, []));
+    expect(_worldStore[`relay:world:${a.rawId}`]).not.toBe(firstRoom);
+    const { ws, msgs } = await connectWs(srv.port);
+    await waitForMsg(ws, msgs, () => send(ws, {op:'subscribe', token:a.token, cursor:0}));
+    await new Promise((r) => setTimeout(r, 80));
+    expect(msgs.some((m) => m.event?.body === 'old world only')).toBe(false);
+    ws.close();
+  });
+
+  test('stream confirms the requesting HUD session before server history, even for an empty room', async () => {
+    const a = await registerAndLink('StreamBind', 'fcm-stream-bind');
+    const {ws, msgs} = await connectWs(srv.port);
+    await waitForMsg(ws, msgs, () => send(ws, {op:'subscribe', token:a.token, cursor:0}));
+    const bind = async (requestId) => {
+      const rpc = await connectWs(srv.port);
+      const result = await waitForMsg(rpc.ws, rpc.msgs, () => send(rpc.ws,
+        {op:'send', token:a.token, channel:'server', targetUserId:`FCMSESSION/1;${requestId}`, body:makeRosterBody(a.rawId, [])}));
+      rpc.ws.close();
+      expect(result.success).toBe(true);
+      await new Promise((r) => setTimeout(r, 60));
+    };
+    await bind('first');
+    const firstRoom = _worldStore[`relay:world:${a.rawId}`];
+    expect(msgs.some((m) => m.event?.body === `FCMCTL/1/SERVER-READY:first|${firstRoom}`)).toBe(true);
+    await sendRaw(a, 'current room history');
+    const from = msgs.length;
+    await bind('first');
+    const replay = msgs.slice(from).filter((m) => m.op === 'event');
+    expect(replay[0].event.body).toBe(`FCMCTL/1/SERVER-READY:first|${firstRoom}`);
+    expect(replay.some((m) => m.event?.body === 'current room history')).toBe(true);
+    await bind('second'); // fresh HUD session, even when LEAVE could not be sent
+    expect(_worldStore[`relay:world:${a.rawId}`]).not.toBe(firstRoom);
+    const stale = await connectWs(srv.port);
+    const rejected = await waitForMsg(stale.ws, stale.msgs, () => send(stale.ws,
+      {op:'send', token:a.token, channel:'server', targetUserId:`FCMROOM/1;${firstRoom}`, body:'must not cross rooms'}));
+    expect(rejected).toMatchObject({success:false, error:{code:'invalid_channel'}});
+    stale.ws.close();
+    ws.close();
   });
 
   test('mutual sighting groups users into one room; unsighted user is isolated', async () => {
