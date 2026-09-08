@@ -55,36 +55,36 @@ model User {
   updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   // Relations
-  sessions             Session[]
-  messages             Message[]
-  playerReports        PlayerReport[]
-  staffApplications    StaffApplication[]
-  reportsSent          Report[]           @relation("reporterUser")
-  reportsReceived      Report[]           @relation("targetUser")
-  auditLogsActor       AuditLog[]         @relation("auditActor")
-  resolutions          Report[]           @relation("resolvedBy")
-  bansReceived         Ban[]              @relation("BanTarget")
-  bansIssued           Ban[]              @relation("BanIssuer")
-  bansReversed         Ban[]              @relation("BanReverser")
-  aliases              UserAlias[]
-  partiesOwned         Party[]            @relation("PartyOwner")
-  partyMemberships     PartyMember[]      @relation("PartyMemberships")
-  partyInvitesReceived PartyInvite[]      @relation("PartyInvitesReceived")
-  partyInvitesSent     PartyInvite[]      @relation("PartyInvitesSent")
-  partyMessages        PartyMessage[]     @relation("PartyMessages")
-  privateConversationsA PrivateConversation[] @relation("PrivateConversationA")
-  privateConversationsB PrivateConversation[] @relation("PrivateConversationB")
-  privateMessagesSent  PrivateMessage[]   @relation("PrivateMessagesSent")
-  blocksMade           Block[]            @relation("BlocksMade")
-  blocksAgainst        Block[]            @relation("BlocksAgainst")
-  mcpApiKeys           McpApiKey[]        @relation("McpApiKeyOwner")
-  giveawaysCreated     Giveaway[]         @relation("GiveawaysCreated")
-  giveawaysWon         Giveaway[]         @relation("GiveawaysWon")
-  giveawayEntries      GiveawayEntry[]    @relation("GiveawayEntries")
-  hudPairingTokensLinked  HudPairingToken[] @relation("HudPairingTokenLinkedUser")
-  linkedIdentities        LinkedIdentity[]
-  redeemedLinkCodes       HudLinkCode[]     @relation("RedeemedLinkCodes")
-  cosmetics               UserCosmetic?     @relation("UserCosmetics")
+  sessions               Session[]
+  messages               Message[]
+  playerReports          PlayerReport[]
+  staffApplications      StaffApplication[]
+  reportsSent            Report[]              @relation("reporterUser")
+  reportsReceived        Report[]              @relation("targetUser")
+  auditLogsActor         AuditLog[]            @relation("auditActor")
+  resolutions            Report[]              @relation("resolvedBy")
+  bansReceived           Ban[]                 @relation("BanTarget")
+  bansIssued             Ban[]                 @relation("BanIssuer")
+  bansReversed           Ban[]                 @relation("BanReverser")
+  aliases                UserAlias[]
+  partiesOwned           Party[]               @relation("PartyOwner")
+  partyMemberships       PartyMember[]         @relation("PartyMemberships")
+  partyInvitesReceived   PartyInvite[]         @relation("PartyInvitesReceived")
+  partyInvitesSent       PartyInvite[]         @relation("PartyInvitesSent")
+  partyMessages          PartyMessage[]        @relation("PartyMessages")
+  privateConversationsA  PrivateConversation[] @relation("PrivateConversationA")
+  privateConversationsB  PrivateConversation[] @relation("PrivateConversationB")
+  privateMessagesSent    PrivateMessage[]      @relation("PrivateMessagesSent")
+  blocksMade             Block[]               @relation("BlocksMade")
+  blocksAgainst          Block[]               @relation("BlocksAgainst")
+  mcpApiKeys             McpApiKey[]           @relation("McpApiKeyOwner")
+  giveawaysCreated       Giveaway[]            @relation("GiveawaysCreated")
+  giveawaysWon           Giveaway[]            @relation("GiveawaysWon")
+  giveawayEntries        GiveawayEntry[]       @relation("GiveawayEntries")
+  hudPairingTokensLinked HudPairingToken[]     @relation("HudPairingTokenLinkedUser")
+  linkedIdentities       LinkedIdentity[]
+  redeemedLinkCodes      HudLinkCode[]         @relation("RedeemedLinkCodes")
+  cosmetics              UserCosmetic?         @relation("UserCosmetics")
 
   @@index([installToken])
   @@index([steamId])
@@ -140,17 +140,17 @@ model Channel {
 // Messages (TimescaleDB hypertable candidate)
 // =============================================================================
 model Message {
-  id              String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  id              String    @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   content         String
-  userId          String   @map("user_id") @db.Uuid
-  channelId       String   @map("channel_id") @db.Uuid
-  parentChannelId String?  @map("parent_channel_id") @db.Uuid
-  source          String   @default("game") // 'game' | 'discord' | 'hud' | 'relay' | 'mcp' | 'ws'
-  isDeleted       Boolean  @default(false) @map("is_deleted")
+  userId          String    @map("user_id") @db.Uuid
+  channelId       String    @map("channel_id") @db.Uuid
+  parentChannelId String?   @map("parent_channel_id") @db.Uuid
+  source          String    @default("game") // 'game' | 'discord' | 'hud' | 'relay' | 'mcp' | 'ws'
+  isDeleted       Boolean   @default(false) @map("is_deleted")
   editedAt        DateTime? @map("edited_at") @db.Timestamptz(6)
-  metadata        Json?    // optional structured payload (e.g. party_invite embed)
-  relaySeq        BigInt?  @map("relay_seq") // monotonic cursor when a healthy relay sequence is available
-  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  metadata        Json? // optional structured payload (e.g. party_invite embed)
+  relaySeq        BigInt?   @map("relay_seq") // monotonic cursor when a healthy relay sequence is available
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   // Relations
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -238,7 +238,7 @@ model AuditLog {
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   // Relations
-  actor  User? @relation("auditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  actor User? @relation("auditActor", fields: [actorId], references: [id], onDelete: SetNull)
   // NOTE: target_id is POLYMORPHIC (users, parties, messages, …) — it deliberately
   // has NO FK relation. A FK to users(id) here broke party/message audit logs
   // (P2003) since their target_id isn't a user. See migration 20260601_drop_audit_target_fkey.
@@ -754,15 +754,15 @@ model PartyInvite {
 }
 
 model PartyMessage {
-  id        String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  partyId   String   @map("party_id") @db.Uuid
-  userId    String   @map("user_id") @db.Uuid
+  id        String    @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  partyId   String    @map("party_id") @db.Uuid
+  userId    String    @map("user_id") @db.Uuid
   username  String
   content   String
-  source    String   @default("party")
-  isDeleted Boolean  @default(false) @map("is_deleted")
+  source    String    @default("party")
+  isDeleted Boolean   @default(false) @map("is_deleted")
   editedAt  DateTime? @map("edited_at") @db.Timestamptz(6)
-  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   // Relations
   user  User  @relation("PartyMessages", fields: [userId], references: [id], onDelete: Cascade)
@@ -782,13 +782,13 @@ model PartyMessage {
 // Private Messages
 // =============================================================================
 model PrivateConversation {
-  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userAId          String    @map("user_a_id") @db.Uuid
-  userBId          String    @map("user_b_id") @db.Uuid
-  userALastReadAt  DateTime? @map("user_a_last_read_at") @db.Timestamptz(6)
-  userBLastReadAt  DateTime? @map("user_b_last_read_at") @db.Timestamptz(6)
-  lastMessageAt    DateTime? @map("last_message_at") @db.Timestamptz(6)
-  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userAId         String    @map("user_a_id") @db.Uuid
+  userBId         String    @map("user_b_id") @db.Uuid
+  userALastReadAt DateTime? @map("user_a_last_read_at") @db.Timestamptz(6)
+  userBLastReadAt DateTime? @map("user_b_last_read_at") @db.Timestamptz(6)
+  lastMessageAt   DateTime? @map("last_message_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   userA    User             @relation("PrivateConversationA", fields: [userAId], references: [id], onDelete: Cascade)
   userB    User             @relation("PrivateConversationB", fields: [userBId], references: [id], onDelete: Cascade)
@@ -801,13 +801,13 @@ model PrivateConversation {
 }
 
 model PrivateMessage {
-  id             String   @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  conversationId String   @map("conversation_id") @db.Uuid
-  senderId       String   @map("sender_id") @db.Uuid
+  id             String    @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String    @map("conversation_id") @db.Uuid
+  senderId       String    @map("sender_id") @db.Uuid
   content        String
-  isDeleted      Boolean  @default(false) @map("is_deleted")
+  isDeleted      Boolean   @default(false) @map("is_deleted")
   editedAt       DateTime? @map("edited_at") @db.Timestamptz(6)
-  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   conversation PrivateConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
   sender       User                @relation("PrivateMessagesSent", fields: [senderId], references: [id], onDelete: Cascade)
@@ -830,7 +830,7 @@ model Block {
   blockedId String   @map("blocked_id") @db.Uuid
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  blocker User @relation("BlocksMade",    fields: [blockerId], references: [id], onDelete: Cascade)
+  blocker User @relation("BlocksMade", fields: [blockerId], references: [id], onDelete: Cascade)
   blocked User @relation("BlocksAgainst", fields: [blockedId], references: [id], onDelete: Cascade)
 
   @@unique([blockerId, blockedId])
@@ -860,26 +860,26 @@ model OnlineSnapshot {
 // embedding column is reserved for P4 pgvector — kept in SQL comment only.
 // =============================================================================
 model WikiEntry {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  wikiTitle      String    @map("wiki_title")
-  pageId         Int       @map("page_id")            // Fandom numeric id; stable across renames → UPSERT KEY
-  name           String                               // normalized display name ("(Fallout 76)" stripped)
-  kind           String?                              // weapon|armor|power_armor|creature|item|location|perk|character|other
-  infobox        Json      @default("{}") @map("infobox")
-  imageUrl       String?   @map("image_url")          // our MinIO-proxied URL
-  imageMime      String?   @map("image_mime")         // 'image/webp' (CDN serves WebP even for .png)
-  imageWidth     Int?      @map("image_width")
-  imageHeight    Int?      @map("image_height")
-  imageAspect    String?   @map("image_aspect")       // 'ultrawide'|'portrait'|'square'|'unknown' (UI layout)
-  imageSourceUrl String?   @map("image_source_url")   // Fandom CDN fallback
-  contentHash    String?   @map("content_hash") @db.Char(64)  // sha256(raw wikitext) → change detection
-  revId          Int?      @map("rev_id")                     // Fandom revision id — fast-skip when unchanged
-  isStale        Boolean   @default(false) @map("is_stale")
-  ingestedAt     DateTime  @default(now()) @map("ingested_at") @db.Timestamptz(6)
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  wikiTitle      String   @map("wiki_title")
+  pageId         Int      @map("page_id") // Fandom numeric id; stable across renames → UPSERT KEY
+  name           String // normalized display name ("(Fallout 76)" stripped)
+  kind           String? // weapon|armor|power_armor|creature|item|location|perk|character|other
+  infobox        Json     @default("{}") @map("infobox")
+  imageUrl       String?  @map("image_url") // our MinIO-proxied URL
+  imageMime      String?  @map("image_mime") // 'image/webp' (CDN serves WebP even for .png)
+  imageWidth     Int?     @map("image_width")
+  imageHeight    Int?     @map("image_height")
+  imageAspect    String?  @map("image_aspect") // 'ultrawide'|'portrait'|'square'|'unknown' (UI layout)
+  imageSourceUrl String?  @map("image_source_url") // Fandom CDN fallback
+  contentHash    String?  @map("content_hash") @db.Char(64) // sha256(raw wikitext) → change detection
+  revId          Int?     @map("rev_id") // Fandom revision id — fast-skip when unchanged
+  isStale        Boolean  @default(false) @map("is_stale")
+  ingestedAt     DateTime @default(now()) @map("ingested_at") @db.Timestamptz(6)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
 
-  locations      Json      @default("[]") @map("locations")  // jsonb array of spawn/find location strings
+  locations Json @default("[]") @map("locations") // jsonb array of spawn/find location strings
 
   aliases WikiAlias[]
   images  WikiImage[]
@@ -893,17 +893,17 @@ model WikiEntry {
 // position=0 → primary (carousel first). is_map=true → map/spawn overlay.
 // imageUrl on WikiEntry = images[0].url kept for back-compat.
 model WikiImage {
-  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  wikiEntryId  String    @map("wiki_entry_id") @db.Uuid
-  url          String
-  sourceUrl    String?   @map("source_url")
-  mime         String?
-  width        Int?
-  height       Int?
-  aspect       String?
-  position     Int       @default(0)
-  isMap        Boolean   @default(false) @map("is_map")
-  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  wikiEntryId String   @map("wiki_entry_id") @db.Uuid
+  url         String
+  sourceUrl   String?  @map("source_url")
+  mime        String?
+  width       Int?
+  height      Int?
+  aspect      String?
+  position    Int      @default(0)
+  isMap       Boolean  @default(false) @map("is_map")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   wikiEntry WikiEntry @relation(fields: [wikiEntryId], references: [id], onDelete: Cascade)
 
@@ -917,7 +917,7 @@ model WikiAlias {
   id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   alias       String
   wikiEntryId String   @map("wiki_entry_id") @db.Uuid
-  source      String   @default("auto")  // 'auto' | 'curated'
+  source      String   @default("auto") // 'auto' | 'curated'
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   wikiEntry WikiEntry @relation(fields: [wikiEntryId], references: [id], onDelete: Cascade)
@@ -931,21 +931,21 @@ model WikiAlias {
 // CAMP Items — ingested from 76-CAMPDatabase (mrsblobby.github.io)
 // =============================================================================
 model CampItem {
-  id          String   @id @default(dbgenerated("gen_random_uuid()::text"))
-  name        String
-  category    String
-  subCategory String   @map("sub_category")
-  budgetCost  Float?   @map("budget_cost")
-  plan        String?                        // required plan name; null = no plan required
-  formId      String?  @map("form_id")
-  imageKey    String?  @map("image_key")    // MinIO object key: camp-images/<formid>.webp
-  sourceType     String?   @map("source_type")      // e.g. 'atomic_shop', 'bullion', 'daily_ops', …
-  sourceLabel    String?   @map("source_label")     // human-readable label shown in UI
-  atomPrice      Int?      @map("atom_price")        // last known Atomic Shop price in Atoms (null = not sold / unknown)
-  atomBundle     String?   @map("atom_bundle")       // bundle name when sold as part of a bundle (null = standalone)
-  atomCheckedAt  DateTime? @map("atom_checked_at") @db.Timestamptz(6) // when atom_price was last fetched from the wiki
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt      DateTime  @updatedAt    @map("updated_at")  @db.Timestamptz(6)
+  id            String    @id @default(dbgenerated("gen_random_uuid()::text"))
+  name          String
+  category      String
+  subCategory   String    @map("sub_category")
+  budgetCost    Float?    @map("budget_cost")
+  plan          String? // required plan name; null = no plan required
+  formId        String?   @map("form_id")
+  imageKey      String?   @map("image_key") // MinIO object key: camp-images/<formid>.webp
+  sourceType    String?   @map("source_type") // e.g. 'atomic_shop', 'bullion', 'daily_ops', …
+  sourceLabel   String?   @map("source_label") // human-readable label shown in UI
+  atomPrice     Int?      @map("atom_price") // last known Atomic Shop price in Atoms (null = not sold / unknown)
+  atomBundle    String?   @map("atom_bundle") // bundle name when sold as part of a bundle (null = standalone)
+  atomCheckedAt DateTime? @map("atom_checked_at") @db.Timestamptz(6) // when atom_price was last fetched from the wiki
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   @@unique([name, formId])
   @@index([category])
@@ -962,9 +962,9 @@ model CampItem {
 model HudIdentityBlock {
   id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   identityHash String    @map("identity_hash")
-  type         String    // 'mute' | 'ban'
+  type         String // 'mute' | 'ban'
   reason       String?
-  createdBy    String?   @map("created_by")   // userId of mod who issued this
+  createdBy    String?   @map("created_by") // userId of mod who issued this
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
   expiresAt    DateTime? @map("expires_at") @db.Timestamptz(6) // null = permanent
 
@@ -983,7 +983,7 @@ model HudIdentityBlock {
 model LinkedIdentity {
   id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   userId       String    @map("user_id") @db.Uuid
-  provider     String    // 'nexus' | future providers
+  provider     String // 'nexus' | future providers
   providerUid  String    @map("provider_uid")
   username     String?
   linkedAt     DateTime  @default(now()) @map("linked_at") @db.Timestamptz(6)
@@ -1004,14 +1004,14 @@ model LinkedIdentity {
 // Integration seam: relay polls WHERE code = $1 AND used_at IS NOT NULL; redeemedByUserId
 // identifies the FCM account to bind the relay token to (limited → linked upgrade).
 model HudLinkCode {
-  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  code                String    @unique
-  relayUserId         String    @map("relay_user_id")
-  redeemedByUserId    String?   @map("redeemed_by_user_id") @db.Uuid
-  expiresAt           DateTime  @map("expires_at") @db.Timestamptz(6)
-  usedAt              DateTime? @map("used_at") @db.Timestamptz(6)
-  attempts            Int       @default(0)
-  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code             String    @unique
+  relayUserId      String    @map("relay_user_id")
+  redeemedByUserId String?   @map("redeemed_by_user_id") @db.Uuid
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz(6)
+  usedAt           DateTime? @map("used_at") @db.Timestamptz(6)
+  attempts         Int       @default(0)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
   redeemedBy User? @relation("RedeemedLinkCodes", fields: [redeemedByUserId], references: [id], onDelete: SetNull)
 
@@ -1058,13 +1058,13 @@ model McpApiKey {
   keyHash    String    @unique @map("key_hash")
   label      String?
   ownerId    String    @map("owner_id") @db.Uuid
-  env        String    // 'dev' | 'prod'
+  env        String // 'dev' | 'prod'
   createdAt  DateTime  @default(now()) @map("created_at")
   lastUsedAt DateTime? @map("last_used_at")
   expiresAt  DateTime  @map("expires_at")
   revokedAt  DateTime? @map("revoked_at")
 
-  owner      User      @relation("McpApiKeyOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  owner User @relation("McpApiKeyOwner", fields: [ownerId], references: [id], onDelete: Cascade)
 
   @@index([ownerId])
   @@index([keyHash])
@@ -1075,17 +1075,17 @@ model McpApiKey {
 // Created by the ticketing feature (Bug / Suggestion / Support). See
 // docs/discord/github-tickets.md.
 model GithubIssueThread {
-  id              String   @id @default(uuid())
-  issueNumber     Int      @unique @map("issue_number")
-  issueNodeId     String   @map("issue_node_id")
-  issueUrl        String   @map("issue_url")
-  type            String // 'bug' | 'suggestion' | 'support'
-  discordThreadId String   @unique @map("discord_thread_id")
-  discordChannelId String  @map("discord_channel_id")
-  reporterId      String   @map("reporter_id")
-  isPrivate       Boolean  @default(false) @map("is_private")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @default(now()) @updatedAt @map("updated_at")
+  id               String   @id @default(uuid())
+  issueNumber      Int      @unique @map("issue_number")
+  issueNodeId      String   @map("issue_node_id")
+  issueUrl         String   @map("issue_url")
+  type             String // 'bug' | 'suggestion' | 'support'
+  discordThreadId  String   @unique @map("discord_thread_id")
+  discordChannelId String   @map("discord_channel_id")
+  reporterId       String   @map("reporter_id")
+  isPrivate        Boolean  @default(false) @map("is_private")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at")
 
   @@index([discordThreadId])
   @@map("github_issue_threads")
@@ -1096,18 +1096,18 @@ model GithubIssueThread {
 // =============================================================================
 
 model Giveaway {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  shortId         String    @unique @map("short_id")            // 6-char e.g. "A1B2C3"
-  createdByUserId String    @map("created_by_user_id") @db.Uuid
-  creatorName     String    @map("creator_name")
-  channelId       String    @map("channel_id") @db.Uuid         // channel where announced
-  itemName        String    @map("item_name")
-  durationMin     Int       @map("duration_min")
-  endsAt          DateTime  @map("ends_at") @db.Timestamptz(6)
-  status          String    @default("active")                  // active | cancelled | completed
-  winnerId        String?   @map("winner_id") @db.Uuid
-  winnerName      String?   @map("winner_name")
-  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  shortId         String   @unique @map("short_id") // 6-char e.g. "A1B2C3"
+  createdByUserId String   @map("created_by_user_id") @db.Uuid
+  creatorName     String   @map("creator_name")
+  channelId       String   @map("channel_id") @db.Uuid // channel where announced
+  itemName        String   @map("item_name")
+  durationMin     Int      @map("duration_min")
+  endsAt          DateTime @map("ends_at") @db.Timestamptz(6)
+  status          String   @default("active") // active | cancelled | completed
+  winnerId        String?  @map("winner_id") @db.Uuid
+  winnerName      String?  @map("winner_name")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
   createdBy User            @relation("GiveawaysCreated", fields: [createdByUserId], references: [id], onDelete: Cascade)
   winner    User?           @relation("GiveawaysWon", fields: [winnerId], references: [id], onDelete: SetNull)

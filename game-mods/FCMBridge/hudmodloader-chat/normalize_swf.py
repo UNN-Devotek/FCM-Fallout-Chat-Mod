@@ -18,6 +18,8 @@ def normalize(path: Path) -> None:
     else:
         raise SystemExit(f"unsupported SWF signature in {path}: {data[:3]!r}")
 
+    from emoji.embed_sprites import embed
+    body = embed(body)
     output = b"FWS" + bytes([32]) + struct.pack("<I", 8 + len(body)) + body
     path.write_bytes(output)
     print(f"normalized {path} -> FWS v32 ({len(output)} bytes)")

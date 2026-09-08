@@ -169,7 +169,8 @@ Set `Extensions.enabled = true` once per display class before any of these.
   GFx-only code so a SWF can also run in a Flash test harness), `getTopMostEntity`.
 - **`TextFieldEx`**: `appendHtml` (use it), `setVerticalAlign`, `setTextAutoSize` (SHRINK/FIT),
   `setForceVector` (input fields), `setImageSubstitutions`/`updateImageSubstitution` (emoji-in-text via
-  BitmapData — the substitution map is the right way to do inline emoji), selection colors.
+  BitmapData — an SDK option, not proof of Fallout HUD compatibility; the FCM 2.10.70
+  attempt failed in-game and this path has been removed), selection colors.
 - **`InteractiveObjectEx`**: `setTopmostLevel`, `setHitTestDisable`, `setFocusGroupMask`.
 - **`DisplayObjectEx`**: `setInvertedMask`, renderer string/float hooks, `disableBatching`.
 - **`FocusManager`** (GFx) + **CLIK `FocusHandler`** (component layer): `setModalClip` locks focus to a

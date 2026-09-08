@@ -30,6 +30,8 @@ private typedef ChatRecord = {
 }
 
 private typedef FeedRowView = {
+    @:optional var textField:TextField;
+    @:optional var bodyOffset:Int;
     var view:Sprite;
     var contentY:Float;
     var height:Float;
@@ -152,7 +154,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.70"; // Full-width feed and reconnect outbox
+    static inline var VERSION:String  = "2.10.74"; // Full-width feed and reconnect outbox
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -3649,6 +3651,8 @@ class FCMChatWidget extends MovieClip {
         var droppedCount:Int = 0;  // provider queue-loss markers still advance the cursor
         var wireStarCount:Int = 0;
         var wireStarColorCount:Int = 0;
+        var wireNameColorCount:Int = 0;
+        var carrierNameColorCount:Int = 0;
         var wireTagCount:Int = 0;
         var wireTransportCount:Int = 0;
         var wireMessageIdCount:Int = 0;
@@ -3697,7 +3701,8 @@ class FCMChatWidget extends MovieClip {
             var transportTag:String = FcmConfig.hudTransportTag(hudTransport);
             var transportStarColor:String = FcmConfig.hudTransportStarColor(hudTransport);
             var transportNameColor = FcmConfig.hudTransportNameColor(hudTransport);
-            if (transportNameColor.length > 0) nameColor = transportNameColor;
+            if (transportNameColor.length > 0) { nameColor = transportNameColor; carrierNameColorCount++; }
+            if (FcmConfig.parseHexColor(nameColor, -1) >= 0) wireNameColorCount++;
             if (transportTag.length > 0) tag = transportTag;
             if (transportStarColor.length > 0) starColor = transportStarColor;
             if (tag.length > 0) wireTagCount++;
@@ -3836,6 +3841,7 @@ class FCMChatWidget extends MovieClip {
         if (parsedCount > 0) zfeLog("info", "recv", "events=" + parsedCount + " cursor=" + _cursor
             + " newRecords=" + (newRecords ? "y" : "n")
             + " dropped=" + droppedCount
+            + " wireNameColors=" + wireNameColorCount + " carrierNameColors=" + carrierNameColorCount
             + " wireStars=" + wireStarCount + " wireStarColors=" + wireStarColorCount
             + " wireTags=" + wireTagCount + " wireTransport=" + wireTransportCount
             + " wireMessageIds=" + wireMessageIdCount
@@ -4482,11 +4488,12 @@ class FCMChatWidget extends MovieClip {
      * same row Sprite. The marker therefore moves with its message during rebuilds and scrolls;
      * it cannot drift into the header or be placed over another row by TextField indices.
      */
-    function buildFeedMessageRow(rec:ChatRecord, viewportWidth:Float, allowEmoji:Bool = true):FeedRowView {
+    function buildFeedMessageRow(rec:ChatRecord, viewportWidth:Float, displayBody:String = null):FeedRowView {
+        _renderStep = "styled-row-entry";
         var row:Sprite = new Sprite();
         var fs:Int = _cfg.fontSize;
         var rawUser:String = rec.user == null ? "" : rec.user;
-        var rawBody:String = rec.body == null ? "" : rec.body;
+        var rawBody:String = displayBody != null ? displayBody : FcmConfig.normalizeDiscordEmojiMarkup(rec.body == null ? "" : rec.body);
         var queuedSend = rec.pending ? _outbox.get(rec.localSendId) : null;
         var deliveryStatus:String = queuedSend == null ? ""
             : " [" + (queuedSend.attempts > 0 ? "sending" : "queued") + "]";
@@ -4508,15 +4515,8 @@ class FCMChatWidget extends MovieClip {
             markerSpaces = FcmStarLayout.markerSpaces(markerSize, STAR_CONTENT_GAP,
                 spaceSample.textWidth - plainSample.textWidth, fs);
         }
-        var emojiSupported = allowEmoji && FcmEmojiRenderer.supported(FONT_BODY, fs);
-        if (!_emojiSupportLogged) {
-            _emojiSupportLogged = true;
-            zfeLog("info", "emoji", "embedded-image probe=" + (emojiSupported ? "passed" : "text fallback"));
-        }
-        var emoji = FcmEmoji.plan(rawBody, emojiSupported,
-            channelLabel + moderationText + rawTag + rawUser + deliveryStatus);
         var runs = FcmFeedText.compose(channelLabel, moderationText, rawTag, rawUser,
-            emoji.text, markerSpaces, deliveryStatus);
+            rawBody, markerSpaces, deliveryStatus);
         _renderStep = "native-wrapped-text";
         var contentTf:TextField = makeFeedTextField("", viewportWidth, fs + 8, true);
         contentTf.text = runs.text;
@@ -4532,10 +4532,6 @@ class FCMChatWidget extends MovieClip {
         formatFeedRange(contentTf, runs.nameStart, runs.nameEnd, FONT_BOLD, nameColor);
         formatFeedRange(contentTf, runs.nameEnd, runs.statusStart, FONT_BODY, _cfg.textColor);
         formatFeedRange(contentTf, runs.statusStart, contentTf.length, FONT_BODY, _cfg.promptColor);
-        // GFx lays out embedded emoji inline, including wrapping and baseline alignment.
-        if (!FcmEmojiRenderer.apply(contentTf, emoji.slots, fs))
-            return buildFeedMessageRow(rec, viewportWidth, false);
-        // Auto-size owns the field height after text formatting and image substitution.
         var contentHeight:Float = Math.max(contentTf.height, measuredFeedHeight(contentTf));
         var lineHeight:Float = measuredFeedLineHeight(contentTf);
         _renderStep = "native-marker";
@@ -4565,7 +4561,47 @@ class FCMChatWidget extends MovieClip {
         }
         row.mouseEnabled = false;
         row.mouseChildren = false;
-        return { view: row, contentY: 0, height: Math.max(contentHeight, lineHeight) };
+        return { view: row, contentY: 0, height: Math.max(contentHeight, lineHeight), textField: contentTf, bodyOffset: runs.nameEnd + 2 };
+    }
+
+    // Called only after a complete styled baseline exists. Optional class verification,
+    // tokenization, and sprite construction cannot remove that baseline on failure.
+    function buildEmojiFeedRow(rec:ChatRecord, viewportWidth:Float):FeedRowView {
+        _renderStep = "emoji-plan";
+        var plan:FcmEmoji.FcmEmojiPlan;
+        try {
+            plan = FcmEmoji.plan(rec.body == null ? "" : rec.body, true, rec.user + rec.tag);
+        } catch (error:Dynamic) {
+            reportEmojiStatus("planner failed at " + FcmEmoji.stage + ": " + clip200(Std.string(error)));
+            return null;
+        }
+        _renderStep = "emoji-layout";
+        var emoji = FcmEmojiLayout.prepare(plan);
+        if (emoji.slots.length == 0) return null;
+        // A decoration failure should show a readable name, not missing font glyphs.
+        var fallback = FcmEmoji.plan(rec.body == null ? "" : rec.body, false).text;
+        try {
+            _renderStep = "emoji-styled-row";
+            var candidate = buildFeedMessageRow(rec, viewportWidth, emoji.text);
+            _renderStep = "emoji-decoration";
+            if (FcmEmojiRenderer.decorate(candidate.view, candidate.textField, emoji.slots,
+                    candidate.bodyOffset, _cfg.fontSize, FONT_BODY, _cfg.textColor)) {
+                candidate.height = Math.max(candidate.textField.height, measuredFeedHeight(candidate.textField));
+                reportEmojiStatus("native sprites placed");
+                return candidate;
+            }
+            reportEmojiStatus("readable fallback at " + FcmEmojiRenderer.stage);
+        } catch (error:Dynamic) {
+            reportEmojiStatus("readable fallback; step=" + _renderStep + ": " + clip200(Std.string(error)));
+        }
+        return buildFeedMessageRow(rec, viewportWidth, fallback);
+    }
+
+    var _emojiLastStatus:String = "";
+    function reportEmojiStatus(status:String):Void {
+        if (_emojiLastStatus == status) return;
+        _emojiLastStatus = status;
+        zfeLog("info", "emoji", status);
     }
 
     function buildFeedNoticeRow(text:String, viewportWidth:Float):FeedRowView {
@@ -4582,7 +4618,7 @@ class FCMChatWidget extends MovieClip {
 
     var _renderStep:String = "idle";
     var _ownNameColor:String = "";
-    var _emojiSupportLogged:Bool = false;
+
 
     function renderRecords():Void {
         if (_logTf == null || _feedLayer == null) return;
@@ -4616,14 +4652,23 @@ class FCMChatWidget extends MovieClip {
         _logTf.visible = false;
         _feedLayer.visible = true;
         var contentY:Float = 0;
+        var customNameColors:Int = 0;
         for (rec in visibleRecords) {
             _renderStep = "build-row";
+            if (FcmConfig.parseHexColor(rec.color, _cfg.senderColor) != _cfg.senderColor) customNameColors++;
             var rendered:FeedRowView = buildFeedMessageRow(rec, _logTf.width);
+            try {
+                var decorated = buildEmojiFeedRow(rec, _logTf.width);
+                if (decorated != null) rendered = decorated;
+            } catch (emojiError:Dynamic) {
+                zfeLog("warn", "emoji", "kept styled row; step=" + _renderStep + ": " + clip200(Std.string(emojiError)));
+            }
             rendered.contentY = contentY;
             _feedRows.push(rendered);
             _feedLayer.addChild(rendered.view);
             contentY += rendered.height + FEED_ROW_GAP;
         }
+        zfeLog("info", "name-colors", "rows=" + visibleRecords.length + " differentFromTheme=" + customNameColors);
         // "v N new" hint when scrolled up and new messages arrived below.
         if (_bScrolling && _newWhileScrolled > 0) {
             var notice:FeedRowView = buildFeedNoticeRow(

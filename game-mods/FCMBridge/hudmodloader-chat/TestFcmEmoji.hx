@@ -34,6 +34,18 @@ class TestFcmEmoji {
         var row = FcmFeedText.compose("General", "", "VIP", "ColoredName", body.text, 3, " [queued]");
         check(row.text.substring(row.nameStart, row.nameEnd) == "ColoredName", "emoji does not alter name color offsets");
         check(row.text.substring(row.nameEnd, row.statusStart) == ": " + body.text, "body remains independently formatted and multiline");
-        trace("FcmEmoji tests passed");
+        var count = 0;
+        for (line in FcmEmojiCatalog.data().split("\n")) {
+            var cells = line.split("\t");
+            var source = StringTools.startsWith(cells[0], "discord:")
+                ? "<:renamed:" + cells[0].substr(8) + ">" : cells[0];
+            var result = FcmEmoji.plan(source, true);
+            check(result.slots.length == 1, "catalog sequence resolves as one image: " + cells[0]);
+            check(result.slots[0].image == Std.parseInt(cells[1]), "catalog image ID preserved");
+            count++;
+        }
+        check(count > 5000, "entire reviewed catalog covered");
+        check(FcmEmoji.stage == "complete", "planner completion diagnostic");
+        trace("FcmEmoji tests passed (" + count + " catalog sequences)");
     }
 }

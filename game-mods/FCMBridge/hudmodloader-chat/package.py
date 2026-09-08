@@ -128,9 +128,13 @@ RESYNC recovery if static history is missing or the native queue reports loss.
 Send an emoji with /emoji <name>, e.g. /emoji heart or /emoji thumbs_up.
 Use an exact custom Discord emoji name to send a bundled custom emoji.
 
-Unicode and bundled FCM Discord emojis render as inline still images when the host
-GFx image extension passes its runtime probe. Unsupported images use readable names.
+Unicode and bundled custom Discord emojis render as inline artwork. Styling and
+emoji rendering have been tested in-game with xScal and ZFE. Animated custom emojis
+use static artwork. New or unbundled custom emojis use readable names.
 New Discord emoji require refreshed HUD assets. Artwork attribution: licenses/emoji/NOTICE.txt.
+
+For ZFE, also check Data/configuration/zfe.ini: its [TextChat] Endpoint must
+match the included example ({config['endpoint']}). A stale global endpoint can connect you to the wrong account environment.
 
 1. Exit Fallout 76 completely. Install HUDModLoader and ONE compatible extender
    (ZFE with chat.v1 support or xScal with chatInterface support) using their authors'
@@ -220,8 +224,7 @@ HUD input and commands:
   is not claimed for xScal builds without a documented suppression API.
   Customize actions can be repeated without backing out to the parent menu.
   Auto-hide is shown with its current ON/OFF state the next time F11 opens.
-  Discord custom emojis appear on the HUD as readable :name: labels; public
-  feed image/GIF attachments are intentionally not relayed into the HUD.
+  Unicode and bundled custom Discord emojis render inline; animated emojis use static artwork. Public feed image/GIF attachments are not relayed into the HUD.
 """
 
 
@@ -299,8 +302,9 @@ def build_package(target: str, output: Path, provider: str = "unified") -> None:
             "after the widget cancels its editor; Escape can close the menu normally.\n"
             "See INSTALL.txt for this provider's configuration. Input.* polling alone\n"
             "does not suppress gameplay keys; xScal keyboard suppression is not claimed.\n\n"
-            "Discord custom emojis render in the HUD as readable :name: labels;\n"
-            "public feed image/GIF attachments are intentionally not relayed.\n\n"
+            "Unicode and bundled custom Discord emojis render inline. Animated\n"
+            "emojis use static artwork. Public feed\n"
+            "image/GIF attachments are intentionally not relayed.\n\n"
             "If FCM is missing, confirm that FCMChatWidget appears exactly once in\n"
             "Data/hudmodloader.ini, then restart Fallout 76.\n"
         )

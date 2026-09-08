@@ -491,16 +491,18 @@ is unchanged. Apply the idempotent migration before deploying the backend that a
 
 The HUD sends layout controls only when `getAuthState.permissions.canSaveHudLayout` is true. Older relays omit this capability, so wrapping remains available while remote geometry persistence stays disabled. The extender must preserve this permission in its auth response.
 
-### HUD emoji presentation (2.10.69 candidate)
+### HUD emoji status (2.10.74, 2026-09-08)
 
-Unicode and Discord custom emoji markup remain unchanged on the relay wire and in the HUD
-outbox/echo records. The shared xScal/ZFE renderer substitutes bundled images only at display
-time, guarded by a measured GFx capability probe. Animated custom emoji show a static frame;
-unknown custom IDs fall back to `:name:`. This adds no relay operation and does not change the
-desktop overlay renderer. See the HUD `BUILD.md` emoji section for asset and runtime checks.
+The current build restores styled native sprite rendering. The ZFE test was confirmed
+working after correcting the global endpoint from Dev to Prod; its previous account
+had no chosen name color. Check both ZFE configuration locations when switching targets.
 
-HUD 2.10.70 adds local `/emoji <name>` resolution in the shared submit handler for
-both providers. Successful resolution sends ordinary Unicode/custom Discord markup
-through the existing authenticated outbox. Bare/unknown commands show local help and
-are not sent to the relay. Custom names override Unicode unless a `unicode:` or
-`discord:` prefix is supplied. The desktop overlay command behavior is unchanged.
+`/emoji <name>` resolves locally into ordinary Unicode or custom Discord markup and
+uses the existing authenticated outbox. Bare/unknown commands show local help. Custom
+names override Unicode unless `unicode:` or `discord:` is specified. Raw message content
+is preserved on the relay wire; rendering changes do not modify overlay behavior.
+
+The current assets are native SWF sprites. The prior BitmapData/TextFieldEx
+probe and bitmap cache were removed. Offline previews and compiled tests are not evidence
+that images work in Fallout; readable fallback names are not guaranteed on all failure paths.
+See [the HUD emoji test record](../../../testing/hud-emoji-status.md).

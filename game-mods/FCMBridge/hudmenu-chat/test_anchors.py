@@ -491,8 +491,8 @@ if widget_src:
     check('closeHudLoaderMenuAfterStateChange();' in widget_src
           and 'Auto-hide: ON' in widget_src and 'Auto-hide: OFF' in widget_src,
           "FCMChatWidget refreshes the auto-hide label after toggling")
-    check('FcmEmoji.plan(rawBody' in widget_src
-          and 'FcmEmojiRenderer.apply' in widget_src,
+    check('FcmEmoji.plan(' in widget_src
+          and 'FcmEmojiRenderer.decorate' in widget_src,
           "FCMChatWidget renders emojis only in the shared presentation layer")
     check('FcmCommand.isRelink(s)' in widget_src
           and 'function requestRelink' in widget_src

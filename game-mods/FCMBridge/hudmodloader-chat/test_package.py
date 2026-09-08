@@ -94,7 +94,7 @@ def main() -> None:
     assert b"supporterstarbitmap" not in swf_artifact.lower(), (
         "FCMChatWidget.swf must not embed a bitmap supporter-star renderer"
     )
-    assert b"FcmEmojiRenderer" in swf_artifact and b"setImageSubstitutions" in swf_artifact, (
+    assert b"FcmEmojiRenderer" in swf_artifact and b"setImageSubstitutions" not in swf_artifact and b"BitmapData" not in swf_artifact, (
         "Emoji images must use the guarded shared renderer; supporter stars remain vectors"
     )
     assert b"alignMarker" in swf_artifact and "contentTf.y + authorBounds.y" in source_hx, (
