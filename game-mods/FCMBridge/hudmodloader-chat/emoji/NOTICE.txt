@@ -1,0 +1,16 @@
+FCM HUD emoji artwork
+
+Unicode emoji: Twemoji v17.0.3, copyright Twitter, Inc. and other contributors.
+https://github.com/jdecked/twemoji/tree/v17.0.3
+Graphics licensed under Creative Commons Attribution 4.0 International.
+Original 72px PNG artwork embedded without modification. See LICENSE-TWEMOJI.txt.
+
+Unicode emoji sequence data: Unicode 17.0 emoji-test.txt, copyright Unicode, Inc.
+https://www.unicode.org/Public/17.0.0/emoji/emoji-test.txt
+See LICENSE-UNICODE.txt. The sequence catalog is derived from this data.
+
+Custom Discord emoji: FCM community guild catalog, captured 2026-09-08 at the
+project owner's request. Original IDs identify these images; names can change.
+Animated custom emojis use Discord's static PNG rendition in this HUD build.
+They are not covered by the Twemoji license; rights remain with their owners.
+This integration does not grant third parties rights to reuse custom artwork.

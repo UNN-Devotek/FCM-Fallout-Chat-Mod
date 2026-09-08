@@ -17,7 +17,7 @@ class FcmHudLayout {
         var prefix = 'FCMLAYOUT/1;' + seed + '-' + revision + ';';
         if (!StringTools.startsWith(body, prefix)) return false;
         var data:Dynamic;
-        try { data = haxe.Json.parse(body.substr(prefix.length)); } catch (_:Dynamic) { return false; }
+        try { data = FcmJson.parse(body.substr(prefix.length)); } catch (_:Dynamic) { return false; }
         if (data != null) {
             for (key in ['x','y','width','height']) {
                 var n:Dynamic = Reflect.field(data,key);

@@ -94,8 +94,8 @@ def main() -> None:
     assert b"supporterstarbitmap" not in swf_artifact.lower(), (
         "FCMChatWidget.swf must not embed a bitmap supporter-star renderer"
     )
-    assert b"setimagesubstitutions" not in swf_artifact.lower(), (
-        "FCMChatWidget.swf must not use the HUD supporter-star substitution path"
+    assert b"FcmEmojiRenderer" in swf_artifact and b"setImageSubstitutions" in swf_artifact, (
+        "Emoji images must use the guarded shared renderer; supporter stars remain vectors"
     )
     assert b"alignMarker" in swf_artifact and "contentTf.y + authorBounds.y" in source_hx, (
         "star alignment must translate the per-row author bounds, not global feed indices"
@@ -135,6 +135,9 @@ def main() -> None:
             package.build_package(target, unified)
             with ZipFile(unified) as archive:
                 names = archive.namelist()
+                assert b"Twemoji v17.0.3" in archive.read("licenses/emoji/NOTICE.txt")
+                assert "licenses/emoji/LICENSE-TWEMOJI.txt" in names
+                assert "licenses/emoji/LICENSE-UNICODE.txt" in names
                 assert [name for name in names if name.endswith(".ba2")] == ["Data/FCMChatWidget.ba2"]
                 assert not any(name.startswith("Data/ZFE/") for name in names)
                 assert archive.read("Data/FCMChatWidget.ba2") == (ROOT / "FCMChatWidget.ba2").read_bytes()

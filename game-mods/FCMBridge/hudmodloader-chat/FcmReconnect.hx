@@ -7,7 +7,7 @@ class FcmReconnect {
     public static function validPoll(raw:String):Bool {
         if (raw == null) return false;
         try {
-            var data:Dynamic = haxe.Json.parse(raw);
+            var data:Dynamic = FcmJson.parse(raw);
             return data != null && Reflect.field(data, "success") == true
                 && Std.isOfType(Reflect.field(data, "events"), Array);
         } catch (_:Dynamic) { return false; }

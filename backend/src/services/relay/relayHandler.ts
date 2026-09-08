@@ -29,6 +29,7 @@ import { getRedisClient, getSubscriberClient } from '../../config/redis';
 import prisma from '../../config/prisma';
 import logger from '../../config/logger';
 import env from '../../config/environment';
+import { registerLocalPresenceSource, flushLocalPresenceToRedis } from '../onlinePresenceService';
 import { INSTANCE_ID } from '../../config/instanceIdentity';
 import { clientIp } from '../../utils/clientIp';
 import { mintToken, verifyToken, updateDisplayName, markRelayTokenLinked } from './tokenService';
@@ -236,6 +237,10 @@ export async function notifyLinkComplete(relayUserId: string): Promise<void> {
 
 /** Deliver a link completion only to subscribers owned by this process. */
 async function pushLinkCompleteLocal(relayUserId: string): Promise<number> {
+  const linkedToken = await prisma.hudPairingToken.findFirst({
+    where: { userId: relayUserId, revokedAt: null },
+    select: { linkedUserId: true },
+  });
   const redis  = await getRedisClient();
   const cursor = await redis.incr('relay:seq');
   const event = {
@@ -251,6 +256,7 @@ async function pushLinkCompleteLocal(relayUserId: string): Promise<number> {
   let pushed = 0;
   for (const sub of subscribers) {
     if (sub.userId === relayUserId && sub.ws.readyState === 1) {
+      sub.linkedUserId = linkedToken?.linkedUserId ?? null;
       if (sendRaw(sub.ws, JSON.stringify({ op: 'event', cursor, event }))) {
         sub.cursor = Math.max(sub.cursor, cursor);
         pushed++;
@@ -259,6 +265,7 @@ async function pushLinkCompleteLocal(relayUserId: string): Promise<number> {
       }
     }
   }
+  void flushLocalPresenceToRedis();
   return pushed;
 }
 
@@ -485,6 +492,10 @@ interface SubscriberState {
 // Module-level subscriber set — cleared on disconnect.
 const subscribers = new Set<SubscriberState>();
 const pendingSubscriptions = new WeakSet<WebSocket>();
+
+registerLocalPresenceSource(() => [...subscribers]
+  .filter(sub => sub.ws.readyState === 1 && !sub.initializing && sub.linkedUserId)
+  .map(sub => sub.linkedUserId!), 'hud');
 
 registerRelayLiveFanout((payload) => fanoutRelayLiveChatMessage(
   payload,
@@ -1850,7 +1861,14 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
     pendingLiveFrames: [],
     pendingLiveBytes: 0,
   };
+  if (ws.readyState !== 1) return;
   subscribers.add(state);
+  let pingTimer: ReturnType<typeof setInterval> | null = null;
+  ws.once('close', () => {
+    if (pingTimer) clearInterval(pingTimer);
+    subscribers.delete(state);
+    void flushLocalPresenceToRedis();
+  });
 
   // Ensure pub/sub is wired.
   await ensurePubSub();
@@ -1942,7 +1960,9 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
   // (default 4000ms; 0 disables).
   const pingMs = Number(process.env.RELAY_PING_INTERVAL_MS ?? 4000);
   let checkingAccess = false;
-  const pingTimer = pingMs > 0
+  if (ws.readyState !== 1 || !subscribers.has(state)) return;
+  void flushLocalPresenceToRedis();
+  pingTimer = pingMs > 0
     ? setInterval(() => {
         if (ws.readyState !== 1) return;       // 1 = OPEN
         if (checkingAccess) return;
@@ -1964,12 +1984,6 @@ async function handleSubscribeInternal(ws: WebSocket, frame: Record<string, unkn
           .finally(() => { checkingAccess = false; });
       }, pingMs)
     : null;
-
-  // Clean up subscriber (and stop the keepalive) on disconnect.
-  ws.once('close', () => {
-    if (pingTimer) clearInterval(pingTimer);
-    subscribers.delete(state);
-  });
 }
 
 /** Serialize subscription setup so duplicate frames cannot create duplicate timers. */
@@ -1981,6 +1995,10 @@ async function handleSubscribe(ws: WebSocket, frame: Record<string, unknown>): P
   pendingSubscriptions.add(ws);
   try {
     await handleSubscribeInternal(ws, frame);
+  } catch (err) {
+    for (const sub of subscribers) if (sub.ws === ws) subscribers.delete(sub);
+    void flushLocalPresenceToRedis();
+    throw err;
   } finally {
     pendingSubscriptions.delete(ws);
   }

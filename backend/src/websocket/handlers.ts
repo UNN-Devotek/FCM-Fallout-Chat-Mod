@@ -26,6 +26,7 @@ import {
   noteUserDisconnected,
   noteUserPendingDisconnect,
   registerLocalPresenceSource,
+  getLocalOnlineUserIds,
 } from '../services/onlinePresenceService';
 import {
   PrivateConversationAccessError,
@@ -477,7 +478,7 @@ export function getConnectedUserIds(): string[] {
 /**
  * Authoritative set of userIds that are "present" on THIS instance: anyone with
  * an OPEN socket, plus anyone inside the flap-grace window (pendingDisconnect).
- * This is the same set getClientCount() sizes, exposed so onlinePresenceService
+ * This is the overlay contribution to getClientCount(), exposed so onlinePresenceService
  * can flush it to Redis for the cross-instance /online count without keeping a
  * drift-prone parallel refcount. Order doesn't matter — callers dedup.
  */
@@ -490,7 +491,7 @@ export function getLocallyPresentUserIds(): string[] {
   return Array.from(seen);
 }
 
-// Wire the WS layer in as the single source of truth for local presence.
+// Register the overlay transport alongside HUD relay presence.
 registerLocalPresenceSource(getLocallyPresentUserIds);
 
 /** No-op stub retained for call-site compatibility. World-detection was removed. */
@@ -1368,15 +1369,7 @@ function broadcastToAdmins(payload: object): void {
 // Also counts users whose flap-grace disconnect timer is still pending to avoid
 // the Discord bot presence cycling "Watching 0 dwellers" ↔ N during reconnects.
 function getClientCount(): number {
-  const seen = new Set<string>();
-  for (const c of clients.values()) {
-    if (c.userId && c.ws.readyState === WebSocket.OPEN) seen.add(c.userId);
-  }
-  // Include users with an in-flight flap-grace timer (not yet disconnected).
-  for (const userId of pendingDisconnect.keys()) {
-    seen.add(userId);
-  }
-  return seen.size;
+  return getLocalOnlineUserIds().length;
 }
 
 /**

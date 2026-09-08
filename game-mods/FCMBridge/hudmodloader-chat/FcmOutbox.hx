@@ -68,7 +68,7 @@ class FcmOutbox {
         if (body == null || !StringTools.startsWith(body, "FCMACK/1;")) return "";
         try {
             var raw = StringTools.urlDecode(body.substr(9));
-            var parsed:Dynamic = haxe.Json.parse(raw);
+            var parsed:Dynamic = FcmJson.parse(raw);
             if (parsed == null || receipt(Reflect.field(parsed, "targetUserId")).length == 0) return "";
             return raw;
         } catch (_:Dynamic) { return ""; }

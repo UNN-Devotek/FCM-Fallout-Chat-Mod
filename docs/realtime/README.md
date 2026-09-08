@@ -164,3 +164,18 @@ Immediately after a game-client connection is established the backend pushes thr
 3. `telemetry:set` — deprecated kill-switch; always `{ enabled: false }` (telemetry was removed)
 
 `handlers.ts:1649–1696`
+
+### Community online count
+
+The bot activity, website `onlineNow`, and `/online` include authenticated overlay
+connections and established, linked in-game HUD subscriptions (both xScal and ZFE).
+Presence is deduplicated by FCM account ID across transports and devices. Unlinked
+HUD sessions and transient relay RPC connections do not count. Linking a live HUD
+session updates its presence without requiring a reconnect. Closing the last HUD
+subscription removes that account unless an overlay connection remains; overlay
+reconnect grace is unchanged.
+
+Each backend publishes the union of its live transport registries to Redis every
+15 seconds with a 45-second expiry. `/online` unions those instance snapshots;
+website and bot activity counts use the local union, as before. This does not
+change overlay WebSocket routing, party in-game status, or private message delivery.

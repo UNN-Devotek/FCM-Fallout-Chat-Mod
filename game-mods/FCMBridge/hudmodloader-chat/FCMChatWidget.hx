@@ -152,7 +152,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.66"; // Full-width feed and reconnect outbox
+    static inline var VERSION:String  = "2.10.70"; // Full-width feed and reconnect outbox
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -2244,6 +2244,14 @@ class FCMChatWidget extends MovieClip {
             }
         }
 
+        var emojiCommand = FcmEmojiCommand.resolve(s);
+        if (emojiCommand.handled) {
+            if (emojiCommand.error.length > 0) {
+                setLogText(FcmConfig.htmlEscape(emojiCommand.error));
+                return;
+            }
+            s = emojiCommand.body;
+        }
         sendMessage(s);
     }
 
@@ -2881,6 +2889,7 @@ class FCMChatWidget extends MovieClip {
         var connectStatus:String = extractJsonString(rs, "status");
         var connectCode:String = extractJsonString(rs, "code");
         var connectDecision:String = FcmAuthFlow.classify(_api.provider, "", connectStatus, connectCode);
+        _consecutivePollFailures = 0;
         _connected = true; // native transport accepted; _authState separately gates chat sends
         // Native input is probed lazily on the first open. Never activate it at startup:
         // legacy Windows/ZFE builds can expose the bare probe payload as editable text.
@@ -3055,7 +3064,7 @@ class FCMChatWidget extends MovieClip {
         if (_api == null) return;
         try {
             var state:String = Std.string(_api.call("chat.v1.getAuthState", "{}"));
-            var authEnvelope:Dynamic = haxe.Json.parse(state);
+            var authEnvelope:Dynamic = FcmJson.parse(state);
             if (authEnvelope == null || Reflect.field(authEnvelope, "success") == false) {
                 if (!FcmReconnect.pendingAllowed(_connectStartedAt, flash.Lib.getTimer())) forceReconnect("auth response unavailable");
                 return;
@@ -3735,10 +3744,8 @@ class FCMChatWidget extends MovieClip {
                 zfeLog("info", "history", "replay completed");
                 continue;
             }
-            // The web client renders Discord custom emojis from CDN images. The
-            // Scaleform HUD cannot safely load those images, so keep the readable
-            // emoji name and remove the numeric Discord snowflake from this surface.
-            var displayBody:String  = FcmConfig.normalizeDiscordEmojiMarkup(body);
+            // Preserve raw emoji identifiers for rendering and echo reconciliation.
+            var displayBody:String  = body;
             var messageId:String    = extractJsonString(obj, "messageId");
             var transportMessageId:String = FcmConfig.hudTransportMessageId(hudTransport);
             if (transportMessageId.length > 0) messageId = transportMessageId;
@@ -3889,7 +3896,7 @@ class FCMChatWidget extends MovieClip {
     function reconcileOwnEcho(messageId:String, senderUserId:String, channel:String, body:String,
             displayName:String, tag:String, supporterStar:Bool, starColor:String, nameColor:String = ""):Bool {
         _lastEchoMatchMode = "";
-        var normalized:String = FcmConfig.normalizeDiscordEmojiMarkup(body);
+        var normalized:String = body;
         var pending:Array<FcmEcho.FcmPendingEcho> = [];
         for (i in 0..._records.length) {
             var pendingRecord:ChatRecord = _records[i];
@@ -3997,7 +4004,7 @@ class FCMChatWidget extends MovieClip {
         _records.push({
             color: _ownNameColor.length > 0 ? _ownNameColor : hx(_cfg.senderColor), channel: channel, user: _displayName,
             tag: tag, supporterStar: supporterStar, starColor: starColor,
-            body: FcmConfig.normalizeDiscordEmojiMarkup(body),
+            body: body,
             messageId: messageId, senderUserId: senderUserId, pending: true,
             localSendId: localSendId, pendingAt: flash.Lib.getTimer(), sendAccepted: false,
         });
@@ -4393,6 +4400,15 @@ class FCMChatWidget extends MovieClip {
         return tf;
     }
 
+    function formatFeedRange(tf:TextField, start:Int, end:Int, font:String, color:Int):Void {
+        if (start < 0 || end <= start || end > tf.length) return;
+        var fmt = new TextFormat();
+        fmt.font = font;
+        fmt.size = _cfg.fontSize;
+        fmt.color = color;
+        tf.setTextFormat(fmt, start, end);
+    }
+
     function measuredFeedHeight(tf:TextField):Float {
         var measured:Float = _cfg.fontSize + 4;
         try {
@@ -4412,61 +4428,60 @@ class FCMChatWidget extends MovieClip {
      * same row Sprite. The marker therefore moves with its message during rebuilds and scrolls;
      * it cannot drift into the header or be placed over another row by TextField indices.
      */
-    function buildFeedMessageRow(rec:ChatRecord, viewportWidth:Float):FeedRowView {
+    function buildFeedMessageRow(rec:ChatRecord, viewportWidth:Float, allowEmoji:Bool = true):FeedRowView {
         var row:Sprite = new Sprite();
         var fs:Int = _cfg.fontSize;
         var rawUser:String = rec.user == null ? "" : rec.user;
         var rawBody:String = rec.body == null ? "" : rec.body;
         var queuedSend = rec.pending ? _outbox.get(rec.localSendId) : null;
-        var deliveryHtml:String = queuedSend == null ? ""
-            : '<font color="' + hx(_cfg.promptColor) + '"> ['
-                + (queuedSend.attempts > 0 ? "sending" : "queued") + ']</font>';
+        var deliveryStatus:String = queuedSend == null ? ""
+            : " [" + (queuedSend.attempts > 0 ? "sending" : "queued") + "]";
         var rawTag:String = rec.tag == null ? "" : rec.tag;
-        var col:String = ~/^#[0-9a-fA-F]{6}$/.match(rec.color) ? rec.color : hx(_cfg.senderColor);
-        var channelLabel:String = FcmConfig.chanLabel(rec.channel);
-        var channelHtml:String = _cfg.showChannelTag
-            ? '<font face="' + FONT_BOLD + '" size="' + fs + '" color="'
-                + hx(_cfg.channelColor(rec.channel)) + '">[' + FcmConfig.htmlEscape(channelLabel) + ']</font> '
-            : "";
-
-        var user:String = FcmConfig.htmlEscape(rawUser);
-        var msg:String = FcmConfig.htmlEscape(rawBody);
-        msg = StringTools.replace(StringTools.replace(msg, "\r\n", "\n"), "\r", "\n");
-        msg = StringTools.replace(msg, "\n", "<br/>");
-        var customTagHtml:String = (rawTag.length > 0)
-            ? '<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + hx(_cfg.textColor) + '">['
-                + FcmConfig.htmlEscape(rawTag) + ']</font> '
-            : "";
-        var moderationRefHtml:String = "";
-        var moderationRefLength:Int = 0;
+        var nameColor:Int = FcmConfig.parseHexColor(rec.color, _cfg.senderColor);
+        var channelLabel:String = _cfg.showChannelTag ? FcmConfig.chanLabel(rec.channel) : "";
+        var moderationText:String = "";
         if (_canModerate && rec.messageId != null && rec.messageId.length >= 8
-                && rec.senderUserId != null && rec.senderUserId.length > 0) {
-            moderationRefLength = 12; // "[#" + eight hexadecimal digits + "] "
-            moderationRefHtml = '<font color="' + hx(_cfg.promptColor) + '">[#'
-                + rec.messageId.substr(0, 8).toUpperCase() + ']</font> ';
-        }
+                && rec.senderUserId != null && rec.senderUserId.length > 0)
+            moderationText = "[#" + rec.messageId.substr(0, 8).toUpperCase() + "] ";
         // A single full-width native field lets continuation lines return beneath the channel.
         // Non-breaking spaces reserve an inline vector slot and stay with the first name word.
         var hasMarker:Bool = rec.supporterStar && rawUser.length > 0;
         var markerSize:Float = Math.max(8, Math.min(16, fs * 0.95));
         var markerSpaces:Int = 0;
-        var markerHtml:String = "";
         if (hasMarker) {
             var spaceSample = makeFeedTextField('<font face="' + FONT_BOLD + '">M&#160;M</font>', 200, fs + 8, false);
             var plainSample = makeFeedTextField('<font face="' + FONT_BOLD + '">MM</font>', 200, fs + 8, false);
             markerSpaces = FcmStarLayout.markerSpaces(markerSize, STAR_CONTENT_GAP,
                 spaceSample.textWidth - plainSample.textWidth, fs);
-            for (_ in 0...markerSpaces) markerHtml += "&#160;";
         }
-        var contentHtml:String = '<font face="' + FONT_BODY + '" size="' + fs + '" color="' + hx(_cfg.textColor) + '">'
-            + channelHtml + moderationRefHtml + customTagHtml
-            + '<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + col + '">' + markerHtml + user + '</font>'
-            + '<font face="' + FONT_BODY + '" size="' + fs + '" color="' + hx(_cfg.textColor) + '">: ' + msg + '</font>' + deliveryHtml
-            + '</font>';
+        var emojiSupported = allowEmoji && FcmEmojiRenderer.supported(FONT_BODY, fs);
+        if (!_emojiSupportLogged) {
+            _emojiSupportLogged = true;
+            zfeLog("info", "emoji", "embedded-image probe=" + (emojiSupported ? "passed" : "text fallback"));
+        }
+        var emoji = FcmEmoji.plan(rawBody, emojiSupported,
+            channelLabel + moderationText + rawTag + rawUser + deliveryStatus);
+        var runs = FcmFeedText.compose(channelLabel, moderationText, rawTag, rawUser,
+            emoji.text, markerSpaces, deliveryStatus);
         _renderStep = "native-wrapped-text";
-        var contentTf:TextField = makeFeedTextField(contentHtml, viewportWidth, fs + 8, true);
+        var contentTf:TextField = makeFeedTextField("", viewportWidth, fs + 8, true);
+        contentTf.text = runs.text;
         row.addChild(contentTf);
-        // Auto-size owns the field height. Never shrink it after HTML layout.
+        _renderStep = "native-text-colors";
+        // Set the whole row to the theme first, then override only named ranges.
+        // Plain text prevents HTML font inheritance and keeps indices exact for escaped text.
+        formatFeedRange(contentTf, 0, contentTf.length, FONT_BODY, _cfg.textColor);
+        formatFeedRange(contentTf, 0, runs.channelEnd, FONT_BOLD, _cfg.channelColor(rec.channel));
+        formatFeedRange(contentTf, runs.channelEnd, runs.moderationEnd, FONT_BODY, _cfg.promptColor);
+        formatFeedRange(contentTf, runs.moderationEnd, runs.tagEnd, FONT_BOLD, _cfg.textColor);
+        formatFeedRange(contentTf, runs.tagEnd, runs.nameStart, FONT_BOLD, _cfg.textColor);
+        formatFeedRange(contentTf, runs.nameStart, runs.nameEnd, FONT_BOLD, nameColor);
+        formatFeedRange(contentTf, runs.nameEnd, runs.statusStart, FONT_BODY, _cfg.textColor);
+        formatFeedRange(contentTf, runs.statusStart, contentTf.length, FONT_BODY, _cfg.promptColor);
+        // GFx lays out embedded emoji inline, including wrapping and baseline alignment.
+        if (!FcmEmojiRenderer.apply(contentTf, emoji.slots, fs))
+            return buildFeedMessageRow(rec, viewportWidth, false);
+        // Auto-size owns the field height after text formatting and image substitution.
         var contentHeight:Float = Math.max(contentTf.height, measuredFeedHeight(contentTf));
         var lineHeight:Float = measuredFeedLineHeight(contentTf);
         _renderStep = "native-marker";
@@ -4479,8 +4494,7 @@ class FCMChatWidget extends MovieClip {
             star.visible = false;
             row.addChild(star);
             try {
-                var authorIndex = (_cfg.showChannelTag ? channelLabel.length + 3 : 0)
-                    + moderationRefLength + (rawTag.length > 0 ? rawTag.length + 3 : 0) + markerSpaces;
+                var authorIndex = runs.nameStart;
                 var authorBounds:Rectangle = contentTf.getCharBoundaries(authorIndex);
                 var slotBounds:Rectangle = contentTf.getCharBoundaries(authorIndex - markerSpaces);
                 var markerBounds:Rectangle = star.getBounds(star);
@@ -4514,6 +4528,7 @@ class FCMChatWidget extends MovieClip {
 
     var _renderStep:String = "idle";
     var _ownNameColor:String = "";
+    var _emojiSupportLogged:Bool = false;
 
     function renderRecords():Void {
         if (_logTf == null || _feedLayer == null) return;

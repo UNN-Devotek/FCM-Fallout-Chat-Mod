@@ -355,7 +355,17 @@ jobs:
         run: haxe test-echo.hxml
       - name: Run HUD reconnect outbox tests
         working-directory: game-mods/FCMBridge/hudmodloader-chat
-        run: haxe test-outbox.hxml
+        run: |
+          python3 emoji/generate.py --check
+          haxe test-emoji-command.hxml
+          haxe -main TestFcmEmojiCommand -js /tmp/fcm-emoji-command-test.js
+          node /tmp/fcm-emoji-command-test.js
+          haxe test-emoji.hxml
+          haxe -main TestFcmEmoji -js /tmp/fcm-emoji-test.js
+          node /tmp/fcm-emoji-test.js
+          haxe test-feed-text.hxml
+          haxe test-json.hxml
+          haxe test-outbox.hxml
       - name: Test HUD history recovery and world transitions
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe test-history.hxml
