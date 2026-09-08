@@ -332,7 +332,10 @@ See [v2.10.55 recovery changes](BUILD.md#v21055-send-and-reload-recovery) for gu
 array-backed roster snapshots, delivered-history completion, and the matching relay requirement.
 
 
-Provider-specific ZIPs use `package.py --provider zfe` (default) or `--provider xscal`.
-The widget BA2 still auto-detects either extender; only setup files differ. Never copy the
-ZFE ZIP to an xScal filename. xScal packages contain no ZFE fragments.
+The default release is one ZIP containing one auto-detecting BA2 and both extender examples.
+ZFE users copy `examples/ZFE/FCMChatWidget.ini.example` to
+`Data/ZFE/TextChat/fragments/FCMChatWidget.ini`. xScal users leave that example alone and
+run `Enable-xScal-Chat.cmd` on Windows, or merge `xscal.ini.example` on Linux/Proton.
+The shared package installs no active ZFE fragment by default. Legacy provider-only output
+remains available with `--provider zfe` or `--provider xscal`.
 Input.* polling supports navigation but does not itself suppress gameplay keys.

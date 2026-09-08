@@ -194,7 +194,7 @@ if (-not (Test-Path $hudPackageScript)) { Fail "missing script" "Required HUD pa
 # This keeps the release URL and the ZIP contents tied to one version source.
 $pythonCommand = Get-Command python3 -ErrorAction SilentlyContinue
 if (-not $pythonCommand) { $pythonCommand = Get-Command python -ErrorAction SilentlyContinue }
-if (-not $pythonCommand) { Fail "pre-flight" "Python 3 is required to package the ZFE FCM HUD Mod" }
+if (-not $pythonCommand) { Fail "pre-flight" "Python 3 is required to package the FCM HUD Mod" }
 $hudModVersion = (& $pythonCommand.Source $hudPackageScript --print-version).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $hudModVersion -or $hudModVersion -notmatch '^\d+\.\d+\.\d+$') {
     Fail "pre-flight" "Could not read a valid FCMChatWidget version from $hudPackageScript"
@@ -240,7 +240,7 @@ $linuxDeb     = Join-Path $distDir "Fallout Chat Mod-$Version.deb"
 $winZipName   = "Fallout Chat Mod Setup $Version (Windows).zip"
 $linuxZipName = "Fallout Chat Mod-$Version.AppImage (Linux).zip"
 $hudTarget    = "prod"
-$hudZipName   = "ZFE FCM HUD Mod-$hudModVersion ($($hudTarget.ToUpperInvariant())).zip"
+$hudZipName   = "FCM HUD Mod-$hudModVersion ($($hudTarget.ToUpperInvariant())).zip"
 $winZip       = Join-Path $distDir $winZipName
 $linuxZip     = Join-Path $distDir $linuxZipName
 $hudZip       = Join-Path $distDir $hudZipName

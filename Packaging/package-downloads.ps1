@@ -7,7 +7,7 @@
     Produces:
       - "Fallout Chat Mod Setup V (Windows).zip"  (Windows installer + INSTALL-WINDOWS.txt)
       - "Fallout Chat Mod-V.AppImage (Linux).zip" (Linux AppImage + .deb + INSTALL-LINUX.txt + .kwinrule)
-      - "ZFE FCM HUD Mod-V (TARGET).zip" (target-stamped FCMChatWidget BA2 + configs + INSTALL.txt)
+      - "FCM HUD Mod-V (TARGET).zip" (target-stamped FCMChatWidget BA2 + configs + INSTALL.txt)
 
     These ZIPs are the artifacts linked from the website download buttons and uploaded
     to Nexus Mods. They are ADDITIONAL to (not replacing) the raw installer files.
@@ -82,7 +82,7 @@ if (-not (Test-Path $hudPackage))   { Fail "Missing: $hudPackage" }
 # release wrapper on Windows, Linux, and macOS.
 $pythonCommand = Get-Command python3 -ErrorAction SilentlyContinue
 if (-not $pythonCommand) { $pythonCommand = Get-Command python -ErrorAction SilentlyContinue }
-if (-not $pythonCommand) { Fail "Python 3 is required to package the ZFE FCM HUD Mod" }
+if (-not $pythonCommand) { Fail "Python 3 is required to package the FCM HUD Mod" }
 $hudVersion = (& $pythonCommand.Source $hudPackage --print-version).Trim()
 if ($LASTEXITCODE -ne 0 -or -not $hudVersion -or $hudVersion -notmatch '^\d+\.\d+\.\d+$') {
     Fail "Could not read a valid FCMChatWidget version from $hudPackage"
@@ -91,7 +91,7 @@ if ($LASTEXITCODE -ne 0 -or -not $hudVersion -or $hudVersion -notmatch '^\d+\.\d
 # --- Output ZIP names --------------------------------------------------------
 $winZipName   = "Fallout Chat Mod Setup $Version (Windows).zip"
 $linuxZipName = "Fallout Chat Mod-$Version.AppImage (Linux).zip"
-$hudZipName   = "ZFE FCM HUD Mod-$hudVersion ($($HudTarget.ToUpperInvariant())).zip"
+$hudZipName   = "FCM HUD Mod-$hudVersion ($($HudTarget.ToUpperInvariant())).zip"
 $winZipOut    = Join-Path $DistDir $winZipName
 $linuxZipOut  = Join-Path $DistDir $linuxZipName
 $hudZipOut    = Join-Path $DistDir $hudZipName
@@ -129,7 +129,7 @@ Compress-Archive -Path (Join-Path $linuxStaging "*") -DestinationPath $linuxZipO
 $linuxSize = (Get-Item $linuxZipOut).Length
 Write-Host "[package-downloads]   -> $linuxZipOut ($([math]::Round($linuxSize/1MB,1)) MB)"
 
-# --- Build ZFE FCM HUD Mod ZIP ----------------------------------------------
+# --- Build FCM HUD Mod ZIP ----------------------------------------------
 Write-Host "[package-downloads] Building HUD ZIP: $hudZipName"
 if (Test-Path $hudZipOut) { Remove-Item $hudZipOut -Force }
 & $pythonCommand.Source $hudPackage --target $HudTarget --output $hudZipOut
