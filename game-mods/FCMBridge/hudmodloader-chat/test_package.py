@@ -131,6 +131,23 @@ def main() -> None:
             assert not invalid.exists()
         assert package.widget_version() == version_match.group(1)
         for target, expected in package.TARGETS.items():
+            unified = Path(temp_dir) / f"widget-{target}-unified.zip"
+            package.build_package(target, unified)
+            with ZipFile(unified) as archive:
+                names = archive.namelist()
+                assert [name for name in names if name.endswith(".ba2")] == ["Data/FCMChatWidget.ba2"]
+                assert not any(name.startswith("Data/ZFE/") for name in names)
+                assert archive.read("Data/FCMChatWidget.ba2") == (ROOT / "FCMChatWidget.ba2").read_bytes()
+                assert f"Endpoint={expected['endpoint']}".encode() in archive.read("examples/ZFE/FCMChatWidget.ini.example")
+                assert b"enabled=true" in archive.read("xscal.ini.example")
+                assert expected["endpoint"].encode() in archive.read("xscal.ini.example")
+                assert expected["endpoint"].encode() in archive.read("Enable-xScal-Chat.ps1")
+                assert b"@@FCM_RELAY_ENDPOINT@@" not in archive.read("Enable-xScal-Chat.ps1")
+                assert b"Choose ONE installed extender" in archive.read("INSTALL.txt")
+                assert b"do NOT install the ZFE example" in archive.read("INSTALL.txt")
+                assert archive.read("FCMChatWidget.provider.txt") == b"unified\n"
+
+        for target, expected in package.TARGETS.items():
             for provider in ("zfe", "xscal"):
                 output = Path(temp_dir) / f"widget-{target}-{provider}.zip"
                 package.build_package(target, output, provider)

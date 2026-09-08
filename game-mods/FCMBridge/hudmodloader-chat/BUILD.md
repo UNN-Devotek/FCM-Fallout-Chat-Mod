@@ -250,7 +250,7 @@ widget version. The output can be regenerated at any time from the current
 
 ```bash
 python3 package.py --print-version
-python3 package.py --target prod --output "/tmp/ZFE FCM HUD Mod-$(python3 package.py --print-version) (PROD).zip"
+python3 package.py --target prod --output "/tmp/FCM HUD Mod-$(python3 package.py --print-version) (PROD).zip"
 ```
 
 ## Input-path acceptance
@@ -481,13 +481,16 @@ Do not copy the new BA2 into a live game installation or publish it until these
 checks have passed on the intended environment.
 
 
-### Provider-specific packaging
+### Unified release packaging
 
-`python3 package.py --target dev --provider zfe --output /tmp/zfe.zip`
-and `python3 package.py --target dev --provider xscal --output /tmp/xscal.zip`
-package the same auto-detecting BA2. The default provider is ZFE for existing release scripts.
-Only ZFE includes `Data/ZFE/TextChat/fragments/FCMChatWidget.ini`; only xScal includes
-`xscal.ini.example` and `Enable-xScal-Chat.cmd` / `.ps1`. After extracting into the
+`python3 package.py --target prod --output "/tmp/FCM HUD Mod-$(python3 package.py --print-version) (PROD).zip"`
+builds the default single download: one auto-detecting BA2, the shared runtime INI,
+`examples/ZFE/FCMChatWidget.ini.example`, `xscal.ini.example`, and the xScal enable helper.
+Only apply the example for your installed extender. ZFE users copy the example into
+`Data/ZFE/TextChat/fragments/FCMChatWidget.ini`; xScal users do not create that folder.
+The ZIP contains no active ZFE fragment. Optional legacy `--provider zfe` and
+`--provider xscal` outputs remain available for targeted diagnostics.
+For xScal, after extracting into the
 game folder with Fallout 76 closed, run the CMD helper on Windows. It backs up the
 existing `xscal.ini`, changes `[Chat] enabled=false` to `enabled=true`, stamps the
 package relay endpoint, and preserves unrelated settings, encoding and line endings.

@@ -57,7 +57,7 @@ export function releaseDownloadFieldValue(version: string, hudMod?: HudModDownlo
     `[Linux ZIP + install docs](${linuxZipUrl(version)})`,
     `[Download page](${downloadPageUrl()})`,
   ];
-  if (hudMod) links.push(`[ZFE FCM HUD Mod ZIP v${hudMod.version}](${hudMod.url})`);
+  if (hudMod) links.push(`[FCM HUD Mod ZIP (ZFE / xScal) v${hudMod.version}](${hudMod.url})`);
   return links.join('  ·  ');
 }
 

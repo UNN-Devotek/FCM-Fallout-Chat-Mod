@@ -120,7 +120,7 @@ if ($LASTEXITCODE -ne 0 -or -not $hudVersion -or $hudVersion -notmatch '^\d+\.\d
 $winExe   = Join-Path $DistDir "Fallout Chat Mod Setup $Version.exe"
 $linuxApp = Join-Path $DistDir "Fallout Chat Mod-$Version.AppImage"
 $linuxDeb = Join-Path $DistDir "Fallout Chat Mod-$Version.deb"
-$hudZip   = Join-Path $DistDir "ZFE FCM HUD Mod-$hudVersion (PROD).zip"
+$hudZip   = Join-Path $DistDir "FCM HUD Mod-$hudVersion (PROD).zip"
 
 # -- FAIL-CLOSED VirusTotal gate -------------------------------------------------
 # Run the VT gate FIRST and ABORT (do not upload anything to Nexus) if it returns
@@ -187,7 +187,7 @@ For the portable AppImage package, use the separate Linux AppImage file on the s
 VirusTotal scan (always points to the current build): https://falloutchatmod.com/virustotal
 "@
 $hudDesc = $notesBlock + @"
-OPTIONAL IN-GAME HUD MOD: ZFE FCM HUD Mod v$hudVersion
+OPTIONAL IN-GAME HUD MOD: FCM HUD Mod v$hudVersion
 
 This is a separate, opt-in Fallout 76 HUD install. It is not required for the
 desktop overlay and must be installed at the user's discretion. The ZIP contains

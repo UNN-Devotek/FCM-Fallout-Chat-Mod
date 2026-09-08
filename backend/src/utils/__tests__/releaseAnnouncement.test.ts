@@ -92,7 +92,7 @@ describe('releaseAnnouncement', () => {
         version: '2.10.8',
         url: 'https://dev.falloutchatmod.com/downloads/electron/ZFE%20FCM%20HUD%20Mod-2.10.8%20(DEV).zip',
       });
-      assert.ok(v.includes('[ZFE FCM HUD Mod ZIP v2.10.8](https://dev.falloutchatmod.com/downloads/electron/ZFE%20FCM%20HUD%20Mod-2.10.8%20(DEV).zip)'));
+      assert.ok(v.includes('[FCM HUD Mod ZIP (ZFE / xScal) v2.10.8](https://dev.falloutchatmod.com/downloads/electron/ZFE%20FCM%20HUD%20Mod-2.10.8%20(DEV).zip)'));
     });
   });
 
