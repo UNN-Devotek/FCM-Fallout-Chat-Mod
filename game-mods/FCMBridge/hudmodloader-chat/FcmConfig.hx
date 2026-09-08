@@ -202,6 +202,11 @@ class FcmConfig {
         return hudTransportValue(wire, "m");
     }
 
+    public static function hudTransportNameColor(wire:String):String {
+        var color = hudTransportValue(wire, "n");
+        return parseHexColor(color, -1) >= 0 ? color : "";
+    }
+
     public static function hudTransportStarColor(wire:String):String {
         var color:String = hudTransportValue(wire, "c");
         return parseHexColor(color, -1) >= 0 ? color : "";
