@@ -16,7 +16,7 @@ vi.mock('../../../services/api', () => ({
   },
 }));
 
-vi.mock('../EmojiPicker', () => ({ default: () => null }));
+vi.mock('../EmojiPicker', () => ({ default: () => null, extractEmojiTokens: () => [] }));
 vi.mock('../GifPicker', () => ({ default: () => null }));
 vi.mock('../components/ChatEmbedCard', () => ({ ChatEmbedCard: () => null }));
 
@@ -192,6 +192,56 @@ describe('ChatOverlay private messaging', () => {
     vi.restoreAllMocks();
     globalThis.fetch = realFetch;
     globalThis.WebSocket = realWebSocket;
+  });
+
+  it('keeps the admin server feed and public mentions out of an opened PM', async () => {
+    const normalGet = apiGet.getMockImplementation()!;
+    apiGet.mockImplementation((path: string) => {
+      if (path === '/api/channels') return Promise.resolve([{
+        id: 'main-1', name: 'Fallout 76', parentId: null, children: [
+          { id: 'general', name: 'General', parentId: 'main-1' },
+          { id: 'server:test-world', name: 'Server', parentId: 'main-1' },
+        ],
+      }]);
+      if (path.startsWith('/api/presence/server-messages')) return Promise.resolve([{
+        id: 'public-mention', content: '@You public server mention', username: 'PublicSender',
+        userId: 'public-user', serverEndpoint: 'test-world', createdAt: '2026-06-25T15:52:00.000Z',
+      }]);
+      return normalGet(path);
+    });
+    renderOverlay({ id: 'user-me', username: 'You', role: 'admin' });
+    await screen.findByText('Fallout 76');
+    fireEvent.click(screen.getByText('Server'));
+    await screen.findByText(/public server mention/);
+    fireEvent.click(screen.getByText('PM'));
+    await act(async () => {
+      emitWs({ type: 'pm:list', payload: { openedConversationId: 'conv-1', conversations: [{
+        conversationId: 'conv-1', otherUserId: 'user-other', otherDisplayName: 'Stealthmog',
+        lastMessagePreview: 'meet at whitespring?', lastMessageSenderId: 'user-other',
+        lastMessageAt: '2026-06-25T15:52:00.000Z', unreadCount: 0,
+      }] } });
+    });
+    expect(await screen.findByText('meet at whitespring?')).toBeTruthy();
+    expect(screen.queryByText(/public server mention/)).toBeNull();
+    await act(async () => {
+      emitWs({ type: 'chat:message', payload: {
+        id: 'mention-live', content: '@You live public mention', username: 'PublicSender',
+        userId: 'public-user', channelId: 'general', source: 'game', createdAt: '2026-06-25T15:55:00.000Z',
+      } });
+      emitWs({ type: 'chat:history', payload: { messages: [{
+        id: 'mention-history', content: '@You historical public mention', username: 'PublicSender',
+        user_id: 'public-user', channel_id: 'general', source: 'game', created_at: '2026-06-25T15:50:00.000Z',
+      }] } });
+    });
+    expect(screen.queryByText(/live public mention/)).toBeNull();
+    expect(screen.queryByText(/historical public mention/)).toBeNull();
+    expect(screen.getByText('meet at whitespring?')).toBeTruthy();
+    const composer = screen.getByPlaceholderText('Type a message...');
+    fireEvent.change(composer, { target: { value: 'private reply' } });
+    fireEvent.keyDown(composer, { key: 'Enter', code: 'Enter' });
+    const sent = wsInstances[wsInstances.length - 1].sentFrames;
+    expect(sent.some(frame => frame.type === 'pm:send' && frame.payload?.content === 'private reply')).toBe(true);
+    expect(sent.some(frame => frame.type === 'chat:send' || frame.type === 'party:send')).toBe(false);
   });
 
   it('renders sender-aware PM inbox previews without avatars', async () => {

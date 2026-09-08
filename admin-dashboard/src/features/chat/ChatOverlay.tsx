@@ -4543,7 +4543,11 @@ export default function ChatOverlay() {
     }
   }, [channelsRaw]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const isOnServerChannel = activeSubId.startsWith('server:');
+  // PM and Party retain the last channel selection for returning to chat.
+  // That remembered sub-tab must not activate the public server feed here.
+  const isOnServerChannel = activeMainId !== PM_MAIN_ID
+    && activeMainId !== PARTY_MAIN_ID
+    && activeSubId.startsWith('server:');
   const adminFeedActive = isAdmin && isOnServerChannel;
 
   const { data: feedData } = useQuery({
