@@ -23,7 +23,7 @@
       5. Size verify: confirm the bytes served by the VPS match the local build artifact size.
       6. Register: POST /admin/releases {version, downloadUrl (Windows ZIP), releaseNotes}.
       7. Nexus: THIS SCRIPT publishes the Linux AppImage ZIP and Linux .deb ZIP as
-         MAIN files and the HUD ZIP as an OPTIONAL file (each replacing its previous
+         MAIN files and the HUD ZIP as a MAIN file (each replacing its previous
          version) via publish-nexus.ps1. Pass -PublishWindowsForReview to upload a
          new Windows ZIP as a MAIN file while preserving the existing Windows file
          for Nexus support review.
@@ -214,9 +214,9 @@ $linuxInclude = @(
 $platforms = @(
     @{ Name = "Linux AppImage"; File = $linuxApp; Zip = $linuxAppZip; Group = $linuxGroup; Desc = $linuxAppDesc; Include = $linuxInclude; NexusVersion = $Version; Category = "main"; ArchiveExisting = $true },
     @{ Name = "Linux .deb"; File = $linuxDeb; Zip = $linuxDebZip; Group = $linuxDebGroup; Desc = $linuxDebDesc; Include = $linuxInclude; NexusVersion = $Version; Category = "main"; ArchiveExisting = $true },
-    # The HUD package is a separate optional file group on the same Nexus mod page.
+    # The HUD has its own Main Files entry; installation remains opt-in.
     # Its file version follows the widget version, not the desktop overlay version.
-    @{ Name = "HUD"; File = $hudZip; Zip = ""; Group = $hudGroup; Desc = $hudDesc; Include = @(); NexusVersion = $hudVersion; Category = "optional"; ArchiveExisting = $true }
+    @{ Name = "HUD"; File = $hudZip; Zip = ""; Group = $hudGroup; Desc = $hudDesc; Include = @(); NexusVersion = $hudVersion; Category = "main"; ArchiveExisting = $true }
 )
 if ($publishWindows) {
     # Support-review upload creates a second live Windows file alongside the existing one.

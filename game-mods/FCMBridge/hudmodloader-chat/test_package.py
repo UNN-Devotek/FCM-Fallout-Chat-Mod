@@ -146,6 +146,16 @@ def main() -> None:
                 assert b"Choose ONE installed extender" in archive.read("INSTALL.txt")
                 assert b"do NOT install the ZFE example" in archive.read("INSTALL.txt")
                 assert archive.read("FCMChatWidget.provider.txt") == b"unified\n"
+                install = archive.read("INSTALL.txt").decode()
+                assert f"[Chat]\n   enabled=true\n   relayEndpoint={expected['endpoint']}" in install
+                assert "If xscal.ini is missing, create a plain-text" in install
+                assert "New users must apply these settings too" in install
+                assert "setup helper is optional" in install
+                assert "Copy the COMPLETE examples/ZFE/FCMChatWidget.ini.example" in install
+                assert "Steam sign-in does not require Discord" in install
+                other = "prod" if target == "dev" else "dev"
+                assert package.TARGETS[other]["endpoint"] not in install
+
 
         for target, expected in package.TARGETS.items():
             for provider in ("zfe", "xscal"):

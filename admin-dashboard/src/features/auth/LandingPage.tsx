@@ -1,4 +1,5 @@
 import { hudDownloads } from './hudDownloads';
+import HudManualInstall from './HudManualInstall';
 import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { Player } from '@remotion/player';
@@ -566,10 +567,10 @@ function InstallPanel() {
       {/* ── Optional in-game HUD mod — keep the download visible at the top ── */}
       <div style={firstSectionHeaderStyle}>FCM HUD MOD — ZFE / xScal — OPTIONAL</div>
       <div style={bodyStyle}>
-        Download the separate opt-in in-game HUD mod for ZFE or xScal here. Choose the package for your
-        installed extender. Both contain the same auto-detecting FCMChatWidget BA2, but include only the matching setup files,
-        both runtime configuration files, the HUDModLoader append snippet, and target-specific
-        installation instructions. It does not install or modify the desktop overlay.
+        One optional HUD download supports both ZFE and xScal. It contains a single
+        auto-detecting FCMChatWidget BA2 and configuration examples for both extenders.
+        Apply the example for your installed extender. This is a separate in-game mod;
+        it does not install or modify the desktop overlay.
       </div>
       <div className="install-dl-row" style={downloadRowStyle}>
         {hudModUrl ? hudDownloads(hudModUrl).map((download) => (
@@ -597,57 +598,12 @@ function InstallPanel() {
         do not replace that file.
       </div>
 
-      <div style={stepStyle}>STEP 1 — PREPARE</div>
-      <div style={bodyStyle}>
-        Install <strong style={{ color: '#C8A840' }}>ZFE with chat.v1 support</strong> and{' '}
-        <strong style={{ color: '#C8A840' }}>HUDModLoader</strong> first. This archive is the
-        explicit opt-in in-game HUD track and is separate from the desktop overlay.
-        It is preconfigured for the environment represented by this install page.
-      </div>
-
-      <div style={stepStyle}>STEP 2 — EXTRACT THE ZIP</div>
-      <div style={bodyStyle}>
-        Exit Fallout 76 completely, then extract the ZIP into the Fallout 76 game
-        installation folder, preserving existing files. It contains:
-      </div>
-      <div style={{ ...bulletStyle, paddingLeft: '16px' }}>
-        <code>Data/FCMChatWidget.ba2</code><br />
-        <code>Data/FCMChat.ini</code> (ZFE/relay settings)<br />
-        <code>Data/ZFE/TextChat/fragments/FCMChatWidget.ini</code> (widget settings)<br />
-        <code>FCMChatWidget.hudmodloader.ini</code> (append-only loader snippet)<br />
-        <code>Fallout76Custom.ini.example</code>
-      </div>
-
-      <div style={stepStyle}>STEP 3 — APPEND HUDMODLOADER</div>
-      <div style={bodyStyle}>
-        Open the existing <code>Data/hudmodloader.ini</code> and append the single line
-        from <code>FCMChatWidget.hudmodloader.ini</code> exactly once. Keep every existing
-        widget entry; do not replace the file.
-      </div>
-
-      <div style={stepStyle}>STEP 4 — REGISTER THE BA2</div>
-      <div style={bodyStyle}>
-        Open <code>Fallout76Custom.ini</code> and append <code>FCMChatWidget.ba2</code> to
-        the existing <code>[Archive]</code> <code>sResourceArchive2List</code> value.
-        Preserve all existing archives. If the section or key is missing, add{' '}
-        <code>sResourceArchive2List=HUDModLoader.ba2,FCMChatWidget.ba2</code>.
-      </div>
-      <div style={noteStyle}>
-        Native Windows normally stores Fallout76Custom.ini in{' '}
-        <code>Documents/My Games/Fallout 76/</code>. Proton/Wine normally stores it in
-        the Steam prefix under <code>compatdata/1151340/pfx/drive_c/users/steamuser/</code>.
-        The Data/ files always belong in the game installation folder. Keep the two INI
-        files at their packaged paths: they are consumed by different HUD/ZFE layers.
-      </div>
-
-      <div style={stepStyle}>STEP 5 — VERIFY AND LINK</div>
-      <div style={bodyStyle}>
-        Start Fallout 76, open the HUDModLoader <strong style={{ color: '#C8A840' }}>F11</strong>{' '}
-        menu, and confirm <code>FCMChatWidget</code> is listed. When the widget shows a
-        fresh 8-character code, open <a href={hudLinkUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#C8A840' }}>the account-link page</a>,
-        sign in with Discord, enter the code, and return to the game. Codes expire after
-        10 minutes; reconnect the widget to request a new one.
-      </div>
+      <HudManualInstall
+        linkUrl={hudLinkUrl}
+        bodyStyle={bodyStyle}
+        stepStyle={stepStyle}
+        noteStyle={noteStyle}
+      />
 
       {/* ── Windows ─────────────────────────────────────────────────── */}
       <div style={sectionHeaderStyle}>WINDOWS</div>
