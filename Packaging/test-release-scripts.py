@@ -96,6 +96,8 @@ def main() -> None:
         "window.location.hostname === 'dev.falloutchatmod.com'",
     ):
         assert marker in install_page, f"website Linux download control is missing: {marker}"
+    manual_hud = (ROOT / "admin-dashboard/src/features/auth/HudManualInstall.tsx").read_text(encoding="utf-8")
+    assert "<HudManualInstall" in install_page
     for marker in (
         "STEP 1 — PREPARE",
         "Data/FCMChatWidget.ba2",
@@ -103,9 +105,11 @@ def main() -> None:
         "Data/hudmodloader.ini",
         "FCMChatWidget.hudmodloader.ini",
         "Fallout76Custom.ini",
-        "8-character code",
+        "fresh link code",
+        "enabled=true",
+        "sign in with Steam or Discord",
     ):
-        assert marker in install_page, f"HUD install instructions are missing: {marker}"
+        assert marker in manual_hud, f"HUD install instructions are missing: {marker}"
 
     for source, label in (
         (install_page, "website Linux instructions"),
