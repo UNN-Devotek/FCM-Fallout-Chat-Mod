@@ -172,15 +172,19 @@ envelope only to v2.10.16+; older widgets receive no envelope. The relay records
 beside a short-lived one-way token digest in Redis so separate connect and subscribe sockets use
 the same capability decision. `tag` and `starColor` are already validated by the cosmetics
 service, and `supporterStar` is derived only from an active Supporter or Overseer entitlement.
-Widget v2.10.46 renders supporter fields with a fixed five-point vector `Shape` in a row-local
-`Sprite` containing separate channel and message fields. The row measures the channel field,
-reserves the marker slot, places the marker 5px after the channel tag, and centers it on
-the first message line with a 2px visual down-nudge. There is no `getCharBoundaries()`, document-index search, or global/local
-transform, so Scaleform's mixed-font coordinate ambiguity cannot move a marker into the header or
-top-left corner. The feed clip moves the complete row, including its marker, and keeps off-screen
-history out of the header/input area. It uses the validated `starColor` and never trusts a Unicode
-glyph, bitmap, HTML image, or substitution token from the wire. The desktop/web `nameColor` and
-effect fields remain outside this HUD extension. A self-authored in-game message creates one
+Widget v2.10.65 retains native HTML wrapping and places the vector supporter star using the
+first author character's `getCharBoundaries()` rectangle plus the text field's row-local offset.
+The star's own vector bounds are centered on that rectangle; the entire multiline row height is
+not used. This measures the glyph advance box, not exact ink extents. Channel and message fields
+remain siblings in the row, so the feed clip moves them together. Narrow layouts move the name
+and star below the channel with a reserved marker gap.
+
+The HUD now accepts a validated six-digit `nameColor` from server-resolved cosmetics. It travels
+through live/history/ACK projections and the native-known carrier as `n=%23RRGGBB`; old widgets
+ignore that new key. The widget applies it to names/custom tags and defaults to its theme color
+when absent or invalid. Animated effects remain outside this HUD extension.
+
+A self-authored in-game message creates one
 canonical local send transaction before the synchronous native send RPC runs, so a slow TLS/socket
 call cannot block the first visible feedback. The successful ACK carries the server-resolved
 cosmetics and stable message ID, so the widget decorates the exact row immediately. A live event

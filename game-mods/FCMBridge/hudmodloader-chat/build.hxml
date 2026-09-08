@@ -10,3 +10,6 @@
 --class-path ..
 --swf FCMChatWidget.swf
 --swf-version 32
+
+# Fallout GFx does not guarantee Flash Player 11 native JSON.
+-D haxeJSON

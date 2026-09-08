@@ -152,7 +152,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.60"; // Steam or Discord linking instructions
+    static inline var VERSION:String  = "2.10.65"; // Explicit line wrapping and device-scoped xScal layout
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -1537,7 +1537,24 @@ class FCMChatWidget extends MovieClip {
 
     // Best-effort persist so customizations survive relaunch. ZFE storage is scoped to this vendor;
     // if unavailable the change is still applied live this session (guarded, no-op on failure).
+    var _hudLayoutSupported:Bool = false;
+    var _hudLayout:FcmHudLayout = new FcmHudLayout(Std.string(Std.int(Math.random() * 1000000000)));
+
+    function syncHudLayout():Void {
+        if (_api == null || _api.provider != FcmNativeApi.XSCAL || !_connected || _needsLink || !_hudLayoutSupported) return;
+        var body = _hudLayout.request(flash.Lib.getTimer(), _cfg);
+        if (body.length == 0) return;
+        try {
+            _api.call("chat.v1.sendMessage", haxe.Json.stringify({channel:"server", targetUserId:"", body:body}));
+        } catch (_:Dynamic) { zfeLog("warn", "customize", "layout sync deferred"); }
+    }
+
     function persistConfig():Void {
+        if (_api == null || _api.provider == FcmNativeApi.XSCAL) {
+            _hudLayout.changed();
+            syncHudLayout();
+            return;
+        }
         try {
             var payload:String = '{"vendor":"' + VENDOR + '","path":"' + SETTINGS_PATH
                 + '","text":"' + jsonEscape(_cfg.toIni()) + '"}';
@@ -1550,6 +1567,7 @@ class FCMChatWidget extends MovieClip {
 
     /** Apply persisted Customize values over the packaged environment config. */
     function loadPersistedConfig():Void {
+        if (_api == null || _api.provider == FcmNativeApi.XSCAL) return;
         var environmentLinkUrl:String = _cfg.linkUrl;
         try {
             var payload:String = '{"vendor":"' + VENDOR + '","path":"' + SETTINGS_PATH + '"}';
@@ -2524,12 +2542,15 @@ class FCMChatWidget extends MovieClip {
                     var messageId:String = extractJsonString(rs, "messageId");
                     var ackTag:String = extractJsonString(rs, "tag");
                     var ackStarColor:String = extractJsonString(rs, "starColor");
+                    var ackNameColor:String = extractJsonString(rs, "nameColor");
                     // ZFE may strip additive cosmetic members from native RPC responses, just as
                     // it does for live event frames. v2.10.16+ relays mirror the message ID and
                     // validated cosmetics in the known targetUserId member.
                     var ackHudTransport:String = extractJsonString(rs, "targetUserId");
                     var ackTransportMessageId:String = FcmConfig.hudTransportMessageId(ackHudTransport);
                     if (ackTransportMessageId.length > 0) messageId = ackTransportMessageId;
+                    var ackTransportNameColor = FcmConfig.hudTransportNameColor(ackHudTransport);
+                    if (ackTransportNameColor.length > 0) ackNameColor = ackTransportNameColor;
                     var ackTransportTag:String = FcmConfig.hudTransportTag(ackHudTransport);
                     var ackTransportStarColor:String = FcmConfig.hudTransportStarColor(ackHudTransport);
                     if (ackTransportTag.length > 0) ackTag = ackTransportTag;
@@ -2543,7 +2564,7 @@ class FCMChatWidget extends MovieClip {
                         || rs.indexOf('"supporterStar":') >= 0
                         || rs.indexOf('"starColor":') >= 0;
                     var ackUpdated:Bool = updateOptimisticRecord(localSendId, messageId, ackTag,
-                        ackSupporterStar, ackStarColor, ackCosmeticsKnown);
+                        ackSupporterStar, ackStarColor, ackCosmeticsKnown, ackNameColor);
                     zfeLog("info", "cosmetics", "sendAck len=" + rs.length
                         + " provider=" + (_api == null ? "none" : _api.provider)
                         + " id=" + (messageId.length > 0 ? "y" : "n")
@@ -2714,6 +2735,7 @@ class FCMChatWidget extends MovieClip {
         _falloutIdentityReady = false;
         _displayName = "Wanderer";
         _ownCosmeticsKnown = false;
+        _ownNameColor = "";
         _ownTag = "";
         _ownSupporterStar = false;
         _ownStarColor = "";
@@ -2959,10 +2981,12 @@ class FCMChatWidget extends MovieClip {
             if (linkedUid.length > 0 && linkedUid != _linkedUserId) {
                 _linkedUserId = linkedUid;
                 _ownCosmeticsKnown = false;
+                _ownNameColor = "";
                 _ownTag = "";
                 _ownSupporterStar = false;
                 _ownStarColor = "";
             }
+            _hudLayoutSupported = extractJsonBool(state, "canSaveHudLayout");
             var prevAuth:String = _authState;
             var prevCanModerate:Bool = _canModerate;
             var becameAuthenticated:Bool = prevAuth != "authenticated"
@@ -2987,6 +3011,7 @@ class FCMChatWidget extends MovieClip {
                 if (becameAuthenticated && _api.provider == FcmNativeApi.XSCAL) {
                     startXscalWarmup();
                 }
+                syncHudLayout();
                 maybeRequestHistoryResync();
             } else if (_api.provider == FcmNativeApi.XSCAL
                     && _connected && authDecision == FcmAuthFlow.RECONNECT) {
@@ -3536,6 +3561,7 @@ class FCMChatWidget extends MovieClip {
             var senderUserId:String = extractJsonString(obj, "senderUserId");
             var displayName:String  = extractJsonString(obj, "senderDisplayName");
             var tag:String          = extractJsonString(obj, "tag");
+            var nameColor:String    = extractJsonString(obj, "nameColor");
             var starColor:String    = extractJsonString(obj, "starColor");
             // ZFE's native chat bridge strips unknown additive members. The relay
             // therefore mirrors cosmetics into targetUserId for widget builds that
@@ -3544,6 +3570,8 @@ class FCMChatWidget extends MovieClip {
             var hudTransport:String = extractJsonString(obj, "targetUserId");
             var transportTag:String = FcmConfig.hudTransportTag(hudTransport);
             var transportStarColor:String = FcmConfig.hudTransportStarColor(hudTransport);
+            var transportNameColor = FcmConfig.hudTransportNameColor(hudTransport);
+            if (transportNameColor.length > 0) nameColor = transportNameColor;
             if (transportTag.length > 0) tag = transportTag;
             if (transportStarColor.length > 0) starColor = transportStarColor;
             if (tag.length > 0) wireTagCount++;
@@ -3555,6 +3583,11 @@ class FCMChatWidget extends MovieClip {
             if (supporterStar) wireStarCount++;
             if (starColor.length > 0) wireStarColorCount++;
             var body:String         = extractJsonString(obj, "body");
+            if (rawChannel == "system" && senderUserId == "system" && StringTools.startsWith(body, "FCMLAYOUT/1;")) {
+                updateCursorFromEvent(obj);
+                if (_api != null && _api.provider == FcmNativeApi.XSCAL && _hudLayout.accept(body, _cfg)) rebuildPanel();
+                continue; // Private settings are never rendered as chat or interpreted as a link notice.
+            }
             if (rawChannel == "system" && senderUserId == "system"
                     && StringTools.startsWith(body, FcmServerSession.READY_PREFIX)) {
                 updateCursorFromEvent(obj);
@@ -3627,7 +3660,7 @@ class FCMChatWidget extends MovieClip {
             // cosmetics, but appending a second canonical row would duplicate the message when
             // the event arrives after the optimistic row.
             if (reconcileOwnEcho(messageId, senderUserId, channel, body, displayName, tag,
-                    supporterStar, starColor)) {
+                    supporterStar, starColor, nameColor)) {
                 ownEchoMatchedCount++;
                 if (_lastEchoMatchMode == "id") ownEchoIdMatchCount++;
                 else ownEchoFallbackMatchCount++;
@@ -3645,7 +3678,7 @@ class FCMChatWidget extends MovieClip {
             if (!markSeenEvent(channel, evId, messageId)) continue;
 
             _records.push({
-                color: hx(_cfg.senderColor), channel: channel, user: displayName,
+                color: FcmConfig.parseHexColor(nameColor, -1) >= 0 ? nameColor : hx(_cfg.senderColor), channel: channel, user: displayName,
                 tag: tag, supporterStar: supporterStar, starColor: starColor, body: displayBody,
                 messageId: messageId, senderUserId: senderUserId, pending: false,
                 localSendId: "", pendingAt: 0, sendAccepted: false,
@@ -3733,7 +3766,7 @@ class FCMChatWidget extends MovieClip {
      * FcmEcho decision table (stable id, identity, then bounded legacy fallback).
      */
     function reconcileOwnEcho(messageId:String, senderUserId:String, channel:String, body:String,
-            displayName:String, tag:String, supporterStar:Bool, starColor:String):Bool {
+            displayName:String, tag:String, supporterStar:Bool, starColor:String, nameColor:String = ""):Bool {
         _lastEchoMatchMode = "";
         var normalized:String = FcmConfig.normalizeDiscordEmojiMarkup(body);
         var pending:Array<FcmEcho.FcmPendingEcho> = [];
@@ -3764,6 +3797,8 @@ class FCMChatWidget extends MovieClip {
         rec.messageId = messageId.length > 0 ? messageId : rec.messageId;
         rec.senderUserId = senderUserId.length > 0 ? senderUserId : rec.senderUserId;
         if (displayName != null && displayName.length > 0) rec.user = displayName;
+        rec.color = FcmConfig.parseHexColor(nameColor, -1) >= 0 ? nameColor : hx(_cfg.senderColor);
+        _ownNameColor = rec.color;
         rec.tag = tag;
         rec.supporterStar = supporterStar;
         rec.starColor = starColor;
@@ -3815,6 +3850,7 @@ class FCMChatWidget extends MovieClip {
         }
 
         if (candidate != null) {
+            _ownNameColor = candidate.color;
             rememberOwnCosmetics(candidate.tag, candidate.supporterStar, candidate.starColor);
         }
     }
@@ -3833,7 +3869,7 @@ class FCMChatWidget extends MovieClip {
             supporterStar:Bool, starColor:String, senderUserId:String, localSendId:String):Void {
         if (senderUserId == null) senderUserId = "";
         _records.push({
-            color: hx(_cfg.senderColor), channel: channel, user: _displayName,
+            color: _ownNameColor.length > 0 ? _ownNameColor : hx(_cfg.senderColor), channel: channel, user: _displayName,
             tag: tag, supporterStar: supporterStar, starColor: starColor,
             body: FcmConfig.normalizeDiscordEmojiMarkup(body),
             messageId: messageId, senderUserId: senderUserId, pending: true,
@@ -3846,7 +3882,7 @@ class FCMChatWidget extends MovieClip {
 
     /** Apply the ACK to the exact transaction row; no text/identity search occurs here. */
     function updateOptimisticRecord(localSendId:String, messageId:String, tag:String,
-            supporterStar:Bool, starColor:String, cosmeticsKnown:Bool):Bool {
+            supporterStar:Bool, starColor:String, cosmeticsKnown:Bool, nameColor:String = ""):Bool {
         for (rec in _records) {
             if (!rec.pending || rec.localSendId != localSendId) continue;
             if (messageId != null && messageId.length > 0) rec.messageId = messageId;
@@ -3855,6 +3891,8 @@ class FCMChatWidget extends MovieClip {
             // ACKs carry FCMHUD/1 (or additive fields), so an explicit empty
             // projection is also respected when the user is not a supporter.
             if (cosmeticsKnown) {
+                rec.color = FcmConfig.parseHexColor(nameColor, -1) >= 0 ? nameColor : hx(_cfg.senderColor);
+                _ownNameColor = rec.color;
                 rec.tag = tag;
                 rec.supporterStar = supporterStar;
                 rec.starColor = starColor;
@@ -4210,6 +4248,7 @@ class FCMChatWidget extends MovieClip {
         tf.height = Math.max(20, height);
         tf.multiline = true;
         tf.wordWrap = wrap;
+        tf.autoSize = wrap ? flash.text.TextFieldAutoSize.LEFT : flash.text.TextFieldAutoSize.NONE;
         tf.selectable = false;
         tf.mouseEnabled = false;
         tf.embedFonts = true;
@@ -4240,12 +4279,9 @@ class FCMChatWidget extends MovieClip {
     }
 
     function measuredFeedLineHeight(tf:TextField):Float {
-        var lineHeight:Float = _cfg.fontSize + 4;
-        try {
-            var metrics:Dynamic = tf.getLineMetrics(0);
-            if (metrics != null && metrics.height > 0) lineHeight = metrics.height;
-        } catch (e:Dynamic) {}
-        return Math.max(lineHeight, _cfg.fontSize + 2);
+        // A single-line sample avoids an optional TextLineMetrics class dependency.
+        var sample = makeFeedTextField("Mg", 100, _cfg.fontSize + 8, false);
+        return Math.max(_cfg.fontSize + 2, Math.ceil(sample.textHeight + 2));
     }
 
     /**
@@ -4280,8 +4316,10 @@ class FCMChatWidget extends MovieClip {
                 + FcmConfig.htmlEscape(rawTag) + ']</font> '
             : "";
         var moderationRefHtml:String = "";
+        var moderationRefLength:Int = 0;
         if (_canModerate && rec.messageId != null && rec.messageId.length >= 8
                 && rec.senderUserId != null && rec.senderUserId.length > 0) {
+            moderationRefLength = 12; // "[#" + eight hexadecimal digits + "] "
             moderationRefHtml = '<font color="' + hx(_cfg.promptColor) + '">[#'
                 + rec.messageId.substr(0, 8).toUpperCase() + ']</font> ';
         }
@@ -4298,23 +4336,36 @@ class FCMChatWidget extends MovieClip {
         var channelGap:Float = _cfg.showChannelTag ? STAR_CHANNEL_GAP : 0;
         var initial = FcmStarLayout.row(channelWidth, fs + 4, markerSize,
             channelGap, STAR_CONTENT_GAP, hasMarker, STAR_MARKER_Y_NUDGE);
-        var contentWidth:Float = Math.max(20, viewportWidth - initial.contentX);
-        var contentTf:TextField = makeFeedTextField(contentHtml, contentWidth, 1000, true);
-        contentTf.x = initial.contentX;
-        var contentHeight:Float = measuredFeedHeight(contentTf);
+        var box = FcmStarLayout.content(viewportWidth, initial.contentX, fs, hasMarker ? markerSize + STAR_CONTENT_GAP : 0);
+        _renderStep = "native-wrapped-text";
+        var contentTf:TextField = makeFeedTextField(contentHtml, box.width, fs + 8, true);
+        contentTf.x = box.x;
+        contentTf.y = box.y;
+        row.addChild(contentTf);
+        // Auto-size owns the field height. Never shrink it after HTML layout.
+        var contentHeight:Float = box.y + Math.max(contentTf.height, measuredFeedHeight(contentTf));
         var lineHeight:Float = measuredFeedLineHeight(contentTf);
         var placement = FcmStarLayout.row(channelWidth, lineHeight, markerSize,
             channelGap, STAR_CONTENT_GAP, hasMarker, STAR_MARKER_Y_NUDGE);
-        contentTf.x = placement.contentX;
-        contentTf.height = contentHeight;
-        row.addChild(contentTf);
+        _renderStep = "native-marker";
 
         if (hasMarker) {
             var star:Shape = makeSupporterStar(
                 FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor), markerSize);
             star.x = placement.markerX;
             star.y = placement.markerY;
+            if (box.y > 0) star.x = 0;
             row.addChild(star);
+            try {
+                var authorIndex = moderationRefLength + (rawTag.length > 0 ? rawTag.length + 3 : 0);
+                var authorBounds:Rectangle = contentTf.getCharBoundaries(authorIndex);
+                var markerBounds:Rectangle = star.getBounds(star);
+                if (authorBounds != null && authorBounds.height > 0 && markerBounds.height > 0) {
+                    // Both objects are direct children of row; text-field bounds need only its offset.
+                    star.y = FcmStarLayout.alignMarker(contentTf.y + authorBounds.y,
+                        authorBounds.height, markerBounds.y, markerBounds.height);
+                }
+            } catch (_:Dynamic) {}
         }
         row.mouseEnabled = false;
         row.mouseChildren = false;
@@ -4325,14 +4376,16 @@ class FCMChatWidget extends MovieClip {
         var row:Sprite = new Sprite();
         var html:String = '<font face="' + FONT_BOLD + '" size="' + _cfg.fontSize
             + '" color="' + hx(_cfg.tabActiveColor) + '">' + FcmConfig.htmlEscape(text) + '</font>';
-        var tf:TextField = makeFeedTextField(html, viewportWidth, 1000, true);
-        var height:Float = measuredFeedHeight(tf);
-        tf.height = height;
+        var tf:TextField = makeFeedTextField(html, viewportWidth, _cfg.fontSize + 8, true);
         row.addChild(tf);
+        var height:Float = Math.max(tf.height, measuredFeedHeight(tf));
         row.mouseEnabled = false;
         row.mouseChildren = false;
         return { view: row, contentY: 0, height: height };
     }
+
+    var _renderStep:String = "idle";
+    var _ownNameColor:String = "";
 
     function renderRecords():Void {
         if (_logTf == null || _feedLayer == null) return;
@@ -4367,6 +4420,7 @@ class FCMChatWidget extends MovieClip {
         _feedLayer.visible = true;
         var contentY:Float = 0;
         for (rec in visibleRecords) {
+            _renderStep = "build-row";
             var rendered:FeedRowView = buildFeedMessageRow(rec, _logTf.width);
             rendered.contentY = contentY;
             _feedRows.push(rendered);
@@ -4396,9 +4450,18 @@ class FCMChatWidget extends MovieClip {
                 clearFeedRows();
                 _logTf.visible = true;
                 _feedLayer.visible = false;
-                _logTf.text = "chat render unavailable";
+                _logTf.multiline = true;
+                _logTf.wordWrap = true;
+                var fallback = new StringBuf();
+                for (rec in _records) {
+                    if (!_connected || _needsLink) break;
+                    if (!FcmCommand.channelVisible(CHAN_SLUGS[_chanIdx], rec.channel)) continue;
+                    fallback.add("[" + FcmConfig.chanLabel(rec.channel) + "] " + rec.user + ": " + rec.body + "\n");
+                }
+                _logTf.text = !_connected ? "connecting..." : (_needsLink ? "Link your account to chat" : fallback.toString());
+                _logTf.scrollV = _logTf.maxScrollV;
             } catch (_:Dynamic) {}
-            zfeLog("warn", "render", "isolated render exception: " + clip200(Std.string(err)));
+            zfeLog("warn", "render", "isolated render exception step=" + _renderStep + ": " + clip200(Std.string(err)));
         }
     }
 

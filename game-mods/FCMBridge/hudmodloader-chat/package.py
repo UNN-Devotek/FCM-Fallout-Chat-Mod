@@ -190,6 +190,12 @@ sign in with Steam or Discord, enter the code, and return to the game. Codes exp
 Steam sign-in does not require Discord. If your name is blank, your Steam display
 name is used. You can link Discord later from your profile.
 
+Saved geometry:
+  ZFE uses its vendor-scoped local settings store. On xScal, position and size are
+  saved per linked relay device by the v2.10.61+ backend and restored after reconnect.
+  Saving requires a working linked connection; other xScal appearance settings remain
+  session-only. Desktop and laptop devices keep separate positions and sizes.
+
 HUD input and commands:
   Press Insert while Fallout 76 is focused to start typing. Press Enter to send
   or Escape to cancel. Page Down / Page Up switch channels. After Insert opens

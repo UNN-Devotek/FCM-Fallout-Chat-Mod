@@ -13,7 +13,7 @@ describe('relayHudCosmetics', () => {
     assert.deepEqual(relayHudCosmetics({
       tag: 'X', badges: ['overseer'], starColor: '#FD4DA6',
       nameColor: '#58FDFD', effectId: 'glitch',
-    }), { tag: 'X', supporterStar: true, starColor: '#FD4DA6' });
+    }), { tag: 'X', supporterStar: true, starColor: '#FD4DA6', nameColor: '#58FDFD' });
   });
 
   test('accepts the supporter tier and rejects an invalid star colour', () => {
@@ -90,4 +90,14 @@ test('native HUD transport is carried through send acknowledgements', () => {
     messageId: 'm-1',
     ...cosmetics,
   });
+});
+
+
+test('HUD name colors survive native event and acknowledgement carriers', () => {
+  assert.deepEqual(relayHudCosmetics({nameColor:'#FF8800'}), {nameColor:'#FF8800'});
+  assert.deepEqual(relayHudCosmetics({nameColor:'url(evil)'}), {});
+  assert.equal(relayHudEventForClient({messageId:'id',nameColor:'#FF8800',targetUserId:''},true).targetUserId,
+    'FCMHUD/1;m=id;n=%23FF8800');
+  assert.equal(relayHudSendAck({messageId:'id',targetUserId:''},{nameColor:'#FF8800'},true).targetUserId,
+    'FCMHUD/1;m=id;n=%23FF8800');
 });
