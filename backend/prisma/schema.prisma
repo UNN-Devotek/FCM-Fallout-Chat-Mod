@@ -1149,6 +1149,8 @@ model GiveawayEntry {
 // =============================================================================
 model HudPairingToken {
   id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  // Device-specific HUD geometry; survives world changes and game restarts.
+  hudLayout    Json?     @map("hud_layout")
   tokenHash    String    @map("token_hash")
   tokenPrefix  String    @map("token_prefix")
   fo76Name     String    @map("fo76_name")

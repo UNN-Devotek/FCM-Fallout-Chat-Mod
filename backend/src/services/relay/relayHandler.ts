@@ -71,6 +71,7 @@ import {
   type ServerRoomEvent,
 } from './serverChat';
 import type { RelayToken } from './tokenService';
+import { HUD_LAYOUT_CONTROL, HUD_LAYOUT_EVENT, parseHudLayout, parseHudLayoutControl, readHudLayout, writeHudLayout } from './hudLayoutService';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -581,6 +582,18 @@ function consumeServerHistoryResyncPending(userId: string): boolean {
   return expiresAt !== undefined && expiresAt > Date.now();
 }
 
+/** Private settings replies follow the same authenticated device's subscriber across replicas. */
+async function pushHudLayoutLocal(userId: string, requestId: string, layout: unknown): Promise<void> {
+  const redis = await getRedisClient();
+  const cursor = await redis.incr('relay:seq');
+  const event = { id: cursor, kind: 'chat.message', channel: 'system', senderUserId: 'system',
+    senderDisplayName: 'FCM', targetUserId: '', createdAt: new Date().toISOString(),
+    body: HUD_LAYOUT_EVENT + requestId + ';' + JSON.stringify(parseHudLayout(layout)) };
+  for (const sub of subscribers) {
+    if (sub.userId === userId) sendSubscriberFrame(sub, JSON.stringify({ op: 'event', cursor, event }), cursor);
+  }
+}
+
 // Redis pub/sub listener — initialised once per process.
 let pubSubReady = false;
 
@@ -754,6 +767,14 @@ async function ensurePubSub(): Promise<void> {
       if (parsed.sourceInstanceId !== undefined
         && (typeof parsed.sourceInstanceId !== 'string' || !UUID_RE.test(parsed.sourceInstanceId))) return;
       if (parsed.sourceInstanceId === relayInstanceId) return;
+
+      if (parsed.kind === 'hud-layout' && typeof parsed.relayUserId === 'string'
+        && /^user_[0-9a-f]{32}$/i.test(parsed.relayUserId)
+        && typeof parsed.requestId === 'string' && /^[a-z0-9-]{1,64}$/.test(parsed.requestId)) {
+        pushHudLayoutLocal(parsed.relayUserId, parsed.requestId, parsed.layout).catch(err =>
+          logger.warn({ err }, '[relayHandler] HUD layout delivery failed'));
+        return;
+      }
 
       if (parsed.kind === 'evict' && typeof parsed.linkedUserId === 'string') {
         evictLocalRelayUser(
@@ -973,6 +994,7 @@ async function handleGetAuthState(ws: WebSocket, frame: Record<string, unknown>)
     state,
     permissions: {
       canSend:   identity.isLinked,
+      canSaveHudLayout: identity.isLinked,
       canReport: identity.isLinked,
       canDeleteMessage: identity.isLinked && privileged,
       canKickUser:      identity.isLinked && privileged,
@@ -1036,6 +1058,22 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   const sessionTarget = typeof frame.targetUserId === 'string' ? repairBody(frame.targetUserId, channelRepair.mangled) : '';
   const sessionMatch = /^FCMSESSION\/1;([a-z0-9-]{1,64})$/.exec(sessionTarget);
   const requestId = sessionMatch?.[1] ?? '';
+
+  if (slug === 'server' && body.startsWith(HUD_LAYOUT_CONTROL)) {
+    const control = parseHudLayoutControl(body);
+    if (!control) { send(ws, errEnvelope('invalid_request', 'Invalid HUD layout')); return; }
+    if (!(await checkWorldControlRateLimit(identity.userId))) {
+      send(ws, errEnvelope('rate_limited', 'HUD settings are temporarily rate limited')); return;
+    }
+    if (control.layout) await writeHudLayout(identity.userId, control.layout);
+    const layout = control.layout ?? await readHudLayout(identity.userId);
+    await pushHudLayoutLocal(identity.userId, control.requestId, layout);
+    const redis = await getRedisClient();
+    await redis.publish(RELAY_CONTROL_CHANNEL, JSON.stringify({ kind: 'hud-layout',
+      relayUserId: identity.userId, requestId: control.requestId, layout, sourceInstanceId: relayInstanceId }));
+    sendControlAck(ws);
+    return;
+  }
 
   // ── Authenticated world/roster control intercept (before ALL_SLUGS check) ──
   // Actor identity comes only from `identity`, derived from the relay token above.
