@@ -102,6 +102,19 @@ describe('onlinePresenceService', () => {
     await expect(service.getGlobalOnlineCount(0)).resolves.toBe(1);
   });
 
+  test('unions HUD and overlay account IDs and tracks each transport independently', async () => {
+    let overlay = ['shared', 'overlay-only'];
+    let hud = ['shared', 'hud-only', 'hud-only'];
+    service.registerLocalPresenceSource(() => overlay);
+    service.registerLocalPresenceSource(() => hud, 'hud');
+    expect(service.getLocalOnlineUserIds().sort()).toEqual(['hud-only', 'overlay-only', 'shared']);
+    await expect(service.getGlobalOnlineCount()).resolves.toBe(3);
+    overlay = [];
+    await expect(service.getGlobalOnlineCount()).resolves.toBe(2);
+    hud = [];
+    await expect(service.getGlobalOnlineCount()).resolves.toBe(0);
+  });
+
   test('unbalanced note*() calls cannot corrupt the count when a provider is registered', async () => {
     // Regression: the golden-build reject path fires noteUserDisconnected with no
     // matching noteUserConnected (flap loop). With the provider as source of

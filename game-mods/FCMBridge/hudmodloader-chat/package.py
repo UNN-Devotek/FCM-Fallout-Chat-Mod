@@ -125,6 +125,13 @@ subscriber is drained across multiple short warm-up polls; ZFE gets a short seco
 drain when its first queue batch is full. Both providers use delayed authenticated
 RESYNC recovery if static history is missing or the native queue reports loss.
 
+Send an emoji with /emoji <name>, e.g. /emoji heart or /emoji thumbs_up.
+Use an exact custom Discord emoji name to send a bundled custom emoji.
+
+Unicode and bundled FCM Discord emojis render as inline still images when the host
+GFx image extension passes its runtime probe. Unsupported images use readable names.
+New Discord emoji require refreshed HUD assets. Artwork attribution: licenses/emoji/NOTICE.txt.
+
 1. Exit Fallout 76 completely. Install HUDModLoader and ONE compatible extender
    (ZFE with chat.v1 support or xScal with chatInterface support) using their authors'
    instructions. The desktop overlay is not required for HUD chat.
@@ -244,6 +251,8 @@ def build_package(target: str, output: Path, provider: str = "unified") -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
         archive.writestr("INSTALL.txt", install_instructions(target, provider))
+        for notice in ("NOTICE.txt", "LICENSE-TWEMOJI.txt", "LICENSE-UNICODE.txt"):
+            archive.write(ROOT / "emoji" / notice, "licenses/emoji/" + notice)
         archive.writestr(
             "HUDMODLOADER-MENU.txt",
             "FCMChatWidget HUDModLoader menu\n"

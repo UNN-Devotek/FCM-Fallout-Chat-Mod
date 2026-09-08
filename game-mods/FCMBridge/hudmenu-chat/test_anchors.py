@@ -491,9 +491,9 @@ if widget_src:
     check('closeHudLoaderMenuAfterStateChange();' in widget_src
           and 'Auto-hide: ON' in widget_src and 'Auto-hide: OFF' in widget_src,
           "FCMChatWidget refreshes the auto-hide label after toggling")
-    check('normalizeDiscordEmojiMarkup' in widget_src
-          and 'displayBody' in widget_src,
-          "FCMChatWidget normalizes Discord custom emoji for HUD rendering")
+    check('FcmEmoji.plan(rawBody' in widget_src
+          and 'FcmEmojiRenderer.apply' in widget_src,
+          "FCMChatWidget renders emojis only in the shared presentation layer")
     check('FcmCommand.isRelink(s)' in widget_src
           and 'function requestRelink' in widget_src
           and 'CLEAR_AUTH_COMMAND:String = "clearChatAuth"' in widget_src,
@@ -504,7 +504,7 @@ if widget_src:
           "FCMChatWidget decodes native-known HUD identity and cosmetics transport")
     check('extractJsonBool(obj, "supporterStar")' in widget_src
           and 'supporterStarPresent' in widget_src
-          and 'var customTagHtml:String' in widget_src
+          and 'var rawTag:String' in widget_src
           and 'SupporterStarBitmap' not in widget_src
           and 'setImageSubstitutions' not in widget_src
           and 'function makeSupporterStar' in widget_src
@@ -544,7 +544,7 @@ if widget_src:
           "FCMChatWidget keeps authoritative cosmetics as the source of truth after a stripped send acknowledgement")
     check('_feedLayer' in widget_src
           and '_feedRows:Array<FeedRowView>' in widget_src
-          and 'makeFeedTextField(contentHtml, viewportWidth, fs + 8, true)' in widget_src
+          and 'makeFeedTextField("", viewportWidth, fs + 8, true)' in widget_src
           and 'row.addChild(channelTf)' not in widget_src
           and 'contentTf.x = box.x' not in widget_src
           and 'row.addChild(contentTf)' in widget_src
@@ -554,10 +554,11 @@ if widget_src:
           and 'globalToLocal' not in widget_src,
           "FCMChatWidget keeps text and supporter markers in one deterministic row-local layout")
     feed_row = widget_src.split('function buildFeedMessageRow', 1)[1].split('function buildFeedNoticeRow', 1)[0]
-    check('markerHtml + user + \'</font>\'' in feed_row
-          and "hx(_cfg.textColor) + '\">: ' + msg" in feed_row
-          and feed_row.count("+ col +") == 1,
-          "FCMChatWidget scopes chosen name color to the author, with explicit theme-colored body and punctuation")
+    check('contentTf.text = runs.text;' in feed_row
+          and 'runs.nameStart, runs.nameEnd, FONT_BOLD, nameColor' in feed_row
+          and 'runs.nameEnd, runs.statusStart, FONT_BODY, _cfg.textColor' in feed_row
+          and 'tf.setTextFormat(fmt, start, end)' in widget_src,
+          "FCMChatWidget formats exact name and body ranges without HTML color inheritance")
     check('static inline var LOG_INPUT_GAP:Int     = 4;' in widget_src
           and 'var logBottom:Int = h - INPUT_H - LOG_INPUT_GAP;' in widget_src
           and '_logTf.height = logHeight;' in widget_src

@@ -71,6 +71,8 @@ const redisMock = {
   zCard:            jest.fn().mockResolvedValue(1),
   expire:           jest.fn().mockResolvedValue(1),
   multi: jest.fn().mockReturnValue({
+    del: jest.fn().mockReturnThis(),
+    sAdd: jest.fn().mockReturnThis(),
     zRemRangeByScore: jest.fn().mockReturnThis(),
     zAdd:             jest.fn().mockReturnThis(),
     zCard:            jest.fn().mockReturnThis(),
@@ -1529,6 +1531,26 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
+  test('counts linked HUD subscriptions once per account and removes closed sessions', async () => {
+    const presence = require('../src/services/onlinePresenceService');
+    const { token } = await setupLinkedUser();
+    const a = await conn();
+    const b = await conn();
+    // A transient authenticated RPC is not a persistent online user.
+    await waitForMsg(a.ws, a.msgs, () => send(a.ws, { op: 'hello', token }));
+    expect(presence.getLocalOnlineUserIds()).not.toContain(FAKE_FCM_USER_ID);
+    await waitForMsg(a.ws, a.msgs, () => send(a.ws, { op: 'subscribe', token }));
+    await waitForMsg(b.ws, b.msgs, () => send(b.ws, { op: 'subscribe', token }));
+    await new Promise(r => setTimeout(r, 50));
+    expect(presence.getLocalOnlineUserIds().filter(id => id === FAKE_FCM_USER_ID)).toHaveLength(1);
+    a.ws.close();
+    await new Promise(r => setTimeout(r, 50));
+    expect(presence.getLocalOnlineUserIds()).toContain(FAKE_FCM_USER_ID);
+    b.ws.close();
+    await new Promise(r => setTimeout(r, 50));
+    expect(presence.getLocalOnlineUserIds()).not.toContain(FAKE_FCM_USER_ID);
+  });
+
   test('notifyLinkComplete pushes a LINK COMPLETE handshake to the live subscriber', async () => {
     // After the web redeem marks the identity linked, the relay pushes a "LINK COMPLETE" system
     // event to the user's live subscriber so an already-connected in-game widget hands off to chat.
@@ -1543,7 +1565,12 @@ describe('relay WebSocket ops', () => {
     await waitForMsg(ws, msgs, () => send(ws, { op: 'subscribe', token }));
     await new Promise((r) => setTimeout(r, 150));
     redisMock.publish.mockClear();
+    const presence = require('../src/services/onlinePresenceService');
+    expect(presence.getLocalOnlineUserIds()).not.toContain('newly-linked-account');
+    expect(presence.getLocalOnlineUserIds()).not.toContain(relayUserId);
+    markTokensLinked(relayUserId, 'newly-linked-account');
     await notifyLinkComplete(relayUserId);
+    expect(presence.getLocalOnlineUserIds()).toContain('newly-linked-account');
     await new Promise((r) => setTimeout(r, 250));
     const done = msgs.find((m) => m && m.op === 'event' && m.event && m.event.channel === 'system'
       && String(m.event.body).includes('LINK COMPLETE'));

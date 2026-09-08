@@ -1,0 +1,338 @@
+[
+  {
+    "id": "1509625415726006313",
+    "name": "Confused",
+    "animated": true,
+    "source": "https://cdn.discordapp.com/emojis/1509625415726006313.png?size=64&quality=lossless",
+    "sha256": "23d6188729b05f7224bf10d45b0dfe55cd55ce58bab64f9af65b58b50785fafe"
+  },
+  {
+    "id": "1509625750188462090",
+    "name": "Hello",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509625750188462090.png?size=64&quality=lossless",
+    "sha256": "adb6b06a1be49438eddd777738091895e7c193d06c3dbc40d4f2dcb10923b720"
+  },
+  {
+    "id": "1509626150689964133",
+    "name": "MindBlown",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509626150689964133.png?size=64&quality=lossless",
+    "sha256": "b8aa139043fd0721742277c4b494d50709e4255a98db3c4c69727b232d384dc8"
+  },
+  {
+    "id": "1509626546334470205",
+    "name": "Gladiator",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509626546334470205.png?size=64&quality=lossless",
+    "sha256": "119a12b618df2ce154aa9eed61a0e54671252f37512106c94888c62adae5283c"
+  },
+  {
+    "id": "1509626673753231491",
+    "name": "SBQ",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509626673753231491.png?size=64&quality=lossless",
+    "sha256": "d72baceca67e5acd74f8c28cb48290fd725a382f8375b8aadf6929cddf9381f7"
+  },
+  {
+    "id": "1509626853218979890",
+    "name": "Mischief",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509626853218979890.png?size=64&quality=lossless",
+    "sha256": "d934e3f782f379a3afa99a78740d69a51a652c97ff4353c684522670587de0f6"
+  },
+  {
+    "id": "1509626956218368010",
+    "name": "Shocking",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509626956218368010.png?size=64&quality=lossless",
+    "sha256": "14dd5c60e8853feabdc44ee93101122c2df1518f61caa8d781471f03a12f17a3"
+  },
+  {
+    "id": "1509627125139902625",
+    "name": "Psycho",
+    "animated": true,
+    "source": "https://cdn.discordapp.com/emojis/1509627125139902625.png?size=64&quality=lossless",
+    "sha256": "9d72500e6294e61ea15ac47d7f5990dca7bc1bc3853150129364bcab5e6985d4"
+  },
+  {
+    "id": "1509627307156050111",
+    "name": "BRB",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509627307156050111.png?size=64&quality=lossless",
+    "sha256": "d657b662ca9b83fbe0b32375917aa628312ca53a4ecf680bdf12bac38b3c93ba"
+  },
+  {
+    "id": "1509627481500553317",
+    "name": "Sleep",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509627481500553317.png?size=64&quality=lossless",
+    "sha256": "c7ff3332452c122e9622e4bc1a539d81cf49ba8eaf023e7a5c5f3287a16df660"
+  },
+  {
+    "id": "1509627578036523070",
+    "name": "Yes",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509627578036523070.png?size=64&quality=lossless",
+    "sha256": "56bfdbdfacb001990968e59a7b8ef83ce736c766abea5596f2e2bf6811ef208d"
+  },
+  {
+    "id": "1509627687097078003",
+    "name": "No",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509627687097078003.png?size=64&quality=lossless",
+    "sha256": "fa65ee7127ffc886e7193feb27b9694e4a864f21865fb5aeee6b29c0dd949a62"
+  },
+  {
+    "id": "1509627794789892228",
+    "name": "o7",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509627794789892228.png?size=64&quality=lossless",
+    "sha256": "d1d2d7ffc4226208ef252322683182409388600b9c801a33c811bfd428c014e7"
+  },
+  {
+    "id": "1509628161716125706",
+    "name": "HighFive",
+    "animated": true,
+    "source": "https://cdn.discordapp.com/emojis/1509628161716125706.png?size=64&quality=lossless",
+    "sha256": "885c31e9d1cd34796ab9f32bebeefcf85eb2b10f8408bf52de90d7827a0ea791"
+  },
+  {
+    "id": "1509628309871526022",
+    "name": "Buffed",
+    "animated": true,
+    "source": "https://cdn.discordapp.com/emojis/1509628309871526022.png?size=64&quality=lossless",
+    "sha256": "0bbe41688671b8d557b5aa0ee698e548ed805caa0cf35eaac290b253fa1a4fef"
+  },
+  {
+    "id": "1509628431103557682",
+    "name": "RIch",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509628431103557682.png?size=64&quality=lossless",
+    "sha256": "f269815cb28cc7d93e903f35a27ea4cf59291c04dcdd889086ca8a6273e63e39"
+  },
+  {
+    "id": "1509628585214738636",
+    "name": "Waiting",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509628585214738636.png?size=64&quality=lossless",
+    "sha256": "6f78d5d65390a25b8abbc671be50c737f97d1f72b3eb3910ed493802d0b44b44"
+  },
+  {
+    "id": "1509628723648004266",
+    "name": "WhatsUp",
+    "animated": true,
+    "source": "https://cdn.discordapp.com/emojis/1509628723648004266.png?size=64&quality=lossless",
+    "sha256": "3cc49bd752895592e687e6cf574513f40bd97842bffa36851b1020b27904bf36"
+  },
+  {
+    "id": "1509628925574381608",
+    "name": "MysteriousStranger",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509628925574381608.png?size=64&quality=lossless",
+    "sha256": "2a3c90797ab4ec239167b44fa7751771c81103640a680fa5d404f761ea2a61b9"
+  },
+  {
+    "id": "1509629046831579206",
+    "name": "BrickWall",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509629046831579206.png?size=64&quality=lossless",
+    "sha256": "82a3a2436580ebc4f89f652c92765b1c23394fd453eeffb41ae95db842aefa7b"
+  },
+  {
+    "id": "1509629202775805952",
+    "name": "Looting",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509629202775805952.png?size=64&quality=lossless",
+    "sha256": "5a495cc9164ac394ca0e3946b63a5a6d52bb7de3f04830e88549b143e8daa53e"
+  },
+  {
+    "id": "1509630002407145684",
+    "name": "Flyboy",
+    "animated": true,
+    "source": "https://cdn.discordapp.com/emojis/1509630002407145684.png?size=64&quality=lossless",
+    "sha256": "1576dfbb5f327c98de9a56f5ecda9c297d2e2cafb2f96edc56b50972a3a8e13d"
+  },
+  {
+    "id": "1509630082174550197",
+    "name": "Wave",
+    "animated": true,
+    "source": "https://cdn.discordapp.com/emojis/1509630082174550197.png?size=64&quality=lossless",
+    "sha256": "fe6d8c2bdc3b33cfcf242bab4990ff4fc7e95b83ab2b9ebc770fdcf8dd48bc8b"
+  },
+  {
+    "id": "1509630231978442885",
+    "name": "Triumph",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509630231978442885.png?size=64&quality=lossless",
+    "sha256": "65c34edc54530fa1d9246464d32ff13367fb94e1cb8e4b92a783de2d6d3de7a9"
+  },
+  {
+    "id": "1509630393161351229",
+    "name": "Howl",
+    "animated": true,
+    "source": "https://cdn.discordapp.com/emojis/1509630393161351229.png?size=64&quality=lossless",
+    "sha256": "38b2612f759e713546748931c5e55fec1af896f30376e2a3c02af3bbeb749957"
+  },
+  {
+    "id": "1509630599688622381",
+    "name": "Trading",
+    "animated": true,
+    "source": "https://cdn.discordapp.com/emojis/1509630599688622381.png?size=64&quality=lossless",
+    "sha256": "c6e940c5cd8b0f7dad07cf6eab29db3835445ff1cf588206b2305c65084b978b"
+  },
+  {
+    "id": "1509630705045471243",
+    "name": "Wild",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509630705045471243.png?size=64&quality=lossless",
+    "sha256": "22cfa8ad81e697202e184d55a0b7221b1b3f0a69ead031a037d359948e355ea1"
+  },
+  {
+    "id": "1509631101604335686",
+    "name": "Presence",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509631101604335686.png?size=64&quality=lossless",
+    "sha256": "4627f6cb34b00c1beeadaff4a8ea2bac9bd7869a933ccbaf3c60b56369466587"
+  },
+  {
+    "id": "1509631552404062300",
+    "name": "Cook",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509631552404062300.png?size=64&quality=lossless",
+    "sha256": "429aeb29e009f82a7293215f0df4dd01e4afaa9753f90492ce779762eb7fc193"
+  },
+  {
+    "id": "1509631843207614626",
+    "name": "Birthdaycake",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509631843207614626.png?size=64&quality=lossless",
+    "sha256": "969525b9e1513dc32846792d476e2bbc55fe7a09f06de462a38081cb88fc15a4"
+  },
+  {
+    "id": "1509632242706677941",
+    "name": "Science",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509632242706677941.png?size=64&quality=lossless",
+    "sha256": "a57ff0fc08c81522b1685109784a4b9df3b7ff93c50c5fa99affe14562666fec"
+  },
+  {
+    "id": "1509632874100297881",
+    "name": "Conspiracy",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509632874100297881.png?size=64&quality=lossless",
+    "sha256": "c7c34b7aa0d355dfb72588a20ffa88456b7c6b3cd135d10aa98947d079509172"
+  },
+  {
+    "id": "1509633508899950842",
+    "name": "I_See",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509633508899950842.png?size=64&quality=lossless",
+    "sha256": "195fbad3c2f35fdeb233cd8a57ba26a549d18e4284ea36b2d58bb1b6dfba18e3"
+  },
+  {
+    "id": "1509633705755283517",
+    "name": "WalkingArsenal",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509633705755283517.png?size=64&quality=lossless",
+    "sha256": "b06b3b069c42eaaa10fa574f300c0fdad9fa6bb88b5bf823678ec60e0749311c"
+  },
+  {
+    "id": "1509634313631699034",
+    "name": "BigBrain",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509634313631699034.png?size=64&quality=lossless",
+    "sha256": "dac2260030bdc63f8ed2798742f792b82f8f4e177c3ea180788f1da7081cec5e"
+  },
+  {
+    "id": "1509634489737941032",
+    "name": "Food",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509634489737941032.png?size=64&quality=lossless",
+    "sha256": "af459ff2c4d607b1fd371dd93cf4e60bb38ae1034bb24b64af6f7de12d7372cb"
+  },
+  {
+    "id": "1509634864427565166",
+    "name": "Snipe",
+    "animated": true,
+    "source": "https://cdn.discordapp.com/emojis/1509634864427565166.png?size=64&quality=lossless",
+    "sha256": "66c09e3e1110022e1b399ec8b8afb7e1c8ca50b0fd2a37dd1f214446462cc617"
+  },
+  {
+    "id": "1509635873979760700",
+    "name": "Breathe",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509635873979760700.png?size=64&quality=lossless",
+    "sha256": "d51d2e7c5135767405a54348190e97d8f9d0f79167c69e290542c1fa61c31ff7"
+  },
+  {
+    "id": "1509636609610350695",
+    "name": "Caravans",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509636609610350695.png?size=64&quality=lossless",
+    "sha256": "ff7e7f5bf21b3e4b71620c36ce656a1d79fa502a785b4111daa6f00bb9c57c11"
+  },
+  {
+    "id": "1509637879100346589",
+    "name": "Shroom",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509637879100346589.png?size=64&quality=lossless",
+    "sha256": "9d1ff296b5c71bd6f1d49f6484324c4805f3b00d7d6d03512a5ceaad4dae4dbe"
+  },
+  {
+    "id": "1509650159745634315",
+    "name": "survivor",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509650159745634315.png?size=64&quality=lossless",
+    "sha256": "a76fcd33ff184ebade1c3481d5905c76b1e79d81a150f4ffe8a579c7f000dc9c"
+  },
+  {
+    "id": "1509650292369784982",
+    "name": "WatchingYou",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509650292369784982.png?size=64&quality=lossless",
+    "sha256": "0bbd65ee2e00637e32afb14e927cd781b16d84fa1d252c9bb992999cc389e2cf"
+  },
+  {
+    "id": "1509650472179466451",
+    "name": "LetsGo",
+    "animated": true,
+    "source": "https://cdn.discordapp.com/emojis/1509650472179466451.png?size=64&quality=lossless",
+    "sha256": "4198312b6545070076c6edde655568628b0f74e44a21921a81dae109d21b3e20"
+  },
+  {
+    "id": "1509650721522450537",
+    "name": "Build",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509650721522450537.png?size=64&quality=lossless",
+    "sha256": "520de66b878efcb4467e7ff7b96f84420564b64dbeb1fb66e6990b5b910f0e2b"
+  },
+  {
+    "id": "1509650979870478516",
+    "name": "ISeeYou",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509650979870478516.png?size=64&quality=lossless",
+    "sha256": "ed65dbaaf5a6cd8c19b198c633ff4dc17da736eb854ee6b23933deda3da65a53"
+  },
+  {
+    "id": "1509651104923648173",
+    "name": "dead",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509651104923648173.png?size=64&quality=lossless",
+    "sha256": "312ca5aaa6322295e120d7e5e059caba3cfb5e54f6a17ed2255d1b93a0fd2fbb"
+  },
+  {
+    "id": "1509694099433853048",
+    "name": "fcmamber",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509694099433853048.png?size=64&quality=lossless",
+    "sha256": "d43d2b691f7bd210f257329c62f03214a13de025aa50293998ab87ffcf09ef92"
+  },
+  {
+    "id": "1509694168249794762",
+    "name": "fcmgreen",
+    "animated": false,
+    "source": "https://cdn.discordapp.com/emojis/1509694168249794762.png?size=64&quality=lossless",
+    "sha256": "5ae0969bdf1dc56c09a3e044af5a2cb0fed9ab45b2c18ee68754ab51dfe64d1f"
+  }
+]
