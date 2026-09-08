@@ -515,3 +515,13 @@ keys outside 1..255 fail closed. xScal supplies false while Fallout 76 is not fo
 The widget registers six keys at setup, polls their state, and unregisters those keys at
 teardown. It does not call global `ClearKeys`, which could remove another widget's keys.
 Gamepad suppression is documented separately; this keyboard widget does not enable it.
+
+### Manual installation documentation
+
+The unified ZIP's `INSTALL.txt` includes complete manual steps for both providers;
+`Enable-xScal-Chat.cmd` is optional. New xScal users must also set `[Chat] enabled=true`
+and the target-specific `relayEndpoint`. An example file alone does not activate chat.
+If `xscal.ini` is absent, create it beside `Fallout76.exe`; otherwise preserve existing
+sections and settings. ZFE users copy the complete example into the active fragment
+path. Keep these steps aligned with the website's `HudManualInstall.tsx` and the Nexus
+copy in `docs/marketing/nexus-description.bbcode`.
