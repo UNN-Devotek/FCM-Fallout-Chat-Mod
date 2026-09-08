@@ -21,6 +21,7 @@ import { usePickerInsert } from './usePickerInsert';
 import { useDebouncedSearch } from './useDebouncedSearch';
 import { ChatEmbedCard } from './components/ChatEmbedCard';
 import { ChatInlineEmbed } from './components/ChatInlineEmbed';
+import { scheduledEventAccent, scheduledEventActionState, scheduledEventCountdown } from './scheduledEventPresentation';
 import ImageLightbox from './components/ImageLightbox';
 import { OutboxQueue } from './outboxQueue';
 import { supporterBadge, supporterStarColor, SUPPORTER_STAR_GLYPH } from './supporterBadge';
@@ -1539,7 +1540,24 @@ interface GiveawayHistoryMetadata {
   type: 'giveaway_history';
   giveaways: GiveawayHistoryEntry[];
 }
-type ChatMessageMetadata = PartyInviteMetadata | NukeCodesMetadata | ServerStatusMetadata | CampItemMetadata | CardShareMetadata | WikiShareMetadata | GiveawayMetadata | GiveawayWinnerMetadata | GiveawayListMetadata | GiveawayHistoryMetadata | { type?: string; [k: string]: unknown } | null;
+interface ScheduledEventMetadata {
+  type: 'scheduled_event';
+  kind: 'scheduled_event';
+  eventCode: string;
+  scheduledEventId: string;
+  name: string;
+  status: 'Upcoming' | 'Live' | 'Ended' | 'Canceled' | 'Deleted';
+  startUtc: string | null;
+  endUtc: string | null;
+  location: string | null;
+  descriptionSummary: string;
+  announcementUrl: string | null;
+  discordEventUrl: string | null;
+  interestedCount: number;
+  /** Client-local viewer state from a private event:attendance-viewer frame. */
+  isViewerInterested?: boolean | null;
+}
+type ChatMessageMetadata = PartyInviteMetadata | NukeCodesMetadata | ServerStatusMetadata | CampItemMetadata | CardShareMetadata | WikiShareMetadata | GiveawayMetadata | GiveawayWinnerMetadata | GiveawayListMetadata | GiveawayHistoryMetadata | ScheduledEventMetadata | { type?: string; [k: string]: unknown } | null;
 
 interface ChatMessage {
   id: string;
@@ -5138,6 +5156,12 @@ export default function ChatOverlay() {
                   badges: frame.payload.badges ?? [],
                   starColor: frame.payload.starColor ?? null,
                 }]);
+                if (!isPublicMode && frame.payload.metadata?.type === 'scheduled_event' && typeof frame.payload.metadata.eventCode === 'string') {
+                  wsRef.current?.send(JSON.stringify({
+                    type: 'event:attendance-state',
+                    payload: { eventCode: frame.payload.metadata.eventCode },
+                  }));
+                }
 
                 // Track active giveaways from broadcast metadata.
                 {
@@ -5216,6 +5240,45 @@ export default function ChatOverlay() {
                     }
                   }
                 }
+              } else if (frame.type === 'event:attendance-viewer') {
+                const viewerUpdate = frame.payload ?? {};
+                if (typeof viewerUpdate.eventCode === 'string') {
+                  setMessages(prev => prev.map(message => {
+                    const metadata = message.metadata;
+                    if (!metadata || metadata.type !== 'scheduled_event' || metadata.eventCode !== viewerUpdate.eventCode) {
+                      return message;
+                    }
+                    return {
+                      ...message,
+                      metadata: {
+                        ...metadata,
+                        isViewerInterested: typeof viewerUpdate.isViewerInterested === 'boolean'
+                          ? viewerUpdate.isViewerInterested
+                          : null,
+                      },
+                    } as ChatMessage;
+                  }));
+                }
+              } else if (frame.type === 'event:attendance-updated') {
+                const eventUpdate = frame.payload ?? {};
+                if (typeof eventUpdate.eventCode === 'string') {
+                  setMessages(prev => prev.map(message => {
+                    const metadata = message.metadata;
+                    if (!metadata || metadata.type !== 'scheduled_event' || metadata.eventCode !== eventUpdate.eventCode) {
+                      return message;
+                    }
+                    return {
+                      ...message,
+                      metadata: {
+                        ...metadata,
+                        ...(typeof eventUpdate.interestedCount === 'number'
+                          ? { interestedCount: Math.max(0, eventUpdate.interestedCount) }
+                          : {}),
+                        ...(typeof eventUpdate.status === 'string' ? { status: eventUpdate.status } : {}),
+                      },
+                    } as ChatMessage;
+                  }));
+                }
               } else if (frame.type === 'chat:history') {
                 const incoming = (frame.payload.messages || []).map((m: any) => {
                   // History rows are snake_case; the backend adds camelCase `avatarUrl`.
@@ -5235,6 +5298,17 @@ export default function ChatOverlay() {
                     starColor: m.starColor ?? null,
                   };
                 });
+                if (!isPublicMode) {
+                  const eventCodes = new Set(
+                    incoming
+                      .map((message: ChatMessage) => message.metadata)
+                      .filter((metadata: ChatMessage['metadata']): metadata is ScheduledEventMetadata => metadata?.type === 'scheduled_event')
+                      .map((metadata: ScheduledEventMetadata) => metadata.eventCode),
+                  );
+                  for (const eventCode of eventCodes) {
+                    wsRef.current?.send(JSON.stringify({ type: 'event:attendance-state', payload: { eventCode } }));
+                  }
+                }
                 // ── Lazy-load branch ─────────────────────────────────────────
                 // A top-scroll fetch is in flight: PREPEND the older batch,
                 // bump the loaded-count offset, detect end-of-history, and
@@ -5312,9 +5386,23 @@ export default function ChatOverlay() {
                 setFeedMessages(prev => prev.filter(m => m.id !== frame.payload.messageId));
               } else if (frame.type === 'chat:edit') {
                 const payload = frame.payload ?? {};
-                const update = (message: ChatMessage): ChatMessage => message.id === payload.messageId
-                  ? { ...message, content: payload.content, editedAt: payload.editedAt ?? null }
-                  : message;
+                const update = (message: ChatMessage): ChatMessage => {
+                  if (message.id !== payload.messageId) return message;
+                  const nextMetadata = payload.metadata !== undefined
+                    ? (payload.metadata?.type === 'scheduled_event' && message.metadata?.type === 'scheduled_event'
+                      ? { ...payload.metadata, isViewerInterested: message.metadata.isViewerInterested }
+                      : payload.metadata)
+                    : message.metadata;
+                  return {
+                    ...message,
+                    content: payload.content,
+                    editedAt: payload.editedAt ?? null,
+                    // Event projections update metadata and content together.
+                    // Ordinary user edits do not send metadata, so preserve the
+                    // existing value for those frames.
+                    metadata: nextMetadata,
+                  };
+                };
                 setMessages(prev => prev.map(update));
                 if (payload.source === 'pm' && typeof payload.conversationId === 'string') {
                   setPrivateMessages(prev => ({
@@ -8051,6 +8139,100 @@ export default function ChatOverlay() {
                 // tag + name match every other message. (Ephemeral/sender-only
                 // responses use the boxed ChatEmbedCard instead.)
                 let inlineContent: React.ReactNode = null;
+                // ── Discord scheduled-event projection ────────────────────
+                // Native Interested state lives on Discord. This projection is
+                // intentionally informational: the only action opens Discord's
+                // own event page, where Discord owns attendance changes.
+                if (md && md.type === 'scheduled_event') {
+                  const ev = md as ScheduledEventMetadata;
+                  const eventAccent = scheduledEventAccent(ev.status);
+                  const start = ev.startUtc ? new Date(ev.startUtc) : null;
+                  const end = ev.endUtc ? new Date(ev.endUtc) : null;
+                  const validStart = !!start && Number.isFinite(start.getTime());
+                  const validEnd = !!end && Number.isFinite(end.getTime());
+                  const formatEventTime = (date: Date | null, valid: boolean) => {
+                    if (!date || !valid) return 'UTC time unavailable';
+                    return date.toLocaleString(undefined, {
+                      month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+                    });
+                  };
+                  const when = validStart
+                    ? `${formatEventTime(start, true)}${validEnd ? ` – ${formatEventTime(end, true)}` : ''}`
+                    : 'UTC time unavailable';
+                  const countdown = scheduledEventCountdown(ev.status, ev.startUtc);
+                  const eventActionState = scheduledEventActionState(ev.status, ev.discordEventUrl, ev.isViewerInterested);
+                  const openDiscord = eventActionState.canOpenDiscord ? () => openUrl(ev.discordEventUrl!) : undefined;
+                  const openButton = openDiscord ? (
+                    <button
+                      type="button"
+                      onClick={e => { e.stopPropagation(); openDiscord(); }}
+                      style={{
+                        minHeight: '22px', padding: '3px 8px', border: `1px solid ${hexAlpha(eventAccent, 0.65)}`,
+                        background: hexAlpha(eventAccent, 0.14), color: eventAccent, cursor: 'pointer',
+                        fontFamily: theme.fontFamily, fontSize: `${Math.max(9, fontSize - 2)}px`,
+                        fontWeight: 700, letterSpacing: '0.04em', whiteSpace: 'nowrap',
+                      }}
+                    >OPEN DISCORD EVENT ↗</button>
+                  ) : null;
+                  const viewerStateLabel = eventActionState.viewerLabel === 'YOU ARE INTERESTED'
+                    ? <span style={{ color: eventAccent, fontSize: `${Math.max(8, fontSize - 2)}px`, letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>YOU ARE INTERESTED</span>
+                    : eventActionState.viewerLabel === 'NOT INTERESTED'
+                      ? <span style={{ color: hexAlpha(dimText, 0.85), fontSize: `${Math.max(8, fontSize - 2)}px`, letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>NOT INTERESTED</span>
+                    : eventActionState.viewerLabel === 'UNLINKED'
+                      ? <span style={{ color: hexAlpha(dimText, 0.85), fontSize: `${Math.max(8, fontSize - 2)}px`, letterSpacing: '0.04em', whiteSpace: 'nowrap' }}>UNLINKED</span>
+                      : null;
+                  const eventActions = viewerStateLabel || openButton ? (
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                      {viewerStateLabel}
+                      {openButton}
+                    </span>
+                  ) : null;
+
+                  if (isMainFeedView) {
+                    inlineContent = (
+                      <ChatInlineEmbed
+                        accent={eventAccent}
+                        icon="◈"
+                        title={ev.name}
+                        badge={`EVENT · ${ev.status.toUpperCase()}`}
+                        meta={{ label: `${ev.interestedCount} interested` }}
+                        action={eventActions}
+                        fontSize={fontSize}
+                        dimText={dimText}
+                      >{ev.status === 'Upcoming' ? `starts ${when}` : ev.status}</ChatInlineEmbed>
+                    );
+                  } else {
+                    const eventFields: { label: string; value: string }[] = [
+                      { label: 'WHEN', value: when },
+                      ...(ev.location ? [{ label: 'WHERE', value: ev.location }] : []),
+                      { label: 'INTERESTED', value: String(Math.max(0, ev.interestedCount)) },
+                      ...(countdown ? [{ label: 'STARTS IN', value: countdown }] : []),
+                    ];
+                    return (
+                      <div key={msg.id} style={{ padding: '2px 8px' }}>
+                        <ChatEmbedCard
+                          accent={eventAccent}
+                          icon="◈"
+                          tag={`EVENT · ${ev.status.toUpperCase()}`}
+                          title={ev.name}
+                          titleGlow={glowEnabled && ev.status === 'Live'}
+                          inlineMeta={<span style={{ color: hexAlpha(eventAccent, 0.78), fontSize: `${Math.max(8, fontSize - 2)}px` }}>ID {ev.eventCode}</span>}
+                          actions={eventActions}
+                          fields={eventFields}
+                          footer={ev.descriptionSummary ? (
+                            <span style={{ color: hexAlpha(dimText, 0.9), fontSize: `${Math.max(9, fontSize - 2)}px`, lineHeight: 1.3 }}>
+                              {ev.descriptionSummary}
+                            </span>
+                          ) : undefined}
+                          hexAlpha={hexAlpha}
+                          fontFamily={theme.fontFamily}
+                          fontSize={fontSize}
+                          dimText={dimText}
+                        />
+                      </div>
+                    );
+                  }
+                }
                 if (md && md.type === 'party_invite' && typeof (md as PartyInviteMetadata).partyId === 'string') {
                   const inv = md as PartyInviteMetadata;
                   const accent = (inv.color && inv.color.trim()) ? inv.color : primaryColor;

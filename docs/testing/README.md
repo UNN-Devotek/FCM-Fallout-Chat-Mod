@@ -223,3 +223,6 @@ On macOS/Windows drop `xvfb-run -a`. The mock relay is launched as a Playwright 
 - [overlay-test-plan.md](overlay-test-plan.md) — per-unit plan, refactors, e2e scenarios.
 - [ci-cd-pipeline.md](ci-cd-pipeline.md) — GitHub Actions jobs, branch protection, mock relay.
 - [../deployment/local-dev.md](../deployment/local-dev.md) — dev stack, ports, process hygiene.
+
+- [HUD styling and emoji status](hud-emoji-status.md) — 2.10.72 desktop styling is
+  confirmed; emoji pictures remain unresolved, with separate ZFE verification pending.

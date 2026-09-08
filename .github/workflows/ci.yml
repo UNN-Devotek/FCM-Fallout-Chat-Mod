@@ -357,6 +357,9 @@ jobs:
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: |
           python3 emoji/generate.py --check
+          haxe test-emoji-layout.hxml
+          haxe -main TestFcmEmojiLayout -js /tmp/fcm-emoji-layout.js
+          node /tmp/fcm-emoji-layout.js
           haxe test-emoji-command.hxml
           haxe -main TestFcmEmojiCommand -js /tmp/fcm-emoji-command-test.js
           node /tmp/fcm-emoji-command-test.js
@@ -381,6 +384,7 @@ jobs:
           haxe build.hxml
           python3 normalize_swf.py FCMChatWidget.swf
           python3 ../tools/validate_swf.py FCMChatWidget.swf --require-signature FWS --require-version 32
+          python3 emoji/test_embedded.py
       - name: Compile legacy FCMBridge
         working-directory: game-mods/FCMBridge
         run: |

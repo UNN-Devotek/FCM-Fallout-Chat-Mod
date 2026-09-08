@@ -651,6 +651,49 @@ that back-applies renames to rendered history covers colour changes too.
 
 Full design record: [docs/product/supporter-tier.md](../product/supporter-tier.md).
 
+## Discord scheduled-event cards
+
+Scheduled events arrive as ordinary `chat:message`/`chat:history` rows in the
+shared `ChatOverlay`; the renderer branches only on
+`metadata.type === "scheduled_event"`. There is no event-only overlay fork.
+
+In an Events view, the message uses the existing `ChatEmbedCard` shell shared
+with Nuke Codes and related structured cards. It keeps the status, event name,
+local start/end time (with a UTC fallback), location, native Interested count,
+and a bounded creator summary visible. Upcoming cards may show a relative
+countdown; Ended, Canceled, and Deleted cards retain the final count and stop
+countdowns.
+
+In an aggregate feed, the same message uses `ChatInlineEmbed` so it stays
+compact rather than repeating the full card. The only action is a keyboard-
+operable `OPEN DISCORD EVENT` link. It opens Discord's native event page; it is
+not an FCM Join/Leave control. Public mode remains read-only and never receives
+attendee identities or private viewer state.
+
+The metadata contract is:
+
+```json
+{
+  "type": "scheduled_event",
+  "kind": "scheduled_event",
+  "eventCode": "EVT-...",
+  "scheduledEventId": "...",
+  "name": "Moonshine Jamboree",
+  "status": "Upcoming",
+  "startUtc": "2026-09-08T20:00:00.000Z",
+  "endUtc": "2026-09-08T21:00:00.000Z",
+  "location": "Appalachia",
+  "descriptionSummary": "...",
+  "announcementUrl": "https://discord.com/channels/...",
+  "discordEventUrl": "https://discord.com/events/...",
+  "interestedCount": 6
+}
+```
+
+Shared attendance updates use `event:attendance-updated` and patch the matching
+event card by stable event code. Attendee identity and viewer-specific native
+state are never placed in shared cached metadata.
+
 ## Related
 
 - [theming.md](./theming.md) — theme system and CSS variable details

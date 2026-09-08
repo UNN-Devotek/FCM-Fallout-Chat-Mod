@@ -3,7 +3,7 @@ FCM HUD emoji artwork
 Unicode emoji: Twemoji v17.0.3, copyright Twitter, Inc. and other contributors.
 https://github.com/jdecked/twemoji/tree/v17.0.3
 Graphics licensed under Creative Commons Attribution 4.0 International.
-Original 72px PNG artwork embedded without modification. See LICENSE-TWEMOJI.txt.
+Original artwork converted to premultiplied SWF bitmap fills inside native sprites. See LICENSE-TWEMOJI.txt.
 
 Unicode emoji sequence data: Unicode 17.0 emoji-test.txt, copyright Unicode, Inc.
 https://www.unicode.org/Public/17.0.0/emoji/emoji-test.txt

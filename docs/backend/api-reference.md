@@ -749,8 +749,10 @@ TCP connections are still destroyed when the write buffer exceeds **64 KB** (bac
 ### Backend wiring
 
 `localBroadcast()` in `handlers.ts:758` calls `hudPushNotify(payload)` for every outbound
-payload. The push core filters `chat:message` events, resolves the channel (60 s TTL cache),
-applies `isHudEligibleChannel()`, formats via `buildFeedLines()`, and fans out.
+payload. The push core filters ordinary `chat:message` events plus scheduled-event
+`chat:edit` updates, resolves the channel (60 s TTL cache), applies
+`isHudEligibleChannel()`, formats via `buildFeedLines()`, and fans out. The HUD widget
+replaces scheduled-event rows in place; ordinary human edits remain dashboard-only.
 
 Started from `server.ts start()` after `initPubSub()`:
 ```ts

@@ -10,6 +10,7 @@ import ticketService from './ticketService';
 import supporterSyncService from './supporterSyncService';
 import cosmeticsCommandService from './cosmeticsCommandService';
 import chatNameCommandService from './chatNameCommandService';
+import * as discordEventService from './discordEventService';
 import { attachCosmetics } from './cosmetics/cosmeticsService';
 import { nextRelaySeq } from './relay/relaySeq';
 import { getEntry, bestMatch } from './wikiCatalogService';
@@ -25,6 +26,7 @@ import type { HudModDownload } from '../utils/releaseAnnouncement';
 
 let discordClient: Client | null = null;
 let broadcastFn: ((payload: any, excludeWs?: any) => void) | null = null; // Injected from WS handler to avoid circular deps
+let broadcastUsersFn: ((payload: any, userIds: string[]) => Promise<number>) | null = null;
 let discordStatus = 'disconnected';
 
 // ZWS watermark -- inserted into all outbound relay messages (game->Discord)
@@ -276,7 +278,13 @@ let defaultChannelIdCache: string | null | undefined = undefined;
 let defaultChannelLastLoaded = 0;
 let defaultChannelPromise: Promise<string | null> | null = null; // in-flight guard
 
-function setBroadcast(fn: (payload: any, excludeWs?: any) => void): void { broadcastFn = fn; }
+function setBroadcast(
+  fn: (payload: any, excludeWs?: any) => void,
+  broadcastUsers?: (payload: any, userIds: string[]) => Promise<number>,
+): void {
+  broadcastFn = fn;
+  broadcastUsersFn = broadcastUsers ?? null;
+}
 function getStatus(): string { return discordStatus; }
 
 function isSyntheticRelayUsername(username: string | null | undefined): boolean {
@@ -635,8 +643,7 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
     return;
   }
 
-  discordClient = new Client({
-    intents: [
+  const intents: GatewayIntentBits[] = [
       GatewayIntentBits.Guilds,
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.GuildMessageTyping, // Discord → overlay typing indicators
@@ -649,7 +656,12 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
       // EACH application — dev and prod are separate apps, so this is done twice.
       // Without it the gateway connection is rejected outright, not silently degraded.
       GatewayIntentBits.GuildMembers,
-    ],
+      // Scheduled-event lifecycle and native Interested synchronization.
+      GatewayIntentBits.GuildScheduledEvents,
+  ];
+
+  discordClient = new Client({
+    intents,
     // Partials let reaction events fire for messages posted before the last
     // restart (uncached) — required for reaction roles to survive a redeploy.
     partials: [Partials.Message, Partials.Channel, Partials.Reaction],
@@ -663,6 +675,11 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
   supporterSyncService.register(discordClient);
   cosmeticsCommandService.register(discordClient);
   chatNameCommandService.register(discordClient);
+  discordEventService.register(
+    discordClient,
+    (payload) => { broadcastFn?.(payload); },
+    (payload, userIds) => broadcastUsersFn?.(payload, userIds) ?? Promise.resolve(0),
+  );
 
   // Invalidate the emoji cache whenever the guild's emoji set changes.
   // Lazy-require to avoid circular deps (discordEmojisController imports us too).

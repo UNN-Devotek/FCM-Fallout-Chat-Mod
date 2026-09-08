@@ -1,7 +1,95 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.70. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.74. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
+
+## Release status — 2.10.74
+
+The user confirmed the ZFE test works after correcting its global endpoint to Prod.
+The xScal emoji path also reached native sprite placement in-game. The diagnostics
+below describe the investigation history; the earlier block-rendering limitation is
+superseded. See `docs/testing/hud-emoji-status.md` from the repository root for evidence.
+
+## 2.10.74 ZFE name-color diagnostic
+
+User confirms emojis work with ZFE, but chosen name colors are missing for their
+own and other users. This build counts validated incoming/carrier name colors and
+rendered rows whose name color differs from the theme. No identities, raw colors,
+or message contents are logged. No rendering behavior is changed; the loss boundary
+was traced to a Dev/Prod mismatch: the global ZFE configuration still targeted Dev,
+where the sending account had no chosen name color. Check both the fragment and
+`Data/configuration/zfe.ini` `[TextChat] Endpoint`; the desktop global setting has
+been corrected to Prod, awaiting a restarted-game test.
+
+## 2.10.73 compatibility candidate
+
+The emoji planner now uses a sorted array and binary lookup, with direct string
+concatenation and decimal catalog IDs. This removes the `haxe.IMap`, `StringMap`,
+and `Std.string` dependency paths seen in its 2.10.72 decompile. This is a targeted
+compatibility candidate, **not proof of the exact missing runtime class**. All 5,273
+catalog sequences are checked in both the interpreter and JavaScript UTF-16 tests.
+
+The shared xScal/ZFE rendering path retains the complete styled baseline. When
+planning succeeds but picture decoration fails, it builds a styled readable-name
+fallback. Planner/catalog, layout, and sprite placement diagnostics distinguish the
+remaining failure stages without logging message content. In-game confirmation of
+pictures, wrapping, and colors is still required for each extender.
+
+## Current verified status — 2.10.72 (2026-09-08)
+
+The user confirmed that the desktop HUD styling is correct again: channel/name/body
+styling and the vector supporter star are restored. Their screenshot still shows
+block placeholders where the sent emojis should appear. Emoji sending reaches Discord
+and the desktop overlay; successful delivery does **not** establish HUD image rendering.
+
+The fresh desktop xScal log identifies `BUILD=chatv1-widget-v2.10.72` and reports
+`kept styled row; step=emoji-plan: TypeError: Error #1014`. The optional emoji path is
+failing during planning, before sprite decoration. The styled baseline survives, as
+intended, but raw Unicode can display as missing-glyph blocks in the game font.
+The exact missing runtime class/dependency is not established. Do not describe this
+as a confirmed sprite placement, bitmap, or font-only root cause.
+
+| Surface / behavior | Evidence and status |
+| --- | --- |
+| Desktop xScal message styling | User-confirmed correct in 2.10.72 |
+| Emoji sending to Discord and overlay | User-confirmed working |
+| Emoji pictures in the HUD | Unresolved: tested messages show blocks |
+| Native sprite artwork | Offline FFDec previews and linkage checks pass only |
+| Current ZFE build in-game | Not verified by this test; shared code/tests are not runtime proof |
+| Public HUD downloads | Not updated by these local test installations |
+
+A styled baseline is built before optional emoji work. Emoji errors retain that row
+rather than forcing the whole feed into the emergency plain-text view. `/emoji`,
+queued sends, reconnects and the other current transport features remain included.
+See [the test record](../../../docs/testing/hud-emoji-status.md) for the remaining checks.
+
+## Current experimental image implementation
+
+The candidate uses native SWF bitmap-filled sprites, not AS3 BitmapData or TextFieldEx
+image substitutions. `emoji/build_sprites.py` (Pillow 12.3.0) refreshes a checked-in tag
+archive offline; `normalize_swf.py` embeds it without downloads or Pillow. Checksums
+bind the archive to the PNG manifest. `emoji/generate.py` regenerates the catalog and
+Sprite factories; notices and licenses ship in `licenses/emoji/`. No game-owned assets
+are embedded. The catalog includes Twemoji 17.0.3 and 48 FCM Discord emojis captured
+2026-09-08. Animated custom assets are static renditions; animation is not implemented.
+
+The intended layout reserves NBSP glyphs with letter spacing and places sprites at
+measured bounds after native text formatting. CRLF is normalized before indices are
+calculated. Up to 32 pictures per row are planned. This path has **not** been confirmed
+in-game: the current test fails before decoration. Readable-name fallbacks exist for
+some paths, but cannot be promised for every emoji failure; blocks remain visible.
+
+### Superseded experiments
+
+- 2.10.69/70 used BitmapData and a TextFieldEx substitution probe. The 2.10.70
+  in-game row-builder failure caused the styling regression; sending still worked.
+- 2.10.71 introduced native sprites but still failed before a styled row was built.
+- 2.10.72 isolates the complete styled baseline from optional emoji processing.
+  Styling is now confirmed; emoji planning/rendering remains unresolved.
+
+Offline SWF previews prove asset structure and appearance in that previewer, not
+Fallout GFx compatibility. Previous text-width-probe and 128-bitmap-cache descriptions
+apply only to the removed image-substitution implementation.
 
 ## Sending emojis (2.10.70)
 
@@ -22,36 +110,6 @@ The shared submit handler converts the command into Unicode or Discord markup
 before the normal send/outbox path. It retains channel membership checks, auth,
 moderation, rate limits, retry receipts and ordinary Discord bridging. No bot
 impersonation, new relay operation, or desktop-overlay command handler is added.
-
-## Emoji rendering candidate (2.10.69)
-
-[Confirmed, source/build] Both providers share `FcmEmoji` and `FcmEmojiRenderer` after
-native transport normalization. Messages retain original Unicode and Discord IDs through
-queueing, replay, and echo matching; only the displayed body is transformed. The SWF embeds
-Twemoji 17.0.3 plus 48 FCM Discord custom emojis from the 2026-09-08 guild snapshot.
-Unicode sequences use longest matching, including skin tones, flags, keycaps and ZWJ families.
-Custom emoji lookup uses Discord ID, so renamed emoji keep the right image. Animated custom
-emoji render as static PNGs. New custom images require regenerating/rebuilding the HUD.
-
-[Confirmed, host interface] The inspected HUDTools `scaleform/gfx/TextFieldEx.as` exposes
-`setImageSubstitutions`; Autodesk documents embedded bitmap substitutions since GFx 4.0.17.
-[Unverified in Fallout runtime] A hidden text-width probe must show actual substitution
-before the renderer enables pictures. Missing methods, no-op stubs, and image errors fall
-back to readable names. Message text is never interpreted as HTML. Generated substitution
-tokens fit GFx's 15-character limit and cannot collide with text supplied by the sender.
-Native layout owns image wrapping/baselines; names, text colors and vector stars retain their
-existing independent formatting. At most 32 emoji pictures per row and 128 cached bitmap
-references are retained; extra emoji use readable names. Unknown Unicode remains literal.
-
-`emoji/generate.py` regenerates both catalog and bitmap factories offline from checked-in
-assets and sequence data. `emoji/asset-hashes.json` records the exact PNG inputs. Attribution
-and licenses ship in the ZIP under `licenses/emoji/`. No game-owned assets are embedded.
-
-Required runtime checks, separately on xScal and ZFE: emoji-only and mixed text, adjacent
-emoji, skin tones/families/flags, static/animated custom emoji, very narrow/wide resize,
-star/name/body colors, scroll clipping, queued send/reconnect/replay and world leave/join.
-The same BA2 serves both providers, but compiler/unit checks are not runtime certification.
-No emoji candidate has been installed or published yet.
 
 ## What it does
 
@@ -674,7 +732,7 @@ The reconnect failure counter also resets when a new transport is accepted.
 
 Run `haxe test-json.hxml`, `haxe test-outbox.hxml`, and `haxe test-hud-layout.hxml`.
 FFDec inspection confirms FcmJson/FcmReconnect do not reference JsonParser or Haxe
-exception classes. A fresh in-game connection test is still required.
+exception classes. The user subsequently confirmed connection in 2.10.67; current per-provider validation limits are recorded above.
 
 ## v2.10.68 explicit color ranges
 
@@ -685,4 +743,4 @@ row, then for the channel, name and body separately; colon and body are reset to
 the configured textColor. Star Shape fill continues to use the validated starColor.
 The same string offsets anchor the star, so range styling preserves full-width
 wrapping. Tests cover prefixes, literal markup, line breaks and exact name/body
-boundaries (`haxe test-feed-text.hxml`). Native color confirmation is pending.
+boundaries (`haxe test-feed-text.hxml`). This was the earlier implementation milestone; styling is now user-confirmed in 2.10.72 on desktop xScal. Current emoji limitations are recorded above.

@@ -393,11 +393,13 @@ pending local transaction in place, so the client still renders one row. It must
 in `senderDisplayName` or `body`, nor use a bitmap, HTML image, or substitution token; see the
 [Dev wire capture](dev-supporter-star-wire-capture-2026-09-02.md).
 
-The event `body` remains the canonical raw text for web and relay consumers. The Dev HUD applies
-one display-only normalization for Discord custom-emoji tokens: `<:name:id>` and `<a:name:id>`
-become `:name:` before Scaleform escaping. This avoids exposing Discord snowflake IDs; the HUD does
-not fetch or render remote emoji images. Public feed image/GIF attachments continue to be rejected
-by the Discord bridge rather than entering the in-game event stream.
+The event `body` remains canonical raw text for web and relay consumers. Current HUD
+records preserve Unicode and Discord custom-emoji markup through replay and echo matching.
+Display-only code may normalize custom tokens to `:name:` or attempt bundled sprite rendering;
+it does not fetch remote emoji images. The 2.10.72 planning failure is superseded by
+the 2.10.73/74 native sprite path. See the
+[HUD emoji test record](../../../testing/hud-emoji-status.md). Public feed image/GIF
+attachments continue to be rejected by the Discord bridge.
 
 For an authenticated HUD send, the relay performs a bounded authoritative Discord
 member-role refresh before decoration: once per linked Discord account per minute across

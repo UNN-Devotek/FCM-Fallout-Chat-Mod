@@ -1,5 +1,10 @@
 # ZFE / xScal — FCM in-game integration
 
+> **HUD 2.10.74:** Styled emoji rendering and chosen name colors have been tested
+> in-game. Verify the global ZFE endpoint as well as its fragment when switching
+> Dev/Prod. See the [test record](../../testing/hud-emoji-status.md).
+
+
 ZFE (Zeroed Fallout Extender) and xScal are supported script-extender providers
 for Fallout 76's Scaleform HUD. FCM's optional `FCMChatWidget` HUDModLoader mod
 uses ZFE's sanctioned `chat.v1` surface or xScal's `chatInterface` surface,
@@ -220,11 +225,11 @@ The widget renders the marker as a fixed five-point vector `Shape` positioned fr
 `TextField.getCharBoundaries()`. It never inserts U+2605, a bitmap, an HTML image, or a substitution
 token, avoiding the tofu blocks produced by Fallout 76's missing star glyph and GFx image path.
 Feed paragraph leading is zero and the feed keeps only a 4px safety gap above the top-level HUDTools
-input. When the local player sends a message, the widget waits for the authoritative live relay
-event because ZFE strips cosmetics from the native send acknowledgement; the sender therefore
-receives the same validated marker/tag as every other message author. Static history is decorated
-with the same current tag data as live messages. ZFE's native chat bridge strips unknown JSON members
-before they reach Scaleform, so v2.10.30 also reads a
+input. Current builds create a local pending row and reconcile it with authoritative send
+receipts/live events; they do not wait for a live event before showing the pending send.
+Server-resolved cosmetics arrive through the supported HUD carrier, and static history is
+decorated with current tag data. ZFE strips unknown JSON members before they reach Scaleform,
+so the v2.10.30 compatibility path introduced a
 capability-gated `FCMHUD/1;...` envelope from the existing, known `targetUserId` member. That
 member is an empty transport slot for ordinary channel chat; it is never a real recipient. Older
 BA2 files receive no envelope, while raw relay consumers retain the additive JSON fields. The

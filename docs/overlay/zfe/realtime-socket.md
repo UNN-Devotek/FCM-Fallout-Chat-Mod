@@ -206,7 +206,7 @@ Extracted from `routes/hudFeed.ts`. Both the REST route and the push path reuse:
 
 - `registerClient(client)` — adds to registry, fires async `HELLO~1~<n>` + `ACTIVECHAN~<name>` + channel-filtered backfill (fire-and-forget). Default active channel: `HUD_DEFAULT_CHANNEL_ID` (General).
 - `switchClientChannel(client, channelId)` — validates channel is a non-archived leaf; updates `client.activeChannelId`; sends `ACTIVECHAN~<name>` + last 30 messages of the new channel (fire-and-forget). Invalid IDs are silently ignored.
-- `hudPushNotify(payload)` — called from `localBroadcast()` in `handlers.ts`; filters, formats, fans out to clients whose `activeChannelId === channelId` only (per-connection channel filter).
+- `hudPushNotify(payload)` — called from `localBroadcast()` in `handlers.ts`; filters, formats, and fans out ordinary `chat:message` rows plus scheduled-event `chat:edit` rows to clients whose `activeChannelId === channelId` (per-connection channel filter). The event widget replaces the prior compact row by message ID/event code; ordinary human edits stay off this text feed.
 - `isHudEligibleChannel(info)` — single predicate: `parentId !== null && !isArchived` (leaf channels only; root container excluded)
 - `HudPushClient.activeChannelId` — per-connection active channel; set on construction (default General) and mutated by `switchClientChannel`.
 - 10 s `PING` heartbeat (ZFE ~15 s idle receive timeout) via `setInterval` (`.unref()`-ed so it does not block process exit)

@@ -788,8 +788,12 @@ async function ensurePubSub(): Promise<void> {
         ? (parsed.payload as Record<string, unknown>)
         : parsed;
 
-      // We only forward chat:message events.
-      if (envelope.type !== 'chat:message') return;
+      // Forward ordinary chat messages and scheduled-event lifecycle edits. Other
+      // websocket edits are dashboard-only and must not enter the native HUD feed.
+      const isScheduledEventEdit = envelope.type === 'chat:edit'
+        && (envelope.payload as Record<string, unknown> | undefined)?.metadata
+        && ((envelope.payload as Record<string, unknown>).metadata as Record<string, unknown>).type === 'scheduled_event';
+      if (envelope.type !== 'chat:message' && !isScheduledEventEdit) return;
       fanoutRelayLiveChatMessage(envelope, subscribers,
         (subscriber, frame, cursor) => sendSubscriberFrame(subscriber, frame, cursor));
     });

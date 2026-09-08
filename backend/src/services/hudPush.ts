@@ -2,15 +2,17 @@
  * hudPush.ts — transport-agnostic HUD push core
  *
  * Manages a registry of connected HUD push clients (TCP sockets, WS frames, …)
- * and fans out live chat:message events to them in FCMHUD/1 wire format.
+ * and fans out live chat:message events plus scheduled-event chat:edit updates
+ * to them in FCMHUD/1 wire format.
  *
  * On client registration:
  *   1. Send HELLO~1~<backfillCount>
  *   2. Backfill: fetchFeedRows() → buildFeedLines(rows.reverse()) → one line per send
  *
- * On chat:message broadcast: hudPushNotify(payload) is called from
- * localBroadcast() in handlers.ts; it resolves the channel, applies the same
- * predicate as the hud-feed SQL, formats the line and fans out.
+ * On chat:message (or scheduled-event chat:edit) broadcast:
+ * hudPushNotify(payload) is called from localBroadcast() in handlers.ts; it
+ * resolves the channel, applies the same predicate as the hud-feed SQL,
+ * formats the line and fans out.
  *
  * Filter-parity: the live-push channel predicate (parentId !== null &&
  * !isArchived) mirrors the hud-feed SQL WHERE clause verbatim.  Leaf channels
@@ -246,8 +248,14 @@ export function hudPushNotify(payload: any): void {
 
   void (async () => {
     try {
-      // Only handle chat:message events.
-      if (payload?.type !== 'chat:message') return;
+      // Event projections are durable message rows, so their lifecycle/count
+      // edits also need to reach an already-connected HUD. FCMHUD/1 is
+      // append-oriented; the widget replaces the prior `[EVENT] FCM` row by
+      // stable event code. Ordinary human chat edits stay on the JSON overlay
+      // path and are not duplicated into HUD history.
+      const isChatMessage = payload?.type === 'chat:message';
+      const isEventEdit = payload?.type === 'chat:edit' && payload?.payload?.metadata?.type === 'scheduled_event';
+      if (!isChatMessage && !isEventEdit) return;
 
       // Skip private messages.
       if (payload?.payload?.isPrivate) return;
@@ -263,7 +271,7 @@ export function hudPushNotify(payload: any): void {
       // identical format to the backfill path.
       const row = {
         content: payload.payload.content ?? '',
-        username: payload.payload.username ?? null,
+        username: payload.payload.username ?? '[EVENT] FCM',
         discord_display_name: null,
         discord_username: null,
         channel_name: info.name,

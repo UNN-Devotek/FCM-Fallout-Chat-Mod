@@ -109,6 +109,30 @@ Note: Prisma cannot model the FK from `reports.message_id` to `messages` due to 
 
 Maps in-game channel UUIDs to Discord channel IDs. Unique composite `(in_game_channel_id, discord_channel_id)`.
 
+### `discord_event_mirrors` (`DiscordEventMirror`)
+
+One durable projection/repair record per `(guild_id, scheduled_event_id)`.
+Discord Scheduled Events remain authoritative; this table stores the stable
+event code, configured announcement channel/message, FCM message, source
+lifecycle/fingerprint, a compact source snapshot for deleted-event repair,
+generated description-link state, and the final native Interested count for
+terminal records. The `event_code` is globally unique and deterministically
+derived from guild plus event ID. Snapshot fields are `source_name`,
+`source_start_utc`, `source_end_utc`, `source_location`,
+`source_description_summary`, and `source_discord_event_url`.
+
+### `discord_event_subscribers` (`DiscordEventSubscriber`)
+
+The current native Discord subscriber set for a mirror. Composite primary key
+`(mirror_id, discord_user_id)` prevents duplicate gateway delivery. Discord
+user IDs are stored as strings; `linked_fcm_user_id` is nullable and is filled
+only when the Discord identity is already verified against an FCM user. No
+attendee display names are stored or exposed in public event projections.
+
+Migration: `20260908120000_add_discord_scheduled_event_mirrors`. The migration
+uses `IF NOT EXISTS` for tables and indexes so it remains compatible with the
+baseline `db push` followed by `migrate deploy` startup sequence.
+
 ---
 
 ## Party System

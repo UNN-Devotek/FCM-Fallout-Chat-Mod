@@ -1,5 +1,19 @@
 # Service Modules
 
+## discordEventService.ts
+
+**Role:** Mirrors Discord Scheduled Events into the existing FCM Events
+channel. `DiscordEventMirror` and `DiscordEventSubscriber` persist repair
+handles and the current native Interested roster. Discord is authoritative for
+lifecycle and attendance; this service never creates channels, assigns roles,
+or accepts FCM/HUD attendance mutations.
+
+The service validates `DISCORD_SERVER_ID` plus `DISCORD_EVENTS_CHANNEL_ID` at
+gateway ready, coalesces per-event gateway updates, reconciles subscribers at
+startup/reconnect and every five minutes, edits one bot-authored announcement,
+and publishes the compact `scheduled_event` message metadata used by the shared
+ChatOverlay and FCMHUD/1 feed.
+
 Service files live in `backend/src/services/`. They contain business logic called by controllers and WebSocket handlers. Services should not import from `routes/` or `controllers/`.
 
 ---
