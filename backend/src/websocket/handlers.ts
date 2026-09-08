@@ -14,6 +14,7 @@ import { engineEvaluate } from '../services/autoModEngine';
 import { relayToDiscord, editDiscordRelayMessage, invalidateRelayMappingsCache } from '../services/discordService';
 import { persistMessage } from '../services/messageService';
 import { finalizeMessage } from '../services/ingestMessage';
+import { mapDiscordEventLifecycle, type DiscordEventSourceState } from '../services/discordEventProjection';
 import { attachCosmetics, attachCosmeticsToHistory } from '../services/cosmetics/cosmeticsService';
 import messageQueue from '../queues/messagePersist';
 import logger from '../config/logger';
@@ -628,7 +629,10 @@ function localBroadcast(
   notifyRelay: boolean = true,
 ): void {
   try { hudPushNotify(payload); } catch { /* hud push must never break chat */ }
-  if (notifyRelay && payload?.type === 'chat:message') {
+  const isRelayChatMessage = payload?.type === 'chat:message';
+  const isRelayScheduledEventEdit = payload?.type === 'chat:edit'
+    && payload?.payload?.metadata?.type === 'scheduled_event';
+  if (notifyRelay && (isRelayChatMessage || isRelayScheduledEventEdit)) {
     // The native relay subscriber lives in this same process. Deliver the event
     // directly before Redis; Redis remains the cross-instance path. Keeping this
     // callback in a dependency-free module avoids handlers <-> relayHandler's
@@ -2437,6 +2441,37 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
           ws.send(JSON.stringify({ type: 'chat:history', payload: { messages: messages.reverse() } }));
         } catch (err) {
           logger.error({ err }, 'Failed to load history');
+        }
+        break;
+      }
+
+      case 'event:attendance-state': {
+        const eventCode = frame.payload?.eventCode;
+        if (typeof eventCode !== 'string' || !/^EVT-[A-F0-9]{12}$/.test(eventCode)) break;
+        try {
+          const mirror = await prisma.discordEventMirror.findUnique({
+            where: { eventCode },
+            select: { eventCode: true, sourceStatus: true, id: true },
+          });
+          if (!mirror) break;
+          let status: string;
+          try {
+            status = mapDiscordEventLifecycle(mirror.sourceStatus as DiscordEventSourceState).status;
+          } catch {
+            break;
+          }
+          const isViewerInterested = user.discordId
+            ? !!await prisma.discordEventSubscriber.findUnique({
+              where: { mirrorId_discordUserId: { mirrorId: mirror.id, discordUserId: user.discordId } },
+              select: { mirrorId: true },
+            })
+            : null;
+          ws.send(JSON.stringify({
+            type: 'event:attendance-viewer',
+            payload: { eventCode: mirror.eventCode, status, isViewerInterested },
+          }));
+        } catch (err) {
+          logger.debug({ err, eventCode, userId: user.id }, '[ws] event attendance state lookup failed');
         }
         break;
       }

@@ -150,6 +150,19 @@ moderation and rate-limit rules, persists messages, and assigns a monotonic rela
 cursor. The `server` slug is reserved for ephemeral in-game rooms and is not a
 normal database channel.
 
+### Scheduled-event lifecycle updates
+
+Scheduled-event projections use the existing compact Events-channel row. The
+initial projection is a normal `chat.message`; a lifecycle or Interested-count
+change for an already-persisted event is delivered to connected native clients
+as `kind: "chat.edit"` with a fresh relay cursor and the original `messageId`.
+`FCMChatWidget` replaces that `[EVENT] FCM` row in place, matching the durable
+message ID and using the visible event code as a secondary key when present.
+History reads the latest persisted content, so reconnects do not require a
+second event panel or a new HUD wire format. These rows are informational only:
+attendance remains native Discord Interested state and the HUD has no RSVP
+command.
+
 ## HUD identity cosmetic extension
 
 Widget v2.10.16 understands three optional, additive FCM fields on `chat.message`

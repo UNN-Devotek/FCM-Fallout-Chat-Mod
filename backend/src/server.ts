@@ -83,7 +83,7 @@ import { refreshSupporterFromDiscord } from './services/supporterSyncService';
 import { captureAvatar, buildAvatarUrl } from './services/avatarService';
 import { getAvatarObject, getPartyImageObject } from './config/storage';
 import * as roleVerificationService from './services/roleVerificationService';
-import { handleConnection, broadcast, broadcastMessageDeletion, broadcastReportAlert, broadcastChannelUpdate, broadcastCommandsUpdate, getClientCount, initPubSub, snapshotActiveClients, resolveDisplayName, pushToUser, isUserWsConnected, isPendingDisconnect, refreshClientIdentity, broadcastToPartyMembers, getConnectedUserIds, refreshClientBlocks } from './websocket/handlers';
+import { handleConnection, broadcast, broadcastMessageDeletion, broadcastReportAlert, broadcastChannelUpdate, broadcastCommandsUpdate, getClientCount, initPubSub, snapshotActiveClients, resolveDisplayName, pushToUser, isUserWsConnected, isPendingDisconnect, refreshClientIdentity, broadcastToPartyMembers, broadcastToUsers, getConnectedUserIds, refreshClientBlocks } from './websocket/handlers';
 import { startPartyReapJob } from './jobs/partyReap';
 import { startWikiIngestJob } from './jobs/wikiIngest';
 import { startWikiSyncSchedule } from './jobs/wikiSyncSchedule';
@@ -2457,7 +2457,7 @@ attachChatUpgradeRouter(server, wss, { hudPathEnabled: isHudPushWsEnabled() });
 // Block enforcement — blockController calls this on add/remove so the connected
 // blocker's cached blocked-set updates immediately (live, no reconnect needed).
 (global as any).refreshClientBlocks = refreshClientBlocks;
-discordService.setBroadcast(broadcast);
+discordService.setBroadcast(broadcast, broadcastToUsers);
 
 // Update health route with live metrics
 setInterval(() => {

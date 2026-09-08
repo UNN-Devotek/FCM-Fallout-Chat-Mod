@@ -27,6 +27,23 @@ function chatBroadcast(overrides: Record<string, unknown> = {}): Record<string, 
   };
 }
 
+function eventEditBroadcast(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    type: 'chat:edit',
+    payload: {
+      messageId: 'event-message-42',
+      content: 'Moonshine Jamboree [EVT-ABCDEF123456] | ENDED | 6 interested',
+      username: '[EVENT] FCM',
+      userId: 'event-bot-42',
+      channelId: GLOBAL_CHANNEL,
+      relaySeq: 43,
+      createdAt: '2026-09-04T01:00:00.000Z',
+      metadata: { type: 'scheduled_event', eventCode: 'EVT-ABCDEF123456' },
+      ...overrides,
+    },
+  };
+}
+
 describe('relay live chat fan-out', () => {
   test('projects the same canonical event used by direct and Redis delivery', () => {
     assert.deepEqual(buildRelayLiveChatEvent(chatBroadcast()), {
@@ -77,6 +94,32 @@ describe('relay live chat fan-out', () => {
     assert.equal(fanoutRelayLiveChatMessage(chatBroadcast(), subscribers, () => true), 0);
   });
 
+  test('projects scheduled-event edits as replaceable native HUD frames', () => {
+    assert.deepEqual(buildRelayLiveChatEvent(eventEditBroadcast()), {
+      relaySeq: 43,
+      event: {
+        id: 43,
+        kind: 'chat.edit',
+        messageId: 'event-message-42',
+        channel: 'global',
+        senderUserId: 'event-bot-42',
+        senderDisplayName: '[EVENT] FCM',
+        body: 'Moonshine Jamboree [EVT-ABCDEF123456] | ENDED | 6 interested',
+        targetUserId: '',
+        createdAt: '2026-09-04T01:00:00.000Z',
+      },
+    });
+
+    const subscriber: RelayLiveSubscriber = { cursor: 42, supportsHudCosmeticsTransport: false };
+    const frames: string[] = [];
+    assert.equal(fanoutRelayLiveChatMessage(eventEditBroadcast(), new Set([subscriber]), (_s, frame) => {
+      frames.push(frame);
+      return true;
+    }), 1);
+    assert.equal(subscriber.cursor, 43);
+    assert.equal(JSON.parse(frames[0]).event.kind, 'chat.edit');
+  });
+
   test('removes a subscriber whose socket cannot accept the frame', () => {
     const failed: RelayLiveSubscriber = { cursor: 0, supportsHudCosmeticsTransport: true };
     const subscribers = new Set([failed]);
@@ -102,6 +145,8 @@ describe('relay live chat fan-out', () => {
       { type: 'chat:message', payload: null },
       { type: 'chat:message', payload: { channelId: GLOBAL_CHANNEL, relaySeq: 0 } },
       { type: 'chat:message', payload: { channelId: GLOBAL_CHANNEL, relaySeq: '42' } },
+      { type: 'chat:edit', payload: { channelId: GLOBAL_CHANNEL, relaySeq: 43 } },
+      { type: 'chat:edit', payload: { channelId: GLOBAL_CHANNEL, relaySeq: 43, metadata: { type: 'wiki_share' } } },
     ]) {
       assert.equal(fanoutRelayLiveChatMessage(payload, subscribers, send), 0);
     }

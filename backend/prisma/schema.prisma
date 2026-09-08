@@ -1172,3 +1172,56 @@ model HudPairingToken {
   @@index([linkedUserId])
   @@map("hud_pairing_tokens")
 }
+
+// =============================================================================
+// Discord scheduled-event mirror
+//
+// Discord is authoritative for lifecycle and native Interested state. These
+// records only retain the projection/repair handles needed by FCM surfaces.
+// Subscriber rows contain Discord IDs, not attendee display data.
+// =============================================================================
+model DiscordEventMirror {
+  id                       String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  guildId                  String    @map("guild_id")
+  scheduledEventId         String    @map("scheduled_event_id")
+  eventCode                String    @unique @map("event_code")
+  announcementChannelId    String    @map("announcement_channel_id")
+  announcementMessageId    String?   @map("announcement_message_id")
+  fcmMessageId             String?   @map("fcm_message_id")
+  announcementUrl          String?   @map("announcement_url")
+  generatedDescriptionLink String?   @map("generated_description_link")
+  sourceStatus             String    @map("source_status")
+  sourceName               String?   @map("source_name")
+  sourceStartUtc           DateTime? @map("source_start_utc") @db.Timestamptz(6)
+  sourceEndUtc             DateTime? @map("source_end_utc") @db.Timestamptz(6)
+  sourceLocation           String?   @map("source_location")
+  sourceDescriptionSummary String?   @map("source_description_summary")
+  sourceDiscordEventUrl    String?   @map("source_discord_event_url")
+  finalInterestedCount     Int?      @map("final_interested_count")
+  sourceFingerprint        String?   @map("source_fingerprint")
+  lastSyncedAt             DateTime  @default(now()) @map("last_synced_at") @db.Timestamptz(6)
+  createdAt                DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  subscribers DiscordEventSubscriber[]
+
+  @@unique([guildId, scheduledEventId])
+  @@index([guildId, sourceStatus])
+  @@index([announcementChannelId, announcementMessageId])
+  @@map("discord_event_mirrors")
+}
+
+model DiscordEventSubscriber {
+  mirrorId        String   @map("mirror_id") @db.Uuid
+  discordUserId   String   @map("discord_user_id")
+  linkedFcmUserId String?  @map("linked_fcm_user_id") @db.Uuid
+  subscribedAt    DateTime @default(now()) @map("subscribed_at") @db.Timestamptz(6)
+  lastSyncedAt    DateTime @default(now()) @map("last_synced_at") @db.Timestamptz(6)
+
+  mirror DiscordEventMirror @relation(fields: [mirrorId], references: [id], onDelete: Cascade)
+
+  @@id([mirrorId, discordUserId])
+  @@index([discordUserId])
+  @@index([linkedFcmUserId])
+  @@map("discord_event_subscribers")
+}

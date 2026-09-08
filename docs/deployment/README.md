@@ -95,6 +95,7 @@ If the tunnel goes down:
 | [packaging.md](packaging.md) | What each `Packaging/` script does |
 | [code-signing.md](code-signing.md) | AV / SmartScreen situation; Azure Trusted Signing path |
 | [secret-rotation-runbook.md](secret-rotation-runbook.md) | Procedure for rotating a DB credential (consistent backup + minimal downtime) and scrubbing secrets from git history |
+| [discord-scheduled-events.md](discord-scheduled-events.md) | Production configuration, permissions, validation, and smoke test for Discord Scheduled Event mirroring |
 
 ### Related docs
 

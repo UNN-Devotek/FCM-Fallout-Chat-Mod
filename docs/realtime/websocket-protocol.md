@@ -214,7 +214,9 @@ messages, reruns AutoMod, and records `edited_at` before broadcasting the patch.
 ```
 
 Successful edits are broadcast as `chat:edit` with `messageId`, normalized `content`,
-`editedAt`, and the source-specific routing fields. The sender also receives
+`editedAt`, and the source-specific routing fields. Structured bot projections
+may additionally include their replacement `metadata`; clients must preserve
+existing metadata when that field is absent. The sender also receives
 `message:edit:ack` with the same payload. Invalid, unauthorized, muted, rate-limited, or
 AutoMod-blocked edits return the standard `error` frame.
 
@@ -225,6 +227,69 @@ and emits the same `chat:edit` broadcast. The bot cannot edit a Discord user's
 original message, so overlay edits of Discord-origin messages remain local.
 
 Bot messages (source `bot`, userId `system`, username `[Vault-Tec]`) are never block-filtered. `handlers.ts:742–749`
+
+### Discord scheduled-event projection
+
+Discord Scheduled Events are mirrored into the existing FCM Events channel as
+normal `chat:message`/`chat:history` rows with `metadata.type =
+"scheduled_event"`. Discord owns lifecycle and native Interested state; FCM
+clients never send an attendance mutation frame.
+
+The shared metadata contains the event code, source ID, public status, UTC
+times, location, bounded summary, announcement/native URLs, and native
+Interested count. It never contains attendee names or a shared
+`isViewerInterested` value.
+
+### `event:attendance-state` (C→S request)
+
+An authenticated client may request its own native state for an event code after
+history arrives. The server scopes the lookup to the session's verified Discord
+identity; an unlinked account receives `isViewerInterested: null`.
+
+```json
+{
+  "type": "event:attendance-state",
+  "payload": { "eventCode": "EVT-ABC123" }
+}
+```
+
+### `event:attendance-viewer` (S→C private response)
+
+This frame is sent only to the requesting FCM user. The field is client-local
+state and is never written into shared event metadata or a public cache.
+
+```json
+{
+  "type": "event:attendance-viewer",
+  "payload": {
+    "eventCode": "EVT-ABC123",
+    "status": "Upcoming",
+    "isViewerInterested": true
+  }
+}
+```
+
+### `event:attendance-updated` (S→C broadcast)
+
+Sent after Discord Scheduled Event User Add/Remove delivery and reconciliation.
+The client patches matching event cards by `eventCode`; the event message's
+`chat:edit` also carries the authoritative metadata replacement.
+
+```json
+{
+  "type": "event:attendance-updated",
+  "payload": {
+    "eventCode": "EVT-ABC123",
+    "status": "Upcoming",
+    "interestedCount": 6,
+    "updatedFields": ["interestedCount"]
+  }
+}
+```
+
+This is informational only. The overlay's `OPEN DISCORD EVENT` link is the
+native attendance path; public mode and terminal event records remain
+read-only.
 
 ### `message:ack` (S→C)
 Sent back to the sender after each accepted message.

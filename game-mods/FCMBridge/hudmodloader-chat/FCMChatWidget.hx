@@ -3676,7 +3676,8 @@ class FCMChatWidget extends MovieClip {
                 continue;
             }
 
-            if (obj.indexOf('"chat.message"') < 0 && obj.indexOf('chat.message') < 0) {
+            var isChatEditEvent:Bool = extractJsonString(obj, "kind") == "chat.edit";
+            if (obj.indexOf('"chat.message"') < 0 && obj.indexOf('chat.message') < 0 && !isChatEditEvent) {
                 updateCursorFromEvent(obj);
                 continue;
             }
@@ -3765,6 +3766,22 @@ class FCMChatWidget extends MovieClip {
             parsedCount++;
             if (body.length == 0) continue;
 
+            // Scheduled-event lifecycle updates are delivered as chat.edit frames
+            // with the same durable message ID as the original compact event row.
+            // Replace that row in place so a connected HUD never accumulates stale
+            // Upcoming/Live/Ended/Canceled copies. The event code is a secondary
+            // identity when the compact 70-character line has room for it.
+            var eventEditAccepted:Bool = false;
+            if (isChatEditEvent && displayName == "[EVENT] FCM") {
+                eventEditAccepted = markSeenEventUpdate(channel, evId);
+                if (!eventEditAccepted) continue;
+                if (replaceHudEventRecord(channel, messageId, body, displayName, tag,
+                        nameColor, starColor, supporterStar)) {
+                    newRecords = true;
+                    continue;
+                }
+            }
+
             // System channel — link handshake. "LINK COMPLETE" means the web redeem finished
             // (relay pushed it post-activation) → clear the gate and hand off to chat. Anything
             // else is the link-required code notice (relay sends it ONLY to limited identities).
@@ -3803,7 +3820,7 @@ class FCMChatWidget extends MovieClip {
             // channel's one-shot subscribe backfill — history looked empty on
             // Trading/Events/Raids/Infests forever after connect.
             if (CHAN_SLUGS.indexOf(channel) < 0) continue;
-            if (!markSeenEvent(channel, evId, messageId)) continue;
+            if (!eventEditAccepted && !markSeenEvent(channel, evId, messageId)) continue;
 
             _records.push({
                 color: FcmConfig.parseHexColor(nameColor, -1) >= 0 ? nameColor : hx(_cfg.senderColor), channel: channel, user: displayName,
@@ -3850,6 +3867,43 @@ class FCMChatWidget extends MovieClip {
     function markSeenEvent(channel:String, eventId:Int, messageId:String):Bool {
         return _history.accept(channel, eventId, messageId,
             Std.int(Math.max(256, _cfg.maxMessages * 2)));
+    }
+
+    /** Edits retain the message ID, so deduplicate their fresh relay cursor separately. */
+    function markSeenEventUpdate(channel:String, eventId:Int):Bool {
+        return _history.accept(channel, eventId, "",
+            Std.int(Math.max(256, _cfg.maxMessages * 2)));
+    }
+
+    function eventCodeFromHudBody(body:String):String {
+        var marker:String = "[EVT-";
+        var start:Int = body.indexOf(marker);
+        if (start < 0) return "";
+        var end:Int = body.indexOf("]", start);
+        if (end <= start) return "";
+        return body.substring(start + 1, end);
+    }
+
+    /** Update one compact event row in place, matching by durable ID or visible event code. */
+    function replaceHudEventRecord(channel:String, messageId:String, body:String,
+            displayName:String, tag:String, nameColor:String, starColor:String,
+            supporterStar:Bool):Bool {
+        var eventCode:String = eventCodeFromHudBody(body);
+        for (rec in _records) {
+            if (rec.channel != channel) continue;
+            var sameMessage:Bool = messageId.length > 0 && rec.messageId == messageId;
+            var sameEventCode:Bool = eventCode.length > 0 && eventCodeFromHudBody(rec.body) == eventCode;
+            if (!sameMessage && !sameEventCode) continue;
+            rec.user = displayName;
+            rec.tag = tag;
+            rec.color = FcmConfig.parseHexColor(nameColor, -1) >= 0 ? nameColor : hx(_cfg.senderColor);
+            rec.starColor = starColor;
+            rec.supporterStar = supporterStar;
+            rec.body = body;
+            if (messageId.length > 0) rec.messageId = messageId;
+            return true;
+        }
+        return false;
     }
 
     /**

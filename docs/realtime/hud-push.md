@@ -12,7 +12,7 @@ authenticated `/ws` JSON message catalog described in [websocket-protocol.md](./
 | Auth | Required (session token or WS ticket) | None |
 | Clients | Electron overlay, web dashboard | FCMBridge.swf in-game (ZFE Text Chat bridge) |
 | Direction | Bidirectional | Both (M7: inbound HELLO/SEND parsed; outbound push unchanged) |
-| Delivery | Every message type in the catalog | `chat:message` events on eligible channels only |
+| Delivery | Every message type in the catalog | `chat:message` events plus scheduled-event `chat:edit` updates on eligible channels |
 
 ## Where to find the full spec
 
@@ -44,3 +44,27 @@ limits, SWF crash rules, probe tooling, and PENDING probe findings — are in:
 - **Rate-limit on Redis outage:** inbound `hud` messages fail **closed**; authenticated `ws` messages fail **open** (SR-004).
 - **`HUD_DEFAULT_CHANNEL_ID`** (default `00000000-0000-0000-0000-000000000005` = General) — the leaf channel the SWF should use as its default send target. The backend does not auto-redirect sends; the SWF must send to this channel ID.
 - **Channel eligibility:** feed SQL and live-push both use `parent_id IS NOT NULL AND NOT is_archived` — the root container is excluded. Eligible channels: General, Trading, Events, Raids.
+
+## Scheduled-event rows
+
+Scheduled-event projections reuse the ordinary `FCMHUD/1` record path and the
+same `buildFeedLines()` formatter for live delivery and history. The persisted
+event body is compact; the existing Events channel label and `[EVENT] FCM`
+sender marker produce rows shaped like:
+
+```text
+[EVENTS] [EVENT] FCM: Moonshine Jamboree | 20:00 UTC | 6 interested
+[EVENTS] [EVENT] FCM: Moonshine Jamboree | LIVE | 6 interested
+[EVENTS] [EVENT] FCM: Moonshine Jamboree | ENDED | 6 interested
+[EVENTS] [EVENT] FCM: Moonshine Jamboree | CANCELED | 6 interested
+```
+
+Names are escaped with the existing ZFE-safe character mapping and fitted to
+the 70-character line budget before status/time/count. A stable event code is
+included only when it fits. The HUD row is informational and has no clickable
+button or attendance mutation command; native Interested changes happen in
+Discord. For an already-connected native HUD subscriber, lifecycle/count edits
+are sent as a `chat.edit` relay event with the same message ID and the widget
+replaces the existing row in place. A row that is reloaded from history already
+contains the latest persisted state. Ordinary human chat edits are not sent to
+the HUD.

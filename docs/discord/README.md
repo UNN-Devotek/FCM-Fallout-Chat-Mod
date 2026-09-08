@@ -21,6 +21,7 @@ Declared in `discordService.ts` when the shared client is created:
 | `MessageContent` | Chat bridge — reading message text |
 | `GuildVoiceStates` | Temp voice channels (Join-to-Create) |
 | `GuildMessageReactions` | Reaction roles |
+| `GuildScheduledEvents` | Scheduled-event lifecycle and native Interested synchronization; always requested by the bot |
 
 **Partials** (`Message`, `Channel`, `Reaction`) are also enabled so that
 reaction events fire for messages posted before the last restart (i.e. messages
@@ -42,6 +43,7 @@ stop working after a redeploy.
 | Manage Roles | Temp voice channel overrides, reaction roles |
 | Connect | Temp voice — bot joins the lobby briefly |
 | Manage Nicknames | Nickname sync (FO76 character name) |
+| Manage Events | Scheduled-event mirror validation/repair where required by the Discord API |
 
 ---
 
@@ -132,6 +134,7 @@ discordClient created (intents + partials)
 | `DISCORD_TOKEN` | Bot token — if unset, the bridge is disabled entirely |
 | `DISCORD_SERVER_ID` | Guild snowflake (assignable-roles, nickname sync) |
 | `DISCORD_CHANNEL_ID` | Default relay channel fallback |
+| `DISCORD_EVENTS_CHANNEL_ID` | Existing Discord text-channel snowflake for event announcements; must belong to `DISCORD_SERVER_ID` |
 | `DISCORD_UPDATES_CHANNEL_ID` | Release announcement channel (default `1479531502567166066`) |
 | `DOWNLOAD_PAGE_URL` | Release embed/download-page URL; dev overrides this to `https://dev.falloutchatmod.com` |
 | `RELEASE_DOWNLOAD_HOST` | Host for release artifact links; prod defaults to `falloutchatmod.com`, dev uses `dev.falloutchatmod.com` |
@@ -216,4 +219,5 @@ Full design record: [docs/product/supporter-tier.md](../product/supporter-tier.m
 - [voice-channels.md](./voice-channels.md) — Join-to-Create temp voice channels
 - [embeds.md](./embeds.md) — Embed builder
 - [reaction-roles.md](./reaction-roles.md) — React-to-get-role
+- [scheduled-events.md](./scheduled-events.md) — Scheduled Event mirroring and native Interested synchronization
 - [github-tickets.md](./github-tickets.md) — Discord ⇄ GitHub bug/suggestion ticketing

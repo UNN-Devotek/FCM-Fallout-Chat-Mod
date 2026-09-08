@@ -59,9 +59,12 @@ function asRecord(value: unknown): Record<string, unknown> | null {
  */
 export function buildRelayLiveChatEvent(payload: unknown): RelayLiveChatEvent | null {
   const root = asRecord(payload);
-  if (root?.type !== 'chat:message') return null;
+  const isChatMessage = root?.type === 'chat:message';
+  const source = asRecord(root?.payload);
+  const isScheduledEventEdit = root?.type === 'chat:edit'
+    && asRecord(source?.metadata)?.type === 'scheduled_event';
+  if (!isChatMessage && !isScheduledEventEdit) return null;
 
-  const source = asRecord(root.payload);
   if (!source) return null;
 
   const relaySeq = typeof source.relaySeq === 'number' && Number.isFinite(source.relaySeq)
@@ -73,13 +76,16 @@ export function buildRelayLiveChatEvent(payload: unknown): RelayLiveChatEvent | 
   const createdAt = typeof source.timestamp === 'string'
     ? source.timestamp
     : (typeof source.createdAt === 'string' ? source.createdAt : '');
+  const messageId = typeof source.id === 'string'
+    ? source.id
+    : (typeof source.messageId === 'string' ? source.messageId : undefined);
 
   return {
     relaySeq,
     event: {
       id: relaySeq,
-      kind: 'chat.message',
-      messageId: source.id,
+      kind: isScheduledEventEdit ? 'chat.edit' : 'chat.message',
+      messageId,
       channel: channelIdToSlug(channelId) ?? channelId,
       senderUserId: source.userId,
       senderDisplayName: source.username,
