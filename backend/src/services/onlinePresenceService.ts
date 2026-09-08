@@ -8,32 +8,32 @@ const ONLINE_USERS_TTL_SEC = 45;
 const INSTANCE_ID = randomUUID();
 const INSTANCE_KEY = `${ONLINE_USERS_KEY_PREFIX}${INSTANCE_ID}`;
 
-// Single source of truth: the WS layer registers a provider that returns the
-// userIds with at least one live (OPEN or flap-grace) socket on THIS instance.
-// We deliberately do NOT maintain a parallel hand-incremented refcount here —
-// that drifted whenever a note*() call was unbalanced (e.g. the golden-build
-// reject path fired noteUserDisconnected without a matching noteUserConnected),
-// inflating/corrupting the /online count. Reading the live socket registry
-// directly makes that class of bug impossible.
-let liveLocalUserIdsProvider: (() => string[]) | null = null;
+// Read each transport's live registry rather than maintaining socket refcounts.
+// Providers return linked FCM account IDs, so multiple devices/transports count once.
+const localPresenceSources = new Map<string, () => string[]>();
+let refreshTimer: ReturnType<typeof setInterval> | undefined;
 
 // Legacy fallback sets — only consulted when no provider has been registered
 // (e.g. unit tests that exercise the service in isolation). Kept minimal.
 const fallbackUsers = new Set<string>();
 
-/**
- * Register the authoritative source of locally-connected userIds. Called once
- * by the WS handlers module at load. Idempotent.
- */
-export function registerLocalPresenceSource(provider: () => string[]): void {
-  liveLocalUserIdsProvider = provider;
+/** Register a transport's authoritative local presence snapshot. Idempotent by name. */
+export function registerLocalPresenceSource(provider: () => string[], source = 'websocket'): void {
+  localPresenceSources.set(source, provider);
+  // Keep quiet HUD-only instances visible to other instances beyond the Redis TTL.
+  if (!refreshTimer) {
+    refreshTimer = setInterval(() => { void flushLocalPresenceToRedis(); }, 15_000);
+    refreshTimer.unref();
+  }
 }
 
-function getLocalOnlineUserIds(): string[] {
-  if (liveLocalUserIdsProvider) {
-    return Array.from(new Set<string>(liveLocalUserIdsProvider()));
+export function getLocalOnlineUserIds(): string[] {
+  if (localPresenceSources.size === 0) return Array.from(fallbackUsers);
+  const users = new Set<string>();
+  for (const provider of localPresenceSources.values()) {
+    for (const userId of provider()) if (userId) users.add(userId);
   }
-  return Array.from(fallbackUsers);
+  return Array.from(users);
 }
 
 export async function flushLocalPresenceToRedis(): Promise<void> {
@@ -57,7 +57,7 @@ export async function flushLocalPresenceToRedis(): Promise<void> {
 // time, so unbalanced calls can no longer corrupt the count. The fallback set
 // is maintained only for the no-provider (unit-test) path.
 export function noteUserConnected(userId: string): void {
-  if (!liveLocalUserIdsProvider) fallbackUsers.add(userId);
+  if (localPresenceSources.size === 0) fallbackUsers.add(userId);
   void flushLocalPresenceToRedis();
 }
 
@@ -71,7 +71,7 @@ export function notePendingDisconnectSuppressed(_userId: string): void {
 }
 
 export function noteUserDisconnected(userId: string): void {
-  if (!liveLocalUserIdsProvider) fallbackUsers.delete(userId);
+  if (localPresenceSources.size === 0) fallbackUsers.delete(userId);
   void flushLocalPresenceToRedis();
 }
 

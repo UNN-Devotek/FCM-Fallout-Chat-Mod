@@ -172,7 +172,8 @@ envelope only to v2.10.16+; older widgets receive no envelope. The relay records
 beside a short-lived one-way token digest in Redis so separate connect and subscribe sockets use
 the same capability decision. `tag` and `starColor` are already validated by the cosmetics
 service, and `supporterStar` is derived only from an active Supporter or Overseer entitlement.
-The widget uses one full-width HTML field for the channel tag, author, and body. Continuations
+The widget uses one full-width plain-text field for the channel tag, author, and body.
+Explicit `setTextFormat` character ranges isolate channel/name/body colors. Continuations
 return under the channel tag and reflow with the current HUD width. An inline non-breaking-space
 slot reserves room for the vector supporter star immediately before the author. First-author
 `getCharBoundaries()` and vector bounds center it in row coordinates (glyph advance bounds,
@@ -476,3 +477,17 @@ They are never saved as messages or bridged to Discord. ZFE's local settings sto
 is unchanged. Apply the idempotent migration before deploying the backend that advertises layout support.
 
 The HUD sends layout controls only when `getAuthState.permissions.canSaveHudLayout` is true. Older relays omit this capability, so wrapping remains available while remote geometry persistence stays disabled. The extender must preserve this permission in its auth response.
+
+### HUD emoji presentation (2.10.69 candidate)
+
+Unicode and Discord custom emoji markup remain unchanged on the relay wire and in the HUD
+outbox/echo records. The shared xScal/ZFE renderer substitutes bundled images only at display
+time, guarded by a measured GFx capability probe. Animated custom emoji show a static frame;
+unknown custom IDs fall back to `:name:`. This adds no relay operation and does not change the
+desktop overlay renderer. See the HUD `BUILD.md` emoji section for asset and runtime checks.
+
+HUD 2.10.70 adds local `/emoji <name>` resolution in the shared submit handler for
+both providers. Successful resolution sends ordinary Unicode/custom Discord markup
+through the existing authenticated outbox. Bare/unknown commands show local help and
+are not sent to the relay. Custom names override Unicode unless a `unicode:` or
+`discord:` prefix is supplied. The desktop overlay command behavior is unchanged.

@@ -1,11 +1,61 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.66. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.70. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
+
+## Sending emojis (2.10.70)
+
+Type `/emoji <name>` to send one emoji to the selected channel. Examples:
+`/emoji smile`, `/emoji heart`, `/emoji thumbs_up`, `/emoji grinning face`,
+or `/emoji <custom Discord name>`. Names are case-insensitive; underscores and
+spaces are interchangeable, and surrounding shortcode colons are accepted.
+A bare `emoji <name>` is accepted when the native editor consumes the slash.
+`/g /emoji heart` also works through the existing channel-switch parser.
+
+Custom names take precedence over Unicode names. Use `unicode:<name>` or
+`discord:<name>` to disambiguate. Common aliases include smile, grin, heart,
+thumbsup, thumbsdown, laughing, joy, and wave. Bare `/emoji` shows usage; unknown
+names show a local error and do not send. The command resolves from the bundled
+catalog, so newly added/renamed custom names require a refreshed HUD build.
+
+The shared submit handler converts the command into Unicode or Discord markup
+before the normal send/outbox path. It retains channel membership checks, auth,
+moderation, rate limits, retry receipts and ordinary Discord bridging. No bot
+impersonation, new relay operation, or desktop-overlay command handler is added.
+
+## Emoji rendering candidate (2.10.69)
+
+[Confirmed, source/build] Both providers share `FcmEmoji` and `FcmEmojiRenderer` after
+native transport normalization. Messages retain original Unicode and Discord IDs through
+queueing, replay, and echo matching; only the displayed body is transformed. The SWF embeds
+Twemoji 17.0.3 plus 48 FCM Discord custom emojis from the 2026-09-08 guild snapshot.
+Unicode sequences use longest matching, including skin tones, flags, keycaps and ZWJ families.
+Custom emoji lookup uses Discord ID, so renamed emoji keep the right image. Animated custom
+emoji render as static PNGs. New custom images require regenerating/rebuilding the HUD.
+
+[Confirmed, host interface] The inspected HUDTools `scaleform/gfx/TextFieldEx.as` exposes
+`setImageSubstitutions`; Autodesk documents embedded bitmap substitutions since GFx 4.0.17.
+[Unverified in Fallout runtime] A hidden text-width probe must show actual substitution
+before the renderer enables pictures. Missing methods, no-op stubs, and image errors fall
+back to readable names. Message text is never interpreted as HTML. Generated substitution
+tokens fit GFx's 15-character limit and cannot collide with text supplied by the sender.
+Native layout owns image wrapping/baselines; names, text colors and vector stars retain their
+existing independent formatting. At most 32 emoji pictures per row and 128 cached bitmap
+references are retained; extra emoji use readable names. Unknown Unicode remains literal.
+
+`emoji/generate.py` regenerates both catalog and bitmap factories offline from checked-in
+assets and sequence data. `emoji/asset-hashes.json` records the exact PNG inputs. Attribution
+and licenses ship in the ZIP under `licenses/emoji/`. No game-owned assets are embedded.
+
+Required runtime checks, separately on xScal and ZFE: emoji-only and mixed text, adjacent
+emoji, skin tones/families/flags, static/animated custom emoji, very narrow/wide resize,
+star/name/body colors, scroll clipping, queued send/reconnect/replay and world leave/join.
+The same BA2 serves both providers, but compiler/unit checks are not runtime certification.
+No emoji candidate has been installed or published yet.
 
 ## What it does
 
-The feed uses one native multiline HTML TextField per message, at the full current feed width.
+The feed uses one native multiline plain-text TextField per message, at the full current feed width.
 The channel tag is inline on the first line; every continuation starts underneath that tag and
 wraps at the current right edge. Auto-size owns the height, and resizing rebuilds all rows.
 The author alone uses the chosen name color; message text, colon, and custom tag use the
@@ -16,7 +66,9 @@ an inline slot immediately before the name. The slot follows the name when the p
 First-author and slot character bounds must agree on a line and provide sufficient room before
 the star is displayed; unavailable metrics hide only the optional marker, not the message.
 The outer feed rectangle clips the scrolling list, not individual message continuations.
-Body CRLF/LF/CR line breaks become HTML `<br/>` after escaping; user markup stays escaped.
+Body CRLF/LF/CR line breaks normalize to LF; markup remains literal text. After assigning
+`text`, `setTextFormat` applies exact character ranges: baseline/body/theme, channel/channel
+color, and name/chosen color. No HTML inheritance is used for message colors.
 
 [Confirmed, installed Steam English assets] `interface/fontconfig_en.txt` maps the Light/Bold
 aliases to Roboto Condensed Light/Bold. FFDec 26.2.1 inspection of `interface/fonts_en.swf`
@@ -137,7 +189,7 @@ connected, later HUD reads update local identity state only; they never issue a 
 `chat.v1.connect`, and empty reads do not erase a known name.
 
 The HUD renders the server-validated channel and identity tags plus an optional supporter marker.
-The marker is a five-point vector `Shape` beside the full-width HTML message field in one
+The marker is a five-point vector `Shape` beside the full-width message field in one
 row `Sprite`. Measured non-breaking spaces reserve its inline position immediately before the
 name. Row-local first-author bounds anchor and center the vector; no document-wide scroll
 estimate or global/local transform is used. Missing or inconsistent metrics hide the optional
@@ -608,3 +660,29 @@ The backend carries the user's resolved solid name color through `FCMHUD/1;n=...
 `nameColor`, validated as six hexadecimal digits. Live/history rows and send ACKs share that
 transport; optimistic rows reuse the latest authoritative local color. Deploy the corresponding
 backend projection to enable chosen colors in Prod. Missing colors use the configured theme.
+
+## v2.10.67 authentication parser hotfix
+
+[Confirmed] The desktop 2.10.66 log reported Error #1014 at every auth probe and
+subsequent malformed-poll reconnects while the Prod relay flag remained enabled.
+The new auth and poll validation called the general Haxe JSON parser. [Deduced]
+its runtime dependency path caused this regression; the exported parser references
+Haxe exception classes. FcmJson now reads bounded JSON without throwing or using
+native JSON. Auth, poll, private receipts and layout restore share that reader.
+It rejects malformed input, oversized envelopes and nesting beyond 32 levels.
+The reconnect failure counter also resets when a new transport is accepted.
+
+Run `haxe test-json.hxml`, `haxe test-outbox.hxml`, and `haxe test-hud-layout.hxml`.
+FFDec inspection confirms FcmJson/FcmReconnect do not reference JsonParser or Haxe
+exception classes. A fresh in-game connection test is still required.
+
+## v2.10.68 explicit color ranges
+
+The user confirmed full-width wrapping and successful connection with 2.10.67, but
+reported channel-color bleed into message text. Message rows now use plain text
+and explicit native TextFormat ranges. Font, size and color are set for the whole
+row, then for the channel, name and body separately; colon and body are reset to
+the configured textColor. Star Shape fill continues to use the validated starColor.
+The same string offsets anchor the star, so range styling preserves full-width
+wrapping. Tests cover prefixes, literal markup, line breaks and exact name/body
+boundaries (`haxe test-feed-text.hxml`). Native color confirmation is pending.
