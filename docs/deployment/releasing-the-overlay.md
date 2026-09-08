@@ -393,7 +393,7 @@ upload is intentionally deferred. The standalone wrapper still requires the
 explicit `-PublishWindowsForReview` switch.
 
 This script:
-1. Calls `Packaging/publish-nexus.ps1` for the Linux AppImage ZIP and Linux `.deb` ZIP as `main`, and the production `FCM HUD Mod` ZIP as `optional`; these normal replacement paths archive their previous files
+1. Calls `Packaging/publish-nexus.ps1` for the Linux AppImage ZIP and Linux `.deb` ZIP as `main`, and the production `FCM HUD Mod` ZIP as `main` (still a separate, opt-in installation); these normal replacement paths archive their previous files
 2. Calls `publish-nexus.ps1` for the Windows ZIP as `main` with `archive_existing_file: false` when the canonical release path enables the support-review upload
 3. Implements the 6-step Nexus v3 Upload API: open multipart session → upload chunks to S3 → complete S3 multipart → finalise → poll for `available` state → attach the new file with the requested archive behavior
 4. Uploads the Windows `.exe` to VirusTotal and pushes the permalink to `/admin/virustotal-url`
@@ -403,7 +403,7 @@ Required env vars (set as Windows USER env vars):
 - `NEXUS_FILE_GROUP_ID_WINDOWS` — required by the canonical release path unless `-SkipWindowsNexus` is used; required by the standalone wrapper only with `-PublishWindowsForReview`
 - `NEXUS_FILE_GROUP_ID_LINUX`
 - `NEXUS_FILE_GROUP_ID_LINUX_DEB` — the separate Linux `.deb` file group
-- `NEXUS_FILE_GROUP_ID_HUD` — the separate optional HUD file group on the same Nexus mod page
+- `NEXUS_FILE_GROUP_ID_HUD` — the separate HUD file group in Main Files on the same Nexus mod page
 - `VT_API_KEY`
 - `PROD_ADMIN_RELEASE_TOKEN`
 

@@ -31,7 +31,7 @@ def main() -> None:
         '$hudZip   = Join-Path $DistDir "FCM HUD Mod-$hudVersion (PROD).zip"',
         '@{ Name = "HUD";',
         "NexusVersion = $hudVersion",
-        'Category = "optional"',
+        'NexusVersion = $hudVersion; Category = "main"; ArchiveExisting = $true',
         "FileCategory  = $p.Category",
         '$linuxDeb = Join-Path $DistDir "Fallout Chat Mod-$Version.deb"',
         '@{ Name = "Linux .deb";',
