@@ -52,7 +52,7 @@ def stamp_configs(target: str, chat_ini: str, widget_ini: str) -> tuple[str, str
     )
 
 
-def install_instructions(target: str, provider: str = "zfe") -> str:
+def install_instructions(target: str, provider: str = "unified") -> str:
     config = TARGETS[target]
     version = widget_version()
     provider_label = "xScal" if provider == "xscal" else "ZFE"
@@ -70,7 +70,22 @@ def install_instructions(target: str, provider: str = "zfe") -> str:
         "The ZFE TextChat fragment supplies the relay endpoint and OpenChatKey. Keep\n"
         "   FCMChat.ini openKey aligned with that key and any Data/configuration/zfe.ini override."
     )
-    setup_files = "   Enable-xScal-Chat.cmd\n   Enable-xScal-Chat.ps1\n" if provider == "xscal" else ""
+    if provider == "unified":
+        provider_label = "ZFE or xScal"
+        config_file = "examples/ZFE/FCMChatWidget.ini.example\n   xscal.ini.example"
+        provider_setup = (
+            "Choose ONE installed extender; the widget detects it automatically.\n"
+            "   ZFE: copy examples/ZFE/FCMChatWidget.ini.example to\n"
+            "   Data/ZFE/TextChat/fragments/FCMChatWidget.ini. Create that folder if needed.\n"
+            "   Keep OpenChatKey aligned with Data/FCMChat.ini openKey.\n"
+            "   xScal: do NOT install the ZFE example or create ZFE folders. On Windows,\n"
+            "   run Enable-xScal-Chat.cmd beside Fallout76.exe. It backs up xscal.ini,\n"
+            "   sets [Chat] enabled=true and relayEndpoint, and preserves other settings.\n"
+            "   On Linux/Proton, merge xscal.ini.example into the EXISTING [Chat] section\n"
+            "   of xscal.ini. Do not replace the entire file or add a duplicate section.\n"
+            "   The example alone does not enable xScal chat; apply these settings."
+        )
+    setup_files = "   Enable-xScal-Chat.cmd\n   Enable-xScal-Chat.ps1\n" if provider in ("xscal", "unified") else ""
     return f"""Fallout Chat Mod - optional in-game HUD chat ({config['label']})
 
 FCMChatWidget version: {version}
@@ -78,7 +93,7 @@ FCMChatWidget version: {version}
 This archive is the explicit opt-in in-game HUD-mod track. It is separate from
 the desktop overlay. It connects to {config['label'].lower()} through ZFE chat.v1
 or xScal chatInterface, selected automatically. The BA2 is identical for both providers.
-This package contains setup files for {provider_label} only. Install {provider_label} and HUDModLoader.
+This package contains configuration examples for {provider_label}. Install ONE extender and HUDModLoader.
 On first subscribe, both providers receive the same complete bounded history: up to
 15 recent messages for each static channel and up to 50 messages from the current
 server room (125 events total). The native poll limit is 64. xScal's asynchronous
@@ -176,9 +191,9 @@ def xscal_config_example(target: str) -> str:
     )
 
 
-def build_package(target: str, output: Path, provider: str = "zfe") -> None:
-    if provider not in ("zfe", "xscal"):
-        raise ValueError("provider must be zfe or xscal")
+def build_package(target: str, output: Path, provider: str = "unified") -> None:
+    if provider not in ("zfe", "xscal", "unified"):
+        raise ValueError("provider must be unified, zfe or xscal")
     version = widget_version()
     widget_artifact = ROOT / "FCMChatWidget.ba2"
     if version.encode("ascii") not in widget_artifact.read_bytes():
@@ -250,7 +265,7 @@ def build_package(target: str, output: Path, provider: str = "zfe") -> None:
             "sResourceArchive2List=HUDModLoader.ba2,FCMChatWidget.ba2\n",
         )
         archive.writestr("FCMChatWidget.provider.txt", provider + "\n")
-        if provider == "xscal":
+        if provider in ("xscal", "unified"):
             archive.writestr("xscal.ini.example", xscal_config_example(target))
             setup = (ROOT / "Enable-xScal-Chat.ps1").read_text(encoding="ascii")
             archive.writestr("Enable-xScal-Chat.ps1", setup.replace("@@FCM_RELAY_ENDPOINT@@", TARGETS[target]["endpoint"]))
@@ -261,6 +276,8 @@ def build_package(target: str, output: Path, provider: str = "zfe") -> None:
         archive.writestr("Data/FCMChat.ini", chat_ini)
         if provider == "zfe":
             archive.writestr("Data/ZFE/TextChat/fragments/FCMChatWidget.ini", widget_ini)
+        if provider == "unified":
+            archive.writestr("examples/ZFE/FCMChatWidget.ini.example", widget_ini)
         # This is a user-applied append snippet, not a file to extract over the
         # user's existing HUDModLoader registry. Keeping it at the archive root
         # makes accidental overwrite impossible.
@@ -273,8 +290,8 @@ def build_package(target: str, output: Path, provider: str = "zfe") -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--provider", choices=["zfe", "xscal"], default="zfe",
-                        help="provider-specific setup files; the auto-detecting BA2 is shared")
+    parser.add_argument("--provider", choices=["unified", "zfe", "xscal"], default="unified",
+                        help="one shared BA2 and both extender examples by default; legacy provider-only packages optional")
     parser.add_argument("--target", choices=sorted(TARGETS))
     parser.add_argument("--output", type=Path)
     parser.add_argument(

@@ -28,7 +28,7 @@ def main() -> None:
         "NEXUS_FILE_GROUP_ID_LINUX_DEB",
         "NEXUS_FILE_GROUP_ID_HUD",
         "$hudVersion = (& $pythonCommand.Source $hudPackage --print-version).Trim()",
-        '$hudZip   = Join-Path $DistDir "ZFE FCM HUD Mod-$hudVersion (PROD).zip"',
+        '$hudZip   = Join-Path $DistDir "FCM HUD Mod-$hudVersion (PROD).zip"',
         '@{ Name = "HUD";',
         "NexusVersion = $hudVersion",
         'Category = "optional"',
