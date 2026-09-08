@@ -172,17 +172,17 @@ envelope only to v2.10.16+; older widgets receive no envelope. The relay records
 beside a short-lived one-way token digest in Redis so separate connect and subscribe sockets use
 the same capability decision. `tag` and `starColor` are already validated by the cosmetics
 service, and `supporterStar` is derived only from an active Supporter or Overseer entitlement.
-Widget v2.10.65 retains native HTML wrapping and places the vector supporter star using the
-first author character's `getCharBoundaries()` rectangle plus the text field's row-local offset.
-The star's own vector bounds are centered on that rectangle; the entire multiline row height is
-not used. This measures the glyph advance box, not exact ink extents. Channel and message fields
-remain siblings in the row, so the feed clip moves them together. Narrow layouts move the name
-and star below the channel with a reserved marker gap.
+The widget uses one full-width HTML field for the channel tag, author, and body. Continuations
+return under the channel tag and reflow with the current HUD width. An inline non-breaking-space
+slot reserves room for the vector supporter star immediately before the author. First-author
+`getCharBoundaries()` and vector bounds center it in row coordinates (glyph advance bounds,
+not ink extents). Missing or inconsistent slot bounds hide the optional star safely.
 
 The HUD now accepts a validated six-digit `nameColor` from server-resolved cosmetics. It travels
 through live/history/ACK projections and the native-known carrier as `n=%23RRGGBB`; old widgets
-ignore that new key. The widget applies it to names/custom tags and defaults to its theme color
-when absent or invalid. Animated effects remain outside this HUD extension.
+ignore that new key. The widget applies it only to author names; message text, punctuation, and
+custom tags retain the standard text color. Missing or invalid name colors default to the
+configured sender color. Animated effects remain outside this HUD extension.
 
 A self-authored in-game message creates one
 canonical local send transaction before the synchronous native send RPC runs, so a slow TLS/socket

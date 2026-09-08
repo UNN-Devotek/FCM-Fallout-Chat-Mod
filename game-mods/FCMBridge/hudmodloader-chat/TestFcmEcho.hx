@@ -73,23 +73,15 @@ class TestFcmEcho {
         check("a stable live event can complete a row before its ACK",
             preAckDecision.recordIndex == 9 && preAckDecision.mode == "legacy-name");
 
-        var placement = FcmStarLayout.row(74.0, 18.0, 13.0, 5.0, 4.0, true, 2.0);
-        check("star starts after the measured channel field plus the visual nudge", placement.markerX == 79.0);
-        check("star is vertically centered in the author line plus the visual nudge", placement.markerY == 4.5);
-        check("message content starts after the reserved star slot", placement.contentX == 96.0);
-
-        var wide = FcmStarLayout.content(600, placement.contentX, 14);
-        check("wrapped text retains the channel/star hanging indent", wide.x == 96 && wide.width == 504 && wide.y == 0);
-        var narrow = FcmStarLayout.content(130, placement.contentX, 14);
-        check("narrow text moves below markers within the box", narrow.x == 0 && narrow.width == 130 && narrow.y == 22);
-        var resized = FcmStarLayout.content(400, placement.contentX, 14);
-        check("resize changes the native wrapping width", resized.width == 304 && resized.x + resized.width == 400);
+        check("inline space slot rounds up to leave room for the marker gap", FcmStarLayout.markerSpaces(13, 4, 6, 14) == 3);
+        check("space slot grows with the rendered marker", FcmStarLayout.markerSpaces(16, 4, 3, 20) == 7);
+        check("missing font metrics have a bounded fallback", FcmStarLayout.markerSpaces(13, 4, 0, 14) == 5);
+        check("non-finite font metrics have a bounded fallback", FcmStarLayout.markerSpaces(13, 4, Math.NaN, 14) == 5);
+        check("tiny font advance cannot produce an unbounded prefix", FcmStarLayout.markerSpaces(16, 4, 0.001, 14) == 64);
         check("star centers its actual vector bounds on the first author glyph",
             FcmStarLayout.alignMarker(5,18,0,12) == 8);
         check("wrapped row height does not affect marker centering",
             FcmStarLayout.alignMarker(27,18,1,12) == 29);
-        var narrowStar = FcmStarLayout.content(130,96,14,17);
-        check("narrow layout reserves the star beside the name", narrowStar.x == 17 && narrowStar.width == 113);
         if (failures > 0) Sys.exit(1);
     }
 }

@@ -249,3 +249,6 @@ and selects the package relay endpoint without replacing unrelated settings.
 Linux/Proton users should merge the example's `enabled=true` and `relayEndpoint`
 into the existing `[Chat]` section manually. Merely extracting the BA2 or the INI
 example does not enable chat. ZFE packages contain neither this helper nor xScal settings.
+
+For the native HUD outbox protocol, cross-instance deduplication and delivery limits, see
+[HUD send receipts and retry safety](hud-send-retries.md).
