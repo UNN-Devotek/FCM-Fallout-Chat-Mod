@@ -453,3 +453,22 @@ backend relay tests listed in
 Before a release, validate in game that the tab row is single-rendered after a
 world transition, a message with JSON-looking text does not break later events,
 and the reconnect state recovers after a temporary relay outage.
+
+
+## Device HUD geometry (v2.10.61)
+
+Linked, non-banned/non-muted relay clients may send on channel `server`:
+`FCMCTL/1/LAYOUT/GET;requestId` or `FCMCTL/1/LAYOUT/SET;requestId;json`.
+The JSON has only integer `x`, `y`, `width`, `height` within the HUD's 1920x1080
+coordinate system (minimum 200x120). Payloads are capped at 300 characters and
+share the authenticated control rate limit. Invalid layout controls fail before
+chat ingestion. The actor comes exclusively from the verified token.
+
+Geometry lives on the active `hud_pairing_tokens.hud_layout` JSONB field, so it
+survives world changes and game restarts and remains separate for each device.
+Replies use private system events `FCMLAYOUT/1;requestId;json` (`null` when absent),
+forwarded only to subscribers for that relay identity, including across replicas.
+They are never saved as messages or bridged to Discord. ZFE's local settings store
+is unchanged. Apply the idempotent migration before deploying the backend that advertises layout support.
+
+The HUD sends layout controls only when `getAuthState.permissions.canSaveHudLayout` is true. Older relays omit this capability, so wrapping remains available while remote geometry persistence stays disabled. The extender must preserve this permission in its auth response.
