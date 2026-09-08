@@ -1,9 +1,33 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.60. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.65. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
+
+v2.10.64 uses native multiline HTML TextFields with word wrapping and automatic height.
+The field width is the current inner message width; auto-size owns the height, and no later
+manual height assignment clips wrapped lines. Channel colors, author/custom-tag styling,
+and vector supporter stars remain in their original row-local layout. Very narrow layouts
+move the message below the channel and star. Resizing rebuilds fields at the new width.
+The outer feed rectangle clips the scrolling list, not individual message continuations.
+
+xScal position/size now persist per authenticated relay device in Postgres
+`hud_pairing_tokens.hud_layout`, because xScal does not implement ZFE storage commands.
+The private `FCMCTL/1/LAYOUT/GET;requestId` and `SET;requestId;json` controls travel through
+its sanctioned chat bridge. `FCMLAYOUT/1;requestId;json` replies are consumed internally,
+never displayed as chat. Restore/save requests retry at most once per 10 seconds; a newer
+local move invalidates older replies. Desktop and laptop tokens keep separate layouts.
+ZFE continues using vendor-scoped local storage; the packaged link URL is preserved.
+Only geometry (x/y/width/height) is stored remotely; other xScal customizations remain
+session-only. Relinking with a new device token starts with packaged defaults.
+
+Deploy the matching backend and idempotent migration to enable xScal geometry persistence.
+The HUD requires `getAuthState.permissions.canSaveHudLayout=true` before sending layout
+controls; on older backends, wrapping works but remote geometry persistence stays disabled.
+In-game checks still required: both extenders, long/short messages, narrow/wide resizing,
+world leave/join, game restart, and separate desktop/laptop geometry. Compiling and unit
+tests are not proof of a successful Fallout GFx render or native round-trip.
 
 v2.10.60 updates the unlinked instructions to offer Steam or Discord.
 
@@ -95,8 +119,8 @@ connected, later HUD reads update local identity state only; they never issue a 
 `chat.v1.connect`, and empty reads do not erase a known name.
 
 The HUD renders the server-validated channel and identity tags plus an optional supporter marker.
-The marker is a five-point vector `Shape` in the same row `Sprite` as two text fields: one for the
-channel tag and one for the hanging message content. The row measures the channel field, reserves
+The marker is a five-point vector `Shape` in the same row `Sprite` as the channel tag and the individually positioned
+message-line text fields. The row measures the channel field, reserves
 the marker slot, and places the marker 5px after the complete channel tag, vertically centered
 with a 2px visual down-nudge in the first message line. It never uses `getCharBoundaries()`, document indices, or
 global/local transforms. This avoids the Scaleform mixed-font coordinate drift that previously put
@@ -525,3 +549,31 @@ If `xscal.ini` is absent, create it beside `Fallout76.exe`; otherwise preserve e
 sections and settings. ZFE users copy the complete example into the active fragment
 path. Keep these steps aligned with the website's `HudManualInstall.tsx` and the Nexus
 copy in `docs/marketing/nexus-description.bbcode`.
+
+The SWF build forces `-D haxeJSON` so layout serialization uses bundled Haxe code, not the optional Flash Player native `JSON` class. Render failures log a bounded stage label without message contents.
+
+Runtime logs for 2.10.62 failed at `wrap-ranges`; 2.10.63 failed at `build-row` after
+inlining. This identifies the custom wrapping path as incompatible, but does not identify
+the exact missing runtime class. 2.10.64 removes that path and the TextLineMetrics return-type
+dependency, using native HTML wrapping/auto-size instead. The gated plain-text fallback remains
+an emergency path, not the normal styled presentation. In-game confirmation is still required.
+
+Research references: [Scaleform text sizing](https://help.autodesk.com/cloudhelp/ENU/Scaleform-Help/scaleform_help/as2_reference/textfield_extensions/text_size.html),
+[Scaleform AS3 text area](https://help.autodesk.com/cloudhelp/ENU/Scaleform-Help/scaleform_help/clik/clik_as3_user_guide/prebuilt_components/basic_button/textarea.html),
+and [TextField formatting](https://airsdk.dev/docs/development/text/using-the-textfield-class/formatting-text).
+These document API behavior, not Fallout runtime certification. Local FO76 UI artifacts confirm
+use of TextField auto-size; no third-party source or assets were incorporated.
+
+## v2.10.65 identity styling
+
+Native auto-size/wrapping remains unchanged from the in-game-confirmed 2.10.64 build.
+Stars now center their actual vector bounds on the first author character's layout rectangle,
+translated by the message field's row-local position. Narrow layouts reserve a star slot beside
+the name below the channel. This removes the generic sample-height/2px-nudge alignment from the
+normal path. Tests cover marker bounds, row offsets, and narrow widths; exact game alignment
+still needs visual confirmation.
+
+The backend carries the user's resolved solid name color through `FCMHUD/1;n=...` as well as
+`nameColor`, validated as six hexadecimal digits. Live/history rows and send ACKs share that
+transport; optimistic rows reuse the latest authoritative local color. Deploy the corresponding
+backend projection to enable chosen colors in Prod. Missing colors use the configured theme.

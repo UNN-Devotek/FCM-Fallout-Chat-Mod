@@ -2,7 +2,7 @@
  * The small HUD projection understood by the in-game HUD widget.
  *
  * The web clients receive the complete cosmetics object. The HUD only needs the
- * validated custom tag and the immutable supporter marker, so keeping this
+ * validated name color, custom tag, and immutable supporter marker, so keeping this
  * projection explicit prevents accidental exposure of unsupported effects or
  * arbitrary badge text on the Scaleform surface.
  */
@@ -11,6 +11,7 @@ export interface RelayHudCosmetics {
   tag?: string;
   supporterStar?: true;
   starColor?: string;
+  nameColor?: string;
 }
 
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
@@ -19,6 +20,7 @@ export const HUD_COSMETICS_TRANSPORT_PREFIX = 'FCMHUD/1;';
 /** Project server-resolved cosmetics into the additive chat.v1 HUD fields. */
 export function relayHudCosmetics(source: Record<string, unknown>): RelayHudCosmetics {
   const result: RelayHudCosmetics = {};
+  if (typeof source.nameColor === 'string' && HEX_COLOR.test(source.nameColor)) result.nameColor = source.nameColor;
   if (typeof source.tag === 'string' && source.tag.trim()) {
     result.tag = source.tag;
   }
@@ -40,6 +42,7 @@ export function withoutRelayHudCosmetics<T extends Record<string, unknown>>(even
   delete next.tag;
   delete next.supporterStar;
   delete next.starColor;
+  delete next.nameColor;
   return next as T;
 }
 
@@ -63,6 +66,7 @@ export function relayHudCosmeticTransport(
   if (stableMessageId && stableMessageId.length <= 128) {
     fields.push(`m=${encodeURIComponent(stableMessageId)}`);
   }
+  if (cosmetics.nameColor && HEX_COLOR.test(cosmetics.nameColor)) fields.push(`n=${encodeURIComponent(cosmetics.nameColor)}`);
   if (cosmetics.supporterStar) fields.push('s=1');
   if (cosmetics.starColor && HEX_COLOR.test(cosmetics.starColor)) {
     fields.push(`c=${encodeURIComponent(cosmetics.starColor)}`);

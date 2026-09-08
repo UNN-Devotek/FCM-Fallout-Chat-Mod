@@ -44,6 +44,8 @@ class TestFcmConfig {
         eqb("HUD transport recognizes prefix", FcmConfig.hudTransportHasStar(hudWire), true);
         eqs("HUD transport decodes tag", FcmConfig.hudTransportTag(hudWire), "X;Y");
         eqs("HUD transport validates color", FcmConfig.hudTransportStarColor(hudWire), "#FD4DA6");
+        eqs("HUD name color carrier", FcmConfig.hudTransportNameColor("FCMHUD/1;n=%23FF8800"), "#FF8800");
+        eqs("HUD rejects invalid name color", FcmConfig.hudTransportNameColor("FCMHUD/1;n=url%28evil%29"), "");
         eqb("HUD transport rejects ordinary target", FcmConfig.hudTransportHasStar("user_123"), false);
         eqs("HUD transport rejects invalid color",
             FcmConfig.hudTransportStarColor("FCMHUD/1;c=url%28evil%29"), "");

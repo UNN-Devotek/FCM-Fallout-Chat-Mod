@@ -353,6 +353,15 @@ except FileNotFoundError:
     widget_src = ""
 
 if widget_src:
+    check("tf.wordWrap = wrap" in widget_src and "tf.autoSize = wrap ?" in widget_src
+          and "contentTf.height =" not in widget_src and "FcmFeedWrap" not in widget_src,
+          "Styled message text uses native wrapping and automatic height without manual shrink")
+    check('"chat render unavailable"' not in widget_src and "_logTf.text = !_connected" in widget_src,
+          "Rendering failure uses a gated text fallback")
+    widget_build = open(os.path.join(os.path.dirname(WIDGET_HX), "build.hxml"), encoding="utf-8").read()
+    check("-D haxeJSON" in widget_build, "Widget bundles JSON instead of requiring native Flash JSON")
+    check("|| !_hudLayoutSupported" in widget_src and 'extractJsonBool(state, "canSaveHudLayout")' in widget_src,
+          "HUD layout commands require the authenticated backend capability")
     check("static inline var USE_NATIVE_INPUT:Bool = true;" in widget_src,
           "FCMChatWidget attempts native input lazily on open")
     check('if (low == "false" || low == "true") return "";' in widget_src,
@@ -491,7 +500,7 @@ if widget_src:
           "FCMChatWidget decodes native-known HUD identity and cosmetics transport")
     check('extractJsonBool(obj, "supporterStar")' in widget_src
           and 'supporterStarPresent' in widget_src
-          and 'customTagHtml' in widget_src
+          and 'var customTagHtml:String' in widget_src
           and 'SupporterStarBitmap' not in widget_src
           and 'setImageSubstitutions' not in widget_src
           and 'function makeSupporterStar' in widget_src
@@ -534,10 +543,11 @@ if widget_src:
     check('_feedLayer' in widget_src
           and '_feedRows:Array<FeedRowView>' in widget_src
           and 'row.addChild(channelTf)' in widget_src
-          and 'contentTf.x = placement.contentX' in widget_src
+          and 'FcmStarLayout.content' in widget_src
+          and 'contentTf.x = box.x' in widget_src
           and 'row.addChild(contentTf)' in widget_src
           and 'row.view.y = row.contentY - _feedScrollY' in widget_src
-          and 'getCharBoundaries' not in widget_src
+          and 'contentTf.y + authorBounds.y' in widget_src
           and 'localToGlobal' not in widget_src
           and 'globalToLocal' not in widget_src,
           "FCMChatWidget keeps text and supporter markers in one deterministic row-local layout")

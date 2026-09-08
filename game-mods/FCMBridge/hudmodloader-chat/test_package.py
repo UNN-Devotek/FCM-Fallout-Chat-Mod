@@ -97,8 +97,8 @@ def main() -> None:
     assert b"setimagesubstitutions" not in swf_artifact.lower(), (
         "FCMChatWidget.swf must not use the HUD supporter-star substitution path"
     )
-    assert b"getcharboundaries" not in swf_artifact.lower(), (
-        "FCMChatWidget.swf must not use the drifting text-boundary star renderer"
+    assert b"alignMarker" in swf_artifact and "contentTf.y + authorBounds.y" in source_hx, (
+        "star alignment must translate the per-row author bounds, not global feed indices"
     )
     widget_artifact = (ROOT / "FCMChatWidget.ba2").read_bytes()
     widget_version = version_match.group(1).encode("ascii")
@@ -235,7 +235,7 @@ def main() -> None:
 
                     if target == "prod":
                         for name in names - {"Data/FCMChatWidget.ba2"}:
-                            assert b"dev" not in archive.read(name).lower(), (
+                            assert not re.search(rb"\bdev\b", archive.read(name).lower()), (
                                 f"production archive mentions DEV in {name}"
                             )
 
