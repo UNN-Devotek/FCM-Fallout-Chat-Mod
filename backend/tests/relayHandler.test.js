@@ -2426,6 +2426,30 @@ describe('server chat (worldId-scoped room)', () => {
   const sendJoin  = (user, worldId) => sendCtrl(user, makeJoinBody(worldId));
   const sendLeave = (user)          => sendCtrl(user, makeLeaveBody());
 
+  test('HUD layout survives reconnect, stays device-scoped, and never becomes chat', async () => {
+    const a = await registerAndLink('LayoutA', 'fcm-layout-shared');
+    const b = await registerAndLink('LayoutB', 'fcm-layout-shared');
+    const layout = { x: 40, y: 80, width: 600, height: 300 };
+    const ingest = require('../src/services/ingestMessage').ingestMessage;
+    ingest.mockClear();
+    expect(await sendCtrl(a, 'FCMCTL/1/LAYOUT/SET;save-1;' + JSON.stringify(layout))).toMatchObject({ success: true });
+    expect(_tokenRows.find(row => row.userId === a.rawId).hudLayout).toEqual(layout);
+    expect(_tokenRows.find(row => row.userId === b.rawId).hudLayout).toBeUndefined();
+    expect(await sendCtrl(a, 'FCMCTL/1/LAYOUT/SET;bad;{"userId":"other"}')).toMatchObject({ success: false });
+    const own = await connectWs(srv.port);
+    const other = await connectWs(srv.port);
+    await waitForMsg(own.ws, own.msgs, () => send(own.ws, { op: 'subscribe', token: a.token, lastEventId: 0 }));
+    await waitForMsg(other.ws, other.msgs, () => send(other.ws, { op: 'subscribe', token: b.token, lastEventId: 0 }));
+    expect(await sendCtrl(a, 'FCMCTL/1/LAYOUT/GET;read-2')).toMatchObject({ success: true });
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const notices = own.msgs.filter(m => m.event?.body?.startsWith('FCMLAYOUT/1;read-2;'));
+    expect(notices).toHaveLength(1);
+    expect(notices[0].event.body).toBe('FCMLAYOUT/1;read-2;' + JSON.stringify(layout));
+    expect(other.msgs.some(m => m.event?.body?.startsWith('FCMLAYOUT/1;'))).toBe(false);
+    expect(ingest).not.toHaveBeenCalled();
+    own.ws.close(); other.ws.close();
+  });
+
   test('server send with no active world → invalid_channel', async () => {
     const a = await registerAndLink('Nomad', 'fcm-nomad');
     const { ws, msgs } = await connectWs(srv.port);
@@ -3113,7 +3137,7 @@ describe('auth gate integration', () => {
     expect(res).toMatchObject({
       success:     true,
       state:       'limited',
-      permissions: { canSend: false, canReport: false },
+      permissions: { canSend: false, canReport: false, canSaveHudLayout: false },
     });
     expect(typeof res.userId).toBe('string');
     ws.close();
@@ -3142,7 +3166,7 @@ describe('auth gate integration', () => {
       success:     true,
       state:       'authenticated',
       linkedUserId: 'fcm-user-linked-xyz',
-      permissions: { canSend: true, canReport: true },
+      permissions: { canSend: true, canReport: true, canSaveHudLayout: true },
     });
     ws.close();
   });
