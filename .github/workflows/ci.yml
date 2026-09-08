@@ -353,6 +353,9 @@ jobs:
       - name: Run FcmEcho unit tests
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe test-echo.hxml
+      - name: Run HUD reconnect outbox tests
+        working-directory: game-mods/FCMBridge/hudmodloader-chat
+        run: haxe test-outbox.hxml
       - name: Test HUD history recovery and world transitions
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe test-history.hxml

@@ -19,6 +19,8 @@ the exact commands you run locally. Deeper material lives in sibling docs:
   and the two-runner setup (Jest + node:test).
 - **[ci-cd-pipeline.md](ci-cd-pipeline.md)** — the GitHub Actions workflow (`ci.yml`), the job
   graph, branch protection, the hermetic mock relay, and the coverage rollout.
+- **[hud-recovery.md](hud-recovery.md)** — in-game wrapping, provider reconnect, queued-send,
+  and duplicate-delivery checks for xScal and ZFE.
 
 > This is a living plan. Several units cited below are **not yet directly testable** because the
 > code has no `module.exports` / named exports or runs side effects at import time. Those are

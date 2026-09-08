@@ -71,6 +71,7 @@ import {
   type ServerRoomEvent,
 } from './serverChat';
 import type { RelayToken } from './tokenService';
+import { parseHudSendCarrier, claimHudSend, hudSendReceiptIdentity, hudSendResponse, HUD_SEND_RECEIPT_SECONDS } from './hudSendReceipt';
 import { HUD_LAYOUT_CONTROL, HUD_LAYOUT_EVENT, parseHudLayout, parseHudLayoutControl, readHudLayout, writeHudLayout } from './hudLayoutService';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -279,7 +280,7 @@ async function pushLinkCompleteLocal(relayUserId: string): Promise<number> {
  *   slash_ignored       — a "/command" was typed in-game (not supported there)
  *   invalid_action      — unknown moderationAction action
  */
-function errEnvelope(code: string, message: string): object {
+function errEnvelope(code: string, message: string): Record<string, unknown> {
   return { success: false, error: { code, message } };
 }
 
@@ -594,6 +595,27 @@ async function pushHudLayoutLocal(userId: string, requestId: string, layout: unk
   }
 }
 
+/** Async native send workers may discard RPC responses; deliver receipts privately. */
+async function pushHudSendReceiptLocal(userId: string, accountId: string | null, response: Record<string, unknown>): Promise<void> {
+  const targets = [...subscribers].filter(sub => sub.userId === userId && sub.linkedUserId === accountId);
+  if (targets.length === 0) return;
+  const cursor = await nextRelaySeq();
+  const event = { id: cursor, kind: 'chat.message', channel: 'system', senderUserId: 'system',
+    senderDisplayName: 'FCM', targetUserId: response.targetUserId ?? '', createdAt: new Date().toISOString(),
+    body: 'FCMACK/1;' + encodeURIComponent(JSON.stringify(response)) };
+  for (const sub of targets) {
+    const frame = JSON.stringify({ op: 'event', cursor, event });
+    sendSubscriberFrame(sub, frame, cursor);
+  }
+}
+
+async function publishHudSendReceipt(userId: string, accountId: string | null, response: Record<string, unknown>): Promise<void> {
+  await pushHudSendReceiptLocal(userId, accountId, response);
+  const redis = await getRedisClient();
+  await redis.publish(RELAY_CONTROL_CHANNEL, JSON.stringify({ kind: 'hud-send-receipt',
+    relayUserId: userId, linkedUserId: accountId, response, sourceInstanceId: relayInstanceId }));
+}
+
 // Redis pub/sub listener — initialised once per process.
 let pubSubReady = false;
 
@@ -767,6 +789,15 @@ async function ensurePubSub(): Promise<void> {
       if (parsed.sourceInstanceId !== undefined
         && (typeof parsed.sourceInstanceId !== 'string' || !UUID_RE.test(parsed.sourceInstanceId))) return;
       if (parsed.sourceInstanceId === relayInstanceId) return;
+
+      if (parsed.kind === 'hud-send-receipt' && typeof parsed.relayUserId === 'string'
+        && /^user_[0-9a-f]{32}$/i.test(parsed.relayUserId)
+        && (typeof parsed.linkedUserId === 'string' || parsed.linkedUserId === null)
+        && parsed.response && typeof parsed.response === 'object' && !Array.isArray(parsed.response)) {
+        pushHudSendReceiptLocal(parsed.relayUserId, parsed.linkedUserId, parsed.response as Record<string, unknown>)
+          .catch(err => logger.warn({ err }, '[relayHandler] HUD receipt delivery failed'));
+        return;
+      }
 
       if (parsed.kind === 'hud-layout' && typeof parsed.relayUserId === 'string'
         && /^user_[0-9a-f]{32}$/i.test(parsed.relayUserId)
@@ -995,6 +1026,7 @@ async function handleGetAuthState(ws: WebSocket, frame: Record<string, unknown>)
     permissions: {
       canSend:   identity.isLinked,
       canSaveHudLayout: identity.isLinked,
+      canRetryHudSend: identity.isLinked,
       canReport: identity.isLinked,
       canDeleteMessage: identity.isLinked && privileged,
       canKickUser:      identity.isLinked && privileged,
@@ -1022,10 +1054,28 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     return;
   }
 
+  // ZFE mangles mod-supplied string values on the way out (see wireSanitize.ts). Detect that
+  // on the CHANNEL, where a repair is positively verifiable against the known slug set, and
+  // only then repair this frame's body. A body must never be de-interleaved on its own
+  // evidence: a legitimate `au0000bu0000c` matches the pattern and would be rewritten.
+  const channelRepair = repairChannel(frame.channel, (s) => ALL_SLUGS.includes(s));
+  const slug = channelRepair.slug;
+  const body = repairBody(frame.body, channelRepair.mangled);
+  const sessionTarget = typeof frame.targetUserId === 'string' ? repairBody(frame.targetUserId, channelRepair.mangled) : '';
+  const outbox = parseHudSendCarrier(sessionTarget);
+  const deliver = async (response: Record<string, unknown>): Promise<void> => {
+    const result = outbox ? hudSendResponse(response, outbox.id) : response;
+    send(ws, result);
+    if (outbox) {
+      try { await publishHudSendReceipt(identity.userId, identity.linkedUserId, result); }
+      catch (err) { logger.warn({ err }, '[relayHandler] private HUD send receipt unavailable; same-ID retry can replay it'); }
+    }
+  };
+  try {
   // Auth gate: limited identities cannot send (check before any user lookup).
   // We check this BEFORE ban/mute to avoid unnecessary DB queries for limited users.
   if (!identity.isLinked) {
-    send(ws, errEnvelope('permission_denied', `Account not linked — complete the link flow at ${LINK_URL}`));
+    await deliver(errEnvelope('permission_denied', `Account not linked — complete the link flow at ${LINK_URL}`));
     return;
   }
 
@@ -1036,34 +1086,26 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     select: { isBanned: true, isMuted: true, kickedUntil: true, discordId: true },
   });
   if (user?.isBanned) {
-    send(ws, errEnvelope('user_banned', 'This account is banned'));
+    await deliver(errEnvelope('user_banned', 'This account is banned'));
     return;
   }
   if (user?.kickedUntil && new Date(user.kickedUntil).getTime() > Date.now()) {
-    send(ws, errEnvelope('user_kicked', 'This account is temporarily kicked'));
+    await deliver(errEnvelope('user_kicked', 'This account is temporarily kicked'));
     return;
   }
   if (user?.isMuted) {
-    send(ws, errEnvelope('user_muted', 'You are currently muted'));
+    await deliver(errEnvelope('user_muted', 'You are currently muted'));
     return;
   }
 
-  // ZFE mangles mod-supplied string values on the way out (see wireSanitize.ts). Detect that
-  // on the CHANNEL, where a repair is positively verifiable against the known slug set, and
-  // only then repair this frame's body. A body must never be de-interleaved on its own
-  // evidence: a legitimate `au0000bu0000c` matches the pattern and would be rewritten.
-  const channelRepair = repairChannel(frame.channel, (s) => ALL_SLUGS.includes(s));
-  const slug = channelRepair.slug;
-  const body = repairBody(frame.body, channelRepair.mangled);
-  const sessionTarget = typeof frame.targetUserId === 'string' ? repairBody(frame.targetUserId, channelRepair.mangled) : '';
   const sessionMatch = /^FCMSESSION\/1;([a-z0-9-]{1,64})$/.exec(sessionTarget);
   const requestId = sessionMatch?.[1] ?? '';
 
   if (slug === 'server' && body.startsWith(HUD_LAYOUT_CONTROL)) {
     const control = parseHudLayoutControl(body);
-    if (!control) { send(ws, errEnvelope('invalid_request', 'Invalid HUD layout')); return; }
+    if (!control) { await deliver(errEnvelope('invalid_request', 'Invalid HUD layout')); return; }
     if (!(await checkWorldControlRateLimit(identity.userId))) {
-      send(ws, errEnvelope('rate_limited', 'HUD settings are temporarily rate limited')); return;
+      await deliver(errEnvelope('rate_limited', 'HUD settings are temporarily rate limited')); return;
     }
     if (control.layout) await writeHudLayout(identity.userId, control.layout);
     const layout = control.layout ?? await readHudLayout(identity.userId);
@@ -1082,7 +1124,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     const worldId = parseWorldIdControl(body, identity.userId);
     if (worldId) {
       if (!(await checkWorldControlRateLimit(identity.userId))) {
-        send(ws, errEnvelope('rate_limited', 'World controls are temporarily rate limited'));
+        await deliver(errEnvelope('rate_limited', 'World controls are temporarily rate limited'));
         return;
       }
       await handleWorldJoin(identity, worldId, requestId);
@@ -1093,7 +1135,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   if (slug === 'server' && (body.startsWith(WORLD_LEAVE_SENTINEL_PREFIX) || body.startsWith(LEGACY_WORLD_LEAVE_SENTINEL_PREFIX))) {
     if (isWorldLeaveControl(body, identity.userId)) {
       if (!(await checkWorldControlRateLimit(identity.userId))) {
-        send(ws, errEnvelope('rate_limited', 'World controls are temporarily rate limited'));
+        await deliver(errEnvelope('rate_limited', 'World controls are temporarily rate limited'));
         return;
       }
       await handleWorldLeave(identity);
@@ -1105,7 +1147,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     const names = parseWorldRosterControl(body);
     if (names) {
       if (!(await checkWorldControlRateLimit(identity.userId))) {
-        send(ws, errEnvelope('rate_limited', 'World controls are temporarily rate limited'));
+        await deliver(errEnvelope('rate_limited', 'World controls are temporarily rate limited'));
         return;
       }
       await setRoster(identity.userId, identity.fo76Name, names, requestId);
@@ -1116,7 +1158,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   }
   if (slug === 'server' && body === HISTORY_RESYNC_SENTINEL) {
     if (!(await checkWorldControlRateLimit(identity.userId))) {
-      send(ws, errEnvelope('rate_limited', 'World controls are temporarily rate limited'));
+      await deliver(errEnvelope('rate_limited', 'World controls are temporarily rate limited'));
       return;
     }
     markServerHistoryResyncPending(identity.userId);
@@ -1127,7 +1169,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       await publishHistoryResync(identity.userId, relayInstanceId);
     } catch (err) {
       logger.warn({ err, userId: identity.userId }, '[relayHandler] history resync failed');
-      send(ws, errEnvelope('history_unavailable', 'Chat history is temporarily unavailable'));
+      await deliver(errEnvelope('history_unavailable', 'Chat history is temporarily unavailable'));
       return;
     }
     sendControlAck(ws);
@@ -1135,14 +1177,50 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   }
 
   if (!ALL_SLUGS.includes(slug)) {
-    send(ws, errEnvelope('invalid_channel', `Unknown channel: ${slug}`));
+    await deliver(errEnvelope('invalid_channel', `Unknown channel: ${slug}`));
     return;
   }
 
   if (body.length > 500) {
-    send(ws, errEnvelope('message_too_long', 'Message body exceeds 500 characters'));
+    await deliver(errEnvelope('message_too_long', 'Message body exceeds 500 characters'));
     return;
   }
+
+  if (sessionTarget.startsWith('FCMOUT/') && !outbox) {
+    await deliver(errEnvelope('invalid_request', 'Invalid HUD send receipt')); return;
+  }
+  if (outbox && ((slug === 'server' && !outbox.room) || (slug !== 'server' && outbox.room))) {
+    await deliver(errEnvelope('invalid_request', 'HUD send room does not match channel')); return;
+  }
+  const receiptRedis = outbox ? await getRedisClient() : null;
+  const claim = outbox && receiptRedis ? await claimHudSend(receiptRedis,
+    hudSendReceiptIdentity(identity.userId, identity.linkedUserId!, outbox, slug, body)) : null;
+  if (claim?.kind === 'replay') { await deliver(claim.response); return; }
+  if (claim?.kind === 'pending') {
+    await deliver(errEnvelope('send_in_progress', 'Previous send is still pending; retry with the same message ID')); return;
+  }
+  if (claim?.kind === 'uncertain') {
+    await deliver(errEnvelope('send_uncertain', 'Delivery could not be confirmed; check history before sending again')); return;
+  }
+  if (claim?.kind === 'conflict') {
+    await deliver(errEnvelope('send_conflict', 'Message ID was already used for different content')); return;
+  }
+  const reply = async (response: Record<string, unknown>): Promise<void> => {
+    const result = outbox ? hudSendResponse(response, outbox.id) : response;
+    if (claim?.kind === 'claimed' && receiptRedis) {
+      // Keep even failed receipts: an ID denotes one immutable attempt. Explicit
+      // rejections are safe for a client to retry under a fresh ID if appropriate.
+      const error = response.error;
+      if (error && typeof error === 'object' && 'code' in error && error.code === 'rate_limited') {
+        // Both rate-limit exits happen before any message is queued/published.
+        await receiptRedis.del(claim.key);
+      } else {
+        await receiptRedis.set(claim.key, JSON.stringify({ fingerprint: claim.fingerprint, response: result }),
+          { XX: true, EX: HUD_SEND_RECEIPT_SECONDS });
+      }
+    }
+    await deliver(response);
+  };
 
   // HUD-originated sends are the fast path for a supporter role change. Refresh
   // the linked account's Discord roles at most once per minute before either the
@@ -1169,15 +1247,15 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   if (slug === 'server') {
     const worldId = await getWorldId(identity.userId);
     if (!worldId) {
-      send(ws, errEnvelope('invalid_channel', 'No active server session — send worldId first'));
+      await reply(errEnvelope('invalid_channel', 'No active server session — send worldId first'));
       return;
     }
-    if (sessionTarget.startsWith('FCMROOM/1;') && sessionTarget.slice('FCMROOM/1;'.length) !== worldId) {
-      send(ws, errEnvelope('invalid_channel', 'Server session changed; wait for a fresh room confirmation'));
+    if ((outbox && outbox.room !== worldId) || (sessionTarget.startsWith('FCMROOM/1;') && sessionTarget.slice('FCMROOM/1;'.length) !== worldId)) {
+      await reply(errEnvelope('invalid_channel', 'Server session changed; wait for a fresh room confirmation'));
       return;
     }
     if (!(await checkServerRateLimit(identity.userId))) {
-      send(ws, errEnvelope('rate_limited', 'You are sending messages too quickly'));
+      await reply(errEnvelope('rate_limited', 'You are sending messages too quickly'));
       return;
     }
     // Automod: no channel-exemption context for the ephemeral room (channelId undefined).
@@ -1186,7 +1264,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       username: identity.fo76Name,
     });
     if (mod.block) {
-      send(ws, errEnvelope('message_blocked', 'Message blocked by the chat filter'));
+      await reply(errEnvelope('message_blocked', 'Message blocked by the chat filter'));
       return;
     }
     const relaySeq = await nextRelaySeq();
@@ -1214,14 +1292,14 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       supportsHudCosmeticsTransport,
     );
     logHudSendAckCosmetics(ack, hudCosmetics, supportsHudCosmeticsTransport);
-    send(ws, ack);
+    await reply(ack);
     return;
   }
 
   // ── Static channels (global/trade/events/raids/infests) ──
   const channelId = slugToChannelId(slug);
   if (!channelId) {
-    send(ws, errEnvelope('invalid_channel', `Channel '${slug}' is not mapped`));
+    await reply(errEnvelope('invalid_channel', `Channel '${slug}' is not mapped`));
     return;
   }
 
@@ -1264,7 +1342,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       code === 'message_blocked' ? 'Message blocked by the chat filter' :
       code === 'slash_ignored'   ? 'Slash commands are not supported in-game' :
       (result.reason ?? 'Send rejected');
-    send(ws, errEnvelope(code, msg));
+    await reply(errEnvelope(code, msg));
     return;
   }
 
@@ -1277,7 +1355,11 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     supportsHudCosmeticsTransport,
   );
   logHudSendAckCosmetics(ack, senderCosmetics, supportsHudCosmeticsTransport);
-  send(ws, ack);
+  await reply(ack);
+  } catch (err) {
+    logger.warn({ err }, '[relayHandler] HUD send failed; delivery may be uncertain');
+    await deliver(errEnvelope('internal_error', 'Send temporarily unavailable; retry with the same message ID'));
+  }
 }
 
 /**

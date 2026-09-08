@@ -37,7 +37,7 @@ function resetRedisIncrMock() {
 const redisMock = {
   incrBy: jest.fn(async (_key, count) => (_redisSeq += count)),
   get:  jest.fn().mockImplementation(async (key) => _worldStore[key] ?? null),
-  set:  jest.fn().mockImplementation(async (key, val) => { _worldStore[key] = val; return 'OK'; }),
+  set:  jest.fn().mockImplementation(async (key, val, options) => { if (options?.NX && _worldStore[key] !== undefined) return null; if (options?.XX && _worldStore[key] === undefined) return null; _worldStore[key] = val; return 'OK'; }),
   del:  jest.fn().mockImplementation(async (key)      => { delete _worldStore[key]; return 1; }),
   // relay:seq keeps its dedicated monotonic counter; all other keys get per-key counters.
   incr: jest.fn().mockImplementation(async (key) => {
@@ -740,7 +740,7 @@ describe('worldIdService', () => {
     for (const k of Object.keys(_worldStore)) delete _worldStore[k];
     jest.clearAllMocks();
     require('../src/config/redis').getRedisClient.mockResolvedValue(redisMock);
-    redisMock.set.mockImplementation(async (key, val) => { _worldStore[key] = val; return 'OK'; });
+    redisMock.set.mockImplementation(async (key, val, options) => { if (options?.NX && _worldStore[key] !== undefined) return null; if (options?.XX && _worldStore[key] === undefined) return null; _worldStore[key] = val; return 'OK'; });
     redisMock.get.mockImplementation(async (key) => _worldStore[key] ?? null);
     redisMock.del.mockImplementation(async (key) => { delete _worldStore[key]; return 1; });
   });
@@ -803,7 +803,7 @@ describe('relay WebSocket ops', () => {
     jest.clearAllMocks();
     resetRedisIncrMock();
     redisMock.get.mockImplementation(async (key) => _worldStore[key] ?? null);
-    redisMock.set.mockImplementation(async (key, val) => { _worldStore[key] = val; return 'OK'; });
+    redisMock.set.mockImplementation(async (key, val, options) => { if (options?.NX && _worldStore[key] !== undefined) return null; if (options?.XX && _worldStore[key] === undefined) return null; _worldStore[key] = val; return 'OK'; });
     require('../src/config/prisma').default.user.create.mockImplementation(async (args) => {
       const u = { id: args.data.id || 'uid-stub', ...args.data };
       _userMap[u.id] = u;
@@ -2580,6 +2580,97 @@ describe('server chat (worldId-scoped room)', () => {
     }
   });
 
+  test('HUD outbox retries replay ACK without duplicate ingestion and reject ID mutation', async () => {
+    const a = await registerAndLink('Outbox', 'fcm-outbox');
+    const ingest = require('../src/services/ingestMessage').ingestMessage;
+    ingest.mockClear();
+    async function submit(body, id = 'outbox00000000001') {
+      const { ws, msgs } = await connectWs(srv.port);
+      const res = await waitForMsg(ws, msgs, () => send(ws, { op: 'send', token: a.token,
+        channel: 'global', body, targetUserId: `FCMOUT/1;i=${id};r=` }));
+      ws.close(); return res;
+    }
+    const first = await submit('only once');
+    expect(first).toMatchObject({ success: true, targetUserId: expect.stringContaining(';q=outbox00000000001') });
+    expect(await submit('only once')).toEqual(first);
+    expect(ingest).toHaveBeenCalledTimes(1);
+    expect(await submit('changed')).toMatchObject({ error: { code: 'send_conflict' } });
+    expect(ingest).toHaveBeenCalledTimes(1);
+    ingest.mockResolvedValueOnce({ ok: false, reason: 'rate-limited' });
+    expect(await submit('try later', 'outbox00000000002')).toMatchObject({ error: { code: 'rate_limited' } });
+    expect(await submit('try later', 'outbox00000000002')).toMatchObject({ success: true });
+    ingest.mockResolvedValueOnce({ ok: false, reason: 'automod' });
+    const beforeBlocked = ingest.mock.calls.length;
+    const blocked = await submit('blocked', 'outbox00000000003');
+    expect(blocked).toMatchObject({ error: { code: 'message_blocked' } });
+    expect(await submit('blocked', 'outbox00000000003')).toEqual(blocked);
+    expect(ingest).toHaveBeenCalledTimes(beforeBlocked + 1);
+  });
+
+  test('async HUD receives success, replay and terminal failure receipts privately across replicas', async () => {
+    const a = await registerAndLink('ReceiptOwner', 'fcm-receipt-shared');
+    const b = await registerAndLink('ReceiptOtherDevice', 'fcm-receipt-shared');
+    const own = await connectWs(srv.port);
+    const other = await connectWs(srv.port);
+    await waitForMsg(own.ws, own.msgs, () => send(own.ws, { op: 'subscribe', token: a.token, lastEventId: 0 }));
+    await waitForMsg(other.ws, other.msgs, () => send(other.ws, { op: 'subscribe', token: b.token, lastEventId: 0 }));
+    async function submit(id, body = 'async delivery') {
+      const { ws, msgs } = await connectWs(srv.port);
+      const response = await waitForMsg(ws, msgs, () => send(ws, { op: 'send', token: a.token,
+        channel: 'global', body, targetUserId: `FCMOUT/1;i=${id};r=` }));
+      ws.close(); await new Promise(resolve => setTimeout(resolve, 20)); return response;
+    }
+    function receipts(connection) {
+      return connection.msgs.filter(m => m.event?.body?.startsWith('FCMACK/1;'))
+        .map(m => JSON.parse(decodeURIComponent(m.event.body.slice('FCMACK/1;'.length))));
+    }
+    try {
+      const receiptIngest = require('../src/services/ingestMessage').ingestMessage;
+      receiptIngest.mockClear();
+      const first = await submit('privatereceipt001');
+      expect(receipts(own)).toEqual([first]);
+      expect(receipts(other)).toEqual([]);
+      expect(await submit('privatereceipt001')).toEqual(first);
+      expect(receipts(own)).toEqual([first, first]);
+      const control = redisMock.publish.mock.calls.map(([channel, value]) => channel === 'relay:control' ? JSON.parse(value) : null)
+        .find(value => value?.kind === 'hud-send-receipt' && value.relayUserId === a.rawId);
+      expect(control).toMatchObject({ relayUserId: a.rawId, linkedUserId: a.fcmId });
+      await redisMock.publish('relay:control', JSON.stringify({ ...control, sourceInstanceId: '11111111-1111-4111-8111-111111111111' }));
+      await new Promise(resolve => setTimeout(resolve, 20));
+      expect(receipts(own)).toEqual([first, first, first]);
+      expect(receipts(other)).toEqual([]);
+      require('../src/services/ingestMessage').ingestMessage.mockResolvedValueOnce({ ok: false, reason: 'automod' });
+      const blocked = await submit('privatereceipt002', 'blocked');
+      expect(blocked).toMatchObject({ error: { code: 'message_blocked' }, targetUserId: 'FCMHUD/1;q=privatereceipt002' });
+      expect(receipts(own).at(-1)).toEqual(blocked);
+      expect(receiptIngest).toHaveBeenCalledTimes(2);
+      _userMap[a.fcmId].isMuted = true;
+      const muted = await submit('privatereceipt003');
+      expect(muted).toMatchObject({ error: { code: 'user_muted' }, targetUserId: 'FCMHUD/1;q=privatereceipt003' });
+      expect(receipts(own).at(-1)).toEqual(muted);
+      expect(receiptIngest).toHaveBeenCalledTimes(2);
+      expect(receipts(other)).toEqual([]);
+    } finally { own.ws.close(); other.ws.close(); }
+  });
+
+  test('HUD server retries retain old ACK but never publish a new send into a different world', async () => {
+    const a = await registerAndLink('OutboxServer', 'fcm-outbox-server');
+    await sendJoin(a, 'outbox-world-one');
+    async function submit(id) {
+      const { ws, msgs } = await connectWs(srv.port);
+      const res = await waitForMsg(ws, msgs, () => send(ws, { op: 'send', token: a.token,
+        channel: 'server', body: 'pinned world', targetUserId: `FCMOUT/1;i=${id};r=outbox-world-one` }));
+      ws.close(); return res;
+    }
+    const first = await submit('worldoutbox000001');
+    expect(first).toMatchObject({ success: true });
+    await sendJoin(a, 'outbox-world-two');
+    expect(await submit('worldoutbox000001')).toEqual(first);
+    expect(await submit('worldoutbox000002')).toMatchObject({ error: { code: 'invalid_channel' } });
+    expect(_lists['relay:serverchat:outbox-world-one']).toHaveLength(1);
+    expect(_lists['relay:serverchat:outbox-world-two'] ?? []).toHaveLength(0);
+  });
+
   test('server chat send is ephemeral — never hits ingestMessage/Postgres', async () => {
     const a = await registerAndLink('Ghost', 'fcm-ghost');
     await sendJoin(a, 'world-Z');
@@ -2963,7 +3054,7 @@ describe('auth gate integration', () => {
     _redisSeq  = 0;
     resetRedisIncrMock();
     redisMock.get.mockImplementation(async (key) => _worldStore[key] ?? null);
-    redisMock.set.mockImplementation(async (key, val) => { _worldStore[key] = val; return 'OK'; });
+    redisMock.set.mockImplementation(async (key, val, options) => { if (options?.NX && _worldStore[key] !== undefined) return null; if (options?.XX && _worldStore[key] === undefined) return null; _worldStore[key] = val; return 'OK'; });
     require('../src/config/prisma').default.user.create.mockImplementation(async (args) => {
       const u = { id: args.data.id || 'uid-stub', ...args.data };
       _userMap[u.id] = u;
@@ -3137,7 +3228,7 @@ describe('auth gate integration', () => {
     expect(res).toMatchObject({
       success:     true,
       state:       'limited',
-      permissions: { canSend: false, canReport: false, canSaveHudLayout: false },
+      permissions: { canSend: false, canReport: false, canSaveHudLayout: false, canRetryHudSend: false },
     });
     expect(typeof res.userId).toBe('string');
     ws.close();
@@ -3166,7 +3257,7 @@ describe('auth gate integration', () => {
       success:     true,
       state:       'authenticated',
       linkedUserId: 'fcm-user-linked-xyz',
-      permissions: { canSend: true, canReport: true, canSaveHudLayout: true },
+      permissions: { canSend: true, canReport: true, canSaveHudLayout: true, canRetryHudSend: true },
     });
     ws.close();
   });
