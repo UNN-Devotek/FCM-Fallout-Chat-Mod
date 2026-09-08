@@ -51,3 +51,11 @@ npx remotion still src/index.ts Header           ../admin-dashboard/public/promo
 - `OverlayWindow` chrome: 23px main tab row + 22px sub tab row = 45px total. Input bar: 32px.
   Content = H − 45 − 32.
 - Remotion Studio: `npm run studio` from `marketing/promo/`.
+
+## Nexus description
+
+[`nexus-description.bbcode`](nexus-description.bbcode) holds the approved full listing,
+including manual HUD installation for the unified ZFE/xScal archive. Keep its production
+endpoint and installation paths aligned with `HudManualInstall.tsx` and the package's
+`INSTALL.txt`. Publishing description or download updates does not require reposting a
+Discord release announcement.
