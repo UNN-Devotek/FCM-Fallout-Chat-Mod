@@ -1,16 +1,34 @@
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.65. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.66. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## What it does
 
-v2.10.64 uses native multiline HTML TextFields with word wrapping and automatic height.
-The field width is the current inner message width; auto-size owns the height, and no later
-manual height assignment clips wrapped lines. Channel colors, author/custom-tag styling,
-and vector supporter stars remain in their original row-local layout. Very narrow layouts
-move the message below the channel and star. Resizing rebuilds fields at the new width.
+The feed uses one native multiline HTML TextField per message, at the full current feed width.
+The channel tag is inline on the first line; every continuation starts underneath that tag and
+wraps at the current right edge. Auto-size owns the height, and resizing rebuilds all rows.
+The author alone uses the chosen name color; message text, colon, and custom tag use the
+configured standard text color. Channel colors remain independent.
+
+Supporter stars remain row-local vector shapes, with measured non-breaking spaces reserving
+an inline slot immediately before the name. The slot follows the name when the prefix wraps.
+First-author and slot character bounds must agree on a line and provide sufficient room before
+the star is displayed; unavailable metrics hide only the optional marker, not the message.
 The outer feed rectangle clips the scrolling list, not individual message continuations.
+Body CRLF/LF/CR line breaks become HTML `<br/>` after escaping; user markup stays escaped.
+
+[Confirmed, installed Steam English assets] `interface/fontconfig_en.txt` maps the Light/Bold
+aliases to Roboto Condensed Light/Bold. FFDec 26.2.1 inspection of `interface/fonts_en.swf`
+from `SeventySix - Interface_en.ba2` finds U+00A0 at glyph index 101 in both fonts, positive
+advance (4340/4360 font units), and an empty outline (`EndShapeRecord` only). The reserved
+space is therefore an available blank glyph, not an unsupported character placeholder.
+Extracted SWF SHA-256: `5aaeadcf59ebce885509cac98d69ec3654f82f0cec8d6fb254238991ef534c61`.
+This is English-font asset evidence; other font overrides and runtime line-break behavior
+still require visual confirmation. No extracted game font is packaged with the widget.
+
+Native rendering still requires an in-game visual check at wide and narrow sizes, with long
+names, custom tags, moderator references, stars, and several chosen name colors.
 
 xScal position/size now persist per authenticated relay device in Postgres
 `hud_pairing_tokens.hud_layout`, because xScal does not implement ZFE storage commands.
@@ -119,12 +137,11 @@ connected, later HUD reads update local identity state only; they never issue a 
 `chat.v1.connect`, and empty reads do not erase a known name.
 
 The HUD renders the server-validated channel and identity tags plus an optional supporter marker.
-The marker is a five-point vector `Shape` in the same row `Sprite` as the channel tag and the individually positioned
-message-line text fields. The row measures the channel field, reserves
-the marker slot, and places the marker 5px after the complete channel tag, vertically centered
-with a 2px visual down-nudge in the first message line. It never uses `getCharBoundaries()`, document indices, or
-global/local transforms. This avoids the Scaleform mixed-font coordinate drift that previously put
-stars over the channel tag or in the top-left corner. It uses the validated `starColor` and never
+The marker is a five-point vector `Shape` beside the full-width HTML message field in one
+row `Sprite`. Measured non-breaking spaces reserve its inline position immediately before the
+name. Row-local first-author bounds anchor and center the vector; no document-wide scroll
+estimate or global/local transform is used. Missing or inconsistent metrics hide the optional
+star to avoid painting it over another part of the message. It uses the validated `starColor` and never
 renders a Unicode glyph, bitmap, HTML image, or substitution token. Feed paragraph leading is zero,
 and the feed keeps only a 4px safety gap above the top-level HUDTools input so rows stay compact
 while new content remains above the input field.
@@ -456,8 +473,8 @@ staff validation on every request; the HUD permission is only a visibility hint.
 3. Switch channels, join/leave a world, and switch again; the tab row remains single-rendered.
 4. Send a body containing `{`, `}`, quotes, and backslashes; later events still render.
 5. On DEV, use a linked supporter account and confirm each supporter message has exactly one
-   colored vector star 5px after the complete channel tag and before the message content.
-   It must be centered on the author's first message line with the 2px visual down-nudge, including when a moderation or
+   colored vector star immediately before the name with a 4px gap.
+   It must be centered on the first author character, including when a moderation or
    custom identity tag is present. The marker must move with its row while scrolling and never
    appear in the header/top-left corner.
    Confirm non-supporter
@@ -564,7 +581,21 @@ and [TextField formatting](https://airsdk.dev/docs/development/text/using-the-te
 These document API behavior, not Fallout runtime certification. Local FO76 UI artifacts confirm
 use of TextField auto-size; no third-party source or assets were incorporated.
 
-## v2.10.65 identity styling
+## v2.10.66 connection recovery
+
+The authenticated widget keeps an in-memory outbox of at most 32 messages for 30 minutes.
+Connection attempts continue with capped backoff; an unresolved handshake is restarted after
+60 seconds, and malformed polls count toward reconnect recovery. Previously authenticated
+players can compose static-channel messages while offline. Retry dispatch waits for fresh
+authentication and uses a stable identifier; SERVER entries also require their original room.
+Relinking or changing accounts clears queued text. Widget unload/game exit clears the outbox.
+
+Safe ambiguous-send retries require the matching backend's `canRetryHudSend` capability.
+See [send receipts and limitations](../../../docs/overlay/zfe/hud-send-retries.md) and
+[native recovery checks](../../../docs/testing/hud-recovery.md). Run `haxe test-outbox.hxml`
+for the queue, identity/room isolation, and handshake/poll policy tests; CI runs this suite.
+
+## v2.10.65 identity styling (prior layout)
 
 Native auto-size/wrapping remains unchanged from the in-game-confirmed 2.10.64 build.
 Stars now center their actual vector bounds on the first author character's layout rectangle,

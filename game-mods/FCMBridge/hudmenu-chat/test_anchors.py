@@ -442,7 +442,11 @@ if widget_src:
     check('FcmAuthFlow.classify' in widget_src
           and 'transport accepted; xScal auth pending' in widget_src
           and 'xScal auth state' in widget_src,
-          "FCMChatWidget keeps xScal transport alive while auth is pending and reconnects only on terminal state")
+          "FCMChatWidget classifies pending and terminal xScal auth states")
+    receipt_guard = 'if (rawChannel == "system" && senderUserId == "system" && StringTools.startsWith(body, "FCMACK/1;"))'
+    check(receipt_guard in widget_src
+          and 'acceptOutboxReceipt(body);\n                continue;' in widget_src,
+          "HUD delivery receipts require a private system event and bypass chat rendering")
     check('if (_api.provider == FcmNativeApi.XSCAL)' in widget_src
           and 'refreshAuthState();' in widget_src
           and 'isPendingTransportResponse' in widget_src,
@@ -505,11 +509,9 @@ if widget_src:
           and 'setImageSubstitutions' not in widget_src
           and 'function makeSupporterStar' in widget_src
           and 'function buildFeedMessageRow' in widget_src
-          and 'FcmStarLayout.row' in widget_src
-          and 'star.x = placement.markerX' in widget_src
-          and 'star.y = placement.markerY' in widget_src
-          and 'STAR_CHANNEL_GAP:Float = 5' in widget_src
-          and 'STAR_MARKER_Y_NUDGE:Float = 2' in widget_src
+          and 'FcmStarLayout.markerSpaces' in widget_src
+          and 'star.visible = false' in widget_src
+          and 'authorBounds.x - slotBounds.x >= markerBounds.width + STAR_CONTENT_GAP' in widget_src
           and 'FcmConfig.supporterStarColor' in widget_src
           and 'row.addChild(star)' in widget_src
           and 'U+2605' not in widget_src
@@ -542,15 +544,20 @@ if widget_src:
           "FCMChatWidget keeps authoritative cosmetics as the source of truth after a stripped send acknowledgement")
     check('_feedLayer' in widget_src
           and '_feedRows:Array<FeedRowView>' in widget_src
-          and 'row.addChild(channelTf)' in widget_src
-          and 'FcmStarLayout.content' in widget_src
-          and 'contentTf.x = box.x' in widget_src
+          and 'makeFeedTextField(contentHtml, viewportWidth, fs + 8, true)' in widget_src
+          and 'row.addChild(channelTf)' not in widget_src
+          and 'contentTf.x = box.x' not in widget_src
           and 'row.addChild(contentTf)' in widget_src
           and 'row.view.y = row.contentY - _feedScrollY' in widget_src
           and 'contentTf.y + authorBounds.y' in widget_src
           and 'localToGlobal' not in widget_src
           and 'globalToLocal' not in widget_src,
           "FCMChatWidget keeps text and supporter markers in one deterministic row-local layout")
+    feed_row = widget_src.split('function buildFeedMessageRow', 1)[1].split('function buildFeedNoticeRow', 1)[0]
+    check('markerHtml + user + \'</font>\'' in feed_row
+          and "hx(_cfg.textColor) + '\">: ' + msg" in feed_row
+          and feed_row.count("+ col +") == 1,
+          "FCMChatWidget scopes chosen name color to the author, with explicit theme-colored body and punctuation")
     check('static inline var LOG_INPUT_GAP:Int     = 4;' in widget_src
           and 'var logBottom:Int = h - INPUT_H - LOG_INPUT_GAP;' in widget_src
           and '_logTf.height = logHeight;' in widget_src

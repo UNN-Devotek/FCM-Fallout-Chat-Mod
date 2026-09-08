@@ -152,7 +152,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.65"; // Explicit line wrapping and device-scoped xScal layout
+    static inline var VERSION:String  = "2.10.66"; // Full-width feed and reconnect outbox
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -496,6 +496,72 @@ class FCMChatWidget extends MovieClip {
     var _configLoader:URLLoader  = null;
     var _configTimer:Timer       = null;
     var _sendTimers:Array<Timer> = [];
+    var _outbox:FcmOutbox = new FcmOutbox();
+    var _outboxIdentity:String = "";
+    var _canRetryHudSend:Bool = false;
+    var _connectStartedAt:Float = 0;
+    var _sendNonce:String = Std.string(Date.now().getTime()) + "-" + Std.string(Std.random(1000000000));
+
+    function clearOutbox():Void {
+        for (id in _outbox.clear()) removeOptimisticRecord(id);
+        _outboxIdentity = "";
+        _records = [];
+    }
+
+    function outboxStatus(message:String):Void {
+        setPrompt('<font face="' + FONT_BODY + '" size="13" color="' + hx(_cfg.promptColor) + '">' + FcmConfig.htmlEscape(message) + '</font>');
+    }
+
+    function flushOutbox():Void {
+        if (_disposed || !_connected || _authState != "authenticated" || _outboxIdentity.length == 0) return;
+        var dropped = _outbox.prune(_outboxIdentity, _serverSession.room, _serverSessionReady, flash.Lib.getTimer());
+        for (id in dropped) removeOptimisticRecord(id);
+        if (dropped.length > 0) { renderRecords(); outboxStatus("Queued message expired or its server changed; please resend."); }
+        var entry = _outbox.next(_outboxIdentity, _serverSession.room, _serverSessionReady, flash.Lib.getTimer());
+        if (entry == null) return;
+        runSendTransportSafely(entry.channel, entry.body, false, entry.id, entry.identity);
+    }
+
+    /** xScal returns queued immediately; the private subscriber carries relay completion. */
+    function acceptOutboxReceipt(body:String):Void {
+        var response = FcmOutbox.privateReceipt(body);
+        if (response.length == 0) return;
+        var carrier = extractJsonString(response, "targetUserId");
+        var id = FcmOutbox.receipt(carrier);
+        var entry = _outbox.get(id);
+        if (entry == null || entry.identity != _outboxIdentity) return;
+        if (extractJsonBool(response, "success")) {
+            var messageId = FcmConfig.hudTransportMessageId(carrier);
+            if (messageId.length == 0) messageId = extractJsonString(response, "messageId");
+            if (messageId.length == 0) return; // Only durable relay completion ends a retry.
+            _outbox.remove(id);
+            var tag = FcmConfig.hudTransportTag(carrier);
+            var color = FcmConfig.hudTransportStarColor(carrier);
+            updateOptimisticRecord(id, messageId, tag,
+                FcmConfig.hudTransportHasStar(carrier), color, true,
+                FcmConfig.hudTransportNameColor(carrier));
+            if (_outbox.entries.length == 0 && !_inputOpen) setPrompt(idlePrompt());
+            return;
+        }
+        var code = extractJsonString(response, "code");
+        if (FcmOutbox.retryable(code)) {
+            outboxStatus("Message queued - waiting to retry.");
+            return;
+        }
+        _outbox.remove(id);
+        removeOptimisticRecord(id);
+        renderRecords();
+        outboxStatus(code == "send_uncertain"
+            ? "Delivery unconfirmed. Check history before sending again."
+            : "Message not sent: " + code);
+    }
+
+    function retryQueuedSend(localSendId:String, reason:String):Void {
+        if (_outbox.get(localSendId) == null) return;
+        outboxStatus("Message queued - retrying when chat reconnects.");
+        if (_connected) forceReconnect(reason);
+        else scheduleConnectRetry();
+    }
 
     // ── Self-send transaction state ──────────────────────────────────────────
     // Legacy Dev ACKs do not carry the server-resolved cosmetic projection. Once
@@ -590,6 +656,7 @@ class FCMChatWidget extends MovieClip {
             try { timer.stop(); } catch (e:Dynamic) {}
         }
         _sendTimers = [];
+        clearOutbox();
 
         if (_configLoader != null) {
             try {
@@ -2404,12 +2471,7 @@ class FCMChatWidget extends MovieClip {
 
     function sendMessage(raw:String):Void {
         if (_disposed) return;
-        if (_api == null || !_connected) {
-            zfeLog("warn", "send", "not connected; cannot send");
-            return;
-        }
-        if (_authState != "authenticated") {
-            zfeLog("warn", "send", "send blocked; authState=" + _authState + " (account not linked)");
+        if (_api == null || _outboxIdentity.length == 0 || _needsLink) {
             setLogText(linkHint());
             return;
         }
@@ -2432,6 +2494,11 @@ class FCMChatWidget extends MovieClip {
         // hold the Scaleform frame before the player sees their own message.
         var localUserId:String = _relayUserId.length > 0 ? _relayUserId : _userId;
         var localSendId:String = nextLocalSendId();
+        if (!_outbox.add(localSendId, slug, raw, _outboxIdentity,
+                slug == "server" ? _serverSession.room : "", flash.Lib.getTimer())) {
+            outboxStatus("Message queue is full; wait for chat to reconnect.");
+            return;
+        }
         var nativeSubmit:Bool = _nativeSubmitInFlight;
         var ownCosmetics = ownCosmeticsForSend();
         addOptimisticEcho(slug, raw, "", ownCosmetics.tag, ownCosmetics.supporterStar,
@@ -2450,7 +2517,8 @@ class FCMChatWidget extends MovieClip {
                 runSendTransportSafely(slug, raw, nativeSubmit, localSendId, localUserId);
             } catch (err:Dynamic) {
                 zfeLog("warn", "send", "deferred callback failed: " + clip200(Std.string(err)));
-                try { removeOptimisticRecord(localSendId); renderRecords(); } catch (_:Dynamic) {}
+                if (_canRetryHudSend) retryQueuedSend(localSendId, "deferred send exception");
+                else { _outbox.remove(localSendId); try { removeOptimisticRecord(localSendId); renderRecords(); } catch (_:Dynamic) {} }
             }
         });
         _sendTimers.push(sendTimer);
@@ -2464,6 +2532,8 @@ class FCMChatWidget extends MovieClip {
             sendMessageTransport(slug, raw, nativeSubmit, localSendId, localUserId);
         } catch (err:Dynamic) {
             zfeLog("warn", "send", "send timer isolated: " + clip200(Std.string(err)));
+            if (_canRetryHudSend) { retryQueuedSend(localSendId, "isolated send exception"); return; }
+            _outbox.remove(localSendId);
             try { removeOptimisticRecord(localSendId); } catch (_:Dynamic) {}
             try {
                 if (FcmCommand.channelVisible(CHAN_SLUGS[_chanIdx], slug)) renderRecords();
@@ -2474,19 +2544,23 @@ class FCMChatWidget extends MovieClip {
     /** Invoke the provider after the optimistic row had a paint opportunity. */
     function sendMessageTransport(slug:String, raw:String, nativeSubmit:Bool, localSendId:String,
             localUserId:String):Void {
-        if (_api == null || !_connected) {
-            removeOptimisticRecord(localSendId);
-            if (FcmCommand.channelVisible(CHAN_SLUGS[_chanIdx], slug)) renderRecords();
-            zfeLog("warn", "send", "not connected; cannot send");
+        var queued = _outbox.get(localSendId);
+        if (queued == null) return;
+        if (_api == null || !_connected || _authState != "authenticated") {
+            retryQueuedSend(localSendId, "queued send awaiting connection");
             return;
         }
-        if (_authState != "authenticated") {
-            removeOptimisticRecord(localSendId);
-            if (FcmCommand.channelVisible(CHAN_SLUGS[_chanIdx], slug)) renderRecords();
-            zfeLog("warn", "send", "send blocked; authState=" + _authState + " (account not linked)");
-            setLogText(linkHint());
+        if (queued.identity != _outboxIdentity) { _outbox.remove(localSendId); removeOptimisticRecord(localSendId); return; }
+        if (slug == "server" && (!_serverSessionReady || queued.room != _serverSession.room)) return;
+        if (queued.attempts > 0 && !_canRetryHudSend) {
+            _outbox.remove(localSendId); removeOptimisticRecord(localSendId);
+            outboxStatus("Delivery unconfirmed; automatic retry needs the updated relay.");
             return;
         }
+        if (queued.attempts == 0) {
+            for (rec in _records) if (rec.pending && rec.localSendId == localSendId) rec.pendingAt = flash.Lib.getTimer();
+        }
+        _outbox.attempted(localSendId, flash.Lib.getTimer());
 
         if (raw.length > _cfg.maxSendLen) raw = raw.substr(0, _cfg.maxSendLen);
         raw = fcmClean(raw);
@@ -2494,6 +2568,7 @@ class FCMChatWidget extends MovieClip {
             // sendMessage() creates the optimistic row before deferring transport. A
             // control-character-only draft must remove that exact transaction rather than
             // leaving a permanent phantom message in the feed.
+            _outbox.remove(localSendId);
             removeOptimisticRecord(localSendId);
             if (FcmCommand.channelVisible(CHAN_SLUGS[_chanIdx], slug)) renderRecords();
             return;
@@ -2511,7 +2586,8 @@ class FCMChatWidget extends MovieClip {
             zfeLog("warn", "server", "ordinary send blocked; session not ready");
             return;
         }
-        var serverTarget = slug == "server" ? "FCMROOM/1;" + _serverSession.room : "";
+        var serverTarget = _canRetryHudSend ? FcmOutbox.target(localSendId, queued.room)
+            : (slug == "server" ? "FCMROOM/1;" + _serverSession.room : "");
         var payload:String = '{"channel":"' + jsonEscape(slug) + '","targetUserId":"' + jsonEscape(serverTarget) + '","body":"' + jsonEscape(raw) + '"}';
         zfeLog("info", "send", "payload ch=" + slug + " len=" + raw.length);
         try {
@@ -2526,7 +2602,7 @@ class FCMChatWidget extends MovieClip {
             // v2.5.3 diagnostic: when this send is from a just-closed native session,
             // log the FULL raw result so we learn whether send works in that context.
             if (nativeSubmit) {
-                zfeLog("info", "nativein", "send-in-session raw=" + clip200(rs));
+                zfeLog("info", "nativein", "send-in-session code=" + extractJsonString(rs, "code") + " status=" + extractJsonString(rs, "status"));
             }
             var success:Bool = (rs.indexOf('"success":true') >= 0 || rs.indexOf('success:true') >= 0);
             if (success) {
@@ -2549,6 +2625,8 @@ class FCMChatWidget extends MovieClip {
                     var ackHudTransport:String = extractJsonString(rs, "targetUserId");
                     var ackTransportMessageId:String = FcmConfig.hudTransportMessageId(ackHudTransport);
                     if (ackTransportMessageId.length > 0) messageId = ackTransportMessageId;
+                    if (messageId.length > 0 || FcmOutbox.receipt(ackHudTransport) == localSendId) _outbox.remove(localSendId);
+                    else if (!_canRetryHudSend) _outbox.remove(localSendId);
                     var ackTransportNameColor = FcmConfig.hudTransportNameColor(ackHudTransport);
                     if (ackTransportNameColor.length > 0) ackNameColor = ackTransportNameColor;
                     var ackTransportTag:String = FcmConfig.hudTransportTag(ackHudTransport);
@@ -2579,10 +2657,16 @@ class FCMChatWidget extends MovieClip {
                 }
                 scheduleEchoPoll();
             } else {
+                var code:String = extractJsonString(rs, "code");
+                if (_canRetryHudSend && FcmOutbox.retryable(code)) {
+                    if (code == "rate_limited" || code == "send_in_progress") outboxStatus("Message queued - waiting to retry.");
+                    else retryQueuedSend(localSendId, "transient send failure");
+                    return;
+                }
+                _outbox.remove(localSendId);
                 removeOptimisticRecord(localSendId);
                 if (FcmCommand.channelVisible(CHAN_SLUGS[_chanIdx], slug)) renderRecords();
-                // Surface the relay error code to the user.
-                var code:String = extractJsonString(rs, "code");
+                // Surface permanent rejections without retrying them.
                 // Failure only: the untruncated response. This is the line that finally exposed
                 // the v2.9.12 root cause after days of unreadable `raw={\` output.
                 zfeLog("warn", "diag", "RSLEN=" + rs.length + " RSSAFE=" + logSafe(rs).substr(0, 300));
@@ -2592,6 +2676,10 @@ class FCMChatWidget extends MovieClip {
                 // ingress evidence.
                 zfeLog("warn", "send", "send rejected code=" + code + " raw=" + rs.substr(0, 200));
                 switch (code) {
+                    case "send_uncertain":
+                        outboxStatus("Delivery could not be confirmed. Check chat history before sending again.");
+                    case "send_conflict":
+                        outboxStatus("Message could not be retried. Please send it again.");
                     case "permission_denied":
                         // Genuine not-linked / insufficient-role only (automod + slash now have
                         // their own codes below, so this no longer fires for filtered messages).
@@ -2629,6 +2717,8 @@ class FCMChatWidget extends MovieClip {
                 }
             }
         } catch (e:Dynamic) {
+            if (_canRetryHudSend) { retryQueuedSend(localSendId, "send transport exception"); return; }
+            _outbox.remove(localSendId);
             removeOptimisticRecord(localSendId);
             if (FcmCommand.channelVisible(CHAN_SLUGS[_chanIdx], slug)) renderRecords();
             zfeLog("warn", "send", "sendMessage threw: " + Std.string(e));
@@ -2746,6 +2836,8 @@ class FCMChatWidget extends MovieClip {
         resetFalloutIdentity();
         if (_api == null) return;
         _connectAttempts++;
+        _connectStartedAt = flash.Lib.getTimer();
+        _canRetryHudSend = false;
         // Re-read the public FO76 account handle each attempt until AccountInfoData has it.
         // Never substitute CharacterInfoData: that is the local character label, not the name
         // other Fallout 76 players see. The retry timer probes later without re-entering a live
@@ -2758,7 +2850,8 @@ class FCMChatWidget extends MovieClip {
             return;
         }
         zfeLog("info", "connect", "attempt=" + _connectAttempts);
-        setLogText("connecting...");
+        if (_outboxIdentity.length > 0 && !_needsLink) outboxStatus("Reconnecting to chat...");
+        else setLogText("connecting...");
 
         // clientVersion lets the relay tell which widget build it is talking to, so any
         // future wire-format addition can be gated on capability instead of shipped
@@ -2847,7 +2940,7 @@ class FCMChatWidget extends MovieClip {
         stopEchoPollTimer();
         stopServerHistoryDrain();
         stopWorldTimer();
-        stopOpenKeyTimer();
+        if (_outboxIdentity.length == 0 || _needsLink) stopOpenKeyTimer();
         scheduleConnectRetry();
     }
 
@@ -2861,6 +2954,7 @@ class FCMChatWidget extends MovieClip {
      * manual fallback so a user is never told that their account was reset when it was not.
      */
     function requestRelink():Void {
+        clearOutbox();
         if (_inputOpen) {
             if (_nativeInput) closeInputNative();
             else closeInputSharedHudTools("relink");
@@ -2937,7 +3031,10 @@ class FCMChatWidget extends MovieClip {
             runStartConnectSafely();
         });
         _connectTimer.start();
-        setLogText("retrying in " + Std.int(_connectDelay / 1000) + "s...");
+        if (_outboxIdentity.length > 0 && !_needsLink) {
+            renderRecords();
+            outboxStatus("Reconnecting in " + Std.int(_connectDelay / 1000) + "s; queued messages will retry.");
+        } else setLogText("retrying in " + Std.int(_connectDelay / 1000) + "s...");
     }
 
     function runStartConnectSafely():Void {
@@ -2958,6 +3055,11 @@ class FCMChatWidget extends MovieClip {
         if (_api == null) return;
         try {
             var state:String = Std.string(_api.call("chat.v1.getAuthState", "{}"));
+            var authEnvelope:Dynamic = haxe.Json.parse(state);
+            if (authEnvelope == null || Reflect.field(authEnvelope, "success") == false) {
+                if (!FcmReconnect.pendingAllowed(_connectStartedAt, flash.Lib.getTimer())) forceReconnect("auth response unavailable");
+                return;
+            }
             var observedState:String = extractJsonString(state, "state");
             var observedStatus:String = extractJsonString(state, "status");
             var observedCode:String = extractJsonString(state, "code");
@@ -2985,6 +3087,12 @@ class FCMChatWidget extends MovieClip {
                 _ownTag = "";
                 _ownSupporterStar = false;
                 _ownStarColor = "";
+            }
+            _canRetryHudSend = extractJsonBool(state, "canRetryHudSend");
+            if (authDecision == FcmAuthFlow.AUTHENTICATED) {
+                var identity = linkedUid.length > 0 ? linkedUid : uid;
+                if (_outboxIdentity.length > 0 && identity.length > 0 && identity != _outboxIdentity) clearOutbox();
+                if (identity.length > 0) _outboxIdentity = identity;
             }
             _hudLayoutSupported = extractJsonBool(state, "canSaveHudLayout");
             var prevAuth:String = _authState;
@@ -3022,7 +3130,8 @@ class FCMChatWidget extends MovieClip {
                 // xScal returns status=connecting while its worker performs the
                 // async hello/register flow. Keep the transport alive and let
                 // pollEvents call us again on the normal cadence.
-                setLogText("connecting to chat...");
+                if (!FcmReconnect.pendingAllowed(_connectStartedAt, flash.Lib.getTimer())) forceReconnect("authentication handshake timed out");
+                else setLogText("connecting to chat...");
             } else if (_authState != "authenticated" && _connected) {
                 // Preserve the established ZFE behavior. Its getAuthState
                 // contract is synchronous and a non-authenticated result is a
@@ -3031,6 +3140,7 @@ class FCMChatWidget extends MovieClip {
             }
         } catch (e:Dynamic) {
             zfeLog("warn", "auth", "getAuthState threw: " + Std.string(e));
+            if (_connected && !FcmReconnect.pendingAllowed(_connectStartedAt, flash.Lib.getTimer())) forceReconnect("auth probe failed");
         }
     }
 
@@ -3043,7 +3153,7 @@ class FCMChatWidget extends MovieClip {
     // =========================================================================
 
     function startOpenKeyTimer():Void {
-        if (_disposed || _api == null || !_connected) return;
+        if (_disposed || _api == null || (!_connected && (_outboxIdentity.length == 0 || _needsLink))) return;
         if (_openKeyTimer != null) { _openKeyTimer.stop(); _openKeyTimer = null; }
         _lastChatKey = false;
         _openKeyTimer = new flash.utils.Timer(OPEN_KEY_MS);
@@ -3191,7 +3301,7 @@ class FCMChatWidget extends MovieClip {
     /** Open chat on a false->true edge of isChatKeyPressed. */
     function pollOpenKey():Void {
         releaseInputForPipboy();
-        if (_api == null || !_connected) return;
+        if (_api == null || (!_connected && (_outboxIdentity.length == 0 || _needsLink))) return;
         try {
             // The OpenChatKey is the one configured key exposed by the top-level ZFE chat
             // helper. Other physical navigation keys use the provider Input.* fallback above.
@@ -3485,7 +3595,8 @@ class FCMChatWidget extends MovieClip {
                     || rs.indexOf('user_banned') >= 0) {
                 forceReconnect("relay returned an auth error on poll");
             } else if (_api.provider == FcmNativeApi.XSCAL
-                    && FcmAuthFlow.isPendingTransportResponse(rs)) {
+                    && FcmAuthFlow.isPendingTransportResponse(rs)
+                    && FcmReconnect.pendingAllowed(_connectStartedAt, flash.Lib.getTimer())) {
                 // The xScal worker has not opened its subscriber yet. This is
                 // expected while connect() reports status=connecting; do not
                 // spend the poll-failure budget or restart the worker.
@@ -3496,9 +3607,14 @@ class FCMChatWidget extends MovieClip {
             return 0;
         }
 
+        if (!FcmReconnect.validPoll(rs)) {
+            notePollFailure("malformed poll response");
+            return 0;
+        }
         _consecutivePollFailures = 0;
         _eventPollPhase = "render";
         var parsed:Int = parseAndRenderEvents(rs);
+        flushOutbox();
         _eventPollPhase = "complete";
         return parsed;
     }
@@ -3583,6 +3699,11 @@ class FCMChatWidget extends MovieClip {
             if (supporterStar) wireStarCount++;
             if (starColor.length > 0) wireStarColorCount++;
             var body:String         = extractJsonString(obj, "body");
+            if (rawChannel == "system" && senderUserId == "system" && StringTools.startsWith(body, "FCMACK/1;")) {
+                updateCursorFromEvent(obj);
+                acceptOutboxReceipt(body);
+                continue; // Private delivery receipts never appear as public chat.
+            }
             if (rawChannel == "system" && senderUserId == "system" && StringTools.startsWith(body, "FCMLAYOUT/1;")) {
                 updateCursorFromEvent(obj);
                 if (_api != null && _api.provider == FcmNativeApi.XSCAL && _hudLayout.accept(body, _cfg)) rebuildPanel();
@@ -3754,7 +3875,7 @@ class FCMChatWidget extends MovieClip {
 
     /** Generate the only identity used to mutate a local send row after it is created. */
     function nextLocalSendId():String {
-        var id:String = "send-" + _nextSendSequence;
+        var id:String = "send-" + _sendNonce + "-" + _nextSendSequence;
         _nextSendSequence++;
         if (_nextSendSequence > 1000000) _nextSendSequence = 1;
         return id;
@@ -3773,6 +3894,10 @@ class FCMChatWidget extends MovieClip {
         for (i in 0..._records.length) {
             var pendingRecord:ChatRecord = _records[i];
             if (!pendingRecord.pending) continue;
+            // An offline draft is not a sent event. History from another device with the
+            // same body must never consume it. Retry-capable sends wait for exact receipt ID.
+            var queuedEcho = _outbox.get(pendingRecord.localSendId);
+            if (!FcmOutbox.canCorrelate(queuedEcho, pendingRecord.messageId, _canRetryHudSend)) continue;
             pending.push({
                 recordIndex: i,
                 channel: pendingRecord.channel,
@@ -3803,6 +3928,7 @@ class FCMChatWidget extends MovieClip {
         rec.supporterStar = supporterStar;
         rec.starColor = starColor;
         rec.body = normalized;
+        _outbox.remove(rec.localSendId);
         rec.pending = false;
         rec.localSendId = "";
         rec.pendingAt = 0;
@@ -3883,6 +4009,13 @@ class FCMChatWidget extends MovieClip {
     /** Apply the ACK to the exact transaction row; no text/identity search occurs here. */
     function updateOptimisticRecord(localSendId:String, messageId:String, tag:String,
             supporterStar:Bool, starColor:String, cosmeticsKnown:Bool, nameColor:String = ""):Bool {
+        if (messageId != null && messageId.length > 0) {
+            for (existing in _records) if (!existing.pending && existing.messageId == messageId) {
+                removeOptimisticRecord(localSendId);
+                renderRecords();
+                return true;
+            }
+        }
         for (rec in _records) {
             if (!rec.pending || rec.localSendId != localSendId) continue;
             if (messageId != null && messageId.length > 0) rec.messageId = messageId;
@@ -4056,7 +4189,7 @@ class FCMChatWidget extends MovieClip {
         var kept:Array<ChatRecord> = [];
         var removed:Int = 0;
         for (rec in _records) {
-            if (rec.channel == "server") removed++;
+            if (rec.channel == "server" && !(rec.pending && _outbox.get(rec.localSendId) != null)) removed++;
             else kept.push(rec);
         }
         if (removed == 0) return;
@@ -4235,9 +4368,7 @@ class FCMChatWidget extends MovieClip {
     static inline var FEED_ROW_GAP:Float = 2;
     // The supporter marker is intentionally a little farther from the closing
     // channel bracket; this also moves the reserved content slot with it.
-    static inline var STAR_CHANNEL_GAP:Float = 5;
     static inline var STAR_CONTENT_GAP:Float = 4;
-    static inline var STAR_MARKER_Y_NUDGE:Float = 2;
 
     /** Create a feed-owned TextField with the same explicit HUD font contract as the chrome. */
     function makeFeedTextField(html:String, width:Float, height:Float, wrap:Bool):TextField {
@@ -4260,14 +4391,6 @@ class FCMChatWidget extends MovieClip {
         tf.defaultTextFormat = fmt;
         tf.htmlText = html;
         return tf;
-    }
-
-    /** GFx reports the width of this small field reliably; use a conservative fallback only if it does not. */
-    function measuredFeedWidth(tf:TextField, plain:String):Float {
-        var measured:Float = 0;
-        try { measured = tf.textWidth + 2; } catch (e:Dynamic) {}
-        if (measured > 2) return Math.ceil(measured);
-        return Math.max(8, Math.ceil(plain.length * _cfg.fontSize * 0.62));
     }
 
     function measuredFeedHeight(tf:TextField):Float {
@@ -4294,25 +4417,24 @@ class FCMChatWidget extends MovieClip {
         var fs:Int = _cfg.fontSize;
         var rawUser:String = rec.user == null ? "" : rec.user;
         var rawBody:String = rec.body == null ? "" : rec.body;
+        var queuedSend = rec.pending ? _outbox.get(rec.localSendId) : null;
+        var deliveryHtml:String = queuedSend == null ? ""
+            : '<font color="' + hx(_cfg.promptColor) + '"> ['
+                + (queuedSend.attempts > 0 ? "sending" : "queued") + ']</font>';
         var rawTag:String = rec.tag == null ? "" : rec.tag;
         var col:String = ~/^#[0-9a-fA-F]{6}$/.match(rec.color) ? rec.color : hx(_cfg.senderColor);
         var channelLabel:String = FcmConfig.chanLabel(rec.channel);
-        var channelWidth:Float = 0;
-
-        if (_cfg.showChannelTag) {
-            var channelHtml:String = '<font face="' + FONT_BOLD + '" size="' + fs + '" color="'
-                + hx(_cfg.channelColor(rec.channel)) + '">[' + channelLabel + ']</font>';
-            var channelTf:TextField = makeFeedTextField(channelHtml, viewportWidth, fs + 8, false);
-            channelWidth = measuredFeedWidth(channelTf, "[" + channelLabel + "]");
-            channelTf.width = channelWidth;
-            channelTf.height = fs + 8;
-            row.addChild(channelTf);
-        }
+        var channelHtml:String = _cfg.showChannelTag
+            ? '<font face="' + FONT_BOLD + '" size="' + fs + '" color="'
+                + hx(_cfg.channelColor(rec.channel)) + '">[' + FcmConfig.htmlEscape(channelLabel) + ']</font> '
+            : "";
 
         var user:String = FcmConfig.htmlEscape(rawUser);
         var msg:String = FcmConfig.htmlEscape(rawBody);
+        msg = StringTools.replace(StringTools.replace(msg, "\r\n", "\n"), "\r", "\n");
+        msg = StringTools.replace(msg, "\n", "<br/>");
         var customTagHtml:String = (rawTag.length > 0)
-            ? '<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + col + '">['
+            ? '<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + hx(_cfg.textColor) + '">['
                 + FcmConfig.htmlEscape(rawTag) + ']</font> '
             : "";
         var moderationRefHtml:String = "";
@@ -4323,47 +4445,53 @@ class FCMChatWidget extends MovieClip {
             moderationRefHtml = '<font color="' + hx(_cfg.promptColor) + '">[#'
                 + rec.messageId.substr(0, 8).toUpperCase() + ']</font> ';
         }
-        // The body field starts after the reserved marker slot. This is an intentional hanging
-        // layout: all wrapped body lines share the same content origin and can never collide with
-        // the channel tag or supporter marker.
-        var contentHtml:String = '<font face="' + FONT_BODY + '" size="' + fs + '">'
-            + moderationRefHtml + customTagHtml
-            + '<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + col + '">' + user + ':</font> '
-            + '<font face="' + FONT_BODY + '" size="' + fs + '" color="' + hx(_cfg.textColor) + '">' + msg + '</font>'
-            + '</font>';
+        // A single full-width native field lets continuation lines return beneath the channel.
+        // Non-breaking spaces reserve an inline vector slot and stay with the first name word.
         var hasMarker:Bool = rec.supporterStar && rawUser.length > 0;
         var markerSize:Float = Math.max(8, Math.min(16, fs * 0.95));
-        var channelGap:Float = _cfg.showChannelTag ? STAR_CHANNEL_GAP : 0;
-        var initial = FcmStarLayout.row(channelWidth, fs + 4, markerSize,
-            channelGap, STAR_CONTENT_GAP, hasMarker, STAR_MARKER_Y_NUDGE);
-        var box = FcmStarLayout.content(viewportWidth, initial.contentX, fs, hasMarker ? markerSize + STAR_CONTENT_GAP : 0);
+        var markerSpaces:Int = 0;
+        var markerHtml:String = "";
+        if (hasMarker) {
+            var spaceSample = makeFeedTextField('<font face="' + FONT_BOLD + '">M&#160;M</font>', 200, fs + 8, false);
+            var plainSample = makeFeedTextField('<font face="' + FONT_BOLD + '">MM</font>', 200, fs + 8, false);
+            markerSpaces = FcmStarLayout.markerSpaces(markerSize, STAR_CONTENT_GAP,
+                spaceSample.textWidth - plainSample.textWidth, fs);
+            for (_ in 0...markerSpaces) markerHtml += "&#160;";
+        }
+        var contentHtml:String = '<font face="' + FONT_BODY + '" size="' + fs + '" color="' + hx(_cfg.textColor) + '">'
+            + channelHtml + moderationRefHtml + customTagHtml
+            + '<font face="' + FONT_BOLD + '" size="' + fs + '" color="' + col + '">' + markerHtml + user + '</font>'
+            + '<font face="' + FONT_BODY + '" size="' + fs + '" color="' + hx(_cfg.textColor) + '">: ' + msg + '</font>' + deliveryHtml
+            + '</font>';
         _renderStep = "native-wrapped-text";
-        var contentTf:TextField = makeFeedTextField(contentHtml, box.width, fs + 8, true);
-        contentTf.x = box.x;
-        contentTf.y = box.y;
+        var contentTf:TextField = makeFeedTextField(contentHtml, viewportWidth, fs + 8, true);
         row.addChild(contentTf);
         // Auto-size owns the field height. Never shrink it after HTML layout.
-        var contentHeight:Float = box.y + Math.max(contentTf.height, measuredFeedHeight(contentTf));
+        var contentHeight:Float = Math.max(contentTf.height, measuredFeedHeight(contentTf));
         var lineHeight:Float = measuredFeedLineHeight(contentTf);
-        var placement = FcmStarLayout.row(channelWidth, lineHeight, markerSize,
-            channelGap, STAR_CONTENT_GAP, hasMarker, STAR_MARKER_Y_NUDGE);
         _renderStep = "native-marker";
 
         if (hasMarker) {
             var star:Shape = makeSupporterStar(
                 FcmConfig.supporterStarColor(rec.starColor, _cfg.tabActiveColor), markerSize);
-            star.x = placement.markerX;
-            star.y = placement.markerY;
-            if (box.y > 0) star.x = 0;
+            // Hide only the optional marker if GFx cannot resolve the inline slot; never paint
+            // an estimated star over the channel or a different continuation line.
+            star.visible = false;
             row.addChild(star);
             try {
-                var authorIndex = moderationRefLength + (rawTag.length > 0 ? rawTag.length + 3 : 0);
+                var authorIndex = (_cfg.showChannelTag ? channelLabel.length + 3 : 0)
+                    + moderationRefLength + (rawTag.length > 0 ? rawTag.length + 3 : 0) + markerSpaces;
                 var authorBounds:Rectangle = contentTf.getCharBoundaries(authorIndex);
+                var slotBounds:Rectangle = contentTf.getCharBoundaries(authorIndex - markerSpaces);
                 var markerBounds:Rectangle = star.getBounds(star);
-                if (authorBounds != null && authorBounds.height > 0 && markerBounds.height > 0) {
+                if (authorBounds != null && slotBounds != null && authorBounds.height > 0
+                        && markerBounds.height > 0 && Math.abs(slotBounds.y - authorBounds.y) < 1
+                        && authorBounds.x - slotBounds.x >= markerBounds.width + STAR_CONTENT_GAP) {
                     // Both objects are direct children of row; text-field bounds need only its offset.
+                    star.x = contentTf.x + authorBounds.x - STAR_CONTENT_GAP - markerBounds.width - markerBounds.x;
                     star.y = FcmStarLayout.alignMarker(contentTf.y + authorBounds.y,
                         authorBounds.height, markerBounds.y, markerBounds.height);
+                    star.visible = true;
                 }
             } catch (_:Dynamic) {}
         }
@@ -4398,7 +4526,7 @@ class FCMChatWidget extends MovieClip {
 
         // First load / not linked: show ONLY the link screen — never the chat history (user
         // request). An unlinked identity can't post, so the link prompt takes the whole feed.
-        if (!_connected) { setLogText("connecting..."); return; }
+        if (!_connected && _outboxIdentity.length == 0) { setLogText("connecting..."); return; }
         // Link gate. ZFE's getAuthState.state is ALWAYS "authenticated" when merely CONNECTED
         // (it does NOT reflect the relay's linked/limited state), so we must NOT use it here.
         // The relay sends a system link-code notice ONLY to limited (unlinked) identities; its
@@ -4454,11 +4582,12 @@ class FCMChatWidget extends MovieClip {
                 _logTf.wordWrap = true;
                 var fallback = new StringBuf();
                 for (rec in _records) {
-                    if (!_connected || _needsLink) break;
+                    if ((!_connected && _outboxIdentity.length == 0) || _needsLink) break;
                     if (!FcmCommand.channelVisible(CHAN_SLUGS[_chanIdx], rec.channel)) continue;
                     fallback.add("[" + FcmConfig.chanLabel(rec.channel) + "] " + rec.user + ": " + rec.body + "\n");
                 }
-                _logTf.text = !_connected ? "connecting..." : (_needsLink ? "Link your account to chat" : fallback.toString());
+                _logTf.text = !_connected && _outboxIdentity.length == 0 ? "connecting..."
+                    : (_needsLink ? "Link your account to chat" : fallback.toString());
                 _logTf.scrollV = _logTf.maxScrollV;
             } catch (_:Dynamic) {}
             zfeLog("warn", "render", "isolated render exception step=" + _renderStep + ": " + clip200(Std.string(err)));
