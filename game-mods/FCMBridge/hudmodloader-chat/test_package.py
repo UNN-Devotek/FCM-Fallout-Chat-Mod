@@ -159,6 +159,41 @@ def main() -> None:
                 other = "prod" if target == "dev" else "dev"
                 assert package.TARGETS[other]["endpoint"] not in install
 
+            nexus = Path(temp_dir) / f"widget-{target}-nexus.zip"
+            package.build_package(target, nexus, distribution="nexus")
+            with ZipFile(nexus) as archive:
+                names = archive.namelist()
+                assert "Enable-xScal-Chat.cmd" not in names
+                assert "Enable-xScal-Chat.ps1" not in names
+                assert "DOWNLOAD-XSCAL-SETUP-HELPERS.txt" in names
+                assert not {
+                    Path(name).suffix.lower() for name in names
+                }.intersection(package.NEXUS_BLOCKED_SUFFIXES)
+                helper = archive.read("DOWNLOAD-XSCAL-SETUP-HELPERS.txt")
+                assert b"never bundled in the Nexus HUD archive" in helper
+                assert f"FCM%20HUD%20Mod-{package.widget_version()}".encode() in helper
+                assert b"DOWNLOAD-XSCAL-SETUP-HELPERS.txt" in archive.read("INSTALL.txt")
+
+            unsafe = Path(temp_dir) / f"widget-{target}-unsafe-nexus.zip"
+            package.build_package(target, unsafe)
+            with ZipFile(unsafe, "a") as archive:
+                archive.writestr("unexpected.exe", b"MZ")
+            try:
+                package.assert_nexus_archive_safe(unsafe)
+                raise AssertionError("Nexus validation must reject executable entries")
+            except ValueError:
+                assert not unsafe.exists()
+
+            disguised = Path(temp_dir) / f"widget-{target}-disguised-nexus.zip"
+            package.build_package(target, disguised)
+            with ZipFile(disguised, "a") as archive:
+                archive.writestr("extensionless-runner", b"\x7fELF")
+            try:
+                package.assert_nexus_archive_safe(disguised)
+                raise AssertionError("Nexus validation must reject executable magic bytes")
+            except ValueError:
+                assert not disguised.exists()
+
 
         for target, expected in package.TARGETS.items():
             for provider in ("zfe", "xscal"):

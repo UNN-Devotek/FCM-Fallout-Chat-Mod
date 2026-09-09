@@ -247,9 +247,10 @@ this implementation; live simultaneous-input testing is required on each provide
 
 ### xScal package setup
 
-xScal can ship with `[Chat] enabled=false`. The xScal setup ZIP includes
+xScal can ship with `[Chat] enabled=false`. The website HUD ZIP includes
 `Enable-xScal-Chat.cmd` and `.ps1`: close Fallout 76, extract into the game folder,
-and run the CMD helper. It backs up and edits the existing `xscal.ini`, enables chat,
+and run the CMD helper. Nexus HUD ZIPs never contain executable or script files; they include
+`DOWNLOAD-XSCAL-SETUP-HELPERS.txt` pointing to the website ZIP instead. The helper backs up and edits the existing `xscal.ini`, enables chat,
 and selects the package relay endpoint without replacing unrelated settings.
 Linux/Proton users should merge the example's `enabled=true` and `relayEndpoint`
 into the existing `[Chat]` section manually. Merely extracting the BA2 or the INI

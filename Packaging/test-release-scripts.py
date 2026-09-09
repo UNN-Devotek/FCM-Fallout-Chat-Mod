@@ -60,6 +60,8 @@ def main() -> None:
     assert '$gameModsDir = Join-Path $repoRoot "game-mods"' in nexus
     assert '$fcmBridgeDir = Join-Path $gameModsDir "FCMBridge"' in nexus
     assert 'Join-Path $fcmBridgeDir "hudmodloader-chat"' in nexus
+    assert '--distribution nexus --output $hudNexusZip' in nexus
+    assert 'File = $hudNexusZip' in nexus
 
     for marker in (
         "[switch]$SkipWindowsNexus",

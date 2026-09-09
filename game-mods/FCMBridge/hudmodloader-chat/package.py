@@ -11,6 +11,11 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 ROOT = Path(__file__).resolve().parent
 VERSION_SOURCE = ROOT / "FCMChatWidget.hx"
+NEXUS_BLOCKED_SUFFIXES = {
+    ".bat", ".cmd", ".com", ".dll", ".exe", ".js", ".jse", ".msi",
+    ".msp", ".ps1", ".psd1", ".psm1", ".scr", ".sh", ".vbe", ".vbs",
+    ".wsf", ".wsh",
+}
 TARGETS = {
     "dev": {
         "endpoint": "wss://dev.falloutchatmod.com/relay",
@@ -52,7 +57,9 @@ def stamp_configs(target: str, chat_ini: str, widget_ini: str) -> tuple[str, str
     )
 
 
-def install_instructions(target: str, provider: str = "unified") -> str:
+def install_instructions(
+    target: str, provider: str = "unified", distribution: str = "website"
+) -> str:
     config = TARGETS[target]
     version = widget_version()
     provider_label = "xScal" if provider == "xscal" else "ZFE"
@@ -85,6 +92,14 @@ def install_instructions(target: str, provider: str = "unified") -> str:
             "   of xscal.ini. Do not replace the entire file or add a duplicate section.\n"
             "   The example alone does not enable xScal chat; apply these settings."
         )
+    if distribution == "nexus" and provider in ("xscal", "unified"):
+        provider_setup = provider_setup.replace(
+            "run Enable-xScal-Chat.cmd beside Fallout76.exe.",
+            "download the optional setup helpers using DOWNLOAD-XSCAL-SETUP-HELPERS.txt.",
+        ).replace(
+            "double-click Enable-xScal-Chat.cmd in the game folder.",
+            "download the optional setup helpers using DOWNLOAD-XSCAL-SETUP-HELPERS.txt.",
+        )
     if provider in ("xscal", "unified"):
         provider_setup += (
             "\n\n   MANUAL xScal SETUP - NO INSTALLER REQUIRED (Windows or Linux/Proton):\n"
@@ -109,7 +124,13 @@ def install_instructions(target: str, provider: str = "unified") -> str:
             "   openKey and any Data/configuration/zfe.ini override. ZFE does not need xscal.ini.\n"
             "   Restart Fallout 76 after changing the configuration."
         )
-    setup_files = "   Enable-xScal-Chat.cmd\n   Enable-xScal-Chat.ps1\n" if provider in ("xscal", "unified") else ""
+    setup_files = ""
+    if provider in ("xscal", "unified"):
+        setup_files = (
+            "   DOWNLOAD-XSCAL-SETUP-HELPERS.txt\n"
+            if distribution == "nexus"
+            else "   Enable-xScal-Chat.cmd\n   Enable-xScal-Chat.ps1\n"
+        )
     return f"""Fallout Chat Mod - optional in-game HUD chat ({config['label']})
 
 FCMChatWidget version: {version}
@@ -237,9 +258,55 @@ def xscal_config_example(target: str) -> str:
     )
 
 
-def build_package(target: str, output: Path, provider: str = "unified") -> None:
+def nexus_helper_download(target: str) -> str:
+    """Point Nexus users to the website ZIP that may contain setup scripts."""
+    version = widget_version()
+    host = "dev.falloutchatmod.com" if target == "dev" else "falloutchatmod.com"
+    label = "DEV" if target == "dev" else "PROD"
+    filename = f"FCM HUD Mod-{version} ({label}).zip".replace(" ", "%20")
+    return (
+        "Fallout Chat Mod - optional xScal setup helpers\n"
+        "=================================================\n\n"
+        "Executable and script files are never bundled in the Nexus HUD archive.\n"
+        "Download the website HUD ZIP if you want the optional Windows helpers:\n\n"
+        f"https://{host}/downloads/electron/{filename}\n\n"
+        "Manual xScal setup is documented in INSTALL.txt and needs no helper.\n"
+    )
+
+
+def assert_nexus_archive_safe(output: Path) -> None:
+    """Fail closed when a Nexus HUD ZIP contains executable/script entries."""
+    with ZipFile(output) as archive:
+        blocked_names = [
+            name for name in archive.namelist()
+            if Path(name).suffix.lower() in NEXUS_BLOCKED_SUFFIXES
+        ]
+        executable_magic = []
+        for name in archive.namelist():
+            if name.endswith("/"):
+                continue
+            prefix = archive.read(name)[:4]
+            if (
+                prefix.startswith((b"MZ", b"\x7fELF", b"#!"))
+                or prefix in {b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe", b"\xcf\xfa\xed\xfe"}
+            ):
+                executable_magic.append(name)
+    blocked = sorted(set(blocked_names + executable_magic))
+    if blocked:
+        output.unlink(missing_ok=True)
+        raise ValueError(f"Nexus HUD archive contains executable/script files: {blocked}")
+
+
+def build_package(
+    target: str,
+    output: Path,
+    provider: str = "unified",
+    distribution: str = "website",
+) -> None:
     if provider not in ("zfe", "xscal", "unified"):
         raise ValueError("provider must be unified, zfe or xscal")
+    if distribution not in ("website", "nexus"):
+        raise ValueError("distribution must be website or nexus")
     version = widget_version()
     widget_artifact = ROOT / "FCMChatWidget.ba2"
     if version.encode("ascii") not in widget_artifact.read_bytes():
@@ -253,7 +320,7 @@ def build_package(target: str, output: Path, provider: str = "unified") -> None:
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
-        archive.writestr("INSTALL.txt", install_instructions(target, provider))
+        archive.writestr("INSTALL.txt", install_instructions(target, provider, distribution))
         for notice in ("NOTICE.txt", "LICENSE-TWEMOJI.txt", "LICENSE-UNICODE.txt"):
             archive.write(ROOT / "emoji" / notice, "licenses/emoji/" + notice)
         archive.writestr(
@@ -316,11 +383,17 @@ def build_package(target: str, output: Path, provider: str = "unified") -> None:
         archive.writestr("FCMChatWidget.provider.txt", provider + "\n")
         if provider in ("xscal", "unified"):
             archive.writestr("xscal.ini.example", xscal_config_example(target))
-            setup = (ROOT / "Enable-xScal-Chat.ps1").read_text(encoding="ascii")
-            archive.writestr("Enable-xScal-Chat.ps1", setup.replace("@@FCM_RELAY_ENDPOINT@@", TARGETS[target]["endpoint"]))
-            archive.writestr("Enable-xScal-Chat.cmd",
-                '@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Enable-xScal-Chat.ps1"\r\n'
-                'set "fcmExitCode=%errorlevel%"\r\npause\r\nexit /b %fcmExitCode%\r\n')
+            if distribution == "website":
+                setup = (ROOT / "Enable-xScal-Chat.ps1").read_text(encoding="ascii")
+                archive.writestr("Enable-xScal-Chat.ps1", setup.replace("@@FCM_RELAY_ENDPOINT@@", TARGETS[target]["endpoint"]))
+                archive.writestr("Enable-xScal-Chat.cmd",
+                    '@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Enable-xScal-Chat.ps1"\r\n'
+                    'set "fcmExitCode=%errorlevel%"\r\npause\r\nexit /b %fcmExitCode%\r\n')
+            else:
+                archive.writestr(
+                    "DOWNLOAD-XSCAL-SETUP-HELPERS.txt",
+                    nexus_helper_download(target),
+                )
         archive.write(widget_artifact, "Data/FCMChatWidget.ba2")
         archive.writestr("Data/FCMChat.ini", chat_ini)
         if provider == "zfe":
@@ -335,12 +408,16 @@ def build_package(target: str, output: Path, provider: str = "unified") -> None:
             "FCMChatWidget\n",
         )
         archive.writestr("FCMChatWidget.version.txt", f"{version}\n")
+    if distribution == "nexus":
+        assert_nexus_archive_safe(output)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--provider", choices=["unified", "zfe", "xscal"], default="unified",
                         help="one shared BA2 and both extender examples by default; legacy provider-only packages optional")
+    parser.add_argument("--distribution", choices=["website", "nexus"], default="website",
+                        help="website includes optional helpers; Nexus fails closed on executable/script files")
     parser.add_argument("--target", choices=sorted(TARGETS))
     parser.add_argument("--output", type=Path)
     parser.add_argument(
@@ -354,7 +431,7 @@ def main() -> None:
         return
     if not args.target or not args.output:
         parser.error("--target and --output are required unless --print-version is used")
-    build_package(args.target, args.output, args.provider)
+    build_package(args.target, args.output, args.provider, args.distribution)
     print(f"wrote {args.output} ({args.target})")
 
 

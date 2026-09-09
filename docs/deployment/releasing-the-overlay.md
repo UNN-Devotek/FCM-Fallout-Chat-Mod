@@ -265,6 +265,13 @@ The overlay ZIPs go to the website and Nexus Mods. The HUD ZIP goes to the websi
 environment's Discord Updates announcement, and its separate optional Nexus file group. It is
 an explicit opt-in mod and is additional to the raw files — do not replace the raw files with it.
 
+**HARD RULE — Nexus HUD ZIPs contain no executables or scripts.** The website HUD ZIP may
+include the optional `Enable-xScal-Chat.cmd` and `.ps1` helpers. Before a Nexus HUD upload,
+`publish-nexus-release.ps1` builds a separate `FCM HUD Mod-<widget-version> (PROD)-Nexus.zip`
+with `--distribution nexus`. That archive omits both helpers, includes
+`DOWNLOAD-XSCAL-SETUP-HELPERS.txt` pointing to the website ZIP, and fails closed if a blocked
+executable/script extension is present. Never upload the website HUD ZIP to Nexus.
+
 For a hosted-dev package, use `-HudTarget dev`; the generated INIs and `INSTALL.txt` then point
 only to `dev.falloutchatmod.com`. Never copy a stamped package between environments.
 
@@ -393,7 +400,7 @@ upload is intentionally deferred. The standalone wrapper still requires the
 explicit `-PublishWindowsForReview` switch.
 
 This script:
-1. Calls `Packaging/publish-nexus.ps1` for the Linux AppImage ZIP and Linux `.deb` ZIP as `main`, and the production `FCM HUD Mod` ZIP as `main` (still a separate, opt-in installation); these normal replacement paths archive their previous files
+1. Builds the executable-free Nexus-specific HUD ZIP, then calls `Packaging/publish-nexus.ps1` for the Linux AppImage ZIP and Linux `.deb` ZIP as `main`, and that Nexus HUD ZIP as `main` (still a separate, opt-in installation); these normal replacement paths archive their previous files
 2. Calls `publish-nexus.ps1` for the Windows ZIP as `main` with `archive_existing_file: false` when the canonical release path enables the support-review upload
 3. Implements the 6-step Nexus v3 Upload API: open multipart session → upload chunks to S3 → complete S3 multipart → finalise → poll for `available` state → attach the new file with the requested archive behavior
 4. Uploads the Windows `.exe` to VirusTotal and pushes the permalink to `/admin/virustotal-url`
@@ -407,7 +414,9 @@ Required env vars (set as Windows USER env vars):
 - `VT_API_KEY`
 - `PROD_ADMIN_RELEASE_TOKEN`
 
-The HUD package is uploaded from `dist-electron/FCM HUD Mod-<widget-version> (PROD).zip`.
+The website HUD package remains `dist-electron/FCM HUD Mod-<widget-version> (PROD).zip`.
+Nexus receives only `dist-electron/FCM HUD Mod-<widget-version> (PROD)-Nexus.zip`, generated
+immediately before publishing with no executable or script entries.
 Its Nexus file version is the widget version read from `FCMChatWidget.hx`, not the desktop
 overlay version. Create the HUD file group in the Nexus Files tab and set its ID in
 `NEXUS_FILE_GROUP_ID_HUD`; the wrapper then replaces the previous HUD file on each release. The
