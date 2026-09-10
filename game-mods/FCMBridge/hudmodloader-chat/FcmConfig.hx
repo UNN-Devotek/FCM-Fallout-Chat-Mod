@@ -78,6 +78,13 @@ class FcmConfig {
     public var showChannelTag:Bool  = true;
     public var showHints:Bool       = false;      // blank idle prompt by default (CAP-014)
 
+    // ── HUD mode gating ────────────────────────────────────────────────────────
+    // Blacklist of HUDMode strings where the widget must stay hidden. Single INI key
+    // `hideInHUDModes` (comma-separated) — case-insensitive. Opinionated default hides
+    // MainMenu, Pipboy, CAMP build modes, vendor/crafting/repair (ContainerMode) and
+    // the map (MapMenu) so the chat does not cover those UIs.
+    public var hideInHUDModes:Array<String> = ["MainMenu", "Pipboy", "WorkshopMode", "WorkshopNoCrosshairMode", "CampPlacement", "ContainerMode", "MapMenu"];
+
     // ── Link flow ────────────────────────────────────────────────────────────────
     // URL shown in the widget's link prompt (linkHint fallback). DEV builds set this to
     // dev.falloutchatmod.com/link via FCMChat.ini; prod uses the default. URL-safe charset
@@ -572,6 +579,8 @@ class FcmConfig {
                 case "hidekey":         cfg.hideKey = validAction(val, "");
                 case "showchanneltag":  cfg.showChannelTag = parseBool(val, cfg.showChannelTag);
                 case "showhints":       cfg.showHints = parseBool(val, cfg.showHints);
+                case "hideinhudmodes":
+                    cfg.hideInHUDModes = parseHideInHUDModes(val);
                 case "linkurl":
                     // URL-safe charset only — interpolated into htmlText (crash rule #2).
                     var lu:String = StringTools.trim(val);
@@ -582,6 +591,28 @@ class FcmConfig {
 
         cfg.clamp();
         return cfg;
+    }
+
+    static function parseHideInHUDModes(s:String):Array<String> {
+        if (s == null) return [];
+        var raw:String = StringTools.trim(s);
+        if (raw.length == 0) return [];
+        var out:Array<String> = [];
+        var seen:Map<String,Bool> = new Map();
+        for (c in raw.split(",")) {
+            for (d in c.split(";")) {
+                var t:String = StringTools.trim(d);
+                if (t.length == 0) continue;
+                var low:String = t.toLowerCase();
+                if (!seen.exists(low)) {
+                    seen.set(low, true);
+                    out.push(t);
+                }
+                if (out.length >= 16) break;
+            }
+            if (out.length >= 16) break;
+        }
+        return out;
     }
 
     /** Clamp every numeric value to a safe range; keep the panel on-screen. */
@@ -597,6 +628,23 @@ class FcmConfig {
         maxSendLen  = clampInt(maxSendLen, 1, 500);     // server hard cap 500
         pollMs      = clampInt(pollMs, 1000, 60000);    // 1s..60s event-poll interval
         autoHideSec = clampInt(autoHideSec, 0, 600);    // 0 = off, else 1s..10min
+        // Clamp HUD mode list length and dedupe lower-cased
+        if (hideInHUDModes == null) hideInHUDModes = [];
+        if (hideInHUDModes.length > 16) hideInHUDModes = hideInHUDModes.slice(0, 16);
+        // Normalize empty strings and dedupe case-insensitively
+        var norm:Array<String> = [];
+        var seen:Map<String,Bool> = new Map();
+        for (v in hideInHUDModes) {
+            if (v == null) continue;
+            var t:String = StringTools.trim(v);
+            if (t.length == 0) continue;
+            var low:String = t.toLowerCase();
+            if (!seen.exists(low)) {
+                seen.set(low, true);
+                norm.push(t);
+            }
+        }
+        hideInHUDModes = norm;
     }
 
     /** Serialize back to the [FCMChat] INI (for F11 Customize persistence via ZFE storage).
@@ -634,6 +682,7 @@ class FcmConfig {
         s.add("hideKey=" + hideKey + "\n");
         s.add("showChannelTag=" + b(showChannelTag) + "\n");
         s.add("showHints=" + b(showHints) + "\n");
+        s.add("hideInHUDModes=" + hideInHUDModes.join(",") + "\n");
         s.add("linkUrl=" + linkUrl + "\n");
         return s.toString();
     }

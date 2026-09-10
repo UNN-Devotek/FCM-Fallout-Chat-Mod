@@ -357,6 +357,12 @@ class FCMChatWidget extends MovieClip {
     var _autoHideOn:Bool         = false;
     var _autoHideTimer:Timer     = null;
     var _themeIdx:Int            = 0;       // F11 Customize → cycle color theme
+    // HUDMode gating — blacklist via hideInHUDModes (single INI key, opinionated default)
+    var _hiddenByHUDMode:Bool    = false;
+    var _cachedHUDMode:String    = "";
+    var _hudModeSubscribed:Bool  = false;
+    var _hudModeCallback:Dynamic = null;
+    var _menuStackCallback:Dynamic = null;
     // HUDTools disables a clicked item until its timeout expires. A short cooldown
     // keeps repeatable actions usable without allowing key-repeat to flood commands.
     static inline var MENU_ACTION_TIMEOUT_MS:Float = 250;
@@ -677,6 +683,7 @@ class FCMChatWidget extends MovieClip {
         // every subscription before releasing the manager so an old reload instance cannot
         // continue processing world/roster updates after the replacement is live.
         try { unsubscribeRoster(); } catch (e:Dynamic) {}
+        try { unsubscribeHudMode(); } catch (e:Dynamic) {}
         _rosterManager = null;
         _bsui = null;
         try { removeEventListener(Event.ADDED_TO_STAGE, onStage); } catch (e:Dynamic) {}
@@ -837,6 +844,8 @@ class FCMChatWidget extends MovieClip {
         // Register HUDModLoader listeners before building the static panel.
         attachHUDModListeners();
         buildPanel();
+        subscribeHudMode();
+        updateHUDVisibility();
         // Delay ZFE init 3 s — ZFE API may not be ready at SWF load time.
         stopConfigTimer();
         _configTimer = new Timer(3000, 1);
@@ -1504,10 +1513,149 @@ class FCMChatWidget extends MovieClip {
 
     function show():Void {
         if (_disposed) return;
+        // HUDMode gating overrides manual show — keep hidden while HUDMode says hidden
+        if (_hiddenByHUDMode || !isValidHUDMode()) {
+            zfeLog("info", "hud", "show suppressed HUDMode=" + currentHUDMode());
+            updateHUDVisibility();
+            return;
+        }
         this.visible = true;
         _hidden = false;
         bumpAutoHide();
         zfeLog("info", "hide", "panel restored");
+    }
+
+    // ── HUDMode gating — single INI key hideInHUDModes (blacklist, opinionated default) ──
+    function currentHUDMode():String {
+        // MenuStackData MainMenu is synthetic; otherwise cached HUDModeData string
+        try {
+            if (FcmRoster.isMainMenu(uiData(getBSUIData(findBSUI(), "MenuStackData")))) return "MainMenu";
+        } catch (_:Dynamic) {}
+        return _cachedHUDMode;
+    }
+
+    function isValidHUDMode():Bool {
+        if (_cfg == null || _cfg.hideInHUDModes == null || _cfg.hideInHUDModes.length == 0) return true;
+        var cur:String = currentHUDMode();
+        if (cur == null || cur.length == 0) return true;
+        var low:String = cur.toLowerCase();
+        for (v in _cfg.hideInHUDModes) {
+            if (v != null && StringTools.trim(v).toLowerCase() == low) return false;
+        }
+        return true;
+    }
+
+    function updateHUDVisibility():Void {
+        if (_disposed) return;
+        var shouldHideByMode:Bool = !isValidHUDMode();
+        if (shouldHideByMode) {
+            if (!_hiddenByHUDMode) {
+                _hiddenByHUDMode = true;
+                if (!_hidden) {
+                    if (_inputOpen) {
+                        try {
+                            if (_nativeInput) closeInputNative();
+                            else closeInputSharedHudTools("HUDMode hide");
+                        } catch (_:Dynamic) {}
+                    }
+                    this.visible = false;
+                    _hidden = true;
+                    stopAutoHideTimer();
+                    zfeLog("info", "hud", "HUDMode hide hudMode=" + currentHUDMode());
+                } else {
+                    zfeLog("info", "hud", "HUDMode already hidden hudMode=" + currentHUDMode());
+                }
+            }
+        } else {
+            if (_hiddenByHUDMode) {
+                _hiddenByHUDMode = false;
+                if (_hidden) {
+                    // Mode now allows visible — restore even if manual hide was active (mode overrides)
+                    this.visible = true;
+                    _hidden = false;
+                    bumpAutoHide();
+                    zfeLog("info", "hud", "HUDMode show hudMode=" + currentHUDMode());
+                } else {
+                    zfeLog("info", "hud", "HUDMode no longer hidden hudMode=" + currentHUDMode());
+                }
+            }
+        }
+    }
+
+    function onHUDModeChanged(evt:Dynamic):Void {
+        try {
+            var d:Dynamic = null;
+            try { d = evt.data; } catch (_:Dynamic) {}
+            if (d == null) try { d = evt.target.data; } catch (_:Dynamic) {}
+            var mode:String = "";
+            if (d != null) {
+                if (Reflect.hasField(d, "hudMode")) mode = Std.string(Reflect.field(d, "hudMode"));
+                else if (d.hudMode != null) mode = Std.string(d.hudMode);
+                else if (d.data != null) {
+                    if (Reflect.hasField(d.data, "hudMode")) mode = Std.string(Reflect.field(d.data, "hudMode"));
+                    else if (d.data.hudMode != null) mode = Std.string(d.data.hudMode);
+                }
+            }
+            if (mode.length > 0) _cachedHUDMode = mode;
+            zfeLog("info", "hud", "HUDMode evt hudMode=" + _cachedHUDMode + " valid=" + isValidHUDMode());
+        } catch (e:Dynamic) {
+            zfeLog("warn", "hud", "HUDMode evt threw: " + Std.string(e));
+        }
+        updateHUDVisibility();
+    }
+
+    function onMenuStackChanged(evt:Dynamic):Void {
+        // MenuStackData change can flip isMainMenu synthetic mode
+        zfeLog("info", "hud", "MenuStack evt valid=" + isValidHUDMode() + " isMainMenu=" + FcmRoster.isMainMenu(uiData(getBSUIData(findBSUI(), "MenuStackData"))));
+        updateHUDVisibility();
+    }
+
+    function subscribeHudMode():Void {
+        if (_hudModeSubscribed) return;
+        var mgr:Dynamic = findBSUI();
+        if (mgr == null) return;
+        try {
+            _hudModeCallback = function(evt:Dynamic):Void { try { onHUDModeChanged(evt); } catch (_:Dynamic) {} };
+            mgr.Subscribe("HUDModeData", _hudModeCallback);
+            _menuStackCallback = function(evt:Dynamic):Void { try { onMenuStackChanged(evt); } catch (_:Dynamic) {} };
+            mgr.Subscribe("MenuStackData", _menuStackCallback);
+            _hudModeSubscribed = true;
+            // Pull current values — Subscribe does not replay cached value (see subscribeRoster comment)
+            try {
+                var hud:Dynamic = getBSUIData(mgr, "HUDModeData");
+                var d:Dynamic = uiData(hud);
+                if (d != null) {
+                    var m:String = "";
+                    if (Reflect.hasField(d, "hudMode")) m = Std.string(Reflect.field(d, "hudMode"));
+                    else if (d.hudMode != null) m = Std.string(d.hudMode);
+                    if (m.length > 0) _cachedHUDMode = m;
+                }
+            } catch (_:Dynamic) {}
+            zfeLog("info", "hud", "subscribed HUDModeData/MenuStackData hudMode=" + _cachedHUDMode);
+            updateHUDVisibility();
+        } catch (e:Dynamic) {
+            zfeLog("warn", "hud", "Subscribe HUDMode threw: " + Std.string(e));
+            unsubscribeHudMode(mgr);
+        }
+    }
+
+    function unsubscribeHudMode(mgr:Dynamic = null):Void {
+        var target:Dynamic = (mgr != null) ? mgr : findBSUI();
+        if (target == null) target = _rosterManager;
+        if (target != null) {
+            try {
+                var unsub:Dynamic = Reflect.field(target, "Unsubscribe");
+                if (unsub != null) {
+                    if (_hudModeCallback != null) Reflect.callMethod(target, unsub, ["HUDModeData", _hudModeCallback]);
+                    if (_menuStackCallback != null) Reflect.callMethod(target, unsub, ["MenuStackData", _menuStackCallback]);
+                }
+            } catch (e:Dynamic) {
+                zfeLog("warn", "hud", "Unsubscribe HUDMode threw: " + Std.string(e));
+            }
+        }
+        _hudModeCallback = null;
+        _menuStackCallback = null;
+        _hudModeSubscribed = false;
     }
 
     /**
@@ -5135,9 +5283,12 @@ class FCMChatWidget extends MovieClip {
         if (mgr == null) return;
         if (_rosterManager != null && _rosterManager != mgr) {
             unsubscribeRoster(_rosterManager);
+            unsubscribeHudMode(_rosterManager);
             resetRosterObservation("BSUIDataManager changed");
         }
         _rosterManager = mgr;
+        // Ensure HUDMode gating follows the same manager lifecycle (keeps poll running while hidden)
+        if (!_hudModeSubscribed) subscribeHudMode();
         if (_rosterSubscribed) return;
         try {
             var playerCallback:Dynamic = function(evt:Dynamic):Void {
