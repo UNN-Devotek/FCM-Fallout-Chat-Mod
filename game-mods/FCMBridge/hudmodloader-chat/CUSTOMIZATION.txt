@@ -1,0 +1,74 @@
+FCM HUD CUSTOMIZATION
+=====================
+
+Open F11 -> FCM -> Customize. These settings affect your HUD, not other users.
+
+SIZE AND POSITION
+- Panel width +/- and height +/- are independent. Move up/down/left/right.
+- Input height +/- and input text size +/- adjust the actual editor displayed
+  over the widget, including the ZFE/SharedHUDTools editor.
+- Input width and alignment always follow the widget input area. They are not
+  separate settings. The input remains inside the panel with fixed padding.
+- Feed text size +/- is independent of input text size.
+- Small panels constrain effective input dimensions to leave room for chat.
+
+OPACITY AND COLORS
+- Opacity +/- controls background opacity, including tab and input boxes.
+- Colors... lets you choose panel background, tab box, input box, border,
+  message text, input text, default name text, active/inactive tab text, and
+  hint text colors. Pick a color from the submenu.
+- Default name text affects names without a server-provided color. It does
+  not replace a user's chosen name color.
+- Color theme cycles the existing basic themes; individual colors can then
+  be changed separately. Reset all settings restores the packaged defaults.
+
+AUTO-HIDE
+- Auto-hide ON/OFF is independent of the remembered hide delay.
+- Hide delay +/- changes the delay by five seconds, from 1 to 600 seconds.
+- Changing the delay while OFF does not turn auto-hide on.
+- OFF cancels the timer and reveals the panel. Manual Hide still works.
+
+EXACT VALUES IN Data/FCMChat.ini
+Edit keys in the existing [FCMChat] section; do not add duplicate keys/sections.
+
+width=600
+height=300
+fontSize=16
+inputHeight=48
+inputFontSize=24
+bgAlpha=0.85
+bgColor=#0A0907
+tabRowColor=#080705
+inputBgColor=#080705
+borderColor=#F5CB5B
+textColor=#FAF4DA
+inputTextColor=#F5CB5B
+senderColor=#F5CB5B
+tabActiveColor=#F5CB5B
+tabInactiveColor=#B49544
+promptColor=#AC9043
+autoHideEnabled=false
+autoHideSec=60
+
+Input height accepts 28-120; input font size accepts 8-47, or 0 to use existing
+provider sizing. Background opacity accepts 0-1. Colors accept #RRGGBB.
+Input height alone does not enlarge the font. The row grows to fit larger text.
+Legacy autoHideSec=0 also disables auto-hide; enabling it supplies 60 seconds.
+
+SAVING AND RELOADING
+F11 changes apply immediately. ZFE saves in vendor-scoped
+FCMChatWidget/settings.ini; saved values take priority over Data/FCMChat.ini.
+If you already customized with F11, use F11 for further changes, or update the
+corresponding saved settings through your extender's storage location before
+reloading. xScal saves appearance per linked device through the matching relay
+backend; saved device values also take priority over the INI. Changes are only
+session-local if persistence is unavailable. Deploy the matching backend before
+using the new xScal controls. Reload the widget to reread configuration. Replacing
+a BA2 or changing extender configuration requires a full game restart.
+
+FIXED FEATURES
+Badges, channel tags (including their colors and visibility), emojis, default
+channel, and available channels are not appearance settings. Older showChannelTag,
+channelTagColor and colorGeneral/Trading/Events/Infests/Raids/Server overrides are
+ignored. You can still switch channels normally. There are no input-width or
+input-alignment settings.

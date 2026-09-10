@@ -2456,7 +2456,7 @@ describe('server chat (worldId-scoped room)', () => {
   test('HUD layout survives reconnect, stays device-scoped, and never becomes chat', async () => {
     const a = await registerAndLink('LayoutA', 'fcm-layout-shared');
     const b = await registerAndLink('LayoutB', 'fcm-layout-shared');
-    const layout = { x: 40, y: 80, width: 600, height: 300 };
+    const layout = { x: 40, y: 80, width: 600, height: 300, fontSize: 18, inputHeight: 48, inputFontSize: 24, autoHideEnabled: false, autoHideSec: 95, bgAlpha: 0.3, inputBgColor: 0x123456, inputTextColor: 0xFFFFFF };
     const ingest = require('../src/services/ingestMessage').ingestMessage;
     ingest.mockClear();
     expect(await sendCtrl(a, 'FCMCTL/1/LAYOUT/SET;save-1;' + JSON.stringify(layout))).toMatchObject({ success: true });
@@ -2471,7 +2471,7 @@ describe('server chat (worldId-scoped room)', () => {
     await new Promise(resolve => setTimeout(resolve, 30));
     const notices = own.msgs.filter(m => m.event?.body?.startsWith('FCMLAYOUT/1;read-2;'));
     expect(notices).toHaveLength(1);
-    expect(notices[0].event.body).toBe('FCMLAYOUT/1;read-2;' + JSON.stringify(layout));
+    expect(JSON.parse(notices[0].event.body.slice('FCMLAYOUT/1;read-2;'.length))).toEqual(layout);
     expect(other.msgs.some(m => m.event?.body?.startsWith('FCMLAYOUT/1;'))).toBe(false);
     expect(ingest).not.toHaveBeenCalled();
     own.ws.close(); other.ws.close();

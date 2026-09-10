@@ -93,7 +93,7 @@ echo "    HUDMenu vanilla SHA-256 pin=$HUDMENU_SHA256"
 # ---------------------------------------------------------------------------
 echo ""
 echo "--- a: haxe compile FCMBridge.hx"
-(cd "$SRC_DIR" && "$HAXE" --main FCMBridge --swf "$OUT/FCMBridge.swf" --swf-version 32)
+(cd "$SRC_DIR" && "$HAXE" --class-path hudmodloader-chat --main FCMBridge --swf "$OUT/FCMBridge.swf" --swf-version 32)
 echo "    compiled: $(wc -c < "$OUT/FCMBridge.swf") bytes (pre-decompress)"
 
 # ---------------------------------------------------------------------------

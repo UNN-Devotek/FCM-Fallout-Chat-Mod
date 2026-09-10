@@ -142,6 +142,11 @@ def main() -> None:
                 assert not any(name.startswith("Data/ZFE/") for name in names)
                 assert archive.read("Data/FCMChatWidget.ba2") == (ROOT / "FCMChatWidget.ba2").read_bytes()
                 assert f"Endpoint={expected['endpoint']}".encode() in archive.read("examples/ZFE/FCMChatWidget.ini.example")
+                override = archive.read("examples/ZFE/zfe.ini.example")
+                assert f"[TextChat]\nEndpoint={expected['endpoint']}\n".encode() in override
+                assert b"Do not replace the whole file" in override
+                assert b"examples/ZFE/zfe.ini.example" in archive.read("INSTALL.txt")
+                assert "CUSTOMIZATION.txt" in names
                 assert b"enabled=true" in archive.read("xscal.ini.example")
                 assert expected["endpoint"].encode() in archive.read("xscal.ini.example")
                 assert expected["endpoint"].encode() in archive.read("Enable-xScal-Chat.ps1")
@@ -155,6 +160,8 @@ def main() -> None:
                 assert "New users must apply these settings too" in install
                 assert "setup helper is optional" in install
                 assert "Copy the COMPLETE examples/ZFE/FCMChatWidget.ini.example" in install
+                assert "ZFE applies this global file after" in install
+                assert f"[TextChat]\n   Endpoint={expected['endpoint']}" in install
                 assert "Steam sign-in does not require Discord" in install
                 other = "prod" if target == "dev" else "dev"
                 assert package.TARGETS[other]["endpoint"] not in install
@@ -233,6 +240,15 @@ def main() -> None:
                     ) if provider == "zfe" else b""
                     install = archive.read("INSTALL.txt")
                     menu = archive.read("HUDMODLOADER-MENU.txt")
+                    customization = archive.read("CUSTOMIZATION.txt")
+                    assert b"inputBgColor=#080705" in customization
+                    assert b"autoHideEnabled=false" in customization
+                    assert b"Input width and alignment always follow" in customization
+                    assert b"Badges, channel tags" in customization
+                    assert b"CUSTOMIZATION.txt" in menu
+                    assert b"Colors..." in menu
+                    assert b"showChannelTag=" not in chat_config
+                    assert b"colorGeneral=" not in chat_config
                     xscal_config = archive.read("xscal.ini.example") if provider == "xscal" else b""
                     assert f"linkUrl={expected['link_url']}\n".encode() in chat_config
                     assert provider != "zfe" or f"Endpoint={expected['endpoint']}\n".encode() in widget_config
@@ -248,6 +264,8 @@ def main() -> None:
                     assert b"Home / End" in install
                     assert b"/g, /t, /e" in install
                     assert b"/relink" in install
+                    assert b"ZFE applies this global file after" in install
+                    assert f"[TextChat]\n   Endpoint={expected['endpoint']}".encode() in install
                     assert b"Reset all settings" in install
                     assert b"F11" in menu
                     assert b"FCM -> Customize..." in menu

@@ -249,9 +249,8 @@ class FcmNativeApi {
                 || method == "logout" || method == "clearChatAuth") {
             return Reflect.callMethod(chat, fn, []);
         }
-        var args:Dynamic = payload;
-        try { args = haxe.Json.parse(payload == null || payload.length == 0 ? "{}" : payload); }
-        catch (e:Dynamic) {}
+        var args:Dynamic = FcmJson.parse(payload == null || payload.length == 0 ? "{}" : payload);
+        if (args == null && payload != "null") args = payload;
         return Reflect.callMethod(chat, fn, [args]);
     }
 
@@ -513,8 +512,14 @@ class FcmNativeApi {
         if (lower == "true" || lower == "1" || lower == "pressed" || lower == "down") return true;
         if (lower.length == 0 || lower.charAt(0) != "{") return false;
         var parsed:Dynamic = null;
-        try { parsed = haxe.Json.parse(text); } catch (e:Dynamic) { return false; }
-        if (parsed == null || Reflect.field(parsed, "success") == false) return false;
+        parsed = FcmJson.parse(text);
+        return inputObjectIsTrue(parsed, 0);
+    }
+
+    // Keep the entire ZFE decoder free of JsonParser/JsonPrinter exception dependencies.
+    // GFx can fail method verification before even reaching a native-boolean fast path.
+    static function inputObjectIsTrue(parsed:Dynamic, depth:Int):Bool {
+        if (depth > 32 || parsed == null || Reflect.field(parsed, "success") == false) return false;
         for (name in ["pressed", "isPressed", "down", "isDown", "held", "value", "result", "data"]) {
             var field:Dynamic = Reflect.field(parsed, name);
             if (field == null) continue;
@@ -525,7 +530,7 @@ class FcmNativeApi {
                 return f == "true" || f == "1" || f == "pressed" || f == "down";
             }
             if (Std.isOfType(field, Float) || Std.isOfType(field, Int)) return field != 0;
-            if (Reflect.isObject(field)) return inputResultIsTrue(haxe.Json.stringify(field));
+            if (Reflect.isObject(field)) return inputObjectIsTrue(field, depth + 1);
         }
         return false;
     }

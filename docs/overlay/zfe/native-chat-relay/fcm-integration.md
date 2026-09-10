@@ -1,3 +1,12 @@
+> Navigation correction (local HUD 2.10.76): the existing ZFE `Input.*` path is
+> locally observed compatibility, not a verified public ZFE contract. Earlier
+> references below equating `zfe-input-v1` with this surface are superseded:
+> that capability describes `input.v1.*` text sessions. The new decoder removes
+> general Haxe JSON dependencies associated with the observed Error #1014;
+> live ZFE verification is pending. No navigation INI edits are required.
+> The public guide names `zfe-hotkeys-v1` for hotkeys; migration requires its
+> detailed payload contract. See [ZFE Modder Guide](https://www.nexusmods.com/fallout76/articles/255).
+
 # FCM integration with ZFE `chat.v1` and xScal `chatInterface`
 
 This document describes the current FCM adapter for ZFE's `chat.v1` API and xScal's
@@ -477,8 +486,19 @@ and the reconnect state recovers after a temporary relay outage.
 
 Linked, non-banned/non-muted relay clients may send on channel `server`:
 `FCMCTL/1/LAYOUT/GET;requestId` or `FCMCTL/1/LAYOUT/SET;requestId;json`.
-The JSON has only integer `x`, `y`, `width`, `height` within the HUD's 1920x1080
-coordinate system (minimum 200x120). Payloads are capped at 300 characters and
+The JSON requires integer `x`, `y`, `width`, `height` within the HUD's 1920x1080
+coordinate system (minimum 200x120). The pending sizing-controls change also accepts
+optional integer `fontSize` (8–47), `inputHeight` (28–120), and `inputFontSize`
+(0 for inherited sizing, or 8–47), `autoHideSec` (0–600), and boolean
+`autoHideEnabled`. The enabled flag is independent of the remembered delay.
+The optional appearance fields `bgColor`, `tabRowColor`, `inputBgColor`,
+`borderColor`, `textColor`, `inputTextColor`, `senderColor`, `tabActiveColor`,
+`tabInactiveColor`, and `promptColor` are integer RGB values (0–16777215);
+`bgAlpha` is a finite number from 0–1. Unknown fields remain rejected, including
+input width/alignment, channel-tag overrides, badges and emoji controls. Old geometry-only
+records remain valid and leave the HUD's configured font/input settings unchanged.
+Deploy this backend extension before distributing the updated HUD: older backends
+reject the extra settings fields, so its xScal saves would not persist. Payloads are capped at 1024 characters and
 share the authenticated control rate limit. Invalid layout controls fail before
 chat ingestion. The actor comes exclusively from the verified token.
 

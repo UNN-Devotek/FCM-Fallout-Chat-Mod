@@ -110,3 +110,13 @@ The strengthened retained-cursor test failed before the relay fix. FFDec inspect
 `splice` in the guarded deferred-send callback and array-backed roster snapshot traversal.
 These checks do not constitute a fresh native gameplay run. Send/Discord delivery, repeated
 joins, roster exception absence, and xScal runtime validation remain in-game acceptance items.
+
+## Retained-row guard (pending HUD build)
+
+The bounded history cache can evict a durable message key when replay deliveries
+introduce fresh event IDs, even while its original row remains in the feed. Normal
+message ingestion therefore also checks retained canonical rows by channel and
+nonempty message ID before appending. This check excludes pending sends and never
+compares body text or sender names. Event-edit handling remains separate. SERVER
+clear/rejoin behavior is unchanged because cleared rows no longer participate in
+this check. The existing CI history suite reproduces the full-cache replay case.

@@ -61,11 +61,22 @@ class FcmHistory {
     }
 
     /** Scope both IDs to the feed so clearing SERVER cannot invalidate static deduplication. */
-    public function accept(channel:String, eventId:Int, messageId:String, cap:Int):Bool {
+    public function accept(channel:String, eventId:Int, messageId:String, cap:Int,
+            ?retained:Array<{channel:String, messageId:String, pending:Bool}>):Bool {
         var keys:Array<String> = [];
         if (eventId > 0) keys.push(channel + ":event:" + eventId);
         if (messageId != null && messageId.length > 0) keys.push(channel + ":message:" + messageId);
         var duplicate:Bool = false;
+        // Replay cursors can evict cached identities while their rows are still visible.
+        // Retained canonical rows are authoritative; never match text or pending sends.
+        if (retained != null && messageId != null && messageId.length > 0) {
+            for (row in retained) {
+                if (!row.pending && row.channel == channel && row.messageId == messageId) {
+                    duplicate = true;
+                    break;
+                }
+            }
+        }
         for (key in keys) {
             if (seen.exists(key)) duplicate = true;
             else {

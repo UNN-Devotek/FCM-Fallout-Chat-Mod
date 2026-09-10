@@ -1,6 +1,32 @@
+## Local navigation hotfix 2.10.76
+
+[Confirmed] The local ZFE 2.10.74 log registers keys 33/34/38/40/36/35, then
+stops the navigation timer with Error #1014 before its first poll diagnostic.
+[Hypothesized] The ZFE decoder's Haxe JSON parser/printer dependencies trigger
+GFx method verification failure, including on its native-boolean fast path.
+This build uses the existing bounded FcmJson reader and traverses nested objects
+without serialization. Timer failures now identify the key/read/dispatch step.
+Native mock tests and source dependency guards run in CI; runtime success still
+requires a fresh ZFE game session. No new hotkey payloads are guessed.
+
+The existing Input.* ZFE compatibility path is observed locally, not guaranteed
+by the public ZFE API contract. zfe-input-v1 identifies input.v1 text sessions,
+not arbitrary physical keys. The public Modder Guide names zfe-hotkeys-v1 and
+hotkeys.v1.register/poll/unregister, but the detailed payload contract was not
+available in the public articles reviewed. Capability-gated migration remains
+pending that contract; this patch retains current key ownership and xScal behavior.
+See https://www.nexusmods.com/fallout76/articles/255 and articles/248.
+
+Build the legacy bridge with `--class-path hudmodloader-chat` so it can share
+FcmJson; build.sh and CI include this path. No INI changes are required.
+
+> **Local test build 2.10.76:** Includes retained-message replay protection, duplicate
+> diagnostics and the appearance/auto-hide controls. Built for local production-connected
+> testing; no public release or in-game verification is implied by compilation.
+
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.74. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.76. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## Release status — 2.10.74
@@ -147,8 +173,7 @@ its sanctioned chat bridge. `FCMLAYOUT/1;requestId;json` replies are consumed in
 never displayed as chat. Restore/save requests retry at most once per 10 seconds; a newer
 local move invalidates older replies. Desktop and laptop tokens keep separate layouts.
 ZFE continues using vendor-scoped local storage; the packaged link URL is preserved.
-Only geometry (x/y/width/height) is stored remotely; other xScal customizations remain
-session-only. Relinking with a new device token starts with packaged defaults.
+The pending appearance backend extension also persists font/input dimensions, colors, opacity and auto-hide. Deploy it before testing persistence with HUD 2.10.76; older backends accept only geometry and reject the new settings payload. Relinking with a new device token starts with packaged defaults.
 
 Deploy the matching backend and idempotent migration to enable xScal geometry persistence.
 The HUD requires `getAuthState.permissions.canSaveHudLayout=true` before sending layout

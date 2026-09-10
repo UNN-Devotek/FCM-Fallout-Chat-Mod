@@ -9,6 +9,7 @@ describe('manual HUD setup', () => {
     render(<HudManualInstall linkUrl={`https://${host}/link`} bodyStyle={{}} stepStyle={{}} noteStyle={{}} />);
     expect(screen.getByRole('link', { name: 'the account-link page' })).toHaveAttribute('href', `https://${host}/link`);
     expect(screen.getByText(`[Chat]\nenabled=true\nrelayEndpoint=wss://${host}/relay`, { collapseWhitespace: false })).toBeInTheDocument();
+    expect(screen.getByText(`[TextChat]\nEndpoint=wss://${host}/relay`, { collapseWhitespace: false })).toBeInTheDocument();
     expect(screen.getByText(`Endpoint=wss://${host}/relay`)).toBeInTheDocument();
     const text = screen.getByRole('region', { name: 'Manual HUD installation' }).textContent!;
     const otherHost = host.startsWith('dev.') ? 'wss://falloutchatmod.com' : 'wss://dev.falloutchatmod.com';
@@ -16,6 +17,7 @@ describe('manual HUD setup', () => {
     expect(text).toContain('If the file is missing');
     expect(text).toContain('New users must apply these settings too');
     expect(text).toContain('Copy the complete');
+    expect(text).toContain('values override the fragment');
     expect(text).toContain('sign in with Steam or Discord');
     expect(text).toContain('Steam display name');
   });

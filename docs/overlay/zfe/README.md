@@ -1,4 +1,124 @@
+> Navigation correction (local HUD 2.10.76): the existing ZFE `Input.*` path is
+> locally observed compatibility, not a verified public ZFE contract. Earlier
+> references below equating `zfe-input-v1` with this surface are superseded:
+> that capability describes `input.v1.*` text sessions. The new decoder removes
+> general Haxe JSON dependencies associated with the observed Error #1014;
+> live ZFE verification is pending. No navigation INI edits are required.
+> The public guide names `zfe-hotkeys-v1` for hotkeys; migration requires its
+> detailed payload contract. See [ZFE Modder Guide](https://www.nexusmods.com/fallout76/articles/255).
+
 # ZFE / xScal — FCM in-game integration
+
+## Duplicate-feed diagnostics (source-only; not yet released)
+
+Diagnostic builds identify themselves with `diagnostics=dup-v1` on the BUILD line.
+Every widget log message carries a random per-load `[instance=...]` tag. Interleaved
+activity from different tags can reveal concurrent modern widgets; sequential tags
+can simply indicate a reload. Old widgets/legacy renderers will not emit this tag,
+so a single tag does not exclude a second older renderer.
+
+Receive summaries include `appended` and `duplicateRejected` (normal message replay
+rejections; scheduled-event edit handling is separate), alongside existing echo
+matches and before/after record counts. Render summaries include `repeatedIds`,
+`repeatedContent` (same channel, sender ID and body), and `pendingRows`. Repeated
+content can be intentional; it is not proof of a delivery bug. `renderedRows`
+counts tracked message rows before the optional new-message notice; `legacyTextVisible`
+refers to this widget's fallback TextField, not an independently loaded legacy mod.
+
+These additions emit counts, not message bodies, names or durable IDs. Snapshot
+maps are limited to retained visible records and discarded after each summary.
+To investigate, collect the extender log from startup through a visible duplicate,
+plus a screenshot and the active HUD loader/archive configuration. Check the BUILD
+marker first: existing packaged SWF/BA2 files do not contain these source changes.
+
+## Retained-message replay protection (source-only; not yet released)
+
+The HUD rejects a replay if a retained non-pending row already has the same channel
+and nonempty durable message ID, even if fresh replay cursors evicted that ID from
+the bounded history cache. Matching never uses message text. Pending own echoes
+still follow reconciliation, scheduled-event edits use their existing update path,
+and clearing server-world rows permits their normal history restoration.
+
+This closes a reproduced cache-eviction duplication case; it does not establish the
+cause of the reported 2.10.74 user's duplicates. It cannot suppress a second renderer
+or duplicate backend messages assigned different IDs. Continue collecting the
+instance/receive/render diagnostics for those cases.
+
+## Appearance controls (source-only; not yet released)
+
+F11 → FCM → Customize → Colors offers palettes for panel, tab-box and input-box
+backgrounds, borders, message text, input text, default sender text, active/inactive
+tab text and hints. Exact INI colors use `bgColor`, `tabRowColor`, `inputBgColor`,
+`borderColor`, `textColor`, `inputTextColor`, `senderColor`, `tabActiveColor`,
+`tabInactiveColor`, and `promptColor` (`#RRGGBB`). `bgAlpha` controls background
+opacity for the panel, tab boxes, and actual SharedHUDTools editor. Custom
+server-supplied sender colors are retained; the local sender color is a fallback.
+Both providers persist these settings with the matching backend for xScal.
+
+Input width and alignment are fixed to the widget's input rectangle. Its height
+and font size are the only separate input geometry/text-size settings. Badges,
+channel tags (including colors and visibility), emojis, default channel and
+available channels are not appearance controls. Older `showChannelTag`,
+`channelTagColor`, and per-channel `colorGeneral`/`colorTrading`/`colorEvents`/
+`colorInfests`/`colorRaids`/`colorServer` INI overrides are ignored and no longer
+serialized. Normal channel switching remains available.
+
+Unified ZIPs include `Data/FCMChat.ini`, `xscal.ini.example`, the ZFE fragment
+`examples/ZFE/FCMChatWidget.ini.example`, and the optional global endpoint override
+`examples/ZFE/zfe.ini.example`. Merge the latter into an existing
+`Data/configuration/zfe.ini` only when an override is needed; never replace its
+unrelated sections. Install only the examples for the selected extender.
+
+Every generated HUD ZIP includes `CUSTOMIZATION.txt` with F11 steps, the exact INI
+keys, fixed-feature rules, and saved-setting precedence. The website's Appearance
+page documents the same controls for public and signed-in users. Saved ZFE vendor
+settings and xScal device settings take precedence over the INI.
+
+## Auto-hide controls (source-only; not yet released)
+
+`autoHideEnabled=false` in `[FCMChat]` disables automatic hiding while retaining
+`autoHideSec` (default 60). F11 exposes **Auto-hide: ON/OFF** independently of
+**Hide delay +5s / -5s** in Customize. The delay is bounded to 1–600 seconds;
+changing it while disabled does not turn auto-hide on. Switching off cancels the
+pending timer and reveals a hidden panel. Manual Hide remains available.
+Legacy `autoHideSec=0` still means off; explicitly enabling it supplies a 60-second
+delay. Enabled state and delay persist through ZFE storage or the updated xScal
+relay settings. Reset restores enabled/60 seconds.
+
+## Input sizing (source-only; not yet released)
+
+In **F11 → FCM → Customize**, separate **Panel width +/−** and **Panel height +/−**
+controls replace combined Size +/−. Width changes in steps of 30, height in steps
+of 20. **Input height +/−** changes by 4; **Input text size +/−** and **Feed text
+size +/−** change by 1. Labels show current values when the menu is built.
+**Input text: use default size** restores inheritance. Changes apply immediately
+and use the existing persistence path. Panel `width` and `height` also remain
+independently editable in the INI. The input spans the panel's inner width.
+
+
+Edit the `[FCMChat]` section of `Data/FCMChat.ini`, then reload the widget using
+HUDModLoader's F11 menu. For example:
+
+```ini
+[FCMChat]
+inputHeight=48
+inputFontSize=24
+```
+
+`inputHeight` defaults to 28 and accepts 28–120 HUD coordinate units.
+`inputFontSize` accepts 8–47; its default, 0, preserves the existing sizing:
+SharedHUDTools inherits `fontSize`, while native input uses 13. An explicit value
+applies to typed text in both paths without changing feed text or tab labels.
+The same input rectangle drives the widget prompt and the overlaid
+SharedHUDTools editor through `FormatTextEdit`, including width, height, stage
+position, and input font size. Live menu resize/move/reset also reformats an open
+SharedHUDTools editor; the next open always reapplies current settings. The
+`FormatTextEdit ok` log includes dimensions and font size for in-game verification.
+Increasing height alone does not enlarge text. The row grows to provide at least
+10 units beyond the effective font size. Small panels reserve 70 units for tabs,
+separation and feed, reducing effective input height/font as necessary without
+discarding the requested settings. Both settings survive F11 saves on ZFE through local storage and on xScal through
+the updated relay's device settings; reset restores 28/0. Existing packaged artifacts do not yet implement these settings.
 
 > **HUD 2.10.74:** Styled emoji rendering and chosen name colors have been tested
 > in-game. Verify the global ZFE endpoint as well as its fragment when switching
