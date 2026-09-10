@@ -684,6 +684,8 @@ class FCMChatWidget extends MovieClip {
         // continue processing world/roster updates after the replacement is live.
         try { unsubscribeRoster(); } catch (e:Dynamic) {}
         try { unsubscribeHudMode(); } catch (e:Dynamic) {}
+        try { unsubscribeRecentActivities(); } catch (e:Dynamic) {}
+        try { stopRecentActivitiesFallback(); } catch (e:Dynamic) {}
         _rosterManager = null;
         _bsui = null;
         try { removeEventListener(Event.ADDED_TO_STAGE, onStage); } catch (e:Dynamic) {}
@@ -845,6 +847,7 @@ class FCMChatWidget extends MovieClip {
         attachHUDModListeners();
         buildPanel();
         subscribeHudMode();
+        subscribeRecentActivities();
         updateHUDVisibility();
         // Delay ZFE init 3 s — ZFE API may not be ready at SWF load time.
         stopConfigTimer();
@@ -1664,6 +1667,321 @@ class FCMChatWidget extends MovieClip {
         _hudModeCallback = null;
         _menuStackCallback = null;
         _hudModeSubscribed = false;
+    }
+
+    // ── Public-event auto-broadcast — reads RecentActivitiesData like HUDChallenges ──
+    static inline var AUTO_BROADCAST_SEEN_CAP:Int = 512;
+    var _recentActivitiesSubscribed:Bool = false;
+    var _recentActivitiesCallback:Dynamic = null;
+    var _recentActivitiesData:Dynamic = null;
+    var _broadcastedWorldEvents:Map<String, Float> = new Map();
+    var _broadcastOrder:Array<String> = [];
+    var _recentActivitiesFailCount:Int = 0;
+    var _recentActivitiesFallbackTimer:Timer = null;
+    // Cross-domain safe accessors — RecentActivitiesData objects live in the host
+    // ApplicationDomain; direct Reflect.field/dot access on them throws #1014.
+    // uiField() already isolates sealed/native objects, so route everything through it.
+    function raStr(obj:Dynamic, field:String):String {
+        try {
+            var v:Dynamic = uiField(obj, field);
+            if (v == null) return "";
+            var s:String = Std.string(v);
+            if (s == "null") return "";
+            return s;
+        } catch (_:Dynamic) { return ""; }
+    }
+    function raInt(obj:Dynamic, field:String, fallback:Int = -1):Int {
+        try {
+            var v:Dynamic = uiField(obj, field);
+            if (v == null) return fallback;
+            if (Std.isOfType(v, Int)) return v;
+            var p:Null<Int> = Std.parseInt(StringTools.trim(Std.string(v)));
+            return (p == null) ? fallback : p;
+        } catch (_:Dynamic) { return fallback; }
+    }
+    function raLen(obj:Dynamic):Int {
+        try {
+            var v:Dynamic = uiField(obj, "length");
+            if (v == null) return -1;
+            return Std.int(v);
+        } catch (_:Dynamic) { return -1; }
+    }
+    function raAt(arr:Dynamic, idx:Int):Dynamic {
+        try { return untyped arr[idx]; } catch (_:Dynamic) { return null; }
+    }
+
+    function stableWorldEventCode(id:String):String {
+        if (id == null || id.length == 0) return "EVT-000000000000";
+        var h:Int = 0;
+        for (i in 0...id.length) h = (h * 31 + id.charCodeAt(i)) & 0x7fffffff;
+        var h2:Int = Std.int(id.length * 0x9e3779b9) & 0x7fffffff;
+        return "EVT-" + StringTools.hex(h, 8).toUpperCase().substr(0, 8) + StringTools.hex(h2, 4).toUpperCase().substr(0, 4);
+    }
+
+    function isValidWorldEventName(name:String):Bool {
+        if (name == null) return false;
+        var t:String = StringTools.trim(name);
+        return t.length >= 3;
+    }
+
+    function extractWorldEventMutation(details:Dynamic):String {
+        if (details == null) return "";
+        try {
+            var n:Int = raLen(details);
+            if (n < 0) return "";
+            for (i in 0...n) {
+                var d:Dynamic = raAt(details, i);
+                if (d == null) continue;
+                var g:String = raStr(d, "groupLabel");
+                if (g != "$DailyOps_Header_Mutation") continue;
+                var pairs:Dynamic = null;
+                try { pairs = uiField(d, "pairList"); } catch (_:Dynamic) { continue; }
+                if (pairs == null) continue;
+                var m:Int = raLen(pairs);
+                if (m < 0) continue;
+                var out:String = "";
+                for (j in 0...m) {
+                    var entry:Dynamic = raAt(pairs, j);
+                    if (entry == null) continue;
+                    var lbl:String = StringTools.trim(raStr(entry, "label"));
+                    if (lbl.length == 0) continue;
+                    out = (out.length == 0) ? lbl : out + "|" + lbl;
+                }
+                return out;
+            }
+        } catch (_:Dynamic) {}
+        return "";
+    }
+
+    function extractWorldEventParticipants(details:Dynamic):Int {
+        if (details == null) return -1;
+        try {
+            var n:Int = raLen(details);
+            if (n < 0) return -1;
+            for (i in 0...n) {
+                var d:Dynamic = raAt(details, i);
+                if (d == null) continue;
+                var g:String = raStr(d, "groupLabel");
+                if (g != "$STATS") continue;
+                var pairs:Dynamic = null;
+                try { pairs = uiField(d, "pairList"); } catch (_:Dynamic) { continue; }
+                if (pairs == null) continue;
+                var m:Int = raLen(pairs);
+                if (m < 0) continue;
+                for (j in 0...m) {
+                    var entry:Dynamic = raAt(pairs, j);
+                    if (entry == null) continue;
+                    var lbl:String = raStr(entry, "label");
+                    if (lbl != "$Participants") continue;
+                    var desc:String = StringTools.trim(raStr(entry, "description"));
+                    if (desc.length == 0) continue;
+                    var v:Null<Int> = Std.parseInt(desc);
+                    if (v != null) return v;
+                }
+            }
+        } catch (_:Dynamic) {}
+        return -1;
+    }
+
+    function formatWorldEventBody(name:String, mutation:String, participants:Int, code:String):String {
+        var body:String = "Public Event: " + name + " [" + code + "]";
+        if (mutation != null && StringTools.trim(mutation).length > 0) body += " [" + StringTools.trim(mutation) + "]";
+        if (participants >= 0) body += " Participants: " + participants;
+        return body;
+    }
+
+    function onRecentActivitiesUpdate(evt:Dynamic):Void {
+        // NOTE: never touch evt.data / evt.target — the RecentActivities event object
+        // lives in the host ApplicationDomain and property access on it throws
+        // TypeError #1014 (class not found) in this child domain (see xscal.log).
+        // Pull fresh via GetDataFromClient instead; the event is just a wake-up ping.
+        try {
+            var raw:Dynamic = null;
+            try { raw = getBSUIData(findBSUI(), "RecentActivitiesData"); } catch (_:Dynamic) {}
+            try { _recentActivitiesData = raw; } catch (_:Dynamic) {}
+            var d:Dynamic = null;
+            try { d = uiData(raw); } catch (_:Dynamic) {}
+            maybeAutoBroadcastWorldEvents(d != null ? d : raw);
+            _recentActivitiesFailCount = 0;
+        } catch (e:Dynamic) {
+            _recentActivitiesFailCount++;
+            zfeLog("warn", "events", "onRecentActivitiesUpdate threw: " + Std.string(e));
+            // After 3 consecutive #1014s the Subscribe path is poisoned — fall back to
+            // 30s polling (HUDChallenges DATA_RELOAD_TIME) which uses GetDataFromClient
+            // only and never touches the cross-domain event object.
+            if (_recentActivitiesFailCount >= 3 && _recentActivitiesFallbackTimer == null) {
+                startRecentActivitiesFallback();
+            }
+        }
+    }
+
+    function maybeAutoBroadcastWorldEvents(raw:Dynamic):Void {
+        if (_cfg == null || !_cfg.autoBroadcastWorldEvents) return;
+        if (_api == null || !_connected || _needsLink) return;
+        if (raw == null) {
+            try { raw = uiData(getBSUIData(findBSUI(), "RecentActivitiesData")); } catch (_:Dynamic) {}
+            if (raw == null) return;
+        }
+        // raw may be {recentActivities: [...]} or already that array container.
+        // Use uiField (sealed-object safe) — never raw Reflect.hasField/dot on host objects.
+        var acts:Dynamic = null;
+        try {
+            var cand:Dynamic = uiField(raw, "recentActivities");
+            acts = (cand != null) ? cand : raw;
+        } catch (_:Dynamic) { acts = raw; }
+        if (acts == null) return;
+        var n:Int = raLen(acts);
+        if (n < 0) {
+            // Single object instead of array? Treat length-1 defensively.
+            try {
+                var singleType:Int = raInt(acts, "type", -99);
+                if (singleType == -99) return;
+                n = 1;
+                acts = [acts];
+            } catch (_:Dynamic) { return; }
+        }
+        if (n <= 0) return;
+        var currentIds:Map<String, Bool> = new Map();
+        var toBroadcast:Array<Dynamic> = [];
+        var probed:Int = 0;
+        for (i in 0...n) {
+            var act:Dynamic = null;
+            try { act = raAt(acts, i); } catch (_:Dynamic) { continue; }
+            if (act == null) continue;
+            var type:Int = -1;
+            try { type = raInt(act, "type", -1); } catch (_:Dynamic) { continue; }
+            var idProbe:String = "";
+            var nameProbe:String = "";
+            try {
+                idProbe = StringTools.trim(raStr(act, "id"));
+                nameProbe = StringTools.trim(raStr(act, "name"));
+            } catch (_:Dynamic) {}
+            if (probed < 3) {
+                probed++;
+                try { zfeLog("info", "events", "probe type=" + type + " id=" + idProbe + " name=" + nameProbe + " n=" + n); } catch (_:Dynamic) {}
+            }
+            if (type != 1) continue; // publicEvent only per confirmed scope (type 1; worldEvent is 2)
+            if (idProbe.length == 0) continue;
+            if (!isValidWorldEventName(nameProbe)) continue;
+            currentIds.set(idProbe, true);
+            if (!_broadcastedWorldEvents.exists(idProbe)) toBroadcast.push(act);
+        }
+        // Exactly-once global broadcast to events leaf (global, not server ephemeral FCMROOM).
+        // Per-item isolation: one poisoned entry must not abort the rest (the #1014 flood).
+        for (act in toBroadcast) {
+            var id:String = "";
+            var name:String = "";
+            var details:Dynamic = null;
+            try {
+                id = StringTools.trim(raStr(act, "id"));
+                name = StringTools.trim(raStr(act, "name"));
+                details = uiField(act, "details");
+            } catch (_:Dynamic) { continue; }
+            if (id.length == 0 || !isValidWorldEventName(name)) continue;
+            var mutation:String = "";
+            var participants:Int = -1;
+            try { mutation = extractWorldEventMutation(details); } catch (_:Dynamic) {}
+            try { participants = extractWorldEventParticipants(details); } catch (_:Dynamic) {}
+            var code:String = stableWorldEventCode(id);
+            var body:String = formatWorldEventBody(name, mutation, participants, code);
+            var chan:String = "events"; // global leaf 000...003 per channelMap, not server FCMROOM
+            // Second guard via history dedupe (backscroll repeat fix)
+            try {
+                if (!_history.accept(chan, 0, "world:" + id, 512, _records)) continue;
+            } catch (_:Dynamic) {}
+            try {
+                var payload:String = '{"channel":"' + chan + '","targetUserId":"","body":"' + jsonEscape(body) + '"}';
+                var rawResp:String = Std.string(_api.call("chat.v1.sendMessage", payload));
+                if (rawResp.indexOf('"success":true') >= 0 || rawResp.indexOf('success:true') >= 0) {
+                    _broadcastedWorldEvents.set(id, flash.Lib.getTimer());
+                    _broadcastOrder.push(id);
+                    zfeLog("info", "events", "auto-broadcast publicEvent id=" + id + " name=" + name + " code=" + code + " participants=" + participants);
+                    while (_broadcastOrder.length > AUTO_BROADCAST_SEEN_CAP) {
+                        var old:String = _broadcastOrder.shift();
+                        _broadcastedWorldEvents.remove(old);
+                    }
+                } else {
+                    zfeLog("warn", "events", "auto-broadcast relay rejected id=" + id + " raw=" + clip200(rawResp));
+                }
+            } catch (e:Dynamic) {
+                zfeLog("warn", "events", "auto-broadcast threw id=" + id + ": " + Std.string(e));
+            }
+        }
+        // Presence-based prune: when activity.id disappears, forget it so next occurrence of same Bethesda id can re-broadcast after expiry
+        try {
+            var kept:Array<String> = [];
+            for (k in _broadcastOrder) if (currentIds.exists(k)) kept.push(k); else _broadcastedWorldEvents.remove(k);
+            _broadcastOrder = kept;
+        } catch (_:Dynamic) {}
+    }
+
+    function startRecentActivitiesFallback():Void {
+        if (_recentActivitiesFallbackTimer != null) return;
+        try {
+            zfeLog("warn", "events", "Subscribe path poisoned (#1014 x3) — falling back to 30s GetDataFromClient poll");
+            try { unsubscribeRecentActivities(); } catch (_:Dynamic) {}
+            _recentActivitiesFallbackTimer = new Timer(30000, 0);
+            _recentActivitiesFallbackTimer.addEventListener(TimerEvent.TIMER, function(_:Dynamic) {
+                try {
+                    if (_disposed) return;
+                    if (_cfg == null || !_cfg.autoBroadcastWorldEvents) return;
+                    var raw:Dynamic = null;
+                    try { raw = getBSUIData(findBSUI(), "RecentActivitiesData"); } catch (_:Dynamic) { return; }
+                    var d:Dynamic = null;
+                    try { d = uiData(raw); } catch (_:Dynamic) { return; }
+                    maybeAutoBroadcastWorldEvents(d != null ? d : raw);
+                } catch (e:Dynamic) {
+                    try { zfeLog("warn", "events", "fallback poll threw: " + Std.string(e)); } catch (_:Dynamic) {}
+                }
+            });
+            _recentActivitiesFallbackTimer.start();
+        } catch (_:Dynamic) {}
+    }
+
+    function stopRecentActivitiesFallback():Void {
+        if (_recentActivitiesFallbackTimer != null) {
+            try { _recentActivitiesFallbackTimer.stop(); } catch (_:Dynamic) {}
+            _recentActivitiesFallbackTimer = null;
+        }
+        _recentActivitiesFailCount = 0;
+    }
+
+    function subscribeRecentActivities():Void {
+        if (_recentActivitiesSubscribed) return;
+        var mgr:Dynamic = findBSUI();
+        if (mgr == null) return;
+        try {
+            _recentActivitiesCallback = function(evt:Dynamic):Void { try { onRecentActivitiesUpdate(evt); } catch (_:Dynamic) {} };
+            mgr.Subscribe("RecentActivitiesData", _recentActivitiesCallback);
+            _recentActivitiesSubscribed = true;
+            _recentActivitiesFailCount = 0;
+            try { stopRecentActivitiesFallback(); } catch (_:Dynamic) {}
+            try {
+                var raw:Dynamic = getBSUIData(mgr, "RecentActivitiesData");
+                var d:Dynamic = uiData(raw);
+                if (d != null) maybeAutoBroadcastWorldEvents(d);
+                else if (raw != null) maybeAutoBroadcastWorldEvents(raw);
+            } catch (_:Dynamic) {}
+            zfeLog("info", "events", "subscribed RecentActivitiesData");
+        } catch (e:Dynamic) {
+            zfeLog("warn", "events", "Subscribe RecentActivities threw: " + Std.string(e));
+            unsubscribeRecentActivities(mgr);
+            // Subscribe itself rejected — poll instead so broadcasts still work.
+            try { startRecentActivitiesFallback(); } catch (_:Dynamic) {}
+        }
+    }
+
+    function unsubscribeRecentActivities(mgr:Dynamic = null):Void {
+        var target:Dynamic = (mgr != null) ? mgr : findBSUI();
+        if (target == null) target = _rosterManager;
+        if (target != null) {
+            try {
+                var unsub:Dynamic = Reflect.field(target, "Unsubscribe");
+                if (unsub != null && _recentActivitiesCallback != null) Reflect.callMethod(target, unsub, ["RecentActivitiesData", _recentActivitiesCallback]);
+            } catch (e:Dynamic) { zfeLog("warn", "events", "Unsubscribe RecentActivities threw: " + Std.string(e)); }
+        }
+        _recentActivitiesCallback = null;
+        _recentActivitiesSubscribed = false;
     }
 
     /**
@@ -5374,6 +5692,9 @@ class FCMChatWidget extends MovieClip {
         _lastRosterObservationAt = -ROSTER_FRESH_MS;
         _rosterLogCount = 0;
         _lastRosterLogAt = 0;
+        // Public-event dedupe is per-world — forgetting old ids allows same Bethesda id to re-broadcast in new world
+        _broadcastedWorldEvents = new Map();
+        _broadcastOrder = [];
         zfeLog("info", "roster", "observation reset: " + reason);
     }
 
@@ -5387,11 +5708,13 @@ class FCMChatWidget extends MovieClip {
         if (_rosterManager != null && _rosterManager != mgr) {
             unsubscribeRoster(_rosterManager);
             unsubscribeHudMode(_rosterManager);
+            unsubscribeRecentActivities(_rosterManager);
             resetRosterObservation("BSUIDataManager changed");
         }
         _rosterManager = mgr;
         // Ensure HUDMode gating follows the same manager lifecycle (keeps poll running while hidden)
         if (!_hudModeSubscribed) subscribeHudMode();
+        if (!_recentActivitiesSubscribed) subscribeRecentActivities();
         if (_rosterSubscribed) return;
         try {
             var playerCallback:Dynamic = function(evt:Dynamic):Void {

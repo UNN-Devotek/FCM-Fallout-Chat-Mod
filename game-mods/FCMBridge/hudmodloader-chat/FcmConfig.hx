@@ -93,6 +93,12 @@ class FcmConfig {
     // Keep decompiled field for compat (some INI files may contain it)
     public var autoHideEnabled:Bool = true;
 
+    // ── World-event auto-broadcast (global events channel) ───────────────────
+    // When true, FCMChatWidget reads RecentActivitiesData (same source HUDChallenges
+    // uses) for publicEvent (type 1) and broadcasts each new event exactly once to the
+    // global events leaf (000...003). Requires events channel in AllowedChannels.
+    public var autoBroadcastWorldEvents:Bool = false;
+
     // ── Link flow ────────────────────────────────────────────────────────────────
     // URL shown in the widget's link prompt (linkHint fallback). DEV builds set this to
     // dev.falloutchatmod.com/link via FCMChat.ini; prod uses the default. URL-safe charset
@@ -591,6 +597,8 @@ class FcmConfig {
                     cfg.inputHeight = parseIntOr(val, cfg.inputHeight);
                 case "inputfontsize":
                     cfg.inputFontSize = parseIntOr(val, cfg.inputFontSize);
+                case "autobroadcastworldevents":
+                    cfg.autoBroadcastWorldEvents = parseBool(val, cfg.autoBroadcastWorldEvents);
                 case "hideinhudmodes":
                     cfg.hideInHUDModes = parseHideInHUDModes(val);
                 case "linkurl":
@@ -767,6 +775,7 @@ class FcmConfig {
         s.add("showChannelTag=" + b(showChannelTag) + "\n");
         s.add("showHints=" + b(showHints) + "\n");
         s.add("hideInHUDModes=" + hideInHUDModes.join(",") + "\n");
+        s.add("autoBroadcastWorldEvents=" + b(autoBroadcastWorldEvents) + "\n");
         s.add("inputHeight=" + inputHeight + "\n");
         s.add("inputFontSize=" + inputFontSize + "\n");
         s.add("linkUrl=" + linkUrl + "\n");
