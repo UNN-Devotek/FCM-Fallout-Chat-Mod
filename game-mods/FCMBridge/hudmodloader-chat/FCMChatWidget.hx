@@ -3754,7 +3754,10 @@ class FCMChatWidget extends MovieClip {
         _eventPollPhase = "history-resync";
         maybeRequestHistoryResync();
         _eventPollPhase = "poll-call";
-        var payload:String = '{"max":64,"cursor":' + _cursor + '}';
+        // Mitigation C: chunk xScal drain to avoid ~1s UI stalls — request 16 per tick,
+        // chain immediate next-tick polls while full batches arrive (covers 64 snapshot over 4 turns)
+        var payload:String = '{"max":16,"cursor":' + _cursor + '}';
+        var tPollStart:Float = flash.Lib.getTimer();
         var result:Dynamic = null;
         try {
             result = _api.call("chat.v1.pollEvents", payload);
@@ -3763,6 +3766,8 @@ class FCMChatWidget extends MovieClip {
             notePollFailure("call threw");
             return 0;
         }
+        var pollDt:Float = flash.Lib.getTimer() - tPollStart;
+        if (pollDt > 50) zfeLog("info", "poll", "poll dt=" + pollDt + "ms");
 
         _eventPollPhase = "response";
         var rs:String = Std.string(result);
@@ -3789,9 +3794,20 @@ class FCMChatWidget extends MovieClip {
         }
         _consecutivePollFailures = 0;
         _eventPollPhase = "render";
+        var tRenderStart:Float = flash.Lib.getTimer();
         var parsed:Int = parseAndRenderEvents(rs);
+        var renderDt:Float = flash.Lib.getTimer() - tRenderStart;
+        if (renderDt > 30) zfeLog("info", "poll", "render dt=" + renderDt + "ms events=" + parsed);
         flushOutbox();
         _eventPollPhase = "complete";
+        // Mitigation C: if xScal drain returned a full 16-batch, chain an immediate next-tick poll to keep draining without stalling a full 64 in one turn
+        if (parsed >= 16 && !_disposed && _connected) {
+            var chunk:Timer = new Timer(1, 1);
+            chunk.addEventListener(TimerEvent.TIMER_COMPLETE, function(_:Dynamic) {
+                try { if (!_disposed) runEventPollSafely(); } catch (_:Dynamic) {}
+            });
+            chunk.start();
+        }
         return parsed;
     }
 
@@ -4783,6 +4799,11 @@ class FCMChatWidget extends MovieClip {
 
     var _renderStep:String = "idle";
     var _ownNameColor:String = "";
+    // Mitigation C chunking — renderRecords slices to avoid ~1s Flash stalls
+    var _renderPending:Bool = false;
+    var _renderSliceSize:Int = 32;
+    var _pendingVisibleRecords:Array<ChatRecord> = null;
+    var _pendingContentY:Float = 0;
 
 
     function renderRecords():Void {
@@ -4813,45 +4834,110 @@ class FCMChatWidget extends MovieClip {
             setLogText("No messages in " + CHAN_NAMES[_chanIdx] + " yet"); return;
         }
 
+        // Mitigation C: chunk large feeds to avoid ~1s stalls — cancel any in-flight slice
+        if (_renderPending) _renderPending = false;
         clearFeedRows();
         _logTf.visible = false;
         _feedLayer.visible = true;
-        var contentY:Float = 0;
-        var customNameColors:Int = 0;
-        for (rec in visibleRecords) {
-            _renderStep = "build-row";
-            if (FcmConfig.parseHexColor(rec.color, _cfg.senderColor) != _cfg.senderColor) customNameColors++;
-            var rendered:FeedRowView = buildFeedMessageRow(rec, _logTf.width);
-            try {
-                var decorated = buildEmojiFeedRow(rec, _logTf.width);
-                if (decorated != null) rendered = decorated;
-            } catch (emojiError:Dynamic) {
-                zfeLog("warn", "emoji", "kept styled row; step=" + _renderStep + ": " + clip200(Std.string(emojiError)));
+        // Small feeds render synchronously to keep snappiness; large feeds slice at 32 per tick
+        if (visibleRecords.length <= _renderSliceSize) {
+            var contentY:Float = 0;
+            var customNameColors:Int = 0;
+            for (rec in visibleRecords) {
+                _renderStep = "build-row";
+                if (FcmConfig.parseHexColor(rec.color, _cfg.senderColor) != _cfg.senderColor) customNameColors++;
+                var rendered:FeedRowView = buildFeedMessageRow(rec, _logTf.width);
+                try {
+                    var decorated = buildEmojiFeedRow(rec, _logTf.width);
+                    if (decorated != null) rendered = decorated;
+                } catch (emojiError:Dynamic) {
+                    zfeLog("warn", "emoji", "kept styled row; step=" + _renderStep + ": " + clip200(Std.string(emojiError)));
+                }
+                rendered.contentY = contentY;
+                _feedRows.push(rendered);
+                _feedLayer.addChild(rendered.view);
+                contentY += rendered.height + FEED_ROW_GAP;
             }
-            rendered.contentY = contentY;
-            _feedRows.push(rendered);
-            _feedLayer.addChild(rendered.view);
-            contentY += rendered.height + FEED_ROW_GAP;
-        }
-        zfeLog("info", "name-colors", "rows=" + visibleRecords.length + " differentFromTheme=" + customNameColors);
-        // "v N new" hint when scrolled up and new messages arrived below.
-        if (_bScrolling && _newWhileScrolled > 0) {
-            var notice:FeedRowView = buildFeedNoticeRow(
-                "v " + _newWhileScrolled + " new - wheel down or F11 Scroll to newest", _logTf.width);
-            notice.contentY = contentY;
-            _feedRows.push(notice);
-            _feedLayer.addChild(notice.view);
-            contentY += notice.height + FEED_ROW_GAP;
-        }
-        _feedContentHeight = contentY;
-        _feedMaxScrollY = Math.max(0, _feedContentHeight - _logTf.height);
-        if (!_bScrolling) {
-            _feedScrollY = _feedMaxScrollY;
-        } else {
-            _feedScrollY = Math.max(0, Math.min(_feedScrollY, _feedMaxScrollY));
-            if (_feedMaxScrollY <= 0) { _bScrolling = false; _newWhileScrolled = 0; }
-        }
+            zfeLog("info", "name-colors", "rows=" + visibleRecords.length + " differentFromTheme=" + customNameColors);
+            if (_bScrolling && _newWhileScrolled > 0) {
+                var notice:FeedRowView = buildFeedNoticeRow(
+                    "v " + _newWhileScrolled + " new - wheel down or F11 Scroll to newest", _logTf.width);
+                notice.contentY = contentY;
+                _feedRows.push(notice);
+                _feedLayer.addChild(notice.view);
+                contentY += notice.height + FEED_ROW_GAP;
+            }
+            _feedContentHeight = contentY;
+            _feedMaxScrollY = Math.max(0, _feedContentHeight - _logTf.height);
+            if (!_bScrolling) {
+                _feedScrollY = _feedMaxScrollY;
+            } else {
+                _feedScrollY = Math.max(0, Math.min(_feedScrollY, _feedMaxScrollY));
+                if (_feedMaxScrollY <= 0) { _bScrolling = false; _newWhileScrolled = 0; }
+            }
             applyFeedScroll();
+        } else {
+            // Chunked path — 32 rows per 1ms tick, keeps 60fps under Wine
+            _pendingVisibleRecords = visibleRecords;
+            _pendingContentY = 0;
+            _renderPending = true;
+            var renderedCount:Int = 0;
+            var customNameColorsChunk:Int = 0;
+            var tChunkStart:Float = flash.Lib.getTimer();
+            var doSlice:Dynamic = null;
+            doSlice = function():Void {
+                if (!_renderPending || _pendingVisibleRecords == null) { _renderPending = false; return; }
+                var start:Int = renderedCount;
+                var end:Int = Std.int(Math.min(_pendingVisibleRecords.length, start + _renderSliceSize));
+                for (idx in start...end) {
+                    var rec:ChatRecord = _pendingVisibleRecords[idx];
+                    _renderStep = "build-row";
+                    if (FcmConfig.parseHexColor(rec.color, _cfg.senderColor) != _cfg.senderColor) customNameColorsChunk++;
+                    var rendered:FeedRowView = buildFeedMessageRow(rec, _logTf.width);
+                    try {
+                        var decorated = buildEmojiFeedRow(rec, _logTf.width);
+                        if (decorated != null) rendered = decorated;
+                    } catch (emojiError:Dynamic) {
+                        zfeLog("warn", "emoji", "kept styled row; step=" + _renderStep + ": " + clip200(Std.string(emojiError)));
+                    }
+                    rendered.contentY = _pendingContentY;
+                    _feedRows.push(rendered);
+                    _feedLayer.addChild(rendered.view);
+                    _pendingContentY += rendered.height + FEED_ROW_GAP;
+                }
+                renderedCount = end;
+                if (renderedCount < _pendingVisibleRecords.length) {
+                    var chunk:Timer = new Timer(1, 1);
+                    chunk.addEventListener(TimerEvent.TIMER_COMPLETE, function(_:Dynamic) { doSlice(); });
+                    chunk.start();
+                } else {
+                    zfeLog("info", "name-colors", "rows=" + _pendingVisibleRecords.length + " differentFromTheme=" + customNameColorsChunk + " sliced render dt=" + (flash.Lib.getTimer() - tChunkStart) + "ms");
+                    var contentY:Float = _pendingContentY;
+                    if (_bScrolling && _newWhileScrolled > 0) {
+                        var notice:FeedRowView = buildFeedNoticeRow(
+                            "v " + _newWhileScrolled + " new - wheel down or F11 Scroll to newest", _logTf.width);
+                        notice.contentY = contentY;
+                        _feedRows.push(notice);
+                        _feedLayer.addChild(notice.view);
+                        contentY += notice.height + FEED_ROW_GAP;
+                    }
+                    _feedContentHeight = contentY;
+                    _feedMaxScrollY = Math.max(0, _feedContentHeight - _logTf.height);
+                    if (!_bScrolling) {
+                        _feedScrollY = _feedMaxScrollY;
+                    } else {
+                        _feedScrollY = Math.max(0, Math.min(_feedScrollY, _feedMaxScrollY));
+                        if (_feedMaxScrollY <= 0) { _bScrolling = false; _newWhileScrolled = 0; }
+                    }
+                    applyFeedScroll();
+                    _renderPending = false;
+                    _pendingVisibleRecords = null;
+                    var dt:Float = flash.Lib.getTimer() - tChunkStart;
+                    if (dt > 80) zfeLog("info", "render", "sliced render complete dt=" + dt + "ms rows=" + visibleRecords.length);
+                }
+            };
+            doSlice();
+        }
         } catch (err:Dynamic) {
             try {
                 clearFeedRows();
