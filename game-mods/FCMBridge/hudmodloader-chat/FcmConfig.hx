@@ -85,6 +85,14 @@ class FcmConfig {
     // the map (MapMenu) so the chat does not cover those UIs.
     public var hideInHUDModes:Array<String> = ["MainMenu", "Pipboy", "WorkshopMode", "WorkshopNoCrosshairMode", "CampPlacement", "ContainerMode", "MapMenu"];
 
+    // ── Input box sizing (fix for clipped entry when fontSize is large) ──────────
+    // Separate controls for the text-entry strip so height scales with font.
+    public var inputHeight:Int    = 28;
+    public var inputFontSize:Int  = 0;   // 0 = auto = fontSize (or 13 for chrome hint)
+
+    // Keep decompiled field for compat (some INI files may contain it)
+    public var autoHideEnabled:Bool = true;
+
     // ── Link flow ────────────────────────────────────────────────────────────────
     // URL shown in the widget's link prompt (linkHint fallback). DEV builds set this to
     // dev.falloutchatmod.com/link via FCMChat.ini; prod uses the default. URL-safe charset
@@ -579,6 +587,10 @@ class FcmConfig {
                 case "hidekey":         cfg.hideKey = validAction(val, "");
                 case "showchanneltag":  cfg.showChannelTag = parseBool(val, cfg.showChannelTag);
                 case "showhints":       cfg.showHints = parseBool(val, cfg.showHints);
+                case "inputheight":
+                    cfg.inputHeight = parseIntOr(val, cfg.inputHeight);
+                case "inputfontsize":
+                    cfg.inputFontSize = parseIntOr(val, cfg.inputFontSize);
                 case "hideinhudmodes":
                     cfg.hideInHUDModes = parseHideInHUDModes(val);
                 case "linkurl":
@@ -615,6 +627,76 @@ class FcmConfig {
         return out;
     }
 
+    public function effectiveInputFontSize(isChrome:Bool = false):Int {
+        var base:Int = (inputFontSize == 0) ? (isChrome ? 13 : fontSize) : inputFontSize;
+        return clampInt(base, 8, Std.int(Math.min(47, height - 80)));
+    }
+
+    public function effectiveInputHeight():Int {
+        return clampInt(Std.int(Math.max(inputHeight, effectiveInputFontSize() + 10)), 28, Std.int(Math.min(120, height - 70)));
+    }
+
+    public function inputRect():Dynamic {
+        return {
+            x: 6,
+            y: height - effectiveInputHeight() + 4,
+            width: width - 12,
+            height: effectiveInputHeight() - 6
+        };
+    }
+
+    public function autoHideActive():Bool {
+        return autoHideEnabled ? autoHideSec > 0 : false;
+    }
+
+    public function toggleAutoHide():Void {
+        autoHideEnabled = !autoHideActive();
+        if (autoHideEnabled && autoHideSec == 0) autoHideSec = 60;
+    }
+
+    public function adjustAutoHideDelay(delta:Int):Void {
+        if (!autoHideActive()) autoHideEnabled = false;
+        autoHideSec = clampInt(autoHideSec + delta, 1, 600);
+    }
+
+    public function sizingMenu():Array<Dynamic> {
+        var out:Array<Dynamic> = [];
+        var add = function(id:String, label:String):Void {
+            out.push({ id: id, label: label });
+        };
+        add("cz_width_up", "Panel width + (" + width + ")");
+        add("cz_width_dn", "Panel width - (" + width + ")");
+        add("cz_height_up", "Panel height + (" + height + ")");
+        add("cz_height_dn", "Panel height - (" + height + ")");
+        add("cz_input_height_up", "Input height + (" + effectiveInputHeight() + ")");
+        add("cz_input_height_dn", "Input height - (" + effectiveInputHeight() + ")");
+        add("cz_input_font_up", "Input text size + (" + effectiveInputFontSize() + ")");
+        add("cz_input_font_dn", "Input text size - (" + effectiveInputFontSize() + ")");
+        add("cz_feed_font_up", "Feed text size + (" + fontSize + ")");
+        add("cz_feed_font_dn", "Feed text size - (" + fontSize + ")");
+        add("cz_input_font_auto", "Input text: use default size");
+        return out;
+    }
+
+    public function customizeSize(action:String):Bool {
+        switch (action) {
+            case "cz_feed_font_dn":   --fontSize;
+            case "cz_feed_font_up":   ++fontSize;
+            case "cz_height_dn":      height -= 20;
+            case "cz_height_up":      height += 20;
+            case "cz_input_font_auto": inputFontSize = 0;
+            case "cz_input_font_dn":  inputFontSize = effectiveInputFontSize() - 1;
+            case "cz_input_font_up":  inputFontSize = effectiveInputFontSize() + 1;
+            case "cz_input_height_dn": inputHeight = effectiveInputHeight() - 4;
+            case "cz_input_height_up": inputHeight = effectiveInputHeight() + 4;
+            case "cz_width_dn":       width -= 30;
+            case "cz_width_up":       width += 30;
+            default: return false;
+        }
+        clamp();
+        return true;
+    }
+
     /** Clamp every numeric value to a safe range; keep the panel on-screen. */
     public function clamp():Void {
         // Size first (x/y bounds depend on it).
@@ -622,6 +704,8 @@ class FcmConfig {
         height   = clampInt(height, 120, VIEW_H);
         x        = clampInt(x, 0, VIEW_W - width);
         y        = clampInt(y, 0, VIEW_H - height);
+        inputHeight = clampInt(inputHeight, 28, 120);
+        if (inputFontSize != 0) inputFontSize = clampInt(inputFontSize, 8, 47);
         fontSize = clampInt(fontSize, 8, 47);          // GFx glyph cache < 48
         bgAlpha  = clampFloat(bgAlpha, 0.0, 1.0);
         maxMessages = clampInt(maxMessages, 10, 500);
@@ -683,6 +767,8 @@ class FcmConfig {
         s.add("showChannelTag=" + b(showChannelTag) + "\n");
         s.add("showHints=" + b(showHints) + "\n");
         s.add("hideInHUDModes=" + hideInHUDModes.join(",") + "\n");
+        s.add("inputHeight=" + inputHeight + "\n");
+        s.add("inputFontSize=" + inputFontSize + "\n");
         s.add("linkUrl=" + linkUrl + "\n");
         return s.toString();
     }

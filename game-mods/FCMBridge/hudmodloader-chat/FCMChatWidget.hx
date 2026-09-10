@@ -877,7 +877,7 @@ class FCMChatWidget extends MovieClip {
         // entry field as a top-level object, so leave an explicit safety gap between
         // the feed's clip rectangle and the input rectangle.
         var logTop:Int = TAB_H + SUB_H + 4;
-        var logBottom:Int = h - INPUT_H - LOG_INPUT_GAP;
+        var logBottom:Int = h - _cfg.effectiveInputHeight() - LOG_INPUT_GAP;
         var logHeight:Int = logBottom - logTop;
 
         _bg = new Shape();
@@ -896,7 +896,7 @@ class FCMChatWidget extends MovieClip {
         g.lineStyle(1, _cfg.borderColor, 0.45);
         g.moveTo(0, TAB_H + SUB_H); g.lineTo(w, TAB_H + SUB_H);
         g.lineStyle(1, _cfg.borderColor, 0.4);
-        g.moveTo(0, h - INPUT_H); g.lineTo(w, h - INPUT_H);
+        g.moveTo(0, h - _cfg.effectiveInputHeight()); g.lineTo(w, h - _cfg.effectiveInputHeight());
         addChild(_bg);
 
         // Main tab label first so we can measure it to size the outline box.
@@ -967,7 +967,8 @@ class FCMChatWidget extends MovieClip {
         } catch (e:Dynamic) {}
 
         // ── Prompt row: idle hint / "typing..." (HUDTools draws its own entry box) ──
-        _promptTf = makeChromeTf(6, h - INPUT_H + 4, w - 12, INPUT_H - 6);
+        var r:Dynamic = _cfg.inputRect();
+        _promptTf = makeChromeTf(r.x, r.y, r.width, r.height);
         setPrompt(idlePrompt());
         addChild(_promptTf);
 
@@ -1194,8 +1195,15 @@ class FCMChatWidget extends MovieClip {
             // Customize submenu (opened when the "customize" isMenu item is selected — HUDTools
             // re-invokes this builder with parentItem = the submenu id).
             if (p == "customize") {
-                Reflect.callMethod(_hudTools, add, ["cz_bigger",  "Size +",        true, false, MENU_ACTION_TIMEOUT_MS]);
-                Reflect.callMethod(_hudTools, add, ["cz_smaller", "Size -",        true, false, MENU_ACTION_TIMEOUT_MS]);
+                // Ported sizing menu from decompiled fix — includes input height/font controls
+                try {
+                    var menu:Array<Dynamic> = _cfg.sizingMenu();
+                    for (item in menu) {
+                        var iid:String = Std.string(Reflect.field(item, "id"));
+                        var label:String = Std.string(Reflect.field(item, "label"));
+                        Reflect.callMethod(_hudTools, add, [iid, label, true, false, MENU_ACTION_TIMEOUT_MS]);
+                    }
+                } catch (_:Dynamic) {}
                 Reflect.callMethod(_hudTools, add, ["cz_up",      "Move up",       true, false, MENU_ACTION_TIMEOUT_MS]);
                 Reflect.callMethod(_hudTools, add, ["cz_down",    "Move down",     true, false, MENU_ACTION_TIMEOUT_MS]);
                 Reflect.callMethod(_hudTools, add, ["cz_left",    "Move left",     true, false, MENU_ACTION_TIMEOUT_MS]);
@@ -1728,14 +1736,22 @@ class FCMChatWidget extends MovieClip {
             if (_autoHideTimer != null) { _autoHideTimer.stop(); _autoHideTimer = null; }
             _autoHideOn = (_cfg.autoHideSec > 0);
             rebuildPanel();
+            updateHUDVisibility();
             if (_autoHideOn) bumpAutoHide();
             persistConfig();
             zfeLog("info", "customize", "all settings reset to defaults");
             return;
         }
+        // Delegate sizing/font customizations to FcmConfig (includes inputHeight/inputFontSize, feed font, panel size)
+        if (_cfg.customizeSize(id)) {
+            _cfg.clamp();
+            rebuildPanel();
+            updateHUDVisibility();
+            persistConfig();
+            zfeLog("info", "customize", "sizing " + id);
+            return;
+        }
         switch (id) {
-            case "cz_bigger":  _cfg.width += 30; _cfg.height += 20;
-            case "cz_smaller": _cfg.width -= 30; _cfg.height -= 20;
             case "cz_up":      _cfg.y -= 20;
             case "cz_down":    _cfg.y += 20;
             case "cz_left":    _cfg.x -= 20;
@@ -2264,10 +2280,11 @@ class FCMChatWidget extends MovieClip {
         // ── Step 1: FormatTextEdit — position + style the entry box ─────────
         // x/y are stage coordinates (1920×1080 space). Position at widget's lower edge.
         // Color args are hex strings WITHOUT '#'. Font arg is the engine body alias.
-        var editX:Float = x + 6;
-        var editY:Float = y + _cfg.height - INPUT_H + 4;
-        var editW:Float = _cfg.width - 12;
-        var editH:Float = INPUT_H - 6;
+        var r:Dynamic = _cfg.inputRect();
+        var editX:Float = x + r.x;
+        var editY:Float = y + r.y;
+        var editW:Float = r.width;
+        var editH:Float = r.height;
         var textEditStarted:Bool = false;
         var generation:Int = ++_inputGeneration;
 
@@ -2281,11 +2298,11 @@ class FCMChatWidget extends MovieClip {
             Reflect.callMethod(_hudTools, formatEdit,
                 [editX, editY, editW, editH,
                  FONT_BODY,                  // engine alias — matches HUDTools' entry_tf default ($MAIN_Font_Light)
-                 _cfg.fontSize,
+                 _cfg.effectiveInputFontSize(),
                  nh(_cfg.tabActiveColor),    // text color — no '#'
                  nh(_cfg.tabRowColor),       // bg color — no '#'
                  0.96]);                    // bg alpha (>0 triggers background rendering)
-            zfeLog("info", "input", "FormatTextEdit ok");
+            zfeLog("info", "input", "FormatTextEdit ok x=" + editX + " y=" + editY + " width=" + editW + " height=" + editH + " font=" + _cfg.effectiveInputFontSize());
 
             // ── Step 2: FormatOnScreenKeyboard — REQUIRED even on PC/KB/mouse ───
             // Position off-screen (y=-300) so the gamepad OSK is invisible on PC.
@@ -4017,10 +4034,10 @@ class FCMChatWidget extends MovieClip {
         return parsedCount;
     }
 
-    /** Keep replay identity scoped to the feed whose records are retained. */
+    /** Keep replay identity scoped to the feed whose records are retained. Backscroll fix: scan live _records so LRU-evicted messageIds don't re-append randomly. */
     function markSeenEvent(channel:String, eventId:Int, messageId:String):Bool {
         return _history.accept(channel, eventId, messageId,
-            Std.int(Math.max(256, _cfg.maxMessages * 2)));
+            Std.int(Math.max(256, _cfg.maxMessages * 2)), _records);
     }
 
     /** Edits retain the message ID, so deduplicate their fresh relay cursor separately. */
