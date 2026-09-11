@@ -2990,7 +2990,6 @@ class FCMChatWidget extends MovieClip {
             var seed:String = _linkedUserId.length > 0 ? _linkedUserId : (_relayUserId.length > 0 ? _relayUserId : _userId);
             if (seed.length > 0) {
                 _outboxIdentity = seed;
-                zfeLog("info", "linkdiag", "lazy-seeded outboxIdentity len=" + seed.length + " source=" + (_linkedUserId.length > 0 ? "linked" : (_relayUserId.length > 0 ? "relay" : "user")));
             } else {
                 try { refreshAuthState(); } catch (_:Dynamic) {}
                 if (_outboxIdentity.length == 0) {
@@ -3000,7 +2999,6 @@ class FCMChatWidget extends MovieClip {
             }
         }
         if (_api == null || _outboxIdentity.length == 0 || _needsLink) {
-            zfeLog("warn", "linkdiag", "send blocked needsLink=" + _needsLink + " outboxIdLen=" + _outboxIdentity.length + " apiNull=" + (_api == null) + " pinLen=" + (_pinnedSystemBody == null ? -1 : _pinnedSystemBody.length) + " codeLen=" + extractLinkCode(_pinnedSystemBody).length + " linkedIdLen=" + _linkedUserId.length + " relayIdLen=" + _relayUserId.length + " authState=" + _authState);
             setLogText(linkHint());
             return;
         }
@@ -3213,12 +3211,8 @@ class FCMChatWidget extends MovieClip {
                         // Genuine not-linked / insufficient-role only (automod + slash now have
                         // their own codes below, so this no longer fires for filtered messages).
                         // A denied send confirms we're NOT linked → drive the persistent gate.
-                        var prePinLen:Int = _pinnedSystemBody == null ? -1 : _pinnedSystemBody.length;
-                        var preLink:Bool = _needsLink;
                         _needsLink = true;
-                        zfeLog("warn", "linkdiag", "permission_denied sets needsLink preLink=" + preLink + " prePinLen=" + prePinLen + " raw=" + rs.substr(0, 280));
                         setLogText(linkHint());
-                        zfeLog("warn", "linkdiag", "linkHint after denied pinLen=" + (_pinnedSystemBody == null ? -1 : _pinnedSystemBody.length) + " codeLen=" + extractLinkCode(_pinnedSystemBody).length + " waiting=" + (_pinnedSystemBody == null || extractLinkCode(_pinnedSystemBody).length == 0));
                     case "message_blocked":
                         setLogText("Message blocked by the chat filter.");
                     case "slash_ignored":
@@ -3334,9 +3328,6 @@ class FCMChatWidget extends MovieClip {
         }
         zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
         zfeLog("info", "startup", "BUILD=chatv1-widget-v" + VERSION);
-        // STAGE-A grace + link-diag marker (staged reintroduction): identifies this exact
-        // build in logs since VERSION never changes. Additive log line only.
-        zfeLog("info", "startup", "STAGE=sA-grace-linkdiag");
         zfeLog("info", "startup", _api.provider == FcmNativeApi.ZFE
             ? "zfe-chat-online-v1 OK"
             : "xscal-chat-interface OK");
@@ -3383,42 +3374,6 @@ class FCMChatWidget extends MovieClip {
         // other Fallout 76 players see. The retry timer probes later without re-entering a live
         // native connection, and HUD data callbacks only update local state.
         refreshDisplayName();
-        // STAGE-0 environment label (staged reintroduction): records what the game
-        // serves, so stage results are read conditioned on session state, never raw.
-        // Lengths + login flag only, no PII. Attempts 1-2 only. Read-only: no behavior change.
-        if (_connectAttempts <= 2) {
-            try {
-                var envMgr:Dynamic = null;
-                try { envMgr = findBSUI(); } catch (_:Dynamic) {}
-                var envData:Dynamic = null;
-                try { envData = uiData(getBSUIData(envMgr, "AccountInfoData")); } catch (_:Dynamic) {}
-                var envParts:Array<String> = [];
-                try {
-                    if (envData == null) envParts.push("dataNull");
-                    else {
-                        for (envF in ["name", "displayName", "playerName", "accountId"]) {
-                            var envLen:String = "?";
-                            try {
-                                var envV:Dynamic = uiField(envData, envF);
-                                if (envV == null) envLen = "null";
-                                else {
-                                    try { envLen = "" + Std.string(envV).length; }
-                                    catch (_:Dynamic) { envLen = "str-threw"; }
-                                }
-                            } catch (_:Dynamic) { envLen = "field-threw"; }
-                            envParts.push(envF + "=" + envLen);
-                        }
-                        var envLogin:String = "?";
-                        try {
-                            var envLv:Dynamic = uiField(envData, "isLoggedIn");
-                            envLogin = (envLv == null) ? "null" : Std.string(envLv);
-                        } catch (_:Dynamic) { envLogin = "threw"; }
-                        envParts.push("isLoggedIn=" + envLogin);
-                    }
-                } catch (_:Dynamic) { envParts.push("probe-threw"); }
-                zfeLog("warn", "connect", "STAGE-ENV mgrNull=" + (envMgr == null) + " " + envParts.join(" "));
-            } catch (_:Dynamic) {}
-        }
         if (!hasResolvedDisplayName()) {
             zfeLog("info", "connect", "player identity not ready; delaying connect");
             setLogText("waiting for Fallout 76 player name...");
@@ -3585,7 +3540,6 @@ class FCMChatWidget extends MovieClip {
             var seed:String = _linkedUserId.length > 0 ? _linkedUserId : (_relayUserId.length > 0 ? _relayUserId : _userId);
             if (seed.length > 0) {
                 _outboxIdentity = seed;
-                zfeLog("info", "system", "seeded outboxIdentity after link len=" + seed.length);
             }
         }
         // Promptly refresh authState so _linkedUserId/_authState become authoritative;
@@ -4234,11 +4188,6 @@ class FCMChatWidget extends MovieClip {
         var parsed:Int = parseAndRenderEvents(rs);
         var renderDt:Float = flash.Lib.getTimer() - tRenderStart;
         if (renderDt > 30) zfeLog("info", "poll", "render dt=" + renderDt + "ms events=" + parsed);
-        // Link-diag: if poll returned events but no system notice arrived while we are waiting, log it.
-        // This distinguishes relay-not-sending vs parser-not-seeing.
-        if (parsed > 0 && _needsLink && (_pinnedSystemBody == null || extractLinkCode(_pinnedSystemBody).length == 0)) {
-            zfeLog("warn", "linkdiag", "poll returned " + parsed + " events but still waiting-no-code cursor=" + _cursor);
-        }
         flushOutbox();
         _eventPollPhase = "complete";
         // Mitigation C: if xScal drain returned a full 16-batch, chain an immediate next-tick poll to keep draining without stalling a full 64 in one turn
@@ -4414,16 +4363,13 @@ class FCMChatWidget extends MovieClip {
             // else is the link-required code notice (relay sends it ONLY to limited identities).
             if (rawChannel == "system" || senderUserId == "system") {
                 if (body.indexOf("LINK COMPLETE") >= 0) {
-                    zfeLog("info", "system", "LINK COMPLETE raw=" + logSafe(body).substr(0, 200));
                     clearLinkGate("LINK COMPLETE notice");
                 } else {
                     _pinnedSystemBody    = body;
                     _needsLink           = true;
                     _linkNoticeAt        = flash.Lib.getTimer();
                     _linkRefreshPending  = false;
-                    var diagCode:String = extractLinkCode(body);
-                    zfeLog("info", "system", "link notice received -> needsLink codeLen=" + diagCode.length + " bodySafe=" + logSafe(body).substr(0, 280));
-                    zfeLog("info", "system", "pinned len=" + body.length + " extracted=" + (diagCode.length > 0 ? diagCode : "(empty)"));
+                    zfeLog("info", "system", "link notice received -> needsLink");
                 }
                 newRecords = true;
                 continue;
@@ -5428,14 +5374,6 @@ class FCMChatWidget extends MovieClip {
                 + '</font>';
         }
         return s;
-    }
-
-     // Diagnostic: log every poll that saw zero system notices while needsLink is up and pin is empty.
-    // Helps distinguish "relay never sent it" vs "parser never saw it".
-    function logLinkWaitingDiag(source:String):Void {
-        if (_needsLink && (_pinnedSystemBody == null || _pinnedSystemBody.length == 0 || extractLinkCode(_pinnedSystemBody).length == 0)) {
-            zfeLog("warn", "linkdiag", source + " waiting-no-code needsLink=" + _needsLink + " pinLen=" + (_pinnedSystemBody == null ? -1 : _pinnedSystemBody.length) + " cursor=" + _cursor + " records=" + _records.length);
-        }
     }
 
      /** Pull the "XXXX-XXXX" code out of the relay notice ("...enter code: XXXX-XXXX (expires...)"). */
