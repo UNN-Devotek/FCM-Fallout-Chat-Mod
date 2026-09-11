@@ -1808,8 +1808,8 @@ class FCMChatWidget extends MovieClip {
         return -1;
     }
 
-    function formatWorldEventBody(name:String, mutation:String, participants:Int, code:String):String {
-        var body:String = "Public Event: " + name + " [" + code + "]";
+    function formatWorldEventBody(name:String, mutation:String, participants:Int):String {
+        var body:String = "Public Event: " + name;
         if (mutation != null && StringTools.trim(mutation).length > 0) body += " [" + StringTools.trim(mutation) + "]";
         if (participants >= 0) body += " Participants: " + participants;
         return body;
@@ -1913,8 +1913,7 @@ class FCMChatWidget extends MovieClip {
             var participants:Int = -1;
             try { mutation = extractWorldEventMutation(details); } catch (_:Dynamic) {}
             try { participants = extractWorldEventParticipants(details); } catch (_:Dynamic) {}
-            var code:String = stableWorldEventCode(id);
-            var body:String = formatWorldEventBody(name, mutation, participants, code);
+            var body:String = formatWorldEventBody(name, mutation, participants);
             var chan:String = "events"; // global leaf 000...003 per channelMap, not server FCMROOM
             // Second guard via history dedupe (backscroll repeat fix)
             try {
@@ -1926,7 +1925,7 @@ class FCMChatWidget extends MovieClip {
                 if (rawResp.indexOf('"success":true') >= 0 || rawResp.indexOf('success:true') >= 0) {
                     _broadcastedWorldEvents.set(id, flash.Lib.getTimer());
                     _broadcastOrder.push(id);
-                    zfeLog("info", "events", "auto-broadcast publicEvent id=" + id + " name=" + name + " code=" + code + " participants=" + participants);
+                    zfeLog("info", "events", "auto-broadcast publicEvent id=" + id + " name=" + name + " participants=" + participants);
                     while (_broadcastOrder.length > AUTO_BROADCAST_SEEN_CAP) {
                         var old:String = _broadcastOrder.shift();
                         _broadcastedWorldEvents.remove(old);
