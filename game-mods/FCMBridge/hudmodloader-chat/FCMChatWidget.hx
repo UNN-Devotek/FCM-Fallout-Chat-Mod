@@ -440,6 +440,8 @@ class FCMChatWidget extends MovieClip {
 
     // ── Auth state ────────────────────────────────────────────────────────────
     var _authState:String        = "limited";
+    // One-shot latch so the ZFE grace-expiry notice logs once per handshake.
+    var _zfeAuthGraceLogged:Bool = false;
     // Server-authoritative permission snapshot from chat.v1.getAuthState. This only
     // controls whether staff-only references/help are shown; every action is still
     // authorized again by the relay from the linked Discord role.
@@ -3353,6 +3355,7 @@ class FCMChatWidget extends MovieClip {
         if (_api == null) return;
         _connectAttempts++;
         _connectStartedAt = flash.Lib.getTimer();
+        _zfeAuthGraceLogged = false;
         _canRetryHudSend = false;
         // Re-read the public FO76 account handle each attempt until AccountInfoData has it.
         // Never substitute CharacterInfoData: that is the local character label, not the name
@@ -3686,10 +3689,28 @@ class FCMChatWidget extends MovieClip {
                 if (!FcmReconnect.pendingAllowed(_connectStartedAt, flash.Lib.getTimer())) forceReconnect("authentication handshake timed out");
                 else setLogText("connecting to chat...");
             } else if (_authState != "authenticated" && _connected) {
-                // Preserve the established ZFE behavior. Its getAuthState
-                // contract is synchronous and a non-authenticated result is a
-                // dead session rather than an in-flight connection.
-                forceReconnect("ZFE auth state not authenticated");
+                // ZFE's native handshake completes asynchronously after transport
+                // connect, like xScal's worker handshake above: a non-authenticated
+                // reading inside the handshake window is an in-flight connection,
+                // not a dead session. Tearing it down restarts the very handshake
+                // being awaited, which wedges boot in a reconnect loop (every poll
+                // reconnects ~3s after the previous connect). Grant the same
+                // pending grace xScal gets; past the window, downgrade to limited
+                // (usable transport + link gate) instead of looping forever.
+                // Genuinely dead transports still recycle via the poll-failure
+                // threshold path, and a late authentication is picked up by the
+                // becameAuthenticated transition above.
+                if (FcmReconnect.pendingAllowed(_connectStartedAt, flash.Lib.getTimer())) {
+                    // Only paint over an empty feed; never blank rendered rows or
+                    // the link screen for a transitional reading.
+                    var hasContent:Bool = false;
+                    try { hasContent = _records.length > 0; } catch (_:Dynamic) {}
+                    if (!hasContent) setLogText("connecting to chat...");
+                } else if (!_zfeAuthGraceLogged) {
+                    _zfeAuthGraceLogged = true;
+                    zfeLog("warn", "auth", "ZFE auth never established; continuing limited");
+                    try { renderRecords(); } catch (_:Dynamic) {}
+                }
             }
         } catch (e:Dynamic) {
             zfeLog("warn", "auth", "getAuthState threw: " + Std.string(e));
