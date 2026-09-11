@@ -291,7 +291,7 @@ one unambiguous historical sender identity, keeps it on a cosmetics-free ACK, an
 unique, ACK-accepted, 15-second display-name/channel/body fallback. A matched event updates the
 existing row in place; it never appends a second row. Ambiguous or stale legacy candidates remain
 separate rather than being guessed. One deferred poll remains as a compatibility drain; ordinary
-background polling remains controlled by `pollMs`. When `AccountInfoData` serves a blank handle all session, `FCMChat.ini` `displayName=` supplies an INI fallback so `chat.v1.connect` can still be reached; relay link/auth still derives from the token's `linkedUserId`, and the real game handle replaces the fallback on the next hello.
+background polling remains controlled by `pollMs`. When `AccountInfoData` serves a blank handle all session, `FCMChat.ini` `displayName=` supplies an INI fallback so `chat.v1.connect` can still be reached; relay link/auth still derives from the token's `linkedUserId`, and the real game handle replaces the fallback on the next hello. Public-event auto-broadcast stays behind `autoBroadcastWorldEvents=false` (default OFF) and is further narrowed by `broadcastEvents=` (comma-separated exact names, case-insensitive, never substrings) plus `broadcastEventsMode=allow|deny` (default `allow`); a blank allow-list reads as broadcast off, quietly.
 
 The backend sends a newly finalized static-channel message directly to native relay subscribers
 on the same process, then publishes it to Redis for other backend instances. The Redis listener

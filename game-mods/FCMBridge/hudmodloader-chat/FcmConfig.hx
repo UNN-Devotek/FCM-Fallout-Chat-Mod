@@ -136,6 +136,38 @@ class FcmConfig {
     // uses) for publicEvent (type 1) and broadcasts each new event exactly once to the
     // global events leaf (000...003). Requires events channel in AllowedChannels.
     public var autoBroadcastWorldEvents:Bool = false;
+    // Which events may be broadcast: one list + a mode flag. "allow" (default) =
+    // only listed names are announced; "deny" = every valid name EXCEPT the listed
+    // ones is announced. Names are trimmed, case-insensitive, EXACT matches against
+    // the game's RecentActivitiesData name (never substrings). allow + empty list =
+    // same as the master toggle off (nothing broadcasts, quietly).
+    // Default allow-list spellings per fallout.fandom.com/wiki/Fallout_76_public_events.
+    public var broadcastEvents:Array<String> = ["Scorched Earth", "Neurological Warfare", "A Colossal Problem", "Seismic Activity", "Encryptid", "Eviction Notice", "Moonshine Jamboree"];
+    public var broadcastEventsMode:String = "allow"; // "allow" | "deny" (invalid -> "allow")
+
+    /** Effective master switch: the toggle AND the empty-allow rule. */
+    public function autoBroadcastActive():Bool {
+        if (!autoBroadcastWorldEvents) return false;
+        if (broadcastEventsMode == "deny") return true;
+        return broadcastEvents != null && broadcastEvents.length > 0;
+    }
+
+    /** Pure name filter shared by both broadcast gates (unit-testable). */
+    public static function eventPassesFilter(name:String, list:Array<String>, mode:String):Bool {
+        if (name == null) return false;
+        var t:String = StringTools.trim(name);
+        if (t.length == 0) return false;
+        var low:String = t.toLowerCase();
+        var listed:Bool = false;
+        if (list != null) {
+            for (v in list) {
+                if (v == null) continue;
+                if (StringTools.trim(v).toLowerCase() == low) { listed = true; break; }
+            }
+        }
+        if (mode == "deny") return !listed;
+        return listed;
+    }
 
     // ── Manual identity fallback (escape hatch for flaky AccountInfoData) ───────
     // When xScal/the game serves a blank AccountInfoData (empty name,
@@ -642,6 +674,13 @@ class FcmConfig {
                 case "showhints":       cfg.showHints = parseBool(val, cfg.showHints);
                 case "autobroadcastworldevents":
                     cfg.autoBroadcastWorldEvents = parseBool(val, cfg.autoBroadcastWorldEvents);
+                case "broadcastevents":
+                    // Always assign: explicit empty (or unparseable) clears the list,
+                    // which in "allow" mode reads as broadcast-off (see autoBroadcastActive).
+                    cfg.broadcastEvents = parseCsvList(val, 16);
+                case "broadcasteventsmode":
+                    var m:String = StringTools.trim(val).toLowerCase();
+                    cfg.broadcastEventsMode = (m == "deny") ? "deny" : "allow";
                 case "hideinhudmodes":
                     cfg.hideInHUDModes = parseHideInHUDModes(val);
                 case "displayname":
@@ -661,7 +700,8 @@ class FcmConfig {
         return cfg;
     }
 
-    static function parseHideInHUDModes(s:String):Array<String> {
+    /** Shared comma/semicolon list parser: trim, drop empties, dedupe case-insensitively, cap. */
+    static function parseCsvList(s:String, cap:Int):Array<String> {
         if (s == null) return [];
         var raw:String = StringTools.trim(s);
         if (raw.length == 0) return [];
@@ -676,11 +716,15 @@ class FcmConfig {
                     seen.set(low, true);
                     out.push(t);
                 }
-                if (out.length >= 16) break;
+                if (out.length >= cap) break;
             }
-            if (out.length >= 16) break;
+            if (out.length >= cap) break;
         }
         return out;
+    }
+
+    static function parseHideInHUDModes(s:String):Array<String> {
+        return parseCsvList(s, 16);
     }
 
     public function effectiveInputFontSize(isChrome:Bool = false):Int {
@@ -766,6 +810,24 @@ class FcmConfig {
             }
         }
         hideInHUDModes = norm;
+        // Broadcast event list: same normalization; mode sanitized to allow|deny.
+        if (broadcastEvents == null) broadcastEvents = [];
+        var bnorm:Array<String> = [];
+        var bseen:Map<String,Bool> = new Map();
+        for (v in broadcastEvents) {
+            if (v == null) continue;
+            var t:String = StringTools.trim(v);
+            if (t.length == 0) continue;
+            var low:String = t.toLowerCase();
+            if (!bseen.exists(low)) {
+                bseen.set(low, true);
+                bnorm.push(t);
+            }
+            if (bnorm.length >= 16) break;
+        }
+        broadcastEvents = bnorm;
+        var bm:String = (broadcastEventsMode == null) ? "" : StringTools.trim(broadcastEventsMode).toLowerCase();
+        broadcastEventsMode = (bm == "deny") ? "deny" : "allow";
     }
 
     /** Serialize back to the [FCMChat] INI (for F11 Customize persistence via ZFE storage).
@@ -803,6 +865,8 @@ class FcmConfig {
         s.add("hideInHUDModes=" + hideInHUDModes.join(",") + "\n");
         s.add("displayName=" + displayNameOverride + "\n");
         s.add("autoBroadcastWorldEvents=" + b(autoBroadcastWorldEvents) + "\n");
+        s.add("broadcastEvents=" + broadcastEvents.join(",") + "\n");
+        s.add("broadcastEventsMode=" + broadcastEventsMode + "\n");
         s.add("inputHeight=" + inputHeight + "\n");
         s.add("inputFontSize=" + inputFontSize + "\n");
         s.add("linkUrl=" + linkUrl + "\n");

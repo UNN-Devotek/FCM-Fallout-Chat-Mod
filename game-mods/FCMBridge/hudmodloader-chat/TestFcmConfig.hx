@@ -160,6 +160,49 @@ class TestFcmConfig {
             FcmConfig.parse("[FCMChat]\ndisplayName=" + [for (k in 0...80) "a"].join("") + "\n").displayNameOverride.length == 64);
         check("displayNameOverride round-trips",
             FcmConfig.parse(FcmConfig.parse("[FCMChat]\ndisplayName=Kate6H\n").toIni()).displayNameOverride == "Kate6H");
+        eqs("default broadcastEventsMode", d.broadcastEventsMode, "allow");
+        check("default broadcastEvents has 7 wiki-sourced names", d.broadcastEvents.length == 7);
+        check("default broadcastEvents includes Scorched Earth",
+            FcmConfig.eventPassesFilter("Scorched Earth", d.broadcastEvents, d.broadcastEventsMode));
+        check("default broadcastEvents excludes Head Hunt",
+            !FcmConfig.eventPassesFilter("Head Hunt", d.broadcastEvents, d.broadcastEventsMode));
+        check("default broadcastEvents excludes Distinguished Guests",
+            !FcmConfig.eventPassesFilter("Distinguished Guests", d.broadcastEvents, d.broadcastEventsMode));
+        eqs("parse broadcastEventsMode deny",
+            FcmConfig.parse("[FCMChat]\nbroadcastEventsMode=DENY\n").broadcastEventsMode, "deny");
+        eqs("parse broadcastEventsMode garbage->allow",
+            FcmConfig.parse("[FCMChat]\nbroadcastEventsMode=sometimes\n").broadcastEventsMode, "allow");
+        check("parse broadcastEvents list",
+            FcmConfig.parse("[FCMChat]\nbroadcastEvents=Free Range, Project Paradise\n").broadcastEvents.join("|") == "Free Range|Project Paradise");
+        check("parse broadcastEvents dedupes case-insensitively",
+            FcmConfig.parse("[FCMChat]\nbroadcastEvents=Tea Time, tea time ,TEA TIME\n").broadcastEvents.length == 1);
+        check("allow match is case-insensitive",
+            FcmConfig.eventPassesFilter("scorched earth", ["Scorched Earth"], "allow"));
+        check("allow match trims",
+            FcmConfig.eventPassesFilter("  Encryptid ", ["Encryptid"], "allow"));
+        check("allow rejects unlisted",
+            !FcmConfig.eventPassesFilter("Distinguished Guests", ["Scorched Earth"], "allow"));
+        check("allow rejects substring (Hunt vs Head Hunt)",
+            !FcmConfig.eventPassesFilter("Head Hunt", ["Hunt"], "allow"));
+        check("allow rejects substring (Head Hunt vs Hunt entry)",
+            !FcmConfig.eventPassesFilter("Hunt", ["Head Hunt"], "allow"));
+        check("deny passes unlisted",
+            FcmConfig.eventPassesFilter("Distinguished Guests", ["Scorched Earth"], "deny"));
+        check("deny rejects listed",
+            !FcmConfig.eventPassesFilter("Scorched Earth", ["Scorched Earth"], "deny"));
+        check("filter rejects blank name",
+            !FcmConfig.eventPassesFilter("   ", ["Scorched Earth"], "allow"));
+        check("empty allow-list reads as broadcast off",
+            !FcmConfig.parse("[FCMChat]\nautoBroadcastWorldEvents=true\nbroadcastEvents=\n").autoBroadcastActive());
+        check("non-empty allow-list with toggle on reads as active",
+            FcmConfig.parse("[FCMChat]\nautoBroadcastWorldEvents=true\nbroadcastEvents=Tea Time\n").autoBroadcastActive());
+        check("deny with empty list reads as active",
+            FcmConfig.parse("[FCMChat]\nautoBroadcastWorldEvents=true\nbroadcastEvents=\nbroadcastEventsMode=deny\n").autoBroadcastActive());
+        check("master toggle off reads as inactive regardless",
+            !FcmConfig.parse("[FCMChat]\nautoBroadcastWorldEvents=false\nbroadcastEvents=Tea Time\n").autoBroadcastActive());
+        check("broadcast filter round-trips",
+            FcmConfig.parse(FcmConfig.parse("[FCMChat]\nbroadcastEvents=Free Range,Project Paradise\nbroadcastEventsMode=deny\n").toIni()).broadcastEvents.join("|") == "Free Range|Project Paradise"
+            && FcmConfig.parse(FcmConfig.parse("[FCMChat]\nbroadcastEvents=Free Range,Project Paradise\nbroadcastEventsMode=deny\n").toIni()).broadcastEventsMode == "deny");
 
         var menuCfg = new FcmConfig();
         check("width action accepted", menuCfg.customizeSize("cz_width_up"));

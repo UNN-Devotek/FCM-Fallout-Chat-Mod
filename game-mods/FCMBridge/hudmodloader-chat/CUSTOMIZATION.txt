@@ -55,6 +55,15 @@ provider sizing. Background opacity accepts 0-1. Colors accept #RRGGBB.
 Input height alone does not enlarge the font. The row grows to fit larger text.
 Legacy autoHideSec=0 also disables auto-hide; enabling it supplies 60 seconds.
 
+PUBLIC-EVENT AUTO-BROADCAST (INI only, default OFF)
+autoBroadcastWorldEvents=true enables announcing public events; the default
+false never subscribes and pays no cost. broadcastEventsMode=allow (default)
+announces ONLY the listed names; =deny announces everything EXCEPT the listed
+names. Names are comma-separated, case-insensitive, EXACT matches only (never
+substrings). A blank allow-list reads as broadcast OFF. Default allow-list:
+Scorched Earth, Neurological Warfare, A Colossal Problem, Seismic Activity,
+Encryptid, Eviction Notice, Moonshine Jamboree.
+
 SAVING AND RELOADING
 F11 changes apply immediately. ZFE saves in vendor-scoped
 FCMChatWidget/settings.ini; saved values take priority over Data/FCMChat.ini.

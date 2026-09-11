@@ -1822,7 +1822,8 @@ class FCMChatWidget extends MovieClip {
         // Pull fresh via GetDataFromClient instead; the event is just a wake-up ping.
         // Gate + throttle: default-off users pay nothing; opt-in users max 1 check/30s
         // (HUDChallenges DATA_RELOAD_TIME), so per-frame Subscribe storms can't stall UI.
-        if (_cfg == null || !_cfg.autoBroadcastWorldEvents) return;
+        // autoBroadcastActive also folds in the empty-allow rule (blank allow-list = off).
+        if (_cfg == null || !_cfg.autoBroadcastActive()) return;
         try {
             var raw:Dynamic = null;
             try { raw = getBSUIData(findBSUI(), "RecentActivitiesData"); } catch (_:Dynamic) {}
@@ -1844,7 +1845,7 @@ class FCMChatWidget extends MovieClip {
     }
 
     function maybeAutoBroadcastWorldEvents(raw:Dynamic):Void {
-        if (_cfg == null || !_cfg.autoBroadcastWorldEvents) {
+        if (_cfg == null || !_cfg.autoBroadcastActive()) {
             try { stopRecentActivitiesFallback(); } catch (_:Dynamic) {}
             return;
         }
@@ -1894,6 +1895,8 @@ class FCMChatWidget extends MovieClip {
             } catch (_:Dynamic) {}
             if (idProbe.length == 0) continue;
             if (!isValidWorldEventName(nameProbe)) continue;
+            // Allow/deny list gate (exact, case-insensitive; never substrings).
+            if (!FcmConfig.eventPassesFilter(nameProbe, _cfg.broadcastEvents, _cfg.broadcastEventsMode)) continue;
             currentIds.set(idProbe, true);
             if (!_broadcastedWorldEvents.exists(idProbe)) toBroadcast.push(act);
         }
@@ -1909,6 +1912,7 @@ class FCMChatWidget extends MovieClip {
                 details = uiField(act, "details");
             } catch (_:Dynamic) { continue; }
             if (id.length == 0 || !isValidWorldEventName(name)) continue;
+            if (!FcmConfig.eventPassesFilter(name, _cfg.broadcastEvents, _cfg.broadcastEventsMode)) continue;
             var mutation:String = "";
             var participants:Int = -1;
             try { mutation = extractWorldEventMutation(details); } catch (_:Dynamic) {}
@@ -1946,7 +1950,7 @@ class FCMChatWidget extends MovieClip {
     }
 
     function startRecentActivitiesFallback():Void {
-        if (_cfg == null || !_cfg.autoBroadcastWorldEvents) return;
+        if (_cfg == null || !_cfg.autoBroadcastActive()) return;
         if (_recentActivitiesFallbackTimer != null) return;
         try {
             zfeLog("warn", "events", "Subscribe path poisoned (#1014 x3) — falling back to 30s GetDataFromClient poll");
@@ -1955,7 +1959,7 @@ class FCMChatWidget extends MovieClip {
             _recentActivitiesFallbackTimer.addEventListener(TimerEvent.TIMER, function(_:Dynamic) {
                 try {
                     if (_disposed) return;
-                    if (_cfg == null || !_cfg.autoBroadcastWorldEvents) return;
+                    if (_cfg == null || !_cfg.autoBroadcastActive()) return;
                     var raw:Dynamic = null;
                     try { raw = getBSUIData(findBSUI(), "RecentActivitiesData"); } catch (_:Dynamic) { return; }
                     var d:Dynamic = null;
@@ -1979,7 +1983,8 @@ class FCMChatWidget extends MovieClip {
 
     function subscribeRecentActivities():Void {
         // Gate: default-off users never subscribe and never pay GetDataFromClient cost.
-        if (_cfg == null || !_cfg.autoBroadcastWorldEvents) {
+        // autoBroadcastActive folds in the empty-allow rule (blank allow-list = off).
+        if (_cfg == null || !_cfg.autoBroadcastActive()) {
             try { unsubscribeRecentActivities(); } catch (_:Dynamic) {}
             try { stopRecentActivitiesFallback(); } catch (_:Dynamic) {}
             return;
