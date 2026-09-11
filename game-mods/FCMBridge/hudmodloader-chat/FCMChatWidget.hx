@@ -1917,7 +1917,9 @@ class FCMChatWidget extends MovieClip {
             var participants:Int = -1;
             try { mutation = extractWorldEventMutation(details); } catch (_:Dynamic) {}
             try { participants = extractWorldEventParticipants(details); } catch (_:Dynamic) {}
-            var body:String = formatWorldEventBody(name, mutation, participants);
+            // Display the prefix-free name ("Public Event: Scorched Earth",
+            // not "Public Event: Event: ..."); dedupe keys above still use the raw id.
+            var body:String = formatWorldEventBody(FcmConfig.stripEventPrefix(name), mutation, participants);
             var chan:String = "events"; // global leaf 000...003 per channelMap, not server FCMROOM
             // Second guard via history dedupe (backscroll repeat fix)
             try {

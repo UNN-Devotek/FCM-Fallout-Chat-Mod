@@ -186,6 +186,23 @@ class TestFcmConfig {
             !FcmConfig.eventPassesFilter("Head Hunt", ["Hunt"], "allow"));
         check("allow rejects substring (Head Hunt vs Hunt entry)",
             !FcmConfig.eventPassesFilter("Hunt", ["Head Hunt"], "allow"));
+        eqs("stripEventPrefix removes prefix",
+            FcmConfig.stripEventPrefix("Event: Scorched Earth"), "Scorched Earth");
+        eqs("stripEventPrefix is case-insensitive",
+            FcmConfig.stripEventPrefix("event:  Encryptid "), "Encryptid");
+        eqs("stripEventPrefix leaves bare names alone",
+            FcmConfig.stripEventPrefix("Scorched Earth"), "Scorched Earth");
+        eqs("stripEventPrefix strips only one prefix",
+            FcmConfig.stripEventPrefix("Event: Event: X"), "Event: X");
+        eqs("stripEventPrefix null->empty", FcmConfig.stripEventPrefix(null), "");
+        check("prefixed live name passes default allow-list",
+            FcmConfig.eventPassesFilter("Event: Scorched Earth", d.broadcastEvents, d.broadcastEventsMode));
+        check("prefixed live name passes deny-list logic",
+            !FcmConfig.eventPassesFilter("Event: Scorched Earth", ["Scorched Earth"], "deny"));
+        check("prefixed Head Hunt still excluded by default allow-list",
+            !FcmConfig.eventPassesFilter("Event: Head Hunt", d.broadcastEvents, d.broadcastEventsMode));
+        check("list entry with prefix also matches",
+            FcmConfig.eventPassesFilter("Scorched Earth", ["Event: Scorched Earth"], "allow"));
         check("deny passes unlisted",
             FcmConfig.eventPassesFilter("Distinguished Guests", ["Scorched Earth"], "deny"));
         check("deny rejects listed",

@@ -152,17 +152,29 @@ class FcmConfig {
         return broadcastEvents != null && broadcastEvents.length > 0;
     }
 
+    /** The game serves public-event names with an "Event: " prefix
+        ("Event: Scorched Earth"); wiki titles usually match the served string.
+        Strip one leading prefix (case-insensitive) so list entries work with or
+        without it. Pure + unit-testable; also used for the broadcast body so the
+        feed reads "Public Event: Scorched Earth", not "Public Event: Event: ...". */
+    public static function stripEventPrefix(name:String):String {
+        if (name == null) return "";
+        var t:String = StringTools.trim(name);
+        var low:String = t.toLowerCase();
+        if (low.indexOf("event:") == 0) t = StringTools.trim(t.substr(6));
+        return t;
+    }
+
     /** Pure name filter shared by both broadcast gates (unit-testable). */
     public static function eventPassesFilter(name:String, list:Array<String>, mode:String):Bool {
-        if (name == null) return false;
-        var t:String = StringTools.trim(name);
+        var t:String = stripEventPrefix(name);
         if (t.length == 0) return false;
         var low:String = t.toLowerCase();
         var listed:Bool = false;
         if (list != null) {
             for (v in list) {
                 if (v == null) continue;
-                if (StringTools.trim(v).toLowerCase() == low) { listed = true; break; }
+                if (stripEventPrefix(v).toLowerCase() == low) { listed = true; break; }
             }
         }
         if (mode == "deny") return !listed;
