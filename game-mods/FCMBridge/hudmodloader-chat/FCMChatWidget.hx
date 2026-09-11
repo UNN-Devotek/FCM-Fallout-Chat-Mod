@@ -3294,6 +3294,9 @@ class FCMChatWidget extends MovieClip {
         }
         zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
         zfeLog("info", "startup", "BUILD=chatv1-widget-v" + VERSION);
+        // STAGE-0 baseline marker (staged reintroduction): identifies this exact
+        // build in logs since VERSION never changes. Additive log line only.
+        zfeLog("info", "startup", "STAGE=s0-baseline");
         zfeLog("info", "startup", _api.provider == FcmNativeApi.ZFE
             ? "zfe-chat-online-v1 OK"
             : "xscal-chat-interface OK");
@@ -3336,6 +3339,42 @@ class FCMChatWidget extends MovieClip {
         // other Fallout 76 players see. The retry timer probes later without re-entering a live
         // native connection, and HUD data callbacks only update local state.
         refreshDisplayName();
+        // STAGE-0 environment label (staged reintroduction): records what the game
+        // serves, so stage results are read conditioned on session state, never raw.
+        // Lengths + login flag only, no PII. Attempts 1-2 only. Read-only: no behavior change.
+        if (_connectAttempts <= 2) {
+            try {
+                var envMgr:Dynamic = null;
+                try { envMgr = findBSUI(); } catch (_:Dynamic) {}
+                var envData:Dynamic = null;
+                try { envData = uiData(getBSUIData(envMgr, "AccountInfoData")); } catch (_:Dynamic) {}
+                var envParts:Array<String> = [];
+                try {
+                    if (envData == null) envParts.push("dataNull");
+                    else {
+                        for (envF in ["name", "displayName", "playerName", "accountId"]) {
+                            var envLen:String = "?";
+                            try {
+                                var envV:Dynamic = uiField(envData, envF);
+                                if (envV == null) envLen = "null";
+                                else {
+                                    try { envLen = "" + Std.string(envV).length; }
+                                    catch (_:Dynamic) { envLen = "str-threw"; }
+                                }
+                            } catch (_:Dynamic) { envLen = "field-threw"; }
+                            envParts.push(envF + "=" + envLen);
+                        }
+                        var envLogin:String = "?";
+                        try {
+                            var envLv:Dynamic = uiField(envData, "isLoggedIn");
+                            envLogin = (envLv == null) ? "null" : Std.string(envLv);
+                        } catch (_:Dynamic) { envLogin = "threw"; }
+                        envParts.push("isLoggedIn=" + envLogin);
+                    }
+                } catch (_:Dynamic) { envParts.push("probe-threw"); }
+                zfeLog("warn", "connect", "STAGE-ENV mgrNull=" + (envMgr == null) + " " + envParts.join(" "));
+            } catch (_:Dynamic) {}
+        }
         if (!hasResolvedDisplayName()) {
             zfeLog("info", "connect", "player identity not ready; delaying connect");
             setLogText("waiting for Fallout 76 player name...");
