@@ -38,6 +38,13 @@ def warn(condition, label):
     if not condition:
         warnings.append("WARN: " + label)
 
+# The ZFE key decoder is verified as a whole by GFx, even for boolean responses.
+# Guard both parse and nested-object paths against reintroducing exception dependencies.
+native_src = open(os.path.join(HERE, '..', 'FcmNativeApi.hx'), encoding='utf-8').read()
+key_decoder = native_src.split('static function inputResultIsTrue', 1)[1].split('static function findXscal', 1)[0]
+check('FcmJson.parse(text)' in key_decoder, 'ZFE navigation uses the bounded GFx JSON reader')
+check('haxe.Json' not in native_src, 'ZFE navigation decoder has no general JSON parser/printer dependency')
+
 # ---------------------------------------------------------------------------
 # 1. Verify fcm-inject.as — chat.v1 API presence + FCMHUD/1 removal
 # ---------------------------------------------------------------------------
@@ -560,10 +567,15 @@ if widget_src:
           and 'tf.setTextFormat(fmt, start, end)' in widget_src,
           "FCMChatWidget formats exact name and body ranges without HTML color inheritance")
     check('static inline var LOG_INPUT_GAP:Int     = 4;' in widget_src
-          and 'var logBottom:Int = h - INPUT_H - LOG_INPUT_GAP;' in widget_src
+          and 'var logBottom:Int = h - _cfg.effectiveInputHeight() - LOG_INPUT_GAP;' in widget_src
           and '_logTf.height = logHeight;' in widget_src
-          and 'var editY:Float = y + _cfg.height - INPUT_H + 4;' in widget_src,
+          and 'var input = _cfg.inputRect();' in widget_src,
           "FCMChatWidget keeps the feed clip rectangle above the top-level HUDTools input")
+    check('function formatSharedInput():Void' in widget_src
+          and '[x + input.x, y + input.y, input.width, input.height, FONT_BODY,' in widget_src
+          and '_cfg.effectiveInputFontSize(), nh(_cfg.inputTextColor), nh(_cfg.inputBgColor), _cfg.bgAlpha]' in widget_src
+          and 'refreshSharedInputLayout();' in widget_src,
+          "FCMChatWidget applies input bounds, colors and opacity to the actual SharedHUDTools editor")
     check('function snapLogToBottom():Void' in widget_src
           and '_feedScrollY = _feedMaxScrollY' in widget_src
           and 'applyFeedScroll();' in widget_src,

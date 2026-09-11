@@ -24,6 +24,9 @@ class FcmConfig {
     public var width:Int        = 400;
     public var height:Int       = 260;
     public var fontSize:Int     = 14;
+    public var inputHeight:Int  = 28;
+    // Zero inherits the existing provider-specific input size.
+    public var inputFontSize:Int = 0;
 
     // ── Colors (0xRRGGBB) + opacity ────────────────────────────────────────────
     public var bgColor:Int          = 0x0A0907;
@@ -36,13 +39,37 @@ class FcmConfig {
     public var tabInactiveColor:Int = 0xB49544;
     public var promptColor:Int      = 0xAC9043;
     public var tabRowColor:Int      = 0x080705;
+    public var inputBgColor:Int     = 0x080705;
+    public var inputTextColor:Int   = 0xF5CB5B;
 
-    // ── Per-channel colors — mirror the website chat_rooms.color (pulled from PROD
-    //    2026-06-28). Drive the channel sub-tabs + the [Channel] message tag so each
-    //    channel renders in its website color. Overridable in FCMChat.ini
-    //    (colorGeneral / colorTrading / colorEvents / colorInfests / colorRaids /
-    //    colorServer). Option A will overwrite these at runtime from relay-fed live
-    //    colors once in-game chat connects (channelColor() is the read point).
+    public static var COLOR_FIELDS(default, null):Array<String> = [
+        "bgColor", "tabRowColor", "inputBgColor", "borderColor", "textColor",
+        "inputTextColor", "senderColor", "tabActiveColor", "tabInactiveColor", "promptColor"
+    ];
+    public static var COLOR_LABELS(default, null):Array<String> = [
+        "Panel background", "Tab box background", "Input box background", "Border",
+        "Message text", "Input text", "Default name text", "Active tab text",
+        "Inactive tab text", "Hint text"
+    ];
+    public static var COLOR_VALUES(default, null):Array<Int> = [
+        0x080705, 0x303030, 0xF5CB5B, 0x5AB0FF, 0x6AD46A, 0xFFFFFF, 0xFAF4DA, 0xB49544,
+        0xD85C5C, 0xBB88DD
+    ];
+    public static var COLOR_NAMES(default, null):Array<String> = [
+        "Black", "Charcoal", "Amber", "Blue", "Green", "White", "Cream", "Muted gold", "Red", "Purple"
+    ];
+
+    public function customizeColor(id:String):Bool {
+        var parts = id.split("_");
+        if (parts.length != 4 || parts[0] != "cz" || parts[1] != "color") return false;
+        if (COLOR_FIELDS.indexOf(parts[2]) < 0 || !(~/^[0-9]+$/.match(parts[3]))) return false;
+        var index = Std.parseInt(parts[3]);
+        if (index == null || index < 0 || index >= COLOR_VALUES.length) return false;
+        Reflect.setField(this, parts[2], COLOR_VALUES[index]);
+        return true;
+    }
+
+    // Fixed channel identity colors; user configuration cannot override these.
     public var chanColorGlobal:Int  = 0x1ABAFF;   // General
     public var chanColorTrade:Int   = 0x008F37;   // Trading
     public var chanColorEvents:Int  = 0xC88A51;   // Events
@@ -65,6 +92,25 @@ class FcmConfig {
     // Auto-hide: hide the panel after this many seconds of no activity; reveal on a new message.
     // 0 disables auto-hide (always visible). Toggled live from the F11 menu.
     public var autoHideSec:Int  = 60;
+    public var autoHideEnabled:Bool = true;
+
+    public function autoHideActive():Bool { return autoHideEnabled && autoHideSec > 0; }
+
+    public function toggleAutoHide():Void {
+        autoHideEnabled = !autoHideActive();
+        if (autoHideEnabled && autoHideSec == 0) autoHideSec = 60;
+    }
+
+    public function adjustAutoHideDelay(delta:Int):Void {
+        if (!autoHideActive()) autoHideEnabled = false;
+        autoHideSec = clampInt(autoHideSec + delta, 1, 600);
+    }
+
+    /** Shared local rectangle for the prompt and the top-level HUDTools editor. */
+    public function inputRect():{x:Int, y:Int, width:Int, height:Int} {
+        return {x:6, y:height - effectiveInputHeight() + 4,
+            width:width - 12, height:effectiveInputHeight() - 6};
+    }
 
     // ── Keybinds ───────────────────────────────────────────────────────────────
     // openKey = the ONE native ZFE key (free-choice; ZFE reads it via isChatKeyPressed).
@@ -84,14 +130,6 @@ class FcmConfig {
     // MainMenu, Pipboy, CAMP build modes, vendor/crafting/repair (ContainerMode) and
     // the map (MapMenu) so the chat does not cover those UIs.
     public var hideInHUDModes:Array<String> = ["MainMenu", "Pipboy", "WorkshopMode", "WorkshopNoCrosshairMode", "CampPlacement", "ContainerMode", "MapMenu"];
-
-    // ── Input box sizing (fix for clipped entry when fontSize is large) ──────────
-    // Separate controls for the text-entry strip so height scales with font.
-    public var inputHeight:Int    = 28;
-    public var inputFontSize:Int  = 0;   // 0 = auto = fontSize (or 13 for chrome hint)
-
-    // Keep decompiled field for compat (some INI files may contain it)
-    public var autoHideEnabled:Bool = true;
 
     // ── World-event auto-broadcast (global events channel) ───────────────────
     // When true, FCMChatWidget reads RecentActivitiesData (same source HUDChallenges
@@ -574,26 +612,24 @@ class FcmConfig {
                 case "y":               cfg.y = parseIntOr(val, cfg.y);
                 case "width":           cfg.width = parseIntOr(val, cfg.width);
                 case "height":          cfg.height = parseIntOr(val, cfg.height);
+                case "inputheight":     cfg.inputHeight = parseIntOr(val, cfg.inputHeight);
+                case "inputfontsize":   cfg.inputFontSize = parseIntOr(val, cfg.inputFontSize);
                 case "fontsize":        cfg.fontSize = parseIntOr(val, cfg.fontSize);
                 case "bgcolor":         cfg.bgColor = parseHexColor(val, cfg.bgColor);
                 case "bgalpha":         cfg.bgAlpha = parseFloatOr(val, cfg.bgAlpha);
                 case "bordercolor":     cfg.borderColor = parseHexColor(val, cfg.borderColor);
                 case "textcolor":       cfg.textColor = parseHexColor(val, cfg.textColor);
                 case "sendercolor":     cfg.senderColor = parseHexColor(val, cfg.senderColor);
-                case "channeltagcolor": cfg.channelTagColor = parseHexColor(val, cfg.channelTagColor);
-                case "colorgeneral":    cfg.chanColorGlobal = parseHexColor(val, cfg.chanColorGlobal);
-                case "colortrading":    cfg.chanColorTrade = parseHexColor(val, cfg.chanColorTrade);
-                case "colorevents":     cfg.chanColorEvents = parseHexColor(val, cfg.chanColorEvents);
-                case "colorinfests":    cfg.chanColorInfests = parseHexColor(val, cfg.chanColorInfests);
-                case "colorraids":      cfg.chanColorRaids = parseHexColor(val, cfg.chanColorRaids);
-                case "colorserver":     cfg.chanColorServer = parseHexColor(val, cfg.chanColorServer);
                 case "tabactivecolor":  cfg.tabActiveColor = parseHexColor(val, cfg.tabActiveColor);
                 case "tabinactivecolor": cfg.tabInactiveColor = parseHexColor(val, cfg.tabInactiveColor);
                 case "promptcolor":     cfg.promptColor = parseHexColor(val, cfg.promptColor);
+                case "inputbgcolor":    cfg.inputBgColor = parseHexColor(val, cfg.inputBgColor);
+                case "inputtextcolor":  cfg.inputTextColor = parseHexColor(val, cfg.inputTextColor);
                 case "tabrowcolor":     cfg.tabRowColor = parseHexColor(val, cfg.tabRowColor);
                 case "maxmessages":     cfg.maxMessages = parseIntOr(val, cfg.maxMessages);
                 case "maxsendlen":      cfg.maxSendLen = parseIntOr(val, cfg.maxSendLen);
                 case "pollms":          cfg.pollMs = parseIntOr(val, cfg.pollMs);
+                case "autohideenabled": cfg.autoHideEnabled = parseBool(val, cfg.autoHideEnabled);
                 case "autohidesec":     cfg.autoHideSec = parseIntOr(val, cfg.autoHideSec);
                 case "openkey":
                     // openKey is interpolated into htmlText (idle prompt) — restrict to a safe key
@@ -603,12 +639,7 @@ class FcmConfig {
                 case "channelnextkey":  cfg.channelNextKey = validAction(val, cfg.channelNextKey);
                 case "channelprevkey":  cfg.channelPrevKey = validAction(val, cfg.channelPrevKey);
                 case "hidekey":         cfg.hideKey = validAction(val, "");
-                case "showchanneltag":  cfg.showChannelTag = parseBool(val, cfg.showChannelTag);
                 case "showhints":       cfg.showHints = parseBool(val, cfg.showHints);
-                case "inputheight":
-                    cfg.inputHeight = parseIntOr(val, cfg.inputHeight);
-                case "inputfontsize":
-                    cfg.inputFontSize = parseIntOr(val, cfg.inputFontSize);
                 case "autobroadcastworldevents":
                     cfg.autoBroadcastWorldEvents = parseBool(val, cfg.autoBroadcastWorldEvents);
                 case "hideinhudmodes":
@@ -659,29 +690,6 @@ class FcmConfig {
 
     public function effectiveInputHeight():Int {
         return clampInt(Std.int(Math.max(inputHeight, effectiveInputFontSize() + 10)), 28, Std.int(Math.min(120, height - 70)));
-    }
-
-    public function inputRect():Dynamic {
-        return {
-            x: 6,
-            y: height - effectiveInputHeight() + 4,
-            width: width - 12,
-            height: effectiveInputHeight() - 6
-        };
-    }
-
-    public function autoHideActive():Bool {
-        return autoHideEnabled ? autoHideSec > 0 : false;
-    }
-
-    public function toggleAutoHide():Void {
-        autoHideEnabled = !autoHideActive();
-        if (autoHideEnabled && autoHideSec == 0) autoHideSec = 60;
-    }
-
-    public function adjustAutoHideDelay(delta:Int):Void {
-        if (!autoHideActive()) autoHideEnabled = false;
-        autoHideSec = clampInt(autoHideSec + delta, 1, 600);
     }
 
     public function sizingMenu():Array<Dynamic> {
@@ -770,30 +778,27 @@ class FcmConfig {
         s.add("x=" + x + "\n");                 s.add("y=" + y + "\n");
         s.add("width=" + width + "\n");         s.add("height=" + height + "\n");
         s.add("fontSize=" + fontSize + "\n");
+        s.add("inputHeight=" + inputHeight + "\n");
+        s.add("inputFontSize=" + inputFontSize + "\n");
         s.add("bgColor=" + h(bgColor) + "\n");  s.add("bgAlpha=" + bgAlpha + "\n");
         s.add("borderColor=" + h(borderColor) + "\n");
         s.add("textColor=" + h(textColor) + "\n");
         s.add("senderColor=" + h(senderColor) + "\n");
-        s.add("channelTagColor=" + h(channelTagColor) + "\n");
         s.add("tabActiveColor=" + h(tabActiveColor) + "\n");
         s.add("tabInactiveColor=" + h(tabInactiveColor) + "\n");
         s.add("promptColor=" + h(promptColor) + "\n");
+        s.add("inputBgColor=" + h(inputBgColor) + "\n");
+        s.add("inputTextColor=" + h(inputTextColor) + "\n");
         s.add("tabRowColor=" + h(tabRowColor) + "\n");
-        s.add("colorGeneral=" + h(chanColorGlobal) + "\n");
-        s.add("colorTrading=" + h(chanColorTrade) + "\n");
-        s.add("colorEvents=" + h(chanColorEvents) + "\n");
-        s.add("colorInfests=" + h(chanColorInfests) + "\n");
-        s.add("colorRaids=" + h(chanColorRaids) + "\n");
-        s.add("colorServer=" + h(chanColorServer) + "\n");
         s.add("maxMessages=" + maxMessages + "\n");
         s.add("maxSendLen=" + maxSendLen + "\n");
         s.add("pollMs=" + pollMs + "\n");
+        s.add("autoHideEnabled=" + b(autoHideEnabled) + "\n");
         s.add("autoHideSec=" + autoHideSec + "\n");
         s.add("openKey=" + openKey + "\n");
         s.add("channelNextKey=" + channelNextKey + "\n");
         s.add("channelPrevKey=" + channelPrevKey + "\n");
         s.add("hideKey=" + hideKey + "\n");
-        s.add("showChannelTag=" + b(showChannelTag) + "\n");
         s.add("showHints=" + b(showHints) + "\n");
         s.add("hideInHUDModes=" + hideInHUDModes.join(",") + "\n");
         s.add("displayName=" + displayNameOverride + "\n");

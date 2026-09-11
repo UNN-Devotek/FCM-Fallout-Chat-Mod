@@ -369,6 +369,7 @@ jobs:
           haxe test-feed-text.hxml
           haxe test-json.hxml
           haxe test-outbox.hxml
+          haxe test-diagnostics.hxml
       - name: Test HUD history recovery and world transitions
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe test-history.hxml
@@ -388,7 +389,7 @@ jobs:
       - name: Compile legacy FCMBridge
         working-directory: game-mods/FCMBridge
         run: |
-          haxe --main FCMBridge --swf /tmp/FCMBridge.swf --swf-version 32
+          haxe --class-path hudmodloader-chat --main FCMBridge --swf /tmp/FCMBridge.swf --swf-version 32
           python3 hudmodloader-chat/normalize_swf.py /tmp/FCMBridge.swf
           python3 tools/validate_swf.py /tmp/FCMBridge.swf --require-signature FWS --require-version 32
       - name: Run EasyFishing installer tests

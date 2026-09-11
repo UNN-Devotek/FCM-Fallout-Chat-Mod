@@ -121,7 +121,13 @@ def install_instructions(
             "   Create the folders if missing. Back up an existing fragment before replacing it.\n"
             f"   The example includes Endpoint={config['endpoint']}; copy all its settings,\n"
             "   not just the Endpoint line. Keep OpenChatKey aligned with Data/FCMChat.ini\n"
-            "   openKey and any Data/configuration/zfe.ini override. ZFE does not need xscal.ini.\n"
+            "   openKey. IMPORTANT: Data/configuration/zfe.ini is a higher-priority global override.\n"
+            "   Merge examples/ZFE/zfe.ini.example into that existing file if an override is needed.\n"
+            "   If it exists, check its [TextChat] section and set:\n\n"
+            f"   [TextChat]\n   Endpoint={config['endpoint']}\n\n"
+            "   Replace stale Endpoint values, preserve unrelated settings, and do not duplicate\n"
+            "   the section or key. If no override is needed, leave the endpoint out of zfe.ini\n"
+            "   so the packaged fragment supplies it. ZFE does not need xscal.ini.\n"
             "   Restart Fallout 76 after changing the configuration."
         )
     setup_files = ""
@@ -154,8 +160,17 @@ emoji rendering have been tested in-game with xScal and ZFE. Animated custom emo
 use static artwork. New or unbundled custom emojis use readable names.
 New Discord emoji require refreshed HUD assets. Artwork attribution: licenses/emoji/NOTICE.txt.
 
-For ZFE, also check Data/configuration/zfe.ini: its [TextChat] Endpoint must
-match the included example ({config['endpoint']}). A stale global endpoint can connect you to the wrong account environment.
+For ZFE, also check Data/configuration/zfe.ini. ZFE applies this global file after
+the TextChat fragment, so its [TextChat] values override the packaged fragment. If
+you use a global endpoint override, it must be:
+
+   [TextChat]
+   Endpoint={config['endpoint']}
+
+Replace any stale Endpoint value, preserve unrelated settings, and do not duplicate
+the section or key. If no override is needed, leave the endpoint out of zfe.ini and
+use the packaged fragment. A stale global endpoint can connect you to the wrong
+account environment.
 
 1. Exit Fallout 76 completely. Install HUDModLoader and ONE compatible extender
    (ZFE with chat.v1 support or xScal with chatInterface support) using their authors'
@@ -199,7 +214,8 @@ match the included example ({config['endpoint']}). A stale global endpoint can c
    a. Press F11 to open the menu.
    b. Confirm the `FCM` menu is present and choose `Customize...` for widget
       settings. The menu also provides `Scroll to newest`, `Hide chat`, and
-      the auto-hide toggle.
+      the auto-hide toggle. Read CUSTOMIZATION.txt for all appearance controls,
+      exact INI values, and fixed features.
    c. Choose `FCM` -> `Customize...` -> `Reset all settings` only when you
       want the packaged defaults restored. The environment-specific link URL
       is kept.
@@ -320,6 +336,7 @@ def build_package(
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
+        archive.write(ROOT / "CUSTOMIZATION.txt", "CUSTOMIZATION.txt")
         archive.writestr("INSTALL.txt", install_instructions(target, provider, distribution))
         for notice in ("NOTICE.txt", "LICENSE-TWEMOJI.txt", "LICENSE-UNICODE.txt"):
             archive.write(ROOT / "emoji" / notice, "licenses/emoji/" + notice)
@@ -329,11 +346,15 @@ def build_package(
             "================================\n\n"
             "1. Start Fallout 76 with ZFE or xScal and HUDModLoader enabled.\n"
             "2. Press F11 to open or close the HUDModLoader menu.\n"
-            "3. Open FCM -> Customize... to adjust size, position, opacity, or color theme.\n"
+            "3. Open FCM -> Customize... for separate panel width/height, input height/text size,\n"
+            "   feed text size, position, opacity, and Colors... controls. Input width/alignment\n"
+            "   stay fixed to the widget input area, including the ZFE editor.\n"
+            "   See CUSTOMIZATION.txt for exact INI keys, fixed features, and saved settings.\n"
             "4. FCM -> Customize... -> Reset all settings restores packaged defaults.\n"
             "5. FCM -> Scroll to newest jumps to the end of the feed.\n"
             "6. FCM -> Hide chat hides the feed; press the configured open key to restore it.\n"
-            "7. FCM -> Auto-hide toggles automatic hiding after inactivity.\n"
+            "7. FCM -> Auto-hide toggles automatic hiding independently of the saved delay.\n"
+            "   Customize -> Hide delay +/- changes seconds without enabling a disabled timer.\n"
             "   The menu closes after the toggle so the next F11 open shows the\n"
             "   current ON/OFF state. Customize actions have a short repeat\n"
             "   cooldown and do not require backing out to the parent menu.\n"
@@ -400,6 +421,14 @@ def build_package(
             archive.writestr("Data/ZFE/TextChat/fragments/FCMChatWidget.ini", widget_ini)
         if provider == "unified":
             archive.writestr("examples/ZFE/FCMChatWidget.ini.example", widget_ini)
+            archive.writestr(
+                "examples/ZFE/zfe.ini.example",
+                "; Optional endpoint override for Data/configuration/zfe.ini.\n"
+                "; Merge this key into the existing [TextChat] section; preserve other settings.\n"
+                "; Do not replace the whole file. xScal users do not install this example.\n"
+                "[TextChat]\n"
+                f"Endpoint={TARGETS[target]['endpoint']}\n",
+            )
         # This is a user-applied append snippet, not a file to extract over the
         # user's existing HUDModLoader registry. Keeping it at the archive root
         # makes accidental overwrite impossible.

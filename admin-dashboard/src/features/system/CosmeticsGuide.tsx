@@ -69,6 +69,45 @@ export default function CosmeticsGuide({ variant = 'dashboard' }: Props) {
         change anything or not.
       </p>
 
+      <section aria-label="In-game HUD customization">
+        <h2 style={sSection}>IN-GAME HUD CUSTOMIZATION</h2>
+        <p style={p}>
+          In the updated HUD build, open <strong>F11 → FCM → Customize</strong>.
+          These controls change your local HUD, independently of your profile cosmetics.
+          They are being prepared for release and are not available in older HUD packages.
+        </p>
+        <ul style={{ ...p, paddingLeft: '18px' }}>
+          <li>Adjust panel width and height independently, and move the panel.</li>
+          <li>Adjust input height and input text size. Input width and alignment stay fixed to the widget’s input area, including the ZFE editor drawn over it.</li>
+          <li>Adjust feed text size and background opacity.</li>
+          <li>Choose panel, tab-box, input-box and border colors under Colors.</li>
+          <li>Choose message, input, default name, active/inactive tab and hint font colors. Other players’ chosen name colors remain intact.</li>
+          <li>Turn auto-hide on or off independently of its remembered delay; adjust the delay in five-second steps.</li>
+          <li>Reset all HUD settings to their defaults.</li>
+        </ul>
+        <p style={p}>
+          Badges, channel tags and their visibility/colors, emojis, the default channel,
+          and the available channels are fixed by the HUD. They have no appearance controls.
+          You can still switch chat channels normally.
+        </p>
+        <p style={p}>
+          For precise values, edit the <code style={sCode}>[FCMChat]</code> section of{' '}
+          <code style={sCode}>Data/FCMChat.ini</code>. Use <code style={sCode}>inputHeight</code>{' '}
+          (28–120), <code style={sCode}>inputFontSize</code> (8–47, or 0 for default sizing),{' '}
+          <code style={sCode}>bgAlpha</code> (0–1), and color keys such as{' '}
+          <code style={sCode}>inputBgColor</code> and <code style={sCode}>inputTextColor</code>{' '}
+          with <code style={sCode}>#RRGGBB</code> values. Keep{' '}
+          <code style={sCode}>autoHideEnabled=false</code> to disable auto-hide without losing{' '}
+          <code style={sCode}>autoHideSec</code>.
+        </p>
+        <p style={p}>
+          F11 changes apply immediately. ZFE saves them in local settings; xScal saves them
+          per linked device with the matching backend update. ZFE’s saved F11 settings
+          take priority over the INI. Follow the packaged customization guide for reload
+          and saved-settings instructions.
+        </p>
+      </section>
+
       <p style={sSection}>TWO WAYS TO CHANGE YOUR APPEARANCE</p>
       <p style={p}>
         Both use the same settings — change something in one place and it updates

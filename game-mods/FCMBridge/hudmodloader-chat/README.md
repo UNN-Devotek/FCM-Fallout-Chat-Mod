@@ -1,8 +1,17 @@
+> Navigation correction (local HUD 2.10.76): the existing ZFE `Input.*` path is
+> locally observed compatibility, not a verified public ZFE contract. Earlier
+> references below equating `zfe-input-v1` with this surface are superseded:
+> that capability describes `input.v1.*` text sessions. The new decoder removes
+> general Haxe JSON dependencies associated with the observed Error #1014;
+> live ZFE verification is pending. No navigation INI edits are required.
+> The public guide names `zfe-hotkeys-v1` for hotkeys; migration requires its
+> detailed payload contract. See [ZFE Modder Guide](https://www.nexusmods.com/fallout76/articles/255).
+
 # FCMChatWidget
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-09-05):** v2.10.58 — source, relay, and packaged BA2 are kept together. The
+> **Status (2026-09-09):** v2.10.76 — built for local testing; the accompanying relay appearance update is not yet deployed. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -281,12 +290,30 @@ TextField. Details are in [BUILD.md](BUILD.md).
 
 ## Customization (`Data/FCMChat.ini`)
 
-All appearance + behavior is user-editable in `Data/FCMChat.ini`, parsed by `FcmConfig`
+Auto-hide has a persistent `autoHideEnabled` switch independent of `autoHideSec`.
+F11 Customize exposes the toggle and delay adjustments; turning it off keeps the
+chosen delay. The SharedHUDTools input box uses the same dimensions as the widget
+input row, refreshed on open and during live customization.
+
+F11 → Customize provides separate panel width/height, input height, input text size,
+and feed text size controls, with current values in their labels. Width and height
+are independent, replacing the combined Size +/− actions. Input width follows the
+panel's inner width. xScal persistence of font/input sizing requires the matching
+backend update; ZFE uses its existing local settings store.
+
+Source builds also support `inputHeight` (28–120, default 28) and `inputFontSize`
+(8–47, or 0 to retain existing provider sizing). For larger typing text, use
+`inputHeight=48` and `inputFontSize=24`. Feed font size remains independent.
+The effective input dimensions adapt to fit small panels. These values survive
+F11 saves. See [input sizing](../../../docs/overlay/zfe/README.md#input-sizing-source-only-not-yet-released)
+for defaults, layout limits and release status.
+
+Supported appearance and behavior settings are user-editable in `Data/FCMChat.ini`, parsed by `FcmConfig`
 (`FcmConfig.hx`). Coordinate space is always 1920×1080 (HUDModLoader's fixed HUD viewport).
 Editable keys (defaults reproduce the amber Pip-Boy theme): position `x`/`y`, `width`/`height`,
-`fontSize`; colors `bgColor`/`bgAlpha`/`borderColor`/`textColor`/`senderColor`/`channelTagColor`/
+`fontSize`, `inputHeight`, `inputFontSize`; colors `bgColor`/`bgAlpha`/`borderColor`/`textColor`/`senderColor`/`inputBgColor`/`inputTextColor`/
 `tabActiveColor`/`tabInactiveColor`/`promptColor`/`tabRowColor`; limits
-`maxMessages`/`maxSendLen`; toggles `showChannelTag`/`showHints`; keybinds
+`maxMessages`/`maxSendLen`; auto-hide `autoHideEnabled`/`autoHideSec`; hint toggle `showHints`; keybinds
 `openKey`/`channelNextKey`/`channelPrevKey`/`hideKey`. Colors accept `#RRGGBB`, `RRGGBB`, or
 `0xRRGGBB`. Every value is validated + clamped — a bad edit falls back to its default, never
 crashes, never goes off-screen. Edit, then reload via the F11 HUDModLoader menu. Full catalog with
@@ -298,9 +325,9 @@ and `timestampColor` entries in `FCMChat.ini` or persisted settings are ignored.
 The F11 menu's **FCM → Customize → Reset all settings** action restores all user-facing values to
 the `FcmConfig` defaults immediately. Under ZFE, settings persist with the other Customize actions
 in vendor-scoped storage (`FCMChatWidget/settings.ini`); xScal has no equivalent vendor-storage
-contract, so its settings remain session-local. It retains the environment-owned
+contract; it uses the updated relay device settings for geometry, fonts, colors, opacity and auto-hide. Changes remain session-local if persistence is unavailable. It retains the environment-owned
 account-link URL so a hosted-dev build continues to link against dev rather than production.
-The generated ZIP also includes `HUDMODLOADER-MENU.txt` with the F11, Customize, reset, scroll,
+The generated ZIP includes `CUSTOMIZATION.txt` for the complete supported appearance controls, fixed features and settings precedence, plus `HUDMODLOADER-MENU.txt` with the F11, Customize, reset, scroll,
 hide, relink, channel, and reload steps. With Fallout 76 focused, press `Insert` to start typing;
 `Enter` sends, `Escape` cancels, `/g` `/t` `/e` `/i` `/r` `/s` switch channels (`/s` after a
 current server/world binding), `/hide` hides the feed, and `/relink` clears local auth when the

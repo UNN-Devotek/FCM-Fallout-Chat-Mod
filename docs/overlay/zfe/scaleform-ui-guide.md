@@ -1,3 +1,12 @@
+> Navigation correction (local HUD 2.10.76): the existing ZFE `Input.*` path is
+> locally observed compatibility, not a verified public ZFE contract. Earlier
+> references below equating `zfe-input-v1` with this surface are superseded:
+> that capability describes `input.v1.*` text sessions. The new decoder removes
+> general Haxe JSON dependencies associated with the observed Error #1014;
+> live ZFE verification is pending. No navigation INI edits are required.
+> The public guide names `zfe-hotkeys-v1` for hotkeys; migration requires its
+> detailed payload contract. See [ZFE Modder Guide](https://www.nexusmods.com/fallout76/articles/255).
+
 # Working with Scaleform GFx UI (Fallout 76 / AS3) — Practical Guide
 
 A field guide for building stable, performant in-game UI in Fallout 76's Scaleform GFx runtime (the

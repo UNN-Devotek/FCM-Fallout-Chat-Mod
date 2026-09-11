@@ -84,6 +84,13 @@ export default function HudManualInstall({ linkUrl, bodyStyle, stepStyle, noteSt
         The example contains <code>{`Endpoint=${relayUrl.href}`}</code>; copy the entire example,
         not just that line. Keep its <code>OpenChatKey</code> aligned with <code>openKey</code> in
         {' '}<code>Data/FCMChat.ini</code> and any override in <code>Data/configuration/zfe.ini</code>.
+        <strong>Important:</strong> ZFE applies <code>Data/configuration/zfe.ini</code> after the
+        fragment, so its <code>[TextChat]</code> values override the fragment. Check that file even
+        when the fragment contains the correct endpoint. If you use a global override, it must be:
+        <pre style={codeStyle}>{`[TextChat]\nEndpoint=${relayUrl.href}`}</pre>
+        Replace any stale endpoint, preserve unrelated settings, and do not duplicate the section or
+        key. If no override is needed, leave the endpoint out of <code>zfe.ini</code> and use the
+        packaged fragment. Do not put the relay endpoint in <code>Data/FCMChat.ini</code>.
         ZFE does not need <code>xscal.ini</code>. Restart Fallout 76 after configuration.
       </div>
 

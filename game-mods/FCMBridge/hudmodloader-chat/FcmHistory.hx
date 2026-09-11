@@ -60,20 +60,21 @@ class FcmHistory {
         order = kept;
     }
 
-    /** Scope both IDs to the feed so clearing SERVER cannot invalidate static deduplication.
-     * Also scans live _records for the same messageId to avoid LRU-evicted duplicates
-     * re-appearing in backscroll after a few minutes (fix for random repeat bug). */
-    public function accept(channel:String, eventId:Int, messageId:String, cap:Int, ?records:Array<Dynamic> = null):Bool {
+    /** Scope both IDs to the feed so clearing SERVER cannot invalidate static deduplication. */
+    public function accept(channel:String, eventId:Int, messageId:String, cap:Int,
+            ?retained:Array<{channel:String, messageId:String, pending:Bool}>):Bool {
         var keys:Array<String> = [];
         if (eventId > 0) keys.push(channel + ":event:" + eventId);
         if (messageId != null && messageId.length > 0) keys.push(channel + ":message:" + messageId);
         var duplicate:Bool = false;
-        // Backscroll fix: if messageId already lives in _records (non-pending, same channel), treat as duplicate even if LRU evicted
-        if (records != null && messageId != null && messageId.length > 0) {
-            for (rec in records) {
-                try {
-                    if (!rec.pending && rec.channel == channel && rec.messageId == messageId) { duplicate = true; break; }
-                } catch (_:Dynamic) {}
+        // Replay cursors can evict cached identities while their rows are still visible.
+        // Retained canonical rows are authoritative; never match text or pending sends.
+        if (retained != null && messageId != null && messageId.length > 0) {
+            for (row in retained) {
+                if (!row.pending && row.channel == channel && row.messageId == messageId) {
+                    duplicate = true;
+                    break;
+                }
             }
         }
         for (key in keys) {
