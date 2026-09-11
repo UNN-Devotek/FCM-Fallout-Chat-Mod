@@ -120,6 +120,17 @@ class TestFcmConfig {
             FcmConfig.parse("[FCMChat]\nlinkUrl=dev.falloutchatmod.com/link\n").linkUrl, "dev.falloutchatmod.com/link");
         eqs("linkUrl unsafe->default",
             FcmConfig.parse("[FCMChat]\nlinkUrl=<b>&x\n").linkUrl, "falloutchatmod.com/link");
+        eqs("default displayNameOverride (unset)", d.displayNameOverride, "");
+        eqs("parse displayNameOverride",
+            FcmConfig.parse("[FCMChat]\ndisplayName=Kate6H\n").displayNameOverride, "Kate6H");
+        eqs("displayNameOverride unsafe->default",
+            FcmConfig.parse("[FCMChat]\ndisplayName=<b>&x\n").displayNameOverride, "");
+        eqs("displayNameOverride trims",
+            FcmConfig.parse("[FCMChat]\ndisplayName=  Kate6H  \n").displayNameOverride, "Kate6H");
+        check("displayNameOverride clamps to 64",
+            FcmConfig.parse("[FCMChat]\ndisplayName=" + [for (k in 0...80) "a"].join("") + "\n").displayNameOverride.length == 64);
+        check("displayNameOverride round-trips",
+            FcmConfig.parse(FcmConfig.parse("[FCMChat]\ndisplayName=Kate6H\n").toIni()).displayNameOverride == "Kate6H");
 
         // Reset restores the authoritative defaults, retaining only the environment-owned link URL.
         var customized = FcmConfig.parse("[FCMChat]\n"

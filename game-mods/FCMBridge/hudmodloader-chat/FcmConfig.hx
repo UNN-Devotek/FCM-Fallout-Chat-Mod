@@ -99,6 +99,18 @@ class FcmConfig {
     // global events leaf (000...003). Requires events channel in AllowedChannels.
     public var autoBroadcastWorldEvents:Bool = false;
 
+    // ── Manual identity fallback (escape hatch for flaky AccountInfoData) ───────
+    // When xScal/the game serves a blank AccountInfoData (empty name,
+    // isLoggedIn=false) the widget waits forever for a handle that never comes
+    // and never reaches chat.v1.connect. Setting displayName supplies the
+    // handshake label so boot can proceed. SAFE: the relay mints anonymous
+    // limited tokens at register and derives link/auth state from the token's
+    // linkedUserId, never from the name — a wrong value here can only mislabel
+    // your own messages, never impersonate another linked account. The real
+    // game-provided handle ALWAYS wins once available (re-synced on re-hello).
+    // Empty (default) = disabled.
+    public var displayNameOverride:String = "";
+
     // ── Link flow ────────────────────────────────────────────────────────────────
     // URL shown in the widget's link prompt (linkHint fallback). DEV builds set this to
     // dev.falloutchatmod.com/link via FCMChat.ini; prod uses the default. URL-safe charset
@@ -601,6 +613,11 @@ class FcmConfig {
                     cfg.autoBroadcastWorldEvents = parseBool(val, cfg.autoBroadcastWorldEvents);
                 case "hideinhudmodes":
                     cfg.hideInHUDModes = parseHideInHUDModes(val);
+                case "displayname":
+                    // Bethesda handle charset: word chars, spaces, - _ .; capped at
+                    // FcmIdentity.MAX_NAME_length by clamp(). Anything else ignored.
+                    var dn:String = StringTools.trim(val);
+                    cfg.displayNameOverride = (dn.length > 0 && ~/^[A-Za-z0-9 _\-.]+$/.match(dn)) ? dn : cfg.displayNameOverride;
                 case "linkurl":
                     // URL-safe charset only — interpolated into htmlText (crash rule #2).
                     var lu:String = StringTools.trim(val);
@@ -720,6 +737,10 @@ class FcmConfig {
         maxSendLen  = clampInt(maxSendLen, 1, 500);     // server hard cap 500
         pollMs      = clampInt(pollMs, 1000, 60000);    // 1s..60s event-poll interval
         autoHideSec = clampInt(autoHideSec, 0, 600);    // 0 = off, else 1s..10min
+        // Manual identity fallback: trim + cap at FcmIdentity.MAX_NAME_LENGTH (64).
+        if (displayNameOverride == null) displayNameOverride = "";
+        displayNameOverride = StringTools.trim(displayNameOverride);
+        if (displayNameOverride.length > 64) displayNameOverride = displayNameOverride.substr(0, 64);
         // Clamp HUD mode list length and dedupe lower-cased
         if (hideInHUDModes == null) hideInHUDModes = [];
         if (hideInHUDModes.length > 16) hideInHUDModes = hideInHUDModes.slice(0, 16);
@@ -775,6 +796,7 @@ class FcmConfig {
         s.add("showChannelTag=" + b(showChannelTag) + "\n");
         s.add("showHints=" + b(showHints) + "\n");
         s.add("hideInHUDModes=" + hideInHUDModes.join(",") + "\n");
+        s.add("displayName=" + displayNameOverride + "\n");
         s.add("autoBroadcastWorldEvents=" + b(autoBroadcastWorldEvents) + "\n");
         s.add("inputHeight=" + inputHeight + "\n");
         s.add("inputFontSize=" + inputFontSize + "\n");

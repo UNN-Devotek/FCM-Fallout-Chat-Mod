@@ -685,6 +685,7 @@ class FCMChatWidget extends MovieClip {
         try { unsubscribeRoster(); } catch (e:Dynamic) {}
         try { unsubscribeHudMode(); } catch (e:Dynamic) {}
         try { unsubscribeRecentActivities(); } catch (e:Dynamic) {}
+        try { unsubscribeIdentityUpdates(); } catch (e:Dynamic) {}
         try { stopRecentActivitiesFallback(); } catch (e:Dynamic) {}
         _rosterManager = null;
         _bsui = null;
@@ -1678,6 +1679,8 @@ class FCMChatWidget extends MovieClip {
     var _broadcastOrder:Array<String> = [];
     var _recentActivitiesFailCount:Int = 0;
     var _recentActivitiesFallbackTimer:Timer = null;
+    static inline var RECENT_ACTIVITIES_THROTTLE_MS:Float = 30000;
+    var _lastRecentCheck:Float = -1e12;
     // Cross-domain safe accessors — RecentActivitiesData objects live in the host
     // ApplicationDomain; direct Reflect.field/dot access on them throws #1014.
     // uiField() already isolates sealed/native objects, so route everything through it.
@@ -1795,6 +1798,9 @@ class FCMChatWidget extends MovieClip {
         // lives in the host ApplicationDomain and property access on it throws
         // TypeError #1014 (class not found) in this child domain (see xscal.log).
         // Pull fresh via GetDataFromClient instead; the event is just a wake-up ping.
+        // Gate + throttle: default-off users pay nothing; opt-in users max 1 check/30s
+        // (HUDChallenges DATA_RELOAD_TIME), so per-frame Subscribe storms can't stall UI.
+        if (_cfg == null || !_cfg.autoBroadcastWorldEvents) return;
         try {
             var raw:Dynamic = null;
             try { raw = getBSUIData(findBSUI(), "RecentActivitiesData"); } catch (_:Dynamic) {}
@@ -1816,8 +1822,16 @@ class FCMChatWidget extends MovieClip {
     }
 
     function maybeAutoBroadcastWorldEvents(raw:Dynamic):Void {
-        if (_cfg == null || !_cfg.autoBroadcastWorldEvents) return;
+        if (_cfg == null || !_cfg.autoBroadcastWorldEvents) {
+            try { stopRecentActivitiesFallback(); } catch (_:Dynamic) {}
+            return;
+        }
         if (_api == null || !_connected || _needsLink) return;
+        // Throttle to DATA_RELOAD_TIME: Subscribe can fire per-frame; only process 1/30s.
+        var now:Float = 0;
+        try { now = flash.Lib.getTimer(); } catch (_:Dynamic) {}
+        if (now - _lastRecentCheck < RECENT_ACTIVITIES_THROTTLE_MS) return;
+        _lastRecentCheck = now;
         if (raw == null) {
             try { raw = uiData(getBSUIData(findBSUI(), "RecentActivitiesData")); } catch (_:Dynamic) {}
             if (raw == null) return;
@@ -1843,24 +1857,19 @@ class FCMChatWidget extends MovieClip {
         if (n <= 0) return;
         var currentIds:Map<String, Bool> = new Map();
         var toBroadcast:Array<Dynamic> = [];
-        var probed:Int = 0;
         for (i in 0...n) {
             var act:Dynamic = null;
             try { act = raAt(acts, i); } catch (_:Dynamic) { continue; }
             if (act == null) continue;
             var type:Int = -1;
             try { type = raInt(act, "type", -1); } catch (_:Dynamic) { continue; }
+            if (type != 1) continue; // publicEvent only per confirmed scope (type 1; worldEvent is 2)
             var idProbe:String = "";
             var nameProbe:String = "";
             try {
                 idProbe = StringTools.trim(raStr(act, "id"));
                 nameProbe = StringTools.trim(raStr(act, "name"));
             } catch (_:Dynamic) {}
-            if (probed < 3) {
-                probed++;
-                try { zfeLog("info", "events", "probe type=" + type + " id=" + idProbe + " name=" + nameProbe + " n=" + n); } catch (_:Dynamic) {}
-            }
-            if (type != 1) continue; // publicEvent only per confirmed scope (type 1; worldEvent is 2)
             if (idProbe.length == 0) continue;
             if (!isValidWorldEventName(nameProbe)) continue;
             currentIds.set(idProbe, true);
@@ -1916,6 +1925,7 @@ class FCMChatWidget extends MovieClip {
     }
 
     function startRecentActivitiesFallback():Void {
+        if (_cfg == null || !_cfg.autoBroadcastWorldEvents) return;
         if (_recentActivitiesFallbackTimer != null) return;
         try {
             zfeLog("warn", "events", "Subscribe path poisoned (#1014 x3) — falling back to 30s GetDataFromClient poll");
@@ -1947,6 +1957,12 @@ class FCMChatWidget extends MovieClip {
     }
 
     function subscribeRecentActivities():Void {
+        // Gate: default-off users never subscribe and never pay GetDataFromClient cost.
+        if (_cfg == null || !_cfg.autoBroadcastWorldEvents) {
+            try { unsubscribeRecentActivities(); } catch (_:Dynamic) {}
+            try { stopRecentActivitiesFallback(); } catch (_:Dynamic) {}
+            return;
+        }
         if (_recentActivitiesSubscribed) return;
         var mgr:Dynamic = findBSUI();
         if (mgr == null) return;
@@ -2055,6 +2071,7 @@ class FCMChatWidget extends MovieClip {
             _autoHideOn = (_cfg.autoHideSec > 0);
             rebuildPanel();
             updateHUDVisibility();
+            try { subscribeRecentActivities(); } catch (_:Dynamic) {}
             if (_autoHideOn) bumpAutoHide();
             persistConfig();
             zfeLog("info", "customize", "all settings reset to defaults");
@@ -3310,6 +3327,9 @@ class FCMChatWidget extends MovieClip {
         // Physical Page/arrow polling is provider-level input, not relay state: start it as
         // soon as the extender is known so channel switching works before (and without) auth.
         startPhysicalNavigation();
+        // Push-driven identity: a stale pre-login AccountInfoData snapshot can make the
+        // 24-30s GetDataFromClient polls retry forever; resolves on first live push.
+        try { subscribeIdentityUpdates(); } catch (_:Dynamic) {}
         startConnect();
     }
 
@@ -5474,20 +5494,26 @@ class FCMChatWidget extends MovieClip {
     }
 
     function uiName(value:Dynamic, stripDecorations:Bool = false):String {
+        // Hardened like every other ui* helper: a cross-domain value can throw #1014
+        // inside Std.string/fcmClean, and the identity path must degrade to "" (retry),
+        // never abort boot (connecting... stall).
         if (value == null) return "";
-        var name:String = fcmClean(Std.string(value));
-        if (stripDecorations) {
-            var marker:Int = name.indexOf("<");
-            if (marker >= 0) name = name.substr(0, marker);
-            name = StringTools.replace(name, "|", "");
-        }
-        return FcmIdentity.normalizeDisplayName(name);
+        try {
+            var name:String = fcmClean(Std.string(value));
+            if (stripDecorations) {
+                var marker:Int = name.indexOf("<");
+                if (marker >= 0) name = name.substr(0, marker);
+                name = StringTools.replace(name, "|", "");
+            }
+            return FcmIdentity.normalizeDisplayName(name);
+        } catch (_:Dynamic) { return ""; }
     }
 
     function uiNameFromFields(obj:Dynamic, fields:Array<String>, stripDecorations:Bool = false):String {
         if (obj == null) return "";
         for (field in fields) {
-            var name:String = uiName(uiField(obj, field), stripDecorations);
+            var name:String = "";
+            try { name = uiName(uiField(obj, field), stripDecorations); } catch (_:Dynamic) {}
             if (name.length > 0) return name;
         }
         return "";
@@ -5562,29 +5588,146 @@ class FCMChatWidget extends MovieClip {
     }
 
     /** Return the public Fallout/Bethesda handle from AccountInfoData. */
+    /**
+     * Return the public Fallout/Bethesda handle from AccountInfoData, trying every
+     * viable manager candidate. A cached single manager can be a decoy serving
+     * MenuStack/HUDMode while its AccountInfoData is hostile or empty (xScal generic
+     * dispatcher vs the real classDef) — first non-empty name across candidates wins
+     * so one decoy can no longer wedge boot in "retrying..." forever.
+     */
+    function readAccountDisplayNameAny():String {
+        var cands:Array<Dynamic> = [];
+        try { cands = bsuiCandidates(); } catch (_:Dynamic) {}
+        if (cands.length == 0) {
+            var single:Dynamic = null;
+            try { single = findBSUI(); } catch (_:Dynamic) {}
+            if (single != null) cands.push(single);
+        }
+        for (mgr in cands) {
+            // xScal's GetDataFromClient throws transient #1014s yet reads fine
+            // milliseconds later; retry the same manager before moving on.
+            // Cheap (µs native round-trip) and only runs on connect attempts.
+            var attempt:Int = 0;
+            while (attempt < 3) {
+                var s:String = "";
+                try { s = readAccountDisplayName(mgr); } catch (_:Dynamic) {}
+                if (s.length > 0) return s;
+                attempt++;
+            }
+        }
+        return "";
+    }
+
     function readAccountDisplayName(mgr:Dynamic):String {
         var data:Dynamic = uiData(getBSUIData(mgr, "AccountInfoData"));
         var name:String = uiNameFromFields(data,
-            ["name", "displayName", "playerName"]);
+            ["name", "displayName", "playerName", "athenaName"]);
         if (name.length > 0) return name;
         // Retain compatibility with older HUD payloads that wrapped the same
         // Fallout account object rather than publishing its fields directly.
+        // athenaName is Bethesda's backend handle and may be populated when the
+        // Scaleform display name is not yet (or vice versa).
         return uiNameFromFields(uiField(data, "account"),
-            ["name", "displayName", "playerName"]);
+            ["name", "displayName", "playerName", "athenaName"]);
+    }
+
+    // Push-driven identity resolution. xScal can serve a STALE pre-login snapshot
+    // from GetDataFromClient (empty name, isLoggedIn=false) for the whole session
+    // while the live data arrives only via subscription pushes — polling the frozen
+    // snapshot every 24-30s then retries forever. So besides the poll fallback in
+    // startConnect, subscribe to AccountInfoData and kick a connect the moment a
+    // push carries a usable handle. Never touches the event payload itself
+    // (cross-domain #1014 lesson from RecentActivitiesData); the push is only a
+    // wake-up ping, data is pulled fresh, throttled to one kick per 5s.
+    static inline var IDENTITY_PUSH_MIN_MS:Float = 5000;
+    var _identityCallback:Dynamic = null;
+    var _identitySubscribed:Bool = false;
+    var _lastPushConnectAt:Float = -1e12;
+
+    function onAccountInfoPush(evt:Dynamic):Void {
+        if (_disposed || _connected) return;
+        var now:Float = 0;
+        try { now = flash.Lib.getTimer(); } catch (_:Dynamic) {}
+        if (now - _lastPushConnectAt < IDENTITY_PUSH_MIN_MS) return;
+        var name:String = "";
+        try { name = readAccountDisplayNameAny(); } catch (_:Dynamic) {}
+        if (name.length == 0) return;
+        _lastPushConnectAt = now;
+        try { zfeLog("info", "connect", "AccountInfoData push carries handle len=" + name.length); } catch (_:Dynamic) {}
+        try { runStartConnectSafely(); } catch (_:Dynamic) {}
+    }
+
+    function subscribeIdentityUpdates():Void {
+        if (_identitySubscribed) return;
+        var mgr:Dynamic = null;
+        try { mgr = findBSUI(); } catch (_:Dynamic) {}
+        if (mgr == null) return;
+        try {
+            _identityCallback = function(evt:Dynamic):Void { try { onAccountInfoPush(evt); } catch (_:Dynamic) {} };
+            mgr.Subscribe("AccountInfoData", _identityCallback);
+            _identitySubscribed = true;
+            zfeLog("info", "connect", "subscribed AccountInfoData pushes");
+        } catch (e:Dynamic) {
+            zfeLog("warn", "connect", "Subscribe AccountInfo threw: " + Std.string(e));
+            unsubscribeIdentityUpdates(mgr);
+        }
+    }
+
+    function unsubscribeIdentityUpdates(mgr:Dynamic = null):Void {
+        var target:Dynamic = (mgr != null) ? mgr : findBSUI();
+        if (target == null) target = _rosterManager;
+        if (target != null) {
+            try {
+                var unsub:Dynamic = Reflect.field(target, "Unsubscribe");
+                if (unsub != null && _identityCallback != null) Reflect.callMethod(target, unsub, ["AccountInfoData", _identityCallback]);
+            } catch (e:Dynamic) { zfeLog("warn", "connect", "Unsubscribe AccountInfo threw: " + Std.string(e)); }
+        }
+        _identityCallback = null;
+        _identitySubscribed = false;
     }
 
     // Returns only the public FO76 account handle, or "" until AccountInfoData is ready.
     // PlayerListData and CharacterInfoData are read as explicit non-authoritative candidates;
     // FcmIdentity refuses to let either character label satisfy the relay handshake.
     function readFalloutDisplayName(rosterData:Dynamic = null):String {
-        var mgr:Dynamic = findBSUI();
-        if (mgr == null) return "";
-
-        var accountName:String = readAccountDisplayName(mgr);
-        var localName:String = readLocalPlayerNameFromData(rosterData);
-        if (localName.length == 0) localName = readLocalPlayerName(mgr);
-        var characterInfoName:String = readNamedData(mgr, "CharacterInfoData");
-        return FcmIdentity.selectFalloutDisplayName(accountName, localName, characterInfoName);
+        var mgr:Dynamic = null;
+        try { mgr = findBSUI(); } catch (_:Dynamic) {}
+        // Authoritative handle first: read across ALL candidates so a decoy manager
+        // serving MenuStack but hostile AccountInfoData cannot wedge resolution.
+        var accountName:String = "";
+        try { accountName = readAccountDisplayNameAny(); } catch (_:Dynamic) {}
+        if (accountName.length == 0 && mgr != null) {
+            try { accountName = readAccountDisplayName(mgr); } catch (_:Dynamic) {}
+        }
+        if (mgr == null && accountName.length == 0) return "";
+        var localName:String = "";
+        try { localName = readLocalPlayerNameFromData(rosterData); } catch (_:Dynamic) {}
+        if (localName.length == 0 && mgr != null) {
+            try { localName = readLocalPlayerName(mgr); } catch (_:Dynamic) {}
+        }
+        var characterInfoName:String = "";
+        if (mgr != null) {
+            try { characterInfoName = readNamedData(mgr, "CharacterInfoData"); } catch (_:Dynamic) {}
+        }
+        var selected:String = "";
+        try { selected = FcmIdentity.selectFalloutDisplayName(accountName, localName, characterInfoName); } catch (_:Dynamic) {}
+        // Manual fallback (FCMChat.ini displayName=): the game can serve a blank
+        // AccountInfoData all session (empty name, isLoggedIn=false) while the
+        // player is fully in-world — without this, boot waits forever and never
+        // reaches chat.v1.connect. Real game data always wins; the override only
+        // fills the gap and is replaced (re-hello sync) once the game provides it.
+        if (selected.length == 0 && _cfg != null) {
+            try {
+                var ov:String = FcmIdentity.normalizeDisplayName(_cfg.displayNameOverride);
+                if (ov.length > 0) {
+                    selected = ov;
+                    if (_displayName != ov) {
+                        try { zfeLog("info", "connect", "using INI displayName override len=" + ov.length); } catch (_:Dynamic) {}
+                    }
+                }
+            } catch (_:Dynamic) {}
+        }
+        return selected;
     }
 
     function hasResolvedDisplayName():Bool {
@@ -5636,11 +5779,11 @@ class FCMChatWidget extends MovieClip {
         return null;
     }
 
-    function findBSUI():Dynamic {
-        if (_bsui != null) {
-            if (canUseBSUI(_bsui)) return _bsui;
-            _bsui = null;
-        }
+    // Raw manager probes in priority order with their scope names. Shared by
+    // findBSUI (first passing candidate wins, cached) and bsuiCandidates (all
+    // passing candidates, de-duplicated, for identity reads that must survive a
+    // decoy serving MenuStack/HUDMode while its AccountInfoData is hostile).
+    function bsuiProbeLists():Dynamic {
         var names:Array<String> = ["classDef", "__global__", "root", "parent", "stage", "stageChild"];
         var cands:Array<Dynamic> = [];
         // The manager is the packaged class Shared.AS3.Data.BSUIDataManager (public,
@@ -5672,13 +5815,53 @@ class FCMChatWidget extends MovieClip {
             }
             cands.push(hit);
         } catch (e:Dynamic) { cands.push(null); }
-        for (k in 0...cands.length) {
-            if (cands[k] != null && canUseBSUI(cands[k])) {
-                _bsui = cands[k];
-                zfeLog("info", "world", "BSUIDataManager found via " + names[k]);
-                return _bsui;
+        return { names: names, cands: cands };
+    }
+
+    // All manager candidates in probe priority order, de-duplicated. PERMISSIVE by
+    // design: a candidate is included unless canUseBSUI cleanly returns false. A
+    // single transient #1014 from xScal's GetDataFromClient must not permanently
+    // exclude the good manager for the whole session — reads are individually
+    // guarded and retried, so an extra candidate costs microseconds and can only
+    // add chances. findBSUI (first clean pass wins) is unchanged for subscribers.
+    function bsuiCandidates():Array<Dynamic> {
+        var out:Array<Dynamic> = [];
+        try {
+            var lists:Dynamic = bsuiProbeLists();
+            var cands:Array<Dynamic> = lists.cands;
+            for (k in 0...cands.length) {
+                var cand:Dynamic = null;
+                try { cand = cands[k]; } catch (_:Dynamic) {}
+                if (cand == null) continue;
+                var dup:Bool = false;
+                for (o in out) { try { if (o == cand) { dup = true; break; } } catch (_:Dynamic) {} }
+                if (dup) continue;
+                var ok:Bool = false;
+                var threw:Bool = false;
+                try { ok = canUseBSUI(cand); } catch (_:Dynamic) { threw = true; }
+                if (ok || threw) out.push(cand);
             }
+        } catch (_:Dynamic) {}
+        return out;
+    }
+
+    function findBSUI():Dynamic {
+        if (_bsui != null) {
+            if (canUseBSUI(_bsui)) return _bsui;
+            _bsui = null;
         }
+        try {
+            var lists:Dynamic = bsuiProbeLists();
+            var names:Array<String> = lists.names;
+            var cands:Array<Dynamic> = lists.cands;
+            for (k in 0...cands.length) {
+                if (cands[k] != null && canUseBSUI(cands[k])) {
+                    _bsui = cands[k];
+                    zfeLog("info", "world", "BSUIDataManager found via " + names[k]);
+                    return _bsui;
+                }
+            }
+        } catch (_:Dynamic) {}
         return null;
     }
 
@@ -5748,12 +5931,14 @@ class FCMChatWidget extends MovieClip {
             unsubscribeRoster(_rosterManager);
             unsubscribeHudMode(_rosterManager);
             unsubscribeRecentActivities(_rosterManager);
+            unsubscribeIdentityUpdates(_rosterManager);
             resetRosterObservation("BSUIDataManager changed");
         }
         _rosterManager = mgr;
         // Ensure HUDMode gating follows the same manager lifecycle (keeps poll running while hidden)
         if (!_hudModeSubscribed) subscribeHudMode();
         if (!_recentActivitiesSubscribed) subscribeRecentActivities();
+        if (!_identitySubscribed && !_connected) subscribeIdentityUpdates();
         if (_rosterSubscribed) return;
         try {
             var playerCallback:Dynamic = function(evt:Dynamic):Void {
