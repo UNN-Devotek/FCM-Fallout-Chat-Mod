@@ -5271,8 +5271,7 @@ class FCMChatWidget extends MovieClip {
             if (FcmCommand.channelVisible(CHAN_SLUGS[_chanIdx], rec.channel)) visibleRecords.push(rec);
         }
         zfeLog("info", "render", "records=" + _records.length + " shown=" + visibleRecords.length
-            + " layout=row-local tags=enabled tab=" + CHAN_SLUGS[_chanIdx]
-            + " " + FcmDiagnostics.rows(visibleRecords));
+            + " layout=row-local tags=enabled tab=" + CHAN_SLUGS[_chanIdx]);
         if (visibleRecords.length == 0) {
             setLogText("No messages in " + CHAN_NAMES[_chanIdx] + " yet"); return;
         }
@@ -5318,30 +5317,6 @@ class FCMChatWidget extends MovieClip {
                 _feedScrollY = Math.max(0, Math.min(_feedScrollY, _feedMaxScrollY));
                 if (_feedMaxScrollY <= 0) { _bScrolling = false; _newWhileScrolled = 0; }
             }
-            rendered.contentY = contentY;
-            _feedRows.push(rendered);
-            _feedLayer.addChild(rendered.view);
-            contentY += rendered.height + FEED_ROW_GAP;
-        }
-        zfeLog("info", "name-colors", "rows=" + visibleRecords.length + " differentFromTheme=" + customNameColors
-            + " renderedRows=" + _feedRows.length + " legacyTextVisible=" + _logTf.visible);
-        // "v N new" hint when scrolled up and new messages arrived below.
-        if (_bScrolling && _newWhileScrolled > 0) {
-            var notice:FeedRowView = buildFeedNoticeRow(
-                "v " + _newWhileScrolled + " new - wheel down or F11 Scroll to newest", _logTf.width);
-            notice.contentY = contentY;
-            _feedRows.push(notice);
-            _feedLayer.addChild(notice.view);
-            contentY += notice.height + FEED_ROW_GAP;
-        }
-        _feedContentHeight = contentY;
-        _feedMaxScrollY = Math.max(0, _feedContentHeight - _logTf.height);
-        if (!_bScrolling) {
-            _feedScrollY = _feedMaxScrollY;
-        } else {
-            _feedScrollY = Math.max(0, Math.min(_feedScrollY, _feedMaxScrollY));
-            if (_feedMaxScrollY <= 0) { _bScrolling = false; _newWhileScrolled = 0; }
-        }
             applyFeedScroll();
         } else {
             // Chunked path — 32 rows per 1ms tick, keeps 60fps under Wine
