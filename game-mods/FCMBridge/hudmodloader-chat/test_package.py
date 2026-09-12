@@ -154,7 +154,11 @@ def main() -> None:
                 assert b"openKey=DELETE" in keybinds
                 assert b"OpenChatKey=DELETE" in keybinds
                 assert b"DELETE is the recommended alternative" in keybinds
-                assert b"Page Up/Down and Arrow Up/Down" in keybinds
+                assert b"ArrowUp/ArrowDown (and Cursor/Dpad aliases)" in keybinds
+                assert b"scrollUpKey=Console" in keybinds
+                assert b"scrollDownKey=F12" in keybinds
+                assert b"scrollBottomKey=Home" in keybinds
+                assert b"`scrollBottomKey` is deliberately empty" in keybinds
                 assert b"XSCAL OPEN-CHAT KEY" in keybinds
                 assert b"do not add OpenChatKey to" in keybinds
                 assert b"Input.RegisterKey/Input.IsKeyPressed" in keybinds
@@ -165,22 +169,24 @@ def main() -> None:
                 assert expected["endpoint"].encode() in archive.read("xscal.ini.example")
                 assert expected["endpoint"].encode() in archive.read("Enable-xScal-Chat.ps1")
                 assert b"@@FCM_RELAY_ENDPOINT@@" not in archive.read("Enable-xScal-Chat.ps1")
-                assert b"Choose ONE installed extender" in archive.read("INSTALL.txt")
-                assert b"do NOT install the ZFE example" in archive.read("INSTALL.txt")
+                install = archive.read("INSTALL.txt")
+                assert b"Choose exactly one script extender" in install
+                assert b"Choose one provider" in install
+                assert b"Do not install the ZFE fragment" in install
                 assert archive.read("FCMChatWidget.provider.txt") == b"unified\n"
-                install = archive.read("INSTALL.txt").decode()
-                assert f"[Chat]\n   enabled=true\n   relayEndpoint={expected['endpoint']}" in install
-                assert "If xscal.ini is missing, create a plain-text" in install
-                assert "New users must apply these settings too" in install
-                assert "setup helper is optional" in install
+                install = install.decode()
+                assert f"[Chat]\n  enabled=true\n  relayEndpoint={expected['endpoint']}" in install
+                assert "If the section or file is missing, add it once" in install
+                assert "Windows: optionally run Enable-xScal-Chat.cmd" in install
                 assert "xScal has no OpenChatKey setting" in install
-                assert "Input.* physical polling" in install
-                assert "Registration does not suppress keyboard input" in install
-                assert "Copy the COMPLETE examples/ZFE/FCMChatWidget.ini.example" in install
-                assert "ZFE applies this global file after" in install
-                assert f"[TextChat]\n   Endpoint={expected['endpoint']}\n   OpenChatKey=INSERT" in install
-                assert "DELETE is the recommended alternative to INSERT" in install
-                assert "Steam sign-in does not require Discord" in install
+                assert "xScal Input.*" in install
+                assert "Copy examples/ZFE/FCMChatWidget.ini.example" in install
+                assert "If Data/configuration/zfe.ini contains [TextChat], it overrides" in install
+                assert f"Endpoint={expected['endpoint']}" in install
+                assert "OpenChatKey=INSERT" in install
+                assert "Initial history" not in install
+                assert "Send an emoji" not in install
+                assert "Steam sign-in" not in install
                 other = "prod" if target == "dev" else "dev"
                 assert package.TARGETS[other]["endpoint"] not in install
 
@@ -241,7 +247,7 @@ def main() -> None:
                         assert b"@@FCM_RELAY_ENDPOINT@@" not in setup
                         assert expected["endpoint"].encode() in setup
                         assert b"Enable-xScal-Chat.cmd" in archive.read("INSTALL.txt")
-                        assert b"enabled=false to enabled=true" in archive.read("INSTALL.txt")
+                        assert b"xScal ships with chat disabled" in archive.read("INSTALL.txt")
                         assert not any(n.lower().startswith("data/zfe/") for n in names)
                     assert "Data/hudmodloader.ini" not in names
                     assert "INSTALL.txt" in names
@@ -258,6 +264,8 @@ def main() -> None:
                     ) if provider == "zfe" else b""
                     install = archive.read("INSTALL.txt")
                     menu = archive.read("HUDMODLOADER-MENU.txt")
+                    assert b"General combines all six feeds" in menu
+                    assert b"Sending from General targets General" in menu
                     customization = archive.read("CUSTOMIZATION.txt")
                     assert b"inputBgColor=#080705" in customization
                     assert b"autoHideEnabled=false" in customization
@@ -270,21 +278,32 @@ def main() -> None:
                     xscal_config = archive.read("xscal.ini.example") if provider == "xscal" else b""
                     assert f"linkUrl={expected['link_url']}\n".encode() in chat_config
                     assert provider != "zfe" or f"Endpoint={expected['endpoint']}\n".encode() in widget_config
-                    assert f"  {expected['web_link_url']}\n".encode() in install
-                    assert f"  {expected['endpoint']}\n".encode() in install
+                    assert expected["web_link_url"].encode() in install
+                    assert expected["endpoint"].encode() in install
                     assert provider != "xscal" or f"relayEndpoint={expected['endpoint']}\n".encode() in xscal_config
+                    if provider == "zfe":
+                        assert b"ZFE setup" in install
+                        assert b"Data/configuration/zfe.ini" in install
+                        assert b"Do not install xscal.ini" in install
+                        assert b"xScal setup" not in install
+                    else:
+                        assert b"xScal setup" in install
+                        assert b"xScal Input.*" in install
+                        assert b"Do not install the ZFE fragment" in install
                     assert b"Press F11" in install
-                    assert b"Press Insert" in install
+                    assert b"Insert opens" in install
                     assert b"Arrow Up / Down" in install
-                    assert b"15 recent messages" in install
-                    assert b"50 messages" in install
-                    assert b"125 events total" in install
-                    assert b"Home / End" in install
-                    assert b"/g, /t, /e" in install
-                    assert b"/relink" in install
-                    assert b"ZFE applies this global file after" in install
-                    assert f"[TextChat]\n   Endpoint={expected['endpoint']}".encode() in install
-                    assert b"Reset all settings" in install
+                    assert b"scrollUpKey" in install
+                    assert b"scrollDownKey" in install
+                    assert b"scrollBottomKey" in install
+                    assert b"scrollBottomKey is blank by default" in install
+                    assert b"scrollUpKey" in menu
+                    assert b"scrollDownKey" in menu
+                    assert b"scrollBottomKey is blank by default" in menu
+                    assert b"Home, End, or F12" in install
+                    assert b"Initial history" not in install
+                    assert b"Send an emoji" not in install
+                    assert b"Steam sign-in" not in install
                     assert b"F11" in menu
                     assert b"FCM -> Customize..." in menu
                     assert b"Press Insert" in menu
@@ -292,7 +311,7 @@ def main() -> None:
                     assert b"15 recent messages" in menu
                     assert b"50 from the current SERVER room" in menu
                     assert b"125 events total" in menu
-                    assert b"Home / End" in menu
+                    assert b"Home, End, F12" in menu
                     assert b"/g, /t, /e" in menu
                     assert b"/relink" in menu
                     assert b"Auto-hide" in menu
@@ -304,8 +323,8 @@ def main() -> None:
                     other = package.TARGETS["prod" if target == "dev" else "dev"]
                     assert f"linkUrl={other['link_url']}\n".encode() not in chat_config
                     assert f"Endpoint={other['endpoint']}\n".encode() not in widget_config
-                    assert f"  {other['web_link_url']}\n".encode() not in install
-                    assert f"  {other['endpoint']}\n".encode() not in install
+                    assert other["web_link_url"].encode() not in install
+                    assert other["endpoint"].encode() not in install
 
                     if target == "prod":
                         for name in names - {"Data/FCMChatWidget.ba2"}:

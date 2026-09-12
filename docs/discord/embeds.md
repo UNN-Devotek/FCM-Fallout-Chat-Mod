@@ -89,7 +89,7 @@ publish 502s and no release is recorded.
   `{ mentionEveryone: false }` for a replacement or corrected announcement that keeps
   the embed but omits both the content and the mention permission.
 - **Download field** — direct 🪟 Windows ZIP / 🐧 Linux AppImage / Linux `.deb` links, the
-  Linux ZIP with install docs, the Download-page link, and the versioned **ZFE FCM HUD Mod ZIP**
+  Linux ZIP with install docs, the Download-page link, and the versioned **FCM HUD Mod ZIP**
   link when the release includes HUD metadata.
   The URLs are **environment-aware** (`utils/releaseAnnouncement.ts` →
   `releaseDownloadUrls.ts`, `RELEASE_DOWNLOAD_HOST`), so a dev/QA release links to the

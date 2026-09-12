@@ -249,9 +249,9 @@ export async function markRelayTokenLinked(relayUserId: string, fcmUserId: strin
   logger.info({ relayUserId, fcmUserId, count: result.count }, '[tokenService] relay token linked');
   invalidateVerificationCache(relayUserId);
 
-  // Propagate the in-game CHARACTER name onto the linked FCM account so chat HISTORY (which
-  // derives the sender from the user row, not per-message) shows the character, not the Discord
-  // name. Live messages already carry identity.fo76Name via handleSend; this keeps history aligned.
+  // Copy the relay's recorded Fallout account handle into the linked account's
+  // fo76AccountName field. This does not change username/chatName or prove a
+  // character name/world location; normal display-name resolution remains separate.
   try {
     const tok = await prisma.hudPairingToken.findFirst({
       where:  { userId: relayUserId },

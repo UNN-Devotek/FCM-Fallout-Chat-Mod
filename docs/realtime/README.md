@@ -5,7 +5,9 @@ This document covers the raw WebSocket relay that powers live chat in Fallout Ch
 **Related docs:**
 - [WebSocket Protocol](./websocket-protocol.md) — full message-type catalog
 - [Presence & Sessions](./presence-and-sessions.md) — identity cache, heartbeat, Redis session store
-- [HUD Push](./hud-push.md) — `/ws/hud` and TCP :4001; FCMHUD/1 line protocol for in-game live feed
+- [Native HUD relay](../overlay/zfe/native-chat-relay/README.md) — current optional widget through ZFE/xScal `/relay`
+- [Background server bridge](../overlay/zfe/background-server-bridge.md) — invisible HUDModLoader child with private desktop room delivery; local candidate
+- [Legacy HUD Push](./hud-push.md) — retained `/ws/hud` and TCP :4001 line transport, not the modern widget path
 
 ---
 
@@ -50,7 +52,7 @@ sequenceDiagram
     R-->>B: userId
     B->>B: Load user from Postgres, check ban/kick/mute
     B-->>C: WS OPEN
-    B-->>C: presence:state  (DB snapshot)
+    B-->>C: presence:state  (account ID and role)
     B-->>C: user:muted  (if muted)
     B-->>C: telemetry:set  (deprecated kill-switch, always false)
     B->>all: room:join broadcast
@@ -151,7 +153,11 @@ followed by an `error` frame. `handlers.ts:710–728`
 
 A 30-second `setInterval` on the server checks `ws.readyState`. Stale sockets that are no longer `OPEN` are removed from the `clients` Map. `handlers.ts:3296–3302`
 
-On `ws.on('close')` the backend defers peer-leave announcements by `WS_FLAP_GRACE_MS` (default 30 s). If the same user reconnects on the same endpoint within the window the leave is suppressed (WS-flap guard, v1.1.37). `handlers.ts:3304–3418`
+On `ws.on('close')`, the last overlay socket starts `WS_FLAP_GRACE_MS` (default 30 seconds)
+before its community presence expires. A reconnect cancels that expiry. The ordinary
+`room:leave` frame is immediate on non-forced closes; the old server peer-leave/endpoint path
+was removed. Superseded sockets cannot tear down their replacements. See
+[presence lifecycle](presence-and-sessions.md#ws-flap-grace-window-v1137).
 
 ---
 
@@ -159,7 +165,7 @@ On `ws.on('close')` the backend defers peer-leave announcements by `WS_FLAP_GRAC
 
 Immediately after a game-client connection is established the backend pushes three frames without the client asking:
 
-1. `presence:state` — current DB-backed endpoint + role snapshot
+1. `presence:state` — current account ID and effective role; no endpoint/world membership
 2. `user:muted` — only if the user is currently muted
 3. `telemetry:set` — deprecated kill-switch; always `{ enabled: false }` (telemetry was removed)
 

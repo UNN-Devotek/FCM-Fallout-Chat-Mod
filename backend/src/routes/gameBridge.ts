@@ -1,14 +1,15 @@
 /**
  * /api/game/player-bridge
  *
- * Receives player data POSTed directly from the FCMBridge.swf mod running
- * inside Fallout 76's Scaleform layer. The SWF has no auth token, so this
+ * Retained development/test-only endpoint from the old direct SWF POST experiment.
+ * It is not mounted in production and the current desktop client does not poll it.
+ * The experimental SWF had no auth token, so this
  * endpoint is intentionally unauthenticated — access is restricted to
  * localhost (127.0.0.1) at the Express middleware level.
  *
  * The backend stores the latest payload in memory (keyed by source IP) and
- * the Electron overlay's GameMonitor polls GET /api/game/player-bridge to
- * retrieve it.
+ * the former Electron GameMonitor polled GET /api/game/player-bridge to retrieve it.
+ * Current native HUD clients use the authenticated /relay contract instead.
  */
 
 import { Router, Request, Response, text as expressText } from 'express';
@@ -66,8 +67,8 @@ function requireLocalhost(req: Request, res: Response, next: () => void): void {
 
 /**
  * POST /api/game/player-bridge
- * Called by FCMBridge.swf inside FO76 every 3 seconds with the current
- * server player list and world ID.
+ * Historical producer cadence was every 3 seconds with a player list/world ID.
+ * The current FCMBridge and FCMChatWidget native clients do not call this route.
  *
  * Scaleform's URLLoader may not send Content-Type: application/json, so
  * express.json() may leave req.body unparsed. We fall back to parsing the
@@ -129,7 +130,7 @@ router.post('/', requireLocalhost, captureAnyBody, (req: Request, res: Response)
 
 /**
  * GET /api/game/player-bridge
- * Polled by the Electron overlay's GameMonitor to get the latest player data.
+ * Retained read side of the former GameMonitor polling experiment.
  * Returns 204 if no data has been received yet (or data is stale > 30s).
  */
 router.get('/', requireLocalhost, (req: Request, res: Response) => {

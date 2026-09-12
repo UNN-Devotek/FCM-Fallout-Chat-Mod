@@ -1,5 +1,9 @@
 # FCMBridge ⇄ ZFE Data Pattern (WORKING — battle-tested 2026-06-10)
 
+> Historical remote-data implementation (June 2026). This is not the active HUD pipeline or a
+> prerequisite for modern widget work. FCMChatWidget now uses native `/relay` chat through ZFE or
+> xScal. Use [the HUD index](README.md) and [current integration](native-chat-relay/fcm-integration.md).
+
 How chat data actually flows from the backend into the in-game Scaleform HUD,
 and every pitfall hit while getting there. **Read this before touching any part
 of the pipeline.** The official ZFE article copies live alongside this file

@@ -84,7 +84,8 @@ The close / error / heartbeat handlers therefore guard every `clients.delete(tok
 > The repeated socket *drops* that trigger the flap are transport-level (e.g. a `1006` abnormal close from a Cloudflare idle timeout / NIC sleep / AV). The overlay's `onclose` now logs `code=<n> reason="…"` to make the next occurrence diagnosable.
 
 ### `room:leave` (S→C broadcast)
-Sent to all clients when a user disconnects (after `WS_FLAP_GRACE_MS`). Suppressed for superseded stale sockets (see above).
+Sent on a non-forced socket disconnect, immediately. Superseded stale sockets suppress it.
+`WS_FLAP_GRACE_MS` delays community presence expiry, not this frame or a server-room leave.
 ```json
 {
   "type": "room:leave",
@@ -97,17 +98,16 @@ Sent to all clients when a user disconnects (after `WS_FLAP_GRACE_MS`). Suppress
 `handlers.ts:3309`
 
 ### `presence:state` (S→C, on connect)
-Server-authoritative snapshot of the connecting user's DB state. Sent immediately on connect; used by the overlay to reconcile any drift during disconnection.
+Current account/role snapshot sent immediately on connect. Desktop world detection was removed;
+this frame does not carry endpoint or world membership. Native HUD room confirmation is a
+separate protocol. The optional background mod authorizes desktop access through the private
+`bridge:*` frames below; `presence:state` does not grant membership.
 ```json
 {
   "type": "presence:state",
   "payload": {
     "userId": "<uuid>",
-    "role": "user",
-    "serverEndpoint": "tcp:1.2.3.4:3001",
-    "alternateEndpoints": [],
-    "serverJoinedAt": "2026-06-04T11:00:00.000Z",
-    "endpointInferred": false
+    "role": "user"
   }
 }
 ```
@@ -826,3 +826,18 @@ mod-supplied `channel`, `body`, and `displayName` frame fields.
 Ordinary text that merely contains `u0000` is returned untouched, so message bodies are never
 silently rewritten. Remove this once ZFE ships a fix *and* the affected builds are out of
 circulation.
+
+## Optional background Server bridge (local 0.1.0 candidate)
+
+Authenticated desktop sockets send `bridge:watch` every ten seconds. The server resolves one
+fresh native bridge leased to the same account and returns `bridge:state`: `status` is ready,
+inactive, ambiguous or unavailable. Ready adds `channelId` (`server:r:<session>`) and an opaque
+`bindingId`. `bridge:history` and `bridge:message` contain those two fields plus normalized
+`messages[]`, preserving each canonical `server:<room>:<sequence>` ID.
+
+Server `chat:send` requires `content`, the current `channelId`, and `bridgeBindingId`; membership
+is derived server-side again. Server sends are never queued offline. Snapshots/live events are
+serialized, revalidated and deduplicated; stale bindings are discarded. Public mode and admin
+observer sockets do not participate. Ordinary UUID channel history/typing is unchanged. See
+[background bridge](../overlay/zfe/background-server-bridge.md) for lease keys, moderation,
+installation, source ownership and the pending deployment/runtime acceptance.

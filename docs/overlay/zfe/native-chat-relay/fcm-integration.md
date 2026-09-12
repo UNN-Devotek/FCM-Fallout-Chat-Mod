@@ -1,12 +1,3 @@
-> Navigation correction (local HUD 2.10.77): the existing ZFE `Input.*` path is
-> locally observed compatibility, not a verified public ZFE contract. Earlier
-> references below equating `zfe-input-v1` with this surface are superseded:
-> that capability describes `input.v1.*` text sessions. The new decoder removes
-> general Haxe JSON dependencies associated with the observed Error #1014;
-> live ZFE verification is pending. No navigation INI edits are required.
-> The public guide names `zfe-hotkeys-v1` for hotkeys; migration requires its
-> detailed payload contract. See [ZFE Modder Guide](https://www.nexusmods.com/fallout76/articles/255).
-
 # FCM integration with ZFE `chat.v1` and xScal `chatInterface`
 
 This document describes the current FCM adapter for ZFE's `chat.v1` API and xScal's
@@ -17,9 +8,13 @@ It is used by the optional
 `FCMChatWidget.ba2` HUDModLoader widget; it does not change
 the EULA-safe desktop overlay.
 
+Updated against the local 2.10.78 candidate on 2026-09-12. Source/build status is not a live
+deployment claim. [The provider guide](../modder-guide.md) owns the current author links and
+public-versus-compatibility input distinctions.
+
 ## Boundaries
 
-- The widget uses ZFE's sanctioned outbound API only: `chat.v1.connect`,
+- The widget uses the selected extender's sanctioned native chat API, normalized by FcmNativeApi: `chat.v1.connect`,
   `chat.v1.pollEvents`, `chat.v1.sendMessage`, `chat.v1.subscribe`,
   `chat.v1.report`, and `chat.v1.getAuthState`.
 - It reads only data already published to the game HUD by `BSUIDataManager`.
@@ -34,9 +29,9 @@ the EULA-safe desktop overlay.
 The same SWF supports either script extender. It probes the Scaleform objects already exposed
 by the active HUD movie, selecting a validated xScal `chatInterface` first when its explicit
 `chatInterface` marker is present, even if ZFE is installed alongside it. When that marker is
-absent, it selects a validated ZFE dispatcher or falls back to a validated xScal `chatInterface`
-with `connect`, `pollEvents`, and `sendMessage`, whether it is under
-`__SFECodeObj` or `__SFCodeObj`. A call-only `__SFCodeObj` is accepted as ZFE only after a
+absent, it selects a validated ZFE dispatcher. The xScal gate requires `connect`,
+`pollEvents`, and `sendMessage`, whether exposed under `__SFECodeObj` or `__SFCodeObj`;
+when optional `getRuntimeInfo` exists, its response must also validate. A call-only `__SFCodeObj` is accepted as ZFE only after a
 positive capability probe, and xScal's
 `GetXSRuntimeInfo` marker is checked first so xScal never receives a ZFE chat probe. No DLL is
 loaded or inspected by the SWF. The adapter maps FCM's canonical `chat.v1.*` verbs to xScal's
@@ -55,8 +50,9 @@ that as an accepted-but-pending transport, does not immediately reconnect, and r
 `getAuthState` during the normal poll loop. `authenticated` enables chat; `connecting`/`pending`
 are retained as intermediate states; only explicit terminal states (`rejected`, `disconnected`,
 token failure, or equivalent) tear down the session. This prevents a three-second reconnect loop.
-The generic xScal `__SFCodeObj.call` callback is optional diagnostics only: FCM routes `log` there
-when exposed, while all `chat.v1.*` verbs go exclusively to `chatInterface`.
+The optional generic xScal `__SFCodeObj.call` is used separately for diagnostics and numeric
+`Input.*` key calls. All chat verbs go exclusively to `chatInterface`, receiving ActionScript
+objects or no arguments according to the method, not ZFE JSON strings.
 
 Fresh subscribe-time history is the initial-history source for both providers. The relay sends up
 to 15 recent rows for each static channel and up to 50 rows for the current world room: 125 events
@@ -76,8 +72,9 @@ registers or resumes with an opaque relay token; `verifyToken` establishes the
 relay `userId`, linked-account state, and display data. Every operation derives
 its actor from this verified token, never from a client-supplied ID.
 
-`getAuthState` is used by the widget to show authenticated chat or its limited,
-receive-only linking state. The token can be linked after a web device-code flow;
+`getAuthState` and the pinned link-required notice jointly control linked/limited UI state.
+Some native responses report transport authentication without a linked FCM account; that does
+not clear the widget’s sticky link gate or the relay’s send permission check. The token can be linked after a web device-code flow;
 the normal relay event flow then refreshes the widget state.
 
 ### Mandatory auth gate — limited until a provider-linked FCM account
@@ -91,9 +88,9 @@ gated. The desktop overlay has a separate direct Discord/Steam provider-link flo
 ### Explicit relink/reset
 
 Widget v2.10.30 accepts the standalone `/relink` command and the matching FCM HUDModLoader menu
-action. Relinking is intentionally a local ZFE operation: the widget calls the top-level
-`clearChatAuth` command with `{}` and never attempts to write `Data/ZFE/chat-auth.bin` through
-FCM's vendor-scoped settings storage. When ZFE returns success, the widget reconnects with
+action. Relinking requests the provider-owned reset: top-level ZFE `clearChatAuth` with `{}`, or
+xScal’s no-argument `chatInterface.clearChatAuth()` when supported. It never writes credentials
+through FCM’s settings storage. On a validated success, the widget reconnects with
 `autoRegister:true`, causing the relay to issue a new limited-session link code.
 
 `clearChatAuth` is an FCM/ZFE extension and is not a `chat.v1` relay operation. It must delete the
@@ -106,16 +103,30 @@ state and is required until the current ZFE build exposes the command.
 The widget resolves `displayName` from HUD-published `BSUIDataManager` data.
 `AccountInfoData.name` (or the older nested `account.name` shape) is authoritative because it is
 the public Fallout/Bethesda account handle. `PlayerListData` and `CharacterInfoData` contain local
-character labels and cannot satisfy the handshake gate. HUD data can arrive late, so the widget
+character labels and cannot satisfy the handshake gate. HUD data can arrive late, so by default the widget
 waits and retries until the account handle is available before its first relay handshake. It never
 connects with the `Wanderer` placeholder or a character-name substitute, and never issues a second
 native `chat.v1.connect` from a late HUD update. Empty reads never replace a known name, punctuation
 is preserved, and the actual name is not written to diagnostics.
 
+An explicit nonempty `Data/FCMChat.ini` `displayName` override can fill the gap when HUD account
+data remains blank. Real HUD account data has priority; the normal default still waits. This is
+not a character-name fallback, and a late UI update does not re-enter native connect. The existing
+connection keeps its relay identity until the next normal reconnect.
+
 Successful relay-token verification uses a short-lived in-process cache keyed by a one-way token
 digest, while repeated invalid-token Argon2 checks are throttled. The cache is invalidated on
 token link, revoke, or display-name update. This reduces reconnect load without exposing the raw
 token in logs or cache keys.
+
+## Delivery acknowledgement
+
+Static native relay sends use `waitForPersistence:false`: after governance, they ACK and fan out
+once the durable Bull queue accepts the message, without holding the native RPC for a worker.
+Ordinary web producers retain their database-persistence fence. Queue failure uses direct
+persistence fallback. SERVER history/fanout is room-scoped in Redis. ACK is not confirmation of
+Discord delivery, and receipt completion is not atomic with every side effect. See
+[retry safety](../hud-send-retries.md).
 
 ## Operations
 
@@ -150,8 +161,7 @@ The optional HUD widget exposes the actions only to a staff identity. It accepts
 player name (quote multi-word names) or the short `[#XXXXXXXX]` reference beside visible messages,
 for example `/mod Alice mute 15 spam`. The widget resolves either input locally to the relay event's
 immutable message and account IDs; it never sends the display name as a moderation target. Duplicate
-visible names are rejected and require the reference. See the widget [build and verification guide]
-(../../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md#in-game-acceptance-checklist).
+visible names are rejected and require the reference. See the widget [build and verification guide](../../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md#in-game-acceptance-checklist).
 
 Static FCM channels use the slugs `global`, `trade`, `events`, `infests`, and
 `raids`. The backend maps them to the owned channel IDs, applies normal auth,
@@ -257,11 +267,13 @@ package contract:
 - a send creates one optimistic row before the synchronous provider call and reconciles the
   authoritative ACK/live event into that row, so one send produces one feed row;
 - the supporter marker is owned by the same row `Sprite` as the channel and message fields,
-  immediately after the measured channel tag and vertically aligned with the first message line;
+  in a measured inline slot immediately before the author, aligned with the author’s first line;
 - the tag and marker are available on the optimistic self-row as soon as the ACK/live projection is
   available, without waiting for a later regular poll;
-- Insert gates feed scrolling, Arrow Up/Down scroll only during the open input session, Home/End
-  return to the newest row, and Page Up/Page Down switch channels without discarding the draft.
+- Insert gates feed scrolling, the configured `scrollUpKey`/`scrollDownKey` actions scroll only
+  during the open input session, the optional `scrollBottomKey` returns to the newest row, and
+  Page Up/Page Down switch channels without discarding the draft. The shipped scroll-to-bottom
+  setting is blank; F11 remains the provider-independent newest-row action.
 - the roster/world observer refreshes the current cached `BSUIDataManager` provider values on each
   world poll because `Subscribe()` adds a `CHANGE` listener but does not replay the cached value;
   this ensures a newly joined world can create the `SERVER` tab and trigger history replay even when
@@ -292,7 +304,7 @@ repeated `FCMChatWidget: [UncaughtErrorEvent ... Error #1014]` lines immediately
 acquired, leaving player controls unavailable. v2.10.46 removes that child dispatch and restores
 the known host-domain ownership model. Raw Scaleform `KeyboardEvent` listeners are not a reliable
 HUD-layer input contract; the named `OpenSocial` event is the supported modal boundary. For
-navigation, v2.10.54 additionally uses the extender's documented `Input.RegisterKey`,
+navigation, v2.10.54 additionally uses compatibility `Input.RegisterKey`,
 `Input.IsKeyPressed`, and `Input.UnregisterKey` compatibility calls when Page keys are collapsed
 to `Unmapped`. The poll starts at provider discovery, independent of relay auth; the dispatcher is
 the generic callback when one exists, otherwise (under ZFE) `__ZFE` itself; registration keeps
@@ -320,7 +332,8 @@ The key code is passed as the native integer argument to the dispatcher; it is n
 the JSON string used by `chat.v1.*`. FCM first tests a separately discovered generic callback.
 For ZFE, if that callback is absent or explicitly rejects the operation, FCM uses
 `__ZFE.call` itself because ZFE's SFE-compatibility dispatcher serves `Input.*` alongside the
-chat-input helpers and advertises `zfe-input-v1`. A void/`null` response from registration is
+chat-input helpers on observed builds. `zfe-input-v1` instead describes public `input.v1.*`
+text sessions and does not prove this compatibility API. A void/`null` response from ZFE registration is
 accepted as a successful mutation; explicit false/error/unsupported responses are rejected and
 allow the next candidate to be tried. The accepted dispatcher is locked for the rest of the
 session so registration and polling cannot split across objects.
@@ -329,8 +342,9 @@ ZFE's pressed-state response must contain an explicit boolean-like `pressed`, `d
 field. A bare `{"success":true}` response means the call completed, not that the key is down.
 Physical navigation is initialized at provider discovery rather than after relay authentication,
 so Page Up/Page Down remain local channel commands while the relay is connecting or rejected.
-The widget latches the physical edge, accepts named HUD actions when available without double
-handling them, and unregisters the keys during shutdown. The live v2.10.54 smoke test confirmed
+The widget tracks physical edges and normalized named-action latches, and unregisters keys at
+shutdown. Different aliases can have different latch keys; simultaneous named/physical delivery
+needs per-loader testing before claiming one action per physical press. The live v2.10.54 smoke test confirmed
 that this route switches channels under ZFE.
 
 ## Ephemeral `server` rooms
@@ -351,7 +365,8 @@ FCMCTL/1/RESYNC
 ```
 
 The relay continues to accept legacy NUL-framed controls from older widget
-builds, but current builds never place control bytes in the distributable SWF.
+builds, but the modern FCMChatWidget never emits those NUL-framed controls. The retained legacy
+FCMBridge source still contains its older HMAC/NUL control path; do not confuse the artifacts.
 
 Controls are intercepted before ordinary channel validation and are never stored
 or broadcast as chat. The backend associates them with the authenticated relay
@@ -374,6 +389,12 @@ static deduplication survives a world change. Reconnecting resets native event I
 restart) while retaining durable static message IDs. Each roster provider is compared against its
 own previous snapshot, preventing unchanged empty auxiliary lists from repeatedly clearing SERVER.
 
+Local candidate HUD 2.10.78 combines all six canonical feeds in the General view without changing relay routing.
+Each row retains its original channel for replay identity, echo reconciliation, labels, and
+moderation targeting. Replay rejection precedes pending-send matching, and conflicting nonempty
+ACK/event IDs cannot fall back to sender/body matching. Individual tabs remain filtered views;
+General sends still use `global`. Server room validation and row clearing apply to both views.
+
 
 `worldRosterService` stores short-lived rosters and builds connected components
 from mutually observed names. The stable room key feeds the existing Redis
@@ -390,16 +411,15 @@ subscriber fan-out is backpressure-aware; a socket with more than 1 MiB buffered
 WebSocket status 1013 and removed from the subscriber set. Duplicate or concurrent `subscribe`
 frames on one connection receive `already_subscribed`.
 
-The widget treats the relay response to a roster/world control as the membership
-acknowledgement. It does not expose or send to the `server` tab merely because
-the game HUD reports nearby players: it waits for `{ "success": true }`. A
-rejected control keeps `server` unavailable, records the relay error, and backs
-off retries for 60 seconds; it does not issue the same synchronous native call
-on every 5-second world tick. Roster controls are also suppressed while the
-account is unlinked or not authenticated. An empty but received roster is valid
-for a solo world, so it is also acknowledged and bound. This prevents a stale or
-mismatched relay deployment from presenting a selectable but unusable Server
-channel, and prevents a slow relay timeout from repeatedly stalling the HUD.
+The modern widget does not equate native RPC acceptance with room membership. ROSTER/WORLD
+requests carry a current `FCMSESSION/1;<requestId>`; the widget waits for an authenticated system
+`FCMCTL/1/SERVER-READY:<requestId>|<roomKey>` matching that request. Up to 64 early SERVER rows
+are deferred, then checked against `server:<confirmedRoomKey>:` message IDs. Outgoing SERVER
+messages pin that room (`FCMROOM/1;...`, or the negotiated retry envelope). Old-room rows/sends
+are rejected. Empty solo rooms can be confirmed, but a solo room is not proof that the game
+world contains no other players. Pending binds retry at a bounded cadence; confirmations expire.
+See [server session binding](server-session-binding.md) for the actual request/confirmation and
+history contract. Controls remain suppressed while unlinked or unauthenticated.
 
 Widget v2.10.54 also pulls the current values of `PlayerListData`, `TeamMarkers`,
 `PartyMenuList`, and `VoiceChatAreaData` after subscribing. This is intentional: the upstream

@@ -1,141 +1,47 @@
-# ZFE Environment Variables
+# HUD environment and extender configuration
 
-**Most Fallout 76 modders do not need environment variables.** If your mod uses ZFE normally, start with the [Modder Guide](modder-guide.md) and [ZFE API Reference](api-reference.md).
+The modern FCMChatWidget uses native ZFE/xScal chat. No legacy socket/remote-data environment
+variable is required to activate it. Follow the [build/install guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md)
+and the selected provider's current author instructions.
 
-This page covers only the small set of environment variables useful while making or testing a mod.
+## Native chat target
 
-## Quick Choice
+ZFE reads the modern `FCMChatWidget.ini` TextChat fragment, with per-key overrides in
+`Data/configuration/zfe.ini` `[TextChat]`. Check that global file even when the packaged fragment
+has the correct endpoint. Keep `OpenChatKey` aligned with `Data/FCMChat.ini` `openKey`.
+xScal uses `[Chat] enabled=true` and `relayEndpoint` in `xscal.ini` beside the game executable;
+do not add ZFE `OpenChatKey` to that file. Both providers use `wss://<target>/relay`.
 
-| Goal | Variable |
-|---|---|
-| Test remote data against a local server | `ZFE_REMOTE_DATA_ALLOW_LOCALHOST_DEVELOPMENT=1` |
-| Test mod behavior when remote data is disabled | `ZFE_DISABLE_REMOTE_DATA=1` |
-| Put `zfe.log` somewhere easy to find | `ZFE_LOG_DIRECTORY=your-folder` |
-| Enable real-time live feed (Text Chat bridge) | `ZFE_ENABLE_TEXT_CHAT_LIVE_BACKEND=1` |
-| Override live feed endpoint | `ZFE_TEXT_CHAT_ENDPOINT=host:port` or `=wss://host/path` |
-| Force-disable live feed even if opt-in is set | `ZFE_DISABLE_TEXT_CHAT_LIVE_BACKEND=1` |
+Restart the game after native configuration changes. FCM's backend `RELAY_PRODUCTION_ENABLED`
+flag is a server-side deployment setting, not a player environment variable. A build/ZIP does
+not establish live deployment state.
 
-## Two Rules
+## Diagnostic and historical variables
 
-1. A switch that says `=1` must be exactly `1`. Values like `true`, `yes`, or `0` are ignored.
-2. If you set a persistent Windows User variable, **restart Steam, the Xbox app, or the game** before testing. The game only sees environment variables that existed when the launcher/game process started.
+The [ZFE author's environment guide](https://www.nexusmods.com/fallout76/articles/247) documents
+`ZFE_LOG_DIRECTORY` for directing logs to a writable folder. `ZFE_REMOTE_DATA_ALLOW_LOCALHOST_DEVELOPMENT`
+and `ZFE_DISABLE_REMOTE_DATA` concern the separate remote-data API; they do not select FCM's
+native chat endpoint or repair its authentication.
 
-## Localhost Remote Data Testing
+Older FCM notes mention `ZFE_ENABLE_TEXT_CHAT_LIVE_BACKEND`, `ZFE_TEXT_CHAT_ENDPOINT`, and
+`ZFE_DISABLE_TEXT_CHAT_LIVE_BACKEND` for the retired generic socket transport. Do not add them
+for the modern widget or infer that they configure `chat.v1`. Preserve historical details in
+[the old socket guide](realtime-socket.md), not in current installation steps.
 
-> **Note:** Remote data ships with ZFE 0.9.1. Public builds before 0.9.1 do not include `zfe-remote-data-v1`.
+For a temporary PowerShell log-directory override:
 
-Requires both the INI opt-in and the environment variable.
-
-`Data/configuration/zfe.ini`:
-```ini
-[RemoteData]
-Enabled=1
-FragmentSources=1
-AllowLocalhostDevelopment=1
-```
-
-PowerShell (persistent User variable):
-```powershell
-[Environment]::SetEnvironmentVariable('ZFE_REMOTE_DATA_ALLOW_LOCALHOST_DEVELOPMENT','1','User')
-# Restart Steam after setting
-```
-
-Source fragment for local testing:
-```ini
-[Source.local-test]
-Vendor=FCMBridge
-Key=hud.feed
-Url=http://127.0.0.1:7177/api/game/hud-feed
-MaxBytes=4096
-CacheSeconds=30
-TimeoutMillis=2000
-```
-
-Source fragments go in `Data/ZFE/RemoteData/sources/FCMBridge.ini`.
-
-**Do not ask normal users to set localhost development.**
-
-## Live Feed (Text Chat Bridge)
-
-ZFE's live transport is opt-in and off by default. All three variables use **User scope** and
-require a **full Steam exit + relaunch** after any change (the game inherits Steam's env block).
-
-| Variable | Value | Effect |
-|----------|-------|--------|
-| `ZFE_ENABLE_TEXT_CHAT_LIVE_BACKEND` | exactly `1` | Enables the Text Chat bridge (Schannel/Winsock transport) |
-| `ZFE_TEXT_CHAT_ENDPOINT` | `host:port` (TCP) or `wss://host/path` (TLS WS) | Overrides the built-in default (`wss://falloutchatmod.com/ws/hud`). Plain `ws://` is refused for chat.v1 (ZFE won't `autoRegister` over an insecure endpoint). |
-| `ZFE_DISABLE_TEXT_CHAT_LIVE_BACKEND` | exactly `1` | Force-disables the bridge even when `ZFE_ENABLE_TEXT_CHAT_LIVE_BACKEND=1` |
-
-> For chat.v1, `[TextChat] AllowLocalhostDevelopment=yes` in `zfe.ini` only *enables* a localhost
-> endpoint — it does NOT enable `autoRegister` over an insecure `ws://` loopback, so a plaintext local
-> relay still cannot complete the handshake. A local `wss://` proxy works at the transport layer but
-> still runs ZFE's Zig TLS client (the same one that crashes under Proton — see
-> [native-chat-relay/proton-status.md](native-chat-relay/proton-status.md)).
-
-Dev setup (TCP, local backend):
-```powershell
-[Environment]::SetEnvironmentVariable('ZFE_ENABLE_TEXT_CHAT_LIVE_BACKEND','1','User')
-[Environment]::SetEnvironmentVariable('ZFE_TEXT_CHAT_ENDPOINT','127.0.0.1:4001','User')
-# Fully exit Steam (File > Exit), relaunch Steam, then launch game.
-```
-
-`zfe.log` startup confirmation line: `text_relay_backend=<value>`  
-When opt-in is absent: `Text Chat transport backend: Schannel/Winsock (opt-in-disabled)`
-
-See [realtime-socket.md](realtime-socket.md) for the full protocol and backend setup.
-
-> **Note (2026-06-26):** the `Schannel/Winsock` line above is the **legacy Text Chat (FCMHUD/1)**
-> transport. The newer ZFE **`chat.v1`** native chat relay
-> ([native-chat-relay/](native-chat-relay/README.md)) uses its **own Zig TLS client** and is driven by
-> different config — `ZFE_TEXT_CHAT_ENDPOINT` (or `[TextChat] Endpoint=` in `zfe.ini`) and the
-> localhost opt-in below. There is **no environment variable** to skip TLS certificate verification or
-> to override the CA bundle path. Under Wine/Proton, chat.v1 reads the system CA bundle from the
-> Wine `Z:` system paths automatically (logged as `chat.v1 TLS CA source: wine_pem_bundle`); on native
-> Windows it uses the Windows certificate store (`windows_store`). The historical Proton/Wine TLS
-> issue is resolved in the current project ZFE build; use the target-specific package instructions
-> and a current ZFE binary.
-
-## Disabling Remote Data For Testing
-
-Current PowerShell process only:
-```powershell
-$env:ZFE_DISABLE_REMOTE_DATA = "1"
-```
-
-Persistent:
-```powershell
-[Environment]::SetEnvironmentVariable('ZFE_DISABLE_REMOTE_DATA','1','User')
-# Restart Steam after setting
-```
-
-## Moving the Log File
-
-Current process only:
 ```powershell
 $env:ZFE_LOG_DIRECTORY = "D:\Temp\ZFELogs"
 ```
 
-This is a **folder path**, not a full `zfe.log` path.
+It affects that process and children launched from it. Use a folder, not a full log filename.
+Clear it after testing:
 
-## Clearing Test Variables
-
-Current PowerShell process:
 ```powershell
 Remove-Item Env:\ZFE_LOG_DIRECTORY -ErrorAction SilentlyContinue
-Remove-Item Env:\ZFE_DISABLE_REMOTE_DATA -ErrorAction SilentlyContinue
-Remove-Item Env:\ZFE_REMOTE_DATA_ALLOW_LOCALHOST_DEVELOPMENT -ErrorAction SilentlyContinue
-Remove-Item Env:\ZFE_ENABLE_TEXT_CHAT_LIVE_BACKEND -ErrorAction SilentlyContinue
-Remove-Item Env:\ZFE_TEXT_CHAT_ENDPOINT -ErrorAction SilentlyContinue
-Remove-Item Env:\ZFE_DISABLE_TEXT_CHAT_LIVE_BACKEND -ErrorAction SilentlyContinue
 ```
 
-Persistent User variables:
-```powershell
-[Environment]::SetEnvironmentVariable('ZFE_LOG_DIRECTORY',$null,'User')
-[Environment]::SetEnvironmentVariable('ZFE_DISABLE_REMOTE_DATA',$null,'User')
-[Environment]::SetEnvironmentVariable('ZFE_REMOTE_DATA_ALLOW_LOCALHOST_DEVELOPMENT',$null,'User')
-[Environment]::SetEnvironmentVariable('ZFE_ENABLE_TEXT_CHAT_LIVE_BACKEND',$null,'User')
-[Environment]::SetEnvironmentVariable('ZFE_TEXT_CHAT_ENDPOINT',$null,'User')
-[Environment]::SetEnvironmentVariable('ZFE_DISABLE_TEXT_CHAT_LIVE_BACKEND',$null,'User')
-# Restart Steam after clearing
-```
+A persistent User environment change requires restarting the launcher/game to take effect.
+Do not use undocumented hook switches, certificate bypasses, proxy daemons, or trust-store
+changes as a routine HUD setup step. See [logs](logs-troubleshooting.md) and
+[historical Proton status](native-chat-relay/proton-status.md).

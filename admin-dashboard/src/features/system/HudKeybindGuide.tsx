@@ -21,13 +21,13 @@ export interface HudKeybindRow {
 export const HUD_KEYBIND_ROWS: HudKeybindRow[] = [
   {
     key: 'Insert',
-    config: 'openKey=INSERT + OpenChatKey=INSERT',
-    description: 'Open the HUD chat input and start typing. These two settings must match.',
+    config: 'openKey=INSERT (ZFE also OpenChatKey=INSERT)',
+    description: 'Open the HUD chat input and start typing. On ZFE, keep the widget and native settings aligned; xScal uses openKey only.',
   },
   { key: 'Enter', config: 'native game input', description: 'Send the message.' },
   { key: 'Escape', config: 'native game input', description: 'Cancel typing and close the input.' },
-  { key: 'Arrow Up / Down', config: 'Insert-open session', description: 'Scroll the HUD feed up or down. Ignored until Insert opens a typing session.' },
-  { key: 'Home / End', config: 'Insert-open session', description: 'Jump to the newest HUD messages. Ignored until Insert opens a typing session.' },
+  { key: 'Arrow Up / Down', config: 'scrollUpKey=Up / scrollDownKey=Down', description: 'Scroll the HUD feed up or down. Arrow/Cursor/Dpad aliases match the defaults; change either setting to rebind it. Ignored until Insert opens a typing session.' },
+  { key: 'Optional newest key', config: 'scrollBottomKey= (unset)', description: 'Jump to the newest HUD messages after you opt in with Home, End, F12, or a forwarded HUD action. The packaged default is unbound.' },
   { key: 'Page Down', config: 'channelNextKey=NextPage', description: 'Switch to the next channel.' },
   { key: 'Page Up', config: 'channelPrevKey=PrevPage', description: 'Switch to the previous channel.' },
   { key: '/hide', config: 'slash command', description: 'Hide the HUD feed. Press Insert to restore it.' },
@@ -76,7 +76,8 @@ export default function HudKeybindGuide({ variant = 'dashboard' }: HudKeybindGui
       </h1>
       <p style={{ fontSize: isPublic ? '13px' : '11px', color: muted, marginBottom: '12px' }}>
         This is the separate, optional Fallout 76 HUD-mod track. It is not an Electron overlay
-        keybind and requires ZFE or xScal plus HUDModLoader (or the documented standalone HUDMenu path).
+        keybind and requires ZFE or xScal plus HUDModLoader. The legacy standalone HUDMenu build
+        has a separate configuration and does not provide this widget’s full control set.
       </p>
 
       <div style={{
@@ -121,7 +122,11 @@ export default function HudKeybindGuide({ variant = 'dashboard' }: HudKeybindGui
         <code style={codeStyle}>Input.RegisterKey</code>/<code style={codeStyle}>Input.IsKeyPressed</code>{' '}
         polling interface and keeps the named HUDMod action as a fallback. Registration does not{' '}
         suppress keyboard input from the game; xScal's documented suppression calls apply to{' '}
-        gamepad buttons, so test the selected key for gameplay conflicts. Read the{' '}
+        gamepad buttons, so test the selected key for gameplay conflicts. The same physical token catalog is available for{' '}
+        <code style={codeStyle}>scrollUpKey</code>, <code style={codeStyle}>scrollDownKey</code>, and{' '}
+        <code style={codeStyle}>scrollBottomKey</code>; named HUD actions remain available through{' '}
+        <code style={codeStyle}>HUDMod::UserEvent</code>. Scroll-to-bottom is blank by default, and the F11{' '}
+        <code style={codeStyle}>Scroll to newest</code> menu item is always available. Read the{' '}
         <a href={XSCAL_INPUT_ARTICLE_URL} target="_blank" rel="noopener noreferrer" style={sourceLinkStyle}>
           xScal Input interface (Nexus article 268)
         </a>.
@@ -167,7 +172,7 @@ export default function HudKeybindGuide({ variant = 'dashboard' }: HudKeybindGui
         <li>Start Fallout 76 with ZFE or xScal and HUDModLoader enabled.</li>
         <li>Press <code style={codeStyle}>F11</code> to open the HUDModLoader menu.</li>
         <li>Choose <code style={codeStyle}>FCM</code> → <code style={codeStyle}>Customize...</code> to resize, move, change opacity/theme, or reset settings.</li>
-        <li>After pressing <code style={codeStyle}>Insert</code>, use <code style={codeStyle}>Arrow Up</code> / <code style={codeStyle}>Arrow Down</code> to review history and <code style={codeStyle}>Home</code> / <code style={codeStyle}>End</code> to return to the newest message; channel entries are also available in this menu.</li>
+        <li>After pressing <code style={codeStyle}>Insert</code>, use the configured scroll keys to review history. Choose <code style={codeStyle}>scrollBottomKey</code> if you want a keyboard shortcut for newest; the menu's <code style={codeStyle}>Scroll to newest</code> action is always available.</li>
         <li>Select <code style={codeStyle}>FCM</code> → <code style={codeStyle}>Customize...</code> → <code style={codeStyle}>Reset all settings</code> only when you want the packaged defaults restored.</li>
       </ol>
       <p style={{ fontSize: isPublic ? '12px' : '11px', color: muted, marginTop: '8px', marginBottom: '0' }}>

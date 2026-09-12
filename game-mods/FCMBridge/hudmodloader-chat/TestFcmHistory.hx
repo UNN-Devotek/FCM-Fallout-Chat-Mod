@@ -4,6 +4,34 @@ class TestFcmHistory {
     }
 
     static function main():Void {
+        var combinedHistory = new FcmHistory();
+        var channels = ["global", "server", "trade", "events", "infests", "raids"];
+        var combined:Array<{channel:String, messageId:String, pending:Bool}> = [];
+        for (channel in channels) {
+            if (combinedHistory.accept(channel, 1, "message-" + channel, 4, combined))
+                combined.push({channel:channel, messageId:"message-" + channel, pending:false});
+        }
+        check("all six channels appear once in General",
+            combined.filter(row -> FcmCommand.channelVisible("global", row.channel)).length == 6);
+        for (replay in 2...5) for (channel in channels) {
+            check("combined replay cannot append " + channel,
+                !combinedHistory.accept(channel, replay, "message-" + channel, 4, combined));
+        }
+        combinedHistory.startConnection();
+        for (channel in channels) check("reconnect retains canonical " + channel,
+            !combinedHistory.accept(channel, 1, "message-" + channel, 4, combined));
+        combined = combined.filter(row -> row.channel != "server");
+        combinedHistory.clearServer();
+        check("leaving removes only server from General",
+            combined.filter(row -> FcmCommand.channelVisible("global", row.channel)).length == 5);
+        check("rejoin can restore the cleared server row",
+            combinedHistory.accept("server", 1, "message-server", 4, combined));
+        for (channel in ["global", "trade", "events", "infests", "raids"])
+            check("world hop retains static " + channel,
+                !combinedHistory.accept(channel, 2, "message-" + channel, 4, combined));
+        check("a distinct message is never deduplicated by text",
+            combinedHistory.accept("trade", 3, "another-trade-message", 4, combined));
+
         TestFcmRoster.main();
         var replayHistory = new FcmHistory();
         var retained = [];

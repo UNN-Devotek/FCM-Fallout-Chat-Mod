@@ -1,4 +1,13 @@
-# SERVER session binding — widget v2.10.58
+# SERVER session binding
+
+Introduced in v2.10.58 and retained by the local 2.10.78 candidate. The observations below are
+dated; [the HUD index](../README.md) owns current build and in-game verification status.
+
+Visible HUD widgets use this native binding directly. The separate
+[background HUDModLoader bridge](../background-server-bridge.md) adds `FCMBRIDGE/1` roster
+controls and a 45-second device lease to authorize private desktop Server delivery. A visible
+widget's `FCMSESSION/1` binding alone does not attach the overlay. The bridge is a local 0.1.0
+candidate; deployment and runtime acceptance are pending.
 
 The desktop ZFE log for 2026-09-05 20:03–20:04 records v2.10.56 on a public world:
 roster sends contained zero names, SERVER was selected with zero rows, and the widget logged
@@ -72,4 +81,5 @@ after opening the map. Check that both report nonzero roster names and the same 
 then exchange SERVER messages. Move one user to another world twice: room keys must separate,
 old rows must disappear, and neither user may receive the other's new SERVER messages. Repeat
 with each extender. General/Trading/Events/Infests/Raids should retain static history throughout.
-Deploy the updated Dev backend before installing v2.10.58; an older relay cannot confirm its tab.
+Use a matching backend that emits session confirmations; a build with only RPC acceptance
+cannot confirm the modern SERVER tab. Verify the actual target deployment before testing.

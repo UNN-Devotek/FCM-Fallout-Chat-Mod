@@ -25,6 +25,17 @@ class FcmRenderGeneration {
         return token == _value;
     }
 
+    /** Every delayed slice needs its own exception boundary; the scheduler's catch has ended. */
+    public function runCurrent(token:Int, work:Void->Void, failed:Dynamic->Void):Void {
+        if (!isCurrent(token)) return;
+        try {
+            work();
+        } catch (error:Dynamic) {
+            // A re-entrant rebuild owns the new feed even if the old work then fails.
+            if (isCurrent(token)) failed(error);
+        }
+    }
+
     public function current():Int {
         return _value;
     }

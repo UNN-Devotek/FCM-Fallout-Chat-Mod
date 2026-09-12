@@ -16,6 +16,10 @@ describe('HUD keybind guide', () => {
     expect(guide).toHaveTextContent('Data/configuration/zfe.ini');
     expect(guide).toHaveTextContent('Input.RegisterKey');
     expect(guide).toHaveTextContent('does not suppress keyboard input');
+    expect(guide).toHaveTextContent('scrollUpKey=Up / scrollDownKey=Down');
+    expect(guide).toHaveTextContent('scrollBottomKey= (unset)');
+    expect(guide).toHaveTextContent('packaged default is unbound');
+    expect(guide).toHaveTextContent('Scroll to newest');
     expect(within(guide).getByRole('link', { name: 'ZFE Modder Guide' })).toHaveAttribute('href', ZFE_MODDER_GUIDE_URL);
     expect(within(guide).getByRole('link', { name: 'xScal Input interface (Nexus article 268)' })).toHaveAttribute('href', XSCAL_INPUT_ARTICLE_URL);
   });

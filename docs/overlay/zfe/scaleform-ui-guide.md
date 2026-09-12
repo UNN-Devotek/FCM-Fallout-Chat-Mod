@@ -1,266 +1,117 @@
-> Navigation correction (local HUD 2.10.77): the existing ZFE `Input.*` path is
-> locally observed compatibility, not a verified public ZFE contract. Earlier
-> references below equating `zfe-input-v1` with this surface are superseded:
-> that capability describes `input.v1.*` text sessions. The new decoder removes
-> general Haxe JSON dependencies associated with the observed Error #1014;
-> live ZFE verification is pending. No navigation INI edits are required.
-> The public guide names `zfe-hotkeys-v1` for hotkeys; migration requires its
-> detailed payload contract. See [ZFE Modder Guide](https://www.nexusmods.com/fallout76/articles/255).
+# FCM Scaleform/GFx engineering guide
 
-# Working with Scaleform GFx UI (Fallout 76 / AS3) — Practical Guide
+This guide describes the current FCM HUD source and the evidence needed to change it. Fallout's
+GFx runtime is not interchangeable with a Flash test harness. Generic Adobe/Haxe/Autodesk docs
+explain formats and APIs; only the active game/provider/loader and fresh logs establish runtime
+compatibility. The [HUD index](README.md) separates candidate and in-game status.
 
-A field guide for building stable, performant in-game UI in Fallout 76's Scaleform GFx runtime (the
-Flash/AS3 engine baked into Bethesda's Creation Engine). Written from a multi-source research pass +
-our own hard-won experience shipping the FCM chat overlay. Pairs with
-[two-way-chat-implemented.md](two-way-chat-implemented.md) (our working pattern) and
-[textchat-blueprint.md](textchat-blueprint.md) (the original Text Chat decompile).
+## Rendering
 
-> **The golden rule:** Scaleform GFx is NOT Adobe Flash Player. It silently ignores or hard-crashes on
-> a meaningful subset of AS3. Code that works in a Flash test harness can blank out or access-violate
-> in-game. Validate everything in-game; treat the rules below as load-bearing.
+The modern widget retains bounded canonical records and renders one full-width multiline plain
+native `TextField` per row. It applies `TextFormat` ranges after assigning text. Row-local vector
+stars and bundled emoji sprites use measured layout slots. This supersedes the old single HTML
+feed and BitmapData/image-substitution experiments described in historical notes.
 
----
+Preserve a complete styled baseline before optional emoji work. Catch planning/layout/decoration
+failures without discarding already-readable rows. If core row construction fails, cancel pending
+work and build the plain-text fallback. Every delayed slice must check its render generation and
+catch exceptions inside that callback; the scheduling stack's catch cannot handle later failures.
+A stale failure must not replace a newer feed.
 
-## 1. The GFx execution model
+Layout changes on data, resize, scroll, or settings changes, not every frame. Measure the actual
+rendered text after wrapping. `getCharBoundaries` is a layout/advance rectangle, not a tight glyph
+outline. Use text-field offsets when marker and field share a proven row coordinate basis; use
+`localToGlobal`/`globalToLocal` when crossing parents. Do not add guessed scroll-line offsets.
+Account for wrapped names, reserved marker/emoji gaps, clipping, and reflow.
 
-- **Advance vs Render are separate threads.** The Advance thread runs ActionScript + timeline; the
-  Render thread draws from a *snapshot*. There is **no Flash `invalidate()` / dirty-region API** at the
-  AS layer — the whole movie advances or it doesn't.
-- **Never update a TextField every frame** — it's the #1 documented perf drain. Update on data change
-  only (we're event-driven off the socket — keep it that way).
-- **`Extensions.noInvisibleAdvance = true`** excludes hidden clips (and children) from Advance — use it
-  to freeze a hidden chat panel. Caveat: code relying on continuous `enterFrame` in a hidden clip stops.
-- **`cacheAsBitmap`** is fine for static panels (our amber chrome) but bad for scrolling text
-  (re-rasterizes on every scroll). Note: accessing `.filters` on a `cacheAsBitmap` object with no
-  filters crashed pre-Scaleform-4.5.32 — don't poke `.filters`.
+The widget uses Fallout font aliases such as `$MAIN_Font_Light` in embedded-font mode. This is
+project/runtime evidence, not a universal GFx alias or proof of arbitrary glyph coverage. Avoid
+introducing dynamic classes/interfaces on hot compatibility paths without target verification;
+the historical Error #1014 failures did not establish a universal ban on those language features.
 
-## 2. GFx vs Flash — what's banned or silently broken
+`appendHtml` is not the current feed's rendering recipe. If another surface requires HTML,
+encode untrusted content for its context and check the target runtime/stylesheet behavior.
+Do not infer from a legacy text sanitizer that modern native chat should strip punctuation.
+Filters, shaders, bitmap caches, gradients, or other effects require measured support and cost;
+do not declare all GFx implementations incapable based on one FCM experiment. Enable Scaleform
+extensions before using extension calls and verify the actual version/availability.
 
-| Feature | In GFx | Consequence |
-| --- | --- | --- |
-| **Filters on MovieClip/Sprite** (GlowFilter, DropShadow…) | **silently ignored** (work on TextFields ONLY, with limits) | wasted effort + the alt-tab-disappears bug |
-| Inner glow/shadow, ConvolutionFilter, ShaderFilter, Pixel Bender | **unsupported** | `ReferenceError` for shader classes |
-| `URLLoader`/`XMLSocket`/`Socket`/`LocalConnection`/`FileReference` networking | **disabled** | all remote I/O must go through the native bridge (ZFE/`__SFCodeObj`) |
-| `ExternalInterface.call(obj/array)` | **type-stripped** to Null/Bool/Int/Number/String | pass JSON strings, never AS Objects, across the bridge |
-| `BitmapData.paletteMap()`, `beginShaderFill`, `drawTriangles`, `lineBitmapStyle` | **not implemented** | — |
-| `cacheAsBitmap` as a generic speed-up | **limited** | don't rely on it |
-| Gradient masks, `BlendMode.SHADER` | **unsupported** | use solid/vector masks only |
-| `fl.motion.*` (AnimatorFactory3D, MotionBase, KeyframeBase) | **Flash-only → runtime `ReferenceError`** | the Text Chat GiveawayWidget uses these — do NOT port it |
-| Some `RegExp` operations | flaky in GFx's AVM2 | prefer split/join over regex (we already do in `fcmClean`) |
+## Input and HUDModLoader
 
-**Our codified crash rules (already in `FCMBridge.hx:38-44`, keep enforcing):** no `filters` arrays, no
-HTML entities in `htmlText`, debug/plain text via `tf.text` never `htmlText`, `Extensions.enabled=true`
-before any `scaleform.gfx.*` call.
+Named `HUDMod::UserEvent` actions differ from raw character/physical key events. FCM reads
+`EventName`/`IsKeyDown` through `FcmUserEvent` and preserves the loader's actual forwarding and
+Boolean handled path. A bubbling non-cancelable event does not suppress gameplay because a child
+listener calls `stopPropagation` or returns a value. Inspect the active host path.
 
-## 3. Text rendering & fonts (the blank-text traps)
+SharedHUDTools' host-domain `TextEdit` is the primary editor for both extenders. It owns the
+balanced lock. The child does not independently dispatch ControlMap start/end events. Close or
+release the owned editor on send, cancel, relevant menu transitions, failure, and unload. Do not
+end another UI's session. The legacy ZFE fallback has different guarantees from public
+owner-scoped `input.v1.*`.
 
-- **`embedFonts` is mandatory** on dynamic/input TextFields or text renders **blank** (GFx has no OS
-  font fallback). Static text is fine (vector-baked).
-- **Reuse the game's font library** rather than embedding our own where possible — reference an
-  engine-registered font binding. **Which binding depends on the movie scope** (verified in-game,
-  FCMChatWidget v2.3.0 → v2.5.3):
-  - In **HUDMenu.swf itself** (a HUDMenu surgery patch), Bethesda's per-movie symbol `"$$MAIN_Font"`
-    resolves.
-  - In a **child widget SWF** loaded into `ApplicationDomain.currentDomain` (any HUDModLoader widget),
-    `$$MAIN_Font` does **NOT** resolve and a Flash `@:font`-embedded TTF is **ignored by GFx** — both
-    render every glyph as a **tofu square**. Use HUDModLoader's **engine-registered GFx aliases**
-    instead: **`$MAIN_Font_Light`** (body text) / **`$MAIN_Font_Bold`** (headers/labels). These DO
-    resolve in a child SWF (proven by HUDButton / HUDTools / HUDKeyboard), with no TTF embed —
-    keep `embedFonts=true`. See `game-mods/FCMBridge/hudmodloader-chat/BUILD.md` → "Fonts".
-  - If you must embed your own: `embedAsCFF="false"` (classic TextField, NOT TLF),
-    `advancedAntiAliasing="true"`, a **narrow unicode range** (Latin ≈ 69KB; don't over-embed), and set
-    `TextFormat.font` to the **DefineFont family name** (e.g. `"DejaVu Sans"` with the space), NOT the
-    postscript name (`"DejaVuSans"`) — GFx matches the family name. Bold/italic are **separate faces** —
-    embed them too if used.
-- **`htmlText` is XML-strict.** Raw `&`, `<`, `>` in *content* break parsing → the whole field can
-  render blank. Use numeric refs (`&#39;`) over named entities. Server-side `zfeSafe()` already strips
-  `< > & " ~ |` — keep that contract on both ends.
-- **`TextFieldEx.appendHtml(tf, html)` not `tf.htmlText +=`.** `+=` reparses the entire document every
-  message; `appendHtml` is incremental. Fails silently if a StyleSheet is applied — don't use CSS.
-- **Glyph cache: keep font size < 48px** (default `MaxSlotHeight`) or glyphs fall back to slow vector
-  rendering. Minimize distinct faces/sizes (cache pressure). For an **input** field where users type
-  arbitrary chars, `TextFieldEx.setForceVector(tf, true)` avoids cache misses; for display-only logs do
-  NOT force vector (slower).
-- Re-assigning `.text` after `.htmlText` strips all inline formatting — always rebuild the full HTML.
+Page Up/Down channel switching is permitted while idle and typing. Feed scrolling requires the
+visible editor owned by chat. Configured aliases and reversed directions resolve through the same
+navigation policy. Existing edge guards key on normalized action names, not every canonical alias;
+test simultaneous named/physical delivery before claiming a single action per physical press. Home/End have no default newest binding.
+The provider guide distinguishes numeric `Input.*`, ZFE `hotkeys.v1.*`, and native text sessions;
+none should be treated as interchangeable or as a universal gameplay-suppression API.
 
-## 4. The scrolling chat-log recipe (proven by Text Chat)
+## Native calls and data
 
-One `TextField` (`multiline`, `wordWrap`, `embedFonts`), fed from a capped ring array:
-1. On new message: cap the ring (`if(arr.length==N) arr.shift()`), then **rebuild**: `tf.htmlText=""`
-   then loop `TextFieldEx.appendHtml(tf, line)` for each entry.
-2. **Auto-scroll to newest:** `tf.setSelection(tf.length, tf.length)` (caret-to-end forces scroll to
-   bottom). Do NOT rely on `scrollV = maxScrollV` — Text Chat's `scrollMax()` is a no-op bug.
-3. **Manual scroll:** `--tf.scrollV` / `++tf.scrollV`, and set a `bScrolling` flag that **suppresses
-   auto-scroll** while the user reads back. (Improve on the original: keep appending to the ring while
-   scrolled up + show a "new messages" indicator — Text Chat dropped messages from view while scrolled.)
-4. Per-message color via inline `<font color="#RRGGBB">`; channel/user/content each get their own span.
-5. Ring size ≈ 80–150 (Text Chat uses 100). The "All" tab fills fastest if it mirrors every channel.
+Use the shared [provider adapter](../../../game-mods/FCMBridge/FcmNativeApi.hx). ZFE commands
+receive JSON strings; xScal chat methods receive ActionScript objects or no arguments, and its
+physical key calls receive numbers. “All structured native data must be JSON strings” is false
+for this integration. A generic callback named `__SFCodeObj` is not proof of provider identity.
 
-## 5. Input & focus — why HUD typing is hard (and how we got it working)
+Native sends can block the Scaleform frame. Build the pending row before deferring the call,
+then reconcile authoritative identity/cosmetics in place. Defer does not mean concurrent or
+nonblocking. Retry only under the negotiated receipt contract; transient queued and terminal
+failure states differ.
 
-This is the subtlety that cost us the most, now fully explained:
-- **A HUD-layer movie is keyboard-deaf by default.** The engine only routes keyboard `HandleEvent`s to
-  the *focused menu*. `stage.focus = myField` is inert unless the movie itself received
-  `HandleEvent(SetFocus)` from C++. That's why our early `stage.addEventListener(KEY_DOWN)` never fired.
-- **`HUDMenu.ProcessUserEvent(actionName, isDown)` delivers NAMED actions, not characters** (`"Forward"`,
-  `"Console"`, `"TeamChat"`). Great for detecting an open-key (we hook `"Console"` = the `~` key); useless
-  for capturing typed text.
-- **Typed text needs the engine's "edit text" gate.** Bethesda games gate text entry through
-  `InputManager::AllowTextInput(true)` (SKSE/F4SE expose it; vanilla triggers it via the chat flow). It
-  ref-counts: while >0 the engine stops feeding keys to gameplay and routes them to Scaleform's
-  CharEvent pipeline. The vanilla `HUDMenu` flow (`stage.focus = ChatEntryText_tf` plus
-  `BSUIDataManager "ControlMap::StartEditText"`) is an in-domain reference, not a safe recipe for
-  a child widget. FCMChatWidget uses HUDModLoader's host-domain `SharedHUDTools.TextEdit`, which
-  owns the balanced Start/Edit and End/Edit lifecycle. A child SWF must not dynamically resolve
-  and dispatch those `ControlMap` events itself.
-- **The native bridge / code-object pattern:** AS↔C++ goes through a code object (vanilla `BGSCodeObj`;
-  ours is ZFE's `__SFCodeObj`/`BRG_OBJ`). It exposes named functions callable from AS
-  (`call("writeUTFBytes", …)`). Only Null/Bool/Int/Number/String cross — strings for everything.
-  The extender compatibility input surface is the exception to the chat JSON convention: FCM
-  sends the integer Windows virtual-key code directly to `Input.RegisterKey`, reads it with
-  `Input.IsKeyPressed`, and releases it with `Input.UnregisterKey`. The channel keys are
-  `PAGEUP=0x21` and `PAGEDOWN=0x22`; Up/Down/Home/End use `0x26`, `0x28`, `0x24`, and `0x23`.
-  Under ZFE these verbs are served by the SFE-compatibility dispatcher, so they are accepted on
-  `__ZFE.call` as well as on a legacy `__SFCodeObj`/`BRG_OBJ`; FCM tries the generic callback
-  first and falls back to `__ZFE`. ZFE answers `Input.IsKeyPressed` with its JSON envelope, and
-  only an explicit `pressed`/`down`/`value` field means key-down. Registration is bookkeeping only
-  and does not acquire the `ControlMap` text-input lock.
-- **ZFE native chat-input session (ZFE 0.9.9+) — no-lock fallback for FCMChatWidget.** ZFE's
-  `dxgi.dll` exposes a native chat-input API as **TOP-LEVEL** ZFE commands (called bare, like
-  `getRuntimeInfo` / `readStorage` — **NOT** `chat.v1.` commands): **`setChatInputActive`**,
-  **`isChatInputActive`**, **`readChatInput`**, **`clearChatInput`**, **`consumeChatInputSubmitted`**,
-  **`isChatKeyPressed`**. Prefixing them with `chat.v1.` returns
-  `{"success":false,"error":{"code":"unsupported_command",...}}` (confirmed in-game, v2.5.0 test). They
-  take **BARE-VALUE payloads (NOT JSON)** and return **BARE booleans/strings** (decoded in-game, v2.5.2
-  probe → v2.5.3): `setChatInputActive("true")` → `true` and ACTIVATES (`"1"` also works; JSON `{}` /
-  `{"active":true}` return `false` and do nothing); `setChatInputActive("false")` deactivates;
-  `consumeChatInputSubmitted("{}")` → a bare boolean (`true` = Enter pressed since last check — **not**
-  the text); `readChatInput("{}")` → the in-progress buffer text (this is where the message text comes
-  from); `isChatInputActive`/`isChatKeyPressed` → `true`/`false`; `clearChatInput("{}")` → `true`. ZFE
-  exposes a bridge-owned buffer, but this fallback does not provide FCMChatWidget's game-control
-  lock. `sendMessage`
-  is the one command that IS `chat.v1.`-prefixed (never bare — a bare `sendMessage` hits the legacy
-  bridge and returns literal `false`). FCMChatWidget v2.5.3 runs the real flow when a clean
-  self-resetting probe proves it usable: `setChatInputActive("true")` → poll `readChatInput` (show
-  in-progress text) + `consumeChatInputSubmitted` (Enter) + `isChatInputActive` (Esc) → on submit
-  `chat.v1.sendMessage` the `readChatInput` text → `clearChatInput` + `setChatInputActive("false")`. A
-  low-rate `isChatKeyPressed` edge poll opens chat on the OpenChatKey (INSERT). Current
-FCMChatWidget v2.10.54 tries SharedHUDTools first; the native path is used only when that host
-  editor is unavailable and never dispatches child-owned `ControlMap` events. It also does not
-  construct `PlatformChangeEvent` dynamically: that class's constructor is not stable across
-  HUDModLoader builds and caused the observed Error #1063. See
-  `game-mods/FCMBridge/hudmodloader-chat/BUILD.md` → "Input-path acceptance".
-- **Native Windows only — Proton/Wine is BLOCKED (2026-06-26, tracked in #326).** chat.v1 works
-  end-to-end on native Windows but **crashes the game under Proton/Wine** at `chat.v1.connect` (a Zig
-  `__fastfail` panic). Root cause is an upstream Zig TLS bug — `std.crypto.tls.Client.readvAdvanced`
-  panics on PARTIAL socket reads (Wine read fragmentation + Cloudflare TLS 1.3 padding make it
-  deterministic), fixed by Zig PR #20587 in **Zig 0.14.0**; the fix is the ZFE author rebuilding on
-  Zig >= 0.14.0. chat.v1 uses its OWN Zig TLS client + a PEM CA bundle (the host CA bundle loads fine,
-  `certs=149`) — **not** Schannel; the old `Schannel/Winsock` ZFE log line was the LEGACY Text Chat
-  transport (relabeled `Legacy Text Chat transport backend` in ZFE 0.9.11). There is no client-side
-  workaround. Linux/Steam-Deck users run the desktop overlay (native, no ZFE) instead.
+General is an allowlisted view over six canonical source channels. Do not copy rows, rewrite
+source slugs, filter ingestion by active tab, or rebroadcast messages to implement aggregation.
+Apply world-room validation before admitting SERVER rows. Reject replay before matching pending
+echoes; conflicting stable IDs never use body fallback. Retained rows remain a duplicate guard
+when bounded caches evict IDs. Session cursors may reset during reconnect; durable message IDs
+survive according to history lifetime. Read [recovery checks](../../testing/hud-recovery.md).
 
-## 6. Z-order & layering (a cleaner fix than our hack)
+## Child widget versus HUDMenu patch
 
-- AS3 display list: `addChild` = top; `addChildAt(o, i)`, `setChildIndex(o, i)`, `swapChildren`.
-- **HUDModLoader stacks widgets in INI order** — later `hudmodloader.ini` entries render on top. Listing
-  the FCM widget **last** keeps it on top with zero code.
-- **`InteractiveObjectEx.setTopmostLevel(obj, true)`** renders an object above ALL others regardless of
-  depth — a far cleaner fix for "input behind the feed" than our `setChildIndex` reparent hack
-  (which only works within HUDMenu's own children).
-- **`InteractiveObjectEx.setHitTestDisable(obj, true)`** makes an overlay pass mouse-through without
-  hiding it (better than `mouseEnabled=false` when you still want programmatic hit-tests).
+`FCMChatWidget.ba2` contains only the FCM child SWF. It does not need vanilla HUDMenu extraction
+or a modified HUDModLoader base. Merge its loader line and archive entry without replacing the
+user's configuration. Check coexistence with actual hotkeys/widgets, not just filenames.
 
-## 7. `scaleform.gfx.*` extensions — quick reference
+The retained standalone build extracts a user-owned vanilla HUDMenu, checks its SHA-256, applies
+FCM additions, and recompiles through FFDec. That route has additional namespace/linkage and
+compiler risks. Prefer targeted structural/ABC changes when appropriate; an assembler roundtrip
+is not byte-lossless. Never claim an unrun FFDec comparison or redistribute Bethesda source/assets.
+The legacy build script can install into its configured game path; inspect it before running.
 
-Set `Extensions.enabled = true` once per display class before any of these.
-- **`Extensions`**: `noInvisibleAdvance`, `visibleRect` (HUD-safe layout bounds), `isScaleform` (guard
-  GFx-only code so a SWF can also run in a Flash test harness), `getTopMostEntity`.
-- **`TextFieldEx`**: `appendHtml` (use it), `setVerticalAlign`, `setTextAutoSize` (SHRINK/FIT),
-  `setForceVector` (input fields), `setImageSubstitutions`/`updateImageSubstitution` (emoji-in-text via
-  BitmapData — an SDK option, not proof of Fallout HUD compatibility; the FCM 2.10.70
-  attempt failed in-game and this path has been removed), selection colors.
-- **`InteractiveObjectEx`**: `setTopmostLevel`, `setHitTestDisable`, `setFocusGroupMask`.
-- **`DisplayObjectEx`**: `setInvertedMask`, renderer string/float hooks, `disableBatching`.
-- **`FocusManager`** (GFx) + **CLIK `FocusHandler`** (component layer): `setModalClip` locks focus to a
-  clip (modal input), `setFocus`/`moveFocus` per-controller.
+## SWF and BA2 gates
 
-## 8. CLIK components are already in HUDMenu
+For this widget, build through `build.hxml` and `normalize_swf.py`, then validate FWS v32, declared
+and actual length, frame rectangle, ABC/tag boundaries, and final End tag. FWS v32 is this
+project's artifact contract, not a universal SWF/GFx format rule. The current widget's rectangle
+is 400×300, not a hardcoded game viewport.
 
-FO76's `HUDMenu.swf` ships compiled CLIK (`scaleform.clik.*`): `ScrollingList`/`TileList` (data-bound,
-`ListItemRenderer`), `ScrollBar`/`ScrollIndicator`, `Button`/`CheckBox`, `TextInput`/`TextArea`. We can
-*instantiate and drive* these from injected AS (they exist in the loaded ApplicationDomain) even though
-we can't recompile them without the Flex SDK + CLIK stubs. A `ScrollingList` is the "proper" scrolling
-log, but a plain `TextField + appendHtml` (Text Chat's approach) is simpler and proven — prefer it
-unless we need row interactivity.
+Fingerprint BA2 version/type/entry paths before using a reader/writer. The checked-in archive is
+BTDX v1 GNRL with `interface/FCMChatWidget.swf`. The repository's tested `ba2tool.py` can preserve
+metadata while swapping that payload. Compare the complete entry set, relevant header/index
+metadata, and decoded SWF bytes; filename/version-string checks alone are insufficient. Keep
+provider/target/distribution config stamps in the same verification pass.
 
-## 9. HUDModLoader integration API (from decompile)
+Haxe, normalization, pure logic, and archive tests run on Linux CI. FFDec/Archive2/Wine are not
+required for the modern build. See [BUILD.md](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md)
+for commands and in-game acceptance; do not confuse offline checks with a live game test.
 
-- **Loading:** `hudmodloader.swf` reads `Data/hudmodloader.ini` (one widget per line:
-  `Name[, enabled][, reloadable]`) and `addChild`s each widget SWF into HUDMenu, sharing
-  `ApplicationDomain.currentDomain` (mandatory — lets widgets see engine classes).
-- **Input events:** `HUDMenu.ProcessUserEvent` dispatches a **bubbling `HUDModUserEvent`
-  (`"HUDMod::UserEvent"`)** on the stage *before* native handling. Any widget can
-  `stage.addEventListener("HUDMod::UserEvent", …)` to receive every control-map action (e.g. `"TeamChat"`,
-  `"DiagnosticSnapshot"`=F12, `"L3"`). This is the conflict-free way for a *widget* to get input without
-  patching HUDMenu.
-  The event's `EventName` and `IsKeyDown` values are AS3 getter properties; a Haxe Flash widget
-  must use native dynamic property access (as `FcmUserEvent` does), not `Reflect.field()` alone.
-- **Modal handoff:** the in-game Ctrl+Tab social shortcut is delivered at this boundary as the named
-  `OpenSocial` action on the current HUDModLoader path. A widget that owns text input must directly
-  deactivate the no-lock native fallback or call `SharedHUDTools.EndTextEdit()` for the host-owned
-  editor before `HUDMenu.ProcessUserEvent` continues; clearing only a local `inputOpen` flag leaves
-  the `ControlMap::StartEditText` gate and can lock the social menu/Escape path.
-- Loader builds do not all expose the same edge: FCMChatWidget accepts the first key-down or a
-  key-up-only HUDMod::UserEvent for Page Up/Page Down and feed navigation, with a per-action latch
-  preventing a key-down plus key-up pair from switching twice. If the loader emits no named Page
-  action and reduces the physical key to `Unmapped`, the widget uses the selected extender's
-  `Input.*` surface as a second path; the physical key-down edge invokes the same command and the
-  physical release only clears the latch, so the two paths cannot double-switch.
-- **`SharedHUDTools` IPC + text entry:** a message bus (`Register`, `SendMessage`) plus
-  **`TextEdit(callback, startText)` + `FormatTextEdit(x,y,w,h,font,size,color,bg,alpha)`** — HUDTools'
-  own text-entry machinery that handles gamepad OSK + the StartEditText/EndEditText cycle for you.
-  This is the lock-owning primary path for FCMChatWidget, and a cleaner path than re-skinning the
-  native green box when HUDModLoader is present.
-- **HUD-mode filtering** (`HUDModes.All`, suppress in `VATS`/`ScopeMenu`), **`isReloadable=true`**
-  (hot-reload from the F11 HUDModLoader menu during dev). Coordinate space is **always 1920×1080**.
-- **Position config convention:** a per-widget `Data/<Widget>.ini` read via `URLLoader("../X.ini")` —
-  the established way users reposition HUD mods by editing a text file (HUD-editor style).
+## Evidence references
 
-## 10. Toolchain & build
+- [Current provider contracts and author links](modder-guide.md).
+- [HUDModLoader source](https://github.com/GitCrazy-wc/hudmodloader); compare the installed host revision.
+- [Surface manifest](hud-surface-manifest.md), [compatibility](hud-mod-compatibility.md).
+- [Styling/emoji observations](../../testing/hud-emoji-status.md) and
+  [historical widget notes](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD-HISTORY.md).
 
-- **ffdec full-class recompile widens vanilla `QName`→`Multiname`** (loses precise namespaces) which
-  **crashes GFx**. Two mitigations: (a) FFDEC ≥ v19.0.0 fixes the direct-edit QName bug; (b) **what we
-  do: RABCDAsm** — lossless ABC bytecode splice into the *pristine* bytecode, so vanilla methods stay
-  byte-identical and only our methods/hooks are added. Pipeline + tools persisted at
-  `game-mods/FCMBridge/hudmenu-chat/.build/tools/` (`build_rabc.sh`, patched `rabcdasm`, `splice2.py`).
-- P-code markers `§§goto`/`§§newclass` etc. can't round-trip through FFDEC's source editor — another
-  reason to use RABCDAsm for HUDMenu surgery.
-- FO76 = AS3 / SWF≈FP11; carve SWFs from BTDX/GNRL `.ba2`; loose `Data/Interface/*.swf` loading is
-  unreliable on FO76 — repack the `.ba2` (we swap the hudmenu blob, reusing original hashes).
-
-## 11. Crash-avoidance checklist (pin this)
-
-1. No filters on MovieClips/Sprites (no-op) and none anywhere we don't strictly need.
-2. `embedFonts=true` + a real embedded/known font, or text is blank.
-3. Never put raw `& < >` in `htmlText`; sanitize both ends (`zfeSafe`/`fcmClean`).
-4. `Extensions.enabled=true` before any `scaleform.gfx.*` call.
-5. `appendHtml`, not `htmlText +=`; no StyleSheet on append targets.
-6. No `fl.motion.*`, shaders, `paletteMap`, gradient masks, networking classes.
-7. Don't update TextFields per-frame; event-driven only.
-8. Edit HUDMenu via **RABCDAsm lossless splice**, never ffdec full recompile.
-9. Pass only strings across the native bridge; JSON-encode structure.
-10. Validate in-game — a Flash harness will not catch GFx-specific failures.
-
----
-
-## Sources
-
-Autodesk Scaleform GFx Help (AS3 Extensions, TextFieldEx/InteractiveObjectEx/Extensions/FocusManager,
-CLIK guide, Font/Glyph-cache parts 1/4/5, HUD Development best practices, ExternalInterface integration,
-FAQs: rendering/memory/font/integration); FFDEC (github.com/jindrapetrik/jpexs-decompiler, issue #2072);
-RABCDAsm (github.com/CyberShadow/RABCDAsm); SKSE/F4SE Scaleform hooks (ianpatt/skse64, F4SE changelogs,
-AllowTextInput/code-object pattern); fo76modding guide (github.com/sdaskaliesku/fo76modding); moreHUDSE
-(github.com/ahzaab/moreHUDSEScaleForm); Nexus HUDFramework/HUD Mod Loader pages; UDK Scaleform best
-practices; gamesas/Nexus Flash-SWF-editing wikis. Plus our local decompiles of HUDModLoader.ba2 and the
-Text Chat ChatMod.ba2.
+The older Proton transport failure is historical, not a current blanket blocker. Record exact
+provider/game/build evidence for new reports. Sanitize logs: status/counts/errors/timings are
+preferred over raw tokens, content, names, and stable identities.

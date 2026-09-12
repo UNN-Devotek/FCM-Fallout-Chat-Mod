@@ -21,7 +21,10 @@ describe('HUD customization guide', () => {
     expect(section).toHaveTextContent('OpenChatKey=DELETE');
     expect(section).toHaveTextContent('Data/configuration/zfe.ini');
     expect(section).toHaveTextContent('Delete is the recommended alternative');
-    expect(section).toHaveTextContent('Page Up/Down and Arrow Up/Down remain fixed');
+    expect(section).toHaveTextContent('scrollUpKey=Up');
+    expect(section).toHaveTextContent('scrollDownKey=Down');
+    expect(section).toHaveTextContent('scrollBottomKey=');
+    expect(section).toHaveTextContent('Scroll to newest');
     expect(section).toHaveTextContent('xScal is different');
     expect(section).toHaveTextContent('it has no OpenChatKey setting in xscal.ini');
     expect(section).toHaveTextContent("openKey to xScal's documented physical input polling");

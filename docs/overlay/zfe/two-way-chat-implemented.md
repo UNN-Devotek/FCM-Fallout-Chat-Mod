@@ -1,6 +1,11 @@
 # Two-Way In-Game Chat — IMPLEMENTED & WORKING
 
-> **ACTIVE (re-sequenced 2026-06-24).** This **FCMHUD/1** two-way input (custom `FCMBridge.swf` +
+> Historical socket/HUDMenu implementation and test record. Native chat now supplies the modern
+> HUD transport; the old Proton blocker and “ship sockets first” decision are superseded. The
+> current child widget, input ownership, native key polling, and row renderer are documented in
+> [the HUD index](README.md) and [Scaleform guide](scaleform-ui-guide.md).
+
+> **Historical decision (2026-06-24, superseded).** This **FCMHUD/1** two-way input (custom `FCMBridge.swf` +
 > M7) is the **shipping in-game path now** — the HUD feature push (epic #302) builds on it. ZFE
 > **`chat.v1`** ([native-chat-relay/](native-chat-relay/README.md)) is a **later transport swap**, not
 > a current replacement. This pattern stays the in-game-input reference until chat.v1 ships AND is
@@ -18,7 +23,7 @@ working pattern** discovered through a long debugging session so we can recover 
 Last validated 2026-06-11 (in-game `SEND ok=true`, message round-tripped and displayed).
 
 > The UI is currently the **native FO76 chat box** (green, bottom, no scroll). Replacing it with our
-> amber-themed scrolling UI is the next phase — see [§8 UI rebuild plan](#8-ui-rebuild-plan). Everything
+> amber-themed scrolling UI is the next phase — see [§8 UI rebuild plan](#8-ui-rebuild-plan-next-phase--currently-uses-the-ugly-native-green-box). Everything
 > below is the proven transport/capture/ingest core; do not regress it.
 
 ---

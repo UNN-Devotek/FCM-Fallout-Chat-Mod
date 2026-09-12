@@ -1,11 +1,16 @@
 # In-Game Send Failure — Investigation Log (2026-08-05 → 2026-08-06)
 
+> Historical investigation through 2026-08-06. “Unresolved” and installed/staged build claims
+> below describe that session, not current status. Later native send and 2.10.74 ZFE styling/emoji
+> results supersede the broad blocker. Use [the HUD index](README.md) for current behavior and
+> [recovery checks](../../testing/hud-recovery.md) for new regressions.
+
 Working record of the "**That channel is not available**" / "**never joins server chat**"
 investigation on the MSI native-Windows rig. Written in the same spirit as
 [windows-nsis-ci-fixes.md](../../testing/windows-nsis-ci-fixes.md): the failures **in order**,
 including the wrong turns, so nobody re-walks them.
 
-**Status: UNRESOLVED.** Several real bugs were found and fixed along the way, but the original
+**Status at the end of this recorded investigation: UNRESOLVED.** Several real bugs were found and fixed along the way, but the original
 symptom — sends to GENERAL rejected `invalid_channel` — is still present. A diagnostic widget
 build (v2.9.9) is staged to read ZFE's actual error, which has never been legible.
 

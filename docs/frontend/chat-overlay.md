@@ -699,3 +699,18 @@ state are never placed in shared cached metadata.
 - [theming.md](./theming.md) — theme system and CSS variable details
 - [../overlay/](../overlay/) — Electron shell (window chrome, IPC, keybinds)
 - [../realtime/](../realtime/) — WebSocket protocol and envelope format
+
+## Optional desktop Server bridge
+
+Local candidate FCMServerBridge 0.1.0 uses the same `ChatOverlay` component. On authenticated
+Electron sockets, `bridge:watch` refreshes a private account-derived room. `bridge:state` adds
+a local Server child under Fallout 76; the REST channel tree remains static. The browser/public
+surfaces do not initiate a bridge watch. Server appearing preserves the selected channel; an
+actively selected Server follows its confirmed room changes.
+
+`bridgeFeed.ts` merges private history/live by canonical message ID, including within-batch
+duplicates. General and Server filter one collection. Room/connection boundaries purge server
+rows and reject old binding frames. Server sends carry the current binding and never enter the
+offline outbox. Retired presence REST panels and UUID history pagination are excluded for the
+bridge room. See [background bridge](../overlay/zfe/background-server-bridge.md) for setup and
+remaining hosted/runtime acceptance.

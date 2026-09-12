@@ -148,6 +148,9 @@ class TestFcmConfig {
         eqs("openKey unsafe->default", FcmConfig.parse("[FCMChat]\nopenKey=<b>&x\n").openKey, "INSERT");
         eqs("default channelNextKey", d.channelNextKey, "NextPage");
         eqs("default channelPrevKey", d.channelPrevKey, "PrevPage");
+        eqs("default scrollUpKey", d.scrollUpKey, "Up");
+        eqs("default scrollDownKey", d.scrollDownKey, "Down");
+        eqs("default scrollBottomKey (unset)", d.scrollBottomKey, "");
         eqs("default hideKey (unset)", d.hideKey, "");
         eqb("default showChannelTag", d.showChannelTag, true);
         eqb("default showHints", d.showHints, false);
@@ -327,7 +330,9 @@ class TestFcmConfig {
             + "x=50\ny=60\nwidth=600\nheight=400\nfontSize=18\n"
             + "bgColor=#101010\nbgAlpha=0.5\nborderColor=00FF00\ntextColor=0xABCDEF\n"
             + "maxMessages=250\nmaxSendLen=120\n"
-            + "openKey=INSERT\nchannelNextKey=NextPage\nchannelPrevKey=PrevPage\nhideKey=DiagnosticSnapshot\n"
+            + "openKey=INSERT\nchannelNextKey=NextPage\nchannelPrevKey=PrevPage\n"
+            + "scrollUpKey=Console\nscrollDownKey=F12\nscrollBottomKey=HOME\n"
+            + "hideKey=DiagnosticSnapshot\n"
             + "showChannelTag=false\nshowHints=true\n";
         var c = FcmConfig.parse(ini);
         eqi("parse x", c.x, 50);
@@ -339,6 +344,9 @@ class TestFcmConfig {
         eqi("parse textColor (0x)", c.textColor, 0xABCDEF);
         eqi("parse maxMessages", c.maxMessages, 250);
         eqi("parse maxSendLen", c.maxSendLen, 120);
+        eqs("parse scrollUpKey", c.scrollUpKey, "Console");
+        eqs("parse scrollDownKey", c.scrollDownKey, "F12");
+        eqs("parse scrollBottomKey", c.scrollBottomKey, "HOME");
         eqs("parse hideKey", c.hideKey, "DiagnosticSnapshot");
         eqb("channel tag visibility override ignored", c.showChannelTag, true);
         eqb("parse showHints", c.showHints, true);
@@ -355,6 +363,8 @@ class TestFcmConfig {
         eqi("clamp maxMessages min", bad.maxMessages, 10);
         eqi("clamp maxSendLen max", bad.maxSendLen, 500);
         eqs("invalid action->default", bad.channelNextKey, "NextPage");
+        eqs("invalid scroll-up token->default", FcmConfig.parse("[FCMChat]\nscrollUpKey=<bad>\n").scrollUpKey, "Up");
+        eqs("blank scroll-bottom stays unset", FcmConfig.parse("[FCMChat]\nscrollBottomKey=\n").scrollBottomKey, "");
         eqi("invalid color->default", bad.bgColor, 0x0A0907);
 
         // ── x/y clamped into the 1920x1080 viewport given width/height ──

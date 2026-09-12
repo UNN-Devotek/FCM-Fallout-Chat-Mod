@@ -1,3 +1,4 @@
+import { INACTIVE_BRIDGE, readBridgeState, mergeBridgeRows, clearBridgeRows, bridgeSendPayload, type BridgeState } from './bridgeFeed';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 // Notification ping (#437). Imported as a module asset so Vite fingerprints it
@@ -246,7 +247,11 @@ export function mergeHistoryMessages<T extends { id: string; timestamp?: string 
   cap: number,
 ): T[] {
   const seen = new Set(prev.map(m => m.id));
-  const fresh = incoming.filter(m => !seen.has(m.id));
+  const fresh = incoming.filter(m => {
+    if (seen.has(m.id)) return false;
+    seen.add(m.id);
+    return true;
+  });
   if (fresh.length === 0) return prev; // no-op: same ref → no re-render / scroll-jump
   const merged = [...prev, ...fresh];
   merged.sort((a, b) => {
@@ -4357,10 +4362,20 @@ export default function ChatOverlay() {
   }, [inputText]);
 
   // Fetch hierarchical channels
-  const { data: channelsRaw, refetch: refetchChannels } = useQuery({
+  const { data: staticChannels, refetch: refetchChannels } = useQuery({
     queryKey: ['channels'],
     queryFn: () => api.get<Channel[]>('/api/channels').then(d => d ?? []),
   });
+  const [bridgeState, setBridgeState] = useState<BridgeState>(INACTIVE_BRIDGE);
+  const bridgeStateRef = useRef<BridgeState>(INACTIVE_BRIDGE);
+  const channelsRaw = useMemo(() => {
+    if (!staticChannels || !overlayShell || isPublicMode || bridgeState.status !== 'ready') return staticChannels;
+    const parent = staticChannels.find(c => c.name.toLowerCase() === 'fallout 76') ?? staticChannels[0];
+    return staticChannels.map(c => c !== parent ? c : { ...c, children: [...(c.children ?? []), {
+      id: bridgeState.channelId, name: 'Server', color: c.color, parentId: c.id,
+      allowGifs: false, allowEmojis: true,
+    }] });
+  }, [staticChannels, bridgeState, overlayShell, isPublicMode]);
   useEffect(() => { refetchChannelsRef.current = () => refetchChannels(); }, [refetchChannels]);
 
   // Live app version — the LATEST published release from GET /api/version, NOT the
@@ -4538,7 +4553,6 @@ export default function ChatOverlay() {
     const allSubs = channelsRaw.flatMap(c => c.children || []);
     const serverTab = allSubs.find(c => c.id.startsWith('server:')) ?? null;
     const prevId = prevServerTabIdRef.current;
-    const wasLoaded = channelsHaveLoadedRef.current;
     prevServerTabIdRef.current = serverTab?.id ?? null;
     channelsHaveLoadedRef.current = true;
 
@@ -4551,10 +4565,8 @@ export default function ChatOverlay() {
         const subs = channelsRaw[0].children || [];
         setActiveSubId(subs[0]?.id ?? channelsRaw[0].id);
       }
-    } else if (serverTab && !prevId && activeSubIdRef.current && wasLoaded) {
-      // Server tab newly appeared — auto-switch to it.
-      // Guard on wasLoaded so cold-open always starts on General even when
-      // the user is already in-game at page load.
+    } else if (serverTab && prevId && prevId !== serverTab.id && activeSubIdRef.current === prevId) {
+      // Follow a confirmed room change only when the user was viewing Server.
       const parent = channelsRaw.find(c => (c.children || []).some(s => s.id === serverTab.id));
       if (parent) setActiveMainId(parent.id);
       setActiveSubId(serverTab.id);
@@ -4566,7 +4578,8 @@ export default function ChatOverlay() {
   const isOnServerChannel = activeMainId !== PM_MAIN_ID
     && activeMainId !== PARTY_MAIN_ID
     && activeSubId.startsWith('server:');
-  const adminFeedActive = isAdmin && isOnServerChannel;
+  const isBridgeChannel = isOnServerChannel && bridgeState.status === 'ready' && activeSubId === bridgeState.channelId;
+  const adminFeedActive = isAdmin && isOnServerChannel && !isBridgeChannel;
 
   const { data: feedData } = useQuery({
     queryKey: ['server-feed'],
@@ -4578,8 +4591,8 @@ export default function ChatOverlay() {
   const { data: membersData, refetch: refetchMembers } = useQuery({
     queryKey: ['same-server-members'],
     queryFn: () => api.get<{ serverEndpoint: string | null; users: ServerMember[]; totalChatMod: number; allPlayers: string[] | null }>('/api/presence/same-server'),
-    enabled: isOnServerChannel,
-    refetchInterval: isOnServerChannel ? 10_000 : false,
+    enabled: isOnServerChannel && !isBridgeChannel,
+    refetchInterval: isOnServerChannel && !isBridgeChannel ? 10_000 : false,
   });
   useEffect(() => { presenceRefetchRef.current = () => refetchMembers(); }, [refetchMembers]);
   useEffect(() => {
@@ -4853,7 +4866,7 @@ export default function ChatOverlay() {
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN && all.length > 0) {
       for (const ch of all) {
-        ws.send(JSON.stringify({ type: 'chat:history', payload: { channelId: ch.id, limit: 300 } }));
+        if (!ch.id.startsWith('server:')) ws.send(JSON.stringify({ type: 'chat:history', payload: { channelId: ch.id, limit: 300 } }));
       }
     }
   }, [channelsRaw]);
@@ -4976,6 +4989,14 @@ export default function ChatOverlay() {
     }
     let ws: WebSocket | undefined;
     let cancelled = false;
+    let bridgeWatch: ReturnType<typeof setInterval> | undefined;
+    const resetBridge = () => {
+      clearInterval(bridgeWatch);
+      bridgeStateRef.current = INACTIVE_BRIDGE;
+      setBridgeState(INACTIVE_BRIDGE);
+      setMessages(clearBridgeRows);
+    };
+    resetBridge();
     let retryTimeout: ReturnType<typeof setTimeout>;
     let fetchAbort: AbortController | undefined;
     // Tracks consecutive 401/403 responses from /auth/ws-ticket.
@@ -5014,6 +5035,11 @@ export default function ChatOverlay() {
 
           ws.onopen = () => {
             setConnected(true);
+            if (overlayShell) {
+              const watch = () => { if (!cancelled && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'bridge:watch' })); };
+              watch();
+              bridgeWatch = setInterval(watch, 10_000);
+            }
             // Flush any chat:send frames that were queued while offline.
             try {
               const r = outboxRef.current.flush((f) => ws!.send(f), Date.now());
@@ -5059,7 +5085,7 @@ export default function ChatOverlay() {
               knownChannelIds: known.map(ch => ch.id),
             });
             for (const channelId of historyChannelIds) {
-              ws!.send(JSON.stringify({ type: 'chat:history', payload: { channelId, limit: 300 } }));
+              if (!channelId.startsWith('server:')) ws!.send(JSON.stringify({ type: 'chat:history', payload: { channelId, limit: 300 } }));
             }
             // If the user is currently viewing a specific party, also request its
             // history. The party:history effect only fires on partyView CHANGES, so
@@ -5084,6 +5110,7 @@ export default function ChatOverlay() {
             ws!.send(JSON.stringify({ type: 'client:status', payload: { inGame: inGameRef.current } }));
           };
           ws.onclose = (ev?: { code?: number; reason?: string }) => {
+            resetBridge();
             setConnected(false);
             if (editPendingRef.current) {
               editPendingRef.current = false;
@@ -5109,6 +5136,25 @@ export default function ChatOverlay() {
           ws.onmessage = (event) => {
             try {
               const frame = JSON.parse(event.data);
+              if (cancelled) return;
+              if (frame.type === 'bridge:state') {
+                const next = readBridgeState(frame.payload, !!overlayShell && !isPublicMode);
+                const previous = bridgeStateRef.current;
+                if (next.status !== 'ready' || previous.status !== 'ready' || next.bindingId !== previous.bindingId) setMessages(clearBridgeRows);
+                bridgeStateRef.current = next;
+                setBridgeState(next);
+                return;
+              }
+              if (frame.type === 'bridge:history' || frame.type === 'bridge:message') {
+                const state = bridgeStateRef.current;
+                const rows = Array.isArray(frame.payload?.messages) ? frame.payload.messages.filter((row: unknown) => {
+                  if (!row || typeof row !== 'object') return false;
+                  const r = row as Record<string, unknown>;
+                  return typeof r.id === 'string' && typeof r.channelId === 'string' && typeof r.content === 'string' && typeof r.username === 'string';
+                }) as ChatMessage[] : [];
+                setMessages(prev => bridgeStateRef.current === state ? mergeBridgeRows(prev, rows, state, frame.payload ?? {}, MESSAGE_CAP) : prev);
+                return;
+              }
               if (frame.type === 'chat:message') {
                 // Client-side dedup: backend may deliver the same frame more than
                 // once (multi-tab / reconnect zombie). Skip if id already rendered.
@@ -5451,7 +5497,7 @@ export default function ChatOverlay() {
               } else if (frame.type === 'channels:refresh') {
                 refetchChannelsRef.current?.();
               } else if (frame.type === 'presence:update') {
-                if (activeSubIdRef.current.startsWith('server:')) {
+                if (activeSubIdRef.current.startsWith('server:') && bridgeStateRef.current.status !== 'ready') {
                   presenceRefetchRef.current?.();
                 }
               } else if (frame.type === 'commands:updated') {
@@ -5704,6 +5750,7 @@ export default function ChatOverlay() {
     connect();
     return () => {
       cancelled = true; clearTimeout(retryTimeout);
+      resetBridge();
       fetchAbort?.abort();
       try { (window as any).relayBridge?.logDiag?.('[ws-gate] teardown — closing WS'); } catch { /* noop */ }
       ws?.close();
@@ -5928,12 +5975,12 @@ export default function ChatOverlay() {
     const activeChannel = [...mainChannels, ...mainChannels.flatMap(m => m.children || [])].find(c => c.id === activeSubId);
     const isMain = mainChannels.some(m => m.id === activeSubId);
     if (isMain && activeChannel) {
-      ws.send(JSON.stringify({ type: 'chat:history', payload: { channelId: activeSubId, limit: 300 } }));
+      if (!activeSubId.startsWith('server:')) ws.send(JSON.stringify({ type: 'chat:history', payload: { channelId: activeSubId, limit: 300 } }));
       for (const sub of (activeChannel as Channel).children || []) {
-        ws.send(JSON.stringify({ type: 'chat:history', payload: { channelId: sub.id, limit: 300 } }));
+        if (!sub.id.startsWith('server:')) ws.send(JSON.stringify({ type: 'chat:history', payload: { channelId: sub.id, limit: 300 } }));
       }
     } else {
-      ws.send(JSON.stringify({ type: 'chat:history', payload: { channelId: activeSubId, limit: 300 } }));
+      if (!activeSubId.startsWith('server:')) ws.send(JSON.stringify({ type: 'chat:history', payload: { channelId: activeSubId, limit: 300 } }));
     }
   }, [activeSubId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -6115,7 +6162,7 @@ export default function ChatOverlay() {
         ? [activeSubId, ...((activeChannel as Channel).children || []).map(c => c.id)]
         : [activeSubId];
       // Pick the first channel that still has older history to fetch.
-      const target = channelIds.find(id => !lazyEndReachedRef.current.has(id));
+      const target = channelIds.find(id => !id.startsWith('server:') && !lazyEndReachedRef.current.has(id));
       if (!target) return;
       const offset = lazyLoadedCountRef.current.get(target) || 0;
       lazyLoadingRef.current = true;
@@ -6485,6 +6532,16 @@ export default function ChatOverlay() {
   // automatic flush on the next reconnect. Inert in public mode.
   const sendOrQueueChat = useCallback((frame: object) => {
     const ws = wsRef.current;
+    const outgoing = frame as { type?: string; payload?: { channelId?: string } };
+    if (outgoing.type === 'chat:send' && outgoing.payload?.channelId?.startsWith('server:')) {
+      const payload = bridgeSendPayload(outgoing.payload, bridgeStateRef.current);
+      if (isPublicMode || !payload || !ws || ws.readyState !== WebSocket.OPEN) {
+        showActionToast('err', 'Server bridge is not connected.');
+        return;
+      }
+      ws.send(JSON.stringify({ ...outgoing, payload }));
+      return;
+    }
     const json = JSON.stringify(frame);
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(json);
@@ -11090,7 +11147,7 @@ export default function ChatOverlay() {
       )}
 
       {/* ── Server member list panel ── */}
-      {isOnServerChannel && !adminFeedActive && (
+      {isOnServerChannel && !adminFeedActive && !isBridgeChannel && (
         <div style={{
           width: '180px',
           flexShrink: 0,

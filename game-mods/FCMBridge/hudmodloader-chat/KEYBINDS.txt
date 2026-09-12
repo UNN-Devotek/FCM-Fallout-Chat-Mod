@@ -37,12 +37,30 @@ has OpenChatKey, changing only the fragment will have no effect.
 
 OTHER HUD ACTIONS
 -----------------
-FCMChat.ini also exposes channelNextKey, channelPrevKey, and hideKey. These are
-HUDMod::UserEvent action names forwarded by HUDModLoader, not arbitrary physical keys.
-Their defaults are NextPage, PrevPage, and blank. Page Up/Down and Arrow Up/Down physical
-fallbacks are currently fixed because their provider contracts differ; they are not INI
-keybinds. Arrow Up/Down scroll only while the chat input is open so gameplay controls remain
-available at other times.
+FCMChat.ini exposes channelNextKey, channelPrevKey, scrollUpKey, scrollDownKey,
+scrollBottomKey, and hideKey. These are HUDMod::UserEvent action names forwarded by
+HUDModLoader, or physical key tokens understood by the extender fallback. The defaults are
+NextPage, PrevPage, Up, Down, blank, and blank. ArrowUp/ArrowDown (and Cursor/Dpad aliases)
+are equivalent to the default Up/Down actions. To rebind scrolling, set for example:
+
+  [FCMChat]
+  scrollUpKey=Console
+  scrollDownKey=F12
+  scrollBottomKey=Home
+
+An empty scroll key disables that direction. `scrollBottomKey` is deliberately empty in the
+shipped settings, so Home and End do not jump to newest unless you choose one of them (or a
+forwarded action such as `DiagnosticSnapshot`). Feed navigation is accepted only after the
+open-chat key owns a visible input session; before then the game keeps the controls. The F11
+HUDModLoader menu's **Scroll to newest** item remains available regardless of this optional
+binding.
+
+For ZFE, use Fallout control-map action names that the loader forwards. For xScal, a token
+with a documented Windows virtual-key mapping (Home, End, F12, a letter or digit, etc.) is
+also registered through `Input.RegisterKey`/`Input.IsKeyPressed`; the named-action path remains
+available for control-map actions. Registration is polling bookkeeping and does not suppress the
+underlying keyboard action. Test any bare gameplay key for conflicts. The physical fallback uses
+the same configured values for ZFE when its compatibility Input.* surface is available.
 
 XSCAL OPEN-CHAT KEY
 -------------------

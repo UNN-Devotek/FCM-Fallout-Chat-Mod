@@ -13,13 +13,14 @@ const router = Router();
 
 /**
  * POST /api/player-list
- * Called by GameMonitor whenever the FO76 companion mod writes a new player list.
- * Body: { endpoint?: string, players: string[], alternateEndpoints?: string[] }
+ * Compatibility snapshot endpoint for older companion clients.
+ * Body: { endpoint?: string, players: string[], sessionId?: string, worldSessionId?: string }
  * Auth: X-Auth-Token (requireClientAuth middleware).
  *
  * World-session and same-server detection have been removed. This route accepts
- * POSTs for backwards compatibility with older companion mod versions and returns
- * 204 after basic validation.
+ * POSTs for backwards compatibility, validates and caches names for lookup commands,
+ * then returns 204. Submitted endpoint/session keys do not establish room membership.
+ * The current desktop client no longer runs the old GameMonitor reporting loop.
  */
 router.post('/', playerListLimiter, requireClientAuth, async (req: Request, res: Response) => {
   const {

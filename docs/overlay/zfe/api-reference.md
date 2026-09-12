@@ -1,6 +1,11 @@
 # ZFE API Reference
 
-This is the combined API reference for all ZFE bridge calls available to HUD mod authors.
+> Historical general/remote-data API snapshot, not an exhaustive current ZFE reference.
+> For new code, use [the provider guide](modder-guide.md) and linked author contracts. In particular,
+> public `input.v1.*` and `hotkeys.v1.*` are separate from FCM compatibility `Input.*` calls;
+> remote data is not the current FCM HUD transport.
+
+This preserves the earlier combined reference for selected ZFE bridge calls.
 Read the [Modder Guide](modder-guide.md) first for bridge discovery, call mechanics, logging, and testing discipline.
 
 ---

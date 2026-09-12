@@ -1,0 +1,6 @@
+--main FCMServerBridge
+--class-path ..
+--class-path ../hudmodloader-chat
+--swf FCMServerBridge.swf
+--swf-version 32
+-D haxeJSON

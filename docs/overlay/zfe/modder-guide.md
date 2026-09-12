@@ -1,140 +1,77 @@
-# ZFE Modder Guide
+# Provider APIs used by the FCM HUD
 
-Starting point for Fallout 76 UI mod authors calling ZFE from ActionScript/Scaleform.
+This guide separates FCM's implemented adapter from upstream APIs that may be available to new
+mods. It was checked against local source and the authors' public guides on 2026-09-12. Always
+check the running provider's capabilities; an article's version or a familiar object name is not
+a compatibility guarantee.
 
-## Related Guides
+## FCM adapter
 
-- [ZFE API Reference](api-reference.md) — Remote Data, Storage, Events, Imports, and Legacy Compatibility in one doc
-- [ZFE Environment Variables](env-vars.md) — variables useful while testing your mod
-- [ZFE Logs and Troubleshooting](logs-troubleshooting.md)
+Use [`FcmNativeApi.hx`](../../../game-mods/FCMBridge/FcmNativeApi.hx) instead of introducing a
+second provider-discovery implementation. It walks already-exposed movie/parent/root surfaces.
+It does not inspect DLLs, read game memory, or scan files/ports to choose an extender.
 
-## What ZFE Exposes
+| Surface | How FCM uses it |
+| --- | --- |
+| ZFE `__ZFE.call` / `ZFECodeObj.call` | Canonical verb plus JSON string; positive native-chat capability response required |
+| Legacy call-only `__SFCodeObj` / `BRG_OBJ` | Ambiguous until positively identified; avoid sending ZFE probes to a known xScal registry |
+| xScal `chatInterface` | Required `connect`, `pollEvents`, `sendMessage`; positive optional runtime response when exposed; selected first if both providers are present |
+| xScal generic callback | Logging and physical `Input.*`, separate from chat transport |
 
-ZFE exposes a local API bridge. Preferred call shape:
+xScal chat payloads are ActionScript objects, parsed from FCM's canonical JSON input. Runtime,
+connection-state, disconnect, logout, and credential-clear methods take no arguments in the
+adapter. `report` maps to `reportMessage`; auth-state lookup has its supported connection-state
+fallback. Do not pass JSON strings or extra `{}` arguments indiscriminately.
 
-```as3
-__ZFE.call(command:String, payloadJson:String):String
-```
+ZFE general runtime discovery uses `getRuntimeInfo`; FCM's existing chat gate checks
+`chat.v1.getRuntimeInfo` for `zfe-chat-online-v1`. The author's current general capability is
+`zfe-chat-v1`. These are different discovery surfaces; do not silently replace one gate with the
+other without adapter tests and a runtime trace. The
+[ZFE API overview](https://www.nexusmods.com/fallout76/articles/255) is the upstream starting point;
+the [chat relay guide](https://www.nexusmods.com/fallout76/articles/256) owns the current wire contract.
 
-New mods should look for `__ZFE` first. ZFE also installs compatibility objects for older roots, so the same ZFE commands may be available through `ZFECodeObj.call(...)` or `__SFCodeObj.call(...)`. However, xScal also installs a generic `__SFCodeObj.call` on the movie root, so that name alone is not proof of ZFE; require a successful capability response before using it.
+## Three distinct input contracts
 
-## Finding the Bridge
+1. **Current FCM input:** SharedHUDTools' host editor first, with a legacy ZFE native-editor
+   fallback. The child widget does not send its own ControlMap lock events.
+2. **Physical `Input.*` compatibility:** xScal documents numeric Windows VK arguments and Boolean
+   results for registration, polling, and unregistration. FCM requires true Boolean success for
+   xScal. Its ZFE compatibility decoder also supports older return shapes. An accepted register
+   call is not proof that polling or keyboard suppression works. See the
+   [xScal Input guide](https://www.nexusmods.com/fallout76/articles/268).
+3. **Public ZFE owner-scoped APIs:** `zfe-input-v1` names `input.v1.*` text sessions; it is not
+   evidence for legacy `Input.RegisterKey` or chat-editor calls. `zfe-hotkeys-v1` names a separate
+   hotkey API. Neither is implemented by merely renaming FCM's compatibility methods.
 
-`api` is **not** an ActionScript import. ZFE injects bridge objects into the live UI at runtime. Find one at startup:
+The detailed [ZFE hotkey guide](https://www.nexusmods.com/fallout76/articles/270) is available,
+superseding older “payload contract unavailable” notes. It describes vendor-owned registrations,
+exact chords, edge-count polling, and explicit unregistration; abandoned registrations expire
+after five seconds. It does not guarantee blocking a gameplay binding. Its key list does not
+include arrows, so it cannot replace every feed-navigation key unchanged. Migration remains
+separate work requiring ownership, idle/typing, repeat, timeout, and unload tests.
 
-```as3
-function bridgeOn(container:Object, name:String):Object {
-    if (container != null && container[name] != null && container[name].call != null) {
-        return container[name];
-    }
-    return null;
-}
+The [ZFE text-input guide](https://www.nexusmods.com/fallout76/articles/260) documents session
+ownership, heartbeat, and release behavior. Keep that lifecycle distinct from the old chat-input
+fallback. Refer to the author's current API for new work rather than copying the historical API
+snapshot in this folder.
 
-function findZfeApi(scope:Object):Object {
-    var parent:Object = scope != null ? scope.parent : null;
-    var root:Object   = scope != null ? scope.root   : null;
+## Results, timing, and security
 
-    var api:Object = bridgeOn(scope,  "__ZFE");      if (api != null) return api;
-        api        = bridgeOn(parent, "__ZFE");      if (api != null) return api;
-        api        = bridgeOn(root,   "__ZFE");      if (api != null) return api;
-        api        = bridgeOn(root,   "ZFECodeObj"); if (api != null) return api;
-    var legacy:Object = bridgeOn(root, "__SFCodeObj");
-    if (legacy != null) {
-        // xScal uses this same property for a different callback registry.
-        // Identify that registry before sending any ZFE chat command.
-        var xscalInfo:String = String(legacy.call("GetXSRuntimeInfo", "{}"));
-        if (xscalInfo.indexOf('"runtime":"xScal"') >= 0 ||
-            xscalInfo.indexOf('"runtime": "xScal"') >= 0) return null;
-        var legacyInfo:String = String(legacy.call("chat.v1.getRuntimeInfo", "{}"));
-        if (legacyInfo.indexOf('"success":true') >= 0 &&
-            legacyInfo.indexOf("zfe-chat-online-v1") >= 0) return legacy;
-    }
-    return null;
-}
+Parse successful JSON explicitly and reject malformed/unsupported results. A successful xScal
+`connecting` response is pending transport, not linked authentication. Keep native calls bounded;
+a timer defers a synchronous call but does not make it asynchronous. Preserve session-scoped
+cursors, durable message identities, replay-before-echo ordering, and capability-gated retries.
 
-var api:Object = findZfeApi(this);
-```
+Native credentials stay provider-owned. Use only documented storage/import APIs for allowed
+UI settings; never use vendor storage to edit a credential container. Preserve per-provider
+argument shapes and error handling. The HUD may consume data the game already publishes to its
+UI, but the desktop overlay must not inherit that access.
 
-All examples in ZFE guides assume `api` is a bridge object returned by a lookup like this.
+## Further references
 
-## getRuntimeInfo
-
-```as3
-var result:String = String(api.call("getRuntimeInfo", "{}"));
-```
-
-Parse the returned JSON and check `success:true`. Contains: `runtime`, `version`, `protocol`, `mode`, `capabilities`, `limits`, `remoteData`.
-
-Useful capability names:
-
-| Capability | Feature |
-|---|---|
-| `zfe-general-api-v1` | General API |
-| `zfe-storage-v1` | Local storage |
-| `zfe-import-v1` | Allow-listed import files |
-| `zfe-log-v1` | ZFE log API |
-| `zfe-events-v1` | In-process events |
-| `zfe-remote-data-v1` | HTTPS remote data fetch |
-
-For HUDModLoader AS3 mods, search order:
-1. `this.__ZFE`, `parent.__ZFE`, `root.__ZFE`
-2. `ZFECodeObj` at the same locations
-3. `__SFCodeObj` for legacy compatibility, but accept it only after a positive ZFE capability probe (xScal uses the same property name for a different callback registry)
-4. First-level children of root if hosted inside another menu
-
-## Result Shape
-
-Success:
-```json
-{"success":true}
-```
-
-Failure:
-```json
-{"success":false,"error":{"code":"invalid_vendor","message":"Vendor must be 1..64 ASCII letters, digits, dot, dash, or underscore"}}
-```
-
-**Always parse JSON and check `success`. Never treat a non-empty string as success.**
-
-## Safe Names
-
-Most commands require a `vendor` field. Use a stable vendor name for your mod or family.
-
-Vendor names, event topics, and log categories: 1–64 ASCII letters, digits, `.`, `-`, `_`.
-
-Good examples: `MyMod`, `MyMod.UI`, `FCMBridge`, `PerkLoadoutManager`
-
-## Logging
-
-```as3
-api.call("log",
-    "{\"vendor\":\"FCMBridge\",\"level\":\"info\",\"category\":\"startup\",\"message\":\"loaded\"}");
-```
-
-Levels: `trace`, `info`, `warn`, `error`. Result: `{"success":true,"status":"logged"}`.
-
-Keep messages short. Do not log private player data.
-
-## Current Limits
-
-| Resource | Limit |
-|---|---|
-| Storage write/read | 1 MiB |
-| Import read | 2 MiB |
-| Log message | 4096 bytes |
-| Event data JSON | 8192 bytes |
-| Retained events | 128 |
-| Poll batch | 1–64 (default 16) |
-
-## Safety Boundary
-
-The local ZFE API does **not** inspect game memory, attach to another process, bypass anti-cheat, scrape player/vendor/container state, or automate trade.
-
-Use it for: local UI-mod coordination, local mod settings, allow-listed imports, logs, and documented ZFE APIs only.
-
-## Testing Checklist
-
-1. Call `getRuntimeInfo` — confirm `success:true`, version, and the capability you need.
-2. Parse every command result and check `success`.
-3. Inspect `zfe.log` for your vendor's Mod API lines.
-4. Test Steam and Game Pass separately if claiming support for both.
+- [FCM integration](native-chat-relay/fcm-integration.md): actual relay operations, controls, and permissions.
+- [Scaleform engineering](scaleform-ui-guide.md): rendering/input/artifact evidence.
+- [API snapshot](api-reference.md): historical general/remote-data APIs, not a complete current contract.
+- [Environment notes](env-vars.md), [logs and troubleshooting](logs-troubleshooting.md): diagnostic scope.
+- [xScal callback source](https://github.com/DCHoaxer/xScal/blob/main/src/api/scaleform_callbacks.cpp):
+  generic callback implementation, separate from the chat interface.

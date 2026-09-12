@@ -1,6 +1,24 @@
 # HUD wrapping and connection recovery checks
 
 These checks apply to the optional in-game HUD widget, separately from the desktop overlay.
+
+For local candidate 2.10.78, verify the combined General feed on each extender:
+
+- Receive one message from General, Server, Trading, Events, Infests, and Raids. General must
+  show each once with its source label. Each other tab must show only its own rows. Sending
+  from General must still target General.
+- Send identical text twice, then replay the first event while the second send awaits its
+  echo. The two real messages must remain two rows; no replay may replace the second send's ID.
+  Repeat after reconnect and after enough history to evict old cached IDs.
+- Change worlds with General open. Only the old Server rows disappear. Early Server events
+  must remain deferred until a matching room confirmation; other-world rows must never appear.
+- With more than 32 retained messages, switch tabs and reload while rows are rendering. Old
+  slices must not reappear. A failed delayed row must fall back without an uncaught callback.
+- Test reversed `scrollUpKey=Down` / `scrollDownKey=Up`, then a configured `scrollBottomKey`.
+  Physical and forwarded aliases must agree; feed actions remain gated by an open editor. Also
+  deliver the named and physical alias for the same press: existing latches key on normalized
+  action names, so cross-alias one-press behavior needs explicit per-loader verification.
+
 Run the outage scenarios against a disposable local or Dev backend; do not interrupt Prod to
 test recovery. Repeat with xScal and ZFE individually, recording the widget build and provider
 from fresh logs. Automated tests do not establish native GFx or extender behavior.

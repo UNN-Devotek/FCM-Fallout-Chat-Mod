@@ -17,6 +17,15 @@ class TestFcmCommand {
         check("SERVER excludes General messages", !FcmCommand.channelVisible("server", "global"));
         check("Trading excludes server messages", !FcmCommand.channelVisible("trading", "server"));
         check("General includes community messages", FcmCommand.channelVisible("global", "global"));
+        var channels = ["global", "server", "trade", "events", "infests", "raids"];
+        for (active in channels) for (channel in channels) {
+            check(active + " visibility of " + channel,
+                FcmCommand.channelVisible(active, channel) == (active == "global" || active == channel));
+        }
+        for (channel in ["system", "party", "private", "unknown", "", null]) {
+            check("General excludes non-feed channel " + channel, !FcmCommand.channelVisible("global", channel));
+            check("invalid tabs fail closed " + channel, !FcmCommand.channelVisible(channel, channel));
+        }
         check("PipBoy releases shared editor", FcmCommand.externalInputClosePath(true, false, "pipboy") == "shared");
         check("PipBoy releases native editor", FcmCommand.externalInputClosePath(true, true, "PipBoy") == "native");
         check("PipBoy menu blocks input", FcmRoster.hasPipboy({menuStackA: [{menuName: "PipboyMenu"}]}));
@@ -43,17 +52,37 @@ class TestFcmCommand {
         check("xScal letter token maps to uppercase VK", FcmCommand.virtualKeyCode("a") == 0x41);
         check("xScal digit token maps to VK digit", FcmCommand.virtualKeyCode("7") == 0x37);
         check("control-map-only token does not guess a physical key", FcmCommand.virtualKeyCode("Console") == 0);
-        check("home jumps to newest", FcmCommand.isScrollToBottom("Home"));
-        check("end jumps to newest", FcmCommand.isScrollToBottom("End"));
+        check("scroll-to-bottom is unbound without a configured action", !FcmCommand.isScrollToBottom("Home"));
+        check("configured scroll-to-bottom action matches", FcmCommand.isScrollToBottom("F12", "F12"));
+        check("unconfigured scroll-to-bottom action is ignored", !FcmCommand.isScrollToBottom("End", ""));
+        check("custom scroll key maps to its physical token",
+            FcmCommand.physicalNavigationAction(0x7B, "Up", "Down", "F12") == "F12");
+        check("built-in physical arrow remains available for default scroll",
+            FcmCommand.physicalNavigationAction(0x26, "Up", "Down", "") == "ArrowUp");
         check("page down selects next channel", FcmCommand.isNextChannel("Page Down", "NextPage"));
         check("page up selects previous channel", FcmCommand.isPreviousChannel("Page Up", "PrevPage"));
         check("ordinary action does not scroll", FcmCommand.scrollDirection("NextPage") == 0);
+        check("custom scroll-up action rebinds from arrow", FcmCommand.scrollDirection("Console", "Console", "Down") == -1);
+        check("old arrow action is released by a custom scroll-up bind", FcmCommand.scrollDirection("ArrowUp", "Console", "Down") == 0);
+        check("custom scroll-down action rebinds from arrow", FcmCommand.scrollDirection("F12", "Up", "F12") == 1);
+        check("reversed arrows retain physical aliases", FcmCommand.scrollDirection("ArrowDown", "Down", "Up") == -1);
+        check("reversed arrows retain loader aliases", FcmCommand.scrollDirection("CursorUp", "Down", "Up") == 1);
+        check("scroll-to-bottom accepts physical arrow alias", FcmCommand.isScrollToBottom("ArrowUp", "Up"));
+        check("scroll-to-bottom accepts Page Down token alias", FcmCommand.isScrollToBottom("PageDown", "PGDN"));
+        check("configured Page Up scroll alias wins consistently",
+            FcmCommand.navigationAction("PageUp", "NextPage", "PrevPage", "PGUP", "Down", "") == "feed-up");
         check("page down is a one-shot next-channel command",
             FcmCommand.navigationAction("Page Down", "NextPage", "PrevPage") == "next-channel");
         check("page up is a one-shot previous-channel command",
             FcmCommand.navigationAction("Page Up", "NextPage", "PrevPage") == "previous-channel");
         check("arrow navigation is classified as feed-only",
             FcmCommand.navigationAction("ArrowUp", "NextPage", "PrevPage") == "feed-up");
+        check("configured scroll-up navigation is feed-only",
+            FcmCommand.navigationAction("Console", "NextPage", "PrevPage", "Console", "Down", "") == "feed-up");
+        check("configured scroll-to-bottom navigation works",
+            FcmCommand.navigationAction("F12", "NextPage", "PrevPage", "Up", "Down", "F12") == "feed-bottom");
+        check("default scroll-to-bottom navigation remains unbound",
+            FcmCommand.navigationAction("Home", "NextPage", "PrevPage", "Up", "Down", "") == "");
         check("ordinary text never enters channel selection",
             FcmCommand.navigationAction("A", "NextPage", "PrevPage") == "");
         check("Unmapped never enters channel selection",

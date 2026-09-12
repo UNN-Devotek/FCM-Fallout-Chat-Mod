@@ -43,110 +43,30 @@ private typedef ModerationTargetResolution = {
 }
 
 /**
- * FCMChatWidget — HUDModLoader widget for Fallout Chat Mod.
+ * Optional FCM HUDModLoader child widget; the desktop overlay stays separate.
+ * Native transport is selected through FcmNativeApi: ZFE command/JSON dispatch
+ * or xScal chatInterface object/no-argument methods. Generic callbacks are separate.
  *
- * Transport: ZFE chat.v1 or xScal chatInterface, selected automatically.
- *   __ZFE.call("chat.v1.connect",    payload)   — register + connect
- *   __ZFE.call("chat.v1.pollEvents", payload)   — cursor-based event poll
- *   __ZFE.call("chat.v1.sendMessage",payload)   — send a message
- *   __ZFE.call("chat.v1.getAuthState","{}") — connection/auth health
- *   __ZFE.call("clearChatAuth","{}") — clear ZFE's local relay token (relink)
+ * General projects the six allowed source channels without copying/rebroadcasting.
+ * Retained IDs reject replay before pending echo matching; conflicting stable IDs
+ * never fall back to body matching. SERVER records require the current room gate.
  *
- * Font: GFx engine-registered HUDModLoader aliases — NO embed.
- *   `$MAIN_Font_Light` (body) and `$MAIN_Font_Bold` (bold/headers/tab labels) are
- *   font aliases registered by HUDModLoader at the GFx engine level (see HUDTools.as
- *   entry_tf / HUDButton.as label TextFields). Unlike HUDMenu.swf's per-movie symbol
- *   `$$MAIN_Font` (NOT resolvable in a child widget SWF), and unlike a Flash-@:font
- *   embedded TTF (GFx IGNORES child-SWF embedded TTFs — this is why the v2.3.0
- *   DejaVuSans embed still rendered tofu), these aliases DO resolve inside any child
- *   widget SWF loaded into ApplicationDomain.currentDomain — proven by HUDButton /
- *   HUDTools / HUDKeyboard, which render with them. embedFonts=true is kept on every
- *   TextField (the HUDTools entry_tf precedent); the aliases resolve fine with it.
- *   FONT_BODY is also passed to FormatTextEdit (matches HUDTools' entry_tf default).
+ * SharedHUDTools owns the primary editor and its balanced ControlMap lifecycle.
+ * The child does not dispatch ControlMap lock events. Legacy ZFE editor/Input.*
+ * compatibility is distinct from public input.v1.* and hotkeys.v1.* contracts.
+ * Idle Page Up/Down changes tabs; feed scrolling requires a visible owned editor.
  *
- * Native input fallback (v2.5.3): DECODED native chat-input API. The verbs are TOP-LEVEL ZFE
- *   commands that take BARE-VALUE payloads (not JSON) and return bare booleans/strings:
- *     setChatInputActive payload "true" -> true (ACTIVATES); "false" deactivates.
- *       (JSON {} / {"active":true} return false / do nothing — use bare "true"/"false".)
- *     consumeChatInputSubmitted -> bare BOOLEAN (true = Enter pressed since last check);
- *       the MESSAGE TEXT comes from readChatInput, NOT from the consume result.
- *     readChatInput -> the in-progress text buffer (bare string).
- *     isChatInputActive -> true/false ; isChatKeyPressed -> true when OpenChatKey
- *       (INSERT by default) pressed ; clearChatInput -> true.
- *   nativeTruthy(raw): trimmed/lowercased == "true" OR == "1" OR contains "success":true.
- *   FLOW (openInputNative, no game-control lock): setChatInputActive("true") -> _inputTimer (~100 ms)
- *     pollNativeInput(): readChatInput (show in-progress) ; if consume truthy => SUBMIT
- *       (final text = readChatInput, run through shared handleSubmittedText -> direct
- *       chat.v1.sendMessage, log full raw) ; else if !isChatInputActive => cancel (Esc).
- *     closeInputNative(): clearChatInput + setChatInputActive("false").
- *   OPEN triggers: HUDMod::UserEvent open key, AND a low-rate (~150 ms) pollOpenKey()
- *     that opens on an isChatKeyPressed false->true edge (so the configured key opens chat).
- *   HUDModLoader menu: the F11 HUDMod::UserEvent explicitly calls SharedHUDTools.ShowMenu();
- *     RegisterMenu() only registers FCM's entries and does not open the menu by itself.
- *   SharedHUDTools is the primary editor because its host-domain TextEdit owns the engine's
- *     ControlMap lifecycle. Native input is a no-lock fallback only when HUDTools is unavailable
- *     or cannot open. The first native activation is immediately cleared and verified because
- *     some Windows/ZFE builds expose the bare activation payload as literal text. NEVER run both.
- *     sendMessage stays chat.v1.sendMessage ONLY.
+ * Rendering uses native plain-text rows with TextFormat ranges and measured
+ * row-local vector decorations. Runtime-proven Fallout font aliases are used
+ * with embedFonts=true; historical failures do not prove universal GFx limits.
+ * Optional decoration preserves a styled baseline. Each delayed slice checks
+ * its generation and catches its own errors before a readable fallback.
  *
- * Input owner (PRIMARY): SharedHUDTools.FormatTextEdit + FormatOnScreenKeyboard + TextEdit.
- *   HUDModLoader's HUDTools handles StartEditText/EndEditText and gamepad OSK.
- *   ALL THREE must be called in order:
- *     1. FormatTextEdit(x,y,w,h,font,size,hexColor,bgHexColor,bgAlpha)
- *     2. FormatOnScreenKeyboard(oskX,oskY) — REQUIRED even on KB/mouse
- *     3. TextEdit(callback, startText)
- *   Without FormatOnScreenKeyboard, HUDTools sends ERROR|TXT → callback(null)
- *   immediately (the v2.0.3 "immediately released" bug).
- *
- * Native provider discovery: widget runs in HUDModLoader's ApplicationDomain
- * (shared with HUDMenu). FcmNativeApi walks the widget's parent/root chain for
- * an explicit ZFE bridge or xScal's chatInterface under __SFECodeObj or
- * __SFCodeObj. xScal may also install a generic call-only __SFCodeObj.call on
- * the movie root; that object is not a ZFE bridge and is never selected by name alone.
- *
- * Channel slugs (AllowedChannels in Data/ZFE/TextChat/fragments/FCMChatWidget.ini):
- *   global, trade, events, infests, raids, server
- * DefaultChannel: global
- *
- * Server-room membership (EULA §4(F)-safe — HUD UI data only, no memory reads):
- * the widget sends an observed roster from BSUIDataManager on the reserved
- * "server" channel. The authenticated relay derives a shared ephemeral room
- * from that roster. Legacy worldId data is only a best-effort fallback.
- *
- * Auth state:
- *   "authenticated" — player may send.
- *   "limited"       — account not yet linked; receive only; pinned link-code notice shown.
- *
- * Link gate (_needsLink) — STICKY across reconnects (v2.9.7):
- *   The relay pushes the link-code notice as a ONE-SHOT frame on register/hello/subscribe
- *   (relayHandler.pushLinkNotice) — it is not replayable, so a notice missed on a reconnect
- *   is gone for good. v2.9.6 and earlier cleared _needsLink on every (re)connect and waited
- *   for a fresh notice to re-raise it; when none arrived the widget silently fell through to
- *   the chat feed and the player could never reach the link screen again without deleting
- *   Data/ZFE/chat-auth.bin. The gate now persists until something PROVES the account is
- *   linked — a "LINK COMPLETE" notice or a successful send — and a pinned code older than
- *   LINK_CODE_REFRESH_MS forces a reconnect so the relay issues a fresh one.
- *
- * SWF CRASH HARD RULES (violations crashed the game in production):
- *   1. NO GlowFilter / DropShadow or any .filters assignment on MovieClip/Sprite.
- *   2. NO raw HTML entities (&amp; etc.) in htmlText — use numeric refs only.
- *   3. Live content is zfeSafe()d server-side; renderRecords() trusts that.
- *   4. Debug text: tf.text (plain), NEVER tf.htmlText.
- *   5. Extensions.enabled = true before ANY scaleform.gfx.* call.
- *   6. embedFonts = true + a real embedded/known font; text goes blank otherwise.
- *   7. No fl.motion.*, shaders, gradient masks, networking classes.
- *   8. No TextField update per-frame; event-driven only.
- *   9. NO getChildAt/numChildren on arbitrary native Scaleform objects (VM crash).
- *  10. NO hard casts (MovieClip(...)) — native-provider access is isolated in
- *      FcmNativeApi, which performs the guarded parent/root discovery.
- *
- * Docs:
- *   docs/overlay/zfe/native-chat-relay/protocol-spec.md  — chat.v1 call surface
- *   docs/overlay/zfe/native-chat-relay/fcm-integration.md — FCM relay adapter + worldId
- *   docs/overlay/zfe/scaleform-ui-guide.md §3,§9 — font embedding, HUDModLoader API
- *   docs/overlay/zfe/textchat-blueprint.md  — Text Chat mod decompile reference
+ * The sticky link gate survives reconnect until linked state is established.
+ * World/roster observations come only from HUD-published BSUIDataManager data.
+ * Diagnostics report bounded status/counts; do not log tokens, names, or bodies.
+ * See README.md / BUILD.md and docs/overlay/zfe/ for the maintained contract.
  */
-
 class FCMChatWidget extends MovieClip {
 
     // ── Widget identity ────────────────────────────────────────────────────────
@@ -154,7 +74,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.77"; // Configurable xScal physical open-key polling
+    static inline var VERSION:String  = "2.10.78"; // Combined General feed and replay/render guards (local candidate)
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -335,9 +255,9 @@ class FCMChatWidget extends MovieClip {
     // navigation is handled on the first edge available, then the matching key-up is ignored.
     var _navigationActionsDown:Map<String,Bool> = new Map();
     // Physical-key polling is an extender bookkeeping/read path, not a game-input lock. Page
-    // keys are always eligible for channel navigation; arrows/Home/End are read only while an
-    // Insert-open feed session is active. The map prevents a stage event and the physical path
-    // from handling the same press twice.
+    // keys are always eligible for channel navigation; configured feed keys are read only while
+    // an Insert-open feed session is active. The map prevents a stage event and the physical
+    // path from handling the same press twice.
     var _physicalNavigationDown:Map<Int,Bool> = new Map();
     // Patched HUDMenu calls the widget before it dispatches HUDMod::UserEvent. The matching
     // bubbling event is still useful for unpatched hosts, but must be ignored after the host
@@ -1352,7 +1272,8 @@ class FCMChatWidget extends MovieClip {
         }
 
         var navigation:String = FcmCommand.navigationAction(action,
-            _cfg.channelNextKey, _cfg.channelPrevKey);
+            _cfg.channelNextKey, _cfg.channelPrevKey,
+            _cfg.scrollUpKey, _cfg.scrollDownKey, _cfg.scrollBottomKey);
         if (navigation.length > 0) {
             zfeLog("info", "input", "HUDMod::UserEvent action=" + action
                 + " edge=" + (isDown ? "down" : "up") + " command=" + navigation);
@@ -1421,12 +1342,13 @@ class FCMChatWidget extends MovieClip {
         // mode. This matters because the same stage also hosts the SharedHUDTools editor: an
         // ordinary character or an Unmapped action must never be routed into channel handling.
         // Page actions switch channels while idle or while typing; the editor owner and draft are
-        // left untouched. Arrows/Home/End are feed commands only for an active Insert session.
+        // left untouched. Configured feed actions are feed commands only for an active Insert session.
         var navAction:String = FcmCommand.navigationAction(action,
-            _cfg.channelNextKey, _cfg.channelPrevKey);
+            _cfg.channelNextKey, _cfg.channelPrevKey,
+            _cfg.scrollUpKey, _cfg.scrollDownKey, _cfg.scrollBottomKey);
         if (navAction.length > 0) {
-            // Arrow/Home/End remain ordinary gameplay controls until Insert owns a visible
-            // editor. Page actions are FCM channel commands in either visible state.
+            // Configured feed actions remain ordinary gameplay controls until Insert owns a
+            // visible editor. Page actions are FCM channel commands in either visible state.
             var feedCommand:Bool = navAction == "feed-up" || navAction == "feed-down"
                 || navAction == "feed-bottom";
             if (feedCommand && !FcmCommand.feedNavigationEnabled(_inputOpen, _hidden)) {
@@ -3830,7 +3752,14 @@ class FCMChatWidget extends MovieClip {
             return;
         }
 
-        var keyCodes:Array<Int> = [VK_PAGEUP, VK_PAGEDOWN, VK_UP, VK_DOWN, VK_HOME, VK_END];
+        // Page keys remain the physical fallback for channel actions. Feed keys are
+        // configured below; scroll-to-bottom is intentionally absent unless the user
+        // selected a physical token in FCMChat.ini.
+        var keyCodes:Array<Int> = [VK_PAGEUP, VK_PAGEDOWN, VK_UP, VK_DOWN];
+        for (token in [_cfg.scrollUpKey, _cfg.scrollDownKey, _cfg.scrollBottomKey]) {
+            var configuredCode:Int = FcmCommand.virtualKeyCode(token);
+            if (configuredCode > 0 && keyCodes.indexOf(configuredCode) < 0) keyCodes.push(configuredCode);
+        }
         _physicalOpenKey = _api.provider == FcmNativeApi.XSCAL
             ? FcmCommand.virtualKeyCode(_cfg.openKey) : 0;
         _physicalOpenKeyDown = false;
@@ -3863,7 +3792,9 @@ class FCMChatWidget extends MovieClip {
         _physicalNavTimer.start();
         zfeLog("info", "input", "physical navigation poll started provider="
             + _api.provider + " interval=" + PHYSICAL_NAV_POLL_MS + "ms keys="
-            + _physicalNavRegistered.join(",") + " openKey=" + _physicalOpenKey);
+            + _physicalNavRegistered.join(",") + " openKey=" + _physicalOpenKey
+            + " scrollUp=" + _cfg.scrollUpKey + " scrollDown=" + _cfg.scrollDownKey
+            + " scrollBottom=" + (_cfg.scrollBottomKey.length > 0 ? _cfg.scrollBottomKey : "<unset>"));
     }
 
     var _physicalNavStep:String = "idle";
@@ -3902,12 +3833,14 @@ class FCMChatWidget extends MovieClip {
         }
         for (keyCode in _physicalNavRegistered) {
             if (_api.provider == FcmNativeApi.XSCAL && keyCode == _physicalOpenKey) continue;
-            // Page keys switch channels in either state. Feed-only keys remain ordinary game
-            // controls until the player has opened the editor with Insert.
-            var action:String = FcmCommand.physicalKeyAction(keyCode);
-            if (action == "ArrowUp" || action == "ArrowDown" || action == "Home" || action == "End") {
-                if (!FcmCommand.feedNavigationEnabled(_inputOpen, _hidden)) continue;
-            }
+            // Page keys switch channels in either state. Configured feed keys remain ordinary
+            // game controls until the player has opened the editor with Insert.
+            var action:String = FcmCommand.physicalNavigationAction(keyCode,
+                _cfg.scrollUpKey, _cfg.scrollDownKey, _cfg.scrollBottomKey);
+            if (action.length == 0) continue;
+            var command:String = FcmCommand.navigationAction(action,
+                _cfg.channelNextKey, _cfg.channelPrevKey,
+                _cfg.scrollUpKey, _cfg.scrollDownKey, _cfg.scrollBottomKey);
             _physicalNavStep = "read-key-" + keyCode;
             var isDown:Bool = _api.isPhysicalKeyPressed(keyCode);
             if (!_physicalNavProbeLogged && keyCode == VK_PAGEUP) {
@@ -3922,8 +3855,6 @@ class FCMChatWidget extends MovieClip {
                 && _physicalNavigationDown.get(keyCode);
             if (isDown == wasDown) continue;
             if (isDown) {
-                var command:String = FcmCommand.navigationAction(action,
-                    _cfg.channelNextKey, _cfg.channelPrevKey);
                 _physicalNavStep = "dispatch-key-" + keyCode;
                 var handled:Bool = handleUserEvent(action, true);
                 if (command.length > 0) {
@@ -4481,6 +4412,14 @@ class FCMChatWidget extends MovieClip {
 
             _history.observe(channel);
 
+            // Store each source message once before projecting it into General or its tab.
+            // A replay must be rejected BEFORE matching a newer same-text pending send.
+            if (CHAN_SLUGS.indexOf(channel) < 0) continue;
+            if (!eventEditAccepted && !markSeenEvent(channel, evId, messageId)) {
+                duplicateRejectedCount++;
+                continue;
+            }
+
             // Reconcile a pending self-send in place. The relay is the source of truth for
             // cosmetics, but appending a second canonical row would duplicate the message when
             // the event arrives after the optimistic row.
@@ -4489,7 +4428,6 @@ class FCMChatWidget extends MovieClip {
                 ownEchoMatchedCount++;
                 if (_lastEchoMatchMode == "id") ownEchoIdMatchCount++;
                 else ownEchoFallbackMatchCount++;
-                markSeenEvent(channel, evId, messageId);
                 newRecords = true;
                 continue;
             }
@@ -4499,11 +4437,6 @@ class FCMChatWidget extends MovieClip {
             // The old active-channel ingest filter silently discarded every other
             // channel's one-shot subscribe backfill — history looked empty on
             // Trading/Events/Raids/Infests forever after connect.
-            if (CHAN_SLUGS.indexOf(channel) < 0) continue;
-            if (!eventEditAccepted && !markSeenEvent(channel, evId, messageId)) {
-                duplicateRejectedCount++;
-                continue;
-            }
             appendedCount++;
 
             _records.push({
@@ -4513,7 +4446,7 @@ class FCMChatWidget extends MovieClip {
                 localSendId: "", pendingAt: 0, sendAccepted: false,
             });
             while (_records.length > _cfg.maxMessages) _records.shift();
-            if (_bScrolling) _newWhileScrolled++;
+            if (_bScrolling && FcmCommand.channelVisible(CHAN_SLUGS[_chanIdx], channel)) _newWhileScrolled++;
             newRecords = true;
         }
 
@@ -4749,7 +4682,7 @@ class FCMChatWidget extends MovieClip {
             localSendId: localSendId, pendingAt: flash.Lib.getTimer(), sendAccepted: false,
         });
         while (_records.length > _cfg.maxMessages) _records.shift();
-        if (_bScrolling) _newWhileScrolled++;
+        if (_bScrolling && FcmCommand.channelVisible(CHAN_SLUGS[_chanIdx], channel)) _newWhileScrolled++;
         if (FcmCommand.channelVisible(CHAN_SLUGS[_chanIdx], channel)) renderRecords();
     }
 
@@ -5432,7 +5365,9 @@ class FCMChatWidget extends MovieClip {
                 renderedCount = end;
                 if (renderedCount < pendingRecords.length) {
                     var chunk:Timer = new Timer(1, 1);
-                    chunk.addEventListener(TimerEvent.TIMER_COMPLETE, function(_:Dynamic) { doSlice(); });
+                    chunk.addEventListener(TimerEvent.TIMER_COMPLETE, function(_:Dynamic) {
+                        _renderGeneration.runCurrent(renderToken, doSlice, renderRecordsFallback);
+                    });
                     chunk.start();
                 } else {
                     zfeLog("info", "name-colors", "rows=" + pendingRecords.length + " differentFromTheme=" + customNameColorsChunk + " sliced render dt=" + (flash.Lib.getTimer() - tChunkStart) + "ms");
@@ -5464,24 +5399,30 @@ class FCMChatWidget extends MovieClip {
             doSlice();
         }
         } catch (err:Dynamic) {
-            try {
-                clearFeedRows();
-                _logTf.visible = true;
-                _feedLayer.visible = false;
-                _logTf.multiline = true;
-                _logTf.wordWrap = true;
-                var fallback = new StringBuf();
-                for (rec in _records) {
-                    if ((!_connected && _outboxIdentity.length == 0) || _needsLink) break;
-                    if (!FcmCommand.channelVisible(CHAN_SLUGS[_chanIdx], rec.channel)) continue;
-                    fallback.add("[" + FcmConfig.chanLabel(rec.channel) + "] " + rec.user + ": " + rec.body + "\n");
-                }
-                _logTf.text = !_connected && _outboxIdentity.length == 0 ? "connecting..."
-                    : (_needsLink ? "Link your account to chat" : fallback.toString());
-                _logTf.scrollV = _logTf.maxScrollV;
-            } catch (_:Dynamic) {}
-            zfeLog("warn", "render", "isolated render exception step=" + _renderStep + ": " + clip200(Std.string(err)));
+            renderRecordsFallback(err);
         }
+    }
+
+    /** Shared first-slice/timer failure path; invalidate pending work before showing plain text. */
+    function renderRecordsFallback(err:Dynamic):Void {
+        cancelPendingRender();
+        try {
+            clearFeedRows();
+            _logTf.visible = true;
+            _feedLayer.visible = false;
+            _logTf.multiline = true;
+            _logTf.wordWrap = true;
+            var fallback = new StringBuf();
+            for (rec in _records) {
+                if ((!_connected && _outboxIdentity.length == 0) || _needsLink) break;
+                if (!FcmCommand.channelVisible(CHAN_SLUGS[_chanIdx], rec.channel)) continue;
+                fallback.add("[" + FcmConfig.chanLabel(rec.channel) + "] " + rec.user + ": " + rec.body + "\n");
+            }
+            _logTf.text = !_connected && _outboxIdentity.length == 0 ? "connecting..."
+                : (_needsLink ? "Link your account to chat" : fallback.toString());
+            _logTf.scrollV = _logTf.maxScrollV;
+        } catch (_:Dynamic) {}
+        zfeLog("warn", "render", "isolated render exception step=" + _renderStep + ": " + clip200(Std.string(err)));
     }
 
     /**

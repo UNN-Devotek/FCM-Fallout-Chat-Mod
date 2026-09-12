@@ -1,0 +1,3 @@
+--class-path ../hudmodloader-chat
+--main TestFcmBridgeState
+--interp

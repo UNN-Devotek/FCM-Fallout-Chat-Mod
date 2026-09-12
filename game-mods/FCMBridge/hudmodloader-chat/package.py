@@ -60,217 +60,176 @@ def stamp_configs(target: str, chat_ini: str, widget_ini: str) -> tuple[str, str
 def install_instructions(
     target: str, provider: str = "unified", distribution: str = "website"
 ) -> str:
+    """Generate short, provider-specific installation instructions."""
     config = TARGETS[target]
     version = widget_version()
-    provider_label = "xScal" if provider == "xscal" else "ZFE"
-    config_file = "xscal.ini.example" if provider == "xscal" else "Data/ZFE/TextChat/fragments/FCMChatWidget.ini"
-    provider_setup = (
-        "Optional Windows helper: double-click Enable-xScal-Chat.cmd in the game folder.\n"
-        "   It backs up xscal.ini, sets [Chat] enabled=true and this package's relayEndpoint,\n"
-        "   and preserves all other settings. xScal ships with chat disabled by default.\n"
-        "   Extracting the BA2 or xscal.ini.example alone does NOT enable chat.\n"
-        "   Linux/Proton or manual setup: edit the EXISTING [Chat] section in xscal.ini\n"
-        "   beside Fallout76.exe using xscal.ini.example: change enabled=false to enabled=true\n"
-        "   and set relayEndpoint to the value below. Do not add a second [Chat] section.\n"
-        "   Preserve xScalPriority and all other sections, then restart Fallout 76."
-        if provider == "xscal" else
-        "The ZFE TextChat fragment supplies the relay endpoint and OpenChatKey. Keep\n"
-        "   FCMChat.ini openKey aligned with that key and any Data/configuration/zfe.ini override."
+    endpoint = config["endpoint"]
+    label = config["label"]
+
+    if distribution == "website":
+        xscal_files = (
+            "   Enable-xScal-Chat.cmd\n"
+            "   Enable-xScal-Chat.ps1\n"
+        )
+        xscal_helper = (
+            "  Windows: optionally run Enable-xScal-Chat.cmd from the game folder.\n"
+            "  It backs up xscal.ini, enables the section, and preserves other settings.\n"
+            "  Linux/Proton: use the manual edit above; the helper is Windows-only.\n"
+        )
+    else:
+        xscal_files = "   DOWNLOAD-XSCAL-SETUP-HELPERS.txt\n"
+        xscal_helper = (
+            "  This Nexus archive omits executable and script files. Use the manual edit above.\n"
+            "  DOWNLOAD-XSCAL-SETUP-HELPERS.txt explains where the optional website helper is found.\n"
+        )
+
+    zfe_fragment = (
+        "Data/ZFE/TextChat/fragments/FCMChatWidget.ini"
+        if provider == "zfe"
+        else "examples/ZFE/FCMChatWidget.ini.example"
     )
-    if provider == "unified":
-        provider_label = "ZFE or xScal"
-        config_file = "examples/ZFE/FCMChatWidget.ini.example\n   xscal.ini.example"
+    zfe_copy = (
+        "  The ZFE fragment is already at Data/ZFE/TextChat/fragments/FCMChatWidget.ini."
+        if provider == "zfe"
+        else "  Copy examples/ZFE/FCMChatWidget.ini.example to\n"
+             "  Data/ZFE/TextChat/fragments/FCMChatWidget.ini."
+    )
+    zfe_destination_note = "" if provider == "zfe" else " Create the destination folders if needed."
+    zfe_example_note = (
+        "  The archive includes examples/ZFE/zfe.ini.example as a global-override template.\n"
+        if provider == "unified"
+        else ""
+    )
+    zfe_setup = (
+        "ZFE setup\n"
+        "---------\n"
+        f"{zfe_copy}{zfe_destination_note}\n"
+        "  The fragment supplies the relay endpoint and OpenChatKey. Keep\n"
+        "  Data/FCMChat.ini openKey equal to OpenChatKey (INSERT by default).\n"
+        "  If Data/configuration/zfe.ini contains [TextChat], it overrides the fragment.\n"
+        "  Merge settings into that existing section; do not replace the file or duplicate keys.\n"
+        "  If you use an override, set:\n\n"
+        "  [TextChat]\n"
+        f"  Endpoint={endpoint}\n"
+        "  OpenChatKey=INSERT\n\n"
+        f"{zfe_example_note}"
+        "  Do not install xscal.ini. Restart Fallout 76 after changing ZFE configuration.\n"
+    )
+    xscal_setup = (
+        "xScal setup\n"
+        "------------\n"
+        "  xScal ships with chat disabled. Merge xscal.ini.example into the existing\n"
+        "  [Chat] section in xscal.ini beside Fallout76.exe:\n\n"
+        "  [Chat]\n"
+        "  enabled=true\n"
+        f"  relayEndpoint={endpoint}\n\n"
+        "  If the section or file is missing, add it once. Preserve unrelated settings\n"
+        "  and do not duplicate the [Chat] section.\n"
+        f"{xscal_helper}"
+        "  xScal has no OpenChatKey setting. Data/FCMChat.ini openKey is mapped through\n"
+        "  xScal Input.*; see KEYBINDS.txt for key behavior.\n"
+        "  Do not install the ZFE fragment or create Data/ZFE folders. Restart Fallout 76\n"
+        "  after changing xScal configuration.\n"
+    )
+
+    if provider == "zfe":
+        extender_instruction = (
+            "1. Exit Fallout 76. Install HUDModLoader and the ZFE script extender with\n"
+            "   chat.v1 support, using the authors' instructions."
+        )
+        provider_intro = (
+            "This archive is for ZFE with HUDModLoader. Do not install xScal configuration.\n"
+        )
+        provider_files = f"   {zfe_fragment}\n"
+        provider_setup = zfe_setup
+    elif provider == "xscal":
+        extender_instruction = (
+            "1. Exit Fallout 76. Install HUDModLoader and the xScal script extender with\n"
+            "   chatInterface support, using the authors' instructions."
+        )
+        provider_intro = (
+            "This archive is for xScal with HUDModLoader. Do not install ZFE configuration.\n"
+        )
+        provider_files = "   xscal.ini.example\n" + xscal_files
+        provider_setup = xscal_setup
+    else:
+        extender_instruction = (
+            "1. Exit Fallout 76. Install HUDModLoader and exactly one script extender:\n"
+            "   ZFE with chat.v1 support or xScal with chatInterface support."
+        )
+        provider_intro = (
+            "Choose exactly one script extender: ZFE or xScal. Install only that provider's "
+            "configuration section below.\n"
+        )
+        provider_files = (
+            "   examples/ZFE/FCMChatWidget.ini.example\n"
+            "   examples/ZFE/zfe.ini.example\n"
+            "   xscal.ini.example\n"
+            f"{xscal_files}"
+        )
         provider_setup = (
-            "Choose ONE installed extender; the widget detects it automatically.\n"
-            "   ZFE: copy examples/ZFE/FCMChatWidget.ini.example to\n"
-            "   Data/ZFE/TextChat/fragments/FCMChatWidget.ini. Create that folder if needed.\n"
-            "   Keep OpenChatKey aligned with Data/FCMChat.ini openKey. See KEYBINDS.txt.\n"
-            "   xScal: do NOT install the ZFE example or create ZFE folders. On Windows,\n"
-            "   run Enable-xScal-Chat.cmd beside Fallout76.exe. It backs up xscal.ini,\n"
-            "   sets [Chat] enabled=true and relayEndpoint, and preserves other settings.\n"
-            "   On Linux/Proton, merge xscal.ini.example into the EXISTING [Chat] section\n"
-            "   of xscal.ini. Do not replace the entire file or add a duplicate section.\n"
-            "   The example alone does not enable xScal chat; apply these settings."
+            "Choose one provider\n"
+            "-------------------\n"
+            f"{zfe_setup}\n"
+            f"{xscal_setup}"
         )
-    if distribution == "nexus" and provider in ("xscal", "unified"):
-        provider_setup = provider_setup.replace(
-            "run Enable-xScal-Chat.cmd beside Fallout76.exe.",
-            "download the optional setup helpers using DOWNLOAD-XSCAL-SETUP-HELPERS.txt.",
-        ).replace(
-            "double-click Enable-xScal-Chat.cmd in the game folder.",
-            "download the optional setup helpers using DOWNLOAD-XSCAL-SETUP-HELPERS.txt.",
-        )
-    if provider in ("xscal", "unified"):
-        provider_setup += (
-            "\n\n   MANUAL xScal SETUP - NO INSTALLER REQUIRED (Windows or Linux/Proton):\n"
-            "   Back up xscal.ini beside Fallout76.exe. Edit its existing [Chat] section:\n\n"
-            f"   [Chat]\n   enabled=true\n   relayEndpoint={config['endpoint']}\n\n"
-            "   Change enabled=false to enabled=true and replace the relayEndpoint value.\n"
-            "   If [Chat] is missing, add it once. If xscal.ini is missing, create a plain-text\n"
-            "   xscal.ini beside Fallout76.exe, not xscal.ini.txt, with the settings above.\n"
-            "   Preserve unrelated settings; do not duplicate sections or keys.\n"
-            "   New users must apply these settings too: xScal ships with chat disabled.\n"
-            "   The example file alone does not enable chat. The setup helper is optional.\n"
-            "   xScal has no OpenChatKey setting. Data/FCMChat.ini openKey is mapped to\n"
-            "   xScal's documented Input.* physical polling, with the named-action fallback.\n"
-            "   Registration does not suppress keyboard input; test gameplay conflicts. See KEYBINDS.txt.\n"
-            "   Restart Fallout 76 after changing the configuration."
-        )
-    if provider == "unified":
-        provider_setup += (
-            "\n\n   MANUAL ZFE SETUP - NO INSTALLER REQUIRED:\n"
-            "   Copy the COMPLETE examples/ZFE/FCMChatWidget.ini.example file to\n"
-            "   Data/ZFE/TextChat/fragments/FCMChatWidget.ini, removing the .example suffix.\n"
-            "   Create the folders if missing. Back up an existing fragment before replacing it.\n"
-            f"   The example includes Endpoint={config['endpoint']}; copy all its settings,\n"
-            "   not just the Endpoint line. Keep OpenChatKey aligned with Data/FCMChat.ini\n"
-            "   openKey. IMPORTANT: Data/configuration/zfe.ini is a higher-priority global override.\n"
-            "   Merge examples/ZFE/zfe.ini.example into that existing file if an override is needed.\n"
-            "   If it exists, check its [TextChat] section and set:\n\n"
-            f"   [TextChat]\n   Endpoint={config['endpoint']}\n   OpenChatKey=INSERT\n\n"
-            "   Replace stale Endpoint values, preserve unrelated settings, and do not duplicate\n"
-            "   the section or key. If no override is needed, leave the endpoint out of zfe.ini\n"
-            "   so the packaged fragment supplies it. ZFE does not need xscal.ini.\n"
-            "   To change the open-chat key, set the same value in Data/FCMChat.ini openKey\n"
-            "   and zfe.ini OpenChatKey. DELETE is the recommended alternative to INSERT.\n"
-            "   Supported values and precedence are documented in KEYBINDS.txt.\n"
-            "   Restart Fallout 76 after changing the configuration."
-        )
-    setup_files = ""
-    if provider in ("xscal", "unified"):
-        setup_files = (
-            "   DOWNLOAD-XSCAL-SETUP-HELPERS.txt\n"
-            if distribution == "nexus"
-            else "   Enable-xScal-Chat.cmd\n   Enable-xScal-Chat.ps1\n"
-        )
-    return f"""Fallout Chat Mod - optional in-game HUD chat ({config['label']})
+
+    return f"""Fallout Chat Mod - optional in-game HUD chat ({label})
 
 FCMChatWidget version: {version}
 
-This archive is the explicit opt-in in-game HUD-mod track. It is separate from
-the desktop overlay. It connects to {config['label'].lower()} through ZFE chat.v1
-or xScal chatInterface, selected automatically. The BA2 is identical for both providers.
-This package contains configuration examples for {provider_label}. Install ONE extender and HUDModLoader.
-On first subscribe, both providers receive the same complete bounded history: up to
-15 recent messages for each static channel and up to 50 messages from the current
-server room (125 events total). The native poll limit is 64. xScal's asynchronous
-subscriber is drained across multiple short warm-up polls; ZFE gets a short second
-drain when its first queue batch is full. Both providers use delayed authenticated
-RESYNC recovery if static history is missing or the native queue reports loss.
+This archive installs the optional in-game HUD-mod track through HUDModLoader. It is
+separate from the desktop overlay; the desktop overlay is not required for HUD chat.
+{provider_intro}The BA2 works with the selected provider and connects to {label.lower()}.
 
-Send an emoji with /emoji <name>, e.g. /emoji heart or /emoji thumbs_up.
-Use an exact custom Discord emoji name to send a bundled custom emoji.
-
-Unicode and bundled custom Discord emojis render as inline artwork. Styling and
-emoji rendering have been tested in-game with xScal and ZFE. Animated custom emojis
-use static artwork. New or unbundled custom emojis use readable names.
-New Discord emoji require refreshed HUD assets. Artwork attribution: licenses/emoji/NOTICE.txt.
-
-For ZFE, also check Data/configuration/zfe.ini. ZFE applies this global file after
-the TextChat fragment, so its [TextChat] values override the packaged fragment. If
-you use a global endpoint override, it must be:
-
-   [TextChat]
-   Endpoint={config['endpoint']}
-
-Replace any stale Endpoint value, preserve unrelated settings, and do not duplicate
-the section or key. If no override is needed, leave the endpoint out of zfe.ini and
-use the packaged fragment. A stale global endpoint can connect you to the wrong
-account environment.
-
-1. Exit Fallout 76 completely. Install HUDModLoader and ONE compatible extender
-   (ZFE with chat.v1 support or xScal with chatInterface support) using their authors'
-   instructions. The desktop overlay is not required for HUD chat.
-2. Extract this archive into the Fallout 76 installation folder, preserving all
-   existing files. The archive contains these files:
+Installation
+------------
+{extender_instruction}
+2. Extract this archive into the Fallout 76 game folder. Keep the existing files in
+   place; do not replace unrelated configuration. The important files are:
 
    Data/FCMChatWidget.ba2
    Data/FCMChat.ini
-   {config_file}
-{setup_files}   FCMChatWidget.hudmodloader.ini
+{provider_files}   FCMChatWidget.hudmodloader.ini
    FCMChatWidget.version.txt
-   FCMChatWidget.provider.txt
    HUDMODLOADER-MENU.txt
    KEYBINDS.txt
+   CUSTOMIZATION.txt
    Fallout76Custom.ini.example
 
-   The file `FCMChatWidget.hudmodloader.ini` is an append-only snippet; it is
-   intentionally not extracted into `Data/`.
-
-3. Back up and open the existing `Data/hudmodloader.ini` and append the single line from
-   `FCMChatWidget.hudmodloader.ini` exactly once. Preserve every existing widget
-   entry; do not replace the file.
-
-4. Back up and open `Fallout76Custom.ini` and append `FCMChatWidget.ba2` to the existing
-   `[Archive]` `sResourceArchive2List` value. Preserve every existing archive;
-   do not replace the full list. If the section or key is missing, create:
+3. Open the existing Data/hudmodloader.ini and append the one line in
+   FCMChatWidget.hudmodloader.ini exactly once. Do not replace the file.
+4. Open Fallout76Custom.ini and append FCMChatWidget.ba2 to the existing
+   [Archive] sResourceArchive2List value. Preserve every existing archive. If the
+   section or key is missing, use:
 
    [Archive]
    sResourceArchive2List=HUDModLoader.ba2,FCMChatWidget.ba2
 
-   Native Windows normally stores `Fallout76Custom.ini` in
-   `Documents/My Games/Fallout 76/`. Proton/Wine normally stores it in the
-   Fallout 76 Steam prefix under `compatdata/1151340/pfx/drive_c/users/steamuser/`.
-   Inside that prefix, use `Documents/My Games/Fallout 76/Fallout76Custom.ini`.
-   Do not duplicate [Archive] sections or sResourceArchive2List keys.
-   The `Data/` files always belong in the Fallout 76 game installation folder.
+   Windows normally stores this file in Documents/My Games/Fallout 76/.
+   Proton/Wine uses the Fallout 76 prefix's Documents/My Games/Fallout 76/ folder.
 
-   {provider_setup}
+5. Configure the chosen extender:
 
-5. Start Fallout 76 and open the HUDModLoader menu:
-   a. Press F11 to open the menu.
-   b. Confirm the `FCM` menu is present and choose `Customize...` for widget
-      settings. The menu also provides `Scroll to newest`, `Hide chat`, and
-      the auto-hide toggle. Read CUSTOMIZATION.txt for all appearance controls,
-      exact INI values, and fixed features.
-   c. Choose `FCM` -> `Customize...` -> `Reset all settings` only when you
-      want the packaged defaults restored. The environment-specific link URL
-      is kept.
-   d. Use the HUDModLoader reload control for live widget changes. If you replace
-      the BA2 or provider configuration, exit Fallout 76 before copying the files
-      and restart the game so native configuration is reloaded.
+{provider_setup}
+6. Start Fallout 76. Press F11 and confirm the FCM menu appears. Use FCM -> Customize...
+   for appearance settings. The menu also provides Hide chat, Auto-hide, and Scroll to
+   newest. If FCM is missing, verify the HUDModLoader line and BA2 archive entry, then restart.
+7. When the widget shows an 8-character link code, open {config['web_link_url']}, sign in,
+   enter the code, and return to the game. Codes expire after 10 minutes.
 
-   If the widget is not listed under FCM, exit the game and verify that the
-   `FCMChatWidget` line was appended exactly once to `Data/hudmodloader.ini`.
+Key defaults
+------------
+Insert opens the input; Enter sends; Escape cancels; Page Up/Page Down switch channels.
+scrollUpKey=Up and scrollDownKey=Down (Arrow Up / Down) scroll after Insert opens the input.
+scrollBottomKey is blank by default; set it in Data/FCMChat.ini (for example Home, End, or F12)
+if you want a keyboard shortcut for newest. See KEYBINDS.txt
+for ZFE and xScal key paths, supported physical tokens, and conflict guidance.
 
-Account linking for this {config['label']} package:
-  {config['web_link_url']}
-
-The relay endpoint is:
-  {config['endpoint']}
-
-When the in-game widget shows a fresh 8-character code, open the link above,
-sign in with Steam or Discord, enter the code, and return to the game. Codes expire after
-10 minutes; reconnect the widget to request a new code if needed.
-Steam sign-in does not require Discord. If your name is blank, your Steam display
-name is used. You can link Discord later from your profile.
-
-Saved geometry:
-  ZFE uses its vendor-scoped local settings store. On xScal, position and size are
-  saved per linked relay device by the v2.10.61+ backend and restored after reconnect.
-  Saving requires a working linked connection; other xScal appearance settings remain
-  session-only. Desktop and laptop devices keep separate positions and sizes.
-
-HUD input and commands:
-  Press Insert while Fallout 76 is focused to start typing. Press Enter to send
-  or Escape to cancel. Page Down / Page Up switch channels. After Insert opens
-  the typing session, Arrow Up / Down scroll the feed, and Home / End return to
-  the newest message; before Insert they remain game controls. Type /g, /t, /e,
-  /i, or /r before a message to route it to General, Trading, Events, Infests,
-  or Raids. /s (or /server) is available after the current server/world session
-  is confirmed. Type /hide by itself to hide the feed; press Insert to restore it.
-  Type /relink by itself to request that the active extender clear its local chat auth and issue
-  a new link code. This requires clearChatAuth support; older builds will show a manual recovery
-  instruction. Follow the provider configuration instructions above.
-  While a draft is active, Control-Tab opens the game's social menu after the widget
-  cancels its native or SharedHUDTools editor; Escape can then close the social menu normally.
-  Input.* key polling does not itself suppress gameplay keys. Keyboard suppression
-  is not claimed for xScal builds without a documented suppression API.
-  Customize actions can be repeated without backing out to the parent menu.
-  Auto-hide is shown with its current ON/OFF state the next time F11 opens.
-  Unicode and bundled custom Discord emojis render inline; animated emojis use static artwork. Public feed image/GIF attachments are not relayed into the HUD.
+General shows General, current-room Server, Trading, Events, Infests, and Raids together.
+Each message keeps its source label; other tabs filter the same history. Sending from General
+still goes to General. Replayed messages keep their existing duplicate guard.
 """
-
 
 def xscal_config_example(target: str) -> str:
     """Return target-specific xScal chat settings without overwriting user config."""
@@ -367,6 +326,8 @@ def build_package(
             "   cooldown and do not require backing out to the parent menu.\n"
             "8. FCM -> General / Trading / Events / Infests / Raids selects a channel;\n"
             "   SERVER appears after a current world binding is confirmed.\n"
+            "   General combines all six feeds, keeping each message's source label.\n"
+            "   Other tabs show only their own channel. Sending from General targets General.\n"
             "9. Use the loader reload control for live widget changes. Replacing\n"
             "   the BA2 or a script-extender configuration fragment requires exiting and restarting\n"
             "   Fallout 76 so native configuration is reloaded.\n\n"
@@ -384,11 +345,15 @@ def build_package(
             "-----------------------\n"
             "Press Insert while Fallout 76 is focused to start typing. Press\n"
             "Enter to send or Escape to cancel. Page Down / Page Up switch\n"
-            "channels. After Insert opens the typing session, Arrow Up / Down scroll\n"
-            "the feed and Home / End return to the newest message; before Insert they\n"
-            "remain game controls. Type /g, /t, /e, /i, or /r before a message to route it\n"
-            "to General, Trading, Events, Infests, or Raids. /s (or /server)\n"
-            "is available after the current server/world session is confirmed.\n"
+            "channels. After Insert opens the typing session, the configured\n"
+            "scrollUpKey / scrollDownKey values scroll the feed (Arrow Up / Down\n"
+            "are the defaults). scrollBottomKey is blank by default; set it in\n"
+            "Data/FCMChat.ini to Home, End, F12, or a forwarded action if desired.\n"
+            "Before Insert, configured feed keys remain game controls. FCM -> Scroll\n"
+            "to newest is always available from the F11 menu. Type /g, /t, /e, /i,\n"
+            "or /r before a message to route it to General, Trading, Events, Infests,\n"
+            "or Raids. /s (or /server) is available after the current server/world\n"
+            "session is confirmed.\n"
             "Type /hide by itself to hide the feed; press Insert to restore it.\n"
             "Type /relink by itself to clear local chat auth and request a new\n"
             "link code. This requires clearChatAuth support; older builds must\n"

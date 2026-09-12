@@ -114,10 +114,16 @@ class FcmConfig {
 
     // ── Keybinds ───────────────────────────────────────────────────────────────
     // openKey = the native ZFE key, or the xScal virtual-key token polled through Input.*.
-    // channelNext/Prev + hide map to FO76 control-map ACTIONS the loader forwards.
+    // channelNext/Prev + hide map to FO76 control-map ACTIONS the loader forwards;
+    // scroll keys may use those actions or a physical extender token.
     public var openKey:String        = "INSERT";
     public var channelNextKey:String = "NextPage";
     public var channelPrevKey:String = "PrevPage";
+    // Feed navigation actions. Up/Down preserve the current arrow bindings; the
+    // newest-message action is intentionally unset until a user opts in.
+    public var scrollUpKey:String     = "Up";
+    public var scrollDownKey:String   = "Down";
+    public var scrollBottomKey:String = "";
     public var hideKey:String        = "";        // unset = use /hide or the F11 menu
 
     // ── Feed toggles ───────────────────────────────────────────────────────────
@@ -631,6 +637,19 @@ class FcmConfig {
         return fallback;
     }
 
+    /**
+     * Validate a user-supplied navigation token. The loader action vocabulary varies
+     * between Fallout builds, so scroll bindings intentionally accept any printable
+     * action/key token while still rejecting markup and separators that could leak into
+     * diagnostics or a persisted INI. Empty is meaningful for an explicitly disabled bind.
+     */
+    static function validScrollKey(s:String, fallback:String):String {
+        if (s == null) return fallback;
+        var t:String = StringTools.trim(s);
+        if (t.length == 0) return "";
+        return ~/^[A-Za-z0-9 _-]+$/.match(t) ? t : fallback;
+    }
+
     // ── Parse the [FCMChat] section of an INI string into a clamped config ──────
 
     public static function parse(raw:String):FcmConfig {
@@ -681,6 +700,9 @@ class FcmConfig {
                     cfg.openKey = (ok.length > 0 && ~/^[A-Za-z0-9_]+$/.match(ok)) ? ok : cfg.openKey;
                 case "channelnextkey":  cfg.channelNextKey = validAction(val, cfg.channelNextKey);
                 case "channelprevkey":  cfg.channelPrevKey = validAction(val, cfg.channelPrevKey);
+                case "scrollupkey":     cfg.scrollUpKey = validScrollKey(val, cfg.scrollUpKey);
+                case "scrolldownkey":   cfg.scrollDownKey = validScrollKey(val, cfg.scrollDownKey);
+                case "scrollbottomkey": cfg.scrollBottomKey = validScrollKey(val, "");
                 case "hidekey":         cfg.hideKey = validAction(val, "");
                 case "showhints":       cfg.showHints = parseBool(val, cfg.showHints);
                 case "autobroadcastworldevents":
@@ -871,6 +893,9 @@ class FcmConfig {
         s.add("openKey=" + openKey + "\n");
         s.add("channelNextKey=" + channelNextKey + "\n");
         s.add("channelPrevKey=" + channelPrevKey + "\n");
+        s.add("scrollUpKey=" + scrollUpKey + "\n");
+        s.add("scrollDownKey=" + scrollDownKey + "\n");
+        s.add("scrollBottomKey=" + scrollBottomKey + "\n");
         s.add("hideKey=" + hideKey + "\n");
         s.add("showHints=" + b(showHints) + "\n");
         s.add("hideInHUDModes=" + hideInHUDModes.join(",") + "\n");

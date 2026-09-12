@@ -63,15 +63,15 @@ import {
 import { engineEvaluate } from '../autoModEngine';
 import { getEffectiveRole, isPrivilegedRole } from '../userRoleService';
 import {
-  publishServerMessage,
   publishRebind,
   publishHistoryResync,
   getServerHistory,
-  checkServerRateLimit,
   SERVER_EVENTS_CHANNEL,
   type ServerRoomEvent,
 } from './serverChat';
 import type { RelayToken } from './tokenService';
+import { renewBridgeLease, clearBridgeLease } from './overlayServerBridge';
+import { sendServerMessage, ServerMessageError } from './serverMessageService';
 import { parseHudSendCarrier, claimHudSend, hudSendReceiptIdentity, hudSendResponse, HUD_SEND_RECEIPT_SECONDS } from './hudSendReceipt';
 import { HUD_LAYOUT_CONTROL, HUD_LAYOUT_EVENT, parseHudLayout, parseHudLayoutControl, readHudLayout, writeHudLayout } from './hudLayoutService';
 
@@ -1102,13 +1102,9 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     await deliver(errEnvelope('user_kicked', 'This account is temporarily kicked'));
     return;
   }
-  if (user?.isMuted) {
-    await deliver(errEnvelope('user_muted', 'You are currently muted'));
-    return;
-  }
-
-  const sessionMatch = /^FCMSESSION\/1;([a-z0-9-]{1,64})$/.exec(sessionTarget);
-  const requestId = sessionMatch?.[1] ?? '';
+  const sessionMatch = /^(FCMSESSION|FCMBRIDGE)\/1;([a-z0-9-]{1,64})$/.exec(sessionTarget);
+  const requestId = sessionMatch?.[2] ?? '';
+  const isBackgroundBridge = sessionMatch?.[1] === 'FCMBRIDGE';
 
   if (slug === 'server' && body.startsWith(HUD_LAYOUT_CONTROL)) {
     const control = parseHudLayoutControl(body);
@@ -1147,7 +1143,10 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
         await deliver(errEnvelope('rate_limited', 'World controls are temporarily rate limited'));
         return;
       }
-      await handleWorldLeave(identity);
+      if (!isBackgroundBridge || (await readRoster(identity.userId))?.requestId === requestId) {
+        await clearBridgeLease(identity.userId);
+        await handleWorldLeave(identity);
+      }
       sendControlAck(ws);
       return;
     }
@@ -1161,6 +1160,8 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       }
       await setRoster(identity.userId, identity.fo76Name, names, requestId);
       await applyRoomAssignments(identity.userId);
+      if (isBackgroundBridge) await renewBridgeLease(identity.linkedUserId!, identity.userId, requestId);
+      else await clearBridgeLease(identity.userId);
       sendControlAck(ws);
       return;
     }
@@ -1182,6 +1183,11 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       return;
     }
     sendControlAck(ws);
+    return;
+  }
+
+  if (user?.isMuted) {
+    await deliver(errEnvelope('user_muted', 'You are currently muted'));
     return;
   }
 
@@ -1263,34 +1269,15 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       await reply(errEnvelope('invalid_channel', 'Server session changed; wait for a fresh room confirmation'));
       return;
     }
-    if (!(await checkServerRateLimit(identity.userId))) {
-      await reply(errEnvelope('rate_limited', 'You are sending messages too quickly'));
-      return;
+    let event: ServerRoomEvent;
+    try {
+      event = await sendServerMessage({ accountId: identity.linkedUserId!, relayUserId: identity.userId,
+        displayName: identity.fo76Name }, worldId, body);
+    } catch (err) {
+      if (err instanceof ServerMessageError) { await reply(errEnvelope(err.code, err.message)); return; }
+      throw err;
     }
-    // Automod: no channel-exemption context for the ephemeral room (channelId undefined).
-    const mod = await engineEvaluate(body, undefined, {
-      id: identity.linkedUserId!,
-      username: identity.fo76Name,
-    });
-    if (mod.block) {
-      await reply(errEnvelope('message_blocked', 'Message blocked by the chat filter'));
-      return;
-    }
-    const relaySeq = await nextRelaySeq();
-    const hudCosmetics = await resolveHudCosmetics(identity.linkedUserId);
-    const event: ServerRoomEvent = {
-      id:                relaySeq,
-      kind:              'chat.message',
-      messageId:         `server:${worldId}:${relaySeq}`,
-      channel:           'server',
-      senderUserId:      identity.userId,
-      senderDisplayName: identity.fo76Name,
-      body,
-      targetUserId:      '',
-      createdAt:         new Date().toISOString(),
-      ...hudCosmetics,
-    };
-    await publishServerMessage(worldId, relaySeq, event);
+    const hudCosmetics = relayHudCosmetics({ ...event, badges: event.supporterStar ? ['supporter'] : [] });
     // Include the resolved identity cosmetics in the send acknowledgement as well as
     // the live event. ZFE renders a local optimistic row immediately; returning the
     // authoritative marker here means that row is decorated even if the asynchronous

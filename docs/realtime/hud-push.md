@@ -1,6 +1,8 @@
 # HUD Push (`/ws/hud` and TCP :4001)
 
-The HUD push path delivers live chat lines to FCMBridge.swf running inside Fallout 76.
+This retained legacy push path served the former generic-socket HUD client. The modern
+FCMChatWidget uses native ZFE/xScal `/relay` instead; see [current integration](../overlay/zfe/native-chat-relay/fcm-integration.md).
+The following sections describe the legacy listeners, not modern HUD setup.
 It is a **separate, non-JSON, newline-delimited line-protocol endpoint** — not part of the
 authenticated `/ws` JSON message catalog described in [websocket-protocol.md](./websocket-protocol.md).
 

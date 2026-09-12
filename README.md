@@ -351,7 +351,7 @@ Fallout Chat Mod ships in two clearly separated forms:
 
 1. **Desktop overlay (default, EULA-safe).** The transparent overlay does **not** read game memory, modify game files, inject code, or scan network connections. Its only game-process interaction is checking whether `Fallout76.exe` is running (via the public OS process list) to show or hide the overlay.
 
-2. **In-game HUD mods (`.ba2`, optional opt-in).** A separate install that renders chat inside the game HUD by swapping UI assets only. It is never bundled into or required by the overlay — you choose to install it at your own discretion. Even here, no game memory is read, no code is injected, and no networks are scanned.
+2. **In-game HUD mods (`.ba2`, optional opt-in).** A separate install that renders chat inside the game HUD by swapping UI assets only. It is never bundled into or required by the overlay — you choose to install it at your own discretion. Even here, no game memory is read, no code is injected, and no networks are scanned. The maintained [FCMChatWidget HUD guide](docs/overlay/zfe/README.md) covers native ZFE/xScal chat, installation, appearance, and verification status. The separate [FCMServerBridge background candidate](docs/overlay/zfe/background-server-bridge.md) also uses HUDModLoader but renders chat only in the desktop overlay; it remains a local build pending deployment and in-game acceptance.
 
 Character names are entered manually during onboarding (or via the Settings page).
 
@@ -405,6 +405,6 @@ of ZeniMax Media Inc. All related marks, characters, and intellectual property a
 their respective owners.
 
 The MIT License covering this project applies only to its own original source code. It does not
-grant any rights to Bethesda or ZeniMax IP. Users who install in-game HUD mods (e.g. FCMBridge)
+grant any rights to Bethesda or ZeniMax IP. Users who install in-game HUD mods (e.g. FCMChatWidget)
 do so at their own risk and are responsible for ensuring compliance with the game's End User
 License Agreement.

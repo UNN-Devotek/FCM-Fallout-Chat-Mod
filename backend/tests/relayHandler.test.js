@@ -2829,6 +2829,26 @@ describe('roster-derived world rooms', () => {
     return res;
   }
 
+  test('background bridge nonce owns its lease; muted readers can renew; stale leave cannot clear a new world', async () => {
+    const a = await registerAndLink('Background', 'fcm-background');
+    _userMap['fcm-background'].isMuted = true;
+    const { ws, msgs } = await connectWs(srv.port);
+    const control = (nonce, body) => waitForMsg(ws, msgs, () => send(ws, {
+      op: 'send', token: a.token, channel: 'server', targetUserId: `FCMBRIDGE/1;${nonce}`, body,
+    }));
+    expect(await control('one', makeRosterBody(a.rawId, []))).toMatchObject({ success: true });
+    expect(JSON.parse(_worldStore[`relay:bridge:device:${a.rawId}`])).toMatchObject({ accountId: 'fcm-background', requestId: 'one' });
+    expect(await control('two', makeRosterBody(a.rawId, []))).toMatchObject({ success: true });
+    const room = _worldStore[`relay:world:${a.rawId}`];
+    await control('one', 'FCMCTL/1/LEAVE');
+    expect(_worldStore[`relay:world:${a.rawId}`]).toBe(room);
+    expect(JSON.parse(_worldStore[`relay:bridge:device:${a.rawId}`]).requestId).toBe('two');
+    await control('two', 'FCMCTL/1/LEAVE');
+    expect(_worldStore[`relay:bridge:device:${a.rawId}`]).toBeUndefined();
+    expect(await sendRaw(a, 'muted chat')).toMatchObject({ error: { code: 'user_muted' } });
+    ws.close();
+  });
+
   test('roster controls return a protocol-compliant non-empty message ID', async () => {
     const a = await registerAndLink('RosterAck', 'fcm-roster-ack');
     const res = await sendRaw(a, makeRosterBody(a.rawId, []));

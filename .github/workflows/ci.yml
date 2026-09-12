@@ -337,6 +337,11 @@ jobs:
       # FcmConfig parser/clamp unit tests (CAP-001..005, #303/#304) — pure Haxe, --interp.
       - name: Install Haxe
         run: sudo apt-get update && sudo apt-get install -y haxe
+      - name: Build and test background Server bridge
+        working-directory: game-mods/FCMBridge/hudmodloader-bridge
+        run: |
+          haxe test-state.hxml
+          python3 test_package.py
       - name: Run HUD device-layout tests
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: |

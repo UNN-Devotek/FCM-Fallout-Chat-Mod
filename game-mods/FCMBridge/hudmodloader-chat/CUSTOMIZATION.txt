@@ -71,8 +71,8 @@ If you already customized with F11, use F11 for further changes, or update the
 corresponding saved settings through your extender's storage location before
 reloading. xScal saves appearance per linked device through the matching relay
 backend; saved device values also take priority over the INI. Changes are only
-session-local if persistence is unavailable. Deploy the matching backend before
-using the new xScal controls. Reload the widget to reread configuration. Replacing
+session-local if persistence is unavailable. Saving xScal appearance requires a matching
+relay backend; missing support does not prevent live customization. Reload the widget to reread configuration. Replacing
 a BA2 or changing extender configuration requires a full game restart.
 
 FIXED FEATURES
@@ -99,3 +99,19 @@ accepted values, precedence, conflicts, and the separate xScal limitations.
 For xScal, do not add OpenChatKey to xscal.ini. Change FCMChat.ini openKey; the widget maps
 it to xScal's physical Input.* polling API and retains the named-action fallback. See KEYBINDS.txt
 and the xScal Input interface article: https://www.nexusmods.com/fallout76/articles/268.
+
+SCROLL KEYBINDS
+---------------
+The modern FCMChatWidget reads these additional keys from the same [FCMChat] section:
+
+  scrollUpKey=Up
+  scrollDownKey=Down
+  scrollBottomKey=
+
+Up/Down are the packaged arrow-scroll bindings; their ArrowUp/ArrowDown, Cursor, and Dpad
+spellings are treated as aliases. Set either direction to a forwarded HUD action (for example
+Console) or a physical xScal/ZFE token (for example F12) to rebind it. An empty value disables
+that direction. `scrollBottomKey` is intentionally blank by default, so Home and End remain
+game controls until one is explicitly selected. The F11 **Scroll to newest** menu action is
+always available. Feed keys are consumed only while the open-chat key owns the visible input
+session. See KEYBINDS.txt for provider-specific action names and physical-key behavior.

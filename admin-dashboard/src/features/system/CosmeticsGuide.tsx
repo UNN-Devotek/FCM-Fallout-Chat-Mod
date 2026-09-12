@@ -130,17 +130,22 @@ export default function CosmeticsGuide({ variant = 'dashboard' }: Props) {
         </p>
         <p style={p}>
           The global <code style={sCode}>zfe.ini</code> value overrides the widget fragment in{' '}
-          <code style={sCode}>Data/ZFE/TextChat/fragments</code>. Page Up/Down and Arrow Up/Down
-          remain fixed navigation controls; the packaged <code style={sCode}>KEYBINDS.txt</code>{' '}
-          explains the other HUD action-name settings.
+          <code style={sCode}>Data/ZFE/TextChat/fragments</code>. In the packaged{' '}
+          <code style={sCode}>Data/FCMChat.ini</code>,{' '}
+          <code style={sCode}>scrollUpKey=Up</code> and <code style={sCode}>scrollDownKey=Down</code>{' '}
+          preserve arrow scrolling, and <code style={sCode}>scrollBottomKey=</code> is intentionally
+          unbound. Set those values to forwarded HUD actions or supported physical tokens to rebind
+          them; the F11 <code style={sCode}>Scroll to newest</code> action is always available. The
+          packaged <code style={sCode}>KEYBINDS.txt</code> explains the provider-specific behavior.
         </p>
         <p style={p}>
           <strong>xScal is different:</strong> it has no <code style={sCode}>OpenChatKey</code>{' '}
           setting in <code style={sCode}>xscal.ini</code>. The widget maps{' '}
           <code style={sCode}>Data/FCMChat.ini</code> <code style={sCode}>openKey</code> to xScal's
           documented physical input polling, with the named HUDMod action as a fallback. Do not
-          add ZFE settings to <code style={sCode}>xscal.ini</code>. xScal's keyboard registration
-          does not suppress the key from gameplay, so test for conflicts; its documented
+          add ZFE settings to <code style={sCode}>xscal.ini</code>. The same physical token catalog
+          is available for the three scroll settings. xScal's keyboard registration does not
+          suppress the key from gameplay, so test for conflicts; its documented
           suppression calls are for gamepad buttons. See the{' '}
           <a href={XSCAL_INPUT_ARTICLE_URL} target="_blank" rel="noopener noreferrer" style={{ color: gold }}>
             xScal Input interface (Nexus article 268)

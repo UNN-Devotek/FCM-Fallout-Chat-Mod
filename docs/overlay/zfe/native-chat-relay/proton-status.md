@@ -1,6 +1,9 @@
 # chat.v1 under Proton / Wine — SUPPORTED
 
-**Status (2026-08-31): SUPPORTED by the current project ZFE build.**
+**Recorded status (2026-08-31): supported by the ZFE build tested at that time.**
+The source/build audit on 2026-09-12 did not repeat a live Proton or Windows game test. Use
+[the HUD index](../README.md) for current candidate status; do not infer support for every newer
+provider/game pair from this historical result.
 
 The FCMChatWidget `chat.v1` path works on native Windows and Proton/Wine. Install the current
 ZFE build with `chat.v1` support, then use the same target-specific FCM widget package on either
@@ -17,15 +20,16 @@ For the package install procedure, see
 `chat.v1.connect` panics the game under Proton/Wine — a Zig panic / `__fastfail`. The host CA
 bundle loads fine first; the crash happens later, during the first TLS read.
 
-## Root cause — Zig `std.crypto.tls.Client.readvAdvanced` partial-read panic
+## Historical root-cause hypothesis — Zig partial-read panic
 
-ZFE's chat.v1 transport is a Zig TLS client. The crash is a known Zig standard-library bug:
+The investigation associated ZFE's Zig TLS failure with a known standard-library bug:
 `std.crypto.tls.Client.readvAdvanced` does an out-of-bounds `@memcpy` on a **partial socket read**
 (when a TLS record arrives split across multiple `read()` calls). Upstream Zig issues:
 **#15226 / #15673 / #14573**. The sibling error type `TlsConnectionTruncated` is present in the
 binary.
 
-Why it is **deterministic under Proton but intermittent on native Windows:** Wine's socket layer
+Proposed explanation for the observed Proton/native-Windows difference (not independently
+proven by the log excerpts below): Wine's socket layer
 fragments reads more aggressively, and Cloudflare's TLS 1.3 record padding makes the fragmented,
 partial-read code path hit on essentially every connection. On native Windows the reads usually
 arrive whole, so the bug rarely triggers.
@@ -59,9 +63,9 @@ chat.v1 uses its own Zig TLS client + the host PEM CA bundle.
   certificate verification or override the CA path. See
   [../env-vars.md](../env-vars.md).
 
-## Historical fix (upstream)
+## Historical proposed upstream fix
 
-The ZFE author rebuilds ZFE with **Zig >= 0.14.0**, which includes **Zig PR #20587** — the fix for
+The proposed fix was for the ZFE author to rebuild with **Zig >= 0.14.0**, which includes **Zig PR #20587** — the fix for
 the `readvAdvanced` partial-read panic. Zig 0.14.0 is a released toolchain on `ziglang.org/download`.
 (Zig development has since moved to `codeberg.org/ziglang/zig`; the old GitHub issue/PR references
 above remain readable.)
@@ -79,7 +83,7 @@ above remain readable.)
 
 - Install the package's `Data/` files into the Fallout 76 game directory inside the Steam library.
 - Keep `Fallout76Custom.ini` in the Fallout 76 Proton prefix's user Documents path; the package
-  `INSTALL.txt` includes the common `compatdata/1151340` location.
+  `INSTALL.txt` describes the prefix Documents folder; the exact Steam library/prefix path varies.
 - Use the current ZFE/Proton setup for the installed game. No legacy workaround from the historical
   partial-read failure is required by the FCM package.
 

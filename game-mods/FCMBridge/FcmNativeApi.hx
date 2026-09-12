@@ -135,8 +135,9 @@ class FcmNativeApi {
      * preference order. A separately discovered generic callback
      * (__SFCodeObj / BRG_OBJ) is tried first. Under ZFE the SFE-compatibility
      * dispatcher that already serves setChatInputActive / isChatKeyPressed is
-     * reachable through __ZFE.call, and ZFE 0.12 advertises zfe-input-v1 on
-     * that object, so it is a legitimate second candidate. xScal's
+     * reachable through __ZFE.call on observed compatibility builds. The public
+     * zfe-input-v1 capability describes input.v1.* text sessions, not these Input.*
+     * callbacks; candidate acceptance is checked through the actual operation. xScal's
      * chatInterface is never one: it has no generic call() surface.
      */
     function inputDispatcherCandidates():Array<Dynamic> {

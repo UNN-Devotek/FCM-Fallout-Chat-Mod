@@ -49,7 +49,6 @@ See [auth.md](./auth.md) for full details.
 | GET | `/api/users` | requireDiscordRole(owner/admin/mod) | List all users |
 | POST | `/api/users` | public + rate-limited | Register a new install (requires `X-App-Client-Key`) |
 | DELETE | `/api/users/session` | requireAuth | Log out / invalidate session token |
-| GET | `/api/users/presence/same-server` | none (resolves X-Auth-Token OR Discord session) | Same-server presence lookup |
 | GET | `/api/users/mention-search` | public (apiLimiter only) | Username autocomplete for @mentions |
 | GET | `/api/users/:id/profile` | public | Public-safe user profile (excludes ban reason, installToken, endpoint) |
 | GET | `/api/users/:id` | requireDiscordRole(owner/admin/mod) | Full user record |
@@ -210,22 +209,28 @@ automatically server-side. The REST endpoints are for the dashboard and admin to
 
 ## Presence (`/api/presence`)
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/api/presence/server-messages` | requireDiscordRole(owner/admin) | List recent server-channel messages |
-| DELETE | `/api/presence/server-messages/:id` | requireDiscordRole(owner/admin/mod) | Soft-delete a server message |
-
-Note: the main presence updates (`presence:update`) flow over the WebSocket — see [../realtime/](../realtime/).
+The old `/api/presence/server-messages`, `/api/presence/same-server` and
+`/api/users/presence/same-server` routes are not mounted in the current backend. Retained Server
+UI code still references some of them; those references do not constitute supported endpoints.
+Current WebSocket presence is account/process status, not desktop world membership. Native HUD
+rooms use `/relay`; the optional [background bridge](../overlay/zfe/background-server-bridge.md)
+connects them through private authenticated `bridge:*` WebSocket frames in the local candidate;
+it does not revive these REST routes. See [presence](../realtime/presence-and-sessions.md).
 
 ---
 
 ## Player List (`/api/player-list`)
 
-Uses `playerListLimiter` (30 req/min per token). Desktop client POSTs every 5s in warm cadence.
+Uses `playerListLimiter` (30 req/min per token). This is a compatibility snapshot endpoint;
+the current desktop client no longer runs the old GameMonitor five-second reporting loop.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | POST | `/api/player-list` | requireClientAuth | Submit nearby player list snapshot |
+
+Accepted fields are `players`, optional `endpoint`, and optional `sessionId`/`worldSessionId`.
+The route validates/caches names for compatibility and lookup commands; it does not establish
+room membership or authorize a caller to send into a submitted session ID.
 
 ---
 
@@ -667,7 +672,10 @@ Metadata shape on match:
 
 ## HUD Feed (`/api/game/hud-feed`)
 
-Public, unauthenticated, read-only endpoint. Consumed by **FCMBridge.swf** running inside Fallout 76's Scaleform layer via ZFE's `readRemoteData` API. ZFE caches the response on the client side (300 s minimum); the backend returns `Cache-Control: public, max-age=30` for Cloudflare edge caching. This is the **cold-start and fallback** path — see HUD Push below for real-time delivery.
+Retained public, read-only endpoint for the legacy remote-data client. It is not consumed by the
+modern FCMChatWidget, whose history and live messages use native ZFE/xScal `/relay`. The backend
+returns `Cache-Control: public, max-age=30`; old remote-data caching behavior is documented only
+as historical context. See [current HUD integration](../overlay/zfe/native-chat-relay/fcm-integration.md).
 
 Mounted at `server.ts:1016` with `hudFeedLimiter` applied before the router.
 
@@ -695,12 +703,12 @@ ZFE integration: [docs/overlay/zfe/fcmbridge-data-pattern.md](../overlay/zfe/fcm
 
 ## HUD Push (real-time)
 
-Real-time counterpart to the polling endpoint above. Two front-ends share one transport-agnostic
-core (`hudPush.ts`). Both are **off by default** and must be explicitly enabled.
+Legacy counterpart to the polling endpoint above; the modern HUD does not use these listeners.
+Two front-ends share `hudPush.ts`. Both are off by default and are not needed to enable native `/relay`.
 
 > **Dev-only:** both transports hard-refuse to start when `NODE_ENV=production`, even with
-> their env flags set (a warning is logged). Removing that guard is an explicit step of the
-> M6 production-exposure milestone — see
+> their env flags set (a warning is logged). Do not remove that guard to install the modern HUD.
+> The old transport design is retained in
 > [docs/overlay/zfe/realtime-socket.md](../overlay/zfe/realtime-socket.md).
 
 ### Endpoints
@@ -714,7 +722,7 @@ core (`hudPush.ts`). Both are **off by default** and must be explicitly enabled.
 
 | Var | Purpose |
 |-----|---------|
-| `HUD_PUSH_TCP_TLS_CERT` | Path to PEM cert file (self-signed works — ZFE/Schannel skips validation) |
+| `HUD_PUSH_TCP_TLS_CERT` | Path to PEM certificate for the legacy listener; not a native-chat TLS setting |
 | `HUD_PUSH_TCP_TLS_KEY` | Path to PEM private key file |
 
 ### Auth
@@ -766,7 +774,7 @@ disabled and unknown upgrade paths are destroyed promptly.
 
 **M7 identity env var:** `HUD_IDENTITY_SECRET` — HMAC-SHA256 key for deriving `identityHash` from FO76 `accountName`. Dev default in `.env.example`; must be a strong random secret before production use.
 
-**M7 ingestion service:** `backend/src/services/ingestMessage.ts` — `ingestMessage({ userId, channelId, rawContent, source, identityHash? })` runs the canonical governance pipeline (mute → rate-limit → content validation → emoji expansion → channel validity → automod → broadcast → persist → Discord relay). Both the WS `chat:send` handler and the HUD TCP `SEND` handler call it. `source: 'hud' | 'ws'` is stored on the message row for auditing; it does NOT skip any governance step.
+**M7 ingestion service:** `backend/src/services/ingestMessage.ts` — `ingestMessage({ userId, channelId, rawContent, source, identityHash? })` runs the canonical governance pipeline (mute → rate-limit → content validation → emoji expansion → channel validity → automod → persistence policy → broadcast → Discord relay). Both the WS `chat:send` handler and the HUD TCP `SEND` handler call it. `source: 'hud' | 'ws'` is stored on the message row for auditing; it does NOT skip any governance step.
 
 **M7 identity service:** `backend/src/services/hudIdentityService.ts` — `resolveHudIdentity`, `getActiveBlock`, `blockHash`, `unblockHash`. `HudIdentityBlock` DB table stores mute/ban records keyed on `identityHash`.
 
@@ -816,12 +824,13 @@ Key debug mirrors:
 Additional admin-key-only debug endpoints (no public API mirror):
 - `GET /admin/debug/ws-clients` — snapshot of connected WebSocket clients
 - `GET /admin/debug/presence-audit?userId=&limit=` — Redis ring buffer of raw `presence:update` payloads
-- `GET /admin/debug/peer-announce-events?limit=` — in-memory ring buffer of peer join announcements
-- `GET /admin/debug/server-messages?endpoint=&limit=` — recent server-channel message rows
 - `GET /admin/debug/users/:userId/aliases` — username alias history
 - `POST /admin/debug/set-username` — force-set a user's username
 - `POST /admin/debug/clear-rate-limit` — clear `rl_api:*` Redis keys
-- `POST /admin/debug/clear-matchmake-endpoints` — null-out `:3000` endpoints
-- `POST /admin/debug/clear-user-endpoint` — force-clear a user's server endpoint
 - `POST /admin/debug/merge-users` — merge a duplicate user row into the canonical one
 - `POST /admin/nuke-users` — hard wipe of all users (requires `?confirm=yes-delete-everything`)
+
+The former `peer-announce-events`, `server-messages`, `clear-matchmake-endpoints` and
+`clear-user-endpoint` debug routes were removed with desktop world detection. The retained
+`presence-audit` reader does not establish current room membership or imply the old
+`presence:update` producer is still active.

@@ -1,212 +1,73 @@
-# FCMBridge
+# FCM in-game HUD sources
 
-A Fallout 76 HUDModLoader widget that displays the Fallout Chat Mod community chat feed inside
-the in-game HUD. Connects to the FCM backend via **ZFE chat.v1** or xScal `chatInterface` — not to the
-game's memory or network state.
+The maintained in-game package is [FCMChatWidget](hudmodloader-chat/README.md), a HUDModLoader
+child widget using native ZFE `chat.v1` or xScal `chatInterface`. Start with its
+[build/install guide](hudmodloader-chat/BUILD.md) and the [HUD documentation index](../../docs/overlay/zfe/README.md).
 
-## Transport: automatic ZFE/xScal selection
+The separate [FCMServerBridge 0.1.0 background candidate](hudmodloader-bridge/README.md) also
+uses HUDModLoader. It has no chat widget; the loader menu supplies linking/status and the
+desktop overlay renders its confirmed room. The matching backend/renderer are implemented
+locally; hosted deployment and two-provider in-game acceptance remain pending.
 
-FCMBridge uses ZFE's **standardized native chat relay protocol** (`chat.v1`) or xScal's
-`chatInterface` under `__SFECodeObj` or `__SFCodeObj` instead of the legacy bespoke FCMHUD/1
-socket layer. The SWF
-normalizes both provider surfaces to the same connect/poll/send/auth flow:
+This directory also retains the **legacy standalone bridge and HUDMenu patch**. Do not treat
+`FCMBridge.hx` as the modern widget renderer or apply its transport/rendering assumptions to
+`FCMChatWidget.hx`. Both belong to the explicit opt-in mod track, separate from the default
+desktop overlay. They do not add game-memory reads, code injection, or port scanning.
 
-```actionscript
-__ZFE.call("chat.v1.connect",    payload)  // register + connect; displayName from AccountInfoData
-__ZFE.call("chat.v1.pollEvents", payload)  // poll every 2s; cursor-based dedup
-__ZFE.call("chat.v1.sendMessage",payload)  // send on the active channel
-__ZFE.call("chat.v1.getAuthState","{}") // connection health check
-```
+## Source ownership
 
-The SWF never sees the raw relay token. ZFE stores it in a DPAPI-protected file and
-re-presents it via `hello` on each session.
+| Path | Role |
+| --- | --- |
+| `hudmodloader-bridge/` | Invisible background child, observation policy/tests and validated package builder |
+| `hudmodloader-chat/` | Modern child widget, pure Haxe logic/tests, config, emoji, package tools |
+| `FcmNativeApi.hx`, `FcmAuthFlow.hx` | Shared provider adapter and native auth lifecycle |
+| `FCMBridge.hx` | Legacy feed client used by the standalone HUDMenu integration |
+| `Data/ZFE/TextChat/fragments/FCM.ini` | Legacy standalone ZFE fragment, not the modern widget fragment |
+| `hudmenu-chat/` | Legacy HUDMenu injection source, hash-pinned build, BA2 tool, source anchors |
+| `tools/validate_swf.py` | Structural SWF validation |
+| `SocketProbe.hx` | Historical generic-bridge diagnostic, not a shipped widget |
 
-At startup the SWF probes exposed Scaleform bridge objects. An explicit xScal `chatInterface`
-is selected first because it is the positive provider identity; ZFE is selected only when that
-surface is absent and its own capability probe succeeds. xScal exposes both the chat surface
-(`chatInterface` under either `__SFECodeObj` or `__SFCodeObj`) and, in current builds, may also
-expose a separate call-only `__SFCodeObj` callback object. The latter is not treated as ZFE.
-xScal's chat bridge does not expose ZFE's native text-edit buffer, so the HUD widget uses
-SharedHUDTools input on xScal and
-does not send unsupported editor commands to it.
+## Shared provider contract
 
-The capability probe is provider-specific: ZFE receives `chat.v1.getRuntimeInfo`, while xScal
-receives a no-argument `getRuntimeInfo()` through `chatInterface` (when available). xScal command
-methods receive parsed ActionScript objects, not ZFE's JSON strings. The widget never sends a
-ZFE verb through xScal's generic callback object.
+Discovery inspects only objects already exposed to the movie. An explicit xScal `chatInterface`
+with the required methods has priority; ZFE dispatchers require a positive chat capability
+probe. A generic `__SFCodeObj.call` alone is ambiguous. ZFE takes JSON strings, while xScal
+chat methods take ActionScript objects or no arguments according to the method. Generic logging
+and numeric physical-key callbacks remain separate from chat transport.
 
-xScal's `connect` completes asynchronously. FCM treats
-`success:true,status:"connecting"` as a pending native transport, keeps polling its auth state,
-and does not call `connect` again until xScal reports a terminal failure. A separate generic
-`__SFCodeObj.call` may be used for the `log` diagnostic and documented `Input.*` physical-key
-bookkeeping only; it is never a fallback chat dispatcher. The positive `chatInterface` marker also overrides a stale legacy provider hint, so a
-combined xScal/ZFE installation cannot route chat through the generic callback. This policy is
-shared by the modern HUDModLoader widget and the legacy bridge.
+A successful asynchronous xScal connect can still mean `connecting`; the client polls until
+auth completes instead of repeatedly connecting. Native credentials stay provider-owned.
+Linked-account permission is enforced by the relay in addition to local UI gates. The modern widget’s world/roster
+controls use HUD-published data and authenticated relay membership; its printable `FCMCTL/1/*`
+controls do not embed a shared HMAC secret. The retained legacy FCMBridge still contains its
+older HMAC/NUL control path and must not be used as the modern control recipe.
 
-## What it does
+The active modern path uses `/relay`. Generic socket/remote-data docs describe retired clients.
+The legacy line-feed name `FCMHUD/1` must not be confused with the modern `FCMHUD/1;...` metadata
+carrier. See [native integration](../../docs/overlay/zfe/native-chat-relay/fcm-integration.md).
 
-FCMBridge renders live community chat (General / Trading / Events / Infests / Raids) as styled
-htmlText in the Scaleform overlay. Channel slugs and their FCM mappings:
+## Build and validation
 
-| Slug | FCM target | Notes |
-|------|-----------|-------|
-| `global` | General | broad default |
-| `trade` | Trading | |
-| `events` | Events | custom slug via AllowedChannels |
-| `infests` | Infests | custom slug |
-| `raids` | Raids | custom slug |
-| `server` | world-session room | dynamic; worldId-bound by relay |
-
-The active channel is tracked by the patched HUDMenu and communicated to FCMBridge via
-`fcmSwitchChannelTo(idx)`. Sends go through `fcmSendMessage(body, channelSlug)`.
-
-## Auth state gate (limited vs authenticated)
-
-When a player has not yet linked their FCM account, the relay returns `state:"limited"` from
-`chat.v1.getAuthState`. FCMBridge tracks this in `_authState` and enforces two behaviours:
-
-### 1. Pinned link-code notice
-
-The relay pushes a system event over the poll/subscribe stream:
-
-```json
-{ "kind": "chat.message", "channel": "system", "senderUserId": "system",
-  "senderDisplayName": "FCM",
-  "body": "LINK REQUIRED - visit falloutchatmod.com/link, sign in, and enter code: XXXX-XXXX (expires 10m)" }
-```
-
-FCMBridge special-cases `channel === "system"` or `senderUserId === "system"`: it stores the
-body in `_pinnedSystemBody` and renders it **above the message feed** (prefixed with `** ... **`)
-on every render cycle. It is never scrolled off. If the relay re-emits the notice with a
-refreshed code the pin is updated automatically.
-
-### 2. Send gate
-
-`fcmSendMessage(body, slug)` returns immediately (logs a warn) when `_authState != "authenticated"`.
-The public `fcmCanSend():Bool` method exposes this for the injected HUDMenu code:
-
-- `fcm-inject.as` calls `fcmCanSend()` **before** calling `fcmSendMessage`. If false it calls
-  `fcmShowAuthHint(fcmLinkHint())` which writes the link-code text into the chat input bar
-  in amber and returns without sending.
-- `fcmSendMessage` also enforces the gate defensively (double gate).
-
-The worldId control message (`sendWorldIdControl`) bypasses the send gate — it is an internal
-relay signal, not player-visible chat, and must fire regardless of link state to keep the
-server-channel room binding correct.
-
-## worldId self-read (#293, EULA §4(F)-safe)
-
-FCMBridge reads `worldId` from `BSUIDataManager.GetDataFromClient("AccountInfoData")` — the
-same sanctioned UI-layer surface the game uses for HUD rendering. No game-memory reads,
-no injection, no network scanning. On world transition it emits a reserved control message
-over `chat.v1.sendMessage` (channel `server`, body signed with HMAC-SHA256) that the relay
-intercepts, never broadcasts, and uses to bind the subscriber to the correct world room.
-
-## Files
-
-| File | Purpose |
-|------|---------|
-| `FCMBridge.hx` | Main SWF source — chat.v1 client, render loop, worldId read + HMAC |
-| `FcmNativeApi.hx` | Shared automatic ZFE/xScal discovery and verb adapter |
-| `FCMBridge.swf` | Compiled + version-byte-patched output (SWF v32, deploy to game) |
-| `Data/ZFE/TextChat/fragments/FCM.ini` | TextChat fragment (AllowedChannels, Endpoint, OpenChatKey) |
-| `hudmenu-chat/apply-patch.py` | Injects `fcm-inject.as` into vanilla HUDMenu.as |
-| `hudmenu-chat/fcm-inject.as` | Injected AS3 — HUDMenu input chain + FCMBridge delegation |
-| `hudmenu-chat/test_anchors.py` | Anchor assertions for apply-patch.py (runnable on Linux) |
-| `hudmenu-chat/BUILD.md` | Step-by-step build guide |
-| `SocketProbe.hx` | M0 diagnostic SWF for ZFE API probing (not part of release) |
-
-## Build requirements
-
-- Haxe 4.3+ (`scoop install haxe` on Windows)
-- Python 3 (for `apply-patch.py`, `test_anchors.py`, and the version-byte patch)
-- ZFE 0.9.8+ installed in the game (requires `zfe-chat-online-v1`) **or** xScal
-  installed with its `[Chat]` relay configuration and `chatInterface` enabled
-- Archive2.exe (ships with CK) to pack the `.ba2`
-
-**Haxe is Windows-only in this project.** The Linux CI can run `test_anchors.py` and the
-Vitest SWF shape guard, but the Haxe compile, ffdec recompile, and Archive2 pack must run
-on Windows (see Phase 7).
-
-## Build and deploy (every change to FCMBridge.hx)
+Haxe and Python checks run on Linux CI; compilation is not Windows-only. From this directory,
+the legacy bridge compile smoke used in CI is:
 
 ```bash
-cd game-mods/FCMBridge
-
-# 1. Compile FCMBridge (Windows only -- Haxe not available on Linux)
-haxe --main FCMBridge --swf FCMBridge.swf --swf-version 32
-
-# 2. Patch SWF version byte (MANDATORY -- haxe writes byte 43; game requires 32)
-python3 -c "
-with open('FCMBridge.swf','r+b') as f:
-    d = bytearray(f.read()); d[3]=32; f.seek(0); f.write(d)
-"
-
-# 3. Verify
-python3 -c "print(open('FCMBridge.swf','rb').read(4)[3])"  # must print 32
-
-# 4. Deploy to game for testing
-cp FCMBridge.swf "<FO76>\Data\interface\FCMBridge.swf"
+haxe --class-path hudmodloader-chat --main FCMBridge --swf /tmp/FCMBridge.swf --swf-version 32
+python3 hudmodloader-chat/normalize_swf.py /tmp/FCMBridge.swf
+python3 tools/validate_swf.py /tmp/FCMBridge.swf --require-signature FWS --require-version 32
+haxe test-native-api.hxml
+haxe test-auth-flow.hxml
+python3 hudmenu-chat/test_anchors.py
+python3 hudmenu-chat/test_ba2tool.py
+python3 tools/test_validate_swf.py
 ```
 
-Full build pipeline including HUDMenu patch + Archive2 pack: **[hudmenu-chat/BUILD.md](hudmenu-chat/BUILD.md)**
+Use the [modern build guide](hudmodloader-chat/BUILD.md) to compile/embed emoji and package the
+widget. Normalization decompresses/validates the SWF as needed; changing one header byte is not
+an adequate format check. Repository `ba2tool.py` supports the tested v1 GNRL profile; it is not
+a universal writer for arbitrary BA2 formats.
 
-## Anchor test (runnable on Linux)
-
-```bash
-cd game-mods/FCMBridge/hudmenu-chat
-python3 test_anchors.py               # tests fcm-inject.as + FCMBridge.hx + FCM.ini
-python3 test_anchors.py path/to/HUDMenu.as  # also checks all 6 HUDMenu injection anchors
-```
-
-All 78 assertions should pass. Run this before patching any new `HUDMenu.as`.
-
-## Installation (end-user, standalone)
-
-1. Copy `FCM-standalone.ba2` to `<FO76>\Data\`.
-2. Add to `Fallout76Custom.ini` under `[Archive]`:
-   ```
-   sResourceArchive2List = FCM-standalone.ba2
-   ```
-3. Ensure ZFE 0.9.8+ (`dxgi.dll`) **or xScal** is installed and its chat relay is enabled.
-   No env vars are needed for prod. If using xScal, merge the `[Chat]` section from
-   `hudmodloader-chat/xscal.ini.example` into the existing `xscal.ini` beside the game executable.
-4. For dev/localhost testing, set in `Data/configuration/zfe.ini`:
-   ```ini
-   [TextChat]
-   Endpoint=ws://127.0.0.1:8788/
-   ```
-
-## Crash hard rules
-
-**Violations have crashed the game in production -- do not reintroduce these:**
-
-- **NO `GlowFilter` or any `filters` array** on Scaleform display objects
-- **NO HTML entities** (`&amp;`, `&lt;`, etc.) anywhere in `htmlText`
-- On-screen debug panels: use `tf.text` (plain), never `tf.htmlText`
-
-## What changed from FCMHUD/1
-
-| FCMHUD/1 (removed) | chat.v1 (current) |
-|---|---|
-| `__SFCodeObj` legacy bridge discovery (parent-chain walk) | `__ZFE.call("chat.v1.*")` directly |
-| `register(anon_obj)` / `connect()` / `readUTFBytes()` / `writeUTFBytes()` | `chat.v1.connect`, `pollEvents`, `sendMessage` |
-| `color~channel~user~content` line parsing | JSON event objects from `pollEvents` |
-| `HELLO~accountName~characterName` identity | ZFE DPAPI token + relay-issued `userId` |
-| `SEND~<channelUUID>~<text>` outbound | `chat.v1.sendMessage {channel:slug,body}` |
-| `CHAN~<channelUUID>` channel switch | `fcmSwitchChannelTo(idx)` via FCMBridge public API |
-| `ACTIVECHAN` / `PING` control lines | cursor-based poll; auth state via `getAuthState` |
-| `BRG_OBJ` TCP socket on port 4001 | ZFE-owned WebSocket at `Endpoint` from fragment |
-| Channel UUIDs in SWF | Channel slugs only; relay owns UUID mapping |
-| `DIAG~cat~msg` diagnostic line | `zfeLog` via `__ZFE.call("log", ...)` |
-
----
-
-## Documentation
-
-| Doc | What it covers |
-|-----|---------------|
-| [docs/overlay/zfe/native-chat-relay/protocol-spec.md](../../docs/overlay/zfe/native-chat-relay/protocol-spec.md) | chat.v1 call surface (connect/pollEvents/sendMessage/getAuthState) |
-| [docs/overlay/zfe/native-chat-relay/fcm-integration.md](../../docs/overlay/zfe/native-chat-relay/fcm-integration.md) | FCM relay adapter design, worldId scheme (#293), channel mapping |
-| [docs/overlay/zfe/env-vars.md](../../docs/overlay/zfe/env-vars.md) | ZFE env vars |
-| [docs/overlay/zfe/README.md](../../docs/overlay/zfe/README.md) | ZFE integration overview |
+The [standalone guide](hudmenu-chat/BUILD.md) requires a user-owned vanilla HUDMenu extraction,
+its exact SHA-256, and compatible FFDec tooling. Those inputs are not redistributable project
+assets. Standalone HUDMenu replacements compete with HUDModLoader; use the
+[compatibility guide](../../docs/overlay/zfe/hud-mod-compatibility.md) before any installation.

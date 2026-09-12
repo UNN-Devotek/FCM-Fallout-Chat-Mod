@@ -1,5 +1,10 @@
 # SPEC — In-game HUD widget customization + rendering polish (FCMChatWidget)
 
+> Historical design with later amendments. The maintained configuration contract is
+> [HUD appearance](../overlay/zfe/ingame-chat-appearance.md) and the packaged customization guide.
+> Timestamps and channel-tag/per-channel-color overrides below are retired; they are not current
+> settings. Current input sizing, colors, auto-hide, and persistence are covered in those guides.
+
 **Status:** Implemented — CAP-001..015 shipped (see Implementation Status below)
 **Version:** 0.6
 **Date:** 2026-06-26
@@ -66,8 +71,10 @@ CAP-006 — Player can open the chat panel with the open key, and rebind it via 
 CAP-007 — Player can cycle to next + previous channel by key, each rebindable via config.
   ↳ Test: next-key advances channel; prev-key reverses; rebinding either changes the trigger.
 
-CAP-008 — Player can scroll back through history and jump to newest.
-  ↳ Test: scroll gesture moves history up; jump control returns the feed to the latest message.
+CAP-008 — Player can scroll back through history and optionally bind a jump-to-newest action.
+  ↳ Test: configured scroll actions move history; an unset `scrollBottomKey` leaves Home/End
+    with the game; a configured action returns the feed to the latest message; F11 remains a
+    provider-independent newest-message fallback.
 
 CAP-009 — Invalid, out-of-range, or missing config value falls back to its default without crashing.
   ↳ Test: feed malformed/empty/extreme values, widget loads at defaults, game does not crash.
@@ -136,8 +143,14 @@ confirmation step; not a code blocker.
 - Live hot-apply of config without a widget reload.
 - Editing the channel list / `AllowedChannels` (ZFE fragment territory — #299, #314).
 - Raising the message length cap above the server-enforced maximum.
-- Binding arbitrary physical keys directly remains unavailable for ZFE named actions (arrows, `\`, and other controls still need a FO76 control remap). xScal supports the documented `openKey` virtual-key mapping for Insert, Delete, Home, End, page keys, arrows, F1-F12, letters, and digits; that polling registration does not suppress keyboard gameplay input.
-- Keyboard scroll-back — Arrow Up/Down scroll the idle feed; Home/End returns to newest. Mouse-wheel + menu remain available.
+- Binding arbitrary physical keys directly remains unavailable for ordinary ZFE named actions;
+  the scroll settings may use a physical token when the provider's `Input.*` compatibility
+  surface is available. xScal supports the documented `openKey` virtual-key mapping for Insert,
+  Delete, Home, End, page keys, arrows, F1-F12, letters, and digits; that polling registration
+  does not suppress keyboard gameplay input.
+- Keyboard scroll-back — `scrollUpKey`/`scrollDownKey` default to Up/Down (with directional
+  aliases); `scrollBottomKey` is blank by default and can be assigned to a forwarded action or
+  physical token. Mouse-wheel + the F11 menu remain available.
 
 ---
 
@@ -157,7 +170,10 @@ SS-5: Every visible message shows a proper-cased channel tag matching the active
 - D-02 (locked 2026-06-25): color value format accepts `#RRGGBB`, `RRGGBB`, or `0xRRGGBB`; invalid → key default.
 - D-03 (locked 2026-06-25): channel-key config values use the deliverable action-name set (`NextPage`, `PrevPage`, `Console`, `TeamChat`, `DiagnosticSnapshot`); invalid → key default.
 - D-04 (locked 2026-06-25): v1 layout exposes geometry + font size + retention; row-heights + leading stay fixed (advanced, deferred to v2).
-- D-05 (revised 2026-09-02): keymap — `INSERT` = open AND restore-from-hidden; `Page Down`/`Page Up` (`NextPage`/`PrevPage`) = channel next/prev; Arrow Up/Down = idle feed scroll; Home/End = newest; `/hide` + F11 = hide; mouse-wheel + auto-scroll remain available.
+- D-05 (revised 2026-09-12): keymap — `INSERT` = open AND restore-from-hidden; `Page Down`/`Page Up`
+  (`NextPage`/`PrevPage`) = channel next/prev; `scrollUpKey=Up` and `scrollDownKey=Down`
+  preserve arrow scroll by default; `scrollBottomKey` is blank unless the user assigns it;
+  `/hide` + F11 = hide; mouse-wheel + auto-scroll remain available.
 - D-06 (revised 2026-07-16): optional `hideKey=<action>` config (default UNSET) lets power users bind a key by remapping it to a free action in FO76 controls. Hide is always available via `/hide` + the F11 menu.
 - D-07 (locked 2026-06-25): default open key changes `PAGE_DOWN` → `INSERT` (`FCMChatWidget.ini` `OpenChatKey`, `FCMChat.ini` `openKey`, `_cfgOpenKey`). VM-verify ZFE accepts `INSERT` (Text Chat mod default = INSERT, so expected); `PAGE_DOWN` is the known-good fallback.
 - D-08 (locked 2026-06-25): timestamps come from the relay forwarding `createdAt` in the chat.v1 `chat.message` event (data already exists, `fcm-integration.md:358`; event omits it today, `protocol-spec.md:315`). Accurate for live AND history. NO client-receipt-time fallback — the widget renders the event `ts` only. Relay change tracked as its own backend issue (paired dependency, under #289/#288). Widget timestamps land once the relay ships `createdAt`.
@@ -238,6 +254,9 @@ them = independent keys (more usage sites to thread).
 | `openKey` * | open input; **restore if hidden** | `INSERT` (native ZFE key) | `_cfgOpenKey` :175, `onUserEvent` :560, `pollOpenKey` :1304 | `INSERT` (D-07) |
 | `channelNextKey` + | next channel | `Page Down` | `NextPage`→`cycleChannel` :569 | `NextPage` |
 | `channelPrevKey` + | prev channel (NEW `cyclePrev`) | `Page Up` | none yet (cycle forward-only :652) | `PrevPage` |
+| `scrollUpKey` | scroll feed up during an open session | `Up` / `ArrowUp` aliases | `feed-up` | `Up` |
+| `scrollDownKey` | scroll feed down during an open session | `Down` / `ArrowDown` aliases | `feed-down` | `Down` |
+| `scrollBottomKey` | jump to newest during an open session | unset; user may choose `Home`, `End`, `F12`, or an action | `feed-bottom` | UNSET |
 | `hideKey` + | hide panel (optional) | user-mapped action | none yet | UNSET (use `/hide` + F11 menu) |
 
 **Deliverable action set** (the only values `channelNextKey`/`channelPrevKey`/`hideKey` accept):
@@ -246,8 +265,9 @@ overrides team chat), `DiagnosticSnapshot` (F12). Everything else
 is gameplay-critical and not bindable. For any other physical key, the user maps key→action in
 FO76 controls, then sets the matching action here.
 
-- **Scroll:** Arrow Up/Down actions and mouse-wheel move through feed history; Home/End and F11
-  "Scroll to newest" return to the latest message. `Page Up` remains `channelPrevKey`.
+- **Scroll:** `scrollUpKey`/`scrollDownKey` and mouse-wheel move through feed history. The
+  optional `scrollBottomKey` and F11 "Scroll to newest" return to the latest message. `Page Up`
+  remains `channelPrevKey`.
 - **Hide / restore:** `/hide` (slash command) or F11 "Hide chat" hides (`this.visible=false`,
   timers + listeners keep running so the feed stays current). `openKey` (`INSERT`) restores +
   opens — guaranteed, it is the one natively-polled key.

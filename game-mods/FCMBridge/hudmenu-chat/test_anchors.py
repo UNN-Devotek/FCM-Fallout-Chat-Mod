@@ -360,6 +360,28 @@ except FileNotFoundError:
     widget_src = ""
 
 if widget_src:
+    try:
+        widget_config_src = open(WIDGET_CONFIG_HX, encoding="utf-8").read()
+    except FileNotFoundError:
+        widget_config_src = ""
+    check('scrollUpKey:String     = "Up"' in widget_config_src
+          and 'scrollDownKey:String   = "Down"' in widget_config_src
+          and 'scrollBottomKey:String = ""' in widget_config_src
+          and 'case "scrollupkey"' in widget_config_src
+          and 'case "scrolldownkey"' in widget_config_src
+          and 'case "scrollbottomkey"' in widget_config_src,
+          "FcmConfig exposes opt-in scroll key settings with an unset newest binding")
+    check('scrollUpKey=" + scrollUpKey' in widget_config_src
+          and 'scrollDownKey=" + scrollDownKey' in widget_config_src
+          and 'scrollBottomKey=" + scrollBottomKey' in widget_config_src,
+          "FcmConfig persists all scroll key settings")
+    check('scrollUpKey=Up' in open(os.path.join(os.path.dirname(WIDGET_HX), "FCMChat.ini"), encoding="utf-8").read()
+          and 'scrollDownKey=Down' in open(os.path.join(os.path.dirname(WIDGET_HX), "FCMChat.ini"), encoding="utf-8").read()
+          and 'scrollBottomKey=' in open(os.path.join(os.path.dirname(WIDGET_HX), "FCMChat.ini"), encoding="utf-8").read(),
+          "FCMChat.ini ships default arrow scrolling and no scroll-to-bottom bind")
+    check('scrollDirection(raw:String, configuredUp:String = "Up", configuredDown:String = "Down")' in open(os.path.join(os.path.dirname(WIDGET_HX), "FcmCommand.hx"), encoding="utf-8").read()
+          and 'physicalNavigationAction' in open(os.path.join(os.path.dirname(WIDGET_HX), "FcmCommand.hx"), encoding="utf-8").read(),
+          "FcmCommand supports configurable named and physical scroll actions")
     check("tf.wordWrap = wrap" in widget_src and "tf.autoSize = wrap ?" in widget_src
           and "contentTf.height =" not in widget_src and "FcmFeedWrap" not in widget_src,
           "Styled message text uses native wrapping and automatic height without manual shrink")
@@ -494,10 +516,10 @@ if widget_src:
     check("_api.provider != FcmNativeApi.ZFE" in widget_src
           and "xScal has no ZFE isChatKeyPressed command" in widget_src,
           "FCMChatWidget keeps the ZFE-only open-key poll off xScal")
-    check("physicalKeyAction" in widget_src
+    check("physicalNavigationAction" in widget_src
           and "VK_PAGEUP:Int = 0x21" in widget_src
           and "VK_PAGEDOWN:Int = 0x22" in widget_src,
-          "FCMChatWidget uses the documented Windows Page Up/Page Down virtual-key codes")
+          "FCMChatWidget uses configured physical navigation and documented Page Up/Page Down virtual-key codes")
     check("probeChatCapability" in widget_src
           and "if (!_api.probeChatCapability())" in widget_src,
           "FCMChatWidget probes only the selected provider capability")
@@ -697,7 +719,7 @@ if widget_src:
           and "navAction == \"feed-bottom\"" in widget_src
           and "function scrollUp" in widget_src
           and "function scrollDown" in widget_src,
-          "FCMChatWidget maps arrows/Home/End only while Insert owns the feed")
+          "FCMChatWidget maps configured scroll actions only while Insert owns the feed")
     check("_fcmNavigationAction:String = \"\"" in patch_src
           and "_fcmNavigationDown:Array = []" in patch_src
           and "fcmNavigationIsDown" in inject_src
@@ -820,6 +842,15 @@ if widget_src:
           and '_renderGeneration.isCurrent(renderToken)' in widget_src
           and 'cancelPendingRender();' in widget_src,
           "FCMChatWidget invalidates delayed feed slices across rebuild and reload")
+    check('_renderGeneration.runCurrent(renderToken, doSlice, renderRecordsFallback);' in widget_src
+          and 'function renderRecordsFallback(err:Dynamic)' in widget_src
+          and 'function(_:Dynamic) { doSlice(); }' not in widget_src,
+          "FCMChatWidget guards delayed render exceptions as well as the first slice")
+    event_parser = widget_src[widget_src.index('function parseAndRenderEvents('):widget_src.index('function markSeenEvent(')]
+    replay_guard = event_parser.find('!markSeenEvent(channel, evId, messageId)')
+    echo_match = event_parser.find('if (reconcileOwnEcho(')
+    check(replay_guard >= 0 and replay_guard < echo_match,
+          "FCMChatWidget rejects replays before they can consume a pending self-send")
     check('_broadcastInFlight' in widget_src
           and '_history.release(chan, 0, "world:" + id)' in widget_src
           and 'auto-broadcast history guard threw' in widget_src,

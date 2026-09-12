@@ -1,6 +1,6 @@
 # Architecture Overview
 
-Fallout Chat Mod is a governed, real-time community chat platform for Fallout 76. It is **EULA §4(F) compliant** — no game-memory reading, no game-file modification, no code injection, no network/port scanning. The desktop client only checks whether the `Fallout76` process is running (to show/hide the overlay); it does not read game state.
+Fallout Chat Mod is a governed, real-time community chat platform for Fallout 76. The default desktop overlay only checks whether the `Fallout76` process is running to show/hide its window; it does not read game state or modify game files. The separate, explicit opt-in [HUD mod](../overlay/zfe/README.md) installs UI assets and uses already-exposed HUD data through ZFE/xScal. Neither track adds game-memory reads, code injection, or network/port scanning.
 
 ---
 

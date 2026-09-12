@@ -1,10 +1,21 @@
 # HUD styling and emoji test status
 
-Last updated: 2026-09-08. Last confirmed desktop test: **2.10.72**, connected to Prod.
-The **2.10.73** compatibility candidate is installed on the desktop against Prod
-and awaits in-game confirmation. Installed BA2 SHA-256:
+Status reviewed 2026-09-12. The final recorded desktop **ZFE 2.10.74 HUD test** confirmed
+chosen name colors and emoji after correcting the global ZFE endpoint to Prod. Earlier 2.10.72
+failures and 2.10.73 pending labels below are historical. xScal 2.10.73 logs confirmed the sprite
+placement path executed, which is narrower than a complete visual acceptance test.
+
+Local candidate 2.10.78 passed offline source/build/package checks; it has not been validated
+in-game in this review. No current installed path, public download, or backend deployment is
+inferred from these earlier sessions. See [the HUD index](../overlay/zfe/README.md).
+
+## Historical investigation (2026-09-08 and follow-up)
+
+At the start of this record, 2.10.72 styling was confirmed and a 2.10.73 candidate was installed
+for testing. Its BA2 SHA-256 was
 `f70d61320189e8619f781d22d3e4418abf24aef801d673fa1629b74fbce85467`.
-This record covers the optional in-game HUD, not the desktop overlay renderer.
+This is a historical artifact identity, not the current candidate. Some early Prod-target claims
+were corrected by the endpoint diagnosis later in this record.
 
 ## Confirmed observations
 
@@ -55,9 +66,10 @@ queued sends, reconnects or other transport updates.
   The previous xScal loader/config are preserved in the game directory under
   `FCM-extender-backup-before-zfe-20260908-154747`.
 
-## Remaining verification
+## Verification requested during the investigation
 
-1. Identify the class/dependency behind the `emoji-plan` error in the actual runtime.
+1. The exact dependency behind the old `emoji-plan` failure was not proven. If it recurs,
+   diagnose the actual runtime instead of assuming the historical workaround explains every case.
 2. Verify Unicode and custom emoji pictures in-game, separately on xScal and ZFE.
 3. Check adjacent emoji, skin tones, flags, joined sequences, mixed text, narrow/wide
    resizing, clipping, and continued independent channel/name/body/star colors.

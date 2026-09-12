@@ -9,7 +9,7 @@ moderation portal, rendered through a transparent in-game overlay.
 > memory, modifies game files, injects code, or scans networks/ports. The optional **in-game HUD mods
 > (`.ba2`)** are a separate, explicit opt-in install that swap UI assets and may read the game's own
 > UI-layer data the HUD already renders (e.g. `worldId` / nearby-player roster from `BSUIDataManager`)
-> via ZFE's sanctioned outbound channel — never bundled into or required by the overlay. Neither track
+> via the selected ZFE/xScal provider's sanctioned outbound channel — never bundled into or required by the overlay. Neither track
 > reads game memory, injects code, or scans networks/ports.
 
 This folder is the central documentation hub. Each domain lives in its own subfolder, with a
@@ -50,7 +50,7 @@ This folder is the central documentation hub. Each domain lives in its own subfo
 | **Real-time** | [realtime/](realtime/README.md) | WSS relay protocol, presence & sessions, HUD push |
 | **Frontend** | [frontend/](frontend/README.md) | Admin dashboard, the shared ChatOverlay component, theming |
 | **Electron overlay** | [overlay/](overlay/README.md) | Window management, keybinds, update notification, building |
-| **In-game HUD feed** | [overlay/zfe/](overlay/zfe/README.md) | ZFE/FCMBridge wire format, events, env vars, modder guide |
+| **In-game HUD feed** | [overlay/zfe/](overlay/zfe/README.md) | FCMChatWidget, native ZFE/xScal relay, packaging, input, appearance, recovery |
 | **Discord bot** | [discord/](discord/README.md) | Chat bridge, Join-to-Create voice, embed builder, reaction roles |
 | **Database** | [database/](database/README.md) | Prisma schema, idempotent migrations, Redis usage |
 | **Moderation** | [moderation/](moderation/README.md) | Automod engine, reports & evidence, role model |
@@ -66,11 +66,11 @@ This folder is the central documentation hub. Each domain lives in its own subfo
 - **Auth.** Overlay clients use an anonymous UUID install token → an ephemeral session token in Redis.
   The admin dashboard uses Discord OAuth2 with server-authoritative role re-verification on every
   request (owner/admin/moderator). See [backend/auth.md](backend/auth.md).
-- **Canonical message persistence completes before visibility.** WS/HUD sends enqueue the Postgres
-  write through the Bull/Redis `messagePersist` queue and wait for the job to finish before broadcasting
-  or acknowledging the message, so self-edit cannot race a missing row. Cross-instance fan-out uses
-  Redis pub/sub, so the backend scales horizontally with no sticky sessions. See
-  [architecture/data-flow.md](architecture/data-flow.md).
+- **Delivery ordering depends on the producer.** Ordinary WS and legacy HUD sends wait for the
+  Bull persistence job before visibility. Native `/relay` sends ACK and fan out after durable queue
+  acceptance to keep the synchronous HUD RPC bounded; database/Discord completion is separate.
+  Cross-instance fan-out uses Redis pub/sub. See [HUD retry safety](overlay/zfe/hud-send-retries.md)
+  and [architecture/data-flow.md](architecture/data-flow.md).
 - **Migrations must be idempotent.** `baseline-migrations.sh` runs `prisma db push` before
   `migrate deploy`, so every migration must use `IF NOT EXISTS` / constraint guards / `ON CONFLICT DO
   NOTHING`. See [database/migrations.md](database/migrations.md).
