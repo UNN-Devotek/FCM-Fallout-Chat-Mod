@@ -3234,6 +3234,32 @@ describe('auth gate integration', () => {
     wsLinked.close();
   });
 
+  test('linked hello ignores an unverified displayName override', async () => {
+    const { ws: wsReg, msgs: msgsReg } = await conn5();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      wsReg.send(JSON.stringify({ op: 'register', displayName: 'VerifiedPlayer' })),
+    );
+    await new Promise((r) => setTimeout(r, 100));
+    wsReg.close();
+
+    const { token } = regRes;
+    const rawId = lastRawUserId();
+    const linkedUserId = 'fcm-identity-guard-001';
+    _userMap[rawId] = { id: rawId, discordId: null, steamId: null, isBanned: false, isMuted: false };
+    _userMap[linkedUserId] = { id: linkedUserId, discordId: 'discord-identity', isBanned: false, isMuted: false };
+    markTokensLinked(rawId, linkedUserId);
+
+    const prisma = require('../src/config/prisma').default;
+    prisma.user.update.mockClear();
+    const { ws, msgs } = await conn5();
+    const res = await waitForMsg(ws, msgs, () =>
+      ws.send(JSON.stringify({ op: 'hello', token, displayName: 'SpoofedFromIni' })),
+    );
+    expect(res).toMatchObject({ success: true, displayName: 'VerifiedPlayer' });
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    ws.close();
+  });
+
   // ── 4. getAuthState state transitions ────────────────────────────────────────
 
   test('getAuthState returns state=limited with canSend=false before link', async () => {

@@ -964,20 +964,14 @@ async function handleHello(ws: WebSocket, frame: Record<string, unknown>): Promi
   // moderation state lives on linkedUserId.
   if (identity.linkedUserId && await rejectBlockedAccount(ws, identity.linkedUserId)) return;
 
-  // Update displayName if provided and different.
-  const newName = readWireDisplayName(frame.displayName).trim();
-  if (newName && newName !== identity.fo76Name) {
-    await updateDisplayName(identity.userId, newName);
-    // Keep the linked account's fo76_account_name in sync so chat HISTORY (which derives the
-    // sender from the user row) shows the current character name, not a stale one. This is what
-    // lets the real FO76 name land once the widget re-hellos with it after the game populates it.
-    if (identity.linkedUserId) {
-      await prisma.user.update({
-        where: { id: identity.linkedUserId },
-        data:  { fo76AccountName: newName },
-      }).catch((err) => logger.warn({ err, userId: identity.linkedUserId }, '[relayHandler] fo76AccountName sync on hello failed'));
-    }
-  }
+  // A linked token's name is the server-held identity. Never let a client-side INI
+  // override rewrite the linked account or the relay token; the HUD cannot prove that
+  // an arbitrary displayName came from Fallout 76. Limited tokens may still refresh their
+  // temporary name until the authenticated web link establishes the durable identity.
+  const requestedName = readWireDisplayName(frame.displayName).trim();
+  const newName = identity.isLinked ? '' : requestedName;
+  if (newName && newName !== identity.fo76Name) await updateDisplayName(identity.userId, newName);
+  const effectiveName = identity.isLinked ? identity.fo76Name : (newName || identity.fo76Name);
 
   const state = identity.isLinked ? 'authenticated' : 'limited';
 
@@ -985,7 +979,7 @@ async function handleHello(ws: WebSocket, frame: Record<string, unknown>): Promi
     success:     true,
     // identity.userId is relay TEXT ("user_"+hex) — pass through directly.
     userId:      identity.userId,
-    displayName: newName || identity.fo76Name,
+    displayName: effectiveName,
     role:        identity.role,
     state,
   });

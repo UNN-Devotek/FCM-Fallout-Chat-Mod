@@ -50,6 +50,27 @@ class FcmHistory {
         forget("server:", true);
     }
 
+    /** Release a speculative message/event identity after a send was rejected. */
+    public function release(channel:String, eventId:Int, messageId:String):Void {
+        var keys:Array<String> = [];
+        if (eventId > 0) keys.push(channel + ":event:" + eventId);
+        if (messageId != null && messageId.length > 0) keys.push(channel + ":message:" + messageId);
+        for (key in keys) releaseExact(key);
+    }
+
+    /** Synthetic public-event message IDs are scoped to a world, not a connection. */
+    public function clearWorldBroadcasts():Void {
+        forget(":message:world:", false);
+    }
+
+    function releaseExact(key:String):Void {
+        if (!seen.exists(key)) return;
+        seen.remove(key);
+        var kept:Array<String> = [];
+        for (current in order) if (current != key) kept.push(current);
+        order = kept;
+    }
+
     function forget(value:String, prefix:Bool):Void {
         var kept:Array<String> = [];
         for (key in order) {

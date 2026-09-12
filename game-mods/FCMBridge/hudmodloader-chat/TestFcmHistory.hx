@@ -31,6 +31,15 @@ class TestFcmHistory {
         check("seed old world row", cleared.accept("server", 1, "world-message", 256));
         cleared.clearServer();
         check("removed world row can be restored", cleared.accept("server", 1, "world-message", 256, []));
+        var broadcastHistory = new FcmHistory();
+        check("speculative broadcast is initially accepted",
+            broadcastHistory.accept("events", 0, "world:activity-1", 512));
+        broadcastHistory.release("events", 0, "world:activity-1");
+        check("rejected broadcast can be retried",
+            broadcastHistory.accept("events", 0, "world:activity-1", 512));
+        broadcastHistory.clearWorldBroadcasts();
+        check("world reset releases synthetic event identities",
+            broadcastHistory.accept("events", 0, "world:activity-1", 512));
         replayHistory.startConnection();
         check("retained canonical row protected after reconnect", !replayHistory.accept("global", 1, "message-1", 400, retained));
 

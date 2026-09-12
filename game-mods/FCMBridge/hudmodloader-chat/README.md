@@ -348,6 +348,7 @@ restart; the loader reload control is for live widget changes.
 | `FcmCommand.hx` / `TestFcmCommand.hx` / `test-command.hxml` | Pure slash-command matching and tests |
 | `FcmUserEvent.hx` | Native HUDModLoader getter-property adapter for named input events |
 | `FcmWire.hx` / `TestFcmWire.hx` / `test-wire.hxml` | Whitespace-safe native event-array detection and tests |
+| `FcmRenderGeneration.hx` / `TestFcmRenderGeneration.hx` / `test-render-generation.hxml` | Delayed render/reload generation guard and tests |
 | `TestFcmConfig.hx` / `test-config.hxml` | `FcmConfig` unit tests (`haxe --interp`; run in CI) |
 | `build.hxml` | Haxe build file |
 | `FCMChat.ini` | Per-user config — position, size, colors, font, limits, keybinds, toggles |
