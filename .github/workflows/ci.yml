@@ -309,9 +309,12 @@ jobs:
             game-mods/FCMBridge/hudmodloader-chat/FcmHistory.hx
             game-mods/FCMBridge/hudmodloader-chat/FcmRoster.hx
             game-mods/FCMBridge/hudmodloader-chat/FcmServerSession.hx
+            game-mods/FCMBridge/hudmodloader-chat/FcmRenderGeneration.hx
             game-mods/FCMBridge/hudmodloader-chat/TestFcmHistory.hx
             game-mods/FCMBridge/hudmodloader-chat/TestFcmRoster.hx
+            game-mods/FCMBridge/hudmodloader-chat/TestFcmRenderGeneration.hx
             game-mods/FCMBridge/hudmodloader-chat/test-history.hxml
+            game-mods/FCMBridge/hudmodloader-chat/test-render-generation.hxml
             game-mods/FCMBridge/hudmenu-chat/test_ba2tool.py
             game-mods/FCMBridge/tools/validate_swf.py
             game-mods/FCMBridge/tools/test_validate_swf.py
@@ -373,6 +376,9 @@ jobs:
       - name: Test HUD history recovery and world transitions
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe test-history.hxml
+      - name: Test delayed HUD render invalidation
+        working-directory: game-mods/FCMBridge/hudmodloader-chat
+        run: haxe test-render-generation.hxml
       - name: Run native bridge compatibility tests
         working-directory: game-mods/FCMBridge
         run: haxe test-native-api.hxml

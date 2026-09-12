@@ -28,51 +28,6 @@ class FcmConfig {
     // Zero inherits the existing provider-specific input size.
     public var inputFontSize:Int = 0;
 
-    public function effectiveInputFontSize(nativeInput:Bool = false):Int {
-        var requested = inputFontSize == 0 ? (nativeInput ? 13 : fontSize) : inputFontSize;
-        return clampInt(requested, 8, Std.int(Math.min(47, height - 80)));
-    }
-
-    public function effectiveInputHeight():Int {
-        // Reserve 70px for tab rows, separation and at least 20px of feed.
-        return clampInt(Std.int(Math.max(inputHeight, effectiveInputFontSize() + 10)),
-            28, Std.int(Math.min(120, height - 70)));
-    }
-
-    /** Shared action catalog keeps menu wiring and tested sizing behavior together. */
-    public function sizingMenu():Array<{id:String, label:String}> {
-        var items = [];
-        for (entry in [{key:"width", label:"Panel width", value:width},
-                {key:"height", label:"Panel height", value:height},
-                {key:"input_height", label:"Input height", value:effectiveInputHeight()},
-                {key:"input_font", label:"Input text size", value:effectiveInputFontSize()},
-                {key:"feed_font", label:"Feed text size", value:fontSize}]) {
-            items.push({id:"cz_" + entry.key + "_up", label:entry.label + " + (" + entry.value + ")"});
-            items.push({id:"cz_" + entry.key + "_dn", label:entry.label + " - (" + entry.value + ")"});
-        }
-        items.push({id:"cz_input_font_auto", label:"Input text: use default size"});
-        return items;
-    }
-
-    public function customizeSize(id:String):Bool {
-        switch (id) {
-            case "cz_width_up": width += 30;
-            case "cz_width_dn": width -= 30;
-            case "cz_height_up": height += 20;
-            case "cz_height_dn": height -= 20;
-            case "cz_input_height_up": inputHeight = effectiveInputHeight() + 4;
-            case "cz_input_height_dn": inputHeight = effectiveInputHeight() - 4;
-            case "cz_input_font_up": inputFontSize = effectiveInputFontSize() + 1;
-            case "cz_input_font_dn": inputFontSize = effectiveInputFontSize() - 1;
-            case "cz_input_font_auto": inputFontSize = 0;
-            case "cz_feed_font_up": fontSize++;
-            case "cz_feed_font_dn": fontSize--;
-            default: return false;
-        }
-        clamp();
-        return true;
-    }
-
     // ── Colors (0xRRGGBB) + opacity ────────────────────────────────────────────
     public var bgColor:Int          = 0x0A0907;
     public var bgAlpha:Float        = 0.94;
@@ -168,6 +123,74 @@ class FcmConfig {
     // ── Feed toggles ───────────────────────────────────────────────────────────
     public var showChannelTag:Bool  = true;
     public var showHints:Bool       = false;      // blank idle prompt by default (CAP-014)
+
+    // ── HUD mode gating ────────────────────────────────────────────────────────
+    // Blacklist of HUDMode strings where the widget must stay hidden. Single INI key
+    // `hideInHUDModes` (comma-separated) — case-insensitive. Opinionated default hides
+    // MainMenu, Pipboy, CAMP build modes, vendor/crafting/repair (ContainerMode) and
+    // the map (MapMenu) so the chat does not cover those UIs.
+    public var hideInHUDModes:Array<String> = ["MainMenu", "Pipboy", "WorkshopMode", "WorkshopNoCrosshairMode", "CampPlacement", "ContainerMode", "MapMenu"];
+
+    // ── World-event auto-broadcast (global events channel) ───────────────────
+    // When true, FCMChatWidget reads RecentActivitiesData (same source HUDChallenges
+    // uses) for publicEvent (type 1) and broadcasts each new event exactly once to the
+    // global events leaf (000...003). Requires events channel in AllowedChannels.
+    public var autoBroadcastWorldEvents:Bool = false;
+    // Which events may be broadcast: one list + a mode flag. "allow" (default) =
+    // only listed names are announced; "deny" = every valid name EXCEPT the listed
+    // ones is announced. Names are trimmed, case-insensitive, EXACT matches against
+    // the game's RecentActivitiesData name (never substrings). allow + empty list =
+    // same as the master toggle off (nothing broadcasts, quietly).
+    // Default allow-list spellings per fallout.fandom.com/wiki/Fallout_76_public_events.
+    public var broadcastEvents:Array<String> = ["Scorched Earth", "Neurological Warfare", "A Colossal Problem", "Seismic Activity", "Encryptid", "Eviction Notice", "Moonshine Jamboree"];
+    public var broadcastEventsMode:String = "allow"; // "allow" | "deny" (invalid -> "allow")
+
+    /** Effective master switch: the toggle AND the empty-allow rule. */
+    public function autoBroadcastActive():Bool {
+        if (!autoBroadcastWorldEvents) return false;
+        if (broadcastEventsMode == "deny") return true;
+        return broadcastEvents != null && broadcastEvents.length > 0;
+    }
+
+    /** The game serves public-event names with an "Event: " prefix
+        ("Event: Scorched Earth"); wiki titles usually match the served string.
+        Strip one leading prefix (case-insensitive) so list entries work with or
+        without it. Pure + unit-testable; also used for the broadcast body so the
+        feed reads "Public Event: Scorched Earth", not "Public Event: Event: ...". */
+    public static function stripEventPrefix(name:String):String {
+        if (name == null) return "";
+        var t:String = StringTools.trim(name);
+        var low:String = t.toLowerCase();
+        if (low.indexOf("event:") == 0) t = StringTools.trim(t.substr(6));
+        return t;
+    }
+
+    /** Pure name filter shared by both broadcast gates (unit-testable). */
+    public static function eventPassesFilter(name:String, list:Array<String>, mode:String):Bool {
+        var t:String = stripEventPrefix(name);
+        if (t.length == 0) return false;
+        var low:String = t.toLowerCase();
+        var listed:Bool = false;
+        if (list != null) {
+            for (v in list) {
+                if (v == null) continue;
+                if (stripEventPrefix(v).toLowerCase() == low) { listed = true; break; }
+            }
+        }
+        if (mode == "deny") return !listed;
+        return listed;
+    }
+
+    // ── Manual identity fallback (escape hatch for flaky AccountInfoData) ───────
+    // When xScal/the game serves a blank AccountInfoData (empty name,
+    // isLoggedIn=false) the widget waits forever for a handle that never comes
+    // and never reaches chat.v1.connect. Setting displayName supplies the
+    // handshake label so boot can proceed. The value is a client-side bootstrap
+    // label only; linked tokens keep the server-held identity and the relay ignores
+    // this value for durable account/message identity. The real game-provided handle
+    // wins in the HUD when available.
+    // Empty (default) = disabled.
+    public var displayNameOverride:String = "";
 
     // ── Link flow ────────────────────────────────────────────────────────────────
     // URL shown in the widget's link prompt (linkHint fallback). DEV builds set this to
@@ -660,6 +683,22 @@ class FcmConfig {
                 case "channelprevkey":  cfg.channelPrevKey = validAction(val, cfg.channelPrevKey);
                 case "hidekey":         cfg.hideKey = validAction(val, "");
                 case "showhints":       cfg.showHints = parseBool(val, cfg.showHints);
+                case "autobroadcastworldevents":
+                    cfg.autoBroadcastWorldEvents = parseBool(val, cfg.autoBroadcastWorldEvents);
+                case "broadcastevents":
+                    // Always assign: explicit empty (or unparseable) clears the list,
+                    // which in "allow" mode reads as broadcast-off (see autoBroadcastActive).
+                    cfg.broadcastEvents = parseCsvList(val, 16);
+                case "broadcasteventsmode":
+                    var m:String = StringTools.trim(val).toLowerCase();
+                    cfg.broadcastEventsMode = (m == "deny") ? "deny" : "allow";
+                case "hideinhudmodes":
+                    cfg.hideInHUDModes = parseHideInHUDModes(val);
+                case "displayname":
+                    // Bethesda handle charset: word chars, spaces, - _ .; capped at
+                    // FcmIdentity.MAX_NAME_length by clamp(). Anything else ignored.
+                    var dn:String = StringTools.trim(val);
+                    cfg.displayNameOverride = (dn.length > 0 && ~/^[A-Za-z0-9 _\-.]+$/.match(dn)) ? dn : cfg.displayNameOverride;
                 case "linkurl":
                     // URL-safe charset only — interpolated into htmlText (crash rule #2).
                     var lu:String = StringTools.trim(val);
@@ -670,6 +709,80 @@ class FcmConfig {
 
         cfg.clamp();
         return cfg;
+    }
+
+    /** Shared comma/semicolon list parser: trim, drop empties, dedupe case-insensitively, cap. */
+    static function parseCsvList(s:String, cap:Int):Array<String> {
+        if (s == null) return [];
+        var raw:String = StringTools.trim(s);
+        if (raw.length == 0) return [];
+        var out:Array<String> = [];
+        var seen:Map<String,Bool> = new Map();
+        for (c in raw.split(",")) {
+            for (d in c.split(";")) {
+                var t:String = StringTools.trim(d);
+                if (t.length == 0) continue;
+                var low:String = t.toLowerCase();
+                if (!seen.exists(low)) {
+                    seen.set(low, true);
+                    out.push(t);
+                }
+                if (out.length >= cap) break;
+            }
+            if (out.length >= cap) break;
+        }
+        return out;
+    }
+
+    static function parseHideInHUDModes(s:String):Array<String> {
+        return parseCsvList(s, 16);
+    }
+
+    public function effectiveInputFontSize(isChrome:Bool = false):Int {
+        var base:Int = (inputFontSize == 0) ? (isChrome ? 13 : fontSize) : inputFontSize;
+        return clampInt(base, 8, Std.int(Math.min(47, height - 80)));
+    }
+
+    public function effectiveInputHeight():Int {
+        return clampInt(Std.int(Math.max(inputHeight, effectiveInputFontSize() + 10)), 28, Std.int(Math.min(120, height - 70)));
+    }
+
+    public function sizingMenu():Array<Dynamic> {
+        var out:Array<Dynamic> = [];
+        var add = function(id:String, label:String):Void {
+            out.push({ id: id, label: label });
+        };
+        add("cz_width_up", "Panel width + (" + width + ")");
+        add("cz_width_dn", "Panel width - (" + width + ")");
+        add("cz_height_up", "Panel height + (" + height + ")");
+        add("cz_height_dn", "Panel height - (" + height + ")");
+        add("cz_input_height_up", "Input height + (" + effectiveInputHeight() + ")");
+        add("cz_input_height_dn", "Input height - (" + effectiveInputHeight() + ")");
+        add("cz_input_font_up", "Input text size + (" + effectiveInputFontSize() + ")");
+        add("cz_input_font_dn", "Input text size - (" + effectiveInputFontSize() + ")");
+        add("cz_feed_font_up", "Feed text size + (" + fontSize + ")");
+        add("cz_feed_font_dn", "Feed text size - (" + fontSize + ")");
+        add("cz_input_font_auto", "Input text: use default size");
+        return out;
+    }
+
+    public function customizeSize(action:String):Bool {
+        switch (action) {
+            case "cz_feed_font_dn":   --fontSize;
+            case "cz_feed_font_up":   ++fontSize;
+            case "cz_height_dn":      height -= 20;
+            case "cz_height_up":      height += 20;
+            case "cz_input_font_auto": inputFontSize = 0;
+            case "cz_input_font_dn":  inputFontSize = effectiveInputFontSize() - 1;
+            case "cz_input_font_up":  inputFontSize = effectiveInputFontSize() + 1;
+            case "cz_input_height_dn": inputHeight = effectiveInputHeight() - 4;
+            case "cz_input_height_up": inputHeight = effectiveInputHeight() + 4;
+            case "cz_width_dn":       width -= 30;
+            case "cz_width_up":       width += 30;
+            default: return false;
+        }
+        clamp();
+        return true;
     }
 
     /** Clamp every numeric value to a safe range; keep the panel on-screen. */
@@ -687,6 +800,45 @@ class FcmConfig {
         maxSendLen  = clampInt(maxSendLen, 1, 500);     // server hard cap 500
         pollMs      = clampInt(pollMs, 1000, 60000);    // 1s..60s event-poll interval
         autoHideSec = clampInt(autoHideSec, 0, 600);    // 0 = off, else 1s..10min
+        // Manual identity fallback: trim + cap at FcmIdentity.MAX_NAME_LENGTH (64).
+        if (displayNameOverride == null) displayNameOverride = "";
+        displayNameOverride = StringTools.trim(displayNameOverride);
+        if (displayNameOverride.length > 64) displayNameOverride = displayNameOverride.substr(0, 64);
+        // Clamp HUD mode list length and dedupe lower-cased
+        if (hideInHUDModes == null) hideInHUDModes = [];
+        if (hideInHUDModes.length > 16) hideInHUDModes = hideInHUDModes.slice(0, 16);
+        // Normalize empty strings and dedupe case-insensitively
+        var norm:Array<String> = [];
+        var seen:Map<String,Bool> = new Map();
+        for (v in hideInHUDModes) {
+            if (v == null) continue;
+            var t:String = StringTools.trim(v);
+            if (t.length == 0) continue;
+            var low:String = t.toLowerCase();
+            if (!seen.exists(low)) {
+                seen.set(low, true);
+                norm.push(t);
+            }
+        }
+        hideInHUDModes = norm;
+        // Broadcast event list: same normalization; mode sanitized to allow|deny.
+        if (broadcastEvents == null) broadcastEvents = [];
+        var bnorm:Array<String> = [];
+        var bseen:Map<String,Bool> = new Map();
+        for (v in broadcastEvents) {
+            if (v == null) continue;
+            var t:String = StringTools.trim(v);
+            if (t.length == 0) continue;
+            var low:String = t.toLowerCase();
+            if (!bseen.exists(low)) {
+                bseen.set(low, true);
+                bnorm.push(t);
+            }
+            if (bnorm.length >= 16) break;
+        }
+        broadcastEvents = bnorm;
+        var bm:String = (broadcastEventsMode == null) ? "" : StringTools.trim(broadcastEventsMode).toLowerCase();
+        broadcastEventsMode = (bm == "deny") ? "deny" : "allow";
     }
 
     /** Serialize back to the [FCMChat] INI (for F11 Customize persistence via ZFE storage).
@@ -721,6 +873,11 @@ class FcmConfig {
         s.add("channelPrevKey=" + channelPrevKey + "\n");
         s.add("hideKey=" + hideKey + "\n");
         s.add("showHints=" + b(showHints) + "\n");
+        s.add("hideInHUDModes=" + hideInHUDModes.join(",") + "\n");
+        s.add("displayName=" + displayNameOverride + "\n");
+        s.add("autoBroadcastWorldEvents=" + b(autoBroadcastWorldEvents) + "\n");
+        s.add("broadcastEvents=" + broadcastEvents.join(",") + "\n");
+        s.add("broadcastEventsMode=" + broadcastEventsMode + "\n");
         s.add("linkUrl=" + linkUrl + "\n");
         return s.toString();
     }

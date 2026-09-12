@@ -477,8 +477,10 @@ if widget_src:
           and "isPhysicalKeyPressed" in widget_src
           and "stopPhysicalNavigation" in widget_src,
           "FCMChatWidget polls registered physical keys when HUDModLoader collapses Page actions")
-    check(re.search(r"loadPersistedConfig\(\);\s*(//[^\n]*\n\s*)*startPhysicalNavigation\(\);\s*startConnect\(\);",
-                    widget_src) is not None,
+    load_config_at = widget_src.find("loadPersistedConfig();")
+    physical_navigation_at = widget_src.find("startPhysicalNavigation();", load_config_at + 1)
+    connect_at = widget_src.find("startConnect();", physical_navigation_at + 1)
+    check(load_config_at >= 0 and physical_navigation_at > load_config_at and connect_at > physical_navigation_at,
           "FCMChatWidget starts physical navigation at provider discovery, before the relay connect")
     check("_api == null || !_connected) return;\n        stopPhysicalNavigation();" not in widget_src
           and "!_physicalNavReady || _api == null || !_connected" not in widget_src,
@@ -813,6 +815,18 @@ if widget_src:
           and 'function scheduleHistoryResyncFallback' in widget_src
           and 'HISTORY_RESYNC_FALLBACK_MS' in widget_src,
           "FCMChatWidget delays history replay until an empty or dropped initial poll")
+    check('FcmRenderGeneration' in widget_src
+          and '_renderGeneration.begin()' in widget_src
+          and '_renderGeneration.isCurrent(renderToken)' in widget_src
+          and 'cancelPendingRender();' in widget_src,
+          "FCMChatWidget invalidates delayed feed slices across rebuild and reload")
+    check('_broadcastInFlight' in widget_src
+          and '_history.release(chan, 0, "world:" + id)' in widget_src
+          and 'auto-broadcast history guard threw' in widget_src,
+          "FCMChatWidget retries rejected public-event broadcasts without permanent dedupe")
+    check('_history.clearWorldBroadcasts();' in widget_src
+          and 'reason == "roster boundary"' in widget_src,
+          "FCMChatWidget clears synthetic event identities only at world boundaries")
     check('_history.accept(channel, eventId, messageId,' in widget_src
           and '_history.clearServer();' in widget_src
           and '_history.startConnection();' in widget_src,

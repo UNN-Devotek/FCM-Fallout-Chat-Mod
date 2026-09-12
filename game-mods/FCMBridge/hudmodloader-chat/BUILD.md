@@ -306,7 +306,7 @@ one unambiguous historical sender identity, keeps it on a cosmetics-free ACK, an
 unique, ACK-accepted, 15-second display-name/channel/body fallback. A matched event updates the
 existing row in place; it never appends a second row. Ambiguous or stale legacy candidates remain
 separate rather than being guessed. One deferred poll remains as a compatibility drain; ordinary
-background polling remains controlled by `pollMs`.
+background polling remains controlled by `pollMs`. When `AccountInfoData` serves a blank handle all session, `FCMChat.ini` `displayName=` supplies a client-side bootstrap label so `chat.v1.connect` can still be reached; linked tokens retain the server-held identity and the relay ignores this fallback for durable account/message identity. Public-event auto-broadcast stays behind `autoBroadcastWorldEvents=false` (default OFF) and is further narrowed by `broadcastEvents=` (comma-separated exact names, case-insensitive, never substrings) plus `broadcastEventsMode=allow|deny` (default `allow`); a blank allow-list reads as broadcast off, quietly.
 
 The backend sends a newly finalized static-channel message directly to native relay subscribers
 on the same process, then publishes it to Redis for other backend instances. The Redis listener
@@ -543,6 +543,7 @@ contains the same SWF before distributing it.
 haxe test-config.hxml
 haxe test-identity.hxml
 haxe test-history.hxml
+haxe test-render-generation.hxml
 python3 ../hudmenu-chat/test_anchors.py
 cd ../../../cross-platform-overlay
 npm run test:unit -- --run __tests__/fcm-chat-widget-logic.test.js
