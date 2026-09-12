@@ -117,7 +117,7 @@ confirmation step; not a code blocker.
 ## Constraints
 
 - Colors solid only. No glow, drop-shadow, gradient, or `filters` of any kind (Scaleform VM crash).
-- A HUD-layer widget gets NO raw keyboard events. Input surface is exactly: (1) the ONE native open key via ZFE `isChatKeyPressed`; (2) named FO76 control-map ACTIONS forwarded as `HUDMod::UserEvent` (e.g. `NextPage`/`PrevPage`/`Console`/`TeamChat`/`DiagnosticSnapshot`); (3) mouse events (in-game availability unverified). Channel/hide keys must be chosen from the deliverable action set OR mapped key->action in FO76 controls.
+- A HUD-layer widget gets NO raw keyboard events. Input is provider-specific: ZFE uses its ONE native open key via `isChatKeyPressed`, while xScal can poll the configured `openKey` through its documented `Input.RegisterKey`/`Input.IsKeyPressed` surface. Both providers also receive named FO76 control-map ACTIONS forwarded as `HUDMod::UserEvent` (e.g. `NextPage`/`PrevPage`/`Console`/`TeamChat`/`DiagnosticSnapshot`); (3) mouse events (in-game availability unverified). ZFE channel/hide keys must be chosen from the deliverable action set OR mapped key->action in FO76 controls. xScal keyboard registration is polling and does not suppress the underlying game action.
 - Font FAMILY fixed to loader engine aliases; only font SIZE is user-settable.
 - Send + cancel stay native Enter / Esc — not rebindable (native input session owns them).
 - Config parsed once at widget load. Changes apply on reload, not live.
@@ -136,7 +136,7 @@ confirmation step; not a code blocker.
 - Live hot-apply of config without a widget reload.
 - Editing the channel list / `AllowedChannels` (ZFE fragment territory — #299, #314).
 - Raising the message length cap above the server-enforced maximum.
-- Binding arbitrary physical keys directly (arrows, `\`, `DELETE`) — impossible for a HUD widget without a FO76 control remap (see Constraints). Only the open key is a true free key.
+- Binding arbitrary physical keys directly remains unavailable for ZFE named actions (arrows, `\`, and other controls still need a FO76 control remap). xScal supports the documented `openKey` virtual-key mapping for Insert, Delete, Home, End, page keys, arrows, F1-F12, letters, and digits; that polling registration does not suppress keyboard gameplay input.
 - Keyboard scroll-back — Arrow Up/Down scroll the idle feed; Home/End returns to newest. Mouse-wheel + menu remain available.
 
 ---

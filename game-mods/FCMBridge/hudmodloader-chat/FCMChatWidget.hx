@@ -154,7 +154,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.76"; // Local ZFE navigation decoder hotfix
+    static inline var VERSION:String  = "2.10.77"; // Configurable xScal physical open-key polling
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -489,6 +489,8 @@ class FCMChatWidget extends MovieClip {
     var _physicalNavRegistered:Array<Int> = [];
     var _physicalNavReady:Bool = false;
     var _physicalNavProbeLogged:Bool = false;      // one raw IsKeyPressed sample per session
+    var _physicalOpenKey:Int = 0;
+    var _physicalOpenKeyDown:Bool = false;
 
     // ── SharedHUDTools (HUDModLoader text-entry + F11 menu integration) ───────
     var _hudTools:Dynamic        = null;
@@ -3204,7 +3206,10 @@ class FCMChatWidget extends MovieClip {
     // =========================================================================
 
     function startOpenKeyTimer():Void {
-        if (_disposed || _api == null || (!_connected && (_outboxIdentity.length == 0 || _needsLink))) return;
+        // xScal has no ZFE isChatKeyPressed command. Its configured open key is
+        // handled by the physical Input.* poll that starts at provider discovery.
+        if (_disposed || _api == null || _api.provider != FcmNativeApi.ZFE
+                || (!_connected && (_outboxIdentity.length == 0 || _needsLink))) return;
         if (_openKeyTimer != null) { _openKeyTimer.stop(); _openKeyTimer = null; }
         _lastChatKey = false;
         _openKeyTimer = new flash.utils.Timer(OPEN_KEY_MS);
@@ -3234,7 +3239,8 @@ class FCMChatWidget extends MovieClip {
      * Register and poll the physical keys that HUDModLoader may collapse to
      * "Unmapped". xScal documents this as Input.RegisterKey/IsKeyPressed, and
      * current ZFE builds expose the same compatibility surface on the generic
-     * bridge. Registration does not consume a key or lock Fallout controls.
+     * bridge. xScal additionally polls the configured FCMChat.ini openKey here.
+     * Registration does not consume a key or lock Fallout controls.
      */
     function startPhysicalNavigation():Void {
         // Channel switching is local HUD state, so this runs from provider discovery on and
@@ -3249,6 +3255,12 @@ class FCMChatWidget extends MovieClip {
         }
 
         var keyCodes:Array<Int> = [VK_PAGEUP, VK_PAGEDOWN, VK_UP, VK_DOWN, VK_HOME, VK_END];
+        _physicalOpenKey = _api.provider == FcmNativeApi.XSCAL
+            ? FcmCommand.virtualKeyCode(_cfg.openKey) : 0;
+        _physicalOpenKeyDown = false;
+        if (_physicalOpenKey > 0 && keyCodes.indexOf(_physicalOpenKey) < 0) {
+            keyCodes.push(_physicalOpenKey);
+        }
         for (keyCode in keyCodes) {
             try {
                 var registered:Bool = _api.registerPhysicalKey(keyCode);
@@ -3275,7 +3287,7 @@ class FCMChatWidget extends MovieClip {
         _physicalNavTimer.start();
         zfeLog("info", "input", "physical navigation poll started provider="
             + _api.provider + " interval=" + PHYSICAL_NAV_POLL_MS + "ms keys="
-            + _physicalNavRegistered.join(","));
+            + _physicalNavRegistered.join(",") + " openKey=" + _physicalOpenKey);
     }
 
     var _physicalNavStep:String = "idle";
@@ -3299,7 +3311,21 @@ class FCMChatWidget extends MovieClip {
         _physicalNavStep = "input-owner";
         releaseInputForPipboy();
         if (_disposed || !_physicalNavReady || _api == null) return;
+        if (_api.provider == FcmNativeApi.XSCAL && _physicalOpenKey > 0
+                && _physicalNavRegistered.indexOf(_physicalOpenKey) >= 0) {
+            _physicalNavStep = "read-open-key-" + _physicalOpenKey;
+            var openDown:Bool = _api.isPhysicalKeyPressed(_physicalOpenKey);
+            if (openDown != _physicalOpenKeyDown) {
+                _physicalOpenKeyDown = openDown;
+                if (openDown && !_inputOpen
+                        && (_connected || !(_outboxIdentity.length == 0 || _needsLink))) {
+                    zfeLog("info", "nativein", "xScal openKey edge key=" + _physicalOpenKey);
+                    openInput();
+                }
+            }
+        }
         for (keyCode in _physicalNavRegistered) {
+            if (_api.provider == FcmNativeApi.XSCAL && keyCode == _physicalOpenKey) continue;
             // Page keys switch channels in either state. Feed-only keys remain ordinary game
             // controls until the player has opened the editor with Insert.
             var action:String = FcmCommand.physicalKeyAction(keyCode);
@@ -3354,12 +3380,15 @@ class FCMChatWidget extends MovieClip {
         _physicalNavigationDown = new Map();
         _physicalNavReady = false;
         _physicalNavProbeLogged = false;
+        _physicalOpenKey = 0;
+        _physicalOpenKeyDown = false;
     }
 
     /** Open chat on a false->true edge of isChatKeyPressed. */
     function pollOpenKey():Void {
         releaseInputForPipboy();
-        if (_api == null || (!_connected && (_outboxIdentity.length == 0 || _needsLink))) return;
+        if (_api == null || _api.provider != FcmNativeApi.ZFE
+                || (!_connected && (_outboxIdentity.length == 0 || _needsLink))) return;
         try {
             // The OpenChatKey is the one configured key exposed by the top-level ZFE chat
             // helper. Other physical navigation keys use the provider Input.* fallback above.

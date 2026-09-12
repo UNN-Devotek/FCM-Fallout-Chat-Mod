@@ -17,5 +17,15 @@ describe('HUD customization guide', () => {
     expect(section).toHaveTextContent('They have no appearance controls');
     expect(section).toHaveTextContent('independently of its remembered delay');
     expect(section).toHaveTextContent('not available in older HUD packages');
+    expect(section).toHaveTextContent('openKey=DELETE');
+    expect(section).toHaveTextContent('OpenChatKey=DELETE');
+    expect(section).toHaveTextContent('Data/configuration/zfe.ini');
+    expect(section).toHaveTextContent('Delete is the recommended alternative');
+    expect(section).toHaveTextContent('Page Up/Down and Arrow Up/Down remain fixed');
+    expect(section).toHaveTextContent('xScal is different');
+    expect(section).toHaveTextContent('it has no OpenChatKey setting in xscal.ini');
+    expect(section).toHaveTextContent("openKey to xScal's documented physical input polling");
+    expect(section).toHaveTextContent('does not suppress the key from gameplay');
+    expect(section).toHaveTextContent('suppression calls are for gamepad buttons');
   });
 });

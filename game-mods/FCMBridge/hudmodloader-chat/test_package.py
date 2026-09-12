@@ -144,9 +144,23 @@ def main() -> None:
                 assert f"Endpoint={expected['endpoint']}".encode() in archive.read("examples/ZFE/FCMChatWidget.ini.example")
                 override = archive.read("examples/ZFE/zfe.ini.example")
                 assert f"[TextChat]\nEndpoint={expected['endpoint']}\n".encode() in override
+                assert b"OpenChatKey=INSERT" in override
+                assert b"Keep OpenChatKey identical to Data/FCMChat.ini openKey" in override
                 assert b"Do not replace the whole file" in override
                 assert b"examples/ZFE/zfe.ini.example" in archive.read("INSTALL.txt")
                 assert "CUSTOMIZATION.txt" in names
+                assert "KEYBINDS.txt" in names
+                keybinds = archive.read("KEYBINDS.txt")
+                assert b"openKey=DELETE" in keybinds
+                assert b"OpenChatKey=DELETE" in keybinds
+                assert b"DELETE is the recommended alternative" in keybinds
+                assert b"Page Up/Down and Arrow Up/Down" in keybinds
+                assert b"XSCAL OPEN-CHAT KEY" in keybinds
+                assert b"do not add OpenChatKey to" in keybinds
+                assert b"Input.RegisterKey/Input.IsKeyPressed" in keybinds
+                assert b"not keyboard suppression" in keybinds
+                assert b"https://www.nexusmods.com/fallout76/articles/255" in keybinds
+                assert b"https://www.nexusmods.com/fallout76/articles/268" in keybinds
                 assert b"enabled=true" in archive.read("xscal.ini.example")
                 assert expected["endpoint"].encode() in archive.read("xscal.ini.example")
                 assert expected["endpoint"].encode() in archive.read("Enable-xScal-Chat.ps1")
@@ -159,9 +173,13 @@ def main() -> None:
                 assert "If xscal.ini is missing, create a plain-text" in install
                 assert "New users must apply these settings too" in install
                 assert "setup helper is optional" in install
+                assert "xScal has no OpenChatKey setting" in install
+                assert "Input.* physical polling" in install
+                assert "Registration does not suppress keyboard input" in install
                 assert "Copy the COMPLETE examples/ZFE/FCMChatWidget.ini.example" in install
                 assert "ZFE applies this global file after" in install
-                assert f"[TextChat]\n   Endpoint={expected['endpoint']}" in install
+                assert f"[TextChat]\n   Endpoint={expected['endpoint']}\n   OpenChatKey=INSERT" in install
+                assert "DELETE is the recommended alternative to INSERT" in install
                 assert "Steam sign-in does not require Discord" in install
                 other = "prod" if target == "dev" else "dev"
                 assert package.TARGETS[other]["endpoint"] not in install

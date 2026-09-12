@@ -9,6 +9,9 @@ import React from 'react';
 
 export type HudKeybindGuideVariant = 'dashboard' | 'public';
 
+export const ZFE_MODDER_GUIDE_URL = 'https://www.nexusmods.com/fallout76/articles/255';
+export const XSCAL_INPUT_ARTICLE_URL = 'https://www.nexusmods.com/fallout76/articles/268';
+
 export interface HudKeybindRow {
   key: string;
   config: string;
@@ -62,6 +65,7 @@ export default function HudKeybindGuide({ variant = 'dashboard' }: HudKeybindGui
     fontSize: isPublic ? '13px' : '12px',
     verticalAlign: 'top',
   };
+  const sourceLinkStyle: React.CSSProperties = { color: isPublic ? '#D8B94C' : 'var(--phosphor-color)', textDecoration: 'underline' };
 
   return (
     <section data-testid="hud-keybind-guide">
@@ -88,6 +92,40 @@ export default function HudKeybindGuide({ variant = 'dashboard' }: HudKeybindGui
         The HUD input opens and you can type immediately; press <code style={codeStyle}>Enter</code> to send
         or <code style={codeStyle}>Escape</code> to cancel.
       </div>
+
+      <p style={sectionStyle}>ZFE OPEN-CHAT KEY</p>
+      <p style={{ fontSize: isPublic ? '12px' : '11px', color: muted, margin: '0 0 8px', lineHeight: '1.7' }}>
+        ZFE reads the native <code style={codeStyle}>OpenChatKey</code>. The packaged default is{' '}
+        <code style={codeStyle}>INSERT</code>. To use <code style={codeStyle}>DELETE</code>, set{' '}
+        <code style={codeStyle}>openKey=DELETE</code> in <code style={codeStyle}>Data/FCMChat.ini</code>{' '}
+        and set <code style={codeStyle}>OpenChatKey=DELETE</code> in the active{' '}
+        <code style={codeStyle}>[TextChat]</code> configuration. If{' '}
+        <code style={codeStyle}>Data/configuration/zfe.ini</code> has a{' '}
+        <code style={codeStyle}>[TextChat]</code> override, it wins over the fragment at{' '}
+        <code style={codeStyle}>Data/ZFE/TextChat/fragments/FCMChatWidget.ini</code>. Restart Fallout 76{' '}
+        after changing native ZFE configuration. Supported values are{' '}
+        <code style={codeStyle}>INSERT</code>, <code style={codeStyle}>DELETE</code>,{' '}
+        <code style={codeStyle}>HOME</code>, <code style={codeStyle}>END</code>,{' '}
+        <code style={codeStyle}>PAGE_DOWN</code>/<code style={codeStyle}>PAGEDOWN</code>/<code style={codeStyle}>PGDN</code>,{' '}
+        and one letter or digit. Avoid Page Down if it is also your next-channel control. See the{' '}
+        <a href={ZFE_MODDER_GUIDE_URL} target="_blank" rel="noopener noreferrer" style={sourceLinkStyle}>
+          ZFE Modder Guide
+        </a>{' '}for the extender hotkey surface.
+      </p>
+
+      <p style={sectionStyle}>xSCAL OPEN-CHAT KEY</p>
+      <p style={{ fontSize: isPublic ? '12px' : '11px', color: muted, margin: '0 0 8px', lineHeight: '1.7' }}>
+        xScal has no <code style={codeStyle}>OpenChatKey</code> setting in{' '}
+        <code style={codeStyle}>xscal.ini</code>. Set <code style={codeStyle}>openKey</code> in{' '}
+        <code style={codeStyle}>Data/FCMChat.ini</code>; the widget maps it to xScal's documented{' '}
+        <code style={codeStyle}>Input.RegisterKey</code>/<code style={codeStyle}>Input.IsKeyPressed</code>{' '}
+        polling interface and keeps the named HUDMod action as a fallback. Registration does not{' '}
+        suppress keyboard input from the game; xScal's documented suppression calls apply to{' '}
+        gamepad buttons, so test the selected key for gameplay conflicts. Read the{' '}
+        <a href={XSCAL_INPUT_ARTICLE_URL} target="_blank" rel="noopener noreferrer" style={sourceLinkStyle}>
+          xScal Input interface (Nexus article 268)
+        </a>.
+      </p>
 
       <p style={sectionStyle}>HUD INPUT AND CHANNEL CONTROLS</p>
       <div className="table-responsive">

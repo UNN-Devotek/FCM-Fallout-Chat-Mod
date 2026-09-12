@@ -72,3 +72,21 @@ channel, and available channels are not appearance settings. Older showChannelTa
 channelTagColor and colorGeneral/Trading/Events/Infests/Raids/Server overrides are
 ignored. You can still switch channels normally. There are no input-width or
 input-alignment settings.
+OPEN-CHAT KEY (ZFE)
+-------------------
+The default is Insert. To use another supported key, keep these two values identical:
+
+  Data/FCMChat.ini
+  [FCMChat]
+  openKey=DELETE
+
+  Data/configuration/zfe.ini
+  [TextChat]
+  OpenChatKey=DELETE
+
+ZFE's global zfe.ini value overrides the packaged widget fragment. See KEYBINDS.txt for
+accepted values, precedence, conflicts, and the separate xScal limitations.
+
+For xScal, do not add OpenChatKey to xscal.ini. Change FCMChat.ini openKey; the widget maps
+it to xScal's physical Input.* polling API and retains the named-action fallback. See KEYBINDS.txt
+and the xScal Input interface article: https://www.nexusmods.com/fallout76/articles/268.

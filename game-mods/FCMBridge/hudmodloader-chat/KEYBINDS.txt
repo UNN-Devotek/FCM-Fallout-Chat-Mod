@@ -1,0 +1,67 @@
+Fallout Chat Mod HUD keybinds
+============================
+
+ZFE OPEN-CHAT KEY
+-----------------
+The default open-chat key is Insert. ZFE users can change it. Keep the HUD label/action
+setting and ZFE's native key watcher aligned:
+
+1. Edit Data/FCMChat.ini:
+
+   [FCMChat]
+   openKey=DELETE
+
+2. Edit the existing Data/configuration/zfe.ini (preserve its other settings):
+
+   [TextChat]
+   OpenChatKey=DELETE
+
+Do not create a second [TextChat] section or a duplicate OpenChatKey. Restart Fallout 76
+after changing zfe.ini. Reloading only the HUD widget is not enough for native ZFE config.
+
+ZFE accepts INSERT, DELETE, HOME, END, PAGE_DOWN (also PAGEDOWN or PGDN), and one letter
+or digit. DELETE is the recommended alternative when Insert conflicts with another mod.
+Avoid PAGE_DOWN if you want Page Down to remain FCM's next-channel command. Letter and
+digit keys can conflict with gameplay and typing, so use them only after testing both states.
+Reference: ZFE Modder Guide: https://www.nexusmods.com/fallout76/articles/255
+It describes the extender hotkey surface; this file describes FCM's supported values and precedence.
+
+ZFE CONFIG PRECEDENCE
+---------------------
+Data/configuration/zfe.ini [TextChat] is the user override and wins over:
+
+  Data/ZFE/TextChat/fragments/FCMChatWidget.ini
+
+The packaged fragment also contains OpenChatKey=INSERT as its default. If zfe.ini already
+has OpenChatKey, changing only the fragment will have no effect.
+
+OTHER HUD ACTIONS
+-----------------
+FCMChat.ini also exposes channelNextKey, channelPrevKey, and hideKey. These are
+HUDMod::UserEvent action names forwarded by HUDModLoader, not arbitrary physical keys.
+Their defaults are NextPage, PrevPage, and blank. Page Up/Down and Arrow Up/Down physical
+fallbacks are currently fixed because their provider contracts differ; they are not INI
+keybinds. Arrow Up/Down scroll only while the chat input is open so gameplay controls remain
+available at other times.
+
+XSCAL OPEN-CHAT KEY
+-------------------
+xScal does not expose ZFE's OpenChatKey configuration, so do not add OpenChatKey to
+xscal.ini. The xScal build uses Data/FCMChat.ini openKey through its documented physical
+Input.RegisterKey/Input.IsKeyPressed interface:
+
+  [FCMChat]
+  openKey=DELETE
+
+The widget registers the selected key on xScal and opens chat on its physical down edge, even
+when HUDModLoader reports the key as Unmapped. The named HUDMod::UserEvent path remains as a
+compatibility fallback. If registration is unavailable or the key is rejected, restore
+openKey=INSERT and collect the xscal.log diagnostic line.
+
+xScal's API uses numeric Windows virtual-key codes; FCM maps names such as INSERT, DELETE,
+HOME, END, PAGE_UP/PAGE_DOWN, arrows, ESCAPE, TAB, SPACE, F1-F12, letters, and digits. Registration is polling,
+not keyboard suppression: xScal's documented suppression calls apply to gamepad buttons.
+Test the chosen key for gameplay conflicts. FCM only opens chat on a press edge and unregisters
+the key when the widget unloads.
+Reference: xScal Input interface, Nexus article 268:
+https://www.nexusmods.com/fallout76/articles/268

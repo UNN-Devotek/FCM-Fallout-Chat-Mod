@@ -158,7 +158,7 @@ class FcmConfig {
     }
 
     // ── Keybinds ───────────────────────────────────────────────────────────────
-    // openKey = the ONE native ZFE key (free-choice; ZFE reads it via isChatKeyPressed).
+    // openKey = the native ZFE key, or the xScal virtual-key token polled through Input.*.
     // channelNext/Prev + hide map to FO76 control-map ACTIONS the loader forwards.
     public var openKey:String        = "INSERT";
     public var channelNextKey:String = "NextPage";

@@ -714,8 +714,8 @@ function shouldRotateLog(size, cap) {
 //   the normal install-token/session auth flow is sufficient.
 //
 // Path B (dev:local):
-//   env.RELAY_HTTP = 'http://localhost:7177'
-//   env.RELAY_WS   = 'ws://localhost:7177/ws'
+//   env.RELAY_HTTP = 'http://localhost:7076'
+//   env.RELAY_WS   = 'ws://localhost:7076/ws'
 //
 // Production (default — no env override needed):
 //   relayHttp = 'https://falloutchatmod.com'

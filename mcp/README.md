@@ -23,6 +23,10 @@ stdio MCP server exposing FCM dev environment APIs to AI agents.
    - [Codex](clients/codex.md)
    - [Antigravity](clients/antigravity.md)
 
+### Cloudflare API MCP
+
+Failover edge operations require the official Cloudflare API MCP at `https://mcp.cloudflare.com/mcp`. Codex uses the global OAuth configuration documented in [clients/codex.md](clients/codex.md); credentials stay in the OS keyring and never enter this repository. Authenticate with `codex mcp login cloudflare`, then verify with `codex mcp list`.
+
 ## Tools
 
 | Tool | Description |

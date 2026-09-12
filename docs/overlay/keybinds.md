@@ -141,7 +141,7 @@ steps in both `INSTALL.txt` and `HUDMODLOADER-MENU.txt`.
 
 | Default | Action / config key | Behavior |
 |---------|---------------------|----------|
-| `Insert` | `openKey` (native ZFE key) | **Open / restore.** Opens the native chat input; if the panel is hidden, restores it first. The only freely-choosable physical key (ZFE `isChatKeyPressed`). `PAGE_DOWN` is the known-good fallback if `INSERT` does not fire in-game. |
+| `Insert` | `openKey` (native ZFE key) | **Open / restore.** On ZFE, opens the native chat input and restores a hidden panel through `isChatKeyPressed`; `PAGE_DOWN` is the known-good fallback if `INSERT` does not fire in-game. On xScal, the same `openKey` value is mapped through `Input.RegisterKey`/`Input.IsKeyPressed`; see the provider note below. |
 | `Page Down` | `channelNextKey` = `NextPage` | Advance to the next channel. Physical `PageDown` aliases are accepted. Works while idle or while input is open; an open draft is preserved. |
 | `Page Up` | `channelPrevKey` = `PrevPage` | Go to the previous channel. Physical `PageUp` aliases are accepted. Works while idle or while input is open; an open draft is preserved. |
 | `Arrow Up` / `Arrow Down` | runtime HUD actions | After `Insert` opens the typing session, scroll the active feed one line. Before then they remain game controls. |
@@ -165,6 +165,22 @@ Two open-key bindings must agree: `Data/ZFE/TextChat/fragments/FCMChatWidget.ini
 default `INSERT`. Full key catalog (colors / geometry / opacity / limits / toggles / keybinds):
 see [zfe/ingame-chat-appearance.md](zfe/ingame-chat-appearance.md) and the commented
 `Data/FCMChat.ini`.
+
+ZFE's extender hotkey surface is described in the [ZFE Modder Guide](https://www.nexusmods.com/fallout76/articles/255).
+
+### xScal open-chat key
+
+xScal has no `OpenChatKey` setting in `xscal.ini`. For the xScal provider, the widget maps
+`Data/FCMChat.ini` `[FCMChat] openKey` to the documented numeric Windows virtual-key interface
+(`Input.RegisterKey` and `Input.IsKeyPressed`) and opens on the physical press edge. The named
+`HUDMod::UserEvent` action remains a compatibility fallback. The mapping accepts `INSERT`,
+`DELETE`, `HOME`, `END`, page keys, arrows, `ESCAPE`, `TAB`, `SPACE`, `F1`–`F12`, letters, and digits; unknown
+control-map-only action names fail closed. The registration is polling bookkeeping and does not
+suppress keyboard input from the game. xScal's documented suppression functions apply to
+gamepad buttons, so test the chosen key for gameplay conflicts. The widget unregisters the key
+when it unloads. Do not add a fabricated `OpenChatKey` entry to `xscal.ini`. See the
+[xScal Input interface, Nexus article 268](https://www.nexusmods.com/fallout76/articles/268)
+for the provider's registration, polling, and suppression scope.
 
 ---
 

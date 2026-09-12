@@ -43,6 +43,46 @@ class FcmCommand {
         }
     }
 
+    /** Convert an openKey token to a Windows virtual-key code for xScal polling. */
+    public static function virtualKeyCode(raw:String):Int {
+        var key:String = normalizeAction(raw);
+        switch (key) {
+            case "insert", "ins": return 0x2D;
+            case "delete", "del": return 0x2E;
+            case "home": return 0x24;
+            case "end": return 0x23;
+            case "pageup", "pgup", "prior": return 0x21;
+            case "pagedown", "pgdn", "next": return 0x22;
+            case "up", "arrowup": return 0x26;
+            case "down", "arrowdown": return 0x28;
+            case "left", "arrowleft": return 0x25;
+            case "right", "arrowright": return 0x27;
+            case "escape", "esc": return 0x1B;
+            case "tab": return 0x09;
+            case "space": return 0x20;
+            case "f1": return 0x70;
+            case "f2": return 0x71;
+            case "f3": return 0x72;
+            case "f4": return 0x73;
+            case "f5": return 0x74;
+            case "f6": return 0x75;
+            case "f7": return 0x76;
+            case "f8": return 0x77;
+            case "f9": return 0x78;
+            case "f10": return 0x79;
+            case "f11": return 0x7A;
+            case "f12": return 0x7B;
+            default:
+                if (key.length == 1) {
+                    var code:Int = key.charCodeAt(0);
+                    if ((code >= 97 && code <= 122) || (code >= 48 && code <= 57)) {
+                        return code >= 97 ? code - 32 : code;
+                    }
+                }
+                return 0;
+        }
+    }
+
     /** Home/End both mean "show the newest messages" when the feed is idle. */
     public static function isScrollToBottom(raw:String):Bool {
         var action:String = normalizeAction(raw);

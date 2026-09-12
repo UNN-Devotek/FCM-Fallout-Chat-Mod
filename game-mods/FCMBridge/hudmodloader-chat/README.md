@@ -1,4 +1,4 @@
-> Navigation correction (local HUD 2.10.76): the existing ZFE `Input.*` path is
+> Navigation correction (local HUD 2.10.77): the existing ZFE `Input.*` path is
 > locally observed compatibility, not a verified public ZFE contract. Earlier
 > references below equating `zfe-input-v1` with this surface are superseded:
 > that capability describes `input.v1.*` text sessions. The new decoder removes
@@ -11,7 +11,7 @@
 
 A HUDModLoader widget that adds interactive FCM community chat to Fallout 76's HUD.
 
-> **Status (2026-09-09):** v2.10.76 — built for local testing; the accompanying relay appearance update is not yet deployed. The
+> **Status (2026-09-10):** v2.10.77 — built for local testing; the accompanying relay appearance update is not yet deployed. The
 > in-game mod is an explicit opt-in; the default desktop overlay remains separate. Build, install,
 > rollout, and acceptance checks are in [BUILD.md](BUILD.md).
 
@@ -95,10 +95,13 @@ the documented provider `Input.*` key bookkeeping; no chat verb is ever routed t
 When a loader collapses physical Page Up/Page Down into `Unmapped`, the widget registers their
 Windows virtual-key codes (`0x21`/`0x22`) through `Input.RegisterKey` and polls them with
 `Input.IsKeyPressed`. The same fallback registers Up/Down/Home/End for feed navigation, but those
-four are acted on only after Insert has opened the feed editor. `Input.UnregisterKey` runs at
-shutdown. Since v2.10.54 this polling starts as soon as the extender is discovered and is not tied
-to the relay session: channel switching is local HUD state, so it keeps working while relay auth
-is pending or rejected. The Input.* dispatcher is chosen at the first registration, in order: a
+four are acted on only after Insert has opened the feed editor. On xScal, the configured
+`Data/FCMChat.ini` `openKey` is mapped to its numeric virtual-key code and uses the same
+registration/polling edge path, so Delete or another supported token can open the editor without
+an `OpenChatKey` entry in `xscal.ini`. `Input.UnregisterKey` runs at shutdown. Since v2.10.54
+this polling starts as soon as the extender is discovered and is not tied to the relay session:
+channel switching is local HUD state, so it keeps working while relay auth is pending or rejected.
+The Input.* dispatcher is chosen at the first registration, in order: a
 separately discovered generic callback (`__SFCodeObj`/`BRG_OBJ`), then under ZFE the `__ZFE`
 dispatcher itself (ZFE 0.12 advertises `zfe-input-v1` there and serves `Input.*` from the same
 SFE-compatibility bridge that answers `isChatKeyPressed`). The first candidate that does not return

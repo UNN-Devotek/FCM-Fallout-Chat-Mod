@@ -1,4 +1,4 @@
-> Navigation correction (local HUD 2.10.76): the existing ZFE `Input.*` path is
+> Navigation correction (local HUD 2.10.77): the existing ZFE `Input.*` path is
 > locally observed compatibility, not a verified public ZFE contract. Earlier
 > references below equating `zfe-input-v1` with this surface are superseded:
 > that capability describes `input.v1.*` text sessions. The new decoder removes

@@ -84,7 +84,7 @@ def install_instructions(
             "Choose ONE installed extender; the widget detects it automatically.\n"
             "   ZFE: copy examples/ZFE/FCMChatWidget.ini.example to\n"
             "   Data/ZFE/TextChat/fragments/FCMChatWidget.ini. Create that folder if needed.\n"
-            "   Keep OpenChatKey aligned with Data/FCMChat.ini openKey.\n"
+            "   Keep OpenChatKey aligned with Data/FCMChat.ini openKey. See KEYBINDS.txt.\n"
             "   xScal: do NOT install the ZFE example or create ZFE folders. On Windows,\n"
             "   run Enable-xScal-Chat.cmd beside Fallout76.exe. It backs up xscal.ini,\n"
             "   sets [Chat] enabled=true and relayEndpoint, and preserves other settings.\n"
@@ -111,6 +111,9 @@ def install_instructions(
             "   Preserve unrelated settings; do not duplicate sections or keys.\n"
             "   New users must apply these settings too: xScal ships with chat disabled.\n"
             "   The example file alone does not enable chat. The setup helper is optional.\n"
+            "   xScal has no OpenChatKey setting. Data/FCMChat.ini openKey is mapped to\n"
+            "   xScal's documented Input.* physical polling, with the named-action fallback.\n"
+            "   Registration does not suppress keyboard input; test gameplay conflicts. See KEYBINDS.txt.\n"
             "   Restart Fallout 76 after changing the configuration."
         )
     if provider == "unified":
@@ -124,10 +127,13 @@ def install_instructions(
             "   openKey. IMPORTANT: Data/configuration/zfe.ini is a higher-priority global override.\n"
             "   Merge examples/ZFE/zfe.ini.example into that existing file if an override is needed.\n"
             "   If it exists, check its [TextChat] section and set:\n\n"
-            f"   [TextChat]\n   Endpoint={config['endpoint']}\n\n"
+            f"   [TextChat]\n   Endpoint={config['endpoint']}\n   OpenChatKey=INSERT\n\n"
             "   Replace stale Endpoint values, preserve unrelated settings, and do not duplicate\n"
             "   the section or key. If no override is needed, leave the endpoint out of zfe.ini\n"
             "   so the packaged fragment supplies it. ZFE does not need xscal.ini.\n"
+            "   To change the open-chat key, set the same value in Data/FCMChat.ini openKey\n"
+            "   and zfe.ini OpenChatKey. DELETE is the recommended alternative to INSERT.\n"
+            "   Supported values and precedence are documented in KEYBINDS.txt.\n"
             "   Restart Fallout 76 after changing the configuration."
         )
     setup_files = ""
@@ -185,6 +191,7 @@ account environment.
    FCMChatWidget.version.txt
    FCMChatWidget.provider.txt
    HUDMODLOADER-MENU.txt
+   KEYBINDS.txt
    Fallout76Custom.ini.example
 
    The file `FCMChatWidget.hudmodloader.ini` is an append-only snippet; it is
@@ -417,6 +424,7 @@ def build_package(
                 )
         archive.write(widget_artifact, "Data/FCMChatWidget.ba2")
         archive.writestr("Data/FCMChat.ini", chat_ini)
+        archive.write(ROOT / "KEYBINDS.txt", "KEYBINDS.txt")
         if provider == "zfe":
             archive.writestr("Data/ZFE/TextChat/fragments/FCMChatWidget.ini", widget_ini)
         if provider == "unified":
@@ -424,10 +432,12 @@ def build_package(
             archive.writestr(
                 "examples/ZFE/zfe.ini.example",
                 "; Optional endpoint override for Data/configuration/zfe.ini.\n"
-                "; Merge this key into the existing [TextChat] section; preserve other settings.\n"
+                "; Merge these keys into the existing [TextChat] section; preserve other settings.\n"
                 "; Do not replace the whole file. xScal users do not install this example.\n"
+                "; Keep OpenChatKey identical to Data/FCMChat.ini openKey. See KEYBINDS.txt.\n"
                 "[TextChat]\n"
-                f"Endpoint={TARGETS[target]['endpoint']}\n",
+                f"Endpoint={TARGETS[target]['endpoint']}\n"
+                "OpenChatKey=INSERT\n",
             )
         # This is a user-applied append snippet, not a file to extract over the
         # user's existing HUDModLoader registry. Keeping it at the archive root

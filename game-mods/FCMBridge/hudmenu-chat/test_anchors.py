@@ -485,6 +485,13 @@ if widget_src:
           "FCMChatWidget physical navigation is not gated on the relay session")
     check("inputDispatcherName" in widget_src and "lastInputResponse" in widget_src,
           "FCMChatWidget logs which Input.* dispatcher accepted registration and the raw response")
+    check("FcmCommand.virtualKeyCode" in widget_src
+          and "_physicalOpenKey" in widget_src
+          and "xScal openKey edge" in widget_src,
+          "FCMChatWidget polls the configured openKey through xScal Input.*")
+    check("_api.provider != FcmNativeApi.ZFE" in widget_src
+          and "xScal has no ZFE isChatKeyPressed command" in widget_src,
+          "FCMChatWidget keeps the ZFE-only open-key poll off xScal")
     check("physicalKeyAction" in widget_src
           and "VK_PAGEUP:Int = 0x21" in widget_src
           and "VK_PAGEDOWN:Int = 0x22" in widget_src,

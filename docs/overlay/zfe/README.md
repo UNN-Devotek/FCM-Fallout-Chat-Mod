@@ -1,4 +1,4 @@
-> Navigation correction (local HUD 2.10.76): the existing ZFE `Input.*` path is
+> Navigation correction (local HUD 2.10.77): the existing ZFE `Input.*` path is
 > locally observed compatibility, not a verified public ZFE contract. Earlier
 > references below equating `zfe-input-v1` with this surface are superseded:
 > that capability describes `input.v1.*` text sessions. The new decoder removes
@@ -6,6 +6,24 @@
 > live ZFE verification is pending. No navigation INI edits are required.
 > The public guide names `zfe-hotkeys-v1` for hotkeys; migration requires its
 > detailed payload contract. See [ZFE Modder Guide](https://www.nexusmods.com/fallout76/articles/255).
+
+### User-selectable open-chat key
+
+ZFE users may change the default `INSERT` open-chat key. The supported packaged workflow keeps
+`Data/FCMChat.ini` `[FCMChat] openKey` equal to `Data/configuration/zfe.ini` `[TextChat]
+OpenChatKey`; the global ZFE setting overrides the widget fragment. ZFE documents `INSERT`,
+`DELETE`, `HOME`, `END`, `PAGE_DOWN`/`PAGEDOWN`/`PGDN`, and a single letter or digit. `DELETE`
+is the recommended alternative. Restart Fallout 76 after editing native ZFE configuration.
+The package ships `KEYBINDS.txt` with the complete procedure and conflict guidance. See the
+[ZFE Modder Guide](https://www.nexusmods.com/fallout76/articles/255) for the extender hotkey surface.
+
+xScal does not read `OpenChatKey` from `xscal.ini`. The HUD maps `Data/FCMChat.ini` `openKey`
+to xScal's documented numeric `Input.RegisterKey`/`Input.IsKeyPressed` callbacks, then keeps
+the named `HUDMod::UserEvent` path as a compatibility fallback. `Input.RegisterKey` is polling
+bookkeeping, not keyboard suppression; xScal's documented suppression calls cover gamepad
+buttons. Test the selected key for gameplay conflicts and do not add a fabricated
+xScal `OpenChatKey` setting. See the [xScal Input interface, Nexus article 268](https://www.nexusmods.com/fallout76/articles/268)
+for the documented registration and polling contract.
 
 # ZFE / xScal — FCM in-game integration
 

@@ -36,6 +36,13 @@ class TestFcmCommand {
         check("physical Up maps to feed scroll", FcmCommand.physicalKeyAction(0x26) == "ArrowUp");
         check("physical Down maps to feed scroll", FcmCommand.physicalKeyAction(0x28) == "ArrowDown");
         check("unknown physical key is ignored", FcmCommand.physicalKeyAction(0x70) == "");
+        check("xScal Insert token maps to VK_INSERT", FcmCommand.virtualKeyCode("INSERT") == 0x2D);
+        check("xScal Delete token maps to VK_DELETE", FcmCommand.virtualKeyCode("DELETE") == 0x2E);
+        check("xScal Page Down token maps to VK_NEXT", FcmCommand.virtualKeyCode("PAGE_DOWN") == 0x22);
+        check("xScal Page Down alias maps to VK_NEXT", FcmCommand.virtualKeyCode("PGDN") == 0x22);
+        check("xScal letter token maps to uppercase VK", FcmCommand.virtualKeyCode("a") == 0x41);
+        check("xScal digit token maps to VK digit", FcmCommand.virtualKeyCode("7") == 0x37);
+        check("control-map-only token does not guess a physical key", FcmCommand.virtualKeyCode("Console") == 0);
         check("home jumps to newest", FcmCommand.isScrollToBottom("Home"));
         check("end jumps to newest", FcmCommand.isScrollToBottom("End"));
         check("page down selects next channel", FcmCommand.isNextChannel("Page Down", "NextPage"));

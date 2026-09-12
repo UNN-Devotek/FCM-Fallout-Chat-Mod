@@ -1,3 +1,18 @@
+## Local xScal open-key hotfix 2.10.77
+
+[Confirmed] xScal exposes the documented `Input.RegisterKey` and
+`Input.IsKeyPressed` callbacks through the generic HUD callback. The widget now maps
+`Data/FCMChat.ini` `[FCMChat] openKey` to a Windows virtual-key code, registers it
+when xScal is selected, and opens the editor on a physical down edge. The existing
+named `HUDMod::UserEvent` route remains as a fallback. `Input.RegisterKey` is
+bookkeeping/polling, not keyboard suppression; xScal's documented suppression
+functions apply to gamepad buttons. The key is unregistered when the widget unloads.
+
+The mapping accepts the packaged key names (Insert, Delete, Home, End, Page Up/Down,
+arrows, Escape, Tab, Space, F1-F12, letters, and digits). Unknown or control-map-only names fail closed
+and keep the named-action path available. This build does not invent an `OpenChatKey`
+setting in `xscal.ini`.
+
 ## Local navigation hotfix 2.10.76
 
 [Confirmed] The local ZFE 2.10.74 log registers keys 33/34/38/40/36/35, then
@@ -20,13 +35,13 @@ See https://www.nexusmods.com/fallout76/articles/255 and articles/248.
 Build the legacy bridge with `--class-path hudmodloader-chat` so it can share
 FcmJson; build.sh and CI include this path. No INI changes are required.
 
-> **Local test build 2.10.76:** Includes retained-message replay protection, duplicate
+> **Local test build 2.10.77:** Includes retained-message replay protection, duplicate
 > diagnostics and the appearance/auto-hide controls. Built for local production-connected
 > testing; no public release or in-game verification is implied by compilation.
 
 # FCMChatWidget build, install, and verification
 
-> **Widget version:** 2.10.76. This is the optional in-game HUD-mod track. It is
+> **Widget version:** 2.10.77. This is the optional in-game HUD-mod track. It is
 > never installed or modified by the desktop overlay.
 
 ## Release status — 2.10.74
@@ -173,7 +188,7 @@ its sanctioned chat bridge. `FCMLAYOUT/1;requestId;json` replies are consumed in
 never displayed as chat. Restore/save requests retry at most once per 10 seconds; a newer
 local move invalidates older replies. Desktop and laptop tokens keep separate layouts.
 ZFE continues using vendor-scoped local storage; the packaged link URL is preserved.
-The pending appearance backend extension also persists font/input dimensions, colors, opacity and auto-hide. Deploy it before testing persistence with HUD 2.10.76; older backends accept only geometry and reject the new settings payload. Relinking with a new device token starts with packaged defaults.
+The pending appearance backend extension also persists font/input dimensions, colors, opacity and auto-hide. Deploy it before testing persistence with HUD 2.10.77; older backends accept only geometry and reject the new settings payload. Relinking with a new device token starts with packaged defaults.
 
 Deploy the matching backend and idempotent migration to enable xScal geometry persistence.
 The HUD requires `getAuthState.permissions.canSaveHudLayout=true` before sending layout
