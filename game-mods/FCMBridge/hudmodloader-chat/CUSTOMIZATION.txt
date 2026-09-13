@@ -83,7 +83,8 @@ ignored. You can still switch channels normally. There are no input-width or
 input-alignment settings.
 OPEN-CHAT KEY (ZFE)
 -------------------
-The default is Insert. To use another supported key, keep these two values identical:
+The shipped ZFE values are Insert in both locations. To use another supported key, keep these
+two values identical (the example changes both to Delete):
 
   Data/FCMChat.ini
   [FCMChat]
@@ -102,11 +103,16 @@ and the xScal Input interface article: https://www.nexusmods.com/fallout76/artic
 
 SCROLL KEYBINDS
 ---------------
-The modern FCMChatWidget reads these additional keys from the same [FCMChat] section:
+The modern FCMChatWidget reads these navigation keys from the same [FCMChat] section. The
+shipped values are explicit, including the two intentional blank defaults:
+
+  channelNextKey=NextPage
+  channelPrevKey=PrevPage
 
   scrollUpKey=Up
   scrollDownKey=Down
   scrollBottomKey=
+  hideKey=
 
 Up/Down are the packaged arrow-scroll bindings; their ArrowUp/ArrowDown, Cursor, and Dpad
 spellings are treated as aliases. Set either direction to a forwarded HUD action (for example
@@ -114,4 +120,5 @@ Console) or a physical xScal/ZFE token (for example F12) to rebind it. An empty 
 that direction. `scrollBottomKey` is intentionally blank by default, so Home and End remain
 game controls until one is explicitly selected. The F11 **Scroll to newest** menu action is
 always available. Feed keys are consumed only while the open-chat key owns the visible input
-session. See KEYBINDS.txt for provider-specific action names and physical-key behavior.
+session. A blank `hideKey` keeps `/hide` and the F11 **Hide chat** menu action available. See
+KEYBINDS.txt for provider-specific action names and physical-key behavior.

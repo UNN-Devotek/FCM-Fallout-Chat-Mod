@@ -31,6 +31,18 @@ TARGETS = {
     },
 }
 
+# Keep the shipped INI key map visible in every generated user-facing guide. Empty values are
+# deliberate defaults: they leave Home/End available to the game and keep hide on /hide or F11.
+HUD_KEY_DEFAULTS = (
+    "openKey=INSERT\n"
+    "channelNextKey=NextPage\n"
+    "channelPrevKey=PrevPage\n"
+    "scrollUpKey=Up\n"
+    "scrollDownKey=Down\n"
+    "scrollBottomKey=\n"
+    "hideKey=\n"
+)
+
 
 def widget_version() -> str:
     """Read the packaged widget version from the Haxe runtime source."""
@@ -220,10 +232,13 @@ Installation
 
 Key defaults
 ------------
+The shipped Data/FCMChat.ini [FCMChat] key map is:
+{HUD_KEY_DEFAULTS}
 Insert opens the input; Enter sends; Escape cancels; Page Up/Page Down switch channels.
 scrollUpKey=Up and scrollDownKey=Down (Arrow Up / Down) scroll after Insert opens the input.
 scrollBottomKey is blank by default; set it in Data/FCMChat.ini (for example Home, End, or F12)
-if you want a keyboard shortcut for newest. See KEYBINDS.txt
+if you want a keyboard shortcut for newest. hideKey is also blank by default; use /hide or the
+F11 menu to hide the feed. See KEYBINDS.txt
 for ZFE and xScal key paths, supported physical tokens, and conflict guidance.
 
 General shows General, current-room Server, Trading, Events, Infests, and Raids together.
@@ -343,12 +358,15 @@ def build_package(
             "when static history is missing or the queue reports loss.\n\n"
             "HUD input and commands\n"
             "-----------------------\n"
-            "Press Insert while Fallout 76 is focused to start typing. Press\n"
+            "Shipped Data/FCMChat.ini key map:\n"
+            + HUD_KEY_DEFAULTS
+            + "\nPress Insert while Fallout 76 is focused to start typing. Press\n"
             "Enter to send or Escape to cancel. Page Down / Page Up switch\n"
             "channels. After Insert opens the typing session, the configured\n"
             "scrollUpKey / scrollDownKey values scroll the feed (Arrow Up / Down\n"
             "are the defaults). scrollBottomKey is blank by default; set it in\n"
             "Data/FCMChat.ini to Home, End, F12, or a forwarded action if desired.\n"
+            "hideKey is blank by default; /hide and FCM -> Hide chat remain available.\n"
             "Before Insert, configured feed keys remain game controls. FCM -> Scroll\n"
             "to newest is always available from the F11 menu. Type /g, /t, /e, /i,\n"
             "or /r before a message to route it to General, Trading, Events, Infests,\n"

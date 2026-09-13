@@ -3,8 +3,23 @@ Fallout Chat Mod HUD keybinds
 
 ZFE OPEN-CHAT KEY
 -----------------
-The default open-chat key is Insert. ZFE users can change it. Keep the HUD label/action
-setting and ZFE's native key watcher aligned:
+The shipped open-chat key is Insert. ZFE users can change it. Keep the HUD label/action
+setting and ZFE's native key watcher aligned. The complete shipped key map is:
+
+  Data/FCMChat.ini
+  [FCMChat]
+  openKey=INSERT
+  channelNextKey=NextPage
+  channelPrevKey=PrevPage
+  scrollUpKey=Up
+  scrollDownKey=Down
+  scrollBottomKey=
+  hideKey=
+
+`scrollBottomKey` and `hideKey` are explicit blank defaults. Home/End remain game controls,
+and hiding is available through `/hide` or the F11 menu. Enter sends and Escape cancels through
+the native editor; they are not configurable in this INI. For ZFE, the native open key must match
+the widget's `openKey`:
 
 1. Edit Data/FCMChat.ini:
 
@@ -40,7 +55,8 @@ OTHER HUD ACTIONS
 FCMChat.ini exposes channelNextKey, channelPrevKey, scrollUpKey, scrollDownKey,
 scrollBottomKey, and hideKey. These are HUDMod::UserEvent action names forwarded by
 HUDModLoader, or physical key tokens understood by the extender fallback. The defaults are
-NextPage, PrevPage, Up, Down, blank, and blank. ArrowUp/ArrowDown (and Cursor/Dpad aliases)
+NextPage, PrevPage, Up, Down, blank, and blank. These values are present as active lines in the
+shipped `Data/FCMChat.ini`; blank means intentionally unbound. ArrowUp/ArrowDown (and Cursor/Dpad aliases)
 are equivalent to the default Up/Down actions. To rebind scrolling, set for example:
 
   [FCMChat]
@@ -69,7 +85,10 @@ xscal.ini. The xScal build uses Data/FCMChat.ini openKey through its documented 
 Input.RegisterKey/Input.IsKeyPressed interface:
 
   [FCMChat]
-  openKey=DELETE
+  openKey=INSERT
+
+The shipped value is Insert. To rebind xScal (and the matching ZFE values above) to Delete,
+change `openKey=DELETE` and `OpenChatKey=DELETE` together.
 
 The widget registers the selected key on xScal and opens chat on its physical down edge, even
 when HUDModLoader reports the key as Unmapped. The named HUDMod::UserEvent path remains as a

@@ -76,10 +76,12 @@ stale work cannot replace a newer feed with a fallback.
 
 ## Input and appearance
 
-Insert opens chat by default; Enter sends and Escape cancels. Page Up/Down switch channels
-while idle or typing. Configured feed scrolling acts only while chat owns a visible input
-session. `scrollUpKey=Up`, `scrollDownKey=Down`, and an empty `scrollBottomKey` are the defaults.
-Home/End remain unassigned unless selected; F11 → FCM → Scroll to newest is always available.
+The shipped key map is `openKey=INSERT`, `channelNextKey=NextPage`, `channelPrevKey=PrevPage`,
+`scrollUpKey=Up`, `scrollDownKey=Down`, `scrollBottomKey=`, and `hideKey=`. Insert opens chat by
+default; Enter sends and Escape cancels. Page Up/Down switch channels while idle or typing.
+Configured feed scrolling acts only while chat owns a visible input session. The blank newest and
+hide values are intentional: Home/End remain unassigned, and `/hide` plus F11 → FCM → Hide chat
+remain available. F11 → FCM → Scroll to newest is always available.
 Aliases and reversed Up/Down bindings use the same navigation policy. Edge guards key on
 normalized action names; different aliases are not universally one shared latch. Test simultaneous
 named/physical delivery on the installed loader before claiming one action per physical press.

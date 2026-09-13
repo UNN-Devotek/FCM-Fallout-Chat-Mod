@@ -46,9 +46,12 @@ fallback is retained; the widget does not dispatch ControlMap lock events itself
 `input.v1.*` text-session and `hotkeys.v1.*` APIs are different contracts and are not implemented
 by renaming FCM's compatibility calls. See the [provider guide](../../../docs/overlay/zfe/modder-guide.md).
 
-Insert opens chat; Enter sends; Escape cancels. Page Up/Down switch channels while idle or
-editing. Up/Down scroll only while chat owns the visible editor. Home/End are not bound to newest
-by default. `KEYBINDS.txt` covers aliases, rebinding, physical polling, and ZFE config precedence.
+The shipped key map is `openKey=INSERT`, `channelNextKey=NextPage`, `channelPrevKey=PrevPage`,
+`scrollUpKey=Up`, `scrollDownKey=Down`, `scrollBottomKey=` and `hideKey=`. Insert opens chat;
+Enter sends; Escape cancels. Page Up/Down switch channels while idle or editing. Up/Down scroll
+only while chat owns the visible editor. The blank newest and hide values are intentional: Home/End
+remain game controls, while `/hide` and the F11 menu hide the feed. `KEYBINDS.txt` covers aliases,
+rebinding, physical polling, and ZFE config precedence.
 xScal's numeric `Input.*` operations require Boolean results; ZFE's compatibility decoder also
 handles its legacy envelopes. Registration does not promise gameplay suppression.
 

@@ -17,10 +17,33 @@ package = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(package)
 
 
+HUD_KEY_DEFAULTS = {
+    "openKey": "INSERT",
+    "channelNextKey": "NextPage",
+    "channelPrevKey": "PrevPage",
+    "scrollUpKey": "Up",
+    "scrollDownKey": "Down",
+    "scrollBottomKey": "",
+    "hideKey": "",
+}
+
+
+def active_ini_value(text: str, key: str) -> str:
+    """Return one active key assignment and reject missing/duplicate shipped defaults."""
+    lines = [line for line in text.splitlines() if line.startswith(f"{key}=")]
+    assert len(lines) == 1, f"expected one active {key}= line, found {len(lines)}"
+    return lines[0].split("=", 1)[1]
+
+
 def main() -> None:
     source_chat = (ROOT / "FCMChat.ini").read_text(encoding="utf-8")
     source_widget = (ROOT / "FCMChatWidget.ini").read_text(encoding="utf-8")
     source_hx = (ROOT / "FCMChatWidget.hx").read_text(encoding="utf-8")
+    for key, expected in HUD_KEY_DEFAULTS.items():
+        assert active_ini_value(source_chat, key) == expected, (
+            f"FCMChat.ini shipped default {key} must be {expected!r}"
+        )
+    assert active_ini_value(source_widget, "OpenChatKey") == "INSERT"
     assert '2) Sign in with Steam or Discord<br/>' in source_hx
     version_match = re.search(
         r'static inline var VERSION:String\s*=\s*"([^"]+)"', source_hx
@@ -141,7 +164,12 @@ def main() -> None:
                 assert [name for name in names if name.endswith(".ba2")] == ["Data/FCMChatWidget.ba2"]
                 assert not any(name.startswith("Data/ZFE/") for name in names)
                 assert archive.read("Data/FCMChatWidget.ba2") == (ROOT / "FCMChatWidget.ba2").read_bytes()
-                assert f"Endpoint={expected['endpoint']}".encode() in archive.read("examples/ZFE/FCMChatWidget.ini.example")
+                zfe_example = archive.read("examples/ZFE/FCMChatWidget.ini.example").decode()
+                assert f"Endpoint={expected['endpoint']}" in zfe_example
+                assert active_ini_value(zfe_example, "OpenChatKey") == "INSERT"
+                chat_config = archive.read("Data/FCMChat.ini").decode()
+                for key, value in HUD_KEY_DEFAULTS.items():
+                    assert active_ini_value(chat_config, key) == value
                 override = archive.read("examples/ZFE/zfe.ini.example")
                 assert f"[TextChat]\nEndpoint={expected['endpoint']}\n".encode() in override
                 assert b"OpenChatKey=INSERT" in override
@@ -184,6 +212,9 @@ def main() -> None:
                 assert "If Data/configuration/zfe.ini contains [TextChat], it overrides" in install
                 assert f"Endpoint={expected['endpoint']}" in install
                 assert "OpenChatKey=INSERT" in install
+                for key, value in HUD_KEY_DEFAULTS.items():
+                    assert f"{key}={value}" in install
+                assert "hideKey is also blank by default" in install
                 assert "Initial history" not in install
                 assert "Send an emoji" not in install
                 assert "Steam sign-in" not in install
@@ -277,7 +308,13 @@ def main() -> None:
                     assert b"colorGeneral=" not in chat_config
                     xscal_config = archive.read("xscal.ini.example") if provider == "xscal" else b""
                     assert f"linkUrl={expected['link_url']}\n".encode() in chat_config
+                    chat_config_text = chat_config.decode()
+                    for key, value in HUD_KEY_DEFAULTS.items():
+                        assert active_ini_value(chat_config_text, key) == value
                     assert provider != "zfe" or f"Endpoint={expected['endpoint']}\n".encode() in widget_config
+                    assert provider != "zfe" or active_ini_value(
+                        widget_config.decode(), "OpenChatKey"
+                    ) == "INSERT"
                     assert expected["web_link_url"].encode() in install
                     assert expected["endpoint"].encode() in install
                     assert provider != "xscal" or f"relayEndpoint={expected['endpoint']}\n".encode() in xscal_config
@@ -297,6 +334,11 @@ def main() -> None:
                     assert b"scrollDownKey" in install
                     assert b"scrollBottomKey" in install
                     assert b"scrollBottomKey is blank by default" in install
+                    assert b"hideKey is also blank by default" in install
+                    assert b"Shipped Data/FCMChat.ini key map:" in menu
+                    for key, value in HUD_KEY_DEFAULTS.items():
+                        assert f"{key}={value}".encode() in install
+                        assert f"{key}={value}".encode() in menu
                     assert b"scrollUpKey" in menu
                     assert b"scrollDownKey" in menu
                     assert b"scrollBottomKey is blank by default" in menu

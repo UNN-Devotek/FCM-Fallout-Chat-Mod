@@ -146,8 +146,10 @@ Reload alone can refresh widget settings but does not reload the extender's conf
 Both providers use SharedHUDTools first; its host editor owns the balanced game-control lock.
 A legacy ZFE fallback is separate from public `input.v1.*`. Named HUD actions and physical key
 polling share navigation handling, with guards keyed by normalized action name. Different aliases
-can have separate latch keys; validate simultaneous named/physical delivery in-game. Page Up/Down switch tabs while idle or editing; feed scrolling requires
-a visible owned editor. Default Up/Down scroll, with newest unassigned. See [KEYBINDS.txt](KEYBINDS.txt).
+can have separate latch keys; validate simultaneous named/physical delivery in-game. The shipped
+navigation map is `NextPage`/`PrevPage` for Page Up/Down, `Up`/`Down` for feed scrolling, and
+explicit blank values for `scrollBottomKey` and `hideKey`; feed scrolling requires a visible owned
+editor. See [KEYBINDS.txt](KEYBINDS.txt).
 
 The widget uses runtime-proven Fallout font aliases with embedded-font mode; that is not proof
 that arbitrary fonts/glyphs work. Rows use plain text plus formatting ranges, with row-local

@@ -116,6 +116,8 @@ class FcmConfig {
     // openKey = the native ZFE key, or the xScal virtual-key token polled through Input.*.
     // channelNext/Prev + hide map to FO76 control-map ACTIONS the loader forwards;
     // scroll keys may use those actions or a physical extender token.
+    // These values mirror the active assignments in FCMChat.ini. Empty newest/hide values are
+    // explicit opt-outs so Home/End remain game controls and /hide/F11 remain the hide paths.
     public var openKey:String        = "INSERT";
     public var channelNextKey:String = "NextPage";
     public var channelPrevKey:String = "PrevPage";
