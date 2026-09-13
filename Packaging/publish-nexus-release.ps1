@@ -121,6 +121,16 @@ $winExe   = Join-Path $DistDir "Fallout Chat Mod Setup $Version.exe"
 $linuxApp = Join-Path $DistDir "Fallout Chat Mod-$Version.AppImage"
 $linuxDeb = Join-Path $DistDir "Fallout Chat Mod-$Version.deb"
 $hudZip   = Join-Path $DistDir "FCM HUD Mod-$hudVersion (PROD).zip"
+$hudNexusZip = Join-Path $DistDir "FCM HUD Mod-$hudVersion (PROD)-Nexus.zip"
+
+# Nexus HUD packages are a distinct, fail-closed artifact. Website packages may
+# contain the optional Windows setup helpers; Nexus HUD ZIPs contain no scripts
+# or executables and instead point users to the website download.
+& $pythonCommand.Source $hudPackage --target prod --distribution nexus --output $hudNexusZip
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path $hudNexusZip)) {
+    Write-Error "Could not build the executable-free Nexus HUD package."
+    exit 1
+}
 
 # -- FAIL-CLOSED VirusTotal gate -------------------------------------------------
 # Run the VT gate FIRST and ABORT (do not upload anything to Nexus) if it returns
@@ -216,7 +226,7 @@ $platforms = @(
     @{ Name = "Linux .deb"; File = $linuxDeb; Zip = $linuxDebZip; Group = $linuxDebGroup; Desc = $linuxDebDesc; Include = $linuxInclude; NexusVersion = $Version; Category = "main"; ArchiveExisting = $true },
     # The HUD has its own Main Files entry; installation remains opt-in.
     # Its file version follows the widget version, not the desktop overlay version.
-    @{ Name = "HUD"; File = $hudZip; Zip = ""; Group = $hudGroup; Desc = $hudDesc; Include = @(); NexusVersion = $hudVersion; Category = "main"; ArchiveExisting = $true }
+    @{ Name = "HUD"; File = $hudNexusZip; Zip = ""; Group = $hudGroup; Desc = $hudDesc; Include = @(); NexusVersion = $hudVersion; Category = "main"; ArchiveExisting = $true }
 )
 if ($publishWindows) {
     # Support-review upload creates a second live Windows file alongside the existing one.

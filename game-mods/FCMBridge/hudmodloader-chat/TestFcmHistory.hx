@@ -4,7 +4,73 @@ class TestFcmHistory {
     }
 
     static function main():Void {
+        var combinedHistory = new FcmHistory();
+        var channels = ["global", "server", "trade", "events", "infests", "raids"];
+        var combined:Array<{channel:String, messageId:String, pending:Bool}> = [];
+        for (channel in channels) {
+            if (combinedHistory.accept(channel, 1, "message-" + channel, 4, combined))
+                combined.push({channel:channel, messageId:"message-" + channel, pending:false});
+        }
+        check("all six channels appear once in General",
+            combined.filter(row -> FcmCommand.channelVisible("global", row.channel)).length == 6);
+        for (replay in 2...5) for (channel in channels) {
+            check("combined replay cannot append " + channel,
+                !combinedHistory.accept(channel, replay, "message-" + channel, 4, combined));
+        }
+        combinedHistory.startConnection();
+        for (channel in channels) check("reconnect retains canonical " + channel,
+            !combinedHistory.accept(channel, 1, "message-" + channel, 4, combined));
+        combined = combined.filter(row -> row.channel != "server");
+        combinedHistory.clearServer();
+        check("leaving removes only server from General",
+            combined.filter(row -> FcmCommand.channelVisible("global", row.channel)).length == 5);
+        check("rejoin can restore the cleared server row",
+            combinedHistory.accept("server", 1, "message-server", 4, combined));
+        for (channel in ["global", "trade", "events", "infests", "raids"])
+            check("world hop retains static " + channel,
+                !combinedHistory.accept(channel, 2, "message-" + channel, 4, combined));
+        check("a distinct message is never deduplicated by text",
+            combinedHistory.accept("trade", 3, "another-trade-message", 4, combined));
+
         TestFcmRoster.main();
+        var replayHistory = new FcmHistory();
+        var retained = [];
+        // Default widget capacity: 200 visible records and 400 cached identity keys.
+        for (id in 1...201) {
+            var messageId = "message-" + id;
+            check("seed retained message", replayHistory.accept("global", id, messageId, 400));
+            retained.push({channel:"global", messageId:messageId, pending:false});
+        }
+        // Two replays add fresh event IDs, evicting message-1's cached identity.
+        check("first replay rejected", !replayHistory.accept("global", 201, "message-200", 400, retained));
+        check("second replay rejected", !replayHistory.accept("global", 202, "message-200", 400, retained));
+        check("retained row survives dedup-cache eviction",
+            !replayHistory.accept("global", 203, "message-1", 400, retained));
+
+        check("new durable identity still accepted", replayHistory.accept("global", 204, "new-message", 400, retained));
+        check("message identities stay channel-scoped", replayHistory.accept("trade", 205, "message-1", 400, retained));
+        var pendingHistory = new FcmHistory();
+        var pending = [{channel:"global", messageId:"pending-id", pending:true}];
+        check("pending echo is not silently discarded", pendingHistory.accept("global", 1, "pending-id", 256, pending));
+        var emptyIds = [{channel:"global", messageId:"", pending:false}];
+        check("missing IDs do not match retained rows", pendingHistory.accept("global", 2, "", 256, emptyIds));
+        check("fresh edit cursor remains accepted", replayHistory.accept("global", 206, "", 400));
+        var cleared = new FcmHistory();
+        check("seed old world row", cleared.accept("server", 1, "world-message", 256));
+        cleared.clearServer();
+        check("removed world row can be restored", cleared.accept("server", 1, "world-message", 256, []));
+        var broadcastHistory = new FcmHistory();
+        check("speculative broadcast is initially accepted",
+            broadcastHistory.accept("events", 0, "world:activity-1", 512));
+        broadcastHistory.release("events", 0, "world:activity-1");
+        check("rejected broadcast can be retried",
+            broadcastHistory.accept("events", 0, "world:activity-1", 512));
+        broadcastHistory.clearWorldBroadcasts();
+        check("world reset releases synthetic event identities",
+            broadcastHistory.accept("events", 0, "world:activity-1", 512));
+        replayHistory.startConnection();
+        check("retained canonical row protected after reconnect", !replayHistory.accept("global", 1, "message-1", 400, retained));
+
         for (provider in [FcmNativeApi.ZFE, FcmNativeApi.XSCAL]) {
             var session = new FcmServerSession();
             session.begin("first");

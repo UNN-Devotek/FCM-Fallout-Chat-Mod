@@ -20,7 +20,8 @@ Full architecture and how the pieces connect: **[docs/README.md](docs/README.md)
 | Dashboard, the shared ChatOverlay component, theming | [docs/frontend/](docs/frontend/README.md) |
 | Electron overlay: window mgmt, keybinds, update notification, building | [docs/overlay/](docs/overlay/README.md) |
 | Overlay diagnostics: log file, levels, `--fcm-debug`/`FCM_DEBUG`, rotation | [docs/overlay/diagnostics-logging.md](docs/overlay/diagnostics-logging.md) |
-| In-game HUD feed (ZFE/FCMBridge): wire format, events, env vars | [docs/overlay/zfe/](docs/overlay/zfe/README.md) |
+| In-game HUD mod (FCMChatWidget, ZFE/xScal): build, native relay, input, recovery | [docs/overlay/zfe/](docs/overlay/zfe/README.md) |
+| Background HUDModLoader mod for desktop Server chat | [docs/overlay/zfe/background-server-bridge.md](docs/overlay/zfe/background-server-bridge.md) |
 | Discord bot: bridge, voice, embeds, reaction roles | [docs/discord/](docs/discord/README.md) |
 | Prisma schema, migrations, Redis usage | [docs/database/](docs/database/README.md) |
 | Automod, reports/evidence, role model | [docs/moderation/](docs/moderation/README.md) |
@@ -28,6 +29,13 @@ Full architecture and how the pieces connect: **[docs/README.md](docs/README.md)
 | Local dev, release pipeline, packaging, code signing, deploy | [docs/deployment/](docs/deployment/README.md) |
 | QA-tester builds: golden-build lock, build/bless/distribute runbook | [docs/deployment/qa-builds.md](docs/deployment/qa-builds.md) |
 | Marketing assets (Remotion GIFs/stills), re-export commands | [docs/marketing/](docs/marketing/README.md) |
+
+The background server bridge is the separate **FCMServerBridge HUDModLoader child** in
+`game-mods/FCMBridge/hudmodloader-bridge/`. The user explicitly revised the no-HUDModLoader
+requirement. Keep it invisible: no chat widget/editor, only status/linking in the loader menu.
+The local 0.1.0 candidate includes private backend/desktop routing; hosted deployment and
+in-game acceptance are still pending. Preserve fresh account/device leases, room nonces and
+canonical-ID deduplication. Never coinstall it with the visible widget or legacy FCMBridge.
 
 ## CI Infrastructure
 
@@ -127,9 +135,9 @@ These are non-negotiable. Each links to the doc with the full context.
      always clearly presented as the modding track. Even here the hard limits hold: **no game-memory
      reading, no code injection, no network/port scanning** — the `.ba2` mods swap UI assets and may
      read the game's own UI-layer data that the HUD already renders (e.g. `worldId` / nearby-player
-     roster from `BSUIDataManager`) via ZFE's sanctioned outbound channel. This is not game-memory
+     roster from `BSUIDataManager`) via the selected ZFE/xScal provider's sanctioned outbound channel. This is not game-memory
      reading, injection, or network/port scanning — it is reading data the game itself surfaces to its
-     own HUD, forwarded through the approved ZFE channel.
+     own HUD, forwarded through that approved provider channel.
   Never blur the two: the EULA-safe overlay must never gain game-file modification, and the `.ba2`
   install must never be presented as required or default.
 - **One ChatOverlay component — never fork it.** `admin-dashboard/src/features/chat/ChatOverlay.tsx`

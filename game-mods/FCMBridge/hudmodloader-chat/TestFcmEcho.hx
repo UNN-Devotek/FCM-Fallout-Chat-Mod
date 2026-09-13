@@ -22,6 +22,22 @@ class TestFcmEcho {
         check("stable transport id selects the canonical row", idDecision.recordIndex == 4
             && idDecision.mode == "id");
 
+        var channels = ["global", "server", "trade", "events", "infests", "raids"];
+        var simultaneous = [for (index in 0...channels.length)
+            pending(index, "own-" + channels[index], "relay-1", "Tester", channels[index], "same text")];
+        for (index in 0...channels.length) {
+            var channel = channels[index];
+            var own = FcmEcho.choose("own-" + channel, "relay-1", "Tester", channel, "same text",
+                simultaneous, 1001, "relay-1", "native-1", "linked-1");
+            check("combined feed keeps own echo in " + channel, own.recordIndex == index && own.mode == "id");
+            var old = FcmEcho.choose("older-" + channel, "relay-1", "Tester", channel, "same text",
+                simultaneous, 1001, "relay-1", "native-1", "linked-1");
+            check("replayed ID cannot consume a different ACK in " + channel, old.recordIndex < 0);
+            var legacyOld = FcmEcho.choose("older-" + channel, "unknown", "Tester", channel, "same text",
+                simultaneous, 1001, "relay-1", "native-1", "");
+            check("legacy name fallback cannot override an ACK ID in " + channel, legacyOld.recordIndex < 0);
+        }
+
         var identity = [pending(7, "", "relay-1", "Devotek", "global", "hello")];
         var identityDecision = FcmEcho.choose("event-1", "linked-1", "Devotek", "global", "hello",
             identity, 1001, "relay-1", "native-1", "linked-1");

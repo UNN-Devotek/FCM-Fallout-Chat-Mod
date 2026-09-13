@@ -39,6 +39,20 @@ Key files:
 - Persist service: `backend/src/services/messageService.ts`
 - Broadcast: `broadcast()` in `handlers.ts` publishes to Redis; `initPubSub()` subscribes each instance
 
+### Optional in-game HUD message
+
+FCMChatWidget uses the selected ZFE/xScal native chat API and the backend `/relay` adapter,
+separately from the desktop `/ws` path above. The verified native token resolves the linked FCM
+actor; normal governance applies before delivery. Static native sends ACK and fan out after the
+Bull persistence queue accepts them (`waitForPersistence:false`), without waiting on a worker.
+Queue failure falls back to direct persistence. SERVER uses ephemeral room-scoped Redis history
+and fanout; a matching session confirmation gates both display and outgoing room-pinned sends.
+
+General combines six allowed source feeds as a widget view. It does not create another backend
+message or Discord broadcast. Replay identity, own-echo matching, and retry receipt identity have
+separate guards. See [native integration](../overlay/zfe/native-chat-relay/fcm-integration.md) and
+[retry safety](../overlay/zfe/hud-send-retries.md) for acknowledgement and crash-window limits.
+
 ### Multi-instance fan-out
 
 Each backend instance subscribes to the Redis `chat:broadcast` pub/sub channel. When a message arrives on one instance, `redis.publish()` fans it out to all instances, which each deliver it to their locally-connected sockets. This makes horizontal scaling possible without sticky sessions.
@@ -171,3 +185,13 @@ Overlay clients send `presence:update` every 60 seconds while in-world. The back
 - [glossary.md](./glossary.md) — domain terms
 - [../realtime/](../realtime/) — WebSocket protocol reference (TODO)
 - [../discord/](../discord/) — Discord bot features in detail (TODO)
+
+### Optional background bridge → desktop Server chat
+
+A separate invisible HUDModLoader child sends bounded native roster controls through `/relay`.
+An independent account/device lease authorizes private `bridge:*` frames over the existing
+authenticated desktop socket. General and Server share the same canonical room records; server
+sends use the shared ephemeral moderation/publication service, without static-channel or Discord
+rebroadcast. The desktop only consumes backend data and never reads native credentials or game
+state itself. See [background bridge](../overlay/zfe/background-server-bridge.md) for the local
+0.1.0 candidate and pending deployment/runtime acceptance.

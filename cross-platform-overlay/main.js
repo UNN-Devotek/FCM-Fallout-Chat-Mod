@@ -728,7 +728,7 @@ const NEXUS_MOD_URL = 'https://www.nexusmods.com/fallout76/mods/4082';
 // ─── Configuration ──────────────────────────────────────────────────────────
 // Relay URL is env-driven: set RELAY_HTTP / RELAY_WS to point at any backend.
 // Path A (dev:cloud, non-CF-Access dev backend): https://dev.falloutchatmod.com
-// Path B (dev:local):                            http://localhost:7177
+// Path B (dev:local):                            http://localhost:7076
 // Production default (no override):              https://falloutchatmod.com
 const BUILD_CHANNEL = (() => {
   try { return require('./package.json').fcmChannel || process.env.BUILD_CHANNEL || 'stable'; }

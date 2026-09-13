@@ -1,5 +1,5 @@
 ## FCMChatWidget build file
-## Matches FCMBridge.hx build setup exactly.
+## Modern child-widget build; the legacy standalone bridge has its own compile path.
 ## Run from the hudmodloader-chat/ directory (or adjust paths).
 ##
 ## Prerequisites: Haxe 4.3+

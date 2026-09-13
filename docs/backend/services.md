@@ -12,7 +12,7 @@ The service validates `DISCORD_SERVER_ID` plus `DISCORD_EVENTS_CHANNEL_ID` at
 gateway ready, coalesces per-event gateway updates, reconciles subscribers at
 startup/reconnect and every five minutes, edits one bot-authored announcement,
 and publishes the compact `scheduled_event` message metadata used by the shared
-ChatOverlay and FCMHUD/1 feed.
+ChatOverlay and native HUD relay, with the retained legacy feed adapter also consuming it.
 
 Service files live in `backend/src/services/`. They contain business logic called by controllers and WebSocket handlers. Services should not import from `routes/` or `controllers/`.
 
@@ -22,7 +22,7 @@ Service files live in `backend/src/services/`. They contain business logic calle
 
 **Role:** Persists chat messages to PostgreSQL.
 
-`persistMessage({ id, content, userId, channelId, parentChannelId, source, createdAt, metadata })` — writes a row to the `messages` table using a raw `INSERT ... ON CONFLICT (id, created_at) DO NOTHING` query. Idempotent. Canonical WS/HUD sends await the Bull `message-persist` job before broadcasting; other background/simulation producers may remain asynchronous.
+`persistMessage({ id, content, userId, channelId, parentChannelId, source, createdAt, metadata })` — writes a row to the `messages` table using a raw `INSERT ... ON CONFLICT (id, created_at) DO NOTHING` query. Idempotent. Ordinary WS and legacy HUD producers await the Bull persistence job before broadcasting. Native `/relay` sends explicitly use `waitForPersistence:false` and fan out after queue acceptance so a synchronous HUD RPC does not wait on a worker. See `messagePersistencePolicy.ts`, `ingestMessage.ts`, and [HUD retry safety](../overlay/zfe/hud-send-retries.md).
 
 The `metadata` column accepts arbitrary JSONB (e.g. party invite embed data).
 
@@ -39,7 +39,7 @@ Key exports:
 
 The `SKEW_WINDOW_MS = 60_000` and `NONCE_TTL_SECONDS = 120` constants are exported for test use.
 
-See [auth.md](./auth.md#4-device-keypair-auth-ecdsa-p-256) for protocol details.
+See [auth.md](./auth.md#5-device-keypair-auth-ecdsa-p-256) for protocol details.
 
 ---
 
@@ -246,17 +246,19 @@ Enforcement of block filtering in WS broadcasts and message history is noted as 
 
 ## playerListService.ts
 
-**Role:** Processes player list snapshots submitted by the desktop client.
-
-The desktop client POSTs `{ players, endpoint }` every ~5s. This service stores the snapshot and drives same-server grouping logic (which players share the same FO76 server endpoint). See `routes/playerList.ts`.
+**Role:** Validates and caches player-list snapshots accepted by the compatibility
+`routes/playerList.ts` endpoint. Optional endpoint/session keys and the authenticated user key
+support roster lookup commands. It does not assign world membership; the old desktop reporting
+loop and endpoint attach flow were removed. Native HUD grouping instead uses
+`services/relay/worldRosterService.ts` and [authenticated room controls](../overlay/zfe/native-chat-relay/server-session-binding.md).
 
 ---
 
 ## presenceClearedRegistry.ts
 
-**Role:** In-memory set of user IDs whose presence was explicitly cleared in the current server session.
-
-Prevents the "phantom endpoint" problem where a user disconnects without sending a `presence:update(null)` and the stale endpoint persists. The WS disconnect handler marks the user here; the periodic stale-presence sweeper skips re-clearing already-cleared users.
+**Role:** Retained in-memory 120-second leave-guard utility from the retired desktop world
+attach flow. Current WebSocket and player-list handlers do not call it. Do not rely on it for
+native relay room expiry or the background bridge's leave protection.
 
 ---
 
@@ -405,3 +407,15 @@ record; this is the service-level map.
 `cosmeticsEnabled()` is the master kill switch (`SUPPORTER_TIER_ENABLED`, default
 `false` outside production). Production must declare the switch explicitly; with it off
 the entire surface is inert — see the supporter-tier doc.
+
+## Background desktop Server bridge
+
+`relay/overlayServerBridge.ts` renews a 45-second device lease only from authenticated
+`FCMBRIDGE/1` roster controls. It resolves exactly one live device linked to the signed-in account,
+checks current token/roster/room/account state, and rejects ambiguity or expiry.
+`websocket/bridgeConnection.ts` owns private watched-socket history/live delivery and rejects
+stale asynchronous snapshots. `relay/serverMessageService.ts` is the shared native/desktop
+moderation, account flood-limit, cosmetics and single-publication path. `serverChat.ts` remains
+the ephemeral Redis room store; failed writes/publication now reject rather than return success.
+See [background bridge](../overlay/zfe/background-server-bridge.md) for the full contract and
+local-candidate deployment status. No database migration or new environment variables are needed.

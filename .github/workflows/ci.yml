@@ -309,9 +309,12 @@ jobs:
             game-mods/FCMBridge/hudmodloader-chat/FcmHistory.hx
             game-mods/FCMBridge/hudmodloader-chat/FcmRoster.hx
             game-mods/FCMBridge/hudmodloader-chat/FcmServerSession.hx
+            game-mods/FCMBridge/hudmodloader-chat/FcmRenderGeneration.hx
             game-mods/FCMBridge/hudmodloader-chat/TestFcmHistory.hx
             game-mods/FCMBridge/hudmodloader-chat/TestFcmRoster.hx
+            game-mods/FCMBridge/hudmodloader-chat/TestFcmRenderGeneration.hx
             game-mods/FCMBridge/hudmodloader-chat/test-history.hxml
+            game-mods/FCMBridge/hudmodloader-chat/test-render-generation.hxml
             game-mods/FCMBridge/hudmenu-chat/test_ba2tool.py
             game-mods/FCMBridge/tools/validate_swf.py
             game-mods/FCMBridge/tools/test_validate_swf.py
@@ -334,6 +337,11 @@ jobs:
       # FcmConfig parser/clamp unit tests (CAP-001..005, #303/#304) — pure Haxe, --interp.
       - name: Install Haxe
         run: sudo apt-get update && sudo apt-get install -y haxe
+      - name: Build and test background Server bridge
+        working-directory: game-mods/FCMBridge/hudmodloader-bridge
+        run: |
+          haxe test-state.hxml
+          python3 test_package.py
       - name: Run HUD device-layout tests
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: |
@@ -369,9 +377,13 @@ jobs:
           haxe test-feed-text.hxml
           haxe test-json.hxml
           haxe test-outbox.hxml
+          haxe test-diagnostics.hxml
       - name: Test HUD history recovery and world transitions
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe test-history.hxml
+      - name: Test delayed HUD render invalidation
+        working-directory: game-mods/FCMBridge/hudmodloader-chat
+        run: haxe test-render-generation.hxml
       - name: Run native bridge compatibility tests
         working-directory: game-mods/FCMBridge
         run: haxe test-native-api.hxml
@@ -388,7 +400,7 @@ jobs:
       - name: Compile legacy FCMBridge
         working-directory: game-mods/FCMBridge
         run: |
-          haxe --main FCMBridge --swf /tmp/FCMBridge.swf --swf-version 32
+          haxe --class-path hudmodloader-chat --main FCMBridge --swf /tmp/FCMBridge.swf --swf-version 32
           python3 hudmodloader-chat/normalize_swf.py /tmp/FCMBridge.swf
           python3 tools/validate_swf.py /tmp/FCMBridge.swf --require-signature FWS --require-version 32
       - name: Run EasyFishing installer tests

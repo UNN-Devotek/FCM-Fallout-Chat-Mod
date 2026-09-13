@@ -2456,7 +2456,7 @@ describe('server chat (worldId-scoped room)', () => {
   test('HUD layout survives reconnect, stays device-scoped, and never becomes chat', async () => {
     const a = await registerAndLink('LayoutA', 'fcm-layout-shared');
     const b = await registerAndLink('LayoutB', 'fcm-layout-shared');
-    const layout = { x: 40, y: 80, width: 600, height: 300 };
+    const layout = { x: 40, y: 80, width: 600, height: 300, fontSize: 18, inputHeight: 48, inputFontSize: 24, autoHideEnabled: false, autoHideSec: 95, bgAlpha: 0.3, inputBgColor: 0x123456, inputTextColor: 0xFFFFFF };
     const ingest = require('../src/services/ingestMessage').ingestMessage;
     ingest.mockClear();
     expect(await sendCtrl(a, 'FCMCTL/1/LAYOUT/SET;save-1;' + JSON.stringify(layout))).toMatchObject({ success: true });
@@ -2471,7 +2471,7 @@ describe('server chat (worldId-scoped room)', () => {
     await new Promise(resolve => setTimeout(resolve, 30));
     const notices = own.msgs.filter(m => m.event?.body?.startsWith('FCMLAYOUT/1;read-2;'));
     expect(notices).toHaveLength(1);
-    expect(notices[0].event.body).toBe('FCMLAYOUT/1;read-2;' + JSON.stringify(layout));
+    expect(JSON.parse(notices[0].event.body.slice('FCMLAYOUT/1;read-2;'.length))).toEqual(layout);
     expect(other.msgs.some(m => m.event?.body?.startsWith('FCMLAYOUT/1;'))).toBe(false);
     expect(ingest).not.toHaveBeenCalled();
     own.ws.close(); other.ws.close();
@@ -2828,6 +2828,26 @@ describe('roster-derived world rooms', () => {
     ws.close();
     return res;
   }
+
+  test('background bridge nonce owns its lease; muted readers can renew; stale leave cannot clear a new world', async () => {
+    const a = await registerAndLink('Background', 'fcm-background');
+    _userMap['fcm-background'].isMuted = true;
+    const { ws, msgs } = await connectWs(srv.port);
+    const control = (nonce, body) => waitForMsg(ws, msgs, () => send(ws, {
+      op: 'send', token: a.token, channel: 'server', targetUserId: `FCMBRIDGE/1;${nonce}`, body,
+    }));
+    expect(await control('one', makeRosterBody(a.rawId, []))).toMatchObject({ success: true });
+    expect(JSON.parse(_worldStore[`relay:bridge:device:${a.rawId}`])).toMatchObject({ accountId: 'fcm-background', requestId: 'one' });
+    expect(await control('two', makeRosterBody(a.rawId, []))).toMatchObject({ success: true });
+    const room = _worldStore[`relay:world:${a.rawId}`];
+    await control('one', 'FCMCTL/1/LEAVE');
+    expect(_worldStore[`relay:world:${a.rawId}`]).toBe(room);
+    expect(JSON.parse(_worldStore[`relay:bridge:device:${a.rawId}`]).requestId).toBe('two');
+    await control('two', 'FCMCTL/1/LEAVE');
+    expect(_worldStore[`relay:bridge:device:${a.rawId}`]).toBeUndefined();
+    expect(await sendRaw(a, 'muted chat')).toMatchObject({ error: { code: 'user_muted' } });
+    ws.close();
+  });
 
   test('roster controls return a protocol-compliant non-empty message ID', async () => {
     const a = await registerAndLink('RosterAck', 'fcm-roster-ack');
@@ -3232,6 +3252,32 @@ describe('auth gate integration', () => {
     expect(linkedRes).toMatchObject({ success: true });
     expect(typeof linkedRes.messageId).toBe('string');
     wsLinked.close();
+  });
+
+  test('linked hello ignores an unverified displayName override', async () => {
+    const { ws: wsReg, msgs: msgsReg } = await conn5();
+    const regRes = await waitForMsg(wsReg, msgsReg, () =>
+      wsReg.send(JSON.stringify({ op: 'register', displayName: 'VerifiedPlayer' })),
+    );
+    await new Promise((r) => setTimeout(r, 100));
+    wsReg.close();
+
+    const { token } = regRes;
+    const rawId = lastRawUserId();
+    const linkedUserId = 'fcm-identity-guard-001';
+    _userMap[rawId] = { id: rawId, discordId: null, steamId: null, isBanned: false, isMuted: false };
+    _userMap[linkedUserId] = { id: linkedUserId, discordId: 'discord-identity', isBanned: false, isMuted: false };
+    markTokensLinked(rawId, linkedUserId);
+
+    const prisma = require('../src/config/prisma').default;
+    prisma.user.update.mockClear();
+    const { ws, msgs } = await conn5();
+    const res = await waitForMsg(ws, msgs, () =>
+      ws.send(JSON.stringify({ op: 'hello', token, displayName: 'SpoofedFromIni' })),
+    );
+    expect(res).toMatchObject({ success: true, displayName: 'VerifiedPlayer' });
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    ws.close();
   });
 
   // ── 4. getAuthState state transitions ────────────────────────────────────────

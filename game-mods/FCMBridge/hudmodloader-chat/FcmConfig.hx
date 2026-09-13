@@ -24,6 +24,9 @@ class FcmConfig {
     public var width:Int        = 400;
     public var height:Int       = 260;
     public var fontSize:Int     = 14;
+    public var inputHeight:Int  = 28;
+    // Zero inherits the existing provider-specific input size.
+    public var inputFontSize:Int = 0;
 
     // ── Colors (0xRRGGBB) + opacity ────────────────────────────────────────────
     public var bgColor:Int          = 0x0A0907;
@@ -36,13 +39,37 @@ class FcmConfig {
     public var tabInactiveColor:Int = 0xB49544;
     public var promptColor:Int      = 0xAC9043;
     public var tabRowColor:Int      = 0x080705;
+    public var inputBgColor:Int     = 0x080705;
+    public var inputTextColor:Int   = 0xF5CB5B;
 
-    // ── Per-channel colors — mirror the website chat_rooms.color (pulled from PROD
-    //    2026-06-28). Drive the channel sub-tabs + the [Channel] message tag so each
-    //    channel renders in its website color. Overridable in FCMChat.ini
-    //    (colorGeneral / colorTrading / colorEvents / colorInfests / colorRaids /
-    //    colorServer). Option A will overwrite these at runtime from relay-fed live
-    //    colors once in-game chat connects (channelColor() is the read point).
+    public static var COLOR_FIELDS(default, null):Array<String> = [
+        "bgColor", "tabRowColor", "inputBgColor", "borderColor", "textColor",
+        "inputTextColor", "senderColor", "tabActiveColor", "tabInactiveColor", "promptColor"
+    ];
+    public static var COLOR_LABELS(default, null):Array<String> = [
+        "Panel background", "Tab box background", "Input box background", "Border",
+        "Message text", "Input text", "Default name text", "Active tab text",
+        "Inactive tab text", "Hint text"
+    ];
+    public static var COLOR_VALUES(default, null):Array<Int> = [
+        0x080705, 0x303030, 0xF5CB5B, 0x5AB0FF, 0x6AD46A, 0xFFFFFF, 0xFAF4DA, 0xB49544,
+        0xD85C5C, 0xBB88DD
+    ];
+    public static var COLOR_NAMES(default, null):Array<String> = [
+        "Black", "Charcoal", "Amber", "Blue", "Green", "White", "Cream", "Muted gold", "Red", "Purple"
+    ];
+
+    public function customizeColor(id:String):Bool {
+        var parts = id.split("_");
+        if (parts.length != 4 || parts[0] != "cz" || parts[1] != "color") return false;
+        if (COLOR_FIELDS.indexOf(parts[2]) < 0 || !(~/^[0-9]+$/.match(parts[3]))) return false;
+        var index = Std.parseInt(parts[3]);
+        if (index == null || index < 0 || index >= COLOR_VALUES.length) return false;
+        Reflect.setField(this, parts[2], COLOR_VALUES[index]);
+        return true;
+    }
+
+    // Fixed channel identity colors; user configuration cannot override these.
     public var chanColorGlobal:Int  = 0x1ABAFF;   // General
     public var chanColorTrade:Int   = 0x008F37;   // Trading
     public var chanColorEvents:Int  = 0xC88A51;   // Events
@@ -65,18 +92,113 @@ class FcmConfig {
     // Auto-hide: hide the panel after this many seconds of no activity; reveal on a new message.
     // 0 disables auto-hide (always visible). Toggled live from the F11 menu.
     public var autoHideSec:Int  = 60;
+    public var autoHideEnabled:Bool = true;
+
+    public function autoHideActive():Bool { return autoHideEnabled && autoHideSec > 0; }
+
+    public function toggleAutoHide():Void {
+        autoHideEnabled = !autoHideActive();
+        if (autoHideEnabled && autoHideSec == 0) autoHideSec = 60;
+    }
+
+    public function adjustAutoHideDelay(delta:Int):Void {
+        if (!autoHideActive()) autoHideEnabled = false;
+        autoHideSec = clampInt(autoHideSec + delta, 1, 600);
+    }
+
+    /** Shared local rectangle for the prompt and the top-level HUDTools editor. */
+    public function inputRect():{x:Int, y:Int, width:Int, height:Int} {
+        return {x:6, y:height - effectiveInputHeight() + 4,
+            width:width - 12, height:effectiveInputHeight() - 6};
+    }
 
     // ── Keybinds ───────────────────────────────────────────────────────────────
-    // openKey = the ONE native ZFE key (free-choice; ZFE reads it via isChatKeyPressed).
-    // channelNext/Prev + hide map to FO76 control-map ACTIONS the loader forwards.
+    // openKey = the native ZFE key, or the xScal virtual-key token polled through Input.*.
+    // channelNext/Prev + hide map to FO76 control-map ACTIONS the loader forwards;
+    // scroll keys may use those actions or a physical extender token.
+    // These values mirror the active assignments in FCMChat.ini. Empty newest/hide values are
+    // explicit opt-outs so Home/End remain game controls and /hide/F11 remain the hide paths.
     public var openKey:String        = "INSERT";
     public var channelNextKey:String = "NextPage";
     public var channelPrevKey:String = "PrevPage";
+    // Feed navigation actions. Up/Down preserve the current arrow bindings; the
+    // newest-message action is intentionally unset until a user opts in.
+    public var scrollUpKey:String     = "Up";
+    public var scrollDownKey:String   = "Down";
+    public var scrollBottomKey:String = "";
     public var hideKey:String        = "";        // unset = use /hide or the F11 menu
 
     // ── Feed toggles ───────────────────────────────────────────────────────────
     public var showChannelTag:Bool  = true;
     public var showHints:Bool       = false;      // blank idle prompt by default (CAP-014)
+
+    // ── HUD mode gating ────────────────────────────────────────────────────────
+    // Blacklist of HUDMode strings where the widget must stay hidden. Single INI key
+    // `hideInHUDModes` (comma-separated) — case-insensitive. Opinionated default hides
+    // MainMenu, Pipboy, CAMP build modes, vendor/crafting/repair (ContainerMode) and
+    // the map (MapMenu) so the chat does not cover those UIs.
+    public var hideInHUDModes:Array<String> = ["MainMenu", "Pipboy", "WorkshopMode", "WorkshopNoCrosshairMode", "CampPlacement", "ContainerMode", "MapMenu"];
+
+    // ── World-event auto-broadcast (global events channel) ───────────────────
+    // When true, FCMChatWidget reads RecentActivitiesData (same source HUDChallenges
+    // uses) for publicEvent (type 1) and broadcasts each new event exactly once to the
+    // global events leaf (000...003). Requires events channel in AllowedChannels.
+    public var autoBroadcastWorldEvents:Bool = false;
+    // Which events may be broadcast: one list + a mode flag. "allow" (default) =
+    // only listed names are announced; "deny" = every valid name EXCEPT the listed
+    // ones is announced. Names are trimmed, case-insensitive, EXACT matches against
+    // the game's RecentActivitiesData name (never substrings). allow + empty list =
+    // same as the master toggle off (nothing broadcasts, quietly).
+    // Default allow-list spellings per fallout.fandom.com/wiki/Fallout_76_public_events.
+    public var broadcastEvents:Array<String> = ["Scorched Earth", "Neurological Warfare", "A Colossal Problem", "Seismic Activity", "Encryptid", "Eviction Notice", "Moonshine Jamboree"];
+    public var broadcastEventsMode:String = "allow"; // "allow" | "deny" (invalid -> "allow")
+
+    /** Effective master switch: the toggle AND the empty-allow rule. */
+    public function autoBroadcastActive():Bool {
+        if (!autoBroadcastWorldEvents) return false;
+        if (broadcastEventsMode == "deny") return true;
+        return broadcastEvents != null && broadcastEvents.length > 0;
+    }
+
+    /** The game serves public-event names with an "Event: " prefix
+        ("Event: Scorched Earth"); wiki titles usually match the served string.
+        Strip one leading prefix (case-insensitive) so list entries work with or
+        without it. Pure + unit-testable; also used for the broadcast body so the
+        feed reads "Public Event: Scorched Earth", not "Public Event: Event: ...". */
+    public static function stripEventPrefix(name:String):String {
+        if (name == null) return "";
+        var t:String = StringTools.trim(name);
+        var low:String = t.toLowerCase();
+        if (low.indexOf("event:") == 0) t = StringTools.trim(t.substr(6));
+        return t;
+    }
+
+    /** Pure name filter shared by both broadcast gates (unit-testable). */
+    public static function eventPassesFilter(name:String, list:Array<String>, mode:String):Bool {
+        var t:String = stripEventPrefix(name);
+        if (t.length == 0) return false;
+        var low:String = t.toLowerCase();
+        var listed:Bool = false;
+        if (list != null) {
+            for (v in list) {
+                if (v == null) continue;
+                if (stripEventPrefix(v).toLowerCase() == low) { listed = true; break; }
+            }
+        }
+        if (mode == "deny") return !listed;
+        return listed;
+    }
+
+    // ── Manual identity fallback (escape hatch for flaky AccountInfoData) ───────
+    // When xScal/the game serves a blank AccountInfoData (empty name,
+    // isLoggedIn=false) the widget waits forever for a handle that never comes
+    // and never reaches chat.v1.connect. Setting displayName supplies the
+    // handshake label so boot can proceed. The value is a client-side bootstrap
+    // label only; linked tokens keep the server-held identity and the relay ignores
+    // this value for durable account/message identity. The real game-provided handle
+    // wins in the HUD when available.
+    // Empty (default) = disabled.
+    public var displayNameOverride:String = "";
 
     // ── Link flow ────────────────────────────────────────────────────────────────
     // URL shown in the widget's link prompt (linkHint fallback). DEV builds set this to
@@ -517,6 +639,19 @@ class FcmConfig {
         return fallback;
     }
 
+    /**
+     * Validate a user-supplied navigation token. The loader action vocabulary varies
+     * between Fallout builds, so scroll bindings intentionally accept any printable
+     * action/key token while still rejecting markup and separators that could leak into
+     * diagnostics or a persisted INI. Empty is meaningful for an explicitly disabled bind.
+     */
+    static function validScrollKey(s:String, fallback:String):String {
+        if (s == null) return fallback;
+        var t:String = StringTools.trim(s);
+        if (t.length == 0) return "";
+        return ~/^[A-Za-z0-9 _-]+$/.match(t) ? t : fallback;
+    }
+
     // ── Parse the [FCMChat] section of an INI string into a clamped config ──────
 
     public static function parse(raw:String):FcmConfig {
@@ -541,26 +676,24 @@ class FcmConfig {
                 case "y":               cfg.y = parseIntOr(val, cfg.y);
                 case "width":           cfg.width = parseIntOr(val, cfg.width);
                 case "height":          cfg.height = parseIntOr(val, cfg.height);
+                case "inputheight":     cfg.inputHeight = parseIntOr(val, cfg.inputHeight);
+                case "inputfontsize":   cfg.inputFontSize = parseIntOr(val, cfg.inputFontSize);
                 case "fontsize":        cfg.fontSize = parseIntOr(val, cfg.fontSize);
                 case "bgcolor":         cfg.bgColor = parseHexColor(val, cfg.bgColor);
                 case "bgalpha":         cfg.bgAlpha = parseFloatOr(val, cfg.bgAlpha);
                 case "bordercolor":     cfg.borderColor = parseHexColor(val, cfg.borderColor);
                 case "textcolor":       cfg.textColor = parseHexColor(val, cfg.textColor);
                 case "sendercolor":     cfg.senderColor = parseHexColor(val, cfg.senderColor);
-                case "channeltagcolor": cfg.channelTagColor = parseHexColor(val, cfg.channelTagColor);
-                case "colorgeneral":    cfg.chanColorGlobal = parseHexColor(val, cfg.chanColorGlobal);
-                case "colortrading":    cfg.chanColorTrade = parseHexColor(val, cfg.chanColorTrade);
-                case "colorevents":     cfg.chanColorEvents = parseHexColor(val, cfg.chanColorEvents);
-                case "colorinfests":    cfg.chanColorInfests = parseHexColor(val, cfg.chanColorInfests);
-                case "colorraids":      cfg.chanColorRaids = parseHexColor(val, cfg.chanColorRaids);
-                case "colorserver":     cfg.chanColorServer = parseHexColor(val, cfg.chanColorServer);
                 case "tabactivecolor":  cfg.tabActiveColor = parseHexColor(val, cfg.tabActiveColor);
                 case "tabinactivecolor": cfg.tabInactiveColor = parseHexColor(val, cfg.tabInactiveColor);
                 case "promptcolor":     cfg.promptColor = parseHexColor(val, cfg.promptColor);
+                case "inputbgcolor":    cfg.inputBgColor = parseHexColor(val, cfg.inputBgColor);
+                case "inputtextcolor":  cfg.inputTextColor = parseHexColor(val, cfg.inputTextColor);
                 case "tabrowcolor":     cfg.tabRowColor = parseHexColor(val, cfg.tabRowColor);
                 case "maxmessages":     cfg.maxMessages = parseIntOr(val, cfg.maxMessages);
                 case "maxsendlen":      cfg.maxSendLen = parseIntOr(val, cfg.maxSendLen);
                 case "pollms":          cfg.pollMs = parseIntOr(val, cfg.pollMs);
+                case "autohideenabled": cfg.autoHideEnabled = parseBool(val, cfg.autoHideEnabled);
                 case "autohidesec":     cfg.autoHideSec = parseIntOr(val, cfg.autoHideSec);
                 case "openkey":
                     // openKey is interpolated into htmlText (idle prompt) — restrict to a safe key
@@ -569,9 +702,27 @@ class FcmConfig {
                     cfg.openKey = (ok.length > 0 && ~/^[A-Za-z0-9_]+$/.match(ok)) ? ok : cfg.openKey;
                 case "channelnextkey":  cfg.channelNextKey = validAction(val, cfg.channelNextKey);
                 case "channelprevkey":  cfg.channelPrevKey = validAction(val, cfg.channelPrevKey);
+                case "scrollupkey":     cfg.scrollUpKey = validScrollKey(val, cfg.scrollUpKey);
+                case "scrolldownkey":   cfg.scrollDownKey = validScrollKey(val, cfg.scrollDownKey);
+                case "scrollbottomkey": cfg.scrollBottomKey = validScrollKey(val, "");
                 case "hidekey":         cfg.hideKey = validAction(val, "");
-                case "showchanneltag":  cfg.showChannelTag = parseBool(val, cfg.showChannelTag);
                 case "showhints":       cfg.showHints = parseBool(val, cfg.showHints);
+                case "autobroadcastworldevents":
+                    cfg.autoBroadcastWorldEvents = parseBool(val, cfg.autoBroadcastWorldEvents);
+                case "broadcastevents":
+                    // Always assign: explicit empty (or unparseable) clears the list,
+                    // which in "allow" mode reads as broadcast-off (see autoBroadcastActive).
+                    cfg.broadcastEvents = parseCsvList(val, 16);
+                case "broadcasteventsmode":
+                    var m:String = StringTools.trim(val).toLowerCase();
+                    cfg.broadcastEventsMode = (m == "deny") ? "deny" : "allow";
+                case "hideinhudmodes":
+                    cfg.hideInHUDModes = parseHideInHUDModes(val);
+                case "displayname":
+                    // Bethesda handle charset: word chars, spaces, - _ .; capped at
+                    // FcmIdentity.MAX_NAME_length by clamp(). Anything else ignored.
+                    var dn:String = StringTools.trim(val);
+                    cfg.displayNameOverride = (dn.length > 0 && ~/^[A-Za-z0-9 _\-.]+$/.match(dn)) ? dn : cfg.displayNameOverride;
                 case "linkurl":
                     // URL-safe charset only — interpolated into htmlText (crash rule #2).
                     var lu:String = StringTools.trim(val);
@@ -584,6 +735,80 @@ class FcmConfig {
         return cfg;
     }
 
+    /** Shared comma/semicolon list parser: trim, drop empties, dedupe case-insensitively, cap. */
+    static function parseCsvList(s:String, cap:Int):Array<String> {
+        if (s == null) return [];
+        var raw:String = StringTools.trim(s);
+        if (raw.length == 0) return [];
+        var out:Array<String> = [];
+        var seen:Map<String,Bool> = new Map();
+        for (c in raw.split(",")) {
+            for (d in c.split(";")) {
+                var t:String = StringTools.trim(d);
+                if (t.length == 0) continue;
+                var low:String = t.toLowerCase();
+                if (!seen.exists(low)) {
+                    seen.set(low, true);
+                    out.push(t);
+                }
+                if (out.length >= cap) break;
+            }
+            if (out.length >= cap) break;
+        }
+        return out;
+    }
+
+    static function parseHideInHUDModes(s:String):Array<String> {
+        return parseCsvList(s, 16);
+    }
+
+    public function effectiveInputFontSize(isChrome:Bool = false):Int {
+        var base:Int = (inputFontSize == 0) ? (isChrome ? 13 : fontSize) : inputFontSize;
+        return clampInt(base, 8, Std.int(Math.min(47, height - 80)));
+    }
+
+    public function effectiveInputHeight():Int {
+        return clampInt(Std.int(Math.max(inputHeight, effectiveInputFontSize() + 10)), 28, Std.int(Math.min(120, height - 70)));
+    }
+
+    public function sizingMenu():Array<Dynamic> {
+        var out:Array<Dynamic> = [];
+        var add = function(id:String, label:String):Void {
+            out.push({ id: id, label: label });
+        };
+        add("cz_width_up", "Panel width + (" + width + ")");
+        add("cz_width_dn", "Panel width - (" + width + ")");
+        add("cz_height_up", "Panel height + (" + height + ")");
+        add("cz_height_dn", "Panel height - (" + height + ")");
+        add("cz_input_height_up", "Input height + (" + effectiveInputHeight() + ")");
+        add("cz_input_height_dn", "Input height - (" + effectiveInputHeight() + ")");
+        add("cz_input_font_up", "Input text size + (" + effectiveInputFontSize() + ")");
+        add("cz_input_font_dn", "Input text size - (" + effectiveInputFontSize() + ")");
+        add("cz_feed_font_up", "Feed text size + (" + fontSize + ")");
+        add("cz_feed_font_dn", "Feed text size - (" + fontSize + ")");
+        add("cz_input_font_auto", "Input text: use default size");
+        return out;
+    }
+
+    public function customizeSize(action:String):Bool {
+        switch (action) {
+            case "cz_feed_font_dn":   --fontSize;
+            case "cz_feed_font_up":   ++fontSize;
+            case "cz_height_dn":      height -= 20;
+            case "cz_height_up":      height += 20;
+            case "cz_input_font_auto": inputFontSize = 0;
+            case "cz_input_font_dn":  inputFontSize = effectiveInputFontSize() - 1;
+            case "cz_input_font_up":  inputFontSize = effectiveInputFontSize() + 1;
+            case "cz_input_height_dn": inputHeight = effectiveInputHeight() - 4;
+            case "cz_input_height_up": inputHeight = effectiveInputHeight() + 4;
+            case "cz_width_dn":       width -= 30;
+            case "cz_width_up":       width += 30;
+            default: return false;
+        }
+        clamp();
+        return true;
+    }
+
     /** Clamp every numeric value to a safe range; keep the panel on-screen. */
     public function clamp():Void {
         // Size first (x/y bounds depend on it).
@@ -591,12 +816,53 @@ class FcmConfig {
         height   = clampInt(height, 120, VIEW_H);
         x        = clampInt(x, 0, VIEW_W - width);
         y        = clampInt(y, 0, VIEW_H - height);
+        inputHeight = clampInt(inputHeight, 28, 120);
+        if (inputFontSize != 0) inputFontSize = clampInt(inputFontSize, 8, 47);
         fontSize = clampInt(fontSize, 8, 47);          // GFx glyph cache < 48
         bgAlpha  = clampFloat(bgAlpha, 0.0, 1.0);
         maxMessages = clampInt(maxMessages, 10, 500);
         maxSendLen  = clampInt(maxSendLen, 1, 500);     // server hard cap 500
         pollMs      = clampInt(pollMs, 1000, 60000);    // 1s..60s event-poll interval
         autoHideSec = clampInt(autoHideSec, 0, 600);    // 0 = off, else 1s..10min
+        // Manual identity fallback: trim + cap at FcmIdentity.MAX_NAME_LENGTH (64).
+        if (displayNameOverride == null) displayNameOverride = "";
+        displayNameOverride = StringTools.trim(displayNameOverride);
+        if (displayNameOverride.length > 64) displayNameOverride = displayNameOverride.substr(0, 64);
+        // Clamp HUD mode list length and dedupe lower-cased
+        if (hideInHUDModes == null) hideInHUDModes = [];
+        if (hideInHUDModes.length > 16) hideInHUDModes = hideInHUDModes.slice(0, 16);
+        // Normalize empty strings and dedupe case-insensitively
+        var norm:Array<String> = [];
+        var seen:Map<String,Bool> = new Map();
+        for (v in hideInHUDModes) {
+            if (v == null) continue;
+            var t:String = StringTools.trim(v);
+            if (t.length == 0) continue;
+            var low:String = t.toLowerCase();
+            if (!seen.exists(low)) {
+                seen.set(low, true);
+                norm.push(t);
+            }
+        }
+        hideInHUDModes = norm;
+        // Broadcast event list: same normalization; mode sanitized to allow|deny.
+        if (broadcastEvents == null) broadcastEvents = [];
+        var bnorm:Array<String> = [];
+        var bseen:Map<String,Bool> = new Map();
+        for (v in broadcastEvents) {
+            if (v == null) continue;
+            var t:String = StringTools.trim(v);
+            if (t.length == 0) continue;
+            var low:String = t.toLowerCase();
+            if (!bseen.exists(low)) {
+                bseen.set(low, true);
+                bnorm.push(t);
+            }
+            if (bnorm.length >= 16) break;
+        }
+        broadcastEvents = bnorm;
+        var bm:String = (broadcastEventsMode == null) ? "" : StringTools.trim(broadcastEventsMode).toLowerCase();
+        broadcastEventsMode = (bm == "deny") ? "deny" : "allow";
     }
 
     /** Serialize back to the [FCMChat] INI (for F11 Customize persistence via ZFE storage).
@@ -609,31 +875,36 @@ class FcmConfig {
         s.add("x=" + x + "\n");                 s.add("y=" + y + "\n");
         s.add("width=" + width + "\n");         s.add("height=" + height + "\n");
         s.add("fontSize=" + fontSize + "\n");
+        s.add("inputHeight=" + inputHeight + "\n");
+        s.add("inputFontSize=" + inputFontSize + "\n");
         s.add("bgColor=" + h(bgColor) + "\n");  s.add("bgAlpha=" + bgAlpha + "\n");
         s.add("borderColor=" + h(borderColor) + "\n");
         s.add("textColor=" + h(textColor) + "\n");
         s.add("senderColor=" + h(senderColor) + "\n");
-        s.add("channelTagColor=" + h(channelTagColor) + "\n");
         s.add("tabActiveColor=" + h(tabActiveColor) + "\n");
         s.add("tabInactiveColor=" + h(tabInactiveColor) + "\n");
         s.add("promptColor=" + h(promptColor) + "\n");
+        s.add("inputBgColor=" + h(inputBgColor) + "\n");
+        s.add("inputTextColor=" + h(inputTextColor) + "\n");
         s.add("tabRowColor=" + h(tabRowColor) + "\n");
-        s.add("colorGeneral=" + h(chanColorGlobal) + "\n");
-        s.add("colorTrading=" + h(chanColorTrade) + "\n");
-        s.add("colorEvents=" + h(chanColorEvents) + "\n");
-        s.add("colorInfests=" + h(chanColorInfests) + "\n");
-        s.add("colorRaids=" + h(chanColorRaids) + "\n");
-        s.add("colorServer=" + h(chanColorServer) + "\n");
         s.add("maxMessages=" + maxMessages + "\n");
         s.add("maxSendLen=" + maxSendLen + "\n");
         s.add("pollMs=" + pollMs + "\n");
+        s.add("autoHideEnabled=" + b(autoHideEnabled) + "\n");
         s.add("autoHideSec=" + autoHideSec + "\n");
         s.add("openKey=" + openKey + "\n");
         s.add("channelNextKey=" + channelNextKey + "\n");
         s.add("channelPrevKey=" + channelPrevKey + "\n");
+        s.add("scrollUpKey=" + scrollUpKey + "\n");
+        s.add("scrollDownKey=" + scrollDownKey + "\n");
+        s.add("scrollBottomKey=" + scrollBottomKey + "\n");
         s.add("hideKey=" + hideKey + "\n");
-        s.add("showChannelTag=" + b(showChannelTag) + "\n");
         s.add("showHints=" + b(showHints) + "\n");
+        s.add("hideInHUDModes=" + hideInHUDModes.join(",") + "\n");
+        s.add("displayName=" + displayNameOverride + "\n");
+        s.add("autoBroadcastWorldEvents=" + b(autoBroadcastWorldEvents) + "\n");
+        s.add("broadcastEvents=" + broadcastEvents.join(",") + "\n");
+        s.add("broadcastEventsMode=" + broadcastEventsMode + "\n");
         s.add("linkUrl=" + linkUrl + "\n");
         return s.toString();
     }

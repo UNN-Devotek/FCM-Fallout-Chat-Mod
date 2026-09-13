@@ -21,7 +21,7 @@ in-game HUD-mod ZIP from the raw `electron-builder` artifacts and current HUD wi
 4. Compresses the staging contents (files at root, not nested in a subfolder) into:
    - `Fallout Chat Mod Setup X.Y.Z (Windows).zip` — installer + `INSTALL-WINDOWS.txt`
    - `Fallout Chat Mod-X.Y.Z.AppImage (Linux).zip` — AppImage + **`.deb`** + `INSTALL-LINUX.txt` + `.kwinrule`
-   - `ZFE FCM HUD Mod-<widget-version> (PROD).zip` — `FCMChatWidget.ba2`, both runtime INIs,
+   - `FCM HUD Mod-<widget-version> (PROD).zip` — `FCMChatWidget.ba2`, shared UI INI and provider configuration examples,
      an append-only `FCMChatWidget.hudmodloader.ini` snippet, `FCMChatWidget.version.txt`,
      `Fallout76Custom.ini.example`, target-specific `INSTALL.txt`, and `HUDMODLOADER-MENU.txt`
 5. All three ZIPs land in `cross-platform-overlay/dist-electron/` alongside the raw files
@@ -55,10 +55,10 @@ between environments.
 ```
 
 **What it does:**
-1. Calls `publish-nexus.ps1` for the Linux AppImage ZIP and Linux `.deb` ZIP as `main`, and the production HUD ZIP as `optional`; each normal replacement archives the previous file only after the new upload reaches Nexus `available`
-2. Uses the desktop version for both Linux Nexus files and the current `FCMChatWidget.hx` version for the HUD Nexus file
-3. After the Nexus publishes succeed, uploads the raw Windows `.exe` to VirusTotal using the large-file upload URL (required for files > 32 MB)
-4. Computes the SHA-256 permalink and POSTs it to `POST https://falloutchatmod.com/admin/virustotal-url` so the `/virustotal` redirect always points at the latest scan
+1. Builds `FCM HUD Mod-<widget-version> (PROD)-Nexus.zip` with `--distribution nexus`, excluding scripts/executables. Website helper ZIPs must never be uploaded to Nexus.
+2. Runs the completed VirusTotal gate before any Nexus upload; the release operator must already have passed the packaged-app smoke gate. Then calls `publish-nexus.ps1` for the Linux AppImage and `.deb` ZIPs as `main` and the separate Nexus HUD ZIP as `optional`; each normal replacement archives the previous file only after the new upload is available.
+3. Uses the desktop version for both Linux Nexus files and the current `FCMChatWidget.hx` version for the HUD Nexus file
+4. After publishing, refreshes the Windows scan permalink metadata (the mandatory completed scan gate has already run). Computes the SHA-256 permalink and POSTs it to `POST https://falloutchatmod.com/admin/virustotal-url` so the `/virustotal` redirect always points at the latest scan
 
 Windows is an explicit, support-gated path because Nexus may quarantine `.exe` uploads. To upload
 a new Windows ZIP alongside the existing live Windows file for review, run:
@@ -83,9 +83,9 @@ The ordinary release path does not upload Windows to Nexus, and therefore does n
 
 The HUD file is uploaded as a separate optional Nexus file group, so it does not replace the
 desktop download. Set `NEXUS_FILE_GROUP_ID_HUD` to the group created for the HUD package in the
-Nexus Files tab. The wrapper expects `ZFE FCM HUD Mod-<widget-version> (PROD).zip` to already
-exist in `dist-electron/` (the normal `release.ps1` sequence creates it in step 4), then archives
-the previous HUD file when the new one reaches Nexus `available` state. The low-level uploader
+Nexus Files tab. The wrapper builds the separate `FCM HUD Mod-<widget-version> (PROD)-Nexus.zip` from the
+validated local HUD artifacts; the website ZIP is not its upload input. It archives the previous
+HUD file only when the new Nexus file reaches `available` state. The low-level uploader
 defaults to preserving the previous file; the wrapper opts into archiving for the normal Linux,
 `.deb`, and HUD replacement paths.
 
@@ -156,3 +156,12 @@ The patch preserves the original byte length by trimming excess whitespace insid
 | `assets/install/INSTALL-WINDOWS.txt` | Bundled into Windows ZIP by `package-downloads.ps1` and `publish-nexus-release.ps1` |
 | `assets/install/INSTALL-LINUX.txt` | Bundled into Linux ZIP |
 | `assets/fallout-chatmod-keepabove.kwinrule` | Bundled into Linux ZIP; required by KDE Plasma (Wayland) users for always-on-top behavior |
+
+## Optional background bridge package
+
+`game-mods/FCMBridge/hudmodloader-bridge/package.py --target dev|prod --output <zip>` compiles
+and validates FCMServerBridge separately from the visible HUD widget and desktop installer.
+It writes one BA2 child movie, append snippets, provider examples and a target/hash manifest.
+No HUDMenu, native binaries, auto-installer or credentials are bundled. The matching backend and
+shared desktop renderer must be deployed before hosted testing. See the
+[background build guide](../../game-mods/FCMBridge/hudmodloader-bridge/README.md).

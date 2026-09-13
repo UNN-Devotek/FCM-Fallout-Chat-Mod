@@ -1,16 +1,21 @@
 # ZFE Native Chat Relay Protocol (`chat.v1`) — Upstream Contract
 
+> Historical upstream protocol snapshot with FCM-specific amendments. It is not a current
+> verbatim contract or new DLL-inspection evidence. Use the [author’s chat relay guide](https://www.nexusmods.com/fallout76/articles/256)
+> and [current FCM integration](fcm-integration.md) when changing code. Runtime capability checks
+> and per-provider call signatures remain required; old rollout and version claims below are dated.
+
 > **Status: SHIPPED in ZFE 0.9.8 (2026-06-23).** This is the relay contract ZFE's native chat client
 > implements — **verified directly from the `dxgi.dll` binary** (the `zfe-chat-v1` capability, the
 > `register`/`hello`/`send`/`poll`/`subscribe`/`report`/`moderationAction` ops, the error codes, the
-> channel vocab, and the `chat.message` event schema are all present). Reproduced here
-> verbatim-in-substance as the canonical reference. FCM's relay implements R1–R3 + worldId — see
+> channel vocab, and the `chat.message` event schema are all present). Preserved here as a historical
+> snapshot with later local amendments. For the implemented FCM adapter, see
 > [fcm-integration.md](fcm-integration.md) for the integration status (epic #282).
 >
 > **Status (2026-08-31): end-to-end send works on native Windows and Proton/Wine.** The
 > `chat.v1.send` path is verified against the FCM relay on the current project ZFE build. The
 > older 0.9.8 `dispatch_failed` and Proton/Wine TLS failures apply only to pre-fix ZFE builds.
-> See [ZFE version history](#zfe-version-history) and [Transport / TLS](#transport--tls-chatv1-is-not-schannel)
+> See [ZFE version history](#zfe-version-history) and [Transport / TLS](#transport--tls--chatv1-is-not-schannel)
 > below.
 >
 > **This is NOT the existing FCMHUD/1 bridge.** FCM's shipping in-game chat is a *bespoke*
@@ -19,7 +24,7 @@
 > [../two-way-chat-implemented.md](../two-way-chat-implemented.md). The protocol below is a
 > **standardized, relay-agnostic JSON contract** that ZFE itself defines and drives; a
 > compliant relay needs none of FCM's custom SWF/wire code. See
-> [README.md](README.md#how-this-differs-from-the-existing-fcmhud1-bridge) for the side-by-side.
+> [README.md](README.md#delivery-and-duplicate-protection) for the side-by-side.
 
 ZFE is **relay agnostic**. A server can be written in any language as long as it speaks the
 JSON-over-WebSocket contract below.

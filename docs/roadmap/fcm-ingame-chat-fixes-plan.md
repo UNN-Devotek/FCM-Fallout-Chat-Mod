@@ -1,5 +1,9 @@
 # FCM In-Game Chat — Channel, Identity & Input-Box Fixes (Plan)
 
+> Historical June 2026 plan. Its base HUDMenu/socket architecture and remaining-work labels are
+> superseded by the modern native-chat widget. Use [the HUD index](../overlay/zfe/README.md) for
+> current behavior and [recovery checks](../testing/hud-recovery.md) for acceptance.
+
 **Status:** PLANNED — 2026-06-11 (see status update below)
 **Context:** Two-way in-game chat (non-HUDModLoader / RABCDAsm HUDMenu patch + FCMBridge feed widget)
 is now functional: send round-trips (`SEND … ok=true`) and the feed renders. Four issues remain,

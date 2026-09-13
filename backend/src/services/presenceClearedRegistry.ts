@@ -7,10 +7,9 @@
  * and re-assign a virtual endpoint — which would put the user "back on" the server
  * in chat for up to 2 minutes after they left.
  *
- * Both handlers.ts (writes markRecentlyCleared on explicit leave) and
- * playerList.ts (reads isRecentlyCleared before nearbyPlayers write) import this
- * module. The Map is tiny in practice (one entry per connected user who just left),
- * so no LRU or size cap is needed — expired entries are swept on every read.
+ * Retained legacy utility: current handlers.ts and playerList.ts no longer import
+ * it after desktop world detection was removed. It does not guard native relay
+ * membership. Expired entries are swept on every isRecentlyCleared() read.
  */
 
 const DEFAULT_TTL_MS = 120_000; // 2 minutes

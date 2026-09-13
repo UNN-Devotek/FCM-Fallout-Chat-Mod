@@ -224,5 +224,14 @@ On macOS/Windows drop `xvfb-run -a`. The mock relay is launched as a Playwright 
 - [ci-cd-pipeline.md](ci-cd-pipeline.md) — GitHub Actions jobs, branch protection, mock relay.
 - [../deployment/local-dev.md](../deployment/local-dev.md) — dev stack, ports, process hygiene.
 
-- [HUD styling and emoji status](hud-emoji-status.md) — 2.10.72 desktop styling is
-  confirmed; emoji pictures remain unresolved, with separate ZFE verification pending.
+- [HUD styling and emoji status](hud-emoji-status.md) — final 2.10.74 desktop ZFE colors/emoji
+  confirmation, historical failures, and separate local-candidate/provider verification limits.
+
+### Background Server bridge
+
+The local 0.1.0 candidate has Haxe observation/session tests and Python builds for both DEV and
+PROD in `game-mods/FCMBridge/hudmodloader-bridge/`; the existing `gamemod-anchors` CI job runs them.
+Backend Jest covers independent leases, account ownership/revocation, ambiguity, fresh nonce
+controls, moderation and private history/live races. Dashboard Vitest covers canonical-ID merge,
+stale frames, public lockdown and send binding. In-game two-client ZFE/xScal acceptance and hosted
+CI/deployment remain separate gates; see [bridge acceptance](../overlay/zfe/background-server-bridge.md).

@@ -112,10 +112,12 @@ Position presets are an optional keybind slot type. Each preset stores a saved w
 
 These are **separate** from the Electron overlay's global shortcuts above. The in-game HUD chat
 widget (`FCMChatWidget`, the explicit-opt-in `.ba2` install) runs on a Scaleform HUD layer that
-receives **no raw keyboard events** — its input surface is restricted to (1) the one native open
-key polled by ZFE and (2) named Fallout 76 control-map **actions** the loader forwards as
-`HUDMod::UserEvent`. The current loader fields are `actionName`/`isDown`; the widget also accepts
-the legacy `EventName`/`IsKeyDown` aliases. Configure them in `Data/FCMChat.ini` (`[FCMChat]` section).
+does not rely on raw keyboard events for gameplay input. Its supported paths are (1) the one native open
+key polled by ZFE, (2) named Fallout 76 control-map **actions** the loader forwards as
+`HUDMod::UserEvent`, and (3) the extender `Input.*` physical-key compatibility path used when a
+configured scroll token has a Windows virtual-key mapping. The native loader exposes `EventName`/`IsKeyDown` getters; the widget also accepts
+`actionName`/`isDown` compatibility fields using accessor-aware reads.
+Configure them in `Data/FCMChat.ini` (`[FCMChat]` section).
 
 ### Start typing and HUDModLoader menu
 
@@ -141,30 +143,55 @@ steps in both `INSTALL.txt` and `HUDMODLOADER-MENU.txt`.
 
 | Default | Action / config key | Behavior |
 |---------|---------------------|----------|
-| `Insert` | `openKey` (native ZFE key) | **Open / restore.** Opens the native chat input; if the panel is hidden, restores it first. The only freely-choosable physical key (ZFE `isChatKeyPressed`). `PAGE_DOWN` is the known-good fallback if `INSERT` does not fire in-game. |
+| `Insert` | `openKey` (native ZFE key) | **Open / restore.** On ZFE, opens the native chat input and restores a hidden panel through `isChatKeyPressed`; use a supported alternative such as `DELETE` if Insert conflicts, and keep native/widget values aligned. `PAGE_DOWN` conflicts with the default next-channel key. On xScal, the same `openKey` value is mapped through `Input.RegisterKey`/`Input.IsKeyPressed`; see the provider note below. |
 | `Page Down` | `channelNextKey` = `NextPage` | Advance to the next channel. Physical `PageDown` aliases are accepted. Works while idle or while input is open; an open draft is preserved. |
 | `Page Up` | `channelPrevKey` = `PrevPage` | Go to the previous channel. Physical `PageUp` aliases are accepted. Works while idle or while input is open; an open draft is preserved. |
-| `Arrow Up` / `Arrow Down` | runtime HUD actions | After `Insert` opens the typing session, scroll the active feed one line. Before then they remain game controls. |
-| `Home` / `End` | runtime HUD actions | After `Insert` opens the typing session, return the feed to the newest message. Before then they remain game controls. |
+| `Arrow Up` / `Arrow Down` | `scrollUpKey=Up` / `scrollDownKey=Down` | After `Insert` opens the typing session, scroll the active feed one line. Arrow/Cursor/Dpad aliases match the default action. Before then they remain game controls. |
+| (optional) newest key | `scrollBottomKey` | Return the feed to the newest message. **Default is UNSET**; choose `Home`, `End`, `F12`, or a forwarded action to enable it. Before `Insert`, the key remains a game control. |
 | `/hide` + `F11` | (`/hide` slash command; F11 HUDModLoader menu) | Hide the panel. Feed keeps running in the background; restore with the open key (`Insert`). |
 | (optional) `hideKey` | `hideKey` = `<action>` | Optional power-user hide bind; default **UNSET**. Accepts a forwarded action only; hide is always available via `/hide` + the F11 menu regardless. |
-| Mouse-wheel | (not a keybind) | Scroll the feed history. F11 "Scroll to newest" + Home/End are the jump-to-newest fallbacks. |
+| Mouse-wheel | (not a keybind) | Scroll the feed history. F11 **Scroll to newest** remains available even when `scrollBottomKey` is unset. |
 
 `Enter` (send) and `Esc` (cancel) stay native to the game's chat input session and are **not**
-rebindable. While a native session is active, the widget requires the engine's edit-text lock;
-game movement/actions are restored on Enter, Esc, or a terminal relay/input failure.
+rebindable. SharedHUDTools owns the primary editor’s balanced text-edit lock; the legacy ZFE
+fallback does not provide the same lock contract. FCM closes its owned editor on send/cancel and
+relevant failure/menu/unload paths. Do not describe compatibility polling as gameplay suppression.
 
-**Deliverable action set** — the only values `channelNextKey` / `channelPrevKey` / `hideKey`
-accept (forwarded by the loader as `HUDMod::UserEvent`): `NextPage` (Page Down), `PrevPage`
-(Page Up), `Console` (`~`), `TeamChat` (`T`), `DiagnosticSnapshot` (F12). Arrow and Home/End
-scroll actions are recognized at runtime and do not change the config action set. Any other physical key must be remapped to one of these
-actions in Fallout 76's control settings, then set the matching action name here.
+**Deliverable action set** — `channelNextKey` / `channelPrevKey` / `hideKey` continue to accept
+the forwarded loader actions `NextPage` (Page Down), `PrevPage` (Page Up), `Console` (`~`),
+`TeamChat` (`T`), and `DiagnosticSnapshot` (F12). `scrollUpKey`, `scrollDownKey`, and
+`scrollBottomKey` accept a forwarded action name or a safe physical token. The defaults are
+`Up`, `Down`, and blank. An empty scroll value disables that direction; changing `scrollUpKey`
+or `scrollDownKey` releases the corresponding arrow alias instead of retaining it as a second
+binding. For xScal and the ZFE Input.* compatibility path, physical tokens with a Windows
+virtual-key mapping are registered and polled through `Input.RegisterKey`/`Input.IsKeyPressed`.
+Registration does not suppress the underlying keyboard action, so test bare gameplay keys.
 
 Two open-key bindings must agree: `Data/ZFE/TextChat/fragments/FCMChatWidget.ini` `OpenChatKey`
 (authoritative native key) and `FCMChat.ini` `openKey` (the `HUDMod::UserEvent` path) — both
 default `INSERT`. Full key catalog (colors / geometry / opacity / limits / toggles / keybinds):
 see [zfe/ingame-chat-appearance.md](zfe/ingame-chat-appearance.md) and the commented
 `Data/FCMChat.ini`.
+
+ZFE's public [hotkey contract](https://www.nexusmods.com/fallout76/articles/270) is now available.
+The current widget still uses its compatibility path; `zfe-input-v1` names separate `input.v1.*`
+text sessions, not `Input.*`. See the [provider guide](zfe/modder-guide.md) before a migration.
+
+### xScal open-chat key
+
+xScal has no `OpenChatKey` setting in `xscal.ini`. For the xScal provider, the widget maps
+`Data/FCMChat.ini` `[FCMChat] openKey` to the documented numeric Windows virtual-key interface
+(`Input.RegisterKey` and `Input.IsKeyPressed`) and opens on the physical press edge. The named
+`HUDMod::UserEvent` action remains a compatibility fallback. The mapping accepts `INSERT`,
+`DELETE`, `HOME`, `END`, page keys, arrows, `ESCAPE`, `TAB`, `SPACE`, `F1`–`F12`, letters, and digits;
+the same physical token catalog is available to the scroll key settings. Unknown control-map-only
+action names still work through the named-action path but do not create an xScal physical binding.
+The registration is polling bookkeeping and does not
+suppress keyboard input from the game. xScal's documented suppression functions apply to
+gamepad buttons, so test the chosen key for gameplay conflicts. The widget unregisters the key
+when it unloads. Do not add a fabricated `OpenChatKey` entry to `xscal.ini`. See the
+[xScal Input interface, Nexus article 268](https://www.nexusmods.com/fallout76/articles/268)
+for the provider's registration, polling, and suppression scope.
 
 ---
 

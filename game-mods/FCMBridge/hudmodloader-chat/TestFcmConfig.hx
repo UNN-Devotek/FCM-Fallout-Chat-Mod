@@ -21,6 +21,11 @@ class TestFcmConfig {
     static function eqb(name:String, got:Bool, want:Bool):Void {
         check(name + " (got=" + got + " want=" + want + ")", got == want);
     }
+    static function countLines(text:String, prefix:String):Int {
+        var count:Int = 0;
+        for (line in text.split("\n")) if (StringTools.startsWith(line, prefix)) count++;
+        return count;
+    }
 
     static function main():Void {
         // ── parseHexColor: accepts #RRGGBB / RRGGBB / 0xRRGGBB; invalid -> fallback ──
@@ -93,6 +98,37 @@ class TestFcmConfig {
         eqi("default width", d.width, 400);
         eqi("default height", d.height, 260);
         eqi("default fontSize", d.fontSize, 14);
+        eqi("default input height", d.effectiveInputHeight(), 28);
+        eqi("default shared input font", d.effectiveInputFontSize(), 14);
+        eqi("default native input font", d.effectiveInputFontSize(true), 13);
+        var input = FcmConfig.parse("[FCMChat]\ninputHeight=48\ninputFontSize=24\nfontSize=16\n");
+        eqi("independent input height", input.effectiveInputHeight(), 48);
+        eqi("independent input font", input.effectiveInputFontSize(), 24);
+        eqi("native input font override", input.effectiveInputFontSize(true), 24);
+        eqi("feed font unchanged", input.fontSize, 16);
+        eqs("input settings survive save", FcmConfig.parse(input.toIni()).toIni(), input.toIni());
+        check("input height is serialized once", countLines(input.toIni(), "inputHeight=") == 1);
+        check("input font size is serialized once", countLines(input.toIni(), "inputFontSize=") == 1);
+        var inherited = FcmConfig.parse("[FCMChat]\nfontSize=22\ninputFontSize=0\n");
+        eqi("inherit feed font", inherited.effectiveInputFontSize(), 22);
+        eqi("input grows to fit text", inherited.effectiveInputHeight(), 32);
+        var invalidInput = FcmConfig.parse("[FCMChat]\ninputHeight=no\ninputFontSize=no\n");
+        eqi("invalid input height defaults", invalidInput.inputHeight, 28);
+        eqi("invalid input font inherits", invalidInput.inputFontSize, 0);
+        var small = FcmConfig.parse("[FCMChat]\nheight=120\ninputHeight=999\ninputFontSize=999\n");
+        eqi("input height cap", small.inputHeight, 120);
+        eqi("input glyph cap", small.inputFontSize, 47);
+        eqi("small panel reserves feed", small.effectiveInputHeight(), 50);
+        eqi("small panel fits font", small.effectiveInputFontSize(), 40);
+        small.height = 260;
+        eqi("resize restores requested height", small.effectiveInputHeight(), 120);
+        eqi("resize restores requested font", small.effectiveInputFontSize(), 47);
+        var low = FcmConfig.parse("[FCMChat]\ninputHeight=-1\ninputFontSize=-1\n");
+        eqi("input height minimum", low.inputHeight, 28);
+        eqi("input font minimum", low.inputFontSize, 8);
+        eqi("reset input height", FcmConfig.resetToDefaults(input).inputHeight, 28);
+        eqi("reset input font", FcmConfig.resetToDefaults(input).inputFontSize, 0);
+
         eqi("default autoHideSec", d.autoHideSec, 60);
         eqi("default bgColor", d.bgColor, 0x0A0907);
         eqi("default borderColor", d.borderColor, 0xF5CB5B);
@@ -112,6 +148,9 @@ class TestFcmConfig {
         eqs("openKey unsafe->default", FcmConfig.parse("[FCMChat]\nopenKey=<b>&x\n").openKey, "INSERT");
         eqs("default channelNextKey", d.channelNextKey, "NextPage");
         eqs("default channelPrevKey", d.channelPrevKey, "PrevPage");
+        eqs("default scrollUpKey", d.scrollUpKey, "Up");
+        eqs("default scrollDownKey", d.scrollDownKey, "Down");
+        eqs("default scrollBottomKey (unset)", d.scrollBottomKey, "");
         eqs("default hideKey (unset)", d.hideKey, "");
         eqb("default showChannelTag", d.showChannelTag, true);
         eqb("default showHints", d.showHints, false);
@@ -120,6 +159,156 @@ class TestFcmConfig {
             FcmConfig.parse("[FCMChat]\nlinkUrl=dev.falloutchatmod.com/link\n").linkUrl, "dev.falloutchatmod.com/link");
         eqs("linkUrl unsafe->default",
             FcmConfig.parse("[FCMChat]\nlinkUrl=<b>&x\n").linkUrl, "falloutchatmod.com/link");
+        eqs("default displayNameOverride (unset)", d.displayNameOverride, "");
+        eqs("parse displayNameOverride",
+            FcmConfig.parse("[FCMChat]\ndisplayName=Kate6H\n").displayNameOverride, "Kate6H");
+        eqs("displayNameOverride unsafe->default",
+            FcmConfig.parse("[FCMChat]\ndisplayName=<b>&x\n").displayNameOverride, "");
+        eqs("displayNameOverride trims",
+            FcmConfig.parse("[FCMChat]\ndisplayName=  Kate6H  \n").displayNameOverride, "Kate6H");
+        check("displayNameOverride clamps to 64",
+            FcmConfig.parse("[FCMChat]\ndisplayName=" + [for (k in 0...80) "a"].join("") + "\n").displayNameOverride.length == 64);
+        check("displayNameOverride round-trips",
+            FcmConfig.parse(FcmConfig.parse("[FCMChat]\ndisplayName=Kate6H\n").toIni()).displayNameOverride == "Kate6H");
+        eqs("default broadcastEventsMode", d.broadcastEventsMode, "allow");
+        check("default broadcastEvents has 7 wiki-sourced names", d.broadcastEvents.length == 7);
+        check("default broadcastEvents includes Scorched Earth",
+            FcmConfig.eventPassesFilter("Scorched Earth", d.broadcastEvents, d.broadcastEventsMode));
+        check("default broadcastEvents excludes Head Hunt",
+            !FcmConfig.eventPassesFilter("Head Hunt", d.broadcastEvents, d.broadcastEventsMode));
+        check("default broadcastEvents excludes Distinguished Guests",
+            !FcmConfig.eventPassesFilter("Distinguished Guests", d.broadcastEvents, d.broadcastEventsMode));
+        eqs("parse broadcastEventsMode deny",
+            FcmConfig.parse("[FCMChat]\nbroadcastEventsMode=DENY\n").broadcastEventsMode, "deny");
+        eqs("parse broadcastEventsMode garbage->allow",
+            FcmConfig.parse("[FCMChat]\nbroadcastEventsMode=sometimes\n").broadcastEventsMode, "allow");
+        check("parse broadcastEvents list",
+            FcmConfig.parse("[FCMChat]\nbroadcastEvents=Free Range, Project Paradise\n").broadcastEvents.join("|") == "Free Range|Project Paradise");
+        check("parse broadcastEvents dedupes case-insensitively",
+            FcmConfig.parse("[FCMChat]\nbroadcastEvents=Tea Time, tea time ,TEA TIME\n").broadcastEvents.length == 1);
+        check("allow match is case-insensitive",
+            FcmConfig.eventPassesFilter("scorched earth", ["Scorched Earth"], "allow"));
+        check("allow match trims",
+            FcmConfig.eventPassesFilter("  Encryptid ", ["Encryptid"], "allow"));
+        check("allow rejects unlisted",
+            !FcmConfig.eventPassesFilter("Distinguished Guests", ["Scorched Earth"], "allow"));
+        check("allow rejects substring (Hunt vs Head Hunt)",
+            !FcmConfig.eventPassesFilter("Head Hunt", ["Hunt"], "allow"));
+        check("allow rejects substring (Head Hunt vs Hunt entry)",
+            !FcmConfig.eventPassesFilter("Hunt", ["Head Hunt"], "allow"));
+        eqs("stripEventPrefix removes prefix",
+            FcmConfig.stripEventPrefix("Event: Scorched Earth"), "Scorched Earth");
+        eqs("stripEventPrefix is case-insensitive",
+            FcmConfig.stripEventPrefix("event:  Encryptid "), "Encryptid");
+        eqs("stripEventPrefix leaves bare names alone",
+            FcmConfig.stripEventPrefix("Scorched Earth"), "Scorched Earth");
+        eqs("stripEventPrefix strips only one prefix",
+            FcmConfig.stripEventPrefix("Event: Event: X"), "Event: X");
+        eqs("stripEventPrefix null->empty", FcmConfig.stripEventPrefix(null), "");
+        check("prefixed live name passes default allow-list",
+            FcmConfig.eventPassesFilter("Event: Scorched Earth", d.broadcastEvents, d.broadcastEventsMode));
+        check("prefixed live name passes deny-list logic",
+            !FcmConfig.eventPassesFilter("Event: Scorched Earth", ["Scorched Earth"], "deny"));
+        check("prefixed Head Hunt still excluded by default allow-list",
+            !FcmConfig.eventPassesFilter("Event: Head Hunt", d.broadcastEvents, d.broadcastEventsMode));
+        check("list entry with prefix also matches",
+            FcmConfig.eventPassesFilter("Scorched Earth", ["Event: Scorched Earth"], "allow"));
+        check("deny passes unlisted",
+            FcmConfig.eventPassesFilter("Distinguished Guests", ["Scorched Earth"], "deny"));
+        check("deny rejects listed",
+            !FcmConfig.eventPassesFilter("Scorched Earth", ["Scorched Earth"], "deny"));
+        check("filter rejects blank name",
+            !FcmConfig.eventPassesFilter("   ", ["Scorched Earth"], "allow"));
+        check("empty allow-list reads as broadcast off",
+            !FcmConfig.parse("[FCMChat]\nautoBroadcastWorldEvents=true\nbroadcastEvents=\n").autoBroadcastActive());
+        check("non-empty allow-list with toggle on reads as active",
+            FcmConfig.parse("[FCMChat]\nautoBroadcastWorldEvents=true\nbroadcastEvents=Tea Time\n").autoBroadcastActive());
+        check("deny with empty list reads as active",
+            FcmConfig.parse("[FCMChat]\nautoBroadcastWorldEvents=true\nbroadcastEvents=\nbroadcastEventsMode=deny\n").autoBroadcastActive());
+        check("master toggle off reads as inactive regardless",
+            !FcmConfig.parse("[FCMChat]\nautoBroadcastWorldEvents=false\nbroadcastEvents=Tea Time\n").autoBroadcastActive());
+        check("broadcast filter round-trips",
+            FcmConfig.parse(FcmConfig.parse("[FCMChat]\nbroadcastEvents=Free Range,Project Paradise\nbroadcastEventsMode=deny\n").toIni()).broadcastEvents.join("|") == "Free Range|Project Paradise"
+            && FcmConfig.parse(FcmConfig.parse("[FCMChat]\nbroadcastEvents=Free Range,Project Paradise\nbroadcastEventsMode=deny\n").toIni()).broadcastEventsMode == "deny");
+
+        var menuCfg = new FcmConfig();
+        check("width action accepted", menuCfg.customizeSize("cz_width_up"));
+        eqi("width grows independently", menuCfg.width, 430);
+        eqi("width leaves height", menuCfg.height, 260);
+        menuCfg.customizeSize("cz_height_dn");
+        eqi("height shrinks independently", menuCfg.height, 240);
+        eqi("height leaves width", menuCfg.width, 430);
+        menuCfg.customizeSize("cz_input_font_up");
+        eqi("input font exits auto", menuCfg.inputFontSize, 15);
+        eqi("input font leaves feed", menuCfg.fontSize, 14);
+        menuCfg.customizeSize("cz_input_font_auto");
+        eqi("input font returns to auto", menuCfg.inputFontSize, 0);
+        menuCfg.customizeSize("cz_input_height_up");
+        eqi("input row grows independently", menuCfg.inputHeight, 32);
+        eqi("input height leaves panel", menuCfg.height, 240);
+        for (item in menuCfg.sizingMenu())
+            check("menu action supported " + item.id, menuCfg.customizeSize(item.id));
+        check("unknown sizing action rejected", !menuCfg.customizeSize("bogus"));
+        menuCfg.width = 1920;
+        menuCfg.customizeSize("cz_width_up");
+        eqi("menu width bounded", menuCfg.width, 1920);
+        menuCfg.height = 120;
+        menuCfg.customizeSize("cz_height_dn");
+        eqi("menu height bounded", menuCfg.height, 120);
+
+        var hideCfg = FcmConfig.parse("[FCMChat]\nautoHideEnabled=false\nautoHideSec=95\n");
+        check("auto-hide can be off with positive delay", !hideCfg.autoHideActive());
+        hideCfg.adjustAutoHideDelay(5);
+        check("delay change does not enable auto-hide", !hideCfg.autoHideActive());
+        eqi("delay changes while disabled", hideCfg.autoHideSec, 100);
+        hideCfg.toggleAutoHide();
+        check("toggle restores auto-hide", hideCfg.autoHideActive());
+        eqi("toggle preserves delay", hideCfg.autoHideSec, 100);
+        hideCfg.toggleAutoHide();
+        var restoredHide = FcmConfig.parse(hideCfg.toIni());
+        check("disabled state survives save", !restoredHide.autoHideActive());
+        eqi("saved delay retained", restoredHide.autoHideSec, 100);
+        var legacyHide = FcmConfig.parse("[FCMChat]\nautoHideSec=0\n");
+        check("legacy zero is off", !legacyHide.autoHideActive());
+        legacyHide.adjustAutoHideDelay(5);
+        check("legacy disabled stays disabled on delay change", !legacyHide.autoHideActive());
+        legacyHide.autoHideSec = 0;
+        legacyHide.toggleAutoHide();
+        eqi("enabling legacy zero supplies default delay", legacyHide.autoHideSec, 60);
+        legacyHide.adjustAutoHideDelay(999);
+        eqi("delay maximum", legacyHide.autoHideSec, 600);
+        legacyHide.adjustAutoHideDelay(-999);
+        eqi("delay minimum", legacyHide.autoHideSec, 1);
+        var editorCfg = FcmConfig.parse("[FCMChat]\nwidth=600\nheight=300\ninputHeight=48\ninputFontSize=24\n");
+        var editor = editorCfg.inputRect();
+        eqi("editor width matches panel padding", editor.width, 588);
+        eqi("editor height matches input padding", editor.height, 42);
+        eqi("editor vertical placement", editor.y, 256);
+        check("editor remains inside panel", editor.y + editor.height <= editorCfg.height);
+        editorCfg.customizeSize("cz_width_up");
+        eqi("editor follows live width", editorCfg.inputRect().width, 618);
+        editorCfg.customizeSize("cz_input_height_up");
+        eqi("editor follows live input height", editorCfg.inputRect().height, 46);
+
+        var colors = FcmConfig.parse("[FCMChat]\ninputBgColor=#123456\ninputTextColor=#ABCDEF\nbgAlpha=0.25\n");
+        eqi("input background parses", colors.inputBgColor, 0x123456);
+        eqi("input font color parses", colors.inputTextColor, 0xABCDEF);
+        eqs("appearance survives local save", FcmConfig.parse(colors.toIni()).toIni(), colors.toIni());
+        for (field in FcmConfig.COLOR_FIELDS) {
+            check("color menu action " + field, colors.customizeColor("cz_color_" + field + "_5"));
+            eqi("color applied " + field, Reflect.field(colors,field), 0xFFFFFF);
+        }
+        check("bad color index rejected", !colors.customizeColor("cz_color_bgColor_99"));
+        check("partial index rejected", !colors.customizeColor("cz_color_bgColor_5oops"));
+        for (field in ["showChannelTag", "chanColorGlobal", "defaultChannel", "inputWidth", "inputAlignment"])
+            check("restricted menu field " + field, !colors.customizeColor("cz_color_" + field + "_5"));
+        var locked = FcmConfig.parse("[FCMChat]\nshowChannelTag=false\nchannelTagColor=#123456\ncolorGeneral=#123456\ninputWidth=999\ninputAlignment=right\n");
+        check("tags remain enabled", locked.showChannelTag);
+        eqi("tag identity stays fixed", locked.channelTagColor, 0x8FBC8F);
+        eqi("channel identity stays fixed", locked.channelColor("global"), 0x1ABAFF);
+        eqi("input width stays bounded", locked.inputRect().width, locked.width - 12);
+        eqi("input alignment stays fixed", locked.inputRect().x, 6);
+        check("locked keys not saved", locked.toIni().indexOf("showChannelTag") < 0 && locked.toIni().indexOf("colorGeneral") < 0);
 
         // Reset restores the authoritative defaults, retaining only the environment-owned link URL.
         var customized = FcmConfig.parse("[FCMChat]\n"
@@ -141,7 +330,9 @@ class TestFcmConfig {
             + "x=50\ny=60\nwidth=600\nheight=400\nfontSize=18\n"
             + "bgColor=#101010\nbgAlpha=0.5\nborderColor=00FF00\ntextColor=0xABCDEF\n"
             + "maxMessages=250\nmaxSendLen=120\n"
-            + "openKey=INSERT\nchannelNextKey=NextPage\nchannelPrevKey=PrevPage\nhideKey=DiagnosticSnapshot\n"
+            + "openKey=INSERT\nchannelNextKey=NextPage\nchannelPrevKey=PrevPage\n"
+            + "scrollUpKey=Console\nscrollDownKey=F12\nscrollBottomKey=HOME\n"
+            + "hideKey=DiagnosticSnapshot\n"
             + "showChannelTag=false\nshowHints=true\n";
         var c = FcmConfig.parse(ini);
         eqi("parse x", c.x, 50);
@@ -153,8 +344,11 @@ class TestFcmConfig {
         eqi("parse textColor (0x)", c.textColor, 0xABCDEF);
         eqi("parse maxMessages", c.maxMessages, 250);
         eqi("parse maxSendLen", c.maxSendLen, 120);
+        eqs("parse scrollUpKey", c.scrollUpKey, "Console");
+        eqs("parse scrollDownKey", c.scrollDownKey, "F12");
+        eqs("parse scrollBottomKey", c.scrollBottomKey, "HOME");
         eqs("parse hideKey", c.hideKey, "DiagnosticSnapshot");
-        eqb("parse showChannelTag", c.showChannelTag, false);
+        eqb("channel tag visibility override ignored", c.showChannelTag, true);
         eqb("parse showHints", c.showHints, true);
         check("legacy timestamp settings are ignored", FcmConfig.parse(
             "[FCMChat]\nshowTimestamps=true\ntimestampColor=#FFFFFF\n").toIni().indexOf("showTimestamps") < 0);
@@ -169,6 +363,8 @@ class TestFcmConfig {
         eqi("clamp maxMessages min", bad.maxMessages, 10);
         eqi("clamp maxSendLen max", bad.maxSendLen, 500);
         eqs("invalid action->default", bad.channelNextKey, "NextPage");
+        eqs("invalid scroll-up token->default", FcmConfig.parse("[FCMChat]\nscrollUpKey=<bad>\n").scrollUpKey, "Up");
+        eqs("blank scroll-bottom stays unset", FcmConfig.parse("[FCMChat]\nscrollBottomKey=\n").scrollBottomKey, "");
         eqi("invalid color->default", bad.bgColor, 0x0A0907);
 
         // ── x/y clamped into the 1920x1080 viewport given width/height ──
@@ -202,8 +398,8 @@ class TestFcmConfig {
         eqi("chanColor unknown->tagColor", d.channelColor("nope"),    d.channelTagColor);
         eqi("chanColor null->tagColor",    d.channelColor(null),      d.channelTagColor);
         eqi("chanColor case-insensitive",  d.channelColor("  RAIDS "), 0xCE0909);
-        eqi("chanColor INI override",
-            FcmConfig.parse("[FCMChat]\ncolorRaids=#123456\n").channelColor("raids"), 0x123456);
+        eqi("channel color override ignored",
+            FcmConfig.parse("[FCMChat]\ncolorRaids=#123456\n").channelColor("raids"), 0xCE0909);
         eqs("config serialization round-trip", FcmConfig.parse(c.toIni()).toIni(), c.toIni());
 
         // ── dimColor: scales a color toward black (inactive sub-tabs) ──

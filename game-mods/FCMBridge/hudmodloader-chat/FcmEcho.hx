@@ -66,7 +66,7 @@ class FcmEcho {
 
         var identityCandidates:Array<FcmPendingEcho> = [];
         for (candidate in pending) {
-            if (!eligible(candidate, channel, body, now, preAckAllowed)) continue;
+            if (!eligible(candidate, messageId, channel, body, now, preAckAllowed)) continue;
             var senderMatches:Bool = sameNonEmpty(senderUserId, candidate.senderUserId)
                 || isKnownLocal(senderUserId, relayUserId, localUserId, localLinkedUserId)
                 || (isKnownLocal(candidate.senderUserId, relayUserId, localUserId, localLinkedUserId)
@@ -85,7 +85,7 @@ class FcmEcho {
         var legacyCandidates:Array<FcmPendingEcho> = [];
         var incomingKnownLocal:Bool = isKnownLocal(senderUserId, relayUserId, localUserId, localLinkedUserId);
         for (candidate in pending) {
-            if (!eligible(candidate, channel, body, now, preAckAllowed)) continue;
+            if (!eligible(candidate, messageId, channel, body, now, preAckAllowed)) continue;
             if (!sameName(displayName, candidate.displayName)) continue;
             if (has(localLinkedUserId) && has(senderUserId) && !incomingKnownLocal) continue;
             legacyCandidates.push(candidate);
@@ -97,10 +97,13 @@ class FcmEcho {
         return decision;
     }
 
-    static function eligible(candidate:FcmPendingEcho, channel:String, body:String, now:Float,
+    static function eligible(candidate:FcmPendingEcho, messageId:String, channel:String, body:String, now:Float,
             allowUnaccepted:Bool):Bool {
         if (candidate == null || (!candidate.accepted && !allowUnaccepted)) return false;
         if (!same(candidate.channel, channel) || candidate.body != body) return false;
+        // A stable ACK identity wins over every name/body fallback. A delayed event
+        // for a different send must never turn this pending row into a second copy.
+        if (has(candidate.messageId) && has(messageId) && candidate.messageId != messageId) return false;
         return now - candidate.createdAt >= 0 && now - candidate.createdAt <= MATCH_WINDOW_MS;
     }
 

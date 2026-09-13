@@ -1,8 +1,12 @@
 # Text Chat Mod — Decompiled Build Blueprint
 
+> Historical analysis of a third-party mod. These observations apply to the inspected artifact,
+> not every Fallout/GFx runtime. FCMChatWidget is now a child widget using native chat and
+> SharedHUDTools, not this socket/HUDMenu architecture. See [the engineering guide](scaleform-ui-guide.md).
+
 The basis for M7 two-way in-game chat. Reverse-engineered from the original FO76 **Text Chat** mod
-(`ChatMod.ba2` → two SWFs: a modified **HUDMenu.swf** + a **TextChat.swf** chat-UI). We mimic this
-architecture. See [two-way-chat-implemented.md](two-way-chat-implemented.md) for the implemented result.
+(`ChatMod.ba2` → two SWFs: a modified **HUDMenu.swf** + a **TextChat.swf** chat-UI). The early FCM implementation mimicked this
+architecture; the modern widget does not. See [two-way-chat-implemented.md](two-way-chat-implemented.md) for the implemented result.
 
 > Method: carved the two SWFs out of the BTDX/GNRL `.ba2` (zlib-decompress each `CWS` stream → `FWS`),
 > then decompiled AS3 with JPEXS/ffdec. All line refs below are into that decompiled source.

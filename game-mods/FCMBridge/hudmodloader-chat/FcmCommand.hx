@@ -17,11 +17,17 @@ class FcmCommand {
         return command == "/relink" || command == "relink";
     }
 
-    /** Map loader action names to feed scroll direction: -1 up, +1 down, 0 other. */
-    public static function scrollDirection(raw:String):Int {
-        var action:String = normalizeAction(raw);
-        if (action == "up" || action == "arrowup" || action == "cursorup" || action == "dpadup") return -1;
-        if (action == "down" || action == "arrowdown" || action == "cursordown" || action == "dpaddown") return 1;
+    /**
+     * Map a loader action to feed scroll direction: -1 up, +1 down, 0 other.
+     *
+     * The configured values are replacements for the default Up/Down actions. The
+     * directional aliases remain equivalent, so `scrollUpKey=Up` accepts Up,
+     * ArrowUp, CursorUp, and DpadUp on loaders that use a different spelling.
+     * An empty configured value disables that direction.
+     */
+    public static function scrollDirection(raw:String, configuredUp:String = "Up", configuredDown:String = "Down"):Int {
+        if (matchesScrollBinding(raw, configuredUp)) return -1;
+        if (matchesScrollBinding(raw, configuredDown)) return 1;
         return 0;
     }
 
@@ -43,10 +49,49 @@ class FcmCommand {
         }
     }
 
-    /** Home/End both mean "show the newest messages" when the feed is idle. */
-    public static function isScrollToBottom(raw:String):Bool {
-        var action:String = normalizeAction(raw);
-        return action == "home" || action == "end" || action == "scrolltoend" || action == "scrollbottom";
+    /** Convert an openKey token to a Windows virtual-key code for xScal polling. */
+    public static function virtualKeyCode(raw:String):Int {
+        var key:String = normalizeAction(raw);
+        switch (key) {
+            case "insert", "ins": return 0x2D;
+            case "delete", "del": return 0x2E;
+            case "home": return 0x24;
+            case "end": return 0x23;
+            case "pageup", "pgup", "prior": return 0x21;
+            case "pagedown", "pgdn", "next": return 0x22;
+            case "up", "arrowup": return 0x26;
+            case "down", "arrowdown": return 0x28;
+            case "left", "arrowleft": return 0x25;
+            case "right", "arrowright": return 0x27;
+            case "escape", "esc": return 0x1B;
+            case "tab": return 0x09;
+            case "space": return 0x20;
+            case "f1": return 0x70;
+            case "f2": return 0x71;
+            case "f3": return 0x72;
+            case "f4": return 0x73;
+            case "f5": return 0x74;
+            case "f6": return 0x75;
+            case "f7": return 0x76;
+            case "f8": return 0x77;
+            case "f9": return 0x78;
+            case "f10": return 0x79;
+            case "f11": return 0x7A;
+            case "f12": return 0x7B;
+            default:
+                if (key.length == 1) {
+                    var code:Int = key.charCodeAt(0);
+                    if ((code >= 97 && code <= 122) || (code >= 48 && code <= 57)) {
+                        return code >= 97 ? code - 32 : code;
+                    }
+                }
+                return 0;
+        }
+    }
+
+    /** Match the optional user-selected action that returns the feed to newest. */
+    public static function isScrollToBottom(raw:String, configured:String = ""):Bool {
+        return matchesScrollBinding(raw, configured);
     }
 
     public static function isNextChannel(raw:String, configured:String):Bool {
@@ -66,13 +111,31 @@ class FcmCommand {
      * this classification pure makes it impossible for an ordinary character/Unmapped event to
      * fall through into channel selection. The returned value is intentionally a one-shot command.
      */
-    public static function navigationAction(raw:String, nextChannel:String, previousChannel:String):String {
-        var scroll:Int = scrollDirection(raw);
+    public static function navigationAction(raw:String, nextChannel:String, previousChannel:String,
+            configuredScrollUp:String = "Up", configuredScrollDown:String = "Down",
+            configuredScrollBottom:String = ""):String {
+        var scroll:Int = scrollDirection(raw, configuredScrollUp, configuredScrollDown);
         if (scroll < 0) return "feed-up";
         if (scroll > 0) return "feed-down";
-        if (isScrollToBottom(raw)) return "feed-bottom";
+        if (isScrollToBottom(raw, configuredScrollBottom)) return "feed-bottom";
         if (isNextChannel(raw, nextChannel)) return "next-channel";
         if (isPreviousChannel(raw, previousChannel)) return "previous-channel";
+        return "";
+    }
+
+    /**
+     * Resolve a physical virtual-key code to the action token used by navigationAction.
+     * Built-in channel/arrow aliases are returned first; configured xScal/ZFE physical
+     * tokens fill in additional keys such as F12 or a letter. Duplicate bindings follow
+     * navigationAction's up, down, bottom precedence.
+     */
+    public static function physicalNavigationAction(keyCode:Int, configuredScrollUp:String,
+            configuredScrollDown:String, configuredScrollBottom:String):String {
+        var builtIn:String = physicalKeyAction(keyCode);
+        if (builtIn.length > 0) return builtIn;
+        if (virtualKeyCode(configuredScrollUp) == keyCode && keyCode > 0) return configuredScrollUp;
+        if (virtualKeyCode(configuredScrollDown) == keyCode && keyCode > 0) return configuredScrollDown;
+        if (virtualKeyCode(configuredScrollBottom) == keyCode && keyCode > 0) return configuredScrollBottom;
         return "";
     }
 
@@ -107,13 +170,21 @@ class FcmCommand {
      * the token matching also covers loader/game-version aliases for quick actions and
      * the friends list. These actions must be handled before normal widget navigation.
      */
-    /** SERVER records are already room-validated on ingestion and cleared on leave. */
     public static function acceptsInputCallback(open:Bool, current:Int, callback:Int):Bool {
         return open && current == callback;
     }
 
+    /**
+     * General is a view of the six public HUD feeds. Records keep their source channel,
+     * so tab switching, self-echo matching and replay guards share one canonical row.
+     * SERVER records are room-validated on ingestion and cleared on leave.
+     */
     public static function channelVisible(active:String, channel:String):Bool {
-        return active == channel || (active == "global" && channel == "server");
+        switch (channel) {
+            case "global", "server", "trade", "events", "infests", "raids":
+                return active == "global" || active == channel;
+            default: return false;
+        }
     }
 
     public static function isExternalInputAction(raw:String):Bool {
@@ -250,6 +321,28 @@ class FcmCommand {
 
     static function sameAction(normalized:String, configured:String):Bool {
         return configured != null && normalized.length > 0 && normalized == normalizeAction(configured);
+    }
+
+    static function matchesScrollBinding(raw:String, configured:String):Bool {
+        var action:String = normalizeAction(raw);
+        var target:String = normalizeAction(configured);
+        if (action.length == 0 || target.length == 0) return false;
+        if (action == target) return true;
+        var actionGroup:String = scrollAliasGroup(action);
+        var targetGroup:String = scrollAliasGroup(target);
+        if (actionGroup.length > 0 && actionGroup == targetGroup) return true;
+        // The physical provider emits canonical tokens (PageDown/ArrowUp), while
+        // configuration may use aliases (PGDN/Up), including reversed directions.
+        var keyCode:Int = virtualKeyCode(action);
+        return keyCode > 0 && keyCode == virtualKeyCode(target);
+    }
+
+    static function scrollAliasGroup(action:String):String {
+        switch (action) {
+            case "up", "arrowup", "cursorup", "dpadup": return "up";
+            case "down", "arrowdown", "cursordown", "dpaddown": return "down";
+            default: return "";
+        }
     }
 
     /** Stable key for the per-press navigation latch in the widget. */

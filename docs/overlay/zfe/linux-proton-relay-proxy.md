@@ -1,5 +1,9 @@
 # Linux/Proton relay stability — loopback TLS proxy
 
+> Historical workaround for an older transport failure, not current installation guidance.
+> Do not add proxies, trust-store changes, hosts overrides, or TLS bypasses for the modern HUD
+> based on this record. Use the current provider setup and [Proton test status](native-chat-relay/proton-status.md).
+
 **Problem.** Under Wine/Proton, ZFE's Schannel TLS handshake to the network relay
 (`dev-relay-direct.falloutchatmod.com:443`) intermittently times out (`recv failed with WSA
 error 10060`), especially on the long-lived **subscribe (receive)** connection — so the in-game

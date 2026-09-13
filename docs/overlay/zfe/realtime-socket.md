@@ -1,6 +1,11 @@
 # ZFE Real-Time Socket (FCMHUD/1)
 
-> **ACTIVE TRANSPORT (re-sequenced 2026-06-24).** FCMHUD/1 (this `color~channel~user~content` push
+> Historical generic socket transport. The June 2026 shipping decision below is superseded;
+> FCMChatWidget uses native ZFE/xScal chat through `/relay`. Do not enable TCP/socket or remote-data
+> settings to install the modern HUD. The old line protocol is distinct from the active
+> `FCMHUD/1;...` metadata carrier. See [current integration](native-chat-relay/fcm-integration.md).
+
+> **Historical decision (2026-06-24, superseded).** FCMHUD/1 (this `color~channel~user~content` push
 > bridge + the M7 inbound parser) is the **transport we ship the in-game HUD mod on now** — feature
 > work is built on it today (epic #302), and it is being **exposed to production** (#139), **not**
 > retired. The ZFE **`chat.v1`** native chat relay ([native-chat-relay/](native-chat-relay/README.md))

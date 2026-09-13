@@ -1,6 +1,7 @@
 # Reconnect History Recovery — Specification
 
-**Status:** Implemented — hosted validation pending
+**Status:** Implemented in source/local builds; current candidate acceptance remains pending.
+See [the HUD index](../README.md) for 2026-09-12 status. Installation claims below are dated evidence.
 **Version:** 0.2
 **Date:** 2026-08-12
 
@@ -57,8 +58,8 @@ copy of each expected record and each world feed contains only its own records.
   durable static message IDs remain remembered.
 - History retrieval with an initial cursor returns the bounded recent history for static feeds;
   a later cursor returns only records newer than that cursor.
-- Cursors must move forward monotonically and a record must never be displayed more than once for a
-  given feed.
+- Cursors move forward within a provider session; reconnect may reset native cursor/event identity.
+  Retained durable message IDs still prevent a replay from creating another visible record.
 - World-feed history remains scoped to the active derived world room; no record from a prior world
   may appear after a transition.
 - Existing authentication, authorization, rate limits, payload limits, and opt-in HUD-mod
@@ -71,7 +72,8 @@ copy of each expected record and each world feed contains only its own records.
 - Changing how a player is assigned to a world.
 - Preserving a temporary world feed after the player moves to a different world.
 - Changing moderation, permissions, or the set of available chat feeds.
-- Resolving the separate issue in which locally typed chat text can appear in diagnostic logs.
+- Expanding diagnostics beyond the current sanitized status/count/error contract. The old logging
+  issue was separate from this recovery design; do not reintroduce content logging.
 
 ## Success Signal
 
@@ -101,7 +103,8 @@ Widget v2.10.55 was installed on the developer's Proton desktop and native-Windo
 laptop with adjacent timestamped backups. Both installed BA2 hashes matched
 `92c9e525efab931f053e715efd387a2cc547ec14b003173c42b063ca377e5495` (117676 bytes).
 The single extracted SWF matched the build byte-for-byte, FWS v32, 117587 bytes.
-Both installations retain the hosted-dev endpoint and existing user configuration.
+At that test date both installations retained the hosted-dev endpoint and existing configuration;
+this is not a claim about their current installed state.
 
 Local validation: 113 relay integration tests, 423 backend TS unit tests, 196 overlay
 widget-logic tests, all eight Haxe test entrypoints (including roster coverage), source
@@ -110,3 +113,13 @@ The strengthened retained-cursor test failed before the relay fix. FFDec inspect
 `splice` in the guarded deferred-send callback and array-backed roster snapshot traversal.
 These checks do not constitute a fresh native gameplay run. Send/Discord delivery, repeated
 joins, roster exception absence, and xScal runtime validation remain in-game acceptance items.
+
+## Retained-row guard (included in local candidate 2.10.78)
+
+The bounded history cache can evict a durable message key when replay deliveries
+introduce fresh event IDs, even while its original row remains in the feed. Normal
+message ingestion therefore also checks retained canonical rows by channel and
+nonempty message ID before appending. This check excludes pending sends and never
+compares body text or sender names. Event-edit handling remains separate. SERVER
+clear/rejoin behavior is unchanged because cleared rows no longer participate in
+this check. The existing CI history suite reproduces the full-cache replay case.

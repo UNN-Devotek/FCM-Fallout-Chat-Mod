@@ -1,8 +1,9 @@
 /**
  * serverChat.ts — ephemeral, worldId-scoped "server" chat room.
  *
- * Server chat is the in-game per-world room: players on the SAME Fallout 76
- * world (worldId) share a virtual channel `server:<worldId>`. It is deliberately
+ * Server chat is the native relay's virtual channel `server:<worldId>`. Modern
+ * worldId values are ephemeral room keys inferred from mutual HUD roster sightings,
+ * not authoritative Fallout world identifiers. It is deliberately
  * NOT persisted to Postgres — FO76 worlds churn constantly, so a per-world
  * `channels` row would be unbounded garbage. Instead:
  *   - recent history lives in a capped Redis list (auto-expiring), and
@@ -36,12 +37,15 @@ export interface ServerRoomEvent {
   messageId: string;
   channel: 'server';
   senderUserId: string;
+  /** Account at send time, for private desktop delivery/block filtering. */
+  linkedUserId?: string;
   senderDisplayName: string;
   body: string;
   targetUserId: '';
   createdAt: string;
   /** Additive fields understood by widget builds with HUD cosmetics support. */
   tag?: string;
+  nameColor?: string;
   supporterStar?: true;
   starColor?: string;
 }
@@ -72,6 +76,7 @@ export async function publishServerMessage(
     await redis.publish(SERVER_EVENTS_CHANNEL, JSON.stringify(envelope));
   } catch (err) {
     logger.warn({ err, worldId }, '[serverChat] publishServerMessage failed');
+    throw err;
   }
 }
 

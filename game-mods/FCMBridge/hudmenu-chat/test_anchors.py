@@ -38,6 +38,13 @@ def warn(condition, label):
     if not condition:
         warnings.append("WARN: " + label)
 
+# The ZFE key decoder is verified as a whole by GFx, even for boolean responses.
+# Guard both parse and nested-object paths against reintroducing exception dependencies.
+native_src = open(os.path.join(HERE, '..', 'FcmNativeApi.hx'), encoding='utf-8').read()
+key_decoder = native_src.split('static function inputResultIsTrue', 1)[1].split('static function findXscal', 1)[0]
+check('FcmJson.parse(text)' in key_decoder, 'ZFE navigation uses the bounded GFx JSON reader')
+check('haxe.Json' not in native_src, 'ZFE navigation decoder has no general JSON parser/printer dependency')
+
 # ---------------------------------------------------------------------------
 # 1. Verify fcm-inject.as — chat.v1 API presence + FCMHUD/1 removal
 # ---------------------------------------------------------------------------
@@ -353,6 +360,28 @@ except FileNotFoundError:
     widget_src = ""
 
 if widget_src:
+    try:
+        widget_config_src = open(WIDGET_CONFIG_HX, encoding="utf-8").read()
+    except FileNotFoundError:
+        widget_config_src = ""
+    check('scrollUpKey:String     = "Up"' in widget_config_src
+          and 'scrollDownKey:String   = "Down"' in widget_config_src
+          and 'scrollBottomKey:String = ""' in widget_config_src
+          and 'case "scrollupkey"' in widget_config_src
+          and 'case "scrolldownkey"' in widget_config_src
+          and 'case "scrollbottomkey"' in widget_config_src,
+          "FcmConfig exposes opt-in scroll key settings with an unset newest binding")
+    check('scrollUpKey=" + scrollUpKey' in widget_config_src
+          and 'scrollDownKey=" + scrollDownKey' in widget_config_src
+          and 'scrollBottomKey=" + scrollBottomKey' in widget_config_src,
+          "FcmConfig persists all scroll key settings")
+    check('scrollUpKey=Up' in open(os.path.join(os.path.dirname(WIDGET_HX), "FCMChat.ini"), encoding="utf-8").read()
+          and 'scrollDownKey=Down' in open(os.path.join(os.path.dirname(WIDGET_HX), "FCMChat.ini"), encoding="utf-8").read()
+          and 'scrollBottomKey=' in open(os.path.join(os.path.dirname(WIDGET_HX), "FCMChat.ini"), encoding="utf-8").read(),
+          "FCMChat.ini ships default arrow scrolling and no scroll-to-bottom bind")
+    check('scrollDirection(raw:String, configuredUp:String = "Up", configuredDown:String = "Down")' in open(os.path.join(os.path.dirname(WIDGET_HX), "FcmCommand.hx"), encoding="utf-8").read()
+          and 'physicalNavigationAction' in open(os.path.join(os.path.dirname(WIDGET_HX), "FcmCommand.hx"), encoding="utf-8").read(),
+          "FcmCommand supports configurable named and physical scroll actions")
     check("tf.wordWrap = wrap" in widget_src and "tf.autoSize = wrap ?" in widget_src
           and "contentTf.height =" not in widget_src and "FcmFeedWrap" not in widget_src,
           "Styled message text uses native wrapping and automatic height without manual shrink")
@@ -470,18 +499,27 @@ if widget_src:
           and "isPhysicalKeyPressed" in widget_src
           and "stopPhysicalNavigation" in widget_src,
           "FCMChatWidget polls registered physical keys when HUDModLoader collapses Page actions")
-    check(re.search(r"loadPersistedConfig\(\);\s*(//[^\n]*\n\s*)*startPhysicalNavigation\(\);\s*startConnect\(\);",
-                    widget_src) is not None,
+    load_config_at = widget_src.find("loadPersistedConfig();")
+    physical_navigation_at = widget_src.find("startPhysicalNavigation();", load_config_at + 1)
+    connect_at = widget_src.find("startConnect();", physical_navigation_at + 1)
+    check(load_config_at >= 0 and physical_navigation_at > load_config_at and connect_at > physical_navigation_at,
           "FCMChatWidget starts physical navigation at provider discovery, before the relay connect")
     check("_api == null || !_connected) return;\n        stopPhysicalNavigation();" not in widget_src
           and "!_physicalNavReady || _api == null || !_connected" not in widget_src,
           "FCMChatWidget physical navigation is not gated on the relay session")
     check("inputDispatcherName" in widget_src and "lastInputResponse" in widget_src,
           "FCMChatWidget logs which Input.* dispatcher accepted registration and the raw response")
-    check("physicalKeyAction" in widget_src
+    check("FcmCommand.virtualKeyCode" in widget_src
+          and "_physicalOpenKey" in widget_src
+          and "xScal openKey edge" in widget_src,
+          "FCMChatWidget polls the configured openKey through xScal Input.*")
+    check("_api.provider != FcmNativeApi.ZFE" in widget_src
+          and "xScal has no ZFE isChatKeyPressed command" in widget_src,
+          "FCMChatWidget keeps the ZFE-only open-key poll off xScal")
+    check("physicalNavigationAction" in widget_src
           and "VK_PAGEUP:Int = 0x21" in widget_src
           and "VK_PAGEDOWN:Int = 0x22" in widget_src,
-          "FCMChatWidget uses the documented Windows Page Up/Page Down virtual-key codes")
+          "FCMChatWidget uses configured physical navigation and documented Page Up/Page Down virtual-key codes")
     check("probeChatCapability" in widget_src
           and "if (!_api.probeChatCapability())" in widget_src,
           "FCMChatWidget probes only the selected provider capability")
@@ -560,10 +598,15 @@ if widget_src:
           and 'tf.setTextFormat(fmt, start, end)' in widget_src,
           "FCMChatWidget formats exact name and body ranges without HTML color inheritance")
     check('static inline var LOG_INPUT_GAP:Int     = 4;' in widget_src
-          and 'var logBottom:Int = h - INPUT_H - LOG_INPUT_GAP;' in widget_src
+          and 'var logBottom:Int = h - _cfg.effectiveInputHeight() - LOG_INPUT_GAP;' in widget_src
           and '_logTf.height = logHeight;' in widget_src
-          and 'var editY:Float = y + _cfg.height - INPUT_H + 4;' in widget_src,
+          and 'var input = _cfg.inputRect();' in widget_src,
           "FCMChatWidget keeps the feed clip rectangle above the top-level HUDTools input")
+    check('function formatSharedInput():Void' in widget_src
+          and '[x + input.x, y + input.y, input.width, input.height, FONT_BODY,' in widget_src
+          and '_cfg.effectiveInputFontSize(), nh(_cfg.inputTextColor), nh(_cfg.inputBgColor), _cfg.bgAlpha]' in widget_src
+          and 'refreshSharedInputLayout();' in widget_src,
+          "FCMChatWidget applies input bounds, colors and opacity to the actual SharedHUDTools editor")
     check('function snapLogToBottom():Void' in widget_src
           and '_feedScrollY = _feedMaxScrollY' in widget_src
           and 'applyFeedScroll();' in widget_src,
@@ -676,7 +719,7 @@ if widget_src:
           and "navAction == \"feed-bottom\"" in widget_src
           and "function scrollUp" in widget_src
           and "function scrollDown" in widget_src,
-          "FCMChatWidget maps arrows/Home/End only while Insert owns the feed")
+          "FCMChatWidget maps configured scroll actions only while Insert owns the feed")
     check("_fcmNavigationAction:String = \"\"" in patch_src
           and "_fcmNavigationDown:Array = []" in patch_src
           and "fcmNavigationIsDown" in inject_src
@@ -794,6 +837,27 @@ if widget_src:
           and 'function scheduleHistoryResyncFallback' in widget_src
           and 'HISTORY_RESYNC_FALLBACK_MS' in widget_src,
           "FCMChatWidget delays history replay until an empty or dropped initial poll")
+    check('FcmRenderGeneration' in widget_src
+          and '_renderGeneration.begin()' in widget_src
+          and '_renderGeneration.isCurrent(renderToken)' in widget_src
+          and 'cancelPendingRender();' in widget_src,
+          "FCMChatWidget invalidates delayed feed slices across rebuild and reload")
+    check('_renderGeneration.runCurrent(renderToken, doSlice, renderRecordsFallback);' in widget_src
+          and 'function renderRecordsFallback(err:Dynamic)' in widget_src
+          and 'function(_:Dynamic) { doSlice(); }' not in widget_src,
+          "FCMChatWidget guards delayed render exceptions as well as the first slice")
+    event_parser = widget_src[widget_src.index('function parseAndRenderEvents('):widget_src.index('function markSeenEvent(')]
+    replay_guard = event_parser.find('!markSeenEvent(channel, evId, messageId)')
+    echo_match = event_parser.find('if (reconcileOwnEcho(')
+    check(replay_guard >= 0 and replay_guard < echo_match,
+          "FCMChatWidget rejects replays before they can consume a pending self-send")
+    check('_broadcastInFlight' in widget_src
+          and '_history.release(chan, 0, "world:" + id)' in widget_src
+          and 'auto-broadcast history guard threw' in widget_src,
+          "FCMChatWidget retries rejected public-event broadcasts without permanent dedupe")
+    check('_history.clearWorldBroadcasts();' in widget_src
+          and 'reason == "roster boundary"' in widget_src,
+          "FCMChatWidget clears synthetic event identities only at world boundaries")
     check('_history.accept(channel, eventId, messageId,' in widget_src
           and '_history.clearServer();' in widget_src
           and '_history.startConnection();' in widget_src,

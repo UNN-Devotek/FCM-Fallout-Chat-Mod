@@ -50,6 +50,27 @@ class FcmHistory {
         forget("server:", true);
     }
 
+    /** Release a speculative message/event identity after a send was rejected. */
+    public function release(channel:String, eventId:Int, messageId:String):Void {
+        var keys:Array<String> = [];
+        if (eventId > 0) keys.push(channel + ":event:" + eventId);
+        if (messageId != null && messageId.length > 0) keys.push(channel + ":message:" + messageId);
+        for (key in keys) releaseExact(key);
+    }
+
+    /** Synthetic public-event message IDs are scoped to a world, not a connection. */
+    public function clearWorldBroadcasts():Void {
+        forget(":message:world:", false);
+    }
+
+    function releaseExact(key:String):Void {
+        if (!seen.exists(key)) return;
+        seen.remove(key);
+        var kept:Array<String> = [];
+        for (current in order) if (current != key) kept.push(current);
+        order = kept;
+    }
+
     function forget(value:String, prefix:Bool):Void {
         var kept:Array<String> = [];
         for (key in order) {
@@ -61,11 +82,22 @@ class FcmHistory {
     }
 
     /** Scope both IDs to the feed so clearing SERVER cannot invalidate static deduplication. */
-    public function accept(channel:String, eventId:Int, messageId:String, cap:Int):Bool {
+    public function accept(channel:String, eventId:Int, messageId:String, cap:Int,
+            ?retained:Array<{channel:String, messageId:String, pending:Bool}>):Bool {
         var keys:Array<String> = [];
         if (eventId > 0) keys.push(channel + ":event:" + eventId);
         if (messageId != null && messageId.length > 0) keys.push(channel + ":message:" + messageId);
         var duplicate:Bool = false;
+        // Replay cursors can evict cached identities while their rows are still visible.
+        // Retained canonical rows are authoritative; never match text or pending sends.
+        if (retained != null && messageId != null && messageId.length > 0) {
+            for (row in retained) {
+                if (!row.pending && row.channel == channel && row.messageId == messageId) {
+                    duplicate = true;
+                    break;
+                }
+            }
+        }
         for (key in keys) {
             if (seen.exists(key)) duplicate = true;
             else {

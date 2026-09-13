@@ -1,0 +1,162 @@
+FCM Server Bridge {version} - {target} local test build
+
+Adds a Server sub-tab to a compatible FCM desktop overlay. The mod runs in the
+background, with no in-game chat window. Use HUDModLoader's menu for connection
+status, account linking and reconnecting; read and send chat in the desktop app.
+
+BUILD STATUS
+This candidate connects to {host}. Use a matching FCM desktop test
+build connected to that same environment. Server chat requires the matching
+service and desktop updates to be available there; the mod alone cannot enable
+it in an older overlay. In-game testing is still pending. This is not a public
+release package.
+
+BEFORE YOU START
+- Install HUDModLoader and exactly one supported script extender, following
+  their authors' instructions: ZFE with chat.v1, OR xScal with chatInterface.
+  These dependencies and the desktop overlay are separate downloads.
+- Have your FCM account ready. The bridge and desktop overlay must use the same
+  linked account and environment. DEV builds require access to the DEV service.
+- Close Fallout 76 before changing files. Keep a backup of any existing
+  configuration files you edit below.
+- Disable the visible FCMChatWidget and legacy FCMBridge before enabling this
+  bridge: remove only their entries from Data\hudmodloader.ini and the game's
+  archive list. Keep HUDModLoader and unrelated mods enabled. If an older FCM
+  install replaced HUDMenu, disable that replacement and restore HUDModLoader
+  using the loader's instructions. Run only one FCM mod at a time.
+
+INSTALL
+1. Unzip the download into a temporary folder.
+
+   Find your Fallout 76 game folder: it is the folder containing Fallout76.exe.
+   Copy the ZIP's Data\FCMServerBridge.ba2 into that game's Data folder:
+
+   <game folder>\Data\FCMServerBridge.ba2
+
+   Do not copy the entire ZIP over existing configuration files. The .example
+   files and FCMServerBridge.hudmodloader.ini are references for the edits below.
+
+2. Register the mod with HUDModLoader.
+
+   Open <game folder>\Data\hudmodloader.ini in a text editor. Add this line once,
+   on its own line, preserving the existing entries:
+
+   FCMServerBridge
+
+   Use the name without .ba2 or .swf. The supplied FCMServerBridge.hudmodloader.ini
+   contains that one line; do not rename it over your existing loader registry.
+   If the registry is missing, finish HUDModLoader's setup first.
+
+3. Enable the archive in Fallout76Custom.ini.
+
+   Windows normally uses:
+   <Documents>\My Games\Fallout 76\Fallout76Custom.ini
+
+   Use your actual Documents folder, including its redirected location if any.
+   Proton/Wine uses the corresponding Documents\My Games\Fallout 76 folder
+   inside the game's prefix.
+
+   In the existing [Archive] section, append ,FCMServerBridge.ba2 to the end of
+   the existing sResourceArchive2List value, once. Preserve the other archives.
+   Do not add a second [Archive] section or a second sResourceArchive2List key.
+   If the section/key is missing, add it. A list with only the loader and bridge
+   looks like this:
+
+   [Archive]
+   sResourceArchive2List=HUDModLoader.ba2,FCMServerBridge.ba2
+
+   Fallout76Custom.ini.example is a reference, not a replacement for your file.
+   If creating the file, save it as plain text named Fallout76Custom.ini, not
+   Fallout76Custom.ini.txt.
+
+4. Configure ONE provider, matching the extender you installed.
+
+   ZFE
+   Copy examples\ZFE\FCMServerBridge.ini.example from the ZIP to:
+
+   <game folder>\Data\ZFE\TextChat\fragments\FCMServerBridge.ini
+
+   Create the destination folders if needed. Remove the .example extension.
+   The file contains:
+
+   [TextChat]
+   Endpoint=wss://{host}/relay
+   DefaultChannel=server
+   AllowedChannels=server
+   AutoConnect=false
+
+   If <game folder>\Data\configuration\zfe.ini already has a [TextChat]
+   section, its keys override this fragment. Update those same keys there when
+   necessary to match the values above. Preserve unrelated settings and avoid
+   duplicate sections/keys. No chat hotkey is needed for this background mod.
+   Skip the xScal instructions below.
+
+   xScal
+   Open xscal.ini beside Fallout76.exe. Merge the following values into its
+   existing [Chat] section, using examples\xScal\xscal.ini.example as a reference:
+
+   [Chat]
+   enabled=true
+   relayEndpoint=wss://{host}/relay
+
+   If the file or section is missing, create it once. Preserve unrelated
+   settings; do not replace the whole file or duplicate the [Chat] section.
+   Do not install the ZFE fragment for xScal.
+
+5. Start the desktop overlay and Fallout 76, then link your account.
+
+   In the game, open HUDModLoader's menu (F11 / DiagnosticSnapshot with the
+   standard keyboard mapping) and select FCM Server Bridge. If your loader menu
+   key is remapped, use that binding.
+
+   If a link code appears, visit https://{host}/link and sign in
+   with the SAME FCM account used by this desktop overlay. Enter the code shown
+   in the menu. Codes expire after ten minutes; use Reconnect bridge if you need
+   a new code. An existing native account link may be reused without a new code.
+
+6. Join a world and check the desktop overlay.
+
+   Once the bridge confirms your room, a Server sub-tab appears under Fallout 76.
+   Select Server to read or send to that room. General also shows its messages;
+   sending from General still sends to General. Each feed keeps one copy of each
+   message, including when messages are delivered again after reconnecting.
+
+   World changes replace the Server room and clear the previous room's messages.
+   Leaving the world removes the tab; if you were viewing it, selection returns
+   to General. Allow for confirmation and the overlay's ten-second refresh.
+   An unexpected disconnect can take about 55 seconds to remove the tab.
+
+TROUBLESHOOTING
+- FCM Server Bridge is missing from F11: check the BA2 destination, the exact
+  loader line and the archive-list entry. Verify HUDModLoader works, then restart
+  the game. The absence of a chat window is expected for this mod.
+- Waiting for native chat provider / connection error: verify the selected
+  extender supports chat, check its configuration and any overrides above, then
+  restart the game. Use Reconnect bridge to retry a stopped connection.
+- Linked but no Server tab: join a world, confirm the desktop build supports
+  this bridge, and check that both use the same account and environment. The
+  matching service update must also be available. Native linking alone does not
+  confirm a Server room.
+- Multiple devices: use only one active background bridge per FCM account.
+  Close other game sessions using that account and allow their connection to
+  expire. The overlay disables Server access while multiple bridges are active.
+- Players on the same world are missing: rooms are inferred from names exposed
+  by the game's HUD. All participants need working Server chat in the same
+  environment. Opening the map may expose additional names, but incomplete HUD
+  data can still split players into separate rooms. Full-world discovery is not
+  guaranteed in this candidate.
+
+UPDATE OR REMOVE
+To update this same bridge: close Fallout 76, replace Data\FCMServerBridge.ba2
+with the newer matching-environment build, and review that build's instructions.
+Keep the loader/archive entries once and retain your existing account link.
+
+To uninstall: close Fallout 76, remove the FCMServerBridge line from
+Data\hudmodloader.ini, remove only FCMServerBridge.ba2 from sResourceArchive2List,
+and delete Data\FCMServerBridge.ba2. If you installed its ZFE fragment, delete
+Data\ZFE\TextChat\fragments\FCMServerBridge.ini as well. Restore only provider
+settings you changed solely for this bridge, using your backup as a reference.
+Preserve other mods, shared configuration and native account credentials.
+
+This optional mod is installed manually. The desktop overlay never installs it
+or modifies game files. The ZIP includes no scripts or native executables.

@@ -1,18 +1,26 @@
 # Presence & Sessions
 
-This document covers how the backend tracks connected clients, resolves display names, and manages world session membership.
+This document covers desktop WebSocket presence and identity, reviewed against local source on
+2026-09-12. The retired desktop world-detection/endpoint attach flow remains removed. Optional
+[FCMServerBridge 0.1.0](../overlay/zfe/background-server-bridge.md) now uses a separate invisible
+HUDModLoader child and native roster controls to authorize desktop Server chat. Its independent
+account/device lease is implemented locally; hosted deployment and runtime acceptance are pending.
 
 ---
 
 ## In-Memory Client Registry
 
-The `clients` Map in `handlers.ts` is the authoritative source for all live WS state. It is keyed by **session token** (not userId) to support multiple simultaneous connections for the same user (multi-tab, overlay + dashboard).
+The `clients` Map in `handlers.ts` owns authenticated desktop/chat sockets on this backend
+instance. It is keyed by **session token**; separate tokens can connect the same account, while
+a newer connection using the same token supersedes the old socket. Admin observers and native
+HUD subscriptions have separate registries. Community online counts combine the transports
+through `onlinePresenceService`.
 
 ```ts
 const clients = new Map<string, ClientEntry>();
 ```
 
-`handlers.ts:328`
+Source: [handlers.ts](../../backend/src/websocket/handlers.ts), `ClientEntry` and `clients`.
 
 ### ClientEntry fields
 
@@ -23,19 +31,14 @@ const clients = new Map<string, ClientEntry>();
 | `username` | `string` | FO76 in-game name (or placeholder) |
 | `displayName` | `string` | Resolved display name (see below) |
 | `isMuted` | `boolean` | In-memory mute flag; auto-lifted on send if DB says expired |
-| `serverEndpoint` | `string\|null` | Current world server endpoint (e.g. `tcp:1.2.3.4:3001`) |
-| `alternateEndpoints` | `string[]` | Additional endpoint candidates from memory scanner |
-| `nearbyPlayers` | `string[]` | Last FO76 mod roster snapshot |
-| `nearbyPlayersAt` | `Date\|null` | When `nearbyPlayers` was last written |
-| `worldSessionId` | `string\|null` | UUID of the active `world_sessions` row (primary routing key, v1.1.56+) |
+| `bridge` | optional `BridgeConnection` | Private account/room state, serialized history/live delivery and lease checks |
+| `worldSessionId` | optional `string\|null` | Retained compatibility field; not populated by the current connection path |
 | `blockedIds` | `Set<string>` | UserIds this client has blocked; loaded on connect |
 | `inGame` | `boolean` | Whether FO76 process is currently running (v1.4.0) |
-| `manualMode` | `boolean` | User opted out of FSM auto-attach |
-| `manualLeaveActive` | `boolean` | User clicked Leave Server; blocks re-attach until Join Server |
-| `fsmEverSeen` | `boolean` | True once any world FSM frame was processed |
-| `fsmInWorld` | `boolean\|undefined` | Latest FSM in-world state (true=in world, false=at menu) |
+| `role` | effective role | Resolved on connection for moderation/party observer behavior |
 
-`handlers.ts:238–306`
+Endpoint candidates, nearby-player state and world-detection FSM flags are not current
+`ClientEntry` fields. Process-running status alone does not establish world membership.
 
 ---
 
@@ -45,9 +48,10 @@ Priority order (highest wins):
 
 1. `users.chat_name` when set (the free account chat name)
 2. `users.username` if set and not a placeholder (`Wanderer`, `pending-*`, `Overlay<digits>`, `discord:*`)
-3. `users.discordDisplayName` (Discord display/global name, e.g. "Devotek")
-4. `users.discordUsername` (Discord @handle, e.g. "devotek")
-5. Fallback: `"Wanderer"`
+3. `users.steamDisplayName` when nonempty
+4. `users.discordDisplayName` (Discord display/global name)
+5. `users.discordUsername` (Discord @handle)
+6. Fallback: `"Wanderer"`
 
 `handlers.ts:22–54` — `resolveDisplayName()`
 
@@ -66,6 +70,8 @@ export function refreshClientIdentity(
   discordUsername: string | null,
   discordDisplayName: string | null,
   installToken: string,
+  chatName: string | null = null,
+  steamDisplayName: string | null = null,
 ): number
 ```
 
@@ -127,61 +133,47 @@ When a user adds or removes a block, `global.refreshClientBlocks(userId)` walks 
 
 ---
 
-## World Session Identity (v1.1.56+)
+## World Session Identity (historical desktop behavior)
 
-Before v1.1.56, same-server grouping was driven by string-matching on `serverEndpoint`. This was replaced with a backend-minted UUID (`worldSessionId`) stored in the `world_sessions` table. Same-server membership is now a simple FK equality check.
+Older desktop versions used endpoints and later `world_sessions` UUIDs. That attach flow is
+removed: the current WebSocket switch has no `server:join-manual`, `server:leave-manual`,
+`world:joined` or `world:left` handler. `updateClientEndpoint` is a compatibility no-op.
+`broadcastToSession` still exists but does not establish membership. Do not restore endpoint
+scanning or treat the retained field/helpers as an active server-chat implementation.
 
-```ts
-// v1.1.56 lock-in: broadcast via session id when available.
-if (senderSessionId) {
-  deliveredCount = await broadcastToSession(broadcastPayload, senderSessionId, null);
-}
-```
-
-`handlers.ts:2116–2123`
-
-The `worldSessionId` is:
-- Loaded from `users.worldSessionId` on WS connect (stale sessions >2 min idle are cleared)
-- Updated by `server:join-manual` and `server:leave-manual` handlers
-- Synced via `setClientWorldSessionId(userId, sessionId)` from player-list POST hooks
-
-`handlers.ts:589–594, 1551–1591`
+The current `/api/player-list` compatibility route validates and caches submitted snapshots;
+it does not assign a world session. The static channel-list response contains no virtual Server
+tab. The native relay's Redis rooms are separate from these legacy database sessions.
 
 ### Stale Session Guard (connect-time)
 
-On every reconnect, if the user's DB row has a `worldSessionId`, the backend validates it:
-- Session row must exist and have no `endedAt`
-- `lastActivityAt` must be within **2 minutes** (player-list POST cadence is ~10s)
-
-If stale, the backend null-clears `worldSessionId`, `serverEndpoint`, and all related fields before hydrating the in-memory entry. This prevents users from re-joining a stale Server tab after closing FO76.
-
-`handlers.ts:1551–1591`
+The old two-minute database-world validation is not part of the current desktop connect path.
+Native room expiry and confirmation are documented in
+[SERVER session binding](../overlay/zfe/native-chat-relay/server-session-binding.md).
+The background bridge validates its independent 45-second device/session lease on every
+protected room operation; a retained database field or stale in-process room value is insufficient.
+`bridge:watch` refreshes every ten seconds and supplies the local desktop Server tab. The static
+channel tree and retired `worldSessionId` field are not used as room authorization.
 
 ---
 
 ## Presence Cleared Registry
 
-`presenceClearedRegistry.ts` tracks users who recently had their server presence explicitly cleared (via Leave Server or world:left). It gates subsequent player-list POST writes for a **120-second TTL** so stale `nearbyPlayers` data can't re-arm name-overlap grouping and silently re-create a Server tab the user just left.
-
-```ts
-markRecentlyCleared(userId)   // called on Leave Server
-isRecentlyCleared(userId)     // checked in playerList.ts before nearbyPlayers write
-clearRecentlyCleared(userId)  // called on Join Server (explicit refresh)
-```
-
-`presenceClearedRegistry.ts:26–52`
+`presenceClearedRegistry.ts` retains a 120-second in-memory guard utility from the retired
+attach flow. Current `handlers.ts` and `routes/playerList.ts` do not call it. Its existence
+does not provide leave protection to the native relay or the background bridge.
 
 ---
 
 ## WS Flap Grace Window (v1.1.37)
 
-To suppress false "X left server chat" / "X joined server chat" messages during brief WS drops (e.g. backend deploy, short network blip), the backend defers the peer-leave announcement by `WS_FLAP_GRACE_MS` (default 30 s) using the `pendingDisconnect` Map.
+`WS_FLAP_GRACE_MS` (default 30 seconds) retains community presence briefly after the account's
+last overlay socket closes. A reconnect cancels the pending expiry; superseded sockets cannot
+remove their replacements. The retained handoff helper accepts endpoints, but both current
+connect/close paths supply `null` and the old server peer-leave callback is empty.
 
-If the same user reconnects on the **same endpoint** within the window, the leave and `clearJoinDedupKeys` are both cancelled. If the user reconnects on a **different endpoint**, the old-endpoint leave fires immediately (it was a real transition).
-
-Additionally, if the user's `serverSeenAt` (bumped by player-list POSTs) is within 45 s of the WS drop, the peer-leave is suppressed — the FO76 client is still active even though the overlay's WS socket dropped.
-
-`handlers.ts:330–388, 3304–3418`
+The ordinary `room:leave` frame is emitted immediately on a non-forced close; it is not the
+retired deferred server-room announcement. There is no current 45-second `serverSeenAt` check.
 
 ---
 

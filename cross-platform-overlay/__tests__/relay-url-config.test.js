@@ -15,8 +15,8 @@
 //   The dev backend is on a non-CF-Access path; only install-token/session auth needed.
 //
 // Path B (local — dev:local script):
-//   RELAY_HTTP=http://localhost:7177
-//   RELAY_WS=ws://localhost:7177/ws
+//   RELAY_HTTP=http://localhost:7076
+//   RELAY_WS=ws://localhost:7076/ws
 
 import core from '../overlay-core.js';
 
@@ -41,12 +41,12 @@ describe('resolveRelayUrls', () => {
 
   it('Path B (dev:local) — honours RELAY_HTTP / RELAY_WS pointing at local backend', () => {
     const env = {
-      RELAY_HTTP: 'http://localhost:7177',
-      RELAY_WS: 'ws://localhost:7177/ws',
+      RELAY_HTTP: 'http://localhost:7076',
+      RELAY_WS: 'ws://localhost:7076/ws',
     };
     const { relayHttp, relayWs } = resolveRelayUrls(env);
-    expect(relayHttp).toBe('http://localhost:7177');
-    expect(relayWs).toBe('ws://localhost:7177/ws');
+    expect(relayHttp).toBe('http://localhost:7076');
+    expect(relayWs).toBe('ws://localhost:7076/ws');
   });
 
   it('only RELAY_HTTP set — RELAY_WS falls back to production default', () => {

@@ -1,0 +1,124 @@
+FCM HUD CUSTOMIZATION
+=====================
+
+Open F11 -> FCM -> Customize. These settings affect your HUD, not other users.
+
+SIZE AND POSITION
+- Panel width +/- and height +/- are independent. Move up/down/left/right.
+- Input height +/- and input text size +/- adjust the actual editor displayed
+  over the widget, including the ZFE/SharedHUDTools editor.
+- Input width and alignment always follow the widget input area. They are not
+  separate settings. The input remains inside the panel with fixed padding.
+- Feed text size +/- is independent of input text size.
+- Small panels constrain effective input dimensions to leave room for chat.
+
+OPACITY AND COLORS
+- Opacity +/- controls background opacity, including tab and input boxes.
+- Colors... lets you choose panel background, tab box, input box, border,
+  message text, input text, default name text, active/inactive tab text, and
+  hint text colors. Pick a color from the submenu.
+- Default name text affects names without a server-provided color. It does
+  not replace a user's chosen name color.
+- Color theme cycles the existing basic themes; individual colors can then
+  be changed separately. Reset all settings restores the packaged defaults.
+
+AUTO-HIDE
+- Auto-hide ON/OFF is independent of the remembered hide delay.
+- Hide delay +/- changes the delay by five seconds, from 1 to 600 seconds.
+- Changing the delay while OFF does not turn auto-hide on.
+- OFF cancels the timer and reveals the panel. Manual Hide still works.
+
+EXACT VALUES IN Data/FCMChat.ini
+Edit keys in the existing [FCMChat] section; do not add duplicate keys/sections.
+
+width=600
+height=300
+fontSize=16
+inputHeight=48
+inputFontSize=24
+bgAlpha=0.85
+bgColor=#0A0907
+tabRowColor=#080705
+inputBgColor=#080705
+borderColor=#F5CB5B
+textColor=#FAF4DA
+inputTextColor=#F5CB5B
+senderColor=#F5CB5B
+tabActiveColor=#F5CB5B
+tabInactiveColor=#B49544
+promptColor=#AC9043
+autoHideEnabled=false
+autoHideSec=60
+
+Input height accepts 28-120; input font size accepts 8-47, or 0 to use existing
+provider sizing. Background opacity accepts 0-1. Colors accept #RRGGBB.
+Input height alone does not enlarge the font. The row grows to fit larger text.
+Legacy autoHideSec=0 also disables auto-hide; enabling it supplies 60 seconds.
+
+PUBLIC-EVENT AUTO-BROADCAST (INI only, default OFF)
+autoBroadcastWorldEvents=true enables announcing public events; the default
+false never subscribes and pays no cost. broadcastEventsMode=allow (default)
+announces ONLY the listed names; =deny announces everything EXCEPT the listed
+names. Names are comma-separated, case-insensitive, EXACT matches only (never
+substrings). A blank allow-list reads as broadcast OFF. Default allow-list:
+Scorched Earth, Neurological Warfare, A Colossal Problem, Seismic Activity,
+Encryptid, Eviction Notice, Moonshine Jamboree.
+
+SAVING AND RELOADING
+F11 changes apply immediately. ZFE saves in vendor-scoped
+FCMChatWidget/settings.ini; saved values take priority over Data/FCMChat.ini.
+If you already customized with F11, use F11 for further changes, or update the
+corresponding saved settings through your extender's storage location before
+reloading. xScal saves appearance per linked device through the matching relay
+backend; saved device values also take priority over the INI. Changes are only
+session-local if persistence is unavailable. Saving xScal appearance requires a matching
+relay backend; missing support does not prevent live customization. Reload the widget to reread configuration. Replacing
+a BA2 or changing extender configuration requires a full game restart.
+
+FIXED FEATURES
+Badges, channel tags (including their colors and visibility), emojis, default
+channel, and available channels are not appearance settings. Older showChannelTag,
+channelTagColor and colorGeneral/Trading/Events/Infests/Raids/Server overrides are
+ignored. You can still switch channels normally. There are no input-width or
+input-alignment settings.
+OPEN-CHAT KEY (ZFE)
+-------------------
+The shipped ZFE values are Insert in both locations. To use another supported key, keep these
+two values identical (the example changes both to Delete):
+
+  Data/FCMChat.ini
+  [FCMChat]
+  openKey=DELETE
+
+  Data/configuration/zfe.ini
+  [TextChat]
+  OpenChatKey=DELETE
+
+ZFE's global zfe.ini value overrides the packaged widget fragment. See KEYBINDS.txt for
+accepted values, precedence, conflicts, and the separate xScal limitations.
+
+For xScal, do not add OpenChatKey to xscal.ini. Change FCMChat.ini openKey; the widget maps
+it to xScal's physical Input.* polling API and retains the named-action fallback. See KEYBINDS.txt
+and the xScal Input interface article: https://www.nexusmods.com/fallout76/articles/268.
+
+SCROLL KEYBINDS
+---------------
+The modern FCMChatWidget reads these navigation keys from the same [FCMChat] section. The
+shipped values are explicit, including the two intentional blank defaults:
+
+  channelNextKey=NextPage
+  channelPrevKey=PrevPage
+
+  scrollUpKey=Up
+  scrollDownKey=Down
+  scrollBottomKey=
+  hideKey=
+
+Up/Down are the packaged arrow-scroll bindings; their ArrowUp/ArrowDown, Cursor, and Dpad
+spellings are treated as aliases. Set either direction to a forwarded HUD action (for example
+Console) or a physical xScal/ZFE token (for example F12) to rebind it. An empty value disables
+that direction. `scrollBottomKey` is intentionally blank by default, so Home and End remain
+game controls until one is explicitly selected. The F11 **Scroll to newest** menu action is
+always available. Feed keys are consumed only while the open-chat key owns the visible input
+session. A blank `hideKey` keeps `/hide` and the F11 **Hide chat** menu action available. See
+KEYBINDS.txt for provider-specific action names and physical-key behavior.

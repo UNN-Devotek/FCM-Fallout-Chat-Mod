@@ -1,5 +1,9 @@
 # ZFE Logs and Troubleshooting
 
+This page covers ZFE logs; xScal uses its own provider log. Check the selected provider in the
+widget startup marker before interpreting a missing ZFE entry. The [author’s current guide](https://www.nexusmods.com/fallout76/articles/249)
+is the reference for provider log locations and retention.
+
 ## Where zfe.log Is Written
 
 By default, ZFE writes `zfe.log` beside the loaded `dxgi.dll`.
@@ -16,18 +20,22 @@ Game Pass/Xbox installs often use the Documents fallback because the install con
 $env:ZFE_LOG_DIRECTORY = "D:\Temp\ZFELogs"
 ```
 
-This affects only the current PowerShell process. The value is a **folder path**, not a full `zfe.log` path.
+This affects the current PowerShell process and children launched from it. The value is a **folder path**, not a full `zfe.log` path.
 
 Clear afterward:
 ```powershell
 Remove-Item Env:\ZFE_LOG_DIRECTORY -ErrorAction SilentlyContinue
 ```
 
+ZFE normally keeps concise startup/warning/error and explicit mod logs. At approximately 8 MiB,
+it rotates to `zfe.previous.log` with one retained backup. Missing old debug chatter is not proof
+that mod logging failed.
+
 ## What to Look For
 
 Useful lines:
 - A ZFE DLL load line
-- `ZFE Alpha/Experimental compatibility initialized` — game version supported, initialization complete
+- `ZFE compatibility initialized` (wording can vary by release) — game version supported, initialization complete
 - `ZFE compatibility disabled: ...` — executable or version not supported
 - Mod API lines from your own `log` calls
 - `remote data refresh cached ...` or `remote data refresh failed ...` if using remote data
@@ -69,7 +77,12 @@ Do not set advanced debug variables such as Scaleform hook toggles unless a main
 - Relevant part of `zfe.log` — especially startup lines and first warning/error
 - Whether you used a mod manager or installed manually
 
-Avoid posting unrelated personal information from logs or screenshots.
+For FCM, include the widget build/instance marker, selected provider, effective target,
+receive/duplicate/echo counts, and the first rendering/input error. Check actual emitted fields;
+planned helper diagnostics are not necessarily wired into the current widget. A second instance
+may indicate duplicate loads, while one instance cannot exclude an older legacy renderer.
+Do not post raw credentials, names, message bodies, or stable account IDs. Sanitize screenshots
+and logs before sharing. See [recovery checks](../../testing/hud-recovery.md).
 
 ## For Mod Authors — Leave Breadcrumbs
 

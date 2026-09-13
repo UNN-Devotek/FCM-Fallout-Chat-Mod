@@ -1,5 +1,10 @@
 # M6: HUD Chat Auth System — Design Document
 
+> Historical M6 design and implementation record. Working-tree/rollout labels below refer to
+> June 2026. The modern HUD uses native `/relay`, not the old HELLO/pairing-token socket flow.
+> Current device linking, Steam/Discord access, provider reset, and relay permissions are documented
+> in [FCM integration](../overlay/zfe/native-chat-relay/fcm-integration.md) and [auth](auth.md).
+
 **Status:** **Implemented** (2026-06-24, worktree `chatv1-auth`). Core auth gate, provider linking, device-code flow, /link page, and deny-list are in the working tree awaiting integration review. The §9 Open Decisions are resolved (OD-3/OD-6) or carried as recommendations.
 **Milestone:** M6 (production-exposure gate)  
 **Author:** Design session 2026-06-11  
@@ -10,8 +15,8 @@
 > ## Update (2026-06-23): chat.v1 transport + lockdown decisions
 >
 > This doc was written for the **FCMHUD/1** transport (`/ws/hud`, `tcp:4001`, the `HELLO~<token>~<char>`
-> wire, `fcm.ini [FCMBridge] PairingToken`). That transport is the **active in-game transport we ship
-> on now** (#302); the **ZFE `chat.v1` native chat relay**
+> wire, `fcm.ini [FCMBridge] PairingToken`). That transport was the **planned shipping path at this
+> design date**, since superseded; the **ZFE `chat.v1` native chat relay**
 > ([`docs/overlay/zfe/native-chat-relay/`](../overlay/zfe/native-chat-relay/README.md), epic #282)
 > supersedes it **later** (re-sequenced). **Both flavors of this auth design apply:** the pairing-token
 > `HELLO~<token>` gate ships on FCMHUD/1 now; the device-code refinement lands with chat.v1. The

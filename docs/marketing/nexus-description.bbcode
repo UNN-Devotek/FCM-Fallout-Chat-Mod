@@ -25,7 +25,7 @@ The Windows release installer is digitally signed. Release builds must pass laun
 [*][b]Steam or Discord sign-in:[/b] Create an account and link your chat session using either provider. Steam sign-in does not require linking Discord. You can add Discord later from your website profile.[/*]
 [*][b]Display names:[/b] Choose a custom display name, or use your Steam display name when signing in through Steam without entering one.[/*]
 [*][b]Optional server chat:[/b] The HUD’s SERVER channel connects players assigned to the same confirmed game-world room. Messages from your current server also appear in General with a SERVER label. Leaving a world clears the previous room’s state.[/*]
-[*][b]Custom emojis and GIFs:[/b] The desktop overlay includes a server-emoji picker and Tenor GIF search. The HUD uses a simpler text-focused presentation: custom Discord emojis appear as readable :name: labels, and public-feed image/GIF attachments are not displayed.[/*]
+[*][b]Custom emojis and GIFs:[/b] The desktop overlay includes a server-emoji picker and Tenor GIF search. The HUD renders bundled Unicode and known custom emoji as static pictures, with readable :name: fallbacks for unsupported custom emoji. It does not load remote image/GIF attachments or play animated emoji.[/*]
 [*][b]Built-in wiki and commands:[/b] Look up Fallout 76 information and use chat commands without opening a separate browser window.[/*]
 [*][b]Community giveaways:[/b] Start an item raffle with /giveaway start, let other players join, and have a winner selected when the timer ends. Use /giveaway list to check active giveaways.[/*]
 [*][b]Appearance settings:[/b] Customize the desktop overlay’s theme, name colors, and chat appearance. Supporter benefits include additional cosmetic options.[/*]
@@ -69,22 +69,36 @@ Prefer chat rendered directly inside Fallout 76? Install the optional FCM HUD Mo
 [*]The FCM HUD Mod ZIP.[/*]
 [*]An internet connection and a Steam or Discord account.[/*]
 [/list][b][size=4]Manual HUD Installation — No Installer Required[/size][/b] 
-You can install and configure the HUD entirely by hand. The included xScal setup helper is optional; the manual settings are listed below. [b]1. Close the game and install the dependencies[/b] Exit Fallout 76 completely. Install HUDModLoader and your chosen extender using their authors’ instructions. Open your Fallout 76 installation folder. This is the folder containing Fallout76.exe and the Data folder. [b]2. Extract the HUD files[/b] Extract the FCM HUD Mod ZIP into the Fallout 76 installation folder, preserving its folder structure. The shared HUD files should be at:
-[code] Fallout76/ Fallout76.exe Data/ FCMChatWidget.ba2 FCMChat.ini [/code]The ZIP also includes:
+You can install and configure the HUD entirely by hand. Nexus HUD archives contain no executables or scripts. Optional Windows xScal setup helpers are available in the website HUD ZIP; the manual settings below need no helper. [b]1. Close the game and install the dependencies[/b] Exit Fallout 76 completely. Install HUDModLoader and your chosen extender using their authors’ instructions. Open your Fallout 76 installation folder. This is the folder containing Fallout76.exe and the Data folder. [b]2. Extract the HUD files[/b] Extract the FCM HUD Mod ZIP into the Fallout 76 installation folder, preserving its folder structure. The shared HUD files should be at:
+[code]
+Fallout76/
+  Fallout76.exe
+  Data/
+    FCMChatWidget.ba2
+    FCMChat.ini
+[/code]The ZIP also includes:
 [list]
 [*]FCMChatWidget.hudmodloader.ini — the loader entry to append.[/*]
 [*]Fallout76Custom.ini.example — an archive-list example.[/*]
 [*]examples/ZFE/FCMChatWidget.ini.example — configuration for ZFE users.[/*]
 [*]xscal.ini.example — configuration for xScal users.[/*]
-[*]Enable-xScal-Chat.cmd and Enable-xScal-Chat.ps1 — optional Windows setup helpers.[/*]
+[*]DOWNLOAD-XSCAL-SETUP-HELPERS.txt — points to optional website setup helpers; the Nexus ZIP contains no scripts.[/*]
+[*]KEYBINDS.txt, CUSTOMIZATION.txt, and HUDMODLOADER-MENU.txt — HUD controls and settings.[/*]
 [*]INSTALL.txt — the packaged installation instructions.[/*]
 [/list][b]3. Register the widget with HUDModLoader[/b] Back up and open your existing:
 [code] Data/hudmodloader.ini [/code]Add this line exactly once:
 [code] FCMChatWidget [/code]Keep all existing widget entries. Do not replace your entire hudmodloader.ini with the supplied snippet. [b]4. Add the BA2 to Fallout76Custom.ini[/b] On Windows, Fallout76Custom.ini is normally located under:
 [code] Documents/My Games/Fallout 76/Fallout76Custom.ini [/code]For Steam Proton, look inside the Fallout 76 compatibility prefix:
 [code] steamapps/compatdata/1151340/pfx/drive_c/users/steamuser/ [/code]Then locate the game’s Documents/My Games/Fallout 76 folder within that prefix. Back up Fallout76Custom.ini, then find its [Archive] section and sResourceArchive2List entry. Add FCMChatWidget.ba2 to the existing comma-separated list. For example, if HUDModLoader is your only other archive:
-[code] [Archive] sResourceArchive2List=HUDModLoader.ba2,FCMChatWidget.ba2 [/code][b]Preserve every archive already in your list.[/b] If [Archive] already exists, edit that section rather than adding a duplicate. Make sure HUDModLoader is registered according to its own installation instructions. [b]5. Configure your chosen extender[/b] Follow either the xScal instructions or the ZFE instructions below. [b]Manual xScal Configuration[/b] Open xscal.ini in the game installation folder, beside Fallout76.exe. Back it up before editing. Find the existing [Chat] section and set:
-[code] [Chat] enabled=true relayEndpoint=wss://falloutchatmod.com/relay [/code][list]
+[code]
+[Archive]
+sResourceArchive2List=HUDModLoader.ba2,FCMChatWidget.ba2
+[/code][b]Preserve every archive already in your list.[/b] If [Archive] already exists, edit that section rather than adding a duplicate. Make sure HUDModLoader is registered according to its own installation instructions. [b]5. Configure your chosen extender[/b] Follow either the xScal instructions or the ZFE instructions below. [b]Manual xScal Configuration[/b] Open xscal.ini in the game installation folder, beside Fallout76.exe. Back it up before editing. Find the existing [Chat] section and set:
+[code]
+[Chat]
+enabled=true
+relayEndpoint=wss://falloutchatmod.com/relay
+[/code][list]
 [*]If enabled=false is already present, change it to enabled=true.[/*]
 [*]If relayEndpoint already exists in [Chat], replace its value with the production endpoint shown above.[/*]
 [*]If [Chat] is missing, add the section once.[/*]
@@ -92,10 +106,13 @@ You can install and configure the HUD entirely by hand. The included xScal setup
 [*]Preserve all unrelated sections and settings in an existing file.[/*]
 [*]Do not add a second [Chat] section or duplicate the same settings.[/*]
 [*]Do not copy the ZFE example into Data/ZFE when using xScal.[/*]
-[/list][b]New xScal users must apply this configuration too.[/b] xScal ships with chat disabled by default. The included xscal.ini.example already shows enabled=true, but an example file does not activate chat until its settings are applied to the actual xscal.ini. [b]Optional Windows shortcut:[/b] Instead of editing by hand, run Enable-xScal-Chat.cmd from the game folder. It backs up the existing xscal.ini, enables chat, sets the relay endpoint, and preserves unrelated settings. Restart Fallout 76 after changing xScal configuration. [b]Manual ZFE Configuration[/b] Copy the included file:
+[/list][b]New xScal users must apply this configuration too.[/b] xScal ships with chat disabled by default. The included xscal.ini.example already shows enabled=true, but an example file does not activate chat until its settings are applied to the actual xscal.ini. [b]Optional Windows shortcut:[/b] If you downloaded the optional helpers from the website ZIP, run Enable-xScal-Chat.cmd from the game folder instead of editing by hand. It backs up the existing xscal.ini, enables chat, sets the relay endpoint, and preserves unrelated settings. Restart Fallout 76 after changing xScal configuration. [b]Manual ZFE Configuration[/b] Copy the included file:
 [code] examples/ZFE/FCMChatWidget.ini.example [/code]To:
 [code] Data/ZFE/TextChat/fragments/FCMChatWidget.ini [/code]Create the destination folders if they do not exist. Remove the .example suffix from the copied file. The production example contains the correct relay endpoint:
-[code] Endpoint=wss://falloutchatmod.com/relay [/code]Copy the complete supplied example, not just the Endpoint line. If you already have an FCMChatWidget.ini fragment, back it up and compare its settings before replacing or updating it. Keep the fragment’s OpenChatKey aligned with openKey in Data/FCMChat.ini and any applicable ZFE key override. ZFE users do not need to create or edit xscal.ini. Restart Fallout 76 after changing the configuration.
+[code] Endpoint=wss://falloutchatmod.com/relay [/code]Copy the complete supplied example, not just the Endpoint line. If you already have an FCMChatWidget.ini fragment, back it up and compare its settings before replacing or updating it. Keep the fragment’s OpenChatKey aligned with openKey in Data/FCMChat.ini. [b]Important:[/b] ZFE applies the global [code]Data/configuration/zfe.ini[/code] after the TextChat fragment, so its [code][TextChat][/code] values override the fragment. Check that file even when the fragment contains the correct endpoint. If you use a global override, set: [code]
+[TextChat]
+Endpoint=wss://falloutchatmod.com/relay
+[/code] Replace any stale Endpoint value, preserve unrelated settings, and do not duplicate the section or key. If no override is needed, leave the endpoint out of zfe.ini and use the packaged fragment. Do not put the relay endpoint in Data/FCMChat.ini. ZFE users do not need to create or edit xscal.ini. Restart Fallout 76 after changing the configuration.
 
 [b]Verify the HUD and Link Your Account[/b]
 [list=1]
@@ -104,14 +121,14 @@ You can install and configure the HUD entirely by hand. The included xScal setup
 [*]When the widget displays a fresh linking code, open [url=https://falloutchatmod.com/link]falloutchatmod.com/link[/url].[/*]
 [*]Sign in with Steam or Discord and enter the code.[/*]
 [*]Return to the game and open chat with Insert.[/*]
-[/list]Steam sign-in does not require linking Discord. If you sign in through Steam without entering a custom name, your Steam display name is used. You can link Discord later from your website profile. Linking codes expire after 10 minutes. If necessary, reconnect the widget to request a fresh code. 
+[/list]Steam sign-in does not require linking Discord. Website/overlay display-name settings are separate from the HUD’s public Fallout account handle. You can link Discord later from your website profile. Linking codes expire after 10 minutes. If necessary, reconnect the widget to request a fresh code. 
 
 [b][size=4]HUD Controls[/size][/b]
 [list]
 [*]Insert opens chat input.[/*]
 [*]Enter sends your message; Escape cancels input.[/*]
 [*]Page Up/Page Down switch channels.[/*]
-[*]While a typing session is open, Arrow Up/Down scroll the feed and Home/End return to the newest message.[/*]
+[*]While a typing session is open, the configurable [code]scrollUpKey[/code] / [code]scrollDownKey[/code] bindings scroll the feed (Arrow Up/Down by default). [code]scrollBottomKey[/code] is unbound by default; assign Home, End, F12, or a forwarded action in [code]Data/FCMChat.ini[/code] if you want a keyboard shortcut for newest. The F11 menu always includes Scroll to newest.[/*]
 [*]Use /g, /t, /e, /i, or /r to route a message to a community channel.[/*]
 [*]Use /s or /server after the current server/world session has been confirmed.[/*]
 [*]Use /hide to hide the feed and Insert to restore it.[/*]

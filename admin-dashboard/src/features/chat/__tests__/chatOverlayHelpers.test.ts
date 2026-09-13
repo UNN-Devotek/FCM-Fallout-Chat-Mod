@@ -813,6 +813,11 @@ describe('hiddenChannelIdSet', () => {
 describe('mergeHistoryMessages', () => {
   const m = (id: string, ts: string) => ({ id, timestamp: ts });
 
+  it('rejects duplicates within the same history batch without collapsing distinct IDs', () => {
+    const repeated = m('a', '2026-01-01T00:00:00Z');
+    expect(mergeHistoryMessages([], [repeated, repeated, { ...repeated, id: 'b' }], 300).map(row => row.id)).toEqual(['a', 'b']);
+  });
+
   it('returns the SAME array ref when nothing is new (the flash fix)', () => {
     const prev = [m('a', '2026-01-01T00:00:00Z'), m('b', '2026-01-01T00:00:01Z')];
     const incoming = [m('a', '2026-01-01T00:00:00Z'), m('b', '2026-01-01T00:00:01Z')];

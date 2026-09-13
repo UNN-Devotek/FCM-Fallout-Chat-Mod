@@ -14,6 +14,7 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../../services/api';
+import { XSCAL_INPUT_ARTICLE_URL, ZFE_MODDER_GUIDE_URL } from './HudKeybindGuide';
 
 export type GuideVariant = 'dashboard' | 'public';
 
@@ -68,6 +69,89 @@ export default function CosmeticsGuide({ variant = 'dashboard' }: Props) {
         every chat, moderation and overlay feature works exactly the same whether you
         change anything or not.
       </p>
+
+      <section aria-label="In-game HUD customization">
+        <h2 style={sSection}>IN-GAME HUD CUSTOMIZATION</h2>
+        <p style={p}>
+          In the updated HUD build, open <strong>F11 → FCM → Customize</strong>.
+          These controls change your local HUD, independently of your profile cosmetics.
+          They are being prepared for release and are not available in older HUD packages.
+        </p>
+        <ul style={{ ...p, paddingLeft: '18px' }}>
+          <li>Adjust panel width and height independently, and move the panel.</li>
+          <li>Adjust input height and input text size. Input width and alignment stay fixed to the widget’s input area, including the ZFE editor drawn over it.</li>
+          <li>Adjust feed text size and background opacity.</li>
+          <li>Choose panel, tab-box, input-box and border colors under Colors.</li>
+          <li>Choose message, input, default name, active/inactive tab and hint font colors. Other players’ chosen name colors remain intact.</li>
+          <li>Turn auto-hide on or off independently of its remembered delay; adjust the delay in five-second steps.</li>
+          <li>Reset all HUD settings to their defaults.</li>
+        </ul>
+        <p style={p}>
+          Badges, channel tags and their visibility/colors, emojis, the default channel,
+          and the available channels are fixed by the HUD. They have no appearance controls.
+          You can still switch chat channels normally.
+        </p>
+        <p style={p}>
+          For precise values, edit the <code style={sCode}>[FCMChat]</code> section of{' '}
+          <code style={sCode}>Data/FCMChat.ini</code>. Use <code style={sCode}>inputHeight</code>{' '}
+          (28–120), <code style={sCode}>inputFontSize</code> (8–47, or 0 for default sizing),{' '}
+          <code style={sCode}>bgAlpha</code> (0–1), and color keys such as{' '}
+          <code style={sCode}>inputBgColor</code> and <code style={sCode}>inputTextColor</code>{' '}
+          with <code style={sCode}>#RRGGBB</code> values. Keep{' '}
+          <code style={sCode}>autoHideEnabled=false</code> to disable auto-hide without losing{' '}
+          <code style={sCode}>autoHideSec</code>.
+        </p>
+        <p style={p}>
+          F11 changes apply immediately. ZFE saves them in local settings; xScal saves them
+          per linked device with the matching backend update. ZFE’s saved F11 settings
+          take priority over the INI. Follow the packaged customization guide for reload
+          and saved-settings instructions.
+        </p>
+        <h3 style={sSection}>OPEN-CHAT KEY</h3>
+        <p style={p}>
+          ZFE users can replace the default <strong>Insert</strong> open-chat key. Keep the two
+          shipped settings identical: set <code style={sCode}>openKey=DELETE</code> under{' '}
+          <code style={sCode}>[FCMChat]</code> in <code style={sCode}>Data/FCMChat.ini</code>, then
+          set <code style={sCode}>OpenChatKey=DELETE</code> under{' '}
+          <code style={sCode}>[TextChat]</code> in{' '}
+          <code style={sCode}>Data/configuration/zfe.ini</code>. Preserve the other settings and
+          keep one <code style={sCode}>[TextChat]</code> section. Restart Fallout 76 afterward.
+        </p>
+        <p style={p}>
+          ZFE accepts <code style={sCode}>INSERT</code>, <code style={sCode}>DELETE</code>,{' '}
+          <code style={sCode}>HOME</code>, <code style={sCode}>END</code>,{' '}
+          <code style={sCode}>PAGE_DOWN</code> (also <code style={sCode}>PAGEDOWN</code> or{' '}
+          <code style={sCode}>PGDN</code>), and one letter or digit. Delete is the recommended
+          alternative when Insert conflicts with another mod. Avoid Page Down if you use it to
+          switch FCM channels. Letter and digit keys may conflict with gameplay or typing.
+          {' '}See the <a href={ZFE_MODDER_GUIDE_URL} target="_blank" rel="noopener noreferrer" style={{ color: gold }}>
+            ZFE Modder Guide
+          </a> for the extender hotkey surface.
+        </p>
+        <p style={p}>
+          The global <code style={sCode}>zfe.ini</code> value overrides the widget fragment in{' '}
+          <code style={sCode}>Data/ZFE/TextChat/fragments</code>. In the packaged{' '}
+          <code style={sCode}>Data/FCMChat.ini</code>,{' '}
+          <code style={sCode}>scrollUpKey=Up</code> and <code style={sCode}>scrollDownKey=Down</code>{' '}
+          preserve arrow scrolling, and <code style={sCode}>scrollBottomKey=</code> is intentionally
+          unbound. Set those values to forwarded HUD actions or supported physical tokens to rebind
+          them; the F11 <code style={sCode}>Scroll to newest</code> action is always available. The
+          packaged <code style={sCode}>KEYBINDS.txt</code> explains the provider-specific behavior.
+        </p>
+        <p style={p}>
+          <strong>xScal is different:</strong> it has no <code style={sCode}>OpenChatKey</code>{' '}
+          setting in <code style={sCode}>xscal.ini</code>. The widget maps{' '}
+          <code style={sCode}>Data/FCMChat.ini</code> <code style={sCode}>openKey</code> to xScal's
+          documented physical input polling, with the named HUDMod action as a fallback. Do not
+          add ZFE settings to <code style={sCode}>xscal.ini</code>. The same physical token catalog
+          is available for the three scroll settings. xScal's keyboard registration does not
+          suppress the key from gameplay, so test for conflicts; its documented
+          suppression calls are for gamepad buttons. See the{' '}
+          <a href={XSCAL_INPUT_ARTICLE_URL} target="_blank" rel="noopener noreferrer" style={{ color: gold }}>
+            xScal Input interface (Nexus article 268)
+          </a>.
+        </p>
+      </section>
 
       <p style={sSection}>TWO WAYS TO CHANGE YOUR APPEARANCE</p>
       <p style={p}>

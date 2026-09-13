@@ -1,77 +1,56 @@
-# ZFE Native Chat Relay (`chat.v1`)
+# FCM native HUD chat relay
 
-ZFE ships a **first-class native chat client** inside Fallout 76 with a **standardized,
-relay-agnostic JSON-over-WebSocket contract** — **live as of ZFE 0.9.8** (2026-06-23). This sub-topic
-captures (1) that contract verbatim-in-substance, and (2) a design plan for making FCM's relay speak
-it.
+The active in-game HUD uses FCM's `FCMChatWidget.swf` with ZFE `chat.v1` or xScal
+`chatInterface`. The backend `/relay` adapter is implemented. The older plan to ship the generic
+FCMHUD socket transport while waiting for native chat is superseded.
 
-> **Status: protocol SHIPPED (ZFE 0.9.8) + R1–R5 + worldId implemented in FCM backend.**
-> Verified from the `dxgi.dll` binary. The FCM `/relay` adapter implements registration,
-> authentication, send/poll/subscribe, message reports, staff-gated moderation actions, and
-> worldId controls. R6 (production guard lift) remains follow-on work. `setSlowMode` is
-> intentionally advertised as unavailable because FCM has no per-channel slow-mode primitive.
-
-> **Status (2026-08-31): chat.v1 in-game send WORKS end-to-end on native Windows and Proton/Wine.**
-> The earlier 0.9.8 `chat.v1.sendMessage` → `dispatch_failed` was an upstream ZFE bug, fixed in
-> **0.9.9**. The current project ZFE build also contains the Proton/Wine transport fix. On the relay side, two fixes landed (both
-> squash-merged to `dev`):
-> - **#334** — `handleSend` now attributes the message to the **linked FCM user UUID**
->   (`identity.linkedUserId`, the `users.id`), **not** the relay TEXT id (`user_<hex>`). The TEXT id
->   broke `prisma.user.findUnique` (P2023 invalid UUID) → internal_error → ZFE surfaced
->   `relay_rejected`. Send is gated on `isLinked`, so `linkedUserId` is always set there.
-> - **#335** — the relay now **persists `messages.relay_seq`** on relay sends (a single broadcast
->   carries the pre-computed `relaySeq`; the old double-broadcast was removed). Without it,
->   `poll`/history (which filter `relay_seq IS NOT NULL`) never returned relay sends.
->
-> The historical Proton/Wine TLS issue tracked in **#326** is resolved in the current project ZFE
-> build. The `Schannel/Winsock` label seen in older ZFE logs is the **legacy Text Chat** transport,
-> not chat.v1 — chat.v1 uses its own Zig TLS client plus a PEM CA bundle.
-
-## Contents
-
-| Doc | What it is |
-|---|---|
-| [**protocol-spec.md**](protocol-spec.md) | The upstream ZFE `chat.v1` relay contract — SWF flow, packaged config, the full WebSocket op set (`register`/`hello`/`send`/`poll`/`subscribe`/`report`/`moderationAction`), channels, limits, identity/bans, the loopback test |
-| [**fcm-integration.md**](fcm-integration.md) | How FCM's backend would expose a compliant `/relay` endpoint — op→service mapping, identity/token bridge, channel mapping, the net-new monotonic cursor, error-code mapping, permissions, phased rollout, tests, open questions |
-| [**reconnect-history-recovery-spec.md**](reconnect-history-recovery-spec.md) | Required reconnect and world-transition history behavior, boundaries, and acceptance signals for the in-game chat feeds |
-
-## How this differs from the existing FCMHUD/1 bridge
-
-FCM **already** ships in-game chat — but via a **bespoke** path, not this standard:
-
-In both cases **FCM owns the in-game chat UI — our own SWF.** What changes is the *plumbing*:
-
-- **FCMHUD/1** ([../realtime-socket.md](../realtime-socket.md), [../two-way-chat-implemented.md](../two-way-chat-implemented.md))
-  — our SWF rides ZFE's **generic** socket bridge and does its own networking + a *bespoke* line
-  protocol (`color~channel~user~content` + M7 `HELLO/SEND/CHAN`). FCM defines and maintains the wire.
-- **`chat.v1`** (this folder) — a protocol **ZFE itself defines and drives**. ZFE provides the native
-  chat **engine** (transport, token, reconnect, input); **our same SWF** just calls the `chat.v1.*`
-  API and renders. FCM stops maintaining a custom wire/transport, **not** the UI.
-
-**Decision (re-sequenced 2026-06-24): ship on FCMHUD/1 now; `chat.v1` is a *later* transport swap.**
-Because ZFE's chat.v1 publish date is unknown, FCMHUD/1 (which we own and works today) is the **active
-shipping transport** for the in-game HUD mod (epic #302; prod exposure #139). `chat.v1` supersedes it
-**later** — a wire swap, with the feature layer (commands, customization, server chat) built
-transport-agnostic so it carries over unchanged. FCMHUD/1 retires (#291) **only after** chat.v1 ships
-AND is validated. The in-game chat SWF (the UI we built) is kept either way. See
-[fcm-integration.md → How this differs](fcm-integration.md#how-this-differs-from-the-existing-fcmhud1-bridge).
-
-## At a glance — the integration shape
-
-```
-ZFE native chat SWF ──(chat.v1 JSON)──▶ NEW /relay adapter ──▶ existing FCM services
-                          wss://…/relay      (proposed)           ingestMessage / moderation /
-                                                                  channels / Redis pub/sub / ws_rate
+```mermaid
+flowchart LR
+    HUD[FCM HUDModLoader widget] --> Adapter[FcmNativeApi]
+    Adapter --> ZFE[ZFE chat.v1]
+    Adapter --> XS[xScal chatInterface]
+    ZFE --> Relay[FCM /relay]
+    XS --> Relay
+    Relay --> Services[Authentication, governance, history and fanout]
 ```
 
-The adapter is a **thin translation layer**. The only net-new infrastructure is a **durable
-monotonic cursor** (for `poll`/`subscribe` dedup) and a **persistent relay token** identity; every
-other concern reuses an existing FCM service. FCM's custom channels (Events / Raids / Infests) are
-carried by ZFE's **`AllowedChannels`** config — no protocol gap. Full detail in
-[fcm-integration.md](fcm-integration.md).
+The diagram shows alternatives; discovery selects one provider. This optional mod does not
+require or modify the desktop overlay. Extenders own native networking and local tokens. The
+widget reads only HUD-published data and exposed APIs.
 
-## See also
+## Maintained references
 
-- [../README.md](../README.md) — ZFE / FCMBridge integration index
-- [../../../realtime/README.md](../../../realtime/README.md) — FCM's `/ws` relay protocol, presence, pub/sub
-- [../../../backend/README.md](../../../backend/README.md) — REST API, services, auth model
+| Topic | Reference |
+| --- | --- |
+| Adapter, auth, operations, cosmetics, controls | [FCM integration](fcm-integration.md) |
+| Reconnect snapshots, cursors, bounded recovery | [Recovery contract](reconnect-history-recovery-spec.md) |
+| Current-room SERVER isolation | [Server session binding](server-session-binding.md) |
+| Retry receipts and ambiguous sends | [HUD retry safety](../hud-send-retries.md) |
+| Build status and installation | [HUD index](../README.md), [widget build guide](../../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md) |
+| Upstream contract | [ZFE author's chat relay guide](https://www.nexusmods.com/fallout76/articles/256) |
+
+The [local protocol snapshot](protocol-spec.md) records an earlier upstream contract. It is not
+a verbatim or exhaustive description of every current ZFE release. Check runtime capabilities
+and the author's current guide before changing an adapter. xScal uses different callable
+signatures even when the relay operations have the same meaning.
+
+## Delivery and duplicate protection
+
+The relay reuses existing identity, moderation, channel, queue, Redis, and Discord services.
+Static native sends broadcast and ACK after durable queue acceptance; they do not wait for a
+worker to complete database persistence. Ordinary web producers retain their persistence fence.
+SERVER delivery is room-scoped Redis history/fanout. Neither ACK means confirmed Discord delivery.
+See [retry safety](../hud-send-retries.md) for crash windows and negotiated retries.
+
+In the widget, General is a view over six source channels, not a relay destination for copied
+messages. Retained message IDs, provider event IDs, pending echoes, and world-room membership
+have separate guards. The [integration guide](fcm-integration.md) and
+[recovery tests](../../../testing/hud-recovery.md) document their ordering and scope.
+
+The old line-feed protocol `FCMHUD/1` is retired for this widget. The similarly named
+`FCMHUD/1;...` carrier remains active inside native event `targetUserId` to preserve canonical
+message identity and validated cosmetics across extenders that discard unknown JSON members.
+
+Historical Windows/Proton success is recorded in [Proton status](proton-status.md); it is not
+proof that an untested provider/game/build combination works. Production exposure still requires
+the backend's `RELAY_PRODUCTION_ENABLED` configuration; this document does not assert live state.

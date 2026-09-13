@@ -94,7 +94,8 @@ does not accept a user id from the renderer. Free swatches remain usable by ever
 while Supporter and Overseer's Circle choices stay visible but locked until the matching
 Discord role is active. The supporter marker is always a `★`, with its colour chosen
 independently from the username colour. Colour and tag render in the in-game HUD; visual
-effects are honestly labelled desktop-only because Scaleform cannot render them safely.
+effects are labelled desktop-only because the HUD implements solid colors and tags, not those
+animated effects. This is an FCM feature boundary, not a universal Scaleform limitation.
 Selecting a value updates the local preview immediately. The save then replaces that preview
 with the server-authoritative result; transient network/server failures retry a bounded number
 of times, while validation or entitlement errors roll the preview back and release the busy
@@ -267,3 +268,11 @@ Onboarding accepts either Steam or Discord. The in-game name field is optional: 
 blank uses the linked Steam display name (when the backend profile lookup is configured),
 then Discord, then `Wanderer`. A provider default is not saved as a custom in-game name.
 HUD linking instructions likewise offer Steam or Discord at `/link`.
+
+## Optional background Server bridge
+
+The local FCMServerBridge 0.1.0 candidate uses a separate invisible HUDModLoader mod to supply
+a fresh native room lease. The shared desktop ChatOverlay renders Server and includes the same
+canonical messages in General. No mod is installed by the desktop app. See
+[bridge setup and acceptance](zfe/background-server-bridge.md); hosted deployment and two-client
+ZFE/xScal validation remain pending.

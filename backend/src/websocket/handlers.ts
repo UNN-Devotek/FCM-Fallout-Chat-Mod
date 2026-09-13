@@ -45,6 +45,8 @@ import { getActiveQaVersion } from '../services/activeQaVersion';
 import env from '../config/environment';
 import { INSTANCE_ID } from '../config/instanceIdentity';
 import { notifyRelayLiveChatMessage } from '../services/relay/relayLiveFanout';
+import { BridgeConnection } from './bridgeConnection';
+import { SERVER_EVENTS_CHANNEL, type ServerEventEnvelope } from '../services/relay/serverChat';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -216,6 +218,7 @@ const WS_CLOSE_BANNED = 4002;
 const WS_CLOSE_OUTDATED_BUILD = 4003;
 
 interface ClientEntry {
+  bridge?: BridgeConnection;
   ws: WebSocket;
   userId: string;
   username: string;
@@ -705,6 +708,16 @@ let pubsubInitializing = false;
  * blip at startup does not permanently disable cross-instance delivery.
  * The ready/reconnect guard prevents duplicate subscriptions.
  */
+function receiveBridgePubSub(message: string): void {
+  try {
+    const envelope = JSON.parse(message) as ServerEventEnvelope;
+    if (!envelope || !['msg', 'rebind'].includes(envelope.kind)) return;
+    for (const client of clients.values()) {
+      if (client.ws.readyState === WebSocket.OPEN) void client.bridge?.receive(envelope);
+    }
+  } catch (err) { logger.warn({ err }, 'Invalid server bridge event'); }
+}
+
 async function initPubSub(): Promise<void> {
   if (pubsubActive || pubsubInitializing) return;
   pubsubInitializing = true;
@@ -768,6 +781,7 @@ async function initPubSub(): Promise<void> {
         logger.warn({ err }, 'Failed to process pub/sub message');
       }
     });
+    await subscriber.subscribe(SERVER_EVENTS_CHANNEL, receiveBridgePubSub);
     pubsubActive = true;
     pubsubInitializing = false;
     logger.info({ instanceId: INSTANCE_ID }, 'Redis pub/sub subscriber active on channel ' + PUBSUB_CHANNEL);
@@ -1589,8 +1603,14 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
     connectTimeRole = await _getRoleForConnect(user.id);
   } catch { /* default 'user' */ }
 
+  clients.get(token)?.bridge?.dispose();
+  const serverBridge = new BridgeConnection(user.id, frame => {
+    if (ws.readyState === WebSocket.OPEN && clients.get(token)?.ws === ws) {
+      safeSend(ws, JSON.stringify(frame), `bridge:${user.id}`);
+    }
+  }, () => clients.get(token)?.blockedIds ?? new Set<string>());
   clients.set(token, {
-    ws, userId: user.id, username: user.username, displayName,
+    ws, userId: user.id, username: user.username, displayName, bridge: serverBridge,
     isMuted: user.isMuted,
     blockedIds: initialBlockedIds,
     inGame: false,
@@ -2079,6 +2099,11 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
         break;
       }
 
+      case 'bridge:watch': {
+        if (await checkWsRateLimitBucket('bridge-watch', user.id, 4, 10)) await serverBridge.watch();
+        break;
+      }
+
       case 'chat:send': {
         const client = clients.get(token);
         if (!client) return;
@@ -2155,6 +2180,11 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
         }
         // Convert :shortcode: emoji to Unicode before persist/broadcast/relay.
         content = emojifyShortcodes(content);
+
+        if (typeof channelId === 'string' && channelId.startsWith('server:')) {
+          await serverBridge.send(channelId, frame.payload?.bridgeBindingId, content);
+          return;
+        }
 
         if (!channelId || !UUID_RE.test(channelId)) {
           sendWsError(ws, 'Invalid channelId.');
@@ -2743,6 +2773,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
   const heartbeat = setInterval(() => {
     if (ws.readyState !== WebSocket.OPEN) {
       clearInterval(heartbeat);
+      serverBridge.dispose();
       // Only evict if WE are still the current socket for this token. A newer
       // socket may have replaced us in the map (same session token reconnect) —
       // deleting by token blindly would evict the LIVE socket. See the close
@@ -2752,10 +2783,11 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
   }, 30_000);
   // Register an error handler that guarantees the interval is cleared if the
   // socket errors before ws.on('close') fires.
-  ws.once('error', () => { clearInterval(heartbeat); });
+  ws.once('error', () => { clearInterval(heartbeat); serverBridge.dispose(); });
 
   ws.on('close', () => {
     clearInterval(heartbeat);
+    serverBridge.dispose();
     // ── Supersession guard (token-keyed clients map) ───────────────────────────
     // The clients map is keyed by SESSION TOKEN, and the overlay reconnects with
     // the SAME token across WS flaps (the desktop relay proxy reuses sessionToken

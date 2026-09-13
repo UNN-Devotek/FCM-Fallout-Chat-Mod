@@ -111,6 +111,29 @@ class TestFcmNativeApi {
         check("last Input.* response is retained for diagnostics",
             chatOnlyApi.lastInputResponse == '{"success":true,"pressed":false}');
 
+        // Exercise actual bridge results, including the boolean fast path whose method
+        // verifier previously still pulled in the general JSON parser under GFx.
+        var keyReply:Dynamic = false;
+        var decoderApi = FcmNativeApi.fromZfe({call: function(verb:String, arg:Dynamic):Dynamic {
+            return verb == "Input.IsKeyPressed" ? keyReply : true;
+        }});
+        decoderApi.registerPhysicalKey(33);
+        for (reply in ["true", "1", '{"success":true,"pressed":true}',
+                '{"success":true,"data":{"result":{"down":true}}}']) {
+            keyReply = reply;
+            check("ZFE navigation decodes " + reply, decoderApi.isPhysicalKeyPressed(33));
+        }
+        for (reply in ["false", "0", "{broken", '{"success":true}',
+                '{"success":false,"pressed":true}', '{"success":true,"pressed":false}',
+                '{"success":true,"data":{"success":false,"down":true}}']) {
+            keyReply = reply;
+            check("ZFE navigation rejects " + reply, !decoderApi.isPhysicalKeyPressed(33));
+        }
+        keyReply = true;
+        check("ZFE native boolean down", decoderApi.isPhysicalKeyPressed(33));
+        keyReply = false;
+        check("ZFE native boolean release", !decoderApi.isPhysicalKeyPressed(33));
+
         // A generic callback that exists but rejects Input.* (unsupported / error) must
         // not block the fallback; the first accepting candidate is locked for later calls.
         var rejectingCalls:Array<String> = [];

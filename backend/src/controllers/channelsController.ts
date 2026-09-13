@@ -9,8 +9,8 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 /**
  * GET /api/channels -- public
  * Returns hierarchical channel tree: main channels with nested children.
- * If the requesting user has a serverEndpoint, injects a virtual "Server"
- * channel at sortOrder -1 that scopes to that endpoint only.
+ * Returns only static channels. Desktop world detection/virtual Server injection
+ * was removed; native relay rooms do not enter this public channel tree.
  */
 async function listChannels(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
