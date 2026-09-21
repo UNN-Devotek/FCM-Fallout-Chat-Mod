@@ -26,7 +26,8 @@ data. 0.2.3 reuses `FcmJson` for runtime-info/write acknowledgements and forbids
 exports and the user reported it working. Full mixed-client shared-room/message/travel
 acceptance remains pending; the overlay log did not independently confirm room assignment.
 
-**Visible HUD 2.10.117 private candidate:** retains 2.10.116's session transcript and reserves
+**Visible HUD 2.10.117 CONTROLLER-TEST:** isolated, native-unverified test build. It retains
+2.10.116's session transcript and reserves
 Enter for text submission. Selected-link activation defaults to F8, and transient empty
 SharedHUDTools samples no longer erase the stable draft. It keeps accepted
 Server rows as bounded in-memory history across every room visited during the current widget/game
@@ -39,7 +40,9 @@ room's backlog from arriving as a tail burst. Live Server rows remain in General
 retains 2.10.111's roster-visible `@self:` evidence; authentication, sender attribution, mutual
 sightings and room gates are unchanged. It adds capability-gated, transition-only fixed-schema
 room diagnostics with no player names, roster contents, messages, raw identifiers or tokens.
-Native acceptance remains pending. 2.10.110 remains the current public release.
+It adds capability-gated ZFE owner-scoped text input and configured hotkeys. xScal retains
+configured physical-key polling and best-effort SharedHUDTools text entry. Native acceptance
+remains pending. 2.10.110 remains the current public release.
 
 2.10.117 adds capability-gated ZFE owner-scoped text input for keyboard use while a controller is
 connected and rejects mixed ZFE/xScal installs. Bridge 0.2.6 removes every menu, hotkey, editor,

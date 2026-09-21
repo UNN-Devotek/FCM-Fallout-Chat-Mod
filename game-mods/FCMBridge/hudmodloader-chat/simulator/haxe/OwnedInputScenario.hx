@@ -14,7 +14,7 @@ class OwnedInputScenario {
                 timer.stop();
                 run(widget, scenario);
                 flash.Lib.trace("OWNED-INPUT PASS " + scenario
-                    + " session=bounded release=stable fallback=legacy cleanup=ended");
+                    + " session=bounded release=stable fallback=shared cleanup=ended");
             } catch (error:Dynamic) {
                 timer.stop();
                 widget.shutdown();
@@ -40,14 +40,14 @@ class OwnedInputScenario {
                 "expired session ends ownership");
             return;
         }
-        MockZfe.handleKey(65, 65, true);
-        MockZfe.handleKey(49, 49, true);
-        MockZfe.handleKey(8, 0, true);
+        MockZfe.handleKey(65, 65, true); MockZfe.handleKey(65, 65, false);
+        MockZfe.handleKey(8, 0, true); MockZfe.handleKey(8, 0, false);
+        MockZfe.handleKey(66, 66, true); MockZfe.handleKey(66, 66, false);
         MockZfe.handleKey(13, 0, true);
         widget.pollOwnedInput();
-        check(widget._ownedInput, "terminal input waits before release barrier");
-        widget.pollOwnedInput();
-        widget.pollOwnedInput();
+        check(widget._ownedInput, "terminal input waits while Enter is held");
+        MockZfe.handleKey(13, 0, false);
+        widget.pollOwnedInput(); widget.pollOwnedInput();
         check(widget._ownedInput, "releaseReady must remain stable");
         widget.pollOwnedInput();
         check(!widget._ownedInput && MockZfe.ownedEndCount == 1,

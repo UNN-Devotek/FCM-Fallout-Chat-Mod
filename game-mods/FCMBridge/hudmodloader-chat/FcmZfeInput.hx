@@ -7,6 +7,7 @@ typedef FcmZfeInputBegin = {
 
 typedef FcmZfeInputPoll = {
     var success:Bool;
+    var session:Dynamic;
     var active:Bool;
     var revision:Int;
     var text:String;
@@ -21,6 +22,10 @@ class FcmZfeInput {
         try { return value == null ? null : Reflect.field(value, key); } catch (_:Dynamic) { return null; }
     }
 
+    public static function sameSession(expected:Dynamic, actual:Dynamic):Bool {
+        return expected != null && actual != null && Std.string(expected) == Std.string(actual);
+    }
+
     public static function begin(raw:Dynamic):FcmZfeInputBegin {
         var parsed = FcmJson.parse(Std.string(raw));
         return {
@@ -31,14 +36,18 @@ class FcmZfeInput {
         };
     }
 
-    public static function poll(raw:Dynamic):FcmZfeInputPoll {
+    public static function poll(raw:Dynamic, maxChars:Int = 512):FcmZfeInputPoll {
         var parsed = FcmJson.parse(Std.string(raw));
         var revision = Std.parseInt(Std.string(field(parsed, "revision")));
+        var text = field(parsed, "text") == null ? "" : Std.string(field(parsed, "text"));
+        if (maxChars < 1) maxChars = 1;
+        if (text.length > maxChars) text = text.substr(0, maxChars);
         return {
             success: field(parsed, "success") == true && field(parsed, "session") != null,
+            session: field(parsed, "session"),
             active: field(parsed, "active") == true,
             revision: revision == null ? -1 : revision,
-            text: field(parsed, "text") == null ? "" : Std.string(field(parsed, "text")),
+            text: text,
             submitted: field(parsed, "submitted") == true,
             cancelled: field(parsed, "cancelled") == true,
             releaseReady: field(parsed, "releaseReady") == true

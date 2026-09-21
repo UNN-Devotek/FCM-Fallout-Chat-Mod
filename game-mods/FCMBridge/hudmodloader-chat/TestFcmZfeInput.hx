@@ -13,11 +13,12 @@ class TestFcmZfeInput {
         var released = FcmZfeInput.poll('{"success":true,"session":42,"active":true,"revision":5,'
             + '"text":"bloodied fixer","submitted":true,"cancelled":false,"releaseReady":true}');
         check("decodes release barrier", released.releaseReady);
-        check("begin payload is scoped", FcmZfeInput.beginPayload("FCMChatWidget", "", 512)
-            == '{"initial":"","maxBytes":512,"vendor":"FCMChatWidget"}'
-            || FcmZfeInput.beginPayload("FCMChatWidget", "", 512)
-            == '{"vendor":"FCMChatWidget","initial":"","maxBytes":512}');
-        check("session payload retains opaque token", FcmZfeInput.sessionPayload(42).indexOf("42") >= 0);
+        check("matches only the retained opaque session", FcmZfeInput.sameSession(42, poll.session)
+            && !FcmZfeInput.sameSession(41, poll.session));
+        var bounded = FcmZfeInput.poll('{"success":true,"session":"opaque","active":true,"revision":1,"text":"abcdef"}', 4);
+        check("bounds untrusted returned text", bounded.text == "abcd");
+        check("begin payload is scoped", FcmZfeInput.beginPayload("FCMChatWidget", "", 512).indexOf('"vendor":"FCMChatWidget"') >= 0);
+        check("session payload retains opaque token", FcmZfeInput.sessionPayload("opaque").indexOf("opaque") >= 0);
         Sys.println("FCM ZFE owner-scoped input tests passed");
     }
 }

@@ -17,7 +17,7 @@ for (const scenario of ['owned-input-release', 'owned-input-busy', 'owned-input-
   test(`ZFE ${scenario} owns or falls back and cleans up deterministically`, async ({ page }) => {
     await page.goto(`/?mode=harness&provider=zfe&scenario=${scenario}`);
     await expect(page.locator('#log')).toContainText(/OWNED-INPUT (PASS|FAIL)/, { timeout: 20_000 });
-    await expect(page.locator('#log')).toContainText(`OWNED-INPUT PASS ${scenario} session=bounded release=stable fallback=legacy cleanup=ended`);
+    await expect(page.locator('#log')).toContainText(`OWNED-INPUT PASS ${scenario} session=bounded release=stable fallback=shared cleanup=ended`);
     await expect(page.locator('#log')).not.toContainText('OWNED-INPUT FAIL');
   });
 }

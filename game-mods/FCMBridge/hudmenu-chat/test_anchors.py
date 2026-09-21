@@ -494,8 +494,9 @@ if widget_src:
           and 'if (route == FcmInputRoute.OWNED)' in widget_src
           and 'openOwnedInput()' in widget_src
           and 'FcmInputRoute.mayUseNativeFallback' in widget_src
+          and 'input.v1.begin' in widget_src
           and 'openInputSharedHudTools();' in widget_src,
-          "FCMChatWidget routes owner-scoped, shared, and legacy ZFE input in one build")
+          "FCMChatWidget routes owned ZFE input, shared input and legacy fallback in one build")
     check("function dispatchEditText" not in widget_src
           and "_editTextLockOwned" not in widget_src
           and "BSUIDataManager.dispatchEvent" not in widget_src,

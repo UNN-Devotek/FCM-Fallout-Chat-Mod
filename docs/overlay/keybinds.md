@@ -152,10 +152,11 @@ steps in both `INSTALL.txt` and `HUDMODLOADER-MENU.txt`.
 | `Delete` | `hideKey=DELETE` | Hides the HUD while idle. During an active typing session the hide binding is suspended and Delete edits the draft. Both providers poll its physical VK edge when available; named loader actions remain supported. Set the value blank to disable keyboard hiding. |
 | Mouse-wheel | (not a keybind) | Scroll the feed history. F11 **Scroll to newest** remains available even when `scrollBottomKey` is unset. |
 
-`Enter` (send), `Esc` (cancel), and Delete/Backspace editing stay native to the game's chat input session and are **not**
-rebindable. SharedHUDTools owns the primary editor’s balanced text-edit lock; the legacy ZFE
-fallback does not provide the same lock contract. FCM closes its owned editor on send/cancel and
-relevant failure/menu/unload paths. Do not describe compatibility polling as gameplay suppression.
+`Enter` (send), `Esc` (cancel), and Delete/Backspace editing are not rebindable. The 2.10.117
+controller test uses ZFE's owner-scoped `input.v1` session when both text and release-barrier
+capabilities are present. Older ZFE and xScal use SharedHUDTools; xScal text entry remains
+best-effort with a controller because its documented suppression API applies only to gamepad
+buttons. FCM closes its owned editor on send/cancel and every failure/menu/unload path.
 
 **Deliverable action set** — `channelNextKey` / `channelPrevKey` / `hideKey` continue to accept
 the forwarded loader actions `NextPage` (Page Down), `PrevPage` (Page Up), `Console` (`~`),
@@ -174,9 +175,10 @@ rejects the runtime update. Full key catalog (colors / geometry / opacity / limi
 see [zfe/ingame-chat-appearance.md](zfe/ingame-chat-appearance.md) and the commented
 `Data/FCMChat.ini`.
 
-ZFE's public [hotkey contract](https://www.nexusmods.com/fallout76/articles/270) is now available.
-The current widget still uses its compatibility path; `zfe-input-v1` names separate `input.v1.*`
-text sessions, not `Input.*`. See the [provider guide](zfe/modder-guide.md) before a migration.
+The 2.10.117 controller test uses ZFE's public
+[hotkey contract](https://www.nexusmods.com/fallout76/articles/270) for supported configured keys
+and retains `Input.*` for unsupported tokens such as arrows. `zfe-input-v1` remains a separate
+owner-scoped text-session API. See the [provider guide](zfe/modder-guide.md).
 
 ### xScal open-chat key
 

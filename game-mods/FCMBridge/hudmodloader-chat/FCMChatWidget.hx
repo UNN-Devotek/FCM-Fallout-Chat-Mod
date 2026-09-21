@@ -80,7 +80,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.117"; // ZFE owner-scoped keyboard input; input-silent bridge pairing
+    static inline var VERSION:String  = "2.10.117"; // CONTROLLER-TEST: owned ZFE input, configured keys, input-silent bridge pairing
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -442,7 +442,7 @@ class FCMChatWidget extends MovieClip {
     // Set by callTop when a native helper throws or returns a command-level failure. A failed
     // in-session helper must disable native input so the next open uses SharedHUDTools.
     var _nativeInputCommandFailed:Bool = false;
-    static inline var INPUT_POLL_MS:Int  = 100;    // legacy native input-poll interval
+    static inline var INPUT_POLL_MS:Int  = 100;    // in-session legacy native input-poll interval
     static inline var OWNED_INPUT_POLL_MS:Int = 40;
     static inline var OWNED_RELEASE_STABLE_POLLS:Int = 3;
     // ── Open-key poll — open chat on the configured ZFE OpenChatKey edge ───────────────
@@ -463,6 +463,10 @@ class FCMChatWidget extends MovieClip {
     var _physicalNavProbeLogged:Bool = false;      // one raw IsKeyPressed sample per session
     var _physicalOpenKey:Int = 0;
     var _physicalOpenKeyDown:Bool = false;
+    var _ownedHotkeyTimer:flash.utils.Timer = null;
+    var _ownedHotkeys:Array<Dynamic> = [];
+    var _ownedHotkeyCodes:Array<Int> = [];
+    static inline var OWNED_HOTKEY_POLL_MS:Int = 75;
 
     // ── SharedHUDTools (HUDModLoader text-entry + F11 menu integration) ───────
     var _hudTools:Dynamic        = null;
@@ -636,6 +640,7 @@ class FCMChatWidget extends MovieClip {
         stopServerHistoryDrain();
         stopWorldTimer();
         stopOpenKeyTimer();
+        stopOwnedHotkeys();
         stopPhysicalNavigation();
         stopConnectRetry();
         stopZfeSearchTimer();
@@ -2511,7 +2516,7 @@ class FCMChatWidget extends MovieClip {
             _ownedReleaseStable = 0;
             _inProgress = "";
             setPrompt(typingPrompt());
-            zfeLog("info", "input path", "zfe-input-v1");
+            zfeLog("info", "input path", "zfe-input-v1 controller-test");
             stopInputTimer();
             _inputTimer = new flash.utils.Timer(OWNED_INPUT_POLL_MS);
             _inputTimer.addEventListener(TimerEvent.TIMER, function(_) { runOwnedInputSafely(); });
@@ -2535,8 +2540,12 @@ class FCMChatWidget extends MovieClip {
 
     function pollOwnedInput():Void {
         var result = FcmZfeInput.poll(_api.call("input.v1.poll",
-            FcmZfeInput.sessionPayload(_ownedInputSession)));
-        if (!result.success) { closeOwnedInput(true); return; }
+            FcmZfeInput.sessionPayload(_ownedInputSession)), _cfg.maxSendLen);
+        if (!result.success || !FcmZfeInput.sameSession(_ownedInputSession, result.session)
+                || result.revision < _ownedInputRevision) {
+            closeOwnedInput(true);
+            return;
+        }
         if (result.revision != _ownedInputRevision) {
             _ownedInputRevision = result.revision;
             _inProgress = result.text;
@@ -2547,6 +2556,7 @@ class FCMChatWidget extends MovieClip {
         }
         if (result.submitted) _ownedInputSubmitted = true;
         if (result.cancelled) _ownedInputCancelled = true;
+        if (_ownedInputSubmitted && _ownedInputCancelled) { closeOwnedInput(true); return; }
         if (!_ownedInputSubmitted && !_ownedInputCancelled) {
             if (!result.active) closeOwnedInput(true);
             return;
@@ -2564,7 +2574,8 @@ class FCMChatWidget extends MovieClip {
         var session = _ownedInputSession;
         _ownedInputSession = null;
         if (session != null && _api != null) try {
-            _api.call("input.v1.end", FcmZfeInput.sessionPayload(session));
+            var ended = Std.string(_api.call("input.v1.end", FcmZfeInput.sessionPayload(session)));
+            if (ended.indexOf('"success":true') < 0) failed = true;
         } catch (_:Dynamic) { failed = true; }
         if (failed) _ownedInputUsable = false;
         _inputOpen = false;
@@ -3792,12 +3803,13 @@ class FCMChatWidget extends MovieClip {
         zfeLog("info", "startup", _api.provider == FcmNativeApi.ZFE
             ? "zfe-chat-online-v1 OK"
             : "xscal-chat-interface OK");
-        _ownedInputUsable = _api.probeOwnedTextInput();
+        var generalReady = _api.probeGeneralInputCapabilities();
+        _ownedInputUsable = generalReady && _api.supportsOwnedTextInput();
         zfeLog(_ownedInputUsable ? "info" : "warn", "input",
             _ownedInputUsable ? "zfe-input-v1 + release barrier ready"
                 : (_api.provider == FcmNativeApi.ZFE
-                    ? "owner-scoped input unavailable; SharedHUDTools compatibility path active"
-                    : "xScal SharedHUDTools input path active"));
+                    ? "owner-scoped input unavailable; SharedHUDTools compatibility active"
+                    : "xScal SharedHUDTools input path active (controller text is best-effort)"));
         zfeLog(_api.supportsNonBlockingControl() ? "info" : "warn", "startup",
             _api.supportsNonBlockingControl()
                 ? "automatic Server-room controls enabled through non-blocking provider path"
@@ -3810,6 +3822,7 @@ class FCMChatWidget extends MovieClip {
 
         loadPersistedConfig();
         syncConfiguredZfeHotkey();
+        startOwnedHotkeys();
         // Physical Page/arrow polling is provider-level input, not relay state: start it as
         // soon as the extender is known so channel switching works before (and without) auth.
         startPhysicalNavigation();
@@ -3829,6 +3842,79 @@ class FCMChatWidget extends MovieClip {
         } catch (e:Dynamic) {
             zfeLog("warn", "input", "ZFE OpenChatKey synchronization failed: " + clip200(Std.string(e)));
         }
+    }
+
+    function startOwnedHotkeys():Void {
+        stopOwnedHotkeys();
+        if (_disposed || _api == null || _api.provider != FcmNativeApi.ZFE
+                || !_api.supportsOwnedHotkeys()) return;
+        var tokens = [_cfg.openKey, _cfg.hideKey, _cfg.channelNextKey, _cfg.channelPrevKey,
+            _cfg.scrollUpKey, _cfg.scrollDownKey, _cfg.scrollBottomKey, _cfg.activateLinkKey];
+        for (token in tokens) {
+            var key = FcmZfeHotkeys.keyName(token);
+            var code = FcmCommand.virtualKeyCode(token);
+            if (key.length == 0 || code <= 0 || _ownedHotkeyCodes.indexOf(code) >= 0) continue;
+            try {
+                var result = FcmZfeHotkeys.registration(_api.call("hotkeys.v1.register",
+                    FcmZfeHotkeys.registerPayload(VENDOR, key)));
+                if (result.success) {
+                    _ownedHotkeys.push({registration:result.registration, keyCode:code});
+                    _ownedHotkeyCodes.push(code);
+                }
+            } catch (e:Dynamic) {
+                zfeLog("warn", "input", "hotkeys.v1.register failed key=" + key
+                    + " error=" + clip200(Std.string(e)));
+            }
+        }
+        if (_ownedHotkeys.length == 0) return;
+        _ownedHotkeyTimer = new flash.utils.Timer(OWNED_HOTKEY_POLL_MS);
+        _ownedHotkeyTimer.addEventListener(TimerEvent.TIMER, function(_) { pollOwnedHotkeysSafely(); });
+        _ownedHotkeyTimer.start();
+        zfeLog("info", "input", "owner-scoped configured hotkeys ready keys="
+            + _ownedHotkeyCodes.join(","));
+    }
+
+    function pollOwnedHotkeysSafely():Void {
+        if (_disposed || _api == null) return;
+        try {
+            for (entry in _ownedHotkeys) {
+                var registration = Reflect.field(entry, "registration");
+                var presses = FcmZfeHotkeys.presses(_api.call("hotkeys.v1.poll",
+                    FcmZfeHotkeys.tokenPayload(VENDOR, registration)), registration);
+                if (presses < 0) { stopOwnedHotkeys(); return; }
+                if (presses > 0) dispatchOwnedHotkey(Std.int(Reflect.field(entry, "keyCode")));
+            }
+        } catch (e:Dynamic) {
+            zfeLog("warn", "input", "hotkeys.v1.poll failed: " + clip200(Std.string(e)));
+            stopOwnedHotkeys();
+        }
+    }
+
+    function dispatchOwnedHotkey(keyCode:Int):Void {
+        if (keyCode == FcmCommand.virtualKeyCode(_cfg.openKey)) {
+            if (!_inputOpen && isValidHUDMode()
+                    && (_connected || !(_outboxIdentity.length == 0 || _needsLink))) openInput();
+            return;
+        }
+        var action = FcmCommand.virtualKeyCode(_cfg.hideKey) == keyCode ? _cfg.hideKey
+            : FcmCommand.virtualKeyCode(_cfg.activateLinkKey) == keyCode ? _cfg.activateLinkKey
+            : FcmCommand.virtualKeyCode(_cfg.channelNextKey) == keyCode ? _cfg.channelNextKey
+            : FcmCommand.virtualKeyCode(_cfg.channelPrevKey) == keyCode ? _cfg.channelPrevKey
+            : FcmCommand.physicalNavigationAction(keyCode,
+                _cfg.scrollUpKey, _cfg.scrollDownKey, _cfg.scrollBottomKey);
+        if (action.length == 0) return;
+        handleUserEvent(action, true);
+        handleUserEvent(action, false);
+    }
+
+    function stopOwnedHotkeys():Void {
+        if (_ownedHotkeyTimer != null) { _ownedHotkeyTimer.stop(); _ownedHotkeyTimer = null; }
+        if (_api != null) for (entry in _ownedHotkeys) try {
+            _api.call("hotkeys.v1.unregister", FcmZfeHotkeys.tokenPayload(VENDOR,
+                Reflect.field(entry, "registration")));
+        } catch (_:Dynamic) {}
+        _ownedHotkeys = [];
+        _ownedHotkeyCodes = [];
     }
 
     // =========================================================================
@@ -4283,6 +4369,9 @@ class FCMChatWidget extends MovieClip {
             keyCodes.push(_physicalOpenKey);
         }
         for (keyCode in keyCodes) {
+            // Current ZFE owns supported configured keys through hotkeys.v1. Keep Input.*
+            // only for xScal, legacy ZFE, and tokens the owner-scoped API cannot represent.
+            if (_ownedHotkeyCodes.indexOf(keyCode) >= 0) continue;
             try {
                 var registered:Bool = _api.registerPhysicalKey(keyCode);
                 zfeLog("info", "input", "physical key registration key=" + keyCode

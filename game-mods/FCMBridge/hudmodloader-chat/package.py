@@ -192,6 +192,8 @@ def install_instructions(
 
 FCMChatWidget version: {version}
 
+PRIVATE CONTROLLER-TEST BUILD - NATIVE UNVERIFIED - DO NOT REDISTRIBUTE.
+
 This archive installs the optional in-game HUD-mod track through HUDModLoader. It is
 separate from the desktop overlay; the desktop overlay is not required for HUD chat.
 {provider_intro}The BA2 works with the selected provider and connects to {label.lower()}.
@@ -323,6 +325,7 @@ def build_package(
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
+        archive.write(ROOT / "CONTROLLER-TEST-NOTICE.txt", "CONTROLLER-TEST-NOTICE.txt")
         archive.write(ROOT / "CUSTOMIZATION.txt", "CUSTOMIZATION.txt")
         archive.writestr("INSTALL.txt", install_instructions(target, provider, distribution))
         for notice in ("NOTICE.txt", "LICENSE-TWEMOJI.txt", "LICENSE-UNICODE.txt"):

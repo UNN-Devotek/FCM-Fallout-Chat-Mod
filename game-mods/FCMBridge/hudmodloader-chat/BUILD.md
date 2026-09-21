@@ -1,6 +1,10 @@
 # FCMChatWidget build, install, and verification
 
-**Widget version:** 2.10.117. This private candidate retains 2.10.116's Server transcript and
+**Widget version:** 2.10.117. CONTROLLER-TEST is an isolated, native-unverified build that adds
+capability-gated ZFE owner-scoped text input and configured hotkeys. xScal continues to poll every
+supported configured physical key through its documented `Input.*` API and uses SharedHUDTools
+for best-effort text entry. It is not approved for installation, publication, or promotion. It
+retains 2.10.116's Server transcript and
 bounded authenticated room diagnostics, and retains accepted Server rows in memory across room
 changes for the current widget/game session. Live authorization and sends still use only the
 current confirmed room; the existing message cap bounds the transcript. Fixed-enum lifecycle events are sent only on state
@@ -21,9 +25,20 @@ recovers a stable draft from transient empty SharedHUDTools observations. This i
 opt-in HUD-mod track. The desktop overlay never installs or modifies it.
 
 2.10.117 prefers ZFE's owner-scoped `input.v1` text session when both input and release-barrier
-capabilities are advertised. It retains SharedHUDTools only for older ZFE and xScal, rejects mixed
-provider installs, and remains native-unverified. Artifact hashes and final gate evidence must be
-recorded after rebuilding and testing; it is unpublished and unapproved for public distribution.
+capabilities are advertised and registers supported configured actions through `hotkeys.v1`. It
+retains SharedHUDTools for older ZFE and xScal, rejects mixed-provider installs, and remains
+native-unverified.
+
+The 2.10.117 CONTROLLER-TEST results and hashes are recorded in
+`CONTROLLER-TEST-MANIFEST.md`. The prior 2.10.116 complete Haxe/source/native-adapter/package/SWF/BA2/emoji gates passed, as did the
+complete 60-case Ruffle suite (4.2 minutes). The rebuilt one-entry BA2 was extracted and its SWF
+matched the normalized source artifact byte-for-byte. The reviewed prior 2.10.116 local artifacts are
+SWF SHA-256 `0a4affef053a5eabf66dd5c01eeabcc9acf93057898a5ed7c9356dece315ef51`
+(7,185,998 bytes) and BA2 SHA-256
+`240759e5346be7db746b59dd603fcf35276e59eaa7b0ed0225b6b1756df9b65d`
+(7,186,087 bytes). Private PROD Website and Nexus test packages are staged in Downloads. Version
+2.10.117 CONTROLLER-TEST has not been installed or natively accepted and remains unpublished and
+unapproved for public distribution.
 
 ## Status and scope
 
