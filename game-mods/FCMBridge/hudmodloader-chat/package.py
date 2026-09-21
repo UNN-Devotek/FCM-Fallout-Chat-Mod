@@ -90,10 +90,9 @@ def install_instructions(
             "  Linux/Proton: use the manual edit above; the helper is Windows-only.\n"
         )
     else:
-        xscal_files = "   DOWNLOAD-XSCAL-SETUP-HELPERS.txt\n"
+        xscal_files = ""
         xscal_helper = (
-            "  This Nexus archive omits executable and script files. Use the manual edit above.\n"
-            "  DOWNLOAD-XSCAL-SETUP-HELPERS.txt explains where the optional website helper is found.\n"
+            "  This Nexus archive uses the manual edit above and contains no setup scripts.\n"
         )
 
     zfe_fragment = (
@@ -119,13 +118,15 @@ def install_instructions(
         f"Z1. {zfe_copy.strip()}{zfe_destination_note}\n"
         "Z2. The fragment supplies the relay endpoint and startup OpenChatKey.\n"
         "    Data/FCMChat.ini openKey becomes authoritative after discovery.\n"
-        "Z3. If Data/configuration/zfe.ini already has [TextChat], merge these values\n"
-        "    into that section; do not replace the file or duplicate the section:\n\n"
+        "Z3. Data/configuration/zfe.ini is optional. A DLL-only ZFE install may not\n"
+        "    create that folder or file. The packaged fragment is sufficient. Only if\n"
+        "    you want a user-wide override, create or merge one [TextChat] section:\n\n"
         "  [TextChat]\n"
         f"  Endpoint={endpoint}\n"
         "  OpenChatKey=INSERT\n\n"
         f"{zfe_example_note}"
-        "Z4. Do not install xscal.ini. Restart Fallout 76, press F11, and confirm\n"
+        "Z4. Do not install xscal.ini or leave xScal installed beside ZFE. Restart\n"
+        "    Fallout 76, press F11, and confirm\n"
         "    FCM reports ZFE before linking the displayed code.\n"
     )
     xscal_setup = (
@@ -141,7 +142,7 @@ def install_instructions(
         f"{xscal_helper}"
         "X3. xScal has no OpenChatKey setting. Data/FCMChat.ini openKey is mapped\n"
         "    through xScal Input.*; see KEYBINDS.txt.\n"
-        "X4. Do not install the ZFE fragment or create Data/ZFE folders. Restart\n"
+        "X4. Do not install ZFE, its fragment, or Data/ZFE folders. Restart\n"
         "    Fallout 76, press F11, and confirm FCM reports xScal before linking.\n"
     )
 
@@ -276,22 +277,6 @@ def xscal_config_example(target: str) -> str:
     )
 
 
-def nexus_helper_download(target: str) -> str:
-    """Point Nexus users to the website ZIP that may contain setup scripts."""
-    version = widget_version()
-    host = "dev.falloutchatmod.com" if target == "dev" else "falloutchatmod.com"
-    label = "DEV" if target == "dev" else "PROD"
-    filename = f"FCM HUD Mod-{version} ({label}).zip".replace(" ", "%20")
-    return (
-        "Fallout Chat Mod - optional xScal setup helpers\n"
-        "=================================================\n\n"
-        "Executable and script files are never bundled in the Nexus HUD archive.\n"
-        "Download the website HUD ZIP if you want the optional Windows helpers:\n\n"
-        f"https://{host}/downloads/electron/{filename}\n\n"
-        "Manual xScal setup is documented in INSTALL.txt and needs no helper.\n"
-    )
-
-
 def assert_nexus_archive_safe(output: Path) -> None:
     """Fail closed when a Nexus HUD ZIP contains executable/script entries."""
     with ZipFile(output) as archive:
@@ -423,11 +408,6 @@ def build_package(
                 archive.writestr("Enable-xScal-Chat.cmd",
                     '@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Enable-xScal-Chat.ps1"\r\n'
                     'set "fcmExitCode=%errorlevel%"\r\npause\r\nexit /b %fcmExitCode%\r\n')
-            else:
-                archive.writestr(
-                    "DOWNLOAD-XSCAL-SETUP-HELPERS.txt",
-                    nexus_helper_download(target),
-                )
         archive.write(widget_artifact, "Data/FCMChatWidget.ba2")
         archive.writestr("Data/FCMChat.ini", chat_ini)
         archive.write(ROOT / "KEYBINDS.txt", "KEYBINDS.txt")

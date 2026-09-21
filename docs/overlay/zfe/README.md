@@ -7,9 +7,9 @@ must not add game-memory reads, code injection, or network/port scanning.
 
 ## Current implementation and verification
 
-**Background bridge 0.2.4 source candidate:** retains 0.2.3's validated local-export path and
+**Background bridge 0.2.6 source candidate:** retains 0.2.4's local-export path and
 prefers the roster-visible local name for `ownName`, with AccountInfo as fallback. It is
-native-unverified and not installed; the laptop retains the accepted 0.2.3 build. The bridge replaces native networking/linking
+native-unverified and not installed. The bridge replaces native networking/linking
 with provider-scoped local exports. Sign into the overlay only. Visible HUD native
 authentication stays unchanged; both paths share canonical Server rooms/history
 across ZFE/xScal. Full mixed-client and native storage acceptance is required;
@@ -26,7 +26,7 @@ data. 0.2.3 reuses `FcmJson` for runtime-info/write acknowledgements and forbids
 exports and the user reported it working. Full mixed-client shared-room/message/travel
 acceptance remains pending; the overlay log did not independently confirm room assignment.
 
-**Visible HUD 2.10.116 private candidate:** retains 2.10.115's session transcript and reserves
+**Visible HUD 2.10.117 private candidate:** retains 2.10.116's session transcript and reserves
 Enter for text submission. Selected-link activation defaults to F8, and transient empty
 SharedHUDTools samples no longer erase the stable draft. It keeps accepted
 Server rows as bounded in-memory history across every room visited during the current widget/game
@@ -41,10 +41,11 @@ sightings and room gates are unchanged. It adds capability-gated, transition-onl
 room diagnostics with no player names, roster contents, messages, raw identifiers or tokens.
 Native acceptance remains pending. 2.10.110 remains the current public release.
 
-The 2.10.116 complete 60-case Ruffle and local Haxe/compiler/source/artifact/package gates pass;
-native acceptance is pending. The exact older 2.10.114 BA2 and version marker remain installed on the desktop with a recoverable backup;
-provider, settings and loader files are unchanged. It is not natively accepted. No public release
-or backend deployment was performed for this candidate.
+2.10.117 adds capability-gated ZFE owner-scoped text input for keyboard use while a controller is
+connected and rejects mixed ZFE/xScal installs. Bridge 0.2.6 removes every menu, hotkey, editor,
+SharedHUDTools, and HUD user-event dependency. Pure Haxe, package, and the complete 64-scenario
+Ruffle matrix pass; native acceptance is pending. No
+public release, local install, or backend deployment has been performed for these candidates.
 
 **Current production HUD release (2026-09-16):** visible FCMChatWidget **2.10.110** reapplies an authoritative
 supporter projection to retained rows from the same authenticated sender IDs, fixing old feed rows
@@ -76,7 +77,7 @@ initial binding, one message echo and retained history through same-world fast t
 xScal and laptop acceptance remained pending for that build. The previously
 installed **0.1.6** failed (`payload E1014` on four sources, `test provider` on two, no roster).
 Do not transfer visible-HUD acceptance or publication status to the background bridge.
-The background bridge remains unpublished and separate; its current 0.2.3 status is above.
+The background bridge remains unpublished and separate; its current 0.2.6 candidate status is above.
 The visible widget is published as 2.10.110; its startup, Server-send/echo and same-room travel
 evidence is recorded in the [release record](../../deployment/hud-2.10.110-release-notes.md).
 See [bridge architecture](background-server-bridge.md) and the [test gate](../../testing/hud-automation-plan.md#isolated-packaged-bridge-gate).
@@ -114,7 +115,8 @@ coverage from remaining native checks. See
 | Background HUDModLoader mod for desktop Server chat | [Background bridge implementation and acceptance](background-server-bridge.md) |
 
 The separate [FCMServerBridge candidate](background-server-bridge.md) uses HUDModLoader
-and a storage-only adapter. Its loader menu shows cached export status, not a login.
+and a storage-only adapter. It has no loader menu, hotkey, or input listener; status is exported
+to the overlay and written as privacy-safe provider diagnostics.
 The overlay authenticates observations from its own local game; another device's HUD
 link never grants access. Backend confirmation, not file presence, enables Server.
 
@@ -299,8 +301,8 @@ available; migration to `hotkeys.v1.*` is not implemented in 2.10.85 and needs s
 | --- | --- | --- |
 | Shared package | One provider-neutral `FCMChatWidget.ba2` | Same BA2 |
 | Provider selection | Validated only when no supported xScal chat surface is active | Preferred when its required `chatInterface` methods validate |
-| Primary visible editor | SharedHUDTools `TextEdit` | SharedHUDTools `TextEdit` |
-| Native editor fallback | Legacy ZFE buffer only after SharedHUDTools fails to open | Never receives ZFE-only input calls |
+| Primary visible editor | Owner-scoped `input.v1.begin/poll/end` when both input capabilities are advertised | SharedHUDTools `TextEdit` |
+| Compatibility fallback | SharedHUDTools, then the legacy ZFE buffer on older builds | Never receives ZFE-only input calls |
 | Multi-character typing | Focused public field has selection/caret enabled | Same shared field rule |
 | Missing submit callback | Enter draft recovered once after 225 ms; other focus loss cancels | Same shared recovery rule |
 | Delete while typing | Deletes characters; an optional Delete hide binding is suspended | Same shared priority rule |
@@ -366,8 +368,9 @@ That 0.1.15 result remains historical in-game evidence. Nexus xScal 0.2.16 targe
 exercise 0.2.16. Fresh 1.7.26.10 in-game acceptance is still required before promoting that static
 and simulated compatibility result to native acceptance.
 
-Channel and scroll bindings always come from `FCMChat.ini`. Both providers use the visible
-SharedHUDTools editor; only ZFE can use the native draft buffer as a fallback. Provider acceptance
+Channel and scroll bindings always come from `FCMChat.ini`. Current ZFE builds use owner-scoped
+`input.v1` sessions with raw suppression and a stable release barrier; older ZFE and xScal use
+SharedHUDTools, and only ZFE can use the legacy native draft buffer afterward. Provider acceptance
 must verify Insert opens one visible editor, `hello` remains five characters, Page Up/Down switch
 channels only during the owned edit, Escape cancels, and Enter submits once. If the host editor
 loses focus without its callback, the widget waits 225 ms, recovers an Enter submission once, or
@@ -406,9 +409,11 @@ HUD mode. These changes affect the visible HUD widget on both providers, not the
 or background bridge. Updating the INI adds mode coverage; fixing sticky manual hide also requires
 the rebuilt widget `.ba2`. Source/test candidate only until native acceptance and release.
 
-Both providers use the host's SharedHUDTools editor first. The widget does not dispatch its own
-ControlMap lock events. A legacy ZFE editor fallback has different ownership guarantees and must
-not be described as the public owner-scoped text-session API.
+Current ZFE builds use `input.v1.begin/poll/end` when both `zfe-input-v1` and
+`zfe-input-release-v1` are advertised. The widget retains the opaque token, polls every 40 ms,
+requires raw suppression and a stable release barrier, and ends its session on every terminal
+path. SharedHUDTools remains the compatibility fallback and the xScal editor. The widget does not
+dispatch its own ControlMap lock events.
 
 F11 → FCM → Customize controls panel/input dimensions, text sizes, backgrounds, text colors,
 opacity, position, and auto-hide. Input width/alignment follow the panel. Channel tags/colors,
@@ -422,8 +427,9 @@ Use `package.py` with an explicit `--target dev|prod`, `--provider unified|zfe|x
 A generated filename is not proof of which endpoint the game loaded.
 
 The modern ZFE fragment is `Data/ZFE/TextChat/fragments/FCMChatWidget.ini`; `FCM.ini` belongs to
-the legacy standalone build. A global `Data/configuration/zfe.ini` `[TextChat]` override wins over
-the fragment. xScal uses `[Chat] enabled=true` and `relayEndpoint` in `xscal.ini` beside the game
+the legacy standalone build. A DLL-only ZFE install is normal. The global
+`Data/configuration/zfe.ini` file is an optional user override that may be created when needed;
+its `[TextChat]` values win over the fragment. xScal uses `[Chat] enabled=true` and `relayEndpoint` in `xscal.ini` beside the game
 executable. Merge existing sections, loader registrations, and archive lists; never replace
 unrelated settings. Install only the selected provider's configuration and restart the game
 after changing a BA2 or native extender configuration.

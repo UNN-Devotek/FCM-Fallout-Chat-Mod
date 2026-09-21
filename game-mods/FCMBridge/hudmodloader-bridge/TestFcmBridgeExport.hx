@@ -52,10 +52,16 @@ class TestFcmBridgeExport {
         var unused = {call:function(_:String, _:String):String { legacyCalls++; return ""; }};
         check(FcmBridgeStorage.discover({BRG_OBJ:unused, parent:{__ZFE:raw}}, "dev") != null && legacyCalls == 0,
             "modern API on parent wins before local legacy fallback");
-        var preferred = FcmBridgeStorage.discover({BRG_OBJ:unused,__SFCodeObj:{version:{runtime:"xScal"},modStorage:{
+        var preferred = FcmBridgeStorage.discover({__SFCodeObj:{version:{runtime:"xScal"},modStorage:{
             register:function(_:String):Bool return true, save:function(_:String):Bool return true
         }}}, "dev");
-        check(preferred != null && preferred.provider == "xscal" && legacyCalls == 0, "xScal priority is unchanged");
+        check(preferred != null && preferred.provider == "xscal", "single xScal provider is accepted");
+        var conflict = FcmBridgeStorage.discover({BRG_OBJ:raw,__SFCodeObj:{version:{runtime:"xScal"},modStorage:{
+            register:function(_:String):Bool return true, save:function(_:String):Bool return true
+        }}}, "dev");
+        check(conflict == null && FcmBridgeStorage.diagnostic == "provider conflict",
+            "simultaneous ZFE and xScal providers fail closed");
+
     }
     static function main():Void {
         boundedResponses();
@@ -98,6 +104,24 @@ class TestFcmBridgeExport {
             save:function(text:String):Bool { stored = text; return true; }
         }}, "dev");
         check(api != null && registered == "fcmserverbridge-dev" && api.save("{}") && stored == "{}", "xScal direct storage contract");
+        var namedName = "";
+        var namedDocument = "";
+        var namedApi = FcmBridgeStorage.xscal({version:{runtime:"xScal",value:"0.2.17"}, modStorage:{
+            load:function(_:String):Dynamic return false,
+            save:function(name:String, text:String):Bool { namedName = name; namedDocument = text; return true; }
+        }}, "prod");
+        check(namedApi != null && namedApi.route == "namedModStorage"
+            && namedApi.save("{\"ok\":true}") && namedName == "fcmserverbridge-prod"
+            && namedDocument == "{\"ok\":true}",
+            "xScal 0.2.17 named storage works without a registration function");
+        var oldRegistered = 0;
+        var oldApi = FcmBridgeStorage.xscal({version:{runtime:"xScal",value:"0.2.16"}, modStorage:{
+            register:function(_:String):Bool { oldRegistered++; return true; },
+            load:function():Dynamic return false,
+            save:function(_:String):Bool return true
+        }}, "prod");
+        check(oldApi != null && oldApi.route == "modStorage" && oldRegistered == 1,
+            "xScal 0.2.16 retains legacy registered storage behavior");
         check(FcmBridgeStorage.xscal({modStorage:{}}, "dev") == null, "unidentified API rejected");
         check(FcmBridgeStorage.xscal({version:{runtime:"xScal"},modStorage:{register:function(_:String):Bool return false,save:function(_:String):Bool return true}}, "dev") == null,
             "failed registration rejected");

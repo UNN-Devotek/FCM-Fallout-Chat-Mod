@@ -1,6 +1,6 @@
 # FCMChatWidget build, install, and verification
 
-**Widget version:** 2.10.116. This private candidate retains 2.10.115's Server transcript and
+**Widget version:** 2.10.117. This private candidate retains 2.10.116's Server transcript and
 bounded authenticated room diagnostics, and retains accepted Server rows in memory across room
 changes for the current widget/game session. Live authorization and sends still use only the
 current confirmed room; the existing message cap bounds the transcript. Fixed-enum lifecycle events are sent only on state
@@ -20,15 +20,10 @@ It reserves Enter for text submission, moves selected-link activation to F8 by d
 recovers a stable draft from transient empty SharedHUDTools observations. This is the explicit
 opt-in HUD-mod track. The desktop overlay never installs or modifies it.
 
-The 2.10.116 complete Haxe/source/native-adapter/package/SWF/BA2/emoji gates pass, as does the
-complete 60-case Ruffle suite (4.2 minutes). The rebuilt one-entry BA2 was extracted and its SWF
-matched the normalized source artifact byte-for-byte. The reviewed 2.10.116 local artifacts are
-SWF SHA-256 `0a4affef053a5eabf66dd5c01eeabcc9acf93057898a5ed7c9356dece315ef51`
-(7,185,998 bytes) and BA2 SHA-256
-`240759e5346be7db746b59dd603fcf35276e59eaa7b0ed0225b6b1756df9b65d`
-(7,186,087 bytes). Private PROD Website and Nexus test packages are staged in Downloads. Version
-2.10.116 has not been installed or natively accepted and remains unpublished and unapproved for
-public distribution.
+2.10.117 prefers ZFE's owner-scoped `input.v1` text session when both input and release-barrier
+capabilities are advertised. It retains SharedHUDTools only for older ZFE and xScal, rejects mixed
+provider installs, and remains native-unverified. Artifact hashes and final gate evidence must be
+recorded after rebuilding and testing; it is unpublished and unapproved for public distribution.
 
 ## Status and scope
 
@@ -274,7 +269,7 @@ configuration is not deployment authorization or proof that the endpoint is enab
 The packager checks the embedded version and target stamps. Validate the ZIP's BA2 against the
 reviewed BA2 bytes and inspect its install files. Nexus distribution omits executable/script
 files and rejects executable magic. Website ZIPs may contain optional Windows xScal setup helpers;
-xScal/unified Nexus variants get a helper-download note; ZFE-only variants do not need it. No extender DLL is redistributed.
+Nexus variants contain manual xScal instructions only and do not direct users to an external helper download. No extender DLL is redistributed.
 
 ## Configuration and install layout
 
@@ -289,7 +284,8 @@ keybind, customization, and emoji-license files. They do not replace `Data/hudmo
 | xScal | `xscal.ini.example`, merged into `[Chat]` beside `Fallout76.exe` |
 
 The modern ZFE fragment name matches the `FCMChatWidget` loader entry. The legacy `FCM.ini`
-fragment is not its replacement. `Data/configuration/zfe.ini` `[TextChat]` overrides fragment
+fragment is not its replacement. A DLL-only ZFE install is normal. The optional user-created
+`Data/configuration/zfe.ini` `[TextChat]` section overrides fragment
 keys, including endpoint and `OpenChatKey`. Keep `Data/FCMChat.ini` `openKey` aligned. xScal uses
 `[Chat] enabled=true` and `relayEndpoint=wss://<target>/relay`; it has no `OpenChatKey` config.
 The route is `/relay`, never `/zfe-relay`.
@@ -309,8 +305,10 @@ Reload alone can refresh widget settings but does not reload the extender's conf
 
 ## Input, fonts, and customization
 
-Both providers use SharedHUDTools first; its host editor owns the balanced game-control lock.
-A legacy ZFE fallback is separate from public `input.v1.*`. Named HUD actions and physical key
+Current ZFE builds use owner-scoped `input.v1.begin/poll/end` when both input and release
+capabilities are advertised. The widget polls every 40 ms and requires raw suppression plus a
+stable release barrier. SharedHUDTools remains the older-ZFE fallback and the xScal editor; the
+legacy ZFE buffer is last. Named HUD actions and physical key
 polling share navigation handling, with guards keyed by normalized action name. Different aliases
 can have separate latch keys; validate simultaneous named/physical delivery in-game. The shipped
 navigation map is `NextPage`/`PrevPage` for Page Up/Down, `Up`/`Down` for feed scrolling, and

@@ -5,8 +5,8 @@ to the local desktop overlay. Sign into the overlay ONLY. There is no bridge
 login, code, pairing, network connection, or extra service.
 
 PREREQUISITES
-HUDModLoader plus one supported extender: ZFE with zfe-storage-v1, or xScal with
-__SFCodeObj.version.runtime == xScal and modStorage.register/save. These are
+HUDModLoader plus one supported extender: ZFE with zfe-storage-v1, or xScal
+0.2.17 or newer with named modStorage.load/save. These are
 separate downloads. The visible FCM HUD and legacy FCMBridge must not coexist
 with this background bridge. The default overlay does not install any mods.
 
@@ -14,31 +14,40 @@ CHOOSE ONE INSTALL PATH (FALLOUT 76 MUST BE CLOSED)
 
 ZFE INSTALL
 -----------
-1. Install HUDModLoader and ZFE with the zfe-storage-v1 capability.
+1. Install HUDModLoader and exactly one extender: ZFE with the zfe-storage-v1
+   capability. A normal ZFE install may contain only dxgi.dll at first; ZFE's
+   feature-specific Data folders are not proof of installation.
 2. Back up the files below, then copy Data/FCMServerBridge.ba2 into the game's
    Data directory.
 3. Add FCMServerBridge once to Data/hudmodloader.ini. Preserve every existing
    entry; FCMServerBridge.hudmodloader.ini is a snippet, not a replacement.
 4. Append FCMServerBridge.ba2 once to [Archive] sResourceArchive2List in the
    active Fallout76Custom.ini. Preserve HUDModLoader.ba2 and unrelated archives.
-5. If an obsolete Data/ZFE/TextChat/fragments/FCMServerBridge.ini exists, back
-   up and remove only that bridge fragment. Do not alter shared ZFE settings.
-6. Start the signed-in {target} overlay for https://{host}, launch Fallout 76,
-   enter a world, then check F11 -> FCM Server Bridge for ZFE export status.
+5. Do not install falloutchatmod.ini, a TextChat fragment, a relay endpoint, or
+   zfe.ini for the bridge. If an obsolete FCMServerBridge TextChat fragment
+   exists, back up and remove only that fragment.
+6. Remove xScal if it is installed. Start the signed-in {target} overlay for
+   https://{host}, launch Fallout 76, and enter a public world. The overlay
+   exposes Server automatically after fresh exports are confirmed.
 
 XSCAL INSTALL
 -------------
-1. Install HUDModLoader and xScal with modStorage.register/save support.
+1. Install HUDModLoader and exactly one extender: xScal 0.2.17 or newer. This
+   version provides named load(name) and save(name, document) storage so the
+   bridge can coexist with other storage users such as Improved HUD.
 2. Back up the files below, then copy Data/FCMServerBridge.ba2 into the game's
    Data directory.
 3. Add FCMServerBridge once to Data/hudmodloader.ini. Preserve every existing
    entry; FCMServerBridge.hudmodloader.ini is a snippet, not a replacement.
 4. Append FCMServerBridge.ba2 once to [Archive] sResourceArchive2List in the
    active Fallout76Custom.ini. Preserve HUDModLoader.ba2 and unrelated archives.
-5. Do not create a ZFE fragment or configure a relay endpoint. The bridge uses
-   xScal storage directly and has no separate login.
+5. Do not install ZFE, create a ZFE fragment, configure a relay endpoint, or
+   create zfe.ini. The bridge uses
+   xScal storage directly under fcmserverbridge-{target_lower} and has no
+   separate login. It never registers or reads another mod's storage name.
 6. Start the signed-in {target} overlay for https://{host}, launch Fallout 76,
-   enter a world, then check F11 -> FCM Server Bridge for xScal export status.
+   and enter a public world. The overlay exposes Server automatically after
+   fresh exports are confirmed.
 
 Fallout76Custom.ini is normally in Documents/My Games/Fallout 76 on Windows
 (including redirected Documents) or the matching Proton prefix directory.
@@ -51,11 +60,11 @@ game files. Steam Windows/Linux-Proton are the current native test targets;
 Game Pass is not yet certified.
 
 STATUS / CHAT
-F11 -> FCM Server Bridge reports provider, export/storage status and cached
-roster diagnostics. Refresh bridge observations retries discovery on a later
-tick; it does not connect to a relay. Exporting is NOT proof of backend room
-confirmation. Server appears in the overlay only after authenticated backend
-confirmation. Party remains a separate overlay feature.
+The bridge is input-silent: it registers no HUDModLoader menu, hotkey, editor,
+or HUDMod::UserEvent listener. Provider/export status is written only through
+the scoped export and privacy-safe provider logs. Exporting is NOT proof of
+backend room confirmation. Server appears in the overlay only after authenticated
+backend confirmation. Party remains a separate overlay feature.
 
 HUD users and bridge-plus-overlay users share the SAME Server room, history and
 message IDs when mutual roster evidence establishes the same world, irrespective
@@ -71,7 +80,8 @@ Server: the overlay requires advancing fresh snapshots after attaching.
 Dev and Prod use separate files and backend environments.
 
 TROUBLESHOOTING
-- No menu: check archive path, loader registry and active custom INI precedence.
+- No export: check archive path, loader registry and active custom INI precedence.
+- Provider conflict: remove either ZFE or xScal; exactly one may be installed.
 - Scoped storage required: update the selected official extender; the bridge
   does not fall back to native chat or a separate login.
 - Storage unavailable: check provider-supported storage permissions. Export

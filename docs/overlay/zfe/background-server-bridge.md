@@ -1,7 +1,15 @@
 # Drop-in Server bridge: one room across HUD and overlay
 
-Current source candidate: **FCMServerBridge 0.2.4**, native-unverified and not installed.
-The laptop retains 0.2.3, whose native ZFE export recovery was verified on 2026-09-17.
+Current packaged candidate: **FCMServerBridge 0.2.6**, native-unverified and not installed.
+0.2.6 is fully input-silent: it registers no SharedHUDTools instance, loader menu, hotkey,
+editor, or `HUDMod::UserEvent` listener. Provider/export status remains available through the
+scoped export and privacy-safe provider logs. Mixed ZFE/xScal installs fail closed.
+The PROD candidate BA2 SHA-256 is
+`6a2bdb18ee53fc5be3c69a7842d246dca665bdb55cabfacd2844a100bcff9495`; its package and complete
+Ruffle provider matrix pass. This is automated evidence only, not native acceptance.
+The earlier laptop 0.2.3 native ZFE export recovery was verified on 2026-09-17; that evidence
+does not accept the rebuilt 0.2.6 artifact. Provider discovery is now strictly read-only:
+the bridge never creates or repairs xScal's provider-owned `__SFCodeObj` callback surface.
 0.2.4 selects a fresh local-player name from the same accepted roster source for exported
 `ownName`, falling back to `AccountInfoData`. This changes grouping evidence only; overlay
 authentication and account attribution remain authoritative. Full mixed-client
@@ -12,10 +20,9 @@ and write acknowledgements. `success:true`, the storage capability and `status:s
 remain required at their respective boundaries; malformed/oversized replies fail closed.
 No visible HUD, roster or authentication architecture changes are needed for this correction.
 The laptop 0.2.1 attempt still reported provider pending and no confirmed storage route.
-0.2.2 adds cached `Storage probe` and `Last failure` menu rows, separating discovery,
-native-call, JSON-parse and capability rejection from preceding lifecycle errors. These
-contain fixed labels and numeric error IDs only; no raw payloads or extra native calls.
-Last failure is historical until movie reload, not a current health indicator. Keep all
+0.2.6 reports discovery, native-call, JSON-parse, capability, and lifecycle failures only through
+the scoped export and privacy-safe provider logs. These contain fixed reasons and numeric error
+IDs only; no raw payloads or extra native calls. Keep all
 capability/readiness checks and the existing visible-HUD architecture unchanged.
 Desktop/xScal remains on 0.2.0 while the ZFE fallback is tested.
 See [checks, deployment and installed hashes](../../testing/bridge-drop-in-acceptance-2026-09-16.md).
@@ -36,13 +43,21 @@ pairing operation, helper process or extra service. Follow the package
 Never coinstall the visible widget, legacy FCMBridge and background bridge.
 
 ZFE requires `zfe-storage-v1`; xScal requires its runtime marker and callable
-`modStorage.register/save`. Neither bridge adapter connects to native chat or
+named `modStorage.load(name)` / `save(name, document)` on xScal 0.2.17 or newer,
+with the registered `modStorage` contract retained only for older xScal builds.
+Named storage allows the bridge and another HUDModLoader child such as Improved
+HUD to keep independent JSON documents. The bridge writes only
+`fcmserverbridge-dev` or `fcmserverbridge-prod` and never calls `register()` on
+0.2.17+. The visible FCM HUD does not use modStorage at all. Neither bridge adapter connects to native chat or
 consumes its event queue. The visible HUD retains existing native authentication.
+For ZFE, a DLL-only installation is normal. The bridge does not use or require
+`falloutchatmod.ini`, a TextChat fragment, a relay endpoint, or `zfe.ini`; do not create those
+files for the bridge. Install exactly one provider.
 0.2.1 also checks ZFE's legacy `BRG_OBJ.call` fallback, after the modern aliases,
 on the scope/parents/movie root/global. It must positively advertise `zfe-storage-v1`;
 missing, malformed, failed or throwing probes never enable writes. This restores
 discovery compatibility with the existing HUD without reusing its chat/auth APIs.
-The loader menu's `Storage route` identifies the confirmed alias; it is not evidence
+The privacy-safe storage diagnostic identifies the confirmed alias; it is not evidence
 of a successful write or backend room confirmation by itself.
 
 The optional mod is explicit opt-in. The overlay never installs it, edits game files,

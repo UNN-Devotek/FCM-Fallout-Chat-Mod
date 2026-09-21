@@ -73,6 +73,27 @@ test('isolated host cannot link production helpers and tests exact packaged byte
   }
 });
 
+test('packaged bridge is input and loader-menu silent', async () => {
+  const source = await readFile(new URL('../../../hudmodloader-bridge/FCMServerBridge.hx', import.meta.url), 'utf8');
+  const bytes = await readFile(new URL('../public/FCMServerBridge.swf', import.meta.url));
+  for (const forbidden of ['SharedHUDTools', 'HUDMod::UserEvent', 'ShowMenu', 'CloseMenu']) {
+    expect(source, forbidden).not.toContain(forbidden);
+    expect(bytes.includes(Buffer.from(forbidden)), forbidden).toBe(false);
+  }
+});
+
+test('packaged bridge leaves the xScal callback name untouched until xScal attaches', async ({ page }) => {
+  await page.route('**/*', route => new URL(route.request().url()).origin === 'http://127.0.0.1:41739'
+    ? route.continue() : route.abort());
+  const snapshot = () => page.evaluate(() => window.__FCM_SIM__?.packaged('snapshot'));
+  await page.goto('/?mode=packaged-bridge&provider=xscal&scenario=packaged-xscal-late');
+  await expect.poll(async () => pollCount(await snapshot()), { timeout: 15_000 }).toBeGreaterThan(5);
+  expect(await snapshot()).toMatchObject({ active: false, registered: false, stageProviderReserved: false, violation: false });
+  await page.evaluate(() => window.__FCM_SIM__?.packaged('storage-capability'));
+  await expect.poll(snapshot, { timeout: 15_000 }).toMatchObject({ active: true, registered: true,
+    stageProviderReserved: false, violation: false });
+});
+
 for (const provider of ['xscal', 'zfe']) {
   for (const boundary of ['getter', 'subscribe']) {
     test(`unload inside native ${boundary} stops ${provider} polling, subscriptions and exports`, async ({ page }) => {
@@ -119,6 +140,11 @@ for (const provider of ['xscal', 'zfe']) {
     await expect.poll(snapshot, { timeout: 15_000 }).toMatchObject({ isolated: true, registered: true,
       active: true, controls: 1, subscriptions: 8, acceptedNames: true, violation: false,
       snapshot: { schemaVersion: 1, environment: 'dev', provider, state: 'active', ownName: 'HarnessSelf', names: ['PeerA', 'PeerB'] } });
+    if (provider === 'xscal') {
+      const named = await snapshot() as { registerCalls: number; namedWrites: number };
+      expect(named.registerCalls).toBe(0);
+      expect(named.namedWrites).toBeGreaterThan(0);
+    }
     await page.evaluate(() => window.__FCM_SIM__?.packaged('loading'));
     // Wait for real production poll ticks, not private-state calls or patched clocks.
     const before: unknown = await snapshot();

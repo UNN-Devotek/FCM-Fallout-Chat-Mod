@@ -8,7 +8,7 @@ import flash.utils.Timer;
 class FCMServerBridge extends MovieClip {
     public static inline var VERSION:String = FcmBridgeExport.VERSION;
     public var fcmServerBridgeMarker:Bool = true;
-    /** Read-only diagnostics for the loader menu and isolated artifact harness. */
+    /** Read-only diagnostics for provider logs, exports, and the isolated artifact harness. */
     public function storageDiagnostic():String return FcmBridgeStorage.diagnostic;
     public var lastFailure(default, null):String = "none";
     var tickPhase:String = "startup";
@@ -16,7 +16,6 @@ class FCMServerBridge extends MovieClip {
     var exporter:FcmBridgeExport;
     static inline var ENVIRONMENT:String = #if bridge_dev "dev" #else "prod" #end;
     var manager:Dynamic = null;
-    var hudTools:Dynamic = null;
     var timer:Timer;
     var state:FcmBridgeState;
     var rosterReader:FcmHudRosterReader = new FcmHudRosterReader();
@@ -28,8 +27,6 @@ class FCMServerBridge extends MovieClip {
     var status:String = "Waiting for scoped storage provider";
     var nextProvider:Float = 0;
     var nextWorld:Float = 0;
-    var menuDown:Bool = false;
-    var eventStage:Dynamic = null;
     var tickBusy:Bool = false;
     var refreshRequested:Bool = false;
     var identityChanged:Bool = false;
@@ -52,60 +49,9 @@ class FCMServerBridge extends MovieClip {
         timer = new Timer(500);
         timer.addEventListener(TimerEvent.TIMER, tick);
         timer.start();
-        eventStage = stage;
-        if (eventStage != null) eventStage.addEventListener("HUDMod::UserEvent", menuKey);
-    }
-    function menuKey(event:Dynamic):Void {
-        if (disposed || hudTools == null) return;
-        try {
-            var action = FcmUserEvent.action(event);
-            // DiagnosticSnapshot is already handled by upstream HUDTools. These
-            // aliases cover loaders that forward an explicit menu action instead.
-            if (action != "F11" && action != "HUDModMenu" && action != "HUDModLoaderMenu") return;
-            var down = FcmUserEvent.isDown(event);
-            if (down && !menuDown) {
-                if (hudTools.isActive == true) hudTools.CloseMenu(); else hudTools.ShowMenu();
-            }
-            menuDown = down;
-        } catch (_:Dynamic) {}
     }
     static function field(value:Dynamic, key:String):Dynamic { return FcmRoster.field(value, key); }
     static function text(value:Dynamic):String { return value == null ? "" : Std.string(value); }
-    function registerMenu():Void {
-        if (hudTools != null) return;
-        try {
-            var cls:Dynamic = untyped __global__["flash.utils.getDefinitionByName"]("SharedHUDTools");
-            hudTools = untyped __new__(cls, "FCM Server Bridge", "All");
-            hudTools.Register(function(_:String, _:String):Void {});
-            hudTools.RegisterMenu(function(_:String):Void {
-                if (disposed) return;
-                try {
-                    // HUDTools uses commas/semicolons as delimiters. Labels are fixed or sanitized.
-                    hudTools.AddMenuItem("status", status, false);
-                    hudTools.AddMenuItem("build", "Bridge " + VERSION + " - " + (api == null ? "provider pending" : api.provider), false);
-                    hudTools.AddMenuItem("storageRoute", "Storage route - " + (api == null ? "not confirmed" : api.route), false);
-                    hudTools.AddMenuItem("storageProbe", "Storage probe - " + storageDiagnostic(), false);
-                    hudTools.AddMenuItem("lastFailure", "Last failure - " + lastFailure, false);
-                    hudTools.AddMenuItem("subscriptions", "Subscriptions - " + callbacks.length + " of 8"
-                        + (subscriptionError == "" ? "" : " " + subscriptionError), false);
-                    hudTools.AddMenuItem("missingClass", "Missing class - " + state.missingClass, false);
-                    var detailIndex = 0;
-                    for (line in state.diagnostics(flash.Lib.getTimer()))
-                        hudTools.AddMenuItem("detail" + detailIndex++, line, false);
-                    hudTools.AddMenuItem("environment", "Overlay target - " + ENVIRONMENT, false);
-                    hudTools.AddMenuItem("retry", "Refresh bridge observations", true, false, 500);
-                } catch (_:Dynamic) {}
-            }, function(item:String):Void {
-                if (disposed || item != "retry") return;
-                // HUDTools invokes this from its data-dispatch stack. Never enter
-                // a native disconnect/join here. Repeated clicks coalesce into one tick.
-                refreshRequested = true;
-            });
-        } catch (_:Dynamic) {
-            if (hudTools != null) try { hudTools.Shutdown(); } catch (_:Dynamic) {}
-            hudTools = null;
-        }
-    }
     /** Bounded display-tree inspection of FCM markers only; no native modules or game memory. */
     function competingMod():Bool {
         if (stage == null) return false;
@@ -282,9 +228,6 @@ class FCMServerBridge extends MovieClip {
                 refreshRequested = false; nextProvider = 0; nextWorld = 0;
                 status = "Refreshing bridge observations";
             }
-            tickPhase = "loader menu";
-            registerMenu();
-            if (disposed) return;
             if (now >= nextWorld) {
                 nextWorld = now + 2000;
                 tickPhase = "conflict check";
@@ -308,7 +251,10 @@ class FCMServerBridge extends MovieClip {
                 if (disposed) return;
                 api = discovered;
             }
-            if (api == null) { status = "Update extender - scoped storage required"; return; }
+            if (api == null) {
+                status = "Update extender - scoped storage required";
+                return;
+            }
             tickPhase = "export";
             exportState(now, false, sampled);
         } catch (error:Dynamic) {
@@ -326,11 +272,8 @@ class FCMServerBridge extends MovieClip {
         if (timer != null) { timer.stop(); timer.removeEventListener(TimerEvent.TIMER, tick); }
         removeEventListener(Event.ADDED_TO_STAGE, start);
         removeEventListener(Event.REMOVED_FROM_STAGE, removed);
-        if (eventStage != null) try { eventStage.removeEventListener("HUDMod::UserEvent", menuKey); } catch (_:Dynamic) {}
-        eventStage = null;
         detach();
         manager = null;
-        if (hudTools != null) try { hudTools.Shutdown(); } catch (_:Dynamic) {}
-        api = null; hudTools = null;
+        api = null;
     }
 }

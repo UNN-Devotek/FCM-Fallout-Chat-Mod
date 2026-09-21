@@ -32,16 +32,18 @@ the [chat relay guide](https://www.nexusmods.com/fallout76/articles/256) owns th
 
 ## Three distinct input contracts
 
-1. **Current FCM input:** SharedHUDTools' host editor first, with a legacy ZFE native-editor
-   fallback. The child widget does not send its own ControlMap lock events.
+1. **Current FCM input:** owner-scoped `input.v1.begin/poll/end` when ZFE advertises both input
+   and release capabilities. SharedHUDTools remains the older-ZFE fallback and xScal route, with
+   the legacy ZFE native editor last. The child widget does not send its own ControlMap lock events.
 2. **Physical `Input.*` compatibility:** xScal documents numeric Windows VK arguments and Boolean
    results for registration, polling, and unregistration. FCM requires true Boolean success for
    xScal. Its ZFE compatibility decoder also supports older return shapes. An accepted register
    call is not proof that polling or keyboard suppression works. See the
    [xScal Input guide](https://www.nexusmods.com/fallout76/articles/268).
 3. **Public ZFE owner-scoped APIs:** `zfe-input-v1` names `input.v1.*` text sessions; it is not
-   evidence for legacy `Input.RegisterKey` or chat-editor calls. `zfe-hotkeys-v1` names a separate
-   hotkey API. Neither is implemented by merely renaming FCM's compatibility methods.
+   evidence for legacy `Input.RegisterKey` or chat-editor calls. FCM now uses this contract only
+   with `zfe-input-release-v1`, raw suppression, and the release barrier. `zfe-hotkeys-v1` names a
+   separate hotkey API.
 
 The detailed [ZFE hotkey guide](https://www.nexusmods.com/fallout76/articles/270) is available,
 superseding older “payload contract unavailable” notes. It describes vendor-owned registrations,

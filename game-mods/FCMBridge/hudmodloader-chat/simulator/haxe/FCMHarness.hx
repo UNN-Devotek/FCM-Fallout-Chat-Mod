@@ -29,7 +29,7 @@ class FCMHarness extends Sprite {
             scenario = Std.string(parameters.scenario);
         } catch (_:Dynamic) {}
         if (scenario == "delayed-auth") MockXscal.authReady = false;
-        if (provider == "zfe") __ZFE = MockZfe.root();
+        if (provider == "zfe") { MockZfe.configure(scenario); __ZFE = MockZfe.root(); }
         else __SFECodeObj = MockXscal.root();
         if (scenario == "bridge-fast-travel" && provider == "xscal") __SFCodeObj = MockBridgeStorage.root();
         // Deterministic regressions must never load a user's hosted snapshot or send live chat.
@@ -43,6 +43,7 @@ class FCMHarness extends Sprite {
             ExternalInterface.addCallback("simSubmit", simSubmit);
             ExternalInterface.addCallback("simSnapshot", simSnapshot);
             ExternalInterface.addCallback("simSetHudMode", simSetHudMode);
+            ExternalInterface.addCallback("simUnload", simUnload);
             ExternalInterface.call("fcmSimLog", "SIMULATED xScal host initialized");
         }
     }
@@ -74,6 +75,7 @@ class FCMHarness extends Sprite {
             if (scenario == "ultrawide") UltrawideScenario.start(widget, provider);
             if (scenario == "cosmetics-history") CosmeticsHistoryScenario.start(widget, provider);
             if (scenario == "server-history-chronology") ServerHistoryChronologyScenario.start(widget, provider);
+            if (StringTools.startsWith(scenario, "owned-input-")) OwnedInputScenario.start(widget, scenario);
         } catch (error:Dynamic) {
             flash.Lib.trace("HARNESS widget construction failed: " + Std.string(error));
             SimLog.emit("HARNESS widget construction failed: " + Std.string(error));
@@ -130,6 +132,11 @@ class FCMHarness extends Sprite {
         return true;
     }
 
+    function simUnload():Bool {
+        if (widget != null) widget.shutdown();
+        return true;
+    }
+
     function simSnapshot():String {
         return haxe.Json.stringify({
             provider: provider,
@@ -139,6 +146,9 @@ class FCMHarness extends Sprite {
             historyDoneDeliveries: MockXscal.historyDoneDeliveries,
             serverControlCount: MockXscal.serverControlCount,
             zfeQueuedSendCount: MockZfe.queuedSendCount,
+            zfeOwnedBeginCount: MockZfe.ownedBeginCount,
+            zfeOwnedPollCount: MockZfe.ownedPollCount,
+            zfeOwnedEndCount: MockZfe.ownedEndCount,
             asyncCompletionDeliveries: MockXscal.asyncCompletionDeliveries,
             logCount: SimLog.count
         });

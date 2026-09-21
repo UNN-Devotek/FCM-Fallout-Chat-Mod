@@ -95,6 +95,10 @@ def main() -> None:
         and "tf.selectable = true" in source_hx, (
         "the shared widget must route ZFE and xScal input by detected provider"
     )
+    assert '"input.v1.begin"' in source_hx and '"input.v1.poll"' in source_hx \
+        and '"input.v1.end"' in source_hx and "OWNED_RELEASE_STABLE_POLLS" in source_hx, (
+        "current ZFE input must use an owned session with a release barrier"
+    )
     assert "FcmSharedInputRecovery.decide" in source_hx \
         and "onSharedInputKeyDown" in source_hx \
         and "recovered missing SharedHUDTools submit callback" in source_hx, (
@@ -270,7 +274,7 @@ def main() -> None:
                 assert b"Do not extract the whole archive over the game" in install
                 assert b"Copy only these files" in install
                 assert b"preserve your existing FCMChat.ini settings" in install
-                assert b"Do not install the ZFE fragment" in install
+                assert b"Do not install ZFE, its fragment" in install
                 assert archive.read("FCMChatWidget.provider.txt") == b"unified\n"
                 install = install.decode()
                 assert f"[Chat]\n  enabled=true\n  relayEndpoint={expected['endpoint']}" in install
@@ -279,7 +283,7 @@ def main() -> None:
                 assert "xScal has no OpenChatKey setting" in install
                 assert "xScal Input.*" in install
                 assert "Copy examples/ZFE/FCMChatWidget.ini.example" in install
-                assert "If Data/configuration/zfe.ini already has [TextChat]" in install
+                assert "Data/configuration/zfe.ini is optional" in install
                 assert f"Endpoint={expected['endpoint']}" in install
                 assert "OpenChatKey=INSERT" in install
                 for key, value in HUD_KEY_DEFAULTS.items():
@@ -297,14 +301,13 @@ def main() -> None:
                 names = archive.namelist()
                 assert "Enable-xScal-Chat.cmd" not in names
                 assert "Enable-xScal-Chat.ps1" not in names
-                assert "DOWNLOAD-XSCAL-SETUP-HELPERS.txt" in names
+                assert "DOWNLOAD-XSCAL-SETUP-HELPERS.txt" not in names
                 assert not {
                     Path(name).suffix.lower() for name in names
                 }.intersection(package.NEXUS_BLOCKED_SUFFIXES)
-                helper = archive.read("DOWNLOAD-XSCAL-SETUP-HELPERS.txt")
-                assert b"never bundled in the Nexus HUD archive" in helper
-                assert f"FCM%20HUD%20Mod-{package.widget_version()}".encode() in helper
-                assert b"DOWNLOAD-XSCAL-SETUP-HELPERS.txt" in archive.read("INSTALL.txt")
+                install = archive.read("INSTALL.txt")
+                assert b"contains no setup scripts" in install
+                assert b"/downloads/" not in install
 
             unsafe = Path(temp_dir) / f"widget-{target}-unsafe-nexus.zip"
             package.build_package(target, unsafe)
@@ -396,7 +399,7 @@ def main() -> None:
                     else:
                         assert b"XSCAL INSTALL" in install
                         assert b"xScal Input.*" in install
-                        assert b"Do not install the ZFE fragment" in install
+                        assert b"Do not install ZFE, its fragment" in install
                     assert b"Press F11" in install
                     assert b"Insert opens" in install
                     assert b"Arrow Up / Down" in install

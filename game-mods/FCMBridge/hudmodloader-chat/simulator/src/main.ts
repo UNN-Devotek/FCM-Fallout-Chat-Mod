@@ -176,7 +176,8 @@ document.querySelector('#reset-keybinds')!.addEventListener('click', () => void 
 window.__FCM_SIM__ = { dispatch, packaged: command => {
   const value = external('simPackaged', command);
   return value == null ? null : JSON.parse(String(value)) as unknown;
-}, submit: text => external('simSubmit', text), setHudMode: mode => external('simSetHudMode', mode), snapshot: () => {
+}, submit: text => external('simSubmit', text), setHudMode: mode => external('simSetHudMode', mode),
+unload: () => external('simUnload'), snapshot: () => {
   const value = external('simSnapshot');
   return value == null ? null : JSON.parse(String(value));
 } };
@@ -203,7 +204,7 @@ declare global {
     RufflePlayer?: { newest(): { createPlayer(): RuffleElement } };
     fcmSimLog: (message: unknown) => void;
     fcmHostedDevSend: (channel: unknown, body: unknown) => boolean;
-    __FCM_SIM__?: { dispatch(action: string): Promise<void>; packaged(command: string): unknown; submit(text: string): unknown; setHudMode(mode: string): unknown; snapshot(): Record<string, unknown> | null };
+    __FCM_SIM__?: { dispatch(action: string): Promise<void>; packaged(command: string): unknown; submit(text: string): unknown; setHudMode(mode: string): unknown; unload(): unknown; snapshot(): Record<string, unknown> | null };
     __FCM_SIM_TEARDOWN__?: () => void;
     __INSTALLED_XSCAL__?: InstalledXscalHost;
   }

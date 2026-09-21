@@ -1,6 +1,7 @@
 /** Pure rate/freshness policy. A heartbeat advances sequence, NEVER observationSequence. */
 class FcmBridgeExport {
-    public static inline var VERSION:String = "0.2.4";
+    public static inline var VERSION:String = "0.2.7";
+    public static inline var BUILD:String = VERSION;
     public var sequence(default, null):Int = 0;
     public var observationSequence(default, null):Int = 1;
     public var lastSuccess(default, null):Bool = false;
@@ -50,7 +51,7 @@ class FcmBridgeExport {
         if (key == lastKey && now - lastSaved < 5000) return false;
         lastAttempt = now;
         var document = haxe.Json.stringify({schemaVersion:1, environment:environment, provider:provider,
-            build:VERSION, sessionId:sessionId, worldGeneration:world,
+            build:BUILD, sessionId:sessionId, worldGeneration:world,
             sequence:++sequence, observationSequence:Std.int(Math.max(1, observationSequence)),
             observationAgeMs:Std.int(Math.min(60000, Math.max(0, now - lastObservation))),
             state:mode, ownName:fresh ? ownName.substr(0, 64) : "", names:names});

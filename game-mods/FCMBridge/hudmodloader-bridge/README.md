@@ -1,9 +1,9 @@
-# FCM Server Bridge 0.2.4
+# FCM Server Bridge 0.2.7
 
 Invisible, optional HUDModLoader child. Sign into the desktop overlay only.
 No bridge login/code/pairing, chat connection, input editor or helper service.
 
-Requires official ZFE scoped storage or xScal modStorage plus HUDModLoader.
+Requires official ZFE scoped storage or xScal 0.2.17+ named modStorage plus HUDModLoader.
 Install BA2 and merge loader/archive configs with the game closed; preserve unrelated
 mods and recoverable backups. Never coinstall visible FCMChatWidget or legacy FCMBridge.
 See [INSTALL.template.txt](INSTALL.template.txt) and the maintained
@@ -11,16 +11,16 @@ See [INSTALL.template.txt](INSTALL.template.txt) and the maintained
 
 ## Contract
 
-- `FCMServerBridge`: bounded native UI observations, subscriptions, cached menu,
+- `FCMServerBridge`: bounded native UI observations and subscriptions,
   deferred refresh and lifecycle disposal. No native chat APIs.
 - `FcmBridgeState`: copied observations, source precedence, world generation,
   fast-travel continuity and 30-second expiry.
 - `FcmBridgeExport`: schema-1 bounded snapshot, maximum one write/sec and five-second
   heartbeat. Separate observation sequence/age prevents stale heartbeat renewal.
-- `FcmBridgeStorage`: xScal runtime + register/save, or validated ZFE
+- `FcmBridgeStorage`: xScal 0.2.17+ named `load(name)` / `save(name, document)`, or validated ZFE
   `zfe-storage-v1` + `writeStorage`. Independent of native chat authentication.
   Modern aliases win before the legacy `BRG_OBJ` fallback; every route must pass
-  the same storage capability check. The loader menu shows the confirmed route.
+  the same storage capability check. The bridge registers no menu or input listener.
 
 Export contains no credentials. Environment is compiled into the SWF.
 The overlay validates advancing local snapshots and forwards them through its
@@ -41,7 +41,7 @@ cd ../hudmodloader-chat
 for suite in test-*.hxml; do haxe "$suite" || exit 1; done
 npm test --prefix simulator
 cd ../hudmodloader-bridge
-python3 package.py --target dev --output ../../../_dev-test-builds/server-bridge-0.2.4/FCM-Server-Bridge-0.2.4-DEV.zip
+python3 package.py --target dev --output ../../../_dev-test-builds/server-bridge-0.2.7/FCM-Server-Bridge-0.2.7-DEV.zip
 ```
 
 Also run parent native-adapter/auth/source checks and affected backend, overlay and
@@ -87,6 +87,12 @@ pending; see the dated evidence linked from the architecture guide.
 `AccountInfoData` when writing `ownName`, with the account name retained as a fallback. This
 aligns bridge evidence with the name peers actually observe without treating either value as
 authentication. Freshness, generation, mutual-sighting and bounded-export rules are unchanged.
+
+0.2.7 uses xScal 0.2.17's stateless named storage calls for the bridge export. It does not
+claim the legacy HUDMenu-wide registration slot, so Improved HUD can continue using its own
+`improvedbars` document while FCM writes only `fcmserverbridge-dev` or
+`fcmserverbridge-prod`. Older xScal builds retain the legacy adapter for standalone
+compatibility, but 0.2.17+ is required when another HUD child also uses modStorage.
 
 Prior native-network implementation and E1014 investigations:
 [NATIVE-NETWORK-HISTORY.md](NATIVE-NETWORK-HISTORY.md). Previous acceptance never

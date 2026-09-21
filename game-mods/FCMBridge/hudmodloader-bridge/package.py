@@ -16,7 +16,7 @@ import zlib
 
 ROOT = Path(__file__).resolve().parent
 ENTRY = "Interface/FCMServerBridge.swf"
-VERSION = "0.2.4"
+VERSION = "0.2.7"
 
 
 def module(name: str, path: Path):
@@ -41,6 +41,7 @@ def validate_pair(swf: Path, archive: Path) -> dict:
         raise ValueError("Archive SWF differs from compiled SWF")
     payload = swf.read_bytes()
     for forbidden in [b"FCMChatWidget", b"flash.text.TextField", b"TextEdit", b"URLLoader", b"Socket",
+                      b"SharedHUDTools", b"HUDMod::UserEvent", b"ShowMenu", b"CloseMenu",
                       b"BridgeRosterScenario", b"BRIDGE-ROSTER", b"PackagedBridgeHost", b"IsolatedProvider",
                       b"chat.v1.", b"chatInterface", b"LINK REQUIRED", b"FCMBRIDGE/1;", b"JsonParser"]:
         if forbidden in payload:
@@ -83,7 +84,7 @@ def build(target: str, output: Path) -> dict:
 
 def instructions(host: str, target: str) -> str:
     return (ROOT / "INSTALL.template.txt").read_text(encoding="utf-8").format(
-        version=VERSION, target=target.upper(), host=host,
+        version=VERSION, target=target.upper(), target_lower=target, host=host,
     )
 
 

@@ -80,7 +80,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.116"; // Stable SharedHUDTools drafts; Enter submits only
+    static inline var VERSION:String  = "2.10.117"; // ZFE owner-scoped keyboard input; input-silent bridge pairing
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -414,6 +414,13 @@ class FCMChatWidget extends MovieClip {
     // its activation buffer is cleared and verified before the session becomes visible.
     static inline var USE_NATIVE_INPUT:Bool = true;
     var _nativeInput:Bool        = false;          // true while a native session owns input
+    var _ownedInput:Bool         = false;          // true for ZFE input.v1 owner-scoped capture
+    var _ownedInputUsable:Bool   = false;
+    var _ownedInputSession:Dynamic = null;
+    var _ownedInputRevision:Int = -1;
+    var _ownedInputSubmitted:Bool = false;
+    var _ownedInputCancelled:Bool = false;
+    var _ownedReleaseStable:Int = 0;
     var _inputTimer:flash.utils.Timer = null;      // in-session native input poll (~100 ms)
     var _sharedInputDiagTimer:flash.utils.Timer = null;
     var _lastSharedInputDiag:String = "";
@@ -435,7 +442,9 @@ class FCMChatWidget extends MovieClip {
     // Set by callTop when a native helper throws or returns a command-level failure. A failed
     // in-session helper must disable native input so the next open uses SharedHUDTools.
     var _nativeInputCommandFailed:Bool = false;
-    static inline var INPUT_POLL_MS:Int  = 100;    // in-session native input-poll interval
+    static inline var INPUT_POLL_MS:Int  = 100;    // legacy native input-poll interval
+    static inline var OWNED_INPUT_POLL_MS:Int = 40;
+    static inline var OWNED_RELEASE_STABLE_POLLS:Int = 3;
     // ── Open-key poll — open chat on the configured ZFE OpenChatKey edge ───────────────
     var _openKeyTimer:flash.utils.Timer = null;    // low-rate (~150 ms) open-trigger poll
     static inline var OPEN_KEY_MS:Int = 150;       // open-key poll interval
@@ -2461,12 +2470,16 @@ class FCMChatWidget extends MovieClip {
         // The open key both restores a hidden panel AND opens input (CAP-011, guaranteed).
         if (_hidden) show();
         bumpAutoHide();   // opening input = activity (the timer also never hides while input is open)
-        // One BA2 serves both providers. Both use the visible host-owned SharedHUDTools editor;
+        // One BA2 serves both providers. Current ZFE uses its owner-scoped input contract;
+        // SharedHUDTools remains the compatibility route and the xScal editor.
         // provider detection controls transport and whether ZFE's native buffer is available as
         // a last-resort fallback. xScal never receives ZFE-only input calls.
         var provider:String = _api == null ? "" : _api.provider;
-        var route:String = FcmInputRoute.preferred(provider, USE_NATIVE_INPUT && _nativeInputUsable);
-        if (route == FcmInputRoute.SHARED) openInputSharedHudTools();
+        var route:String = FcmInputRoute.preferred(provider, _ownedInputUsable);
+        if (route == FcmInputRoute.OWNED) {
+            if (openOwnedInput()) return;
+            openInputSharedHudTools();
+        } else if (route == FcmInputRoute.SHARED) openInputSharedHudTools();
         if (_inputOpen) return;
 
         if (FcmInputRoute.mayUseNativeFallback(provider, USE_NATIVE_INPUT && _nativeInputUsable)) {
@@ -2474,6 +2487,96 @@ class FCMChatWidget extends MovieClip {
             if (openInputNative()) return;
             _nativeInputUsable = false;
         }
+    }
+
+    /** Open a controller-independent, owner-scoped ZFE keyboard session. */
+    function openOwnedInput():Bool {
+        if (_api == null || _api.provider != FcmNativeApi.ZFE || !_ownedInputUsable) return false;
+        try {
+            var raw = _api.call("input.v1.begin",
+                FcmZfeInput.beginPayload(VENDOR, "", Std.int(Math.min(512, _cfg.maxSendLen))));
+            var result = FcmZfeInput.begin(raw);
+            if (!result.success || !result.rawSuppression || !result.releaseBarrier) {
+                zfeLog("warn", "input", "input.v1.begin rejected required ownership guarantees");
+                _ownedInputUsable = false;
+                return false;
+            }
+            _inputOpen = true;
+            _nativeInput = true;
+            _ownedInput = true;
+            _ownedInputSession = result.session;
+            _ownedInputRevision = -1;
+            _ownedInputSubmitted = false;
+            _ownedInputCancelled = false;
+            _ownedReleaseStable = 0;
+            _inProgress = "";
+            setPrompt(typingPrompt());
+            zfeLog("info", "input path", "zfe-input-v1");
+            stopInputTimer();
+            _inputTimer = new flash.utils.Timer(OWNED_INPUT_POLL_MS);
+            _inputTimer.addEventListener(TimerEvent.TIMER, function(_) { runOwnedInputSafely(); });
+            _inputTimer.start();
+            return true;
+        } catch (e:Dynamic) {
+            _ownedInputUsable = false;
+            zfeLog("warn", "input", "input.v1.begin failed: " + clip200(Std.string(e)));
+            return false;
+        }
+    }
+
+    function runOwnedInputSafely():Void {
+        if (_disposed || !_ownedInput) return;
+        try { pollOwnedInput(); }
+        catch (e:Dynamic) {
+            zfeLog("warn", "input", "input.v1.poll failed: " + clip200(Std.string(e)));
+            closeOwnedInput(true);
+        }
+    }
+
+    function pollOwnedInput():Void {
+        var result = FcmZfeInput.poll(_api.call("input.v1.poll",
+            FcmZfeInput.sessionPayload(_ownedInputSession)));
+        if (!result.success) { closeOwnedInput(true); return; }
+        if (result.revision != _ownedInputRevision) {
+            _ownedInputRevision = result.revision;
+            _inProgress = result.text;
+            setPrompt(_inProgress.length == 0 ? typingPrompt()
+                : typingPrompt() + ' <font face="' + FONT_BODY + '" size="' + _cfg.effectiveInputFontSize(true)
+                    + '" color="' + hx(_cfg.inputTextColor) + '"> &#x203A; '
+                    + FcmConfig.htmlEscape(_inProgress) + '</font>');
+        }
+        if (result.submitted) _ownedInputSubmitted = true;
+        if (result.cancelled) _ownedInputCancelled = true;
+        if (!_ownedInputSubmitted && !_ownedInputCancelled) {
+            if (!result.active) closeOwnedInput(true);
+            return;
+        }
+        _ownedReleaseStable = result.releaseReady ? _ownedReleaseStable + 1 : 0;
+        if (_ownedReleaseStable < OWNED_RELEASE_STABLE_POLLS) return;
+        var submitted = _ownedInputSubmitted;
+        var text = StringTools.trim(_inProgress);
+        closeOwnedInput(false);
+        if (submitted && text.length > 0) handleSubmittedText(text);
+    }
+
+    function closeOwnedInput(failed:Bool = false):Void {
+        stopInputTimer();
+        var session = _ownedInputSession;
+        _ownedInputSession = null;
+        if (session != null && _api != null) try {
+            _api.call("input.v1.end", FcmZfeInput.sessionPayload(session));
+        } catch (_:Dynamic) { failed = true; }
+        if (failed) _ownedInputUsable = false;
+        _inputOpen = false;
+        _nativeInput = false;
+        _ownedInput = false;
+        _ownedInputRevision = -1;
+        _ownedInputSubmitted = false;
+        _ownedInputCancelled = false;
+        _ownedReleaseStable = 0;
+        _inProgress = "";
+        clearNavigationLatches();
+        setPrompt(idlePrompt());
     }
 
     // =========================================================================
@@ -2652,6 +2755,7 @@ class FCMChatWidget extends MovieClip {
      * the native input (bare "false"), and reset the prompt.
      */
     function closeInputNative(failed:Bool = false):Void {
+        if (_ownedInput) { closeOwnedInput(failed); return; }
         stopInputTimer();
         var closeFailed:Bool = false;
         try {
@@ -3634,6 +3738,11 @@ class FCMChatWidget extends MovieClip {
         if (_disposed) return;
         _zfeSearchTries++;
         stopBrowser();
+        if (FcmNativeApi.hasProviderConflict(this)) {
+            setLogText("ZFE and xScal both detected\nRemove one script extender");
+            zfeLog("warn", "startup", "provider conflict; exactly one extender is required");
+            return;
+        }
         _api = FcmNativeApi.discover(this);
         if (_api != null) {
             onZfeFound();
@@ -3683,6 +3792,12 @@ class FCMChatWidget extends MovieClip {
         zfeLog("info", "startup", _api.provider == FcmNativeApi.ZFE
             ? "zfe-chat-online-v1 OK"
             : "xscal-chat-interface OK");
+        _ownedInputUsable = _api.probeOwnedTextInput();
+        zfeLog(_ownedInputUsable ? "info" : "warn", "input",
+            _ownedInputUsable ? "zfe-input-v1 + release barrier ready"
+                : (_api.provider == FcmNativeApi.ZFE
+                    ? "owner-scoped input unavailable; SharedHUDTools compatibility path active"
+                    : "xScal SharedHUDTools input path active"));
         zfeLog(_api.supportsNonBlockingControl() ? "info" : "warn", "startup",
             _api.supportsNonBlockingControl()
                 ? "automatic Server-room controls enabled through non-blocking provider path"

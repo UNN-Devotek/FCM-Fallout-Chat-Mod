@@ -38,10 +38,10 @@ loaded or inspected by the SWF. The adapter maps FCM's canonical `chat.v1.*` ver
 unprefixed methods, including `getAuthState`, `reportMessage`, `moderationAction`, and
 `clearChatAuth`.
 
-xScal does not provide ZFE's native chat editor commands. Both providers therefore use the
-SharedHUDTools input path first: its host-domain `TextEdit` owns the balanced game-control lock.
-ZFE's native editor is retained only as a no-lock fallback when SharedHUDTools is unavailable or
-cannot open. The child widget never dispatches `ControlMap` events itself. The relay payloads,
+xScal does not provide ZFE's owner-scoped input commands and continues to use SharedHUDTools.
+Current ZFE uses `input.v1.begin/poll/end` when both input and release capabilities are advertised;
+SharedHUDTools and then the legacy native editor remain compatibility fallbacks. The child widget
+never dispatches `ControlMap` events itself. The relay payloads,
 channel slugs, server-room controls, auth gate, and cursor polling remain shared.
 
 The provider lifecycle is not identical: xScal's `connect` is asynchronous and may return
@@ -293,11 +293,10 @@ listener arms Enter recovery; if the field loses focus and the normal callback d
 within 225 ms, the widget invalidates that editor generation, balances `EndTextEdit`, and submits
 the captured draft once. Escape, Tab, and unexplained focus loss cancel the stale session instead.
 Logs expose draft length and recovery outcome, never message content.
-Both providers select the visible SharedHUDTools editor first. The widget enables the focused
-public input TextField's selection behavior after HUDTools creates it; this preserves normal caret
-and multi-character entry without reading or rewriting the draft. Provider discovery keeps ZFE's
-buffered native API available only as a fallback and prevents xScal from receiving ZFE-only calls.
-Both paths remain in the same provider-neutral widget BA2.
+Current ZFE selects an owner-scoped session first, retains its opaque token, polls every 40 ms,
+and does not release action guards until `releaseReady` is stable. SharedHUDTools remains the
+older-ZFE fallback and xScal route. Provider discovery prevents xScal from receiving ZFE-only
+calls. Both paths remain in the same provider-neutral widget BA2.
 
 The keybinding contract is provider-specific even though the BA2 is shared. ZFE's authoritative
 open key is the effective `[TextChat] OpenChatKey`; `Data/configuration/zfe.ini` overrides the
@@ -384,7 +383,8 @@ the text-input lock. `TestFcmNativeApi.hx` / `test-native-api.hxml` cover the di
 and the pressed-state decoding. The pure policy is covered
 by `TestFcmCommand.hx` / `test-command.hxml` (including the native getter regression cases), and
 `test_package.py` plus `test_anchors.py` assert
-that the widget uses SharedHUDTools first and contains no child `ControlMap` dispatch.
+that the widget selects owner-scoped ZFE input when available, retains compatibility fallbacks,
+and contains no child `ControlMap` dispatch.
 
 ### ZFE physical-key contract (verified in-game in v2.10.54)
 

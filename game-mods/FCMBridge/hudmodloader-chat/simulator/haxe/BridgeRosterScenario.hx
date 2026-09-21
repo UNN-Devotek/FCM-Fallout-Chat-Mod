@@ -121,9 +121,9 @@ class BridgeRosterScenario {
             && bridge.state.fresh(flash.Lib.getTimer()));
         var freshNonce = bridge.state.session.requestId;
         var freshControls = MockXscal.serverControlCount;
-        SharedHUDTools.selectMenu("retry");
-        SharedHUDTools.selectMenu("retry");
-        check("menu reconnect never calls transport or clears healthy room inline",
+        bridge.tick(null);
+        bridge.tick(null);
+        check("refresh polling never calls transport or clears healthy room inline",
             bridge.api != null && bridge.state.session.requestId == freshNonce
             && MockXscal.serverControlCount == freshControls);
         bridge.tick(null);
@@ -150,24 +150,14 @@ class BridgeRosterScenario {
         flash.Lib.trace("BRIDGE-EVENTS PASS fresh-push=preferred retry=deferred test-provider=rejected");
         var menuControls = MockXscal.serverControlCount;
         var menuNonce = bridge.state.session.requestId;
-        var menuRefresh = bridge.refreshRequested;
-        MockBridgeGameData.onRead = function():Void { throw "menu must not read native providers"; };
-        var items = SharedHUDTools.inspectMenu();
-        check("diagnostic menu uses cached state without native reads or control mutation",
-            MockBridgeGameData.onRead != null && MockXscal.serverControlCount == menuControls
-            && bridge.state.session.requestId == menuNonce && bridge.refreshRequested == menuRefresh);
-        MockBridgeGameData.onRead = null;
-        check("menu includes tested build and precise gate", [for (item in items) item.label].indexOf(
-            "Bridge " + FCMServerBridge.VERSION + " - " + bridge.api.provider) >= 0
-            && [for (item in items) item.label].indexOf("Menu - test provider") >= 0);
-        var details = 0;
-        for (item in items) if (StringTools.startsWith(item.id, "detail")) {
-            details++;
-            check("diagnostic rows are bounded inert fixed labels", !item.enabled && item.label.length < 64
-                && item.label.indexOf("Peer") < 0 && item.label.indexOf(menuNonce) < 0);
-        }
-        check("all eight bounded diagnostic rows present", details == 8);
-        flash.Lib.trace("BRIDGE-DIAGNOSTICS PASS cached=read-only labels=private-data-free");
+        var reasons = bridge.state.diagnostics(flash.Lib.getTimer());
+        check("privacy-safe diagnostics use bounded fixed labels without control mutation",
+            MockXscal.serverControlCount == menuControls && bridge.state.session.requestId == menuNonce
+            && reasons.length <= 8 && reasons.join("|").indexOf("Peer") < 0
+            && reasons.join("|").indexOf(menuNonce) < 0);
+        check("bridge remains input and menu silent", bridge.numChildren == 0
+            && !SharedHUDTools.hasActiveEditor());
+        flash.Lib.trace("BRIDGE-DIAGNOSTICS PASS export-only labels=private-data-free menu=absent");
         // Throw actual AVM2 Error objects at different boundaries. The outer getter's
         // phase must survive a nested callback that fails inside name processing.
         bridge.state.menu(FcmHudRosterReader.menu(new MockBridgeProvider({menuStackA:[]})));
@@ -185,7 +175,7 @@ class BridgeRosterScenario {
         MockBridgeGameData.readErrorKey = "MapMenuData";
         try { bridge.observe("MapMenuData", false); } catch (_:Dynamic) {}
         MockBridgeGameData.readErrorKey = "";
-        var reasons = bridge.state.diagnostics(flash.Lib.getTimer());
+        reasons = bridge.state.diagnostics(flash.Lib.getTimer());
         check("getter failure remains distinct from nested processing failure - " + reasons.join(" / "),
             reasons.indexOf("Map - getter E1014") >= 0 && reasons.indexOf("Player list - unreadable entries") >= 0);
         var retried = false;
@@ -201,14 +191,12 @@ class BridgeRosterScenario {
         classAttempt.step = "processor entry";
         bridge.state.readException("MapMenuData", classAttempt,
             new flash.errors.Error("Error #1014: Class haxe.iterators::ArrayIterator could not be found.", 1014));
-        items = SharedHUDTools.inspectMenu();
-        check("menu identifies a simulated missing class", [for (item in items) item.label].indexOf(
-            "Missing class - haxe.iterators::ArrayIterator") >= 0);
+        check("export diagnostics identify a simulated missing class",
+            bridge.state.missingClass == "haxe.iterators::ArrayIterator");
         bridge.state.readException("MapMenuData", classAttempt,
             new flash.errors.Error("Class Array could not be found.\nPrivate stack payload", 1014));
-        items = SharedHUDTools.inspectMenu();
-        check("noncanonical missing-class text stays private", [for (item in items) item.label].indexOf(
-            "Missing class - not reported") >= 0);
+        check("noncanonical missing-class text stays private",
+            bridge.state.missingClass == "not reported");
         check("class diagnostics cannot create membership", !bridge.state.fresh(flash.Lib.getTimer())
             && bridge.state.session.requestId == menuNonce && MockXscal.serverControlCount == menuControls);
         for (retry in bridge.readRetries) retry.after = 0;
@@ -218,10 +206,8 @@ class BridgeRosterScenario {
         MockBridgeGameData.subscribeErrorKey = "VoiceChatAreaData";
         bridge.subscribe("VoiceChatAreaData");
         MockBridgeGameData.subscribeErrorKey = "";
-        items = SharedHUDTools.inspectMenu();
-        check("subscription failure is visible without leaking error messages", bridge.callbacks.length == 0
-            && [for (item in items) item.label].indexOf("Subscriptions - 0 of 8 E1006") >= 0);
-        for (item in items) check("exception text is never rendered", item.label.indexOf("Private") < 0);
+        check("subscription failure is exported without leaking error messages", bridge.callbacks.length == 0
+            && bridge.subscriptionError == "E1006");
         verifyRestoredReader(bridge);
         flash.Lib.trace("BRIDGE-ERRORS PASS getter=E1014 nested-names=rejected subscribe=E1006");
     }

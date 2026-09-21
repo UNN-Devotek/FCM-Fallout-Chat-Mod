@@ -27,6 +27,8 @@ class PackagedBridgeHost extends Sprite {
     var writes:Int = 0;
     var failed:Bool = false;
     var registered:Bool = false;
+    var registerCalls:Int = 0;
+    var namedWrites:Int = 0;
     var lastWrite:Float = -1000;
     var controls:Int = 0;
     var leaves:Int = 0;
@@ -79,12 +81,7 @@ class PackagedBridgeHost extends Sprite {
                 storageCapability = scenario != "packaged-legacy-unavailable";
             } else __ZFE = {call:dispatch};
         }
-        else {
-            __SFCodeObj = {version:{runtime:"xScal",value:"sim",platform:"sim"},modStorage:{
-                register:function(name:String):Bool { registered = name == "fcmserverbridge-dev"; return registered; },
-                save:save
-            }};
-        }
+        else if (scenario != "packaged-xscal-late") __SFCodeObj = xscalApi();
         if (ExternalInterface.available) ExternalInterface.addCallback("simPackaged", action);
         addEventListener(Event.ADDED_TO_STAGE, start);
     }
@@ -143,6 +140,18 @@ class PackagedBridgeHost extends Sprite {
         }
         return true;
     }
+    function xscalApi():Dynamic return {version:{runtime:"xScal",value:"0.2.17",platform:"sim"},modStorage:{
+        register:function(_:String):Bool { registerCalls++; return false; },
+        load:Reflect.makeVarArgs(function(_:Array<Dynamic>):Dynamic return false),
+        save:Reflect.makeVarArgs(function(args:Array<Dynamic>):Dynamic {
+            if (args.length != 2 || Std.string(args[0]) != "fcmserverbridge-dev") {
+                violation = true; violationReason = "named-storage-contract"; return false;
+            }
+            namedWrites++;
+            registered = true;
+            return save(Std.string(args[1]));
+        })
+    }};
     function dispatch(verb:String, payload:String):Dynamic {
         if (source != "zfe") { violation = true; return ""; }
         if (verb == "getRuntimeInfo") {
@@ -186,13 +195,17 @@ class PackagedBridgeHost extends Sprite {
                 movie.unloadAndStop(true);
             case "storage-fail": failed = true;
             case "storage-recover": failed = false;
-            case "storage-capability": storageCapability = true; probeFault = "";
+            case "storage-capability":
+                storageCapability = true; probeFault = "";
+                if (source == "xscal" && __SFCodeObj == null) __SFCodeObj = xscalApi();
             case "snapshot":
             default: violation = true;
         }
-        return haxe.Json.stringify({provider:source,isolated:isolated,registered:registered,active:active,storageDiagnostic:storageDiagnostic,
+        return haxe.Json.stringify({provider:source,isolated:isolated,registered:registered,registerCalls:registerCalls,namedWrites:namedWrites,
+            active:active,storageDiagnostic:storageDiagnostic,
             controls:controls,leaves:leaves,polls:polls,reads:reads,writes:writes,runtimeProbes:runtimeProbes,snapshot:snapshot,subscriptions:listeners.length,
-            acceptedNames:acceptedNames,rebound:rebound,violation:violation,violationReason:violationReason,disposed:disposed});
+            acceptedNames:acceptedNames,rebound:rebound,violation:violation,violationReason:violationReason,disposed:disposed,
+            stageProviderReserved:stage != null && Reflect.hasField(stage, "__SFCodeObj")});
     }
 }
 

@@ -424,7 +424,7 @@ if widget_src:
         check("activation buffer not clear; falling back" in native_body,
               "FCMChatWidget falls back when native activation leaves text behind")
     check("function openInputSharedHudTools" in widget_src,
-          "FCMChatWidget retains the primary SharedHUDTools editor")
+          "FCMChatWidget retains the SharedHUDTools compatibility editor")
     check("_nativeInputCommandFailed" in widget_src
           and "closeInputNative(true)" in widget_src
           and "_nativeInputUsable = false;" in widget_src,
@@ -490,10 +490,12 @@ if widget_src:
           and 'refreshAuthState();' in widget_src
           and 'isPendingTransportResponse' in widget_src,
           "FCMChatWidget refreshes xScal auth during polling and ignores pending transport responses")
-    check('FcmInputRoute.preferred(provider, USE_NATIVE_INPUT && _nativeInputUsable)' in widget_src
+    check('FcmInputRoute.preferred(provider, _ownedInputUsable)' in widget_src
+          and 'if (route == FcmInputRoute.OWNED)' in widget_src
+          and 'openOwnedInput()' in widget_src
           and 'FcmInputRoute.mayUseNativeFallback' in widget_src
           and 'openInputSharedHudTools();' in widget_src,
-          "FCMChatWidget routes shared input and ZFE fallback in one build")
+          "FCMChatWidget routes owner-scoped, shared, and legacy ZFE input in one build")
     check("function dispatchEditText" not in widget_src
           and "_editTextLockOwned" not in widget_src
           and "BSUIDataManager.dispatchEvent" not in widget_src,

@@ -5,6 +5,8 @@
  * the relay operations as methods on a `chatInterface` object, normally under
  * `__SFECodeObj` and, in some builds, under `__SFCodeObj`. xScal may also
  * install an unrelated generic callback object at `__SFCodeObj.call`.
+ * xScal 0.2.17 may also expose named `modStorage` on that object. The visible
+ * HUD deliberately ignores storage; only the separate Server Bridge uses it.
  * A bare `__SFCodeObj.call` is therefore ambiguous and must never be treated
  * as ZFE merely because it has a `call` member.
  * Discovery only inspects objects already exposed to the Scaleform movie; it
@@ -23,6 +25,7 @@ class FcmNativeApi {
     var _loggerRaw:Dynamic;
     var _inputRaw:Dynamic;
     var _runtimeInfo:String = "";
+    var _generalRuntimeInfo:String = "";
 
     function new(raw:Dynamic, providerName:String, loggerRaw:Dynamic = null,
             inputRaw:Dynamic = null) {
@@ -111,6 +114,26 @@ class FcmNativeApi {
     /** xScal provides chat transport, not ZFE's native edit buffer. */
     public function supportsNativeInput():Bool {
         return provider == ZFE;
+    }
+
+    /** Require both ownership and physical-release guarantees from current ZFE. */
+    public function probeOwnedTextInput():Bool {
+        if (provider != ZFE || !zfeRaw(_raw)) return false;
+        try {
+            _generalRuntimeInfo = Std.string(callDispatcher(_raw, "getRuntimeInfo", "{}"));
+            return hasSuccessTrue(_generalRuntimeInfo)
+                && _generalRuntimeInfo.indexOf("zfe-input-v1") >= 0
+                && _generalRuntimeInfo.indexOf("zfe-input-release-v1") >= 0;
+        } catch (_:Dynamic) { return false; }
+    }
+
+    /** Detect an unsupported mixed-provider installation before selecting a transport. */
+    public static function hasProviderConflict(scope:Dynamic):Bool {
+        var x = findXscal(scope);
+        if (x == null) return false;
+        var z = findZfe(scope);
+        if (z != null && isZfeChatDispatcher(z)) return true;
+        return findLegacyZfe(scope) != null;
     }
 
     /**

@@ -3,7 +3,7 @@
 FCMChatWidget is the optional HUDModLoader chat widget for Fallout 76. It uses ZFE or xScal's
 native chat bridge and FCM's `/relay`. It is independent of the desktop overlay.
 
-**Current private candidate: 2.10.116 (native-unverified).** It retains 2.10.115's behavior, keeps
+**Current private candidate: 2.10.117 (native-unverified).** It retains 2.10.116's behavior, keeps
 accepted Server rows as an in-memory transcript across room changes, travel, expiry and MainMenu
 for the current widget/game session. New messages and sends remain restricted to the currently
 confirmed room. Restarting the game/widget starts a fresh transcript, and the existing configured
@@ -30,10 +30,10 @@ contents, tokens or messages. This is diagnostic evidence for determining whethe
 the live game exposes a stable account/team identifier; no such identifier is
 assumed or transmitted until native evidence establishes its semantics.
 
-The 2.10.116 complete 60-case Ruffle suite, all Haxe suites, compiler diagnostics, native API/auth,
-source/anchor/SWF/BA2/package/emoji gates, focused relay tests (135) and overlay widget tests (196)
-pass. Version 2.10.116 has not been installed, natively accepted or published. Fresh native input
-acceptance is pending.
+2.10.117 uses ZFE's owner-scoped `input.v1` capture when both text-input and release-barrier
+capabilities are present, keeping keyboard entry independent of a connected controller. Older ZFE
+uses the existing SharedHUDTools compatibility path; xScal is unchanged. Simultaneous ZFE and
+xScal installations fail closed. Automated and fresh native acceptance are pending.
 
 **Current production release: 2.10.110 (2026-09-16).** Once an authoritative
 self-echo or acknowledgement supplies the local sender's cosmetics, retained rows for the same
@@ -221,6 +221,9 @@ See [CUSTOMIZATION.txt](CUSTOMIZATION.txt) for active/retired INI keys and saved
 ZFE stores F11 settings in vendor-scoped storage. xScal uses per-linked-device relay persistence
 only when the backend advertises the capability and supports the settings payload. Missing
 persistence leaves changes session-local. A code checkout does not establish backend deployment.
+The visible HUD does not call xScal `modStorage.register`, `load`, or `save`. On xScal
+0.2.17, the separate optional Server Bridge uses named storage directly, leaving the HUD's
+chat transport and other mods' storage documents independent.
 
 ## Browser HUD simulator
 
