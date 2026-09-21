@@ -4,8 +4,8 @@ class TestFcmInputRoute {
     }
 
     static function main():Void {
-        check("ZFE prefers the visible shared editor",
-            FcmInputRoute.preferred(FcmNativeApi.ZFE, true) == FcmInputRoute.SHARED);
+        check("current ZFE prefers owner-scoped input",
+            FcmInputRoute.preferred(FcmNativeApi.ZFE, true) == FcmInputRoute.OWNED);
         check("ZFE keeps the shared editor when native input is unavailable",
             FcmInputRoute.preferred(FcmNativeApi.ZFE, false) == FcmInputRoute.SHARED);
         check("xScal uses SharedHUDTools",

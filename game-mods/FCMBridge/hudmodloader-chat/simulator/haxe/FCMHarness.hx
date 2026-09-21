@@ -29,7 +29,7 @@ class FCMHarness extends Sprite {
             scenario = Std.string(parameters.scenario);
         } catch (_:Dynamic) {}
         if (scenario == "delayed-auth") MockXscal.authReady = false;
-        if (provider == "zfe") __ZFE = MockZfe.root();
+        if (provider == "zfe") { MockZfe.configure(scenario); __ZFE = MockZfe.root(); }
         else __SFECodeObj = MockXscal.root();
         if (scenario == "bridge-fast-travel" && provider == "xscal") __SFCodeObj = MockBridgeStorage.root();
         // Deterministic regressions must never load a user's hosted snapshot or send live chat.
@@ -74,6 +74,7 @@ class FCMHarness extends Sprite {
             if (scenario == "ultrawide") UltrawideScenario.start(widget, provider);
             if (scenario == "cosmetics-history") CosmeticsHistoryScenario.start(widget, provider);
             if (scenario == "server-history-chronology") ServerHistoryChronologyScenario.start(widget, provider);
+            if (StringTools.startsWith(scenario, "owned-input-")) OwnedInputScenario.start(widget, scenario);
         } catch (error:Dynamic) {
             flash.Lib.trace("HARNESS widget construction failed: " + Std.string(error));
             SimLog.emit("HARNESS widget construction failed: " + Std.string(error));

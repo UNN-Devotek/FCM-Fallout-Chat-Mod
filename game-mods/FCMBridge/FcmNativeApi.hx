@@ -23,6 +23,7 @@ class FcmNativeApi {
     var _loggerRaw:Dynamic;
     var _inputRaw:Dynamic;
     var _runtimeInfo:String = "";
+    var _generalRuntimeInfo:String = "";
 
     function new(raw:Dynamic, providerName:String, loggerRaw:Dynamic = null,
             inputRaw:Dynamic = null) {
@@ -111,6 +112,28 @@ class FcmNativeApi {
     /** xScal provides chat transport, not ZFE's native edit buffer. */
     public function supportsNativeInput():Bool {
         return provider == ZFE;
+    }
+
+    /** Probe the general ZFE surface once and retain its capability document. */
+    public function probeGeneralInputCapabilities():Bool {
+        if (provider != ZFE || !zfeRaw(_raw)) return false;
+        try {
+            _generalRuntimeInfo = Std.string(callDispatcher(_raw, "getRuntimeInfo", "{}"));
+            return hasSuccessTrue(_generalRuntimeInfo);
+        } catch (_:Dynamic) {
+            _generalRuntimeInfo = "";
+            return false;
+        }
+    }
+
+    public function supportsOwnedTextInput():Bool {
+        return provider == ZFE
+            && _generalRuntimeInfo.indexOf("zfe-input-v1") >= 0
+            && _generalRuntimeInfo.indexOf("zfe-input-release-v1") >= 0;
+    }
+
+    public function supportsOwnedHotkeys():Bool {
+        return provider == ZFE && _generalRuntimeInfo.indexOf("zfe-hotkeys-v1") >= 0;
     }
 
     /**

@@ -3,7 +3,12 @@
 FCMChatWidget is the optional HUDModLoader chat widget for Fallout 76. It uses ZFE or xScal's
 native chat bridge and FCM's `/relay`. It is independent of the desktop overlay.
 
-**Current private candidate: 2.10.116 (native-unverified).** It retains 2.10.115's behavior, keeps
+**Current isolated test candidate: 2.10.117 CONTROLLER-TEST (native-unverified).** Current ZFE
+uses owner-scoped `input.v1` keyboard capture and `hotkeys.v1` for supported configured actions
+when those capabilities are advertised. Older ZFE falls back to SharedHUDTools and `Input.*`.
+xScal polls every supported configured physical binding through `Input.*`, but text entry remains
+best-effort through SharedHUDTools because xScal 0.2.16 exposes no keyboard capture/suppression API.
+It retains 2.10.115's behavior and keeps
 accepted Server rows as an in-memory transcript across room changes, travel, expiry and MainMenu
 for the current widget/game session. New messages and sends remain restricted to the currently
 confirmed room. Restarting the game/widget starts a fresh transcript, and the existing configured
@@ -30,10 +35,9 @@ contents, tokens or messages. This is diagnostic evidence for determining whethe
 the live game exposes a stable account/team identifier; no such identifier is
 assumed or transmitted until native evidence establishes its semantics.
 
-The 2.10.116 complete 60-case Ruffle suite, all Haxe suites, compiler diagnostics, native API/auth,
-source/anchor/SWF/BA2/package/emoji gates, focused relay tests (135) and overlay widget tests (196)
-pass. Version 2.10.116 has not been installed, natively accepted or published. Fresh native input
-acceptance is pending.
+The test-build gate results and hashes are recorded in `CONTROLLER-TEST-MANIFEST.md`. Version
+2.10.117 has not been installed, natively accepted or published. Fresh controller input acceptance
+is required before any promotion.
 
 **Current production release: 2.10.110 (2026-09-16).** Once an authoritative
 self-echo or acknowledgement supplies the local sender's cosmetics, retained rows for the same

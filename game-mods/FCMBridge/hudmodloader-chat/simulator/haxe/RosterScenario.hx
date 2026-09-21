@@ -23,7 +23,7 @@ class RosterScenario {
                 check("authenticated room diagnostic is fixed-schema and privacy safe",
                     MockXscal.roomDiagnosticCount > 0
                     && MockXscal.lastRoomDiagnosticBody.indexOf("event=roster_send") >= 0
-                    && MockXscal.lastRoomDiagnosticBody.indexOf("build=2.10.116") >= 0
+                    && MockXscal.lastRoomDiagnosticBody.indexOf("build=2.10.117") >= 0
                     && MockXscal.lastRoomDiagnosticBody.indexOf("HarnessPeer") < 0
                     && MockXscal.lastRoomDiagnosticBody.indexOf("VisibleSimulator") < 0);
                 var diagnosticCount = MockXscal.roomDiagnosticCount;

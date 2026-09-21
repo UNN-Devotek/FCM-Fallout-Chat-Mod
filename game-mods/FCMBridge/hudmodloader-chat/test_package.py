@@ -239,6 +239,7 @@ def main() -> None:
                 assert "CUSTOMIZATION.txt" in names
                 assert "KEYBINDS.txt" in names
                 keybinds = archive.read("KEYBINDS.txt")
+                assert b"PRIVATE, NATIVE-UNVERIFIED TEST BUILD" in archive.read("CONTROLLER-TEST-NOTICE.txt")
                 assert b"PROVIDER KEYBIND CONTRACT" in keybinds
                 assert b"ZFE       Data/FCMChat.ini openKey" in keybinds
                 assert b"xScal     Data/FCMChat.ini openKey only" in keybinds

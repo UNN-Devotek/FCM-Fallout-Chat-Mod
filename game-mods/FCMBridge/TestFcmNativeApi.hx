@@ -28,6 +28,8 @@ class TestFcmNativeApi {
         check("routes canonical ZFE verb", Std.string(zApi.call("chat.v1.sendMessage", "{}"))
             .indexOf('"provider":"zfe"') >= 0);
         check("ZFE uses native input", zApi.supportsNativeInput());
+        check("ZFE owner-scoped features require a positive general capability probe",
+            !zApi.supportsOwnedTextInput() && !zApi.supportsOwnedHotkeys());
         check("ZFE async-send capability permits non-blocking sends",
             zApi.probeChatCapability() && zApi.supportsNonBlockingSend());
         check("ZFE without async-control does not permit automatic server controls",
@@ -39,6 +41,15 @@ class TestFcmNativeApi {
             && zCalls[2] == "chat.v1.getRuntimeInfo|{}");
         check("ZFE verb and payload preserved", zCalls[1] == "chat.v1.sendMessage|{}");
         check("rejects an unrecognized host object", FcmNativeApi.fromExposed({}) == null);
+
+        var ownedZfe = FcmNativeApi.fromZfe({call:function(verb:String, payload:Dynamic):String {
+            return verb == "getRuntimeInfo"
+                ? '{"success":true,"capabilities":["zfe-input-v1","zfe-input-release-v1","zfe-hotkeys-v1"]}'
+                : '{"success":true}';
+        }});
+        check("current ZFE advertises owned text and configured hotkeys",
+            ownedZfe != null && ownedZfe.probeGeneralInputCapabilities()
+            && ownedZfe.supportsOwnedTextInput() && ownedZfe.supportsOwnedHotkeys());
 
         var syncZfe:FcmNativeApi = FcmNativeApi.fromZfe({call: function(verb:String, payload:Dynamic):String {
             return '{"success":true,"capabilities":["zfe-chat-online-v1"]}';
@@ -219,6 +230,9 @@ class TestFcmNativeApi {
         check("maps xScal report to reportMessage", xCalls.length == 4
             && xCalls[3] == "reportMessage|{\"messageId\":\"m1\"}");
         check("xScal does not claim ZFE native input", !xApi.supportsNativeInput());
+        check("xScal cannot claim ZFE owned keyboard contracts",
+            !xApi.probeGeneralInputCapabilities()
+            && !xApi.supportsOwnedTextInput() && !xApi.supportsOwnedHotkeys());
         check("xScal transport permits automatic server controls", xApi.supportsNonBlockingControl());
         check("xScal can recover an empty retained subscriber after a HUD reload",
             FcmNativeApi.widgetMustRequestHistoryResync(FcmNativeApi.XSCAL));

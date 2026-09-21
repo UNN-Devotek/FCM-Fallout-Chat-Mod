@@ -1,10 +1,12 @@
 /** Provider-aware input routing for the one shared widget build. */
 class FcmInputRoute {
     public static inline var NATIVE:String = "native";
+    public static inline var OWNED:String = "owned";
     public static inline var SHARED:String = "shared";
 
-    /** Both use the visible host editor; only ZFE can recover through its native buffer. */
-    public static function preferred(provider:String, nativeUsable:Bool):String {
+    /** Current ZFE owns keyboard text directly; older ZFE and xScal use the host editor. */
+    public static function preferred(provider:String, ownedUsable:Bool):String {
+        if (provider == FcmNativeApi.ZFE && ownedUsable) return OWNED;
         return SHARED;
     }
 

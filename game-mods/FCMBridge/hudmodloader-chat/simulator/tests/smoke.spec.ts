@@ -13,6 +13,15 @@ for (const provider of ['xscal', 'zfe']) {
   });
 }
 
+for (const scenario of ['owned-input-release', 'owned-input-busy', 'owned-input-expiry']) {
+  test(`ZFE ${scenario} owns or falls back and cleans up deterministically`, async ({ page }) => {
+    await page.goto(`/?mode=harness&provider=zfe&scenario=${scenario}`);
+    await expect(page.locator('#log')).toContainText(/OWNED-INPUT (PASS|FAIL)/, { timeout: 20_000 });
+    await expect(page.locator('#log')).toContainText(`OWNED-INPUT PASS ${scenario} session=bounded release=stable fallback=shared cleanup=ended`);
+    await expect(page.locator('#log')).not.toContainText('OWNED-INPUT FAIL');
+  });
+}
+
 test.afterEach(async ({ page, request }) => {
   await page.evaluate(() => (window as Window & { __FCM_SIM_TEARDOWN__?: () => void }).__FCM_SIM_TEARDOWN__?.()).catch(() => undefined);
   await expect(page.locator('#ruffle-player')).toHaveCount(0);
@@ -22,7 +31,7 @@ test.afterEach(async ({ page, request }) => {
 test('loads the exact production widget artifact and records browser key delivery', async ({ page }) => {
   await page.goto('/?mode=artifact');
   await expect(page.locator('#status')).toHaveAttribute('data-state', 'ready', { timeout: 20_000 });
-  await expect(page.locator('#widget-version')).toHaveText('2.10.116');
+  await expect(page.locator('#widget-version')).toHaveText('2.10.117');
   await page.locator('#focus-stage').click();
   await page.keyboard.press('Insert');
   await page.keyboard.press('ArrowUp');

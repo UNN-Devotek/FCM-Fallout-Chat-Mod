@@ -2,6 +2,10 @@
 
 Latest drop-in bridge evidence: [rollout, fallback and diagnostic candidates](bridge-drop-in-acceptance-2026-09-16.md).
 
+2026-09-21 controller-input test candidate: HUD 2.10.117 uses capability-gated ZFE owner-scoped
+text input and configured hotkeys. xScal retains configured `Input.*` polling and best-effort
+SharedHUDTools text entry. This candidate remains isolated and native-unverified.
+
 2026-09-20 input-correction candidate: HUD 2.10.116 reserves Enter for editor submission, defaults
 selected-link activation to F8, and preserves the stable SharedHUDTools draft across unexplained
 empty host observations. The complete 60-case Ruffle suite and local HUD gates pass; fresh native
