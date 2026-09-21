@@ -18,10 +18,16 @@ def main() -> None:
     linux_install = (ROOT / "cross-platform-overlay/assets/install/INSTALL-LINUX.txt").read_text(
         encoding="utf-8"
     )
+    nexus_guides = [
+        (ROOT / "cross-platform-overlay/assets/install/INSTALL-WINDOWS-NEXUS.txt").read_text(encoding="utf-8"),
+        (ROOT / "cross-platform-overlay/assets/install/INSTALL-LINUX-APPIMAGE-NEXUS.txt").read_text(encoding="utf-8"),
+        (ROOT / "cross-platform-overlay/assets/install/INSTALL-LINUX-DEB-NEXUS.txt").read_text(encoding="utf-8"),
+    ]
     linux_cli = (ROOT / "Packaging/linux/install.sh").read_text(encoding="utf-8")
     linux_helper = (ROOT / "cross-platform-overlay/main.js").read_text(encoding="utf-8")
     smoke = (ROOT / "Packaging/smoke-test.ps1").read_text(encoding="utf-8")
     package_downloads = (ROOT / "Packaging/package-downloads.ps1").read_text(encoding="utf-8")
+    package_nexus = (ROOT / "Packaging/package-nexus-downloads.ps1").read_text(encoding="utf-8")
     vt_gate = (ROOT / "Packaging/vt-gate.ps1").read_text(encoding="utf-8")
 
     required_nexus_markers = (
@@ -44,6 +50,12 @@ def main() -> None:
         '@{ Name = "Windows (support review)";',
         "ArchiveExisting = $false",
         "ArchiveExisting = $true",
+        '[Parameter(Mandatory = $true)] [string]$BridgeZip',
+        'package-nexus-downloads.ps1',
+        'Fallout Chat Mod Portable $Version (Windows)-Nexus.zip',
+        '"INSTALL-WINDOWS-NEXUS.txt"',
+        '"INSTALL-LINUX-APPIMAGE-NEXUS.txt"',
+        '"INSTALL-LINUX-DEB-NEXUS.txt"',
     )
     for marker in required_nexus_markers:
         assert marker in nexus, f"Nexus release path is missing: {marker}"
@@ -132,6 +144,24 @@ def main() -> None:
 
     for marker in ("Download choices on the INSTALL page", "LINUX APPIMAGE", "LINUX .DEB", "LINUX ZIP + DOCS"):
         assert marker in linux_install, f"packaged Linux instructions are missing package choice: {marker}"
+
+    for guide in nexus_guides:
+        assert "Nexus Files tab" in guide
+        assert "falloutchatmod.com" not in guide
+        assert "discord.gg" not in guide
+        assert "github.com" not in guide
+    for forbidden in ("falloutchatmod.com (SYSTEM", "install.ps1", "install.sh", "official download page"):
+        assert forbidden not in nexus, f"Nexus release copy contains off-site download direction: {forbidden}"
+
+    for marker in (
+        "Optional FCM Bridge",
+        "Data/FCMServerBridge.ba2",
+        "97047bd39c6572b410ce81a0ab27802e89dbef27d35960dc0f016dd6cf641113",
+        "Fallout Chat Mod Portable $Version (Windows)",
+        "README-PORTABLE-NEXUS.txt",
+    ):
+        assert marker in package_nexus, f"Nexus package helper is missing: {marker}"
+    assert '"-BridgeZip", $BridgeZip' in release
 
     assert 'Fallout Chat Mod-$Version.AppImage' in smoke
     assert 'Get-ChildItem -Path $DistDir -Filter "*.AppImage"' not in smoke

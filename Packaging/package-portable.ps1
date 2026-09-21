@@ -44,7 +44,7 @@ try {
         $fcmBridge = Join-Path $gameMods 'FCMBridge'
         $bridgeMod = Join-Path $fcmBridge 'hudmodloader-bridge'
         $template = Join-Path $bridgeMod 'INSTALL.template.txt'
-        $text = (Get-Content -LiteralPath $template -Raw).Replace('{version}', '0.2.4').Replace('{target}', 'PROD').Replace('{host}', 'falloutchatmod.com')
+        $text = (Get-Content -LiteralPath $template -Raw).Replace('{version}', '0.2.8').Replace('{target}', 'PROD').Replace('{host}', 'falloutchatmod.com')
         [IO.File]::WriteAllText($bridgeInstallPath, $text, [Text.UTF8Encoding]::new($false))
     }
     Copy-Item -LiteralPath $exe.FullName -Destination $stage

@@ -1,0 +1,31 @@
+Fallout Chat Mod - Linux AppImage
+=================================
+
+This Nexus package contains the portable Linux AppImage.
+
+Install
+-------
+1. Extract this ZIP to a normal folder.
+2. Make "Fallout Chat Mod-<version>.AppImage" executable.
+3. Run the AppImage, sign in with Steam or Discord, and complete onboarding.
+
+The AppImage may require libfuse2. If it cannot mount, install the compatible FUSE
+package for your distribution or run it with --appimage-extract-and-run.
+
+Overlay setup
+-------------
+- Run Fallout 76 without gamescope; a nested compositor prevents an external
+  overlay from drawing above the game.
+- KDE Wayland: use Borderless Windowed mode. The overlay manages its KWin rule
+  while Fallout 76 is running. The included .kwinrule is a manual fallback.
+- Hyprland: hyprctl is used when available; otherwise normal game detection remains.
+- Plain X11: xdotool is preferred, with kdotool as a fallback.
+- Other Wayland desktops: use Windowed or Borderless Windowed mode appropriate to
+  the compositor. PROTON_NO_WM_DECORATION=1 %command% can provide a borderless look
+  where supported; KDE users should use the managed KWin path instead.
+
+Update
+------
+Download the newer AppImage package from this mod's Nexus Files tab and replace the
+old AppImage. Existing account data, settings, keybinds, and window preferences are
+stored separately and are preserved.

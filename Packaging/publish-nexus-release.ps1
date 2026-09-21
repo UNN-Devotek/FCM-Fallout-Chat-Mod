@@ -56,6 +56,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)] [string]$Version,
+    [Parameter(Mandatory = $true)] [string]$BridgeZip,
     [string]$DistDir = "",
     # Release notes for this version -- prepended to each Nexus file description as
     # a "What's new in vX.Y.Z" block so the changelog is visible on the file page.
@@ -82,6 +83,7 @@ if (-not $HudModDir) { $HudModDir = Join-Path $fcmBridgeDir "hudmodloader-chat" 
 $nexus     = Join-Path $PSScriptRoot "publish-nexus.ps1"
 $assetsDir = Join-Path $overlayDir "assets"
 $hudPackage = Join-Path $HudModDir "package.py"
+$nexusPackage = Join-Path $PSScriptRoot "package-nexus-downloads.ps1"
 
 $winGroup   = $env:NEXUS_MOD_FILE_ID_WINDOWS
 $linuxGroup = $env:NEXUS_MOD_FILE_ID_LINUX
@@ -102,6 +104,10 @@ if (-not $linuxGroup -or -not $linuxDebGroup -or -not $hudGroup -or ($publishWin
 
 if (-not (Test-Path $hudPackage)) {
     Write-Error "HUD package helper not found: $hudPackage"
+    exit 1
+}
+if (-not (Test-Path $nexusPackage)) {
+    Write-Error "Nexus package helper not found: $nexusPackage"
     exit 1
 }
 $pythonCommand = Get-Command python3 -ErrorAction SilentlyContinue
@@ -130,6 +136,21 @@ $hudNexusZip = Join-Path $DistDir "FCM HUD Mod-$hudVersion (PROD)-Nexus.zip"
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $hudNexusZip)) {
     Write-Error "Could not build the executable-free Nexus HUD package."
     exit 1
+}
+
+# Build self-contained overlay archives before any upload. Each includes the
+# exact validated optional bridge under Optional FCM Bridge/ and never installs it.
+& $nexusPackage -Version $Version -BridgeZip $BridgeZip -DistDir $DistDir
+if ($LASTEXITCODE -ne 0) {
+    Write-Error "Could not build the Nexus overlay packages."
+    exit 1
+}
+$winNexusZip = Join-Path $DistDir "Fallout Chat Mod Setup $Version (Windows)-Nexus.zip"
+$portableNexusZip = Join-Path $DistDir "Fallout Chat Mod Portable $Version (Windows)-Nexus.zip"
+$linuxAppNexusZip = Join-Path $DistDir "Fallout Chat Mod $Version (Linux AppImage)-Nexus.zip"
+$linuxDebNexusZip = Join-Path $DistDir "Fallout Chat Mod $Version (Linux .deb)-Nexus.zip"
+foreach ($package in @($winNexusZip, $portableNexusZip, $linuxAppNexusZip, $linuxDebNexusZip)) {
+    if (-not (Test-Path $package)) { Write-Error "Nexus package missing: $package"; exit 1 }
 }
 
 # -- FAIL-CLOSED VirusTotal gate -------------------------------------------------
@@ -163,38 +184,23 @@ $linuxDebZip = "Fallout Chat Mod $Version (Linux .deb).zip"
 
 # Windows file: install instructions + CLI option (installer is code-signed; no AV disclaimer).
 $winDesc = $notesBlock + @"
-Full install instructions for every platform: https://falloutchatmod.com (SYSTEM -> INSTALL)
-
-PREFER THE CLI? One-line install (PowerShell):
-    irm https://falloutchatmod.com/install.ps1 | iex
-
-Or download this zip, extract, and run "Fallout Chat Mod Setup <version>.exe". See INSTALL-WINDOWS.txt inside the zip.
+Extract this ZIP to a normal folder, then run "Fallout Chat Mod Setup <version>.exe".
+See INSTALL-WINDOWS-NEXUS.txt inside the archive. Updates are available from this
+mod's Nexus Files tab. The installer preserves existing account data and settings.
 "@
 $linuxAppDesc = $notesBlock + @"
-WINDOWS USERS: the Windows installer is not hosted on Nexus - download it from the official site (same build, scanned clean): https://falloutchatmod.com (SYSTEM -> INSTALL). VirusTotal: https://falloutchatmod.com/virustotal
-
-Full install instructions for every platform: https://falloutchatmod.com (SYSTEM -> INSTALL)
-
-PREFER THE CLI? One-line install (adds an app-menu launcher):
-    curl -fsSL https://falloutchatmod.com/install.sh | bash
-
-Download the AppImage package, make it executable, and run it. See INSTALL-LINUX.txt on the official site for the complete KDE Wayland, Hyprland, and X11 setup.
+Extract this ZIP, make the AppImage executable, and run it. See
+INSTALL-LINUX-APPIMAGE-NEXUS.txt inside the archive for KDE Wayland, Hyprland,
+X11, FUSE, update, and compositor guidance.
 
 KDE Plasma (Wayland) users: run Fallout 76 in WINDOWED mode (not Borderless) and set your taskbar/panel to Auto-Hide - that's the reliable setup. For a borderless look, use the Steam launch option PROTON_NO_WM_DECORATION=1 %command% instead. Do NOT add a game-side "Fullscreen = No" KWin rule (it breaks the loading screen / in-game UI).
-
-VirusTotal scan (always points to the current build): https://falloutchatmod.com/virustotal
 "@
 $linuxDebDesc = $notesBlock + @"
-WINDOWS USERS: the Windows installer is not hosted on Nexus - download it from the official site: https://falloutchatmod.com (SYSTEM -> INSTALL). The Linux AppImage is also available there.
-
-Full install instructions for every platform: https://falloutchatmod.com (SYSTEM -> INSTALL)
-
 This is the apt/dpkg package. Install the downloaded file with:
     sudo apt install ./Fallout Chat Mod-$Version.deb
 
-For the portable AppImage package, use the separate Linux AppImage file on the same Nexus mod page or the official download page.
-
-VirusTotal scan (always points to the current build): https://falloutchatmod.com/virustotal
+See INSTALL-LINUX-DEB-NEXUS.txt inside the archive. The portable AppImage is a
+separate file on this mod's Nexus Files tab.
 "@
 $hudDesc = $notesBlock + @"
 OPTIONAL IN-GAME HUD MOD: FCM HUD Mod v$hudVersion
@@ -204,26 +210,27 @@ desktop overlay and must be installed at the user's discretion. The ZIP contains
 the FCMChatWidget BA2, its runtime INI files, an append-only HUDModLoader snippet,
 the version manifest, and INSTALL.txt.
 
-Download and install instructions: https://falloutchatmod.com (SYSTEM -> INSTALL)
 The archive is production-stamped and must not be used with the hosted-dev environment.
 Follow INSTALL.txt and append the loader entry to the existing Data/hudmodloader.ini;
-do not replace that file.
+do not replace that file. xScal configuration is manual in the Nexus package.
 "@
 
 # Per-platform extra files to bundle into the Nexus zip alongside the installer.
 # Result: Nexus zip = installer + same instruction files as the website zip.
 $winInclude   = @(
-    (Join-Path (Join-Path $assetsDir "install") "INSTALL-WINDOWS.txt")
+    (Join-Path (Join-Path $assetsDir "install") "INSTALL-WINDOWS-NEXUS.txt")
 )
-$linuxInclude = @(
-    (Join-Path (Join-Path $assetsDir "install") "READ ME FIRST (Windows users).txt"),
-    (Join-Path (Join-Path $assetsDir "install") "INSTALL-LINUX.txt"),
+$linuxAppInclude = @(
+    (Join-Path (Join-Path $assetsDir "install") "INSTALL-LINUX-APPIMAGE-NEXUS.txt"),
     (Join-Path $assetsDir "fallout-chatmod-keepabove.kwinrule")
+)
+$linuxDebInclude = @(
+    (Join-Path (Join-Path $assetsDir "install") "INSTALL-LINUX-DEB-NEXUS.txt")
 )
 
 $platforms = @(
-    @{ Name = "Linux AppImage"; File = $linuxApp; Zip = $linuxAppZip; Group = $linuxGroup; Desc = $linuxAppDesc; Include = $linuxInclude; NexusVersion = $Version; Category = "main"; ArchiveExisting = $true },
-    @{ Name = "Linux .deb"; File = $linuxDeb; Zip = $linuxDebZip; Group = $linuxDebGroup; Desc = $linuxDebDesc; Include = $linuxInclude; NexusVersion = $Version; Category = "optional"; ArchiveExisting = $true },
+    @{ Name = "Linux AppImage"; File = $linuxAppNexusZip; Zip = ""; Group = $linuxGroup; Desc = $linuxAppDesc; Include = @(); NexusVersion = $Version; Category = "main"; ArchiveExisting = $true },
+    @{ Name = "Linux .deb"; File = $linuxDebNexusZip; Zip = ""; Group = $linuxDebGroup; Desc = $linuxDebDesc; Include = @(); NexusVersion = $Version; Category = "optional"; ArchiveExisting = $true },
     # The HUD has its own Main Files entry; installation remains opt-in.
     # Its file version follows the widget version, not the desktop overlay version.
     @{ Name = "HUD"; File = $hudNexusZip; Zip = ""; Group = $hudGroup; Desc = $hudDesc; Include = @(); NexusVersion = $hudVersion; Category = "optional"; ArchiveExisting = $true }
@@ -232,7 +239,7 @@ if ($publishWindows) {
     # Support-review upload creates a second live Windows file alongside the existing one.
     # The old file is removed manually only after Nexus support approves the new file.
     $platforms = @(
-        @{ Name = "Windows (support review)"; File = $winExe; Zip = $winZip; Group = $winGroup; Desc = $winDesc; Include = $winInclude; NexusVersion = $Version; Category = "main"; ArchiveExisting = $false }
+        @{ Name = "Windows (support review)"; File = $winNexusZip; Zip = ""; Group = $winGroup; Desc = $winDesc; Include = @(); NexusVersion = $Version; Category = "main"; ArchiveExisting = $false }
     ) + $platforms
 }
 

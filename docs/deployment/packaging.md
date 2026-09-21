@@ -97,6 +97,16 @@ defaults to preserving the previous file; the wrapper opts into archiving for th
 
 **Purpose:** Low-level Nexus v3 Upload API wrapper. Called by `publish-nexus-release.ps1`; not normally invoked directly during a release.
 
+Nexus overlay archives use artifact-specific `*-NEXUS.txt` guides. These guides refer only to the
+Nexus Files tab for updates and must not direct users to external binary downloads. The Nexus HUD
+archive similarly contains manual provider configuration without helper-download redirects.
+
+`Packaging/package-nexus-downloads.ps1` builds four self-contained overlay archives: Windows
+installer, Windows portable, Linux AppImage, and Linux `.deb`. Every archive includes the exact
+validated PROD `FCMServerBridge` 0.2.8 package under `Optional FCM Bridge/`, verifies both the
+locked bridge-ZIP and BA2 hashes, and keeps installation manual and optional. The visible HUD is
+never included in these overlay archives.
+
 **What it does (6-step Nexus v3 flow):**
 1. `POST /uploads/multipart` — open a multipart upload session, receive presigned S3 part URLs
 2. `PUT <presigned part urls>` — upload each chunk to S3 (no API key on these calls — auth is baked into the URLs)

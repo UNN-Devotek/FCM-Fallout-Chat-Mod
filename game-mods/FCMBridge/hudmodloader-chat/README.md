@@ -235,6 +235,11 @@ chat transport and other mods' storage documents independent.
 
 ## Browser HUD simulator
 
+HUD 2.10.121 removes the failed xScal direct-TextField experiment and restores SharedHUDTools as
+the xScal text editor. xScal `Input.*` remains reserved for configured action polling. Keyboard
+typing while Fallout is in controller mode is unsupported until xScal exposes a native text-input
+capture contract. ZFE routing is unchanged.
+
 `simulator/` provides the non-game M0 smoke runner. It renders the exact normalized production SWF
 with pinned, self-hosted Ruffle and verifies browser key delivery with Playwright:
 

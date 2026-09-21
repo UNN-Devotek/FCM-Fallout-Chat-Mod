@@ -1,9 +1,9 @@
 # FCMChatWidget build, install, and verification
 
-**Widget version:** 2.10.117. CONTROLLER-TEST is an isolated, native-unverified build that adds
+**Widget version:** 2.10.121. XSCAL-SHAREDHUDTOOLS-ROLLBACK restores the verified
 capability-gated ZFE owner-scoped text input and configured hotkeys. xScal continues to poll every
 supported configured physical key through its documented `Input.*` API and uses SharedHUDTools
-for best-effort text entry. It is not approved for installation, publication, or promotion. It
+for best-effort text entry. Controller-active xScal typing is not supported. It is not approved for publication or promotion. It
 retains 2.10.116's Server transcript and
 bounded authenticated room diagnostics, and retains accepted Server rows in memory across room
 changes for the current widget/game session. Live authorization and sends still use only the

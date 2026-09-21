@@ -1,12 +1,13 @@
-FCM HUD 2.10.117 CONTROLLER-TEST
-================================
+FCM HUD 2.10.121 XSCAL-SHAREDHUDTOOLS-ROLLBACK
+==============================================
 
 PRIVATE, NATIVE-UNVERIFIED TEST BUILD. DO NOT REDISTRIBUTE OR PUBLISH.
 
 This build tests keyboard-controlled FCM actions while a controller remains active.
 ZFE requires zfe-input-v1, zfe-input-release-v1, and zfe-hotkeys-v1 for the new owned paths.
-xScal polls configured keyboard actions through Input.*; its SharedHUDTools text editor remains
-best-effort because xScal 0.2.16 does not expose keyboard capture or keyboard suppression.
+xScal polls configured actions through Input.* and uses the verified SharedHUDTools editor for
+text composition. xScal controller-active typing is not supported because its documented API
+does not provide keyboard capture or suppression.
 
 Do not overwrite FCMChat.ini during an update. Back up the current BA2 before manual installation.
 Rollback by restoring that BA2. This archive does not modify or install either script extender.

@@ -1,4 +1,4 @@
-# FCM Server Bridge 0.2.7
+# FCM Server Bridge 0.2.8
 
 Invisible, optional HUDModLoader child. Sign into the desktop overlay only.
 No bridge login/code/pairing, chat connection, input editor or helper service.
@@ -41,7 +41,7 @@ cd ../hudmodloader-chat
 for suite in test-*.hxml; do haxe "$suite" || exit 1; done
 npm test --prefix simulator
 cd ../hudmodloader-bridge
-python3 package.py --target dev --output ../../../_dev-test-builds/server-bridge-0.2.7/FCM-Server-Bridge-0.2.7-DEV.zip
+python3 package.py --target dev --output ../../../_dev-test-builds/server-bridge-0.2.8/FCM-Server-Bridge-0.2.8-DEV.zip
 ```
 
 Also run parent native-adapter/auth/source checks and affected backend, overlay and
@@ -88,7 +88,7 @@ pending; see the dated evidence linked from the architecture guide.
 aligns bridge evidence with the name peers actually observe without treating either value as
 authentication. Freshness, generation, mutual-sighting and bounded-export rules are unchanged.
 
-0.2.7 uses xScal 0.2.17's stateless named storage calls for the bridge export. It does not
+0.2.8 uses xScal 0.2.17's stateless named storage calls for the bridge export. It does not
 claim the legacy HUDMenu-wide registration slot, so Improved HUD can continue using its own
 `improvedbars` document while FCM writes only `fcmserverbridge-dev` or
 `fcmserverbridge-prod`. Older xScal builds retain the legacy adapter for standalone

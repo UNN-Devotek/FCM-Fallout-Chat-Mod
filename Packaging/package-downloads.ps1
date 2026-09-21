@@ -86,10 +86,10 @@ if (-not (Test-Path $hudPackage))   { Fail "Missing: $hudPackage" }
 if (-not (Test-Path $portablePackage)) { Fail "Missing: $portablePackage" }
 if (-not (Test-Path $bridgeInstallTemplate)) { Fail "Missing: $bridgeInstallTemplate" }
 if (-not (Test-Path -LiteralPath $BridgeZip)) { Fail "Validated PROD bridge ZIP not found: $BridgeZip" }
-$expectedBridgeZipSha256 = "d2e229b601977efead12108d3db1a09b622f6580fe4f4b2ee50fd0a3d3f3ae47"
+$expectedBridgeZipSha256 = "552ba1d8a497fa1701fc9c288f5ed155df13a88e14ae734a412994d3304e7b0a"
 $bridgeZipSha256 = (Get-FileHash -LiteralPath $BridgeZip -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($bridgeZipSha256 -ne $expectedBridgeZipSha256) {
-    Fail "Bridge ZIP is not the native-accepted 0.2.4 artifact (expected $expectedBridgeZipSha256, got $bridgeZipSha256)"
+    Fail "Bridge ZIP is not the reviewed 0.2.8 candidate (expected $expectedBridgeZipSha256, got $bridgeZipSha256)"
 }
 
 # Resolve Python once so package.py is run consistently by the repeatable
@@ -118,7 +118,7 @@ $hudZipOut    = Join-Path $DistDir $hudZipName
 $stagingRoot = Join-Path $DistDir "_pkg-staging"
 $bridgeInstructions = Join-Path $stagingRoot "BRIDGE-INSTALL.txt"
 New-Item -ItemType Directory -Path $stagingRoot -Force | Out-Null
-$bridgeText = (Get-Content -LiteralPath $bridgeInstallTemplate -Raw).Replace('{version}', '0.2.4').Replace('{target}', 'PROD').Replace('{host}', 'falloutchatmod.com')
+$bridgeText = (Get-Content -LiteralPath $bridgeInstallTemplate -Raw).Replace('{version}', '0.2.8').Replace('{target}', 'PROD').Replace('{host}', 'falloutchatmod.com')
 [IO.File]::WriteAllText($bridgeInstructions, $bridgeText, [Text.UTF8Encoding]::new($false))
 
 function Expand-OptionalBridge($destination) {

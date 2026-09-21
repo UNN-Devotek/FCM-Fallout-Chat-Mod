@@ -545,7 +545,7 @@ if ($SkipWindowsNexus) {
 # Pass release notes via env var, NOT a command-line arg: a multi-line/quoted
 # notes string handed to a child `powershell.exe -File` gets re-parsed and a ':'
 # in the notes is read as a PSDrive, corrupting $DistDir. The env var is immune.
-$nexusArgs = @("-Version", $Version)
+$nexusArgs = @("-Version", $Version, "-BridgeZip", $BridgeZip)
 if (-not $SkipWindowsNexus) { $nexusArgs += "-PublishWindowsForReview" }
 $env:FCM_RELEASE_NOTES = $ReleaseNotes
 

@@ -26,6 +26,12 @@ data. 0.2.3 reuses `FcmJson` for runtime-info/write acknowledgements and forbids
 exports and the user reported it working. Full mixed-client shared-room/message/travel
 acceptance remains pending; the overlay log did not independently confirm room assignment.
 
+**Visible HUD 2.10.121 XSCAL-SHAREDHUDTOOLS-ROLLBACK:** local, native-unverified build. It removes
+the failed widget-owned xScal TextField experiment and restores SharedHUDTools as the verified
+xScal text-entry path. xScal `Input.*` remains limited to configured action-key polling. Keyboard
+typing while controller mode is active is unsupported pending a native xScal text-input API. ZFE
+retains the owner-scoped input path unchanged.
+
 **Visible HUD 2.10.117 CONTROLLER-TEST:** isolated, native-unverified test build. It retains
 2.10.116's session transcript and reserves
 Enter for text submission. Selected-link activation defaults to F8, and transient empty

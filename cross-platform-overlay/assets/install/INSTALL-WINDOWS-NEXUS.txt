@@ -1,0 +1,25 @@
+Fallout Chat Mod - Windows installer
+====================================
+
+This Nexus package contains the standard per-user Windows installer.
+
+Install
+-------
+1. Extract this ZIP to a normal folder outside the Fallout 76 game folder.
+2. Run "Fallout Chat Mod Setup <version>.exe" from the extracted folder.
+3. Launch Fallout Chat Mod from the Start Menu or desktop shortcut.
+4. Sign in with Steam or Discord and complete onboarding.
+5. Run Fallout 76 in Borderless Windowed mode.
+
+The desktop overlay does not require a script extender and does not modify the
+Fallout 76 installation. Optional game integrations are separate manual installs.
+
+Update
+------
+When the overlay reports that an update is available, download the newer Windows
+installer from this mod's Nexus Files tab, extract it, and run it. Existing account
+data, settings, keybinds, and window preferences are preserved.
+
+Uninstall
+---------
+Open Windows Settings -> Apps -> Installed apps -> Fallout Chat Mod -> Uninstall.

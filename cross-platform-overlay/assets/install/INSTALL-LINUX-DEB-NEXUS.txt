@@ -1,0 +1,27 @@
+Fallout Chat Mod - Linux Debian package
+=======================================
+
+This Nexus package contains the .deb for compatible Debian and Ubuntu systems.
+
+Install
+-------
+1. Extract this ZIP to a normal folder.
+2. Install the extracted package with your graphical package manager or run:
+
+   sudo apt install "./Fallout Chat Mod-<version>.deb"
+
+3. Launch Fallout Chat Mod from the application menu.
+4. Sign in with Steam or Discord and complete onboarding.
+
+Use Windowed or Borderless Windowed mode as appropriate for your Linux compositor.
+Do not run Fallout 76 inside gamescope when using the desktop overlay.
+
+Update
+------
+Download the newer .deb package from this mod's Nexus Files tab and install it over
+the existing version. Account data, settings, keybinds, and window preferences are
+preserved.
+
+Uninstall
+---------
+Remove the package with your graphical package manager or apt.
