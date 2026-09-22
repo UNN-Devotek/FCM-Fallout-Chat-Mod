@@ -26,7 +26,13 @@ const instances = [];
 jest.mock('../src/websocket/bridgeConnection', () => ({ BridgeConnection: class {
   constructor(...args) { this.args = args; this.watch = jest.fn(); this.observe = jest.fn(); this.leave = jest.fn(); this.dispose = jest.fn(); this.observedPlayerStats = jest.fn(async () => ({ bindingId: null, observedPlayers: null })); instances.push(this); }
 } }));
-jest.mock('../src/services/relay/localExportBridge', () => ({ LocalExportBridge: class { constructor(...args) { this.args = args; } } }));
+jest.mock('../src/services/relay/localExportBridge', () => ({
+  BRIDGE_LEAVE_REASONS: ['observation_timeout', 'game_exit', 'main_menu', 'explicit_inactive', 'account_change',
+    'socket_replaced', 'app_quit', 'invalid_export', 'provider_conflict'],
+  isBridgeLeaveReason: value => ['observation_timeout', 'game_exit', 'main_menu', 'explicit_inactive', 'account_change',
+    'socket_replaced', 'app_quit', 'invalid_export', 'provider_conflict'].includes(value),
+  LocalExportBridge: class { constructor(...args) { this.args = args; } },
+}));
 // Imported services own maintenance intervals; keep them test-owned from import.
 jest.useFakeTimers();
 const { handleConnection } = require('../src/websocket/handlers');
@@ -90,14 +96,21 @@ test('only header-authenticated desktop gets local authority and accepts new con
   expect(bridge.args[4].args[3]()).toBe(false);
   await control(ws, 'client:status', { inGame: true });
   await control(ws, 'bridge:watch', { mode: 'local-export' });
-  await control(ws, 'bridge:observe', payload); await control(ws, 'bridge:leave', {});
+  await control(ws, 'bridge:observe', payload); await control(ws, 'bridge:leave', { reason: 'observation_timeout' });
   expect(bridge.watch).toHaveBeenCalledWith('local-export'); expect(bridge.observe).toHaveBeenCalledWith(payload, expect.any(Number));
-  expect(bridge.leave).toHaveBeenCalledTimes(1);
+  expect(bridge.leave).toHaveBeenCalledWith('observation_timeout');
   await control(ws, 'client:status', { inGame: false });
-  expect(bridge.leave).toHaveBeenCalledTimes(2);
+  expect(bridge.leave).toHaveBeenLastCalledWith('game_exit');
   expect(bridge.args[4].args[3]()).toBe(false);
   await control(ws, 'bridge:observe', payload);
   expect(bridge.observe).toHaveBeenCalledTimes(1);
+});
+
+test('unknown leave reasons fail closed as explicit inactive', async () => {
+  const ws = await connect('/', { 'x-auth-token': 'desktop-token' });
+  const bridge = instances.at(-1);
+  await control(ws, 'bridge:leave', { reason: 'forged-soft-reason' });
+  expect(bridge.leave).toHaveBeenCalledWith('explicit_inactive');
 });
 
 test('browser tickets cannot activate legacy or local bridge controls', async () => {

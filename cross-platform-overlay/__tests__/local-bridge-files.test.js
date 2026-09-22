@@ -66,13 +66,20 @@ describe('strict provider export boundary', () => {
 });
 
 describe('monotonic evidence and writer liveness', () => {
-  it('requires advancement after attach and expires a stopped writer after 12 seconds', () => {
+  it('requires advancement after attach and retains an established writer until observation expiry', () => {
     const cursor = new ExportCursor();
     expect(cursor.accept(snapshot(), 0)).toBeNull();
     expect(cursor.accept(snapshot(), 5000)).toBeNull();
     expect(cursor.accept(snapshot({ sequence: 2, observationAgeMs: 5000 }), 5000)).not.toBeNull();
-    expect(cursor.current(16999)).not.toBeNull();
-    expect(cursor.current(17000)).toBeNull();
+    expect(cursor.current(29999)).not.toBeNull();
+    expect(cursor.current(30000)).toBeNull();
+  });
+  it('revokes an explicit inactive export immediately despite an unexpired observation', () => {
+    const cursor = new ExportCursor();
+    cursor.accept(snapshot(), 0);
+    expect(cursor.accept(snapshot({ sequence: 2 }), 1000)).not.toBeNull();
+    expect(cursor.accept(snapshot({ sequence: 3, state: 'inactive', ownName: '', names: [] }), 2000)).toBeNull();
+    expect(cursor.current(2000)).toBeNull();
   });
   it('heartbeats reporting age zero never extend the original observation deadline or revive it', () => {
     const c = new ExportCursor(); c.accept(snapshot(), 0);
@@ -86,8 +93,8 @@ describe('monotonic evidence and writer liveness', () => {
     expect(c.accept(null, 1500)).not.toBeNull();
     expect(c.accept(snapshot({ sequence: 2 }), 2000)).not.toBeNull();
     expect(c.accept(snapshot({ sequence: 3 }), 2500)).not.toBeNull();
-    expect(c.current(14499)).not.toBeNull();
-    expect(c.current(14500)).toBeNull();
+    expect(c.current(29999)).not.toBeNull();
+    expect(c.current(30000)).toBeNull();
   });
   it('rejects backward sequences, observation mutation and holding without established evidence', () => {
     const c = new ExportCursor(); c.accept(snapshot(), 0);
@@ -107,7 +114,7 @@ describe('monotonic evidence and writer liveness', () => {
   });
   it('accounts for time spent awaiting a read before accepting newer evidence', () => {
     const c = new ExportCursor(); c.accept(snapshot(), 0);
-    expect(c.accept(snapshot({ sequence: 2, observationSequence: 2 }), 20000, 1000)).toBeNull();
+    expect(c.accept(snapshot({ sequence: 2, observationSequence: 2 }), 32000, 1000)).toBeNull();
   });
 });
 
@@ -127,6 +134,26 @@ describe('bounded asynchronous watcher lifecycle', () => {
     await vi.advanceTimersByTimeAsync(3000);
     expect(onInactive).not.toHaveBeenCalled();
     value = snapshot({ sequence: 3 });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(onSnapshot).toHaveBeenCalledTimes(2);
+    expect(onInactive).not.toHaveBeenCalled();
+    watcher.stop();
+  });
+  it('keeps an established room through a 20-second raid HUD reconstruction and resumes in place', async () => {
+    vi.useFakeTimers(); vi.setSystemTime(0);
+    let value = snapshot();
+    const onSnapshot = vi.fn(), onInactive = vi.fn();
+    const watcher = watchExports({ environment: 'dev',
+      discover: async () => [{ root: '/game', relative: 'x.json', provider: 'zfe' }],
+      read: async () => value ? JSON.stringify(value) : null, onSnapshot, onInactive });
+    await vi.advanceTimersByTimeAsync(1000);
+    value = snapshot({ sequence: 2, observationAgeMs: 1000 });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(onSnapshot).toHaveBeenCalledOnce();
+    value = null;
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(onInactive).not.toHaveBeenCalled();
+    value = snapshot({ sequence: 3, observationAgeMs: 22000 });
     await vi.advanceTimersByTimeAsync(1000);
     expect(onSnapshot).toHaveBeenCalledTimes(2);
     expect(onInactive).not.toHaveBeenCalled();
@@ -185,7 +212,9 @@ describe('bounded asynchronous watcher lifecycle', () => {
       discover: async () => [{ root: '/game', relative: 'z.json', provider: 'zfe' }], read, onSnapshot, onInactive });
     await vi.advanceTimersByTimeAsync(2000);
     expect(onSnapshot).toHaveBeenCalledOnce(); expect(read).toHaveBeenCalledTimes(3);
-    await vi.advanceTimersByTimeAsync(11000);
+    await vi.advanceTimersByTimeAsync(26000);
+    expect(onInactive).not.toHaveBeenCalled(); expect(read).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(2000);
     expect(onInactive).toHaveBeenCalledOnce(); expect(read).toHaveBeenCalledTimes(3);
     watcher.stop(); finish(JSON.stringify(snapshot({ sequence: 3 })));
     await vi.advanceTimersByTimeAsync(1000);

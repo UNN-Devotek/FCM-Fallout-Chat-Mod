@@ -4,11 +4,19 @@ import env from '../../config/environment';
 import prisma from '../../config/prisma';
 import { getRedisClient } from '../../config/redis';
 import { applyRoomAssignments, clearRoomMembership, coordinateRooms } from './roomCoordinator';
-import { normalizeRosterName, readRoster, setRoster } from './worldRosterService';
+import { canRestoreRoomAffinity, normalizeRosterName, readRoster, setRoster } from './worldRosterService';
 import { getWorldId, setWorldId } from './worldIdService';
 import type { BridgeResolution } from './overlayServerBridge';
+import { opaqueRef, recordRoomDiagnostic } from './roomDiagnostics';
 
 export const LOCAL_OBSERVATION_MS = 30_000;
+export const SOFT_LEAVE_MS = 30_000;
+export const BRIDGE_LEAVE_REASONS = ['observation_timeout', 'game_exit', 'main_menu', 'explicit_inactive',
+  'account_change', 'socket_replaced', 'app_quit', 'invalid_export', 'provider_conflict'] as const;
+export type BridgeLeaveReason = typeof BRIDGE_LEAVE_REASONS[number];
+export function isBridgeLeaveReason(value: unknown): value is BridgeLeaveReason {
+  return typeof value === 'string' && (BRIDGE_LEAVE_REASONS as readonly string[]).includes(value);
+}
 const nonce = z.string().regex(/^[a-z0-9-]{1,64}$/);
 const observationSchema = z.strictObject({
   schemaVersion: z.literal(1), environment: z.enum(['dev', 'prod']), provider: z.enum(['zfe', 'xscal']),
@@ -45,6 +53,8 @@ interface ObservationState {
   active: boolean;
   retiredSessions: string[];
   retiredWorlds: string[];
+  softLeaveUntil?: number;
+  affinity?: { roomKey: string; lastDirectEvidenceAt: number; sessionStartedAt: number };
 }
 const STATE_SECONDS = 86_400;
 const MAX_RETIRED_GENERATIONS = 512;
@@ -63,6 +73,7 @@ export class LocalExportBridge {
   private closed = false;
   private activityEpoch = 0;
   private revoked = false;
+  private softLeaveTimer: NodeJS.Timeout | undefined;
   private readonly connectionKey: string;
   private readonly connectionOrder: Promise<number>;
 
@@ -102,6 +113,30 @@ export class LocalExportBridge {
       && !this.closed && this.isCurrent() && await this.ownsConnection();
   }
 
+  private cancelSoftLeaveTimer(): void {
+    if (this.softLeaveTimer) clearTimeout(this.softLeaveTimer);
+    this.softLeaveTimer = undefined;
+  }
+
+  private scheduleSoftLeaveExpiry(until: number): void {
+    this.cancelSoftLeaveTimer();
+    this.softLeaveTimer = setTimeout(() => { void this.expireSoftLeave(until).catch(() => {}); }, Math.max(1, until - Date.now()));
+    this.softLeaveTimer.unref?.();
+  }
+
+  private async expireSoftLeave(until: number): Promise<void> {
+    await coordinateRooms(async assertCurrent => {
+      const state = await this.readState();
+      if (!state || state.owner !== this.owner || state.active || state.softLeaveUntil !== until
+        || state.softLeaveUntil > Date.now()) return;
+      await assertCurrent();
+      delete state.softLeaveUntil;
+      await this.save(state);
+      await clearRoomMembership(this.actorId, assertCurrent);
+      await recordRoomDiagnostic(this.actorId, { event: 'soft_leave_expired', reason: 'observation_timeout' });
+    });
+  }
+
   initialize(): Promise<void> {
     return this.initialized ??= coordinateRooms(async assertCurrent => {
       if (!(await this.authenticated())) return;
@@ -123,6 +158,10 @@ export class LocalExportBridge {
       if (!this.isInGame() || !(await this.authenticated()) || epoch !== this.activityEpoch) return false;
       const state = await this.readState();
       if (!state || state.owner !== this.owner) return false;
+      if (state.softLeaveUntil !== undefined && state.softLeaveUntil <= Date.now()) {
+        await clearRoomMembership(this.actorId, assertCurrent);
+        delete state.softLeaveUntil;
+      }
       const old = state.snapshot;
       const sessionChanged = !!old && snapshot.sessionId !== old.sessionId;
       const worldChanged = !!old && (sessionChanged || snapshot.worldGeneration !== old.worldGeneration);
@@ -169,11 +208,17 @@ export class LocalExportBridge {
       state.snapshot = snapshot;
       state.expiresAt = expiresAt;
       state.active = false; // Assignment must finish before any ready confirmation.
+      const recoveringSoftLeave = state.softLeaveUntil !== undefined && state.softLeaveUntil > Date.now()
+        && !worldChanged;
+      const restoreAffinity = recoveringSoftLeave && state.affinity
+        && await canRestoreRoomAffinity(this.actorId, state.affinity.roomKey, snapshot.names,
+          state.affinity.lastDirectEvidenceAt, Date.now()) ? state.affinity : undefined;
+      delete state.softLeaveUntil;
       await this.save(state);
       if (!fresh) return true;
       // A replay after expiry cannot revive a room even if it reports age zero.
       await setRoster(this.actorId, snapshot.ownName, snapshot.names, requestIdFor(snapshot), expiresAt, [],
-        { observationSource: `bridge:${snapshot.provider}` });
+        { observationSource: `bridge:${snapshot.provider}`, ...(restoreAffinity ? { restoreAffinity } : {}) });
       await applyRoomAssignments(this.actorId, assertCurrent);
       await assertCurrent();
       if (!this.isInGame() || !(await this.authenticated()) || epoch !== this.activityEpoch || expiresAt <= Date.now()) {
@@ -182,9 +227,20 @@ export class LocalExportBridge {
       }
       await assertCurrent();
       state.active = true;
+      const roster = await readRoster(this.actorId);
+      const assignedRoom = await getWorldId(this.actorId);
+      state.affinity = assignedRoom && roster?.lastDirectEvidenceAt !== undefined ? {
+        roomKey: assignedRoom, lastDirectEvidenceAt: roster.lastDirectEvidenceAt,
+        sessionStartedAt: roster.sessionStartedAt ?? Date.now(),
+      } : undefined;
       await this.save(state);
       if (epoch !== this.activityEpoch || !this.isInGame()) return false;
       this.revoked = false;
+      this.cancelSoftLeaveTimer();
+      if (recoveringSoftLeave) await recordRoomDiagnostic(this.actorId, {
+        event: 'soft_leave_recovered', reason: restoreAffinity ? 'shared_population' : 'new_room',
+        roomRef: opaqueRef(await getWorldId(this.actorId) ?? ''),
+      });
       return true;
     });
   }
@@ -212,24 +268,46 @@ export class LocalExportBridge {
       worldGeneration: snapshot.worldGeneration, sequence: snapshot.sequence } };
   }
 
-  async leave(): Promise<void> {
+  async leave(reason: BridgeLeaveReason = 'explicit_inactive'): Promise<void> {
     this.invalidate();
     if (!this.initialized) return;
     await this.initialized;
+    const soft = reason === 'observation_timeout';
+    let softUntil: number | undefined;
     await coordinateRooms(async assertCurrent => {
       const state = await this.readState();
       if (!state || state.owner !== this.owner) return;
       await assertCurrent();
       state.active = false;
       // Preserve replay watermarks, including on socket replacement.
-      await this.save(state);
+      if (soft) {
+        const roster = await readRoster(this.actorId);
+        const roomKey = await getWorldId(this.actorId);
+        if (roomKey && roster?.lastDirectEvidenceAt !== undefined) state.affinity = {
+          roomKey, lastDirectEvidenceAt: roster.lastDirectEvidenceAt,
+          sessionStartedAt: roster.sessionStartedAt ?? Date.now(),
+        };
+        const started = state.softLeaveUntil === undefined;
+        softUntil = state.softLeaveUntil ?? Date.now() + SOFT_LEAVE_MS;
+        state.softLeaveUntil = softUntil;
+        await this.save(state);
+        if (started) await recordRoomDiagnostic(this.actorId, { event: 'soft_leave_started', reason,
+          roomRef: opaqueRef(await getWorldId(this.actorId) ?? '') });
+      } else {
+        delete state.softLeaveUntil;
+        await this.save(state);
+      }
+      // Authority is always removed immediately. Soft loss preserves only the
+      // private tombstone above, never a live roster/world membership.
       await clearRoomMembership(this.actorId, assertCurrent);
     });
+    if (softUntil !== undefined) this.scheduleSoftLeaveExpiry(softUntil);
+    else this.cancelSoftLeaveTimer();
   }
 
   /** Synchronous fence: queued cleanup must not allow an old observation to
    * publish a ready confirmation while awaiting storage/moderation work. */
   invalidate(): void { this.activityEpoch++; this.revoked = true; }
 
-  close(): Promise<void> { this.closed = true; this.invalidate(); return this.closeTask ??= this.leave(); }
+  close(): Promise<void> { this.closed = true; this.invalidate(); return this.closeTask ??= this.leave('socket_replaced'); }
 }

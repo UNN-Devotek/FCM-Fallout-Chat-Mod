@@ -59,7 +59,7 @@ import env from '../config/environment';
 import { INSTANCE_ID } from '../config/instanceIdentity';
 import { notifyRelayLiveChatMessage } from '../services/relay/relayLiveFanout';
 import { BridgeConnection } from './bridgeConnection';
-import { LocalExportBridge } from '../services/relay/localExportBridge';
+import { isBridgeLeaveReason, LocalExportBridge } from '../services/relay/localExportBridge';
 import { SERVER_EVENTS_CHANNEL, type ServerEventEnvelope } from '../services/relay/serverChat';
 import { ServerModerationConnection } from './serverModerationConnection';
 import { authorizeServerModeration } from './serverModerationAuthorization';
@@ -2217,7 +2217,9 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       }
       case 'bridge:leave': {
         if (webTicketUserId || clients.get(token)?.ws !== ws) break;
-        await serverBridge.leave(); // Revocation fences in-flight work before any await.
+        const requestedReason: unknown = frame.payload?.reason;
+        const reason = isBridgeLeaveReason(requestedReason) ? requestedReason : 'explicit_inactive';
+        await serverBridge.leave(reason); // Revocation fences in-flight work before any await.
         break;
       }
 
@@ -2637,7 +2639,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
           const ownClient = clients.get(token);
           if (!webTicketUserId && ownClient?.ws === ws) {
             ownClient.bridgeInGame = inGame;
-            if (!inGame) await serverBridge.leave();
+            if (!inGame) await serverBridge.leave('game_exit');
           }
           // Propagate to all open client entries for this user (multi-tab / multi-window).
           for (const c of clients.values()) {

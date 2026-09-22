@@ -17,29 +17,29 @@ class LocalBridgeRelay {
     if (owner?.socket.readyState !== 1) return;
     try { owner.socket.send(JSON.stringify({ type, payload })); } catch { /* Closing socket. */ }
   }
-  clear(leave = true) {
+  clear(leave = true, reason = 'explicit_inactive') {
     this.epoch++;
     this.watcher?.stop(); this.watcher = null;
     this.expected = null; this.binding = null;
     if (this.owner) {
-      if (leave) this.send(this.owner, 'bridge:leave');
+      if (leave) this.send(this.owner, 'bridge:leave', { reason });
       this.emit(this.owner.id, { type: 'bridge:state', payload: { status: 'inactive' } });
     }
   }
   setAuth(token) {
     if (this.token === token) return;
-    this.clear(); this.owner = null; this.token = token;
+    this.clear(true, 'account_change'); this.owner = null; this.token = token;
   }
   setGameRunning(running) {
     if (this.gameRunning === running) return;
     this.gameRunning = running;
-    if (!running) this.clear();
+    if (!running) this.clear(true, 'game_exit');
     this.send(this.owner, 'client:status', { inGame: running });
     if (running) this.start();
   }
   opened(id, socket, token) {
     if (!token || token !== this.token) return false;
-    this.clear();
+    this.clear(true, 'socket_replaced');
     this.owner = { id, socket, token };
     this.send(this.owner, 'client:status', { inGame: this.gameRunning });
     // This must precede buffered renderer watch frames and all observations.
@@ -65,10 +65,10 @@ class LocalBridgeRelay {
         } else this.expected.latestSequence = snapshot.sequence;
         this.send(owner, 'bridge:observe', snapshot);
       },
-      onInactive: () => {
+      onInactive: (reason = 'observation_timeout') => {
         if (!current()) return;
         this.expected = null; this.binding = null;
-        this.send(owner, 'bridge:leave');
+        this.send(owner, 'bridge:leave', { reason });
         this.emit(owner.id, { type: 'bridge:state', payload: { status: 'inactive' } });
       },
     });
@@ -111,7 +111,7 @@ class LocalBridgeRelay {
     return !!this.expected && !!this.binding && this.gameRunning
       && p?.bindingId === this.binding.bindingId && p.channelId === this.binding.channelId;
   }
-  dispose() { this.clear(); this.owner = null; this.token = null; }
+  dispose() { this.clear(true, 'app_quit'); this.owner = null; this.token = null; }
 }
 
 module.exports = { LocalBridgeRelay };

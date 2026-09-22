@@ -36,6 +36,11 @@ interface GraceSighting {
   until: number;
 }
 
+interface EmptyRosterContinuity {
+  names: string[];
+  until: number;
+}
+
 export interface RosterEntry {
   userId: string;
   name: string; // own public account name (lowercased)
@@ -44,6 +49,8 @@ export interface RosterEntry {
   seen: string[]; // observed HUD player names (lowercased)
   /** Removed sightings retained briefly without renewal to absorb incomplete UI snapshots. */
   graceSeen?: GraceSighting[];
+  /** Last verified sightings retained only while the provider reports an empty roster. */
+  emptyRosterContinuity?: EmptyRosterContinuity;
   session: string;
   requestId: string;
   /** Bounded transport class for privacy-safe room-decision diagnostics. */
@@ -67,6 +74,8 @@ interface SetRosterOptions {
   recoverHudReplacement?: boolean;
   /** Fixed server-selected transport label; never a player-controlled identifier. */
   observationSource?: 'native' | 'bridge:zfe' | 'bridge:xscal';
+  /** Server-owned soft-loss tombstone; never populated from a client payload. */
+  restoreAffinity?: { roomKey: string; lastDirectEvidenceAt: number; sessionStartedAt: number };
 }
 
 export function normalizeRosterName(name: string): string { return name.trim().toLowerCase().slice(0, MAX_NAME_LENGTH); }
@@ -75,6 +84,8 @@ function effectiveSeenAt(roster: RosterEntry, now: number): string[] {
   return [...new Set([
     ...roster.seen,
     ...(roster.graceSeen ?? []).filter(grace => grace.until > now).map(grace => grace.name),
+    ...(roster.seen.length === 0 && (roster.emptyRosterContinuity?.until ?? 0) > now
+      ? roster.emptyRosterContinuity!.names : []),
   ])];
 }
 
@@ -140,11 +151,13 @@ export async function setRoster(relayUserId: string, ownName: string, seenNames:
       && (previous.requestId === requestId || options.preserveExistingSession || overlapsPrevious
         || replacementSharedPopulation);
     const session = continuingSession ? previous.session : randomUUID();
-    const roomKey = previous?.session === session ? previous.roomKey : undefined;
+    const roomKey = previous?.session === session ? previous.roomKey : options.restoreAffinity?.roomKey;
     // Missing age belongs to a pre-upgrade active session, older than new ones.
-    const sessionStartedAt = previous?.session === session ? previous.sessionStartedAt ?? 0 : now;
+    const sessionStartedAt = previous?.session === session ? previous.sessionStartedAt ?? 0
+      : options.restoreAffinity?.sessionStartedAt ?? now;
     const observedAt = now;
-    const lastDirectEvidenceAt = previous?.session === session ? previous.lastDirectEvidenceAt : undefined;
+    const lastDirectEvidenceAt = previous?.session === session ? previous.lastDirectEvidenceAt
+      : options.restoreAffinity?.lastDirectEvidenceAt;
     const graceByName = new Map<string, number>();
     if (continuingSession && previous) {
       for (const grace of previous.graceSeen ?? []) {
@@ -157,8 +170,18 @@ export async function setRoster(relayUserId: string, ownName: string, seenNames:
       }
     }
     const graceSeen = [...graceByName].map(([graceName, until]) => ({ name: graceName, until })).slice(0, MAX_NAMES);
+    const priorEmptyNames = previous?.emptyRosterContinuity?.names ?? [];
+    const emptyRosterContinuity = continuingSession && previous?.roomKey && seen.length === 0
+      && previous.lastDirectEvidenceAt !== undefined
+      && previous.lastDirectEvidenceAt + SHARED_POPULATION_MAX_MS > now
+      ? {
+        names: [...new Set(previous.seen.length > 0 ? previous.seen : priorEmptyNames)].slice(0, MAX_NAMES),
+        until: previous.lastDirectEvidenceAt + SHARED_POPULATION_MAX_MS,
+      }
+      : undefined;
     const observationSource = options.observationSource ?? previous?.observationSource;
-    const value = JSON.stringify({ name, aliases, seen, ...(graceSeen.length ? { graceSeen } : {}), session, requestId, sessionStartedAt,
+    const value = JSON.stringify({ name, aliases, seen, ...(graceSeen.length ? { graceSeen } : {}),
+      ...(emptyRosterContinuity?.names.length ? { emptyRosterContinuity } : {}), session, requestId, sessionStartedAt,
       observedAt,
       ...(lastDirectEvidenceAt === undefined ? {} : { lastDirectEvidenceAt }),
       ...(observationSource ? { observationSource } : {}),
@@ -170,7 +193,9 @@ export async function setRoster(relayUserId: string, ownName: string, seenNames:
       || previous.seen.join('\u001f') !== seen.join('\u001f')
       || (previous.aliases ?? []).join('\u001f') !== aliases.join('\u001f')
       || (previous.graceSeen ?? []).map(grace => grace.name).sort().join('\u001f')
-        !== graceSeen.map(grace => grace.name).sort().join('\u001f');
+        !== graceSeen.map(grace => grace.name).sort().join('\u001f')
+      || (previous.emptyRosterContinuity?.names ?? []).join('\u001f')
+        !== (emptyRosterContinuity?.names ?? []).join('\u001f');
     if (changed) await recordRoomDiagnostic(relayUserId, {
       event: 'roster_observed', source: observationSource ?? 'legacy',
       continuity: continuingSession ? 'continued' : 'new_session', replacement,
@@ -183,12 +208,25 @@ export async function setRoster(relayUserId: string, ownName: string, seenNames:
       rosterCount: seen.length, rosterRefs: seen.map(rosterNameRef).sort(),
       aliasCount: aliases.length, aliasRefs: aliases.map(rosterNameRef).sort(),
       graceCount: graceSeen.length, graceRefs: graceSeen.map(grace => rosterNameRef(grace.name)).sort(),
+      emptyContinuityCount: emptyRosterContinuity?.names.length ?? 0,
     });
     return true;
   } catch (err) {
     logger.warn({ err, relayUserId }, '[worldRoster] setRoster failed');
     throw err;
   }
+}
+
+/** A soft-loss tombstone can restore only its own former room, and only when a
+ * currently observed member of that room independently satisfies the existing
+ * bounded shared-population rule. */
+export async function canRestoreRoomAffinity(relayUserId: string, roomKey: string, seenNames: string[],
+  lastDirectEvidenceAt: number, now = Date.now()): Promise<boolean> {
+  const seen = [...new Set(seenNames.map(normalizeRosterName).filter(Boolean))].slice(0, MAX_NAMES);
+  const rosters = await getAllRosters();
+  return rosters.some(peer => peer.userId !== relayUserId && peer.roomKey === roomKey
+    && sharedPopulationDecision(seen, effectiveSeenAt(peer, now), lastDirectEvidenceAt,
+      peer.lastDirectEvidenceAt, now) === 'accepted');
 }
 
 export async function clearRoster(relayUserId: string): Promise<void> {
@@ -274,6 +312,14 @@ function isRosterPayload(value: unknown): value is Omit<RosterEntry, 'userId'> {
       && value.graceSeen.every(grace => !!grace && typeof grace === 'object'
         && 'name' in grace && typeof grace.name === 'string' && grace.name.length > 0 && grace.name.length <= MAX_NAME_LENGTH
         && 'until' in grace && typeof grace.until === 'number' && Number.isFinite(grace.until))))
+    && (!('emptyRosterContinuity' in value) || (!!value.emptyRosterContinuity
+      && typeof value.emptyRosterContinuity === 'object'
+      && 'names' in value.emptyRosterContinuity && Array.isArray(value.emptyRosterContinuity.names)
+      && value.emptyRosterContinuity.names.length <= MAX_NAMES
+      && value.emptyRosterContinuity.names.every(name => typeof name === 'string'
+        && name.length > 0 && name.length <= MAX_NAME_LENGTH)
+      && 'until' in value.emptyRosterContinuity && typeof value.emptyRosterContinuity.until === 'number'
+      && Number.isFinite(value.emptyRosterContinuity.until)))
     && Array.isArray(value.seen)
     && value.seen.every((name) => typeof name === 'string');
 }
@@ -317,13 +363,30 @@ export async function computeRooms(assertCurrent: () => Promise<void> = async ()
   const effectiveSeenByUser = new Map(rosters.map(roster => [roster.userId, effectiveSeenAt(roster, startedAt)]));
   const effectiveSeen = (roster: RosterEntry): string[] => effectiveSeenByUser.get(roster.userId) ?? roster.seen;
   const directEvidenceAtByUser = new Map<string, number>();
+  const emptyRosterContinuityUsers = new Set<string>();
+  const loggedEmptyContinuityPairs = new Set<string>();
   for (const a of rosters) {
     for (const seenName of effectiveSeen(a)) {
       for (const b of byName.get(seenName) ?? []) {
         if (a.userId === b.userId || !identityNames(a).some(name => effectiveSeen(b).includes(name))) continue;
-        union(a.userId, b.userId);
         const currentMutualSighting = identityNames(b).some(name => a.seen.includes(name))
           && identityNames(a).some(name => b.seen.includes(name));
+        const emptyContinuityEdge = !currentMutualSighting && (a.seen.length === 0 || b.seen.length === 0);
+        // Retained empty-roster names are continuity-only. They can preserve an
+        // existing canonical room but can never merge two different rooms.
+        if (emptyContinuityEdge && (!a.roomKey || a.roomKey !== b.roomKey)) continue;
+        union(a.userId, b.userId);
+        if (emptyContinuityEdge) {
+          emptyRosterContinuityUsers.add(a.userId);
+          emptyRosterContinuityUsers.add(b.userId);
+          const pair = [a.userId, b.userId].sort().join(':');
+          if (!loggedEmptyContinuityPairs.has(pair)) {
+            loggedEmptyContinuityPairs.add(pair);
+            logger.debug({ event: 'room_continuity', reason: 'empty_roster',
+              roomRef: a.roomKey ? createHash('sha256').update(a.roomKey).digest('hex').slice(0, 12) : null },
+            '[worldRoster] canonical room continuity retained');
+          }
+        }
         if (currentMutualSighting) {
           const directEvidenceAt = Math.min(a.observedAt ?? 0, b.observedAt ?? 0);
           if (directEvidenceAt > 0) {
@@ -452,7 +515,8 @@ export async function computeRooms(assertCurrent: () => Promise<void> = async ()
     }
     if (changedMembers.length > 0) {
       const continuityReason = candidates.length
-        ? (members.some(member => sharedPopulationUsers.has(member.userId)) ? 'shared_population' : 'direct')
+        ? (members.some(member => sharedPopulationUsers.has(member.userId)) ? 'shared_population'
+          : members.some(member => emptyRosterContinuityUsers.has(member.userId)) ? 'empty_roster' : 'direct')
         : (fallbackRejections.get(changedMembers[0]!.roomKey!)?.has('fallback_expired')
             ? 'fallback_expired' : 'threshold_rejected');
       logger.info?.({ event: 'room_rebind', reason: candidates.length ? 'component_join' : 'component_split',

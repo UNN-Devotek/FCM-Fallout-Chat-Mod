@@ -79,8 +79,14 @@ Source-confirmed existing bounds, shared by ZFE and xScal: 500 ms driver tick,
 2-second world sampling, 5-second missing-storage discovery retry, provider read
 failure backoff from 2 to 30 seconds, changed writes at least 1 second apart measured
 from completion, and 5-second unchanged heartbeats. Overlay reads never overlap;
-discovery retries every 10 seconds and writer expiry is 12 seconds. No new per-frame
+discovery retries every 10 seconds. Initial attachment requires advancing snapshots;
+an established writer expires at its nonrenewable 30-second observation deadline. No new per-frame
 tab polling or game-native calls were introduced by channel customization.
+
+If that deadline expires, the desktop reports the fixed `observation_timeout` leave reason. The backend
+immediately revokes chat authority while retaining room affinity for one nonrenewable 30-second recovery
+window. Explicit inactive exports, game exit, account/socket replacement, invalid exports, provider
+conflicts, and real generation changes remain immediate hard boundaries.
 
 The pure bridge tests passed 58 state checks and 141 export checks; 5 package tests
 passed. All 50 Ruffle scenarios passed, including both provider contracts, storage

@@ -266,6 +266,67 @@ test('a transient one-sided missing sighting keeps the room during a non-renewin
   } finally { clock.mockRestore(); }
 });
 
+test('an established two-client room survives fresh empty rosters without renewing direct evidence', async () => {
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(1_000);
+  try {
+    await setRoster('a', 'Alice', ['Bob'], 'world-a');
+    await setRoster('b', 'Bob', ['Alice'], 'world-b');
+    const oldRoom = (await computeRooms()).get('a');
+    const directEvidenceAt = (await readRoster('a')).lastDirectEvidenceAt;
+
+    clock.mockReturnValue(2_000);
+    await setRoster('a', 'Alice', [], 'world-a');
+    await setRoster('b', 'Bob', [], 'world-b');
+    clock.mockReturnValue(12_001);
+    expect(new Set((await computeRooms()).values())).toEqual(new Set([oldRoom]));
+    expect(logger.debug).toHaveBeenCalledWith(expect.objectContaining({
+      event: 'room_continuity', reason: 'empty_roster',
+    }), '[worldRoster] canonical room continuity retained');
+
+    clock.mockReturnValue(3_500_000);
+    await setRoster('a', 'Alice', [], 'world-a');
+    await setRoster('b', 'Bob', [], 'world-b');
+    expect(new Set((await computeRooms()).values())).toEqual(new Set([oldRoom]));
+    expect((await readRoster('a')).lastDirectEvidenceAt).toBe(directEvidenceAt);
+
+    clock.mockReturnValue(3_601_001);
+    const expired = await computeRooms();
+    expect(expired.get('a')).not.toBe(expired.get('b'));
+    expect([expired.get('a'), expired.get('b')]).toContain(oldRoom);
+  } finally { clock.mockRestore(); }
+});
+
+test('a populated observation immediately stops using empty-roster continuity evidence', async () => {
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(1_000);
+  try {
+    await setRoster('a', 'Alice', ['Bob'], 'world-a');
+    await setRoster('b', 'Bob', ['Alice'], 'world-b');
+    await computeRooms();
+    clock.mockReturnValue(2_000);
+    await setRoster('a', 'Alice', [], 'world-a');
+    await setRoster('b', 'Bob', [], 'world-b');
+    clock.mockReturnValue(12_001);
+    await setRoster('a', 'Alice', ['DifferentPlayer'], 'world-a');
+    await setRoster('b', 'Bob', ['AnotherPlayer'], 'world-b');
+    clock.mockReturnValue(22_002);
+    const separated = await computeRooms();
+    expect(separated.get('a')).not.toBe(separated.get('b'));
+  } finally { clock.mockRestore(); }
+});
+
+test('empty-roster continuity cannot merge clients assigned to different rooms', async () => {
+  const until = Date.now() + 60_000;
+  const roomA = 'r:aaaaaaaa-0000-4000-8000-000000000001';
+  const roomB = 'r:bbbbbbbb-0000-4000-8000-000000000001';
+  values.set('relay:roster:a', JSON.stringify({ name: 'alice', seen: [], session: 'a', requestId: 'a',
+    roomKey: roomA, lastDirectEvidenceAt: Date.now(), emptyRosterContinuity: { names: ['bob'], until } }));
+  values.set('relay:roster:b', JSON.stringify({ name: 'bob', seen: [], session: 'b', requestId: 'b',
+    roomKey: roomB, lastDirectEvidenceAt: Date.now(), emptyRosterContinuity: { names: ['alice'], until } }));
+  const rooms = await computeRooms();
+  expect(rooms.get('a')).toBe(roomA);
+  expect(rooms.get('b')).toBe(roomB);
+});
+
 test('a sustained split preserves the old room for the largest stable component', async () => {
   const clock = jest.spyOn(Date, 'now').mockReturnValue(1000);
   try {
@@ -432,7 +493,7 @@ test('equal stable components choose one deterministic old-room survivor', async
   await setRoster('a', 'Alice', ['Bob'], 'a'); await setRoster('b', 'Bob', ['Alice'], 'b');
   const old = (await computeRooms()).get('a');
   await setRoster('a', 'Alice', [], 'a'); await setRoster('b', 'Bob', [], 'b');
-  const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 10_001);
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_600_001);
   const rooms = await computeRooms();
   clock.mockRestore();
   expect(rooms.get('a')).not.toBe(rooms.get('b'));
@@ -480,7 +541,7 @@ test('history storage failure aborts a split before changing room affinity', asy
   await setRoster('b', 'Bob', ['Alice'], 'b');
   const old = (await computeRooms()).get('a');
   await setRoster('a', 'Alice', [], 'a');
-  const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 10_001);
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_600_001);
   redis.copy.mockRejectedValueOnce(new Error('storage unavailable'));
   await expect(computeRooms()).rejects.toThrow('storage unavailable');
   clock.mockRestore();

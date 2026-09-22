@@ -46,8 +46,12 @@ remains non-authoritative; there is no trusted game-world ID.
 A partial same-session roster update retains each newly missing sighting for a
 10-second, per-name grace. Repeating the incomplete roster cannot renew that
 deadline, restored names remove their grace immediately, and expired grace is not
-used for clustering. Empty rosters, explicit leave, expiry and new/disjoint
-generations receive no grace. Reconciliation is event-driven, so an expired edge is
+used for clustering. For an already established room, a fresh empty same-session
+roster instead retains the last mutually verified names until 60 minutes after the
+original direct sighting. Repeated empty observations do not renew that deadline,
+and the retained names are discarded as soon as a populated observation arrives.
+Explicit leave, expiry, account change and new generations receive no grace.
+Reconciliation is event-driven, so an expired edge is
 applied on the next serialized roster mutation; it never renews Redis observation
 freshness or the client lease.
 
@@ -67,10 +71,21 @@ expired fallback windows therefore remain hop boundaries.
 
 Raid-stage HUD reconstruction can briefly replace the background bridge export file. The desktop
 watcher now holds its last validated sample through a transient unreadable poll without renewing
-the twelve-second writer-liveness window or thirty-second observation deadline. This prevents a
-single atomic-replacement gap from emitting `bridge:leave` and discarding room affinity, while a
+the thirty-second observation deadline. Initial attachment still requires repeated advancement;
+after attachment, a paused writer can retain only its original nonrenewable evidence window. This
+prevents a raid-completion HUD reconstruction from emitting `bridge:leave` and discarding room affinity, while a
 stopped writer, persistent invalid file, explicit inactive snapshot, game exit or real generation
 change still retires authority.
+
+Desktop local-export leaves carry a fixed reason. `observation_timeout` is the only soft reason: the
+backend revokes the socket's Server binding immediately, but retains its existing room affinity for a
+nonrenewable 30-second recovery window. A fresh observation from the same authenticated export session
+and world generation may recover that affinity; the timeout cannot authorize sends, receive delivery,
+renew itself, or merge rooms. Expiry clears membership normally. `game_exit`, `main_menu`,
+`explicit_inactive`, `account_change`, `socket_replaced`, `app_quit`, `invalid_export`, and
+`provider_conflict` are hard boundaries and clear membership immediately. Unknown reasons fail closed as
+`explicit_inactive`. Privacy-safe diagnostics record `soft_leave_started`, `soft_leave_recovered`, or
+`soft_leave_expired` without raw account, room, roster, session, or world identifiers.
 
 The overlay and visible HUD separately retain accepted Server rows as bounded, in-memory display
 history for the current game/widget session across backend room moves. This does not retain room
@@ -83,8 +98,8 @@ Production split/rebind decisions are logged at info level with SHA-256-derived
 (`native`, `bridge:zfe`, or `bridge:xscal`). Logs contain no player names, roster
 contents, message bodies, raw room/session/request identifiers or tokens. Decisions
 also carry a fixed continuity reason: `direct`, `shared_population`,
-`fallback_expired`, or `threshold_rejected`. Successful shared-population retention is
-debug-logged with only the fixed reason and a hashed room reference. Changed native
+`empty_roster`, `fallback_expired`, or `threshold_rejected`. Successful shared-population
+and empty-roster retention is debug-logged with only the fixed reason and a hashed room reference. Changed native
 replacement observations additionally carry one fixed decision:
 `replacement_overlap`, `replacement_shared_population`, or `replacement_rejected`.
 
@@ -129,8 +144,9 @@ and one-sided rejection. Fresh two-client native acceptance remains required.
 
 A remaining player may report a roster without their peer before the peer's
 leave reaches the backend. This separates live rooms after the bounded partial-
-sighting grace, or immediately for an empty roster, leave, expiry or generation
-boundary. The selected stable component keeps the canonical room. When every
+sighting grace. An established room reporting fresh empty rosters remains connected
+only through the nonrenewable direct-evidence deadline described above. Leave, expiry,
+account change and generation boundaries still separate immediately. The selected stable component keeps the canonical room. When every
 member of another resulting component has the same previous room affinity and
 unchanged observation session, the coordinator seeds its new room with a snapshot
 of that old room's retained history before publishing the new assignment.

@@ -39,7 +39,7 @@ describe('main-process local export authority', () => {
     expect(c.outgoing('one', socket, '{"type":"ping"}')).toBe('{"type":"ping"}');
   });
   it('accepts a lagged ACK for the current generation and requires its binding for chat/history', () => {
-    const { controller: c, socket, watchers } = attached();
+    const { controller: c, socket, watchers, frames } = attached();
     expect(c.incoming('one', socket, ready())).toBe(false);
     watchers[0].onSnapshot(snapshot()); watchers[0].onSnapshot(snapshot({ sequence: 4 }));
     expect(c.incoming('one', socket, ready())).toBe(true);
@@ -48,8 +48,17 @@ describe('main-process local export authority', () => {
     const send = JSON.stringify({ type: 'chat:send', payload: { channelId: 'server:r:room', bridgeBindingId: 'binding-a', content: 'hello' } });
     expect(c.outgoing('one', socket, send)).toBe(send);
     watchers[0].onInactive();
+    expect(frames.at(-1)).toEqual({ type: 'bridge:leave', payload: { reason: 'observation_timeout' } });
     expect(c.outgoing('one', socket, send)).toBeNull();
     expect(c.incoming('one', socket, history())).toBe(false);
+  });
+  it('sends hard leave reasons for game exit and explicit inactive exports', () => {
+    const { controller: c, socket, watchers, frames } = attached();
+    watchers[0].onSnapshot(snapshot());
+    watchers[0].onInactive('explicit_inactive');
+    expect(frames.at(-1)).toEqual({ type: 'bridge:leave', payload: { reason: 'explicit_inactive' } });
+    c.setGameRunning(false);
+    expect(frames.at(-2)).toEqual({ type: 'bridge:leave', payload: { reason: 'game_exit' } });
   });
   it('immediately rejects old ACK/history/messages on world change, including a same-room rebind', () => {
     const { controller: c, socket, watchers, emitted } = attached();

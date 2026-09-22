@@ -2,6 +2,7 @@ import { bridgeBindingId, resolveOverlayBridge, type BridgeBinding, type BridgeR
 import { getServerHistory, SERVER_HISTORY_ROOM, type ServerRoomEvent, type ServerEventEnvelope } from '../services/relay/serverChat';
 import { sendServerMessage, ServerMessageError } from '../services/relay/serverMessageService';
 import type { LocalExportBridge } from '../services/relay/localExportBridge';
+import type { BridgeLeaveReason } from '../services/relay/localExportBridge';
 import { readRoster } from '../services/relay/worldRosterService';
 
 type Frame = { type: string; payload: Record<string, unknown> };
@@ -146,13 +147,13 @@ export class BridgeConnection {
         channelId: `server:${binding.room}`, historyReplay: true, messages: this.rows(history, binding, true) } });
     });
   }
-  leave(): Promise<void> {
+  leave(reason: BridgeLeaveReason = 'explicit_inactive'): Promise<void> {
     this.localExport = true;
     this.epoch++;
     this.local?.invalidate();
     this.update({ status: 'inactive' });
     return this.enqueue(async () => {
-      await this.local?.leave();
+      await this.local?.leave(reason);
       this.update({ status: 'inactive' });
     });
   }

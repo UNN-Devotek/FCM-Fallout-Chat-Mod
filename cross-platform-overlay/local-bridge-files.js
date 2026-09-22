@@ -5,8 +5,12 @@ const path = require('node:path');
 const { TextDecoder } = require('node:util');
 
 const MAX_BYTES = 8192;
-const ADVANCE_MS = 12000;
 const OBSERVATION_MS = 30000;
+// Once two advancing snapshots establish a live writer, a temporary HUDMenu
+// reconstruction may stop file writes during raid transitions. Keep the last
+// accepted evidence only until its existing observation deadline; never renew
+// that deadline from elapsed time or a repeated heartbeat.
+const ADVANCE_MS = OBSERVATION_MS;
 const KEYS = ['schemaVersion', 'environment', 'provider', 'build', 'sessionId', 'worldGeneration',
   'sequence', 'observationSequence', 'observationAgeMs', 'state', 'ownName', 'names'].sort();
 
@@ -85,7 +89,7 @@ const evidence = s => JSON.stringify([s.provider, s.ownName.trim().toLowerCase()
 
 /** Per file watermarks survive bad reads. A first read is only a baseline. */
 class ExportCursor {
-  constructor() { this.snapshot = null; this.retired = new Set(); this.lastAdvance = -Infinity; this.deadline = 0; this.live = false; }
+  constructor() { this.snapshot = null; this.retired = new Set(); this.lastAdvance = -Infinity; this.deadline = 0; this.live = false; this.failure = ''; }
   accept(s, now, readStartedAt = now) {
     // HUDModLoader replaces the export file rather than updating it in place.
     // Menu reconstruction can therefore expose one missing/partial read between
@@ -96,18 +100,18 @@ class ExportCursor {
     const changedSession = old && old.sessionId !== s.sessionId;
     const changedWorld = old && generation(old) !== generation(s);
     if (this.retired.has(generation(s)) || this.retired.has(`session/${s.sessionId}`) || this.retired.size >= 512) {
-      this.live = false; return null;
+      this.live = false; this.failure = 'invalid_export'; return null;
     }
     if (old && !changedSession && (s.sequence < old.sequence || s.observationSequence < old.observationSequence)) {
-      this.live = false; return null;
+      this.live = false; this.failure = 'invalid_export'; return null;
     }
     if (old && !changedSession && s.sequence === old.sequence) {
-      if (JSON.stringify(s) !== JSON.stringify(old)) this.live = false;
+      if (JSON.stringify(s) !== JSON.stringify(old)) { this.live = false; this.failure = 'invalid_export'; }
       return this.current(now);
     }
     const sameObservation = old && !changedSession && old.observationSequence === s.observationSequence;
     if (sameObservation && s.state !== 'inactive' && (changedWorld || evidence(old) !== evidence(s))) {
-      this.live = false; return null;
+      this.live = false; this.failure = 'invalid_export'; return null;
     }
     const wasLive = !!this.current(now);
     if (changedWorld) this.retired.add(generation(old));
@@ -116,6 +120,7 @@ class ExportCursor {
       : readStartedAt + OBSERVATION_MS - s.observationAgeMs;
     this.snapshot = s;
     this.lastAdvance = readStartedAt;
+    this.failure = s.state === 'inactive' ? 'explicit_inactive' : '';
     // A session switch must establish its own advancing baseline. Holding may
     // preserve evidence only; it cannot attach or restore an invalidated file.
     this.live = !!old && !changedSession && s.state !== 'inactive' && !!s.ownName.trim()
@@ -127,6 +132,8 @@ class ExportCursor {
   current(now) {
     return this.live && now - this.lastAdvance < ADVANCE_MS && now < this.deadline ? this.snapshot : null;
   }
+  inactiveReason(now) { return this.failure || (now >= this.deadline || now - this.lastAdvance >= ADVANCE_MS
+    ? 'observation_timeout' : 'invalid_export'); }
 }
 
 /** Polling avoids native watcher races when providers replace or create files.
@@ -139,7 +146,8 @@ function watchExports({ environment, discover, onSnapshot, onInactive, now = Dat
   function expire() {
     if (stopped) return;
     if (selected && !cursors.get(selected)?.current(now())) {
-      selected = ''; published = ''; onInactive();
+      const cursor = cursors.get(selected);
+      selected = ''; published = ''; onInactive(cursor?.inactiveReason(now()) ?? 'observation_timeout');
     }
     expiryTimer = setTimer(expire, intervalMs);
   }
@@ -170,7 +178,8 @@ function watchExports({ environment, discover, onSnapshot, onInactive, now = Dat
       const completed = now();
       const active = rows.filter(r => r.snapshot && cursors.get(r.key)?.current(completed));
       if (active.length !== 1) {
-        if (selected) onInactive();
+        if (selected) onInactive(active.length > 1 ? 'provider_conflict'
+          : cursors.get(selected)?.inactiveReason(completed) ?? 'invalid_export');
         selected = ''; published = '';
       } else {
         const row = active[0];
@@ -184,7 +193,7 @@ function watchExports({ environment, discover, onSnapshot, onInactive, now = Dat
       // Discovery remains bounded over repeated game/library changes.
       const known = new Set(candidates.map(c => path.join(c.root, c.relative)));
       for (const key of cursors.keys()) if (!known.has(key)) cursors.delete(key);
-    } catch { if (!stopped && selected) onInactive(); selected = ''; published = ''; }
+    } catch { if (!stopped && selected) onInactive('invalid_export'); selected = ''; published = ''; }
     finally {
       busy = false;
       if (!stopped) {
