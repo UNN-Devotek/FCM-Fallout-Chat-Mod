@@ -2,6 +2,19 @@
 
 Latest drop-in bridge evidence: [rollout, fallback and diagnostic candidates](bridge-drop-in-acceptance-2026-09-16.md).
 
+2026-09-22 quoted-message regression: the visible HUD decodes JSON string escapes in received
+chat bodies before control handling, optimistic self-echo reconciliation, storage, and rendering.
+This prevents a quoted local message from surviving beside its authoritative echo and sorting
+below later messages. Pure Haxe coverage includes quotes, backslashes, escaped slashes, tabs, and
+Unicode escapes. The compiled xScal/ZFE scenario requires one decoded, non-pending row. All 67
+Ruffle cases, 23 pure Haxe suites, SWF/emoji/package checks, and BA2 extract/byte-equality checks
+pass. The tested BA2 is now installed on the local Steam/Proton desktop with the visible widget
+registered and the background bridge removed. Its installed SHA-256 matches the tested artifact:
+`1b9393d1a210d27fa182a56db2c8dcf37ba2d9882bcbfc0139098efbf6892492`.
+The prior files are backed up under the game directory's
+`.extender-backups/before-quoted-widget-TOhLzv3c/`. Fresh native quote/echo acceptance remains
+pending; see the [checklist](hud-recovery.md#quoted-message-native-regression).
+
 2026-09-21 controller-input test candidate: HUD 2.10.117 uses capability-gated ZFE owner-scoped
 text input and configured hotkeys. xScal retains configured `Input.*` polling and best-effort
 SharedHUDTools text entry. This candidate remains isolated and native-unverified.

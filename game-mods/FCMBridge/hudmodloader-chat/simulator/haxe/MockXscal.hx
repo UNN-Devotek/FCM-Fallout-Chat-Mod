@@ -25,6 +25,13 @@ class MockXscal {
     static var serverRooms:Map<String, String> = new Map();
     static var nextServerRoom:Int = 0;
 
+    public static function resetEvents():Void {
+        scenarioEvents = [];
+        cursor = 0;
+        pollCount = 0;
+        callCount = 0;
+    }
+
     public static function enqueueEvent(event:Dynamic):Void {
         if (scenarioEvents == null) scenarioEvents = [];
         scenarioEvents.push(event);

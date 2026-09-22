@@ -351,6 +351,9 @@ class TestFcmConfig {
             FcmConfig.decodeJsonText("[FCMChat]\\nx=42\\nlinkUrl=dev.falloutchatmod.com/link\\n"),
             "[FCMChat]\nx=42\nlinkUrl=dev.falloutchatmod.com/link\n");
         eqs("decode storage escaped quote and slash", FcmConfig.decodeJsonText("a\\\"b\\\\c"), "a\"b\\c");
+        eqs("decode received chat JSON escapes",
+            FcmConfig.decodeJsonText("quote: \\\"Bertha\\\"; slash: \\/; tab: \\t; unicode: \\u263a"),
+            "quote: \"Bertha\"; slash: /; tab: \t; unicode: ☺");
 
         // ── full parse ──
         var ini = "[FCMChat]\n"

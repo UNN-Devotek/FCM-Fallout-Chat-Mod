@@ -225,7 +225,7 @@ class FcmConfig {
         return defaults;
     }
 
-    /** Decode the escaped `text` member returned by ZFE readStorage. */
+    /** Decode one already-extracted JSON string value from storage or chat transport. */
     public static function decodeJsonText(s:String):String {
         if (s == null) return "";
         var out:StringBuf = new StringBuf();
@@ -242,8 +242,28 @@ class FcmConfig {
                 case "n": out.add("\n");
                 case "r": out.add("\r");
                 case "t": out.add("\t");
+                case "b": out.addChar(8);
+                case "f": out.addChar(12);
                 case "\"": out.add("\"");
                 case "\\": out.add("\\");
+                case "/": out.add("/");
+                case "u":
+                    if (i + 5 < s.length) {
+                        var code:Int = 0;
+                        var valid:Bool = true;
+                        for (offset in 0...4) {
+                            var digit:String = s.charAt(i + 2 + offset).toLowerCase();
+                            var value:Int = "0123456789abcdef".indexOf(digit);
+                            if (value < 0) { valid = false; break; }
+                            code = code * 16 + value;
+                        }
+                        if (valid) {
+                            out.addChar(code);
+                            i += 6;
+                            continue;
+                        }
+                    }
+                    out.add("\\u");
                 default: out.add("\\" + n);
             }
             i += 2;

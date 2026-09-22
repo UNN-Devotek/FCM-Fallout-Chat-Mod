@@ -3,8 +3,16 @@
 FCMChatWidget is the optional HUDModLoader chat widget for Fallout 76. It uses ZFE or xScal's
 native chat bridge and FCM's `/relay`. It is independent of the desktop overlay.
 
-**Current isolated test candidate: 2.10.117 CONTROLLER-TEST (native-unverified).** Current ZFE
-uses owner-scoped `input.v1` keyboard capture and `hotkeys.v1` for supported configured actions
+**Current local test candidate: 2.10.121 (native-unverified).** Received chat bodies are decoded
+once from JSON before control handling, self-echo matching, and display. A sent message containing
+quotes can therefore replace its pending row with the authoritative echo instead of leaving a
+second copy that sorts below later messages. Pure Haxe checks and a compiled xScal/ZFE Ruffle
+scenario cover the regression; fresh in-game confirmation is still needed. The candidate is
+installed on the local Steam/Proton desktop for testing, with the background Server Bridge
+removed from the active loader and archive lists. See [build and install evidence](BUILD.md) and
+the [native check](../../../docs/testing/hud-recovery.md).
+
+ZFE uses owner-scoped `input.v1` keyboard capture and `hotkeys.v1` for supported configured actions
 when those capabilities are advertised. Older ZFE falls back to SharedHUDTools and `Input.*`.
 xScal polls every supported configured physical binding through `Input.*`, but text entry remains
 best-effort through SharedHUDTools because xScal 0.2.16 exposes no keyboard capture/suppression API.
@@ -39,9 +47,9 @@ assumed or transmitted until native evidence establishes its semantics.
 capabilities are present, keeping keyboard entry independent of a connected controller. Older ZFE
 uses the existing SharedHUDTools compatibility path. xScal adds configured physical-key polling but
 retains best-effort SharedHUDTools text entry. Simultaneous ZFE and xScal installations fail closed.
-The test-build gate results and hashes are recorded in `CONTROLLER-TEST-MANIFEST.md`. Version
-2.10.117 has not been installed, natively accepted or published. Fresh controller input acceptance
-is required before any promotion.
+The historical 2.10.117 test-build gate results and hashes are recorded in
+`CONTROLLER-TEST-MANIFEST.md`. That build was not published. Fresh native input acceptance is
+still required before promotion of the current candidate.
 
 **Current production release: 2.10.110 (2026-09-16).** Once an authoritative
 self-echo or acknowledgement supplies the local sender's cosmetics, retained rows for the same

@@ -11,6 +11,13 @@ for (const provider of ['xscal', 'zfe']) {
     await expect(page.locator('#log')).toContainText(`VISIBILITY PASS ${provider}`);
     await expect(page.locator('#log')).not.toContainText('VISIBILITY FAIL');
   });
+
+  test(`quoted self-echo remains one decoded row (${provider})`, async ({ page }) => {
+    await page.goto(`/?mode=harness&provider=${provider}&scenario=quoted-echo`);
+    await expect(page.locator('#log')).toContainText(/QUOTED-ECHO (PASS|FAIL)/, { timeout: 25_000 });
+    await expect(page.locator('#log')).toContainText(`QUOTED-ECHO PASS ${provider}`);
+    await expect(page.locator('#log')).not.toContainText('QUOTED-ECHO FAIL');
+  });
 }
 
 for (const scenario of ['owned-input-release', 'owned-input-busy', 'owned-input-expiry']) {

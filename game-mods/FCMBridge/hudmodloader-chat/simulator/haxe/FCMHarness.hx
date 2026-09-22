@@ -28,12 +28,13 @@ class FCMHarness extends Sprite {
             if (requested == "zfe") provider = "zfe";
             scenario = Std.string(parameters.scenario);
         } catch (_:Dynamic) {}
+        if (scenario == "quoted-echo") MockXscal.resetEvents();
         if (scenario == "delayed-auth") MockXscal.authReady = false;
         if (provider == "zfe") { MockZfe.configure(scenario); __ZFE = MockZfe.root(); }
         else __SFECodeObj = MockXscal.root();
         if (scenario == "bridge-fast-travel" && provider == "xscal") __SFCodeObj = MockBridgeStorage.root();
         // Deterministic regressions must never load a user's hosted snapshot or send live chat.
-        if (scenario != "browser-links" && scenario != "fast-travel" && scenario != "bridge-fast-travel" && scenario != "delayed-auth" && scenario != "queue-loss" && scenario != "typing-renewal" && scenario != "visibility")
+        if (scenario != "browser-links" && scenario != "fast-travel" && scenario != "bridge-fast-travel" && scenario != "delayed-auth" && scenario != "queue-loss" && scenario != "typing-renewal" && scenario != "visibility" && scenario != "quoted-echo")
             MockXscal.loadScenario("/hosted-dev-snapshot.json");
         BSUIDataManager = scenario == "bridge-fast-travel" ? MockBridgeGameData.manager() : MockGameData.manager();
         // Keep the class linked so the production getDefinitionByName path resolves it.
@@ -71,6 +72,7 @@ class FCMHarness extends Sprite {
             if (scenario == "delayed-auth") DelayedAuthScenario.start(widget, provider);
             if (scenario == "queue-loss") QueueLossScenario.start(widget, provider);
             if (scenario == "visibility") VisibilityScenario.start(widget, provider);
+            if (scenario == "quoted-echo") QuotedEchoScenario.start(widget, provider);
             if (scenario == "typing-renewal") TypingRenewalScenario.start(widget, provider);
             if (scenario == "ultrawide") UltrawideScenario.start(widget, provider);
             if (scenario == "cosmetics-history") CosmeticsHistoryScenario.start(widget, provider);

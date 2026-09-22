@@ -2,6 +2,19 @@
 
 These checks apply to the optional in-game HUD widget, separately from the desktop overlay.
 
+## Quoted-message native regression
+
+For the locally installed 2.10.121 candidate, confirm the widget appears in the F11 menu and
+check its build/provider in fresh provider logs. In General, send three different messages
+containing double quotes, then have another player send several messages. Repeat in Server after
+the room is confirmed. Each sent message should appear once, with ordinary quotes and in its
+original chronological position;
+none should reappear beneath later messages. Also send a literal backslash and punctuation next
+to a quote. Return to Main Menu, rejoin, and confirm the history remains free of duplicate copies.
+Record the build/provider, pending-versus-final row counts and any failure codes without copying
+message bodies into routine logs. Passing Ruffle checks and an installed BA2 do not establish this
+native result.
+
 For current production HUD 2.10.110, verify the combined General feed on each extender:
 
 - Receive one message from General, Server, Trading, Events, Infests, and Raids. General must

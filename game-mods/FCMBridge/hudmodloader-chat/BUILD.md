@@ -1,5 +1,27 @@
 # FCMChatWidget build, install, and verification
 
+## Local 2.10.121 quoted-message candidate (2026-09-22)
+
+Received `chat.message` bodies are JSON-decoded exactly once in `parseAndRenderEvents`, before
+control handling, self-echo reconciliation and row creation. The previous raw escaped body did
+not match the unescaped optimistic send, leaving a pending copy that sorted beneath newer dated
+messages. Keep `FcmEcho`'s strict body and message-ID matching; the fix is at the input boundary.
+`FcmConfig.decodeJsonText` now handles quoted strings, backslashes, escaped slashes, control
+escapes and basic Unicode escapes. `TestFcmConfig` and the compiled `quoted-echo` scenario cover
+the decoded single-row behavior on xScal and ZFE.
+
+All 23 pure Haxe suites, the 67-case Ruffle matrix, SWF structure, emoji linkage, package checks,
+and BA2 extraction/decoded-SWF byte comparison passed locally. The resulting one-entry BA2 has
+SHA-256 `1b9393d1a210d27fa182a56db2c8dcf37ba2d9882bcbfc0139098efbf6892492`.
+With Fallout 76 closed, that exact BA2 was installed on the local Steam/Proton desktop.
+`Data/hudmodloader.ini` now registers `FCMChatWidget` and `ImprovedBars`; the active archive list
+contains `FCMChatWidget.ba2`, `ImprovedHBS21.ba2`, `NoRewardScreen.ba2`, and `HUDModLoader.ba2`.
+The optional `FCMServerBridge.ba2` was removed from the active game directory. The pre-switch
+files are recoverable under
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-quoted-widget-TOhLzv3c/`.
+The widget uses the existing xScal production relay settings. No fresh in-game test, hosted CI,
+release, or publication is claimed for this candidate.
+
 **Widget version:** 2.10.121. XSCAL-SHAREDHUDTOOLS-ROLLBACK restores the verified
 capability-gated ZFE owner-scoped text input and configured hotkeys. xScal continues to poll every
 supported configured physical key through its documented `Input.*` API and uses SharedHUDTools

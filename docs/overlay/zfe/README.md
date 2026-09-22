@@ -7,13 +7,19 @@ must not add game-memory reads, code injection, or network/port scanning.
 
 ## Current implementation and verification
 
-**Background bridge 0.2.6 source candidate:** retains 0.2.4's local-export path and
-prefers the roster-visible local name for `ownName`, with AccountInfo as fallback. It is
-native-unverified and not installed. The bridge replaces native networking/linking
+The published production versions are desktop overlay **1.4.1**, visible HUD
+**2.10.121**, and optional background bridge **0.2.8**. The locally installed
+visible HUD has additional quoted-message changes under the same 2.10.121 version;
+it is a test candidate, not the published BA2, and requires native acceptance.
+
+**Background bridge 0.2.8 release:** published as a separate optional HUDModLoader child.
+It was installed locally with xScal 0.2.17 for testing, but native mixed-client acceptance
+remains pending. It retains the roster-visible `ownName` fallback from the earlier 0.2.6
+candidate. The bridge replaces native networking/linking
 with provider-scoped local exports. Sign into the overlay only. Visible HUD native
 authentication stays unchanged; both paths share canonical Server rooms/history
 across ZFE/xScal. Full mixed-client and native storage acceptance is required;
-older 0.1.x results below are historical, not acceptance of this candidate. See
+older candidate results below are historical, not acceptance of this release. See
 [current bridge contract](background-server-bridge.md) and
 [automated checks, Dev deployment and installed candidates](../../testing/bridge-drop-in-acceptance-2026-09-16.md).
 Desktop/xScal's 0.2.0 export worked; laptop/ZFE created no export. The 0.2.1 laptop
@@ -25,12 +31,19 @@ data. 0.2.3 reuses `FcmJson` for runtime-info/write acknowledgements and forbids
 `JsonParser` linkage. The 2026-09-17 laptop check confirmed active, advancing, fresh ZFE
 exports and the user reported it working. Full mixed-client shared-room/message/travel
 acceptance remains pending; the overlay log did not independently confirm room assignment.
+These 0.2.0–0.2.3 observations are historical and do not accept 0.2.8.
 
-**Visible HUD 2.10.121 XSCAL-SHAREDHUDTOOLS-ROLLBACK:** local, native-unverified build. It removes
-the failed widget-owned xScal TextField experiment and restores SharedHUDTools as the verified
-xScal text-entry path. xScal `Input.*` remains limited to configured action-key polling. Keyboard
-typing while controller mode is active is unsupported pending a native xScal text-input API. ZFE
-retains the owner-scoped input path unchanged.
+**Visible HUD 2.10.121 candidate:** installed locally on the Steam/Proton desktop; native
+acceptance remains pending. It decodes received JSON chat bodies before matching them to the
+optimistic send, preventing quoted messages from leaving a second pending row beneath newer
+messages. The local pure Haxe and complete 67-case Ruffle suite pass, including one-row checks
+for xScal and ZFE. It also removes the failed widget-owned xScal TextField experiment and
+restores SharedHUDTools as the xScal text-entry path. xScal `Input.*` remains limited to
+configured action-key polling. Keyboard typing while controller mode is active is unsupported
+pending a native xScal text-input API. ZFE retains the owner-scoped input path. The local active
+game configuration uses `FCMChatWidget` with `ImprovedBars`; `FCMServerBridge` has been removed.
+See [build and install evidence](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md#local-210121-quoted-message-candidate-2026-09-22)
+and the [native test checklist](../../testing/hud-recovery.md#quoted-message-native-regression).
 
 **Visible HUD 2.10.117 CONTROLLER-TEST:** isolated, native-unverified test build. It retains
 2.10.116's session transcript and reserves
@@ -48,15 +61,16 @@ sightings and room gates are unchanged. It adds capability-gated, transition-onl
 room diagnostics with no player names, roster contents, messages, raw identifiers or tokens.
 It adds capability-gated ZFE owner-scoped text input and configured hotkeys. xScal retains
 configured physical-key polling and best-effort SharedHUDTools text entry. Native acceptance
-remains pending. 2.10.110 remains the current public release.
+remains pending. This paragraph records the earlier isolated test build, not the current release.
 
 2.10.117 adds capability-gated ZFE owner-scoped text input for keyboard use while a controller is
 connected and rejects mixed ZFE/xScal installs. Bridge 0.2.6 removes every menu, hotkey, editor,
 SharedHUDTools, and HUD user-event dependency. Pure Haxe, package, and the complete 64-scenario
 Ruffle matrix pass; native acceptance is pending. No
-public release, local install, or backend deployment has been performed for these candidates.
+public release, local install, or backend deployment had been performed for those candidates
+at the time of that test.
 
-**Current production HUD release (2026-09-16):** visible FCMChatWidget **2.10.110** reapplies an authoritative
+**Previous production HUD release (2026-09-16):** visible FCMChatWidget **2.10.110** reapplies an authoritative
 supporter projection to retained rows from the same authenticated sender IDs, fixing old feed rows
 that remained unstyled after a later self-echo gained the star. Same-name foreign rows are excluded.
 It retains 2.10.109's queue-retirement recovery behavior. The final BA2 passed the complete local
@@ -86,8 +100,8 @@ initial binding, one message echo and retained history through same-world fast t
 xScal and laptop acceptance remained pending for that build. The previously
 installed **0.1.6** failed (`payload E1014` on four sources, `test provider` on two, no roster).
 Do not transfer visible-HUD acceptance or publication status to the background bridge.
-The background bridge remains unpublished and separate; its current 0.2.6 candidate status is above.
-The visible widget is published as 2.10.110; its startup, Server-send/echo and same-room travel
+The background bridge was unpublished at that point; current 0.2.8 release status is above.
+The visible widget was published as 2.10.110; its startup, Server-send/echo and same-room travel
 evidence is recorded in the [release record](../../deployment/hud-2.10.110-release-notes.md).
 See [bridge architecture](background-server-bridge.md) and the [test gate](../../testing/hud-automation-plan.md#isolated-packaged-bridge-gate).
 

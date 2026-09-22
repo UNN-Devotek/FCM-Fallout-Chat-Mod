@@ -4969,7 +4969,11 @@ class FCMChatWidget extends MovieClip {
                     || FcmConfig.hudTransportHasStar(hudTransport), starColor);
             if (supporterStar) wireStarCount++;
             if (starColor.length > 0) wireStarColorCount++;
-            var body:String         = extractJsonString(obj, "body");
+            // extractJsonString deliberately preserves transport escapes. Chat text must be
+            // decoded exactly once before control checks, optimistic-echo matching, and display;
+            // otherwise `"quoted"` local sends compare against `\"quoted\"` authoritative
+            // events and both rows remain in the feed.
+            var body:String         = FcmConfig.decodeJsonText(extractJsonString(obj, "body"));
             if (rawChannel == "system" && senderUserId == "system" && StringTools.startsWith(body, "FCMACK/1;")) {
                 updateCursorFromEvent(obj);
                 acceptOutboxReceipt(body);
