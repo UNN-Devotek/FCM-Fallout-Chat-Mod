@@ -113,6 +113,13 @@ test('unknown leave reasons fail closed as explicit inactive', async () => {
   expect(bridge.leave).toHaveBeenCalledWith('explicit_inactive');
 });
 
+test('legacy bridge leaves without a reason use the bounded observation timeout', async () => {
+  const ws = await connect('/', { 'x-auth-token': 'desktop-token' });
+  const bridge = instances.at(-1);
+  await control(ws, 'bridge:leave', {});
+  expect(bridge.leave).toHaveBeenCalledWith('observation_timeout');
+});
+
 test('browser tickets cannot activate legacy or local bridge controls', async () => {
   store.set('ws_ticket:browser', JSON.stringify({ type: 'web', userId: '10000000-0000-4000-8000-000000000001' }));
   const ws = await connect('/?ticket=browser'); const bridge = instances.at(-1);

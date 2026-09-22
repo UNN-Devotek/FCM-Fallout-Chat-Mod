@@ -83,8 +83,9 @@ nonrenewable 30-second recovery window. A fresh observation from the same authen
 and world generation may recover that affinity; the timeout cannot authorize sends, receive delivery,
 renew itself, or merge rooms. Expiry clears membership normally. `game_exit`, `main_menu`,
 `explicit_inactive`, `account_change`, `socket_replaced`, `app_quit`, `invalid_export`, and
-`provider_conflict` are hard boundaries and clear membership immediately. Unknown reasons fail closed as
-`explicit_inactive`. Privacy-safe diagnostics record `soft_leave_started`, `soft_leave_recovered`, or
+`provider_conflict` are hard boundaries and clear membership immediately. For compatibility with released
+desktop clients, a missing reason is treated as `observation_timeout`; an explicitly supplied unknown reason
+still fails closed as `explicit_inactive`. Privacy-safe diagnostics record `soft_leave_started`, `soft_leave_recovered`, or
 `soft_leave_expired` without raw account, room, roster, session, or world identifiers.
 
 The overlay and visible HUD separately retain accepted Server rows as bounded, in-memory display

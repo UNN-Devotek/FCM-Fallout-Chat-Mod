@@ -2218,7 +2218,9 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       case 'bridge:leave': {
         if (webTicketUserId || clients.get(token)?.ws !== ws) break;
         const requestedReason: unknown = frame.payload?.reason;
-        const reason = isBridgeLeaveReason(requestedReason) ? requestedReason : 'explicit_inactive';
+        const reason = requestedReason === undefined
+          ? 'observation_timeout'
+          : isBridgeLeaveReason(requestedReason) ? requestedReason : 'explicit_inactive';
         await serverBridge.leave(reason); // Revocation fences in-flight work before any await.
         break;
       }
