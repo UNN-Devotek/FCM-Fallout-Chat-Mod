@@ -33,6 +33,10 @@ class BridgePackageTests(unittest.TestCase):
                         self.assertIn('ZFE INSTALL', install)
                         self.assertIn('XSCAL INSTALL', install)
                         self.assertLess(install.index('ZFE INSTALL'), install.index('XSCAL INSTALL'))
+                        self.assertIn('Do not edit xscal.ini for the Server Bridge', install)
+                        self.assertIn('[Chat] enabled and\n   relayEndpoint settings are only for the visible FCM in-game HUD', install)
+                        self.assertNotIn('named load(name)', install)
+                        self.assertNotIn('native-unverified test candidate', install)
                         ba2file = root / f'{target}.ba2'
                         ba2file.write_bytes(archive.read('Data/FCMServerBridge.ba2'))
                         data, _, _, records, entries = package.ba2._read(ba2file)

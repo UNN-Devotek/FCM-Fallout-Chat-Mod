@@ -15,38 +15,34 @@ export default function HudManualInstall({ linkUrl, bodyStyle, stepStyle, noteSt
   return (
     <section aria-label="Manual HUD installation" style={{ overflowWrap: 'anywhere' }}>
       <div style={stepStyle}>MANUAL HUD INSTALLATION — NO INSTALLER REQUIRED</div>
-      <div style={bodyStyle}>The included xScal setup helper is optional. You can complete every step below by hand.</div>
+      <div style={bodyStyle}>Use this section only for the visible <code>FCMChatWidget</code> HUD.</div>
 
       <div style={stepStyle}>STEP 1 — PREPARE</div>
       <div style={bodyStyle}>
-        Exit Fallout 76 completely. Install HUDModLoader and either ZFE with chat.v1 support or xScal
-        with chatInterface support, following their authors’ instructions. Choose one extender;
-        the shared FCMChatWidget automatically detects it. The desktop overlay is not required for HUD chat.
+        Close Fallout 76. Install HUDModLoader and exactly one extender: ZFE or xScal.
+        Do not install <code>FCMServerBridge.ba2</code> with the visible HUD.
       </div>
 
       <div style={stepStyle}>STEP 2 — EXTRACT THE ZIP</div>
       <div style={bodyStyle}>
-        Extract the FCM HUD Mod ZIP into the game installation folder containing <code>Fallout76.exe</code>,
-        preserving the archive’s folder structure. The shared files belong at:
+        Extract the FCM HUD Mod ZIP to a temporary folder outside the Fallout 76 installation,
+        such as <code>Downloads/FCM-HUD</code>. Do not extract the entire archive over the game;
+        it also contains instructions and examples. Copy only the shared files below into the game:
         <pre style={codeStyle}>{'Data/FCMChatWidget.ba2\nData/FCMChat.ini'}</pre>
-        The ZIP also includes <code>FCMChatWidget.hudmodloader.ini</code>, <code>Fallout76Custom.ini.example</code>,
-        {' '}<code>xscal.ini.example</code>, <code>examples/ZFE/FCMChatWidget.ini.example</code>,
-        {' '}the optional xScal helpers, and <code>INSTALL.txt</code>.
+        Keep the remaining examples and instructions outside the game folder.
       </div>
 
       <div style={stepStyle}>STEP 3 — REGISTER WITH HUDMODLOADER</div>
       <div style={bodyStyle}>
-        Back up and open <code>Data/hudmodloader.ini</code>. Append <code>FCMChatWidget</code> on its own
-        line exactly once. Preserve every existing widget entry; do not replace the file with the snippet.
+        Add <code>FCMChatWidget</code> once to <code>Data/hudmodloader.ini</code>. Preserve existing entries.
       </div>
 
       <div style={stepStyle}>STEP 4 — REGISTER THE BA2</div>
       <div style={bodyStyle}>
-        Back up <code>Fallout76Custom.ini</code>. In its existing <code>[Archive]</code> section, append
-        {' '}<code>FCMChatWidget.ba2</code> to the comma-separated <code>sResourceArchive2List</code> value.
-        Preserve other archives, including HUDModLoader. A minimal example is:
+        Add <code>FCMChatWidget.ba2</code> once to <code>sResourceArchive2List</code> in the active{' '}
+        <code>Fallout76Custom.ini</code>. Preserve every existing archive. Example:
         <pre style={codeStyle}>{'[Archive]\nsResourceArchive2List=HUDModLoader.ba2,FCMChatWidget.ba2'}</pre>
-        Add the section or key only if missing. Do not create duplicate sections or replace your existing archive list.
+        Do not create duplicate sections or replace your existing archive list.
       </div>
       <div style={noteStyle}>
         Windows: <code>Documents/My Games/Fallout 76/Fallout76Custom.ini</code>.
@@ -55,54 +51,38 @@ export default function HudManualInstall({ linkUrl, bodyStyle, stepStyle, noteSt
         The <code>Data/</code> files belong in the game installation folder.
       </div>
 
-      <div style={stepStyle}>STEP 5 — CONFIGURE YOUR EXTENDER</div>
-      <div style={bodyStyle}>Follow the section for your installed extender.</div>
-      <div style={stepStyle}>xScal — MANUAL CONFIGURATION</div>
+      <div style={stepStyle}>STEP 5A — xScal ONLY</div>
       <div style={bodyStyle}>
         Back up and open <code>xscal.ini</code> beside <code>Fallout76.exe</code>. Edit the existing
         {' '}<code>[Chat]</code> section to use:
         <pre style={codeStyle}>{`[Chat]\nenabled=true\nrelayEndpoint=${relayUrl.href}`}</pre>
-        Change <code>enabled=false</code> to <code>enabled=true</code> and replace the relay endpoint.
-        If the section is missing, add it once. If the file is missing, create a plain-text
-        {' '}<code>xscal.ini</code> beside the game executable—not <code>xscal.ini.txt</code>.
-        Preserve unrelated settings and avoid duplicate sections or keys.
+        If the file or section is missing, create it beside <code>Fallout76.exe</code>. Make sure the
+        filename is <code>xscal.ini</code>, not <code>xscal.ini.txt</code>. Preserve unrelated settings
+        and do not create a second <code>[Chat]</code> section.
       </div>
       <div style={noteStyle}>
-        New users must apply these settings too: xScal ships with chat disabled by default.
-        Extracting <code>xscal.ini.example</code> alone does not enable chat.
-        xScal does not use the ZFE fragment; do not create ZFE folders for this setup.
-        On Windows, the optional <code>Enable-xScal-Chat.cmd</code> helper backs up and updates the existing
-        configuration instead. Restart Fallout 76 after changing extender settings.
+        xScal ships with chat disabled. Copying <code>xscal.ini.example</code> does not change your
+        active configuration. Do not install the ZFE fragment.
       </div>
 
-      <div style={stepStyle}>ZFE — MANUAL CONFIGURATION</div>
+      <div style={stepStyle}>STEP 5B — ZFE ONLY</div>
       <div style={bodyStyle}>
         Copy the complete <code>examples/ZFE/FCMChatWidget.ini.example</code> file to:
         <pre style={codeStyle}>Data/ZFE/TextChat/fragments/FCMChatWidget.ini</pre>
-        Create the folders if needed and remove the <code>.example</code> suffix.
-        Back up any existing fragment and compare its settings before replacing it.
-        The example contains <code>{`Endpoint=${relayUrl.href}`}</code>; copy the entire example,
-        not just that line. <code>Data/FCMChat.ini</code> <code>openKey</code> is authoritative after
-        widget discovery; the fragment's <code>OpenChatKey</code> is ZFE's startup default.
-        <strong>Important:</strong> ZFE applies <code>Data/configuration/zfe.ini</code> after the
-        fragment, so its <code>[TextChat]</code> values override the fragment. Check that file even
-        when the fragment contains the correct endpoint. If you use a global override, it must be:
+        Create the folders if needed and remove <code>.example</code> from the copied filename.
+        Copy the entire example. If <code>Data/configuration/zfe.ini</code> contains a{' '}
+        <code>[TextChat]</code> section, make sure it uses:
         <pre style={codeStyle}>{`[TextChat]\nEndpoint=${relayUrl.href}`}</pre>
-        Replace any stale endpoint, preserve unrelated settings, and do not duplicate the section or
-        key. If no override is needed, leave the endpoint out of <code>zfe.ini</code> and use the
-        packaged fragment. Do not put the relay endpoint in <code>Data/FCMChat.ini</code>.
-        ZFE does not need <code>xscal.ini</code>. Restart Fallout 76 after configuration.
+        Otherwise, no <code>zfe.ini</code> edit is needed. Do not create <code>xscal.ini</code> for ZFE.
       </div>
 
       <div style={stepStyle}>STEP 6 — VERIFY AND LINK</div>
       <div style={bodyStyle}>
-        Start Fallout 76, press F11 to open HUDModLoader, and confirm the FCM menu is present.
+        Restart Fallout 76. Press F11 and confirm the FCM menu appears.
         When the widget displays a fresh link code, open{' '}
         <a href={linkUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#C8A840' }}>the account-link page</a>,
         sign in with Steam or Discord, enter the code, and return to the game.
-        Steam sign-in does not require Discord. If you leave your name blank, your Steam display name
-        is used; you can link Discord later from your profile.
-        Codes expire after 10 minutes; reconnect the widget to request a new one.
+        Codes expire after 10 minutes. Reconnect the widget if you need a new code.
       </div>
     </section>
   );

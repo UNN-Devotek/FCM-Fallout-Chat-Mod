@@ -1,5 +1,6 @@
 import { hudDownloads } from './hudDownloads';
 import HudManualInstall from './HudManualInstall';
+import ServerBridgeInstall from './ServerBridgeInstall';
 import { WindowsReleaseDownloads } from './WindowsReleaseDownloads';
 import React, { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
@@ -567,49 +568,18 @@ function InstallPanel() {
         </a>
       </div>
 
-      {/* ── Optional in-game HUD mod — keep the download visible at the top ── */}
-      <div style={firstSectionHeaderStyle}>FCM HUD MOD — ZFE / xScal — OPTIONAL</div>
+      <div style={firstSectionHeaderStyle}>CHOOSE YOUR SETUP</div>
       <div style={bodyStyle}>
-        One optional HUD download supports both ZFE and xScal. It contains a single
-        auto-detecting FCMChatWidget BA2 and configuration examples for both extenders.
-        Apply the example for your installed extender. This is a separate in-game mod;
-        it does not install or modify the desktop overlay.
+        Start with the desktop overlay for normal community chat. Add the optional Server Bridge
+        only if you want chat with players confirmed in your current world. Choose the separate
+        in-game HUD only if you want chat rendered inside Fallout 76.
       </div>
-      <div className="install-dl-row" style={downloadRowStyle}>
-        {hudModUrl ? hudDownloads(hudModUrl).map((download) => (
-          <a
-            key={download.label}
-            href={download.url}
-            download
-            target="_blank"
-            rel="noopener noreferrer"
-            className="install-dl-btn"
-            style={downloadBtnStyle}
-            onMouseEnter={dlHoverIn}
-            onMouseLeave={dlHoverOut}
-          >
-            ↓ FCM HUD Mod ZIP — {download.label} {hudModVersion}
-          </a>
-        )) : (
-          <span className="install-dl-btn" style={{ ...downloadBtnStyle, opacity: 0.5, cursor: 'default' }}>
-            FCM HUD MOD ZIP — UNAVAILABLE
-          </span>
-        )}
+      <div style={warningBoxStyle}>
+        Install either the Server Bridge or the visible in-game HUD. Do not install both BA2 files together.
       </div>
-      <div style={noteStyle}>
-        Follow INSTALL.txt and append its loader line to your existing Data/hudmodloader.ini;
-        do not replace that file.
-      </div>
-
-      <HudManualInstall
-        linkUrl={hudLinkUrl}
-        bodyStyle={bodyStyle}
-        stepStyle={stepStyle}
-        noteStyle={noteStyle}
-      />
 
       {/* ── Windows ─────────────────────────────────────────────────── */}
-      <div style={sectionHeaderStyle}>WINDOWS</div>
+      <div style={sectionHeaderStyle}>1. DESKTOP OVERLAY — WINDOWS</div>
 
       <div style={subHeaderStyle}>STEP 1 — DOWNLOAD</div>
       <div style={bodyStyle}>
@@ -637,7 +607,7 @@ function InstallPanel() {
       </div>
 
       {/* ── Linux ───────────────────────────────────────────────────── */}
-      <div style={sectionHeaderStyle}>LINUX</div>
+      <div style={sectionHeaderStyle}>1. DESKTOP OVERLAY — LINUX</div>
 
       <div style={subHeaderStyle}>STEP 1 — DOWNLOAD</div>
       <div style={bodyStyle}>
@@ -899,6 +869,47 @@ function InstallPanel() {
         not needed and has been confirmed to push the overlay <em>behind</em> the game window.
         Use the KWin rule (above) instead.
       </div>
+
+      <ServerBridgeInstall bodyStyle={bodyStyle} stepStyle={stepStyle} noteStyle={noteStyle} />
+
+      {/* ── Optional in-game HUD mod ────────────────────────────────── */}
+      <div style={sectionHeaderStyle}>3. VISIBLE IN-GAME HUD — OPTIONAL</div>
+      <div style={bodyStyle}>
+        Use this separate option if you want chat rendered inside Fallout 76. One HUD download
+        supports either ZFE or xScal. Install exactly one extender and follow only its section.
+        Do not install FCMChatWidget together with FCMServerBridge.
+      </div>
+      <div className="install-dl-row" style={downloadRowStyle}>
+        {hudModUrl ? hudDownloads(hudModUrl).map((download) => (
+          <a
+            key={download.label}
+            href={download.url}
+            download
+            target="_blank"
+            rel="noopener noreferrer"
+            className="install-dl-btn"
+            style={downloadBtnStyle}
+            onMouseEnter={dlHoverIn}
+            onMouseLeave={dlHoverOut}
+          >
+            ↓ FCM HUD Mod ZIP — {download.label} {hudModVersion}
+          </a>
+        )) : (
+          <span className="install-dl-btn" style={{ ...downloadBtnStyle, opacity: 0.5, cursor: 'default' }}>
+            FCM HUD MOD ZIP — UNAVAILABLE
+          </span>
+        )}
+      </div>
+      <div style={noteStyle}>
+        Extract the ZIP outside the game folder, then follow the package-specific INSTALL.txt.
+      </div>
+
+      <HudManualInstall
+        linkUrl={hudLinkUrl}
+        bodyStyle={bodyStyle}
+        stepStyle={stepStyle}
+        noteStyle={noteStyle}
+      />
 
       {/* ── General notes ───────────────────────────────────────────── */}
       <div style={sectionHeaderStyle}>GENERAL NOTES</div>

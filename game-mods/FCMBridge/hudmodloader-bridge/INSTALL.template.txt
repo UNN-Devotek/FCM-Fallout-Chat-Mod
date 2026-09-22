@@ -1,14 +1,13 @@
-FCM Server Bridge {version} - {target} native-unverified test candidate
+FCM Server Bridge {version}
 
 This optional invisible HUDModLoader child exports game HUD roster observations
-to the local desktop overlay. Sign into the overlay ONLY. There is no bridge
-login, code, pairing, network connection, or extra service.
+to Fallout Chat Mod on this computer. Sign into Fallout Chat Mod only. The
+bridge has no separate login or pairing code.
 
 PREREQUISITES
-HUDModLoader plus one supported extender: ZFE with zfe-storage-v1, or xScal
-0.2.17 or newer with named modStorage.load/save. These are
-separate downloads. The visible FCM HUD and legacy FCMBridge must not coexist
-with this background bridge. The default overlay does not install any mods.
+HUDModLoader plus exactly one supported extender: ZFE or xScal 0.2.17 or newer.
+These are separate downloads. Do not install the visible FCM HUD or the old
+FCMBridge with this Server Bridge. Fallout Chat Mod does not install it for you.
 
 CHOOSE ONE INSTALL PATH (FALLOUT 76 MUST BE CLOSED)
 
@@ -23,37 +22,35 @@ ZFE INSTALL
    entry; FCMServerBridge.hudmodloader.ini is a snippet, not a replacement.
 4. Append FCMServerBridge.ba2 once to [Archive] sResourceArchive2List in the
    active Fallout76Custom.ini. Preserve HUDModLoader.ba2 and unrelated archives.
-5. Do not install falloutchatmod.ini, a TextChat fragment, a relay endpoint, or
-   zfe.ini for the bridge. If an obsolete FCMServerBridge TextChat fragment
-   exists, back up and remove only that fragment.
-6. Remove xScal if it is installed. Start the signed-in {target} overlay for
+5. Do not install falloutchatmod.ini, a TextChat fragment, or zfe.ini for the
+   bridge. If an old FCMServerBridge TextChat fragment exists, back up and
+   remove only that fragment.
+6. Remove xScal if it is installed. Start Fallout Chat Mod and sign in at
    https://{host}, launch Fallout 76, and enter a public world. The overlay
    exposes Server automatically after fresh exports are confirmed.
 
 XSCAL INSTALL
 -------------
-1. Install HUDModLoader and exactly one extender: xScal 0.2.17 or newer. This
-   version provides named load(name) and save(name, document) storage so the
-   bridge can coexist with other storage users such as Improved HUD.
-2. Back up the files below, then copy Data/FCMServerBridge.ba2 into the game's
+1. Install HUDModLoader and exactly one extender: xScal 0.2.17 or newer.
+2. Do not edit xscal.ini for the Server Bridge. The [Chat] enabled and
+   relayEndpoint settings are only for the visible FCM in-game HUD, not this
+   invisible bridge.
+3. Back up the files below, then copy Data/FCMServerBridge.ba2 into the game's
    Data directory.
-3. Add FCMServerBridge once to Data/hudmodloader.ini. Preserve every existing
+4. Add FCMServerBridge once to Data/hudmodloader.ini. Preserve every existing
    entry; FCMServerBridge.hudmodloader.ini is a snippet, not a replacement.
-4. Append FCMServerBridge.ba2 once to [Archive] sResourceArchive2List in the
+5. Append FCMServerBridge.ba2 once to [Archive] sResourceArchive2List in the
    active Fallout76Custom.ini. Preserve HUDModLoader.ba2 and unrelated archives.
-5. Do not install ZFE, create a ZFE fragment, configure a relay endpoint, or
-   create zfe.ini. The bridge uses
-   xScal storage directly under fcmserverbridge-{target_lower} and has no
-   separate login. It never registers or reads another mod's storage name.
-6. Start the signed-in {target} overlay for https://{host}, launch Fallout 76,
+6. Do not install ZFE or create ZFE folders or configuration files.
+7. Start Fallout Chat Mod and sign in at https://{host}, launch Fallout 76,
    and enter a public world. The overlay exposes Server automatically after
    fresh exports are confirmed.
 
 Fallout76Custom.ini is normally in Documents/My Games/Fallout 76 on Windows
 (including redirected Documents) or the matching Proton prefix directory.
 
-The {target} environment is compiled into this BA2. EXPORT.json documents its
-exact provider output paths; do not create or edit the exported JSON manually.
+This BA2 is configured for https://{host}. Do not create or edit its exported
+JSON file manually.
 ZFE may use its documented Documents or LocalAppData fallback storage root.
 The desktop reads only known export files, asynchronously, and never writes
 game files. Steam Windows/Linux-Proton are the current native test targets;
@@ -77,7 +74,7 @@ World hopping, main menu, account change, logout, game exit, missing heartbeat
 or expired observations remove stale membership. Five-second heartbeats do not
 refresh the thirty-second observation limit. Old files alone cannot activate
 Server: the overlay requires advancing fresh snapshots after attaching.
-Dev and Prod use separate files and backend environments.
+Test builds and the public service use separate files.
 
 TROUBLESHOOTING
 - No export: check archive path, loader registry and active custom INI precedence.

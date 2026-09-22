@@ -1,6 +1,10 @@
 # Drop-in Server bridge: one room across HUD and overlay
 
-Current packaged candidate: **FCMServerBridge 0.2.6**, native-unverified and not installed.
+**Current release: FCMServerBridge 0.2.8.** It is published as a separate, optional
+HUDModLoader child and was installed locally with xScal 0.2.17 for a bridge test.
+That local installation is not native acceptance: the full ZFE/xScal mixed-client,
+room/message/travel matrix remains pending. Do not coinstall it with the visible
+FCMChatWidget. The 0.2.6 investigation below is historical candidate evidence.
 0.2.6 is fully input-silent: it registers no SharedHUDTools instance, loader menu, hotkey,
 editor, or `HUDMod::UserEvent` listener. Provider/export status remains available through the
 scoped export and privacy-safe provider logs. Mixed ZFE/xScal installs fail closed.
@@ -24,7 +28,7 @@ The laptop 0.2.1 attempt still reported provider pending and no confirmed storag
 the scoped export and privacy-safe provider logs. These contain fixed reasons and numeric error
 IDs only; no raw payloads or extra native calls. Keep all
 capability/readiness checks and the existing visible-HUD architecture unchanged.
-Desktop/xScal remains on 0.2.0 while the ZFE fallback is tested.
+The earlier desktop/xScal 0.2.0 export result does not accept the released 0.2.8 artifact.
 See [checks, deployment and installed hashes](../../testing/bridge-drop-in-acceptance-2026-09-16.md).
 Native acceptance must be recorded separately. Historical
 0.1.x native-network/link-code behavior is [archived](background-server-bridge-native-history.md);
