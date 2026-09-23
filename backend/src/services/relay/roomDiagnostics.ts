@@ -61,12 +61,9 @@ export function parseHudRoomDiagnostic(body: string): HudRoomDiagnostic | null {
 }
 
 function diagnosticSecret(): string {
-  // The real environment module always supplies one of these and production's
-  // startup guard rejects its development sentinel. Some isolated unit suites
-  // deliberately replace the environment module with a minimal object, so keep
-  // best-effort diagnostics from breaking room assignment in that case.
-  return env.HUD_IDENTITY_HASH_SECRET || env.HUD_IDENTITY_SECRET
-    || process.env.HUD_IDENTITY_HASH_SECRET || process.env.HUD_IDENTITY_SECRET
+  // Some isolated suites replace the environment module with a minimal object.
+  return env.HUD_IDENTITY_HASH_SECRET
+    || process.env.HUD_IDENTITY_HASH_SECRET
     || FALLBACK_DIAGNOSTIC_SECRET;
 }
 

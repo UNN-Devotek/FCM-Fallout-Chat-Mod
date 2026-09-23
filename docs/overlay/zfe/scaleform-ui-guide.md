@@ -123,8 +123,7 @@ for commands and in-game acceptance; do not confuse offline checks with a live g
 - [Current provider contracts and author links](modder-guide.md).
 - [HUDModLoader source](https://github.com/GitCrazy-wc/hudmodloader); compare the installed host revision.
 - [Surface manifest](hud-surface-manifest.md), [compatibility](hud-mod-compatibility.md).
-- [Styling/emoji observations](../../testing/hud-emoji-status.md) and
-  [historical widget notes](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD-HISTORY.md).
+- [Styling/emoji observations](../../testing/hud-emoji-status.md).
 
 The older Proton transport failure is historical, not a current blanket blocker. Record exact
 provider/game/build evidence for new reports. Sanitize logs: status/counts/errors/timings are

@@ -24,7 +24,7 @@ jest.mock('../src/services/onlinePresenceService', () => ({
 jest.mock('../src/services/userRoleService', () => ({ getEffectiveRole: jest.fn(async () => 'user'), isPrivilegedRole: jest.fn(() => false) }));
 const instances = [];
 jest.mock('../src/websocket/bridgeConnection', () => ({ BridgeConnection: class {
-  constructor(...args) { this.args = args; this.watch = jest.fn(); this.observe = jest.fn(); this.leave = jest.fn(); this.dispose = jest.fn(); this.observedPlayerStats = jest.fn(async () => ({ bindingId: null, observedPlayers: null })); instances.push(this); }
+  constructor(...args) { this.args = args; this.watch = jest.fn(); this.pairNative = jest.fn(); this.observe = jest.fn(); this.leave = jest.fn(); this.dispose = jest.fn(); this.observedPlayerStats = jest.fn(async () => ({ bindingId: null, observedPlayers: null })); instances.push(this); }
 } }));
 jest.mock('../src/services/relay/localExportBridge', () => ({
   BRIDGE_LEAVE_REASONS: ['observation_timeout', 'game_exit', 'main_menu', 'explicit_inactive', 'account_change',
@@ -126,7 +126,21 @@ test('browser tickets cannot activate legacy or local bridge controls', async ()
   expect(bridge.args[4]).toBeUndefined();
   await control(ws, 'bridge:watch', {}); await control(ws, 'bridge:watch', { mode: 'local-export' });
   await control(ws, 'bridge:observe', {}); await control(ws, 'bridge:leave', {});
+  await control(ws, 'bridge:native-pair', { sessionId: 'forged' });
+  expect(bridge.pairNative).not.toHaveBeenCalled();
   expect(bridge.watch).not.toHaveBeenCalled(); expect(bridge.observe).not.toHaveBeenCalled(); expect(bridge.leave).not.toHaveBeenCalled();
+});
+
+test('native pairing requires the current in-game desktop socket', async () => {
+  const ws = await connect('/', { 'x-auth-token': 'desktop-token' }); const bridge = instances.at(-1);
+  await control(ws, 'bridge:native-pair', { sessionId: 'test-session' });
+  expect(bridge.pairNative).not.toHaveBeenCalled();
+  await control(ws, 'client:status', { inGame: true });
+  await control(ws, 'bridge:native-pair', { sessionId: 'test-session' });
+  expect(bridge.pairNative).toHaveBeenCalledWith('test-session');
+  await connect('/', { 'x-auth-token': 'desktop-token' });
+  await control(ws, 'bridge:native-pair', { sessionId: 'old-session' });
+  expect(bridge.pairNative).toHaveBeenCalledTimes(1);
 });
 
 test('public unauthenticated socket and admin observers never get bridge authority', async () => {

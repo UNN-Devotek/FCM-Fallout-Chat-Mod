@@ -33,6 +33,9 @@
           https://api.nexusmods.com/v1/users/validate.json
       http=200 with --ssl-revoke-best-effort but http=000 without it confirms the cause.
 
+    Existing file descriptions are read from Nexus and copied unchanged. If the
+    description cannot be read, the upload stops before creating a session.
+
     Role in the release pipeline:
       Called by publish-nexus-release.ps1 (once for each enabled release file). Not
       intended to be invoked directly during a normal release; use the wrapper script
@@ -70,8 +73,15 @@
     Pass -ArchiveExisting:$true for a normal replacement after the new upload is
     approved and ready to become the current file.
 
+.PARAMETER PrimaryDownload
+    Make this file the default mod-manager download. The release wrapper sets
+    this only for the HUD package.
+
 .PARAMETER DryRun
     Validate inputs and print the planned calls without uploading anything.
+
+.PARAMETER ValidateMetadataOnly
+    Read the existing Nexus description and category state, then exit before upload.
 #>
 [CmdletBinding()]
 param(
@@ -85,15 +95,15 @@ param(
     # (Nexus expects a zip + a platform-suffixed display name, e.g.
     # "Fallout Chat Mod Setup 1.3.67 (Windows).zip").
     [string]$ZipAs             = "",
-    # Shown as the file's description on Nexus (the Windows file carries the
-    # SmartScreen/AV false-positive disclaimer).
-    [string]$Description       = "",
     # Additional files to include alongside the installer in the -ZipAs archive
     # (e.g. INSTALL-*.txt, .kwinrule). Only used when -ZipAs is also provided.
     [string[]]$IncludeFiles    = @(),
     [bool]  $ArchiveExisting   = $false,
+    [bool]  $PrimaryDownload   = $false,
     [string]$BaseUrl           = "https://api.nexusmods.com/v3",
+    [string]$LegacyBaseUrl     = "https://api.nexusmods.com",
     [int]   $MaxPollAttempts   = 60,
+    [switch]$ValidateMetadataOnly,
     [switch]$DryRun
 )
 
@@ -125,6 +135,9 @@ $ModFileId = Normalize-ConfiguredValue $ModFileId
 if (-not $ApiKey)      { Fail "No API key. Pass -ApiKey or set NEXUS_API_KEY (https://www.nexusmods.com/settings/api-keys)." }
 if (-not $ModFileId)   { Fail "No mod-file id. Pass -ModFileId or set NEXUS_MOD_FILE_ID." }
 if (-not (Test-Path $FilePath)) { Fail "File not found: $FilePath" }
+if (([System.IO.Path]::GetFileName($FilePath) -match '^Fallout Chat Mod (Setup|Portable) ') -and $ArchiveExisting) {
+    Fail "Windows installers must remain in Main; ArchiveExisting cannot be true."
+}
 
 # Nexus wants the installer wrapped in a .zip (with a platform-suffixed display
 # name). When -ZipAs is given, compress the installer into a temp zip and upload
@@ -170,10 +183,10 @@ $sizeBytes = $file.Length
 $apiHeaders = @{ "apikey" = $ApiKey; "Content-Type" = "application/json" }
 
 Write-Host "[nexus] Publishing $fileName ($([math]::Round($sizeBytes/1MB,1)) MB) as version $Version"
-Write-Host "[nexus]   modFile=$ModFileId category=$FileCategory archiveExisting=$ArchiveExisting"
+Write-Host "[nexus]   modFile=$ModFileId category=$FileCategory archiveExisting=$ArchiveExisting primary=$PrimaryDownload"
 
 if ($DryRun) {
-    Write-Host "[nexus] DRY RUN - would POST $BaseUrl/uploads/multipart then attach to /mod-files/$ModFileId/versions"
+    Write-Host "[nexus] DRY RUN - would read the existing Nexus description, POST $BaseUrl/uploads/multipart, then attach to /mod-files/$ModFileId/versions"
     exit 0
 }
 
@@ -248,6 +261,19 @@ function Invoke-Nexus {
     if ($respBody) {
         return $respBody | ConvertFrom-Json
     }
+}
+
+# Fail before uploading if Nexus cannot provide the description already displayed
+# for this file group. Never replace it with generated release notes or blank text.
+. (Join-Path $PSScriptRoot 'nexus-file-metadata.ps1')
+$description = Get-NexusExistingDescription -ModFileId $ModFileId -GetJson {
+    param($path)
+    $origin = if ($path.StartsWith('/v1/')) { $LegacyBaseUrl } else { $BaseUrl }
+    Invoke-Nexus -Method Get -Uri "$origin$path"
+}
+if ($ValidateMetadataOnly) {
+    Write-Host "[nexus] existing description and categories validated for group $ModFileId"
+    exit 0
 }
 
 # --- Step 1: open multipart upload session -----------------------------------
@@ -371,11 +397,11 @@ $result = Invoke-Nexus -Method Post -Uri "$BaseUrl/mod-files/$ModFileId/versions
     upload_id                    = $uploadId
     name                         = $displayName
     version                      = $Version
-    description                  = $Description
+    description                  = $description
     file_category                = $FileCategory
     archive_existing_file        = $ArchiveExisting
     allow_mod_manager_download   = $true
-    primary_mod_manager_download = $false
+    primary_mod_manager_download = $PrimaryDownload
     show_requirements_pop_up     = $false
 }
 $result = if ($result.data) { $result.data } else { $result }

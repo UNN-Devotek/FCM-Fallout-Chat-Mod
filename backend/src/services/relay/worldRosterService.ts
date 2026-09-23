@@ -234,10 +234,9 @@ export async function clearRoster(relayUserId: string): Promise<void> {
     const redis = await getRedisClient();
     const previous = await readRoster(relayUserId);
     await redis.del(`${KEY_PREFIX}${relayUserId}`);
-    await recordRoomDiagnostic(relayUserId, {
-      event: 'roster_cleared', previousRoomRef: previous?.roomKey ? opaqueRef(previous.roomKey) : null,
-      previousSessionRef: previous?.session ? opaqueRef(previous.session) : null,
-      previousRosterCount: previous?.seen.length ?? 0,
+    if (previous) await recordRoomDiagnostic(relayUserId, {
+      event: 'roster_cleared', previousRoomRef: previous.roomKey ? opaqueRef(previous.roomKey) : null,
+      previousSessionRef: opaqueRef(previous.session), previousRosterCount: previous.seen.length,
     });
   } catch (err) {
     logger.warn({ err, relayUserId }, '[worldRoster] clearRoster failed');
@@ -480,16 +479,18 @@ export async function computeRooms(assertCurrent: () => Promise<void> = async ()
   }
   const rooms = new Map<string, string>();
   for (const [root, members] of groups) {
-    // Keep the oldest continuously present session's eligible room when mutual
-    // discovery joins components. A returning user's provisional UUID must not
-    // displace the survivor merely by sorting first. No histories are merged.
+    // After evidence connects the component, keep the eligible room held by the
+    // most members. An older returning singleton must not rename a stable group.
+    // Equal-sized candidates retain the existing age and UUID tie-breaks.
     const ages = new Map<string, number>();
+    const counts = new Map<string, number>();
     for (const member of members) if (member.roomKey) {
       ages.set(member.roomKey, Math.min(ages.get(member.roomKey) ?? Infinity, member.sessionStartedAt ?? 0));
+      counts.set(member.roomKey, (counts.get(member.roomKey) ?? 0) + 1);
     }
     const candidates = [...new Set(members.map(m => m.roomKey).filter((key): key is string => !!key))]
       .filter(key => owners.get(key)?.size === 1 || splitWinners.get(key) === root)
-      .sort((a, b) => ages.get(a)! - ages.get(b)! || a.localeCompare(b));
+      .sort((a, b) => counts.get(b)! - counts.get(a)! || ages.get(a)! - ages.get(b)! || a.localeCompare(b));
     const initial = `r:${members.find(m => m.userId === root)!.session}`;
     // Never resurrect a split room through its original root session UUID.
     const roomKey = candidates[0] ?? (members.some(m => m.roomKey) ? `r:${randomUUID()}` : initial);

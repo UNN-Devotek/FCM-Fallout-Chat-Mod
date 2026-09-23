@@ -4,7 +4,7 @@
 // PURPOSE
 //   These snippets implement two-way in-game chat for Fallout Chat Mod (M7).
 //   They follow the exact mechanism documented in the Text Chat mod decompile
-//   (textchat-blueprint.md).  Copy each block into the correct location inside
+//   (archived text chat blueprint).  Copy each block into the correct location inside
 //   HUDMenu.as after decompiling the vanilla SWF with JPEXS/ffdec.
 //
 // AUTHORSHIP
@@ -14,8 +14,8 @@
 //   in HUDMenu.as is the decompiled vanilla code we do not reproduce here.
 //
 // BLUEPRINT REFERENCES
-//   Sections cited below match textchat-blueprint.md section numbers.
-//   e.g. "BP-2" = textchat-blueprint.md section 2.
+//   Sections cited below match the archived blueprint section numbers.
+//   e.g. "BP-2" = blueprint section 2.
 // =============================================================================
 
 

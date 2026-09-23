@@ -71,6 +71,7 @@ import {
   type ServerRoomEvent,
 } from './serverChat';
 import type { RelayToken } from './tokenService';
+import { NATIVE_BRIDGE_CONTROL, nativeBridgePrototype, nativeBridgePrototypeEnabled } from './nativeBridgePrototype';
 import { renewBridgeLease, clearBridgeLease } from './overlayServerBridge';
 import { sendServerMessage, ServerMessageError } from './serverMessageService';
 import { parseHudSendCarrier, claimHudSend, hudSendReceiptIdentity, hudSendResponse, HUD_SEND_RECEIPT_SECONDS } from './hudSendReceipt';
@@ -458,14 +459,14 @@ function parseWorldRosterControl(body: string): ParsedRosterControl | null {
 }
 
 /** Per-identity limit prevents a modified client from forcing room recomputation. */
-async function checkWorldControlRateLimit(userId: string): Promise<boolean> {
+async function checkWorldControlRateLimit(userId: string, maximum = MAX_WORLD_CONTROLS_PER_WINDOW): Promise<boolean> {
   try {
     const redis = await getRedisClient();
     const bucket = Math.floor(Date.now() / 1000 / WORLD_CONTROL_WINDOW_SECONDS);
     const key = `relay:world-control:${userId}:${bucket}`;
     const count = await redis.incr(key);
     if (count === 1) await redis.expire(key, WORLD_CONTROL_WINDOW_SECONDS + 1);
-    return count <= MAX_WORLD_CONTROLS_PER_WINDOW;
+    return count <= maximum;
   } catch (err) {
     logger.warn({ err, userId }, '[relayHandler] world-control rate limit unavailable');
     return false;
@@ -1190,6 +1191,21 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
   const sessionMatch = /^(FCMSESSION|FCMBRIDGE)\/1;([a-z0-9-]{1,64})$/.exec(sessionTarget);
   const requestId = sessionMatch?.[2] ?? '';
   const isBackgroundBridge = sessionMatch?.[1] === 'FCMBRIDGE';
+
+  if (slug === 'server' && body.startsWith(NATIVE_BRIDGE_CONTROL)) {
+    if (!nativeBridgePrototypeEnabled() || !user) {
+      await deliver(errEnvelope('permission_denied', 'Native bridge prototype is disabled')); return;
+    }
+    if (Buffer.byteLength(body, 'utf8') > 9000 || !(await checkWorldControlRateLimit(identity.userId, 12))) {
+      await deliver(errEnvelope('rate_limited', 'Native bridge prototype limit')); return;
+    }
+    let observation: unknown;
+    try { observation = JSON.parse(body.slice(NATIVE_BRIDGE_CONTROL.length)); } catch { observation = null; }
+    if (!nativeBridgePrototype.ingest(identity.linkedUserId!, identity.userId, observation)) {
+      await deliver(errEnvelope('invalid_request', 'Native bridge observation rejected')); return;
+    }
+    sendControlAck(ws); return;
+  }
 
   if (slug === 'server' && body.startsWith(HUD_LAYOUT_CONTROL)) {
     const control = parseHudLayoutControl(body);

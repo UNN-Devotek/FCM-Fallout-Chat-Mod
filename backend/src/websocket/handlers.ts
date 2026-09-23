@@ -6,7 +6,6 @@ import prisma from '../config/prisma';
 import { query as dbQuery } from '../config/database';
 import { computeDiscriminator } from '../utils/discriminator';
 import { buildAvatarUrl } from '../services/avatarService';
-import { hudPushNotify } from '../services/hudPush';
 import { isSocketSuperseded } from './socketSupersession';
 import { getLatestVersion } from '../services/latestReleaseVersion';
 import { shadowMute } from '../services/autoModService';
@@ -651,7 +650,6 @@ function localBroadcast(
   excludeWs: WebSocket | null = null,
   notifyRelay: boolean = true,
 ): void {
-  try { hudPushNotify(payload); } catch { /* hud push must never break chat */ }
   const isRelayChatMessage = payload?.type === 'chat:message';
   const isRelayScheduledEventEdit = payload?.type === 'chat:edit'
     && payload?.payload?.metadata?.type === 'scheduled_event';
@@ -2203,6 +2201,14 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
       case 'bridge:watch': {
         if (webTicketUserId || clients.get(token)?.ws !== ws) break;
         if (await checkWsRateLimitBucket('bridge-watch', user.id, 4, 10)) await serverBridge.watch(frame.payload?.mode);
+        break;
+      }
+      case 'bridge:native-pair': {
+        if (webTicketUserId || clients.get(token)?.ws !== ws || !clients.get(token)?.bridgeInGame) break;
+        if (await checkWsRateLimitBucket('bridge-native-pair', user.id, 4, 10)
+          && clients.get(token)?.ws === ws && clients.get(token)?.bridgeInGame) {
+          await serverBridge.pairNative(frame.payload?.sessionId);
+        }
         break;
       }
       case 'bridge:observe': {

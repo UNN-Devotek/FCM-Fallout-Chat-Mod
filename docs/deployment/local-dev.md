@@ -294,4 +294,4 @@ npx prisma studio            # visual DB browser
 npm test                     # Jest + Supertest
 ```
 
-All Prisma migrations must be idempotent (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`). See the "Prisma Migrations" section in `CLAUDE.md` for full rules.
+All Prisma migrations must be idempotent (`IF NOT EXISTS`, `ON CONFLICT DO NOTHING`). See the "Prisma Migrations" section in `AGENTS.md` for full rules.

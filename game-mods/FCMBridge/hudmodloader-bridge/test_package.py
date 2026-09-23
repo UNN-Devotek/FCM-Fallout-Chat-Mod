@@ -46,11 +46,22 @@ class BridgePackageTests(unittest.TestCase):
                         self.assertNotIn(b'/link', swf)
                         self.assertIn(b'FcmJson', swf)
                         self.assertNotIn(b'JsonParser', swf)
+                        self.assertNotIn(b'-perf:p', swf)
                         self.assertLess(len(swf), 100000)  # no widget/emoji/font bundle
                         swf_file = root / f'{target}.swf'; swf_file.write_bytes(swf)
                         package.validate_pair(swf_file, ba2file)
                         swf_file.write_bytes(swf.replace(b'writeStorage', b'writeStoragX'))
                         with self.assertRaisesRegex(ValueError, 'differs'): package.validate_pair(swf_file, ba2file)
+
+    def test_diagnostic_package_is_marked_and_keeps_one_export_file(self):
+        with TemporaryDirectory() as root:
+            path = Path(root) / 'bridge-perf-test.zip'
+            manifest = package.build('dev', path, diagnostic=True)
+            with ZipFile(path) as archive:
+                self.assertTrue(manifest['diagnostic'])
+                self.assertIn('DIAGNOSTIC TEST BUILD - NOT FOR RELEASE', archive.read('INSTALL.txt').decode())
+                self.assertEqual([name for name in archive.namelist() if name.startswith('Data/')],
+                                 ['Data/FCMServerBridge.ba2'])
 
     def test_source_is_a_separate_child_with_no_chat_or_input_ui(self):
         source = (package.ROOT / 'FCMServerBridge.hx').read_text()
@@ -58,10 +69,22 @@ class BridgePackageTests(unittest.TestCase):
         self.assertIn('VERSION:String = FcmBridgeExport.VERSION', source)
         self.assertNotIn('FCMChatWidget()', source)
         for text in ['TextField', 'TextEdit', 'URLLoader', 'Input.', 'startInput', 'registerPhysicalKey',
-                     'chat.v1.', 'FcmNativeApi', 'getAuthState', 'pollEvents', 'Link code']:
+                     'chat.v1.', 'getAuthState', 'pollEvents', 'Link code']:
             self.assertNotIn(text, source)
         self.assertIn('mouseEnabled = false', source)
         self.assertIn('mouseChildren = false', source)
+
+    def test_native_prototype_is_separate_and_refuses_production(self):
+        with TemporaryDirectory() as root:
+            path = Path(root) / 'native.zip'
+            with self.assertRaisesRegex(ValueError, 'requires dev'):
+                package.build('prod', path, native_prototype=True)
+            self.assertFalse(path.exists())
+            manifest = package.build('dev', path, native_prototype=True)
+            self.assertTrue(manifest['nativePrototype'])
+            with ZipFile(path) as archive:
+                self.assertIsNone(archive.testzip())
+                self.assertIn('LOCAL DEVELOPMENT ONLY', archive.read('INSTALL.txt').decode())
 
     def test_storage_responses_use_gfx_reader(self):
         source = (package.ROOT / 'FcmBridgeStorage.hx').read_text()

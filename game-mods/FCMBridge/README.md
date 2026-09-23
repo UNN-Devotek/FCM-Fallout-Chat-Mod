@@ -9,8 +9,9 @@ uses HUDModLoader. It has no chat widget; the loader menu supplies linking/statu
 desktop overlay renders its confirmed room. The matching backend/renderer are implemented
 locally; hosted deployment and two-provider in-game acceptance remain pending.
 
-This directory also retains the **legacy standalone bridge and HUDMenu patch**. Do not treat
-`FCMBridge.hx` as the modern widget renderer or apply its transport/rendering assumptions to
+This directory also retains the **standalone HUDMenu bridge and patch**. Its
+`FCMBridge.hx` source uses native ZFE/xScal chat through `/relay`. Do not treat
+it as the modern widget renderer or apply its rendering assumptions to
 `FCMChatWidget.hx`. Both belong to the explicit opt-in mod track, separate from the default
 desktop overlay. They do not add game-memory reads, code injection, or port scanning.
 
@@ -21,11 +22,10 @@ desktop overlay. They do not add game-memory reads, code injection, or port scan
 | `hudmodloader-bridge/` | Invisible background child, observation policy/tests and validated package builder |
 | `hudmodloader-chat/` | Modern child widget, pure Haxe logic/tests, config, emoji, package tools |
 | `FcmNativeApi.hx`, `FcmAuthFlow.hx` | Shared provider adapter and native auth lifecycle |
-| `FCMBridge.hx` | Legacy feed client used by the standalone HUDMenu integration |
-| `Data/ZFE/TextChat/fragments/FCM.ini` | Legacy standalone ZFE fragment, not the modern widget fragment |
+| `FCMBridge.hx` | Standalone native `/relay` client used by the HUDMenu integration |
+| `Data/ZFE/TextChat/fragments/FCM.ini` | Standalone ZFE native-chat fragment, not the modern widget fragment |
 | `hudmenu-chat/` | Legacy HUDMenu injection source, hash-pinned build, BA2 tool, source anchors |
 | `tools/validate_swf.py` | Structural SWF validation |
-| `SocketProbe.hx` | Historical generic-bridge diagnostic, not a shipped widget |
 
 ## Shared provider contract
 
@@ -42,14 +42,15 @@ controls use HUD-published data and authenticated relay membership; its printabl
 controls do not embed a shared HMAC secret. The retained legacy FCMBridge still contains its
 older HMAC/NUL control path and must not be used as the modern control recipe.
 
-The active modern path uses `/relay`. Generic socket/remote-data docs describe retired clients.
+Both current HUD variants use `/relay`. The generic socket/remote-data backend
+paths have been removed.
 The legacy line-feed name `FCMHUD/1` must not be confused with the modern `FCMHUD/1;...` metadata
 carrier. See [native integration](../../docs/overlay/zfe/native-chat-relay/fcm-integration.md).
 
 ## Build and validation
 
 Haxe and Python checks run on Linux CI; compilation is not Windows-only. From this directory,
-the legacy bridge compile smoke used in CI is:
+the standalone bridge compile smoke used in CI is:
 
 ```bash
 haxe --class-path hudmodloader-chat --main FCMBridge --swf /tmp/FCMBridge.swf --swf-version 32
@@ -66,6 +67,9 @@ Use the [modern build guide](hudmodloader-chat/BUILD.md) to compile/embed emoji 
 widget. Normalization decompresses/validates the SWF as needed; changing one header byte is not
 an adequate format check. Repository `ba2tool.py` supports the tested v1 GNRL profile; it is not
 a universal writer for arbitrary BA2 formats.
+
+The legacy `FCMBridge.swf` and `FCMBridge.ba2` are generated locally by `build.sh` and ignored by
+Git. CI compiles and validates the legacy SWF in `/tmp`; no prebuilt legacy binary is tracked.
 
 The [standalone guide](hudmenu-chat/BUILD.md) requires a user-owned vanilla HUDMenu extraction,
 its exact SHA-256, and compatible FFDec tooling. Those inputs are not redistributable project

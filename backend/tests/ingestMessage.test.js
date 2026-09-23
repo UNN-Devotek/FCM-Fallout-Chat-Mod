@@ -9,14 +9,13 @@
  *  - Happy path: ok=true, persistence completes before broadcast, relayToDiscord called
  *  - Muted user (isMuted=true): returns { ok: false, reason: 'muted' }
  *  - Expired mute auto-lifted: proceeds normally
- *  - HUD identity block (active mute block): returns muted
  *  - Rate-limit exceeded: returns rate-limited
  *  - Content too long (>500): returns invalid-content
  *  - Empty content: returns invalid-content
  *  - Invalid channelId (not UUID): returns invalid-channel
  *  - Channel not found: returns channel-not-found
  *  - Automod blocks: returns automod
- *  - Slash command from HUD/relay sources: returns slash-command-dropped
+ *  - Slash command from relay source: returns slash-command-dropped
  *  - Slash command from ws source: NOT dropped (handled by WS path)
  */
 
@@ -106,14 +105,6 @@ jest.mock('../src/controllers/healthController', () => ({
   removeFullscreenClient: jest.fn(),
 }));
 
-jest.mock('../src/services/hudIdentityService', () => ({
-  deriveIdentityHash: jest.fn((a) => `hash-${a}`),
-  resolveHudIdentity: jest.fn().mockResolvedValue({ userId: 'uid', identityHash: 'ihash' }),
-  getActiveBlock: jest.fn().mockResolvedValue(null),
-  blockHash: jest.fn().mockResolvedValue(undefined),
-  unblockHash: jest.fn().mockResolvedValue(1),
-}));
-
 // ── Imports ───────────────────────────────────────────────────────────────────
 
 const { ingestMessage, _clearIngestCaches } = require('../src/services/ingestMessage');
@@ -122,7 +113,6 @@ const { broadcast } = require('../src/websocket/handlers');
 const { relayToDiscord } = require('../src/services/discordService');
 const messageQueue = require('../src/queues/messagePersist');
 const { engineEvaluate } = require('../src/services/autoModEngine');
-const { getActiveBlock } = require('../src/services/hudIdentityService');
 const { getRedisClient } = require('../src/config/redis');
 const { attachCosmetics } = require('../src/services/cosmetics/cosmeticsService');
 
@@ -167,7 +157,6 @@ beforeEach(() => {
   relayToDiscord.mockResolvedValue(undefined);
   attachCosmetics.mockImplementation(async (payload) => payload);
   messageQueue.add.mockResolvedValue({ finished: jest.fn().mockResolvedValue(undefined) });
-  getActiveBlock.mockResolvedValue(null);
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -178,7 +167,7 @@ describe('ingestMessage — happy path', () => {
       userId: 'user-1',
       channelId: VALID_CHANNEL_ID,
       rawContent: 'Hello vault!',
-      source: 'hud',
+      source: 'ws',
     });
 
     expect(result.ok).toBe(true);
@@ -190,7 +179,7 @@ describe('ingestMessage — happy path', () => {
       payload: expect.objectContaining({
         content: 'Hello vault!',
         channelId: VALID_CHANNEL_ID,
-        source: 'hud',
+        source: 'ws',
       }),
     }));
 
@@ -199,7 +188,7 @@ describe('ingestMessage — happy path', () => {
       content: 'Hello vault!',
       userId: 'user-1',
       channelId: VALID_CHANNEL_ID,
-      source: 'hud',
+      source: 'ws',
     }));
 
     // Discord relay
@@ -226,7 +215,7 @@ describe('ingestMessage — happy path', () => {
       userId: 'supporter-user',
       channelId: VALID_CHANNEL_ID,
       rawContent: 'supporter from HUD',
-      source: 'hud',
+      source: 'ws',
     });
 
     expect(relayToDiscord).toHaveBeenCalledWith(
@@ -252,7 +241,7 @@ describe('ingestMessage — happy path', () => {
       userId: 'user-before-persist',
       channelId: VALID_CHANNEL_ID,
       rawContent: 'persist first',
-      source: 'hud',
+      source: 'ws',
     });
 
     while (messageQueue.add.mock.calls.length === 0) {
@@ -317,7 +306,7 @@ describe('ingestMessage — relaySeq threading (relay source)', () => {
       userId: 'hud-user-1',
       channelId: VALID_CHANNEL_ID,
       rawContent: 'hud message',
-      source: 'hud',
+      source: 'ws',
       // no relaySeq -> nextRelaySeq() assigns one
     });
 
@@ -353,7 +342,7 @@ describe('ingestMessage — relaySeq threading (relay source)', () => {
       userId: 'hud-user-redis-down',
       channelId: VALID_CHANNEL_ID,
       rawContent: 'still available',
-      source: 'hud',
+      source: 'ws',
     });
 
     expect(result.ok).toBe(true);
@@ -365,7 +354,7 @@ describe('ingestMessage — relaySeq threading (relay source)', () => {
 describe('ingestMessage — mute checks', () => {
   it('returns muted when user isMuted=true (permanent)', async () => {
     prismaStub.user.findUnique.mockResolvedValue({ ...BASE_USER, isMuted: true, muteExpiresAt: null });
-    const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: 'hi', source: 'hud' });
+    const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: 'hi', source: 'ws' });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('muted');
     expect(broadcast).not.toHaveBeenCalled();
@@ -376,23 +365,11 @@ describe('ingestMessage — mute checks', () => {
     prismaStub.user.findUnique.mockResolvedValue({ ...BASE_USER, isMuted: true, muteExpiresAt: expired });
     prismaStub.user.update.mockResolvedValue({ ...BASE_USER, isMuted: false });
 
-    const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: 'hi', source: 'hud' });
+    const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: 'hi', source: 'ws' });
     expect(result.ok).toBe(true);
     expect(prismaStub.user.update).toHaveBeenCalled();
   });
 
-  it('returns muted when HUD identity block is active', async () => {
-    getActiveBlock.mockResolvedValue({ type: 'mute', identityHash: 'ihash' });
-    const result = await ingestMessage({
-      userId: 'u',
-      channelId: VALID_CHANNEL_ID,
-      rawContent: 'hi',
-      source: 'hud',
-      identityHash: 'ihash',
-    });
-    expect(result.ok).toBe(false);
-    expect(result.reason).toBe('muted');
-  });
 });
 
 describe('ingestMessage — rate limit', () => {
@@ -407,14 +384,13 @@ describe('ingestMessage — rate limit', () => {
       }),
     });
 
-    const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: 'hi', source: 'hud' });
+    const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: 'hi', source: 'ws' });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('rate-limited');
   });
 
-  // SR-004: Redis outage must fail CLOSED for the unauthenticated 'hud'
-  // transport (its only flood control) but fail OPEN for the authenticated
-  // 'ws' path (availability for known users).
+  // Redis outage must fail closed for native relay and fail open for
+  // authenticated web WS clients.
   describe('Redis error during rate-limit check', () => {
     beforeEach(() => {
       getRedisClient.mockResolvedValue({
@@ -430,8 +406,8 @@ describe('ingestMessage — rate limit', () => {
       });
     });
 
-    it('fails CLOSED for hud source (returns rate-limited)', async () => {
-      const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: 'hi', source: 'hud' });
+    it('fails CLOSED for relay source (returns rate-limited)', async () => {
+      const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: 'hi', source: 'relay' });
       expect(result.ok).toBe(false);
       expect(result.reason).toBe('rate-limited');
     });
@@ -445,24 +421,24 @@ describe('ingestMessage — rate limit', () => {
 
 describe('ingestMessage — content validation', () => {
   it('rejects empty content', async () => {
-    const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: '   ', source: 'hud' });
+    const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: '   ', source: 'ws' });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('invalid-content');
   });
 
   it('rejects content > 500 chars', async () => {
-    const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: 'x'.repeat(501), source: 'hud' });
+    const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: 'x'.repeat(501), source: 'ws' });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('invalid-content');
   });
 
   it('accepts exactly 500 chars', async () => {
-    const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: 'x'.repeat(500), source: 'hud' });
+    const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: 'x'.repeat(500), source: 'ws' });
     expect(result.ok).toBe(true);
   });
 
   it('rejects non-UUID channelId', async () => {
-    const result = await ingestMessage({ userId: 'u', channelId: 'not-a-uuid', rawContent: 'hi', source: 'hud' });
+    const result = await ingestMessage({ userId: 'u', channelId: 'not-a-uuid', rawContent: 'hi', source: 'ws' });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('invalid-channel');
   });
@@ -471,7 +447,7 @@ describe('ingestMessage — content validation', () => {
 describe('ingestMessage — channel not found', () => {
   it('returns channel-not-found when channel does not exist', async () => {
     prismaStub.channel.findFirst.mockResolvedValue(null);
-    const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: 'hi', source: 'hud' });
+    const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: 'hi', source: 'ws' });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('channel-not-found');
   });
@@ -480,7 +456,7 @@ describe('ingestMessage — channel not found', () => {
 describe('ingestMessage — automod', () => {
   it('returns automod when engine blocks', async () => {
     engineEvaluate.mockResolvedValue({ block: true, matches: ['badword'], customMessage: 'Blocked.' });
-    const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: 'badword', source: 'hud' });
+    const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: 'badword', source: 'ws' });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe('automod');
     expect(broadcast).not.toHaveBeenCalled();
@@ -488,13 +464,6 @@ describe('ingestMessage — automod', () => {
 });
 
 describe('ingestMessage — slash command handling', () => {
-  it('drops slash command from HUD source', async () => {
-    const result = await ingestMessage({ userId: 'u', channelId: VALID_CHANNEL_ID, rawContent: '/wiki Nuka-Cola', source: 'hud' });
-    expect(result.ok).toBe(false);
-    expect(result.reason).toBe('slash-command-dropped');
-    expect(broadcast).not.toHaveBeenCalled();
-  });
-
   it('drops slash command from the chat.v1 relay source', async () => {
     const result = await ingestMessage({
       userId: 'relay-user',
@@ -514,74 +483,5 @@ describe('ingestMessage — slash command handling', () => {
     // Only the WS handler intercepts them; ingestMessage should not block them.
     // The test just confirms ingestMessage doesn't return slash-command-dropped for ws.
     expect(result.reason).not.toBe('slash-command-dropped');
-  });
-});
-
-describe('ingestMessage — HUD send guard (container channel rejection)', () => {
-  const ROOT_CHANNEL_ID = '00000000-0000-0000-0000-000000000001';
-  const GENERAL_CHANNEL_ID = '00000000-0000-0000-0000-000000000005';
-
-  it('rejects SEND to root container channel (parentId: null) from hud source', async () => {
-    // Root container channel: parentId IS NULL (no parent).
-    prismaStub.channel.findFirst.mockResolvedValue({
-      id: ROOT_CHANNEL_ID,
-      name: 'Fallout 76',
-      parentId: null,
-    });
-    _clearIngestCaches();
-
-    const result = await ingestMessage({
-      userId: 'u',
-      channelId: ROOT_CHANNEL_ID,
-      rawContent: 'should be rejected',
-      source: 'hud',
-    });
-
-    expect(result.ok).toBe(false);
-    expect(result.reason).toBe('invalid-channel');
-    expect(broadcast).not.toHaveBeenCalled();
-  });
-
-  it('accepts SEND to General leaf channel (parentId non-null) from hud source', async () => {
-    // Leaf channel: parentId points to the root container.
-    prismaStub.channel.findFirst.mockResolvedValue({
-      id: GENERAL_CHANNEL_ID,
-      name: 'General',
-      parentId: ROOT_CHANNEL_ID,
-    });
-    _clearIngestCaches();
-
-    const result = await ingestMessage({
-      userId: 'u',
-      channelId: GENERAL_CHANNEL_ID,
-      rawContent: 'hello general',
-      source: 'hud',
-    });
-
-    expect(result.ok).toBe(true);
-    expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'chat:message',
-      payload: expect.objectContaining({ channelId: GENERAL_CHANNEL_ID }),
-    }));
-  });
-
-  it('does NOT apply container guard for ws source (ws path does not use guard)', async () => {
-    // The ws path is allowed to send to any valid channel (WS handler manages channel scope).
-    prismaStub.channel.findFirst.mockResolvedValue({
-      id: ROOT_CHANNEL_ID,
-      name: 'Fallout 76',
-      parentId: null,
-    });
-    _clearIngestCaches();
-
-    const result = await ingestMessage({
-      userId: 'u',
-      channelId: ROOT_CHANNEL_ID,
-      rawContent: 'ws root send',
-      source: 'ws',
-    });
-
-    // ws path should not be blocked by the hud-specific guard
-    expect(result.reason).not.toBe('invalid-channel');
   });
 });

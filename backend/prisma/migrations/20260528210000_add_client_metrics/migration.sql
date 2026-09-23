@@ -1,6 +1,6 @@
 -- Migration: add client_metrics table for desktop-client self-reported performance telemetry.
 -- IDEMPOTENT: uses CREATE TABLE IF NOT EXISTS, CREATE INDEX IF NOT EXISTS
--- per project convention (see CLAUDE.md "Prisma Migrations MUST Be Idempotent").
+-- per project convention (see AGENTS.md "Prisma Migrations MUST Be Idempotent").
 
 CREATE TABLE IF NOT EXISTS "client_metrics" (
   "id"             UUID        NOT NULL DEFAULT gen_random_uuid(),

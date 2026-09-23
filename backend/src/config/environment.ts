@@ -89,43 +89,8 @@ export interface Environment {
   WIKI_SYNC_INTERVAL_HOURS: number;
   // How often to run full CAMP database sync (hours). 0 or unset = disabled.
   CAMP_SYNC_INTERVAL_HOURS: number;
-  // HUD push — raw TCP front-end (Path A)
-  HUD_PUSH_TCP_ENABLED: boolean;
-  // When false, registerClient sends no backfill (HELLO~1~0) — the in-game feed
-  // shows ONLY live messages, no stale history. Default true.
-  HUD_PUSH_BACKFILL_ENABLED: boolean;
-  HUD_PUSH_TCP_PORT: number;
-  // Bind host for the TCP HUD push listener. Defaults to 127.0.0.1 (loopback)
-  // so the port is not publicly exposed in dev. Set to 0.0.0.0 only when the
-  // game client runs on a different host (unusual). Production guard prevents
-  // the listener from starting regardless of this value.
-  HUD_PUSH_TCP_HOST: string;
-  // TLS for the TCP HUD push listener. ZFE wraps host:port endpoints in
-  // Schannel TLS 1.2 and does NOT validate the certificate, so a self-signed
-  // cert is sufficient. Both must be set (paths to PEM files) to enable TLS;
-  // either empty = plaintext net.Server.
-  // See docs/overlay/zfe/realtime-socket.md "Probe findings".
-  HUD_PUSH_TCP_TLS_CERT: string;
-  HUD_PUSH_TCP_TLS_KEY: string;
-  // When true, the TCP HUD push listener appends DIAG/HELLO/SEND lines to
-  // hud-diag.log. The DIAG verb writes UNAUTHENTICATED, attacker-controlled
-  // content to disk, so this defaults to false (off) to avoid a disk-fill /
-  // log-injection vector; enable only for local debugging. (SR-005)
-  HUD_PUSH_DIAG_LOG: boolean;
-  // HUD push — WebSocket front-end (Path B)
-  HUD_PUSH_WS_ENABLED: boolean;
   // chat.v1 relay is default-off in production; a reviewed rollout must enable it.
   RELAY_PRODUCTION_ENABLED: boolean;
-  // M7 two-way chat: HMAC-SHA256 key used to derive identityHash from FO76 accountName.
-  // Required when HUD_PUSH_TCP_ENABLED=true and inbound parsing is active.
-  // Dev default is allowed here; must be a strong secret in production.
-  HUD_IDENTITY_SECRET: string;
-  // HUD default send channel — the leaf channel the in-game SWF targets when the
-  // player has not explicitly selected a channel. Defaults to General
-  // (00000000-0000-0000-0000-000000000005). The SWF uses this as a fallback; the
-  // backend does NOT auto-redirect sends — if the SWF sends to the wrong channel
-  // the send guard rejects it and the SWF must pick a valid leaf channel.
-  HUD_DEFAULT_CHANNEL_ID: string;
   // Dual Discord role gate for the hosted dev environment.
   // See docs/deployment/hosted-dev-environment.md and devAuthService.ts.
   // IDs only — never prod secrets.
@@ -178,8 +143,7 @@ export interface Environment {
   // unset; set them explicitly for the public HTTPS deployment.
   STEAM_OPENID_REALM: string;
   STEAM_OPENID_RETURN_URI: string;
-  // HUD identity hash secret (M6+): HMAC-SHA256 key for identityHash = HMAC(secret, userId)
-  // Replaces HUD_IDENTITY_SECRET for account-derived (unforgeable) identity hashes.
+  // HMAC key for privacy-preserving native HUD room diagnostics.
   HUD_IDENTITY_HASH_SECRET: string;
   // ── Supporter tier (cosmetics entitlement) ────────────────────────────────
   // Discord Server Subscription tier roles. Discord assigns these automatically on
@@ -306,21 +270,7 @@ const env: Environment = {
   ENABLE_SIM_ROUTES: process.env.ENABLE_SIM_ROUTES === 'true',
   WIKI_SYNC_INTERVAL_HOURS: parseFloat(process.env.WIKI_SYNC_INTERVAL_HOURS || '0'),
   CAMP_SYNC_INTERVAL_HOURS: parseFloat(process.env.CAMP_SYNC_INTERVAL_HOURS || '0'),
-  // HUD push — raw TCP front-end (Path A)
-  HUD_PUSH_TCP_ENABLED: (process.env.HUD_PUSH_TCP_ENABLED || 'false').toLowerCase() === 'true',
-  HUD_PUSH_BACKFILL_ENABLED: (process.env.HUD_PUSH_BACKFILL_ENABLED || 'true').toLowerCase() === 'true',
-  HUD_PUSH_TCP_PORT: parseInt(process.env.HUD_PUSH_TCP_PORT || '4001', 10),
-  HUD_PUSH_TCP_HOST: process.env.HUD_PUSH_TCP_HOST || '127.0.0.1',
-  HUD_PUSH_TCP_TLS_CERT: process.env.HUD_PUSH_TCP_TLS_CERT || '',
-  HUD_PUSH_TCP_TLS_KEY: process.env.HUD_PUSH_TCP_TLS_KEY || '',
-  HUD_PUSH_DIAG_LOG: (process.env.HUD_PUSH_DIAG_LOG || 'false').toLowerCase() === 'true',
-  // HUD push — WebSocket front-end (Path B)
-  HUD_PUSH_WS_ENABLED: (process.env.HUD_PUSH_WS_ENABLED || 'false').toLowerCase() === 'true',
   RELAY_PRODUCTION_ENABLED: (process.env.RELAY_PRODUCTION_ENABLED || 'false').toLowerCase() === 'true',
-  // HUD default send channel (General leaf channel)
-  HUD_DEFAULT_CHANNEL_ID: process.env.HUD_DEFAULT_CHANNEL_ID || '00000000-0000-0000-0000-000000000005',
-  // M7 two-way chat identity secret (HMAC-SHA256 key for identityHash derivation)
-  HUD_IDENTITY_SECRET: process.env.HUD_IDENTITY_SECRET || 'dev-hud-identity-secret-change-me',
 
   // Dual Discord role gate (hosted dev environment) — IDs only, never secrets.
   PROD_GUILD_ID: process.env.PROD_GUILD_ID || '',
@@ -362,34 +312,6 @@ const env: Environment = {
   HUD_IDENTITY_HASH_SECRET: process.env.HUD_IDENTITY_HASH_SECRET || '',
 };
 
-// The dev fallback value for HUD_IDENTITY_SECRET (the HMAC key that derives
-// in-game HUD identityHashes). MUST stay byte-for-byte in sync with both the
-// default assigned to HUD_IDENTITY_SECRET above and the sentinel exported as
-// DEV_DEFAULT_IDENTITY_SECRET in services/hudIdentityService.ts. Defined here
-// (the dependency-free config module) rather than imported from the service to
-// avoid a circular import — the service imports `env` from this file. The
-// startup guard below and hudIdentityService share this same literal, and
-// environmentStartupGuard.test.js asserts the two never drift.
-export const DEV_DEFAULT_HUD_IDENTITY_SECRET = 'dev-hud-identity-secret-change-me';
-
-/**
- * Pure predicate: would the production startup guard refuse to boot for this
- * combination? Exported so it can be unit-tested without triggering
- * process.exit. The HUD identity secret is the HMAC key behind every in-game
- * HUD identityHash; with the public dev default (or empty) those identities are
- * forgeable, so production must never boot the inbound HUD chat path with it.
- * The guard only fires when the inbound TCP path is actually enabled.
- */
-export function hudIdentitySecretGuardFails(opts: {
-  nodeEnv: string;
-  hudPushTcpEnabled: boolean;
-  hudIdentitySecret: string | undefined | null;
-}): boolean {
-  if (opts.nodeEnv !== 'production') return false;
-  if (!opts.hudPushTcpEnabled) return false;
-  return !opts.hudIdentitySecret || opts.hudIdentitySecret === DEV_DEFAULT_HUD_IDENTITY_SECRET;
-}
-
 /**
  * Pure predicate: collect the reasons the production startup guard would refuse to
  * boot the supporter tier (empty array = OK). Exported (and re-attached to
@@ -425,7 +347,7 @@ export function collectSupporterTierProductionErrors(opts: {
 
 // Insecure/dev defaults the production MinIO guard rejects. Hoisted to single
 // constants so the guard and any future drift-assertion test share one source of
-// truth (mirrors the DEV_DEFAULT_HUD_IDENTITY_SECRET pattern above).
+// truth for the MinIO startup guard.
 export const MINIO_DOCKER_DEFAULT_ENDPOINT = 'http://minio:9700';
 export const DEV_DEFAULT_MINIO_ROOT_USER = 'fo76minio';
 export const DEV_DEFAULT_MINIO_ROOT_PASSWORD = 'REDACTED';
@@ -434,8 +356,7 @@ export const DEV_DEFAULT_MINIO_ROOT_PASSWORD = 'REDACTED';
  * Pure predicate: collect the human-readable reasons the production startup guard
  * would refuse to boot for these MinIO vars (empty array = OK). Exported (and
  * re-attached to module.exports below) so the unit test asserts the REAL guard
- * rather than a re-implemented copy — a revert of any check then fails CI, the
- * way environmentStartupGuard.test.js covers hudIdentitySecretGuardFails.
+ * rather than a re-implemented copy — a revert of any check then fails CI.
  *
  * Note: MINIO_ENDPOINT is the SERVER-SIDE S3 client endpoint and is intended to
  * stay Docker-internal in the Dokploy topology; we only require it to be set and
@@ -527,24 +448,6 @@ if (env.NODE_ENV === 'production') {
     process.exit(1);
   }
 
-  // HUD identity secret hardening (SR-003): when the inbound HUD chat path
-  // (HUD_PUSH_TCP_ENABLED) is on, HUD_IDENTITY_SECRET is the HMAC key behind
-  // every in-game identityHash. If it is empty or still the public dev default,
-  // identities are forgeable — refuse to boot rather than start the inbound path
-  // with a known key. hudPushTcp already fails the listener closed, but this
-  // fail-closed boot guard catches the misconfiguration earlier and louder.
-  if (hudIdentitySecretGuardFails({
-    nodeEnv: env.NODE_ENV,
-    hudPushTcpEnabled: env.HUD_PUSH_TCP_ENABLED,
-    hudIdentitySecret: env.HUD_IDENTITY_SECRET,
-  })) {
-    console.error(
-      'FATAL: HUD_PUSH_TCP_ENABLED is true but HUD_IDENTITY_SECRET is empty or the ' +
-      'public dev default. In-game HUD identities would be forgeable. Set a strong, ' +
-      'unique HUD_IDENTITY_SECRET (e.g. `node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"`).',
-    );
-    process.exit(1);
-  }
 } else {
   // Dev/test: warn but allow. Helps catch misconfiguration early without
   // blocking local development.
@@ -560,10 +463,7 @@ if (env.NODE_ENV === 'production') {
 
 export default env;
 // `module.exports = env` makes require() return env directly (see consumers /
-// tests). That clobbers esbuild's named CJS exports, so re-attach the guard
-// helper + sentinel onto env so they remain reachable from require('./environment').
-(env as unknown as Record<string, unknown>).hudIdentitySecretGuardFails = hudIdentitySecretGuardFails;
-(env as unknown as Record<string, unknown>).DEV_DEFAULT_HUD_IDENTITY_SECRET = DEV_DEFAULT_HUD_IDENTITY_SECRET;
+// tests). That clobbers esbuild's named CJS exports, so re-attach helpers.
 (env as unknown as Record<string, unknown>).collectMinioProductionErrors = collectMinioProductionErrors;
 (env as unknown as Record<string, unknown>).collectSupporterTierProductionErrors = collectSupporterTierProductionErrors;
 module.exports = env;

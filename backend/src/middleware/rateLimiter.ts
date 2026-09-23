@@ -528,26 +528,6 @@ const campSearchLimiter = rateLimit({
   },
 });
 
-/**
- * HUD feed: 120 req / 15 min per IP.
- * ZFE caches the response for 30 s, so normal play is ~2 req/min. This cap
- * gives 4x headroom for restarts/testing while keeping abuse bounded.
- */
-const hudFeedLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 120,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req: any) => clientIp(req),
-  store: makeRedisStore('rl_hudfeed:'),
-  message: {
-    type: 'https://fo76chat.app/errors/429',
-    title: 'Too Many Requests',
-    status: 429,
-    detail: 'HUD feed rate limit exceeded.',
-  },
-});
-
 /** Party image upload: 10 uploads / min per token. Prevents storage spam. */
 const partyImageUploadLimiter = rateLimit({
   windowMs: 60 * 1000,
@@ -617,5 +597,5 @@ const cosmeticsAppearanceLimiter = rateLimit({
 
 // ipKey is exported for unit testing: it encodes the security invariant that a
 // bucket key is ALWAYS the client IP and never the spoofable x-auth-token header.
-export { ipKey, apiLimitCap, cosmeticsAppearanceCap, mcpOAuthLimitCap, apiLimiter, authLimiter, mcpOAuthLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter, cosmeticsWriteLimiter, cosmeticsAppearanceLimiter };
-module.exports = { ipKey, apiLimitCap, cosmeticsAppearanceCap, mcpOAuthLimitCap, apiLimiter, authLimiter, mcpOAuthLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, hudFeedLimiter, cosmeticsWriteLimiter, cosmeticsAppearanceLimiter };
+export { ipKey, apiLimitCap, cosmeticsAppearanceCap, mcpOAuthLimitCap, apiLimiter, authLimiter, mcpOAuthLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, cosmeticsWriteLimiter, cosmeticsAppearanceLimiter };
+module.exports = { ipKey, apiLimitCap, cosmeticsAppearanceCap, mcpOAuthLimitCap, apiLimiter, authLimiter, mcpOAuthLimiter, debugReportLimiter, registerLimiter, registerIpFloodLimiter, playerListLimiter, channelsLimiter, applicationsLimiter, partiesListLimiter, partyCreateLimiter, partyJoinLimiter, partyInviteLimiter, partyImageUploadLimiter, wikiSearchLimiter, campSearchLimiter, cosmeticsWriteLimiter, cosmeticsAppearanceLimiter };

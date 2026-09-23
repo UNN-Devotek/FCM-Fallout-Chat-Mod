@@ -7,6 +7,9 @@ const redis = {
   }),
   del: jest.fn(async key => values.delete(key)),
   copy: jest.fn(async () => false),
+  lPush: jest.fn(async () => 1),
+  lTrim: jest.fn(async () => 'OK'),
+  expire: jest.fn(async () => true),
   scanIterator: async function* () { yield [...values.keys()]; },
 };
 jest.mock('../src/config/redis', () => ({ getRedisClient: async () => redis }));
@@ -25,6 +28,62 @@ test.each([false, true])('rejoin keeps the continuously occupied room regardless
   expect(rooms.get('laptop')).toBe(survivor);
   expect(rooms.get('desktop')).toBe(survivor);
   expect(redis.copy).not.toHaveBeenCalled();
+});
+
+test.each([false, true])('verified 5+1 join keeps the majority room even when the singleton is older (reverse=%s)', async reverse => {
+  const low = 'r:00000000-0000-4000-8000-000000000001';
+  const high = 'r:ffffffff-ffff-4fff-8fff-ffffffffffff';
+  const stableRoom = reverse ? low : high;
+  const singletonRoom = reverse ? high : low;
+  const stable = ['alice', 'bob', 'carol', 'dave', 'erin'];
+  for (const name of stable) values.set(`relay:roster:${name}`, JSON.stringify({
+    name, seen: [...stable.filter(peer => peer !== name), 'frank'],
+    session: name, requestId: name, roomKey: stableRoom, sessionStartedAt: 2000,
+  }));
+  values.set('relay:roster:frank', JSON.stringify({
+    name: 'frank', seen: stable, session: 'frank', requestId: 'frank',
+    roomKey: singletonRoom, sessionStartedAt: 1000,
+  }));
+
+  const rooms = await computeRooms();
+  expect(new Set(rooms.values())).toEqual(new Set([stableRoom]));
+  expect((await readRoster('frank')).roomKey).toBe(stableRoom);
+  expect(redis.copy).not.toHaveBeenCalled();
+  expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({ event: 'room_rebind',
+    reason: 'component_join', componentSize: 6, memberRefs: [expect.any(String)] }),
+  '[worldRoster] canonical room reassigned');
+});
+
+test('a 1+1 join still uses oldest-session tie break even when its room UUID sorts last', async () => {
+  const olderRoom = 'r:ffffffff-ffff-4fff-8fff-ffffffffffff';
+  const newerRoom = 'r:00000000-0000-4000-8000-000000000001';
+  values.set('relay:roster:a', JSON.stringify({ name: 'alice', seen: ['bob'], session: 'a',
+    requestId: 'a', roomKey: olderRoom, sessionStartedAt: 1000 }));
+  values.set('relay:roster:b', JSON.stringify({ name: 'bob', seen: ['alice'], session: 'b',
+    requestId: 'b', roomKey: newerRoom, sessionStartedAt: 2000 }));
+  expect(new Set((await computeRooms()).values())).toEqual(new Set([olderRoom]));
+  expect(redis.copy).not.toHaveBeenCalled();
+});
+
+test('clearing a missing roster does not fill the diagnostics ring, but clearing an existing roster does', async () => {
+  await clearRoster('missing');
+  await clearRoster('missing');
+  expect(redis.del).toHaveBeenCalledTimes(2);
+  expect(redis.lPush).not.toHaveBeenCalled();
+
+  const room = 'r:aaaaaaaa-0000-4000-8000-000000000001';
+  values.set('relay:roster:present', JSON.stringify({ name: 'alice', seen: ['bob'],
+    session: 'present', requestId: 'present', roomKey: room }));
+  await clearRoster('present');
+  const globalEvents = redis.lPush.mock.calls
+    .filter(([key]) => key === 'relay:room-diagnostics:recent')
+    .map(([, payload]) => JSON.parse(payload));
+  expect(globalEvents).toEqual([expect.objectContaining({ event: 'roster_cleared',
+    previousRosterCount: 1, previousRoomRef: expect.any(String) })]);
+
+  await clearRoster('present');
+  expect(redis.del).toHaveBeenCalledTimes(4);
+  expect(redis.lPush).toHaveBeenCalledTimes(2);
 });
 
 test('session age survives observations but resets on generation change', async () => {
@@ -352,6 +411,31 @@ test('a sustained split preserves the old room for the largest stable component'
       event: 'room_rebind', observationSources: ['bridge:zfe'],
     }), '[worldRoster] canonical room reassigned');
   } finally { clock.mockRestore(); }
+});
+
+test('a split-losing room is excluded before majority ranking against an eligible room', async () => {
+  const priorRoom = 'r:00000000-0000-4000-8000-000000000001';
+  const eligibleRoom = 'r:ffffffff-ffff-4fff-8fff-ffffffffffff';
+  const losingMembers = ['a', 'b'];
+  const winningMembers = ['c', 'd', 'e'];
+  for (const name of losingMembers) values.set(`relay:roster:${name}`, JSON.stringify({
+    name, seen: [...losingMembers.filter(peer => peer !== name), 'f'],
+    session: name, requestId: name, roomKey: priorRoom, sessionStartedAt: 1000,
+  }));
+  for (const name of winningMembers) values.set(`relay:roster:${name}`, JSON.stringify({
+    name, seen: winningMembers.filter(peer => peer !== name),
+    session: name, requestId: name, roomKey: priorRoom, sessionStartedAt: 1000,
+  }));
+  values.set('relay:roster:f', JSON.stringify({ name: 'f', seen: losingMembers,
+    session: 'f', requestId: 'f', roomKey: eligibleRoom, sessionStartedAt: 2000 }));
+
+  const rooms = await computeRooms();
+  for (const name of winningMembers) expect(rooms.get(name)).toBe(priorRoom);
+  for (const name of [...losingMembers, 'f']) expect(rooms.get(name)).toBe(eligibleRoom);
+  expect(logger.info).toHaveBeenCalledWith(expect.objectContaining({
+    event: 'room_split', componentSizes: [3, 2], winnerSize: 3,
+  }), '[worldRoster] canonical room split');
+  expect(redis.copy).not.toHaveBeenCalled();
 });
 
 test('daily ops keeps an established room when party names disappear but the public-world roster remains identical', async () => {

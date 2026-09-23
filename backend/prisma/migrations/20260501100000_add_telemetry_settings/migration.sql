@@ -1,6 +1,6 @@
 -- Migration: add telemetry_settings table for remote per-user and global telemetry control.
 -- IDEMPOTENT: uses CREATE TABLE IF NOT EXISTS, CREATE UNIQUE INDEX IF NOT EXISTS,
--- and ON CONFLICT DO NOTHING per project convention (see CLAUDE.md).
+-- and ON CONFLICT DO NOTHING per project convention (see AGENTS.md).
 
 CREATE TABLE IF NOT EXISTS "telemetry_settings" (
   "id"          UUID        NOT NULL DEFAULT gen_random_uuid(),

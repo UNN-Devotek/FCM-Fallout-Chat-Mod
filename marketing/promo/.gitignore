@@ -1,3 +1,5 @@
 node_modules/
 out/
 dist/
+public/wiki-flow-raw.webm
+public/wiki-flow.mp4

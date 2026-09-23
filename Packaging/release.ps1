@@ -19,7 +19,7 @@
       4. package-downloads.ps1 -Version $Version  (build human-download ZIPs + HUD ZIP)
       5. Upload raw .exe + .AppImage + .deb + ZIPs to VPS; verify served sizes against
          LOCAL build artifact sizes (Get-Item .Length); no feed manifest uploads.
-      6. publish-nexus-release.ps1 -Version $Version -ReleaseNotes $ReleaseNotes
+      6. publish-nexus-release.ps1 -Version $Version
          -PublishWindowsForReview (unless -SkipWindowsNexus)
       7. POST https://falloutchatmod.com/admin/releases  (register release, triggers
          app:update-available notification to connected clients on next WS connect).
@@ -47,7 +47,7 @@
     Required. Version string, e.g. 1.3.84.
 
 .PARAMETER ReleaseNotes
-    Optional. Release notes text prepended to the Nexus file description and sent
+    Optional. Release notes text sent
     in the POST /admin/releases body.
 
 .PARAMETER ReleaseTarget
@@ -67,7 +67,7 @@
 .PARAMETER SkipWindowsNexus
     Skip the Windows Nexus support-review upload. By default the release
     orchestrator uploads the new Windows ZIP alongside the existing Windows
-    file with -PublishWindowsForReview; the old file is never archived.
+    file with -PublishWindowsForReview; approved Windows files are never archived.
 
 .PARAMETER SshTarget
     SSH/SCP target for VPS uploads (user@host). Falls back to FCM_SSH_TARGET env var.
@@ -542,12 +542,10 @@ if ($SkipWindowsNexus) {
     Write-Host "         New Windows file is uploaded alongside the existing file; the old file is preserved."
 }
 
-# Pass release notes via env var, NOT a command-line arg: a multi-line/quoted
-# notes string handed to a child `powershell.exe -File` gets re-parsed and a ':'
-# in the notes is read as a PSDrive, corrupting $DistDir. The env var is immune.
+# Nexus retains each file's existing description; release notes go only to the
+# website registration and Discord announcement in the following step.
 $nexusArgs = @("-Version", $Version, "-BridgeZip", $BridgeZip)
 if (-not $SkipWindowsNexus) { $nexusArgs += "-PublishWindowsForReview" }
-$env:FCM_RELEASE_NOTES = $ReleaseNotes
 
 $nexusExit = Invoke-SubScript $nexusScript $nexusArgs
 if ($nexusExit -ne 0) {

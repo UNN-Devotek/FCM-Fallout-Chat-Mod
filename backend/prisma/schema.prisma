@@ -44,10 +44,8 @@ model User {
   muteCategory       String?   @map("mute_category")
   // Discord role IDs we stripped at ban time, restored on unban. JSON array.
   savedDiscordRoles  Json?     @map("saved_discord_roles")
-  // M7 two-way in-game chat identity fields.
-  // identityHash = HMAC-SHA256(HUD_IDENTITY_SECRET, fo76AccountName) hex — stable key for moderation.
-  // fo76AccountName = raw Bethesda account name (source of identityHash, stored for reconciliation).
-  // fo76CharacterName = in-game character display name (reconciled on every HELLO).
+  // identityHash is historical legacy HUD moderation data. Account and character
+  // names remain available for current linked profiles.
   identityHash       String?   @unique @map("identity_hash")
   fo76AccountName    String?   @map("fo76_account_name")
   fo76CharacterName  String?   @map("fo76_character_name")

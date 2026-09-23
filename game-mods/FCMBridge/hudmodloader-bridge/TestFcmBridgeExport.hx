@@ -64,9 +64,20 @@ class TestFcmBridgeExport {
 
     }
     static function main():Void {
+        TestFcmBridgeNativePrototype.run();
+        var timing = new FcmBridgeTiming();
+        timing.poll(12.9); timing.poll(4);
+        timing.encode(3); timing.save(18);
+        check(timing.label() == "-perf:p4/12:e3/3:s18/18", "timing label reports bounded last/peak milliseconds");
+        timing.save(Math.POSITIVE_INFINITY);
+        check(timing.label().indexOf("s0/18") >= 0, "invalid timing cannot leak arbitrary values");
+        timing.save(20000);
+        check(timing.label().indexOf("s9999/9999") >= 0 && timing.label().length < 59,
+            "timing label is bounded within build field");
         boundedResponses();
         storageDiagnostics();
         legacyDiscovery();
+        coalescedXscalWrites();
         var state = new FcmBridgeState(function() return "world-1");
         state.menu(FcmHudRosterReader.menu({dataReady:true,isTest:false,data:{menuStackA:[]}}));
         var observation = new FcmHudRosterReader.FcmRosterObservation("PlayerListData", 1000, "");
@@ -74,11 +85,20 @@ class TestFcmBridgeExport {
         observation.revision = 1;
         state.observe(observation); state.settle(1000);
         var exporter = new FcmBridgeExport("movie-1", "dev");
+        #if bridge_perf
+        exporter.timing = timing;
+        #end
         var documents:Array<Dynamic> = [];
         var succeed = true;
         var save = function(text:String):Bool { documents.push(haxe.Json.parse(text)); return succeed; };
         check(exporter.update(1000, state, "Self", "xscal", save), "initial snapshot written");
         check(documents[0].state == "active" && documents[0].observationAgeMs == 0, "active evidence age");
+        #if bridge_perf
+        check(StringTools.startsWith(documents[0].build, "0.2.8-c5-perf:p") && documents[0].build.length <= 64,
+            "diagnostic export keeps the strict schema and bounded build label");
+        #else
+        check(documents[0].build == FcmBridgeExport.BUILD, "normal export retains its exact build marker");
+        #end
         check(!exporter.update(1500, state, "Changed", "xscal", save), "changed writes rate limited");
         check(!exporter.update(5999, state, "Self", "xscal", save), "no unnecessary write");
         check(exporter.update(6000, state, "Self", "xscal", save), "five second heartbeat");
@@ -174,6 +194,48 @@ class TestFcmBridgeExport {
         selectedExport.update(31000, selected, "Self", "zfe", save);
         check(documents[documents.length - 1].state == "inactive", "loading cannot preserve map beyond actual observation expiry");
         Sys.println("PASS FcmBridgeExport: " + count + " checks");
+    }
+    static function coalescedXscalWrites():Void {
+        var state = new FcmBridgeState(function() return "world-coalesce");
+        state.menu(FcmHudRosterReader.menu({dataReady:true,isTest:false,data:{menuStackA:[]}}));
+        var observation = new FcmHudRosterReader.FcmRosterObservation("PlayerListData", 1000, "");
+        observation.names = ["Peer"];
+        observation.revision = 1;
+        state.observe(observation); state.settle(1000);
+        var exporter = new FcmBridgeExport("movie-coalesce", "prod");
+        var documents:Array<Dynamic> = [];
+        var save = function(value:String):Bool { documents.push(haxe.Json.parse(value)); return true; };
+        check(exporter.update(1000, state, "Self", "xscal", save), "first xScal export establishes baseline");
+        observation.at = 3000; observation.revision++;
+        state.observe(observation); state.settle(3000);
+        check(exporter.update(3000, state, "Self", "xscal", save), "second fresh xScal export establishes live writer");
+        observation.at = 5000; observation.revision++;
+        state.observe(observation); state.settle(5000);
+        check(!exporter.update(5000, state, "Self", "xscal", save), "unchanged xScal roster coalesces fresh observations");
+        observation.at = 8000; observation.revision++;
+        state.observe(observation); state.settle(8000);
+        check(exporter.update(8000, state, "Self", "xscal", save), "xScal stable roster exports after five seconds");
+        check(documents.length == 3 && documents[2].observationSequence > documents[1].observationSequence
+            && documents[2].observationAgeMs == 0, "coalesced export carries the latest real observation");
+        observation.names = ["Peer", "Other"]; observation.at = 10000; observation.revision++;
+        state.observe(observation); state.settle(10000);
+        check(exporter.update(10000, state, "Self", "xscal", save), "changed roster exports without five-second wait");
+        state.menu(FcmHudRosterReader.menu({dataReady:true,isTest:false,data:{menuStackA:[{menuName:"LoadingMenu"}]}}));
+        check(exporter.update(11000, state, "Self", "xscal", save)
+            && documents[documents.length - 1].state == "holding", "raid loading exports holding immediately");
+        var zfeState = new FcmBridgeState(function() return "world-zfe");
+        zfeState.menu(FcmHudRosterReader.menu({dataReady:true,isTest:false,data:{menuStackA:[]}}));
+        var zfeObservation = new FcmHudRosterReader.FcmRosterObservation("PlayerListData", 1000, "");
+        zfeObservation.names = ["Peer"]; zfeObservation.revision = 1;
+        zfeState.observe(zfeObservation); zfeState.settle(1000);
+        var zfeExporter = new FcmBridgeExport("movie-zfe", "prod");
+        var zfeWrites = 0;
+        var zfeSave = function(_:String):Bool { zfeWrites++; return true; };
+        zfeExporter.update(1000, zfeState, "Self", "zfe", zfeSave);
+        zfeObservation.at = 3000; zfeObservation.revision++;
+        zfeState.observe(zfeObservation); zfeState.settle(3000);
+        check(zfeExporter.update(3000, zfeState, "Self", "zfe", zfeSave) && zfeWrites == 2,
+            "ZFE retains fresh-observation export cadence");
     }
     static function boundedResponses():Void {
         var accepted = ' { "success" : true, "capabilities" : ["other", "zfe-storage-v1"], "extra":{"v":null} } ';

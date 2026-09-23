@@ -116,8 +116,9 @@ so diagnostics cannot consume the functional world-control budget.
 
 The coordinator keeps a separate 24-hour Redis evidence ring: 1,000 recent global
 events and 100 per relay identity. It records changed roster observations, held reloads,
-grace sets, room assignments, splits, rebinds and clears. Player/alias values use
-server-secret HMAC references; UUIDs, nonces, sessions and rooms use 12-character
+grace sets, room assignments, splits, rebinds and clears of existing rosters. Repeated
+clears when no roster exists still delete the Redis key but do not consume ring entries.
+Player/alias values use server-secret HMAC references; UUIDs, nonces, sessions and rooms use 12-character
 SHA-256-derived references. Raw names, IDs, request values, tokens and message bodies
 are not retained. `GET /admin/debug/room-diagnostics?userId=<relay-user-id>&limit=<1..200>`
 reads the per-user ring; omitting `userId` reads recent global evidence. The endpoint
@@ -201,8 +202,11 @@ Redis history still existed.
 
 Roster records now carry a backend-owned `sessionStartedAt`. Observations within
 the same request/generation retain it; leave, expiry or a new generation starts
-a new age. Eligible rooms are ranked by their oldest still-active member session,
-then UUID for deterministic equal-age ties. Split-room exclusion still runs first.
+a new age. After existing evidence connects a component and split-room exclusion
+has run, eligible rooms are ranked by how many members of that component already
+hold each room. Equal-sized candidates use their oldest still-active member session,
+then UUID for deterministic equal-age ties. A 1+1 join therefore retains the
+age/UUID tie behavior; majority ranking adds no new connectivity evidence.
 No history is unioned/copied on a join, and no history TTL is extended. The returner
 receives the selected occupied room's ordinary authorized replay; history from its
 provisional room is not imported. Neither client protocol nor authentication changes.
@@ -213,15 +217,17 @@ are rejected. No migration or client reinstall is required; existing active room
 cannot recover an already-displaced selection merely from this deployment.
 
 This remains roster-based inference, not an authoritative world identity. If two
-long-lived disconnected components discover each other, the oldest active session
-chooses the canonical room; we cannot prove which component represents the physical
-world. Equal-age legacy rooms retain the deterministic UUID tie-breaker. We do not
+long-lived disconnected components discover each other, the larger established
+group keeps its room; equal-sized groups use the oldest active session. We cannot
+prove which component represents the physical world. Equal-age legacy rooms retain
+the deterministic UUID tie-breaker. We do not
 merge their histories to hide this ambiguity. Freshness, mutual sightings and
 per-session authorization remain required.
 
-Regression coverage includes both UUID orders, legacy records, age validation,
-generation reset, deterministic ties, and three leave/rejoin cycles for all four
-HUD/provider-to-bridge/provider pairings plus HUD-to-HUD and bridge-to-bridge.
+Regression coverage includes both UUID orders, a 5+1 join with an older singleton,
+1+1 age and UUID ties, legacy records, age validation, generation reset, and three
+leave/rejoin cycles for all four HUD/provider-to-bridge/provider pairings plus
+HUD-to-HUD and bridge-to-bridge.
 The shared backend tests assert stable survivor room/history and TTL, isolated
 provisional messages, delayed mutual discovery, rendered desktop replay and unique
 message IDs from both senders. Native provider labels exercise the common native

@@ -334,7 +334,6 @@ jobs:
             game-mods/FCMBridge/hudmodloader-bridge/FcmBridgeExport.hx
             game-mods/FCMBridge/hudmodloader-bridge/test-export.hxml
             backend/src/utils/__tests__/oauthState.test.ts
-            game-mods/EasyFishing/test-install.sh
             game-mods/FCMBridge/FCMBridge.hx
             game-mods/FCMBridge/FcmNativeApi.hx
             game-mods/FCMBridge/FcmAuthFlow.hx
@@ -449,8 +448,6 @@ jobs:
           haxe --class-path hudmodloader-chat --main FCMBridge --swf /tmp/FCMBridge.swf --swf-version 32
           python3 hudmodloader-chat/normalize_swf.py /tmp/FCMBridge.swf
           python3 tools/validate_swf.py /tmp/FCMBridge.swf --require-signature FWS --require-version 32
-      - name: Run EasyFishing installer tests
-        run: bash game-mods/EasyFishing/test-install.sh
 
   # ── HUD Ruffle/Playwright regression harness — REQUIRED gate ────────────────
   hud-ruffle:

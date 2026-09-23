@@ -1,5 +1,5 @@
 -- v1.1.73: name blacklist for username write rejection.
--- Idempotent (CLAUDE.md "Prisma Migrations MUST Be Idempotent").
+-- Idempotent (AGENTS.md "Prisma Migrations MUST Be Idempotent").
 
 CREATE TABLE IF NOT EXISTS "name_blacklist" (
   "id" UUID NOT NULL DEFAULT gen_random_uuid(),

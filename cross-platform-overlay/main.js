@@ -55,6 +55,7 @@ const os = require('os');
 // here so the logger below can use resolveLogLevel/shouldRotateLog.
 const overlayCore = require('./overlay-core');
 const { LocalBridgeRelay } = require('./local-bridge-relay');
+const { NativeBridgePrototypeRelay } = require('./native-bridge-prototype');
 const { startLocalPerformance } = require('./local-performance');
 let stopLocalPerformance = () => {};
 const { discoverBridgePaths } = require('./local-bridge-paths');
@@ -1507,7 +1508,10 @@ let isDragging = false;
 
 // Active proxied relay sockets, keyed by a renderer-supplied id.
 const relaySockets = new Map();
-const localBridge = new LocalBridgeRelay({
+const BridgeRelayClass = !app.isPackaged && process.env.FCM_NATIVE_BRIDGE_PROTOTYPE === '1'
+  && /^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(RELAY_HTTP)
+  ? NativeBridgePrototypeRelay : LocalBridgeRelay;
+const localBridge = new BridgeRelayClass({
   relayHttp: RELAY_HTTP,
   onTiming: timing => stopLocalPerformance.observeBridge?.(timing),
   discover: environment => discoverBridgePaths({ environment, documents: app.getPath('documents') }),

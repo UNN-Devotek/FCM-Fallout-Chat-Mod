@@ -4,6 +4,8 @@ import { sendServerMessage, ServerMessageError } from '../services/relay/serverM
 import type { LocalExportBridge } from '../services/relay/localExportBridge';
 import type { BridgeLeaveReason } from '../services/relay/localExportBridge';
 import { readRoster } from '../services/relay/worldRosterService';
+import { nativeBridgePrototype, nativeBridgePrototypeEnabled } from '../services/relay/nativeBridgePrototype';
+import prisma from '../config/prisma';
 
 type Frame = { type: string; payload: Record<string, unknown> };
 interface Dependencies {
@@ -25,6 +27,10 @@ export class BridgeConnection {
   private seen = new Set<string>();
   private localExport = false;
   private epoch = 0;
+  private nativeSession = '';
+  private nativeTimer: NodeJS.Timeout | undefined;
+  private nativeBusy = false;
+  private nativeSequence = 0;
   get observationEpoch(): number { return this.epoch; }
   constructor(private accountId: string, private emit: (frame: Frame) => void,
     private blocked: () => ReadonlySet<string>, private deps: Dependencies = defaults,
@@ -33,8 +39,55 @@ export class BridgeConnection {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true; this.binding = null; this.seen.clear();
+    this.stopNative();
     this.epoch++;
     void this.local?.close().catch(() => {});
+  }
+  private stopNative(): void {
+    if (this.nativeTimer) clearTimeout(this.nativeTimer);
+    this.nativeTimer = undefined; this.nativeSession = ''; this.nativeSequence = 0;
+    nativeBridgePrototype.release(this);
+  }
+  /** Exact-session opt-in, reachable only from authenticated in-game desktops. */
+  async pairNative(session: unknown): Promise<void> {
+    if (!nativeBridgePrototypeEnabled() || this.disposed || !this.local || typeof session !== 'string'
+      || !/^np-[a-z0-9-]{24,60}$/.test(session)) return;
+    if (this.nativeSession && this.nativeSession !== session) await this.leave('socket_replaced');
+    if (!nativeBridgePrototype.claim(this.accountId, session, this)) return;
+    this.nativeSession = session;
+    this.enterLocalExport(); this.watched = true;
+    await this.pollNative();
+  }
+  private async pollNative(): Promise<void> {
+    if (this.nativeBusy || !this.nativeSession || this.disposed) return;
+    if (this.nativeTimer) clearTimeout(this.nativeTimer);
+    this.nativeTimer = undefined;
+    this.nativeBusy = true;
+    const session = this.nativeSession, epoch = this.epoch;
+    try {
+      const entry = nativeBridgePrototype.read(this.accountId, session, this);
+      if (!entry) { await this.leave('observation_timeout'); return; }
+      const credential = await prisma.hudPairingToken.findFirst({ where: {
+        userId: entry.nativeId, linkedUserId: this.accountId, revokedAt: null,
+      }, select: { userId: true } });
+      if (this.disposed || session !== this.nativeSession || epoch !== this.epoch) return;
+      if (!credential) { await this.leave('account_change'); return; }
+      if (entry.snapshot.sequence > this.nativeSequence) {
+        const s = entry.snapshot;
+        this.output({ type: 'bridge:native-observation', payload: { sessionId: s.sessionId,
+          worldGeneration: s.worldGeneration, sequence: s.sequence } });
+        await this.observe(s, entry.receivedAt);
+        if (epoch === this.epoch) this.nativeSequence = s.sequence;
+      }
+      if (epoch === this.epoch) await this.refresh();
+    } catch { if (epoch === this.epoch) await this.leave('observation_timeout'); }
+    finally {
+      this.nativeBusy = false;
+      if (!this.disposed && this.nativeSession === session && epoch === this.epoch) {
+        this.nativeTimer = setTimeout(() => { void this.pollNative(); }, 1000);
+        this.nativeTimer.unref?.();
+      }
+    }
   }
   private output(frame: Frame): void { if (!this.disposed) this.emit(frame); }
   private enqueue(work: () => Promise<void>): Promise<void> {
@@ -148,6 +201,7 @@ export class BridgeConnection {
     });
   }
   leave(reason: BridgeLeaveReason = 'explicit_inactive'): Promise<void> {
+    this.stopNative();
     this.localExport = true;
     this.epoch++;
     this.local?.invalidate();

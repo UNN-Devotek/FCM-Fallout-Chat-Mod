@@ -1,21 +1,21 @@
 /**
- * ingestMessage.ts — shared message ingestion for both WS and HUD paths.
+ * ingestMessage.ts — shared message ingestion for WS, MCP, and native relay.
  *
  * Runs the canonical governance pipeline in order:
- *   1. Mute check (users table isMuted / HUD identity block)
+ *   1. Mute check (users table isMuted)
  *   2. Redis rate-limit (shared ws_rate:<userId> sliding-window bucket)
  *   3. Content validation (≤500 chars, non-empty, valid UUID channelId)
  *   4. Emoji shortcode expansion
  *   5. Channel validity check
  *   6. Automod engine (word-filter + spam + automod_rules)
  *   7. Durable persist (messageQueue worker → messageService fallback)
- *   8. broadcast() → WS fan-out + hudPushNotify
+ *   8. broadcast() → WS and native relay fan-out
  *   9. Discord relay
  *
- * Source tag is 'hud', 'relay', or 'ws' — forwarded to the persisted Message row for
+ * Source tag is 'relay', 'mcp', or 'ws' — forwarded to the persisted Message row for
  * telemetry/abuse-tracing only; it does NOT skip any governance step.
  *
- * Slash commands from the HUD transports ('hud' and the chat.v1 'relay' adapter):
+ * Slash commands from the native chat.v1 relay adapter:
  * OUT OF SCOPE for v1. SEND lines starting with '/' are dropped before governance
  * runs. The ordinary WS/web source remains available for the server-side command
  * handler in handlers.ts.
@@ -45,7 +45,6 @@ import { tryNextRelaySeq } from './relay/relaySeq';
 import { incrementMessageCount } from '../controllers/healthController';
 import { attachCosmetics } from './cosmetics/cosmeticsService';
 import { shadowMute } from './autoModService';
-import { getActiveBlock } from './hudIdentityService';
 import { shouldWaitForPersistence } from './messagePersistencePolicy';
 import { projectionForSharedEvent } from './discordEventService';
 
@@ -96,10 +95,10 @@ async function checkRateLimit(userId: string, source: IngestSource): Promise<boo
     return (results[2] as number) > 5; // true = exceeded
   } catch (err) {
     // SR-004: fail OPEN for the authenticated WS path (availability for known
-    // users), but fail CLOSED for the 'hud' and 'relay' transports — both are
-    // lower-trust paths where a Redis outage must not remove flood control.
+    // users), but fail CLOSED for the relay transport, where a Redis outage
+    // must not remove flood control.
     // Returning true here marks the message as rate-limited.
-    const failClosed = source === 'hud' || source === 'relay';
+    const failClosed = source === 'relay';
     logger.warn({ err, source, failClosed }, `[ingestMessage] rate-limit Redis error — ${failClosed ? `fail-closed (${source})` : 'fail-open (ws/mcp)'}`);
     return failClosed;
   }
@@ -107,7 +106,7 @@ async function checkRateLimit(userId: string, source: IngestSource): Promise<boo
 
 // ── Result type ───────────────────────────────────────────────────────────────
 
-export type IngestSource = 'hud' | 'ws' | 'mcp' | 'relay';
+export type IngestSource = 'ws' | 'mcp' | 'relay';
 
 export interface IngestResult {
   ok: boolean;
@@ -120,12 +119,11 @@ export interface IngestResult {
 /**
  * Ingest a message from a user through the full governance pipeline.
  *
- * @param userId      - Resolved user ID (from WS auth or HUD identity resolution).
+ * @param userId      - Resolved authenticated user ID.
  * @param channelId   - UUID of the target channel.
  * @param rawContent  - Raw text from the client (before emoji expansion).
- * @param source      - 'hud'/'relay' for in-game transports, or 'ws'/'mcp' for
+ * @param source      - 'relay' for in-game transport, or 'ws'/'mcp' for
  *                      ordinary server-side clients.
- * @param identityHash - (HUD only) identityHash for block lookup; undefined for WS path.
  * @param relaySeq    - (relay ONLY) pre-computed monotonic cursor from nextRelaySeq().
  *                      Threaded through to finalizeMessage so the persisted row carries
  *                      relay_seq and the single broadcast carries relaySeq. When an
@@ -137,22 +135,21 @@ export async function ingestMessage(opts: {
   channelId: string;
   rawContent: string;
   source: IngestSource;
-  identityHash?: string;
   relaySeq?: number;
   waitForPersistence?: boolean;
-  // Explicit display-name override. The relay/HUD path passes the in-game CHARACTER name
+  // Explicit display-name override. The relay path passes the in-game CHARACTER name
   // (identity.fo76Name, e.g. "Wanderer") so chat shows that, not the linked FCM account's
   // Discord name (the message is still attributed to the linked user UUID for moderation).
   displayName?: string;
 }): Promise<IngestResult> {
-  const { userId, channelId, source, identityHash, relaySeq } = opts;
+  const { userId, channelId, source, relaySeq } = opts;
   let rawContent = opts.rawContent;
 
-  // The legacy HUD adapter and chat.v1 relay adapter both represent in-game HUD
-  // sends. Neither transport implements the web command surface, so a slash line
+  // The chat.v1 relay adapter represents in-game HUD sends. It does not
+  // implement the web command surface, so a slash line
   // must never fall through as ordinary chat. Keep WS/MCP unchanged: the web WS
   // handler owns its supported slash-command interception.
-  if ((source === 'hud' || source === 'relay') && rawContent.trim().startsWith('/')) {
+  if (source === 'relay' && rawContent.trim().startsWith('/')) {
     logger.info({ userId, source }, '[ingestMessage] dropping HUD slash command (not supported on HUD transport)');
     return { ok: false, reason: 'slash-command-dropped' };
   }
@@ -160,7 +157,7 @@ export async function ingestMessage(opts: {
   // ── 1. Mute check ─────────────────────────────────────────────────────────
   const dbUser = await prisma.user.findUnique({
     where: { id: userId },
-    select: { isMuted: true, muteExpiresAt: true, username: true, chatName: true, discordUsername: true, discordDisplayName: true, fo76AccountName: true, fo76CharacterName: true },
+    select: { isMuted: true, muteExpiresAt: true, username: true, chatName: true, discordUsername: true, discordDisplayName: true },
   });
 
   if (!dbUser) {
@@ -179,15 +176,6 @@ export async function ingestMessage(opts: {
 
   if (isMuted) {
     return { ok: false, reason: 'muted' };
-  }
-
-  // HUD identity block check (mute at ingest = defense-in-depth).
-  if (identityHash) {
-    const block = await getActiveBlock(identityHash);
-    if (block) {
-      // 'ban' should have been caught at HELLO; treat both as muted here.
-      return { ok: false, reason: 'muted' };
-    }
   }
 
   // ── 2. Rate limit ─────────────────────────────────────────────────────────
@@ -215,18 +203,6 @@ export async function ingestMessage(opts: {
     return { ok: false, reason: 'channel-not-found' };
   }
 
-  // HUD send guard: reject sends to container channels (parentId IS NULL).
-  // The root "Fallout 76" channel is a grouping container — messages must only
-  // be posted to leaf channels (General/Trading/Events/Raids). This guard fires
-  // for any source ('hud' or 'ws') so the WS path is also protected.
-  if (source === 'hud') {
-    const chanInfo = await getChannelInfo(channelId);
-    if (chanInfo.parentId === null) {
-      logger.info({ userId, channelId }, '[ingestMessage] SEND to container channel rejected (invalid-channel)');
-      return { ok: false, reason: 'invalid-channel' };
-    }
-  }
-
   // ── 6. Automod ────────────────────────────────────────────────────────────
   const engineResult = await engineEvaluate(content, channelId, { id: userId, username: dbUser.username } as any);
   if (engineResult.block) {
@@ -238,18 +214,14 @@ export async function ingestMessage(opts: {
   }
 
   // ── 7-9. Broadcast + persist + Discord relay (shared with the WS path) ─────
-  // HUD messages display the player's FO76 in-game name (which carries exact
-  // formatting like a trailing '-'), NOT their Discord handle. The FO76 account
-  // name is the social/player name shown in-game; fall back to character name,
-  // then the generic chain. WS (dashboard) messages keep the Discord display name.
+  // Native relay passes the in-game display name explicitly. WS and MCP
+  // messages use the account's usual display name.
   const displayName =
     dbUser.chatName
       ? dbUser.chatName
       : (opts.displayName && opts.displayName.trim())
       ? opts.displayName.trim()
-      : source === 'hud'
-        ? (dbUser.fo76AccountName || dbUser.fo76CharacterName || dbUser.discordDisplayName || dbUser.discordUsername || dbUser.username)
-        : (dbUser.discordDisplayName ?? dbUser.discordUsername ?? dbUser.username);
+      : (dbUser.discordDisplayName ?? dbUser.discordUsername ?? dbUser.username);
   const { messageId } = await finalizeMessage({
     userId,
     channelId,
@@ -271,8 +243,8 @@ export async function ingestMessage(opts: {
  * Persist, broadcast, and relay a fully-governed message.
  *
  * This is the single source of truth for the chat:message wire payload, the
- * persisted Message row, and the Discord relay — called by BOTH ingestMessage
- * (HUD path, source 'hud') and the WS chat:send handler (source 'game').
+ * persisted Message row, and the Discord relay — called by ingestMessage
+ * and the WS chat:send handler (source 'game').
  * Keeping it here prevents the two paths' output formats from drifting.
  *
  * Optional fields are included ONLY when the caller provides them, so the HUD

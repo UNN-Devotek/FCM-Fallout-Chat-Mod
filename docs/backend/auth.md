@@ -8,8 +8,7 @@ The backend has distinct auth flows for the dashboard, desktop overlay, HUD link
 > The install-token flow below stays as the device/session mechanism, but on its own it no longer
 > grants chat — a bare install is **limited** until linked. Public-website read-only stays open;
 > **sending is gated**. Website account/profile sign-in also accepts Steam; elevated dashboard roles still require Discord (#168).
-> Authoritative design: [hud-chat-auth-design.md](hud-chat-auth-design.md) (multi-provider + pairing /
-> device-code) and epic #163; the chat.v1 in-game gate is in
+> The chat.v1 in-game gate is in
 > [native-chat-relay/fcm-integration.md](../overlay/zfe/native-chat-relay/fcm-integration.md#mandatory-auth-gate--limited-until-a-provider-linked-fcm-account).
 
 ---

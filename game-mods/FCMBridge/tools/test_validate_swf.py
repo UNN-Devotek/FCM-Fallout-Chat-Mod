@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression tests for the dependency-free SWF structural validator."""
+"""Regression test for the tracked widget SWF; CI checks compiled legacy output separately."""
 
 from pathlib import Path
 import sys
@@ -11,10 +11,7 @@ from validate_swf import parse_swf  # noqa: E402
 
 def main() -> None:
     root = TOOLS.parent
-    artifacts = [
-        root / "FCMBridge.swf",
-        root / "hudmodloader-chat" / "FCMChatWidget.swf",
-    ]
+    artifacts = [root / "hudmodloader-chat" / "FCMChatWidget.swf"]
     for artifact in artifacts:
         result = parse_swf(artifact)
         assert result["signature"] == "FWS", f"{artifact} must be normalized to FWS"

@@ -42,6 +42,7 @@ class PackagedBridgeHost extends Sprite {
     var previousRequest:String = "";
     var rebound:Bool = false;
     var source:String = "xscal";
+    var scenario:String = "";
     var phase:String = "initial";
     var acceptedNames:Bool = false;
     var disposed:Bool = false;
@@ -50,7 +51,7 @@ class PackagedBridgeHost extends Sprite {
     public function new() {
         super();
         source = flash.Lib.current.loaderInfo.parameters.provider == "zfe" ? "zfe" : "xscal";
-        var scenario = flash.Lib.current.loaderInfo.parameters.scenario;
+        scenario = flash.Lib.current.loaderInfo.parameters.scenario;
         if (scenario == "packaged-probe-throw") probeFault = "throw";
         if (scenario == "packaged-probe-malformed") probeFault = "malformed";
         if (scenario == "packaged-probe-oversized") probeFault = "oversized";
@@ -98,7 +99,9 @@ class PackagedBridgeHost extends Sprite {
         });
         movie.contentLoaderInfo.addEventListener(IOErrorEvent.IO_ERROR, function(_:IOErrorEvent):Void { violation = true; emit("PACKAGED load failed"); });
         addChild(movie);
-        movie.load(new URLRequest("/FCMServerBridge.swf"), new LoaderContext(false, domain));
+        movie.load(new URLRequest(scenario == "packaged-native" ? "/FCMServerBridgeNative.swf"
+            : scenario == "packaged-perf" ? "/FCMServerBridgePerf.swf" : "/FCMServerBridge.swf"),
+            new LoaderContext(false, domain));
     }
     function emit(value:String):Void { if (ExternalInterface.available) ExternalInterface.call("fcmSimLog", value); }
     function retire():Void {
@@ -116,6 +119,14 @@ class PackagedBridgeHost extends Sprite {
         writes++;
         if (failed) return false;
         var data:Dynamic = haxe.Json.parse(document);
+        if (scenario == "packaged-native") {
+            if (data.schemaVersion != "native-prototype-1" || writes != 1 || Reflect.fields(data).length != 4)
+                { violation = true; violationReason = "native-capsule"; }
+            return true;
+        }
+        return acceptSnapshot(data);
+    }
+    function acceptSnapshot(data:Dynamic):Bool {
         if (data.schemaVersion != 1 || data.environment != "dev" || data.provider != source
             || data.sequence <= 0 || data.observationAgeMs < 0) violation = true;
         for (key in ["token","password","code","room","accountId"]) if (Reflect.hasField(data,key)) violation = true;
@@ -140,7 +151,23 @@ class PackagedBridgeHost extends Sprite {
         }
         return true;
     }
-    function xscalApi():Dynamic return {version:{runtime:"xScal",value:"0.2.17",platform:"sim"},modStorage:{
+    function xscalApi():Dynamic return {version:{runtime:"xScal",value:"0.2.17",platform:"sim"},
+      chatInterface:{
+        connect:function(_:Dynamic):String return '{"success":true}',
+        getAuthState:function():String return '{"success":true,"state":"authenticated"}',
+        getConnectionState:function():String return '{"success":true,"state":"authenticated"}',
+        pollEvents:function(_:Dynamic):String return '{"success":true,"events":[]}',
+        sendMessage:function(args:Dynamic):String {
+            if (scenario != "packaged-native" || disposed) { violation = true; violationReason = "unexpected-native-send"; }
+            var prefix = "FCMCTL/1/NATIVE-PROTOTYPE:";
+            if (args.channel != "server" || !StringTools.startsWith(args.body, prefix)) {
+                violation = true; return '{"success":false}';
+            }
+            var envelope:Dynamic = haxe.Json.parse(Std.string(args.body).substr(prefix.length));
+            acceptSnapshot(envelope.snapshot);
+            return '{"success":true}';
+        }
+      },modStorage:{
         register:function(_:String):Bool { registerCalls++; return false; },
         load:Reflect.makeVarArgs(function(_:Array<Dynamic>):Dynamic return false),
         save:Reflect.makeVarArgs(function(args:Array<Dynamic>):Dynamic {
@@ -187,6 +214,7 @@ class PackagedBridgeHost extends Sprite {
         if (!disposed && child != null) storageDiagnostic = child.storageDiagnostic();
         if (!disposed) switch command {
             case "loading": publish("MenuStackData", {menuStackA:[{menuName:"LoadingMenu"}]}); roster([]);
+            case "refresh-roster": roster(["PeerA", "PeerB"]);
             case "resume": roster(["PeerB", "PeerA"]); publish("MenuStackData", {menuStackA:[]});
             case "hop": phase = "hop"; roster(["NewPeer"]);
             case "main-menu": publish("MenuStackData", {menuStackA:[{menuName:"MainMenu"}]});

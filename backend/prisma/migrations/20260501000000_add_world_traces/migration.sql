@@ -1,6 +1,6 @@
 -- Migration: add world_traces table for opt-in desktop telemetry uploads.
 -- IDEMPOTENT: uses CREATE TABLE IF NOT EXISTS and CREATE INDEX IF NOT EXISTS
--- per project convention (see CLAUDE.md "Prisma Migrations MUST Be Idempotent").
+-- per project convention (see AGENTS.md "Prisma Migrations MUST Be Idempotent").
 --
 -- Retention: rows older than 30 days are purged by the world-trace cleanup cron
 -- job registered in backend/src/server.ts (see "World-trace cleanup" comment).

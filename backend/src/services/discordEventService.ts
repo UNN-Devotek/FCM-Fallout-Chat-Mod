@@ -464,7 +464,7 @@ async function updateFcmProjection(
     interestedCount: snapshot.interestedCount,
     eventCode: snapshot.eventCode,
   });
-  // hudFeedService adds the Events channel label and sender name around the
+  // The legacy HUD event row included the Events channel label and sender name around the
   // stored content. Keep only the body so live delivery and history render the
   // same `[EVENTS] [EVENT] FCM: ...` row without duplicating that prefix.
   const content = hudRow.startsWith(HUD_EVENT_PREFIX) ? hudRow.slice(HUD_EVENT_PREFIX.length) : hudRow;

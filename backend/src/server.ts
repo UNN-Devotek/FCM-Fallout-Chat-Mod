@@ -23,7 +23,7 @@ import { getRedisClient, client as redisClient } from './config/redis';
 import prisma from './config/prisma';
 import { Prisma } from '@prisma/client';
 import { errorHandler, createError } from './middleware/errorHandler';
-import { apiLimiter, authLimiter, debugReportLimiter, channelsLimiter, partiesListLimiter, hudFeedLimiter } from './middleware/rateLimiter';
+import { apiLimiter, authLimiter, debugReportLimiter, channelsLimiter, partiesListLimiter } from './middleware/rateLimiter';
 import { requireAdminKey } from './middleware/requireAdminKey';
 import { requireClientAuth } from './middleware/requireClientAuth';
 import { query as dbQueryFn } from './config/database';
@@ -104,8 +104,6 @@ import {
   listPublicPartyMessages,
 } from './controllers/partiesController';
 import { requireDiscordRole } from './middleware/auth';
-import { initHudPushTcp } from './services/hudPushTcp';
-import { initHudPushWs, isHudPushWsEnabled } from './services/hudPushWs';
 import { backfillMissingRelaySeq, seedRelaySeq } from './services/relay/relaySeq';
 import { applyPostPushPatches } from './scripts/applyPostPushPatches';
 import { attachChatUpgradeRouter } from './websocket/upgradeRouter';
@@ -136,7 +134,6 @@ import {
   isBrowserDevPersonaLoginAuthorized,
   markBrowserDevPersonaAccess,
 } from './controllers/devPersonaLoginController';
-import hudFeedRouter from './routes/hudFeed';
 import embedAssetsRouter from './routes/embedAssets';
 import mcpOAuthRouter from './routes/mcpOAuth';
 import { mcpTransportRouter } from './mcp/transport';
@@ -1868,10 +1865,6 @@ app.use('/api/wiki', wikiRouter);
 // Serves autocomplete results from the local camp_items table.
 app.use('/api/camp', campRouter);
 
-// HUD feed — public, unauthenticated. Polled by FCMBridge.swf via ZFE
-// readRemoteData every ~300 s (ZFE cache). Returns { t: "record|record..." }.
-app.use('/api/game/hud-feed', hudFeedLimiter, hudFeedRouter);
-
 // Public, unauthenticated, read-only party endpoints (logged-out website overlay).
 // Registered BEFORE the auth-gated /api/parties mount so these specific routes are
 // not captured by requireClientAuth. Strictly limited to PUBLIC parties.
@@ -2417,11 +2410,8 @@ app.use(errorHandler);
 const MAX_WS_CONNS_PER_IP = parseInt(process.env.MAX_WS_CONNS_PER_IP || '10', 10);
 const wsConnsByIp = new Map<string, number>();
 
-// noServer mode + a manual upgrade router (attachChatUpgradeRouter below).
-// Previously this was `{ server, path: '/ws' }`, but ws's auto-attached handler
-// aborts every non-'/ws' upgrade with HTTP 400 — which killed the HUD live
-// socket at '/ws/hud' before hudPushWs could claim it. verifyClient still runs
-// because it lives inside handleUpgrade(). See websocket/upgradeRouter.ts.
+// noServer mode + a manual upgrade router preserves both authenticated /ws
+// and native /relay while rejecting unknown paths.
 const wss = new WebSocketServer({
   noServer: true,
   maxPayload: 8 * 1024,
@@ -2470,10 +2460,8 @@ const wsHeartbeat = setInterval(() => {
 }, 30_000);
 wss.on('close', () => clearInterval(wsHeartbeat));
 
-// Route HTTP upgrades: '/ws' → this chat server; enabled '/ws/hud' is left for
-// initHudPushWs(); disabled/unknown paths are rejected. Required because `wss`
-// is now in noServer mode (see the WebSocketServer comment above).
-attachChatUpgradeRouter(server, wss, { hudPathEnabled: isHudPushWsEnabled() });
+// Route /ws and /relay upgrades; reject every other path.
+attachChatUpgradeRouter(server, wss);
 
 // Expose broadcast fns to routes and Discord service
 (global as any).broadcast = broadcast;
@@ -2602,10 +2590,6 @@ async function start(): Promise<void> {
 
     // Initialise Redis Pub/Sub for multi-instance message broadcast.
     await initPubSub();
-
-    // HUD push transports — Path A (raw TCP) and Path B (WebSocket /ws/hud).
-    await initHudPushTcp();
-    initHudPushWs(server);
 
     // db push does not replay raw SQL/data-only migrations. Apply the small,
     // idempotent compatibility set before any relay message can be persisted.

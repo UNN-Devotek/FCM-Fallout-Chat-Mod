@@ -7,7 +7,6 @@ This document covers the raw WebSocket relay that powers live chat in Fallout Ch
 - [Presence & Sessions](./presence-and-sessions.md) — identity cache, heartbeat, Redis session store
 - [Native HUD relay](../overlay/zfe/native-chat-relay/README.md) — current optional widget through ZFE/xScal `/relay`
 - [Background server bridge](../overlay/zfe/background-server-bridge.md) — invisible HUDModLoader child with private desktop room delivery; local candidate
-- [Legacy HUD Push](./hud-push.md) — retained `/ws/hud` and TCP :4001 line transport, not the modern widget path
 
 ---
 

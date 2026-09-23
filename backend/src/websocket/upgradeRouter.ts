@@ -1,21 +1,10 @@
 /**
  * upgradeRouter.ts — single HTTP "upgrade" router for the chat WebSocket server.
  *
- * Why this exists:
- *   The main chat server (`wss`) used to be created with
- *   `new WebSocketServer({ server, path: '/ws' })`. In that mode `ws` attaches
- *   its own `upgrade` listener whose `handleUpgrade()` calls `shouldHandle()`
- *   and **aborts every non-'/ws' upgrade with HTTP 400** — and it runs before
- *   hudPushWs's own `/ws/hud` listener, so it killed the HUD live socket before
- *   it could be claimed (observed as a 400 on `wss://…/ws/hud`).
- *   See docs/overlay/zfe/realtime-socket.md.
- *
- * Fix: run the chat server in `noServer: true` mode and route upgrades here:
+ * The chat server runs in `noServer: true` mode and routes upgrades here:
  *   - '/ws'      → chat server `handleUpgrade` (verifyClient/origin/IP guard
  *                  still runs — it lives inside handleUpgrade, not the auto
  *                  listener).
- *   - '/ws/hud'  → left untouched only when the optional HUD listener is enabled;
- *                  otherwise rejected like every unknown path.
  *   - '/relay'   → ZFE chat.v1 JSON-frame relay adapter (handleRelayConnection);
  *                  dev-only (refused in production until R6 lifts the guard).
  *   - any other path → rejected (socket destroyed) so unknown upgrade paths do
@@ -29,8 +18,6 @@ import { handleRelayConnection } from '../services/relay/relayHandler';
 import logger from '../config/logger';
 import { clientIp } from '../utils/clientIp';
 
-/** Path reserved for the HUD live-push WebSocket (handled by hudPushWs). */
-export const HUD_WS_PATH = '/ws/hud';
 /** Path for the main chat WebSocket. */
 export const CHAT_WS_PATH = '/ws';
 /** Path for the ZFE chat.v1 relay adapter. */
@@ -98,16 +85,13 @@ export function upgradePathname(url: string | undefined): string {
 
 /**
  * Attach the chat-upgrade router to `server`. Idempotent per call-site: call
- * exactly once after `wss` (noServer) is created. `initHudPushWs()` attaches a
- * separate listener for HUD_WS_PATH; `hudPathEnabled` must match that listener's
- * startup gate. The relay WSServer for RELAY_WS_PATH is created lazily here.
+ * exactly once after `wss` (noServer) is created. The relay WSServer for
+ * RELAY_WS_PATH is created lazily here.
  */
 export function attachChatUpgradeRouter(
   server: http.Server,
   wss: WebSocketServer,
-  options: { hudPathEnabled?: boolean } = {},
 ): void {
-  const hudPathEnabled = options.hudPathEnabled === true;
   server.on('upgrade', (req: http.IncomingMessage, socket: Duplex, head: Buffer) => {
     const pathname = upgradePathname(req.url);
     if (pathname === CHAT_WS_PATH) {
@@ -120,10 +104,8 @@ export function attachChatUpgradeRouter(
       getRelayWss().handleUpgrade(req, socket, head, (ws) => {
         getRelayWss().emit('connection', ws, req);
       });
-    } else if (pathname === HUD_WS_PATH && hudPathEnabled) {
-      // The separate hudPushWs upgrade listener owns this path when enabled.
     } else {
-      // Unknown or disabled WS path.
+      // Unknown WS path.
       socket.destroy();
     }
   });

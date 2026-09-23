@@ -4,7 +4,7 @@
 > feature, write its unit tests in the **same** change and make sure they run in CI
 > (`.github/workflows/ci.yml`). A feature is not "done" until its tests exist and pass in CI. If a CI
 > job doesn't yet cover the new surface, wire it in and promote it into the required `CI Summary` gate
-> once stable. (Mirrored in [CLAUDE.md](../../CLAUDE.md) Hard Rules.)
+> once stable. (Mirrored in [AGENTS.md](../../AGENTS.md) Hard Rules.)
 
 This is the entry-point doc for the Fallout Chat Mod test strategy. It covers the testing
 philosophy, the three test layers, the tooling decisions per workspace, the directory layout, and

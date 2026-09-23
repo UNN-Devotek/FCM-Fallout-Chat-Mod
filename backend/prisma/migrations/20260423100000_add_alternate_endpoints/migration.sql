@@ -4,6 +4,6 @@
 -- persist every candidate the memory scanner found so the backend can match
 -- users via endpoint set-intersection instead of string equality.
 --
--- Idempotent per CLAUDE.md rule: baseline-migrations.sh runs `prisma db push`
+-- Idempotent per AGENTS.md rule: baseline-migrations.sh runs `prisma db push`
 -- before `migrate deploy`, so this DDL must tolerate a pre-existing column.
 ALTER TABLE "users" ADD COLUMN IF NOT EXISTS "alternate_endpoints" TEXT[] NOT NULL DEFAULT '{}';

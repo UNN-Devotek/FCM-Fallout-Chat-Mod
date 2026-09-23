@@ -7,6 +7,23 @@ function pollCount(value: unknown): number {
   return value.polls;
 }
 
+test('native prototype writes one capsule and streams world changes without storage', async ({ page }) => {
+  test.setTimeout(45_000);
+  await page.route('**/*', route => new URL(route.request().url()).origin === 'http://127.0.0.1:41739'
+    ? route.continue() : route.abort());
+  await page.goto('/?mode=packaged-bridge&provider=xscal&scenario=packaged-native');
+  const snapshot = () => page.evaluate(() => window.__FCM_SIM__?.packaged('snapshot'));
+  await expect.poll(snapshot, { timeout: 15_000 }).toMatchObject({ active: true, writes: 1,
+    namedWrites: 1, registerCalls: 0, violation: false, snapshot: { environment: 'dev', state: 'active' } });
+  await page.evaluate(() => window.__FCM_SIM__?.packaged('loading'));
+  await expect.poll(snapshot, { timeout: 10_000 }).toMatchObject({ writes: 1, snapshot: { state: 'holding' }, violation: false });
+  await page.evaluate(() => window.__FCM_SIM__?.packaged('resume'));
+  await expect.poll(snapshot, { timeout: 10_000 }).toMatchObject({ writes: 1, snapshot: { state: 'active' }, violation: false });
+  const stopped = await page.evaluate(() => window.__FCM_SIM__?.packaged('unload'));
+  await page.waitForTimeout(1500);
+  expect(await snapshot()).toEqual(stopped);
+});
+
 for (const fault of ['throw', 'malformed', 'oversized'] as const) {
   test(`packaged storage diagnostics distinguish ${fault} without exposing payloads`, async ({ page }) => {
     await page.route('**/*', route => new URL(route.request().url()).origin === 'http://127.0.0.1:41739'
@@ -71,6 +88,43 @@ test('isolated host cannot link production helpers and tests exact packaged byte
   for (const symbol of ['FcmRoster', 'FcmHudRosterReader', 'FcmBridgeState', 'FcmNativeApi', 'FcmBridgeStorage', 'FcmBridgeExport', 'FCMChatWidget']) {
     expect(hostBytes.includes(Buffer.from(symbol)), symbol).toBe(false);
   }
+});
+
+test('diagnostic bridge exports bounded timing without a second storage write', async ({ page }) => {
+  await page.route('**/*', route => new URL(route.request().url()).origin === 'http://127.0.0.1:41739'
+    ? route.continue() : route.abort());
+  await page.goto('/?mode=packaged-bridge&provider=xscal&scenario=packaged-perf');
+  const snapshot = () => page.evaluate(() => window.__FCM_SIM__?.packaged('snapshot'));
+  await expect.poll(snapshot, { timeout: 15_000 }).toMatchObject({ active: true, violation: false,
+    snapshot: { build: expect.stringMatching(/^0\.2\.8-c5-perf:p\d+\/\d+:e\d+\/\d+:s\d+\/\d+$/) } });
+  const result = await snapshot() as { writes: number; namedWrites: number; snapshot: { build: string } };
+  expect(result.snapshot.build.length).toBeLessThanOrEqual(64);
+  expect(result.namedWrites).toBe(result.writes);
+  const stopped = await page.evaluate(() => window.__FCM_SIM__?.packaged('unload'));
+  expect(stopped).toMatchObject({ disposed: true, subscriptions: 0, violation: false });
+});
+
+test('xScal coalesces stable roster writes while continuing to poll', async ({ page }) => {
+  await page.route('**/*', route => new URL(route.request().url()).origin === 'http://127.0.0.1:41739'
+    ? route.continue() : route.abort());
+  await page.goto('/?mode=packaged-bridge&provider=xscal&scenario=packaged-perf');
+  const snapshot = () => page.evaluate(() => window.__FCM_SIM__?.packaged('snapshot')) as Promise<
+    { active: boolean; polls: number; writes: number; violation: boolean; snapshot: { observationSequence: number } } | null>;
+  await expect.poll(async () => (await snapshot())?.writes ?? -1, { timeout: 15_000 }).toBeGreaterThanOrEqual(1);
+  const first = await snapshot();
+  await page.evaluate(() => window.__FCM_SIM__?.packaged('refresh-roster'));
+  await expect.poll(async () => (await snapshot())?.snapshot.observationSequence ?? -1,
+    { timeout: 5_000 }).toBeGreaterThan(first!.snapshot.observationSequence);
+  await expect.poll(async () => (await snapshot())?.writes ?? -1, { timeout: 5_000 }).toBeGreaterThan(first!.writes);
+  const before = await snapshot();
+  expect(before).not.toBeNull();
+  await page.evaluate(() => window.__FCM_SIM__?.packaged('refresh-roster'));
+  await expect.poll(async () => (await snapshot())?.polls ?? -1, { timeout: 4_000 }).toBeGreaterThan(before!.polls);
+  expect(await snapshot()).toMatchObject({ active: true, writes: before!.writes, violation: false });
+  await expect.poll(async () => (await snapshot())?.writes ?? -1, { timeout: 7_000 }).toBeGreaterThan(before!.writes);
+  expect((await snapshot())!.snapshot.observationSequence).toBeGreaterThan(before!.snapshot.observationSequence);
+  const stopped = await page.evaluate(() => window.__FCM_SIM__?.packaged('unload'));
+  expect(stopped).toMatchObject({ disposed: true, subscriptions: 0, violation: false });
 });
 
 test('packaged bridge is input and loader-menu silent', async () => {

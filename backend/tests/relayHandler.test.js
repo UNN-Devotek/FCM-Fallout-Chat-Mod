@@ -2878,6 +2878,28 @@ describe('roster-derived world rooms', () => {
     ws.close();
   });
 
+  test('native prototype authenticates reserved snapshots without publishing chat or native room membership', async () => {
+    const a = await registerAndLink('Prototype', 'fcm-prototype');
+    const { nativeBridgePrototype: broker } = require('../src/services/relay/nativeBridgePrototype');
+    const sessionId = 'np-987654321-987654321-987654321-987654321';
+    const body = sequence => 'FCMCTL/1/NATIVE-PROTOTYPE:' + JSON.stringify({ sentAt: Date.now(), snapshot: {
+      schemaVersion: 1, environment: 'dev', provider: 'xscal', build: 'test', sessionId, worldGeneration: 'first',
+      sequence, observationSequence: sequence, observationAgeMs: 0, state: 'active', ownName: 'Prototype', names: ['Peer'],
+    } });
+    delete process.env.FCM_NATIVE_BRIDGE_PROTOTYPE;
+    expect(await sendRaw(a, body(1))).toMatchObject({ success: false, error: { code: 'permission_denied' } });
+    process.env.FCM_NATIVE_BRIDGE_PROTOTYPE = '1';
+    const owner = {};
+    try {
+      expect(await sendRaw(a, body(1))).toMatchObject({ success: true });
+      expect(broker.claim('fcm-prototype', sessionId, owner)).toBe(false);
+      expect(await sendRaw(a, body(2))).toMatchObject({ success: true });
+      expect(broker.claim('fcm-prototype', sessionId, owner)).toBe(true);
+      expect(_worldStore[`relay:world:${a.rawId}`]).toBeUndefined();
+      expect(require('../src/services/ingestMessage').ingestMessage).not.toHaveBeenCalled();
+    } finally { broker.release(owner); delete process.env.FCM_NATIVE_BRIDGE_PROTOTYPE; }
+  });
+
   test('roster controls return a protocol-compliant non-empty message ID', async () => {
     const a = await registerAndLink('RosterAck', 'fcm-roster-ack');
     const res = await sendRaw(a, makeRosterBody(a.rawId, []));

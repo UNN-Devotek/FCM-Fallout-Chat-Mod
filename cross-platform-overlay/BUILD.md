@@ -128,7 +128,7 @@ default icon. The app will still build and run; only the icon is affected.
 ### Windows (Authenticode)
 
 Without a code-signing certificate, SmartScreen will show "Unknown publisher"
-warnings (same situation as the WinForms desktop client). See the root `CLAUDE.md`
+warnings (same situation as the WinForms desktop client). See the root `AGENTS.md`
 "Antivirus / SmartScreen" section for the full context.
 
 To sign with electron-builder, add to `package.json` `build.win`:
@@ -247,4 +247,4 @@ try { return require('./package.json').version; } catch { return '0.0.0'; }
 - [ ] Set up GitHub Actions matrix CI (win/mac/linux) to produce release artifacts
 - [x] ~~Wire the Electron app's own release channel~~ — auto-update removed for Nexus ToS compliance; update awareness is a passive OS notification over the chat WebSocket
 - [ ] Consider switching `GlobalHotkey` in ChatOverlay to `RegisterHotKey` API to
-      reduce AV false positives (noted in root CLAUDE.md; not an Electron concern)
+      reduce AV false positives (noted in root AGENTS.md; not an Electron concern)

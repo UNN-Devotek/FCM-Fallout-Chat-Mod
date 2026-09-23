@@ -7,7 +7,7 @@ const redis = {
 };
 jest.mock('../src/config/redis', () => ({ getRedisClient: async () => redis }));
 jest.mock('../src/config/environment', () => ({ __esModule: true, default: {
-  HUD_IDENTITY_HASH_SECRET: 'private-diagnostic-test-secret', HUD_IDENTITY_SECRET: 'fallback',
+  HUD_IDENTITY_HASH_SECRET: 'private-diagnostic-test-secret',
 } }));
 jest.mock('../src/config/logger', () => ({ __esModule: true, default: { warn: jest.fn() } }));
 

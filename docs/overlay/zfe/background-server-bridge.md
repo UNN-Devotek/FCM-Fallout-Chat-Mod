@@ -30,9 +30,8 @@ IDs only; no raw payloads or extra native calls. Keep all
 capability/readiness checks and the existing visible-HUD architecture unchanged.
 The earlier desktop/xScal 0.2.0 export result does not accept the released 0.2.8 artifact.
 See [checks, deployment and installed hashes](../../testing/bridge-drop-in-acceptance-2026-09-16.md).
-Native acceptance must be recorded separately. Historical
-0.1.x native-network/link-code behavior is [archived](background-server-bridge-native-history.md);
-its successful runs do not accept this new storage path.
+Native acceptance must be recorded separately. Earlier native-network/link-code
+results do not accept this storage path.
 
 ## Install and authentication
 
@@ -97,6 +96,10 @@ timestamp order, so an older room backlog does not replace the current General v
 
 ## Local export contract
 
+An opt-in [local native transport prototype](native-transport-prototype.md) tests a single
+discovery write plus xScal roster transport. It is disabled in production and packaged overlays;
+the published bridge continues to follow the file contract below.
+
 | Provider | Exact primary export |
 | --- | --- |
 | ZFE | `Data/ZFE/Storage/FCMServerBridge/{dev|prod}-state.json` |
@@ -121,16 +124,32 @@ Maximum UTF-8 document: 8 KiB. No tokens, linking codes, account authentication,
 room selection or credentials. Storage namespaces are organization, not security;
 treat the file as untrusted input.
 
-Changed snapshots write at most once per second; unchanged state has a five-second
-heartbeat. Heartbeats increase sequence, never observation freshness. Holding
+Changed snapshots write at most once per second. In the local `c5` test candidate,
+xScal keeps two-second in-memory roster observations but coalesces exports of an
+unchanged roster to five-second intervals after two startup writes. Roster,
+world, self-name, and active/holding/inactive changes still export promptly;
+ZFE keeps its existing observation-write cadence. This candidate is not the
+published 0.2.8 release and still needs native lag and room-continuity acceptance.
+Heartbeats increase sequence, never observation freshness. Holding
 pins the last active roster/age and cannot activate a new binding. Thirty-second
 observation expiry remains; startup loading cannot invent a world. Existing
 split roster decoding, ready/live provenance, source precedence, fast-travel
 overlap and old-world cache rejection remain.
 
+A separate `--diagnostic` bridge package is available for native performance
+investigation. It preserves the export schema and write cadence but uses the
+existing `build` label to carry bounded last/peak millisecond times for the
+world-observation pass (`p`), JSON encoding (`e`), and provider save (`s`).
+Peaks accumulate only for the current HUD movie session.
+Encoding and saving appear one export later because the document is assembled
+before the native save returns. The diagnostic build is not a release artifact;
+do not infer that a high `s` value is the cause of game lag without a same-world
+bridge-on/bridge-off comparison. The normal build retains its exact version
+label and does not include timing code.
+
 The desktop reads asynchronously with bounded size/schema checks. A transient missing, partial or
 invalid read during the provider's atomic file replacement retains only the last already-validated
-sample until its existing twelve-second writer deadline and thirty-second evidence deadline; it
+sample until its existing thirty-second writer and evidence deadlines; it
 does not advance either clock. Persistent corruption therefore still expires and leaves normally.
 A preexisting
 file cannot activate Server: require advancement after attachment, fresh evidence

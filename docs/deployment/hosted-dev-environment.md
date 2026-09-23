@@ -13,7 +13,7 @@ which is **live and deployed** as of 2026-06-11.
 
 1. Contributors branch off `dev`, open PRs against `dev`, and the maintainer
    reviews **before** anything merges. (Policy — see [ci-cd-pipeline](../testing/ci-cd-pipeline.md)
-   and the branch-protection note in [CLAUDE.md](../../CLAUDE.md).)
+   and the branch-protection note in [AGENTS.md](../../AGENTS.md).)
 2. Contributors can develop against a realistic dataset: **real** wiki/camp
    reference data plus **fake** users, chat history, parties, and avatars.
 3. Contributors can pull that dataset down (`pg_restore`) to a fully-local stack,
@@ -72,7 +72,7 @@ non-confidential **by construction**, remote dev access is safe.
 | Credentials | Own dev DB password, Redis password, MinIO creds, `SESSION_SECRET`, Discord app. **Zero overlap with prod.** A full dev compromise leaks no prod secret. |
 | Resource limits | Memory + CPU caps on every dev service so a runaway/abusive dev container cannot starve prod. |
 | Ingress | Dedicated `cloudflared-dev` tunnel attached only to `fcm-dev-network`. |
-| Access | **App-level auth is the gate for the dev website** (the dual dev-Discord `developer` role gate on `dev.falloutchatmod.com` + `dev-hud`), like prod — the Cloudflare Access **edge gate was removed 2026-06-29**. Raw stores (`dev-db` / `dev-s3`) are **still** CF-Access service-token gated. |
+| Access | **App-level auth is the gate for the dev website** (the dual dev-Discord `developer` role gate on `dev.falloutchatmod.com`), like prod — the Cloudflare Access **edge gate was removed 2026-06-29**. Raw stores (`dev-db` / `dev-s3`) are **still** CF-Access service-token gated. |
 
 Because contributors get **application-level access only** (no SSH, no Dokploy
 rights, no container shell), the usual shared-VPS risk — hostile code execution →
@@ -535,7 +535,7 @@ the dev Discord application credentials, the database, or the object store.
 ### Cloudflare Access path-bypass policy
 
 > **SUPERSEDED (2026-06-29).** The CF Access **edge gate on the dev website was removed entirely** —
-> `dev.falloutchatmod.com` + `dev-hud` are now open at the edge, with the app-level dual-`developer`-role
+> `dev.falloutchatmod.com` was open at the edge, with the app-level dual-`developer`-role
 > gate as the only protection (like prod), and all the per-path bypass apps below were deleted. Only
 > `dev-db` + `dev-s3` remain CF-Access (service-token) gated. The section below is retained for history /
 > if the edge gate is ever reinstated. Rationale: app-auth already protects every data path (verified

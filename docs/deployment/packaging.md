@@ -51,12 +51,12 @@ between environments.
 
 **Usage:**
 ```powershell
-.\Packaging\publish-nexus-release.ps1 -Version X.Y.Z [-ReleaseNotes "What's new..."] [-HudModDir path] [-DryRun]
+.\Packaging\publish-nexus-release.ps1 -Version X.Y.Z [-HudModDir path] [-DryRun]
 ```
 
 **What it does:**
 1. Builds `FCM HUD Mod-<widget-version> (PROD)-Nexus.zip` with `--distribution nexus`, excluding scripts/executables. Website helper ZIPs must never be uploaded to Nexus.
-2. Runs the completed VirusTotal gate before any Nexus upload; the release operator must already have passed the packaged-app smoke gate. Then calls `publish-nexus.ps1` for the Linux AppImage and `.deb` ZIPs as `main` and the separate Nexus HUD ZIP as `optional`; each normal replacement archives the previous file only after the new upload is available.
+2. Runs the completed VirusTotal gate before any Nexus upload; the release operator must already have passed the packaged-app smoke gate. Then calls `publish-nexus.ps1` for the Linux AppImage, `.deb`, and HUD ZIPs as Main files. HUD is the primary download; previous Linux/HUD versions are archived after the new upload is available.
 3. Uses the desktop version for both Linux Nexus files and the current `FCMChatWidget.hx` version for the HUD Nexus file
 4. After publishing, refreshes the Windows scan permalink metadata (the mandatory completed scan gate has already run). Computes the SHA-256 permalink and POSTs it to `POST https://falloutchatmod.com/admin/virustotal-url` so the `/virustotal` redirect always points at the latest scan
 
@@ -67,27 +67,32 @@ a new Windows ZIP alongside the existing live Windows file for review, run:
 .\Packaging\publish-nexus-release.ps1 -Version X.Y.Z -PublishWindowsForReview
 ```
 
-The review path sends `archive_existing_file: false`, so both Windows files remain available. After
-Nexus support approves the new file, remove the old Windows file manually in the Nexus Files tab.
-The ordinary release path does not upload Windows to Nexus, and therefore does not require
-`NEXUS_MOD_FILE_ID_WINDOWS`.
+The review path sends `archive_existing_file: false`, so approved standard and portable Windows
+installers remain in Main files. A configured `NEXUS_MOD_FILE_ID_WINDOWS_PORTABLE` uploads the
+portable ZIP too. The owner handles approved Windows files manually; automation never archives
+or removes them. File descriptions are copied unchanged from the existing Nexus entries.
+The canonical `release.ps1` path uploads standard Windows for support review unless
+`-SkipWindowsNexus` is set. The standalone wrapper requires `-PublishWindowsForReview`.
 
 **Required env vars** (Windows: set as USER env vars so they persist across PowerShell sessions. Linux/`pwsh`: put them in the repo-root `.env`/`.env.local` — `release.ps1` auto-loads them via `Import-DotEnv` — or `export` them before running):
 - `NEXUS_API_KEY` — personal API key from nexusmods.com/settings/api-keys
 - `NEXUS_MOD_FILE_ID_WINDOWS` — stable v3 mod-file ID for Windows (required only with `-PublishWindowsForReview`)
+- `NEXUS_MOD_FILE_ID_WINDOWS_PORTABLE` — optional stable v3 mod-file ID for portable Windows
 - `NEXUS_MOD_FILE_ID_LINUX` — stable v3 mod-file ID for the Linux AppImage
 - `NEXUS_MOD_FILE_ID_LINUX_DEB` — stable v3 mod-file ID for the Linux `.deb`
-- `NEXUS_MOD_FILE_ID_HUD` — stable v3 mod-file ID for the optional HUD ZIP
+- `NEXUS_MOD_FILE_ID_HUD` — stable v3 mod-file ID for the HUD Main ZIP
 - `VT_API_KEY` — VirusTotal personal API key
 - `PROD_ADMIN_RELEASE_TOKEN` — backend admin release token (from `backend/.env`)
 
-The HUD file is uploaded as a separate optional Nexus file group, so it does not replace the
-desktop download. Set `NEXUS_MOD_FILE_ID_HUD` to the stable ID created for the HUD package in the
+The HUD file is uploaded as a separate Main Nexus file group and set as the primary download.
+Set `NEXUS_MOD_FILE_ID_HUD` to the stable ID created for the HUD package in the
 Nexus Files tab. The wrapper builds the separate `FCM HUD Mod-<widget-version> (PROD)-Nexus.zip` from the
 validated local HUD artifacts; the website ZIP is not its upload input. It archives the previous
 HUD file only when the new Nexus file reaches `available` state. The low-level uploader
 defaults to preserving the previous file; the wrapper opts into archiving for the normal Linux,
-`.deb`, and HUD replacement paths.
+`.deb`, and HUD replacement paths. Move any existing Old files entries to Archived manually in
+the Nexus management UI; this upload path cannot recategorize them. Metadata preflight checks
+every configured group and blocks a Nexus publish while an Old files entry remains.
 
 **ASCII-only rule:** This script must remain ASCII-only. PowerShell 5.1 via `-File` mis-tokenizes non-ASCII characters (em-dashes, smart quotes, etc.) inside double-quoted strings and throws a misleading `Unexpected token '}'` parse error. Use plain hyphens (`-`), never Unicode dashes.
 
@@ -146,7 +151,7 @@ The patch preserves the original byte length by trimming excess whitespace insid
 
 | File | Purpose |
 |------|---------|
-| `install.ps1` | CLI one-liner installer: `irm https://falloutchatmod.com/install.ps1 \| iex`. Queries `GET /api/releases` to discover the current version, downloads the raw `.exe`, and runs it silently (per-user, no UAC). Doubles as the **update/patch path**: reads the installed exe's `VersionInfo.ProductVersion`, fast-forwards from any older version, and when already on the latest **prompts reinstall-or-cancel** (`Read-Host`); the NSIS hook also migrates the pre-v1.3.62 `Fallout ChatMod` per-user install and stops its legacy process before installation; checks the NSIS exit code and only reports success on `0`. Displayed in the Windows file description on Nexus. |
+| `install.ps1` | CLI one-liner installer: `irm https://falloutchatmod.com/install.ps1 \| iex`. Queries `GET /api/releases` to discover the current version, downloads the raw `.exe`, and runs it silently (per-user, no UAC). Doubles as the **update/patch path**: reads the installed exe's `VersionInfo.ProductVersion`, fast-forwards from any older version, and when already on the latest **prompts reinstall-or-cancel** (`Read-Host`); the NSIS hook also migrates the pre-v1.3.62 `Fallout ChatMod` per-user install and stops its legacy process before installation; checks the NSIS exit code and only reports success on `0`. |
 
 ---
 

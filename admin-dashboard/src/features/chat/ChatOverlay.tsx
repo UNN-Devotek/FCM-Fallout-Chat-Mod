@@ -47,7 +47,7 @@ import { OverlayHeaderControls } from './OverlayHeaderControls';
  * Admin/mod users get inline moderation controls on each message.
  *
  * PARITY RULE: This component MUST stay visually identical to
- * ChatOverlay/ChatOverlayWindow.cs (see CLAUDE.md).
+ * ChatOverlay/ChatOverlayWindow.cs (see AGENTS.md).
  */
 
 // ── Built-in theme definitions (mirrors ChatTheme.cs BuiltIn) ─────────────────

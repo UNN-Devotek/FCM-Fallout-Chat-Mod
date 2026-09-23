@@ -66,7 +66,7 @@ This folder is the central documentation hub. Each domain lives in its own subfo
 - **Auth.** Overlay clients use an anonymous UUID install token → an ephemeral session token in Redis.
   The admin dashboard uses Discord OAuth2 with server-authoritative role re-verification on every
   request (owner/admin/moderator). See [backend/auth.md](backend/auth.md).
-- **Delivery ordering depends on the producer.** Ordinary WS and legacy HUD sends wait for the
+- **Delivery ordering depends on the producer.** Ordinary authenticated WS sends wait for the
   Bull persistence job before visibility. Native `/relay` sends ACK and fan out after durable queue
   acceptance to keep the synchronous HUD RPC bounded; database/Discord completion is separate.
   Cross-instance fan-out uses Redis pub/sub. See [HUD retry safety](overlay/zfe/hud-send-retries.md)
@@ -79,25 +79,6 @@ This folder is the central documentation hub. Each domain lives in its own subfo
   auto-updates (Nexus Mods ToS compliance); update awareness is a passive OS notification delivered
   over the chat WebSocket (`app:update-available`). See [deployment/releasing-the-overlay.md](deployment/releasing-the-overlay.md).
 
-## Reconciled code/doc discrepancies
-
-These were surfaced by the code while documenting and have since been reconciled in code + docs:
-
-- **Session TTL — standardized to 24h.** `SESSION_TTL_SECONDS` was 30 days; it is now `24 * 60 * 60`
-  (`usersController.ts:20`, `server.ts:243`). The overlay silently re-registers via its install token
-  on reconnect, so a shorter session is transparent to users. The 30-day Discord re-auth window
-  (`discordAuthedAt`) is a separate mechanism and is unchanged.
-- **WS rate limit — comment corrected to 5 msg/sec.** The implementation (`checkWsRateLimit`) always
-  enforced 5 frames/sec; a stale comment said "2 msg/sec" (`websocket/handlers.ts:1882`). CLAUDE.md
-  now states 5.
-- **Voice service filename.** The real file is `voiceService.ts` (no `tempVoiceService.ts` exists);
-  CLAUDE.md now points at the correct path.
-- **Default overlay theme.** The startup default is `fo76-wasteland` (amber/gold); `vault-tec-green`
-  (`#18FF62`, Phosphor Green) is the classic Pip-Boy look but not the default. CLAUDE.md now reflects this.
-- **TimescaleDB hypertables.** `messages` and `audit_logs` are hypertables with composite PK
-  `(id, created_at)` and 90-day retention; `audit_logs.target_id` is intentionally FK-less (polymorphic
-  target — use raw SQL for joins). Documented in CLAUDE.md and [database/schema.md](database/schema.md).
-
 ## Reference documents (existing)
 
 - [TERMS.md](TERMS.md) — terms of service
@@ -109,4 +90,4 @@ These were surfaced by the code while documenting and have since been reconciled
 ---
 
 *This documentation set was built to support open-sourcing the project. When code changes, update the
-relevant domain doc here rather than expanding CLAUDE.md — CLAUDE.md should link to these docs for depth.*
+relevant domain doc here rather than expanding AGENTS.md — AGENTS.md should link to these docs for depth.*

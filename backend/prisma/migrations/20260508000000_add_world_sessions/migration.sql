@@ -3,7 +3,7 @@
 -- backend-minted worldSessionId (UUID FK). See A3 final plan in
 -- _arcwright-output/research-2026-05-08/A3-final-plan.md.
 --
--- This migration is fully ADDITIVE and IDEMPOTENT (per CLAUDE.md guidance
+-- This migration is fully ADDITIVE and IDEMPOTENT (per AGENTS.md guidance
 -- "Prisma Migrations MUST Be Idempotent"). No drops in this migration.
 -- Cleanup of legacy endpoint-string columns is deferred to Phase 4 / a
 -- later release after the new path has soaked.

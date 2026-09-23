@@ -2,6 +2,8 @@
 """Regression checks for the repeatable HUD/Nexus release contract."""
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
 
 
@@ -39,7 +41,7 @@ def main() -> None:
         '$hudZip   = Join-Path $DistDir "FCM HUD Mod-$hudVersion (PROD).zip"',
         '@{ Name = "HUD";',
         "NexusVersion = $hudVersion",
-        'NexusVersion = $hudVersion; Category = "optional"; ArchiveExisting = $true',
+        'NexusVersion = $hudVersion; Category = "main"; ArchiveExisting = $true; Primary = $true',
         "FileCategory  = $p.Category",
         "ModFileId     = $p.Group",
         '$linuxDeb = Join-Path $DistDir "Fallout Chat Mod-$Version.deb"',
@@ -48,6 +50,9 @@ def main() -> None:
         "$publishWindows = [bool]$PublishWindowsForReview",
         "if ($publishWindows)",
         '@{ Name = "Windows (support review)";',
+        '@{ Name = "Windows portable (support review)";',
+        'NEXUS_MOD_FILE_ID_WINDOWS_PORTABLE',
+        'PrimaryDownload = $p.Primary',
         "ArchiveExisting = $false",
         "ArchiveExisting = $true",
         '[Parameter(Mandatory = $true)] [string]$BridgeZip',
@@ -59,6 +64,9 @@ def main() -> None:
     )
     for marker in required_nexus_markers:
         assert marker in nexus, f"Nexus release path is missing: {marker}"
+    assert 'Desc = ' not in nexus
+    assert 'Description   = $p.Desc' not in nexus
+    assert 'NexusVersion = $Version; Category = "main"; ArchiveExisting = $false; Primary = $false' in nexus
 
     # These scripts are documented for pwsh on Linux/macOS as well as Windows.
     # A backslash inside a Join-Path child path is a literal character on Unix,
@@ -94,16 +102,19 @@ def main() -> None:
         "preserving previous file",
         'Normalize-ConfiguredValue',
         '$BaseUrl/mod-files/$ModFileId/versions',
+        'Get-NexusExistingDescription',
+        '[switch]$ValidateMetadataOnly',
+        'description                  = $description',
+        'primary_mod_manager_download = $PrimaryDownload',
+        'Windows installers must remain in Main; ArchiveExisting cannot be true.',
     ):
         assert marker in nexus_uploader, f"Nexus uploader is missing safe archive guard: {marker}"
 
     # The HUD download must remain in the first install section, before the
     # platform-specific Windows section, so it is visible without scrolling.
-    hud_marker = "Optional in-game HUD mod — keep the download visible at the top"
+    hud_marker = "VISIBLE IN-GAME HUD — OPTIONAL"
     assert hud_marker in install_page
-    assert install_page.index(hud_marker) < install_page.index(
-        "{/* ── Windows ─────────────────────────────────────────────────── */}"
-    )
+    assert install_page.index(hud_marker) < install_page.index("GENERAL NOTES")
     assert "↓ FCM HUD Mod ZIP — {download.label} {hudModVersion}" in install_page
     for marker in (
         "electronLinuxAppImageUrl",
@@ -122,11 +133,9 @@ def main() -> None:
         "Data/FCMChatWidget.ba2",
         "Data/ZFE/TextChat/fragments/FCMChatWidget.ini",
         "Data/hudmodloader.ini",
-        "FCMChatWidget.hudmodloader.ini",
         "Fallout76Custom.ini",
         "Data/configuration/zfe.ini",
         "[TextChat]",
-        "values override the fragment",
         "fresh link code",
         "enabled=true",
         "sign in with Steam or Discord",
@@ -174,6 +183,10 @@ def main() -> None:
     for marker in ('portableDownloadUrl', 'portable VirusTotal GATE', 'Upload-Artifact $portableZip'):
         assert marker in release, f"portable release orchestration is missing: {marker}"
     assert '[switch]$SkipPermalinkUpdate' in vt_gate
+
+    pwsh = shutil.which("pwsh")
+    assert pwsh, "PowerShell is required to test Nexus metadata handling"
+    subprocess.run([pwsh, "-NoProfile", "-File", str(ROOT / "Packaging/test-nexus-metadata.ps1")], check=True)
 
     # The merged Linux PR made cursor locking explicit/on-demand. Keep the
     # public page from regressing to the old silent Proton/Wine mutation claim.

@@ -7,9 +7,7 @@
  * src/config/environment.ts) — the same function the module-load production guard
  * calls before process.exit(1) — so reverting any check makes them fail. (The
  * earlier version of this suite re-implemented the predicate locally, which gave
- * zero regression protection; see the #109 review, and the sibling
- * environmentStartupGuard.test.js which imports hudIdentitySecretGuardFails the
- * same way.)
+ * zero regression protection; see the #109 review.)
  *
  * Note on MINIO_ENDPOINT: it is the SERVER-SIDE S3 client endpoint and is meant to
  * stay Docker-internal in the Dokploy topology, so a value like the real prod

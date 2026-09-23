@@ -20,11 +20,13 @@ Full architecture and how the pieces connect: **[docs/README.md](docs/README.md)
 | WebSocket relay protocol, presence, sessions | [docs/realtime/](docs/realtime/README.md) |
 | Dashboard, the shared ChatOverlay component, theming | [docs/frontend/](docs/frontend/README.md) |
 | Electron overlay: window mgmt, keybinds, update notification, building | [docs/overlay/](docs/overlay/README.md) |
+| Overlay diagnostics: log file, levels, `--fcm-debug`/`FCM_DEBUG`, rotation | [docs/overlay/diagnostics-logging.md](docs/overlay/diagnostics-logging.md) |
 | In-game HUD mod (FCMChatWidget, ZFE/xScal): build, native relay, input, recovery | [docs/overlay/zfe/](docs/overlay/zfe/README.md) |
 | Background HUDModLoader mod for desktop Server chat | [docs/overlay/zfe/background-server-bridge.md](docs/overlay/zfe/background-server-bridge.md) |
 | Discord bot: bridge, voice, embeds, reaction roles | [docs/discord/](docs/discord/README.md) |
 | Prisma schema, migrations, Redis usage | [docs/database/](docs/database/README.md) |
 | Automod, reports/evidence, role model | [docs/moderation/](docs/moderation/README.md) |
+| AI content moderation (OpenAI), thresholds, kill switch, privacy | [docs/moderation/ai-moderation.md](docs/moderation/ai-moderation.md) |
 | Local dev, release pipeline, packaging, code signing, deploy | [docs/deployment/](docs/deployment/README.md) |
 | QA-tester builds: golden-build lock, build/bless/distribute runbook | [docs/deployment/qa-builds.md](docs/deployment/qa-builds.md) |
 | Marketing assets (Remotion GIFs/stills), re-export commands | [docs/marketing/](docs/marketing/README.md) |
@@ -50,8 +52,15 @@ off the build server until the diff is reviewed. `pr-gate-delabel.yml` strips th
 every new push (TOCTOU guard), so re-review is forced. To run a PR's CI: review it, then add
 `ci-approved`. Jobs were consolidated (matrix `unit-vitest`; the Linux overlay job is now
 `overlay-launch-smoke-linux` and the Windows job `overlay-build-windows-nsis` after auto-update was
-retired), plus the required `hud-ruffle` provider harness = 9 required jobs total;
-actions are SHA-pinned with a `permissions: contents: read` default. Full detail:
+retired), plus the required `hud-ruffle` provider harness and a non-blocking `osv-scan`
+(OSV dependency scan) = 9 required jobs total. Dependabot updates are configured in
+`.github/dependabot.yml`; actions are SHA-pinned with `permissions: contents: read`. Full detail:
+[docs/testing/ci-cd-pipeline.md](docs/testing/ci-cd-pipeline.md).
+
+CI defaults to **GitHub-hosted runners** (`ubuntu-latest` / `windows-latest`). Self-hosted runners
+are a documented fallback via repo variables `CI_RUNNER` and `CI_RUNNER_WINDOWS` (JSON runner
+label strings). Toggle: `gh variable set CI_RUNNER '["self-hosted","linux","unn"]'` to use
+self-hosted; `gh variable delete CI_RUNNER` to revert to GitHub-hosted. Full detail:
 [docs/testing/ci-cd-pipeline.md](docs/testing/ci-cd-pipeline.md).
 
 ### Windows Build
@@ -59,10 +68,10 @@ Windows builds run on a **native Windows runner** — no Docker/Wine. The old Wi
 `win-electron-builder` Docker image was retired because Electron 31+ Chromium/Crashpad triggers a
 `STATUS_BREAKPOINT` crash under Wine64 that cannot be worked around.
 
-- **Manual release build:** `.github/workflows/build-windows.yml` — `workflow_dispatch` with `version` + `publish` inputs; runs on the native Windows runner
-- **CI gate (build):** `overlay-build-windows-nsis` in `ci.yml` — builds the NSIS installer via the Linux runner + docker-cp strategy (the Wine issue only affects *running* the exe, not building it); runs on every PR and `prod` push; asserts absence of `app-update.yml`/`latest*.yml` (these are no longer generated)
+- **Manual release build:** `.github/workflows/build-windows.yml` — `workflow_dispatch` with `version` + `publish` inputs; runs on the self-hosted `[self-hosted, windows, unn]` runner. Release workflows keep their self-hosted runners.
+- **CI gate (build):** `overlay-build-windows-nsis` in `ci.yml` — builds the NSIS installer natively on `windows-latest` (switchable with `CI_RUNNER_WINDOWS`); runs on every PR and `prod`/`dev` push; asserts absence of `app-update.yml`/`latest*.yml`.
 - **CI gate (execution):** the former native-Windows execution smoke (`overlay-autoupdate-e2e-windows-exec`) was removed when auto-update was retired; the build gate above is the Windows CI coverage (manual `.exe` testing can still be done on the Windows VM)
-- **Full failure history and fix rationale:** [`docs/testing/windows-nsis-ci-fixes.md`](docs/testing/windows-nsis-ci-fixes.md) — six Wine/Docker failures documented in order, plus the native-runner migration fixes (PS5.1 for-loop-in-cast syntax, hex-to-bytes without Convert.FromHexString, UTF-8 BOM in package.json). Read this before debugging any future Windows CI failure.
+- **Full failure history and fix rationale:** [`docs/testing/windows-nsis-ci-fixes.md`](docs/testing/windows-nsis-ci-fixes.md) — Wine/Docker failures and the native `windows-latest` migration. Read this before debugging future Windows CI failures.
 
 ## Hosted Dev Environment
 
@@ -71,8 +80,9 @@ DB/Redis/MinIO, dedicated Cloudflare tunnel, **never** prod data (real wiki/camp
 **fake** users/chat). It tracks the `dev` branch. Full runbook:
 [docs/deployment/hosted-dev-environment.md](docs/deployment/hosted-dev-environment.md).
 
-**Access = dual Discord role gate (app-level).** The Cloudflare Access edge gate on the dev website
-was removed 2026-06-29; only the raw DB/object-store endpoints remain CF-Access gated. To onboard a
+**Access = dual Discord role gate (app-level).** The Cloudflare Access edge gate on `dev.falloutchatmod.com`
+and `dev-hud` was removed 2026-06-29; app auth protects the site. Only the raw DB/object-store
+endpoints remain CF-Access gated. To onboard a
 developer (maintainer steps):
 
 1. Assign the **`developer`** role in the **prod** Discord server.
@@ -89,8 +99,8 @@ they run the local stack and PR against `dev`.
 end-users run a packaged "golden" QA build against dev, gated by a dev-guild **`QA`** Discord
 role only — **no Cloudflare Access email, no dual `developer` role**. A version-string
 golden-build lock (`QA_BUILD_LOCK` + `QA_ACTIVE_VERSION`, enforced via `x-client-version` →
-HTTP 426 / WS 4003) retires stale builds; the overlay paths are CF-Access **bypassed** while
-the dashboard stays SSO-gated. The QA build channel is `npm run dist:qa` (Linux) / the
+HTTP 426 / WS 4003) retires stale builds; QA testers reach the dev website and `/link` page
+through app auth, with no CF Access email gate. The QA build channel is `npm run dist:qa` (Linux) / the
 **Build Windows QA** Actions workflow (self-hosted runner). Full build/bless/distribute
 runbook: [docs/deployment/qa-builds.md](docs/deployment/qa-builds.md).
 
@@ -164,6 +174,17 @@ These are non-negotiable. Each links to the doc with the full context.
   **No auto-update.** Update awareness is a passive OS notification; the latest version arrives over
   the chat WebSocket (`app:update-available`); no dedicated update network call — Nexus Mods ToS
   compliance. `electron-updater`, `build.publish`, `latest*.yml`, and `app-update.yml` are removed.
+  **Re-running the installer is now the update/patch path** — and it is a full, idempotent
+  fast-forward: a user many versions behind (e.g. 5 releases old) lands on latest in one run.
+  Installers always fetch the newest version (CLI → `GET /api/releases`, ZIPs → bundled artifact);
+  there is **no minimum-version / forced-upgrade gate** (old clients always patch forward); Windows
+  NSIS overwrites in place (`installer.nsh` taskkills the running app) and Linux writes to a stable
+  version-agnostic path; the userData-rename + keybind-reset startup migrations are any-to-any
+  idempotent; `userData` is outside the package so settings survive. The CLI installers detect the
+  installed version and **prompt reinstall-or-cancel when already current** (Windows reads the exe's
+  `ProductVersion`; Linux reads the `$XDG_DATA_HOME/FalloutChatMod/.fcm-version` marker). The Linux
+  ZIP now also ships a `.deb` (apt-managed alternative to the AppImage). See
+  [docs/overlay/auto-update.md](docs/overlay/auto-update.md) → "Updating / patching from an old version".
 - **Overlay releases are FAIL-CLOSED — never ship an untested or unscanned build (HARD RULE).** Before
   ANY publishing (`POST /admin/releases`, Nexus), the build MUST pass BOTH gates, in order:
   (1) **smoke test** — `Packaging/smoke-test.ps1 -Version X.Y.Z` launches the packaged app and asserts
@@ -195,6 +216,24 @@ These are non-negotiable. Each links to the doc with the full context.
   Dev features (e.g. wiki/camp) are LOCAL-ONLY until explicitly deployed — they don't exist on the
   prod overlay, so test them only on the dev surface (dev overlay → 7177, or the dashboard 7075→7177).
 
+## Nexus release state — Windows publication is support-gated
+
+The Windows installer is **code-signed** (Azure Trusted Signing, `CN=Lance Strickland`) — which
+removed the SmartScreen "unknown publisher" warning on the **website** download. Nexus may still
+quarantine installer `.exe` files, however, so the release path uploads Windows ZIPs for support
+review while also serving the signed installer from the website and VirusTotal.
+
+When Nexus support needs to review a Windows build, use
+`Packaging/publish-nexus-release.ps1 -PublishWindowsForReview`. Standard and configured portable
+Windows ZIPs upload as Main files with `archive_existing_file: false`. Approved Windows installers
+remain in Main for the owner to manage manually; release automation must never archive or remove
+them. Preserve existing Nexus file descriptions. The HUD is Main and the primary download when
+present. Linux/HUD replacement calls archive previous versions; no file belongs in Old files. See
+[docs/deployment/releasing-the-overlay.md](docs/deployment/releasing-the-overlay.md) → Step 7.
+
+> Aside: Nexus's `Compress-Archive`-zip → "scan failed" issue was a *separate, fixed* problem (the
+> Linux release path now zips with the `zip` tool, see #242).
+
 ## Conventions
 
 | Layer | Convention | Example |
@@ -207,6 +246,7 @@ These are non-negotiable. Each links to the doc with the full context.
 | JSON keys | `camelCase` | all API payloads |
 | Socket events | `domain:action` | `chat:message`, `room:join` |
 | Dates | ISO 8601 UTC strings | always |
+| Discord embeds | brand color **`#F1C40F`** (RGB 241,196,15) | every embed uses `BRAND_EMBED_COLOR` |
 
 Backend layer order is `Controllers → Services → Middleware`; errors use RFC 7807 Problem Details,
 success responses wrap in `{ "data": { … } }`. Details in [docs/backend/README.md](docs/backend/README.md).

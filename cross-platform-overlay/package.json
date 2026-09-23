@@ -89,6 +89,7 @@
       "local-bridge-files.js",
       "local-bridge-paths.js",
       "local-bridge-relay.js",
+      "native-bridge-prototype.js",
       "preload.js",
       "package.json",
       "dist-renderer/**/*",

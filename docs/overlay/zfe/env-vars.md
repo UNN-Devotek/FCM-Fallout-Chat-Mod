@@ -25,8 +25,7 @@ native chat endpoint or repair its authentication.
 
 Older FCM notes mention `ZFE_ENABLE_TEXT_CHAT_LIVE_BACKEND`, `ZFE_TEXT_CHAT_ENDPOINT`, and
 `ZFE_DISABLE_TEXT_CHAT_LIVE_BACKEND` for the retired generic socket transport. Do not add them
-for the modern widget or infer that they configure `chat.v1`. Preserve historical details in
-[the old socket guide](realtime-socket.md), not in current installation steps.
+for the modern widget or infer that they configure `chat.v1`.
 
 For a temporary PowerShell log-directory override:
 

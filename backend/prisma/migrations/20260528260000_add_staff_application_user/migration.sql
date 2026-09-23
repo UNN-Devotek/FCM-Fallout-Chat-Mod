@@ -1,5 +1,5 @@
 -- Add nullable user_id to staff_applications so a logged-in user can review their
--- own application from the dashboard self-service view. Idempotent per CLAUDE.md.
+-- own application from the dashboard self-service view. Idempotent per AGENTS.md.
 
 ALTER TABLE "staff_applications" ADD COLUMN IF NOT EXISTS "user_id" UUID;
 

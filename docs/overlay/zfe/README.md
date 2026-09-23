@@ -477,20 +477,8 @@ fields: the `FcmDiagnostics` helper/tests do not establish that every planned su
 into the renderer. Repeated content alone is not evidence of duplicate delivery. Keep diagnostics
 free of raw tokens, chat bodies, player names, and stable account IDs.
 
-## Historical material
-
-The generic remote-data feed and TCP/WebSocket HUD bridge are retired implementation references,
-not installation instructions for FCMChatWidget. Their legacy line protocol named `FCMHUD/1` is
-separate from the **active** `FCMHUD/1;...` metadata envelope in native-chat `targetUserId`.
-
-- [Remote-data pattern](fcmbridge-data-pattern.md), [socket transport](realtime-socket.md),
-  [two-way socket patch](two-way-chat-implemented.md), [old Proton proxy](linux-proton-relay-proxy.md).
-- [Native protocol snapshot](native-chat-relay/protocol-spec.md) and
-  [older send investigation](ingame-send-investigation-2026-08-06.md).
-- [Widget build history](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD-HISTORY.md).
-
-Keep dated observations as history. New behavior belongs in the maintained guides and must
-state separately what is in source, built locally, tested in-game, installed, and published.
+The generic remote-data feed and TCP/WebSocket HUD bridge have been retired. The
+active `FCMHUD/1;...` metadata envelope in native-chat `targetUserId` remains in use.
 
 ## Retained Server history compatibility
 

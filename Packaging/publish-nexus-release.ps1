@@ -4,8 +4,8 @@
     to Nexus Mods, attaching each artifact to its stable mod file.
 
 .DESCRIPTION
-    Thin wrapper over publish-nexus.ps1 that knows the per-platform mod-file ids
-    and descriptions. Finds the version's artifacts in the Electron build output
+    Thin wrapper over publish-nexus.ps1 that knows the per-platform mod-file ids.
+    Existing descriptions are read from Nexus before each upload. Finds the version's artifacts in the Electron build output
     (cross-platform-overlay/dist-electron), publishes the Linux desktop package
     and the optional HUD package to Nexus, then uploads the Windows .exe to
     VirusTotal and pushes the permalink to the backend so
@@ -22,11 +22,10 @@
          /app/downloads/electron/ on the VPS (see DEPLOY.md for the exact commands).
       5. Size verify: confirm the bytes served by the VPS match the local build artifact size.
       6. Register: POST /admin/releases {version, downloadUrl (Windows ZIP), releaseNotes}.
-      7. Nexus: THIS SCRIPT publishes the Linux AppImage ZIP and Linux .deb ZIP as
-         MAIN files and the HUD ZIP as a MAIN file (each replacing its previous
-         version) via publish-nexus.ps1. Pass -PublishWindowsForReview to upload a
-         new Windows ZIP as a MAIN file while preserving the existing Windows file
-         for Nexus support review.
+      7. Nexus: THIS SCRIPT publishes Linux and HUD ZIPs as MAIN files, archiving
+         their previous versions. HUD is the primary download. Pass
+         -PublishWindowsForReview to upload standard and configured portable
+         Windows ZIPs as MAIN files without archiving existing Windows versions.
 
     IMPORTANT -- ASCII-ONLY SCRIPT RULE:
       Keep this file ASCII-only. Windows PowerShell 5.1 run via the `-File` flag
@@ -38,6 +37,7 @@
     Env vars (set as Windows USER env vars):
       NEXUS_API_KEY               personal API key (apikey header)
       NEXUS_MOD_FILE_ID_WINDOWS stable mod-file id for the Windows file
+      NEXUS_MOD_FILE_ID_WINDOWS_PORTABLE stable mod-file id for portable Windows
       NEXUS_MOD_FILE_ID_LINUX stable mod-file id for the Linux AppImage file
       NEXUS_MOD_FILE_ID_LINUX_DEB stable mod-file id for the Linux .deb file
       NEXUS_MOD_FILE_ID_HUD stable mod-file id for the optional HUD file
@@ -50,30 +50,19 @@
 .PARAMETER DryRun    print planned calls (and test the zip step) without uploading
 .PARAMETER PublishWindowsForReview
     Upload the Windows ZIP as a second MAIN file alongside the existing Windows
-    file without archiving it. Use this when submitting a new Windows build to
-    Nexus support for approval; remove the old file manually after approval.
+    file without archiving it. If the portable file id is configured, upload its
+    ZIP the same way. Approved Windows versions remain in MAIN for manual handling.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)] [string]$Version,
     [Parameter(Mandatory = $true)] [string]$BridgeZip,
     [string]$DistDir = "",
-    # Release notes for this version -- prepended to each Nexus file description as
-    # a "What's new in vX.Y.Z" block so the changelog is visible on the file page.
-    [string]$ReleaseNotes = "",
     [string]$HudModDir = "",
     [switch]$DryRun,
     [switch]$PublishWindowsForReview
 )
 $ErrorActionPreference = "Stop"
-# Release notes may arrive via the FCM_RELEASE_NOTES env var instead of the
-# -ReleaseNotes parameter. The orchestrator (release.ps1) uses the env var because
-# passing a multi-line, quoted notes string as a child-process -File argument gets
-# re-parsed on the command line and corrupts later args (a ':' in the notes was
-# read as a PSDrive). An env var carries arbitrary content with no such parsing.
-if (-not $ReleaseNotes -and $env:FCM_RELEASE_NOTES) { $ReleaseNotes = $env:FCM_RELEASE_NOTES }
-# "What's new" block (blank if no notes supplied).
-$notesBlock = if ($ReleaseNotes.Trim()) { "What's new in v${Version}:`n$($ReleaseNotes.Trim())`n`n" } else { "" }
 $repoRoot  = Split-Path $PSScriptRoot -Parent
 $overlayDir = Join-Path $repoRoot "cross-platform-overlay"
 if (-not $DistDir) { $DistDir = Join-Path $overlayDir "dist-electron" }
@@ -86,12 +75,14 @@ $hudPackage = Join-Path $HudModDir "package.py"
 $nexusPackage = Join-Path $PSScriptRoot "package-nexus-downloads.ps1"
 
 $winGroup   = $env:NEXUS_MOD_FILE_ID_WINDOWS
+$portableGroup = $env:NEXUS_MOD_FILE_ID_WINDOWS_PORTABLE
 $linuxGroup = $env:NEXUS_MOD_FILE_ID_LINUX
 $linuxDebGroup = $env:NEXUS_MOD_FILE_ID_LINUX_DEB
 $hudGroup   = $env:NEXUS_MOD_FILE_ID_HUD
 $publishWindows = [bool]$PublishWindowsForReview
 # Fall back to the persistent USER-scope value (process env may not carry it).
 if (-not $winGroup)   { $winGroup   = [Environment]::GetEnvironmentVariable('NEXUS_MOD_FILE_ID_WINDOWS','User') }
+if (-not $portableGroup) { $portableGroup = [Environment]::GetEnvironmentVariable('NEXUS_MOD_FILE_ID_WINDOWS_PORTABLE','User') }
 if (-not $linuxGroup) { $linuxGroup = [Environment]::GetEnvironmentVariable('NEXUS_MOD_FILE_ID_LINUX','User') }
 if (-not $linuxDebGroup) { $linuxDebGroup = [Environment]::GetEnvironmentVariable('NEXUS_MOD_FILE_ID_LINUX_DEB','User') }
 if (-not $hudGroup)   { $hudGroup   = [Environment]::GetEnvironmentVariable('NEXUS_MOD_FILE_ID_HUD','User') }
@@ -182,39 +173,6 @@ $winZip   = "Fallout Chat Mod Setup $Version (Windows).zip"
 $linuxAppZip = "Fallout Chat Mod $Version (Linux AppImage).zip"
 $linuxDebZip = "Fallout Chat Mod $Version (Linux .deb).zip"
 
-# Windows file: install instructions + CLI option (installer is code-signed; no AV disclaimer).
-$winDesc = $notesBlock + @"
-Extract this ZIP to a normal folder, then run "Fallout Chat Mod Setup <version>.exe".
-See INSTALL-WINDOWS-NEXUS.txt inside the archive. Updates are available from this
-mod's Nexus Files tab. The installer preserves existing account data and settings.
-"@
-$linuxAppDesc = $notesBlock + @"
-Extract this ZIP, make the AppImage executable, and run it. See
-INSTALL-LINUX-APPIMAGE-NEXUS.txt inside the archive for KDE Wayland, Hyprland,
-X11, FUSE, update, and compositor guidance.
-
-KDE Plasma (Wayland) users: run Fallout 76 in WINDOWED mode (not Borderless) and set your taskbar/panel to Auto-Hide - that's the reliable setup. For a borderless look, use the Steam launch option PROTON_NO_WM_DECORATION=1 %command% instead. Do NOT add a game-side "Fullscreen = No" KWin rule (it breaks the loading screen / in-game UI).
-"@
-$linuxDebDesc = $notesBlock + @"
-This is the apt/dpkg package. Install the downloaded file with:
-    sudo apt install ./Fallout Chat Mod-$Version.deb
-
-See INSTALL-LINUX-DEB-NEXUS.txt inside the archive. The portable AppImage is a
-separate file on this mod's Nexus Files tab.
-"@
-$hudDesc = $notesBlock + @"
-OPTIONAL IN-GAME HUD MOD: FCM HUD Mod v$hudVersion
-
-This is a separate, opt-in Fallout 76 HUD install. It is not required for the
-desktop overlay and must be installed at the user's discretion. The ZIP contains
-the FCMChatWidget BA2, its runtime INI files, an append-only HUDModLoader snippet,
-the version manifest, and INSTALL.txt.
-
-The archive is production-stamped and must not be used with the hosted-dev environment.
-Follow INSTALL.txt and append the loader entry to the existing Data/hudmodloader.ini;
-do not replace that file. xScal configuration is manual in the Nexus package.
-"@
-
 # Per-platform extra files to bundle into the Nexus zip alongside the installer.
 # Result: Nexus zip = installer + same instruction files as the website zip.
 $winInclude   = @(
@@ -229,18 +187,34 @@ $linuxDebInclude = @(
 )
 
 $platforms = @(
-    @{ Name = "Linux AppImage"; File = $linuxAppNexusZip; Zip = ""; Group = $linuxGroup; Desc = $linuxAppDesc; Include = @(); NexusVersion = $Version; Category = "main"; ArchiveExisting = $true },
-    @{ Name = "Linux .deb"; File = $linuxDebNexusZip; Zip = ""; Group = $linuxDebGroup; Desc = $linuxDebDesc; Include = @(); NexusVersion = $Version; Category = "optional"; ArchiveExisting = $true },
+    @{ Name = "Linux AppImage"; File = $linuxAppNexusZip; Zip = ""; Group = $linuxGroup; Include = @(); NexusVersion = $Version; Category = "main"; ArchiveExisting = $true; Primary = $false },
+    @{ Name = "Linux .deb"; File = $linuxDebNexusZip; Zip = ""; Group = $linuxDebGroup; Include = @(); NexusVersion = $Version; Category = "main"; ArchiveExisting = $true; Primary = $false },
     # The HUD has its own Main Files entry; installation remains opt-in.
     # Its file version follows the widget version, not the desktop overlay version.
-    @{ Name = "HUD"; File = $hudNexusZip; Zip = ""; Group = $hudGroup; Desc = $hudDesc; Include = @(); NexusVersion = $hudVersion; Category = "optional"; ArchiveExisting = $true }
+    @{ Name = "HUD"; File = $hudNexusZip; Zip = ""; Group = $hudGroup; Include = @(); NexusVersion = $hudVersion; Category = "main"; ArchiveExisting = $true; Primary = $true }
 )
 if ($publishWindows) {
-    # Support-review upload creates a second live Windows file alongside the existing one.
-    # The old file is removed manually only after Nexus support approves the new file.
+    # Support-review uploads keep all approved Windows versions in Main. Only the
+    # operator changes their Nexus categories; automation never archives them.
     $platforms = @(
-        @{ Name = "Windows (support review)"; File = $winNexusZip; Zip = ""; Group = $winGroup; Desc = $winDesc; Include = @(); NexusVersion = $Version; Category = "main"; ArchiveExisting = $false }
+        @{ Name = "Windows (support review)"; File = $winNexusZip; Zip = ""; Group = $winGroup; Include = @(); NexusVersion = $Version; Category = "main"; ArchiveExisting = $false; Primary = $false }
     ) + $platforms
+    if ($portableGroup) {
+        $platforms = @(
+            @{ Name = "Windows portable (support review)"; File = $portableNexusZip; Zip = ""; Group = $portableGroup; Include = @(); NexusVersion = $Version; Category = "main"; ArchiveExisting = $false; Primary = $false }
+        ) + $platforms
+    } else {
+        Write-Warning "NEXUS_MOD_FILE_ID_WINDOWS_PORTABLE is unset; portable Nexus upload skipped."
+    }
+}
+
+if (-not $DryRun) {
+    # Validate every managed group before the first Nexus upload, so an Old
+    # files entry or missing description cannot leave a partial Nexus release.
+    foreach ($p in $platforms) {
+        & $nexus -FilePath $p.File -Version $p.NexusVersion -ModFileId $p.Group -FileCategory $p.Category -ArchiveExisting $p.ArchiveExisting -PrimaryDownload $p.Primary -ValidateMetadataOnly
+        if ($LASTEXITCODE -ne 0) { Write-Error "[$($p.Name)] Nexus metadata preflight failed (exit $LASTEXITCODE)"; exit 1 }
+    }
 }
 
 foreach ($p in $platforms) {
@@ -251,16 +225,16 @@ foreach ($p in $platforms) {
         Version       = $p.NexusVersion
         ModFileId     = $p.Group
         ZipAs         = $p.Zip
-        Description   = $p.Desc
         IncludeFiles  = $p.Include
         FileCategory  = $p.Category
         ArchiveExisting = $p.ArchiveExisting
+        PrimaryDownload = $p.Primary
     }
     if ($DryRun) { $args.DryRun = $true }
     & $nexus @args
     if ($LASTEXITCODE -ne 0) { Write-Error "[$($p.Name)] publish failed (exit $LASTEXITCODE)"; exit 1 }
 }
-$windowsSummary = if ($publishWindows) { " + Windows support-review upload (old file preserved)" } else { "" }
+$windowsSummary = if ($publishWindows) { " + Windows support-review uploads (existing files preserved)" } else { "" }
 Write-Host "==== Nexus publish complete for Linux AppImage + .deb v$Version + HUD v$hudVersion$windowsSummary ===="
 
 # -- VirusTotal upload + backend permalink update --------------------------------

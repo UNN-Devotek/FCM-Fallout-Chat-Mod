@@ -77,7 +77,7 @@ npm test
 - Error responses follow RFC 7807 Problem Details: `{ type, title, status, detail }`.
 - Successful responses are wrapped: `{ "data": { ... } }`.
 - New admin endpoints get both a Discord-OAuth-gated route and a debug mirror under `/admin/debug/*` gated by `X-Admin-API-Key`.
-- Prisma migrations must be **idempotent** — use `IF NOT EXISTS` / `ON CONFLICT DO NOTHING`. See the note in `CLAUDE.md`.
+- Prisma migrations must be **idempotent** — use `IF NOT EXISTS` / `ON CONFLICT DO NOTHING`. See the note in `AGENTS.md`.
 
 ### React (Dashboard + Overlay Renderer)
 - Components use functional style with hooks. No class components.

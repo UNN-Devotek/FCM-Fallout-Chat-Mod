@@ -87,6 +87,12 @@ const prismaStub = require('./setup/prisma-stub').default;
 
 
 const originalFetch = global.fetch;
+
+test('retired HUD feed route returns 404', async () => {
+  const response = await request(app).get('/api/game/hud-feed');
+  expect(response.status).toBe(404);
+});
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockBrowserSession = { steamUser: { steamId: '76561198000000001', userId: 'stale' } };

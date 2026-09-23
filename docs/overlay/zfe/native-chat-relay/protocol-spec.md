@@ -18,13 +18,9 @@
 > See [ZFE version history](#zfe-version-history) and [Transport / TLS](#transport--tls--chatv1-is-not-schannel)
 > below.
 >
-> **This is NOT the existing FCMHUD/1 bridge.** FCM's shipping in-game chat is a *bespoke*
-> line protocol (`color~channel~user~content` + M7 `HELLO/SEND/CHAN` verbs) riding ZFE's
-> generic socket — see [../realtime-socket.md](../realtime-socket.md) and
-> [../two-way-chat-implemented.md](../two-way-chat-implemented.md). The protocol below is a
-> **standardized, relay-agnostic JSON contract** that ZFE itself defines and drives; a
-> compliant relay needs none of FCM's custom SWF/wire code. See
-> [README.md](README.md#delivery-and-duplicate-protection) for the side-by-side.
+> The old generic-socket FCMHUD/1 line bridge has been retired. The protocol below
+> is the current native JSON contract. The `FCMHUD/1;...` metadata envelope used
+> within it remains active; it is distinct from the retired line transport.
 
 ZFE is **relay agnostic**. A server can be written in any language as long as it speaks the
 JSON-over-WebSocket contract below.
@@ -636,8 +632,6 @@ Redis, or any other backend, as long as the WebSocket JSON contract stays compat
 
 - [README.md](README.md) — index for this sub-topic, and how it differs from FCMHUD/1
 - [fcm-integration.md](fcm-integration.md) — how the FCM relay would implement this contract
-- [../realtime-socket.md](../realtime-socket.md) — the existing bespoke FCMHUD/1 push bridge
-- [../two-way-chat-implemented.md](../two-way-chat-implemented.md) — M7 in-game send over FCMHUD/1
 
 
 ### History completion (widget v2.10.93)

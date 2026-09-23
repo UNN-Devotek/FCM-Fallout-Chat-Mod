@@ -73,7 +73,6 @@ UI, but the desktop overlay must not inherit that access.
 
 - [FCM integration](native-chat-relay/fcm-integration.md): actual relay operations, controls, and permissions.
 - [Scaleform engineering](scaleform-ui-guide.md): rendering/input/artifact evidence.
-- [API snapshot](api-reference.md): historical general/remote-data APIs, not a complete current contract.
 - [Environment notes](env-vars.md), [logs and troubleshooting](logs-troubleshooting.md): diagnostic scope.
 - [xScal callback source](https://github.com/DCHoaxer/xScal/blob/main/src/api/scaleform_callbacks.cpp):
   generic callback implementation, separate from the chat interface.

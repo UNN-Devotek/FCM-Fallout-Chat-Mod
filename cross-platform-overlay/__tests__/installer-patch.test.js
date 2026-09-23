@@ -215,16 +215,18 @@ describe('Linux smart desktop detection is documented in every install surface',
     });
   }
 
-  it('website HUD instructions are directly below the top HUD download', () => {
+  it('website HUD instructions follow the visible HUD download', () => {
     const page = readRepo('admin-dashboard/src/features/auth/LandingPage.tsx');
-    const hud = page.indexOf('Optional in-game HUD mod — keep the download visible at the top');
-    const instructions = page.indexOf('<HudManualInstall', hud);
+    const hud = page.indexOf('VISIBLE IN-GAME HUD — OPTIONAL');
+    const download = page.indexOf('↓ FCM HUD Mod ZIP', hud);
+    const instructions = page.indexOf('<HudManualInstall', download);
     const manual = readRepo('admin-dashboard/src/features/auth/HudManualInstall.tsx');
     expect(manual).toContain('STEP 1 — PREPARE');
     expect(manual).toContain('STEP 6 — VERIFY AND LINK');
-    const windows = page.indexOf('{/* ── Windows ─────────────────────────────────────────────────── */}');
+    const general = page.indexOf('GENERAL NOTES', instructions);
     expect(hud).toBeGreaterThanOrEqual(0);
-    expect(instructions).toBeGreaterThan(hud);
-    expect(instructions).toBeLessThan(windows);
+    expect(download).toBeGreaterThan(hud);
+    expect(instructions).toBeGreaterThan(download);
+    expect(general).toBeGreaterThan(instructions);
   });
 });

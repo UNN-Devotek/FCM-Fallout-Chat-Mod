@@ -1438,7 +1438,7 @@ class FCMBridge extends MovieClip {
     /** Probe one object for the ZFE bridge, modern-first. Per the ZFE modder guide,
      *  `ZFECodeObj` must be probed AS A PROPERTY on each scope too — it is the
      *  modern-API-backed fallback ZFE exposes "when the active UI root rejects __ZFE"
-     *  (api-reference.md), which is exactly the standalone patched-HUDMenu case. */
+     *  (archived ZFE API snapshot), which is exactly the standalone patched-HUDMenu case. */
     static function probeObj(o:Dynamic):Dynamic {
         if (o == null) return null;
         try { var z:Dynamic = untyped o["__ZFE"];      if (z != null) return z; } catch (e:Dynamic) {}

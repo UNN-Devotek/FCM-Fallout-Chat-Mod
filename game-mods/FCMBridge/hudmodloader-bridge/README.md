@@ -15,8 +15,11 @@ See [INSTALL.template.txt](INSTALL.template.txt) and the maintained
   deferred refresh and lifecycle disposal. No native chat APIs.
 - `FcmBridgeState`: copied observations, source precedence, world generation,
   fast-travel continuity and 30-second expiry.
-- `FcmBridgeExport`: schema-1 bounded snapshot, maximum one write/sec and five-second
-  heartbeat. Separate observation sequence/age prevents stale heartbeat renewal.
+- `FcmBridgeExport`: schema-1 bounded snapshot, maximum one write/sec. xScal
+  coalesces unchanged-roster observations to a five-second export cadence after
+  two startup writes; ZFE keeps its existing observation cadence. Material
+  state/roster/world changes bypass coalescing. Separate observation sequence/age
+  prevents stale heartbeat renewal.
 - `FcmBridgeStorage`: xScal 0.2.17+ named `load(name)` / `save(name, document)`, or validated ZFE
   `zfe-storage-v1` + `writeStorage`. Independent of native chat authentication.
   Modern aliases win before the legacy `BRG_OBJ` fallback; every route must pass
@@ -52,6 +55,19 @@ fixture, not install approval.
 
 `haxe build.hxml -D bridge_dev` compiles Dev; omitting the define compiles Prod.
 Neither command installs or publishes. Do not apply the widget emoji normalizer.
+
+For a native lag investigation only, add `--diagnostic` to `package.py`. This
+compiles a separate test candidate with `bridge_perf`; do not distribute it as a
+release. Its existing export `build` field adds `p`, `e`, and `s` last/peak
+millisecond pairs for the two-second world observation pass, JSON encoding,
+and native storage save. Peaks accumulate for the current HUD movie session;
+encode and save samples appear in the following export.
+For example, `0.2.8-c5-perf:p4/18:e0/2:s1/27` means the latest/peak save took
+1/27 ms. Values are capped at 9999 ms; no names, raw identifiers, or extra
+storage writes are included. The regular build keeps the exact `0.2.8` marker.
+Compare the same game/world with the bridge absent and present while keeping
+xScal, HUDModLoader, and other mods unchanged. Ruffle cannot prove native
+frame timing; keep this candidate native-unverified until an in-game test.
 
 The complete Ruffle suite includes storage-based combined lifecycle tests and an
 isolated host loading the exact packaged child without production helpers. It
@@ -94,6 +110,11 @@ claim the legacy HUDMenu-wide registration slot, so Improved HUD can continue us
 `fcmserverbridge-prod`. Older xScal builds retain the legacy adapter for standalone
 compatibility, but 0.2.17+ is required when another HUD child also uses modStorage.
 
-Prior native-network implementation and E1014 investigations:
-[NATIVE-NETWORK-HISTORY.md](NATIVE-NETWORK-HISTORY.md). Previous acceptance never
-certifies this storage-based candidate.
+The local `c5` performance candidate leaves two-second roster polling intact but
+coalesces xScal exports when only the observation timestamp/sequence changes.
+It still sends two advancing startup snapshots and promptly exports roster,
+world, active/holding/inactive, and self-name changes. The candidate is not a
+release or native-accepted fix; compare its save timing and perceived hitches
+against the earlier diagnostic build before promoting it.
+
+Previous native-network acceptance never certifies this storage-based candidate.

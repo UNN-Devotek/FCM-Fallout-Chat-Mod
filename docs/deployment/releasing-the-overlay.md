@@ -302,7 +302,7 @@ Produces (in `cross-platform-overlay/dist-electron/`):
   It never replaces the user's `Data/hudmodloader.ini`.
 
 The overlay ZIPs go to the website and Nexus Mods. The HUD ZIP goes to the website, the
-environment's Discord Updates announcement, and its separate optional Nexus file group. It is
+environment's Discord Updates announcement, and its separate Nexus Main file group. It is
 an explicit opt-in mod and is additional to the raw files — do not replace the raw files with it.
 
 **HARD RULE — Nexus HUD ZIPs contain no executables or scripts.** The website HUD ZIP may
@@ -436,7 +436,7 @@ Set `announce: false` only when no Discord post should be sent.
 ### Step 6 — Nexus publish
 
 ```powershell
-.\Packaging\publish-nexus-release.ps1 -Version X.Y.Z [-ReleaseNotes "..."]
+.\Packaging\publish-nexus-release.ps1 -Version X.Y.Z
 ```
 
 Nexus may quarantine Windows `.exe` uploads. The canonical `release.ps1` path
@@ -447,24 +447,27 @@ alongside the existing live Windows file for support review:
 .\Packaging\publish-nexus-release.ps1 -Version X.Y.Z -PublishWindowsForReview
 ```
 
-The review path passes `archive_existing_file: false`, so both Windows files remain available.
-After support approves the new file, remove the old Windows file manually in the Nexus Files tab.
+The review path passes `archive_existing_file: false`, so existing approved Windows installers
+remain in **Main files**. This applies to both standard and portable Windows installers. The
+portable ZIP is also uploaded when `NEXUS_MOD_FILE_ID_WINDOWS_PORTABLE` is configured. Do not
+archive or remove approved Windows files in this release process; the owner manages them manually.
 Use `-SkipWindowsNexus` on `release.ps1` only when the Windows support-review
 upload is intentionally deferred. The standalone wrapper still requires the
 explicit `-PublishWindowsForReview` switch.
 
 This script:
-1. Builds the executable-free Nexus-specific HUD ZIP, then calls `Packaging/publish-nexus.ps1` for the Linux AppImage ZIP as `main`, and the Linux `.deb` ZIP plus Nexus HUD ZIP as `optional`; these normal replacement paths archive their previous versions
-2. Calls `publish-nexus.ps1` for the Windows ZIP as `main` with `archive_existing_file: false` when the canonical release path enables the support-review upload
-3. Implements the 6-step Nexus v3 Upload API: open multipart session → upload chunks to S3 → complete S3 multipart → finalise → poll for `available` state → attach the new file with the requested archive behavior
+1. Builds the executable-free Nexus-specific HUD ZIP, then uploads the Linux AppImage, Linux `.deb`, and HUD ZIPs as **Main files**. The HUD is the primary download. Previous Linux/HUD versions are archived.
+2. Uploads the standard Windows ZIP, and the portable ZIP when its file ID is configured, as **Main files** with `archive_existing_file: false`.
+3. Reads each existing Nexus file description and copies it unchanged; missing descriptions block the upload. Then implements the 6-step Nexus v3 Upload API: open multipart session → upload chunks to S3 → complete S3 multipart → finalise → poll for `available` state → attach the new file with the requested archive behavior.
 4. Uploads the Windows `.exe` to VirusTotal and pushes the permalink to `/admin/virustotal-url`
 
 Required env vars (set as Windows USER env vars):
 - `NEXUS_API_KEY`
 - `NEXUS_MOD_FILE_ID_WINDOWS` — required by the canonical release path unless `-SkipWindowsNexus` is used; required by the standalone wrapper only with `-PublishWindowsForReview`
+- `NEXUS_MOD_FILE_ID_WINDOWS_PORTABLE` — optional stable ID for the portable Windows Main file; when set, its new version is uploaded without archiving approved versions
 - `NEXUS_MOD_FILE_ID_LINUX`
 - `NEXUS_MOD_FILE_ID_LINUX_DEB` — the separate Linux `.deb` mod-file ID
-- `NEXUS_MOD_FILE_ID_HUD` — the separate optional HUD mod-file ID on the same Nexus mod page
+- `NEXUS_MOD_FILE_ID_HUD` — the separate HUD Main file ID on the same Nexus mod page
 - `VT_API_KEY`
 - `PROD_ADMIN_RELEASE_TOKEN`
 
@@ -474,15 +477,16 @@ immediately before publishing with no executable or script entries.
 Before Nexus upload it also runs `package-nexus-downloads.ps1` with the validated PROD bridge ZIP.
 The resulting Windows installer, Windows portable, AppImage, and `.deb` archives each contain the
 optional bridge in `Optional FCM Bridge/`; none auto-installs it. The portable Nexus archive is
-generated even before its first stable Nexus mod-file ID is registered.
-For 1.4.1, the portable archive was uploaded manually as a separate Nexus Main file.
-Record its stable v3 mod-file ID and wire it into the release wrapper before relying
-on automation for a subsequent portable update; archive generation alone is not upload.
+generated even when its stable Nexus mod-file ID is not configured. For 1.4.1, the portable
+archive was uploaded manually as a separate Nexus Main file. Set its stable v3 ID in
+`NEXUS_MOD_FILE_ID_WINDOWS_PORTABLE` to include it in subsequent automated uploads.
 Its Nexus file version is the widget version read from `FCMChatWidget.hx`, not the desktop
 overlay version. Create the HUD file in the Nexus Files tab and set its stable v3 ID in
 `NEXUS_MOD_FILE_ID_HUD`; the wrapper then replaces the previous HUD version on each release. The
-low-level uploader defaults to preserving the previous file; normal Linux, `.deb`, and HUD
-replacements explicitly enable archiving.
+low-level uploader defaults to preserving the previous file; Linux, `.deb`, and HUD
+replacements explicitly enable archiving. The wrapper checks every configured file group before
+upload and stops if it finds an **Old files** entry or cannot read an existing description.
+Move Old files entries to Archived manually in Nexus; the upload API does not recategorize them.
 
 ---
 

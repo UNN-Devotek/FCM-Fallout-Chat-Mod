@@ -1,0 +1,47 @@
+FCM NATIVE TRANSPORT PROTOTYPE - LOCAL DEVELOPMENT ONLY
+
+This is an experiment, not a release or a production-compatible bridge.
+It writes one discovery capsule per HUD session, then sends roster observations
+through xScal's existing chat transport. Native hitch testing is still required.
+
+Prerequisites
+1. xScal 0.2.17 or newer and HUDModLoader. Keep Improved HUD installed.
+2. An existing native chat identity linked to the SAME local development account
+   used by the development overlay. This prototype does not create or link one.
+3. The local backend and development overlay from this source change, each
+   started with FCM_NATIVE_BRIDGE_PROTOTYPE=1. The flag is rejected by production
+   backends and packaged overlays. Configure the backend for local development.
+4. Close Fallout 76. Back up xscal.ini, the existing FCMServerBridge.ba2,
+   Data/hudmodloader.ini and Fallout76Custom.ini before changing them.
+
+Install
+1. Extract this ZIP outside the game folder.
+2. Copy only Data/FCMServerBridge.ba2 into the game's Data folder.
+3. Keep FCMServerBridge exactly once in Data/hudmodloader.ini and
+   FCMServerBridge.ba2 exactly once in Fallout76Custom.ini's existing archive
+   list. Preserve every unrelated entry, including Improved HUD and HUDModLoader.
+4. Do not load FCMChatWidget, a legacy bridge, or ZFE alongside this prototype.
+5. In the existing [Chat] section of xscal.ini beside Fallout76.exe, set
+   enabled=true and relayEndpoint=ws://127.0.0.1:7177/relay.
+   Preserve unrelated settings. Never point this prototype at production.
+6. Start the local backend, sign into the development overlay, then launch the
+   game. Enter a public world. A fresh linked native session must send two
+   advancing observations before the overlay can pair and show Server chat.
+
+Test
+Confirm Data/modsdata/fcmserverbridge-dev.json is a native-prototype-1 capsule.
+Its modification time should stop changing while observations continue over
+the native transport. Do not share raw roster or authentication diagnostics.
+Check Improved HUD's F10, room continuity, a genuine world hop, Main Menu,
+game exit, overlay reconnect, and exactly-once messages with a second client.
+Record frame hitches separately; this removes recurring modStorage saves but
+does not prove native transport calls cannot stall.
+
+Limits and recovery
+Keep the clocks synchronized. Snapshots delayed by 30 seconds are rejected.
+The prototype's session rendezvous is memory-only and limited to 64 sessions
+per backend process; restart the local backend to reset it. Only one desktop
+may claim a session at a time. No new database schema or production deployment.
+If no Server tab appears, verify the dev native identity is already linked,
+the two accounts match, the game is detected, and both flags are enabled.
+To roll back, close the game and restore the exact backed-up BA2 and xscal.ini.

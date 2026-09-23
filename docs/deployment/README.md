@@ -112,7 +112,6 @@ If the tunnel goes down:
 | [hosted-dev-environment.md](hosted-dev-environment.md) | Isolated hosted dev stack for contributors: sanitizing seed pipeline, secure remote DB/object-store access, dev Discord |
 | [qa-builds.md](qa-builds.md) | QA-tester builds: the dev-guild QA role gate + golden-build lock, and the build / bless / distribute / retire runbook (Linux `dist:qa` + the Build Windows QA runner workflow) |
 | [releasing-the-overlay.md](releasing-the-overlay.md) | Full Electron release pipeline, step by step |
-| [hud-2.10.110-release-notes.md](hud-2.10.110-release-notes.md) | HUD-only 2.10.110 patch notes, auth/Server recovery evidence, artifact hashes, and publication record |
 | [packaging.md](packaging.md) | What each `Packaging/` script does |
 | [code-signing.md](code-signing.md) | AV / SmartScreen situation; Azure Trusted Signing path |
 | [secret-rotation-runbook.md](secret-rotation-runbook.md) | Procedure for rotating a DB credential (consistent backup + minimal downtime) and scrubbing secrets from git history |

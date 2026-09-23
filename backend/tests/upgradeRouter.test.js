@@ -1,11 +1,6 @@
 'use strict';
 /**
- * Tests for websocket/upgradeRouter.ts — the fix for the HUD live socket.
- *
- * Regression: the chat server used `new WebSocketServer({ server, path: '/ws' })`,
- * whose auto-attached upgrade handler aborted EVERY non-'/ws' upgrade with HTTP
- * 400 — killing '/ws/hud' before hudPushWs could claim it. The router runs the
- * chat server in noServer mode and routes upgrades explicitly.
+ * Tests for websocket/upgradeRouter.ts — /ws and /relay routing.
  *
  * Self-contained: real http.Server + ws, no DB/redis/app imports.
  */
@@ -15,8 +10,8 @@ const { WebSocketServer, WebSocket } = require('ws');
 const {
   upgradePathname,
   attachChatUpgradeRouter,
-  HUD_WS_PATH,
   CHAT_WS_PATH,
+  RELAY_WS_PATH,
 } = require('../src/websocket/upgradeRouter');
 
 describe('upgradePathname', () => {
@@ -38,15 +33,14 @@ describe('upgradePathname', () => {
 
   test('path constants', () => {
     expect(CHAT_WS_PATH).toBe('/ws');
-    expect(HUD_WS_PATH).toBe('/ws/hud');
+    expect(RELAY_WS_PATH).toBe('/relay');
   });
 });
 
-describe('attachChatUpgradeRouter — /ws routing + /ws/hud coexistence', () => {
+describe('attachChatUpgradeRouter — /ws routing and unknown-path rejection', () => {
   let server;
   let port;
   let chatWss;
-  let hudWss;
 
   beforeAll((done) => {
     server = http.createServer((_req, res) => {
@@ -64,16 +58,7 @@ describe('attachChatUpgradeRouter — /ws routing + /ws/hud coexistence', () => 
       },
     });
     chatWss.on('connection', (ws) => ws.send('CHAT_OK'));
-    attachChatUpgradeRouter(server, chatWss, { hudPathEnabled: true });
-
-    // Stub hudPushWs: a second upgrade listener claiming ONLY '/ws/hud'.
-    hudWss = new WebSocketServer({ noServer: true });
-    hudWss.on('connection', (ws) => ws.send('HUD_OK'));
-    server.on('upgrade', (req, socket, head) => {
-      if (upgradePathname(req.url) === HUD_WS_PATH) {
-        hudWss.handleUpgrade(req, socket, head, (ws) => hudWss.emit('connection', ws, req));
-      }
-    });
+    attachChatUpgradeRouter(server, chatWss);
 
     server.listen(0, '127.0.0.1', () => {
       port = server.address().port;
@@ -83,7 +68,6 @@ describe('attachChatUpgradeRouter — /ws routing + /ws/hud coexistence', () => 
 
   afterAll((done) => {
     chatWss.close();
-    hudWss.close();
     server.close(done);
   });
 
@@ -108,8 +92,9 @@ describe('attachChatUpgradeRouter — /ws routing + /ws/hud coexistence', () => 
     await expect(connect(CHAT_WS_PATH)).resolves.toEqual({ ok: true, msg: 'CHAT_OK' });
   });
 
-  test('/ws/hud is NOT aborted by the chat router (the regression)', async () => {
-    await expect(connect(HUD_WS_PATH)).resolves.toEqual({ ok: true, msg: 'HUD_OK' });
+  test('/ws/hud is rejected after legacy listener removal', async () => {
+    const r = await connect('/ws/hud');
+    expect(r.ok).toBe(false);
   });
 
   test('unknown /ws/* path is rejected (socket destroyed)', async () => {
@@ -124,13 +109,13 @@ describe('attachChatUpgradeRouter — /ws routing + /ws/hud coexistence', () => 
   });
 });
 
-test('disabled /ws/hud upgrades are rejected by the shared router', () => {
+test('unknown upgrades are rejected by the shared router', () => {
   const server = http.createServer();
   const chatWss = { handleUpgrade: jest.fn() };
   const socket = { destroy: jest.fn() };
 
-  attachChatUpgradeRouter(server, chatWss, { hudPathEnabled: false });
-  server.emit('upgrade', { url: HUD_WS_PATH }, socket, Buffer.alloc(0));
+  attachChatUpgradeRouter(server, chatWss);
+  server.emit('upgrade', { url: '/ws/hud' }, socket, Buffer.alloc(0));
 
   expect(socket.destroy).toHaveBeenCalledTimes(1);
   expect(chatWss.handleUpgrade).not.toHaveBeenCalled();

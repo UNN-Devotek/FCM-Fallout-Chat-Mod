@@ -305,7 +305,7 @@ feature/* ──PR──► dev ──PR──► prod ──► Dokploy auto-de
 These require **admin** on the repo. Replace `OWNER/REPO` with the actual slug. The rules are
 wired (CODEOWNERS, `ci.yml`, `dev` branch) but **branch protection is NOT
 active** on the free-private-repo plan — it cannot be enforced until the repo goes public or moves
-to a paid plan. See `CLAUDE.md` for the OPEN task details.
+to a paid plan. See `AGENTS.md` for the OPEN task details.
 
 ### prod
 

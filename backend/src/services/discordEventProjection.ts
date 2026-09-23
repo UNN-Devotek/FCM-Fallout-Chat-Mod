@@ -226,8 +226,8 @@ export const HUD_EVENT_MAX_LINE_LENGTH = 70;
 const HUD_EVENT_PREFIX = '[EVENTS] [EVENT] FCM: ';
 
 /**
- * Match the existing hudFeedService.zfeSafe rules without importing its
- * Prisma-backed module. The event row is the content field of FCMHUD/1.
+ * Preserve the historical HUD event formatting rules without importing a
+ * retired transport service. The event row format is retained for compatibility.
  */
 export function escapeHudEventText(value: string): string {
   return value

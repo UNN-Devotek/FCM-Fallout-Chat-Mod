@@ -1,3 +1,4 @@
 --class-path ../hudmodloader-chat
+--class-path ..
 --main TestFcmBridgeExport
 --interp

@@ -2,7 +2,7 @@
 
 > **Status: implemented.** Kick, mute, ban, unban, and message deletion work across **all three chat surfaces**
 > (admin dashboard, desktop overlay, and the new in-game chat.v1 `.ba2`) under the **mandatory
-> Discord/Nexus/Steam auth gate** ([auth lockdown](../backend/hud-chat-auth-design.md),
+> Discord/Nexus/Steam auth gate** ([authentication](../backend/auth.md),
 > [chat.v1 gate](../overlay/zfe/native-chat-relay/fcm-integration.md#mandatory-auth-gate--limited-until-a-provider-linked-fcm-account)).
 > The remaining deferred item is per-channel slow mode; it has no FCM primitive and remains unavailable.
 
@@ -71,9 +71,8 @@ With the [mandatory Discord/Nexus/Steam gate](../overlay/zfe/native-chat-relay/f
   **auth/link gate** (device-code link, overlay Discord/Steam login, Nexus OAuth callback). This makes the
   ban **durable** — it survives FCM-account deletion and blocks re-linking the **same** provider to a
   fresh FCM account. The strongest evasion lever (§5).
-- **`identityHash` rekey** (per [auth design §3.3](../backend/hud-chat-auth-design.md)):
-  `HMAC(HUD_IDENTITY_HASH_SECRET, userId)` — account-derived, not name-derived, so it's unforgeable
-  and survives renames. `HudIdentityBlock` (if kept as a fast relay-side check) keys on this.
+- **Historical `HudIdentityBlock` records** remain in the database for moderation
+  history. Current relay moderation uses authenticated account IDs.
 - **No anonymous chat.** A bare chat.v1 `register` is *limited* and can't send until linked — so a
   banned account can't even participate without a fresh provider account (§5).
 
@@ -147,8 +146,8 @@ The lockdown is the main anti-evasion lever — but it's not absolute. Honest pi
   history/reputation).
 - **Residual:** a fresh provider account still works (fundamental — the deny-list keys on *known*
   IDs). Stacked mitigations: device-key revocation, the `register`-limited gate (can't chat before
-  linking), per-IP connection caps, the FO76-name claim + presence cross-check
-  ([auth §6.5](../backend/hud-chat-auth-design.md)), and report-driven review. The
+  linking), per-IP connection caps, the FO76-name claim + presence cross-check,
+  and report-driven review. The
   `worldId`-spoofing hardening (#293/#294) is a related, separate track.
 - **Recommendation:** keep bans account-level (not identity-hash-only), always revoke the device on
   permanent bans, and surface "new account, same FO76 name / same device fingerprint" signals to
@@ -167,8 +166,7 @@ FCMHUD/1) is no longer the moderation key. Two options:
   in-relay deny-list cache, refreshed from the account flags — only if profiling shows the per-op
   account lookup is hot.
 
-Either way, the name-derived `HUD_IDENTITY_SECRET` is retired with the FCMHUD/1 transport
-([auth §7.3](../backend/hud-chat-auth-design.md)).
+The name-derived `HUD_IDENTITY_SECRET` was retired with the generic-socket transport.
 
 ---
 
@@ -215,5 +213,5 @@ chat.v1 moderation issue #288).
 ## See also
 
 - [README](README.md) · [automod](automod.md) · [reports-and-evidence](reports-and-evidence.md)
-- [auth lockdown / pairing design](../backend/hud-chat-auth-design.md)
+- [authentication](../backend/auth.md)
 - [chat.v1 integration — auth gate + moderationAction mapping](../overlay/zfe/native-chat-relay/fcm-integration.md)

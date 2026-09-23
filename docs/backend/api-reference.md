@@ -573,7 +573,7 @@ Source: `backend/src/routes/verifyDevRole.ts`, `backend/src/controllers/verifyDe
 
 ### POST `/api/admin/sim/stream`
 
-Drips `count` synthetic messages authored by existing sim users through the **real** `broadcast()` / `localBroadcast()` / `hudPushNotify()` path — identical to the live `chat:message` hot path. Messages are also queued for write-behind persistence via `messagePersist`. Fire-and-forget: returns immediately; self-terminates after `count` messages.
+Drips `count` synthetic messages authored by existing sim users through the **real** `broadcast()` / `localBroadcast()` path — identical to the live `chat:message` hot path. Messages are also queued for write-behind persistence via `messagePersist`. Fire-and-forget: returns immediately; self-terminates after `count` messages.
 
 Request body:
 
@@ -674,117 +674,18 @@ Metadata shape on match:
 
 ---
 
-## HUD Feed (`/api/game/hud-feed`)
+## Retired legacy HUD transport
 
-Retained public, read-only endpoint for the legacy remote-data client. It is not consumed by the
-modern FCMChatWidget, whose history and live messages use native ZFE/xScal `/relay`. The backend
-returns `Cache-Control: public, max-age=30`; old remote-data caching behavior is documented only
-as historical context. See [current HUD integration](../overlay/zfe/native-chat-relay/fcm-integration.md).
+In deployments of this backend version, `GET /api/game/hud-feed` returns 404,
+WebSocket upgrades at `/ws/hud` are rejected, and the backend does not listen
+on TCP port 4001. The visible HUD uses native
+`/relay`; the optional Server bridge sends its local exports through the desktop
+overlay's authenticated `/ws` connection. The active `FCMHUD/1;...` native metadata
+format remains supported.
 
-Mounted at `server.ts:1016` with `hudFeedLimiter` applied before the router.
-
-| Method | Path | Auth | Rate limit | Description |
-|--------|------|------|------------|-------------|
-| GET | `/api/game/hud-feed` | public | `hudFeedLimiter` (120 req/15min/IP) | Returns up to 30 recent messages from top-level community channels (General / Trading / Events / Raids), ordered oldest-first. |
-
-### Response shape
-
-```json
-{ "t": "#C8A840~General~Devotek~hello|#4A9FE0~Trade~Vault101~WTS plans" }
-```
-
-The `t` value is a `|`-joined list of `color~channel~user~content` records, pre-rendered by
-`buildFeedLines()` and sanitized by `zfeSafe()` (quote-free, no `<>`, no `&`). The SWF splits
-on `|` then `~` and renders each record as styled htmlText without further JSON parsing.
-
-Channel filter: `parent_id IS NULL AND is_archived = false AND is_deleted = false`.
-
-Source: `backend/src/services/hudFeedService.ts` (shared core), `backend/src/routes/hudFeed.ts` (thin router)  
-Tests: `backend/tests/hudFeed.test.js`, `backend/src/routes/__tests__/hudFeed.test.ts`  
-ZFE integration: [docs/overlay/zfe/fcmbridge-data-pattern.md](../overlay/zfe/fcmbridge-data-pattern.md)
-
----
-
-## HUD Push (real-time)
-
-Legacy counterpart to the polling endpoint above; the modern HUD does not use these listeners.
-Two front-ends share `hudPush.ts`. Both are off by default and are not needed to enable native `/relay`.
-
-> **Dev-only:** both transports hard-refuse to start when `NODE_ENV=production`, even with
-> their env flags set (a warning is logged). Do not remove that guard to install the modern HUD.
-> The old transport design is retained in
-> [docs/overlay/zfe/realtime-socket.md](../overlay/zfe/realtime-socket.md).
-
-### Endpoints
-
-| Transport | Path / Port | Env flag | Default |
-|-----------|------------|----------|---------|
-| Path A — raw TCP (TLS) | `:4001` (configurable via `HUD_PUSH_TCP_PORT`) | `HUD_PUSH_TCP_ENABLED` | `false` |
-| Path B — WebSocket | `/ws/hud` (HTTP upgrade on the backend port) | `HUD_PUSH_WS_ENABLED` | `false` |
-
-**Path A TLS env vars** (both must be set for TLS; empty = plaintext — ZFE cannot connect):
-
-| Var | Purpose |
-|-----|---------|
-| `HUD_PUSH_TCP_TLS_CERT` | Path to PEM certificate for the legacy listener; not a native-chat TLS setting |
-| `HUD_PUSH_TCP_TLS_KEY` | Path to PEM private key file |
-
-### Auth
-
-None. No `Origin` check on `/ws/hud`. The game client sends no/odd `Origin` headers; this is a
-public read-only feed. Per-IP connection cap: **3** concurrent connections on each transport.
-The production guard currently refuses to attach this unauthenticated WebSocket listener in
-`NODE_ENV=production`, and disabled/unknown upgrade paths are rejected by the shared router.
-
-### FCMHUD/1 line protocol
-
-Plain UTF-8, `\n`-terminated lines on both transports.
-
-| Line format | Direction | When |
-|-------------|-----------|------|
-| `HELLO~1~<n>` | server → client | First line sent; `<n>` = backfill count to follow |
-| `color~channel~user~content` | server → client | Backfill + live messages |
-| `PING~<unixSeconds>` | server → client | Every 10 s idle (ZFE ~15 s idle timeout; also defeats Cloudflare ~100 s WS drop) |
-| `HELLO~<accountName>~<characterName>` | **client → server** | M7: identity handshake. Must be sent before any SEND. |
-| `SEND~<channelId>~<text>` | **client → server** | M7: ingest as a real chat message. Only accepted after HELLO. |
-
-Record format is byte-identical to `GET /api/game/hud-feed` records. Control lines have <4
-`~`-fields so the SWF's `renderRecords()` guard skips them with no code change.
-
-**M7 inbound parsing (Path A / TCP only):** The old blunt 4 KB total-bytes cap is replaced with
-a **per-line cap** (2048 bytes). Oversized lines are dropped; the connection is NOT destroyed.
-Flood control is the shared Redis rate-limiter (`ws_rate:<userId>`). Unknown verbs are silently
-ignored. HELLO timeout: 10 s.
-
-TCP connections are still destroyed when the write buffer exceeds **64 KB** (backpressure guard).
-
-### Backend wiring
-
-`localBroadcast()` in `handlers.ts:758` calls `hudPushNotify(payload)` for every outbound
-payload. The push core filters ordinary `chat:message` events plus scheduled-event
-`chat:edit` updates, resolves the channel (60 s TTL cache), applies
-`isHudEligibleChannel()`, formats via `buildFeedLines()`, and fans out. The HUD widget
-replaces scheduled-event rows in place; ordinary human edits remain dashboard-only.
-
-Started from `server.ts start()` after `initPubSub()`:
-```ts
-await initHudPushTcp();
-initHudPushWs(server);
-```
-
-The `/ws/hud` upgrade handler coexists with the `/ws` WebSocketServer. The shared upgrade router
-leaves `/ws/hud` untouched only when `HUD_PUSH_WS_ENABLED=true` in a non-production process;
-disabled and unknown upgrade paths are destroyed promptly.
-
-**M7 identity env var:** `HUD_IDENTITY_SECRET` — HMAC-SHA256 key for deriving `identityHash` from FO76 `accountName`. Dev default in `.env.example`; must be a strong random secret before production use.
-
-**M7 ingestion service:** `backend/src/services/ingestMessage.ts` — `ingestMessage({ userId, channelId, rawContent, source, identityHash? })` runs the canonical governance pipeline (mute → rate-limit → content validation → emoji expansion → channel validity → automod → persistence policy → broadcast → Discord relay). Both the WS `chat:send` handler and the HUD TCP `SEND` handler call it. `source: 'hud' | 'ws'` is stored on the message row for auditing; it does NOT skip any governance step.
-
-**M7 identity service:** `backend/src/services/hudIdentityService.ts` — `resolveHudIdentity`, `getActiveBlock`, `blockHash`, `unblockHash`. `HudIdentityBlock` DB table stores mute/ban records keyed on `identityHash`.
-
-Sources: `backend/src/services/hudPush.ts`, `hudPushTcp.ts`, `hudPushWs.ts`, `ingestMessage.ts`, `hudIdentityService.ts`  
-Tests: `backend/src/services/__tests__/hudPush.test.ts`, `backend/tests/hudPushTcp.test.js`, `backend/tests/hudPushWs.test.js`, `backend/tests/ingestMessage.test.js`, `backend/tests/hudIdentityService.test.js`  
-Full protocol + ZFE env vars: [docs/overlay/zfe/realtime-socket.md](../overlay/zfe/realtime-socket.md)
+Historical `hud_identity_blocks` records and the message `source = 'hud'` database
+value remain readable for existing moderation and message history. New messages
+cannot enter through the retired HUD transport.
 
 ---
 

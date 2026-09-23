@@ -14,6 +14,19 @@ class FCMServerBridge extends MovieClip {
     var tickPhase:String = "startup";
     var api:FcmBridgeStorage = null;
     var exporter:FcmBridgeExport;
+    #if bridge_native_prototype
+    #if !bridge_dev
+    #error "Native transport prototype is development-only"
+    #end
+    var nativePrototype:FcmBridgeNativePrototype = null;
+    var nativeApi:FcmNativeApi = null;
+    var nativeSession:String = "np-" + Std.random(1000000000) + "-" + Std.random(1000000000)
+        + "-" + Std.random(1000000000) + "-" + Std.random(1000000000);
+    public function nativeDiagnostic():String return nativePrototype == null ? "waiting" : nativePrototype.diagnostic;
+    #end
+    #if bridge_perf
+    var timing:FcmBridgeTiming = new FcmBridgeTiming();
+    #end
     static inline var ENVIRONMENT:String = #if bridge_dev "dev" #else "prod" #end;
     var manager:Dynamic = null;
     var timer:Timer;
@@ -39,7 +52,11 @@ class FCMServerBridge extends MovieClip {
         mouseEnabled = false;
         mouseChildren = false;
         state = new FcmBridgeState(function() return Std.string(flash.Lib.getTimer()) + "-" + Std.string(Std.random(1000000000)));
-        exporter = new FcmBridgeExport(Std.string(Std.random(1000000000)) + "-" + Std.string(Std.random(1000000000)), ENVIRONMENT);
+        exporter = new FcmBridgeExport(#if bridge_native_prototype nativeSession #else
+            Std.string(Std.random(1000000000)) + "-" + Std.string(Std.random(1000000000)) #end, ENVIRONMENT);
+        #if bridge_perf
+        exporter.timing = timing;
+        #end
         addEventListener(Event.REMOVED_FROM_STAGE, removed);
         if (stage != null) start(null); else addEventListener(Event.ADDED_TO_STAGE, start);
     }
@@ -206,8 +223,31 @@ class FCMServerBridge extends MovieClip {
     }
     function exportState(now:Float, inactive:Bool = false, sampled:Bool = true):Void {
         if (api == null) return;
-        if (sampled) exporter.update(now, state, state.rosterSelfName(now, displayName), api.provider, api.save, inactive);
-        else exporter.heartbeat(now, api.provider, api.save);
+        #if bridge_native_prototype
+        if (api.provider != "xscal") return;
+        if (nativePrototype == null) {
+            nativeApi = FcmNativeApi.discover(this);
+            if (nativeApi == null || nativeApi.provider != "xscal" || !nativeApi.probeChatCapability()
+                || !nativeApi.supportsNonBlockingControl()) return;
+            nativePrototype = new FcmBridgeNativePrototype(nativeSession, nativeApi.call, api.save, function() return Date.now().getTime());
+        }
+        nativePrototype.tick(now);
+        var save = nativePrototype.save;
+        #else
+        #if bridge_perf
+        var storage = api;
+        var save = function(document:String):Bool {
+            var started = flash.Lib.getTimer();
+            var result = storage.save(document);
+            timing.save(flash.Lib.getTimer() - started);
+            return result;
+        };
+        #else
+        var save = api.save;
+        #end
+        #end
+        if (sampled) exporter.update(now, state, state.rosterSelfName(now, displayName), api.provider, save, inactive);
+        else exporter.heartbeat(now, api.provider, save);
         if (conflict) return;
         status = !exporter.lastSuccess ? "Storage unavailable - retrying"
             : !state.fresh(now) ? "Waiting for a fresh world roster"
@@ -239,7 +279,13 @@ class FCMServerBridge extends MovieClip {
                     return;
                 }
                 tickPhase = "world entry";
+                #if bridge_perf
+                var pollStarted = flash.Lib.getTimer();
+                #end
                 world(now);
+                #if bridge_perf
+                timing.poll(flash.Lib.getTimer() - pollStarted);
+                #end
                 if (disposed) return;
                 sampled = true;
             }
@@ -269,6 +315,9 @@ class FCMServerBridge extends MovieClip {
         // Respect the same write budget on unload. If rate-limited or storage fails,
         // desktop game-exit/heartbeat expiry provides the fail-closed cleanup.
         try { exportState(flash.Lib.getTimer(), true); } catch (_:Dynamic) {}
+        #if bridge_native_prototype
+        if (nativePrototype != null) nativePrototype.close();
+        #end
         if (timer != null) { timer.stop(); timer.removeEventListener(TimerEvent.TIMER, tick); }
         removeEventListener(Event.ADDED_TO_STAGE, start);
         removeEventListener(Event.REMOVED_FROM_STAGE, removed);

@@ -289,4 +289,3 @@ active artifacts and tails only fresh xScal/ZFE diagnostics; it never owns or st
 | `build.hxml`, `normalize_swf.py`, `emoji/` | Haxe build, FWS normalization, bundled sprite data/licenses |
 | `package.py`, `test_package.py`, `test-*.hxml` | Target/provider/distribution packaging and checks |
 | `FCMChatWidget.swf`, `FCMChatWidget.ba2` | Generated local artifacts; verify decoded payload equality |
-| `BUILD-HISTORY.md` | Dated investigations and superseded build notes |

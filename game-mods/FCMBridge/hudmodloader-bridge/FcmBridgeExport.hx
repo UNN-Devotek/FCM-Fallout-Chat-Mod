@@ -10,11 +10,16 @@ class FcmBridgeExport {
     var lastAttempt:Float = -5000;
     var lastSaved:Float = -5000;
     var lastKey:String = "";
+    var successfulWrites:Int = 0;
+    var lastSavedObservationSequence:Int = 0;
     var lastObservation:Float = -60000;
     var lastWorld:String = "";
     var lastNames:Array<String> = [];
     var clock:Void->Float;
     var sample:{mode:String, world:String, ownName:String, names:Array<String>} = null;
+    #if bridge_perf
+    public var timing:FcmBridgeTiming;
+    #end
     public function new(sessionId:String, environment:String, clock:Void->Float = null) {
         this.sessionId = sessionId; this.environment = environment; this.clock = clock;
         #if flash
@@ -47,19 +52,39 @@ class FcmBridgeExport {
         var world = sample.world;
         var ownName = sample.ownName;
         var names = fresh ? sample.names : [];
-        var key = haxe.Json.stringify([mode, world, ownName, names, observationSequence]);
-        if (key == lastKey && now - lastSaved < 5000) return false;
+        // xScal named storage can stall the HUD thread. Keep sampling every two
+        // seconds, but publish an unchanged roster at most every five seconds.
+        // The second successful fresh snapshot still establishes a live writer.
+        var key = haxe.Json.stringify([mode, world, ownName, names,
+            provider == "xscal" ? 0 : observationSequence]);
+        var establishingWriter = provider == "xscal" && successfulWrites == 1
+            && observationSequence > lastSavedObservationSequence;
+        if (key == lastKey && now - lastSaved < 5000 && !establishingWriter) return false;
         lastAttempt = now;
+        #if bridge_perf
+        var encodeStarted = clock == null ? now : clock();
+        var build = BUILD + "-c5" + (timing == null ? "-perf" : timing.label());
+        #else
+        var build = BUILD;
+        #end
         var document = haxe.Json.stringify({schemaVersion:1, environment:environment, provider:provider,
-            build:BUILD, sessionId:sessionId, worldGeneration:world,
+            build:build, sessionId:sessionId, worldGeneration:world,
             sequence:++sequence, observationSequence:Std.int(Math.max(1, observationSequence)),
             observationAgeMs:Std.int(Math.min(60000, Math.max(0, now - lastObservation))),
             state:mode, ownName:fresh ? ownName.substr(0, 64) : "", names:names});
+        #if bridge_perf
+        // This write carries the previous encode/save samples; the next carries these timings.
+        if (timing != null && clock != null) timing.encode(clock() - encodeStarted);
+        #end
         lastSuccess = save(document);
         // Budget from completion, not the timer tick captured before native reads
         // and serialization. Variable work duration must never compress write spacing.
         if (clock != null) lastAttempt = Math.max(now, clock());
-        if (lastSuccess) { lastSaved = lastAttempt; lastKey = key; }
+        if (lastSuccess) {
+            lastSaved = lastAttempt; lastKey = key;
+            lastSavedObservationSequence = observationSequence;
+            successfulWrites++;
+        }
         return true;
     }
 }

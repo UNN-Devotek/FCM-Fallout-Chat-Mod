@@ -42,6 +42,33 @@ try {
     throw new Error('Packaged bridge payload differs from BUILD.json');
   }
   await writeFile(resolve(publicDir, 'bridge-manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+  const perfZip = resolve(bridgeTemp, 'perf.zip');
+  const perfExtract = resolve(bridgeTemp, 'perf');
+  await mkdir(perfExtract);
+  await run('python3', [resolve(bridge, 'package.py'), '--target', 'dev', '--diagnostic', '--output', perfZip]);
+  await run('python3', ['-m', 'zipfile', '-e', perfZip, perfExtract]);
+  const perfManifest = JSON.parse(await readFile(resolve(perfExtract, 'BUILD.json'), 'utf8'));
+  if (!perfManifest.diagnostic) throw new Error('Bridge performance fixture must be marked diagnostic');
+  await run('python3', [resolve(widget, '../hudmenu-chat/ba2tool.py'), 'extract',
+    resolve(perfExtract, 'Data/FCMServerBridge.ba2'), 'Interface/FCMServerBridge.swf',
+    resolve(publicDir, 'FCMServerBridgePerf.swf')]);
+  const perfSwf = await readFile(resolve(publicDir, 'FCMServerBridgePerf.swf'));
+  if (createHash('sha256').update(perfSwf).digest('hex') !== perfManifest.swfSha256) {
+    throw new Error('Diagnostic bridge payload differs from BUILD.json');
+  }
+  await writeFile(resolve(publicDir, 'bridge-perf-manifest.json'), JSON.stringify(perfManifest, null, 2) + '\n');
+  const nativeZip = resolve(bridgeTemp, 'native.zip');
+  const nativeExtract = resolve(bridgeTemp, 'native');
+  await mkdir(nativeExtract);
+  await run('python3', [resolve(bridge, 'package.py'), '--target', 'dev', '--native-prototype', '--output', nativeZip]);
+  await run('python3', ['-m', 'zipfile', '-e', nativeZip, nativeExtract]);
+  await run('python3', [resolve(widget, '../hudmenu-chat/ba2tool.py'), 'extract',
+    resolve(nativeExtract, 'Data/FCMServerBridge.ba2'), 'Interface/FCMServerBridge.swf',
+    resolve(publicDir, 'FCMServerBridgeNative.swf')]);
+  const nativeManifest = JSON.parse(await readFile(resolve(nativeExtract, 'BUILD.json'), 'utf8'));
+  if (!nativeManifest.nativePrototype || createHash('sha256').update(await readFile(resolve(publicDir, 'FCMServerBridgeNative.swf'))).digest('hex') !== nativeManifest.swfSha256) {
+    throw new Error('Native prototype bytes differ from package');
+  }
   await run('haxe', ['packaged-bridge.hxml'], { cwd: simulator });
   await run('python3', [resolve(widget, 'normalize_swf.py'), resolve(publicDir, 'PackagedBridgeHost.swf')]);
 } finally {

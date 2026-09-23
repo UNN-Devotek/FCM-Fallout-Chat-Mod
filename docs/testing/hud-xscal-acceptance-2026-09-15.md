@@ -1068,7 +1068,8 @@ these are provider-level warnings, not FCM transport/auth/history failures.
 
 ## Bridge 0.1.7 follow-up from the accepted HUD release
 
-The release owner pointed to `docs/deployment/hud-post-2.10.85-release-notes-draft.md` and
+The release owner pointed to a then-current release-note draft, later consolidated into the
+[HUD 2.10.110 release record](../deployment/hud-2.10.110-release-notes.md), and
 reported that the newly released HUD has working Server chat. Review of the current `dev`
 checkout (`7f7647ee` before this change) and the native evidence above changes the bridge plan:
 the proposed synthetic decoder probe already ran in visible HUD 2.10.105. It failed before

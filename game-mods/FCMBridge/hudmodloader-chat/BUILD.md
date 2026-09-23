@@ -205,8 +205,7 @@ For current Fallout 76 English assets, body/feed/input text uses `$MAIN_Font` an
 use `$MAIN_Font_Bold`. `interface/fontconfig_en.txt` does not map `$MAIN_Font_Light`; do not restore
 that alias or body glyphs will render as square placeholders.
 
-[README.md](README.md) describes behavior. [BUILD-HISTORY.md](BUILD-HISTORY.md) preserves dated
-investigations and superseded runbooks; it is not a source for current install steps.
+[README.md](README.md) describes current behavior and install steps.
 
 ## Requirements
 

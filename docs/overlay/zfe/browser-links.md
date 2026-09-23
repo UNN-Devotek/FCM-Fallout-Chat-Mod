@@ -4,7 +4,7 @@ The FCM client targets the supplied [ZFE browser-v1 contract](zfe-browser-links-
 ZFE's implementation is forthcoming; a compiled client or passing mock does not establish native support.
 The selected chat provider must be ZFE and its general `getRuntimeInfo` must report
 `success:true` and the exact `zfe-browser-v1` capability. Chat capability alone is insufficient.
-Current xScal builds retain readable links; the [xScal proposal](xscal-browser-links-proposal.md)
+Current xScal builds retain readable links; the [xScal proposal](../../archive/overlay/zfe/xscal-browser-links-proposal.md)
 is a separate maintainer handoff, not an implemented API.
 
 ## Player interaction

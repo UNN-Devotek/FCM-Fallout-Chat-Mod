@@ -6,8 +6,11 @@ public/FCMChatWidget.swf
 public/FCMChat.ini
 public/FCMHarness.swf
 public/FCMServerBridge.swf
+public/FCMServerBridgePerf.swf
+public/FCMServerBridgeNative.swf
 public/PackagedBridgeHost.swf
 public/bridge-manifest.json
+public/bridge-perf-manifest.json
 public/sim-manifest.json
 public/installed-xscal-0.2.16.json
 public/hosted-dev-snapshot.json
