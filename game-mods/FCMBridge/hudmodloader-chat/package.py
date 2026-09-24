@@ -192,7 +192,11 @@ def install_instructions(
 
 FCMChatWidget version: {version}
 
-PRIVATE CONTROLLER-TEST BUILD - NATIVE UNVERIFIED - DO NOT REDISTRIBUTE.
+HUD {version} RELEASE CANDIDATE - NOT YET PUBLISHED.
+
+xScal controller-active typing requires xScal 0.2.18 or newer with the
+Input.BeginInput, Input.PollInput, and Input.EndInput callbacks. Earlier xScal
+builds retain the SharedHUDTools fallback. The xScal DLL is not in this ZIP.
 
 This archive installs the optional in-game HUD-mod track through HUDModLoader. It is
 separate from the desktop overlay; the desktop overlay is not required for HUD chat.
@@ -325,7 +329,7 @@ def build_package(
     )
     output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
-        archive.write(ROOT / "CONTROLLER-TEST-NOTICE.txt", "CONTROLLER-TEST-NOTICE.txt")
+        archive.write(ROOT / "HUD-RELEASE-NOTES.txt", "HUD-RELEASE-NOTES.txt")
         archive.write(ROOT / "CUSTOMIZATION.txt", "CUSTOMIZATION.txt")
         archive.writestr("INSTALL.txt", install_instructions(target, provider, distribution))
         for notice in ("NOTICE.txt", "LICENSE-TWEMOJI.txt", "LICENSE-UNICODE.txt"):
@@ -389,8 +393,9 @@ def build_package(
             "be reset using that extender's documented local-auth recovery.\n"
             "While a draft is active, Control-Tab opens the game's social menu\n"
             "after the widget cancels its editor; Escape can close the menu normally.\n"
-            "See INSTALL.txt for this provider's configuration. Input.* polling alone\n"
-            "does not suppress gameplay keys; xScal keyboard suppression is not claimed.\n\n"
+            "See INSTALL.txt for this provider's configuration. Input.* key polling\n"
+            "alone does not suppress gameplay keys. xScal 0.2.18 native text\n"
+            "sessions own text and editing keys while the session is active.\n\n"
             "Unicode and bundled custom Discord emojis render inline. Animated\n"
             "emojis use static artwork. Public feed\n"
             "image/GIF attachments are intentionally not relayed.\n\n"

@@ -7,6 +7,24 @@ must not add game-memory reads, code injection, or network/port scanning.
 
 ## Current implementation and verification
 
+**Isolated HUD 2.10.125 release candidate (unpublished):**
+the xScal 0.2.18 test DLL exposes native text sessions through
+`__SFCodeObj.call("Input.BeginInput")`, `Input.PollInput(sessionId)` and
+`Input.EndInput(sessionId)`. This branch adds an opt-in session route with
+SharedHUDTools fallback for older xScal builds. The 2.10.125 diagnostic candidate is
+locally installed, but not published or promoted to `dev`. Two Escape cancels
+completed, the native session was released, and later HUD input arrived. The
+user reported that the game remained responsive. A prior 2.10.124 run appeared
+to freeze immediately on Escape, and its cause is not established.
+The production overlay is unchanged. The 512-UTF-16-unit buffer, session identity,
+revision, terminal state and teardown are checked in the widget. The user
+accepted the local native test; the available log independently confirms the
+two cancel/recovery observations but not every action in the wider input matrix.
+The [public xScal Nexus files page](https://www.nexusmods.com/fallout76/mods/4183?tab=files)
+showed 0.2.17 on 2026-09-23 but lists 0.2.18 on 2026-09-24. The public-version
+gate is cleared; the published DLL has not been byte-compared with the locally
+tested DLL. The provider must not be bundled with the HUD.
+
 The published production versions are desktop overlay **1.4.1**, visible HUD
 **2.10.121**, and optional background bridge **0.2.8**. The locally installed
 visible HUD has additional quoted-message changes under the same 2.10.121 version;

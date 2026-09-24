@@ -80,7 +80,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.121"; // xScal compose rollback: verified SharedHUDTools editor; Input.* remains action-only
+    static inline var VERSION:String  = "2.10.125"; // xScal text sessions with bounded cancel diagnostics
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -284,6 +284,7 @@ class FCMChatWidget extends MovieClip {
     var _hostEventSuppressionKey:String = "";
     // Input diagnostics are deduplicated by action/edge so a bad mapping cannot flood zfe.log.
     var _userEventDiagnostics:Map<String,Bool> = new Map();
+    var _xscalCancelDiagnosticPending:Bool = false;
     var _hudEventListenerAttached:Bool = false;
 
     // ── Channel state ─────────────────────────────────────────────────────────
@@ -415,6 +416,11 @@ class FCMChatWidget extends MovieClip {
     static inline var USE_NATIVE_INPUT:Bool = true;
     var _nativeInput:Bool        = false;          // true while a native session owns input
     var _ownedInput:Bool         = false;          // true for ZFE input.v1 owner-scoped capture
+    var _xscalSessionInput:Bool  = false;
+    var _xscalSessionUsable:Bool = true;
+    var _xscalSessionReleaseUncertain:Bool = false;
+    var _xscalSessionId:Dynamic = null;
+    var _xscalSessionRevision:Int = -1;
     var _ownedInputUsable:Bool   = false;
     var _ownedInputSession:Dynamic = null;
     var _ownedInputRevision:Int = -1;
@@ -1444,6 +1450,11 @@ class FCMChatWidget extends MovieClip {
     /** Shared implementation for both patched-host and unpatched stage-listener paths. */
     function handleUserEvent(action:String, isDown:Bool):Bool {
         if (_disposed) return false;
+        if (_xscalCancelDiagnosticPending) {
+            _xscalCancelDiagnosticPending = false;
+            zfeLog("info", "input", "xScal post-cancel HUD event action="
+                + FcmCommand.actionKey(action) + " edge=" + (isDown ? "down" : "up"));
+        }
 
         // Close whichever input owner is active before HUDMenu processes a named modal action.
         // Only the host-domain SharedHUDTools path owns the engine's ControlMap lock; the native
@@ -2465,6 +2476,10 @@ class FCMChatWidget extends MovieClip {
     function openInput():Void {
         if (_disposed) return;
         if (_inputOpen) return;
+        if (_xscalSessionReleaseUncertain) {
+            zfeLog("warn", "input", "xScal open blocked: prior session release unconfirmed");
+            return;
+        }
         // Provider hotkeys are global. Never take text ownership while Fallout owns a
         // blacklisted UI such as ContainerMode, where T may mean Deposit All.
         if (!isValidHUDMode()) return;
@@ -2480,9 +2495,15 @@ class FCMChatWidget extends MovieClip {
         // provider detection controls transport and whether ZFE's native buffer is available as
         // a last-resort fallback. xScal never receives ZFE-only input calls.
         var provider:String = _api == null ? "" : _api.provider;
-        var route:String = FcmInputRoute.preferred(provider, _ownedInputUsable);
+        var route:String = FcmInputRoute.preferred(provider, _ownedInputUsable,
+            provider == FcmNativeApi.XSCAL && _xscalSessionUsable);
         if (route == FcmInputRoute.OWNED) {
             if (openOwnedInput()) return;
+            openInputSharedHudTools();
+        } else if (route == FcmInputRoute.XSCAL_SESSION) {
+            if (openXscalSessionInput()) return;
+            if (_xscalSessionReleaseUncertain) return;
+            if (_xscalSessionUsable) return; // Busy native owner: do not open a second editor.
             openInputSharedHudTools();
         } else if (route == FcmInputRoute.SHARED) openInputSharedHudTools();
         if (_inputOpen) return;
@@ -2492,6 +2513,153 @@ class FCMChatWidget extends MovieClip {
             if (openInputNative()) return;
             _nativeInputUsable = false;
         }
+    }
+
+    /** xScal owns composition/editing; the widget consumes only session snapshots. */
+    function openXscalSessionInput():Bool {
+        if (_api == null || _api.provider != FcmNativeApi.XSCAL || !_xscalSessionUsable) return false;
+        try {
+            var begin = FcmXscalInput.begin(_api.xscalBeginInput());
+            if (!begin.success) {
+                if (begin.busy) {
+                    zfeLog("info", "input", "xScal text session busy; retry on next open");
+                    return false;
+                }
+                if (!begin.unsupported && begin.sessionId != null) {
+                    try { _api.xscalEndInput(begin.sessionId); } catch (_:Dynamic) {}
+                }
+                _xscalSessionReleaseUncertain = !begin.unsupported;
+                _xscalSessionUsable = false;
+                zfeLog("warn", "input", begin.unsupported
+                    ? "xScal text session unsupported; using SharedHUDTools"
+                    : "xScal begin malformed; input blocked until reload");
+                return false;
+            }
+            _xscalSessionId = begin.sessionId;
+            _xscalSessionRevision = -1;
+            _xscalSessionInput = true;
+            _nativeInput = true;
+            _inputOpen = true;
+            _inProgress = "";
+            var generation:Int = ++_inputGeneration;
+            setPrompt(typingPrompt());
+            stopInputTimer();
+            _inputTimer = new flash.utils.Timer(OWNED_INPUT_POLL_MS);
+            _inputTimer.addEventListener(TimerEvent.TIMER,
+                function(_) { runXscalSessionInputSafely(generation); });
+            _inputTimer.start();
+            zfeLog("info", "input path", "xscal-session-v1 begin accepted");
+            return true;
+        } catch (e:Dynamic) {
+            if (_xscalSessionId != null) closeXscalSessionInput(true);
+            else _xscalSessionReleaseUncertain = true;
+            _xscalSessionUsable = false;
+            zfeLog("warn", "input", "xScal session begin failed: " + clip200(Std.string(e)));
+            return false;
+        }
+    }
+
+    function runXscalSessionInputSafely(generation:Int):Void {
+        if (_disposed || !_xscalSessionInput || generation != _inputGeneration) return;
+        try {
+            var snapshot = FcmXscalInput.poll(_api.xscalPollInput(_xscalSessionId),
+                _xscalSessionId, 512);
+            if (!snapshot.success || snapshot.revision < _xscalSessionRevision
+                    || (snapshot.revision == _xscalSessionRevision && snapshot.text != _inProgress)) {
+                zfeLog("warn", "input", "xScal poll rejected valid=" + snapshot.success
+                    + " revision=" + snapshot.revision + " previous=" + _xscalSessionRevision
+                    + " changedWithoutRevision=" + (snapshot.text != _inProgress));
+                closeXscalSessionInput(true);
+                return;
+            }
+            if (snapshot.revision != _xscalSessionRevision || snapshot.text != _inProgress) {
+                zfeLog("info", "input", "xScal poll state=" + snapshot.state
+                    + " revision=" + snapshot.revision + " textLen=" + snapshot.text.length);
+                _xscalSessionRevision = snapshot.revision;
+                _inProgress = snapshot.text;
+                setPrompt(_inProgress.length == 0 ? typingPrompt()
+                    : typingPrompt() + ' <font face="' + FONT_BODY + '" size="'
+                        + _cfg.effectiveInputFontSize(true) + '" color="'
+                        + hx(_cfg.inputTextColor) + '"> &#x203A; '
+                        + FcmConfig.htmlEscape(_inProgress) + '</font>');
+            }
+            if (snapshot.state == "active") return;
+            var submitted:Bool = snapshot.state == "submitted";
+            var text:String = StringTools.trim(_inProgress);
+            zfeLog("info", "input", "xScal terminal state=" + snapshot.state
+                + " revision=" + snapshot.revision + " textLen=" + text.length);
+            var cancelDiagnostic:Bool = snapshot.state == "cancelled";
+            var closeStarted:Int = flash.Lib.getTimer();
+            if (cancelDiagnostic) zfeLog("info", "input", "xScal cancel close enter");
+            var ended:Bool = closeXscalSessionInput();
+            if (cancelDiagnostic) {
+                _xscalCancelDiagnosticPending = true;
+                zfeLog("info", "input", "xScal cancel close exit elapsedMs="
+                    + (flash.Lib.getTimer() - closeStarted) + " released=" + ended);
+                haxe.Timer.delay(function():Void {
+                    if (!_disposed) zfeLog("info", "input", "xScal cancel UI timer alive"
+                        + " waitingForHudEvent=" + _xscalCancelDiagnosticPending);
+                }, 1000);
+            }
+            // Poll's terminal state owns the submit decision. EndInput is cleanup; the
+            // author's contract does not specify its return shape. A failed cleanup still
+            // blocks reopening, but must not silently discard an accepted submission.
+            if (submitted && text.length > 0) {
+                zfeLog("info", "input", "xScal submitted draft dispatch endConfirmed=" + ended);
+                handleSubmittedText(text);
+            }
+        } catch (e:Dynamic) {
+            zfeLog("warn", "input", "xScal session poll failed: " + clip200(Std.string(e)));
+            closeXscalSessionInput(true);
+        }
+    }
+
+    /** Balance every successful begin, including modal interruption and widget teardown. */
+    function closeXscalSessionInput(failed:Bool = false):Bool {
+        stopInputTimer();
+        var id = _xscalSessionId;
+        _xscalSessionId = null;
+        _xscalSessionInput = false;
+        ++_inputGeneration;
+        var ended:Bool = id == null;
+        if (id != null && _api != null) {
+            try {
+                var endStarted:Int = flash.Lib.getTimer();
+                var result:Dynamic = _api.xscalEndInput(id);
+                ended = result == true;
+                zfeLog(ended ? "info" : "warn", "input", "xScal end result="
+                    + (ended ? "true" : result == false ? "false" : result == null ? "null" : "other")
+                    + " elapsedMs=" + (flash.Lib.getTimer() - endStarted));
+            } catch (e:Dynamic) {
+                ended = false;
+                zfeLog("warn", "input", "xScal end threw: " + clip200(Std.string(e)));
+            }
+            if (!ended) {
+                // EndInput's 0.2.18 return shape is not documented and is not a
+                // reliable release signal in GFx. Verify the old ID is dead using
+                // xScal's own invalid_session response before allowing a new begin.
+                try {
+                    var probeStarted:Int = flash.Lib.getTimer();
+                    ended = FcmXscalInput.confirmsReleased(_api.xscalPollInput(id));
+                    zfeLog(ended ? "info" : "warn", "input", "xScal release probe="
+                        + (ended ? "invalid_session" : "unconfirmed")
+                        + " elapsedMs=" + (flash.Lib.getTimer() - probeStarted));
+                } catch (e:Dynamic) {
+                    zfeLog("warn", "input", "xScal release probe threw: "
+                        + clip200(Std.string(e)));
+                }
+            }
+        }
+        if (!ended) _xscalSessionReleaseUncertain = true;
+        if (!ended) failed = true;
+        if (failed) _xscalSessionUsable = false;
+        _inputOpen = false;
+        _nativeInput = false;
+        _xscalSessionRevision = -1;
+        _inProgress = "";
+        clearNavigationLatches();
+        setPrompt(idlePrompt());
+        return !failed && ended;
     }
 
     /** Open a controller-independent, owner-scoped ZFE keyboard session. */
@@ -2766,6 +2934,7 @@ class FCMChatWidget extends MovieClip {
      * the native input (bare "false"), and reset the prompt.
      */
     function closeInputNative(failed:Bool = false):Void {
+        if (_xscalSessionInput) { closeXscalSessionInput(failed); return; }
         if (_ownedInput) { closeOwnedInput(failed); return; }
         stopInputTimer();
         var closeFailed:Bool = false;

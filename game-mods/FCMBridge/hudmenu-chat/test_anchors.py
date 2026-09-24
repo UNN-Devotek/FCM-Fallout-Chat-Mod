@@ -490,8 +490,10 @@ if widget_src:
           and 'refreshAuthState();' in widget_src
           and 'isPendingTransportResponse' in widget_src,
           "FCMChatWidget refreshes xScal auth during polling and ignores pending transport responses")
-    check('FcmInputRoute.preferred(provider, _ownedInputUsable)' in widget_src
+    check('FcmInputRoute.preferred(provider, _ownedInputUsable,' in widget_src
           and 'if (route == FcmInputRoute.OWNED)' in widget_src
+          and 'if (route == FcmInputRoute.XSCAL_SESSION)' in widget_src
+          and 'openXscalSessionInput()' in widget_src
           and 'openOwnedInput()' in widget_src
           and 'FcmInputRoute.mayUseNativeFallback' in widget_src
           and 'input.v1.begin' in widget_src

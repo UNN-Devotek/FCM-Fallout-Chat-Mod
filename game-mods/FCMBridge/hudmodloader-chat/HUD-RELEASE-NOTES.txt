@@ -1,0 +1,17 @@
+FCM HUD 2.10.125
+==============
+
+This candidate adds controller-active keyboard text entry through xScal's
+Input.BeginInput, Input.PollInput, and Input.EndInput session callbacks.
+It requires xScal 0.2.18 or newer for that path. Earlier xScal builds retain
+the SharedHUDTools fallback. ZFE input support is unchanged.
+
+The xScal DLL is not bundled. Install one compatible extender separately.
+The desktop overlay and optional background Server Bridge are not included.
+Do not install the visible widget alongside FCMServerBridge or legacy FCMBridge.
+
+The exact 2.10.125 BA2 was installed and tested locally. Escape cancelled two
+sessions, released their IDs, and subsequent HUD input arrived; the tester
+reported responsive gameplay. The earlier 2.10.124 apparent freeze has no
+confirmed root cause, so bounded privacy-safe cancel diagnostics remain in
+this build. The full automated HUD suite passed. Publication is separate.

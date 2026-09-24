@@ -291,6 +291,27 @@ class TestFcmNativeApi {
         check("xScal physical input does not route through chatInterface",
             xCalls.length == 5);
 
+        var textCalls:Array<String> = [];
+        var textGeneric:Dynamic = {};
+        textGeneric.call = Reflect.makeVarArgs(function(args:Array<Dynamic>):Dynamic {
+            textCalls.push(args[0] + "|" + args.length);
+            if (args[0] == "Input.BeginInput") return '{"success":true,"sessionId":7}';
+            if (args[0] == "Input.PollInput") return '{"success":true,"sessionId":7,"revision":1,"text":"hello","state":"active"}';
+            if (args[0] == "Input.EndInput") return true;
+            return false;
+        });
+        var textScope:Dynamic = {};
+        Reflect.setField(textScope, "__SFECodeObj", {chatInterface:chat});
+        Reflect.setField(textScope, "__SFCodeObj", textGeneric);
+        var textApi = FcmNativeApi.discover(textScope);
+        check("xScal text sessions use no-arg begin and numeric-ID poll/end on generic callback",
+            textApi != null
+            && FcmXscalInput.begin(textApi.xscalBeginInput()).success
+            && FcmXscalInput.poll(textApi.xscalPollInput(7), 7, 512).success
+            && textApi.xscalEndInput(7) == true
+            && textCalls.join(",") == "Input.BeginInput|1,Input.PollInput|2,Input.EndInput|2");
+        check("xScal text sessions never reach chatInterface", xCalls.length == 5);
+
         // xScal builds that do not expose getAuthState use the documented no-argument
         // connection-state method. This must not receive the JSON placeholder payload.
         var connectionStateCalls:Array<String> = [];

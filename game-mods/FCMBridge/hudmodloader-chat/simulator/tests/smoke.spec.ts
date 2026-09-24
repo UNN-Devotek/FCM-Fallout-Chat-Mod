@@ -29,6 +29,15 @@ for (const scenario of ['owned-input-release', 'owned-input-busy', 'owned-input-
   });
 }
 
+for (const scenario of ['xscal-session-input', 'xscal-session-fallback']) {
+  test(`xScal session lifecycle and compatibility: ${scenario}`, async ({ page }) => {
+    await page.goto(`/?mode=harness&provider=xscal&scenario=${scenario}`);
+    await expect(page.locator('#log')).toContainText(/XSCAL-SESSION-INPUT (PASS|FAIL)/, { timeout: 20_000 });
+    await expect(page.locator('#log')).toContainText(`XSCAL-SESSION-INPUT PASS ${scenario}`);
+    await expect(page.locator('#log')).not.toContainText('XSCAL-SESSION-INPUT FAIL');
+  });
+}
+
 test.afterEach(async ({ page, request }) => {
   await page.evaluate(() => (window as Window & { __FCM_SIM_TEARDOWN__?: () => void }).__FCM_SIM_TEARDOWN__?.()).catch(() => undefined);
   await expect(page.locator('#ruffle-player')).toHaveCount(0);
@@ -38,7 +47,7 @@ test.afterEach(async ({ page, request }) => {
 test('loads the exact production widget artifact and records browser key delivery', async ({ page }) => {
   await page.goto('/?mode=artifact');
   await expect(page.locator('#status')).toHaveAttribute('data-state', 'ready', { timeout: 20_000 });
-  await expect(page.locator('#widget-version')).toHaveText('2.10.121');
+  await expect(page.locator('#widget-version')).toHaveText('2.10.125');
   await page.locator('#focus-stage').click();
   await page.keyboard.press('Insert');
   await page.keyboard.press('ArrowUp');

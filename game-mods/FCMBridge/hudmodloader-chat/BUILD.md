@@ -1,5 +1,49 @@
 # FCMChatWidget build, install, and verification
 
+## Isolated 2.10.125 release candidate
+
+**Widget version:** 2.10.125. The bounded cancel diagnostics remain in the
+exact native-tested BA2; release-candidate packaging leaves its bytes unchanged.
+
+In the 2.10.124 native run, Escape immediately made the game appear frozen,
+although the HUD continued logging for roughly 47 seconds. xScal reported
+`cancelled`, `EndInput` returned an undocumented non-Boolean value, and the old
+session ID then returned `invalid_session`. Those observations do not prove
+that keyboard capture or gameplay input recovered. This build adds only
+privacy-safe timings around EndInput and the release probe, an exit marker,
+a one-second UI heartbeat, and a one-shot next-HUD-event marker. It must not
+be considered native-accepted unless Escape and gameplay recovery pass in game.
+Two subsequent native Escape trials completed with `invalid_session` release
+confirmation and later HUD input; the user reported no freeze. The cause of the
+earlier apparent freeze remains unknown. The full 72-case Ruffle matrix, Haxe,
+source, package, emoji, SWF and BA2 checks passed for 2.10.125. The user accepted
+the local native test; the available log independently establishes only the two
+cancel/recovery cycles, not every action in the wider input matrix. The
+public xScal Nexus files page listed 0.2.17 on 2026-09-23 and 0.2.18 on
+2026-09-24. The public-version gate is cleared, but the public DLL has not been
+byte-compared with the locally tested provider.
+
+This branch targets the author-supplied xScal 0.2.18 `Input.BeginInput`,
+`Input.PollInput(sessionId)`, and `Input.EndInput(sessionId)` contract. xScal
+returns full native-edited text and terminal submit/cancel state as JSON;
+FCM never synthesizes characters from key codes. The widget uses the session
+route only when a valid begin succeeds and keeps SharedHUDTools for older xScal.
+The attached DLL is test evidence, not bundled or installed by the HUD package.
+Controller-connected typing, suppression through Enter/Escape release, and
+gameplay recovery were tested locally; retain the distinction between the
+user's acceptance and the narrower logged observations. See the worktree's
+`XSCAL-SESSION-INPUT-READINESS.md` for artifact hash and acceptance gaps.
+The 2.10.122 native run detected Insert and opened one session but logged no
+message send; later Insert edges did not reopen input. The session lacked poll/
+end diagnostics. This revision logs sanitized begin, rejected/terminal poll,
+end result, and blocked reopen status. A validated submitted poll now dispatches
+its text regardless of EndInput's undocumented return value. An unconfirmed
+end still blocks reopening until reload to avoid overlapping native owners.
+The fresh 2.10.123 native run sent and reconciled one message but logged
+`xScal end result=other`, then blocked Insert. Version 2.10.124 makes one
+post-end `Input.PollInput(oldId)` probe. Only the native `invalid_session`
+response confirms release; an active or malformed response remains blocked.
+
 ## Local 2.10.121 quoted-message candidate (2026-09-22)
 
 Received `chat.message` bodies are JSON-decoded exactly once in `parseAndRenderEvents`, before

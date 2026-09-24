@@ -3,7 +3,20 @@
 FCMChatWidget is the optional HUDModLoader chat widget for Fallout 76. It uses ZFE or xScal's
 native chat bridge and FCM's `/relay`. It is independent of the desktop overlay.
 
-**Current local test candidate: 2.10.121 (native-unverified).** Received chat bodies are decoded
+**Isolated 2.10.125 release candidate:** this worktree adds the author-supplied
+xScal 0.2.18 native text session (`Input.BeginInput`, `PollInput`, `EndInput`) with
+bounded full-text snapshots and SharedHUDTools fallback for older xScal builds.
+The exact 2.10.125 BA2 is locally installed, but has not been published or merged.
+An earlier 2.10.124 Escape test caused an immediate apparent game/UI freeze.
+Two 2.10.125 Escape cancels completed with session release and later HUD input,
+and the user reported responsive gameplay. The diagnostic build is not a proven
+fix; it records bounded cancel cleanup and post-cancel UI/input liveness without
+logging draft text. The cause of the 2.10.124 symptom is unknown.
+The attached xScal test DLL
+is not bundled with the HUD. See [build status](BUILD.md) and the worktree
+`XSCAL-SESSION-INPUT-READINESS.md` for exact limits and remaining native checks.
+
+**Previous local test candidate: 2.10.121 (native-unverified).** Received chat bodies are decoded
 once from JSON before control handling, self-echo matching, and display. A sent message containing
 quotes can therefore replace its pending row with the authoritative echo instead of leaving a
 second copy that sorts below later messages. Pure Haxe checks and a compiled xScal/ZFE Ruffle
@@ -14,8 +27,11 @@ the [native check](../../../docs/testing/hud-recovery.md).
 
 ZFE uses owner-scoped `input.v1` keyboard capture and `hotkeys.v1` for supported configured actions
 when those capabilities are advertised. Older ZFE falls back to SharedHUDTools and `Input.*`.
-xScal polls every supported configured physical binding through `Input.*`, but text entry remains
-best-effort through SharedHUDTools because xScal 0.2.16 exposes no keyboard capture/suppression API.
+xScal polls every supported configured physical binding through `Input.*`. The
+author's 0.2.18 test build provides a native text session for controller-active
+typing; older builds retain best-effort SharedHUDTools entry. On 2026-09-24,
+the public [Nexus files page](https://www.nexusmods.com/fallout76/mods/4183?tab=files)
+listed 0.2.18. The public DLL has not been byte-compared with the locally tested one.
 It retains 2.10.116's behavior and keeps
 accepted Server rows as an in-memory transcript across room changes, travel, expiry and MainMenu
 for the current widget/game session. New messages and sends remain restricted to the currently
@@ -243,10 +259,11 @@ chat transport and other mods' storage documents independent.
 
 ## Browser HUD simulator
 
-HUD 2.10.121 removes the failed xScal direct-TextField experiment and restores SharedHUDTools as
-the xScal text editor. xScal `Input.*` remains reserved for configured action polling. Keyboard
-typing while Fallout is in controller mode is unsupported until xScal exposes a native text-input
-capture contract. ZFE routing is unchanged.
+HUD 2.10.121 removed the failed xScal direct-TextField experiment and restored
+SharedHUDTools as the xScal text editor. The isolated 2.10.125 branch uses the
+new 0.2.18 native text-session callbacks when available, retaining SharedHUDTools
+for older xScal builds. ZFE routing is unchanged. The candidate remains
+unpublished while its final packages and dependency evidence are reviewed.
 
 `simulator/` provides the non-game M0 smoke runner. It renders the exact normalized production SWF
 with pinned, self-hosted Ruffle and verifies browser key delivery with Playwright:

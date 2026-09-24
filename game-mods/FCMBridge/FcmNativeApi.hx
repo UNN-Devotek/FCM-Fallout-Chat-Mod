@@ -176,6 +176,28 @@ class FcmNativeApi {
         return inputDispatcherCandidates().length > 0;
     }
 
+    /** xScal 0.2.18 text capture lives on its generic callback, never chatInterface. */
+    public function xscalBeginInput():Dynamic {
+        return callXscalInputSession("Input.BeginInput", null);
+    }
+
+    public function xscalPollInput(sessionId:Dynamic):Dynamic {
+        return callXscalInputSession("Input.PollInput", sessionId);
+    }
+
+    public function xscalEndInput(sessionId:Dynamic):Dynamic {
+        return callXscalInputSession("Input.EndInput", sessionId);
+    }
+
+    function callXscalInputSession(verb:String, sessionId:Dynamic):Dynamic {
+        if (provider != XSCAL || _inputRaw == null) return null;
+        var fn:Dynamic = Reflect.field(_inputRaw, "call");
+        if (!Reflect.isFunction(fn)) return null;
+        return sessionId == null
+            ? Reflect.callMethod(_inputRaw, fn, [verb])
+            : Reflect.callMethod(_inputRaw, fn, [verb, sessionId]);
+    }
+
     // The dispatcher that accepted the first Input.RegisterKey. Later Input.* calls
     // stay on it so a key registered with one bridge is never polled on another.
     var _inputDispatcher:Dynamic = null;

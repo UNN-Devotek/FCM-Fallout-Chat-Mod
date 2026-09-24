@@ -10,6 +10,8 @@ class TestFcmInputRoute {
             FcmInputRoute.preferred(FcmNativeApi.ZFE, false) == FcmInputRoute.SHARED);
         check("xScal uses SharedHUDTools",
             FcmInputRoute.preferred(FcmNativeApi.XSCAL, true) == FcmInputRoute.SHARED);
+        check("xScal session route is explicit",
+            FcmInputRoute.preferred(FcmNativeApi.XSCAL, false, true) == FcmInputRoute.XSCAL_SESSION);
         check("unknown providers fail closed to the shared host editor",
             FcmInputRoute.preferred("unknown", true) == FcmInputRoute.SHARED);
         check("ZFE may use native fallback",

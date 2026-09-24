@@ -243,7 +243,12 @@ def main() -> None:
                 assert "CUSTOMIZATION.txt" in names
                 assert "KEYBINDS.txt" in names
                 keybinds = archive.read("KEYBINDS.txt")
-                assert b"PRIVATE, NATIVE-UNVERIFIED TEST BUILD" in archive.read("CONTROLLER-TEST-NOTICE.txt")
+                assert "HUD-RELEASE-NOTES.txt" in names
+                assert "CONTROLLER-TEST-NOTICE.txt" not in names
+                release_notes = archive.read("HUD-RELEASE-NOTES.txt")
+                assert f"FCM HUD {package.widget_version()}".encode() in release_notes
+                assert b"xScal 0.2.18" in release_notes
+                assert b"DLL is not bundled" in release_notes
                 assert b"PROVIDER KEYBIND CONTRACT" in keybinds
                 assert b"ZFE       Data/FCMChat.ini openKey" in keybinds
                 assert b"xScal     Data/FCMChat.ini openKey only" in keybinds

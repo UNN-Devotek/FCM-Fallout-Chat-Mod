@@ -18,6 +18,16 @@ class MockXscal {
     public static var ordinarySendCount(default, null):Int = 0;
     public static var lastRosterBody(default, null):String = "";
     public static var lastRoomDiagnosticBody(default, null):String = "";
+    public static var sessionInputEnabled:Bool = false;
+    public static var sessionInputBusy:Bool = false;
+    public static var sessionEndResult:Dynamic = true;
+    public static var sessionEndKeepsActive:Bool = false;
+    public static var sessionBeginCount(default, null):Int = 0;
+    public static var sessionEndCount(default, null):Int = 0;
+    static var sessionId:Int = 0;
+    static var sessionRevision:Int = 0;
+    static var sessionText:String = "";
+    static var sessionState:String = "active";
     static var pressed:Map<Int, Bool> = new Map();
     static var registered:Map<Int, Bool> = new Map();
     static var cursor:Int = 0;
@@ -190,6 +200,28 @@ class MockXscal {
             callCount++;
             if (name == "GetXSRuntimeInfo") return response({runtime:"xScal", version:"sim-1", platform:"Simulator"});
             if (name == "log") { SimLog.emit(Std.string(value)); return true; }
+            if (name == "Input.BeginInput") {
+                if (!sessionInputEnabled) return false;
+                if (sessionInputBusy || sessionId != 0)
+                    return response({success:false,error:"input_unavailable"});
+                sessionId = ++sessionBeginCount;
+                sessionRevision = 0;
+                sessionText = "";
+                sessionState = "active";
+                return response({success:true,sessionId:sessionId,revision:0,text:"",state:"active"});
+            }
+            if (name == "Input.PollInput") {
+                if (!sessionInputEnabled || sessionId == 0 || Std.int(value) != sessionId)
+                    return response({success:false,error:"invalid_session"});
+                return response({success:true,sessionId:sessionId,revision:sessionRevision,
+                    text:sessionText,state:sessionState});
+            }
+            if (name == "Input.EndInput") {
+                if (sessionId == 0 || Std.int(value) != sessionId) return false;
+                sessionEndCount++;
+                if (!sessionEndKeepsActive) sessionId = 0;
+                return sessionEndResult;
+            }
             if (name == "Input.RegisterKey") {
                 var registerKey:Int = Std.int(value);
                 registered.set(registerKey, true);
@@ -223,6 +255,12 @@ class MockXscal {
             default: 0;
         };
         if (key > 0) pressed.set(key, down);
+    }
+
+    public static function setSessionInput(text:String, state:String):Void {
+        sessionText = text;
+        sessionState = state;
+        sessionRevision++;
     }
 
     public static function setVirtualKey(key:Int, down:Bool):Void {
