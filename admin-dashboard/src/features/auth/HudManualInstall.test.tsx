@@ -11,6 +11,7 @@ describe('manual HUD setup', () => {
     expect(screen.getByText(`[Chat]\nenabled=true\nrelayEndpoint=wss://${host}/relay`, { collapseWhitespace: false })).toBeInTheDocument();
     expect(screen.getByText(`[TextChat]\nEndpoint=wss://${host}/relay`, { collapseWhitespace: false })).toBeInTheDocument();
     const text = screen.getByRole('region', { name: 'Manual HUD installation' }).textContent!;
+    expect(text).toContain('the latest ZFE or the latest xScal');
     const otherHost = host.startsWith('dev.') ? 'wss://falloutchatmod.com' : 'wss://dev.falloutchatmod.com';
     expect(text).not.toContain(otherHost);
     expect(text).toContain('If the file or section is missing');

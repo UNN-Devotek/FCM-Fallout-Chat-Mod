@@ -148,8 +148,8 @@ def install_instructions(
 
     if provider == "zfe":
         extender_instruction = (
-            "1. Exit Fallout 76. Install HUDModLoader and the ZFE script extender with\n"
-            "   chat.v1 support, using the authors' instructions."
+            "1. Exit Fallout 76. Install HUDModLoader and the latest ZFE,\n"
+            "   using the authors' instructions."
         )
         provider_intro = (
             "This archive is for ZFE with HUDModLoader. Do not install xScal configuration.\n"
@@ -158,8 +158,8 @@ def install_instructions(
         provider_setup = zfe_setup
     elif provider == "xscal":
         extender_instruction = (
-            "1. Exit Fallout 76. Install HUDModLoader and the xScal script extender with\n"
-            "   chatInterface support, using the authors' instructions."
+            "1. Exit Fallout 76. Install HUDModLoader and the latest xScal,\n"
+            "   using the authors' instructions."
         )
         provider_intro = (
             "This archive is for xScal with HUDModLoader. Do not install ZFE configuration.\n"
@@ -169,7 +169,7 @@ def install_instructions(
     else:
         extender_instruction = (
             "1. Exit Fallout 76. Install HUDModLoader and exactly one script extender:\n"
-            "   ZFE with chat.v1 support or xScal with chatInterface support."
+            "   the latest ZFE or the latest xScal."
         )
         provider_intro = (
             "Choose exactly one script extender: ZFE or xScal. Install only that provider's "
@@ -193,10 +193,6 @@ def install_instructions(
 FCMChatWidget version: {version}
 
 HUD {version} RELEASE CANDIDATE - NOT YET PUBLISHED.
-
-xScal controller-active typing requires xScal 0.2.18 or newer with the
-Input.BeginInput, Input.PollInput, and Input.EndInput callbacks. Earlier xScal
-builds retain the SharedHUDTools fallback. The xScal DLL is not in this ZIP.
 
 This archive installs the optional in-game HUD-mod track through HUDModLoader. It is
 separate from the desktop overlay; the desktop overlay is not required for HUD chat.

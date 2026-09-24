@@ -19,7 +19,7 @@ export default function HudManualInstall({ linkUrl, bodyStyle, stepStyle, noteSt
 
       <div style={stepStyle}>STEP 1 — PREPARE</div>
       <div style={bodyStyle}>
-        Close Fallout 76. Install HUDModLoader and exactly one extender: ZFE or xScal.
+        Close Fallout 76. Install HUDModLoader and exactly one extender: the latest ZFE or the latest xScal.
         Do not install <code>FCMServerBridge.ba2</code> with the visible HUD.
       </div>
 

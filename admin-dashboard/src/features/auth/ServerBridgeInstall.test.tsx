@@ -8,6 +8,8 @@ describe('optional Server Bridge installation', () => {
   it('separates bridge setup from visible HUD provider configuration', () => {
     render(<ServerBridgeInstall bodyStyle={{}} stepStyle={{}} noteStyle={{}} />);
     const text = screen.getByRole('region', { name: 'Optional Server Bridge installation' }).textContent!;
+    expect(text).toContain('the latest ZFE or the latest xScal');
+    expect(text).not.toContain('0.2.17');
     expect(text).toContain('Do not edit xscal.ini');
     expect(text).toContain('[Chat]');
     expect(text).toContain('for the visible in-game HUD, not the Server Bridge');

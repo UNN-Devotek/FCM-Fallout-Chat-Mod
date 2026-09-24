@@ -5,7 +5,7 @@ to Fallout Chat Mod on this computer. Sign into Fallout Chat Mod only. The
 bridge has no separate login or pairing code.
 
 PREREQUISITES
-HUDModLoader plus exactly one supported extender: ZFE or xScal 0.2.17 or newer.
+HUDModLoader plus exactly one extender: the latest ZFE or the latest xScal.
 These are separate downloads. Do not install the visible FCM HUD or the old
 FCMBridge with this Server Bridge. Fallout Chat Mod does not install it for you.
 
@@ -13,9 +13,8 @@ CHOOSE ONE INSTALL PATH (FALLOUT 76 MUST BE CLOSED)
 
 ZFE INSTALL
 -----------
-1. Install HUDModLoader and exactly one extender: ZFE with the zfe-storage-v1
-   capability. A normal ZFE install may contain only dxgi.dll at first; ZFE's
-   feature-specific Data folders are not proof of installation.
+1. Install HUDModLoader and the latest ZFE. A normal ZFE install may contain
+   only dxgi.dll at first; its feature-specific Data folders may not exist.
 2. Back up the files below, then copy Data/FCMServerBridge.ba2 into the game's
    Data directory.
 3. Add FCMServerBridge once to Data/hudmodloader.ini. Preserve every existing
@@ -31,7 +30,7 @@ ZFE INSTALL
 
 XSCAL INSTALL
 -------------
-1. Install HUDModLoader and exactly one extender: xScal 0.2.17 or newer.
+1. Install HUDModLoader and the latest xScal.
 2. Do not edit xscal.ini for the Server Bridge. The [Chat] enabled and
    relayEndpoint settings are only for the visible FCM in-game HUD, not this
    invisible bridge.

@@ -283,6 +283,9 @@ def main() -> None:
                 assert b"Do not install ZFE, its fragment" in install
                 assert archive.read("FCMChatWidget.provider.txt") == b"unified\n"
                 install = install.decode()
+                assert "the latest ZFE or the latest xScal" in install
+                assert "with chat.v1 support" not in install
+                assert "with chatInterface support" not in install
                 assert f"[Chat]\n  enabled=true\n  relayEndpoint={expected['endpoint']}" in install
                 assert "If the section or file is missing, add it once" in install
                 assert "Windows: optionally run Enable-xScal-Chat.cmd" in install
@@ -373,6 +376,9 @@ def main() -> None:
                         "Data/ZFE/TextChat/fragments/FCMChatWidget.ini"
                     ) if provider == "zfe" else b""
                     install = archive.read("INSTALL.txt")
+                    assert (b"the latest ZFE" if provider == "zfe" else b"the latest xScal") in install
+                    assert b"with chat.v1 support" not in install
+                    assert b"with chatInterface support" not in install
                     menu = archive.read("HUDMODLOADER-MENU.txt")
                     assert b"General combines all six feeds" in menu
                     assert b"Sending from General targets General" in menu

@@ -22,7 +22,7 @@ export default function ServerBridgeInstall({ bodyStyle, stepStyle, noteStyle }:
 
       <div style={stepStyle}>SERVER BRIDGE — SHARED STEPS</div>
       <div style={bodyStyle}>
-        1. Close Fallout 76. Install HUDModLoader and either ZFE or xScal 0.2.17 or newer.<br />
+        1. Close Fallout 76. Install HUDModLoader and either the latest ZFE or the latest xScal.<br />
         2. Extract the overlay ZIP outside the game folder and open <code>Optional FCM Bridge</code>.<br />
         3. Copy <code>Data/FCMServerBridge.ba2</code> into the game&apos;s <code>Data</code> folder.<br />
         4. Add <code>FCMServerBridge</code> once to <code>Data/hudmodloader.ini</code>. Preserve existing entries.<br />
@@ -34,7 +34,7 @@ export default function ServerBridgeInstall({ bodyStyle, stepStyle, noteStyle }:
 
       <div style={stepStyle}>IF YOU USE xScal</div>
       <div style={bodyStyle}>
-        Use xScal 0.2.17 or newer. <strong>Do not edit <code>xscal.ini</code>.</strong> The{' '}
+        <strong>Do not edit <code>xscal.ini</code>.</strong> The{' '}
         <code>[Chat]</code> settings are for the visible in-game HUD, not the Server Bridge.
       </div>
 
