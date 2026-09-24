@@ -112,6 +112,15 @@ jobs:
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
         run: |
           cd cross-platform-overlay
+          # A service runner can install TrustedSigning under its profile while
+          # child powershell.exe processes inherit a PSModulePath without that
+          # CurrentUser directory. Keep it visible to electron-builder's signer.
+          $moduleRoot = Join-Path $env:USERPROFILE 'Documents\WindowsPowerShell\Modules'
+          $env:PSModulePath = "$moduleRoot;$env:PSModulePath"
+          if (Test-Path (Join-Path $moduleRoot 'TrustedSigning')) {
+            powershell.exe -NoProfile -NonInteractive -Command 'Get-Command Invoke-TrustedSigning -ErrorAction Stop | Out-Null'
+            if ($LASTEXITCODE -ne 0) { throw 'TrustedSigning module is installed but not discoverable' }
+          }
           # `azureSignOptions` is injected HERE (not in package.json) on purpose: the
           # unsigned CI gate build (ci.yml → overlay-build-windows-nsis, which has no
           # Azure creds) must stay green. Putting it in package.json would make every

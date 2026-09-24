@@ -66,6 +66,12 @@ describe('Windows release code signing (Azure Trusted Signing)', () => {
     expect(workflow).toMatch(/uses:\s*actions\/setup-dotnet@[0-9a-f]{40}/);
   });
 
+  it('exposes the service-account signing module to child PowerShell processes', () => {
+    expect(workflow).toContain("Join-Path $env:USERPROFILE 'Documents\\WindowsPowerShell\\Modules'");
+    expect(workflow).toContain('$env:PSModulePath = "$moduleRoot;$env:PSModulePath"');
+    expect(workflow).toContain("'Get-Command Invoke-TrustedSigning -ErrorAction Stop | Out-Null'");
+  });
+
   it('does NOT put azureSignOptions in package.json (keeps the unsigned CI gate green)', () => {
     expect(pkg.build?.win?.azureSignOptions).toBeUndefined();
     // Belt-and-suspenders: the string must not appear anywhere in the build config.

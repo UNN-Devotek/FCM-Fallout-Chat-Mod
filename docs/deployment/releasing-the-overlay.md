@@ -174,6 +174,11 @@ workflow's build step — no manual action per release.
   `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` repo secrets. The publisher name
   comes from the `AZURE_PUBLISHER_NAME` repo variable (keeps the signer's legal name out of git
   history; it is still public on each binary's cert subject).
+- On a Windows service runner, the CurrentUser module may be installed under the service
+  profile but absent from child PowerShell processes' inherited `PSModulePath`. The release
+  build step adds that profile module directory before invoking electron-builder and checks
+  that an installed `Invoke-TrustedSigning` is discoverable. This is needed on the temporary
+  MSI laptop runner; the dedicated signing runner does not require a machine-wide policy change.
 
 **Azure resources (provisioned 2026-06-21, `az` subscription `Azure subscription 1`):**
 
