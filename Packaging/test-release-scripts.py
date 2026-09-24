@@ -30,6 +30,7 @@ def main() -> None:
     smoke = (ROOT / "Packaging/smoke-test.ps1").read_text(encoding="utf-8")
     package_downloads = (ROOT / "Packaging/package-downloads.ps1").read_text(encoding="utf-8")
     package_nexus = (ROOT / "Packaging/package-nexus-downloads.ps1").read_text(encoding="utf-8")
+    package_portable = (ROOT / "Packaging/package-portable.ps1").read_text(encoding="utf-8")
     vt_gate = (ROOT / "Packaging/vt-gate.ps1").read_text(encoding="utf-8")
 
     required_nexus_markers = (
@@ -165,12 +166,17 @@ def main() -> None:
     for marker in (
         "Optional FCM Bridge",
         "Data/FCMServerBridge.ba2",
-        "97047bd39c6572b410ce81a0ab27802e89dbef27d35960dc0f016dd6cf641113",
+        "9ae03b9e047c5fea221d10a8c805b0fe07cfcadb79af9667c766a4c627b54e44",
         "Fallout Chat Mod Portable $Version (Windows)",
         "README-PORTABLE-NEXUS.txt",
     ):
         assert marker in package_nexus, f"Nexus package helper is missing: {marker}"
     assert '"-BridgeZip", $BridgeZip' in release
+    for script in (package_downloads, package_nexus):
+        assert "9c245bcad80b7baf1681d29273fda97008403a047bb941e00622a7210bb465af" in script
+    for script in (package_downloads, package_nexus, package_portable):
+        assert "'0.2.8'" not in script and "0.2.8 candidate" not in script
+        assert "'0.2.9'" in script
 
     assert 'Fallout Chat Mod-$Version.AppImage' in smoke
     assert 'Get-ChildItem -Path $DistDir -Filter "*.AppImage"' not in smoke
