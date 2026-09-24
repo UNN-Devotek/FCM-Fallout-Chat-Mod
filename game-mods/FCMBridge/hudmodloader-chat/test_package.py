@@ -272,6 +272,7 @@ def main() -> None:
                 assert expected["endpoint"].encode() in archive.read("Enable-xScal-Chat.ps1")
                 assert b"@@FCM_RELAY_ENDPOINT@@" not in archive.read("Enable-xScal-Chat.ps1")
                 install = archive.read("INSTALL.txt")
+                assert b"RELEASE CANDIDATE" not in install
                 assert b"Choose exactly one script extender" in install
                 assert b"CHOOSE EXACTLY ONE PROVIDER SECTION" in install
                 assert b"ZFE INSTALL - FOLLOW ONLY IF USING ZFE" in install
@@ -316,6 +317,8 @@ def main() -> None:
                 }.intersection(package.NEXUS_BLOCKED_SUFFIXES)
                 install = archive.read("INSTALL.txt")
                 assert b"contains no setup scripts" in install
+                assert b"and helpers in the extracted" not in install
+                assert b"RELEASE CANDIDATE" not in install
                 assert b"/downloads/" not in install
 
             unsafe = Path(temp_dir) / f"widget-{target}-unsafe-nexus.zip"

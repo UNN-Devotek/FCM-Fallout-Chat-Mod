@@ -120,9 +120,9 @@ OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows
 
 ### Step 1 — Build raw artifacts
 
-> **Standard path: build both platforms on the self-hosted runners.** The repo ships two
-> `workflow_dispatch` build workflows, one per platform, both running on the `unn` self-hosted
-> runners. This is the **preferred** way to produce release artifacts — it pins the toolchain
+> **Standard path: use the release build workflows.** Windows signing runs on the
+> `[self-hosted, windows, unn]` runner; Linux builds run on GitHub-hosted `ubuntu-latest`.
+> This is the **preferred** way to produce release artifacts — it pins the toolchain
 > (Node 24), bumps the version in `package.json` from the `version` input, builds the renderer,
 > runs `electron-builder`, and uploads the raw installer(s) as a 90-day artifact. Build locally
 > (the manual steps further down) only when a runner is unavailable.
@@ -130,11 +130,10 @@ OS-aware behavior (no flags needed — the scripts detect `$IsLinux`/`$IsWindows
 > | Platform | Workflow | Runner | Outputs (artifact) |
 > | -------- | -------- | ------ | ------------------ |
 > | Windows  | `.github/workflows/build-windows.yml` | `[self-hosted, windows, unn]` | `*.exe` (NSIS + portable) |
-> | Linux    | `.github/workflows/build-linux.yml`   | `[self-hosted, linux, unn]`   | `*.AppImage`, `*.deb` |
+> | Linux    | `.github/workflows/build-linux.yml`   | `ubuntu-latest`   | `*.AppImage`, `*.deb` |
 >
-> **Note:** these release workflows (`build-*.yml`) always use the self-hosted runners by design
-> and are NOT affected by the CI runner migration. Only the CI jobs in `ci.yml` defaulted to
-> GitHub-hosted runners (`ubuntu-latest` / `windows-latest`). The `CI_RUNNER` /
+> **Note:** the Windows release workflow still requires the self-hosted signing runner;
+> the Linux release workflow uses GitHub-hosted Linux. The `CI_RUNNER` /
 > `CI_RUNNER_WINDOWS` repo variables have no effect on release workflows.
 >
 > Trigger both for the same version (CLI shown; or use the Actions tab → Run workflow):
@@ -188,8 +187,10 @@ workflow's build step — no manual action per release.
 
 > **Runner prerequisite — .NET SDK (provided by the workflow):** the `TrustedSigning` module
 > fetches the Azure CodeSigning dlib via `dotnet tool install`, so the runner needs `dotnet`.
-> The self-hosted `[self-hosted, windows, unn]` runner has no .NET SDK, so `build-windows.yml`
-> installs it with `actions/setup-dotnet` (`8.0.x`) before the build. Without it, signing dies in
+> `build-windows.yml` selects .NET `8.0.x` with `actions/setup-dotnet` before the build.
+> Its `DOTNET_INSTALL_DIR` points to the runner's writable temporary directory;
+> the default `C:\Program Files\dotnet` fails for unprivileged runner accounts.
+> Without a working SDK, signing dies in
 > `NugetInstall.psm1` with `Start-Process: cannot find the file specified`. `signtool` itself does
 > NOT need separate install — the module bundles it via `Microsoft.Windows.SDK.BuildTools`.
 >
@@ -308,8 +309,8 @@ an explicit opt-in mod and is additional to the raw files — do not replace the
 **HARD RULE — Nexus HUD ZIPs contain no executables or scripts.** The website HUD ZIP may
 include the optional `Enable-xScal-Chat.cmd` and `.ps1` helpers. Before a Nexus HUD upload,
 `publish-nexus-release.ps1` builds a separate `FCM HUD Mod-<widget-version> (PROD)-Nexus.zip`
-with `--distribution nexus`. That archive omits both helpers, includes
-`DOWNLOAD-XSCAL-SETUP-HELPERS.txt` pointing to the website ZIP, and fails closed if a blocked
+with `--distribution nexus`. That archive omits both helpers, gives manual xScal
+configuration in its own `INSTALL.txt`, and fails closed if a blocked
 executable/script extension is present. Never upload the website HUD ZIP to Nexus.
 
 For a hosted-dev package, use `-HudTarget dev`; the generated INIs and `INSTALL.txt` then point

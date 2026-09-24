@@ -96,7 +96,7 @@ test('diagnostic bridge exports bounded timing without a second storage write', 
   await page.goto('/?mode=packaged-bridge&provider=xscal&scenario=packaged-perf');
   const snapshot = () => page.evaluate(() => window.__FCM_SIM__?.packaged('snapshot'));
   await expect.poll(snapshot, { timeout: 15_000 }).toMatchObject({ active: true, violation: false,
-    snapshot: { build: expect.stringMatching(/^0\.2\.8-c5-perf:p\d+\/\d+:e\d+\/\d+:s\d+\/\d+$/) } });
+    snapshot: { build: expect.stringMatching(/^0\.2\.9-c5-perf:p\d+\/\d+:e\d+\/\d+:s\d+\/\d+$/) } });
   const result = await snapshot() as { writes: number; namedWrites: number; snapshot: { build: string } };
   expect(result.snapshot.build.length).toBeLessThanOrEqual(64);
   expect(result.namedWrites).toBe(result.writes);

@@ -94,6 +94,10 @@ def install_instructions(
         xscal_helper = (
             "  This Nexus archive uses the manual edit above and contains no setup scripts.\n"
         )
+    extracted_files_label = (
+        "instructions, examples, snippets, and optional helpers"
+        if distribution == "website" else "instructions, examples, and snippets"
+    )
 
     zfe_fragment = (
         "Data/ZFE/TextChat/fragments/FCMChatWidget.ini"
@@ -192,8 +196,6 @@ def install_instructions(
 
 FCMChatWidget version: {version}
 
-HUD {version} RELEASE CANDIDATE - NOT YET PUBLISHED.
-
 This archive installs the optional in-game HUD-mod track through HUDModLoader. It is
 separate from the desktop overlay; the desktop overlay is not required for HUD chat.
 {provider_intro}The BA2 works with the selected provider and connects to {label.lower()}.
@@ -210,7 +212,7 @@ Installation
    - On an update, replace the BA2 but preserve your existing FCMChat.ini settings;
      compare the packaged INI and merge any new keys instead of overwriting it.
 
-   Keep the remaining instructions, examples, snippets, and helpers in the extracted
+   Keep the remaining {extracted_files_label} in the extracted
    folder for the steps below:
 
    Data/FCMChatWidget.ba2

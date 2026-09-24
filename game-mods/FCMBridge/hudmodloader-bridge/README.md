@@ -1,4 +1,10 @@
-# FCM Server Bridge 0.2.8
+# FCM Server Bridge 0.2.9 release candidate
+
+0.2.9 carries the five-second unchanged-roster xScal export coalescing in a
+versioned candidate. It is not published or native-accepted. The packaged
+0.2.8 bridge remains the current public release until the new candidate passes
+native room, travel, and lag acceptance and its exact ZIP hash is pinned by the
+overlay release packaging scripts.
 
 Invisible, optional HUDModLoader child. Sign into the desktop overlay only.
 No bridge login/code/pairing, chat connection, input editor or helper service.
@@ -44,7 +50,7 @@ cd ../hudmodloader-chat
 for suite in test-*.hxml; do haxe "$suite" || exit 1; done
 npm test --prefix simulator
 cd ../hudmodloader-bridge
-python3 package.py --target dev --output ../../../_dev-test-builds/server-bridge-0.2.8/FCM-Server-Bridge-0.2.8-DEV.zip
+python3 package.py --target dev --output ../../../_dev-test-builds/server-bridge-0.2.9/FCM-Server-Bridge-0.2.9-DEV.zip
 ```
 
 Also run parent native-adapter/auth/source checks and affected backend, overlay and
@@ -62,9 +68,9 @@ release. Its existing export `build` field adds `p`, `e`, and `s` last/peak
 millisecond pairs for the two-second world observation pass, JSON encoding,
 and native storage save. Peaks accumulate for the current HUD movie session;
 encode and save samples appear in the following export.
-For example, `0.2.8-c5-perf:p4/18:e0/2:s1/27` means the latest/peak save took
+For example, `0.2.9-c5-perf:p4/18:e0/2:s1/27` means the latest/peak save took
 1/27 ms. Values are capped at 9999 ms; no names, raw identifiers, or extra
-storage writes are included. The regular build keeps the exact `0.2.8` marker.
+storage writes are included. The regular build keeps the exact `0.2.9` marker.
 Compare the same game/world with the bridge absent and present while keeping
 xScal, HUDModLoader, and other mods unchanged. Ruffle cannot prove native
 frame timing; keep this candidate native-unverified until an in-game test.
@@ -110,11 +116,11 @@ claim the legacy HUDMenu-wide registration slot, so Improved HUD can continue us
 `fcmserverbridge-prod`. Older xScal builds retain the legacy adapter for standalone
 compatibility, but 0.2.17+ is required when another HUD child also uses modStorage.
 
-The local `c5` performance candidate leaves two-second roster polling intact but
+The 0.2.9 release candidate leaves two-second roster polling intact but
 coalesces xScal exports when only the observation timestamp/sequence changes.
 It still sends two advancing startup snapshots and promptly exports roster,
 world, active/holding/inactive, and self-name changes. The candidate is not a
-release or native-accepted fix; compare its save timing and perceived hitches
+published or native-accepted fix; compare its save timing and perceived hitches
 against the earlier diagnostic build before promoting it.
 
 Previous native-network acceptance never certifies this storage-based candidate.

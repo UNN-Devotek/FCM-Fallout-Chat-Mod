@@ -2,6 +2,9 @@
 
 **Current release: FCMServerBridge 0.2.8.** It is published as a separate, optional
 HUDModLoader child and was installed locally with xScal 0.2.17 for a bridge test.
+The versioned 0.2.9 candidate adds unchanged-roster xScal write coalescing but
+is not published or native-accepted. Its new artifact must pass the full native
+room, travel, and lag checks before updating the release packaging hash lock.
 That local installation is not native acceptance: the full ZFE/xScal mixed-client,
 room/message/travel matrix remains pending. Do not coinstall it with the visible
 FCMChatWidget. The 0.2.6 investigation below is historical candidate evidence.
@@ -124,7 +127,7 @@ Maximum UTF-8 document: 8 KiB. No tokens, linking codes, account authentication,
 room selection or credentials. Storage namespaces are organization, not security;
 treat the file as untrusted input.
 
-Changed snapshots write at most once per second. In the local `c5` test candidate,
+Changed snapshots write at most once per second. In the 0.2.9 release candidate,
 xScal keeps two-second in-memory roster observations but coalesces exports of an
 unchanged roster to five-second intervals after two startup writes. Roster,
 world, self-name, and active/holding/inactive changes still export promptly;

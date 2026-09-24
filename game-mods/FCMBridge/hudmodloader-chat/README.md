@@ -3,10 +3,10 @@
 FCMChatWidget is the optional HUDModLoader chat widget for Fallout 76. It uses ZFE or xScal's
 native chat bridge and FCM's `/relay`. It is independent of the desktop overlay.
 
-**Isolated 2.10.125 release candidate:** this worktree adds the author-supplied
+**2.10.125 release candidate on Dev and Prod:** the source adds the author-supplied
 xScal 0.2.18 native text session (`Input.BeginInput`, `PollInput`, `EndInput`) with
 bounded full-text snapshots and SharedHUDTools fallback for older xScal builds.
-The exact 2.10.125 BA2 is locally installed, but has not been published or merged.
+The exact 2.10.125 BA2 was locally installed for testing; public release is pending.
 An earlier 2.10.124 Escape test caused an immediate apparent game/UI freeze.
 Two 2.10.125 Escape cancels completed with session release and later HUD input,
 and the user reported responsive gameplay. The diagnostic build is not a proven

@@ -61,6 +61,9 @@ jobs:
       # this, signing dies in NugetInstall.psm1 with "Start-Process: cannot find the file
       # specified" (dotnet missing). signtool itself comes bundled via the module's SDK BuildTools.
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        env:
+          # Self-hosted runner accounts may not write to C:\Program Files\dotnet.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/.dotnet
         with:
           dotnet-version: '8.0.x'
 

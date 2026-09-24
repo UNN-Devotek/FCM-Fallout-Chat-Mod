@@ -11,6 +11,9 @@ FCMBridge with this Server Bridge. Fallout Chat Mod does not install it for you.
 
 CHOOSE ONE INSTALL PATH (FALLOUT 76 MUST BE CLOSED)
 
+Extract this ZIP outside the Fallout 76 game folder. Copy only the files named
+below; do not extract the entire archive into the game folder.
+
 ZFE INSTALL
 -----------
 1. Install HUDModLoader and the latest ZFE. A normal ZFE install may contain

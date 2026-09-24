@@ -30,6 +30,7 @@ class BridgePackageTests(unittest.TestCase):
                         self.assertFalse(any('TextChat' in n or 'xscal.ini' in n for n in names))
                         self.assertIn(f'https://{host}', archive.read('INSTALL.txt').decode())
                         install = archive.read('INSTALL.txt').decode()
+                        self.assertIn('Extract this ZIP outside the Fallout 76 game folder', install)
                         self.assertIn('the latest ZFE or the latest xScal', install)
                         self.assertNotIn('ZFE with the zfe-storage-v1', install)
                         self.assertNotIn('xScal 0.2.17 or newer', install)

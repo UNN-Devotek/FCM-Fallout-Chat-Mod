@@ -94,7 +94,7 @@ class TestFcmBridgeExport {
         check(exporter.update(1000, state, "Self", "xscal", save), "initial snapshot written");
         check(documents[0].state == "active" && documents[0].observationAgeMs == 0, "active evidence age");
         #if bridge_perf
-        check(StringTools.startsWith(documents[0].build, "0.2.8-c5-perf:p") && documents[0].build.length <= 64,
+        check(StringTools.startsWith(documents[0].build, "0.2.9-c5-perf:p") && documents[0].build.length <= 64,
             "diagnostic export keeps the strict schema and bounded build label");
         #else
         check(documents[0].build == FcmBridgeExport.BUILD, "normal export retains its exact build marker");
