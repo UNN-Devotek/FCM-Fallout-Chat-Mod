@@ -21,8 +21,13 @@ its extracted SWF equals the compiled SWF byte for byte. No package was publishe
 the reviewed 2.10.126 BA2 replaced only `Data/FCMChatWidget.ba2`, and the root
 version stamp was updated. The existing ZFE fragment and inactive `xscal.ini`
 each had only their relay endpoint changed from Prod to
-`wss://dev.falloutchatmod.com/relay`. The ZFE 0.15.0 DLL, other settings,
-HUDModLoader entry, and archive list were unchanged. The installed BA2 hash
+`wss://dev.falloutchatmod.com/relay`. A follow-up corrected the separate
+`Data/FCMChat.ini` `linkUrl` from the Prod `/link` page to
+`dev.falloutchatmod.com/link`; the first install had missed this field. The
+game was closed, only that line changed, and its exact rollback file is under
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-giveaway-dev-link-siwl8bgh/`.
+The ZFE 0.15.0 DLL, other settings, HUDModLoader entry, and archive list were
+unchanged. The installed BA2 hash
 matches the reviewed hash above; the widget has one loader entry and one
 archive-list entry, with no `FCMServerBridge.ba2`. Exact-file backups and
 pre-install hashes are in

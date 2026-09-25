@@ -21,8 +21,10 @@ announcement/result rows; actual extender and game behavior requires a fresh
 native test of this build.
 The 2.10.126 BA2 is installed on the local Steam/Proton desktop for a hosted-Dev
 trial with ZFE 0.15.0; the ZFE fragment and inactive xScal config both target
-`wss://dev.falloutchatmod.com/relay`. The provider and archive registration are
-unchanged. The exact rollback files are listed in the [build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
+`wss://dev.falloutchatmod.com/relay`, and `Data/FCMChat.ini` now points its
+separate `linkUrl` at `dev.falloutchatmod.com/link`. The provider and archive
+registration are unchanged. The exact rollback files are listed in the
+[build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
 Hosted Dev still needs the matching giveaway backend changes before these new
 HUD commands can be tested end to end.
 
