@@ -463,25 +463,51 @@ python3 test_package.py
 ```
 
 `--target prod` stamps the production endpoint/link host. `--provider zfe|xscal` makes a
-provider-specific ZIP; the default unified ZIP contains examples for either provider. Production
-configuration is not deployment authorization or proof that the endpoint is enabled.
+provider-specific ZIP; the default unified ZIP has complete `ZFE (Install for ZFE only)/` and
+`xScal (Install for xScal only)/` folders.
+Inside either folder, open `Data (drag the contents into data folder)/` and drag its contents into
+the game's `Data/` folder. Do not copy the labeled folder itself. Skip edited INIs.
+The main ZIP contains no `.cmd`/`.ps1` helper: users choose one folder and follow its `INSTALL.txt`.
+For Quick Configuration 2 or NukaMods, users extract the main ZIP and import only the chosen
+provider's `Data (drag the contents into data folder)/FCMChatWidget.ba2` as a BA2 mod. The manager owns its Data placement and archive
+list entry; the chosen `INSTALL.txt` covers the separate HUDModLoader entry and provider/FCM INIs.
+The combined ZIP itself must not be passed to a mod manager: it contains two copies of the same
+BA2 under different roots. Verify one `Data/FCMChatWidget.ba2` and one archive-list entry after
+deployment, and preserve edited INIs on update. Before calling a release manager-compatible, use
+a clean test profile in each manager to import the selected BA2, enable/deploy it, confirm the
+single Data file and archive-list entry, update the BA2 while retaining edited INIs, then disable
+or uninstall and confirm that the manager removes its BA2/list entry without replacing the user
+configuration. Repeat for ZFE and xScal. The packaging check cannot certify these manager actions.
+The folder layout is a package-only behavior covered by `test_package.py`; Ruffle cannot exercise
+ZIP extraction or INI merging. Native startup still requires the separate in-game acceptance matrix.
+Production configuration is not deployment authorization or proof that the endpoint is enabled.
 
-The packager checks the embedded version and target stamps. Validate the ZIP's BA2 against the
-reviewed BA2 bytes and inspect its install files. Nexus distribution omits executable/script
-files and rejects executable magic. Website ZIPs may contain optional Windows xScal setup helpers;
-Nexus variants contain manual xScal instructions only and do not direct users to an external helper download. No extender DLL is redistributed.
+The packager checks the embedded version and target stamps. Validate both ZIP BA2 copies against the
+reviewed BA2 bytes and inspect each provider folder. Nexus distribution omits executable/script
+files and rejects executable magic. Legacy xScal-only website ZIPs may contain an optional Windows
+setup helper; the main ZIP and Nexus variants contain manual xScal instructions only. No extender DLL is redistributed.
 
 ## Configuration and install layout
 
-All variants include `Data/FCMChatWidget.ba2`, `Data/FCMChat.ini`, a root-level
-`FCMChatWidget.hudmodloader.ini` append snippet, version stamp, manual installation, F11 menu,
-keybind, customization, and emoji-license files. They do not replace `Data/hudmodloader.ini`.
+The main ZIP has `ZFE (Install for ZFE only)/` and `xScal (Install for xScal only)/` folders. Each has
+`Data (drag the contents into data folder)/FCMChatWidget.ba2`, editable `FCMChat.ini`, and
+`hudmodloader.ini` inside the labeled folder, with the
+loader defaults and FCM line, and root `Fallout76Custom.ini` as an archive-list
+merge template. `README.txt` at ZIP root combines setup, release notes, menu, keybinds,
+customization, version, and provider metadata. Copy only the selected BA2 and missing FCM/ZFE
+INIs; merge shared INIs without replacing existing files. Updates replace only the BA2.
+Provider-specific ZIPs retain the single-provider root layout with a conventional `Data/` folder.
+The packaged `Data/hudmodloader.ini` contains all 22 lines from HUDModLoader's
+[upstream default file](https://github.com/GitCrazy-wc/hudmodloader/blob/71e2fde134933323777980b5e0fd0c6036c2408f/Config%20File/hudmodloader.ini)
+plus `FCMChatWidget`. The snapshot is tracked in `HUDMODLOADER-UPSTREAM-DEFAULTS.txt` and
+checked by `test_package.py`. Existing player registries must still be merged, never replaced;
+the background `FCMServerBridge` belongs to its separate package.
 
 | Provider package | Configuration |
 | --- | --- |
-| Unified | `examples/ZFE/FCMChatWidget.ini.example`, `examples/ZFE/zfe.ini.example`, `xscal.ini.example`; install only the selected provider's settings |
+| Unified | `ZFE (Install for ZFE only)/Data (drag the contents into data folder)/ZFE/TextChat/fragments/FCMChatWidget.ini` or `xScal (Install for xScal only)/xscal.ini`; open one provider folder only |
 | ZFE | `Data/ZFE/TextChat/fragments/FCMChatWidget.ini` |
-| xScal | `xscal.ini.example`, merged into `[Chat]` beside `Fallout76.exe` |
+| xScal | `xscal.ini`, merged into `[Chat]` beside `Fallout76.exe` |
 
 The modern ZFE fragment name matches the `FCMChatWidget` loader entry. The legacy `FCM.ini`
 fragment is not its replacement. A DLL-only ZFE install is normal. The optional user-created
@@ -490,7 +516,7 @@ keys, including endpoint and `OpenChatKey`. Keep `Data/FCMChat.ini` `openKey` al
 `[Chat] enabled=true` and `relayEndpoint=wss://<target>/relay`; it has no `OpenChatKey` config.
 The route is `/relay`, never `/zfe-relay`.
 
-Follow the generated `INSTALL.txt`: exit the game, merge the loader line exactly once, and append
+Follow the generated `README.txt`/provider `INSTALL.txt`: exit the game, merge the loader line exactly once, and append
 the archive to the existing `[Archive] sResourceArchive2List`. If starting an otherwise empty
 list with HUDModLoader, the relevant entries are:
 

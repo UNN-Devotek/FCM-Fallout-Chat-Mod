@@ -23,26 +23,36 @@ export default function HudManualInstall({ linkUrl, bodyStyle, stepStyle, noteSt
         Do not install <code>FCMServerBridge.ba2</code> with the visible HUD.
       </div>
 
-      <div style={stepStyle}>STEP 2 — EXTRACT THE ZIP</div>
+      <div style={stepStyle}>STEP 2 — CHOOSE A PROVIDER FOLDER</div>
       <div style={bodyStyle}>
         Extract the FCM HUD Mod ZIP to a temporary folder outside the Fallout 76 installation,
-        such as <code>Downloads/FCM-HUD</code>. Do not extract the entire archive over the game;
-        it also contains instructions and examples. Copy only the shared files below into the game:
-        <pre style={codeStyle}>{'Data/FCMChatWidget.ba2\nData/FCMChat.ini'}</pre>
-        Keep the remaining examples and instructions outside the game folder.
+        such as <code>Downloads/FCM-HUD</code>. Open only <code>ZFE (Install for ZFE only)/</code> or <code>xScal (Install for xScal only)/</code>
+        {' '}and read its <code>INSTALL.txt</code>; the ZIP root <code>README.txt</code> has reference details. Open its <code>Data (drag the contents into data folder)/</code> folder and drag the contents into the game&apos;s <code>Data/</code> folder. Skip existing INIs, and do not copy the labeled folder itself.
+        On a manual update, replace only <code>Data/FCMChatWidget.ba2</code>. Keep edited INIs;
+        compare packaged defaults for any new settings. Do not copy both provider folders.
       </div>
 
+      <div style={noteStyle}>
+        Quick Configuration 2 or NukaMods: extract the ZIP and import only your chosen
+        {' '}<code>ZFE (Install for ZFE only)/Data (drag the contents into data folder)/FCMChatWidget.ba2</code> or <code>xScal (Install for xScal only)/Data (drag the contents into data folder)/FCMChatWidget.ba2</code>
+        {' '}as a BA2 mod. Do not import the combined ZIP. Let the manager deploy the BA2 and
+        maintain its archive-list entry. Copy only missing INIs or the ZFE fragment from the
+        chosen folder; keep edited files. Complete the HUDModLoader and provider steps below.
+        Verify one deployed BA2 and one archive-list entry.
+      </div>
       <div style={stepStyle}>STEP 3 — REGISTER WITH HUDMODLOADER</div>
       <div style={bodyStyle}>
-        Add <code>FCMChatWidget</code> once to <code>Data/hudmodloader.ini</code>. Preserve existing entries.
+        If the game&apos;s <code>Data/hudmodloader.ini</code> is missing, copy the chosen folder&apos;s
+        {' '}file there; it includes HUDModLoader&apos;s defaults and FCMChatWidget. Otherwise add
+        {' '}<code>FCMChatWidget</code> once and preserve all existing entries.
       </div>
 
       <div style={stepStyle}>STEP 4 — REGISTER THE BA2</div>
       <div style={bodyStyle}>
-        Add <code>FCMChatWidget.ba2</code> once to <code>sResourceArchive2List</code> in the active{' '}
+        For a manual install, add <code>FCMChatWidget.ba2</code> once to <code>sResourceArchive2List</code> in the active{' '}
         <code>Fallout76Custom.ini</code>. Preserve every existing archive. Example:
         <pre style={codeStyle}>{'[Archive]\nsResourceArchive2List=HUDModLoader.ba2,FCMChatWidget.ba2'}</pre>
-        Do not create duplicate sections or replace your existing archive list.
+        The chosen folder&apos;s root <code>Fallout76Custom.ini</code> is a merge template. Do not create duplicate sections or replace your existing archive list.
       </div>
       <div style={noteStyle}>
         Windows: <code>Documents/My Games/Fallout 76/Fallout76Custom.ini</code>.
@@ -61,19 +71,19 @@ export default function HudManualInstall({ linkUrl, bodyStyle, stepStyle, noteSt
         and do not create a second <code>[Chat]</code> section.
       </div>
       <div style={noteStyle}>
-        xScal ships with chat disabled. Copying <code>xscal.ini.example</code> does not change your
+        xScal ships with chat disabled. The packaged <code>xScal (Install for xScal only)/xscal.ini</code> is a merge template and does not change your
         active configuration. Do not install the ZFE fragment.
       </div>
 
       <div style={stepStyle}>STEP 5B — ZFE ONLY</div>
       <div style={bodyStyle}>
-        Copy the complete <code>examples/ZFE/FCMChatWidget.ini.example</code> file to:
+        The selected <code>ZFE (Install for ZFE only)/Data (drag the contents into data folder)/</code> folder already contains the complete fragment for this game path:
         <pre style={codeStyle}>Data/ZFE/TextChat/fragments/FCMChatWidget.ini</pre>
-        Create the folders if needed and remove <code>.example</code> from the copied filename.
-        Copy the entire example. If <code>Data/configuration/zfe.ini</code> contains a{' '}
+        Copy only a missing fragment to that path. Preserve an existing edited fragment on
+        updates. If <code>Data/configuration/zfe.ini</code> contains a{' '}
         <code>[TextChat]</code> section, make sure it uses:
         <pre style={codeStyle}>{`[TextChat]\nEndpoint=${relayUrl.href}`}</pre>
-        Otherwise, no <code>zfe.ini</code> edit is needed. Do not create <code>xscal.ini</code> for ZFE.
+        No separate <code>zfe.ini</code> is included or required. Do not create <code>xscal.ini</code> for ZFE.
       </div>
 
       <div style={stepStyle}>STEP 6 — VERIFY AND LINK</div>

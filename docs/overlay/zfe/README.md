@@ -155,7 +155,7 @@ coverage from remaining native checks. See
 | Native relay, authentication, controls, cosmetics | [FCM integration](native-chat-relay/fcm-integration.md) |
 | Extender API distinctions and current author links | [Provider API guide](modder-guide.md) |
 | Appearance, fonts, emoji, persistence | [Appearance](ingame-chat-appearance.md) |
-| Open key, channel navigation, scrolling | [Packaged keybind guide](../../../game-mods/FCMBridge/hudmodloader-chat/KEYBINDS.txt) |
+| Open key, channel navigation, scrolling | [Keybind source, included in ZIP README.txt](../../../game-mods/FCMBridge/hudmodloader-chat/KEYBINDS.txt) |
 | Rendering, input ownership, artifact constraints | [Scaleform engineering guide](scaleform-ui-guide.md) |
 | Owned files and install conflicts | [Surface manifest](hud-surface-manifest.md), [compatibility](hud-mod-compatibility.md) |
 | Duplicate/reconnect/send behavior | [Recovery checks](../../testing/hud-recovery.md), [retry receipts](hud-send-retries.md) |
@@ -515,10 +515,16 @@ executable. Merge existing sections, loader registrations, and archive lists; ne
 unrelated settings. Install only the selected provider's configuration and restart the game
 after changing a BA2 or native extender configuration.
 
-Packages do not redistribute extenders or Bethesda HUDMenu assets. Website ZIPs may include
-optional Windows xScal setup helpers; Nexus ZIPs omit executable/script files; xScal/unified variants include a
-helper-download note. All builds include manual setup, keybind, customization, and emoji-license
-files. See the [build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
+Packages do not redistribute extenders or Bethesda HUDMenu assets. The main website and Nexus
+ZIPs contain complete `ZFE (Install for ZFE only)/` and `xScal (Install for xScal only)/` folders without setup scripts; choose only one.
+Quick Configuration 2 and NukaMods users should extract the ZIP and import only their chosen
+folder's `Data (drag the contents into data folder)/FCMChatWidget.ba2` as a BA2 mod. The combined ZIP has two provider roots and
+is not a direct mod-manager import. The manager owns BA2 deployment and the archive-list entry;
+copy only missing provider/FCM INIs, merge the HUDModLoader entry, and preserve edited INIs on
+updates. Check for exactly one BA2 in the game's `Data` folder and one archive-list entry.
+Legacy xScal-only website ZIPs may include an optional Windows helper. All builds include
+manual setup, keybind, customization, and emoji-license files. See the
+[build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
 
 ## Client version handshake (`clientVersion`)
 

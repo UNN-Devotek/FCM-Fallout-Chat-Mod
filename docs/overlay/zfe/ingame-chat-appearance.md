@@ -71,7 +71,7 @@ supplies a positive default delay.
 ## INI configuration
 
 Edit the existing `[FCMChat]` section in `Data/FCMChat.ini`. Do not duplicate keys/sections.
-[Packaged CUSTOMIZATION.txt](../../../game-mods/FCMBridge/hudmodloader-chat/CUSTOMIZATION.txt)
+[Customization source, included in the ZIP README.txt](../../../game-mods/FCMBridge/hudmodloader-chat/CUSTOMIZATION.txt)
 is the user-facing reference; `FcmConfig.hx` defines parsing, clamping, and serialization.
 
 | Keys | Meaning |

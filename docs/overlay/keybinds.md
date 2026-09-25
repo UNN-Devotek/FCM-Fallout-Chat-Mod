@@ -139,7 +139,7 @@ menu closes after a toggle to force that label to be rebuilt.
 After opening input, `/g`, `/t`, `/e`, `/i`, `/r`, and `/s` (or `/server` after a current
 server/world binding is confirmed) switch the destination channel before the rest of the message
 is sent; `/hide` hides the feed and the open key restores it. The generated HUD ZIP includes these
-steps in both `INSTALL.txt` and `HUDMODLOADER-MENU.txt`.
+steps in the selected provider's `INSTALL.txt` and the ZIP root `README.txt`.
 
 | Default | Action / config key | Behavior |
 |---------|---------------------|----------|

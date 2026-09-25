@@ -21,9 +21,10 @@ in-game HUD-mod ZIP from the raw `electron-builder` artifacts and current HUD wi
 4. Compresses the staging contents (files at root, not nested in a subfolder) into:
    - `Fallout Chat Mod Setup X.Y.Z (Windows).zip` — installer + `INSTALL-WINDOWS.txt`
    - `Fallout Chat Mod-X.Y.Z.AppImage (Linux).zip` — AppImage + **`.deb`** + `INSTALL-LINUX.txt` + `.kwinrule`
-   - `FCM HUD Mod-<widget-version> (PROD).zip` — `FCMChatWidget.ba2`, shared UI INI and provider configuration examples,
-     an append-only `FCMChatWidget.hudmodloader.ini` snippet, `FCMChatWidget.version.txt`,
-     `Fallout76Custom.ini.example`, target-specific `INSTALL.txt`, and `HUDMODLOADER-MENU.txt`
+   - `FCM HUD Mod-<widget-version> (PROD).zip` — complete `ZFE (Install for ZFE only)/` and
+     `xScal (Install for xScal only)/` folders, each with the same BA2, editable UI INI, provider config,
+     a labeled `Data (drag the contents into data folder)/` folder, a provider-root
+     `Fallout76Custom.ini` merge template, and install guide; one `README.txt` at ZIP root
 5. All three ZIPs land in `cross-platform-overlay/dist-electron/` alongside the raw files
 
 The `.deb` ships inside the Linux ZIP so apt users can `sudo apt install ./'Fallout Chat Mod-X.Y.Z.deb'` (or `dpkg -i`) — an in-place, apt-managed alternative to the AppImage. `Packaging/release.ps1` also verifies + uploads the raw `.deb` alongside the AppImage, and the website exposes both raw Linux files side by side.
@@ -35,6 +36,14 @@ the user's existing `Data/hudmodloader.ini`. `package.py` reads the widget versi
 `FCMChatWidget.hx` and refuses to package a stale BA2. Use `-HudTarget dev` when producing a
 hosted-dev package; use the default `prod` target for production. Never copy a stamped package
 between environments.
+
+Quick Configuration 2 and NukaMods should import the selected provider's extracted
+`Data (drag the contents into data folder)/FCMChatWidget.ba2`, not the two-provider ZIP. The manager deploys the BA2 and maintains
+its archive-list entry; the selected `INSTALL.txt` explains the manual HUDModLoader and INI
+merges. Check that deployment leaves exactly one BA2 and one archive-list entry, and that an
+update preserves any edited `FCMChat.ini` or ZFE fragment.
+For manual installs, open the selected labeled Data folder and drag its contents into the
+game's `Data/` folder; do not copy the labeled folder itself or replace edited INIs.
 
 **Parameters:**
 - `-Version` (required) — e.g. `1.3.73`
@@ -55,7 +64,7 @@ between environments.
 ```
 
 **What it does:**
-1. Builds `FCM HUD Mod-<widget-version> (PROD)-Nexus.zip` with `--distribution nexus`, excluding scripts/executables. Website helper ZIPs must never be uploaded to Nexus.
+1. Builds `FCM HUD Mod-<widget-version> (PROD)-Nexus.zip` with `--distribution nexus`, excluding scripts/executables. The separate Nexus validation remains required even though the main website ZIP is also script-free.
 2. Runs the completed VirusTotal gate before any Nexus upload; the release operator must already have passed the packaged-app smoke gate. Then calls `publish-nexus.ps1` for the Linux AppImage, `.deb`, and HUD ZIPs as Main files. HUD is the primary download; previous Linux/HUD versions are archived after the new upload is available.
 3. Uses the desktop version for both Linux Nexus files and the current `FCMChatWidget.hx` version for the HUD Nexus file
 4. After publishing, refreshes the Windows scan permalink metadata (the mandatory completed scan gate has already run). Computes the SHA-256 permalink and POSTs it to `POST https://falloutchatmod.com/admin/virustotal-url` so the `/virustotal` redirect always points at the latest scan

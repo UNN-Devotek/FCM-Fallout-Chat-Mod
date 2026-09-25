@@ -11,6 +11,10 @@ from zipfile import ZIP_DEFLATED, ZipFile
 
 ROOT = Path(__file__).resolve().parent
 VERSION_SOURCE = ROOT / "FCMChatWidget.hx"
+HUDMODLOADER_DEFAULTS_SOURCE = ROOT / "HUDMODLOADER-UPSTREAM-DEFAULTS.txt"
+ZFE_FOLDER = "ZFE (Install for ZFE only)"
+XSCAL_FOLDER = "xScal (Install for xScal only)"
+DATA_FOLDER_LABEL = "Data (drag the contents into data folder)"
 NEXUS_BLOCKED_SUFFIXES = {
     ".bat", ".cmd", ".com", ".dll", ".exe", ".js", ".jse", ".msi",
     ".msp", ".ps1", ".psd1", ".psm1", ".scr", ".sh", ".vbe", ".vbs",
@@ -71,206 +75,70 @@ def stamp_configs(target: str, chat_ini: str, widget_ini: str) -> tuple[str, str
 
 
 def install_instructions(
-    target: str, provider: str = "unified", distribution: str = "website"
+    target: str, provider: str = "unified", distribution: str = "website",
+    data_folder: str = "Data",
 ) -> str:
-    """Generate short, provider-specific installation instructions."""
+    """Short instructions for one selected provider."""
+    if provider == "unified":
+        return unified_install_instructions(target)
+    if provider not in ("zfe", "xscal"):
+        raise ValueError("provider must be zfe or xscal")
     config = TARGETS[target]
-    version = widget_version()
-    endpoint = config["endpoint"]
-    label = config["label"]
-
-    if distribution == "website":
-        xscal_files = (
-            "   Enable-xScal-Chat.cmd\n"
-            "   Enable-xScal-Chat.ps1\n"
-        )
-        xscal_helper = (
-            "  Windows: optionally run Enable-xScal-Chat.cmd from the game folder.\n"
-            "  It backs up xscal.ini, enables the section, and preserves other settings.\n"
-            "  Linux/Proton: use the manual edit above; the helper is Windows-only.\n"
-        )
-    else:
-        xscal_files = ""
-        xscal_helper = (
-            "  This Nexus archive uses the manual edit above and contains no setup scripts.\n"
-        )
-    extracted_files_label = (
-        "instructions, examples, snippets, and optional helpers"
-        if distribution == "website" else "instructions, examples, and snippets"
+    provider_name = "ZFE" if provider == "zfe" else "xScal"
+    provider_extra = (
+        f"ZFE: the active fragment is {data_folder}/ZFE/TextChat/fragments/FCMChatWidget.ini.\n"
+        "   Copy it only if missing; keep edits on updates. No separate zfe.ini is\n"
+        "   included or required. If you already use a global [TextChat] override\n"
+        "   in Data/configuration/zfe.ini, ensure its Endpoint matches the fragment.\n"
+        if provider == "zfe" else
+        "xScal: merge this folder's xscal.ini [Chat] keys into xscal.ini beside\n"
+        "   Fallout76.exe. Set enabled=true and the packaged relayEndpoint. Keep\n"
+        "   other sections and never add a second [Chat] section.\n"
     )
-
-    zfe_fragment = (
-        "Data/ZFE/TextChat/fragments/FCMChatWidget.ini"
-        if provider == "zfe"
-        else "examples/ZFE/FCMChatWidget.ini.example"
+    helper = (
+        "Optional Windows helper: Enable-xScal-Chat.cmd merges xscal.ini after a backup.\n"
+        if provider == "xscal" and distribution == "website" else ""
     )
-    zfe_copy = (
-        "  The ZFE fragment is already at Data/ZFE/TextChat/fragments/FCMChatWidget.ini."
-        if provider == "zfe"
-        else "  Copy examples/ZFE/FCMChatWidget.ini.example to\n"
-             "  Data/ZFE/TextChat/fragments/FCMChatWidget.ini."
-    )
-    zfe_destination_note = "" if provider == "zfe" else " Create the destination folders if needed."
-    zfe_example_note = (
-        "  The archive includes examples/ZFE/zfe.ini.example as a global-override template.\n"
-        if provider == "unified"
-        else ""
-    )
-    zfe_setup = (
-        "ZFE INSTALL - FOLLOW ONLY IF USING ZFE\n"
-        "--------------------------------------\n"
-        f"Z1. {zfe_copy.strip()}{zfe_destination_note}\n"
-        "Z2. The fragment supplies the relay endpoint and startup OpenChatKey.\n"
-        "    Data/FCMChat.ini openKey becomes authoritative after discovery.\n"
-        "Z3. Data/configuration/zfe.ini is optional. A DLL-only ZFE install may not\n"
-        "    create that folder or file. The packaged fragment is sufficient. Only if\n"
-        "    you want a user-wide override, create or merge one [TextChat] section:\n\n"
-        "  [TextChat]\n"
-        f"  Endpoint={endpoint}\n"
-        "  OpenChatKey=INSERT\n\n"
-        f"{zfe_example_note}"
-        "Z4. Do not install xscal.ini or leave xScal installed beside ZFE. Restart\n"
-        "    Fallout 76, press F11, and confirm\n"
-        "    FCM reports ZFE before linking the displayed code.\n"
-    )
-    xscal_setup = (
-        "XSCAL INSTALL - FOLLOW ONLY IF USING XSCAL\n"
-        "------------------------------------------\n"
-        "X1. xScal ships with chat disabled. Merge xscal.ini.example into the existing\n"
-        "    [Chat] section in xscal.ini beside Fallout76.exe:\n\n"
-        "  [Chat]\n"
-        "  enabled=true\n"
-        f"  relayEndpoint={endpoint}\n\n"
-        "X2. If the section or file is missing, add it once. Preserve unrelated\n"
-        "    settings and do not duplicate [Chat].\n"
-        f"{xscal_helper}"
-        "X3. xScal has no OpenChatKey setting. Data/FCMChat.ini openKey is mapped\n"
-        "    through xScal Input.*; see KEYBINDS.txt.\n"
-        "X4. Do not install ZFE, its fragment, or Data/ZFE folders. Restart\n"
-        "    Fallout 76, press F11, and confirm FCM reports xScal before linking.\n"
-    )
+    return f"""Fallout Chat Mod HUD {widget_version()} — {provider_name} ({config['label']})
 
-    if provider == "zfe":
-        extender_instruction = (
-            "1. Exit Fallout 76. Install HUDModLoader and the latest ZFE,\n"
-            "   using the authors' instructions."
-        )
-        provider_intro = (
-            "This archive is for ZFE with HUDModLoader. Do not install xScal configuration.\n"
-        )
-        provider_files = f"   {zfe_fragment}\n"
-        provider_setup = zfe_setup
-    elif provider == "xscal":
-        extender_instruction = (
-            "1. Exit Fallout 76. Install HUDModLoader and the latest xScal,\n"
-            "   using the authors' instructions."
-        )
-        provider_intro = (
-            "This archive is for xScal with HUDModLoader. Do not install ZFE configuration.\n"
-        )
-        provider_files = "   xscal.ini.example\n" + xscal_files
-        provider_setup = xscal_setup
-    else:
-        extender_instruction = (
-            "1. Exit Fallout 76. Install HUDModLoader and exactly one script extender:\n"
-            "   the latest ZFE or the latest xScal."
-        )
-        provider_intro = (
-            "Choose exactly one script extender: ZFE or xScal. Install only that provider's "
-            "configuration section below.\n"
-        )
-        provider_files = (
-            "   examples/ZFE/FCMChatWidget.ini.example\n"
-            "   examples/ZFE/zfe.ini.example\n"
-            "   xscal.ini.example\n"
-            f"{xscal_files}"
-        )
-        provider_setup = (
-            "CHOOSE EXACTLY ONE PROVIDER SECTION\n"
-            "===================================\n"
-            f"{zfe_setup}\n"
-            f"{xscal_setup}"
-        )
+1. Close Fallout 76. Install HUDModLoader and {provider_name}.
+2. Extract the ZIP outside the game. Use only this provider's folder.
+3. Open {data_folder}/ and drag its contents into the game's Data folder.
+   Do not copy the labeled folder itself. Skip existing INIs; keep edits.
+4. If the game's Data/hudmodloader.ini is missing, copy this folder's
+   {data_folder}/hudmodloader.ini (HUDModLoader defaults plus FCMChatWidget). Otherwise,
+   add FCMChatWidget once to the existing file and preserve all other lines.
+5. Manual BA2 install: append FCMChatWidget.ba2 once to the [Archive]
+   sResourceArchive2List in your user profile's Documents/My Games/Fallout 76/
+   Fallout76Custom.ini. This provider folder's root Fallout76Custom.ini is a
+   merge template, never a replacement. Quick Configuration 2 or NukaMods:
+   import only {data_folder}/FCMChatWidget.ba2 and let the manager maintain this entry.
+   Do not import the combined ZIP or copy the BA2 yourself as well.
+6. {provider_extra}{helper}7. Restart the game. Press F11 for the FCM menu, then link the displayed code
+   at {config['web_link_url']}. Verify one deployed BA2 and one archive entry.
 
-    return f"""Fallout Chat Mod - optional in-game HUD chat ({label})
-
-FCMChatWidget version: {version}
-
-This archive installs the optional in-game HUD-mod track through HUDModLoader. It is
-separate from the desktop overlay; the desktop overlay is not required for HUD chat.
-{provider_intro}The BA2 works with the selected provider and connects to {label.lower()}.
-
-Installation
-------------
-{extender_instruction}
-2. Extract this archive to a temporary folder OUTSIDE the Fallout 76 game folder,
-   such as Downloads/FCM-HUD. Do not extract the whole archive over the game.
-3. Copy only these files from the extracted folder into the game:
-
-   - Copy Data/FCMChatWidget.ba2 to <Fallout 76>/Data/FCMChatWidget.ba2.
-   - On a new install, copy Data/FCMChat.ini to <Fallout 76>/Data/FCMChat.ini.
-   - On an update, replace the BA2 but preserve your existing FCMChat.ini settings;
-     compare the packaged INI and merge any new keys instead of overwriting it.
-
-   Keep the remaining {extracted_files_label} in the extracted
-   folder for the steps below:
-
-   Data/FCMChatWidget.ba2
-   Data/FCMChat.ini
-{provider_files}   FCMChatWidget.hudmodloader.ini
-   FCMChatWidget.version.txt
-   HUDMODLOADER-MENU.txt
-   KEYBINDS.txt
-   CUSTOMIZATION.txt
-   Fallout76Custom.ini.example
-
-4. Open the existing <Fallout 76>/Data/hudmodloader.ini and append the one line in
-   FCMChatWidget.hudmodloader.ini exactly once. Do not replace the file.
-5. Open Fallout76Custom.ini and append FCMChatWidget.ba2 to the existing
-   [Archive] sResourceArchive2List value. Preserve every existing archive. If the
-   section or key is missing, use:
-
-   [Archive]
-   sResourceArchive2List=HUDModLoader.ba2,FCMChatWidget.ba2
-
-   Windows normally stores this file in Documents/My Games/Fallout 76/.
-   Proton/Wine uses the Fallout 76 prefix's Documents/My Games/Fallout 76/ folder.
-
-6. Configure the chosen extender:
-
-{provider_setup}
-7. Start Fallout 76. Press F11 and confirm the FCM menu appears. Use FCM -> Customize...
-   for appearance settings. The menu also provides Hide chat, Auto-hide, and Scroll to
-   newest. If FCM is missing, verify the HUDModLoader line and BA2 archive entry, then restart.
-8. When the widget shows an 8-character link code, open {config['web_link_url']}, sign in,
-   enter the code, and return to the game. Codes expire after 10 minutes.
-
-Key defaults
-------------
-The shipped Data/FCMChat.ini [FCMChat] key map is:
-{HUD_KEY_DEFAULTS}
-Insert opens the input; Enter sends; Escape cancels; Page Up/Page Down switch channels.
-activateLinkKey opens a selected HTTP(S) row only while that input session is active; Enter is
-reserved for submitting the editor, and F8 is the packaged link-action default. A custom link
-binding does not become a global gameplay hotkey.
-Browser launch requires ZFE's zfe-browser-v1 capability and its HTTPS validation/consent.
-Current xScal and older ZFE keep URLs readable; there is no fallback launcher.
-ZFE site allowances are configurable in [BrowserLinks.Sites] of FCMChatWidget.ini.
-Bundled exact sites cover Discord/invites, Fallout Builds, Fallout Wiki (fallout.wiki),
-NukaCrypt and Steam community/store. The fragment lists every origin and purpose.
-Player rules override mod defaults; unlisted sites may prompt rather than being blocked.
-If the host editor loses its final callback, FCM recovers an Enter send once or cancels the stale
-session so Insert can open chat again.
-scrollUpKey=Up and scrollDownKey=Down (Arrow Up / Down) scroll after Insert opens the input.
-scrollBottomKey is blank by default; set it in Data/FCMChat.ini (for example Home, End, or F12)
-if you want a keyboard shortcut for newest. Delete hides the feed while idle and edits text while
-input is open; /hide and the F11 menu also remain available. See KEYBINDS.txt
-for ZFE and xScal key paths, supported physical tokens, and conflict guidance.
-
-General shows General, current-room Server, Trading, Events, Infests, and Raids together.
-Each message keeps its source label; other tabs filter the same history. Sending from General
-still goes to General. Replayed messages keep their existing duplicate guard.
+On updates replace only the BA2; keep edited INIs. The ZIP root README.txt has
+keybind, customization, menu, and release details.
 """
+
+
+def unified_install_instructions(target: str) -> str:
+    config = TARGETS[target]
+    return f"""Fallout Chat Mod HUD {widget_version()} ({config['label']})
+
+Install HUDModLoader and exactly one extender with Fallout 76 closed. Extract
+this ZIP outside the game. Open {ZFE_FOLDER}/INSTALL.txt or
+{XSCAL_FOLDER}/INSTALL.txt and follow only that provider's steps.
+Open its {DATA_FOLDER_LABEL}/ folder and drag its contents into the game's
+Data folder. Skip existing INIs; do not copy the labeled folder itself.
+Merge, never replace, existing hudmodloader.ini, Fallout76Custom.ini, or
+xscal.ini. There is no separate zfe.ini in this package.
+
+Quick Configuration 2/NukaMods: import only the chosen folder's
+{DATA_FOLDER_LABEL}/FCMChatWidget.ba2, not this combined ZIP. The manager owns the BA2 and
+archive list. On updates replace only the BA2 and preserve edited INIs.
+"""
+
 
 def xscal_config_example(target: str) -> str:
     """Return target-specific xScal chat settings without overwriting user config."""
@@ -279,6 +147,18 @@ def xscal_config_example(target: str) -> str:
         "enabled=true\n"
         f"relayEndpoint={TARGETS[target]['endpoint']}\n"
     )
+
+
+def hudmodloader_config() -> str:
+    """Keep the upstream default list and add only the visible FCM widget."""
+    defaults = [
+        line.strip()
+        for line in HUDMODLOADER_DEFAULTS_SOURCE.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    if len(defaults) != len(set(defaults)) or "FCMServerBridge" in defaults:
+        raise ValueError("Review the HUDModLoader default registry before packaging")
+    return "\n".join([entry for entry in defaults if entry != "FCMChatWidget"] + ["FCMChatWidget"]) + "\n"
 
 
 def assert_nexus_archive_safe(output: Path) -> None:
@@ -325,15 +205,19 @@ def build_package(
         (ROOT / "FCMChat.ini").read_text(encoding="utf-8"),
         (ROOT / "FCMChatWidget.ini").read_text(encoding="utf-8"),
     )
+    if provider == "unified":
+        layout_intro = (
+            f"This ZIP has separate {ZFE_FOLDER}/ and {XSCAL_FOLDER}/ folders. Choose only\n"
+            "the folder for the extender you already installed, then follow its INSTALL.txt.\n"
+        )
+    else:
+        layout_intro = (
+            f"This ZIP contains only the {provider.upper()} provider. Follow the INSTALLATION\n"
+            "section below and use the files at the shown destination paths.\n"
+        )
     output.parent.mkdir(parents=True, exist_ok=True)
     with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
-        archive.write(ROOT / "HUD-RELEASE-NOTES.txt", "HUD-RELEASE-NOTES.txt")
-        archive.write(ROOT / "CUSTOMIZATION.txt", "CUSTOMIZATION.txt")
-        archive.writestr("INSTALL.txt", install_instructions(target, provider, distribution))
-        for notice in ("NOTICE.txt", "LICENSE-TWEMOJI.txt", "LICENSE-UNICODE.txt"):
-            archive.write(ROOT / "emoji" / notice, "licenses/emoji/" + notice)
-        archive.writestr(
-            "HUDMODLOADER-MENU.txt",
+        menu_text = (
             "FCMChatWidget HUDModLoader menu\n"
             "================================\n\n"
             "1. Start Fallout 76 with ZFE or xScal and HUDModLoader enabled.\n"
@@ -341,7 +225,7 @@ def build_package(
             "3. Open FCM -> Customize... for separate panel width/height, input height/text size,\n"
             "   feed text size, position, opacity, and Colors... controls. Input width/alignment\n"
             "   stay fixed to the widget input area, including the ZFE editor.\n"
-            "   See CUSTOMIZATION.txt for exact INI keys, fixed features, and saved settings.\n"
+            "   See the customization section in README.txt for exact INI keys and saved settings.\n"
             "4. FCM -> Customize... -> Reset all settings restores packaged defaults.\n"
             "5. FCM -> Scroll to newest jumps to the end of the feed.\n"
             "6. FCM -> Hide chat hides the feed; press the configured open key to restore it.\n"
@@ -391,7 +275,7 @@ def build_package(
             "be reset using that extender's documented local-auth recovery.\n"
             "While a draft is active, Control-Tab opens the game's social menu\n"
             "after the widget cancels its editor; Escape can close the menu normally.\n"
-            "See INSTALL.txt for this provider's configuration. Input.* key polling\n"
+            "See README.txt or the selected provider's INSTALL.txt for configuration. Input.* key polling\n"
             "alone does not suppress gameplay keys. xScal 0.2.18 native text\n"
             "sessions own text and editing keys while the session is active.\n\n"
             "Unicode and bundled custom Discord emojis render inline. Animated\n"
@@ -400,45 +284,55 @@ def build_package(
             "If FCM is missing, confirm that FCMChatWidget appears exactly once in\n"
             "Data/hudmodloader.ini, then restart Fallout 76.\n"
         )
-        archive.writestr(
-            "Fallout76Custom.ini.example",
-            "[Archive]\n"
-            "sResourceArchive2List=HUDModLoader.ba2,FCMChatWidget.ba2\n",
+        readme_sections = (
+            f"Fallout Chat Mod HUD {version} ({TARGETS[target]['label']})\n\n"
+            + layout_intro
+            + (f"Open the chosen {DATA_FOLDER_LABEL if provider == 'unified' else 'Data'}/ folder; "
+               "drag its contents into the game Data folder, not the folder itself.\n"
+               "Skip existing INIs and merge shared settings. The packaged hudmodloader.ini\n"
+               "contains HUDModLoader defaults plus FCMChatWidget. Quick Configuration 2 and\n"
+               f"NukaMods users import only {DATA_FOLDER_LABEL if provider == 'unified' else 'Data'}/FCMChatWidget.ba2.\n\n")
+            + f"Version: {version}\nPackage provider: {provider}\n\n"
+            "INSTALLATION\n============\n\n"
+            + install_instructions(target, provider, distribution,
+                                   DATA_FOLDER_LABEL if provider == "unified" else "Data")
+            + "\n\nRELEASE NOTES\n=============\n\n"
+            + (ROOT / "HUD-RELEASE-NOTES.txt").read_text(encoding="utf-8")
+            + "\n\nHUDMODLOADER MENU\n=================\n\n"
+            + menu_text
+            + "\n\nKEYBINDS\n========\n\n"
+            + (ROOT / "KEYBINDS.txt").read_text(encoding="utf-8").replace("KEYBINDS.txt", "README.txt")
+            + "\n\nCUSTOMIZATION\n=============\n\n"
+            + (ROOT / "CUSTOMIZATION.txt").read_text(encoding="utf-8")
+                .replace("CUSTOMIZATION.txt", "README.txt").replace("KEYBINDS.txt", "README.txt")
         )
-        archive.writestr("FCMChatWidget.provider.txt", provider + "\n")
-        if provider in ("xscal", "unified"):
-            archive.writestr("xscal.ini.example", xscal_config_example(target))
-            if distribution == "website":
-                setup = (ROOT / "Enable-xScal-Chat.ps1").read_text(encoding="ascii")
-                archive.writestr("Enable-xScal-Chat.ps1", setup.replace("@@FCM_RELAY_ENDPOINT@@", TARGETS[target]["endpoint"]))
-                archive.writestr("Enable-xScal-Chat.cmd",
-                    '@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Enable-xScal-Chat.ps1"\r\n'
-                    'set "fcmExitCode=%errorlevel%"\r\npause\r\nexit /b %fcmExitCode%\r\n')
-        archive.write(widget_artifact, "Data/FCMChatWidget.ba2")
-        archive.writestr("Data/FCMChat.ini", chat_ini)
-        archive.write(ROOT / "KEYBINDS.txt", "KEYBINDS.txt")
-        if provider == "zfe":
-            archive.writestr("Data/ZFE/TextChat/fragments/FCMChatWidget.ini", widget_ini)
-        if provider == "unified":
-            archive.writestr("examples/ZFE/FCMChatWidget.ini.example", widget_ini)
+        archive.writestr("README.txt", readme_sections)
+        for notice in ("NOTICE.txt", "LICENSE-TWEMOJI.txt", "LICENSE-UNICODE.txt"):
+            archive.write(ROOT / "emoji" / notice, "licenses/emoji/" + notice)
+        folders = ((ZFE_FOLDER + "/", "zfe"), (XSCAL_FOLDER + "/", "xscal")) if provider == "unified" else (("", provider),)
+        for prefix, selected_provider in folders:
+            if prefix:
+                # The main ZIP is script-free for both distributions. Shared INI
+                # files remain merge sources even when shown at destination paths.
+                archive.writestr(prefix + "INSTALL.txt", install_instructions(target, selected_provider, "nexus", DATA_FOLDER_LABEL))
+            data_prefix = prefix + (DATA_FOLDER_LABEL if prefix else "Data") + "/"
             archive.writestr(
-                "examples/ZFE/zfe.ini.example",
-                "; Optional endpoint override for Data/configuration/zfe.ini.\n"
-                "; Merge these keys into the existing [TextChat] section; preserve other settings.\n"
-                "; Do not replace the whole file. xScal users do not install this example.\n"
-                "; Startup default; FCMChat.ini openKey is synchronized after widget discovery.\n"
-                "[TextChat]\n"
-                f"Endpoint={TARGETS[target]['endpoint']}\n"
-                "OpenChatKey=INSERT\n",
+                prefix + "Fallout76Custom.ini",
+                "[Archive]\nsResourceArchive2List=HUDModLoader.ba2,FCMChatWidget.ba2\n",
             )
-        # This is a user-applied append snippet, not a file to extract over the
-        # user's existing HUDModLoader registry. Keeping it at the archive root
-        # makes accidental overwrite impossible.
-        archive.writestr(
-            "FCMChatWidget.hudmodloader.ini",
-            "FCMChatWidget\n",
-        )
-        archive.writestr("FCMChatWidget.version.txt", f"{version}\n")
+            archive.write(widget_artifact, data_prefix + "FCMChatWidget.ba2")
+            archive.writestr(data_prefix + "FCMChat.ini", chat_ini)
+            archive.writestr(data_prefix + "hudmodloader.ini", hudmodloader_config())
+            if selected_provider == "zfe":
+                archive.writestr(data_prefix + "ZFE/TextChat/fragments/FCMChatWidget.ini", widget_ini)
+            else:
+                archive.writestr(prefix + "xscal.ini", xscal_config_example(target))
+                if distribution == "website" and provider != "unified":
+                    setup = (ROOT / "Enable-xScal-Chat.ps1").read_text(encoding="ascii")
+                    archive.writestr("Enable-xScal-Chat.ps1", setup.replace("@@FCM_RELAY_ENDPOINT@@", TARGETS[target]["endpoint"]))
+                    archive.writestr("Enable-xScal-Chat.cmd",
+                        '@echo off\r\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Enable-xScal-Chat.ps1"\r\n'
+                        'set "fcmExitCode=%errorlevel%"\r\npause\r\nexit /b %fcmExitCode%\r\n')
     if distribution == "nexus":
         assert_nexus_archive_safe(output)
 
@@ -446,9 +340,9 @@ def build_package(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--provider", choices=["unified", "zfe", "xscal"], default="unified",
-                        help="one shared BA2 and both extender examples by default; legacy provider-only packages optional")
+                        help=f"main ZIP has complete {ZFE_FOLDER}/ and {XSCAL_FOLDER}/ folders; provider-only packages optional")
     parser.add_argument("--distribution", choices=["website", "nexus"], default="website",
-                        help="website includes optional helpers; Nexus fails closed on executable/script files")
+                        help="xScal-only website ZIPs may include helpers; Nexus rejects executable/script files")
     parser.add_argument("--target", choices=sorted(TARGETS))
     parser.add_argument("--output", type=Path)
     parser.add_argument(
