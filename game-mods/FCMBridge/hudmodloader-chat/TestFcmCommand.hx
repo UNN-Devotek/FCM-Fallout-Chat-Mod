@@ -37,6 +37,10 @@ class TestFcmCommand {
         check("embedded text rejected", !FcmCommand.isRelink("please relink"));
         check("empty rejected", !FcmCommand.isRelink(""));
         check("null rejected", !FcmCommand.isRelink(null));
+        check("giveaway start preserved", FcmCommand.giveawayCommand("/giveaway start Flux x10 5") == "/giveaway start Flux x10 5");
+        check("game-stripped giveaway slash restored", FcmCommand.giveawayCommand("giveaway leave ABC123") == "/giveaway leave ABC123");
+        check("dot giveaway accepted", FcmCommand.giveawayCommand(".giveaway list") == "/giveaway list");
+        check("ordinary giveaway word is not a command", FcmCommand.giveawayCommand("giveaways are fun") == "");
         check("arrow up scrolls feed up", FcmCommand.scrollDirection("ArrowUp") == -1);
         check("bare down scrolls feed down", FcmCommand.scrollDirection("Down") == 1);
         check("underscore arrow alias scrolls", FcmCommand.scrollDirection("arrow_down") == 1);

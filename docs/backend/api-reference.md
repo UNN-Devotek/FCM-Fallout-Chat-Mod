@@ -191,6 +191,13 @@ automatically server-side. The REST endpoints are for the dashboard and admin to
 | GET      | `/api/giveaways`            | requireClientAuth                       | List active giveaways   |
 | DELETE   | `/api/admin/giveaways/:id`  | requireDiscordRole(owner/admin/mod)     | Force-cancel a giveaway |
 
+Overlay, Discord `/giveaway` and buttons, and the optional native HUD's
+`giveaway start/list/last/join/leave/stop` commands share this service. HUD
+commands are bound to the linked relay token and accepted only as the giveaway
+family; other HUD slash commands retain their existing rejection. Announcements
+and results are persisted in Events and mirrored as Discord embeds with live
+entry counts and final results.
+
 `id` in the admin delete path is the giveaway `shortId` (6-char, e.g. `A1B2C3`), not the UUID.
 
 ---

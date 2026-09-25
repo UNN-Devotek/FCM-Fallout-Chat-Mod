@@ -83,7 +83,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.125"; // xScal text sessions with bounded cancel diagnostics
+    static inline var VERSION:String  = "2.10.126"; // giveaway commands and Events announcements
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -536,6 +536,8 @@ class FCMChatWidget extends MovieClip {
             updateOptimisticRecord(id, messageId, tag,
                 FcmConfig.hudTransportHasStar(carrier), color, true,
                 FcmConfig.hudTransportNameColor(carrier));
+            var giveawayFeedback = FcmConfig.hudTransportValue(carrier, "g");
+            if (giveawayFeedback.length > 0) setLogText(FcmConfig.htmlEscape(giveawayFeedback));
             if (_outbox.entries.length == 0 && !_inputOpen) setPrompt(idlePrompt());
             return;
         }
@@ -3312,6 +3314,12 @@ class FCMChatWidget extends MovieClip {
         // Authorization is still repeated by the relay from the linked Discord role.
         if (handleModerationCommand(s)) return;
 
+        var giveawayCommand = FcmCommand.giveawayCommand(s);
+        if (giveawayCommand.length > 0) {
+            sendMessage(giveawayCommand);
+            return;
+        }
+
         // Slash-command channel switch: "/g /t /e /i /r" (or ".g" alias).
         // If the whole input IS a slash command (bare or with trailing content),
         // consume it — never let it leak through as a chat message.
@@ -3668,7 +3676,8 @@ class FCMChatWidget extends MovieClip {
         raw = fcmClean(raw);
         if (raw.length == 0) return;
 
-        var slug:String = CHAN_SLUGS[_chanIdx];
+        var isGiveawayCommand:Bool = FcmCommand.giveawayCommand(raw).length > 0;
+        var slug:String = isGiveawayCommand ? "events" : CHAN_SLUGS[_chanIdx];
         if (slug == "server" && !_serverSessionReady) {
             setLogText(_serverSessionError.length > 0
                 ? ("Server chat is unavailable: " + _serverSessionError)
@@ -3689,9 +3698,11 @@ class FCMChatWidget extends MovieClip {
         }
         var nativeSubmit:Bool = _nativeSubmitInFlight;
         var ownCosmetics = ownCosmeticsForSend();
-        addOptimisticEcho(slug, raw, "", ownCosmetics.tag, ownCosmetics.supporterStar,
-            ownCosmetics.starColor, localUserId, localSendId);
-        zfeLog("info", "echo", "created canonical local row; transport deferred ch=" + slug);
+        if (!isGiveawayCommand) {
+            addOptimisticEcho(slug, raw, "", ownCosmetics.tag, ownCosmetics.supporterStar,
+                ownCosmetics.starColor, localUserId, localSendId);
+            zfeLog("info", "echo", "created canonical local row; transport deferred ch=" + slug);
+        }
 
         var sendTimer:Timer = new Timer(1, 1);
         sendTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
@@ -3819,6 +3830,8 @@ class FCMChatWidget extends MovieClip {
                     // it does for live event frames. v2.10.16+ relays mirror the message ID and
                     // validated cosmetics in the known targetUserId member.
                     var ackHudTransport:String = extractJsonString(rs, "targetUserId");
+                    var giveawayFeedback = FcmConfig.hudTransportValue(ackHudTransport, "g");
+                    if (giveawayFeedback.length > 0) setLogText(FcmConfig.htmlEscape(giveawayFeedback));
                     var ackTransportMessageId:String = FcmConfig.hudTransportMessageId(ackHudTransport);
                     if (ackTransportMessageId.length > 0) messageId = ackTransportMessageId;
                     if (messageId.length > 0 || FcmOutbox.receipt(ackHudTransport) == localSendId) _outbox.remove(localSendId);

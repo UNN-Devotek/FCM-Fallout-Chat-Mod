@@ -132,6 +132,41 @@ describe('giveawayService', () => {
     }));
   });
 
+  test('production publisher carries the same Events card to persistent chat/Discord', async () => {
+    const publishCard = jest.fn().mockResolvedValue(undefined);
+    const updateDiscordCard = jest.fn().mockResolvedValue(undefined);
+    await giveawayService.init({ prisma, broadcast, publishCard, updateDiscordCard });
+    prisma.giveaway.create.mockResolvedValue(makeGiveaway());
+
+    await giveawayService.createGiveaway('user-1', 'Devotek', 'channel-1', 'Flux x10', 5);
+
+    expect(publishCard).toHaveBeenCalledWith(
+      expect.stringContaining('Flux x10'), 'channel-1',
+      expect.objectContaining({ type: 'giveaway', giveawayId: 'giveaway-uuid-1' }), 'user-1',
+    );
+    expect(broadcast).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'chat:message' }));
+  });
+
+  test('Discord reconnect repairs active cards and recent finished results from stored state', async () => {
+    const repairDiscordCard = jest.fn().mockResolvedValue(undefined);
+    await giveawayService.init({ prisma, broadcast, repairDiscordCard });
+    prisma.giveaway.findMany
+      .mockResolvedValueOnce([makeGiveaway({ id: 'finished-uuid', status: 'completed', winnerName: 'Winner', _count: { entries: 3 } })])
+      .mockResolvedValueOnce([makeGiveaway({ _count: { entries: 2 } })]);
+
+    await giveawayService.repairDiscordCards();
+
+    expect(prisma.giveaway.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ status: { in: ['completed', 'cancelled'] } }),
+    }));
+    expect(repairDiscordCard).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'giveaway-uuid-1' }), 2,
+    );
+    expect(repairDiscordCard).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'finished-uuid', status: 'completed' }), 3,
+    );
+  });
+
   // ── (b) cap: second active giveaway rejected ────────────────────────────────
 
   test('rejects createGiveaway when user already has an active one', async () => {

@@ -95,6 +95,7 @@ import { shouldStartBackgroundJobs } from './utils/runtimeEnvironment';
 import partiesRouter from './routes/parties';
 import giveawaysRouter, { adminCancelGiveaway } from './routes/giveaways';
 import * as giveawayService from './services/giveawayService';
+import { finalizeMessage } from './services/ingestMessage';
 import {
   adminListParties,
   adminGetParty,
@@ -2526,7 +2527,40 @@ if (shouldStartBackgroundJobs(env.NODE_ENV)) {
   });
 
   // Giveaway service — restore draw timers for any in-flight giveaways after restart.
-  void giveawayService.init({ prisma: prisma as any, broadcast });
+  void giveawayService.init({
+    prisma: prisma as any,
+    broadcast,
+    publishCard: async (content, channelId, metadata, creatorUserId) => {
+      await finalizeMessage({
+        userId: creatorUserId,
+        channelId,
+        content,
+        displayName: '[Vault-Tec]',
+        source: 'bot',
+        metadata,
+        suppressDiscordRelay: true,
+        waitForPersistence: true,
+      });
+      const giveaway = await prisma.giveaway.findUnique({
+        where: { id: String(metadata.giveawayId) },
+        include: { _count: { select: { entries: true } } },
+      });
+      if (!giveaway) return;
+      const card = { ...giveaway, entryCount: giveaway._count.entries };
+      try {
+        if (metadata.type === 'giveaway') await discordService.postGiveawayCard(card);
+        else if (metadata.type === 'giveaway_winner') await discordService.updateGiveawayDiscordCard(card, true);
+      } catch (err) {
+        logger.warn({ err, giveawayId: giveaway.id }, 'Giveaway Discord publication failed');
+      }
+    },
+    updateDiscordCard: (giveaway, entryCount) => discordService.updateGiveawayDiscordCard({ ...giveaway, entryCount }),
+    repairDiscordCard: async (giveaway, entryCount) => {
+      const card = { ...giveaway, entryCount };
+      await discordService.postGiveawayCard(card);
+      await discordService.updateGiveawayDiscordCard(card, giveaway.status !== 'active');
+    },
+  });
 } else {
   logger.info('Background sync, party reap, and giveaway restore jobs disabled for test runtime');
 }

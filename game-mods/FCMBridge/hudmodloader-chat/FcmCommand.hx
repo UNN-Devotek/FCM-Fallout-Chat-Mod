@@ -7,6 +7,18 @@
  * be exercised by the CI interpreter tests.
  */
 class FcmCommand {
+    /** Native keyboard input can consume the leading slash. Keep only this command family. */
+    public static function giveawayCommand(raw:String):String {
+        if (raw == null) return "";
+        var text = StringTools.trim(raw);
+        var lower = text.toLowerCase();
+        var start = lower.charAt(0) == "/" || lower.charAt(0) == "." ? 1 : 0;
+        if (lower.substr(start, 8) != "giveaway") return "";
+        var rest = text.substr(start + 8);
+        if (rest.length > 0 && rest.charAt(0) != " ") return "";
+        return "/giveaway" + rest;
+    }
+
     /**
      * True only for the standalone relink command. A trailing argument is not
      * accepted, so arbitrary chat text cannot accidentally clear auth state.

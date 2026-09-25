@@ -7,6 +7,25 @@ must not add game-memory reads, code injection, or network/port scanning.
 
 ## Current implementation and verification
 
+**Giveaways (2.10.126 candidate, native acceptance pending):** The Events feed now
+receives the overlay's giveaway announcement and winner text through ordinary
+persisted chat history and live relay events. Enter `giveaway start <item> [minutes]`,
+`giveaway list`, `giveaway last`, `giveaway join <id>`, `giveaway leave <id>`, or
+`giveaway stop <id>` in the HUD editor. A leading `/` or `.` is also accepted;
+the native keyboard path may consume the leading character. These commands use
+the linked FCM account, route to Events, and do not create a public echo of the
+command itself. The send receipt shows a short result; `list` and `last` include
+up to three compact entries. Other HUD slash commands remain unsupported. The
+ZFE and xScal Ruffle giveaway scenario checks routing, receipt handling, and
+announcement/result rows; actual extender and game behavior requires a fresh
+native test of this build.
+The 2.10.126 BA2 is installed on the local Steam/Proton desktop for a hosted-Dev
+trial with ZFE 0.15.0; the ZFE fragment and inactive xScal config both target
+`wss://dev.falloutchatmod.com/relay`. The provider and archive registration are
+unchanged. The exact rollback files are listed in the [build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
+Hosted Dev still needs the matching giveaway backend changes before these new
+HUD commands can be tested end to end.
+
 **HUD 2.10.125 input and installer patch:**
 the xScal 0.2.18 test DLL exposes native text sessions through
 `__SFCodeObj.call("Input.BeginInput")`, `Input.PollInput(sessionId)` and
@@ -36,8 +55,8 @@ The published production versions before this patch are desktop overlay **1.4.2*
 visible HUD **2.10.125**, and optional background bridge **0.2.9**. This patch
 keeps the HUD version but replaces its package with the corrected 2.10.125 BA2
 and separate provider install folders. An earlier local 2.10.121 test candidate
-contained additional quoted-message changes under that same version; the current
-local test install is the corrected 2.10.125 BA2 described above.
+contained additional quoted-message changes under that same version; the last
+native-tested local install was the corrected 2.10.125 BA2 described above.
 
 **Background bridge 0.2.8 release:** published as a separate optional HUDModLoader child.
 It was installed locally with xScal 0.2.17 for testing, but native mixed-client acceptance

@@ -1,5 +1,11 @@
-FCM HUD 2.10.125
+FCM HUD 2.10.126
 ==============
+
+Giveaways now appear in the Events chat feed. Enter "giveaway start <item> [minutes]",
+"giveaway list", "giveaway last", "giveaway join <id>", "giveaway leave <id>",
+or "giveaway stop <id>" in chat. A leading slash also works if the game keeps it.
+Commands use your linked FCM account and show a private result in the HUD.
+The giveaway announcement and winner are visible in Events and General.
 
 This patch restores ZFE chat entry with a controller active: physical Insert opens
 chat, physical keyboard typing stays in the editor, gameplay keys stay locked,

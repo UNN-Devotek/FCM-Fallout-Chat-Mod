@@ -35,7 +35,17 @@ channel. `/fcm` accepts only slash-prefixed input, for example
 `/fcm command:"/g hello"` or `/fcm command:"/help"`.
 
 `/giveaway command:` is also available directly in Discord; for example use
-`/giveaway command:list` or `/giveaway command:"join <id>"`.
+`/giveaway command:list` or `/giveaway command:"join <id>"`. A started raffle
+publishes one bot embed in the Discord channel mapped to FCM Events (or the
+configured default relay channel when Events has no explicit mapping). Its
+Join, Leave, and Stop buttons require a linked FCM account and call the same
+giveaway service as overlay commands. Stop remains creator/moderator only.
+Entry count edits the original embed; completion or cancellation removes its
+buttons and posts a separate result embed. Interaction confirmations are
+private to the person clicking the button. Discord notifications do not ping
+the host or winner automatically. On bot reconnect, active cards and results
+from giveaways that ended in the preceding 24 hours are restored from giveaway
+state; stored Discord message links prevent repeat result posts.
 
 `/wiki query:` and `/camp item:` search the local FCM catalog as the user types;
 choosing a result then produces the same public rich card used by the overlay,
@@ -73,8 +83,9 @@ commands retain their compact response text and source hyperlink (for example,
 Minerva's “More info at …” link).
 
 `/keybinds` posts the default Electron-overlay and optional HUD-mod controls as
-a public embed. Starting a giveaway posts the confirmation in the invoking
-Discord channel and relays the announcement to FCM General.
+a public embed. `/giveaway` replies privately in the invoking Discord channel;
+the public card and result appear in the mapped Events channel and the FCM
+Events history, including the optional HUD feed.
 
 ### Optional bot-commands channel
 

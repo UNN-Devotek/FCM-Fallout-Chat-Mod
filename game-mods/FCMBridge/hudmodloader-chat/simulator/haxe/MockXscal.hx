@@ -16,6 +16,9 @@ class MockXscal {
     public static var authPollCount(default, null):Int = 0;
     public static var connectCount(default, null):Int = 0;
     public static var ordinarySendCount(default, null):Int = 0;
+    public static var giveawayMode:Bool = false;
+    public static var lastGiveawayBody(default, null):String = "";
+    public static var lastGiveawayChannel(default, null):String = "";
     public static var lastRosterBody(default, null):String = "";
     public static var lastRoomDiagnosticBody(default, null):String = "";
     public static var sessionInputEnabled:Bool = false;
@@ -159,6 +162,12 @@ class MockXscal {
             var messageId:String = "sim-send-" + callCount;
             SimLog.emit("CHAT send len=" + body.length);
             if (scenarioEvents == null) scenarioEvents = [];
+            if (giveawayMode && StringTools.startsWith(body, "/giveaway")) {
+                lastGiveawayBody = body;
+                lastGiveawayChannel = channel;
+                return response({success:true, messageId:messageId,
+                    targetUserId:"FCMHUD/1;g=" + StringTools.urlEncode("Giveaway started")});
+            }
             if (channel == "server" && StringTools.startsWith(body, "FCMCTL/1/")) {
                 if (StringTools.startsWith(body, "FCMCTL/1/DIAG:")) {
                     roomDiagnosticCount++;

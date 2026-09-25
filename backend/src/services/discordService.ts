@@ -31,6 +31,8 @@ import { outboundAllowedMentions, roleMentionAliases } from '../utils/discordMen
 import { normalizeDiscordRelayCard, type DiscordRelayEmbed } from './discordRelayCard';
 import { buildDiscordOverlayCard } from './discordOverlayCommandEmbeds';
 import { getGlobalOnlineCount, noteDiscordMessageActivity } from './onlinePresenceService';
+import { giveawayDiscordCard, giveawayWinnerDiscordCard, type GiveawayCard } from './giveawayDiscordCard';
+import { v5 as uuidv5 } from 'uuid';
 
 let discordClient: Client | null = null;
 let broadcastFn: ((payload: any, excludeWs?: any) => void) | null = null; // Injected from WS handler to avoid circular deps
@@ -767,6 +769,9 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
     // Refresh the same global count consumed by website/overlay every minute.
     // An in-flight guard prevents overlapping aggregation/presence updates.
     updatePresence();
+    // Repair in-flight Events cards when Discord reconnects after backend startup.
+    void import('./giveawayService.js').then((service) => service.repairDiscordCards())
+      .catch((err) => logger.warn({ err }, 'Giveaway Discord reconnect repair failed'));
     setInterval(updatePresence, 60_000).unref?.();
   });
 
@@ -1415,6 +1420,85 @@ async function relayToDiscord(channelId: string, username: string, content: stri
   }
 }
 
+type DiscordGiveaway = GiveawayCard & { id: string; channelId: string };
+const pendingGiveawayPosts = new Map<string, Promise<void>>();
+const pendingGiveawayResults = new Map<string, Promise<void>>();
+
+function giveawayResultLinkId(giveawayId: string): string {
+  return uuidv5(`fcm:giveaway:result:${giveawayId}`, uuidv5.URL);
+}
+
+async function giveawayChannel(channelId: string, preferredDiscordChannelId?: string): Promise<TextChannel | null> {
+  if (!discordClient || discordStatus !== 'connected') return null;
+  const mappings = await loadRelayMappings();
+  const discordChannelId = preferredDiscordChannelId
+    ?? [...mappings].find(([, fcmChannelId]) => fcmChannelId === channelId)?.[0]
+    ?? env.DISCORD_CHANNEL_ID;
+  if (!discordChannelId) return null;
+  const channel = await discordClient.channels.fetch(discordChannelId);
+  return channel?.isTextBased() && 'send' in channel ? channel as TextChannel : null;
+}
+
+/** Publish the Events card once, retaining its Discord ID for live edits. */
+export async function postGiveawayCard(giveaway: DiscordGiveaway): Promise<void> {
+  const pending = pendingGiveawayPosts.get(giveaway.id);
+  if (pending) return pending;
+  const publish = (async () => {
+    if (await prisma.discordMessageLink.findUnique({ where: { messageId: giveaway.id } })) return;
+    const channel = await giveawayChannel(giveaway.channelId);
+    if (!channel) return;
+    await queueDiscordSend(channel, giveawayDiscordCard(giveaway), {
+      messageId: giveaway.id,
+      discordChannelId: channel.id,
+      discordPrefix: '',
+      isBotMessage: true,
+    });
+  })();
+  pendingGiveawayPosts.set(giveaway.id, publish);
+  try { await publish; } finally { pendingGiveawayPosts.delete(giveaway.id); }
+}
+
+/** Refresh count/buttons from the authoritative row and publish the final result. */
+export async function updateGiveawayDiscordCard(giveaway: DiscordGiveaway, announceResult = false): Promise<void> {
+  const link = await prisma.discordMessageLink.findUnique({ where: { messageId: giveaway.id } });
+  if (link) {
+    try {
+      const channel = await giveawayChannel(giveaway.channelId, link.discordChannelId);
+      if (channel) {
+        const message = await channel.messages.fetch(link.discordMessageId);
+        const card = giveawayDiscordCard(giveaway);
+        await message.edit({ embeds: card.embeds, components: card.components, allowedMentions: card.allowedMentions });
+      }
+    } catch (err) {
+      logger.warn({ err, giveawayId: giveaway.id }, 'Failed to edit Discord giveaway card');
+    }
+  }
+  if (announceResult && giveaway.status !== 'active') {
+    await postGiveawayResult(giveaway, link?.discordChannelId);
+  }
+}
+
+async function postGiveawayResult(giveaway: DiscordGiveaway, preferredDiscordChannelId?: string): Promise<void> {
+  const resultId = giveawayResultLinkId(giveaway.id);
+  const pending = pendingGiveawayResults.get(resultId);
+  if (pending) return pending;
+  const publish = (async () => {
+    if (await prisma.discordMessageLink.findUnique({ where: { messageId: resultId } })) return;
+    // Reconnect repair only announces giveaways whose original card reached Discord.
+    if (!await prisma.discordMessageLink.findUnique({ where: { messageId: giveaway.id } })) return;
+    const channel = await giveawayChannel(giveaway.channelId, preferredDiscordChannelId);
+    if (!channel) return;
+    await queueDiscordSend(channel, giveawayWinnerDiscordCard(giveaway), {
+      messageId: resultId,
+      discordChannelId: channel.id,
+      discordPrefix: '',
+      isBotMessage: true,
+    });
+  })();
+  pendingGiveawayResults.set(resultId, publish);
+  try { await publish; } finally { pendingGiveawayResults.delete(resultId); }
+}
+
 // ── Electron download URL helpers ────────────────────────────────────────────
 // Filenames MUST match the electron-builder output (productName "Fallout Chat
 // Mod", WITH spaces). A mismatch serves a 404 error page → "file corrupted" on
@@ -1756,4 +1840,4 @@ function invalidateRelayMappingsCache(): void {
 
 export { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, editDiscordRelayMessage, syncDiscordMessageUpdate, invalidateRelayMappingsCache, loadRelayMappings, relayDiscordTyping, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };
 export type { };
-module.exports = { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, buildDiscordRelayPrefix, editDiscordRelayMessage, syncDiscordMessageUpdate, invalidateRelayMappingsCache, loadRelayMappings, relayDiscordTyping, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };
+module.exports = { start, setBroadcast, getStatus, getDiscordClient, relayToDiscord, postGiveawayCard, updateGiveawayDiscordCard, buildDiscordRelayPrefix, editDiscordRelayMessage, syncDiscordMessageUpdate, invalidateRelayMappingsCache, loadRelayMappings, relayDiscordTyping, postReleaseAnnouncement, postEmbed, postModAlert, invalidateModLogCache, getModLogChannelId, listTextChannels, listAssignableRoles, setMemberNickname, stripMentions };

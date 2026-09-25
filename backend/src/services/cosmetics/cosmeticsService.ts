@@ -234,6 +234,7 @@ export async function attachCosmeticsToHistory<T extends Record<string, unknown>
 
   const userIds = new Set<string>();
   for (const payload of payloads) {
+    if (payload.source === 'bot') continue;
     const userId = typeof payload.userId === 'string'
       ? payload.userId
       : typeof payload.user_id === 'string'
@@ -252,6 +253,7 @@ export async function attachCosmeticsToHistory<T extends Record<string, unknown>
   }));
 
   for (const payload of payloads) {
+    if (payload.source === 'bot') continue;
     const userId = typeof payload.userId === 'string'
       ? payload.userId
       : typeof payload.user_id === 'string'

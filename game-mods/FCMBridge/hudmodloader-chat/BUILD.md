@@ -1,5 +1,36 @@
 # FCMChatWidget build, install, and verification
 
+## Giveaway candidate (2026-09-25)
+
+**Widget version:** 2.10.126. The HUD now routes linked-account giveaway
+start/list/last/join/leave/stop commands through the Events channel, suppresses
+the command's public optimistic row, and displays a private send receipt. The
+Events feed receives the persisted announcement and result text. Pure Haxe and
+the complete 77-case Ruffle suite passed on this source, including both provider
+routes. Native ZFE/xScal acceptance has not yet been performed for this build;
+the game install remains untouched.
+
+The compiled FWS v32 SWF SHA-256 is
+`c2b79c34604e3ec541e31df08898b13abebb4b57cbb2e37d95ba36eb978b09c4`.
+The rebuilt one-entry BA2 SHA-256 is
+`ab193241111297cbd61da4cf9e6f64913dea4d9fddbdacf283a75c47eafdbf2d`.
+The BA2 retained the BTDX v1 GNRL header, path, hashes, flags and sentinel;
+its extracted SWF equals the compiled SWF byte for byte. No package was published.
+
+**Local hosted-Dev install (2026-09-25):** With the Steam/Proton game closed,
+the reviewed 2.10.126 BA2 replaced only `Data/FCMChatWidget.ba2`, and the root
+version stamp was updated. The existing ZFE fragment and inactive `xscal.ini`
+each had only their relay endpoint changed from Prod to
+`wss://dev.falloutchatmod.com/relay`. The ZFE 0.15.0 DLL, other settings,
+HUDModLoader entry, and archive list were unchanged. The installed BA2 hash
+matches the reviewed hash above; the widget has one loader entry and one
+archive-list entry, with no `FCMServerBridge.ba2`. Exact-file backups and
+pre-install hashes are in
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-giveaway-dev-1sp3d8ri/`.
+Native acceptance is pending. Hosted Dev was healthy at install time, but its
+running backend predates the uncommitted giveaway service changes; HUD giveaway
+commands require that matching backend to be deployed before end-to-end testing.
+
 ## ZFE controller keyboard visibility correction (2026-09-24)
 
 The user confirmed that physical Insert now opens chat with a controller active, but the

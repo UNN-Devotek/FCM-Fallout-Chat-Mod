@@ -47,6 +47,8 @@ import {
   tokenSupportsHudCosmeticsTransportDurable,
 } from './clientCapabilityStore';
 import { ingestMessage } from '../ingestMessage';
+import { tryHandleCommand } from '../commandService';
+import { hudGiveawayCommand, hudGiveawayFeedback } from './hudGiveawayCommand';
 import { attachCosmetics, attachCosmeticsToHistory } from '../cosmetics/cosmeticsService';
 import { refreshSupporterFromHudSend } from '../supporterSyncService';
 import {
@@ -1376,6 +1378,22 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     await deliver(response);
   };
 
+  const giveawayCommand = hudGiveawayCommand(body);
+  if (giveawayCommand) {
+    if (slug === 'server') {
+      await reply(errEnvelope('invalid_channel', 'Giveaways use a community channel'));
+      return;
+    }
+    const result = await tryHandleCommand(giveawayCommand, identity.linkedUserId!, identity.fo76Name,
+      slugToChannelId(slug)!, slug, null, 0, null);
+    await reply({
+      success: true,
+      messageId: uuidv4(),
+      targetUserId: `FCMHUD/1;g=${encodeURIComponent(hudGiveawayFeedback(result))}`,
+    });
+    return;
+  }
+
   // HUD-originated sends are the fast path for a supporter role change. Refresh
   // the linked account's Discord roles at most once per minute before either the
   // ephemeral server event or persisted static message is decorated. The helper
@@ -1866,6 +1884,7 @@ async function fetchHistoryEvents(
     relay_seq: bigint | null;
     content: string;
     user_id: string;
+    source: string;
     channel_id: string;
     username: string;
     fo76_account_name: string | null;
@@ -1875,9 +1894,10 @@ async function fetchHistoryEvents(
   if (cursor === 0) {
     rows = await prisma.$queryRaw`
       WITH ranked AS (
-        SELECT m.id, m.relay_seq, m.content, m.user_id,
+        SELECT m.id, m.relay_seq, m.content, m.user_id, m.source,
                m.channel_id, m.created_at,
-               COALESCE(u.fo76_account_name, u.discord_display_name, u.username) AS username,
+               CASE WHEN m.source = 'bot' THEN '[Vault-Tec]'
+                    ELSE COALESCE(u.fo76_account_name, u.discord_display_name, u.username) END AS username,
                u.fo76_account_name,
                ROW_NUMBER() OVER (
                  PARTITION BY m.channel_id
@@ -1894,7 +1914,7 @@ async function fetchHistoryEvents(
           AND  NOT c.is_archived
           AND  NOT m.is_deleted
       )
-      SELECT id, relay_seq, content, user_id, channel_id, created_at, username, fo76_account_name
+      SELECT id, relay_seq, content, user_id, source, channel_id, created_at, username, fo76_account_name
       FROM ranked
       WHERE channel_rank <= ${initialPerChannel}
       ORDER BY relay_seq DESC
@@ -1902,9 +1922,10 @@ async function fetchHistoryEvents(
     rows = rows.reverse(); // oldest first
   } else {
     rows = await prisma.$queryRaw`
-      SELECT m.id, m.relay_seq, m.content, m.user_id,
+      SELECT m.id, m.relay_seq, m.content, m.user_id, m.source,
              m.channel_id, m.created_at,
-             COALESCE(u.fo76_account_name, u.discord_display_name, u.username) AS username,
+             CASE WHEN m.source = 'bot' THEN '[Vault-Tec]'
+                  ELSE COALESCE(u.fo76_account_name, u.discord_display_name, u.username) END AS username,
              u.fo76_account_name
       FROM   messages m
       JOIN   users    u ON u.id = m.user_id
@@ -1929,6 +1950,7 @@ async function fetchHistoryEvents(
     targetUserId:      '',
     createdAt:         row.created_at ? new Date(row.created_at).toISOString() : '',
     userId: row.user_id,
+    source: row.source,
   }));
 
   // History stores identity, not a cosmetic snapshot. Resolve each distinct author

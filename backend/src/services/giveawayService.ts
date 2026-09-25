@@ -22,6 +22,9 @@ import logger from '../config/logger';
 export interface GiveawayDeps {
   prisma: PrismaClient;
   broadcast: (payload: object) => void;
+  publishCard?: (content: string, channelId: string, metadata: Record<string, unknown>, creatorUserId: string) => Promise<void>;
+  updateDiscordCard?: (giveaway: GiveawayRow, entryCount: number) => Promise<void>;
+  repairDiscordCard?: (giveaway: GiveawayRow, entryCount: number) => Promise<void>;
 }
 
 export interface GiveawayRow {
@@ -162,6 +165,26 @@ function makeBotMessage(
   };
 }
 
+async function publishCard(content: string, channelId: string, metadata: Record<string, unknown>, creatorUserId: string): Promise<void> {
+  if (!deps?.publishCard) {
+    safeBroadcast(makeBotMessage(content, channelId, metadata));
+    return;
+  }
+  try {
+    await deps.publishCard(content, channelId, metadata, creatorUserId);
+  } catch (err) {
+    logger.error({ err }, 'giveawayService: card publication failed');
+    safeBroadcast(makeBotMessage(content, channelId, metadata));
+  }
+}
+
+function updateDiscordCard(giveaway: GiveawayRow, entryCount: number): void {
+  if (!deps?.updateDiscordCard) return;
+  void deps.updateDiscordCard(giveaway, entryCount).catch((err) => {
+    logger.warn({ err, giveawayId: giveaway.id }, 'giveawayService: Discord card update failed');
+  });
+}
+
 // ── Draw ──────────────────────────────────────────────────────────────────────
 
 async function drawWinner(giveawayId: string): Promise<void> {
@@ -212,8 +235,9 @@ async function drawWinner(giveawayId: string): Promise<void> {
       ? `🎉 Giveaway winner: ${winner.username}! Prize: ${giveaway.itemName} (started by ${giveaway.creatorName}) [${giveaway.shortId}]`
       : `🎁 Giveaway ended - no entries. [${giveaway.shortId}] ${giveaway.itemName}`;
 
-    safeBroadcast(makeBotMessage(content, giveaway.channelId, sharedMeta));
+    await publishCard(content, giveaway.channelId, sharedMeta, giveaway.createdByUserId);
     broadcastGiveawayUpdate(giveawayId, giveaway.shortId, entries.length, 'completed');
+    updateDiscordCard({ ...giveaway, status: 'completed', winnerName: winner?.username ?? null }, entries.length);
 
     logger.info(
       { giveawayId, shortId: giveaway.shortId, winner: winner?.username ?? null },
@@ -276,6 +300,11 @@ export async function reconcileActive(): Promise<void> {
   const active = await prisma.giveaway.findMany({ where: { status: 'active' } });
 
   for (const g of active) {
+    if (deps.repairDiscordCard) {
+      void prisma.giveawayEntry.count({ where: { giveawayId: g.id } })
+        .then((entryCount) => deps?.repairDiscordCard?.(g as GiveawayRow, entryCount))
+        .catch((err) => logger.warn({ err, giveawayId: g.id }, 'giveawayService: Discord card repair failed'));
+    }
     if (activeTimers.has(g.id)) continue;
     if (g.endsAt <= now) {
       void drawWinner(g.id);
@@ -365,7 +394,7 @@ export async function createGiveaway(
   scheduleTimer(giveaway.id, endsAt);
   scheduleReminder({ id: giveaway.id, shortId, itemName: sanitized, channelId, durationMin: clampedDuration, endsAt });
 
-  safeBroadcast(makeBotMessage(
+  await publishCard(
     `🎁 ${username} started a giveaway! Prize: ${sanitized}. Type /giveaway join ${shortId} or click Join - ends in ${clampedDuration} min.`,
     channelId,
     {
@@ -379,7 +408,8 @@ export async function createGiveaway(
       durationMin: clampedDuration,
       entryCount: 0,
     },
-  ));
+    userId,
+  );
 
   logger.info({ giveawayId: giveaway.id, shortId, userId, itemName: sanitized, durationMin: clampedDuration }, 'Giveaway created');
   return giveaway as unknown as GiveawayRow;
@@ -419,6 +449,7 @@ export async function joinGiveaway(
 
   if (!existing) {
     broadcastGiveawayUpdate(giveaway.id, shortId, entryCount, 'active');
+    updateDiscordCard(giveaway as GiveawayRow, entryCount);
   }
 
   return { entryCount };
@@ -448,6 +479,7 @@ export async function leaveGiveaway(
 
   if (deleted.count > 0) {
     broadcastGiveawayUpdate(giveaway.id, shortId, entryCount, 'active');
+    updateDiscordCard(giveaway as GiveawayRow, entryCount);
   }
 
   return { entryCount };
@@ -487,7 +519,7 @@ export async function cancelGiveaway(
 
   const entryCount = await prisma.giveawayEntry.count({ where: { giveawayId: giveaway.id } });
 
-  safeBroadcast(makeBotMessage(
+  await publishCard(
     `❌ Giveaway cancelled: ${giveaway.itemName} [${shortId}]`,
     giveaway.channelId,
     {
@@ -501,8 +533,10 @@ export async function cancelGiveaway(
       entryCount,
       cancelled: true,
     },
-  ));
+    giveaway.createdByUserId,
+  );
   broadcastGiveawayUpdate(giveaway.id, shortId, entryCount, 'cancelled');
+  updateDiscordCard({ ...giveaway, status: 'cancelled', winnerName: null }, entryCount);
   logger.info({ giveawayId: giveaway.id, shortId, cancelledBy: userId, isMod }, 'Giveaway cancelled');
 }
 
@@ -517,6 +551,29 @@ export async function listActive(): Promise<GiveawayWithCount[]> {
   });
 
   return rows.map(r => ({ ...(r as unknown as GiveawayRow), entryCount: r._count.entries }));
+}
+
+/** Repost missing cards and recent results after the Discord gateway becomes ready. */
+export async function repairDiscordCards(): Promise<void> {
+  if (!deps?.repairDiscordCard) return;
+  const recentFinished = await deps.prisma.giveaway.findMany({
+    where: {
+      status: { in: ['completed', 'cancelled'] },
+      endsAt: { gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+    },
+    include: { _count: { select: { entries: true } } },
+  });
+  const cards = [
+    ...await listActive(),
+    ...recentFinished.map(g => ({ ...(g as unknown as GiveawayRow), entryCount: g._count.entries })),
+  ];
+  for (const giveaway of cards) {
+    try {
+      await deps.repairDiscordCard(giveaway, giveaway.entryCount);
+    } catch (err) {
+      logger.warn({ err, giveawayId: giveaway.id }, 'giveawayService: Discord reconnect repair failed');
+    }
+  }
 }
 
 export async function listRecent(limit: number): Promise<GiveawayWithCount[]> {

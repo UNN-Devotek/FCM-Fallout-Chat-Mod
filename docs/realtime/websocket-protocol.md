@@ -800,8 +800,12 @@ giveaway announcement cards without re-fetching.
 
 `status` values: `"active"` | `"cancelled"` | `"completed"`.
 
-Giveaway announcements and winner results arrive as standard `chat:message` frames from source
-`"bot"` with a structured `metadata` field:
+Giveaway announcements and winner results arrive as persisted, relay-sequenced
+`chat:message` frames from source `"bot"` in Events with a structured `metadata`
+field. The creator's linked user ID attributes the persisted row; clients display
+`[Vault-Tec]` as its sender. The native HUD receives the compact text through
+its normal Events feed and history. `giveaway:update` remains the live count/status
+signal for the overlay; Discord edits its original embed from the same giveaway row.
 
 **Announcement** (`metadata.type = "giveaway"`):
 ```json

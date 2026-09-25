@@ -300,7 +300,7 @@ export async function finalizeMessage(opts: {
   // Resolve the author's cosmetics (colour, effect, tag, badges) onto the
   // payload. Redis-cached ~60s and non-throwing, so it costs nothing for the vast
   // majority of users who have no cosmetics row and can never block delivery.
-  await attachCosmetics(payload);
+  if (opts.source !== 'bot') await attachCosmetics(payload);
 
   // Queue acceptance is enough for the relay path: Bull provides retries and
   // backoff, and waiting for a worker to finish would hold the synchronous HUD
