@@ -7,7 +7,7 @@ must not add game-memory reads, code injection, or network/port scanning.
 
 ## Current implementation and verification
 
-**Giveaways (2.10.127 candidate, native acceptance pending):** The Events feed now
+**Giveaways (2.10.127 candidate, native ZFE trial in progress):** The Events feed now
 receives the overlay's giveaway announcement and winner text through ordinary
 persisted chat history and live relay events. Enter `giveaway start <item> [minutes]`,
 `giveaway list`, `giveaway last`, `giveaway join <id>`, `giveaway leave <id>`, or
@@ -20,8 +20,13 @@ visible only to that player, including when the game strips a leading `/`.
 The send receipt shows a short result; `list` and `last` include
 up to three compact entries. Other HUD slash commands remain unsupported. The
 ZFE and xScal Ruffle giveaway scenario checks private help in the feed, routing,
-receipt handling, and announcement/result rows; actual extender and game behavior requires a fresh
-native test of this build.
+receipt handling, and announcement/result rows. The user's ZFE 0.15.0 screenshot
+confirms the private help row in the native feed. The command reached hosted Dev;
+the first 2.10.127 announcement failed to persist because Dev's
+`messages_source_check` omitted `bot`. After the constraint was expanded, the
+exact failed persistence job completed, Discord's card repair linked the card,
+and the draw's `giveaway_winner` row was persisted and appended to the live ZFE
+feed. A fresh start-to-card native trial after this DB fix remains required.
 The 2.10.127 BA2 is installed on the local Steam/Proton desktop for a hosted-Dev
 trial with ZFE 0.15.0; the ZFE fragment and inactive xScal config both target
 `wss://dev.falloutchatmod.com/relay`, and `Data/FCMChat.ini` now points its
@@ -29,10 +34,8 @@ separate `linkUrl` at `dev.falloutchatmod.com/link`. The provider and archive
 registration are unchanged. The exact rollback files are listed in the
 [build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
 Pure Haxe, source/package checks, and the full 77-case Ruffle suite pass for
-this candidate; a fresh in-game help/feed check is pending.
-The matching giveaway backend was deployed to hosted Dev on 2026-09-25; the
-pre-deployment HUD command was rejected and must be submitted again. Native
-command/result and Discord card acceptance remain pending.
+this candidate. The matching giveaway backend was deployed to hosted Dev on
+2026-09-25; the pre-deployment HUD command was rejected by the old backend.
 
 **HUD 2.10.125 input and installer patch:**
 the xScal 0.2.18 test DLL exposes native text sessions through

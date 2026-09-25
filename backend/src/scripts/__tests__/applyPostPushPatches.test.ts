@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { applyPostPushPatches, POST_PUSH_PATCHES } from '../applyPostPushPatches';
 
 test('post-push patch set is static, ordered, and complete', () => {
@@ -24,9 +26,10 @@ test('post-push patch set is static, ordered, and complete', () => {
 
   assert.match(POST_PUSH_PATCHES[0].sql, /CREATE EXTENSION IF NOT EXISTS pg_trgm/);
   const sourceSql = POST_PUSH_PATCHES[1].sql;
-  for (const source of ['game', 'discord', 'hud', 'relay', 'mcp', 'ws']) {
+  for (const source of ['game', 'discord', 'hud', 'relay', 'mcp', 'ws', 'bot']) {
     assert.match(sourceSql, new RegExp(`'${source}'`));
   }
+  assert.match(sourceSql, /position\('bot' IN definition\) = 0/);
   assert.match(POST_PUSH_PATCHES[2].sql, /require_target/);
   assert.match(POST_PUSH_PATCHES[3].sql, /ON CONFLICT/);
   assert.match(POST_PUSH_PATCHES[4].sql, /fuck/);
@@ -44,6 +47,14 @@ test('post-push patch set is static, ordered, and complete', () => {
     'mcp_oauth_grants_scopes_check',
   ]) {
     assert.ok(POST_PUSH_PATCHES.some((patch) => new RegExp(constraint).test(patch.sql)));
+  }
+});
+
+test('bot giveaway announcements are accepted by the idempotent migration', () => {
+  const sql = readFileSync(join(process.cwd(), 'prisma/migrations/20260925193000_allow_bot_message_source/migration.sql'), 'utf8');
+  assert.match(sql, /position\('bot' IN definition\) = 0/);
+  for (const source of ['game', 'discord', 'hud', 'relay', 'mcp', 'ws', 'bot']) {
+    assert.match(sql, new RegExp(`'${source}'::text`));
   }
 });
 

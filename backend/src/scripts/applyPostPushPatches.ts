@@ -38,7 +38,8 @@ BEGIN
                          OR position('hud' IN definition) = 0
                          OR position('relay' IN definition) = 0
                          OR position('mcp' IN definition) = 0
-                         OR position('ws' IN definition) = 0 THEN
+                         OR position('ws' IN definition) = 0
+                         OR position('bot' IN definition) = 0 THEN
     IF definition IS NOT NULL THEN
       ALTER TABLE messages DROP CONSTRAINT messages_source_check;
     END IF;
@@ -51,7 +52,8 @@ BEGIN
         'hud'::text,
         'relay'::text,
         'mcp'::text,
-        'ws'::text
+        'ws'::text,
+        'bot'::text
       ]));
   END IF;
 END $$;`,

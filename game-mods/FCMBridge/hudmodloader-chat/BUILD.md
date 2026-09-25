@@ -7,7 +7,11 @@
 command never goes to the relay or Discord. The row uses the normal chat feed
 renderer and scrolls into view. The ZFE/xScal Ruffle scenario checks both
 slash and slash-stripped input, private local storage, and rendered feed output.
-Fresh native acceptance remains pending.
+The user's native ZFE screenshot confirms the help row. In the first native
+giveaway trial, the command reached Dev but its bot announcement failed the
+Dev `messages_source_check`. After the DB rule was repaired, the queued
+announcement persisted, Discord's card repair linked the card, and the draw
+result reached the ZFE feed. A fresh start-to-card trial remains pending.
 
 The compiled FWS v32 SWF SHA-256 is
 `c7d38eaf32766ee8356a2c6c36f7d1faf2026233fab33d7e0c48124f7e789d93`.

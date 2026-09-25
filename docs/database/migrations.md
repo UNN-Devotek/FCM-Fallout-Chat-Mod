@@ -101,6 +101,17 @@ CREATE UNIQUE INDEX "admin_users_discord_id_key" ON "admin_users"("discord_id");
 
 The older Prisma-generated migrations (before this rule was established) omit `IF NOT EXISTS`. They work because `prisma db push` already applied the schema; the history reconciliation step records them without replaying their SQL. **All new migrations must use the idempotent patterns** to avoid log noise and to be safe for manual `migrate deploy` runs.
 
+## Message source constraint
+
+`messages_source_check` must admit every value written by the message producers:
+`game`, `discord`, `hud`, `relay`, `mcp`, `ws`, and `bot`. Giveaway cards and
+results use `bot`. The idempotent
+`20260925193000_allow_bot_message_source` migration and the matching
+`applyPostPushPatches` rule both enforce this set because hosted startup can
+mark migrations applied after `db push` without replaying their SQL. A missing
+`bot` source allowed a giveaway row to be created while its queued announcement
+failed to persist, leaving the HUD feed empty.
+
 ## Generating a New Migration
 
 ```bash
