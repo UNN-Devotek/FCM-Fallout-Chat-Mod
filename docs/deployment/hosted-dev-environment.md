@@ -114,6 +114,19 @@ giveaway announcement was persisted after retry, Discord card/result links
 were present, and external health reported connected DB/Redis/Discord. No
 Prod or Dev storage/tunnel containers were recreated.
 
+The `a70fb441` channel-local giveaway correction was staged under
+`/home/devotek/fcm-dev-deploy/a70fb441/` from an exact Git archive (SHA-256
+`af5717841681617a69546a86e47d97b32702bbea55ec4ef9066687f075495ae6`).
+The customized Dev Compose checksum remained
+`193c6f88e4d113bc4f68d9e4531f567fa369be2296138ad74b176c74d90025b7`.
+Only `backend-dev` was rebuilt with `--no-deps --pull never`; its previous image
+was tagged `fcm-dev-backend:pre-channel-giveaway-20260925`. The new image ID is
+`sha256:2cb4db0fa180eba3c9a51ce33eec90e68e5feeef61d4946459903e930d8304fd`.
+The running compiled command service passes the invoking channel into giveaway
+creation, and the Discord service uses the mapped channel without a default
+fallback. The container was healthy, external `/api/health` reported connected
+DB/Redis/Discord, and no Dev storage/tunnel or Prod containers were recreated.
+
 At the 2026-09-16 UTC auth-recovery deployment, hosted Dev was authoritative on the mothership,
 with Dokploy `autoDeploy=false` and `LAPTOP_DEV_AUTODEPLOY=false`. Verify current authority
 before every deployment; these are dated observations, not permission to change either flag.
