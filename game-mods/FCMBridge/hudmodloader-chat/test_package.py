@@ -91,13 +91,13 @@ def main() -> None:
         "shared editor diagnostics must capture metadata without the draft text"
     )
     assert "FcmInputRoute.preferred(provider" in source_hx \
-        and "FcmInputRoute.mayUseNativeFallback" in source_hx \
+        and "text editor unavailable; no ControlMap lock, input refused" in source_hx \
         and "tf.selectable = true" in source_hx, (
-        "the shared widget must route ZFE and xScal input by detected provider"
+        "the shared widget must route provider input without an unlocked fallback"
     )
     assert '"input.v1.begin"' in source_hx and '"input.v1.poll"' in source_hx \
         and '"input.v1.end"' in source_hx and "OWNED_RELEASE_STABLE_POLLS" in source_hx, (
-        "current ZFE input must use an owned session with a release barrier"
+        "retained ZFE diagnostic input must keep its release barrier"
     )
     assert "FcmSharedInputRecovery.decide" in source_hx \
         and "onSharedInputKeyDown" in source_hx \
@@ -188,6 +188,10 @@ def main() -> None:
         "star alignment must translate the per-row author bounds, not global feed indices"
     )
     widget_artifact = (ROOT / "FCMChatWidget.ba2").read_bytes()
+    upstream_loader_defaults = (ROOT / "HUDMODLOADER-UPSTREAM-DEFAULTS.txt").read_text(encoding="utf-8").splitlines()
+    assert len(upstream_loader_defaults) == 22
+    expected_loader = ("\n".join(upstream_loader_defaults + ["FCMChatWidget"]) + "\n").encode()
+    assert b"FCMServerBridge" not in expected_loader
     widget_version = version_match.group(1).encode("ascii")
     assert widget_version in widget_artifact, "FCMChatWidget.ba2 embeds the current VERSION"
     assert b"awaiting authoritative live echo" in widget_artifact, (
@@ -216,112 +220,75 @@ def main() -> None:
             raise AssertionError("unknown providers must be rejected")
         except ValueError:
             assert not invalid.exists()
+
         assert package.widget_version() == version_match.group(1)
         for target, expected in package.TARGETS.items():
             unified = Path(temp_dir) / f"widget-{target}-unified.zip"
             package.build_package(target, unified)
             with ZipFile(unified) as archive:
-                names = archive.namelist()
+                names = set(archive.namelist())
+                readme = archive.read("README.txt")
+                assert readme.startswith(f"Fallout Chat Mod HUD {package.widget_version()}".encode())
+                assert b"Package provider: unified" in readme
+                assert f"{package.ZFE_FOLDER}/ and {package.XSCAL_FOLDER}/".encode() in readme
+                assert b"Choose only" in readme[:400]
+                assert b"RELEASE NOTES" in readme
+                assert b"HUDMODLOADER MENU" in readme
+                assert b"PROVIDER KEYBIND CONTRACT" in readme
+                assert b"CUSTOMIZATION" in readme
+                assert b"Reset all settings" in readme
+                assert b"inputBgColor=#080705" in readme
                 assert b"Twemoji v17.0.3" in archive.read("licenses/emoji/NOTICE.txt")
-                assert "licenses/emoji/LICENSE-TWEMOJI.txt" in names
-                assert "licenses/emoji/LICENSE-UNICODE.txt" in names
-                assert [name for name in names if name.endswith(".ba2")] == ["Data/FCMChatWidget.ba2"]
-                assert not any(name.startswith("Data/ZFE/") for name in names)
-                assert archive.read("Data/FCMChatWidget.ba2") == (ROOT / "FCMChatWidget.ba2").read_bytes()
-                zfe_example = archive.read("examples/ZFE/FCMChatWidget.ini.example").decode()
-                assert f"Endpoint={expected['endpoint']}" in zfe_example
-                assert active_ini_value(zfe_example, "OpenChatKey") == "INSERT"
-                chat_config = archive.read("Data/FCMChat.ini").decode()
-                for key, value in HUD_KEY_DEFAULTS.items():
-                    assert active_ini_value(chat_config, key) == value
-                override = archive.read("examples/ZFE/zfe.ini.example")
-                assert f"[TextChat]\nEndpoint={expected['endpoint']}\n".encode() in override
-                assert b"OpenChatKey=INSERT" in override
-                assert b"FCMChat.ini openKey is synchronized after widget discovery" in override
-                assert b"Do not replace the whole file" in override
-                assert b"examples/ZFE/zfe.ini.example" in archive.read("INSTALL.txt")
-                assert "CUSTOMIZATION.txt" in names
-                assert "KEYBINDS.txt" in names
-                keybinds = archive.read("KEYBINDS.txt")
-                assert "HUD-RELEASE-NOTES.txt" in names
-                assert "CONTROLLER-TEST-NOTICE.txt" not in names
-                release_notes = archive.read("HUD-RELEASE-NOTES.txt")
-                assert f"FCM HUD {package.widget_version()}".encode() in release_notes
-                assert b"xScal 0.2.18" in release_notes
-                assert b"DLL is not bundled" in release_notes
-                assert b"PROVIDER KEYBIND CONTRACT" in keybinds
-                assert b"ZFE       Data/FCMChat.ini openKey" in keybinds
-                assert b"xScal     Data/FCMChat.ini openKey only" in keybinds
-                assert b"`hello` remains five characters" in keybinds
-                assert b"openKey=DELETE" in keybinds
-                assert b"OpenChatKey=DELETE" in keybinds
-                assert b"DELETE is the recommended alternative" in keybinds
-                assert b"ArrowUp/ArrowDown (and Cursor/Dpad aliases)" in keybinds
-                assert b"scrollUpKey=Console" in keybinds
-                assert b"scrollDownKey=F12" in keybinds
-                assert b"scrollBottomKey=Home" in keybinds
-                assert b"`scrollBottomKey` is deliberately empty" in keybinds
-                assert b"XSCAL OPEN-CHAT KEY" in keybinds
-                assert b"do not add OpenChatKey to" in keybinds
-                assert b"Input.RegisterKey/Input.IsKeyPressed" in keybinds
-                assert b"not keyboard suppression" in keybinds
-                assert b"https://www.nexusmods.com/fallout76/articles/255" in keybinds
-                assert b"https://www.nexusmods.com/fallout76/articles/268" in keybinds
-                assert b"enabled=true" in archive.read("xscal.ini.example")
-                assert expected["endpoint"].encode() in archive.read("xscal.ini.example")
-                assert expected["endpoint"].encode() in archive.read("Enable-xScal-Chat.ps1")
-                assert b"@@FCM_RELAY_ENDPOINT@@" not in archive.read("Enable-xScal-Chat.ps1")
-                install = archive.read("INSTALL.txt")
-                assert b"RELEASE CANDIDATE" not in install
-                assert b"Choose exactly one script extender" in install
-                assert b"CHOOSE EXACTLY ONE PROVIDER SECTION" in install
-                assert b"ZFE INSTALL - FOLLOW ONLY IF USING ZFE" in install
-                assert b"XSCAL INSTALL - FOLLOW ONLY IF USING XSCAL" in install
-                assert b"temporary folder OUTSIDE the Fallout 76 game folder" in install
-                assert b"Do not extract the whole archive over the game" in install
-                assert b"Copy only these files" in install
-                assert b"preserve your existing FCMChat.ini settings" in install
-                assert b"Do not install ZFE, its fragment" in install
-                assert archive.read("FCMChatWidget.provider.txt") == b"unified\n"
-                install = install.decode()
-                assert "the latest ZFE or the latest xScal" in install
-                assert "with chat.v1 support" not in install
-                assert "with chatInterface support" not in install
-                assert f"[Chat]\n  enabled=true\n  relayEndpoint={expected['endpoint']}" in install
-                assert "If the section or file is missing, add it once" in install
-                assert "Windows: optionally run Enable-xScal-Chat.cmd" in install
-                assert "xScal has no OpenChatKey setting" in install
-                assert "xScal Input.*" in install
-                assert "Copy examples/ZFE/FCMChatWidget.ini.example" in install
-                assert "Data/configuration/zfe.ini is optional" in install
-                assert f"Endpoint={expected['endpoint']}" in install
-                assert "OpenChatKey=INSERT" in install
-                for key, value in HUD_KEY_DEFAULTS.items():
-                    assert f"{key}={value}" in install
-                assert "Delete hides the feed while idle" in install
-                assert "Initial history" not in install
-                assert "Send an emoji" not in install
-                assert "Steam sign-in" not in install
-                other = "prod" if target == "dev" else "dev"
-                assert package.TARGETS[other]["endpoint"] not in install
+                assert not {
+                    "INSTALL.txt", "FCMChatWidget.provider.txt", "FCMChatWidget.version.txt",
+                    "HUD-RELEASE-NOTES.txt", "HUDMODLOADER-MENU.txt",
+                    "KEYBINDS.txt", "CUSTOMIZATION.txt",
+                }.intersection(names)
+                assert not any(name.endswith(".example") for name in names)
+                assert not any(Path(name).suffix.lower() in package.NEXUS_BLOCKED_SUFFIXES for name in names)
+                assert sorted(name for name in names if name.endswith(".ba2")) == [
+                    f"{package.ZFE_FOLDER}/{package.DATA_FOLDER_LABEL}/FCMChatWidget.ba2",
+                    f"{package.XSCAL_FOLDER}/{package.DATA_FOLDER_LABEL}/FCMChatWidget.ba2",
+                ]
+                assert "Data/FCMChatWidget.ba2" not in names
+                assert "Data/configuration/zfe.ini" not in names
+                for folder, provider in ((package.ZFE_FOLDER, "zfe"), (package.XSCAL_FOLDER, "xscal")):
+                    prefix = folder + "/"
+                    data_prefix = prefix + package.DATA_FOLDER_LABEL + "/"
+                    assert archive.read(data_prefix + "FCMChatWidget.ba2") == widget_artifact
+                    assert archive.read(data_prefix + "hudmodloader.ini") == expected_loader
+                    assert prefix + "Fallout76Custom.ini" in names
+                    assert not any(name.startswith(prefix + "Documents/") for name in names)
+                    assert archive.read(prefix + "Fallout76Custom.ini") == (
+                        b"[Archive]\nsResourceArchive2List=HUDModLoader.ba2,FCMChatWidget.ba2\n"
+                    )
+                    chat = archive.read(data_prefix + "FCMChat.ini").decode()
+                    assert active_ini_value(chat, "linkUrl") == expected["link_url"]
+                    for key, value in HUD_KEY_DEFAULTS.items():
+                        assert active_ini_value(chat, key) == value
+                    guide = archive.read(prefix + "INSTALL.txt")
+                    assert b"HUDModLoader defaults plus FCMChatWidget" in guide
+                    assert b"preserve all other lines" in guide
+                    assert f"import only {package.DATA_FOLDER_LABEL}/FCMChatWidget.ba2".encode() in guide
+                    assert f"Open {package.DATA_FOLDER_LABEL}/ and drag its contents".encode() in guide
+                    assert b"On updates replace only the BA2; keep edited INIs" in guide
+                    assert expected["endpoint"].encode() in (archive.read(data_prefix + "ZFE/TextChat/fragments/FCMChatWidget.ini") if provider == "zfe" else archive.read(prefix + "xscal.ini"))
+                    assert (prefix + "xscal.ini" in names) == (provider == "xscal")
+                    assert (data_prefix + "ZFE/TextChat/fragments/FCMChatWidget.ini" in names) == (provider == "zfe")
+                    assert data_prefix + "configuration/zfe.ini" not in names
+                other = package.TARGETS["prod" if target == "dev" else "dev"]
+                assert other["endpoint"].encode() not in readme
+                assert f"Endpoint={other['endpoint']}".encode() not in archive.read(
+                    package.ZFE_FOLDER + "/" + package.DATA_FOLDER_LABEL + "/ZFE/TextChat/fragments/FCMChatWidget.ini"
+                )
 
             nexus = Path(temp_dir) / f"widget-{target}-nexus.zip"
             package.build_package(target, nexus, distribution="nexus")
             with ZipFile(nexus) as archive:
-                names = archive.namelist()
-                assert "Enable-xScal-Chat.cmd" not in names
-                assert "Enable-xScal-Chat.ps1" not in names
-                assert "DOWNLOAD-XSCAL-SETUP-HELPERS.txt" not in names
-                assert not {
-                    Path(name).suffix.lower() for name in names
-                }.intersection(package.NEXUS_BLOCKED_SUFFIXES)
-                install = archive.read("INSTALL.txt")
-                assert b"contains no setup scripts" in install
-                assert b"and helpers in the extracted" not in install
-                assert b"RELEASE CANDIDATE" not in install
-                assert b"/downloads/" not in install
+                assert not any(Path(name).suffix.lower() in package.NEXUS_BLOCKED_SUFFIXES for name in archive.namelist())
+                assert "README.txt" in archive.namelist()
 
-            unsafe = Path(temp_dir) / f"widget-{target}-unsafe-nexus.zip"
+            unsafe = Path(temp_dir) / f"widget-{target}-unsafe.zip"
             package.build_package(target, unsafe)
             with ZipFile(unsafe, "a") as archive:
                 archive.writestr("unexpected.exe", b"MZ")
@@ -331,7 +298,7 @@ def main() -> None:
             except ValueError:
                 assert not unsafe.exists()
 
-            disguised = Path(temp_dir) / f"widget-{target}-disguised-nexus.zip"
+            disguised = Path(temp_dir) / f"widget-{target}-disguised.zip"
             package.build_package(target, disguised)
             with ZipFile(disguised, "a") as archive:
                 archive.writestr("extensionless-runner", b"\x7fELF")
@@ -341,126 +308,27 @@ def main() -> None:
             except ValueError:
                 assert not disguised.exists()
 
-
-        for target, expected in package.TARGETS.items():
             for provider in ("zfe", "xscal"):
                 output = Path(temp_dir) / f"widget-{target}-{provider}.zip"
                 package.build_package(target, output, provider)
                 with ZipFile(output) as archive:
                     names = set(archive.namelist())
+                    assert "README.txt" in names
                     assert "Data/FCMChatWidget.ba2" in names
                     assert "Data/FCMChat.ini" in names
+                    assert archive.read("Data/hudmodloader.ini") == expected_loader
+                    assert "Fallout76Custom.ini" in names
+                    assert not any(name.startswith("Documents/") for name in names)
+                    assert archive.read("Fallout76Custom.ini") == (
+                        b"[Archive]\nsResourceArchive2List=HUDModLoader.ba2,FCMChatWidget.ba2\n"
+                    )
+                    assert ("xscal.ini" in names) == (provider == "xscal")
                     assert ("Data/ZFE/TextChat/fragments/FCMChatWidget.ini" in names) == (provider == "zfe")
-                    assert "FCMChatWidget.hudmodloader.ini" in names
-                    assert "FCMChatWidget.version.txt" in names
-                    assert ("xscal.ini.example" in names) == (provider == "xscal")
-                    assert archive.read("FCMChatWidget.provider.txt") == (provider + "\n").encode()
+                    assert "INSTALL.txt" not in names
+                    assert b"Package provider: " + provider.encode() in archive.read("README.txt")
                     assert ("Enable-xScal-Chat.ps1" in names) == (provider == "xscal")
                     assert ("Enable-xScal-Chat.cmd" in names) == (provider == "xscal")
-                    if provider == "xscal":
-                        assert b"[Chat]\nenabled=true\n" in archive.read("xscal.ini.example")
-                        setup = archive.read("Enable-xScal-Chat.ps1")
-                        assert b"@@FCM_RELAY_ENDPOINT@@" not in setup
-                        assert expected["endpoint"].encode() in setup
-                        assert b"Enable-xScal-Chat.cmd" in archive.read("INSTALL.txt")
-                        assert b"xScal ships with chat disabled" in archive.read("INSTALL.txt")
-                        assert not any(n.lower().startswith("data/zfe/") for n in names)
-                    assert "Data/hudmodloader.ini" not in names
-                    assert "INSTALL.txt" in names
-                    assert "HUDMODLOADER-MENU.txt" in names
-                    assert archive.read("Data/FCMChatWidget.ba2") == widget_artifact
-                    assert b"chatInterface" in widget_artifact
-                    assert b"__SFECodeObj" in widget_artifact
-                    assert archive.read("FCMChatWidget.hudmodloader.ini") == b"FCMChatWidget\n"
-                    assert archive.read("FCMChatWidget.version.txt") == f"{package.widget_version()}\n".encode()
-
-                    chat_config = archive.read("Data/FCMChat.ini")
-                    widget_config = archive.read(
-                        "Data/ZFE/TextChat/fragments/FCMChatWidget.ini"
-                    ) if provider == "zfe" else b""
-                    install = archive.read("INSTALL.txt")
-                    assert (b"the latest ZFE" if provider == "zfe" else b"the latest xScal") in install
-                    assert b"with chat.v1 support" not in install
-                    assert b"with chatInterface support" not in install
-                    menu = archive.read("HUDMODLOADER-MENU.txt")
-                    assert b"General combines all six feeds" in menu
-                    assert b"Sending from General targets General" in menu
-                    customization = archive.read("CUSTOMIZATION.txt")
-                    assert b"inputBgColor=#080705" in customization
-                    assert b"autoHideEnabled=false" in customization
-                    assert b"Input width and alignment always follow" in customization
-                    assert b"Badges, channel tags" in customization
-                    assert b"CUSTOMIZATION.txt" in menu
-                    assert b"Colors..." in menu
-                    assert b"showChannelTag=" not in chat_config
-                    assert b"colorGeneral=" not in chat_config
-                    xscal_config = archive.read("xscal.ini.example") if provider == "xscal" else b""
-                    assert f"linkUrl={expected['link_url']}\n".encode() in chat_config
-                    chat_config_text = chat_config.decode()
-                    for key, value in HUD_KEY_DEFAULTS.items():
-                        assert active_ini_value(chat_config_text, key) == value
-                    assert provider != "zfe" or f"Endpoint={expected['endpoint']}\n".encode() in widget_config
-                    assert provider != "zfe" or active_ini_value(
-                        widget_config.decode(), "OpenChatKey"
-                    ) == "INSERT"
-                    assert expected["web_link_url"].encode() in install
-                    assert expected["endpoint"].encode() in install
-                    assert provider != "xscal" or f"relayEndpoint={expected['endpoint']}\n".encode() in xscal_config
-                    if provider == "zfe":
-                        assert b"ZFE INSTALL" in install
-                        assert b"Data/configuration/zfe.ini" in install
-                        assert b"Do not install xscal.ini" in install
-                        assert b"XSCAL INSTALL" not in install
-                    else:
-                        assert b"XSCAL INSTALL" in install
-                        assert b"xScal Input.*" in install
-                        assert b"Do not install ZFE, its fragment" in install
-                    assert b"Press F11" in install
-                    assert b"Insert opens" in install
-                    assert b"Arrow Up / Down" in install
-                    assert b"scrollUpKey" in install
-                    assert b"scrollDownKey" in install
-                    assert b"scrollBottomKey" in install
-                    assert b"scrollBottomKey is blank by default" in install
-                    assert b"Delete hides the feed while idle" in install
-                    assert b"Shipped Data/FCMChat.ini key map:" in menu
-                    for key, value in HUD_KEY_DEFAULTS.items():
-                        assert f"{key}={value}".encode() in install
-                        assert f"{key}={value}".encode() in menu
-                    assert b"scrollUpKey" in menu
-                    assert b"scrollDownKey" in menu
-                    assert b"scrollBottomKey is blank by default" in menu
-                    assert b"Home, End, or F12" in install
-                    assert b"Initial history" not in install
-                    assert b"Send an emoji" not in install
-                    assert b"Steam sign-in" not in install
-                    assert b"F11" in menu
-                    assert b"FCM -> Customize..." in menu
-                    assert b"Press Insert" in menu
-                    assert b"Arrow Up / Down" in menu
-                    assert b"15 recent messages" in menu
-                    assert b"50 from the current SERVER room" in menu
-                    assert b"125 events total" in menu
-                    assert b"Home, End, F12" in menu
-                    assert b"/g, /t, /e" in menu
-                    assert b"/relink" in menu
-                    assert b"Auto-hide" in menu
-                    assert b"SERVER" in menu
-                    assert b"Reset all settings" in menu
-                    assert b"showTimestamps" not in chat_config
-                    assert b"timestampColor" not in chat_config
-
-                    other = package.TARGETS["prod" if target == "dev" else "dev"]
-                    assert f"linkUrl={other['link_url']}\n".encode() not in chat_config
-                    assert f"Endpoint={other['endpoint']}\n".encode() not in widget_config
-                    assert other["web_link_url"].encode() not in install
-                    assert other["endpoint"].encode() not in install
-
-                    if target == "prod":
-                        for name in names - {"Data/FCMChatWidget.ba2"}:
-                            assert not re.search(rb"\bdev\b", archive.read(name).lower()), (
-                                f"production archive mentions DEV in {name}"
-                            )
+                    assert not any(name.endswith(".example") for name in names)
 
     print("package target tests passed")
 

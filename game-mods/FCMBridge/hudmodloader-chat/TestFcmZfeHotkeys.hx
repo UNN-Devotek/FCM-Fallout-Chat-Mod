@@ -11,8 +11,12 @@ class TestFcmZfeHotkeys {
         check("retains opaque registration", reg.success && reg.registration == 17);
         check("accepts matching edge count", FcmZfeHotkeys.presses(
             '{"success":true,"registration":17,"presses":2}', 17) == 2);
+        check("accepts documented poll without registration echo", FcmZfeHotkeys.presses(
+            '{"success":true,"presses":1}', 17) == 1);
         check("rejects stale registration", FcmZfeHotkeys.presses(
             '{"success":true,"registration":18,"presses":1}', 17) == -1);
+        check("rejects missing press count", FcmZfeHotkeys.presses(
+            '{"success":true}', 17) == -1);
         Sys.println("FCM ZFE owner-scoped hotkey tests passed");
     }
 }

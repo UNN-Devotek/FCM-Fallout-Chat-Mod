@@ -1,5 +1,125 @@
 # FCMChatWidget build, install, and verification
 
+## ZFE controller keyboard visibility correction (2026-09-24)
+
+The user confirmed that physical Insert now opens chat with a controller active, but the
+SharedHUDTools 300×180 controller keyboard appears below the text entry. The widget explicitly
+placed that keyboard on-stage. `FormatOnScreenKeyboard` remains required by the host editor,
+so the widget now positions it off-screen at `(0, -300)` while retaining the physical-keyboard
+focus handoff to the visible host entry and the host ControlMap lock. The controller-mode Ruffle
+scenario asserts this position and focus handoff. Fresh in-game Insert, typing, gameplay lock,
+and Escape acceptance were subsequently reported by the tester for this corrected artifact.
+
+The focused scenario failed before the placement change and passed afterward. All 75 Ruffle
+scenarios, including both xScal input routes, then passed. Pure Haxe, native adapter/auth,
+compiler diagnostics, source/package/SWF/BA2/emoji checks passed. The rebuilt one-entry BA2
+contains the compiled SWF byte-for-byte (SWF SHA-256
+`a40ab20a1e7e2c839c7c5833e6ebd2ee729ffd457ee7c6f6acdf9fab43574787`; BA2 SHA-256
+`66d1d90246723d99838ab5620192b50fe1083a23cf55f80c11b8e47527ef464e`). The ZFE-only
+Prod test ZIP is `FCMChatWidget-2.10.125-ZFE-No-OSK-Test.zip` (SHA-256
+`233e62fe5c894b19f81dfdc3e2c9702b6ef0c703d2716fe87d2d0ffa76409912`). With the game
+closed, the BA2 was installed locally; ZFE and all configuration files were hash-checked
+unchanged. Rollback backup: `.extender-backups/before-zfe-no-osk-20260925T031013Z/`.
+
+Native provider cross-check (2026-09-25): with this same BA2, the tester reported that
+controller-active physical Insert, `MIW` keyboard entry without the extra on-screen keyboard,
+gameplay/map lock while editing, and Escape control recovery worked on xScal 0.2.18 and ZFE
+0.15.0. The fresh xScal log independently records widget 2.10.125 loading, `provider=xscal`,
+a physical Insert edge, and `invalid_session` confirmation after ending input. The ZFE log
+records the corrected `FormatOnScreenKeyboard ok x=0 y=-300` and physical-keyboard focus
+handoff from the earlier in-game run on this exact BA2. It did not advance after the final
+return swap, so that last ZFE report has no separate fresh log. The local active DLL is again
+ZFE 0.15.0; the xScal DLL and settings are backed up under
+`.extender-backups/before-zfe-recheck-no-osk-20260925T043604Z/`.
+
+## Local ZFE controller-mode keyboard candidate (2026-09-24)
+
+The user confirmed that the restored SharedHUDTools path locks gameplay keys in keyboard mode,
+but physical Insert does not open chat while a controller is active. The previous widget registered
+Insert with `hotkeys.v1` and then omitted its numeric `Input.*` registration. This candidate
+keeps both ZFE open-key routes, while leaving xScal's native text session unchanged. In
+controller mode HUDTools focuses an off-screen controller field; FCM now focuses the visible
+host entry field from the public display list so a physical keyboard can type while the host
+ControlMap lock stays active. A failed host editor still refuses an unlocked ZFE draft.
+
+The full 75-case Ruffle suite, including the new controller-mode open/focus scenario and both
+xScal input routes, passed. Pure Haxe, compiler diagnostics, source anchors, SWF, emoji,
+BA2-tool, and package checks passed. The rebuilt one-entry BA2 preserves the GNRL header and
+record identity and contains the compiled SWF byte-for-byte. SWF SHA-256:
+`f90ea768649d5f27f3d67bbe92bb3031db979c67fffa690e798297bcad207e62`.
+BA2 SHA-256: `f89e089030c5cf0ecfda1b9b526e9ffbe211b138f313a896de1bc540f9ee6fbb`.
+With the Steam/Proton game closed, only `Data/FCMChatWidget.ba2` was replaced locally;
+three existing configuration files were hash-checked unchanged. Rollback backup:
+`.extender-backups/before-zfe-controller-keyboard-20260925T003431Z/` in the game root.
+ZFE 0.15.0 was not replaced. Native controller-mode Insert, physical-keyboard text entry,
+ControlMap suppression and post-close recovery remain unverified on this exact build.
+
+## ZFE ControlMap editor restoration (2026-09-24)
+
+The latest local trial proved that ZFE `input.v1.begin` opened while Fallout still handled
+Forward, StrafeRight, Activate, QuickInventory, and Map. The 2.10.116 route used the
+SharedHUDTools host editor, which starts the game's balanced ControlMap text lock;
+2.10.117 changed ZFE to prefer `input.v1`. This candidate restores SharedHUDTools as the
+automatic ZFE route. xScal still selects its native text session when available and the
+shared host editor otherwise. An unavailable ZFE host editor now refuses entry rather than
+starting an unlocked `input.v1` or legacy-buffer draft. M/`Map`/`QuickMap` and
+I/`QuickInventory` no longer act as editor-exit commands, and the host consumes unhandled
+gameplay actions while editing. Native acceptance remains pending.
+
+The pure Haxe, native-adapter, auth, source/package/SWF/emoji and BA2 checks pass,
+along with the full 75-case Ruffle suite. The installed one-entry BA2 contains the
+compiled SWF byte-for-byte and has SHA-256
+`9608f878fd1e669e75ca5488c3f985e2d54b80eb763a235caa213cfae79e9eae`.
+Only `Data/FCMChatWidget.ba2` was changed in the closed Steam/Proton game. The previous
+archive and install manifest are in
+`.extender-backups/before-zfe-controlmap-20260925T000136Z/`. ZFE remains the validated
+0.15.0 DLL. In game, Insert must log `input path: shared-hud-tools` followed by
+`FormatTextEdit ok`, `FormatOnScreenKeyboard ok`, and `opened`; M, I, and W must type
+without opening game UI or moving the player. Enter/Escape must release the editor and
+restore normal controls.
+
+
+## Local ZFE input-guard follow-up (2026-09-24)
+
+The previous local run opened a native chat session but pressing M delivered `QuickMap`;
+the widget closed that session and allowed the map to open. ZFE recorded 26 raw suppressed
+inputs and zero async suppressed inputs. The earlier `input path` log used a category with
+a space and did not appear, so its absence did not establish that `input.v1.begin` failed.
+This follow-up keeps the owner-scoped session active on QuickMap, consumes unhandled HUD
+gameplay actions while it is open, and logs `input path: zfe-input-v1 controller-test`
+under the ordinary `input` category. This does not establish that native game input is
+fully suppressed; the in-game M/W trial remains required.
+
+All pure Haxe suites, package/source/SWF/emoji checks, and the full 75-case Ruffle suite
+passed. The rebuilt BA2 contains the compiled SWF byte-for-byte and has SHA-256
+`06b1f4443b069bae6cea24d6a0d627bfe2279ca9aef3d7d8cecbb9edcc7a5f04`.
+With the game closed, only `Data/FCMChatWidget.ba2` was replaced in the local ZFE test
+install. The prior archive and install manifest are in
+`.extender-backups/before-zfe-input-guard-20260924T232822Z/`. ZFE remains the same
+validated 0.15.0 DLL. Native acceptance and public release remain pending.
+
+## Local 2.10.125 ZFE hotkey test candidate (2026-09-24)
+
+The ZFE hotkey poll decoder now accepts the documented `success`/`presses` response without
+requiring a registration echo. It still rejects a mismatched echo and logs rejected polls. The
+pure Haxe, source, package, SWF, emoji, and full 74-case Ruffle gates passed. This is a local
+native test candidate, not a new public release or an in-game accepted fix. It retains the
+2.10.125 version string; identify this build by BA2 SHA-256
+`50fc046109db386ae20426cb8fd1d235dcb89d103ba5b317a012ad8e84c87f08`.
+
+With Fallout 76 closed, the Steam/Proton desktop was switched from xScal plus the invisible
+`FCMServerBridge` to the visible widget plus the previously validated ZFE 0.15.0 DLL
+(SHA-256 `3431d70517fd979e4f5193b1d9fd9d76dae7a8d341fae9838e5249b8f3fcb8b0`).
+The active loader/archive registries contain `FCMChatWidget` and no `FCMServerBridge`; the
+existing `FCMChat.ini`, provider auth data, unrelated archives, and inert `xscal.ini` were
+preserved. The installed BA2's extracted SWF matches the source SWF byte-for-byte. Rollback
+copies are under the game directory's
+`.extender-backups/before-zfe-hotkey-widget-20260924T225426Z/`.
+
+Native acceptance is pending. In game, press Insert, confirm an `input path` marker for
+`input path: zfe-input-v1 controller-test`, type M without opening the map, submit and cancel with
+Enter/Escape, and verify ordinary movement/map controls resume after input closes.
+
 ## Isolated 2.10.125 release candidate
 
 **Widget version:** 2.10.125. The bounded cancel diagnostics remain in the
@@ -343,25 +463,51 @@ python3 test_package.py
 ```
 
 `--target prod` stamps the production endpoint/link host. `--provider zfe|xscal` makes a
-provider-specific ZIP; the default unified ZIP contains examples for either provider. Production
-configuration is not deployment authorization or proof that the endpoint is enabled.
+provider-specific ZIP; the default unified ZIP has complete `ZFE (Install for ZFE only)/` and
+`xScal (Install for xScal only)/` folders.
+Inside either folder, open `Data (drag the contents into data folder)/` and drag its contents into
+the game's `Data/` folder. Do not copy the labeled folder itself. Skip edited INIs.
+The main ZIP contains no `.cmd`/`.ps1` helper: users choose one folder and follow its `INSTALL.txt`.
+For Quick Configuration 2 or NukaMods, users extract the main ZIP and import only the chosen
+provider's `Data (drag the contents into data folder)/FCMChatWidget.ba2` as a BA2 mod. The manager owns its Data placement and archive
+list entry; the chosen `INSTALL.txt` covers the separate HUDModLoader entry and provider/FCM INIs.
+The combined ZIP itself must not be passed to a mod manager: it contains two copies of the same
+BA2 under different roots. Verify one `Data/FCMChatWidget.ba2` and one archive-list entry after
+deployment, and preserve edited INIs on update. Before calling a release manager-compatible, use
+a clean test profile in each manager to import the selected BA2, enable/deploy it, confirm the
+single Data file and archive-list entry, update the BA2 while retaining edited INIs, then disable
+or uninstall and confirm that the manager removes its BA2/list entry without replacing the user
+configuration. Repeat for ZFE and xScal. The packaging check cannot certify these manager actions.
+The folder layout is a package-only behavior covered by `test_package.py`; Ruffle cannot exercise
+ZIP extraction or INI merging. Native startup still requires the separate in-game acceptance matrix.
+Production configuration is not deployment authorization or proof that the endpoint is enabled.
 
-The packager checks the embedded version and target stamps. Validate the ZIP's BA2 against the
-reviewed BA2 bytes and inspect its install files. Nexus distribution omits executable/script
-files and rejects executable magic. Website ZIPs may contain optional Windows xScal setup helpers;
-Nexus variants contain manual xScal instructions only and do not direct users to an external helper download. No extender DLL is redistributed.
+The packager checks the embedded version and target stamps. Validate both ZIP BA2 copies against the
+reviewed BA2 bytes and inspect each provider folder. Nexus distribution omits executable/script
+files and rejects executable magic. Legacy xScal-only website ZIPs may contain an optional Windows
+setup helper; the main ZIP and Nexus variants contain manual xScal instructions only. No extender DLL is redistributed.
 
 ## Configuration and install layout
 
-All variants include `Data/FCMChatWidget.ba2`, `Data/FCMChat.ini`, a root-level
-`FCMChatWidget.hudmodloader.ini` append snippet, version stamp, manual installation, F11 menu,
-keybind, customization, and emoji-license files. They do not replace `Data/hudmodloader.ini`.
+The main ZIP has `ZFE (Install for ZFE only)/` and `xScal (Install for xScal only)/` folders. Each has
+`Data (drag the contents into data folder)/FCMChatWidget.ba2`, editable `FCMChat.ini`, and
+`hudmodloader.ini` inside the labeled folder, with the
+loader defaults and FCM line, and root `Fallout76Custom.ini` as an archive-list
+merge template. `README.txt` at ZIP root combines setup, release notes, menu, keybinds,
+customization, version, and provider metadata. Copy only the selected BA2 and missing FCM/ZFE
+INIs; merge shared INIs without replacing existing files. Updates replace only the BA2.
+Provider-specific ZIPs retain the single-provider root layout with a conventional `Data/` folder.
+The packaged `Data/hudmodloader.ini` contains all 22 lines from HUDModLoader's
+[upstream default file](https://github.com/GitCrazy-wc/hudmodloader/blob/71e2fde134933323777980b5e0fd0c6036c2408f/Config%20File/hudmodloader.ini)
+plus `FCMChatWidget`. The snapshot is tracked in `HUDMODLOADER-UPSTREAM-DEFAULTS.txt` and
+checked by `test_package.py`. Existing player registries must still be merged, never replaced;
+the background `FCMServerBridge` belongs to its separate package.
 
 | Provider package | Configuration |
 | --- | --- |
-| Unified | `examples/ZFE/FCMChatWidget.ini.example`, `examples/ZFE/zfe.ini.example`, `xscal.ini.example`; install only the selected provider's settings |
+| Unified | `ZFE (Install for ZFE only)/Data (drag the contents into data folder)/ZFE/TextChat/fragments/FCMChatWidget.ini` or `xScal (Install for xScal only)/xscal.ini`; open one provider folder only |
 | ZFE | `Data/ZFE/TextChat/fragments/FCMChatWidget.ini` |
-| xScal | `xscal.ini.example`, merged into `[Chat]` beside `Fallout76.exe` |
+| xScal | `xscal.ini`, merged into `[Chat]` beside `Fallout76.exe` |
 
 The modern ZFE fragment name matches the `FCMChatWidget` loader entry. The legacy `FCM.ini`
 fragment is not its replacement. A DLL-only ZFE install is normal. The optional user-created
@@ -370,7 +516,7 @@ keys, including endpoint and `OpenChatKey`. Keep `Data/FCMChat.ini` `openKey` al
 `[Chat] enabled=true` and `relayEndpoint=wss://<target>/relay`; it has no `OpenChatKey` config.
 The route is `/relay`, never `/zfe-relay`.
 
-Follow the generated `INSTALL.txt`: exit the game, merge the loader line exactly once, and append
+Follow the generated `README.txt`/provider `INSTALL.txt`: exit the game, merge the loader line exactly once, and append
 the archive to the existing `[Archive] sResourceArchive2List`. If starting an otherwise empty
 list with HUDModLoader, the relevant entries are:
 
@@ -385,10 +531,10 @@ Reload alone can refresh widget settings but does not reload the extender's conf
 
 ## Input, fonts, and customization
 
-Current ZFE builds use owner-scoped `input.v1.begin/poll/end` when both input and release
-capabilities are advertised. The widget polls every 40 ms and requires raw suppression plus a
-stable release barrier. SharedHUDTools remains the older-ZFE fallback and the xScal editor; the
-legacy ZFE buffer is last. Named HUD actions and physical key
+Current ZFE builds use SharedHUDTools' host ControlMap editor for visible text entry.
+The `input.v1` decoder remains for explicit diagnostics but is not selected automatically;
+the legacy ZFE native buffer is not an unlocked fallback. xScal selects its native text
+session when available and SharedHUDTools otherwise. Named HUD actions and physical key
 polling share navigation handling, with guards keyed by normalized action name. Different aliases
 can have separate latch keys; validate simultaneous named/physical delivery in-game. The shipped
 navigation map is `NextPage`/`PrevPage` for Page Up/Down, `Up`/`Down` for feed scrolling, and

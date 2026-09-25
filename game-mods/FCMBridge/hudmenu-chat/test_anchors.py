@@ -491,14 +491,11 @@ if widget_src:
           and 'isPendingTransportResponse' in widget_src,
           "FCMChatWidget refreshes xScal auth during polling and ignores pending transport responses")
     check('FcmInputRoute.preferred(provider, _ownedInputUsable,' in widget_src
-          and 'if (route == FcmInputRoute.OWNED)' in widget_src
           and 'if (route == FcmInputRoute.XSCAL_SESSION)' in widget_src
           and 'openXscalSessionInput()' in widget_src
-          and 'openOwnedInput()' in widget_src
-          and 'FcmInputRoute.mayUseNativeFallback' in widget_src
-          and 'input.v1.begin' in widget_src
-          and 'openInputSharedHudTools();' in widget_src,
-          "FCMChatWidget routes owned ZFE input, shared input and legacy fallback in one build")
+          and 'else if (route == FcmInputRoute.SHARED) openInputSharedHudTools();' in widget_src
+          and 'text editor unavailable; no ControlMap lock, input refused' in widget_src,
+          "FCMChatWidget routes ZFE to the ControlMap editor and xScal to its native session")
     check("function dispatchEditText" not in widget_src
           and "_editTextLockOwned" not in widget_src
           and "BSUIDataManager.dispatchEvent" not in widget_src,
@@ -526,8 +523,9 @@ if widget_src:
           "FCMChatWidget logs which Input.* dispatcher accepted registration and the raw response")
     check("FcmCommand.virtualKeyCode" in widget_src
           and "_physicalOpenKey" in widget_src
-          and "xScal openKey edge" in widget_src,
-          "FCMChatWidget polls the configured openKey through xScal Input.*")
+          and "physical openKey edge" in widget_src
+          and "keyCode != _physicalOpenKey" in widget_src,
+          "FCMChatWidget polls the configured openKey through Input.* on both providers")
     check("_api.provider != FcmNativeApi.ZFE" in widget_src
           and "xScal has no ZFE isChatKeyPressed command" in widget_src,
           "FCMChatWidget keeps the ZFE-only open-key poll off xScal")
@@ -711,8 +709,9 @@ if widget_src:
           and "reconcileDisplayName" not in widget_src,
           "FCMChatWidget has no cached late-identity native reconnect path")
     check("openInputSharedHudTools();" in widget_src
-          and "xScal never receives ZFE-only input calls" in widget_src
-          and "no-lock ZFE native fallback" in widget_src,
+          and "ZFE uses the host-owned SharedHUDTools editor" in widget_src
+          and "xScal uses its native session" in widget_src
+          and "text editor unavailable; no ControlMap lock, input refused" in widget_src,
           "FCMChatWidget keeps provider-specific input ownership explicit")
     try:
         user_event_src = open(USER_EVENT_HX, encoding="utf-8").read()

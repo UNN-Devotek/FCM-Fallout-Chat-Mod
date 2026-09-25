@@ -71,7 +71,7 @@ supplies a positive default delay.
 ## INI configuration
 
 Edit the existing `[FCMChat]` section in `Data/FCMChat.ini`. Do not duplicate keys/sections.
-[Packaged CUSTOMIZATION.txt](../../../game-mods/FCMBridge/hudmodloader-chat/CUSTOMIZATION.txt)
+[Customization source, included in the ZIP README.txt](../../../game-mods/FCMBridge/hudmodloader-chat/CUSTOMIZATION.txt)
 is the user-facing reference; `FcmConfig.hx` defines parsing, clamping, and serialization.
 
 | Keys | Meaning |
@@ -110,10 +110,11 @@ extender config or BA2 changes. This audit did not establish live backend deploy
 
 ## Input ownership and validation
 
-Both providers prefer SharedHUDTools' host-domain editor, which owns the balanced text-edit
-lock. Input height/font/colors are applied to that editor, not only to a hidden widget fallback.
-The child does not dispatch ControlMap lock events itself. A legacy ZFE native-input fallback
-is separate from the public `input.v1.*` owner-scoped API.
+ZFE uses SharedHUDTools' host-domain editor, which owns the balanced text-edit lock;
+xScal uses its native session when available and SharedHUDTools otherwise. Input
+height/font/colors are applied to the host editor. The child does not dispatch ControlMap
+lock events itself. ZFE's legacy buffer and public `input.v1.*` contract are retained only
+for explicit diagnostics, not automatic visible-editor fallbacks.
 
 Validate short/wrapped names, adjacent emoji, localized text, narrow/wide panels, scroll clipping,
 all independent colors, and cancel/send/reload behavior in the game for each provider. A passing

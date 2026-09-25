@@ -6,7 +6,8 @@ PROVIDER KEYBIND CONTRACT
 One FCMChatWidget.ba2 serves both providers, but the open-key source is different:
 
   Provider  Authoritative open-key source                         Detection path
-  ZFE       Data/FCMChat.ini openKey (synced after discovery)      isChatKeyPressed
+  ZFE       Data/FCMChat.ini openKey (synced after discovery)      hotkeys.v1 + Input.*
+                                                                  + isChatKeyPressed
   xScal     Data/FCMChat.ini openKey only                          Input.RegisterKey /
                                                                   Input.IsKeyPressed
 
@@ -15,7 +16,8 @@ navigation for both. ZFE global configuration overrides its widget fragment. xSc
 OpenChatKey setting, so never copy a ZFE [TextChat] section into xscal.ini. Never route ZFE key
 or input commands through xScal chatInterface; xScal chat and Input.* are separate surfaces.
 
-Both providers open the visible SharedHUDTools editor. Only ZFE may use its native draft buffer
+ZFE opens the SharedHUDTools editor; current xScal opens its native text session and uses the
+host editor only when that session is unsupported. ZFE refuses to open an unlocked native draft
 when SharedHUDTools cannot open. After changing input or discovery, test each provider separately:
 INSERT opens one visible editor, `hello` remains five characters, Page Up/Down switch channels
 only during the owned edit. Up/Down selects and highlights message rows. Enter sends a non-empty
@@ -77,8 +79,10 @@ Data/configuration/zfe.ini [TextChat] supplies ZFE's startup value and overrides
 
 The packaged fragment also contains OpenChatKey=INSERT as its default. Once FCMChatWidget loads,
 its `FCMChat.ini` value is pushed to the active watcher when ZFE accepts that token. The widget
-also registers the mapped physical open key through Input.*, covering F-keys rejected by the
-narrower native watcher.
+also registers the mapped physical open key through Input.*, even when hotkeys.v1 accepts it.
+This gives physical Insert an independent polling path while a controller is active. The ZFE
+SharedHUDTools editor positions its controller on-screen keyboard outside the stage and focuses
+the visible host entry field so a physical keyboard can type while controller mode is active.
 
 OTHER HUD ACTIONS
 -----------------

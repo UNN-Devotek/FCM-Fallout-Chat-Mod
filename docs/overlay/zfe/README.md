@@ -7,28 +7,37 @@ must not add game-memory reads, code injection, or network/port scanning.
 
 ## Current implementation and verification
 
-**Isolated HUD 2.10.125 release candidate (unpublished):**
+**HUD 2.10.125 input and installer patch:**
 the xScal 0.2.18 test DLL exposes native text sessions through
 `__SFCodeObj.call("Input.BeginInput")`, `Input.PollInput(sessionId)` and
-`Input.EndInput(sessionId)`. This branch adds an opt-in session route with
-SharedHUDTools fallback for older xScal builds. The 2.10.125 diagnostic candidate is
-locally installed, but not published or promoted to `dev`. Two Escape cancels
+`Input.EndInput(sessionId)`. This branch adds a validated session route with
+SharedHUDTools fallback for older xScal builds. ZFE instead uses the host
+SharedHUDTools editor and its ControlMap lock. The corrected 2.10.125 candidate
+was locally installed with ZFE 0.15.0 and xScal 0.2.18; the corrected BA2 is in
+source revision `4865d668` (SHA-256 `66d1d90246723d99838ab5620192b50fe1083a23cf55f80c11b8e47527ef464e`).
+The [text-input contracts](text-input-contracts.md) give the exact provider calls,
+response checks, ownership, and fallback rules. Two earlier xScal Escape cancels
 completed, the native session was released, and later HUD input arrived. The
 user reported that the game remained responsive. A prior 2.10.124 run appeared
 to freeze immediately on Escape, and its cause is not established.
 The production overlay is unchanged. The 512-UTF-16-unit buffer, session identity,
 revision, terminal state and teardown are checked in the widget. The user
-accepted the local native test; the available log independently confirms the
-two cancel/recovery observations but not every action in the wider input matrix.
+accepted the local native test. On the corrected BA2, the tester subsequently reported
+controller-active physical Insert, keyboard typing without the extra on-screen keyboard,
+gameplay lock while editing, and Escape recovery working on both providers. The available
+logs confirm specific provider/session/focus events, not every action in the wider matrix.
 The [public xScal Nexus files page](https://www.nexusmods.com/fallout76/mods/4183?tab=files)
 showed 0.2.17 on 2026-09-23 but lists 0.2.18 on 2026-09-24. The public-version
-gate is cleared; the published DLL has not been byte-compared with the locally
-tested DLL. The provider must not be bundled with the HUD.
+gate is cleared; the locally downloaded 0.2.18 archive's DLL was byte-compared with the
+earlier tested DLL (SHA-256 `78cb91d6e9e53bcf97f55dd82a60931aec94cc4cc2b6dc74da198d6b9dd311e4`).
+The provider must not be bundled with the HUD.
 
-The published production versions are desktop overlay **1.4.1**, visible HUD
-**2.10.121**, and optional background bridge **0.2.8**. The locally installed
-visible HUD has additional quoted-message changes under the same 2.10.121 version;
-it is a test candidate, not the published BA2, and requires native acceptance.
+The published production versions before this patch are desktop overlay **1.4.2**,
+visible HUD **2.10.125**, and optional background bridge **0.2.9**. This patch
+keeps the HUD version but replaces its package with the corrected 2.10.125 BA2
+and separate provider install folders. An earlier local 2.10.121 test candidate
+contained additional quoted-message changes under that same version; the current
+local test install is the corrected 2.10.125 BA2 described above.
 
 **Background bridge 0.2.8 release:** published as a separate optional HUDModLoader child.
 It was installed locally with xScal 0.2.17 for testing, but native mixed-client acceptance
@@ -51,15 +60,15 @@ exports and the user reported it working. Full mixed-client shared-room/message/
 acceptance remains pending; the overlay log did not independently confirm room assignment.
 These 0.2.0–0.2.3 observations are historical and do not accept 0.2.8.
 
-**Visible HUD 2.10.121 candidate:** installed locally on the Steam/Proton desktop; native
-acceptance remains pending. It decodes received JSON chat bodies before matching them to the
+**Historical visible HUD 2.10.121 candidate:** previously installed on the Steam/Proton desktop;
+its native acceptance was pending. It decodes received JSON chat bodies before matching them to the
 optimistic send, preventing quoted messages from leaving a second pending row beneath newer
 messages. The local pure Haxe and complete 67-case Ruffle suite pass, including one-row checks
 for xScal and ZFE. It also removes the failed widget-owned xScal TextField experiment and
 restores SharedHUDTools as the xScal text-entry path. xScal `Input.*` remains limited to
 configured action-key polling. Keyboard typing while controller mode is active is unsupported
-pending a native xScal text-input API. ZFE retains the owner-scoped input path. The local active
-game configuration uses `FCMChatWidget` with `ImprovedBars`; `FCMServerBridge` has been removed.
+pending a native xScal text-input API. At that time ZFE retained the owner-scoped input path.
+The local game configuration used `FCMChatWidget` with `ImprovedBars`; `FCMServerBridge` was removed.
 See [build and install evidence](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md#local-210121-quoted-message-candidate-2026-09-22)
 and the [native test checklist](../../testing/hud-recovery.md#quoted-message-native-regression).
 
@@ -149,7 +158,7 @@ coverage from remaining native checks. See
 | Native relay, authentication, controls, cosmetics | [FCM integration](native-chat-relay/fcm-integration.md) |
 | Extender API distinctions and current author links | [Provider API guide](modder-guide.md) |
 | Appearance, fonts, emoji, persistence | [Appearance](ingame-chat-appearance.md) |
-| Open key, channel navigation, scrolling | [Packaged keybind guide](../../../game-mods/FCMBridge/hudmodloader-chat/KEYBINDS.txt) |
+| Open key, channel navigation, scrolling | [Keybind source, included in ZIP README.txt](../../../game-mods/FCMBridge/hudmodloader-chat/KEYBINDS.txt) |
 | Rendering, input ownership, artifact constraints | [Scaleform engineering guide](scaleform-ui-guide.md) |
 | Owned files and install conflicts | [Surface manifest](hud-surface-manifest.md), [compatibility](hud-mod-compatibility.md) |
 | Duplicate/reconnect/send behavior | [Recovery checks](../../testing/hud-recovery.md), [retry receipts](hud-send-retries.md) |
@@ -335,29 +344,36 @@ available; migration to `hotkeys.v1.*` is not implemented in 2.10.85 and needs s
 
 | Provider | Authoritative open key | Detection | Configuration precedence |
 | --- | --- | --- | --- |
-| ZFE | `FCMChat.ini` `openKey`, synchronized to ZFE after discovery | ZFE `isChatKeyPressed` | File key wins over persisted appearance and the packaged ZFE default |
+| ZFE | `FCMChat.ini` `openKey`, synchronized to ZFE after discovery | Owner-scoped `hotkeys.v1`, numeric `Input.*` open-key fallback, and legacy `isChatKeyPressed` | File key wins over persisted appearance and the packaged ZFE default |
 | xScal | `FCMChat.ini` `openKey` only | Numeric `Input.RegisterKey` / `Input.IsKeyPressed` | `xscal.ini` has transport settings only and must not contain `OpenChatKey` |
 
 | Behavior | ZFE | xScal |
 | --- | --- | --- |
 | Shared package | One provider-neutral `FCMChatWidget.ba2` | Same BA2 |
-| Provider selection | Validated only when no supported xScal chat surface is active | Preferred when its required `chatInterface` methods validate |
-| Primary visible editor | Owner-scoped `input.v1.begin/poll/end` when both input capabilities are advertised | SharedHUDTools `TextEdit` |
-| Compatibility fallback | SharedHUDTools, then the legacy ZFE buffer on older builds | Never receives ZFE-only input calls |
-| Multi-character typing | Focused public field has selection/caret enabled | Same shared field rule |
-| Missing submit callback | Enter draft recovered once after 225 ms; other focus loss cancels | Same shared recovery rule |
-| Delete while typing | Deletes characters; an optional Delete hide binding is suspended | Same shared priority rule |
-| Default open key | `OpenChatKey=INSERT`, matching `openKey=INSERT` | `openKey=INSERT` only |
+| Provider selection | Validated as the sole active extender | Validated as the sole active extender; the adapter checks `chatInterface` before ZFE if both surfaces appear, but the widget rejects that mixed install |
+| Primary visible editor | SharedHUDTools `TextEdit` with the host ControlMap lock | Native xScal text session when `BeginInput` validates |
+| Physical keyboard with controller active | ZFE focuses the host's visible entry field while retaining its ControlMap lock | Native xScal text session when `BeginInput` validates |
+| Compatibility fallback | No unlocked editor fallback; a failed host editor refuses entry | SharedHUDTools when the native session is unsupported |
+| Multi-character typing | HUDTools' focused entry field has selection/caret enabled | Native session returns complete bounded text snapshots; the host fallback uses its entry field |
+| Submit/cancel recovery | Missing host Enter callback can recover the draft once; other stale focus loss cancels | Native terminal poll decides submit/cancel; release must be confirmed before reopening. Host fallback uses the HUDTools recovery rule |
+| Delete while typing | Edits the host field; the optional hide binding is suspended | Native session owns editing; host fallback edits its field |
+| Default open key | `FCMChat.ini` `openKey=INSERT`, synchronized with the ZFE watcher; the fragment defaults to `OpenChatKey=INSERT` | `FCMChat.ini` `openKey=INSERT` only |
 | Channel / feed keys | Page Up/Down; Arrow Up/Down after input opens | Same behavior through named actions and numeric physical polling |
 | Feed refresh | Atomic hidden staging, six rows per timer turn | Same renderer; verified locally without recurring over-30 ms message turns |
 | Transport payload | Command plus JSON string | ActionScript object or no arguments according to method |
 | Settings persistence | ZFE vendor-scoped storage | Relay persistence only when the capability is advertised |
 
+The [text-input contracts](text-input-contracts.md) separate physical-key polling,
+ZFE owner hotkeys, ZFE diagnostic `input.v1`, the HUDTools ControlMap editor, and xScal's
+native text session. None of those calls is interchangeable with another provider's
+chat transport.
+
 Provider-level physical registrations are derived exclusively from the active profile. On reload
 or profile reapplication, the widget unregisters the complete previous set before registering the
 new channel, scroll, link, hide, and open-chat keys. ZFE also attempts to replace its narrower native
-open-chat watcher through `updateChatHotkey`, while generic `Input.*` handles physical tokens such as
-F-keys that the native watcher rejects. Thus a
+open-chat watcher through `updateChatHotkey`. Its configured open key stays registered with numeric
+`Input.*` even when the owner-scoped hotkey accepts it, so physical Insert has a second edge path in
+controller mode. Other keys use `Input.*` when the owner-scoped API cannot represent them. Thus a
 superseded default such as Insert or Page Down is neither dispatched nor retained as an active FCM
 binding after a successful rebind.
 
@@ -409,9 +425,11 @@ That 0.1.15 result remains historical in-game evidence. Nexus xScal 0.2.16 targe
 exercise 0.2.16. Fresh 1.7.26.10 in-game acceptance is still required before promoting that static
 and simulated compatibility result to native acceptance.
 
-Channel and scroll bindings always come from `FCMChat.ini`. Current ZFE builds use owner-scoped
-`input.v1` sessions with raw suppression and a stable release barrier; older ZFE and xScal use
-SharedHUDTools, and only ZFE can use the legacy native draft buffer afterward. Provider acceptance
+Channel and scroll bindings always come from `FCMChat.ini`. The current ZFE route uses
+SharedHUDTools' host-owned editor and its balanced ControlMap text lock. xScal uses its native
+text session when available and SharedHUDTools on older builds. The ZFE `input.v1` and legacy
+native-buffer paths are not automatic fallbacks because the local 0.15.0 trial still allowed
+gameplay actions during a reported owned session. Provider acceptance
 must verify Insert opens one visible editor, `hello` remains five characters, Page Up/Down switch
 channels only during the owned edit, Escape cancels, and Enter submits once. If the host editor
 loses focus without its callback, the widget waits 225 ms, recovers an Enter submission once, or
@@ -450,11 +468,36 @@ HUD mode. These changes affect the visible HUD widget on both providers, not the
 or background bridge. Updating the INI adds mode coverage; fixing sticky manual hide also requires
 the rebuilt widget `.ba2`. Source/test candidate only until native acceptance and release.
 
-Current ZFE builds use `input.v1.begin/poll/end` when both `zfe-input-v1` and
-`zfe-input-release-v1` are advertised. The widget retains the opaque token, polls every 40 ms,
-requires raw suppression and a stable release barrier, and ends its session on every terminal
-path. SharedHUDTools remains the compatibility fallback and the xScal editor. The widget does not
-dispatch its own ControlMap lock events.
+ZFE now opens SharedHUDTools `TextEdit` first. That host editor owns the balanced
+`ControlMap::StartEditText`/`EndEditText` lifecycle; the child widget does not dispatch those
+events. The public `input.v1.begin/poll/end` decoder remains in the build for explicit
+diagnostics, but it is not the default ZFE editor. If SharedHUDTools cannot open, the widget
+reports input unavailable and leaves gameplay unlocked rather than presenting a draft that
+allows game actions to fire.
+
+For ZFE hotkeys, `hotkeys.v1.register` returns the registration token. A successful
+`hotkeys.v1.poll` is decoded from `success` and `presses`; the poll response need not echo
+the token. If it does echo one, FCM rejects a mismatch. A rejected poll emits a warning and
+stops that registration set. On a report that gameplay keys still fire after Insert, look for
+`input path: shared-hud-tools`, `FormatTextEdit ok`, `FormatOnScreenKeyboard ok`, and `opened`
+in `zfe.log`. A `zfe-input-v1 controller-test` marker identifies the earlier route, which
+the 2026-09-24 in-game trial showed did not lock Fallout controls despite native suppression
+counts. The Ruffle hotkey scenario checks selection of the host editor; only an in-game test
+can confirm Fallout's actual ControlMap behavior. `Map`, `QuickMap`, `QuickInventory`, and
+other ordinary gameplay actions stay in text mode while the editor is open. Explicit modal
+actions such as PipBoy and Social still close the editor.
+
+With a controller active, the ZFE open key is also polled through numeric `Input.*`; the log
+records `zfe physical openKey edge` if this route detects it. HUDTools normally focuses an
+off-screen controller field in this mode. FCM finds the visible host entry field on the public
+display list and focuses it for physical keyboard typing while HUDTools retains the ControlMap
+lock. The log records `ZFE controller mode: physical keyboard focused host entry` on that
+handoff. The host's 300×180 controller keyboard is positioned outside the stage. Ruffle
+covers the focus handoff and open-key fallback. For the corrected 2.10.125 BA2, the tester
+reported controller-active physical Insert, keyboard entry without the extra controller
+keyboard, gameplay/map lock, and Escape recovery working on ZFE 0.15.0 and xScal 0.2.18.
+The ZFE log records the off-screen placement and focus handoff from the initial run; no
+additional ZFE log was produced after the final provider return swap.
 
 F11 → FCM → Customize controls panel/input dimensions, text sizes, backgrounds, text colors,
 opacity, position, and auto-hide. Input width/alignment follow the panel. Channel tags/colors,
@@ -475,10 +518,16 @@ executable. Merge existing sections, loader registrations, and archive lists; ne
 unrelated settings. Install only the selected provider's configuration and restart the game
 after changing a BA2 or native extender configuration.
 
-Packages do not redistribute extenders or Bethesda HUDMenu assets. Website ZIPs may include
-optional Windows xScal setup helpers; Nexus ZIPs omit executable/script files; xScal/unified variants include a
-helper-download note. All builds include manual setup, keybind, customization, and emoji-license
-files. See the [build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
+Packages do not redistribute extenders or Bethesda HUDMenu assets. The main website and Nexus
+ZIPs contain complete `ZFE (Install for ZFE only)/` and `xScal (Install for xScal only)/` folders without setup scripts; choose only one.
+Quick Configuration 2 and NukaMods users should extract the ZIP and import only their chosen
+folder's `Data (drag the contents into data folder)/FCMChatWidget.ba2` as a BA2 mod. The combined ZIP has two provider roots and
+is not a direct mod-manager import. The manager owns BA2 deployment and the archive-list entry;
+copy only missing provider/FCM INIs, merge the HUDModLoader entry, and preserve edited INIs on
+updates. Check for exactly one BA2 in the game's `Data` folder and one archive-list entry.
+Legacy xScal-only website ZIPs may include an optional Windows helper. All builds include
+manual setup, keybind, customization, and emoji-license files. See the
+[build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
 
 ## Client version handshake (`clientVersion`)
 

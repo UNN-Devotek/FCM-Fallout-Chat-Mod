@@ -25,8 +25,9 @@ installed on the local Steam/Proton desktop for testing, with the background Ser
 removed from the active loader and archive lists. See [build and install evidence](BUILD.md) and
 the [native check](../../../docs/testing/hud-recovery.md).
 
-ZFE uses owner-scoped `input.v1` keyboard capture and `hotkeys.v1` for supported configured actions
-when those capabilities are advertised. Older ZFE falls back to SharedHUDTools and `Input.*`.
+ZFE uses SharedHUDTools `TextEdit` for the host ControlMap text lock and `hotkeys.v1` for
+supported configured actions when advertised. A missing host editor refuses entry rather than
+using ZFE's `input.v1` or legacy native buffer without that lock.
 xScal polls every supported configured physical binding through `Input.*`. The
 author's 0.2.18 test build provides a native text session for controller-active
 typing; older builds retain best-effort SharedHUDTools entry. On 2026-09-24,

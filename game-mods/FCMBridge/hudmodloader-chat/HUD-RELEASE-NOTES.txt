@@ -1,14 +1,24 @@
 FCM HUD 2.10.125
 ==============
 
-This release adds keyboard chat entry while a controller is connected through xScal's
-Input.BeginInput, Input.PollInput, and Input.EndInput session callbacks.
-It requires xScal 0.2.18 or newer for that path. Earlier xScal builds retain
-the SharedHUDTools fallback. ZFE input support is unchanged.
+This patch restores ZFE chat entry with a controller active: physical Insert opens
+chat, physical keyboard typing stays in the editor, gameplay keys stay locked,
+and Escape restores controls. It uses the HUDModLoader host text editor and
+ControlMap lock without opening the controller on-screen keyboard.
+
+xScal continues to use Input.BeginInput, Input.PollInput, and Input.EndInput
+for its native text session. That path requires xScal 0.2.18 or newer; older
+xScal builds retain the SharedHUDTools fallback. Both provider paths passed
+the controller-active Insert, typing, and Escape in-game check.
+
+The download now has separate ZFE and xScal install folders. Choose only your
+installed provider, follow its INSTALL.txt, and preserve edited INIs. Existing
+users replace only the BA2. New installs must merge the HUDModLoader entry and
+Fallout76Custom.ini archive entry as described in the selected folder.
 
 The xScal DLL is not bundled. Install one compatible extender separately.
 The desktop overlay and optional background Server Bridge are not included.
 Do not install the visible widget alongside FCMServerBridge or legacy FCMBridge.
 
 Quoted messages no longer reappear below later chat messages during self-echo
-reconciliation. The full automated HUD suite and a local xScal input check passed.
+reconciliation. The full automated HUD suite and local ZFE/xScal input checks passed.

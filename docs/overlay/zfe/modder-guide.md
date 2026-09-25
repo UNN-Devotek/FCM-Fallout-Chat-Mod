@@ -1,7 +1,7 @@
 # Provider APIs used by the FCM HUD
 
 This guide separates FCM's implemented adapter from upstream APIs that may be available to new
-mods. It was checked against local source and the authors' public guides on 2026-09-12. Always
+mods. Provider discovery and input routing were checked against local source on 2026-09-25. Always
 check the running provider's capabilities; an article's version or a familiar object name is not
 a compatibility guarantee.
 
@@ -15,8 +15,8 @@ It does not inspect DLLs, read game memory, or scan files/ports to choose an ext
 | --- | --- |
 | ZFE `__ZFE.call` / `ZFECodeObj.call` | Canonical verb plus JSON string; positive native-chat capability response required |
 | Legacy call-only `__SFCodeObj` / `BRG_OBJ` | Ambiguous until positively identified; avoid sending ZFE probes to a known xScal registry |
-| xScal `chatInterface` | Required `connect`, `pollEvents`, `sendMessage`; positive optional runtime response when exposed; selected first if both providers are present |
-| xScal generic callback | Logging and physical `Input.*`, separate from chat transport |
+| xScal `chatInterface` | Required `connect`, `pollEvents`, `sendMessage`; positive optional runtime response when exposed; the widget rejects a mixed-provider install before selection |
+| xScal generic callback | Logging, physical `Input.*` key detection, and the native `Input.BeginInput` / `PollInput` / `EndInput` text session; separate from chat transport |
 
 xScal chat payloads are ActionScript objects, parsed from FCM's canonical JSON input. Runtime,
 connection-state, disconnect, logout, and credential-clear methods take no arguments in the
@@ -30,20 +30,31 @@ other without adapter tests and a runtime trace. The
 [ZFE API overview](https://www.nexusmods.com/fallout76/articles/255) is the upstream starting point;
 the [chat relay guide](https://www.nexusmods.com/fallout76/articles/256) owns the current wire contract.
 
-## Three distinct input contracts
+## Distinct input contracts
 
-1. **Current FCM input:** owner-scoped `input.v1.begin/poll/end` when ZFE advertises both input
-   and release capabilities. SharedHUDTools remains the older-ZFE fallback and xScal route, with
-   the legacy ZFE native editor last. The child widget does not send its own ControlMap lock events.
+For the current widget's exact calls, result validation, fallback rules, and close lifecycle,
+use the [text-input contract](text-input-contracts.md). The list below distinguishes the
+input surfaces; the widget's route is selected in `FcmInputRoute.preferred`.
+
+1. **Current FCM input:** SharedHUDTools `TextEdit` is the automatic ZFE editor because its host
+   owns Fallout's ControlMap text lock. xScal uses its native text session when available and
+   SharedHUDTools otherwise. ZFE keeps a numeric `Input.*` registration for the configured open
+   key alongside its owner-scoped hotkey. In controller mode it focuses the host's visible
+   entry field for physical keyboard typing and places the host's controller keyboard off-screen.
+   The child widget does not send its own ControlMap lock events.
 2. **Physical `Input.*` compatibility:** xScal documents numeric Windows VK arguments and Boolean
    results for registration, polling, and unregistration. FCM requires true Boolean success for
    xScal. Its ZFE compatibility decoder also supports older return shapes. An accepted register
    call is not proof that polling or keyboard suppression works. See the
    [xScal Input guide](https://www.nexusmods.com/fallout76/articles/268).
 3. **Public ZFE owner-scoped APIs:** `zfe-input-v1` names `input.v1.*` text sessions; it is not
-   evidence for legacy `Input.RegisterKey` or chat-editor calls. FCM now uses this contract only
-   with `zfe-input-release-v1`, raw suppression, and the release barrier. `zfe-hotkeys-v1` names a
-   separate hotkey API.
+   evidence for legacy `Input.RegisterKey` or chat-editor calls. FCM retains an explicit
+   diagnostic decoder for this contract, but does not select it for visible ZFE editing after
+   an in-game trial showed gameplay actions passing through. `zfe-hotkeys-v1` names a separate
+   hotkey API.
+4. **xScal native text session:** `Input.BeginInput` / `PollInput` / `EndInput` live on its
+   generic callback, separate from `chatInterface` and physical `Input.RegisterKey` polling.
+   The tested 0.2.18 route owns text snapshots and cleanup; older xScal falls back to HUDTools.
 
 The detailed [ZFE hotkey guide](https://www.nexusmods.com/fallout76/articles/270) is available,
 superseding older “payload contract unavailable” notes. It describes vendor-owned registrations,

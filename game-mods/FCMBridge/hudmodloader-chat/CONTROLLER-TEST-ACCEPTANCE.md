@@ -12,13 +12,29 @@ existing `Data/FCMChat.ini`, `Data/FCMChatWidget.ba2`, and provider configuratio
 - Run the default profile, then a rotated profile that changes every non-empty action key.
 - Include at least one intentionally overlapping binding and record which action wins.
 
-## ZFE acceptance (current input.v1 + hotkeys.v1 build)
+## ZFE acceptance (SharedHUDTools editor + hotkeys.v1 build)
 
-With the controller connected and active, verify every configured action: open, hide, next/previous
+With the controller connected and active, press physical keyboard Insert while in the ordinary
+HUD. Verify `physical key registration key=45 result=accepted` and, if the owner hotkey does not
+deliver that press, `zfe physical openKey edge key=45` in `zfe.log`. Then verify every configured
+action: open, hide, next/previous
 channel, scroll up/down, scroll bottom, and activate link. Hold each action once and confirm it fires
 on one down-edge rather than repeating. Open the editor and verify normal typing, Backspace, Delete,
 Enter submit, and Escape cancel. Repeat after opening/closing a game modal, fast travel, UI reload,
 and HUD shutdown/reload.
+
+The ZFE controller keyboard must stay outside the viewport. The log must also show
+`ZFE controller mode: physical keyboard focused host entry`; physical keyboard letters, M,
+I, W, Backspace, Enter, and Escape must operate on the draft while game movement and menus
+remain locked. Controller keyboard navigation is outside this physical-keyboard test path;
+moving focus to the visible entry field may affect it.
+
+For the ZFE keyboard regression, open with Insert and confirm `input path: shared-hud-tools`,
+`FormatTextEdit ok`, `FormatOnScreenKeyboard ok`, and `opened` in `zfe.log`. Type M, I, and W while the editor is open: the draft must change,
+the map must stay closed, and the character must remain still. Also try sprint and other mapped
+gameplay keys. Submit or cancel, then confirm the map and movement work normally again. Record
+the ZFE `input suppression session` counters and any `HUDMod::UserEvent` actions; counters alone
+do not establish that Fallout ignored the actions.
 
 Pass only if the final text/revision belongs to the active input session, submit/cancel occurs once,
 held keys do not repeat, stale callbacks do not act on the new editor, controller gameplay resumes

@@ -136,7 +136,7 @@ export default function CosmeticsGuide({ variant = 'dashboard' }: Props) {
           preserve arrow scrolling, and <code style={sCode}>scrollBottomKey=</code> is intentionally
           unbound. Set those values to forwarded HUD actions or supported physical tokens to rebind
           them; the F11 <code style={sCode}>Scroll to newest</code> action is always available. The
-          packaged <code style={sCode}>KEYBINDS.txt</code> explains the provider-specific behavior.
+          packaged <code style={sCode}>README.txt</code> explains the provider-specific behavior.
         </p>
         <p style={p}>
           <strong>xScal is different:</strong> it has no <code style={sCode}>OpenChatKey</code>{' '}

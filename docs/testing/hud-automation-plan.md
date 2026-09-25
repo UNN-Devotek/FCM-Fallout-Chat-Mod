@@ -1,5 +1,15 @@
 # Automated HUD-mod test harness plan
 
+2026-09-24 ZFE controller-mode keyboard candidate: after a native keyboard-mode pass, physical
+Insert did not open chat with the controller active. The widget now keeps a numeric `Input.*`
+registration for ZFE's open key alongside `hotkeys.v1`, then focuses HUDTools' visible text
+field when its controller field has focus. The host still owns the ControlMap lock. The new
+Ruffle scenario covers an Insert edge delivered only through `Input.*` and a delayed host focus
+change; both xScal text-session routes passed. All 75 Ruffle cases and local source/SWF/BA2/
+package gates passed. The installed BA2 SHA-256 is
+`f89e089030c5cf0ecfda1b9b526e9ffbe211b138f313a896de1bc540f9ee6fbb`;
+native controller-mode typing and game-input suppression require a fresh in-game run.
+
 Latest drop-in bridge evidence: [rollout, fallback and diagnostic candidates](bridge-drop-in-acceptance-2026-09-16.md).
 
 2026-09-22 quoted-message regression: the visible HUD decodes JSON string escapes in received
