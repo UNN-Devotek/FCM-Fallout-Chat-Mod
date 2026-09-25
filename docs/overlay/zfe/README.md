@@ -7,13 +7,13 @@ must not add game-memory reads, code injection, or network/port scanning.
 
 ## Current implementation and verification
 
-**Isolated HUD 2.10.125 release candidate (unpublished):**
+**HUD 2.10.125 input and installer patch candidate:**
 the xScal 0.2.18 test DLL exposes native text sessions through
 `__SFCodeObj.call("Input.BeginInput")`, `Input.PollInput(sessionId)` and
 `Input.EndInput(sessionId)`. This branch adds a validated session route with
 SharedHUDTools fallback for older xScal builds. ZFE instead uses the host
 SharedHUDTools editor and its ControlMap lock. The corrected 2.10.125 candidate
-is locally installed with ZFE 0.15.0, but not published or promoted to `dev`.
+was locally installed with ZFE 0.15.0 and xScal 0.2.18; the corrected BA2 is on `dev`.
 The [text-input contracts](text-input-contracts.md) give the exact provider calls,
 response checks, ownership, and fallback rules. Two earlier xScal Escape cancels
 completed, the native session was released, and later HUD input arrived. The
@@ -31,10 +31,12 @@ gate is cleared; the locally downloaded 0.2.18 archive's DLL was byte-compared w
 earlier tested DLL (SHA-256 `78cb91d6e9e53bcf97f55dd82a60931aec94cc4cc2b6dc74da198d6b9dd311e4`).
 The provider must not be bundled with the HUD.
 
-The published production versions are desktop overlay **1.4.1**, visible HUD
-**2.10.121**, and optional background bridge **0.2.8**. An earlier local 2.10.121
-test candidate contained additional quoted-message changes under that same version;
-the current local test install is the corrected 2.10.125 BA2 described above.
+The published production versions before this patch are desktop overlay **1.4.2**,
+visible HUD **2.10.125**, and optional background bridge **0.2.9**. This patch
+keeps the HUD version but replaces its package with the corrected 2.10.125 BA2
+and separate provider install folders. An earlier local 2.10.121 test candidate
+contained additional quoted-message changes under that same version; the current
+local test install is the corrected 2.10.125 BA2 described above.
 
 **Background bridge 0.2.8 release:** published as a separate optional HUDModLoader child.
 It was installed locally with xScal 0.2.17 for testing, but native mixed-client acceptance
