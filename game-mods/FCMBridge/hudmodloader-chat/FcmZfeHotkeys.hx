@@ -39,8 +39,12 @@ class FcmZfeHotkeys {
 
     public static function presses(raw:Dynamic, expected:Dynamic):Int {
         var parsed = FcmJson.parse(Std.string(raw));
-        if (field(parsed, "success") != true
-                || !FcmZfeInput.sameSession(expected, field(parsed, "registration"))) return -1;
+        if (field(parsed, "success") != true) return -1;
+        // ZFE's public poll contract returns success and presses; unlike register,
+        // it does not promise to echo the opaque registration. Validate an echo
+        // when one is present, but do not discard a successful documented reply.
+        var returned = field(parsed, "registration");
+        if (returned != null && !FcmZfeInput.sameSession(expected, returned)) return -1;
         var count = Std.parseInt(Std.string(field(parsed, "presses")));
         return count == null || count < 0 ? -1 : count;
     }

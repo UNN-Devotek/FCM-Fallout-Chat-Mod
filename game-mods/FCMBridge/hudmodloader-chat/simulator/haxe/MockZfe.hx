@@ -111,7 +111,7 @@ class MockZfe {
                 var count = hotkeyPresses.exists(registration) ? hotkeyPresses.get(registration) : 0;
                 hotkeyPresses.set(registration, 0);
                 return haxe.Json.stringify({success:hotkeyRegistrations.exists(registration),
-                    registration:registration,presses:count});
+                    presses:count});
             }
             if (verb == "hotkeys.v1.unregister") {
                 var args:Dynamic = haxe.Json.parse(Std.string(payload));

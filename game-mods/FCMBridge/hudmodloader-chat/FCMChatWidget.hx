@@ -1,4 +1,5 @@
 import flash.display.MovieClip;
+import flash.display.DisplayObjectContainer;
 import flash.display.Shape;
 import flash.display.Sprite;
 import flash.events.Event;
@@ -6,6 +7,7 @@ import flash.events.KeyboardEvent;
 import flash.events.TimerEvent;
 import flash.utils.Timer;
 import flash.text.TextField;
+import flash.text.TextFieldType;
 import flash.text.TextFormat;
 import flash.geom.Rectangle;
 import flash.net.URLLoader;
@@ -57,7 +59,8 @@ private typedef ModerationTargetResolution = {
  * Retained IDs reject replay before pending echo matching; conflicting stable IDs
  * never fall back to body matching. SERVER records require the current room gate.
  *
- * SharedHUDTools owns the primary editor and its balanced ControlMap lifecycle.
+ * SharedHUDTools owns ZFE's editor and its balanced ControlMap lifecycle;
+ * xScal owns its native text session when available.
  * The child does not dispatch ControlMap lock events. Legacy ZFE editor/Input.*
  * compatibility is distinct from public input.v1.* and hotkeys.v1.* contracts.
  * Idle Page Up/Down changes tabs; feed scrolling requires a visible owned editor.
@@ -1547,9 +1550,10 @@ class FCMChatWidget extends MovieClip {
             return _inputOpen;
         }
 
-        // INSERT etc. open via the native poll, not this named-action path. Ordinary actions and
-        // Unmapped must never enter a persistent channel-selection/input mode.
-        return false;
+        // INSERT etc. open via the provider poll, not this named-action path.
+        // M/Map, I/QuickInventory, and movement may still arrive as HUD actions
+        // while either editor is active. Consume them before HUDMenu handles gameplay.
+        return _inputOpen;
     }
 
     /** Reset edge state whenever ownership changes; a held Page/arrow cannot leak into a new edit. */
@@ -2490,17 +2494,13 @@ class FCMChatWidget extends MovieClip {
         // The open key both restores a hidden panel AND opens input (CAP-011, guaranteed).
         if (_hidden) show();
         bumpAutoHide();   // opening input = activity (the timer also never hides while input is open)
-        // One BA2 serves both providers. Current ZFE uses its owner-scoped input contract;
-        // SharedHUDTools remains the compatibility route and the xScal editor.
-        // provider detection controls transport and whether ZFE's native buffer is available as
-        // a last-resort fallback. xScal never receives ZFE-only input calls.
+        // One BA2 serves both providers. ZFE uses the host-owned SharedHUDTools editor,
+        // which starts Fallout's ControlMap text lock. xScal uses its native session.
+        // ZFE input.v1 alone still lets gameplay actions through on the native test build.
         var provider:String = _api == null ? "" : _api.provider;
         var route:String = FcmInputRoute.preferred(provider, _ownedInputUsable,
             provider == FcmNativeApi.XSCAL && _xscalSessionUsable);
-        if (route == FcmInputRoute.OWNED) {
-            if (openOwnedInput()) return;
-            openInputSharedHudTools();
-        } else if (route == FcmInputRoute.XSCAL_SESSION) {
+        if (route == FcmInputRoute.XSCAL_SESSION) {
             if (openXscalSessionInput()) return;
             if (_xscalSessionReleaseUncertain) return;
             if (_xscalSessionUsable) return; // Busy native owner: do not open a second editor.
@@ -2508,11 +2508,8 @@ class FCMChatWidget extends MovieClip {
         } else if (route == FcmInputRoute.SHARED) openInputSharedHudTools();
         if (_inputOpen) return;
 
-        if (FcmInputRoute.mayUseNativeFallback(provider, USE_NATIVE_INPUT && _nativeInputUsable)) {
-            zfeLog("warn", "input", "SharedHUDTools unavailable; using no-lock ZFE native fallback");
-            if (openInputNative()) return;
-            _nativeInputUsable = false;
-        }
+        zfeLog("warn", "input", "text editor unavailable; no ControlMap lock, input refused");
+        setPrompt("chat input unavailable (HUDModLoader editor)");
     }
 
     /** xScal owns composition/editing; the widget consumes only session snapshots. */
@@ -2684,7 +2681,7 @@ class FCMChatWidget extends MovieClip {
             _ownedReleaseStable = 0;
             _inProgress = "";
             setPrompt(typingPrompt());
-            zfeLog("info", "input path", "zfe-input-v1 controller-test");
+            zfeLog("info", "input", "input path: zfe-input-v1 controller-test");
             stopInputTimer();
             _inputTimer = new flash.utils.Timer(OWNED_INPUT_POLL_MS);
             _inputTimer.addEventListener(TimerEvent.TIMER, function(_) { runOwnedInputSafely(); });
@@ -3037,7 +3034,7 @@ class FCMChatWidget extends MovieClip {
         clearNavigationLatches();
         _inputOpen = true;
         setPrompt(typingPrompt());
-        zfeLog("info", "input path", "shared-hud-tools");
+        zfeLog("info", "input", "input path: shared-hud-tools");
 
         // ── Step 1: FormatTextEdit — position + style the entry box ─────────
         // x/y are stage coordinates (1920×1080 space). Position at widget's lower edge.
@@ -3054,11 +3051,11 @@ class FCMChatWidget extends MovieClip {
             }
             formatSharedInput();
 
-            // ── Step 2: FormatOnScreenKeyboard — REQUIRED even on PC/KB/mouse ───
-            // Position off-screen (y=-300) so the gamepad OSK is invisible on PC.
-            Reflect.callMethod(_hudTools, formatOsk,
-                [0.0, -300.0]);
-            zfeLog("info", "input", "FormatOnScreenKeyboard ok");
+            // ── Step 2: FormatOnScreenKeyboard — required by HUDTools ────────
+            // Keep the host's 300x180 controller keyboard outside the viewport.
+            // In ZFE controller mode, focus the visible text entry below instead.
+            Reflect.callMethod(_hudTools, formatOsk, [0.0, -300.0]);
+            zfeLog("info", "input", "FormatOnScreenKeyboard ok x=0 y=-300");
 
             // ── Step 3: TextEdit — open the entry; callback fires on submit ──────
             textEditStarted = true;
@@ -3071,6 +3068,7 @@ class FCMChatWidget extends MovieClip {
             // Do not mirror that same field into _promptTf, or every character appears twice.
             setPrompt(typingPrompt());
             zfeLog("info", "input", "opened");
+            focusZfePhysicalKeyboardField();
             startSharedInputDiagnostics(generation);
         } catch (e:Dynamic) {
             // A partial Format/OSK/TextEdit sequence is not a usable editor. EndTextEdit is
@@ -3080,6 +3078,39 @@ class FCMChatWidget extends MovieClip {
             if (textEditStarted) closeInputSharedHudTools("open failure");
             else resetSharedInputState();
         }
+    }
+
+    /**
+     * HUDTools focuses its off-screen controller field in gamepad mode. The visible
+     * entry field is a sibling on the public display list and retains HUDTools'
+     * key handlers and the host ControlMap lock when focused. This lets a player
+     * keep the controller active while typing on a physical keyboard.
+     */
+    function focusZfePhysicalKeyboardField():Void {
+        if (_api == null || _api.provider != FcmNativeApi.ZFE || stage == null
+                || !Std.isOfType(stage.focus, TextField)) return;
+        var focused:TextField = cast stage.focus;
+        if (focused.y >= 0 || focused.width > 1) return;
+        var host:DisplayObjectContainer = focused.parent;
+        if (host == null) return;
+        var input = _cfg.inputRect();
+        var expectedX:Float = x + input.x;
+        var expectedY:Float = y + input.y;
+        for (i in 0...host.numChildren) {
+            var child = host.getChildAt(i);
+            if (!Std.isOfType(child, TextField)) continue;
+            var candidate:TextField = cast child;
+            if (candidate == focused || !candidate.visible || candidate.type != TextFieldType.INPUT
+                    || Math.abs(candidate.x - expectedX) > 2
+                    || Math.abs(candidate.y - expectedY) > 2
+                    || Math.abs(candidate.width - input.width) > 2) continue;
+            candidate.selectable = true;
+            stage.focus = candidate;
+            candidate.setSelection(candidate.length, candidate.length);
+            zfeLog("info", "input", "ZFE controller mode: physical keyboard focused host entry");
+            return;
+        }
+        zfeLog("warn", "input", "ZFE controller mode: host entry field not found");
     }
 
     /**
@@ -3192,6 +3223,9 @@ class FCMChatWidget extends MovieClip {
             stopSharedInputDiagnostics();
             return;
         }
+        // SharedHUDTools can deliver TextEdit to the host on the next frame.
+        // Recheck after that handoff before binding diagnostics to its focus field.
+        focusZfePhysicalKeyboardField();
         var focused:Dynamic = stage.focus;
         var isTextField:Bool = focused != null && Std.isOfType(focused, TextField);
         var length:Int = -1;
@@ -4050,7 +4084,12 @@ class FCMChatWidget extends MovieClip {
                 var registration = Reflect.field(entry, "registration");
                 var presses = FcmZfeHotkeys.presses(_api.call("hotkeys.v1.poll",
                     FcmZfeHotkeys.tokenPayload(VENDOR, registration)), registration);
-                if (presses < 0) { stopOwnedHotkeys(); return; }
+                if (presses < 0) {
+                    zfeLog("warn", "input", "hotkeys.v1.poll rejected key=" + entry.keyCode
+                        + "; stopping owner-scoped hotkeys");
+                    stopOwnedHotkeys();
+                    return;
+                }
                 if (presses > 0) dispatchOwnedHotkey(Std.int(Reflect.field(entry, "keyCode")));
             }
         } catch (e:Dynamic) {
@@ -4538,9 +4577,10 @@ class FCMChatWidget extends MovieClip {
             keyCodes.push(_physicalOpenKey);
         }
         for (keyCode in keyCodes) {
-            // Current ZFE owns supported configured keys through hotkeys.v1. Keep Input.*
-            // only for xScal, legacy ZFE, and tokens the owner-scoped API cannot represent.
-            if (_ownedHotkeyCodes.indexOf(keyCode) >= 0) continue;
+            // ZFE's owner hotkey may miss a physical keyboard press while the game is
+            // in controller mode. Keep the open key on Input.* as an independent edge
+            // source; _inputOpen prevents either source from opening a second editor.
+            if (_ownedHotkeyCodes.indexOf(keyCode) >= 0 && keyCode != _physicalOpenKey) continue;
             try {
                 var registered:Bool = _api.registerPhysicalKey(keyCode);
                 zfeLog("info", "input", "physical key registration key=" + keyCode
@@ -4602,7 +4642,7 @@ class FCMChatWidget extends MovieClip {
                 _physicalOpenKeyDown = openDown;
                 if (openDown && !_inputOpen
                         && (_connected || !(_outboxIdentity.length == 0 || _needsLink))) {
-                    zfeLog("info", "nativein", "xScal openKey edge key=" + _physicalOpenKey);
+                    zfeLog("info", "nativein", _api.provider + " physical openKey edge key=" + _physicalOpenKey);
                     openInput();
                 }
             }

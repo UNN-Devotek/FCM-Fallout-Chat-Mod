@@ -4,9 +4,9 @@ class TestFcmInputRoute {
     }
 
     static function main():Void {
-        check("current ZFE prefers owner-scoped input",
-            FcmInputRoute.preferred(FcmNativeApi.ZFE, true) == FcmInputRoute.OWNED);
-        check("ZFE keeps the shared editor when native input is unavailable",
+        check("ZFE uses host editor even when input.v1 is advertised",
+            FcmInputRoute.preferred(FcmNativeApi.ZFE, true) == FcmInputRoute.SHARED);
+        check("ZFE keeps the host editor when input.v1 is unavailable",
             FcmInputRoute.preferred(FcmNativeApi.ZFE, false) == FcmInputRoute.SHARED);
         check("xScal uses SharedHUDTools",
             FcmInputRoute.preferred(FcmNativeApi.XSCAL, true) == FcmInputRoute.SHARED);
@@ -14,8 +14,8 @@ class TestFcmInputRoute {
             FcmInputRoute.preferred(FcmNativeApi.XSCAL, false, true) == FcmInputRoute.XSCAL_SESSION);
         check("unknown providers fail closed to the shared host editor",
             FcmInputRoute.preferred("unknown", true) == FcmInputRoute.SHARED);
-        check("ZFE may use native fallback",
-            FcmInputRoute.mayUseNativeFallback(FcmNativeApi.ZFE, true));
+        check("ZFE does not fall back to no-lock native input",
+            !FcmInputRoute.mayUseNativeFallback(FcmNativeApi.ZFE, true));
         check("xScal cannot use ZFE native fallback",
             !FcmInputRoute.mayUseNativeFallback(FcmNativeApi.XSCAL, true));
         Sys.println("FCM provider input-route tests passed");

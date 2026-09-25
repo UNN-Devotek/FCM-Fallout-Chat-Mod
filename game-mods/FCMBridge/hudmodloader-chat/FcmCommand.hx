@@ -210,7 +210,6 @@ class FcmCommand {
     public static function isExternalInputAction(raw:String):Bool {
         var action:String = normalizeAction(raw);
         return action == "escape" || action == "cancel" || action == "pipboy"
-            || action.indexOf("quick") >= 0
             || action.indexOf("friend") >= 0
             || action.indexOf("social") >= 0
             || action == "controltab"

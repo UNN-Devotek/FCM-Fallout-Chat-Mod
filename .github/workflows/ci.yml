@@ -420,6 +420,7 @@ jobs:
           haxe test-browser.hxml
           haxe test-outbox.hxml
           haxe test-diagnostics.hxml
+          haxe test-zfe-hotkeys.hxml
       - name: Test HUD history recovery and world transitions
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe test-history.hxml

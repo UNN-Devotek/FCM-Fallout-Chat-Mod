@@ -20,7 +20,7 @@ for (const provider of ['xscal', 'zfe']) {
   });
 }
 
-for (const scenario of ['owned-input-release', 'owned-input-busy', 'owned-input-expiry']) {
+for (const scenario of ['owned-input-release', 'owned-input-busy', 'owned-input-expiry', 'owned-input-hotkey', 'owned-input-controller-open', 'owned-input-map']) {
   test(`ZFE ${scenario} owns or falls back and cleans up deterministically`, async ({ page }) => {
     await page.goto(`/?mode=harness&provider=zfe&scenario=${scenario}`);
     await expect(page.locator('#log')).toContainText(/OWNED-INPUT (PASS|FAIL)/, { timeout: 20_000 });

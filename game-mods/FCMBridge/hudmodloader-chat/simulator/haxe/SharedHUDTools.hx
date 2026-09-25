@@ -7,12 +7,16 @@ import MockXscal.SimLog;
 
 class SharedHUDTools {
     static var active:SharedHUDTools;
+    public static var oskX:Float = -1;
+    public static var oskY:Float = -1;
+    public static var controllerMode:Bool = false;
     public var isActive:Bool = false;
     var submit:Dynamic;
     var menuSelect:Dynamic;
     var menuPrepare:Dynamic;
     var menuItems:Array<{id:String, label:String, enabled:Bool, isMenu:Bool}> = [];
     var editor:TextField;
+    var controllerField:TextField;
     var x:Float = 0;
     var y:Float = 0;
     var width:Float = 380;
@@ -38,7 +42,10 @@ class SharedHUDTools {
     }
     public function ShowMenu():Void { isActive = true; }
     public function CloseMenu():Void { isActive = false; }
-    public function FormatOnScreenKeyboard(_:Dynamic, __:Dynamic):Void {}
+    public function FormatOnScreenKeyboard(px:Float, py:Float):Void {
+        oskX = px;
+        oskY = py;
+    }
     public function FormatTextEdit(px:Float, py:Float, w:Float, h:Float, _:String, fontSize:Int,
             textColor:String, __:String, ___:Float):Void {
         x = px; y = py; width = w; height = h; size = fontSize;
@@ -55,7 +62,14 @@ class SharedHUDTools {
         editor.border = true; editor.borderColor = color; editor.background = true; editor.backgroundColor = 0x080705;
         editor.addEventListener(KeyboardEvent.KEY_DOWN, onKeyDown);
         Lib.current.addChild(editor);
-        Lib.current.stage.focus = editor;
+        if (controllerMode) {
+            controllerField = new TextField();
+            controllerField.type = TextFieldType.INPUT;
+            controllerField.y = -32;
+            controllerField.width = 0;
+            Lib.current.addChild(controllerField);
+            Lib.current.stage.focus = controllerField;
+        } else Lib.current.stage.focus = editor;
         isActive = true;
         SimLog.emit("HUDTOOLS editor opened");
         return true;
@@ -72,6 +86,10 @@ class SharedHUDTools {
     }
     public function EndTextEdit():Void { submit = null; removeEditor(); }
     function removeEditor():Void {
+        if (controllerField != null) {
+            if (controllerField.parent != null) controllerField.parent.removeChild(controllerField);
+            controllerField = null;
+        }
         if (editor != null) {
             editor.removeEventListener(KeyboardEvent.KEY_DOWN, onKeyDown);
             if (editor.parent != null) editor.parent.removeChild(editor);
@@ -86,4 +104,10 @@ class SharedHUDTools {
         return true;
     }
     public static function hasActiveEditor():Bool return active != null && active.isActive;
+    public static function physicalKeyboardFocused():Bool return active != null && active.editor != null
+        && Lib.current.stage.focus == active.editor;
+    public static function restoreControllerFocus():Void {
+        if (active != null && active.controllerField != null)
+            Lib.current.stage.focus = active.controllerField;
+    }
 }

@@ -142,7 +142,11 @@ class TestFcmCommand {
             && FcmUserEvent.isDown(dynamicEvent));
         check("social shortcut is an external input action", FcmCommand.isExternalInputAction("OpenSocial"));
         check("friends action is an external input action", FcmCommand.isExternalInputAction("OpenFriendList"));
-        check("quick action is an external input action", FcmCommand.isExternalInputAction("QuickActionsMenu"));
+        check("quick actions remain typing keys", !FcmCommand.isExternalInputAction("QuickActionsMenu"));
+        check("QuickMap is typed text while editor owns input", !FcmCommand.isExternalInputAction("QuickMap"));
+        check("QuickMap does not release native editor", FcmCommand.externalInputClosePath(true, true, "QuickMap") == "");
+        check("QuickInventory does not release editor", FcmCommand.externalInputClosePath(true, false, "QuickInventory") == "");
+        check("Map does not release editor", FcmCommand.externalInputClosePath(true, false, "Map") == "");
         check("Control-Tab alias is an external input action", FcmCommand.isExternalInputAction("Control-Tab"));
         check("CtrlTab alias is an external input action", FcmCommand.isExternalInputAction("CtrlTab"));
         check("external action does not match channel navigation", !FcmCommand.isExternalInputAction("NextPage"));

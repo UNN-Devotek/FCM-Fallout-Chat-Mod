@@ -57,14 +57,16 @@ Named `HUDMod::UserEvent` actions differ from raw character/physical key events.
 Boolean handled path. A bubbling non-cancelable event does not suppress gameplay because a child
 listener calls `stopPropagation` or returns a value. Inspect the active host path.
 
-SharedHUDTools' host-domain `TextEdit` is the primary editor for both extenders. It owns the
-balanced lock. The child does not independently dispatch ControlMap start/end events. Close or
+SharedHUDTools' host-domain `TextEdit` is the primary ZFE editor and the xScal fallback.
+It owns the balanced ControlMap lock; current xScal can own a native session instead.
+The child does not independently dispatch ControlMap start/end events. Close or
 release the owned editor on send, cancel, relevant menu transitions, failure, and unload. Do not
 end another UI's session. The legacy ZFE fallback has different guarantees from public
-owner-scoped `input.v1.*`.
+owner-scoped `input.v1.*`. See the [provider text-input contracts](text-input-contracts.md)
+for exact call shapes, controller focus, native session validation, and release behavior.
 
-Page Up/Down channel switching is permitted while idle and typing. Feed scrolling requires the
-visible editor owned by chat. Configured aliases and reversed directions resolve through the same
+Page Up/Down channel switching is permitted while idle and typing. Feed scrolling requires an
+active input session owned by chat. Configured aliases and reversed directions resolve through the same
 navigation policy. Existing edge guards key on normalized action names, not every canonical alias;
 test simultaneous named/physical delivery before claiming a single action per physical press. Home/End have no default newest binding.
 The provider guide distinguishes numeric `Input.*`, ZFE `hotkeys.v1.*`, and native text sessions;

@@ -91,13 +91,13 @@ def main() -> None:
         "shared editor diagnostics must capture metadata without the draft text"
     )
     assert "FcmInputRoute.preferred(provider" in source_hx \
-        and "FcmInputRoute.mayUseNativeFallback" in source_hx \
+        and "text editor unavailable; no ControlMap lock, input refused" in source_hx \
         and "tf.selectable = true" in source_hx, (
-        "the shared widget must route ZFE and xScal input by detected provider"
+        "the shared widget must route provider input without an unlocked fallback"
     )
     assert '"input.v1.begin"' in source_hx and '"input.v1.poll"' in source_hx \
         and '"input.v1.end"' in source_hx and "OWNED_RELEASE_STABLE_POLLS" in source_hx, (
-        "current ZFE input must use an owned session with a release barrier"
+        "retained ZFE diagnostic input must keep its release barrier"
     )
     assert "FcmSharedInputRecovery.decide" in source_hx \
         and "onSharedInputKeyDown" in source_hx \
