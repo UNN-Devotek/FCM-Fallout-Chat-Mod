@@ -104,6 +104,16 @@ external `/api/health` returned connected DB/Redis/Discord with a fresh uptime,
 and its compiled HUD giveaway parser returned `/giveaway list`. No Prod
 containers or Dev storage services were recreated.
 
+The `fe8d282b` giveaway persistence correction was staged separately under
+`/home/devotek/fcm-dev-deploy/fe8d282b/` with the same customized Dev Compose
+checksum. Only `backend-dev` was rebuilt with `--no-deps --pull never`; the
+previous image was tagged `fcm-dev-backend:pre-bot-source-20260925`. The new
+image ID is `sha256:8bce612fc20b6e4ad1bb75dfd7266ef42ef3fa66506b6a295742eed99565e8c7`.
+The Dev-only `messages_source_check` now admits `bot`, the previously failed
+giveaway announcement was persisted after retry, Discord card/result links
+were present, and external health reported connected DB/Redis/Discord. No
+Prod or Dev storage/tunnel containers were recreated.
+
 At the 2026-09-16 UTC auth-recovery deployment, hosted Dev was authoritative on the mothership,
 with Dokploy `autoDeploy=false` and `LAPTOP_DEV_AUTODEPLOY=false`. Verify current authority
 before every deployment; these are dated observations, not permission to change either flag.

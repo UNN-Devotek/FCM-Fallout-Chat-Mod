@@ -20,6 +20,10 @@ class GiveawayScenario {
                 check("help is a private feed record", localHelp.user == "FCM Help"
                     && localHelp.senderUserId == "" && localHelp.messageId == ""
                     && localHelp.body.indexOf("giveaway join <id>") >= 0);
+                check("help has a sortable timestamp", localHelp.createdAt.length > 0
+                    && FcmFeedPlan.compareChronology(localHelp.createdAt, localHelp.arrivalOrder,
+                        FcmFeedPlan.utcTimestamp(Date.fromTime(Date.now().getTime() + 1000)),
+                        localHelp.arrivalOrder + 1) < 0);
                 widget.handleSubmittedText("giveaway start Flux x10 5");
                 var sent = new haxe.Timer(250);
                 var sendAttempts = 0;
@@ -49,19 +53,47 @@ class GiveawayScenario {
                             check("private command receipt consumed", widget._outbox.entries.length == 0);
                         }
                         var startId = widget._cursor + 1;
+                        var announcementAt = FcmFeedPlan.utcTimestamp(Date.fromTime(Date.now().getTime() + 1000));
+                        var resultAt = FcmFeedPlan.utcTimestamp(Date.fromTime(Date.now().getTime() + 2000));
                         widget.parseAndRenderEvents(haxe.Json.stringify({success:true, events:[
                             {id:startId, kind:"chat.message", channel:"events", messageId:"giveaway-card-1",
                                 senderUserId:"giveaway-bot", senderDisplayName:"[Vault-Tec]",
-                                body:"🎁 Flux x10 giveaway [ABC234] — join with giveaway join ABC234", targetUserId:""},
+                                body:"🎁 Flux x10 giveaway [ABC234] — join with giveaway join ABC234",
+                                createdAt:announcementAt, targetUserId:""},
                             {id:startId + 1, kind:"chat.message", channel:"events", messageId:"giveaway-winner-1",
                                 senderUserId:"giveaway-bot", senderDisplayName:"[Vault-Tec]",
-                                body:"🎉 Winner: Wastelander — Flux x10 [ABC234]", targetUserId:""}
+                                body:"🎉 Winner: Wastelander — Flux x10 [ABC234]",
+                                createdAt:resultAt, targetUserId:""}
                         ]}));
                         var cards = 0;
                         for (record in widget._records) if (record.messageId == "giveaway-card-1"
                                 || record.messageId == "giveaway-winner-1") cards++;
                         check("announcement and winner are retained", cards == 2);
-                        flash.Lib.trace("GIVEAWAY PASS " + provider);
+                        var orderAttempts = 0;
+                        var ordered = new haxe.Timer(100);
+                        ordered.run = function():Void {
+                            try {
+                                if (++orderAttempts > 20) throw "giveaway feed order timed out";
+                                var helpIndex = -1;
+                                var cardIndex = -1;
+                                var winnerIndex = -1;
+                                for (i in 0...widget._feedRows.length) {
+                                    var field = widget._feedRows[i].textField;
+                                    if (field == null) continue;
+                                    if (field.text.indexOf("GIVEAWAY COMMANDS") >= 0) helpIndex = i;
+                                    if (field.text.indexOf("Flux x10 giveaway") >= 0) cardIndex = i;
+                                    if (field.text.indexOf("Winner: Wastelander") >= 0) winnerIndex = i;
+                                }
+                                if (winnerIndex < 0) return;
+                                ordered.stop();
+                                check("new messages scroll after private help", helpIndex >= 0
+                                    && cardIndex > helpIndex && winnerIndex > cardIndex);
+                                flash.Lib.trace("GIVEAWAY PASS " + provider);
+                            } catch (error:Dynamic) {
+                                ordered.stop();
+                                flash.Lib.trace("GIVEAWAY FAIL " + provider + " " + Std.string(error));
+                            }
+                        };
                     } catch (error:Dynamic) {
                         sent.stop();
                         flash.Lib.trace("GIVEAWAY FAIL " + provider + " " + Std.string(error));

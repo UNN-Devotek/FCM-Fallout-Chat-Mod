@@ -1,5 +1,8 @@
-FCM HUD 2.10.127
+FCM HUD 2.10.128
 ==============
+
+The private giveaway help row now stays in chronological feed order. Later
+messages scroll below it, so it moves upward like an ordinary chat message.
 
 Type "giveaway" (or "/giveaway") alone to see the available commands in your
 chat feed. The help row stays on your own HUD; it is not sent to other players

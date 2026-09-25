@@ -1,5 +1,26 @@
 # FCMChatWidget build, install, and verification
 
+## Chronological giveaway help candidate (2026-09-25)
+
+**Widget version:** 2.10.128. The private help row now carries a UTC ISO
+timestamp matching relay messages. It remains in chronological feed order as
+new messages arrive, instead of sorting permanently after every dated row.
+Pure feed-plan and ZFE/xScal Ruffle scenarios cover the order. Native acceptance
+of this corrected artifact remains pending.
+
+The compiled FWS v32 SWF SHA-256 is
+`afd1b1c6b01a42533abca5a397bb24a01c6bf21e3fdc470ebc1abd1de56120b9`.
+The one-entry BTDX v1 GNRL BA2 SHA-256 is
+`fb3491d717cc8756916f2e545e485581c6b7a8ae6fa6688a6622df3fb5484256`.
+Its original path, hashes, flags, and sentinel were retained; the extracted
+SWF matches the compiled output byte for byte. Pure Haxe, package, source,
+SWF, and emoji checks plus the complete 77-case Ruffle provider suite passed.
+With Fallout 76 closed, this BA2 replaced only the local Dev
+`Data/FCMChatWidget.ba2`; the root version stamp was set to 2.10.128. The
+installed BA2 hash matches the reviewed hash. Dev relay/link settings and
+their hashes were preserved. Exact-file rollback copies and a manifest are in
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-giveaway-help-order-dev-j30lnn_j/`.
+
 ## Private giveaway help candidate (2026-09-25)
 
 **Widget version:** 2.10.127. Entering bare `giveaway`, `/giveaway`, or
