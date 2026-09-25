@@ -1,4 +1,4 @@
-FCM HUD 2.10.128
+FCM HUD 2.10.129
 ==============
 
 The private giveaway help row now stays in chronological feed order. Later
@@ -8,11 +8,12 @@ Type "giveaway" (or "/giveaway") alone to see the available commands in your
 chat feed. The help row stays on your own HUD; it is not sent to other players
 or Discord. "giveaway help" does the same.
 
-Giveaways now appear in the Events chat feed. Enter "giveaway start <item> [minutes]",
+Giveaways now appear in the community channel where you start them. Enter "giveaway start <item> [minutes]",
 "giveaway list", "giveaway last", "giveaway join <id>", "giveaway leave <id>",
 or "giveaway stop <id>" in chat. A leading slash also works if the game keeps it.
 Commands use your linked FCM account and show a private result in the HUD.
-The giveaway announcement and winner are visible in Events and General.
+The giveaway announcement and winner stay in that channel and its mapped Discord channel.
+Confirmed ZFE giveaway commands now clear the send queue without a false delivery warning.
 
 This patch restores ZFE chat entry with a controller active: physical Insert opens
 chat, physical keyboard typing stays in the editor, gameplay keys stay locked,

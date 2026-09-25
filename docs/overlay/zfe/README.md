@@ -7,18 +7,20 @@ must not add game-memory reads, code injection, or network/port scanning.
 
 ## Current implementation and verification
 
-**Giveaways (2.10.128 candidate, native acceptance pending):** The Events feed now
-receives the overlay's giveaway announcement and winner text through ordinary
+**Giveaways (2.10.129 candidate, native acceptance pending):** The selected channel now
+receives the giveaway announcement and winner text through ordinary
 persisted chat history and live relay events. Enter `giveaway start <item> [minutes]`,
 `giveaway list`, `giveaway last`, `giveaway join <id>`, `giveaway leave <id>`, or
 `giveaway stop <id>` in the HUD editor. A leading `/` or `.` is also accepted;
 the native keyboard path may consume the leading character. These commands use
-the linked FCM account, route to Events, and do not create a public echo of the
+the linked FCM account, stay in the selected community channel, and do not create a public echo of the
 command itself. Entering `giveaway` or `giveaway help` alone inserts a local
 private help row into the current HUD feed without contacting the relay; it is
 visible only to that player, including when the game strips a leading `/`.
 The help row has a UTC timestamp and scrolls upward as newer chat arrives.
-The send receipt shows a short result; `list` and `last` include
+The ZFE terminal command receipt clears the command outbox, so it no longer
+waits for a chat echo and reports a false delivery warning. Command feedback
+uses the prompt without hiding the feed. The send receipt shows a short result; `list` and `last` include
 up to three compact entries. Other HUD slash commands remain unsupported. The
 ZFE and xScal Ruffle giveaway scenario checks private help in the feed, routing,
 receipt handling, and announcement/result rows. The user's ZFE 0.15.0 screenshot
@@ -27,8 +29,11 @@ the first 2.10.127 announcement failed to persist because Dev's
 `messages_source_check` omitted `bot`. After the constraint was expanded, the
 exact failed persistence job completed, Discord's card repair linked the card,
 and the draw's `giveaway_winner` row was persisted and appended to the live ZFE
-feed. A fresh start-to-card native trial after this DB fix remains required.
-The 2.10.128 BA2 is installed on the local Steam/Proton desktop for a hosted-Dev
+feed. A later native General-channel attempt was created and persisted in Dev;
+Discord API confirmed its embed and buttons in Events. The HUD's forced Events
+route and the missing ZFE command receipt handling caused the visible mismatch.
+A fresh start-to-card native trial after the channel and receipt correction remains required.
+The 2.10.129 BA2 is installed on the local Steam/Proton desktop for a hosted-Dev
 trial with ZFE 0.15.0; the ZFE fragment and inactive xScal config both target
 `wss://dev.falloutchatmod.com/relay`, and `Data/FCMChat.ini` now points its
 separate `linkUrl` at `dev.falloutchatmod.com/link`. The provider and archive

@@ -36,8 +36,8 @@ channel. `/fcm` accepts only slash-prefixed input, for example
 
 `/giveaway command:` is also available directly in Discord; for example use
 `/giveaway command:list` or `/giveaway command:"join <id>"`. A started raffle
-publishes one bot embed in the Discord channel mapped to FCM Events (or the
-configured default relay channel when Events has no explicit mapping). Its
+publishes one bot embed in the Discord channel mapped to the FCM channel where
+the command was sent. A channel without a relay mapping has no Discord card. Its
 Join, Leave, and Stop buttons require a linked FCM account and call the same
 giveaway service as overlay commands. Stop remains creator/moderator only.
 Entry count edits the original embed; completion or cancellation removes its

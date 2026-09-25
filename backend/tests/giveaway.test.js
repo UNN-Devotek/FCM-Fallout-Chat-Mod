@@ -132,7 +132,7 @@ describe('giveawayService', () => {
     }));
   });
 
-  test('production publisher carries the same Events card to persistent chat/Discord', async () => {
+  test('production publisher carries the card to its originating channel', async () => {
     const publishCard = jest.fn().mockResolvedValue(undefined);
     const updateDiscordCard = jest.fn().mockResolvedValue(undefined);
     await giveawayService.init({ prisma, broadcast, publishCard, updateDiscordCard });
@@ -145,6 +145,25 @@ describe('giveawayService', () => {
       expect.objectContaining({ type: 'giveaway', giveawayId: 'giveaway-uuid-1' }), 'user-1',
     );
     expect(broadcast).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'chat:message' }));
+  });
+
+  test.each([
+    ['General', '00000000-0000-0000-0000-000000000005'],
+    ['Trading', '00000000-0000-0000-0000-000000000002'],
+  ])('giveaway command starts in the selected %s channel', async (channelName, channelId) => {
+    prisma.channel.findUnique.mockResolvedValue({ id: channelId });
+    prisma.giveaway.create.mockImplementation(async ({ data }) => makeGiveaway({ channelId: data.channelId }));
+    const { tryHandleCommand } = require('../src/services/commandService');
+
+    const result = await tryHandleCommand('/giveaway start Flux x10 5', 'user-1', 'Devotek', channelId, channelName);
+
+    expect(result).toEqual(expect.objectContaining({ handled: true, actionType: 'private', targetChannelId: channelId }));
+    expect(prisma.giveaway.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ channelId }),
+    }));
+    expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({ channelId }),
+    }));
   });
 
   test('Discord reconnect repairs active cards and recent finished results from stored state', async () => {

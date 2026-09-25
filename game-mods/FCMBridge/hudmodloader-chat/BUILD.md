@@ -1,5 +1,27 @@
 # FCMChatWidget build, install, and verification
 
+## Channel-local giveaway and ZFE command receipt candidate (2026-09-25)
+
+**Widget version:** 2.10.129. A giveaway command now stays in the selected
+community channel. ZFE's terminal accepted command clears the outbox and shows
+the private feedback without hiding the chat feed; a synthetic chat echo is no
+longer required. General-channel xScal/ZFE Ruffle scenarios cover routing,
+private feedback, and announcement/result visibility. Native acceptance remains
+pending.
+
+The compiled FWS v32 SWF SHA-256 is
+`50b58a9c415dc71f08c047f9bef291a6df4f94f09021fd6de9b4b0ac8efc08c5`.
+The one-entry BTDX v1 GNRL BA2 SHA-256 is
+`4407256d7af0ddbf33e17b7bad21b6a8c66553acd923b5c4f0366d43fbed4de3`.
+The path, hashes, flags, and sentinel were retained from 2.10.128; its
+extracted SWF matches the compiler output byte for byte. Pure Haxe, source,
+package, SWF, emoji, and complete 77-case Ruffle provider checks passed. With
+Fallout 76 closed, this BA2 replaced only the local Dev `Data/FCMChatWidget.ba2`
+and the root version stamp was set to 2.10.129. The installed hash matches the
+reviewed BA2; Dev relay and link settings were preserved. Exact-file rollback
+copies and a manifest are in
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-giveaway-channel-dev-77a3sex0/`.
+
 ## Chronological giveaway help candidate (2026-09-25)
 
 **Widget version:** 2.10.128. The private help row now carries a UTC ISO

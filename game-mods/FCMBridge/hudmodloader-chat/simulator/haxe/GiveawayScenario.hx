@@ -30,10 +30,12 @@ class GiveawayScenario {
                 sent.run = function():Void {
                     try {
                         if (++sendAttempts > 20) throw "giveaway send timed out";
-                        if (MockXscal.lastGiveawayBody.length == 0) return;
+                        if (MockXscal.lastGiveawayBody.length == 0 || widget._outbox.entries.length > 0) return;
                         sent.stop();
-                        check("command routed to Events", MockXscal.lastGiveawayChannel == "events"
+                        check("command stays in selected General channel", MockXscal.lastGiveawayChannel == "global"
                             && MockXscal.lastGiveawayBody == "/giveaway start Flux x10 5");
+                        check("private command receipt shown without hiding feed",
+                            widget._promptTf.text.indexOf("Giveaway started") >= 0 && widget._feedLayer.visible);
                         var renderedHelp = false;
                         for (row in widget._feedRows) if (row.textField != null
                                 && row.textField.text.indexOf("GIVEAWAY COMMANDS") >= 0)
@@ -41,26 +43,15 @@ class GiveawayScenario {
                         check("private help rendered in feed", renderedHelp && widget._feedLayer.visible);
                         for (record in widget._records)
                             check("no public command echo", record.body != MockXscal.lastGiveawayBody);
-                        if (provider == "zfe" && widget._outbox.entries.length > 0) {
-                            var id = widget._outbox.entries[0].id;
-                            var receipt = haxe.Json.stringify({success:true, messageId:"sim-giveaway-receipt",
-                                targetUserId:"FCMHUD/1;g=Giveaway%20started;q=" + StringTools.urlEncode(id)});
-                            widget.parseAndRenderEvents(haxe.Json.stringify({success:true, events:[{
-                                id:widget._cursor + 1, kind:"chat.message", channel:"system",
-                                senderUserId:"system", senderDisplayName:"FCM",
-                                body:"FCMACK/1;" + StringTools.urlEncode(receipt), targetUserId:""
-                            }]}));
-                            check("private command receipt consumed", widget._outbox.entries.length == 0);
-                        }
                         var startId = widget._cursor + 1;
                         var announcementAt = FcmFeedPlan.utcTimestamp(Date.fromTime(Date.now().getTime() + 1000));
                         var resultAt = FcmFeedPlan.utcTimestamp(Date.fromTime(Date.now().getTime() + 2000));
                         widget.parseAndRenderEvents(haxe.Json.stringify({success:true, events:[
-                            {id:startId, kind:"chat.message", channel:"events", messageId:"giveaway-card-1",
+                            {id:startId, kind:"chat.message", channel:"global", messageId:"giveaway-card-1",
                                 senderUserId:"giveaway-bot", senderDisplayName:"[Vault-Tec]",
                                 body:"🎁 Flux x10 giveaway [ABC234] — join with giveaway join ABC234",
                                 createdAt:announcementAt, targetUserId:""},
-                            {id:startId + 1, kind:"chat.message", channel:"events", messageId:"giveaway-winner-1",
+                            {id:startId + 1, kind:"chat.message", channel:"global", messageId:"giveaway-winner-1",
                                 senderUserId:"giveaway-bot", senderDisplayName:"[Vault-Tec]",
                                 body:"🎉 Winner: Wastelander — Flux x10 [ABC234]",
                                 createdAt:resultAt, targetUserId:""}

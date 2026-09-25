@@ -5,7 +5,7 @@ import { normalizeHudChannel, validateHostedSend } from '../scripts/hosted-dev-b
 import { applyKeybindsToIni, browserKey, defaultKeybinds, normalizeKeybinds } from '../src/keybinds';
 
 for (const provider of ['xscal', 'zfe']) {
-  test(`giveaway command and announcement reach HUD Events (${provider})`, async ({ page }) => {
+  test(`giveaway command and announcement stay in the selected channel (${provider})`, async ({ page }) => {
     await page.goto(`/?mode=harness&provider=${provider}&scenario=giveaway`);
     await expect(page.locator('#log')).toContainText(/GIVEAWAY (PASS|FAIL)/, { timeout: 25_000 });
     await expect(page.locator('#log')).toContainText(`GIVEAWAY PASS ${provider}`);
@@ -54,7 +54,7 @@ test.afterEach(async ({ page, request }) => {
 test('loads the exact production widget artifact and records browser key delivery', async ({ page }) => {
   await page.goto('/?mode=artifact');
   await expect(page.locator('#status')).toHaveAttribute('data-state', 'ready', { timeout: 20_000 });
-  await expect(page.locator('#widget-version')).toHaveText('2.10.128');
+  await expect(page.locator('#widget-version')).toHaveText('2.10.129');
   await page.locator('#focus-stage').click();
   await page.keyboard.press('Insert');
   await page.keyboard.press('ArrowUp');

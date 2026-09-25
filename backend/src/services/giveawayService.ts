@@ -7,7 +7,7 @@
  * Design notes:
  *  - Any authenticated chat user may create a giveaway (no role gate); the
  *    1-active-per-user cap plus the per-user create cooldown prevent spam.
- *  - All broadcasts go to the Events channel (caller passes the fixed UUID).
+ *  - Announcements and results stay in the channel where the creator started the giveaway.
  *  - reconcileActive() runs at startup and on a 5-minute periodic sweep so a
  *    giveaway orphaned by a DB blip is retried, not silently abandoned.
  */

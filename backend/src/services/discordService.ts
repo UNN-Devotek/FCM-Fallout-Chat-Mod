@@ -32,6 +32,7 @@ import { normalizeDiscordRelayCard, type DiscordRelayEmbed } from './discordRela
 import { buildDiscordOverlayCard } from './discordOverlayCommandEmbeds';
 import { getGlobalOnlineCount, noteDiscordMessageActivity } from './onlinePresenceService';
 import { giveawayDiscordCard, giveawayWinnerDiscordCard, type GiveawayCard } from './giveawayDiscordCard';
+import { giveawayDiscordChannelId } from './giveawayDiscordRoute';
 import { v5 as uuidv5 } from 'uuid';
 
 let discordClient: Client | null = null;
@@ -1431,15 +1432,13 @@ function giveawayResultLinkId(giveawayId: string): string {
 async function giveawayChannel(channelId: string, preferredDiscordChannelId?: string): Promise<TextChannel | null> {
   if (!discordClient || discordStatus !== 'connected') return null;
   const mappings = await loadRelayMappings();
-  const discordChannelId = preferredDiscordChannelId
-    ?? [...mappings].find(([, fcmChannelId]) => fcmChannelId === channelId)?.[0]
-    ?? env.DISCORD_CHANNEL_ID;
+  const discordChannelId = giveawayDiscordChannelId(mappings, channelId, preferredDiscordChannelId);
   if (!discordChannelId) return null;
   const channel = await discordClient.channels.fetch(discordChannelId);
   return channel?.isTextBased() && 'send' in channel ? channel as TextChannel : null;
 }
 
-/** Publish the Events card once, retaining its Discord ID for live edits. */
+/** Publish the card in the mapped Discord channel once, retaining its ID for live edits. */
 export async function postGiveawayCard(giveaway: DiscordGiveaway): Promise<void> {
   const pending = pendingGiveawayPosts.get(giveaway.id);
   if (pending) return pending;

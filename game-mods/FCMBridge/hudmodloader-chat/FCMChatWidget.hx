@@ -83,7 +83,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.128"; // chronological private giveaway help
+    static inline var VERSION:String  = "2.10.129"; // channel-local giveaways and ZFE command receipts
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -537,8 +537,8 @@ class FCMChatWidget extends MovieClip {
                 FcmConfig.hudTransportHasStar(carrier), color, true,
                 FcmConfig.hudTransportNameColor(carrier));
             var giveawayFeedback = FcmConfig.hudTransportValue(carrier, "g");
-            if (giveawayFeedback.length > 0) setLogText(FcmConfig.htmlEscape(giveawayFeedback));
-            if (_outbox.entries.length == 0 && !_inputOpen) setPrompt(idlePrompt());
+            if (giveawayFeedback.length > 0) outboxStatus(giveawayFeedback);
+            if (giveawayFeedback.length == 0 && _outbox.entries.length == 0 && !_inputOpen) setPrompt(idlePrompt());
             return;
         }
         var code = extractJsonString(response, "code");
@@ -3681,7 +3681,11 @@ class FCMChatWidget extends MovieClip {
         if (raw.length == 0) return;
 
         var isGiveawayCommand:Bool = FcmCommand.giveawayCommand(raw).length > 0;
-        var slug:String = isGiveawayCommand ? "events" : CHAN_SLUGS[_chanIdx];
+        var slug:String = CHAN_SLUGS[_chanIdx];
+        if (isGiveawayCommand && slug == "server") {
+            setLogText("Giveaways need a community channel.");
+            return;
+        }
         if (slug == "server" && !_serverSessionReady) {
             setLogText(_serverSessionError.length > 0
                 ? ("Server chat is unavailable: " + _serverSessionError)
@@ -3835,7 +3839,7 @@ class FCMChatWidget extends MovieClip {
                     // validated cosmetics in the known targetUserId member.
                     var ackHudTransport:String = extractJsonString(rs, "targetUserId");
                     var giveawayFeedback = FcmConfig.hudTransportValue(ackHudTransport, "g");
-                    if (giveawayFeedback.length > 0) setLogText(FcmConfig.htmlEscape(giveawayFeedback));
+                    if (giveawayFeedback.length > 0) outboxStatus(giveawayFeedback);
                     var ackTransportMessageId:String = FcmConfig.hudTransportMessageId(ackHudTransport);
                     if (ackTransportMessageId.length > 0) messageId = ackTransportMessageId;
                     if (messageId.length > 0 || FcmOutbox.receipt(ackHudTransport) == localSendId) _outbox.remove(localSendId);
@@ -5379,6 +5383,17 @@ class FCMChatWidget extends MovieClip {
             if (entry == null) return;
             if (accepted) {
                 if (_needsLink) clearLinkGate("ZFE relay accepted send");
+                if (FcmCommand.giveawayCommand(entry.body).length > 0) {
+                    _outbox.remove(localSendId);
+                    var feedback = FcmConfig.hudTransportValue(
+                        FcmWire.asyncResultTargetUserId(obj), "g");
+                    outboxStatus(feedback.length > 0
+                        ? feedback
+                        : "Giveaway command accepted. Check this channel for updates.");
+                    zfeLog("info", "send", "giveaway command confirmed ch=" + entry.channel
+                        + " requestId=" + requestId);
+                    return;
+                }
                 zfeLog("info", "send", "relay accepted ch=" + entry.channel
                     + " requestId=" + requestId + "; awaiting durable echo");
                 scheduleEchoPoll();
