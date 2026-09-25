@@ -3,11 +3,13 @@
 FCMChatWidget is the optional HUDModLoader chat widget for Fallout 76. It uses ZFE or xScal's
 native chat bridge and FCM's `/relay`. It is independent of the desktop overlay.
 
-**2.10.126 candidate:** Giveaway announcements and winners appear in the Events
+**2.10.127 candidate:** Giveaway announcements and winners appear in the Events
 and General feeds. The HUD editor accepts `giveaway start/list/last/join/leave/stop`
 (with or without the leading slash) and shows a private result from the linked
-account. The compiled xScal/ZFE Ruffle scenario covers command routing, receipts,
-and giveaway rows. This build still needs a fresh in-game provider check.
+account. Bare `giveaway` or `giveaway help` adds private instructions to the
+current HUD feed without sending a message. The compiled xScal/ZFE Ruffle scenario
+covers private help, command routing, receipts, and giveaway rows. This build still
+needs a fresh in-game provider check.
 
 **2.10.125 release candidate on Dev and Prod:** the source adds the author-supplied
 xScal 0.2.18 native text session (`Input.BeginInput`, `PollInput`, `EndInput`) with

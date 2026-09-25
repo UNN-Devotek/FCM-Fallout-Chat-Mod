@@ -19,6 +19,22 @@ class FcmCommand {
         return "/giveaway" + rest;
     }
 
+    /** Bare giveaway (or explicit help) is a local, private feed instruction. */
+    public static function isGiveawayHelp(raw:String):Bool {
+        var command = giveawayCommand(raw);
+        if (command.length == 0) return false;
+        var rest = StringTools.trim(command.substr(9)).toLowerCase();
+        return rest == "" || rest == "help";
+    }
+
+    public static function giveawayHelp():String {
+        return "GIVEAWAY COMMANDS\n"
+            + "giveaway start <item> [minutes] (1-60, default 5)\n"
+            + "giveaway list | giveaway last [count]\n"
+            + "giveaway join <id> | giveaway leave <id>\n"
+            + "giveaway stop <id> (creator or mod)";
+    }
+
     /**
      * True only for the standalone relink command. A trailing argument is not
      * accepted, so arbitrary chat text cannot accidentally clear auth state.

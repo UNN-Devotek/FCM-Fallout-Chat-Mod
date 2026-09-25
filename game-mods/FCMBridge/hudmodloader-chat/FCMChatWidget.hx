@@ -83,7 +83,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.126"; // giveaway commands and Events announcements
+    static inline var VERSION:String  = "2.10.127"; // private giveaway help in the feed
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -3314,6 +3314,10 @@ class FCMChatWidget extends MovieClip {
         // Authorization is still repeated by the relay from the linked Discord role.
         if (handleModerationCommand(s)) return;
 
+        if (FcmCommand.isGiveawayHelp(s)) {
+            addPrivateGiveawayHelp();
+            return;
+        }
         var giveawayCommand = FcmCommand.giveawayCommand(s);
         if (giveawayCommand.length > 0) {
             sendMessage(giveawayCommand);
@@ -5645,6 +5649,21 @@ class FCMChatWidget extends MovieClip {
             supporterStar: _ownCosmeticsKnown && _ownSupporterStar,
             starColor: _ownCosmeticsKnown ? _ownStarColor : ""
         };
+    }
+
+    /** Keep command help in this widget's feed only; no relay or Discord publication. */
+    function addPrivateGiveawayHelp():Void {
+        var channel = CHAN_SLUGS[_chanIdx];
+        var order = _nextRecordOrder++;
+        _records.push({
+            color: "", channel: channel, user: "FCM Help", tag: "", supporterStar: false,
+            starColor: "", body: FcmCommand.giveawayHelp(), messageId: "", senderUserId: "",
+            pending: false, localSendId: "giveaway-help-" + order, pendingAt: 0,
+            sendAccepted: false, createdAt: "", arrivalOrder: order, serverReplay: false,
+        });
+        while (_records.length > _cfg.maxMessages) _records.shift();
+        scrollToBottom();
+        requestRender();
     }
 
     /** Paint a local send immediately; the ACK/event then replaces fallback cosmetics authoritatively. */

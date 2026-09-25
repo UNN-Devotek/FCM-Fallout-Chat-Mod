@@ -7,24 +7,29 @@ must not add game-memory reads, code injection, or network/port scanning.
 
 ## Current implementation and verification
 
-**Giveaways (2.10.126 candidate, native acceptance pending):** The Events feed now
+**Giveaways (2.10.127 candidate, native acceptance pending):** The Events feed now
 receives the overlay's giveaway announcement and winner text through ordinary
 persisted chat history and live relay events. Enter `giveaway start <item> [minutes]`,
 `giveaway list`, `giveaway last`, `giveaway join <id>`, `giveaway leave <id>`, or
 `giveaway stop <id>` in the HUD editor. A leading `/` or `.` is also accepted;
 the native keyboard path may consume the leading character. These commands use
 the linked FCM account, route to Events, and do not create a public echo of the
-command itself. The send receipt shows a short result; `list` and `last` include
+command itself. Entering `giveaway` or `giveaway help` alone inserts a local
+private help row into the current HUD feed without contacting the relay; it is
+visible only to that player, including when the game strips a leading `/`.
+The send receipt shows a short result; `list` and `last` include
 up to three compact entries. Other HUD slash commands remain unsupported. The
-ZFE and xScal Ruffle giveaway scenario checks routing, receipt handling, and
-announcement/result rows; actual extender and game behavior requires a fresh
+ZFE and xScal Ruffle giveaway scenario checks private help in the feed, routing,
+receipt handling, and announcement/result rows; actual extender and game behavior requires a fresh
 native test of this build.
-The 2.10.126 BA2 is installed on the local Steam/Proton desktop for a hosted-Dev
+The 2.10.127 BA2 is installed on the local Steam/Proton desktop for a hosted-Dev
 trial with ZFE 0.15.0; the ZFE fragment and inactive xScal config both target
 `wss://dev.falloutchatmod.com/relay`, and `Data/FCMChat.ini` now points its
 separate `linkUrl` at `dev.falloutchatmod.com/link`. The provider and archive
 registration are unchanged. The exact rollback files are listed in the
 [build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
+Pure Haxe, source/package checks, and the full 77-case Ruffle suite pass for
+this candidate; a fresh in-game help/feed check is pending.
 The matching giveaway backend was deployed to hosted Dev on 2026-09-25; the
 pre-deployment HUD command was rejected and must be submitted again. Native
 command/result and Discord card acceptance remain pending.

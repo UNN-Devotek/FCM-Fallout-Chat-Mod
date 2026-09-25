@@ -41,6 +41,13 @@ class TestFcmCommand {
         check("game-stripped giveaway slash restored", FcmCommand.giveawayCommand("giveaway leave ABC123") == "/giveaway leave ABC123");
         check("dot giveaway accepted", FcmCommand.giveawayCommand(".giveaway list") == "/giveaway list");
         check("ordinary giveaway word is not a command", FcmCommand.giveawayCommand("giveaways are fun") == "");
+        check("bare slash giveaway shows help", FcmCommand.isGiveawayHelp("/giveaway"));
+        check("game-stripped giveaway shows help", FcmCommand.isGiveawayHelp(" giveaway "));
+        check("explicit giveaway help shows help", FcmCommand.isGiveawayHelp(".GIVEAWAY   HELP"));
+        check("giveaway start is not help", !FcmCommand.isGiveawayHelp("giveaway start Flux"));
+        check("other text is not giveaway help", !FcmCommand.isGiveawayHelp("giveawayish"));
+        check("giveaway help lists start and join", FcmCommand.giveawayHelp().indexOf("giveaway start <item>") >= 0
+            && FcmCommand.giveawayHelp().indexOf("giveaway join <id>") >= 0);
         check("arrow up scrolls feed up", FcmCommand.scrollDirection("ArrowUp") == -1);
         check("bare down scrolls feed down", FcmCommand.scrollDirection("Down") == 1);
         check("underscore arrow alias scrolls", FcmCommand.scrollDirection("arrow_down") == 1);

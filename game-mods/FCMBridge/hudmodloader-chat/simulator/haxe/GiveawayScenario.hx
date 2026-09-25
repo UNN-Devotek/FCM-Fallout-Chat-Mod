@@ -11,6 +11,15 @@ class GiveawayScenario {
                 if (++attempts > 60) throw "giveaway setup timed out";
                 if (!widget._connected || widget._authState != "authenticated") return;
                 ready.stop();
+                var beforeHelp = widget._records.length;
+                widget.handleSubmittedText("/giveaway");
+                widget.handleSubmittedText("giveaway");
+                check("help is local to this widget", MockXscal.lastGiveawayBody.length == 0
+                    && widget._records.length == beforeHelp + 2);
+                var localHelp = widget._records[widget._records.length - 1];
+                check("help is a private feed record", localHelp.user == "FCM Help"
+                    && localHelp.senderUserId == "" && localHelp.messageId == ""
+                    && localHelp.body.indexOf("giveaway join <id>") >= 0);
                 widget.handleSubmittedText("giveaway start Flux x10 5");
                 var sent = new haxe.Timer(250);
                 var sendAttempts = 0;
@@ -21,6 +30,11 @@ class GiveawayScenario {
                         sent.stop();
                         check("command routed to Events", MockXscal.lastGiveawayChannel == "events"
                             && MockXscal.lastGiveawayBody == "/giveaway start Flux x10 5");
+                        var renderedHelp = false;
+                        for (row in widget._feedRows) if (row.textField != null
+                                && row.textField.text.indexOf("GIVEAWAY COMMANDS") >= 0)
+                            renderedHelp = true;
+                        check("private help rendered in feed", renderedHelp && widget._feedLayer.visible);
                         for (record in widget._records)
                             check("no public command echo", record.body != MockXscal.lastGiveawayBody);
                         if (provider == "zfe" && widget._outbox.entries.length > 0) {

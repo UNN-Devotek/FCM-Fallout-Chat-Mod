@@ -1,5 +1,28 @@
 # FCMChatWidget build, install, and verification
 
+## Private giveaway help candidate (2026-09-25)
+
+**Widget version:** 2.10.127. Entering bare `giveaway`, `/giveaway`, or
+`giveaway help` adds a local, private help row to the current HUD feed. The
+command never goes to the relay or Discord. The row uses the normal chat feed
+renderer and scrolls into view. The ZFE/xScal Ruffle scenario checks both
+slash and slash-stripped input, private local storage, and rendered feed output.
+Fresh native acceptance remains pending.
+
+The compiled FWS v32 SWF SHA-256 is
+`c7d38eaf32766ee8356a2c6c36f7d1faf2026233fab33d7e0c48124f7e789d93`.
+The one-entry BTDX v1 GNRL BA2 SHA-256 is
+`cada8c6cbbf5b008d41c715eeed567b54909c7a0491d0cdc3015d79a4e87c85b`.
+The original name, hashes, flags, and sentinel were retained; the extracted
+SWF matches the compiler output byte for byte.
+The pure Haxe, source, package, SWF, emoji, and complete 77-case Ruffle suite
+passed. With Fallout 76 closed, this BA2 replaced only the existing local Dev
+`Data/FCMChatWidget.ba2`, and the root version stamp was updated to 2.10.127.
+The installed BA2 hash matches the reviewed hash above. ZFE 0.15.0, the Dev
+relay/link settings, loader and archive registries were unchanged. Exact-file
+rollback copies and config hashes are in
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-giveaway-help-dev-vai8dcu6/`.
+
 ## Giveaway candidate (2026-09-25)
 
 **Widget version:** 2.10.126. The HUD now routes linked-account giveaway
