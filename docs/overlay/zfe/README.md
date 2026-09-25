@@ -25,8 +25,9 @@ trial with ZFE 0.15.0; the ZFE fragment and inactive xScal config both target
 separate `linkUrl` at `dev.falloutchatmod.com/link`. The provider and archive
 registration are unchanged. The exact rollback files are listed in the
 [build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
-Hosted Dev still needs the matching giveaway backend changes before these new
-HUD commands can be tested end to end.
+The matching giveaway backend was deployed to hosted Dev on 2026-09-25; the
+pre-deployment HUD command was rejected and must be submitted again. Native
+command/result and Discord card acceptance remain pending.
 
 **HUD 2.10.125 input and installer patch:**
 the xScal 0.2.18 test DLL exposes native text sessions through

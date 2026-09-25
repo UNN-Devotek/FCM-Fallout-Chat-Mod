@@ -33,8 +33,12 @@ archive-list entry, with no `FCMServerBridge.ba2`. Exact-file backups and
 pre-install hashes are in
 `/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-giveaway-dev-1sp3d8ri/`.
 Native acceptance is pending. Hosted Dev was healthy at install time, but its
-running backend predates the uncommitted giveaway service changes; HUD giveaway
-commands require that matching backend to be deployed before end-to-end testing.
+running backend initially predated the giveaway service changes. On 2026-09-25,
+the pushed `3075209f` Dev source was staged separately and only `backend-dev`
+was rebuilt; the new backend is healthy and the Dev Events channel retains its
+Discord mapping. The pre-deployment HUD giveaway command was rejected by the
+old relay and must be submitted again. Fresh native result/Discord acceptance
+is still pending.
 
 ## ZFE controller keyboard visibility correction (2026-09-24)
 

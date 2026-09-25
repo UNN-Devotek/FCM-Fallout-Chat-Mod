@@ -87,6 +87,23 @@ owns that token — do not point a GitHub repo webhook at the prod compose's tok
 
 ### Manual deployment while auto-deploy is paused
 
+On 2026-09-25, the Dev compose still had `autoDeploy=false`. The Dokploy
+checkout's Git `HEAD` pointed to a missing object, so it was left untouched.
+The pushed `3075209f` source was staged under
+`/home/devotek/fcm-dev-deploy/3075209f/`; its repository Compose file was
+replaced in that staging copy with the live customized Dev Compose (SHA-256
+`193c6f88e4d113bc4f68d9e4531f567fa369be2296138ad74b176c74d90025b7`).
+Using the existing Dev environment file and Compose project, only `backend-dev`
+was rebuilt/recreated with `--no-deps --pull never` and fresh volumes disabled.
+The prior image is tagged `fcm-dev-backend:pre-giveaway-20260925` (image ID
+`sha256:847dcc85ae4e7b673aec962325eecaf242180dd67ce6e74ed4f97036dd477215`);
+the new image is
+`sha256:af1a6355651542db2c7f83ff9c0ca92ebaa0c19824210ccd9c98c20eb8fa42e6`.
+The original Compose checksum is unchanged. The new container was healthy,
+external `/api/health` returned connected DB/Redis/Discord with a fresh uptime,
+and its compiled HUD giveaway parser returned `/giveaway list`. No Prod
+containers or Dev storage services were recreated.
+
 At the 2026-09-16 UTC auth-recovery deployment, hosted Dev was authoritative on the mothership,
 with Dokploy `autoDeploy=false` and `LAPTOP_DEV_AUTODEPLOY=false`. Verify current authority
 before every deployment; these are dated observations, not permission to change either flag.
