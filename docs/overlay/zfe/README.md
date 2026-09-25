@@ -7,13 +7,14 @@ must not add game-memory reads, code injection, or network/port scanning.
 
 ## Current implementation and verification
 
-**HUD 2.10.125 input and installer patch candidate:**
+**HUD 2.10.125 input and installer patch:**
 the xScal 0.2.18 test DLL exposes native text sessions through
 `__SFCodeObj.call("Input.BeginInput")`, `Input.PollInput(sessionId)` and
 `Input.EndInput(sessionId)`. This branch adds a validated session route with
 SharedHUDTools fallback for older xScal builds. ZFE instead uses the host
 SharedHUDTools editor and its ControlMap lock. The corrected 2.10.125 candidate
-was locally installed with ZFE 0.15.0 and xScal 0.2.18; the corrected BA2 is on `dev`.
+was locally installed with ZFE 0.15.0 and xScal 0.2.18; the corrected BA2 is in
+source revision `4865d668` (SHA-256 `66d1d90246723d99838ab5620192b50fe1083a23cf55f80c11b8e47527ef464e`).
 The [text-input contracts](text-input-contracts.md) give the exact provider calls,
 response checks, ownership, and fallback rules. Two earlier xScal Escape cancels
 completed, the native session was released, and later HUD input arrived. The
