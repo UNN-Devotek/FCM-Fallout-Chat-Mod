@@ -5,7 +5,96 @@ default desktop overlay. The overlay does not install game files or require an e
 HUD mod uses UI assets and already-exposed HUD data through an extender's sanctioned API; it
 must not add game-memory reads, code injection, or network/port scanning.
 
+**Current local typing setup (2026-09-26):** The Steam/Proton game has xScal
+0.2.18, HUDModLoader v70, and the source-built FCMChatWidget 2.10.134 BA2.
+`Data/FCMChat.ini` sets `xscalInputMode=shared` for
+the SharedHUDTools text editor and points its link prompt at hosted Dev; root
+`xscal.ini` points the relay at hosted Dev. `openKey=INSERT`, the xScal DLL,
+archive list, and one-entry FCMChatWidget loader registry were preserved.
+The new BA2 and exact-file rollback backup are verified by hash in the
+[build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
+The 81-case Ruffle suite passed for 2.10.134. The release owner subsequently
+confirmed laptop typing, `/help`, an event shortcut, and a giveaway command,
+including their feed and Discord results. This is a user-reported native check;
+the remaining ZFE/game-only acceptance cases are documented separately.
+
+The MSI Windows 11 laptop was also reset to the same three Nexus ZIPs for a
+native Windows input trial. Its previous `FCMServerBridge` game mod, older
+HUDModLoader, FCM files, extender settings, caches, and logs were moved to
+`C:\Users\White\Documents\FCM-Repro-Backups\before-nexus-clean-20260925T221153Z`.
+The laptop now has the source-built FCMChatWidget 2.10.134 BA2, one loader
+entry, and no active FCMServerBridge. Its `Data/FCMChat.ini` retains
+`openKey=PERIOD` and `xscalInputMode=shared`; its link and root `xscal.ini`
+relay point to hosted Dev. The prior BA2 and both config files are backed up
+under `C:\Users\White\Documents\FCM-Repro-Backups\before-hud-help-2.10.134-2026-09-26`.
+The installed BA2 hash matches the tested artifact. The release owner confirmed
+in-game typing, `/help`, event and giveaway commands, and their feed and
+Discord outcomes on this laptop with the Dev relay.
+
 ## Current implementation and verification
+
+**2.10.134 HUD event commands and selectable help candidate:** `/event help`
+adds the 33 seeded event shortcuts and names as private, individual feed rows,
+including Gearing Up (`/gu`).
+`/help` points to `/event help` and `/mod help` without listing event names or
+staff actions.
+The leading slash may be consumed by native input; `event help` and bare event
+codes such as `sbq` also work. Event shortcuts are sent from General and use
+the backend's enabled `announce` definitions, allowed-channel policy,
+cooldown and template. The resolved announcement is ingested in Events and
+relayed to that channel's Discord mapping. The submitting player receives a
+private HUD result. `/help`, `/event help`, and giveaway help each render one
+selectable row per line, so Up/Down can traverse the whole guide while the
+editor is open. The ZFE terminal send receipt retires event outbox entries.
+
+**2.10.130 private HUD help and giveaway feedback candidate:** Standalone
+`/help`, `.help`, or slash-stripped `help` adds a local command guide to the
+HUD feed. It covers every implemented channel switch, `/hide`, `/relink`,
+`/emoji`, giveaway commands, and staff `/mod` actions. The guide is visible
+only on the submitting HUD and scrolls with ordinary messages. A successful `giveaway join <id>`
+adds a local `[Vault-Tec]` confirmation row to the submitting HUD feed. A creator
+who tries to join their own giveaway receives a local rejection row. Both stay
+in the channel where the command was entered, scroll with later messages, and
+have no relay message ID; the relay sends the result only in that command's
+response. The automatic winner remains a persisted `[Vault-Tec]` message in
+the giveaway's channel. The xScal and ZFE Ruffle scenarios cover the private
+responses and winner order; a fresh native game check remains pending.
+
+**Giveaways (2.10.129 candidate, native acceptance pending):** The selected channel now
+receives the giveaway announcement and winner text through ordinary
+persisted chat history and live relay events. Enter `giveaway start <item> [minutes]`,
+`giveaway list`, `giveaway last`, `giveaway join <id>`, `giveaway leave <id>`, or
+`giveaway stop <id>` in the HUD editor. A leading `/` or `.` is also accepted;
+the native keyboard path may consume the leading character. These commands use
+the linked FCM account, stay in the selected community channel, and do not create a public echo of the
+command itself. Entering `giveaway` or `giveaway help` alone inserts a local
+private help row into the current HUD feed without contacting the relay; it is
+visible only to that player, including when the game strips a leading `/`.
+The help row has a UTC timestamp and scrolls upward as newer chat arrives.
+The ZFE terminal command receipt clears the command outbox, so it no longer
+waits for a chat echo and reports a false delivery warning. In 2.10.129,
+command feedback used the prompt; 2.10.130 places it in the private feed.
+The send receipt shows a short result; `list` and `last` include
+up to three compact entries. The
+ZFE and xScal Ruffle giveaway scenario checks private help in the feed, routing,
+receipt handling, and announcement/result rows. The user's ZFE 0.15.0 screenshot
+confirms the private help row in the native feed. The command reached hosted Dev;
+the first 2.10.127 announcement failed to persist because Dev's
+`messages_source_check` omitted `bot`. After the constraint was expanded, the
+exact failed persistence job completed, Discord's card repair linked the card,
+and the draw's `giveaway_winner` row was persisted and appended to the live ZFE
+feed. A later native General-channel attempt was created and persisted in Dev;
+Discord API confirmed its embed and buttons in Events. The HUD's forced Events
+route and the missing ZFE command receipt handling caused the visible mismatch.
+A fresh start-to-card native trial after the channel and receipt correction remains required.
+The 2.10.129 BA2 was previously installed on the local Steam/Proton desktop for a hosted-Dev
+trial with ZFE 0.15.0; the ZFE fragment and inactive xScal config then targeted
+`wss://dev.falloutchatmod.com/relay`, and `Data/FCMChat.ini` pointed its
+separate `linkUrl` at `dev.falloutchatmod.com/link`. The exact rollback files are listed in the
+[build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
+Pure Haxe, source/package checks, and the full 77-case Ruffle suite pass for
+this candidate. The matching giveaway backend was deployed to hosted Dev on
+2026-09-25; the pre-deployment HUD command was rejected by the old backend.
 
 **HUD 2.10.125 input and installer patch:**
 the xScal 0.2.18 test DLL exposes native text sessions through
@@ -36,8 +125,8 @@ The published production versions before this patch are desktop overlay **1.4.2*
 visible HUD **2.10.125**, and optional background bridge **0.2.9**. This patch
 keeps the HUD version but replaces its package with the corrected 2.10.125 BA2
 and separate provider install folders. An earlier local 2.10.121 test candidate
-contained additional quoted-message changes under that same version; the current
-local test install is the corrected 2.10.125 BA2 described above.
+contained additional quoted-message changes under that same version; the earlier
+native-tested local install was the corrected 2.10.125 BA2 described above.
 
 **Background bridge 0.2.8 release:** published as a separate optional HUDModLoader child.
 It was installed locally with xScal 0.2.17 for testing, but native mixed-client acceptance
@@ -339,8 +428,19 @@ xScal has no `OpenChatKey` setting. Its physical
 key API takes numeric VK codes and returns Booleans. Registration does not promise keyboard
 suppression. FCM's ZFE `Input.*` route remains a tested compatibility path on specific builds,
 not the public `zfe-input-v1` contract. That capability names owner-scoped `input.v1.*` text
-sessions. The public [hotkey contract](https://www.nexusmods.com/fallout76/articles/270) is now
-available; migration to `hotkeys.v1.*` is not implemented in 2.10.85 and needs separate tests.
+sessions. ZFE also has an owner-scoped
+[hotkey contract](https://www.nexusmods.com/fallout76/articles/270); the widget
+registers keys it can represent there and retains numeric `Input.*` polling as
+the compatibility path for other configured VKs.
+
+All eight HUD bindings in `Data/FCMChat.ini` are editable. Physical keys accept named
+punctuation (for example `PERIOD`, `COMMA`, `SLASH`), numpad keys, F1-F24, letters,
+digits, and `VK_###` for decimal Windows virtual-key codes 1–254. Blank disables
+`scrollBottomKey` or `hideKey`. The loader's named control-map actions remain available
+for navigation. `openKey` must resolve to a physical VK; an invalid token falls back
+to Insert. Restart Fallout after editing the INI and verify the effective VK in the
+`physical navigation poll started` log line. A successful key edge alone does not
+establish text focus: xScal must also accept `Input.BeginInput`.
 
 | Provider | Authoritative open key | Detection | Configuration precedence |
 | --- | --- | --- | --- |
@@ -351,9 +451,9 @@ available; migration to `hotkeys.v1.*` is not implemented in 2.10.85 and needs s
 | --- | --- | --- |
 | Shared package | One provider-neutral `FCMChatWidget.ba2` | Same BA2 |
 | Provider selection | Validated as the sole active extender | Validated as the sole active extender; the adapter checks `chatInterface` before ZFE if both surfaces appear, but the widget rejects that mixed install |
-| Primary visible editor | SharedHUDTools `TextEdit` with the host ControlMap lock | Native xScal text session when `BeginInput` validates |
-| Physical keyboard with controller active | ZFE focuses the host's visible entry field while retaining its ControlMap lock | Native xScal text session when `BeginInput` validates |
-| Compatibility fallback | No unlocked editor fallback; a failed host editor refuses entry | SharedHUDTools when the native session is unsupported |
+| Primary visible editor | SharedHUDTools `TextEdit` with the host ControlMap lock | Native xScal text session by default; tested working on Linux/Steam Proton. Temporary `FCMChat.ini` `xscalInputMode=shared` workaround selects SharedHUDTools for the Windows laptop where native begin failed |
+| Physical keyboard with controller active | ZFE focuses the host's visible entry field while retaining its ControlMap lock | Native xScal text session when `BeginInput` validates; controller text entry is unsupported in shared mode |
+| Compatibility fallback | No unlocked editor fallback; a failed host editor refuses entry | SharedHUDTools when the native session is unsupported or shared mode is selected |
 | Multi-character typing | HUDTools' focused entry field has selection/caret enabled | Native session returns complete bounded text snapshots; the host fallback uses its entry field |
 | Submit/cancel recovery | Missing host Enter callback can recover the draft once; other stale focus loss cancels | Native terminal poll decides submit/cancel; release must be confirmed before reopening. Host fallback uses the HUDTools recovery rule |
 | Delete while typing | Edits the host field; the optional hide binding is suspended | Native session owns editing; host fallback edits its field |

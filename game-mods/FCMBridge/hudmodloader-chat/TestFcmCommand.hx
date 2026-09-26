@@ -37,6 +37,48 @@ class TestFcmCommand {
         check("embedded text rejected", !FcmCommand.isRelink("please relink"));
         check("empty rejected", !FcmCommand.isRelink(""));
         check("null rejected", !FcmCommand.isRelink(null));
+        check("slash help is local", FcmCommand.isHelp(" /HELP "));
+        check("native slash-stripped help is local", FcmCommand.isHelp("help"));
+        check("dot help is local", FcmCommand.isHelp(".help"));
+        check("help with arguments is ordinary text", !FcmCommand.isHelp("help someone"));
+        check("other words do not trigger help", !FcmCommand.isHelp("helpful"));
+        var hudHelp = FcmCommand.hudHelp();
+        for (command in ["/help", "/g /t /e /i /r /s", "/hide", "/relink", "/emoji <name>",
+                "/giveaway start", "/giveaway list", "/giveaway last", "/giveaway join",
+                "/giveaway leave", "/giveaway stop", "/mod help"])
+            check("HUD help includes " + command, hudHelp.indexOf(command) >= 0);
+        check("HUD help leaves staff actions to mod help",
+            hudHelp.indexOf("/mod <name|#ref>") < 0
+            && hudHelp.indexOf("delete|kick|mute|unmute|ban|unban") < 0);
+        check("HUD help does not claim unimplemented clear command", hudHelp.indexOf("/clear") < 0);
+        check("HUD help links event commands", hudHelp.indexOf("/event help") >= 0);
+        check("HUD help leaves event names to event help", hudHelp.indexOf("EVENT COMMANDS") < 0
+            && hudHelp.indexOf("/sbq — Scorched Earth") < 0
+            && hudHelp.indexOf("/ss — Sinkhole Solutions") < 0);
+        check("event help accepts slash-stripped text", FcmEventCommands.isHelp("event help"));
+        check("event help does not consume channel switch", !FcmEventCommands.isHelp("event"));
+        check("slash event still switches channels", !FcmEventCommands.isHelp("/event"));
+        check("event help lists all seeded shortcuts", FcmEventCommands.entries.length == 33
+            && FcmEventCommands.help().indexOf("/sbq — Scorched Earth") >= 0
+            && FcmEventCommands.help().indexOf("/gu — Gearing Up") >= 0
+            && FcmEventCommands.help().indexOf("/ss — Sinkhole Solutions") >= 0);
+        for (entry in FcmEventCommands.entries) {
+            var code = entry.split("|")[0];
+            check("event slash restored " + code, FcmEventCommands.command(code) == "/" + code);
+        }
+        check("event namespace routes shortcut", FcmEventCommands.command("/event sbq") == "/sbq");
+        check("event prefix rejects ordinary chat", FcmEventCommands.command("event tomorrow") == "");
+        check("giveaway start preserved", FcmCommand.giveawayCommand("/giveaway start Flux x10 5") == "/giveaway start Flux x10 5");
+        check("game-stripped giveaway slash restored", FcmCommand.giveawayCommand("giveaway leave ABC123") == "/giveaway leave ABC123");
+        check("dot giveaway accepted", FcmCommand.giveawayCommand(".giveaway list") == "/giveaway list");
+        check("ordinary giveaway word is not a command", FcmCommand.giveawayCommand("giveaways are fun") == "");
+        check("bare slash giveaway shows help", FcmCommand.isGiveawayHelp("/giveaway"));
+        check("game-stripped giveaway shows help", FcmCommand.isGiveawayHelp(" giveaway "));
+        check("explicit giveaway help shows help", FcmCommand.isGiveawayHelp(".GIVEAWAY   HELP"));
+        check("giveaway start is not help", !FcmCommand.isGiveawayHelp("giveaway start Flux"));
+        check("other text is not giveaway help", !FcmCommand.isGiveawayHelp("giveawayish"));
+        check("giveaway help lists start and join", FcmCommand.giveawayHelp().indexOf("giveaway start <item>") >= 0
+            && FcmCommand.giveawayHelp().indexOf("giveaway join <id>") >= 0);
         check("arrow up scrolls feed up", FcmCommand.scrollDirection("ArrowUp") == -1);
         check("bare down scrolls feed down", FcmCommand.scrollDirection("Down") == 1);
         check("underscore arrow alias scrolls", FcmCommand.scrollDirection("arrow_down") == 1);
@@ -51,6 +93,14 @@ class TestFcmCommand {
         check("xScal Page Down alias maps to VK_NEXT", FcmCommand.virtualKeyCode("PGDN") == 0x22);
         check("xScal letter token maps to uppercase VK", FcmCommand.virtualKeyCode("a") == 0x41);
         check("xScal digit token maps to VK digit", FcmCommand.virtualKeyCode("7") == 0x37);
+        check("period token maps to VK_OEM_PERIOD", FcmCommand.virtualKeyCode("PERIOD") == 0xBE);
+        check("period alias maps to VK_OEM_PERIOD", FcmCommand.virtualKeyCode("OEM_PERIOD") == 0xBE);
+        check("comma token maps to VK_OEM_COMMA", FcmCommand.virtualKeyCode("COMMA") == 0xBC);
+        check("slash token maps to VK_OEM_2", FcmCommand.virtualKeyCode("SLASH") == 0xBF);
+        check("numpad token maps to VK_NUMPAD3", FcmCommand.virtualKeyCode("NUMPAD3") == 0x63);
+        check("function keys include F24", FcmCommand.virtualKeyCode("F24") == 0x87);
+        check("decimal VK token maps to any physical key", FcmCommand.virtualKeyCode("VK_190") == 0xBE);
+        check("decimal VK token rejects out of range", FcmCommand.virtualKeyCode("VK_255") == 0);
         check("control-map-only token does not guess a physical key", FcmCommand.virtualKeyCode("Console") == 0);
         check("scroll-to-bottom is unbound without a configured action", !FcmCommand.isScrollToBottom("Home"));
         check("configured scroll-to-bottom action matches", FcmCommand.isScrollToBottom("F12", "F12"));

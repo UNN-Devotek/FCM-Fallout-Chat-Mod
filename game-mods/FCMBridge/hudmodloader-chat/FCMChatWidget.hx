@@ -83,7 +83,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.125"; // xScal text sessions with bounded cancel diagnostics
+    static inline var VERSION:String  = "2.10.134"; // Keep staff actions in mod help
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -472,6 +472,11 @@ class FCMChatWidget extends MovieClip {
     var _physicalNavProbeLogged:Bool = false;      // one raw IsKeyPressed sample per session
     var _physicalOpenKey:Int = 0;
     var _physicalOpenKeyDown:Bool = false;
+    // One diagnostic retry after the physical open key is released. A rejected
+    // xScal begin on key-down may be sensitive to the native window key dispatch.
+    var _xscalBeginAfterReleaseKey:Int = 0;
+    var _xscalBeginAfterReleaseAt:Int = 0;
+    static inline var XSCAL_BEGIN_RELEASE_WINDOW_MS:Int = 2000;
     var _ownedHotkeyTimer:flash.utils.Timer = null;
     var _ownedHotkeys:Array<Dynamic> = [];
     var _ownedHotkeyCodes:Array<Int> = [];
@@ -536,7 +541,9 @@ class FCMChatWidget extends MovieClip {
             updateOptimisticRecord(id, messageId, tag,
                 FcmConfig.hudTransportHasStar(carrier), color, true,
                 FcmConfig.hudTransportNameColor(carrier));
-            if (_outbox.entries.length == 0 && !_inputOpen) setPrompt(idlePrompt());
+            var giveawayFeedback = FcmConfig.hudTransportValue(carrier, "g");
+            if (giveawayFeedback.length > 0) addPrivateGiveawayFeedback(entry.channel, giveawayFeedback);
+            if (giveawayFeedback.length == 0 && _outbox.entries.length == 0 && !_inputOpen) setPrompt(idlePrompt());
             return;
         }
         var code = extractJsonString(response, "code");
@@ -2495,11 +2502,13 @@ class FCMChatWidget extends MovieClip {
         if (_hidden) show();
         bumpAutoHide();   // opening input = activity (the timer also never hides while input is open)
         // One BA2 serves both providers. ZFE uses the host-owned SharedHUDTools editor,
-        // which starts Fallout's ControlMap text lock. xScal uses its native session.
+        // which starts Fallout's ControlMap text lock. xScal defaults to its native
+        // session, with an explicit host-editor mode for installs where BeginInput fails.
         // ZFE input.v1 alone still lets gameplay actions through on the native test build.
         var provider:String = _api == null ? "" : _api.provider;
         var route:String = FcmInputRoute.preferred(provider, _ownedInputUsable,
-            provider == FcmNativeApi.XSCAL && _xscalSessionUsable);
+            provider == FcmNativeApi.XSCAL && _xscalSessionUsable, _cfg.xscalInputMode);
+        zfeLog("info", "input", "selected editor=" + route + " xscalInputMode=" + _cfg.xscalInputMode);
         if (route == FcmInputRoute.XSCAL_SESSION) {
             if (openXscalSessionInput()) return;
             if (_xscalSessionReleaseUncertain) return;
@@ -2513,13 +2522,22 @@ class FCMChatWidget extends MovieClip {
     }
 
     /** xScal owns composition/editing; the widget consumes only session snapshots. */
-    function openXscalSessionInput():Bool {
+    function openXscalSessionInput(?phase:String = "open"):Bool {
         if (_api == null || _api.provider != FcmNativeApi.XSCAL || !_xscalSessionUsable) return false;
         try {
             var begin = FcmXscalInput.begin(_api.xscalBeginInput());
             if (!begin.success) {
                 if (begin.busy) {
-                    zfeLog("info", "input", "xScal text session busy; retry on next open");
+                    if (phase != "release" && _physicalOpenKeyDown && _physicalOpenKey > 0) {
+                        _xscalBeginAfterReleaseKey = _physicalOpenKey;
+                        _xscalBeginAfterReleaseAt = flash.Lib.getTimer();
+                    }
+                    setPrompt("xScal text input unavailable; see xscal.log");
+                    zfeLog("info", "input", "xScal text session busy phase=" + phase
+                        + " retryOnRelease=" + (_xscalBeginAfterReleaseKey > 0)
+                        + " localSession=" + (_xscalSessionId == null ? "none" : "present")
+                        + " openKeyVK=" + _physicalOpenKey
+                        + " releaseUncertain=" + _xscalSessionReleaseUncertain);
                     return false;
                 }
                 if (!begin.unsupported && begin.sessionId != null) {
@@ -2533,6 +2551,8 @@ class FCMChatWidget extends MovieClip {
                 return false;
             }
             _xscalSessionId = begin.sessionId;
+            _xscalBeginAfterReleaseKey = 0;
+            _xscalBeginAfterReleaseAt = 0;
             _xscalSessionRevision = -1;
             _xscalSessionInput = true;
             _nativeInput = true;
@@ -2545,7 +2565,7 @@ class FCMChatWidget extends MovieClip {
             _inputTimer.addEventListener(TimerEvent.TIMER,
                 function(_) { runXscalSessionInputSafely(generation); });
             _inputTimer.start();
-            zfeLog("info", "input path", "xscal-session-v1 begin accepted");
+            zfeLog("info", "input path", "xscal-session-v1 begin accepted phase=" + phase);
             return true;
         } catch (e:Dynamic) {
             if (_xscalSessionId != null) closeXscalSessionInput(true);
@@ -3299,6 +3319,11 @@ class FCMChatWidget extends MovieClip {
             return;
         }
 
+        if (FcmCommand.isHelp(s)) {
+            addPrivateHudHelp();
+            return;
+        }
+
         // /relink is local and standalone. It must be consumed before auth-gated sending and
         // before the channel parser; when the game strips a leading slash, bare "relink" is
         // accepted by FcmCommand as the equivalent input.
@@ -3311,6 +3336,30 @@ class FCMChatWidget extends MovieClip {
         // moderation request can never fall through and become a public chat message.
         // Authorization is still repeated by the relay from the linked Discord role.
         if (handleModerationCommand(s)) return;
+
+        if (FcmCommand.isGiveawayHelp(s)) {
+            addPrivateGiveawayHelp();
+            return;
+        }
+        if (FcmEventCommands.isHelp(s)) {
+            addPrivateEventHelp();
+            return;
+        }
+        var giveawayCommand = FcmCommand.giveawayCommand(s);
+        if (giveawayCommand.length > 0) {
+            sendMessage(giveawayCommand);
+            return;
+        }
+        var eventCommand = FcmEventCommands.command(s);
+        if (eventCommand.length > 0) {
+            if (CHAN_SLUGS[_chanIdx] != "global") {
+                addPrivateGiveawayNotice(CHAN_SLUGS[_chanIdx], "[Vault-Tec]",
+                    "Event commands must be sent from General. Switch with /g.");
+            } else {
+                sendMessage(eventCommand);
+            }
+            return;
+        }
 
         // Slash-command channel switch: "/g /t /e /i /r" (or ".g" alias).
         // If the whole input IS a slash command (bare or with trailing content),
@@ -3668,7 +3717,13 @@ class FCMChatWidget extends MovieClip {
         raw = fcmClean(raw);
         if (raw.length == 0) return;
 
+        var isGiveawayCommand:Bool = FcmCommand.giveawayCommand(raw).length > 0;
+        var isEventCommand:Bool = FcmEventCommands.command(raw).length > 0;
         var slug:String = CHAN_SLUGS[_chanIdx];
+        if (isGiveawayCommand && slug == "server") {
+            setLogText("Giveaways need a community channel.");
+            return;
+        }
         if (slug == "server" && !_serverSessionReady) {
             setLogText(_serverSessionError.length > 0
                 ? ("Server chat is unavailable: " + _serverSessionError)
@@ -3689,9 +3744,11 @@ class FCMChatWidget extends MovieClip {
         }
         var nativeSubmit:Bool = _nativeSubmitInFlight;
         var ownCosmetics = ownCosmeticsForSend();
-        addOptimisticEcho(slug, raw, "", ownCosmetics.tag, ownCosmetics.supporterStar,
-            ownCosmetics.starColor, localUserId, localSendId);
-        zfeLog("info", "echo", "created canonical local row; transport deferred ch=" + slug);
+        if (!isGiveawayCommand && !isEventCommand) {
+            addOptimisticEcho(slug, raw, "", ownCosmetics.tag, ownCosmetics.supporterStar,
+                ownCosmetics.starColor, localUserId, localSendId);
+            zfeLog("info", "echo", "created canonical local row; transport deferred ch=" + slug);
+        }
 
         var sendTimer:Timer = new Timer(1, 1);
         sendTimer.addEventListener(TimerEvent.TIMER_COMPLETE, function(_) {
@@ -3819,6 +3876,8 @@ class FCMChatWidget extends MovieClip {
                     // it does for live event frames. v2.10.16+ relays mirror the message ID and
                     // validated cosmetics in the known targetUserId member.
                     var ackHudTransport:String = extractJsonString(rs, "targetUserId");
+                    var giveawayFeedback = FcmConfig.hudTransportValue(ackHudTransport, "g");
+                    if (giveawayFeedback.length > 0) addPrivateGiveawayFeedback(slug, giveawayFeedback);
                     var ackTransportMessageId:String = FcmConfig.hudTransportMessageId(ackHudTransport);
                     if (ackTransportMessageId.length > 0) messageId = ackTransportMessageId;
                     if (messageId.length > 0 || FcmOutbox.receipt(ackHudTransport) == localSendId) _outbox.remove(localSendId);
@@ -4002,7 +4061,8 @@ class FCMChatWidget extends MovieClip {
             return;
         }
         zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-        zfeLog("info", "startup", "BUILD=chatv1-widget-v" + VERSION + " diagnostics=dup-v1");
+        zfeLog("info", "startup", "BUILD=chatv1-widget-v" + VERSION
+            + " diagnostics=dup-v1,xscal-shared-config-1");
         zfeLog("info", "startup", _api.provider == FcmNativeApi.ZFE
             ? "zfe-chat-online-v1 OK"
             : "xscal-chat-interface OK");
@@ -4644,6 +4704,22 @@ class FCMChatWidget extends MovieClip {
                         && (_connected || !(_outboxIdentity.length == 0 || _needsLink))) {
                     zfeLog("info", "nativein", _api.provider + " physical openKey edge key=" + _physicalOpenKey);
                     openInput();
+                } else if (!openDown && _xscalBeginAfterReleaseKey == _physicalOpenKey) {
+                    var elapsed:Int = flash.Lib.getTimer() - _xscalBeginAfterReleaseAt;
+                    _xscalBeginAfterReleaseKey = 0;
+                    _xscalBeginAfterReleaseAt = 0;
+                    if (elapsed >= 0 && elapsed <= XSCAL_BEGIN_RELEASE_WINDOW_MS
+                            && !_inputOpen && _api.provider == FcmNativeApi.XSCAL
+                            && _xscalSessionUsable && !_xscalSessionReleaseUncertain
+                            && isValidHUDMode() && !pipboyOwnsInput()
+                            && (_connected || !(_outboxIdentity.length == 0 || _needsLink))) {
+                        zfeLog("info", "input", "xScal BeginInput release probe key="
+                            + _physicalOpenKey + " elapsedMs=" + elapsed);
+                        openXscalSessionInput("release");
+                    } else {
+                        zfeLog("info", "input", "xScal BeginInput release probe skipped key="
+                            + _physicalOpenKey + " elapsedMs=" + elapsed);
+                    }
                 }
             }
         }
@@ -4712,6 +4788,8 @@ class FCMChatWidget extends MovieClip {
         _physicalNavProbeLogged = false;
         _physicalOpenKey = 0;
         _physicalOpenKeyDown = false;
+        _xscalBeginAfterReleaseKey = 0;
+        _xscalBeginAfterReleaseAt = 0;
     }
 
     /** Open chat on a false->true edge of isChatKeyPressed. */
@@ -5362,6 +5440,20 @@ class FCMChatWidget extends MovieClip {
             if (entry == null) return;
             if (accepted) {
                 if (_needsLink) clearLinkGate("ZFE relay accepted send");
+                var isGiveaway = FcmCommand.giveawayCommand(entry.body).length > 0;
+                var isEvent = FcmEventCommands.command(entry.body).length > 0;
+                if (isGiveaway || isEvent) {
+                    _outbox.remove(localSendId);
+                    var feedback = FcmConfig.hudTransportValue(
+                        FcmWire.asyncResultTargetUserId(obj), "g");
+                    addPrivateGiveawayFeedback(entry.channel, feedback.length > 0
+                        ? feedback
+                        : isGiveaway ? "Giveaway command accepted. Check this channel for updates."
+                            : "Event command accepted. Check Events for the announcement.");
+                    zfeLog("info", "send", (isGiveaway ? "giveaway" : "event") + " command confirmed ch=" + entry.channel
+                        + " requestId=" + requestId);
+                    return;
+                }
                 zfeLog("info", "send", "relay accepted ch=" + entry.channel
                     + " requestId=" + requestId + "; awaiting durable echo");
                 scheduleEchoPoll();
@@ -5632,6 +5724,56 @@ class FCMChatWidget extends MovieClip {
             supporterStar: _ownCosmeticsKnown && _ownSupporterStar,
             starColor: _ownCosmeticsKnown ? _ownStarColor : ""
         };
+    }
+
+    /** Keep command replies in this widget's feed only; no relay or Discord publication. */
+    function addPrivateGiveawayFeedback(channel:String, body:String):Void {
+        if (body == null || body.length == 0) return;
+        addPrivateGiveawayNotice(channel, "[Vault-Tec]", body);
+        if (!_inputOpen) setPrompt(idlePrompt());
+    }
+
+    function addPrivateGiveawayHelp():Void {
+        addPrivateHelpLines(FcmCommand.giveawayHelp());
+    }
+
+    function addPrivateHudHelp():Void {
+        addPrivateHelpLines(FcmCommand.hudHelp());
+    }
+
+    function addPrivateEventHelp():Void {
+        addPrivateHelpLines(FcmEventCommands.help());
+    }
+
+    /** Each line is a selectable feed row, so Up/Down can reach the whole guide. */
+    function addPrivateHelpLines(body:String):Void {
+        var lines = body.split("\n");
+        for (line in lines) {
+            if (StringTools.trim(line).length > 0)
+                addPrivateNoticeRecord(CHAN_SLUGS[_chanIdx], "FCM Help", line);
+        }
+        // A short custom history cap must still retain the complete latest guide.
+        while (_records.length > Std.int(Math.max(_cfg.maxMessages, lines.length))) _records.shift();
+        scrollToBottom();
+        requestRender();
+    }
+
+    function addPrivateGiveawayNotice(channel:String, user:String, body:String):Void {
+        addPrivateNoticeRecord(channel, user, body);
+        while (_records.length > _cfg.maxMessages) _records.shift();
+        scrollToBottom();
+        requestRender();
+    }
+
+    function addPrivateNoticeRecord(channel:String, user:String, body:String):Void {
+        var order = _nextRecordOrder++;
+        _records.push({
+            color: "", channel: channel, user: user, tag: "", supporterStar: false,
+            starColor: "", body: body, messageId: "", senderUserId: "",
+            pending: false, localSendId: "giveaway-private-" + order, pendingAt: 0,
+            sendAccepted: false, createdAt: FcmFeedPlan.utcTimestamp(Date.now()),
+            arrivalOrder: order, serverReplay: false,
+        });
     }
 
     /** Paint a local send immediately; the ACK/event then replaces fallback cosmetics authoritatively. */

@@ -159,10 +159,16 @@ class TestFcmConfig {
         eqi("clamp pollMs min", FcmConfig.parse("[FCMChat]\npollMs=10\n").pollMs, 1000);
         eqi("clamp pollMs max", FcmConfig.parse("[FCMChat]\npollMs=999999\n").pollMs, 60000);
         eqs("default openKey", d.openKey, "INSERT");
-        var environment = FcmConfig.parse("[FCMChat]\nopenKey=T\nchannelNextKey=TeamChat\nhideInHUDModes=ContainerMode\nlinkUrl=dev.falloutchatmod.com/link\n");
+        eqs("default xScal input mode", d.xscalInputMode, "native");
+        eqs("select xScal host editor", FcmConfig.parse("[FCMChat]\nxscalInputMode=SHARED\n").xscalInputMode, "shared");
+        eqs("reject unknown xScal input mode", FcmConfig.parse("[FCMChat]\nxscalInputMode=other\n").xscalInputMode, "native");
+        eqs("xScal input mode survives serialization",
+            FcmConfig.parse("[FCMChat]\nxscalInputMode=shared\n").toIni().indexOf("xscalInputMode=shared\n") >= 0 ? "yes" : "no", "yes");
+        var environment = FcmConfig.parse("[FCMChat]\nopenKey=T\nxscalInputMode=shared\nchannelNextKey=TeamChat\nhideInHUDModes=ContainerMode\nlinkUrl=dev.falloutchatmod.com/link\n");
         var merged = FcmConfig.mergePersistedCustomization(environment,
             "[FCMChat]\nopenKey=INSERT\nchannelNextKey=NextPage\nhideInHUDModes=\nlinkUrl=falloutchatmod.com/link\ntabActiveColor=#5AB0FF\n");
         eqs("persisted appearance cannot restore stale open key", merged.openKey, "T");
+        eqs("persisted appearance cannot restore xScal mode", merged.xscalInputMode, "shared");
         eqs("persisted appearance cannot restore stale channel key", merged.channelNextKey, "TeamChat");
         eqs("persisted appearance keeps environment endpoint", merged.linkUrl, "dev.falloutchatmod.com/link");
         eqs("persisted appearance keeps container safety gate", merged.hideInHUDModes.join(","), "ContainerMode");
@@ -170,6 +176,17 @@ class TestFcmConfig {
         // openKey is interpolated into htmlText (idle prompt) — must be a safe key token
         // ([A-Za-z0-9_]); anything else falls back to default (crash rule #2, htmlText injection).
         eqs("openKey safe kept", FcmConfig.parse("[FCMChat]\nopenKey=PAGE_DOWN\n").openKey, "PAGE_DOWN");
+        eqs("period openKey token kept", FcmConfig.parse("[FCMChat]\nopenKey=PERIOD\n").openKey, "PERIOD");
+        var arbitraryKeys = FcmConfig.parse("[FCMChat]\nopenKey=VK_190\nchannelNextKey=COMMA\nchannelPrevKey=NUMPAD3\nscrollUpKey=SLASH\nscrollDownKey=F24\nscrollBottomKey=VK_186\nactivateLinkKey=SEMICOLON\nhideKey=VK_222\n");
+        eqs("raw VK open key kept", arbitraryKeys.openKey, "VK_190");
+        eqs("punctuation next key kept", arbitraryKeys.channelNextKey, "COMMA");
+        eqs("numpad previous key kept", arbitraryKeys.channelPrevKey, "NUMPAD3");
+        eqs("punctuation scroll key kept", arbitraryKeys.scrollUpKey, "SLASH");
+        eqs("F24 scroll key kept", arbitraryKeys.scrollDownKey, "F24");
+        eqs("raw VK newest key kept", arbitraryKeys.scrollBottomKey, "VK_186");
+        eqs("semicolon link key kept", arbitraryKeys.activateLinkKey, "SEMICOLON");
+        eqs("raw VK hide key kept", arbitraryKeys.hideKey, "VK_222");
+        eqs("unknown open key falls back", FcmConfig.parse("[FCMChat]\nopenKey=NOTAKEY\n").openKey, "INSERT");
         eqs("openKey unsafe->default", FcmConfig.parse("[FCMChat]\nopenKey=<b>&x\n").openKey, "INSERT");
         eqs("default channelNextKey", d.channelNextKey, "NextPage");
         eqs("default channelPrevKey", d.channelPrevKey, "PrevPage");
@@ -178,6 +195,7 @@ class TestFcmConfig {
         eqs("default scrollBottomKey (unset)", d.scrollBottomKey, "");
         eqs("default link activation key", d.activateLinkKey, "F8");
         eqs("default hideKey", d.hideKey, "DELETE");
+        eqs("blank hide key disables binding", FcmConfig.parse("[FCMChat]\nhideKey=\n").hideKey, "");
         eqb("default showChannelTag", d.showChannelTag, true);
         eqb("default showHints", d.showHints, false);
         eqs("default linkUrl", d.linkUrl, "falloutchatmod.com/link");

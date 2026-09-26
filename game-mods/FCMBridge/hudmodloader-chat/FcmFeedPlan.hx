@@ -18,6 +18,18 @@ class FcmFeedPlan {
     public static inline var DEFAULT_SLICE_ROWS:Int = 6;
     public static inline var MAX_SLICE_ROWS:Int = 12;
 
+    /** Match the relay's UTC ISO timestamps so local help keeps its feed position. */
+    public static function utcTimestamp(date:Date):String {
+        var millis = Std.int(date.getTime() % 1000);
+        return StringTools.lpad(Std.string(date.getUTCFullYear()), "0", 4) + "-"
+            + StringTools.lpad(Std.string(date.getUTCMonth() + 1), "0", 2) + "-"
+            + StringTools.lpad(Std.string(date.getUTCDate()), "0", 2) + "T"
+            + StringTools.lpad(Std.string(date.getUTCHours()), "0", 2) + ":"
+            + StringTools.lpad(Std.string(date.getUTCMinutes()), "0", 2) + ":"
+            + StringTools.lpad(Std.string(date.getUTCSeconds()), "0", 2) + "."
+            + StringTools.lpad(Std.string(millis), "0", 3) + "Z";
+    }
+
     /**
      * Fast prefilter: true only when the body could contain an emoji token.
      * Unicode emoji needs a non-ASCII char; custom Discord markup needs ':' or

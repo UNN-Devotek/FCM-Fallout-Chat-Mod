@@ -60,6 +60,16 @@ class FcmWire {
         return value == null ? 0 : positiveInt(Reflect.field(value, "requestId"));
     }
 
+    /** The terminal ZFE event nests the relay response; keep command feedback private. */
+    public static function asyncResultTargetUserId(raw:String):String {
+        var value:Dynamic = parseObject(raw);
+        if (value == null || Std.string(Reflect.field(value, "kind")) != "chat.send.accepted") return "";
+        var result:Dynamic = Reflect.field(value, "result");
+        if (result == null || Reflect.field(result, "success") != true) return "";
+        var carrier:Dynamic = Reflect.field(result, "targetUserId");
+        return Std.isOfType(carrier, String) ? cast carrier : "";
+    }
+
     /** ZFE failures carry the stable machine code in error.code. */
     public static function asyncErrorCode(raw:String):String {
         var value:Dynamic = parseObject(raw);

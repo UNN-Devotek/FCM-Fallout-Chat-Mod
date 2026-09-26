@@ -87,6 +87,46 @@ owns that token — do not point a GitHub repo webhook at the prod compose's tok
 
 ### Manual deployment while auto-deploy is paused
 
+On 2026-09-25, the Dev compose still had `autoDeploy=false`. The Dokploy
+checkout's Git `HEAD` pointed to a missing object, so it was left untouched.
+The pushed `3075209f` source was staged under
+`/home/devotek/fcm-dev-deploy/3075209f/`; its repository Compose file was
+replaced in that staging copy with the live customized Dev Compose (SHA-256
+`193c6f88e4d113bc4f68d9e4531f567fa369be2296138ad74b176c74d90025b7`).
+Using the existing Dev environment file and Compose project, only `backend-dev`
+was rebuilt/recreated with `--no-deps --pull never` and fresh volumes disabled.
+The prior image is tagged `fcm-dev-backend:pre-giveaway-20260925` (image ID
+`sha256:847dcc85ae4e7b673aec962325eecaf242180dd67ce6e74ed4f97036dd477215`);
+the new image is
+`sha256:af1a6355651542db2c7f83ff9c0ca92ebaa0c19824210ccd9c98c20eb8fa42e6`.
+The original Compose checksum is unchanged. The new container was healthy,
+external `/api/health` returned connected DB/Redis/Discord with a fresh uptime,
+and its compiled HUD giveaway parser returned `/giveaway list`. No Prod
+containers or Dev storage services were recreated.
+
+The `fe8d282b` giveaway persistence correction was staged separately under
+`/home/devotek/fcm-dev-deploy/fe8d282b/` with the same customized Dev Compose
+checksum. Only `backend-dev` was rebuilt with `--no-deps --pull never`; the
+previous image was tagged `fcm-dev-backend:pre-bot-source-20260925`. The new
+image ID is `sha256:8bce612fc20b6e4ad1bb75dfd7266ef42ef3fa66506b6a295742eed99565e8c7`.
+The Dev-only `messages_source_check` now admits `bot`, the previously failed
+giveaway announcement was persisted after retry, Discord card/result links
+were present, and external health reported connected DB/Redis/Discord. No
+Prod or Dev storage/tunnel containers were recreated.
+
+The `a70fb441` channel-local giveaway correction was staged under
+`/home/devotek/fcm-dev-deploy/a70fb441/` from an exact Git archive (SHA-256
+`af5717841681617a69546a86e47d97b32702bbea55ec4ef9066687f075495ae6`).
+The customized Dev Compose checksum remained
+`193c6f88e4d113bc4f68d9e4531f567fa369be2296138ad74b176c74d90025b7`.
+Only `backend-dev` was rebuilt with `--no-deps --pull never`; its previous image
+was tagged `fcm-dev-backend:pre-channel-giveaway-20260925`. The new image ID is
+`sha256:2cb4db0fa180eba3c9a51ce33eec90e68e5feeef61d4946459903e930d8304fd`.
+The running compiled command service passes the invoking channel into giveaway
+creation, and the Discord service uses the mapped channel without a default
+fallback. The container was healthy, external `/api/health` reported connected
+DB/Redis/Discord, and no Dev storage/tunnel or Prod containers were recreated.
+
 At the 2026-09-16 UTC auth-recovery deployment, hosted Dev was authoritative on the mothership,
 with Dokploy `autoDeploy=false` and `LAPTOP_DEV_AUTODEPLOY=false`. Verify current authority
 before every deployment; these are dated observations, not permission to change either flag.

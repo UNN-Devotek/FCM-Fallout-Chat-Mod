@@ -66,6 +66,11 @@ class TestFcmWire {
             FcmWire.asyncSendCompletion('{"kind":"chat.message","id":42}') == 0);
         check("ZFE async completion request id extracted",
             FcmWire.asyncRequestId('{"kind":"chat.send.failed","requestId":42}') == 42);
+        check("ZFE accepted command feedback carrier extracted",
+            FcmWire.asyncResultTargetUserId('{"kind":"chat.send.accepted","requestId":42,"result":{"success":true,"targetUserId":"FCMHUD/1;g=Giveaway%20started"}}')
+                == "FCMHUD/1;g=Giveaway%20started");
+        check("failed command cannot impersonate accepted feedback",
+            FcmWire.asyncResultTargetUserId('{"kind":"chat.send.failed","requestId":42,"result":{"success":true,"targetUserId":"FCMHUD/1;g=wrong"}}') == "");
         check("nested ZFE failure code extracted",
             FcmWire.asyncErrorCode('{"kind":"chat.send.failed","requestId":42,"error":{"code":"permission_denied"}}') == "permission_denied");
         check("non-object async envelope is rejected",

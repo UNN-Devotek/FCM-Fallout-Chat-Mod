@@ -191,6 +191,24 @@ automatically server-side. The REST endpoints are for the dashboard and admin to
 | GET      | `/api/giveaways`            | requireClientAuth                       | List active giveaways   |
 | DELETE   | `/api/admin/giveaways/:id`  | requireDiscordRole(owner/admin/mod)     | Force-cancel a giveaway |
 
+Overlay, Discord `/giveaway` and buttons, and the optional native HUD's
+`giveaway start/list/last/join/leave/stop` commands share this service. HUD
+commands are bound to the linked relay token. Announcements and results are
+persisted in the channel where `start` was sent and mirrored as
+Discord embeds in that channel's configured relay mapping, with live entry counts
+and final results. Channels without a Discord mapping receive the in-app card
+without posting to an unrelated Discord channel.
+
+HUD event shortcuts are also accepted when they match an enabled `announce`
+command. The relay enforces that command's source-channel restriction and
+target (Events for the seeded commands), then ingests the announcement through
+the normal moderation and Discord relay path. Other HUD slash commands retain
+their existing rejection. The 33 seeded event shortcuts include `/gu` (Gearing
+Up); the migration `20260926000000_restore_missing_event_commands` restores
+`/acp`, `/bob`, and `/ct` only when those rows are absent, preserving existing
+administrator edits. Hosted installations that use `prisma db push` apply the
+same backfill through the startup post-push patches.
+
 `id` in the admin delete path is the giveaway `shortId` (6-char, e.g. `A1B2C3`), not the UUID.
 
 ---

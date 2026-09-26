@@ -83,6 +83,10 @@ class TestFcmFeedPlan {
                 "2026-09-16T12:00:00Z", 1) > 0);
         check("missing timestamps retain arrival order",
             FcmFeedPlan.compareChronology("", 4, "", 5) < 0);
+        var helpTime = FcmFeedPlan.utcTimestamp(Date.fromTime(1790364339640.0));
+        check("local help uses relay-compatible UTC time", helpTime == "2026-09-25T19:25:39.640Z");
+        check("later dated messages follow local help",
+            FcmFeedPlan.compareChronology(helpTime, 10, "2026-09-25T19:25:40.000Z", 11) < 0);
 
         // Coalescer: bursts collapse into one tick.
         var coalescer = new FcmRenderCoalescer();

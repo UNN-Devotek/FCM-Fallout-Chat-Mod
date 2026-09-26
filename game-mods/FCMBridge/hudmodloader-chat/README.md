@@ -3,6 +3,38 @@
 FCMChatWidget is the optional HUDModLoader chat widget for Fallout 76. It uses ZFE or xScal's
 native chat bridge and FCM's `/relay`. It is independent of the desktop overlay.
 
+**2.10.134 release candidate:** `/event help` lists all 33 seeded event
+shortcuts and names in private HUD feed rows, including Gearing Up (`/gu`).
+`/help` points to `/event help` and `/mod help` without listing event names or
+staff actions.
+Type a shortcut such as `/sbq`
+from General to announce in Events and its mapped Discord channel. Native
+slash-stripped input (`event help`, `sbq`) works too. The backend applies the
+same enabled-command list, General restriction, cooldown, and announcement
+template as the overlay. Each line of `/help`, `/event help`, and
+`/giveaway` help is a selectable feed row; with the editor open, Up/Down
+scrolls through every line. The private result remains on the submitting HUD.
+The release owner confirmed laptop typing, `/help`, an event shortcut, and a
+giveaway command, including their expected feed and Discord results.
+
+**2.10.130 test candidate:** `/help` adds a local command guide to the HUD feed.
+It lists channel switches, hide, relink, emoji, giveaway, and staff moderation
+commands. The native keyboard path's slash-stripped `help` also works. The
+guide is visible only on the submitting HUD and scrolls with chat.
+Giveaway entry confirmation and the creator's
+"You can't enter your own giveaway" rejection appear as local `[Vault-Tec]`
+rows in the HUD feed. They are visible only on the submitting HUD and scroll
+with ordinary messages; no private reply is sent to the channel or Discord.
+The automatic winner announcement remains a channel bot message visible to
+everyone in that channel. Bare `giveaway` or `giveaway help` still adds local
+instructions. The xScal/ZFE Ruffle scenario covers both private replies and
+the winner row; fresh in-game confirmation is pending.
+
+**2.10.129 candidate:** Giveaway announcements and winners appear in the selected
+community channel. The HUD editor accepts `giveaway start/list/last/join/leave/stop`
+with or without the leading slash. ZFE's terminal command receipt clears the
+outbox. This version showed command feedback in the prompt below the feed.
+
 **2.10.125 release candidate on Dev and Prod:** the source adds the author-supplied
 xScal 0.2.18 native text session (`Input.BeginInput`, `PollInput`, `EndInput`) with
 bounded full-text snapshots and SharedHUDTools fallback for older xScal builds.
@@ -214,8 +246,8 @@ provider owns an editor, Delete remains a text-edit key and cannot close or hide
 xScal's numeric `Input.*` operations require Boolean results; ZFE's compatibility decoder also
 handles its legacy envelopes. Registration does not promise gameplay suppression.
 
-Slash shortcuts include `/g`, `/t`, `/e`, `/i`, `/r`, and `/s`; `/clear` clears the local feed,
-`/hide` hides it, and `/relink` requests the provider's supported credential reset. Reset failure
+Slash shortcuts include `/g`, `/t`, `/e`, `/i`, `/r`, and `/s`; `/help` adds a
+private command guide to the feed, `/hide` hides it, and `/relink` requests the provider's supported credential reset. Reset failure
 must not claim a new identity. `/emoji` searches/sends bundled emoji. Staff-only `/mod` commands
 resolve visible targets to immutable IDs and repeat permission checks on the backend. See
 [staff commands](BUILD.md#staff-moderation-commands).

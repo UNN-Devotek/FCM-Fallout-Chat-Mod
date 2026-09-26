@@ -38,7 +38,8 @@ BEGIN
                          OR position('hud' IN definition) = 0
                          OR position('relay' IN definition) = 0
                          OR position('mcp' IN definition) = 0
-                         OR position('ws' IN definition) = 0 THEN
+                         OR position('ws' IN definition) = 0
+                         OR position('bot' IN definition) = 0 THEN
     IF definition IS NOT NULL THEN
       ALTER TABLE messages DROP CONSTRAINT messages_source_check;
     END IF;
@@ -51,7 +52,8 @@ BEGIN
         'hud'::text,
         'relay'::text,
         'mcp'::text,
-        'ws'::text
+        'ws'::text,
+        'bot'::text
       ]));
   END IF;
 END $$;`,
@@ -150,6 +152,19 @@ END $$;`,
     CHECK ("scopes" <@ ARRAY['fcm:read','fcm:discord:write','fcm:moderation:write']::TEXT[]);
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;`,
+  },
+  {
+    name: 'restore-missing-event-commands',
+    sql: `INSERT INTO chat_commands (
+  trigger, description, response, action_type, target_channel_id,
+  allowed_channel_id, cooldown_sec, enabled, requires_args, relay_to_discord,
+  created_at, updated_at
+)
+VALUES
+  ('/acp', 'Announce A Colossal Problem (Earle)', 'A Colossal Problem event on this server.', 'announce', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 30, true, false, true, NOW(), NOW()),
+  ('/bob', 'Announce Beasts of Burden', 'Beasts of Burden event on this server.', 'announce', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 30, true, false, true, NOW(), NOW()),
+  ('/ct', 'Announce Campfire Tales', 'Campfire Tales event on this server.', 'announce', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 30, true, false, true, NOW(), NOW())
+ON CONFLICT (trigger) DO NOTHING;`,
   },
 ] as const;
 

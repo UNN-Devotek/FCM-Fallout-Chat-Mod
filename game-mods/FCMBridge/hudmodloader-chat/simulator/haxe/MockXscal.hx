@@ -16,6 +16,12 @@ class MockXscal {
     public static var authPollCount(default, null):Int = 0;
     public static var connectCount(default, null):Int = 0;
     public static var ordinarySendCount(default, null):Int = 0;
+    public static var giveawayMode:Bool = false;
+    public static var eventMode:Bool = false;
+    public static var lastEventBody(default, null):String = "";
+    public static var lastEventChannel(default, null):String = "";
+    public static var lastGiveawayBody(default, null):String = "";
+    public static var lastGiveawayChannel(default, null):String = "";
     public static var lastRosterBody(default, null):String = "";
     public static var lastRoomDiagnosticBody(default, null):String = "";
     public static var sessionInputEnabled:Bool = false;
@@ -23,6 +29,7 @@ class MockXscal {
     public static var sessionEndResult:Dynamic = true;
     public static var sessionEndKeepsActive:Bool = false;
     public static var sessionBeginCount(default, null):Int = 0;
+    public static var sessionBeginAttempts(default, null):Int = 0;
     public static var sessionEndCount(default, null):Int = 0;
     static var sessionId:Int = 0;
     static var sessionRevision:Int = 0;
@@ -159,6 +166,27 @@ class MockXscal {
             var messageId:String = "sim-send-" + callCount;
             SimLog.emit("CHAT send len=" + body.length);
             if (scenarioEvents == null) scenarioEvents = [];
+            if (giveawayMode && StringTools.startsWith(body, "/giveaway")) {
+                lastGiveawayBody = body;
+                lastGiveawayChannel = channel;
+                var feedback = StringTools.startsWith(body, "/giveaway join OWN123")
+                    ? "You can't enter your own giveaway."
+                    : StringTools.startsWith(body, "/giveaway join ABC234")
+                        ? "You've entered giveaway [ABC234]! Total entries: 1."
+                        : "Giveaway started";
+                return response({success:true, messageId:messageId,
+                    targetUserId:"FCMHUD/1;g=" + StringTools.urlEncode(feedback)});
+            }
+            if (eventMode && FcmEventCommands.command(body).length > 0) {
+                lastEventBody = body;
+                lastEventChannel = channel;
+                scenarioEvents.push({kind:"chat.message", id:scenarioEvents.length + 1,
+                    messageId:messageId, channel:"events", senderUserId:"sim-linked-user",
+                    senderDisplayName:"Simulator76", body:"Scorched Earth event on this server.",
+                    targetUserId:""});
+                return response({success:true, messageId:messageId,
+                    targetUserId:"FCMHUD/1;g=Event%20announced%20in%20Events."});
+            }
             if (channel == "server" && StringTools.startsWith(body, "FCMCTL/1/")) {
                 if (StringTools.startsWith(body, "FCMCTL/1/DIAG:")) {
                     roomDiagnosticCount++;
@@ -201,6 +229,7 @@ class MockXscal {
             if (name == "GetXSRuntimeInfo") return response({runtime:"xScal", version:"sim-1", platform:"Simulator"});
             if (name == "log") { SimLog.emit(Std.string(value)); return true; }
             if (name == "Input.BeginInput") {
+                sessionBeginAttempts++;
                 if (!sessionInputEnabled) return false;
                 if (sessionInputBusy || sessionId != 0)
                     return response({success:false,error:"input_unavailable"});

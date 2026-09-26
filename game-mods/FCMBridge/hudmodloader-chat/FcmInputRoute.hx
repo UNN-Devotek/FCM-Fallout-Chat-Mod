@@ -6,7 +6,9 @@ class FcmInputRoute {
     public static inline var SHARED:String = "shared";
 
     /** ZFE needs the host ControlMap editor; xScal owns its native text session. */
-    public static function preferred(provider:String, ownedUsable:Bool, xscalSessionUsable:Bool = false):String {
+    public static function preferred(provider:String, ownedUsable:Bool, xscalSessionUsable:Bool = false,
+            xscalInputMode:String = "native"):String {
+        if (provider == FcmNativeApi.XSCAL && xscalInputMode == "shared") return SHARED;
         if (provider == FcmNativeApi.XSCAL && xscalSessionUsable) return XSCAL_SESSION;
         return SHARED;
     }

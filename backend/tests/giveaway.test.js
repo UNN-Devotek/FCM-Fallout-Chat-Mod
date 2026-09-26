@@ -132,6 +132,60 @@ describe('giveawayService', () => {
     }));
   });
 
+  test('production publisher carries the card to its originating channel', async () => {
+    const publishCard = jest.fn().mockResolvedValue(undefined);
+    const updateDiscordCard = jest.fn().mockResolvedValue(undefined);
+    await giveawayService.init({ prisma, broadcast, publishCard, updateDiscordCard });
+    prisma.giveaway.create.mockResolvedValue(makeGiveaway());
+
+    await giveawayService.createGiveaway('user-1', 'Devotek', 'channel-1', 'Flux x10', 5);
+
+    expect(publishCard).toHaveBeenCalledWith(
+      expect.stringContaining('Flux x10'), 'channel-1',
+      expect.objectContaining({ type: 'giveaway', giveawayId: 'giveaway-uuid-1' }), 'user-1',
+    );
+    expect(broadcast).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'chat:message' }));
+  });
+
+  test.each([
+    ['General', '00000000-0000-0000-0000-000000000005'],
+    ['Trading', '00000000-0000-0000-0000-000000000002'],
+  ])('giveaway command starts in the selected %s channel', async (channelName, channelId) => {
+    prisma.channel.findUnique.mockResolvedValue({ id: channelId });
+    prisma.giveaway.create.mockImplementation(async ({ data }) => makeGiveaway({ channelId: data.channelId }));
+    const { tryHandleCommand } = require('../src/services/commandService');
+
+    const result = await tryHandleCommand('/giveaway start Flux x10 5', 'user-1', 'Devotek', channelId, channelName);
+
+    expect(result).toEqual(expect.objectContaining({ handled: true, actionType: 'private', targetChannelId: channelId }));
+    expect(prisma.giveaway.create).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ channelId }),
+    }));
+    expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({ channelId }),
+    }));
+  });
+
+  test('Discord reconnect repairs active cards and recent finished results from stored state', async () => {
+    const repairDiscordCard = jest.fn().mockResolvedValue(undefined);
+    await giveawayService.init({ prisma, broadcast, repairDiscordCard });
+    prisma.giveaway.findMany
+      .mockResolvedValueOnce([makeGiveaway({ id: 'finished-uuid', status: 'completed', winnerName: 'Winner', _count: { entries: 3 } })])
+      .mockResolvedValueOnce([makeGiveaway({ _count: { entries: 2 } })]);
+
+    await giveawayService.repairDiscordCards();
+
+    expect(prisma.giveaway.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ status: { in: ['completed', 'cancelled'] } }),
+    }));
+    expect(repairDiscordCard).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'giveaway-uuid-1' }), 2,
+    );
+    expect(repairDiscordCard).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'finished-uuid', status: 'completed' }), 3,
+    );
+  });
+
   // ── (b) cap: second active giveaway rejected ────────────────────────────────
 
   test('rejects createGiveaway when user already has an active one', async () => {
@@ -162,6 +216,20 @@ describe('giveawayService', () => {
     }));
   });
 
+  test('HUD join command returns a private entry confirmation', async () => {
+    prisma.giveaway.findUnique.mockResolvedValue(makeGiveaway());
+    prisma.giveawayEntry.count.mockResolvedValue(1);
+    const { tryHandleCommand } = require('../src/services/commandService');
+
+    const result = await tryHandleCommand('/giveaway join ABC123', 'user-2', 'Wastelander', 'channel-1', 'General');
+
+    expect(result).toEqual(expect.objectContaining({
+      handled: true, actionType: 'private', targetChannelId: 'channel-1',
+      botMessage: expect.stringContaining("You've entered giveaway [ABC123]!"),
+    }));
+    expect(broadcast).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'chat:message' }));
+  });
+
   // ── (d) own giveaway join rejected ─────────────────────────────────────────
 
   test('joinGiveaway rejects the creator joining their own giveaway', async () => {
@@ -170,6 +238,20 @@ describe('giveawayService', () => {
     await expect(
       giveawayService.joinGiveaway('ABC123', 'user-1', 'Devotek'),
     ).rejects.toMatchObject({ code: 'OWN_GIVEAWAY' });
+  });
+
+  test('HUD creator join command returns a private rejection without adding an entry', async () => {
+    prisma.giveaway.findUnique.mockResolvedValue(makeGiveaway({ createdByUserId: 'user-1' }));
+    const { tryHandleCommand } = require('../src/services/commandService');
+
+    const result = await tryHandleCommand('/giveaway join ABC123', 'user-1', 'Devotek', 'channel-1', 'General');
+
+    expect(result).toEqual(expect.objectContaining({
+      handled: true, actionType: 'private', targetChannelId: 'channel-1',
+      botMessage: "You can't enter your own giveaway.",
+    }));
+    expect(prisma.giveawayEntry.upsert).not.toHaveBeenCalled();
+    expect(broadcast).not.toHaveBeenCalled();
   });
 
   // ── (e) join ended giveaway rejected ───────────────────────────────────────
@@ -262,9 +344,32 @@ describe('giveawayService', () => {
     }));
     expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({
       payload: expect.objectContaining({
+        channelId: 'channel-1', source: 'bot', username: '[Vault-Tec]',
+        content: expect.stringContaining('Giveaway winner: Wastelander'),
         metadata: expect.objectContaining({ type: 'giveaway_winner', winnerName: 'Wastelander' }),
       }),
     }));
+  });
+
+  test('production publisher persists the winner in the giveaway channel', async () => {
+    const publishCard = jest.fn().mockResolvedValue(undefined);
+    await giveawayService.init({ prisma, broadcast, publishCard });
+    prisma.giveaway.create.mockResolvedValue(makeGiveaway());
+    prisma.giveaway.findUnique.mockResolvedValue(makeGiveaway({ entries: [makeEntry()] }));
+    prisma.giveaway.update.mockResolvedValue({ status: 'completed' });
+
+    await giveawayService.createGiveaway('user-1', 'Devotek', 'channel-1', 'Flux x10', 5);
+    publishCard.mockClear();
+    jest.runOnlyPendingTimers();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(publishCard).toHaveBeenCalledWith(
+      expect.stringContaining('Giveaway winner: Wastelander'), 'channel-1',
+      expect.objectContaining({ type: 'giveaway_winner', winnerName: 'Wastelander' }), 'user-1',
+    );
+    expect(broadcast).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'chat:message' }));
   });
 
   // ── (j) drawWinner with no entries ─────────────────────────────────────────

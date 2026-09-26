@@ -1,5 +1,474 @@
 # FCMChatWidget build, install, and verification
 
+## HUD event commands and selectable help candidate (2026-09-26)
+
+**Widget version:** 2.10.134. The seeded event shortcuts (including Sinkhole
+Solutions) are accepted in the HUD with slash-stripped native input. From
+General they run through the backend's enabled `announce` definitions, channel
+restriction, cooldown, template and governed ingestion. The announcement
+lands in Events and its Discord mapping. `/event help` shows the 33 event names
+as private feed rows; `/help` points to `/event help` and `/mod help` without listing
+event names or staff actions. Help lines can be selected
+with Up/Down while the editor is open, and they scroll away with chat. ZFE
+retires the event command outbox entry on terminal acceptance. A local command
+result is visible only on the submitting HUD. The 25 Haxe suites, compiler
+diagnostics, source/emoji/package/SWF checks, full backend suite (124 suites),
+overlay suite (59 files), dashboard suite (48 files), and all 81 Ruffle
+scenarios passed. The normalized FWS v32 SWF is SHA-256
+`1e41f27d34a286cf78b7da7d53776dedceaa8b7d10c73187a93f3efe26265b8a`.
+The one-entry BTDX v1 GNRL BA2 extracts that SWF byte-for-byte and is SHA-256
+`7b76a2ee60b9957562718ed27ffede788ab1905a7b2c6755bd7ec9f638128560`.
+With Fallout 76 closed, this BA2 replaced only the local Dev
+`Data/FCMChatWidget.ba2`. The previous BA2 and hash manifest are at
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-hud-mod-help-2.10.134-20260926T081417Z/`.
+Hosted Dev relay and shared xScal input settings were verified unchanged.
+Fresh native game acceptance remains pending.
+
+The same 2.10.134 BA2 was installed on the MSI Windows laptop with Fallout 76
+closed. The installed SHA-256 matches the source artifact above. The laptop's
+`Data/FCMChat.ini` retains `openKey=PERIOD` and `xscalInputMode=shared`; only
+its `linkUrl` was changed to `dev.falloutchatmod.com/link`. The root `xscal.ini`
+relay was changed to `wss://dev.falloutchatmod.com/relay`. Byte comparisons
+against the backed-up configs confirmed these were the only two config changes.
+The old BA2 and both prior configs are at
+`C:\Users\White\Documents\FCM-Repro-Backups\before-hud-help-2.10.134-2026-09-26`.
+The loader still has one FCMChatWidget entry and no additional FCM BA2. The
+release owner confirmed native Windows typing, `/help`, an event shortcut,
+and a giveaway command, including the expected feed and Discord results.
+
+## Private giveaway feedback candidate (2026-09-25)
+
+**Widget version:** 2.10.130. Standalone `/help`, `.help`, or native
+slash-stripped `help` adds a local command guide to the feed, covering every
+implemented channel, visibility, relink, emoji, giveaway, and moderation
+command. Successful giveaway joins and attempts to join
+one's own giveaway now create local `[Vault-Tec]` feed rows in the command's
+channel. They carry no relay message ID or sender ID and are never sent as
+ordinary chat, so only the submitting HUD sees them. The automatic winner is
+still a persisted channel bot message. The xScal and ZFE simulator scenario
+checks both private outcomes, private help, and the winner's feed order.
+The 25 Haxe suites, compiler diagnostics, source/package/emoji/SWF/BA2 checks,
+backend giveaway tests, and all 79 Ruffle scenarios passed. The normalized
+FWS v32 SWF is SHA-256
+`b0d97324754cf100f3610e13d80e070de1a7da97635aff031e1b02fc3b900f35`.
+The rebuilt one-entry BTDX v1 GNRL BA2 extracts that SWF byte-for-byte and is
+SHA-256 `1f5937426cc7628486ecaf77e85f5fba3c598cfb8a3a487196d9cb72c2d836d8`.
+With Fallout 76 closed, the BA2 was installed on the local Steam/Proton
+desktop. The old BA2 and hash manifest are backed up under
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-hud-private-help-20260926T024752Z-me7dk2ua/`.
+The Dev relay/link, `xscalInputMode=shared`, xScal 0.2.18 DLL, loader registry,
+and other configs were verified unchanged. Fresh native game acceptance is pending.
+
+## Local Steam/Proton xScal shared-input install (2026-09-25)
+
+With Fallout 76 closed, the SWF was rebuilt from `dev` revision `17a2a876` and
+normalized; its SHA-256 is
+`c94b591310b06754de0771357439a700dcd6d0d1054ff49a834b221b9d311d26`.
+The rebuilt one-entry BTDX v1 GNRL BA2 extracts that exact SWF and matches the
+committed archive byte-for-byte (SHA-256
+`aa6125aeae3b0d7f828110676c6e939e18f28eaeb8e1590c4e21a72c94c947a6`).
+Compiler diagnostics, 25 Haxe suites, native adapter/auth and source/package
+checks, and the complete 79-case Ruffle suite passed; the revision's CI run
+`36209681621` passed. Only the BA2 and two existing configuration files were
+changed on the local Steam/Proton installation. `Data/FCMChat.ini` now sets
+`xscalInputMode=shared` and `linkUrl=dev.falloutchatmod.com/link`, while the
+root `xscal.ini` uses `wss://dev.falloutchatmod.com/relay`. `openKey=INSERT`,
+xScal 0.2.18, and the HUDModLoader registry remain unchanged. The prior files
+and SHA-256 manifest are under
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-xscal-shared-local-20260926T015953Z-snw8610p/`.
+The version stamp was absent and remains absent. This is a local test install;
+fresh native typing and Dev authentication are pending the user's game launch.
+
+## Temporary Windows xScal SharedHUDTools workaround (2026-09-25)
+
+`FCMChat.ini` now accepts `xscalInputMode=native|shared`. Native remains the
+default and worked in the Linux/Steam Proton test with xScal 0.2.18. The
+native failure reproduced on the Windows laptop; its test uses `shared` to
+bypass xScal 0.2.18 `Input.BeginInput` and open HUDModLoader's
+`SharedHUDTools.TextEdit` instead.
+The setting does not affect ZFE or the eight configurable action keys. It is
+explicit because `input_unavailable` also covers an existing native owner.
+Controller text entry is unsupported in shared mode. The Ruffle harness checks
+that configured shared mode never calls native BeginInput and releases its
+host editor on shutdown. The 25 Haxe suites, compiler diagnostics, source and
+package checks, native adapter/auth checks, and all 79 Ruffle scenarios passed.
+The normalized FWS v32 SWF is SHA-256
+`c94b591310b06754de0771357439a700dcd6d0d1054ff49a834b221b9d311d26`.
+The BTDX v1 GNRL BA2 has one entry; its extracted SWF matches the tested
+artifact byte-for-byte. BA2 SHA-256:
+`aa6125aeae3b0d7f828110676c6e939e18f28eaeb8e1590c4e21a72c94c947a6`.
+The production xScal Nexus-layout ZIP at
+`.build/FCMChatWidget-2.10.129-xscal-shared-config-test-nexus.zip`
+embeds that exact BA2. With Fallout 76 closed, the same BA2 was installed on
+the Windows laptop and verified by hash. Only `xscalInputMode=shared` was
+appended to the laptop's `Data/FCMChat.ini`; `openKey=PERIOD` remains intact.
+The prior BA2 and config are backed up under
+`C:\Users\White\Documents\FCM-Repro-Backups\before-xscal-shared-config-20260925`.
+The user's first laptop run after installation reported that typing seemed to
+work. The fresh `xscal.log` identified the exact `xscal-shared-config-1` build,
+registered Period as VK 190, and logged `selected editor=shared
+xscalInputMode=shared` after its physical open-key edge. `FormatTextEdit`,
+`FormatOnScreenKeyboard`, and `TextEdit` opened successfully. The focused
+input field reached length two; Enter reserved the draft, the callback ran,
+xScal acknowledged the send, and the next relay poll matched one own echo.
+There were zero `BeginInput` log lines and no editor failure in this run.
+The log does not directly measure whether gameplay actions were blocked while
+typing; the user's visual report is the only evidence for that aspect so far.
+The user subsequently confirmed that this workaround worked on the laptop.
+It remains a local test candidate, not a published fix or a diagnosis of the
+native xScal failure. Provider-side diagnostics should distinguish the
+`BeginInput` refusal branches, especially foreground HWND validation and
+`SetWindowSubclass` success on the window-owning thread.
+
+## xScal key-release diagnostic candidate (2026-09-25)
+
+The next FCM BA2 keeps xScal's native `Input.BeginInput` / `PollInput` /
+`EndInput` route. After `input_unavailable` on a physical open-key down edge,
+it attempts `BeginInput` exactly once on that key's release, within two seconds
+and only while the HUD is allowed to own input. Startup marker:
+`diagnostics=dup-v1,xscal-native-begin-probe-2`. The log identifies press and
+release outcomes and release delay. No text or auth data is logged. This probe
+can establish whether refusal depends on key timing; it cannot distinguish the
+internal refusal branches of the public xScal 0.2.18 DLL. ZFE keeps its existing
+SharedHUDTools editor. Record the tested BA2 hash and native result after the
+full Ruffle suite and laptop run.
+
+The candidate passed 25 pure Haxe suites, compiler diagnostics, native
+adapter/auth and source/package/SWF/BA2/emoji checks, and all 78 Ruffle
+cases. FWS v32 SWF SHA-256:
+`fde7e3f49bbdeffbcfedee15576b6d2fdb46fc5a5e3004c083fff559be0af3a0`.
+The BTDX v1 GNRL BA2 has one entry, its extracted SWF matches exactly, and
+its SHA-256 is
+`2e36c5aeefb745d2de65efff459a5ed1cbd6fa12a2acdf98b3a539f556d6a236`.
+The production xScal Nexus-layout ZIP embeds that same BA2. With Fallout 76
+closed, only `Data/FCMChatWidget.ba2` was replaced on the Windows laptop;
+the installed hash matches and `openKey=PERIOD` is unchanged. The prior BA2
+and config are backed up at
+`C:\Users\White\Documents\FCM-Repro-Backups\before-xscal-release-probe-20260925`.
+The next launch supplied the native result below.
+The user's laptop run loaded the exact BA2 (`probe-2` marker). Period registered
+as VK 190 and produced two physical press edges. Both press-time
+`BeginInput` calls returned `input_unavailable`, and the corresponding
+release probes at 78 ms and 80 ms returned the same refusal. FCM had no local
+session and no uncertain release. Typing still failed, so **this candidate is
+native-rejected on the laptop**. The key-release timing hypothesis is ruled
+out for this run; the public 0.2.18 reply still does not reveal which internal
+branch refused the session. Do not publish this as a typing fix.
+
+An independent Windows foreground probe then ran in the laptop's interactive
+session while Fallout 76 was open. On three Period down/up pairs, the foreground
+HWND stayed `1248560`, its owner PID stayed `3188` (the Fallout76 process),
+and its window-owner thread stayed `20784`; both probe and game were in session
+`1`. The matching FCM log again records physical VK 190 edges and rejected
+press/release `BeginInput` attempts. This rules out loss of foreground focus
+for those attempts. It does **not** reveal xScal's callback thread ID or prove
+that `SetWindowSubclass` failed; that still needs native branch diagnostics.
+The read-only foreground probe CSV is kept in the laptop repro backups.
+
+Static inspection of the *exact installed* public xScal 0.2.18 `dxgi.dll`
+(SHA-256 `78cb91d6e9e53bcf97f55dd82a60931aec94cc4cc2b6dc74da198d6b9dd311e4`)
+found two `input_unavailable` returns in `Input.BeginInput` (handler RVA
+`0x26728`). One follows a failed begin helper (RVA `0x28a70`), which combines
+active session, missing/foreign foreground HWND, failed `SetWindowSubclass`,
+and changed prior HWND. The other follows a failed initial snapshot helper
+(RVA `0x28bc0`) and cleanup. The begin helper's foreground getter (RVA
+`0x28294`) uses `GetForegroundWindow`, `GetWindowThreadProcessId`, and
+`GetCurrentProcessId`. COMCTL32 ordinals 410/412/413 were verified against
+the laptop's Windows DLL as Set/Remove/DefSubclassProc. No native callback
+thread ID or branch code is logged. Subclass failure is the leading inference,
+not a confirmed branch; do not patch the external DLL based on this alone.
+
+## xScal 0.2.18 diagnostic-build prerequisite (2026-09-25)
+
+The current public xScal GitHub `main` is commit `2c073777b8399960122c4971694f5b6e8be2a8ba`.
+It contains no `Input.BeginInput`, `Input.PollInput`, `Input.EndInput`,
+`input_unavailable`, or text-session implementation. Its only public tag is
+`v0.1.1`, and GitHub has no published release. The official Nexus 0.2.18 ZIP
+contains only `dxgi.dll` and `xscal.ini`, with no source or debug symbols.
+Consequently, an instrumented **0.2.18 native DLL cannot be built from the
+published source**. Do not replace the laptop's working chat transport with a
+rebuild of this older, incomplete tree.
+
+Request for an author-supplied diagnostic build or the missing 0.2.18 input
+source: keep the native session behavior unchanged and emit a distinct failure
+reason at each `Input.BeginInput` refusal: existing active session; foreground
+Fallout window not found or rejected; `SetWindowSubclass` failure. For the
+window/subclass branches, log the selected HWND, current thread ID, window
+owner thread ID, and Win32 error captured immediately after the failed call.
+Avoid text, player identity, tokens, and chat payloads. Reproduce on the clean
+Windows laptop with xScal 0.2.18, HUDModLoader v70, FCMChatWidget 2.10.129,
+`openKey=PERIOD`, and only the required archives. A successful diagnostic run
+must show which branch refused `BeginInput`; a proposed fix then needs an
+accepted session, visible characters, blocked gameplay actions during input,
+and balanced `EndInput`/reopen across cancel, submit, and focus loss. Repeat
+the same test on the previously working Proton desktop and run the ZFE HUD
+regression suite before shipping a changed FCM BA2.
+
+## Laptop retest and editable physical keys (2026-09-25)
+
+The laptop loaded the 2.10.129 native diagnostic BA2 (startup marker
+`diagnostics=dup-v1,xscal-native-begin-probe-1`) with `openKey=PERIOD`.
+`xscal.log` records accepted VK 190 registration and repeated `physical openKey
+edge key=190` events, each followed by `xScal text session busy` with
+`localSession=none` and `releaseUncertain=false`. This confirms the rebind
+worked and isolates the typing failure to xScal refusing `Input.BeginInput`;
+the log does not distinguish an existing provider session, missing foreground
+game window, or failed Windows subclass installation. The next candidate shows
+this refusal in the HUD prompt and accepts named punctuation, numpad keys,
+F1-F24, and decimal `VK_###` tokens across all eight config key lines.
+`hideKey=` now disables the hide binding as the shipped guide already promised.
+This candidate is a keybind and diagnostic improvement, not a confirmed repair
+for the native refusal. Keep Fallout closed while installing it, then collect
+fresh native results from that exact BA2.
+
+The candidate passed 25 pure Haxe suites, compiler diagnostics, native
+adapter/auth checks, source/package/emoji/SWF/BA2 checks, the complete
+78-case Ruffle suite (including ZFE editor/rebind flows), and the focused
+website keybind guide test. Compiled FWS v32 SWF SHA-256:
+`53127ac882e232bde16091b2999880051a000b31bcaa64f89562a319f34f884c`.
+One-entry BTDX v1 GNRL BA2 SHA-256:
+`4ca5fae83ae7f7d39e748f25626a9997bf3f1e86a4ad92117b7c67befa4a1002`;
+extracted SWF bytes match the compiler output. The production xScal ZIP
+contains that exact BA2 and passed package validation. With Fallout closed,
+only `Data/FCMChatWidget.ba2` was replaced on the laptop. The remote installed
+hash matches; `Data/FCMChat.ini` remains `openKey=PERIOD`. Backup:
+`C:\Users\White\Documents\FCM-Repro-Backups\before-keybind-native-diagnostic-20260925`.
+The user's next game launch loaded this exact BA2. Its fresh `xscal.log`
+records accepted VK 190 registration, two `physical openKey edge key=190`
+events, and two `xScal text session busy` results with `localSession=none`
+and `releaseUncertain=false`. No native session was accepted and typing still
+failed. Therefore this candidate is **native-rejected for text input** on the
+Windows laptop, while its Period rebind is accepted. Do not publish it as a
+typing fix.
+
+Provider issue handoff: on a fresh Steam Fallout 76 1.7.26.10 / xScal 0.2.18 /
+HUDModLoader v70 install, `Input.RegisterKey(190)` returns true and physical
+polling observes the key, but the generic callback `Input.BeginInput` returns
+`{"success":false,"error":"input_unavailable"}` every time. The laptop has
+no previous FCM session or uncertain release. xScal 0.2.18 should distinguish
+and log its three known refusal conditions (already active session, foreground
+game HWND lookup, and `SetWindowSubclass` failure), including the HWND/thread
+and Win32 error where applicable. If subclassing fails because the call is on
+a different thread, install/remove it on the window's owner thread; Microsoft
+documents the cross-thread restriction. This is a hypothesis until xScal's
+own branch diagnostics identify which condition failed.
+
+## Laptop xScal native input diagnostic candidate (2026-09-25)
+
+The clean Windows laptop reproduced the reporter's failure on the public 2.10.125
+BA2 and xScal 0.2.18 DLL: Insert registered as VK 45, but every attempted
+`Input.BeginInput` returned `input_unavailable` (16 busy lines, no accepted
+session). The same DLL accepted a native session on the Steam/Proton desktop.
+No xScal text session had been accepted earlier in the laptop log. The laptop
+game was launched before `FCMChat.ini` changed from Insert to Period, so that
+run tested Insert only. Its period press surfaced as an unmapped HUD action.
+
+The private source candidate retains xScal's native `Input.BeginInput` /
+`PollInput` / `EndInput` path and the fail-closed busy behavior. It maps
+`openKey=PERIOD` to VK_OEM_PERIOD (190) and adds a bounded busy diagnostic
+showing whether this widget already holds a local native session, the configured
+open key code, and whether a prior release is uncertain. The startup marker is
+`diagnostics=dup-v1,xscal-native-begin-probe-1`. These changes can distinguish
+key detection and local ownership from a rejected xScal session; they do not
+claim to repair `input_unavailable` inside the xScal DLL. A Ruffle scenario
+exercises Period opening and closing the native xScal session. All Haxe,
+native-adapter/auth, package, SWF, emoji, and complete 78-case Ruffle checks
+passed. The FWS v32 SWF is SHA-256
+`962dec9a8a4e509cc4379b89303b46f2895c6a4fc5d47cd926406de05f6cf70f`;
+the one-entry BTDX v1 GNRL BA2 is SHA-256
+`d287172f555c874499cb1889b003a2e683439fb6e6e686c67408dbc4ae1c511a`.
+Extraction matched the compiled SWF byte for byte, and the original BA2's
+path and record metadata were retained. A production xScal ZIP was checked
+against its embedded BA2 and production link URL. With Fallout 76 closed, only
+`Data/FCMChatWidget.ba2` was replaced on the laptop, retaining the Nexus
+xScal DLL, HUDModLoader and `FCMChat.ini` `openKey=PERIOD`. The prior BA2,
+config and log are backed up at
+`C:\Users\White\Documents\FCM-Repro-Backups\before-xscal-native-probe-20260925T184343`.
+Installed BA2 SHA-256 matches the candidate. Native acceptance on the laptop
+remains pending the user's next game launch.
+
+Read-only examination of the installed xScal 0.2.18 binary shows its
+`input_unavailable` response also follows failure to find the foreground game
+window or failure of Windows `SetWindowSubclass`; an existing xScal session is
+another branch. [xScal's public source](https://github.com/DCHoaxer/xScal)
+omits the text-session implementation, so the exact failed branch on Windows
+has not been observed. [Microsoft documents](https://learn.microsoft.com/en-us/windows/win32/api/commctrl/nf-commctrl-setwindowsubclass)
+that the subclass helper cannot subclass across threads. This is a hypothesis
+for the Windows/Proton difference, not a confirmed cause; the native xScal
+provider needs its own diagnostic or fix if the candidate stays busy.
+
+## Fresh Nexus xScal input reproduction (2026-09-25)
+
+After local 2.10.129 typing continued to work with only required HUD mods and
+with `xScalPriority` disabled, the user requested a clean install from Nexus.
+With Fallout 76 closed, the current public Nexus ZIPs were fetched directly and
+their SHA-256 hashes matched the files listed on Nexus:
+
+| Nexus mod | Version | ZIP SHA-256 |
+| --- | --- | --- |
+| FCM HUD (4082) | 2.10.125 | `e1e6983d81d3c8c5c49836e7f1bb14770c15ebc8d1e6676638d71c77157f8e65` |
+| HUDModLoader (3144) | 70 | `7f8b320e1779ba9e8a4d2e10935a2cc53ecc36da4518aa0633e10cb1f3016874` |
+| xScal (4183) | 0.2.18 | `30fad6aa50649a38d9ba83a718cbca9970a2c9299f5a722fc2cbfc04657a1baa` |
+
+The xScal provider folder of the unified FCM package supplied
+`Data/FCMChatWidget.ba2` (`66d1d90246723d99838ab5620192b50fe1083a23cf55f80c11b8e47527ef464e`)
+and `Data/FCMChat.ini`; the xScal ZIP supplied root `dxgi.dll` and its default
+`xscal.ini` with production relay and `xScalPriority` disabled. The loader ZIP
+supplied `Data/HUDModLoader.ba2` (`a0287e33c27cd5baa7f7a1f23acb571c77ccd27d25b6b2df83d25b56c9578b11`)
+and its default registry; one `FCMChatWidget` line was appended. The custom
+archive list contains exactly `HUDModLoader.ba2,FCMChatWidget.ba2`. Prior mod
+files, auth cache, settings, and logs were moved to
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/fresh-nexus-input-repro-20260925T220601Z/`;
+the manifest records every path and the source ZIPs. Non-mod display settings
+in `Fallout76Custom.ini` were preserved. Native typing on this exact install
+remains pending the user's next launch.
+
+The same source ZIPs were transferred through SSH Manager to the MSI Windows 11
+laptop and verified there by SHA-256 before installation. Fallout 76 was closed.
+The prior active `FCMServerBridge.ba2`, older HUDModLoader BA2, FCM/extender
+files, caches, settings, and logs were moved to
+`C:\Users\White\Documents\FCM-Repro-Backups\before-nexus-clean-20260925T221153Z`.
+The manifest lists 58 moved paths and installed hashes. The fresh game Data
+folder has only HUDModLoader and FCMChatWidget mod BA2s; the custom archive
+list is `HUDModLoader.ba2,FCMChatWidget.ba2`, the loader registry has one
+`FCMChatWidget` line and no bridge line, and the old xScal log is absent.
+Installed DLL, widget, loader BA2, and provider config hashes match the desktop
+Nexus trial; the merged registry uses Windows line endings.
+The laptop's production desktop overlay was outside this game-mod reset.
+Native typing on the laptop is pending the user's launch.
+
+## Local xScal typing reproduction setup (2026-09-25)
+
+With Fallout 76 closed, the local Steam/Proton install was switched from ZFE
+0.15.0 to the previously native-tested xScal 0.2.18 DLL. Only the root
+`dxgi.dll` changed. The installed `Data/FCMChatWidget.ba2` remains the current
+2.10.129 source build (SHA-256
+`4407256d7af0ddbf33e17b7bad21b6a8c66553acd923b5c4f0366d43fbed4de3`);
+compiling and normalizing the current source reproduced its embedded SWF hash.
+The existing xScal configuration still targets hosted Dev. FCM configuration,
+HUDModLoader registration, archive list, and the inert ZFE fragment were unchanged.
+The loader and archive list each contain one visible widget and no legacy or
+background FCM bridge. Exact-file rollback copies and hashes are in
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-xscal-typing-repro-20260925T204901Z/`.
+
+Pure Haxe, native adapter/auth, source/package/SWF/emoji checks and all 77 Ruffle
+cases passed before the provider swap. The subsequent in-game trial accepted
+typing, gameplay lock, submission, Delete hide/reopen, and a map cycle. The
+reporter's xScal log shows repeated `Input.BeginInput` busy responses with no
+accepted session; their visible Data mod list shows only HUDModLoader and one
+FCMChatWidget as apparent HUD input components, but does not identify the
+native input owner.
+
+## Channel-local giveaway and ZFE command receipt candidate (2026-09-25)
+
+**Widget version:** 2.10.129. A giveaway command now stays in the selected
+community channel. ZFE's terminal accepted command clears the outbox and shows
+the private feedback without hiding the chat feed; a synthetic chat echo is no
+longer required. General-channel xScal/ZFE Ruffle scenarios cover routing,
+private feedback, and announcement/result visibility. Native acceptance remains
+pending.
+
+The compiled FWS v32 SWF SHA-256 is
+`50b58a9c415dc71f08c047f9bef291a6df4f94f09021fd6de9b4b0ac8efc08c5`.
+The one-entry BTDX v1 GNRL BA2 SHA-256 is
+`4407256d7af0ddbf33e17b7bad21b6a8c66553acd923b5c4f0366d43fbed4de3`.
+The path, hashes, flags, and sentinel were retained from 2.10.128; its
+extracted SWF matches the compiler output byte for byte. Pure Haxe, source,
+package, SWF, emoji, and complete 77-case Ruffle provider checks passed. With
+Fallout 76 closed, this BA2 replaced only the local Dev `Data/FCMChatWidget.ba2`
+and the root version stamp was set to 2.10.129. The installed hash matches the
+reviewed BA2; Dev relay and link settings were preserved. Exact-file rollback
+copies and a manifest are in
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-giveaway-channel-dev-77a3sex0/`.
+
+## Chronological giveaway help candidate (2026-09-25)
+
+**Widget version:** 2.10.128. The private help row now carries a UTC ISO
+timestamp matching relay messages. It remains in chronological feed order as
+new messages arrive, instead of sorting permanently after every dated row.
+Pure feed-plan and ZFE/xScal Ruffle scenarios cover the order. Native acceptance
+of this corrected artifact remains pending.
+
+The compiled FWS v32 SWF SHA-256 is
+`afd1b1c6b01a42533abca5a397bb24a01c6bf21e3fdc470ebc1abd1de56120b9`.
+The one-entry BTDX v1 GNRL BA2 SHA-256 is
+`fb3491d717cc8756916f2e545e485581c6b7a8ae6fa6688a6622df3fb5484256`.
+Its original path, hashes, flags, and sentinel were retained; the extracted
+SWF matches the compiled output byte for byte. Pure Haxe, package, source,
+SWF, and emoji checks plus the complete 77-case Ruffle provider suite passed.
+With Fallout 76 closed, this BA2 replaced only the local Dev
+`Data/FCMChatWidget.ba2`; the root version stamp was set to 2.10.128. The
+installed BA2 hash matches the reviewed hash. Dev relay/link settings and
+their hashes were preserved. Exact-file rollback copies and a manifest are in
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-giveaway-help-order-dev-j30lnn_j/`.
+
+## Private giveaway help candidate (2026-09-25)
+
+**Widget version:** 2.10.127. Entering bare `giveaway`, `/giveaway`, or
+`giveaway help` adds a local, private help row to the current HUD feed. The
+command never goes to the relay or Discord. The row uses the normal chat feed
+renderer and scrolls into view. The ZFE/xScal Ruffle scenario checks both
+slash and slash-stripped input, private local storage, and rendered feed output.
+The user's native ZFE screenshot confirms the help row. In the first native
+giveaway trial, the command reached Dev but its bot announcement failed the
+Dev `messages_source_check`. After the DB rule was repaired, the queued
+announcement persisted, Discord's card repair linked the card, and the draw
+result reached the ZFE feed. A fresh start-to-card trial remains pending.
+
+The compiled FWS v32 SWF SHA-256 is
+`c7d38eaf32766ee8356a2c6c36f7d1faf2026233fab33d7e0c48124f7e789d93`.
+The one-entry BTDX v1 GNRL BA2 SHA-256 is
+`cada8c6cbbf5b008d41c715eeed567b54909c7a0491d0cdc3015d79a4e87c85b`.
+The original name, hashes, flags, and sentinel were retained; the extracted
+SWF matches the compiler output byte for byte.
+The pure Haxe, source, package, SWF, emoji, and complete 77-case Ruffle suite
+passed. With Fallout 76 closed, this BA2 replaced only the existing local Dev
+`Data/FCMChatWidget.ba2`, and the root version stamp was updated to 2.10.127.
+The installed BA2 hash matches the reviewed hash above. ZFE 0.15.0, the Dev
+relay/link settings, loader and archive registries were unchanged. Exact-file
+rollback copies and config hashes are in
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-giveaway-help-dev-vai8dcu6/`.
+
+## Giveaway candidate (2026-09-25)
+
+**Widget version:** 2.10.126. The HUD now routes linked-account giveaway
+start/list/last/join/leave/stop commands through the Events channel, suppresses
+the command's public optimistic row, and displays a private send receipt. The
+Events feed receives the persisted announcement and result text. Pure Haxe and
+the complete 77-case Ruffle suite passed on this source, including both provider
+routes. Native ZFE/xScal acceptance has not yet been performed for this build;
+the game install remains untouched.
+
+The compiled FWS v32 SWF SHA-256 is
+`c2b79c34604e3ec541e31df08898b13abebb4b57cbb2e37d95ba36eb978b09c4`.
+The rebuilt one-entry BA2 SHA-256 is
+`ab193241111297cbd61da4cf9e6f64913dea4d9fddbdacf283a75c47eafdbf2d`.
+The BA2 retained the BTDX v1 GNRL header, path, hashes, flags and sentinel;
+its extracted SWF equals the compiled SWF byte for byte. No package was published.
+
+**Local hosted-Dev install (2026-09-25):** With the Steam/Proton game closed,
+the reviewed 2.10.126 BA2 replaced only `Data/FCMChatWidget.ba2`, and the root
+version stamp was updated. The existing ZFE fragment and inactive `xscal.ini`
+each had only their relay endpoint changed from Prod to
+`wss://dev.falloutchatmod.com/relay`. A follow-up corrected the separate
+`Data/FCMChat.ini` `linkUrl` from the Prod `/link` page to
+`dev.falloutchatmod.com/link`; the first install had missed this field. The
+game was closed, only that line changed, and its exact rollback file is under
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-giveaway-dev-link-siwl8bgh/`.
+The ZFE 0.15.0 DLL, other settings, HUDModLoader entry, and archive list were
+unchanged. The installed BA2 hash
+matches the reviewed hash above; the widget has one loader entry and one
+archive-list entry, with no `FCMServerBridge.ba2`. Exact-file backups and
+pre-install hashes are in
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-giveaway-dev-1sp3d8ri/`.
+Native acceptance is pending. Hosted Dev was healthy at install time, but its
+running backend initially predated the giveaway service changes. On 2026-09-25,
+the pushed `3075209f` Dev source was staged separately and only `backend-dev`
+was rebuilt; the new backend is healthy and the Dev Events channel retains its
+Discord mapping. The pre-deployment HUD giveaway command was rejected by the
+old relay and must be submitted again. Fresh native result/Discord acceptance
+is still pending.
+
 ## ZFE controller keyboard visibility correction (2026-09-24)
 
 The user confirmed that physical Insert now opens chat with a controller active, but the

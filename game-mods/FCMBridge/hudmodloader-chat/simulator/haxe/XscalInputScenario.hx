@@ -10,9 +10,14 @@ class XscalInputScenario {
         timer.run = function():Void {
             try {
                 if (++attempts > 40) throw "xScal provider setup timed out";
-                if (widget._api == null) return;
+                if (widget._api == null || (scenario == "xscal-period-native" && !widget._connected)) return;
                 timer.stop();
+                if (scenario == "xscal-period-native") {
+                    periodNative(widget);
+                    return;
+                }
                 if (scenario == "xscal-session-fallback") fallback(widget);
+                else if (scenario == "xscal-shared-config") configuredShared(widget);
                 else {
                     run(widget);
                     return;
@@ -53,6 +58,9 @@ class XscalInputScenario {
         widget.openInput();
         check(!widget._inputOpen && !SharedHUDTools.hasActiveEditor(),
             "busy native owner must not open SharedHUDTools");
+        check(widget._promptTf != null
+            && widget._promptTf.text.indexOf("xScal text input unavailable") >= 0,
+            "busy native input is visible to the player");
         MockXscal.sessionInputBusy = false;
         widget.openInput();
         check(widget._xscalSessionInput && MockXscal.sessionBeginCount == 3,
@@ -95,5 +103,75 @@ class XscalInputScenario {
         widget.shutdown();
         check(!SharedHUDTools.hasActiveEditor() && MockXscal.sessionEndCount == 0,
             "fallback editor cleans up without a native session");
+    }
+
+    static function configuredShared(widget:FCMChatWidget):Void {
+        widget._cfg.xscalInputMode = "shared";
+        MockXscal.sessionInputBusy = true;
+        var before = MockXscal.sessionBeginAttempts;
+        widget.openInput();
+        check(widget._inputOpen && !widget._xscalSessionInput && SharedHUDTools.hasActiveEditor(),
+            "configured shared editor opens despite unavailable native input");
+        check(MockXscal.sessionBeginAttempts == before,
+            "configured shared editor never calls xScal BeginInput");
+        widget.shutdown();
+        check(!SharedHUDTools.hasActiveEditor() && MockXscal.sessionEndCount == 0,
+            "configured host editor releases without a native session");
+    }
+
+    static function periodNative(widget:FCMChatWidget):Void {
+        widget._cfg.openKey = "PERIOD";
+        widget.stopPhysicalNavigation();
+        widget.startPhysicalNavigation();
+        check(widget._physicalOpenKey == 0xBE, "period maps to VK_OEM_PERIOD");
+        MockXscal.setVirtualKey(0xBE, true);
+        widget.runPhysicalNavigationSafely();
+        check(widget._xscalSessionInput && widget._inputOpen
+            && MockXscal.sessionBeginCount == 1,
+            "period opens the xScal native session");
+        MockXscal.setVirtualKey(0xBE, false);
+        MockXscal.setSessionInput("", "cancelled");
+        widget.runXscalSessionInputSafely(widget._inputGeneration);
+        check(!widget._inputOpen && MockXscal.sessionEndCount == 1,
+            "period session releases through xScal");
+        widget._cfg.openKey = "VK_188";
+        widget.stopPhysicalNavigation();
+        widget.startPhysicalNavigation();
+        check(widget._physicalOpenKey == 0xBC, "decimal VK token maps to comma");
+        MockXscal.setVirtualKey(0xBC, true);
+        widget.runPhysicalNavigationSafely();
+        check(widget._xscalSessionInput && MockXscal.sessionBeginCount == 2,
+            "decimal VK token opens the xScal native session");
+        MockXscal.setVirtualKey(0xBC, false);
+        MockXscal.setSessionInput("", "cancelled");
+        widget.runXscalSessionInputSafely(widget._inputGeneration);
+        check(!widget._inputOpen && MockXscal.sessionEndCount == 2,
+            "decimal VK session releases through xScal");
+        widget._cfg.openKey = "PERIOD";
+        widget.stopPhysicalNavigation();
+        widget.startPhysicalNavigation();
+        MockXscal.sessionInputBusy = true;
+        var attemptsBefore = MockXscal.sessionBeginAttempts;
+        MockXscal.setVirtualKey(0xBE, true);
+        widget.runPhysicalNavigationSafely();
+        check(!widget._inputOpen && widget._xscalBeginAfterReleaseKey == 0xBE
+            && MockXscal.sessionBeginAttempts == attemptsBefore + 1,
+            "busy key-down arms one release retry");
+        MockXscal.sessionInputBusy = false;
+        MockXscal.setVirtualKey(0xBE, false);
+        widget.runPhysicalNavigationSafely();
+        check(widget._xscalSessionInput && MockXscal.sessionBeginCount == 3
+            && MockXscal.sessionBeginAttempts == attemptsBefore + 2
+            && widget._xscalBeginAfterReleaseKey == 0,
+            "release retries BeginInput once and accepts the native session");
+        widget.runPhysicalNavigationSafely();
+        check(MockXscal.sessionBeginAttempts == attemptsBefore + 2,
+            "idle polls cannot retry BeginInput again");
+        MockXscal.setSessionInput("", "cancelled");
+        widget.runXscalSessionInputSafely(widget._inputGeneration);
+        check(!widget._inputOpen && MockXscal.sessionEndCount == 3,
+            "release-probe session closes through xScal");
+        widget.shutdown();
+        flash.Lib.trace("XSCAL-SESSION-INPUT PASS xscal-period-native");
     }
 }

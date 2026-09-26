@@ -12,8 +12,16 @@ describe('HUD keybind guide', () => {
 
     expect(within(guide).getByText('ZFE OPEN-CHAT KEY')).toBeInTheDocument();
     expect(within(guide).getByText('xSCAL OPEN-CHAT KEY')).toBeInTheDocument();
+    expect(within(guide).getByText('CHAT OPENS, BUT YOU CANNOT TYPE?')).toBeInTheDocument();
+    expect(guide).toHaveTextContent('the overlay keybind file below does not change them');
+    expect(guide).toHaveTextContent('xScal text session busy');
+    expect(guide).toHaveTextContent('xscalInputMode=shared');
+    expect(guide).toHaveTextContent('Linux/Steam Proton');
+    expect(guide).toHaveTextContent('exit Fallout 76 completely and start it again');
     expect(guide).toHaveTextContent('openKey=DELETE');
-    expect(guide).toHaveTextContent('activateLinkKey=ENTER');
+    expect(guide).toHaveTextContent('activateLinkKey=F8');
+    expect(guide).toHaveTextContent('hideKey=DELETE');
+    expect(guide).toHaveTextContent('VK_190');
     expect(guide).toHaveTextContent('active only after Open Chat owns the editor');
     expect(guide).toHaveTextContent('Input.RegisterKey');
     expect(guide).toHaveTextContent('does not suppress keyboard input');

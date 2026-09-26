@@ -14,6 +14,7 @@ import {
   SlashCommandBuilder,
   type AutocompleteInteraction,
   type ChatInputCommandInteraction,
+  type ButtonInteraction,
   type Interaction,
 } from 'discord.js';
 import env from '../config/environment';
@@ -21,6 +22,9 @@ import logger from '../config/logger';
 import prisma from '../config/prisma';
 import { buildHelpResponse, getCommands, tryHandleCommand, type ChatCommand, type CommandResult } from './commandService';
 import { buildDiscordOverlayCard } from './discordOverlayCommandEmbeds';
+import * as giveawayService from './giveawayService';
+import { GiveawayError } from './giveawayService';
+import { executeGiveawayButton, parseGiveawayButtonId } from './giveawayButtonAction';
 import { splitDiscordResponse } from '../lib/discordResponsePagination';
 import { searchEntries } from './wikiCatalogService';
 import { searchCampItems } from './campService';
@@ -74,14 +78,13 @@ export function discordEventShortcutName(trigger: string): string | null {
 
 /**
  * Discord card commands belong to the channel where their interaction runs.
- * A started giveaway is the sole exception: its public announcement belongs in
- * FCM General so overlay users can join it.
+ * Giveaways publish their own canonical Events card from giveawayService.
  */
 export function shouldRelayDiscordResultToOverlay(
   raw: string,
   result: CommandResult,
 ): result is PrivateCommandResult {
-  return raw.startsWith('/giveaway start ') && result.handled && result.actionType === 'private';
+  return false;
 }
 
 /** A rich card mirrors to FCM only when its Discord channel has an FCM link. */
@@ -199,7 +202,9 @@ async function replyForCommand(interaction: ChatInputCommandInteraction, result:
     });
     return;
   }
-  await interaction.reply({ content: clip(result.botMessage), ...(interaction.commandName === 'apply' ? { flags: MessageFlags.Ephemeral } : {}) });
+  const privateReply = ['apply', 'giveaway'].includes(interaction.commandName)
+    || (interaction.commandName === COMMAND_NAME && commandText(interaction)?.toLowerCase().startsWith('/giveaway'));
+  await interaction.reply({ content: clip(result.botMessage), ...(privateReply ? { flags: MessageFlags.Ephemeral } : {}) });
 }
 
 function buildKeybindsEmbed(): EmbedBuilder {
@@ -243,9 +248,6 @@ async function handleOverlayCommand(interaction: ChatInputCommandInteraction): P
       waitForPersistence: true,
     });
   }
-  if (shouldRelayDiscordResultToOverlay(raw, result)) {
-    await finalizeMessage({ userId: user.id, channelId: '00000000-0000-0000-0000-000000000005', content: result.botMessage, displayName, source: 'discord', waitForPersistence: true });
-  }
   await replyForCommand(interaction, result);
   if (shouldMirrorDiscordCardToOverlay(context.isLinked, result)) {
     await finalizeMessage({
@@ -258,6 +260,25 @@ async function handleOverlayCommand(interaction: ChatInputCommandInteraction): P
       suppressDiscordRelay: true,
       waitForPersistence: true,
     });
+  }
+}
+
+async function handleGiveawayButton(interaction: ButtonInteraction): Promise<void> {
+  const button = parseGiveawayButtonId(interaction.customId);
+  if (!button) return;
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const user = await getUserByDiscordId(interaction.user.id);
+  if (!user) {
+    await interaction.editReply(`Link your Discord account first: ${env.FCM_PUBLIC_BASE_URL}/link`);
+    return;
+  }
+  const displayName = user.chatName ?? user.discordDisplayName ?? user.discordUsername ?? user.username;
+  try {
+    const isMod = button.action === 'stop' && isPrivilegedRole(await getEffectiveRole(user.id));
+    const message = await executeGiveawayButton(button, { id: user.id, displayName, isMod }, giveawayService);
+    await interaction.editReply(message);
+  } catch (err) {
+    await interaction.editReply(err instanceof GiveawayError ? err.message : 'Giveaway action failed. Please try again.');
   }
 }
 
@@ -607,6 +628,12 @@ async function registerCommands(client: Client): Promise<void> {
 }
 
 async function onInteraction(interaction: Interaction): Promise<void> {
+  if (interaction.isButton()) {
+    if (interaction.customId.startsWith('fcm:giveaway:')) {
+      await handleGiveawayButton(interaction).catch((err) => logger.error({ err }, '[discord-overlay-commands] giveaway button failed'));
+    }
+    return;
+  }
   if (interaction.isAutocomplete()) {
     if (interaction.commandName === MODERATION_COMMAND) await handleModerationAutocomplete(interaction);
     else if (interaction.commandName === 'wiki' || interaction.commandName === 'camp') await handleLookupAutocomplete(interaction);

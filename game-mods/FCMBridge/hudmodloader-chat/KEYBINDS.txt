@@ -16,8 +16,11 @@ navigation for both. ZFE global configuration overrides its widget fragment. xSc
 OpenChatKey setting, so never copy a ZFE [TextChat] section into xscal.ini. Never route ZFE key
 or input commands through xScal chatInterface; xScal chat and Input.* are separate surfaces.
 
-ZFE opens the SharedHUDTools editor; current xScal opens its native text session and uses the
-host editor only when that session is unsupported. ZFE refuses to open an unlocked native draft
+ZFE opens the SharedHUDTools editor; current xScal opens its native text session by default.
+For Windows installs where native BeginInput fails, set `xscalInputMode=shared` in
+Data/FCMChat.ini and restart. This selects HUDModLoader's keyboard editor and ControlMap
+lock; controller text entry is unsupported in this mode. The setting does not affect ZFE
+or any of the eight keybinds. ZFE refuses to open an unlocked native draft
 when SharedHUDTools cannot open. After changing input or discovery, test each provider separately:
 INSERT opens one visible editor, `hello` remains five characters, Page Up/Down switch channels
 only during the owned edit. Up/Down selects and highlights message rows. Enter sends a non-empty
@@ -44,7 +47,7 @@ setting and ZFE's native key watcher aligned. The complete shipped key map is:
 
 `scrollBottomKey` is intentionally blank, so Home/End remain game controls. Enter is reserved
 for editor submission. `activateLinkKey`
-opens a selected link only after OpenChat owns the editor and defaults to Enter; it is inert during
+opens a selected link only after OpenChat owns the editor and defaults to F8; it is inert during
 ordinary gameplay. Opening requires ZFE browser-v1 and a validated HTTPS destination;
 unsupported providers keep the full URL readable and selectable. ZFE owns consent.
 `hideKey=DELETE` hides the HUD while input is idle; `/hide` and the F11 menu
@@ -61,8 +64,10 @@ watcher to its authoritative `openKey` after provider discovery:
 ZFE's own configuration remains its pre-widget startup default; no duplicate `[TextChat]` section
 is needed. Reload the widget or restart Fallout after changing `FCMChat.ini`.
 
-ZFE accepts INSERT, DELETE, HOME, END, PAGE_DOWN (also PAGEDOWN or PGDN), and one letter
-or digit. DELETE is the recommended alternative when Insert conflicts with another mod.
+ZFE's native `updateChatHotkey` watcher accepts a narrower token set: INSERT, DELETE,
+HOME, END, PAGE_DOWN (also PAGEDOWN or PGDN), and one letter or digit. The widget
+also registers the configured VK through `Input.*` for keys outside that set.
+DELETE is the recommended alternative when Insert conflicts with another mod.
 Avoid PAGE_DOWN if you want Page Down to remain FCM's next-channel command. Letter and
 digit keys can conflict with gameplay and typing, so use them only after testing both states.
 The widget refuses to open in a configured hidden HUD mode. The default includes ContainerMode,
@@ -87,9 +92,9 @@ the visible host entry field so a physical keyboard can type while controller mo
 OTHER HUD ACTIONS
 -----------------
 FCMChat.ini exposes channelNextKey, channelPrevKey, scrollUpKey, scrollDownKey,
-scrollBottomKey, and hideKey. These are HUDMod::UserEvent action names forwarded by
+scrollBottomKey, activateLinkKey, and hideKey. These are HUDMod::UserEvent action names forwarded by
 HUDModLoader, or physical key tokens understood by the extender fallback. The defaults are
-NextPage, PrevPage, Up, Down, blank, and blank. These values are present as active lines in the
+NextPage, PrevPage, Up, Down, blank, F8, and Delete. These values are present as active lines in the
 shipped `Data/FCMChat.ini`; blank means intentionally unbound. ArrowUp/ArrowDown (and Cursor/Dpad aliases)
 are equivalent to the default Up/Down actions. To rebind scrolling, set for example:
 
@@ -105,9 +110,13 @@ open-chat key owns a visible input session; before then the game keeps the contr
 HUDModLoader menu's **Scroll to newest** item remains available regardless of this optional
 binding.
 
-For either provider, use a Fallout control-map action that the loader forwards or a token
-with a documented Windows virtual-key mapping (Home, End, F12, a letter or digit, etc.). Mapped
-tokens are registered through `Input.RegisterKey`/`Input.IsKeyPressed`; the named-action path remains
+For either provider, edit any of the eight lines in `Data/FCMChat.ini` and restart Fallout.
+Use a Fallout control-map action that the loader forwards or a physical key token: letters,
+digits, F1-F24, numpad, navigation, modifiers, and named punctuation such as `PERIOD`,
+`COMMA`, `SLASH`, and `SEMICOLON`. `VK_###` accepts a decimal Windows virtual-key code from
+1 through 254 for other keys (for example `VK_190` is Period). The literal dot is not a token.
+An unknown `openKey` falls back to Insert; check the startup `openKey=` log for the effective VK.
+Mapped tokens are registered through `Input.RegisterKey`/`Input.IsKeyPressed`; the named-action path remains
 available for control-map actions. Registration is polling bookkeeping and does not suppress the
 underlying keyboard action. Test any bare gameplay key for conflicts. The physical fallback uses
 the same configured values for ZFE and xScal.
@@ -135,7 +144,8 @@ Input.RegisterKey/Input.IsKeyPressed interface:
   [FCMChat]
   openKey=INSERT
 
-The shipped value is Insert. To rebind xScal to Delete, change only `openKey=DELETE`. For a common
+The shipped value is Insert. To rebind xScal to period, set `openKey=PERIOD`;
+to use Delete, set `openKey=DELETE`. For a common
 policy across both providers, also set ZFE's `OpenChatKey=DELETE`; that key never belongs in
 xscal.ini.
 
@@ -145,7 +155,8 @@ compatibility fallback. If registration is unavailable or the key is rejected, r
 openKey=INSERT and collect the xscal.log diagnostic line.
 
 xScal's API uses numeric Windows virtual-key codes; FCM maps names such as INSERT, DELETE,
-HOME, END, PAGE_UP/PAGE_DOWN, arrows, ESCAPE, TAB, SPACE, F1-F12, letters, and digits. Registration is polling,
+HOME, END, PAGE_UP/PAGE_DOWN, arrows, ESCAPE, TAB, SPACE, F1-F24, numpad,
+named punctuation, letters, digits, and `VK_###`. Registration is polling,
 not keyboard suppression: xScal's documented suppression calls apply to gamepad buttons.
 Test the chosen key for gameplay conflicts. FCM only opens chat on a press edge and unregisters
 the key when the widget unloads.

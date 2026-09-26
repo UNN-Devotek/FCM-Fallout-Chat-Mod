@@ -1,6 +1,6 @@
 # HUD text input: ZFE and xScal contracts
 
-This describes the current `FCMChatWidget` 2.10.125 source and the locally tested ZFE 0.15.0
+This describes the current `FCMChatWidget` 2.10.129 source and the locally tested ZFE 0.15.0
 and xScal 0.2.18 paths. One provider-neutral BA2 contains both routes. The widget requires
 **one active extender**; if it detects both, it shows a provider-conflict message and stops
 discovery. [Provider discovery](../../../game-mods/FCMBridge/FcmNativeApi.hx) and
@@ -13,7 +13,8 @@ source of truth. The chat relay transport is separate from keyboard capture; see
 | Provider | Open-key detection | Text editor | Gameplay-key ownership | When opening fails |
 | --- | --- | --- | --- | --- |
 | ZFE | Owner-scoped `hotkeys.v1` where supported, plus numeric `Input.*` polling for physical Insert; the legacy chat-key watcher is a compatibility route | Host `SharedHUDTools.TextEdit`, including when `zfe-input-v1` is advertised | HUDTools owns the balanced Fallout ControlMap text lock | Refuse the editor if HUDTools cannot open; do not start an unlocked native draft |
-| xScal 0.2.18 | Numeric `Input.RegisterKey` / `Input.IsKeyPressed` | Native `Input.BeginInput` / `PollInput` / `EndInput` session | xScal owns keyboard capture during its session | Busy owner: retry on a later open. Unsupported session API: use the host editor. Malformed ownership or unconfirmed release: block reopening until reload |
+| xScal 0.2.18, default `xscalInputMode=native` | Numeric `Input.RegisterKey` / `Input.IsKeyPressed` | Native `Input.BeginInput` / `PollInput` / `EndInput` session | xScal owns keyboard capture during its session | Native refusal: report unavailable; if the physical open key is held, retry once on release within two seconds. Unsupported session API: use the host editor. Malformed ownership or unconfirmed release: block reopening until reload |
+| xScal with `xscalInputMode=shared` | Same numeric open-key polling | `SharedHUDTools.TextEdit` | HUDTools owns the ControlMap lock | Refuse entry if the host editor cannot open; controller text entry is unsupported |
 | Older xScal without the session API | Same numeric open-key polling | `SharedHUDTools.TextEdit` fallback | HUDTools owns the ControlMap lock | Refuse entry if the host editor cannot open; controller-mode physical typing on this fallback is best effort |
 
 The configured `openKey` comes from `Data/FCMChat.ini` on both providers. Registration and
@@ -23,6 +24,26 @@ physical Insert can arrive with a controller active. The widget checks HUD-mode 
 ownership before opening either editor and uses edge latches to avoid opening twice. See
 [`FCMChatWidget.openInput`](../../../game-mods/FCMBridge/hudmodloader-chat/FCMChatWidget.hx)
 and the [keybind guide](../../../game-mods/FCMBridge/hudmodloader-chat/KEYBINDS.txt).
+
+`Data/FCMChat.ini` also selects the xScal editor. The native typing failure
+reproduced on the tested Windows laptop; native xScal input worked in the
+Linux/Steam Proton test with xScal 0.2.18. `xscalInputMode=shared` is a
+temporary Windows workaround while xScal's native refusal is diagnosed.
+`xscalInputMode=native` remains the default for the working Proton path. On a
+Windows install where `Input.BeginInput` repeatedly returns
+`input_unavailable`, set
+`xscalInputMode=shared` and restart the game. This explicitly skips xScal's
+native text session and uses the HUDModLoader host editor. It does not change
+any of the eight configurable action keys or ZFE's editor. The widget keeps
+this environment setting when it restores saved appearance settings. There is
+no automatic switch on `input_unavailable`, because that same response can
+mean another native editor owns the session.
+
+The Windows laptop test with xScal 0.2.18 and HUDModLoader v70 confirmed that
+`xscalInputMode=shared` opened the host editor, accepted typed characters,
+submitted through xScal, and received one matching relay echo. The user reported
+that typing worked. The log does not measure gameplay-key suppression directly;
+controller text entry remains unsupported in this mode.
 
 ## ZFE: host editor and ControlMap lock
 
@@ -85,8 +106,20 @@ release blocks another open rather than risking two native owners. A validated s
 can still dispatch its message even if cleanup cannot confirm release. See
 [`openXscalSessionInput` and `closeXscalSessionInput`](../../../game-mods/FCMBridge/hudmodloader-chat/FCMChatWidget.hx).
 
-`{"success":false,"error":"input_unavailable"}` means another native owner is busy: do not
-open a competing HUDTools editor; the player may retry. A `null` or Boolean `false` begin reply
+`{"success":false,"error":"input_unavailable"}` means xScal refused the native
+session. Static inspection of the public 0.2.18 DLL found that it can result
+from an existing provider session, failure to locate the foreground game
+window, failure to install its window subclass, a changed previously selected
+window, or failure to produce the initial session snapshot. The reply
+does not identify which condition occurred. Do not open a competing HUDTools
+editor; the player may retry. FCM now shows a visible unavailable message.
+For the physical open-key path, the diagnostic BA2 also makes one bounded
+`BeginInput` attempt after that key's release if the first attempt returned
+`input_unavailable` while it was held. It logs the phase, elapsed time, and
+acceptance without recording typed text. This tests whether the native refusal
+depends on key dispatch timing; repeated idle polls do not retry. Modal
+ownership, an expired two-second window, or a provider change skips the probe.
+A `null` or Boolean `false` begin reply
 means the session API is unsupported, so FCM disables that route and uses HUDTools. Other
 malformed begin replies make ownership uncertain and block reopening until reload. This
 fallback distinction is implemented in
@@ -111,3 +144,45 @@ ZFE 0.15.0 and xScal 0.2.18. The ZFE log recorded off-screen keyboard placement 
 focus in its initial run; the xScal log recorded provider selection, a physical Insert edge,
 and `invalid_session` release confirmation. This is evidence for those tested artifacts, not
 a blanket guarantee for other extender or HUDModLoader versions.
+
+The fresh Windows laptop test on 2026-09-25 used xScal 0.2.18, HUDModLoader v70,
+and the exact 2.10.129 keybind diagnostic BA2. `openKey=PERIOD` registered as
+VK 190 and reached FCM twice, but both native begins returned
+`input_unavailable`; there was no FCM-owned session or uncertain release.
+Typing still failed. The complete 78-case Ruffle suite, including ZFE editor
+and rebind flows, passed before installing that BA2. Ruffle exercises the
+caller contract; the Windows result shows that xScal's native refusal still
+requires provider-side diagnosis.
+
+The follow-up `xscal-native-begin-probe-2` BA2 also failed on the laptop:
+`BeginInput` returned `input_unavailable` both while Period was held and
+78–80 ms after release on two separate presses. No xScal session was accepted.
+This rules out a simple key-release timing fix for that run. The public native
+reply gives no reason beyond `input_unavailable`.
+An independent interactive-session probe captured three more Period presses
+while Fallout 76 remained the foreground process and the same HWND/window-owner
+thread throughout. The corresponding native begins were still refused. This
+removes a simple focus-loss explanation for that run, but does not identify
+the xScal callback thread or its internal refusal branch.
+
+The exact public `dxgi.dll` installed on the laptop (SHA-256
+`78cb91d6e9e53bcf97f55dd82a60931aec94cc4cc2b6dc74da198d6b9dd311e4`)
+has a `BeginInput` handler at RVA `0x26728`. It returns the same
+`input_unavailable` string after either a failed native begin helper (RVA
+`0x28a70`) or a failed initial snapshot helper (RVA `0x28bc0`). The begin
+helper rejects a nonzero active session, missing/foreign foreground HWND,
+`SetWindowSubclass` returning false, or a different previously subclassed
+HWND. Its foreground helper (RVA `0x28294`) calls `GetForegroundWindow`,
+`GetWindowThreadProcessId`, and `GetCurrentProcessId`. The laptop's actual
+`comctl32.dll` exports the imported ordinal 410 as `SetWindowSubclass`; 412
+and 413 are `RemoveWindowSubclass` and `DefSubclassProc`. These are static
+binary observations, not a live trace through a specific refusal. The
+foreground probe makes subclass failure the leading hypothesis for the
+laptop, but an xScal callback thread ID or native branch code is still needed
+to prove it. The fresh-session path clears the initial text before making its
+snapshot, so snapshot failure is unlikely without a race or corruption.
+The failure jump after `SetWindowSubclass` does not capture `GetLastError`
+or emit a native diagnostic, so the existing log cannot supply the missing
+return value.
+[Microsoft's `SetWindowSubclass` contract](https://learn.microsoft.com/en-us/windows/win32/api/commctrl/nf-commctrl-setwindowsubclass)
+forbids cross-thread subclassing.

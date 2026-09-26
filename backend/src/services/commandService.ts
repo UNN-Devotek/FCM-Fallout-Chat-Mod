@@ -401,10 +401,7 @@ async function handleGiveawayCommand(
   username: string,
   channelId: string,
 ): Promise<CommandResult> {
-  // All giveaway activity is routed through Events regardless of the channel the user typed from.
-  const EVENTS_CHANNEL_ID = '00000000-0000-0000-0000-000000000003';
   const replyChannelId = channelId; // private replies go back to wherever the user is
-  const giveawayChannelId = EVENTS_CHANNEL_ID;
 
   const spaceIdx = args.indexOf(' ');
   const subCmd = (spaceIdx < 0 ? args : args.slice(0, spaceIdx)).toLowerCase();
@@ -443,7 +440,7 @@ async function handleGiveawayCommand(
     }
 
     try {
-      await giveawayService.createGiveaway(userId, username, giveawayChannelId, itemName, durationMin);
+      await giveawayService.createGiveaway(userId, username, channelId, itemName, durationMin);
       return {
         handled: true,
         actionType: 'private',

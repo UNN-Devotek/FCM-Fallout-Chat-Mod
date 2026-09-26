@@ -629,6 +629,8 @@ async function checkWsRateLimit(userId: string): Promise<boolean> {
  * Frames without a sender id, or system/global frames, are never filtered.
  */
 function recipientHasBlockedSender(payload: any, recipient: ClientEntry): boolean {
+  if (payload?.payload?.source === 'bot'
+      && ['giveaway', 'giveaway_winner'].includes(payload?.payload?.metadata?.type)) return false;
   // chat/bot frames author the sender as `userId`; PM frames use `senderId`.
   const senderId: unknown = payload?.payload?.userId ?? payload?.payload?.senderId;
   if (typeof senderId !== 'string' || senderId.length === 0) return false;
@@ -865,9 +867,9 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
             );
             const messages = result.rows.map((row: any) => {
               const dn = resolveDisplayName({ username: row.username, chatName: row.chat_name, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, steamDisplayName: row.steam_display_name, installToken: row.install_token });
-              const avatarUrl = buildAvatarUrl(row.discord_id);
+              const avatarUrl = row.source === 'bot' ? null : buildAvatarUrl(row.discord_id);
               const { install_token, username, chat_name, discord_username, discord_display_name, steam_display_name, discord_id, metadata, ...rest } = row;
-              return { ...rest, username: dn, avatarUrl, metadata: metadata ?? null };
+              return { ...rest, username: row.source === 'bot' ? '[Vault-Tec]' : dn, avatarUrl, metadata: metadata ?? null };
             });
             await attachCosmeticsToHistory(messages);
             ws.send(JSON.stringify({ type: 'chat:history', payload: { messages: messages.reverse() } }));
@@ -2590,12 +2592,13 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
           // metadata is passed through (null for normal messages) so the overlay
           // can render party_invite embeds from history.
           const messages = result.rows
-            .filter((row: any) => !histBlocked.has(row.user_id))
+            .filter((row: any) => (row.source === 'bot'
+              && ['giveaway', 'giveaway_winner'].includes(row.metadata?.type)) || !histBlocked.has(row.user_id))
             .map((row: any) => {
               const dn = resolveDisplayName({ username: row.username, chatName: row.chat_name, discordUsername: row.discord_username, discordDisplayName: row.discord_display_name, steamDisplayName: row.steam_display_name, installToken: row.install_token });
-              const avatarUrl = buildAvatarUrl(row.discord_id);
+              const avatarUrl = row.source === 'bot' ? null : buildAvatarUrl(row.discord_id);
               const { install_token, username, chat_name, discord_username, discord_display_name, steam_display_name, discord_id, metadata, ...rest } = row;
-              return { ...rest, username: dn, avatarUrl, metadata: metadata ?? null };
+              return { ...rest, username: row.source === 'bot' ? '[Vault-Tec]' : dn, avatarUrl, metadata: metadata ?? null };
             });
           await attachCosmeticsToHistory(messages);
           ws.send(JSON.stringify({ type: 'chat:history', payload: { messages: messages.reverse() } }));

@@ -23,8 +23,8 @@ describe('Discord-to-overlay relay policy', () => {
     assert.equal(shouldMirrorDiscordCardToOverlay(true, cardResult), true);
   });
 
-  test('relays only a started giveaway to FCM General', () => {
-    assert.equal(shouldRelayDiscordResultToOverlay('/giveaway start Flux x10', cardResult), true);
+  test('giveaways publish through the canonical Events card path', () => {
+    assert.equal(shouldRelayDiscordResultToOverlay('/giveaway start Flux x10', cardResult), false);
     assert.equal(shouldRelayDiscordResultToOverlay('/giveaway list', cardResult), false);
   });
 });
