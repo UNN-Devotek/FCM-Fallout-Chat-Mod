@@ -27,8 +27,7 @@ class FcmCommand {
             + "/giveaway join <id> | /giveaway leave <id>\n"
             + "/giveaway stop <id>\n"
             + "/event help — show event commands\n"
-            + "/mod help — staff commands\n"
-            + "/mod <name|#ref> delete|kick|mute|unmute|ban|unban [details] (staff only)";
+            + "/mod help — staff commands";
     }
 
     /** Native keyboard input can consume the leading slash. Keep only this command family. */

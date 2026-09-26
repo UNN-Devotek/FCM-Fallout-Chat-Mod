@@ -45,9 +45,11 @@ class TestFcmCommand {
         var hudHelp = FcmCommand.hudHelp();
         for (command in ["/help", "/g /t /e /i /r /s", "/hide", "/relink", "/emoji <name>",
                 "/giveaway start", "/giveaway list", "/giveaway last", "/giveaway join",
-                "/giveaway leave", "/giveaway stop", "/mod help",
-                "delete|kick|mute|unmute|ban|unban"])
+                "/giveaway leave", "/giveaway stop", "/mod help"])
             check("HUD help includes " + command, hudHelp.indexOf(command) >= 0);
+        check("HUD help leaves staff actions to mod help",
+            hudHelp.indexOf("/mod <name|#ref>") < 0
+            && hudHelp.indexOf("delete|kick|mute|unmute|ban|unban") < 0);
         check("HUD help does not claim unimplemented clear command", hudHelp.indexOf("/clear") < 0);
         check("HUD help links event commands", hudHelp.indexOf("/event help") >= 0);
         check("HUD help leaves event names to event help", hudHelp.indexOf("EVENT COMMANDS") < 0

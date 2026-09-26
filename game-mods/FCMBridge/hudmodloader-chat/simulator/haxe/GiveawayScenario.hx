@@ -108,7 +108,8 @@ class GiveawayScenario {
                 var hudHelp = widget._records[widget._records.length - 1];
                 check("HUD help is a private feed record", hudHelp.user == "FCM Help"
                     && hudHelp.senderUserId == "" && hudHelp.messageId == ""
-                    && hudHelp.body.indexOf("staff only") >= 0
+                    && hudHelp.body.indexOf("/mod help — staff commands") >= 0
+                    && hudHelp.body.indexOf("/mod <name|#ref>") < 0
                     && widget._records[beforeHudHelp].body.indexOf("HUD COMMANDS") >= 0
                     && FcmCommand.hudHelp().indexOf("/giveaway join <id>") >= 0);
                 var beforeHelp = widget._records.length;
