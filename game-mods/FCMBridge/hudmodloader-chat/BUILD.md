@@ -24,6 +24,17 @@ With Fallout 76 closed, this BA2 replaced only the local Dev
 Hosted Dev relay and shared xScal input settings were verified unchanged.
 Fresh native game acceptance remains pending.
 
+The same 2.10.134 BA2 was installed on the MSI Windows laptop with Fallout 76
+closed. The installed SHA-256 matches the source artifact above. The laptop's
+`Data/FCMChat.ini` retains `openKey=PERIOD` and `xscalInputMode=shared`; only
+its `linkUrl` was changed to `dev.falloutchatmod.com/link`. The root `xscal.ini`
+relay was changed to `wss://dev.falloutchatmod.com/relay`. Byte comparisons
+against the backed-up configs confirmed these were the only two config changes.
+The old BA2 and both prior configs are at
+`C:\Users\White\Documents\FCM-Repro-Backups\before-hud-help-2.10.134-2026-09-26`.
+The loader still has one FCMChatWidget entry and no additional FCM BA2. Native
+Windows acceptance awaits the user's game launch.
+
 ## Private giveaway feedback candidate (2026-09-25)
 
 **Widget version:** 2.10.130. Standalone `/help`, `.help`, or native

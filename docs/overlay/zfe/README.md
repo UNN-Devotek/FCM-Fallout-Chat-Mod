@@ -20,10 +20,13 @@ The MSI Windows 11 laptop was also reset to the same three Nexus ZIPs for a
 native Windows input trial. Its previous `FCMServerBridge` game mod, older
 HUDModLoader, FCM files, extender settings, caches, and logs were moved to
 `C:\Users\White\Documents\FCM-Repro-Backups\before-nexus-clean-20260925T221153Z`.
-The fresh laptop has one FCMChatWidget archive and loader entry, no active
-FCMServerBridge, and no old xScal log. It uses the production relay and the
-Nexus xScal default with `xScalPriority` disabled. In-game typing remains
-pending a user launch on that machine.
+The laptop now has the source-built FCMChatWidget 2.10.134 BA2, one loader
+entry, and no active FCMServerBridge. Its `Data/FCMChat.ini` retains
+`openKey=PERIOD` and `xscalInputMode=shared`; its link and root `xscal.ini`
+relay point to hosted Dev. The prior BA2 and both config files are backed up
+under `C:\Users\White\Documents\FCM-Repro-Backups\before-hud-help-2.10.134-2026-09-26`.
+The installed BA2 hash matches the tested artifact. In-game typing, private
+feed behavior, and Dev authentication remain pending the user's launch.
 
 ## Current implementation and verification
 
