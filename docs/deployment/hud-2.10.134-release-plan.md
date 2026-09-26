@@ -23,7 +23,6 @@ optional in-game mod. The desktop overlay and provider DLLs are separate.
   Giveaway cards and winners appear in the originating channel and its mapped
   Discord channel. Join confirmations and creator-rejection messages are
   private to the submitting player.
-- Restored ZFE controller-active physical keyboard entry and Escape cleanup.
 
 ## Silent Discord advance announcement — posted
 

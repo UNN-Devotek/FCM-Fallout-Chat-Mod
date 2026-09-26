@@ -29,8 +29,7 @@ appear in the channel where the giveaway started and its mapped Discord
 channel. Joining shows a private confirmation; creators receive a private
 message when they try to enter their own giveaway.
 
-ZFE controller-active physical keyboard entry and Escape cleanup were also
-restored. Choose only the ZFE or xScal install folder for your extender.
+Choose only the ZFE or xScal install folder for your extender.
 
 Updating
 --------
