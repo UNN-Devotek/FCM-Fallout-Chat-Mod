@@ -1,11 +1,11 @@
-FCM HUD 2.10.132
+FCM HUD 2.10.133
 ==============
 
 Type /event help for all 33 event shortcuts and names, including /gu for
 Gearing Up. Type a shortcut such
 as /sbq in General to announce that event in the Events feed and its Discord
 channel. If the game consumes the slash, type event help or sbq instead.
-The main /help guide lists the event names too.
+The main /help guide points to /event help without listing event names.
 The backend checks whether each event command is enabled and enforces its
 cooldown. The result message appears only in your HUD feed.
 

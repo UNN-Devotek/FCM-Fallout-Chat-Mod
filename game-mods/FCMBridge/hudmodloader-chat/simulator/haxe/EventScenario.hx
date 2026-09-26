@@ -16,6 +16,10 @@ class EventScenario {
                 widget.handleSubmittedText("event help"); // Native editor can consume '/'.
                 var eventLines = FcmEventCommands.help().split("\n");
                 var hudLines = FcmCommand.hudHelp().split("\n");
+                check("main help links event guide without event names",
+                    FcmCommand.hudHelp().indexOf("/event help") >= 0
+                    && FcmCommand.hudHelp().indexOf("/sbq — Scorched Earth") < 0
+                    && FcmCommand.hudHelp().indexOf("/gu — Gearing Up") < 0);
                 check("guides are private individual records",
                     widget._records.length == before + hudLines.length + eventLines.length
                     && MockXscal.lastEventBody == "");

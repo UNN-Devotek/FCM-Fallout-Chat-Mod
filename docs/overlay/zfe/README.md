@@ -6,14 +6,14 @@ HUD mod uses UI assets and already-exposed HUD data through an extender's sancti
 must not add game-memory reads, code injection, or network/port scanning.
 
 **Current local typing setup (2026-09-26):** The Steam/Proton game has xScal
-0.2.18, HUDModLoader v70, and the source-built FCMChatWidget 2.10.132 BA2.
+0.2.18, HUDModLoader v70, and the source-built FCMChatWidget 2.10.133 BA2.
 `Data/FCMChat.ini` sets `xscalInputMode=shared` for
 the SharedHUDTools text editor and points its link prompt at hosted Dev; root
 `xscal.ini` points the relay at hosted Dev. `openKey=INSERT`, the xScal DLL,
 archive list, and one-entry FCMChatWidget loader registry were preserved.
 The new BA2 and exact-file rollback backup are verified by hash in the
 [build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
-The 81-case Ruffle suite passed for 2.10.132. Fresh native typing, private
+The 81-case Ruffle suite passed for 2.10.133. Fresh native typing, private
 feed behavior, and Dev authentication are pending the user's game launch.
 
 The MSI Windows 11 laptop was also reset to the same three Nexus ZIPs for a
@@ -27,10 +27,10 @@ pending a user launch on that machine.
 
 ## Current implementation and verification
 
-**2.10.132 HUD event commands and selectable help candidate:** `/event help`
+**2.10.133 HUD event commands and selectable help candidate:** `/event help`
 adds the 33 seeded event shortcuts and names as private, individual feed rows,
 including Gearing Up (`/gu`).
-`/help` also includes those event names.
+`/help` points to `/event help` without listing event names.
 The leading slash may be consumed by native input; `event help` and bare event
 codes such as `sbq` also work. Event shortcuts are sent from General and use
 the backend's enabled `announce` definitions, allowed-channel policy,

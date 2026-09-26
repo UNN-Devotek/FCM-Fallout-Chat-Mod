@@ -1,25 +1,25 @@
 # FCMChatWidget build, install, and verification
 
-## HUD event commands and selectable help candidate (2026-09-25)
+## HUD event commands and selectable help candidate (2026-09-26)
 
-**Widget version:** 2.10.132. The seeded event shortcuts (including Sinkhole
+**Widget version:** 2.10.133. The seeded event shortcuts (including Sinkhole
 Solutions) are accepted in the HUD with slash-stripped native input. From
 General they run through the backend's enabled `announce` definitions, channel
 restriction, cooldown, template and governed ingestion. The announcement
 lands in Events and its Discord mapping. `/event help` shows the 33 event names
-as private feed rows; `/help` lists the same event names. Help lines can be selected
+as private feed rows; `/help` points to `/event help` without listing event names. Help lines can be selected
 with Up/Down while the editor is open, and they scroll away with chat. ZFE
 retires the event command outbox entry on terminal acceptance. A local command
 result is visible only on the submitting HUD. The 25 Haxe suites, compiler
 diagnostics, source/emoji/package/SWF checks, full backend suite (124 suites),
 overlay suite (59 files), dashboard suite (48 files), and all 81 Ruffle
 scenarios passed. The normalized FWS v32 SWF is SHA-256
-`2d6a6a3ec6e69ee7503e8c7df705eb7b9bfb0a8b218c51bbd36f75dbdfeac60d`.
+`1fe12e778ef50cfc235c3ece9695c013d5014868147eb0a98c1680e905fc596b`.
 The one-entry BTDX v1 GNRL BA2 extracts that SWF byte-for-byte and is SHA-256
-`8a5c078e0c401a5026244e23ce897743f535cb62345966211f4ef9b67a66b585`.
+`c9c854e5fdc6323dc87e0d89db509993043bf0f611e8d4a907ab82ed53f989ed`.
 With Fallout 76 closed, this BA2 replaced only the local Dev
 `Data/FCMChatWidget.ba2`. The previous BA2 and hash manifest are at
-`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-hud-events-2.10.132-20260926T040538Z/`.
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-hud-help-2.10.133-20260926T072915Z/`.
 Hosted Dev relay and shared xScal input settings were verified unchanged.
 Fresh native game acceptance remains pending.
 

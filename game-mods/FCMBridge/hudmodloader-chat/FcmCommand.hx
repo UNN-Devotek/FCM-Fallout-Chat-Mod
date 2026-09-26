@@ -26,7 +26,7 @@ class FcmCommand {
             + "/giveaway list | /giveaway last [count]\n"
             + "/giveaway join <id> | /giveaway leave <id>\n"
             + "/giveaway stop <id>\n"
-            + FcmEventCommands.help() + "\n"
+            + "/event help — show event commands\n"
             + "/mod help — staff commands\n"
             + "/mod <name|#ref> delete|kick|mute|unmute|ban|unban [details] (staff only)";
     }

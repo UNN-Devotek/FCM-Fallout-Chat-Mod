@@ -50,8 +50,9 @@ class TestFcmCommand {
             check("HUD help includes " + command, hudHelp.indexOf(command) >= 0);
         check("HUD help does not claim unimplemented clear command", hudHelp.indexOf("/clear") < 0);
         check("HUD help links event commands", hudHelp.indexOf("/event help") >= 0);
-        check("HUD help lists event names", hudHelp.indexOf("/sbq — Scorched Earth") >= 0
-            && hudHelp.indexOf("/ss — Sinkhole Solutions") >= 0);
+        check("HUD help leaves event names to event help", hudHelp.indexOf("EVENT COMMANDS") < 0
+            && hudHelp.indexOf("/sbq — Scorched Earth") < 0
+            && hudHelp.indexOf("/ss — Sinkhole Solutions") < 0);
         check("event help accepts slash-stripped text", FcmEventCommands.isHelp("event help"));
         check("event help does not consume channel switch", !FcmEventCommands.isHelp("event"));
         check("slash event still switches channels", !FcmEventCommands.isHelp("/event"));
