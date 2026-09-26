@@ -1,12 +1,14 @@
 # FCM HUD Mod 2.10.134 production release plan
 
-**Status:** Release candidate. Dev CI and source/package checks passed. The
-release owner confirmed 2.10.134 laptop typing, `/help`, an event shortcut,
-and a giveaway command, including the expected HUD feed and Discord results.
-The full Ruffle rerun and production package checks are in progress.
+**Status:** Published on 2026-09-26. The release owner confirmed 2.10.134
+laptop typing, `/help`, an event shortcut, and a giveaway command, including
+the expected HUD feed and Discord results. Dev and Prod CI Summaries passed,
+including the complete Ruffle harness. The production overlay smoke test and
+VirusTotal gate passed before HUD publication.
 
-The public Nexus HUD baseline is 2.10.125. This is a HUD-only update of the
-optional in-game mod. The desktop overlay and provider DLLs are separate.
+This HUD-only update replaced the public Nexus HUD 2.10.125 Main version with
+2.10.134; the previous version is archived. The desktop overlay stays at
+1.4.2, and provider DLLs are separate.
 
 ## Public patch notes
 
@@ -34,7 +36,9 @@ is available.
 
 Posted by the production bot to Updates on 2026-09-26 as
 [message 1553332645008646155](https://discord.com/channels/1479229109929381940/1479531502567166066/1553332645008646155).
-The returned Discord flags value was `4096` (`SUPPRESS_NOTIFICATIONS`).
+The returned Discord flags value was `4096` (`SUPPRESS_NOTIFICATIONS`). The
+advance message was no longer retrievable after the final release notice;
+the final notice below is live and silent.
 
 > **FCM HUD Mod 2.10.134 is coming soon**
 >
@@ -64,3 +68,21 @@ The returned Discord flags value was `4096` (`SUPPRESS_NOTIFICATIONS`).
    URLs and `releaseTarget=hud`, with `suppressNotifications=true` for its
    final Discord release announcement. Verify the release feed, Nexus file,
    and Discord message.
+
+## Publication record
+
+- Prod merge: `2879deba37d4c7dc110d41f7b51293f1c6da4bb6`; Prod CI run
+  `36233456997` passed its required Summary. Production auto-deploy and
+  health checks passed.
+- Website ZIP: [FCM HUD Mod 2.10.134](https://falloutchatmod.com/downloads/electron/FCM%20HUD%20Mod-2.10.134%20%28PROD%29.zip),
+  11,999,048 bytes, SHA-256
+  `1965a462570b938a19b423b9aea45b1023f0fb5107ded55c61b8099b910f20d3`.
+  The served download matched this hash.
+- Nexus: [Fallout Chat Mod files](https://www.nexusmods.com/fallout76/mods/4082?tab=files),
+  stable HUD group `7929660`, new Main version ID `11123965320340`;
+  2.10.125 is archived. No overlay file group was changed.
+- Release feed: `/api/releases` reports HUD 2.10.134 with the website ZIP and
+  preserves overlay 1.4.2.
+- Final [Discord release notice](https://discord.com/channels/1479229109929381940/1479531502567166066/1553342584632385589)
+  posted to Updates with the HUD role only. Its flags include
+  `SUPPRESS_NOTIFICATIONS` (`4096`), and its Download field links the live ZIP.
