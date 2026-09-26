@@ -166,8 +166,13 @@ class MockXscal {
             if (giveawayMode && StringTools.startsWith(body, "/giveaway")) {
                 lastGiveawayBody = body;
                 lastGiveawayChannel = channel;
+                var feedback = StringTools.startsWith(body, "/giveaway join OWN123")
+                    ? "You can't enter your own giveaway."
+                    : StringTools.startsWith(body, "/giveaway join ABC234")
+                        ? "You've entered giveaway [ABC234]! Total entries: 1."
+                        : "Giveaway started";
                 return response({success:true, messageId:messageId,
-                    targetUserId:"FCMHUD/1;g=" + StringTools.urlEncode("Giveaway started")});
+                    targetUserId:"FCMHUD/1;g=" + StringTools.urlEncode(feedback)});
             }
             if (channel == "server" && StringTools.startsWith(body, "FCMCTL/1/")) {
                 if (StringTools.startsWith(body, "FCMCTL/1/DIAG:")) {

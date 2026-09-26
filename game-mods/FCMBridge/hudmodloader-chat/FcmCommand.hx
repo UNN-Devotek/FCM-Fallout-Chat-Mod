@@ -7,6 +7,29 @@
  * be exercised by the CI interpreter tests.
  */
 class FcmCommand {
+    /** Native keyboard input may consume the slash; help is a standalone local command. */
+    public static function isHelp(raw:String):Bool {
+        if (raw == null) return false;
+        var command = StringTools.trim(raw).toLowerCase();
+        return command == "/help" || command == ".help" || command == "help";
+    }
+
+    public static function hudHelp():String {
+        return "HUD COMMANDS (private)\n"
+            + "/help — show this guide\n"
+            + "/g /t /e /i /r /s [message] — switch to General, Trading, Events, Infests, Raids, Server\n"
+            + "/hide — hide chat; open key restores it\n"
+            + "/relink — reset ZFE chat link\n"
+            + "/emoji <name> — send a named emoji\n"
+            + "/giveaway — show giveaway help\n"
+            + "/giveaway start <item> [minutes]\n"
+            + "/giveaway list | /giveaway last [count]\n"
+            + "/giveaway join <id> | /giveaway leave <id>\n"
+            + "/giveaway stop <id>\n"
+            + "/mod help — staff commands\n"
+            + "/mod <name|#ref> delete|kick|mute|unmute|ban|unban [details] (staff only)";
+    }
+
     /** Native keyboard input can consume the leading slash. Keep only this command family. */
     public static function giveawayCommand(raw:String):String {
         if (raw == null) return "";

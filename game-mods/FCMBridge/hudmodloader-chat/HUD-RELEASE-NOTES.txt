@@ -1,5 +1,15 @@
-FCM HUD 2.10.129
+FCM HUD 2.10.130
 ==============
+
+Type /help to see all current HUD commands in a private chat-feed message.
+If the game consumes the slash, typing help alone works too. The guide stays
+on your own HUD and scrolls upward as new messages arrive.
+
+Joining a giveaway now adds a private [Vault-Tec] confirmation to your HUD
+chat feed. If you try to join one you created, a private feed message explains
+that you cannot enter your own giveaway. These replies scroll with chat and
+are visible only on your HUD. The winner announcement is still posted
+automatically to the giveaway's channel for everyone to see.
 
 The private giveaway help row now stays in chronological feed order. Later
 messages scroll below it, so it moves upward like an ordinary chat message.

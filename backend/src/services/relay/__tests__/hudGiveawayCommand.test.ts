@@ -18,4 +18,14 @@ describe('HUD giveaway command boundary', () => {
     assert.match(text, /ABC234 Flux.*DEF567 Plans/);
     assert.ok(text.length <= 180);
   });
+
+  test('preserves private join and own-giveaway replies for the HUD receipt', () => {
+    for (const message of [
+      "✅ You've entered giveaway [ABC123]! Total entries: 1.",
+      "You can't enter your own giveaway.",
+    ]) {
+      assert.equal(hudGiveawayFeedback({ handled: true, actionType: 'private',
+        targetChannelId: 'global', botMessage: message }), message);
+    }
+  });
 });

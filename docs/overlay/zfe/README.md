@@ -5,17 +5,16 @@ default desktop overlay. The overlay does not install game files or require an e
 HUD mod uses UI assets and already-exposed HUD data through an extender's sanctioned API; it
 must not add game-memory reads, code injection, or network/port scanning.
 
-**Current local typing reproduction setup (2026-09-25):** The Steam/Proton game
-install was cleared of active mod files and reinstalled from the current Nexus
-ZIPs: xScal 0.2.18, HUDModLoader v70, and FCMChatWidget 2.10.125. The Nexus
-xScal defaults (`xScalPriority` disabled) and FCM production relay/link settings
-are active. The custom archive list has only HUDModLoader and FCMChatWidget;
-their loader registry has one FCMChatWidget entry. Prior mod files, auth cache,
-settings, and logs are backed up for rollback. Source ZIP and installed-file
-hashes are in the [build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
-Native typing acceptance on this exact fresh install is pending the next game
-launch. The earlier 2.10.129 hosted-Dev source build remains in the repository
-but is no longer installed locally.
+**Current local typing setup (2026-09-25):** The Steam/Proton game has xScal
+0.2.18, HUDModLoader v70, and the source-built FCMChatWidget 2.10.130 BA2.
+`Data/FCMChat.ini` sets `xscalInputMode=shared` for
+the SharedHUDTools text editor and points its link prompt at hosted Dev; root
+`xscal.ini` points the relay at hosted Dev. `openKey=INSERT`, the xScal DLL,
+archive list, and one-entry FCMChatWidget loader registry were preserved.
+The new BA2 and exact-file rollback backup are verified by hash in the
+[build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
+The 79-case Ruffle suite passed for 2.10.130. Fresh native typing, private
+feed behavior, and Dev authentication are pending the user's game launch.
 
 The MSI Windows 11 laptop was also reset to the same three Nexus ZIPs for a
 native Windows input trial. Its previous `FCMServerBridge` game mod, older
@@ -27,6 +26,19 @@ Nexus xScal default with `xScalPriority` disabled. In-game typing remains
 pending a user launch on that machine.
 
 ## Current implementation and verification
+
+**2.10.130 private HUD help and giveaway feedback candidate:** Standalone
+`/help`, `.help`, or slash-stripped `help` adds a local command guide to the
+HUD feed. It covers every implemented channel switch, `/hide`, `/relink`,
+`/emoji`, giveaway commands, and staff `/mod` actions. The guide is visible
+only on the submitting HUD and scrolls with ordinary messages. A successful `giveaway join <id>`
+adds a local `[Vault-Tec]` confirmation row to the submitting HUD feed. A creator
+who tries to join their own giveaway receives a local rejection row. Both stay
+in the channel where the command was entered, scroll with later messages, and
+have no relay message ID; the relay sends the result only in that command's
+response. The automatic winner remains a persisted `[Vault-Tec]` message in
+the giveaway's channel. The xScal and ZFE Ruffle scenarios cover the private
+responses and winner order; a fresh native game check remains pending.
 
 **Giveaways (2.10.129 candidate, native acceptance pending):** The selected channel now
 receives the giveaway announcement and winner text through ordinary
@@ -40,9 +52,10 @@ private help row into the current HUD feed without contacting the relay; it is
 visible only to that player, including when the game strips a leading `/`.
 The help row has a UTC timestamp and scrolls upward as newer chat arrives.
 The ZFE terminal command receipt clears the command outbox, so it no longer
-waits for a chat echo and reports a false delivery warning. Command feedback
-uses the prompt without hiding the feed. The send receipt shows a short result; `list` and `last` include
-up to three compact entries. Other HUD slash commands remain unsupported. The
+waits for a chat echo and reports a false delivery warning. In 2.10.129,
+command feedback used the prompt; 2.10.130 places it in the private feed.
+The send receipt shows a short result; `list` and `last` include
+up to three compact entries. The
 ZFE and xScal Ruffle giveaway scenario checks private help in the feed, routing,
 receipt handling, and announcement/result rows. The user's ZFE 0.15.0 screenshot
 confirms the private help row in the native feed. The command reached hosted Dev;
@@ -92,7 +105,7 @@ The published production versions before this patch are desktop overlay **1.4.2*
 visible HUD **2.10.125**, and optional background bridge **0.2.9**. This patch
 keeps the HUD version but replaces its package with the corrected 2.10.125 BA2
 and separate provider install folders. An earlier local 2.10.121 test candidate
-contained additional quoted-message changes under that same version; the last
+contained additional quoted-message changes under that same version; the earlier
 native-tested local install was the corrected 2.10.125 BA2 described above.
 
 **Background bridge 0.2.8 release:** published as a separate optional HUDModLoader child.

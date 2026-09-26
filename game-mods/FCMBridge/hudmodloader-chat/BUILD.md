@@ -1,5 +1,48 @@
 # FCMChatWidget build, install, and verification
 
+## Private giveaway feedback candidate (2026-09-25)
+
+**Widget version:** 2.10.130. Standalone `/help`, `.help`, or native
+slash-stripped `help` adds a local command guide to the feed, covering every
+implemented channel, visibility, relink, emoji, giveaway, and moderation
+command. Successful giveaway joins and attempts to join
+one's own giveaway now create local `[Vault-Tec]` feed rows in the command's
+channel. They carry no relay message ID or sender ID and are never sent as
+ordinary chat, so only the submitting HUD sees them. The automatic winner is
+still a persisted channel bot message. The xScal and ZFE simulator scenario
+checks both private outcomes, private help, and the winner's feed order.
+The 25 Haxe suites, compiler diagnostics, source/package/emoji/SWF/BA2 checks,
+backend giveaway tests, and all 79 Ruffle scenarios passed. The normalized
+FWS v32 SWF is SHA-256
+`b0d97324754cf100f3610e13d80e070de1a7da97635aff031e1b02fc3b900f35`.
+The rebuilt one-entry BTDX v1 GNRL BA2 extracts that SWF byte-for-byte and is
+SHA-256 `1f5937426cc7628486ecaf77e85f5fba3c598cfb8a3a487196d9cb72c2d836d8`.
+With Fallout 76 closed, the BA2 was installed on the local Steam/Proton
+desktop. The old BA2 and hash manifest are backed up under
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-hud-private-help-20260926T024752Z-me7dk2ua/`.
+The Dev relay/link, `xscalInputMode=shared`, xScal 0.2.18 DLL, loader registry,
+and other configs were verified unchanged. Fresh native game acceptance is pending.
+
+## Local Steam/Proton xScal shared-input install (2026-09-25)
+
+With Fallout 76 closed, the SWF was rebuilt from `dev` revision `17a2a876` and
+normalized; its SHA-256 is
+`c94b591310b06754de0771357439a700dcd6d0d1054ff49a834b221b9d311d26`.
+The rebuilt one-entry BTDX v1 GNRL BA2 extracts that exact SWF and matches the
+committed archive byte-for-byte (SHA-256
+`aa6125aeae3b0d7f828110676c6e939e18f28eaeb8e1590c4e21a72c94c947a6`).
+Compiler diagnostics, 25 Haxe suites, native adapter/auth and source/package
+checks, and the complete 79-case Ruffle suite passed; the revision's CI run
+`36209681621` passed. Only the BA2 and two existing configuration files were
+changed on the local Steam/Proton installation. `Data/FCMChat.ini` now sets
+`xscalInputMode=shared` and `linkUrl=dev.falloutchatmod.com/link`, while the
+root `xscal.ini` uses `wss://dev.falloutchatmod.com/relay`. `openKey=INSERT`,
+xScal 0.2.18, and the HUDModLoader registry remain unchanged. The prior files
+and SHA-256 manifest are under
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-xscal-shared-local-20260926T015953Z-snw8610p/`.
+The version stamp was absent and remains absent. This is a local test install;
+fresh native typing and Dev authentication are pending the user's game launch.
+
 ## Temporary Windows xScal SharedHUDTools workaround (2026-09-25)
 
 `FCMChat.ini` now accepts `xscalInputMode=native|shared`. Native remains the

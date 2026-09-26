@@ -83,7 +83,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.129"; // channel-local giveaways and ZFE command receipts
+    static inline var VERSION:String  = "2.10.130"; // private giveaway feedback and local command help
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -542,7 +542,7 @@ class FCMChatWidget extends MovieClip {
                 FcmConfig.hudTransportHasStar(carrier), color, true,
                 FcmConfig.hudTransportNameColor(carrier));
             var giveawayFeedback = FcmConfig.hudTransportValue(carrier, "g");
-            if (giveawayFeedback.length > 0) outboxStatus(giveawayFeedback);
+            if (giveawayFeedback.length > 0) addPrivateGiveawayFeedback(entry.channel, giveawayFeedback);
             if (giveawayFeedback.length == 0 && _outbox.entries.length == 0 && !_inputOpen) setPrompt(idlePrompt());
             return;
         }
@@ -3319,6 +3319,11 @@ class FCMChatWidget extends MovieClip {
             return;
         }
 
+        if (FcmCommand.isHelp(s)) {
+            addPrivateHudHelp();
+            return;
+        }
+
         // /relink is local and standalone. It must be consumed before auth-gated sending and
         // before the channel parser; when the game strips a leading slash, bare "relink" is
         // accepted by FcmCommand as the equivalent input.
@@ -3857,7 +3862,7 @@ class FCMChatWidget extends MovieClip {
                     // validated cosmetics in the known targetUserId member.
                     var ackHudTransport:String = extractJsonString(rs, "targetUserId");
                     var giveawayFeedback = FcmConfig.hudTransportValue(ackHudTransport, "g");
-                    if (giveawayFeedback.length > 0) outboxStatus(giveawayFeedback);
+                    if (giveawayFeedback.length > 0) addPrivateGiveawayFeedback(slug, giveawayFeedback);
                     var ackTransportMessageId:String = FcmConfig.hudTransportMessageId(ackHudTransport);
                     if (ackTransportMessageId.length > 0) messageId = ackTransportMessageId;
                     if (messageId.length > 0 || FcmOutbox.receipt(ackHudTransport) == localSendId) _outbox.remove(localSendId);
@@ -5424,7 +5429,7 @@ class FCMChatWidget extends MovieClip {
                     _outbox.remove(localSendId);
                     var feedback = FcmConfig.hudTransportValue(
                         FcmWire.asyncResultTargetUserId(obj), "g");
-                    outboxStatus(feedback.length > 0
+                    addPrivateGiveawayFeedback(entry.channel, feedback.length > 0
                         ? feedback
                         : "Giveaway command accepted. Check this channel for updates.");
                     zfeLog("info", "send", "giveaway command confirmed ch=" + entry.channel
@@ -5703,14 +5708,27 @@ class FCMChatWidget extends MovieClip {
         };
     }
 
-    /** Keep command help in this widget's feed only; no relay or Discord publication. */
+    /** Keep command replies in this widget's feed only; no relay or Discord publication. */
+    function addPrivateGiveawayFeedback(channel:String, body:String):Void {
+        if (body == null || body.length == 0) return;
+        addPrivateGiveawayNotice(channel, "[Vault-Tec]", body);
+        if (!_inputOpen) setPrompt(idlePrompt());
+    }
+
     function addPrivateGiveawayHelp():Void {
-        var channel = CHAN_SLUGS[_chanIdx];
+        addPrivateGiveawayNotice(CHAN_SLUGS[_chanIdx], "FCM Help", FcmCommand.giveawayHelp());
+    }
+
+    function addPrivateHudHelp():Void {
+        addPrivateGiveawayNotice(CHAN_SLUGS[_chanIdx], "FCM Help", FcmCommand.hudHelp());
+    }
+
+    function addPrivateGiveawayNotice(channel:String, user:String, body:String):Void {
         var order = _nextRecordOrder++;
         _records.push({
-            color: "", channel: channel, user: "FCM Help", tag: "", supporterStar: false,
-            starColor: "", body: FcmCommand.giveawayHelp(), messageId: "", senderUserId: "",
-            pending: false, localSendId: "giveaway-help-" + order, pendingAt: 0,
+            color: "", channel: channel, user: user, tag: "", supporterStar: false,
+            starColor: "", body: body, messageId: "", senderUserId: "",
+            pending: false, localSendId: "giveaway-private-" + order, pendingAt: 0,
             sendAccepted: false, createdAt: FcmFeedPlan.utcTimestamp(Date.now()),
             arrivalOrder: order, serverReplay: false,
         });

@@ -37,6 +37,18 @@ class TestFcmCommand {
         check("embedded text rejected", !FcmCommand.isRelink("please relink"));
         check("empty rejected", !FcmCommand.isRelink(""));
         check("null rejected", !FcmCommand.isRelink(null));
+        check("slash help is local", FcmCommand.isHelp(" /HELP "));
+        check("native slash-stripped help is local", FcmCommand.isHelp("help"));
+        check("dot help is local", FcmCommand.isHelp(".help"));
+        check("help with arguments is ordinary text", !FcmCommand.isHelp("help someone"));
+        check("other words do not trigger help", !FcmCommand.isHelp("helpful"));
+        var hudHelp = FcmCommand.hudHelp();
+        for (command in ["/help", "/g /t /e /i /r /s", "/hide", "/relink", "/emoji <name>",
+                "/giveaway start", "/giveaway list", "/giveaway last", "/giveaway join",
+                "/giveaway leave", "/giveaway stop", "/mod help",
+                "delete|kick|mute|unmute|ban|unban"])
+            check("HUD help includes " + command, hudHelp.indexOf(command) >= 0);
+        check("HUD help does not claim unimplemented clear command", hudHelp.indexOf("/clear") < 0);
         check("giveaway start preserved", FcmCommand.giveawayCommand("/giveaway start Flux x10 5") == "/giveaway start Flux x10 5");
         check("game-stripped giveaway slash restored", FcmCommand.giveawayCommand("giveaway leave ABC123") == "/giveaway leave ABC123");
         check("dot giveaway accepted", FcmCommand.giveawayCommand(".giveaway list") == "/giveaway list");
