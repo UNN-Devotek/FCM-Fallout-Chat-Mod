@@ -30,6 +30,7 @@ class FCMHarness extends Sprite {
         } catch (_:Dynamic) {}
         if (scenario == "quoted-echo") MockXscal.resetEvents();
         if (scenario == "giveaway") { MockXscal.resetEvents(); MockXscal.giveawayMode = true; }
+        if (scenario == "events") { MockXscal.resetEvents(); MockXscal.eventMode = true; }
         if (scenario == "xscal-session-input" || scenario == "xscal-period-native"
                 || scenario == "xscal-shared-config")
             MockXscal.sessionInputEnabled = true;
@@ -38,7 +39,7 @@ class FCMHarness extends Sprite {
         else __SFECodeObj = MockXscal.root();
         if (scenario == "bridge-fast-travel" && provider == "xscal") __SFCodeObj = MockBridgeStorage.root();
         // Deterministic regressions must never load a user's hosted snapshot or send live chat.
-        if (scenario != "browser-links" && scenario != "fast-travel" && scenario != "bridge-fast-travel" && scenario != "delayed-auth" && scenario != "queue-loss" && scenario != "typing-renewal" && scenario != "visibility" && scenario != "quoted-echo" && scenario != "giveaway" && scenario != "xscal-session-input" && scenario != "xscal-session-fallback" && scenario != "xscal-period-native" && scenario != "xscal-shared-config")
+        if (scenario != "browser-links" && scenario != "fast-travel" && scenario != "bridge-fast-travel" && scenario != "delayed-auth" && scenario != "queue-loss" && scenario != "typing-renewal" && scenario != "visibility" && scenario != "quoted-echo" && scenario != "giveaway" && scenario != "events" && scenario != "xscal-session-input" && scenario != "xscal-session-fallback" && scenario != "xscal-period-native" && scenario != "xscal-shared-config")
             MockXscal.loadScenario("/hosted-dev-snapshot.json");
         BSUIDataManager = scenario == "bridge-fast-travel" ? MockBridgeGameData.manager() : MockGameData.manager();
         // Keep the class linked so the production getDefinitionByName path resolves it.
@@ -78,6 +79,7 @@ class FCMHarness extends Sprite {
             if (scenario == "visibility") VisibilityScenario.start(widget, provider);
             if (scenario == "quoted-echo") QuotedEchoScenario.start(widget, provider);
             if (scenario == "giveaway") GiveawayScenario.start(widget, provider);
+            if (scenario == "events") EventScenario.start(widget, provider);
             if (scenario == "typing-renewal") TypingRenewalScenario.start(widget, provider);
             if (scenario == "xscal-session-input" || scenario == "xscal-session-fallback"
                     || scenario == "xscal-period-native" || scenario == "xscal-shared-config")

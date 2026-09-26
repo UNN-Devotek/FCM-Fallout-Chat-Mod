@@ -47,8 +47,9 @@ import {
   tokenSupportsHudCosmeticsTransportDurable,
 } from './clientCapabilityStore';
 import { ingestMessage } from '../ingestMessage';
-import { tryHandleCommand } from '../commandService';
+import { getCommands, tryHandleCommand } from '../commandService';
 import { hudGiveawayCommand, hudGiveawayFeedback } from './hudGiveawayCommand';
+import { hudEventCommand } from './hudEventCommand';
 import { attachCosmetics, attachCosmeticsToHistory } from '../cosmetics/cosmeticsService';
 import { refreshSupporterFromHudSend } from '../supporterSyncService';
 import {
@@ -332,7 +333,7 @@ async function pushLinkCompleteLocal(relayUserId: string): Promise<number> {
  *   message_too_long    — body > 500 chars
  *   user_muted          — user is muted
  *   message_blocked     — rejected by automod (NOT a link/permission problem)
- *   slash_ignored       — a "/command" was typed in-game (not supported there)
+ *   slash_ignored       — an unsupported "/command" was typed in-game
  *   invalid_action      — unknown moderationAction action
  */
 function errEnvelope(code: string, message: string): Record<string, unknown> {
@@ -1391,6 +1392,45 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       messageId: uuidv4(),
       targetUserId: `FCMHUD/1;g=${encodeURIComponent(hudGiveawayFeedback(result))}`,
     });
+    return;
+  }
+
+  // Event shortcuts use the same enabled command definitions, channel policy,
+  // cooldown and template as the overlay. The resolved announcement then takes
+  // the ordinary governed ingestion path into Events and its Discord mapping.
+  const eventCommand = await (async () => {
+    if (slug === 'server') return null;
+    if (!/^[/.][a-z][a-z0-9]*(?:\s|$)/i.test(body.trim())) return null;
+    return hudEventCommand(body, await getCommands());
+  })();
+  if (eventCommand) {
+    const sourceChannelId = slugToChannelId(slug)!;
+    const command = await tryHandleCommand(eventCommand, identity.linkedUserId!, identity.fo76Name,
+      sourceChannelId, slug === 'global' ? 'General' : slug, null, 0,
+      slug === 'global' ? '00000000-0000-0000-0000-000000000001' : null);
+    if (!command.handled || command.actionType !== 'relay') {
+      const feedback = command.handled && command.actionType === 'private'
+        ? command.botMessage : 'Event command unavailable.';
+      await reply({ success: true, messageId: uuidv4(),
+        targetUserId: `FCMHUD/1;g=${encodeURIComponent(feedback.slice(0, 180))}` });
+      return;
+    }
+    const result = await ingestMessage({
+      userId: identity.linkedUserId!, channelId: command.targetChannelId,
+      rawContent: command.relayContent, source: 'relay', relaySeq: await nextRelaySeq(),
+      waitForPersistence: false, displayName: identity.fo76Name,
+      suppressDiscordRelay: !command.relayToDiscord,
+    });
+    if (!result.ok) {
+      const feedback = result.reason === 'rate-limited' ? 'Please wait before announcing another event.'
+        : result.reason === 'automod' ? 'Event announcement blocked by the chat filter.'
+        : 'Event announcement could not be sent.';
+      await reply({ success: true, messageId: uuidv4(),
+        targetUserId: `FCMHUD/1;g=${encodeURIComponent(feedback)}` });
+      return;
+    }
+    await reply({ success: true, messageId: result.messageId,
+      targetUserId: 'FCMHUD/1;g=Event%20announced%20in%20Events.' });
     return;
   }
 

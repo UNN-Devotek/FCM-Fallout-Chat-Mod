@@ -12,6 +12,13 @@ for (const provider of ['xscal', 'zfe']) {
     await expect(page.locator('#log')).not.toContainText('GIVEAWAY FAIL');
   });
 
+  test(`event help scrolls by line and shortcut announces in Events (${provider})`, async ({ page }) => {
+    await page.goto(`/?mode=harness&provider=${provider}&scenario=events`);
+    await expect(page.locator('#log')).toContainText(/EVENT (PASS|FAIL)/, { timeout: 25_000 });
+    await expect(page.locator('#log')).toContainText(`EVENT PASS ${provider}`);
+    await expect(page.locator('#log')).not.toContainText('EVENT FAIL');
+  });
+
   test(`sticky manual hide and inspection visibility (${provider})`, async ({ page }) => {
     await page.goto(`/?mode=harness&provider=${provider}&scenario=visibility`);
     await expect(page.locator('#log')).toContainText(/VISIBILITY (PASS|FAIL)/, { timeout: 25_000 });
@@ -61,7 +68,7 @@ test.afterEach(async ({ page, request }) => {
 test('loads the exact production widget artifact and records browser key delivery', async ({ page }) => {
   await page.goto('/?mode=artifact');
   await expect(page.locator('#status')).toHaveAttribute('data-state', 'ready', { timeout: 20_000 });
-  await expect(page.locator('#widget-version')).toHaveText('2.10.130');
+  await expect(page.locator('#widget-version')).toHaveText('2.10.131');
   await page.locator('#focus-stage').click();
   await page.keyboard.press('Insert');
   await page.keyboard.press('ArrowUp');

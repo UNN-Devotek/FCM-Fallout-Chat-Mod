@@ -3,6 +3,16 @@
 FCMChatWidget is the optional HUDModLoader chat widget for Fallout 76. It uses ZFE or xScal's
 native chat bridge and FCM's `/relay`. It is independent of the desktop overlay.
 
+**2.10.131 test candidate:** `/event help` lists all 32 seeded event
+shortcuts and names in private HUD feed rows. `/help` includes the same names.
+Type a shortcut such as `/sbq`
+from General to announce in Events and its mapped Discord channel. Native
+slash-stripped input (`event help`, `sbq`) works too. The backend applies the
+same enabled-command list, General restriction, cooldown, and announcement
+template as the overlay. Each line of `/help`, `/event help`, and
+`/giveaway` help is a selectable feed row; with the editor open, Up/Down
+scrolls through every line. The private result remains on the submitting HUD.
+
 **2.10.130 test candidate:** `/help` adds a local command guide to the HUD feed.
 It lists channel switches, hide, relink, emoji, giveaway, and staff moderation
 commands. The native keyboard path's slash-stripped `help` also works. The

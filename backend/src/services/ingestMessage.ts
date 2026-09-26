@@ -15,9 +15,9 @@
  * Source tag is 'relay', 'mcp', or 'ws' — forwarded to the persisted Message row for
  * telemetry/abuse-tracing only; it does NOT skip any governance step.
  *
- * Slash commands from the native chat.v1 relay adapter:
- * OUT OF SCOPE for v1. SEND lines starting with '/' are dropped before governance
- * runs. The ordinary WS/web source remains available for the server-side command
+ * The relay adapter resolves supported HUD giveaway and event commands before
+ * calling this function. Any remaining native SEND line starting with '/' is
+ * dropped before governance. The ordinary WS/web source uses the command
  * handler in handlers.ts.
  *
  * The WS handler (handlers.ts) continues to own WS-specific concerns:
@@ -137,6 +137,7 @@ export async function ingestMessage(opts: {
   source: IngestSource;
   relaySeq?: number;
   waitForPersistence?: boolean;
+  suppressDiscordRelay?: boolean;
   // Explicit display-name override. The relay path passes the in-game CHARACTER name
   // (identity.fo76Name, e.g. "Wanderer") so chat shows that, not the linked FCM account's
   // Discord name (the message is still attributed to the linked user UUID for moderation).
@@ -145,8 +146,7 @@ export async function ingestMessage(opts: {
   const { userId, channelId, source, relaySeq } = opts;
   let rawContent = opts.rawContent;
 
-  // The chat.v1 relay adapter represents in-game HUD sends. It does not
-  // implement the web command surface, so a slash line
+  // The chat.v1 relay adapter resolves its supported commands first, so a slash line
   // must never fall through as ordinary chat. Keep WS/MCP unchanged: the web WS
   // handler owns its supported slash-command interception.
   if (source === 'relay' && rawContent.trim().startsWith('/')) {
@@ -232,6 +232,7 @@ export async function ingestMessage(opts: {
     // finalizer makes a best-effort allocation without making chat depend on Redis.
     relaySeq,
     waitForPersistence: opts.waitForPersistence ?? shouldWaitForPersistence(source),
+    suppressDiscordRelay: opts.suppressDiscordRelay,
   });
 
   return { ok: true, messageId };

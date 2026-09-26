@@ -193,12 +193,17 @@ automatically server-side. The REST endpoints are for the dashboard and admin to
 
 Overlay, Discord `/giveaway` and buttons, and the optional native HUD's
 `giveaway start/list/last/join/leave/stop` commands share this service. HUD
-commands are bound to the linked relay token and accepted only as the giveaway
-family; other HUD slash commands retain their existing rejection. Announcements
-and results are persisted in the channel where `start` was sent and mirrored as
+commands are bound to the linked relay token. Announcements and results are
+persisted in the channel where `start` was sent and mirrored as
 Discord embeds in that channel's configured relay mapping, with live entry counts
 and final results. Channels without a Discord mapping receive the in-app card
 without posting to an unrelated Discord channel.
+
+HUD event shortcuts are also accepted when they match an enabled `announce`
+command. The relay enforces that command's source-channel restriction and
+target (Events for the seeded commands), then ingests the announcement through
+the normal moderation and Discord relay path. Other HUD slash commands retain
+their existing rejection.
 
 `id` in the admin delete path is the giveaway `shortId` (6-char, e.g. `A1B2C3`), not the UUID.
 

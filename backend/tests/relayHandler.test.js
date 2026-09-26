@@ -169,6 +169,9 @@ jest.mock('../src/config/prisma', () => ({
       findFirst: jest.fn().mockResolvedValue({ id: 'ch1', isArchived: false }),
       findMany:  jest.fn().mockResolvedValue([]),
     },
+    chatCommand: {
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     report: {
       create: jest.fn().mockResolvedValue({ id: 'report-stub', createdAt: new Date('2026-01-01T00:00:00.000Z') }),
       findFirst: jest.fn().mockResolvedValue(null),
@@ -1513,6 +1516,42 @@ describe('relay WebSocket ops', () => {
     );
     expect(res).toMatchObject({ success: false, error: { code: 'slash_ignored' } });
     expect(ingestMock).toHaveBeenCalledWith(expect.objectContaining({ source: 'relay' }));
+    ws.close();
+  });
+
+  test('HUD event shortcut publishes the resolved announcement to Events with private feedback', async () => {
+    const prisma = require('../src/config/prisma').default;
+    prisma.chatCommand.findMany.mockResolvedValueOnce([{
+      id: 781, trigger: '/sbq', alias: null, description: 'Scorched Earth',
+      response: 'Scorched Earth event on this server.', actionType: 'announce',
+      targetChannelId: SLUG_TO_UUID.events, allowedChannelId: '00000000-0000-0000-0000-000000000001',
+      cooldownSec: 30, enabled: true, requiresArgs: false,
+      responseColor: null, relayToDiscord: true,
+    }]);
+    const { ws: wsReg, msgs: msgsReg } = await conn();
+    const reg = await waitForMsg(wsReg, msgsReg, () =>
+      send(wsReg, { op: 'register', displayName: 'EventSender' }));
+    wsReg.close();
+    const actorId = '77777777-7777-4777-8777-777777777776';
+    _userMap[actorId] = { id: actorId, discordId: 'disc-event', isBanned: false, isMuted: false };
+    markTokensLinked(lastRawUserId(), actorId);
+    const ingest = require('../src/services/ingestMessage').ingestMessage;
+    ingest.mockClear();
+    const { ws, msgs } = await conn();
+    const result = await waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'send', token: reg.token, channel: 'global', body: '/sbq' }));
+    expect(result).toMatchObject({ success: true, targetUserId: 'FCMHUD/1;g=Event%20announced%20in%20Events.' });
+    expect(ingest).toHaveBeenCalledWith(expect.objectContaining({
+      userId: actorId, channelId: SLUG_TO_UUID.events,
+      rawContent: 'Scorched Earth event on this server.', source: 'relay',
+      suppressDiscordRelay: false,
+    }));
+    ingest.mockClear();
+    const blocked = await waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'send', token: reg.token, channel: 'trade', body: '/sbq' }));
+    expect(blocked.success).toBe(true);
+    expect(decodeURIComponent(blocked.targetUserId)).toContain('designated channel');
+    expect(ingest).not.toHaveBeenCalled();
     ws.close();
   });
 

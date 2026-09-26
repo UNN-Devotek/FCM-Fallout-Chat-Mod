@@ -6,14 +6,14 @@ HUD mod uses UI assets and already-exposed HUD data through an extender's sancti
 must not add game-memory reads, code injection, or network/port scanning.
 
 **Current local typing setup (2026-09-25):** The Steam/Proton game has xScal
-0.2.18, HUDModLoader v70, and the source-built FCMChatWidget 2.10.130 BA2.
+0.2.18, HUDModLoader v70, and the source-built FCMChatWidget 2.10.131 BA2.
 `Data/FCMChat.ini` sets `xscalInputMode=shared` for
 the SharedHUDTools text editor and points its link prompt at hosted Dev; root
 `xscal.ini` points the relay at hosted Dev. `openKey=INSERT`, the xScal DLL,
 archive list, and one-entry FCMChatWidget loader registry were preserved.
 The new BA2 and exact-file rollback backup are verified by hash in the
 [build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
-The 79-case Ruffle suite passed for 2.10.130. Fresh native typing, private
+The 81-case Ruffle suite passed for 2.10.131. Fresh native typing, private
 feed behavior, and Dev authentication are pending the user's game launch.
 
 The MSI Windows 11 laptop was also reset to the same three Nexus ZIPs for a
@@ -26,6 +26,18 @@ Nexus xScal default with `xScalPriority` disabled. In-game typing remains
 pending a user launch on that machine.
 
 ## Current implementation and verification
+
+**2.10.131 HUD event commands and selectable help candidate:** `/event help`
+adds the 32 seeded event shortcuts and names as private, individual feed rows.
+`/help` also includes those event names.
+The leading slash may be consumed by native input; `event help` and bare event
+codes such as `sbq` also work. Event shortcuts are sent from General and use
+the backend's enabled `announce` definitions, allowed-channel policy,
+cooldown and template. The resolved announcement is ingested in Events and
+relayed to that channel's Discord mapping. The submitting player receives a
+private HUD result. `/help`, `/event help`, and giveaway help each render one
+selectable row per line, so Up/Down can traverse the whole guide while the
+editor is open. The ZFE terminal send receipt retires event outbox entries.
 
 **2.10.130 private HUD help and giveaway feedback candidate:** Standalone
 `/help`, `.help`, or slash-stripped `help` adds a local command guide to the

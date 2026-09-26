@@ -83,7 +83,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.130"; // private giveaway feedback and local command help
+    static inline var VERSION:String  = "2.10.131"; // HUD event commands and selectable help lines
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -3341,9 +3341,23 @@ class FCMChatWidget extends MovieClip {
             addPrivateGiveawayHelp();
             return;
         }
+        if (FcmEventCommands.isHelp(s)) {
+            addPrivateEventHelp();
+            return;
+        }
         var giveawayCommand = FcmCommand.giveawayCommand(s);
         if (giveawayCommand.length > 0) {
             sendMessage(giveawayCommand);
+            return;
+        }
+        var eventCommand = FcmEventCommands.command(s);
+        if (eventCommand.length > 0) {
+            if (CHAN_SLUGS[_chanIdx] != "global") {
+                addPrivateGiveawayNotice(CHAN_SLUGS[_chanIdx], "[Vault-Tec]",
+                    "Event commands must be sent from General. Switch with /g.");
+            } else {
+                sendMessage(eventCommand);
+            }
             return;
         }
 
@@ -3704,6 +3718,7 @@ class FCMChatWidget extends MovieClip {
         if (raw.length == 0) return;
 
         var isGiveawayCommand:Bool = FcmCommand.giveawayCommand(raw).length > 0;
+        var isEventCommand:Bool = FcmEventCommands.command(raw).length > 0;
         var slug:String = CHAN_SLUGS[_chanIdx];
         if (isGiveawayCommand && slug == "server") {
             setLogText("Giveaways need a community channel.");
@@ -3729,7 +3744,7 @@ class FCMChatWidget extends MovieClip {
         }
         var nativeSubmit:Bool = _nativeSubmitInFlight;
         var ownCosmetics = ownCosmeticsForSend();
-        if (!isGiveawayCommand) {
+        if (!isGiveawayCommand && !isEventCommand) {
             addOptimisticEcho(slug, raw, "", ownCosmetics.tag, ownCosmetics.supporterStar,
                 ownCosmetics.starColor, localUserId, localSendId);
             zfeLog("info", "echo", "created canonical local row; transport deferred ch=" + slug);
@@ -5425,14 +5440,17 @@ class FCMChatWidget extends MovieClip {
             if (entry == null) return;
             if (accepted) {
                 if (_needsLink) clearLinkGate("ZFE relay accepted send");
-                if (FcmCommand.giveawayCommand(entry.body).length > 0) {
+                var isGiveaway = FcmCommand.giveawayCommand(entry.body).length > 0;
+                var isEvent = FcmEventCommands.command(entry.body).length > 0;
+                if (isGiveaway || isEvent) {
                     _outbox.remove(localSendId);
                     var feedback = FcmConfig.hudTransportValue(
                         FcmWire.asyncResultTargetUserId(obj), "g");
                     addPrivateGiveawayFeedback(entry.channel, feedback.length > 0
                         ? feedback
-                        : "Giveaway command accepted. Check this channel for updates.");
-                    zfeLog("info", "send", "giveaway command confirmed ch=" + entry.channel
+                        : isGiveaway ? "Giveaway command accepted. Check this channel for updates."
+                            : "Event command accepted. Check Events for the announcement.");
+                    zfeLog("info", "send", (isGiveaway ? "giveaway" : "event") + " command confirmed ch=" + entry.channel
                         + " requestId=" + requestId);
                     return;
                 }
@@ -5716,14 +5734,38 @@ class FCMChatWidget extends MovieClip {
     }
 
     function addPrivateGiveawayHelp():Void {
-        addPrivateGiveawayNotice(CHAN_SLUGS[_chanIdx], "FCM Help", FcmCommand.giveawayHelp());
+        addPrivateHelpLines(FcmCommand.giveawayHelp());
     }
 
     function addPrivateHudHelp():Void {
-        addPrivateGiveawayNotice(CHAN_SLUGS[_chanIdx], "FCM Help", FcmCommand.hudHelp());
+        addPrivateHelpLines(FcmCommand.hudHelp());
+    }
+
+    function addPrivateEventHelp():Void {
+        addPrivateHelpLines(FcmEventCommands.help());
+    }
+
+    /** Each line is a selectable feed row, so Up/Down can reach the whole guide. */
+    function addPrivateHelpLines(body:String):Void {
+        var lines = body.split("\n");
+        for (line in lines) {
+            if (StringTools.trim(line).length > 0)
+                addPrivateNoticeRecord(CHAN_SLUGS[_chanIdx], "FCM Help", line);
+        }
+        // A short custom history cap must still retain the complete latest guide.
+        while (_records.length > Std.int(Math.max(_cfg.maxMessages, lines.length))) _records.shift();
+        scrollToBottom();
+        requestRender();
     }
 
     function addPrivateGiveawayNotice(channel:String, user:String, body:String):Void {
+        addPrivateNoticeRecord(channel, user, body);
+        while (_records.length > _cfg.maxMessages) _records.shift();
+        scrollToBottom();
+        requestRender();
+    }
+
+    function addPrivateNoticeRecord(channel:String, user:String, body:String):Void {
         var order = _nextRecordOrder++;
         _records.push({
             color: "", channel: channel, user: user, tag: "", supporterStar: false,
@@ -5732,9 +5774,6 @@ class FCMChatWidget extends MovieClip {
             sendAccepted: false, createdAt: FcmFeedPlan.utcTimestamp(Date.now()),
             arrivalOrder: order, serverReplay: false,
         });
-        while (_records.length > _cfg.maxMessages) _records.shift();
-        scrollToBottom();
-        requestRender();
     }
 
     /** Paint a local send immediately; the ACK/event then replaces fallback cosmetics authoritatively. */

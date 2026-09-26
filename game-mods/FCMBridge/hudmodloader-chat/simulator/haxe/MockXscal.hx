@@ -17,6 +17,9 @@ class MockXscal {
     public static var connectCount(default, null):Int = 0;
     public static var ordinarySendCount(default, null):Int = 0;
     public static var giveawayMode:Bool = false;
+    public static var eventMode:Bool = false;
+    public static var lastEventBody(default, null):String = "";
+    public static var lastEventChannel(default, null):String = "";
     public static var lastGiveawayBody(default, null):String = "";
     public static var lastGiveawayChannel(default, null):String = "";
     public static var lastRosterBody(default, null):String = "";
@@ -173,6 +176,16 @@ class MockXscal {
                         : "Giveaway started";
                 return response({success:true, messageId:messageId,
                     targetUserId:"FCMHUD/1;g=" + StringTools.urlEncode(feedback)});
+            }
+            if (eventMode && FcmEventCommands.command(body).length > 0) {
+                lastEventBody = body;
+                lastEventChannel = channel;
+                scenarioEvents.push({kind:"chat.message", id:scenarioEvents.length + 1,
+                    messageId:messageId, channel:"events", senderUserId:"sim-linked-user",
+                    senderDisplayName:"Simulator76", body:"Scorched Earth event on this server.",
+                    targetUserId:""});
+                return response({success:true, messageId:messageId,
+                    targetUserId:"FCMHUD/1;g=Event%20announced%20in%20Events."});
             }
             if (channel == "server" && StringTools.startsWith(body, "FCMCTL/1/")) {
                 if (StringTools.startsWith(body, "FCMCTL/1/DIAG:")) {

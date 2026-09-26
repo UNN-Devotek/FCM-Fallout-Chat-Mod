@@ -1,5 +1,15 @@
-FCM HUD 2.10.130
+FCM HUD 2.10.131
 ==============
+
+Type /event help for the event shortcuts and names. Type a shortcut such
+as /sbq in General to announce that event in the Events feed and its Discord
+channel. If the game consumes the slash, type event help or sbq instead.
+The main /help guide lists the event names too.
+The backend checks whether each event command is enabled and enforces its
+cooldown. The result message appears only in your HUD feed.
+
+Help now appears one line per feed row. With the chat editor open, Up and
+Down move through every help line, including the full event list.
 
 Type /help to see all current HUD commands in a private chat-feed message.
 If the game consumes the slash, typing help alone works too. The guide stays
@@ -11,11 +21,11 @@ that you cannot enter your own giveaway. These replies scroll with chat and
 are visible only on your HUD. The winner announcement is still posted
 automatically to the giveaway's channel for everyone to see.
 
-The private giveaway help row now stays in chronological feed order. Later
-messages scroll below it, so it moves upward like an ordinary chat message.
+The private giveaway help lines stay in chronological feed order. Later
+messages scroll below them, so they move upward like ordinary chat messages.
 
 Type "giveaway" (or "/giveaway") alone to see the available commands in your
-chat feed. The help row stays on your own HUD; it is not sent to other players
+chat feed. The help lines stay on your own HUD; they are not sent to other players
 or Discord. "giveaway help" does the same.
 
 Giveaways now appear in the community channel where you start them. Enter "giveaway start <item> [minutes]",

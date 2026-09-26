@@ -49,6 +49,21 @@ class TestFcmCommand {
                 "delete|kick|mute|unmute|ban|unban"])
             check("HUD help includes " + command, hudHelp.indexOf(command) >= 0);
         check("HUD help does not claim unimplemented clear command", hudHelp.indexOf("/clear") < 0);
+        check("HUD help links event commands", hudHelp.indexOf("/event help") >= 0);
+        check("HUD help lists event names", hudHelp.indexOf("/sbq — Scorched Earth") >= 0
+            && hudHelp.indexOf("/ss — Sinkhole Solutions") >= 0);
+        check("event help accepts slash-stripped text", FcmEventCommands.isHelp("event help"));
+        check("event help does not consume channel switch", !FcmEventCommands.isHelp("event"));
+        check("slash event still switches channels", !FcmEventCommands.isHelp("/event"));
+        check("event help lists all seeded shortcuts", FcmEventCommands.entries.length == 32
+            && FcmEventCommands.help().indexOf("/sbq — Scorched Earth") >= 0
+            && FcmEventCommands.help().indexOf("/ss — Sinkhole Solutions") >= 0);
+        for (entry in FcmEventCommands.entries) {
+            var code = entry.split("|")[0];
+            check("event slash restored " + code, FcmEventCommands.command(code) == "/" + code);
+        }
+        check("event namespace routes shortcut", FcmEventCommands.command("/event sbq") == "/sbq");
+        check("event prefix rejects ordinary chat", FcmEventCommands.command("event tomorrow") == "");
         check("giveaway start preserved", FcmCommand.giveawayCommand("/giveaway start Flux x10 5") == "/giveaway start Flux x10 5");
         check("game-stripped giveaway slash restored", FcmCommand.giveawayCommand("giveaway leave ABC123") == "/giveaway leave ABC123");
         check("dot giveaway accepted", FcmCommand.giveawayCommand(".giveaway list") == "/giveaway list");
