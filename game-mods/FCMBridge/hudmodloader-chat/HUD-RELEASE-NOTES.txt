@@ -1,61 +1,41 @@
 FCM HUD 2.10.134
 ==============
 
-Type /event help for all 33 event shortcuts and names, including /gu for
-Gearing Up. Type a shortcut such
-as /sbq in General to announce that event in the Events feed and its Discord
-channel. If the game consumes the slash, type event help or sbq instead.
-The main /help guide points to /event help and /mod help without listing
-event names or staff actions.
-The backend checks whether each event command is enabled and enforces its
-cooldown. The result message appears only in your HUD feed.
+Windows xScal text input
+------------------------
+Added a working SharedHUDTools text-entry option for Windows xScal users whose
+native Input.BeginInput reports input_unavailable. Set xscalInputMode=shared in
+Data/FCMChat.ini, then restart Fallout 76. This uses HUDModLoader's keyboard
+editor and ControlMap lock. Native input remains the default for installations
+where it works; shared mode does not support controller text entry.
 
-Help now appears one line per feed row. With the chat editor open, Up and
-Down move through every help line, including the full event list.
+HUD commands
+------------
+Type /help for the private general command guide. Event and staff command
+lists are separate: /event help lists all 33 event names and shortcuts, and
+/mod help lists moderator actions. Help appears in your own chat feed, scrolls
+away with new messages, and can be traversed line by line with Up and Down
+while the editor is open. If the game consumes a leading slash, type help or
+event help without it.
 
-Type /help to see general HUD commands and links to the separate guides in
-a private chat-feed message.
-If the game consumes the slash, typing help alone works too. The guide stays
-on your own HUD and scrolls upward as new messages arrive.
+Use an event shortcut such as /sbq from General to announce the event in the
+Events feed and its mapped Discord channel. The backend checks whether the
+event is enabled and applies its channel rule, cooldown, and template. Your
+command result is private to your HUD.
 
-Joining a giveaway now adds a private [Vault-Tec] confirmation to your HUD
-chat feed. If you try to join one you created, a private feed message explains
-that you cannot enter your own giveaway. These replies scroll with chat and
-are visible only on your HUD. The winner announcement is still posted
-automatically to the giveaway's channel for everyone to see.
+The HUD now accepts giveaway start, list, last, join, leave, and stop commands.
+Type /giveaway alone for private help. Giveaway cards and winner announcements
+appear in the channel where the giveaway started and its mapped Discord
+channel. Joining shows a private confirmation; creators receive a private
+message when they try to enter their own giveaway.
 
-The private giveaway help lines stay in chronological feed order. Later
-messages scroll below them, so they move upward like ordinary chat messages.
+ZFE controller-active physical keyboard entry and Escape cleanup were also
+restored. Choose only the ZFE or xScal install folder for your extender.
 
-Type "giveaway" (or "/giveaway") alone to see the available commands in your
-chat feed. The help lines stay on your own HUD; they are not sent to other players
-or Discord. "giveaway help" does the same.
-
-Giveaways now appear in the community channel where you start them. Enter "giveaway start <item> [minutes]",
-"giveaway list", "giveaway last", "giveaway join <id>", "giveaway leave <id>",
-or "giveaway stop <id>" in chat. A leading slash also works if the game keeps it.
-Commands use your linked FCM account and show a private result in the HUD.
-The giveaway announcement and winner stay in that channel and its mapped Discord channel.
-Confirmed ZFE giveaway commands now clear the send queue without a false delivery warning.
-
-This patch restores ZFE chat entry with a controller active: physical Insert opens
-chat, physical keyboard typing stays in the editor, gameplay keys stay locked,
-and Escape restores controls. It uses the HUDModLoader host text editor and
-ControlMap lock without opening the controller on-screen keyboard.
-
-xScal continues to use Input.BeginInput, Input.PollInput, and Input.EndInput
-for its native text session. That path requires xScal 0.2.18 or newer; older
-xScal builds retain the SharedHUDTools fallback. Both provider paths passed
-the controller-active Insert, typing, and Escape in-game check.
-
-The download now has separate ZFE and xScal install folders. Choose only your
-installed provider, follow its INSTALL.txt, and preserve edited INIs. Existing
-users replace only the BA2. New installs must merge the HUDModLoader entry and
-Fallout76Custom.ini archive entry as described in the selected folder.
-
-The xScal DLL is not bundled. Install one compatible extender separately.
-The desktop overlay and optional background Server Bridge are not included.
-Do not install the visible widget alongside FCMServerBridge or legacy FCMBridge.
-
-Quoted messages no longer reappear below later chat messages during self-echo
-reconciliation. The full automated HUD suite and local ZFE/xScal input checks passed.
+Updating
+--------
+Exit Fallout 76 before updating. Existing users replace only
+Data/FCMChatWidget.ba2 and keep their edited INIs, HUDModLoader registry,
+archive list, and saved account data. New users should follow the selected
+provider folder's INSTALL.txt. The xScal DLL, desktop overlay, and optional
+background Server Bridge are separate downloads.
