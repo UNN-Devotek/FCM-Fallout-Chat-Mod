@@ -1,9 +1,9 @@
 # FCM HUD Mod 2.10.134 production release plan
 
-**Status:** Release candidate. Dev commit, CI, source/package checks and Ruffle
-passed. Fresh in-game acceptance on the 2.10.134 BA2 is pending. Do not publish
-Nexus or the website HUD release until that result and the production package
-checks are recorded.
+**Status:** Release candidate. Dev CI and source/package checks passed. The
+release owner confirmed 2.10.134 laptop typing, `/help`, an event shortcut,
+and a giveaway command, including the expected HUD feed and Discord results.
+The full Ruffle rerun and production package checks are in progress.
 
 The public Nexus HUD baseline is 2.10.125. This is a HUD-only update of the
 optional in-game mod. The desktop overlay and provider DLLs are separate.
@@ -47,9 +47,10 @@ The returned Discord flags value was `4096` (`SUPPRESS_NOTIFICATIONS`).
 
 ## Publication sequence
 
-1. Confirm fresh native 2.10.134 typing, `/help`, event and giveaway behavior
-   on the laptop. The package guide documents the remaining ZFE/game-only
-   checks. Record any limitations without claiming the simulator proves them.
+1. **Passed by owner report:** fresh native 2.10.134 laptop typing, `/help`,
+   event shortcut and giveaway command behavior, with feed and Discord results.
+   The package guide documents further ZFE/game-only acceptance limits; the
+   simulator does not prove them.
 2. Merge the tested Dev tree into Prod. Wait for CI, CodeQL and the hosted
    production deploy to finish and verify the backend's event/giveaway paths.
 3. Build the production-target unified website and Nexus ZIPs from the exact

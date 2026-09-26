@@ -13,8 +13,10 @@ the SharedHUDTools text editor and points its link prompt at hosted Dev; root
 archive list, and one-entry FCMChatWidget loader registry were preserved.
 The new BA2 and exact-file rollback backup are verified by hash in the
 [build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
-The 81-case Ruffle suite passed for 2.10.134. Fresh native typing, private
-feed behavior, and Dev authentication are pending the user's game launch.
+The 81-case Ruffle suite passed for 2.10.134. The release owner subsequently
+confirmed laptop typing, `/help`, an event shortcut, and a giveaway command,
+including their feed and Discord results. This is a user-reported native check;
+the remaining ZFE/game-only acceptance cases are documented separately.
 
 The MSI Windows 11 laptop was also reset to the same three Nexus ZIPs for a
 native Windows input trial. Its previous `FCMServerBridge` game mod, older
@@ -25,8 +27,9 @@ entry, and no active FCMServerBridge. Its `Data/FCMChat.ini` retains
 `openKey=PERIOD` and `xscalInputMode=shared`; its link and root `xscal.ini`
 relay point to hosted Dev. The prior BA2 and both config files are backed up
 under `C:\Users\White\Documents\FCM-Repro-Backups\before-hud-help-2.10.134-2026-09-26`.
-The installed BA2 hash matches the tested artifact. In-game typing, private
-feed behavior, and Dev authentication remain pending the user's launch.
+The installed BA2 hash matches the tested artifact. The release owner confirmed
+in-game typing, `/help`, event and giveaway commands, and their feed and
+Discord outcomes on this laptop with the Dev relay.
 
 ## Current implementation and verification
 

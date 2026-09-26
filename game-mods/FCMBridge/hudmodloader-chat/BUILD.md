@@ -32,8 +32,9 @@ relay was changed to `wss://dev.falloutchatmod.com/relay`. Byte comparisons
 against the backed-up configs confirmed these were the only two config changes.
 The old BA2 and both prior configs are at
 `C:\Users\White\Documents\FCM-Repro-Backups\before-hud-help-2.10.134-2026-09-26`.
-The loader still has one FCMChatWidget entry and no additional FCM BA2. Native
-Windows acceptance awaits the user's game launch.
+The loader still has one FCMChatWidget entry and no additional FCM BA2. The
+release owner confirmed native Windows typing, `/help`, an event shortcut,
+and a giveaway command, including the expected feed and Discord results.
 
 ## Private giveaway feedback candidate (2026-09-25)
 
