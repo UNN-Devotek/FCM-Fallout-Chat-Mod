@@ -21,6 +21,7 @@ test('post-push patch set is static, ordered, and complete', () => {
       'mcp-oauth-s256-constraint',
       'mcp-oauth-code-scopes-constraint',
       'mcp-oauth-grant-scopes-constraint',
+      'restore-missing-event-commands',
     ],
   );
 
@@ -48,6 +49,10 @@ test('post-push patch set is static, ordered, and complete', () => {
   ]) {
     assert.ok(POST_PUSH_PATCHES.some((patch) => new RegExp(constraint).test(patch.sql)));
   }
+  const migration = readFileSync(join(process.cwd(),
+    'prisma/migrations/20260926000000_restore_missing_event_commands/migration.sql'), 'utf8');
+  const seed = POST_PUSH_PATCHES.find((patch) => patch.name === 'restore-missing-event-commands');
+  assert.equal(seed?.sql.trim(), migration.slice(migration.indexOf('INSERT INTO chat_commands')).trim());
 });
 
 test('bot giveaway announcements are accepted by the idempotent migration', () => {

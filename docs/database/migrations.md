@@ -23,9 +23,10 @@ fail-closed. The current set keeps `messages.source` aligned with all producers 
 `discord`, `hud`, `relay`, `mcp`, `ws`), repairs only the untouched stock automod rule to
 target-gated slur protection, removes only the four exact legacy chat-profanity literal rows
 (`fuck`, `shit`, `bastard`, `assh`) once (tracked by a dedicated cleanup marker), and inserts
-disabled/shadow AI moderation defaults. It also installs the embed-asset state/lease constraints
-and the MCP OAuth S256/scope constraints that Prisma cannot represent. These checks are required;
-startup fails rather than serving with them missing.
+disabled/shadow AI moderation defaults. It also restores absent `/acp`, `/bob`, and `/ct`
+event command rows without changing existing administrator settings. It installs the embed-asset
+state/lease constraints and the MCP OAuth S256/scope constraints that Prisma cannot represent.
+These checks are required; startup fails rather than serving with them missing.
 
 **The second step reconciles migration *history*, it does NOT re-apply migrations.** Because db push already created every object, the old `prisma migrate deploy` would try to replay each migration's SQL, fail with `42P07` (`already exists`), record a *failed* row, and surface `P3009` ("failed migrations") on every subsequent boot. Instead, [`src/scripts/reconcileMigrations.ts`](../../backend/src/scripts/reconcileMigrations.ts) records each pending or previously-failed migration as **applied** (`prisma migrate resolve --applied`) — history bookkeeping only, no schema change. It resolves *only* the pending ones (steady state = 0), so it is a no-op on normal boots and never reintroduces the ~150s cold-start that a resolve-every-migration loop once caused.
 

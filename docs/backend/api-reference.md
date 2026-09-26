@@ -206,7 +206,8 @@ the normal moderation and Discord relay path. Other HUD slash commands retain
 their existing rejection. The 33 seeded event shortcuts include `/gu` (Gearing
 Up); the migration `20260926000000_restore_missing_event_commands` restores
 `/acp`, `/bob`, and `/ct` only when those rows are absent, preserving existing
-administrator edits.
+administrator edits. Hosted installations that use `prisma db push` apply the
+same backfill through the startup post-push patches.
 
 `id` in the admin delete path is the giveaway `shortId` (6-char, e.g. `A1B2C3`), not the UUID.
 
