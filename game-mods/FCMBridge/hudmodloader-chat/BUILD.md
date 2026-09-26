@@ -2,11 +2,11 @@
 
 ## HUD event commands and selectable help candidate (2026-09-25)
 
-**Widget version:** 2.10.131. The seeded event shortcuts (including Sinkhole
+**Widget version:** 2.10.132. The seeded event shortcuts (including Sinkhole
 Solutions) are accepted in the HUD with slash-stripped native input. From
 General they run through the backend's enabled `announce` definitions, channel
 restriction, cooldown, template and governed ingestion. The announcement
-lands in Events and its Discord mapping. `/event help` shows the 32 event names
+lands in Events and its Discord mapping. `/event help` shows the 33 event names
 as private feed rows; `/help` lists the same event names. Help lines can be selected
 with Up/Down while the editor is open, and they scroll away with chat. ZFE
 retires the event command outbox entry on terminal acceptance. A local command
@@ -14,12 +14,12 @@ result is visible only on the submitting HUD. The 25 Haxe suites, compiler
 diagnostics, source/emoji/package/SWF checks, full backend suite (124 suites),
 overlay suite (59 files), dashboard suite (48 files), and all 81 Ruffle
 scenarios passed. The normalized FWS v32 SWF is SHA-256
-`d60af2865dd62f1b8fc287f043be4214d00e902f7e03b1d1a534596c1661a8cf`.
+`2d6a6a3ec6e69ee7503e8c7df705eb7b9bfb0a8b218c51bbd36f75dbdfeac60d`.
 The one-entry BTDX v1 GNRL BA2 extracts that SWF byte-for-byte and is SHA-256
-`29111924f41cfcbc9c710c36fa16a97a739ed3ef8f2693ec376b2e7b6b992703`.
+`8a5c078e0c401a5026244e23ce897743f535cb62345966211f4ef9b67a66b585`.
 With Fallout 76 closed, this BA2 replaced only the local Dev
 `Data/FCMChatWidget.ba2`. The previous BA2 and hash manifest are at
-`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-hud-events-20260926T033213Z-0d880ed5/`.
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-hud-events-2.10.132-20260926T040538Z/`.
 Hosted Dev relay and shared xScal input settings were verified unchanged.
 Fresh native game acceptance remains pending.
 

@@ -1,7 +1,8 @@
-FCM HUD 2.10.131
+FCM HUD 2.10.132
 ==============
 
-Type /event help for the event shortcuts and names. Type a shortcut such
+Type /event help for all 33 event shortcuts and names, including /gu for
+Gearing Up. Type a shortcut such
 as /sbq in General to announce that event in the Events feed and its Discord
 channel. If the game consumes the slash, type event help or sbq instead.
 The main /help guide lists the event names too.

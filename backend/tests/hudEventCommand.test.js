@@ -16,11 +16,22 @@ describe('HUD event command boundary', () => {
     const hud = readFileSync(resolve(root, 'game-mods/FCMBridge/hudmodloader-chat/FcmEventCommands.hx'), 'utf8');
     const seed = [
       '20260418210000_event_commands',
+      '20260527120000_event_gearing_up',
       '20260608020000_infests_channel_and_sinkhole_command',
     ].map((migration) => readFileSync(resolve(root, 'backend/prisma/migrations', migration, 'migration.sql'), 'utf8')).join('\n');
     const hudCodes = [...hud.matchAll(/"([a-z]+)\|/g)].map((match) => match[1]).sort();
     const seedCodes = [...seed.matchAll(/VALUES\s*\(\s*'\/([a-z]+)'/g)].map((match) => match[1]).sort();
     expect(hudCodes).toEqual(seedCodes);
+  });
+
+  test('missing original event commands are restored without changing existing definitions', () => {
+    const root = resolve(__dirname, '../..');
+    const sql = readFileSync(resolve(root,
+      'backend/prisma/migrations/20260926000000_restore_missing_event_commands/migration.sql'), 'utf8');
+    for (const code of ['/acp', '/bob', '/ct']) {
+      expect(sql).toContain(`'${code}'`);
+    }
+    expect(sql).toContain('ON CONFLICT (trigger) DO NOTHING');
   });
 
   test('restores slash and accepts the event namespace and alias', () => {
