@@ -24,7 +24,7 @@ select { width: 100%; margin: 0 0 12px; padding: 7px; color: #f5cb5b; background
 details { border: 1px solid #342c19; padding: 8px; margin: 0 0 12px; }
 summary { color: #f5cb5b; cursor: pointer; margin-bottom: 8px; }
 #keybind-fields { display: grid; grid-template-columns: 1fr 130px; gap: 6px 8px; align-items: center; }
-#keybind-fields label, #keybind-fields select { margin: 0; }
+#keybind-fields label, #keybind-fields input { margin: 0; }
 #keybind-error { color: #ff8a78; min-height: 18px; margin: 4px 0; }
 #log { height: 280px; overflow: auto; border: 1px solid #342c19; padding: 8px; color: #b8cf81; font-size: 11px; white-space: pre-wrap; }
 @media (max-width: 1050px) { .workspace { grid-template-columns: 1fr; } }

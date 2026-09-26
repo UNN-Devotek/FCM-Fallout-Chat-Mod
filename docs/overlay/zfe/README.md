@@ -5,6 +5,27 @@ default desktop overlay. The overlay does not install game files or require an e
 HUD mod uses UI assets and already-exposed HUD data through an extender's sanctioned API; it
 must not add game-memory reads, code injection, or network/port scanning.
 
+**Current local typing reproduction setup (2026-09-25):** The Steam/Proton game
+install was cleared of active mod files and reinstalled from the current Nexus
+ZIPs: xScal 0.2.18, HUDModLoader v70, and FCMChatWidget 2.10.125. The Nexus
+xScal defaults (`xScalPriority` disabled) and FCM production relay/link settings
+are active. The custom archive list has only HUDModLoader and FCMChatWidget;
+their loader registry has one FCMChatWidget entry. Prior mod files, auth cache,
+settings, and logs are backed up for rollback. Source ZIP and installed-file
+hashes are in the [build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
+Native typing acceptance on this exact fresh install is pending the next game
+launch. The earlier 2.10.129 hosted-Dev source build remains in the repository
+but is no longer installed locally.
+
+The MSI Windows 11 laptop was also reset to the same three Nexus ZIPs for a
+native Windows input trial. Its previous `FCMServerBridge` game mod, older
+HUDModLoader, FCM files, extender settings, caches, and logs were moved to
+`C:\Users\White\Documents\FCM-Repro-Backups\before-nexus-clean-20260925T221153Z`.
+The fresh laptop has one FCMChatWidget archive and loader entry, no active
+FCMServerBridge, and no old xScal log. It uses the production relay and the
+Nexus xScal default with `xScalPriority` disabled. In-game typing remains
+pending a user launch on that machine.
+
 ## Current implementation and verification
 
 **Giveaways (2.10.129 candidate, native acceptance pending):** The selected channel now
@@ -33,11 +54,10 @@ feed. A later native General-channel attempt was created and persisted in Dev;
 Discord API confirmed its embed and buttons in Events. The HUD's forced Events
 route and the missing ZFE command receipt handling caused the visible mismatch.
 A fresh start-to-card native trial after the channel and receipt correction remains required.
-The 2.10.129 BA2 is installed on the local Steam/Proton desktop for a hosted-Dev
-trial with ZFE 0.15.0; the ZFE fragment and inactive xScal config both target
-`wss://dev.falloutchatmod.com/relay`, and `Data/FCMChat.ini` now points its
-separate `linkUrl` at `dev.falloutchatmod.com/link`. The provider and archive
-registration are unchanged. The exact rollback files are listed in the
+The 2.10.129 BA2 was previously installed on the local Steam/Proton desktop for a hosted-Dev
+trial with ZFE 0.15.0; the ZFE fragment and inactive xScal config then targeted
+`wss://dev.falloutchatmod.com/relay`, and `Data/FCMChat.ini` pointed its
+separate `linkUrl` at `dev.falloutchatmod.com/link`. The exact rollback files are listed in the
 [build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
 Pure Haxe, source/package checks, and the full 77-case Ruffle suite pass for
 this candidate. The matching giveaway backend was deployed to hosted Dev on
@@ -375,8 +395,19 @@ xScal has no `OpenChatKey` setting. Its physical
 key API takes numeric VK codes and returns Booleans. Registration does not promise keyboard
 suppression. FCM's ZFE `Input.*` route remains a tested compatibility path on specific builds,
 not the public `zfe-input-v1` contract. That capability names owner-scoped `input.v1.*` text
-sessions. The public [hotkey contract](https://www.nexusmods.com/fallout76/articles/270) is now
-available; migration to `hotkeys.v1.*` is not implemented in 2.10.85 and needs separate tests.
+sessions. ZFE also has an owner-scoped
+[hotkey contract](https://www.nexusmods.com/fallout76/articles/270); the widget
+registers keys it can represent there and retains numeric `Input.*` polling as
+the compatibility path for other configured VKs.
+
+All eight HUD bindings in `Data/FCMChat.ini` are editable. Physical keys accept named
+punctuation (for example `PERIOD`, `COMMA`, `SLASH`), numpad keys, F1-F24, letters,
+digits, and `VK_###` for decimal Windows virtual-key codes 1–254. Blank disables
+`scrollBottomKey` or `hideKey`. The loader's named control-map actions remain available
+for navigation. `openKey` must resolve to a physical VK; an invalid token falls back
+to Insert. Restart Fallout after editing the INI and verify the effective VK in the
+`physical navigation poll started` log line. A successful key edge alone does not
+establish text focus: xScal must also accept `Input.BeginInput`.
 
 | Provider | Authoritative open key | Detection | Configuration precedence |
 | --- | --- | --- | --- |
@@ -387,9 +418,9 @@ available; migration to `hotkeys.v1.*` is not implemented in 2.10.85 and needs s
 | --- | --- | --- |
 | Shared package | One provider-neutral `FCMChatWidget.ba2` | Same BA2 |
 | Provider selection | Validated as the sole active extender | Validated as the sole active extender; the adapter checks `chatInterface` before ZFE if both surfaces appear, but the widget rejects that mixed install |
-| Primary visible editor | SharedHUDTools `TextEdit` with the host ControlMap lock | Native xScal text session when `BeginInput` validates |
-| Physical keyboard with controller active | ZFE focuses the host's visible entry field while retaining its ControlMap lock | Native xScal text session when `BeginInput` validates |
-| Compatibility fallback | No unlocked editor fallback; a failed host editor refuses entry | SharedHUDTools when the native session is unsupported |
+| Primary visible editor | SharedHUDTools `TextEdit` with the host ControlMap lock | Native xScal text session by default; tested working on Linux/Steam Proton. Temporary `FCMChat.ini` `xscalInputMode=shared` workaround selects SharedHUDTools for the Windows laptop where native begin failed |
+| Physical keyboard with controller active | ZFE focuses the host's visible entry field while retaining its ControlMap lock | Native xScal text session when `BeginInput` validates; controller text entry is unsupported in shared mode |
+| Compatibility fallback | No unlocked editor fallback; a failed host editor refuses entry | SharedHUDTools when the native session is unsupported or shared mode is selected |
 | Multi-character typing | HUDTools' focused entry field has selection/caret enabled | Native session returns complete bounded text snapshots; the host fallback uses its entry field |
 | Submit/cancel recovery | Missing host Enter callback can recover the draft once; other stale focus loss cancels | Native terminal poll decides submit/cancel; release must be confirmed before reopening. Host fallback uses the HUDTools recovery rule |
 | Delete while typing | Edits the host field; the optional hide binding is suspended | Native session owns editing; host fallback edits its field |

@@ -131,6 +131,26 @@ for the feed, and `FCM → Customize... → Reset all settings` to restore the p
 the loader reload control for live widget changes; replacing the BA2 or ZFE fragment requires
 exiting and restarting Fallout 76.
 
+If Insert shows or restores the HUD feed but typing does not start, the open key has already
+worked. Close the F11 HUDModLoader menu and any game menu, then retry once. On xScal, repeated
+`xScal text session busy` lines in `xscal.log` mean `Input.BeginInput` did not grant an editor
+session. Fully exit and restart Fallout 76; changing `openKey` does not address that response.
+If the same response appears on a fresh launch, collect the new `xscal.log` and installed HUD
+mod list to investigate why the editor remains unavailable. FCM does not open a second editor
+while xScal reports busy.
+
+The native xScal 0.2.18 editor worked in the Linux/Steam Proton test but returned
+`input_unavailable` on the tested Windows laptop. As a temporary Windows workaround,
+set `xscalInputMode=shared` in `Data/FCMChat.ini` and restart. This selects
+HUDModLoader's keyboard editor; controller text entry is unsupported in this mode.
+
+All eight HUD key lines are editable in `Data/FCMChat.ini`. Use a named key such as
+`openKey=PERIOD` or `openKey=COMMA`, or `VK_###` for a decimal Windows virtual-key code
+from 1 through 254. `scrollBottomKey=` and `hideKey=` may be blank. Restart Fallout
+and check the `physical navigation poll started` line in `xscal.log` or `zfe.log`
+to confirm the effective registration. Key rebinding controls when the widget calls
+`Input.BeginInput`; it cannot make a refused native text session accept input.
+
 Customize actions are repeatable while the submenu remains open. The HUDTools one-shot behavior is
 given a short cooldown by FCM, so position, size, opacity, and theme controls no longer become
 permanently grey after one activation. Auto-hide reports its live state on the next F11 open; the
@@ -186,7 +206,7 @@ xScal has no `OpenChatKey` setting in `xscal.ini`. For the xScal provider, the w
 `Data/FCMChat.ini` `[FCMChat] openKey` to the documented numeric Windows virtual-key interface
 (`Input.RegisterKey` and `Input.IsKeyPressed`) and opens on the physical press edge. The named
 `HUDMod::UserEvent` action remains a compatibility fallback. The mapping accepts `INSERT`,
-`DELETE`, `HOME`, `END`, page keys, arrows, `ESCAPE`, `TAB`, `SPACE`, `F1`–`F12`, letters, and digits;
+`DELETE`, `HOME`, `END`, page keys, arrows, `ESCAPE`, `TAB`, `SPACE`, `PERIOD` (the `.` key), `F1`–`F12`, letters, and digits;
 the same physical token catalog is available to the scroll key settings. Unknown control-map-only
 action names still work through the named-action path but do not create an xScal physical binding.
 The registration is polling bookkeeping and does not

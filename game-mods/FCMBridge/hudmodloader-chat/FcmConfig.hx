@@ -133,6 +133,9 @@ class FcmConfig {
     public var scrollBottomKey:String = "";
     public var activateLinkKey:String = "F8";
     public var hideKey:String        = "DELETE";  // idle hide; suspended while an editor owns input
+    // xScal native sessions fail to begin on some Windows installs. Explicitly select the
+    // host editor there; keep native as the default for working installs and Proton.
+    public var xscalInputMode:String = "native"; // "native" | "shared"
 
     // ── Feed toggles ───────────────────────────────────────────────────────────
     public var showChannelTag:Bool  = true;
@@ -658,6 +661,7 @@ class FcmConfig {
         stored.scrollBottomKey = environment.scrollBottomKey;
         stored.activateLinkKey = environment.activateLinkKey;
         stored.hideKey = environment.hideKey;
+        stored.xscalInputMode = environment.xscalInputMode;
         stored.hideInHUDModes = environment.hideInHUDModes.copy();
         return stored;
     }
@@ -752,16 +756,21 @@ class FcmConfig {
                 case "autohidesec":     cfg.autoHideSec = parseIntOr(val, cfg.autoHideSec);
                 case "openkey":
                     // openKey is interpolated into htmlText (idle prompt) — restrict to a safe key
-                    // token; anything with &/</> etc. falls back to default (crash rule #2 guard).
+                    // token with an actual VK mapping; anything else falls back to default.
                     var ok:String = StringTools.trim(val);
-                    cfg.openKey = (ok.length > 0 && ~/^[A-Za-z0-9_]+$/.match(ok)) ? ok : cfg.openKey;
+                    cfg.openKey = (ok.length > 0 && ~/^[A-Za-z0-9_]+$/.match(ok)
+                        && FcmCommand.virtualKeyCode(ok) > 0) ? ok : cfg.openKey;
                 case "channelnextkey":  cfg.channelNextKey = validBindableAction(val, cfg.channelNextKey);
                 case "channelprevkey":  cfg.channelPrevKey = validBindableAction(val, cfg.channelPrevKey);
                 case "scrollupkey":     cfg.scrollUpKey = validScrollKey(val, cfg.scrollUpKey);
                 case "scrolldownkey":   cfg.scrollDownKey = validScrollKey(val, cfg.scrollDownKey);
                 case "scrollbottomkey": cfg.scrollBottomKey = validScrollKey(val, "");
                 case "activatelinkkey": cfg.activateLinkKey = validScrollKey(val, "F8");
-                case "hidekey":         cfg.hideKey = validBindableAction(val, "DELETE");
+                case "hidekey":         cfg.hideKey = StringTools.trim(val).length == 0
+                    ? "" : validBindableAction(val, "DELETE");
+                case "xscalinputmode":
+                    var mode = val.toLowerCase();
+                    if (mode == "native" || mode == "shared") cfg.xscalInputMode = mode;
                 case "showhints":       cfg.showHints = parseBool(val, cfg.showHints);
                 case "autobroadcastworldevents":
                     cfg.autoBroadcastWorldEvents = parseBool(val, cfg.autoBroadcastWorldEvents);
@@ -957,6 +966,7 @@ class FcmConfig {
         s.add("scrollBottomKey=" + scrollBottomKey + "\n");
         s.add("activateLinkKey=" + activateLinkKey + "\n");
         s.add("hideKey=" + hideKey + "\n");
+        s.add("xscalInputMode=" + xscalInputMode + "\n");
         s.add("showHints=" + b(showHints) + "\n");
         s.add("hideInHUDModes=" + hideInHUDModes.join(",") + "\n");
         s.add("displayName=" + displayNameOverride + "\n");

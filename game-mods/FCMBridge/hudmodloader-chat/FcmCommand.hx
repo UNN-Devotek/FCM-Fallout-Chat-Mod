@@ -78,9 +78,15 @@ class FcmCommand {
         }
     }
 
-    /** Convert an openKey token to a Windows virtual-key code for xScal polling. */
+    /** Convert an INI key token to a Windows virtual-key code for provider polling. */
     public static function virtualKeyCode(raw:String):Int {
         var key:String = normalizeAction(raw);
+        // VK_### covers keys whose physical name varies by layout or keyboard.
+        // Keep 0 (no key) and 255 (reserved) out of active registrations.
+        if (~/^vk[0-9]{1,3}$/.match(key)) {
+            var numeric:Null<Int> = Std.parseInt(key.substr(2));
+            return numeric != null && numeric > 0 && numeric < 255 ? numeric : 0;
+        }
         switch (key) {
             case "insert", "ins": return 0x2D;
             case "delete", "del": return 0x2E;
@@ -96,19 +102,42 @@ class FcmCommand {
             case "enter", "return": return 0x0D;
             case "tab": return 0x09;
             case "space": return 0x20;
-            case "f1": return 0x70;
-            case "f2": return 0x71;
-            case "f3": return 0x72;
-            case "f4": return 0x73;
-            case "f5": return 0x74;
-            case "f6": return 0x75;
-            case "f7": return 0x76;
-            case "f8": return 0x77;
-            case "f9": return 0x78;
-            case "f10": return 0x79;
-            case "f11": return 0x7A;
-            case "f12": return 0x7B;
+            case "backspace", "back": return 0x08;
+            case "capslock", "capital": return 0x14;
+            case "numlock": return 0x90;
+            case "scrolllock": return 0x91;
+            case "printscreen", "snapshot": return 0x2C;
+            case "pause": return 0x13;
+            case "shift": return 0x10;
+            case "leftshift", "lshift": return 0xA0;
+            case "rightshift", "rshift": return 0xA1;
+            case "control", "ctrl": return 0x11;
+            case "leftcontrol", "lcontrol", "lctrl": return 0xA2;
+            case "rightcontrol", "rcontrol", "rctrl": return 0xA3;
+            case "alt", "menu": return 0x12;
+            case "leftalt", "lalt": return 0xA4;
+            case "rightalt", "ralt": return 0xA5;
+            case "comma", "oemcomma": return 0xBC;
+            case "period", "oemperiod": return 0xBE;
+            case "semicolon", "oem1": return 0xBA;
+            case "equals", "equal", "oemplus": return 0xBB;
+            case "minus", "hyphen", "oemminus": return 0xBD;
+            case "slash", "forwardslash", "oem2": return 0xBF;
+            case "grave", "backtick", "oem3": return 0xC0;
+            case "leftbracket", "openbracket", "oem4": return 0xDB;
+            case "backslash", "oem5": return 0xDC;
+            case "rightbracket", "closebracket", "oem6": return 0xDD;
+            case "apostrophe", "quote", "oem7": return 0xDE;
+            case "numpadmultiply", "multiply": return 0x6A;
+            case "numpadadd", "add": return 0x6B;
+            case "numpadsubtract", "subtract": return 0x6D;
+            case "numpaddecimal", "decimal": return 0x6E;
+            case "numpaddivide", "divide": return 0x6F;
             default:
+                if (~/^f([1-9]|1[0-9]|2[0-4])$/.match(key))
+                    return 0x6F + Std.parseInt(key.substr(1));
+                if (~/^numpad[0-9]$/.match(key))
+                    return 0x60 + Std.parseInt(key.substr(6));
                 if (key.length == 1) {
                     var code:Int = key.charCodeAt(0);
                     if ((code >= 97 && code <= 122) || (code >= 48 && code <= 57)) {

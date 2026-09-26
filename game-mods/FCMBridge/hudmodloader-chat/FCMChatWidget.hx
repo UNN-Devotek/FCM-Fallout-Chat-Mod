@@ -472,6 +472,11 @@ class FCMChatWidget extends MovieClip {
     var _physicalNavProbeLogged:Bool = false;      // one raw IsKeyPressed sample per session
     var _physicalOpenKey:Int = 0;
     var _physicalOpenKeyDown:Bool = false;
+    // One diagnostic retry after the physical open key is released. A rejected
+    // xScal begin on key-down may be sensitive to the native window key dispatch.
+    var _xscalBeginAfterReleaseKey:Int = 0;
+    var _xscalBeginAfterReleaseAt:Int = 0;
+    static inline var XSCAL_BEGIN_RELEASE_WINDOW_MS:Int = 2000;
     var _ownedHotkeyTimer:flash.utils.Timer = null;
     var _ownedHotkeys:Array<Dynamic> = [];
     var _ownedHotkeyCodes:Array<Int> = [];
@@ -2497,11 +2502,13 @@ class FCMChatWidget extends MovieClip {
         if (_hidden) show();
         bumpAutoHide();   // opening input = activity (the timer also never hides while input is open)
         // One BA2 serves both providers. ZFE uses the host-owned SharedHUDTools editor,
-        // which starts Fallout's ControlMap text lock. xScal uses its native session.
+        // which starts Fallout's ControlMap text lock. xScal defaults to its native
+        // session, with an explicit host-editor mode for installs where BeginInput fails.
         // ZFE input.v1 alone still lets gameplay actions through on the native test build.
         var provider:String = _api == null ? "" : _api.provider;
         var route:String = FcmInputRoute.preferred(provider, _ownedInputUsable,
-            provider == FcmNativeApi.XSCAL && _xscalSessionUsable);
+            provider == FcmNativeApi.XSCAL && _xscalSessionUsable, _cfg.xscalInputMode);
+        zfeLog("info", "input", "selected editor=" + route + " xscalInputMode=" + _cfg.xscalInputMode);
         if (route == FcmInputRoute.XSCAL_SESSION) {
             if (openXscalSessionInput()) return;
             if (_xscalSessionReleaseUncertain) return;
@@ -2515,13 +2522,22 @@ class FCMChatWidget extends MovieClip {
     }
 
     /** xScal owns composition/editing; the widget consumes only session snapshots. */
-    function openXscalSessionInput():Bool {
+    function openXscalSessionInput(?phase:String = "open"):Bool {
         if (_api == null || _api.provider != FcmNativeApi.XSCAL || !_xscalSessionUsable) return false;
         try {
             var begin = FcmXscalInput.begin(_api.xscalBeginInput());
             if (!begin.success) {
                 if (begin.busy) {
-                    zfeLog("info", "input", "xScal text session busy; retry on next open");
+                    if (phase != "release" && _physicalOpenKeyDown && _physicalOpenKey > 0) {
+                        _xscalBeginAfterReleaseKey = _physicalOpenKey;
+                        _xscalBeginAfterReleaseAt = flash.Lib.getTimer();
+                    }
+                    setPrompt("xScal text input unavailable; see xscal.log");
+                    zfeLog("info", "input", "xScal text session busy phase=" + phase
+                        + " retryOnRelease=" + (_xscalBeginAfterReleaseKey > 0)
+                        + " localSession=" + (_xscalSessionId == null ? "none" : "present")
+                        + " openKeyVK=" + _physicalOpenKey
+                        + " releaseUncertain=" + _xscalSessionReleaseUncertain);
                     return false;
                 }
                 if (!begin.unsupported && begin.sessionId != null) {
@@ -2535,6 +2551,8 @@ class FCMChatWidget extends MovieClip {
                 return false;
             }
             _xscalSessionId = begin.sessionId;
+            _xscalBeginAfterReleaseKey = 0;
+            _xscalBeginAfterReleaseAt = 0;
             _xscalSessionRevision = -1;
             _xscalSessionInput = true;
             _nativeInput = true;
@@ -2547,7 +2565,7 @@ class FCMChatWidget extends MovieClip {
             _inputTimer.addEventListener(TimerEvent.TIMER,
                 function(_) { runXscalSessionInputSafely(generation); });
             _inputTimer.start();
-            zfeLog("info", "input path", "xscal-session-v1 begin accepted");
+            zfeLog("info", "input path", "xscal-session-v1 begin accepted phase=" + phase);
             return true;
         } catch (e:Dynamic) {
             if (_xscalSessionId != null) closeXscalSessionInput(true);
@@ -4023,7 +4041,8 @@ class FCMChatWidget extends MovieClip {
             return;
         }
         zfeLog("info", "startup", VENDOR + " " + VERSION + " loaded");
-        zfeLog("info", "startup", "BUILD=chatv1-widget-v" + VERSION + " diagnostics=dup-v1");
+        zfeLog("info", "startup", "BUILD=chatv1-widget-v" + VERSION
+            + " diagnostics=dup-v1,xscal-shared-config-1");
         zfeLog("info", "startup", _api.provider == FcmNativeApi.ZFE
             ? "zfe-chat-online-v1 OK"
             : "xscal-chat-interface OK");
@@ -4665,6 +4684,22 @@ class FCMChatWidget extends MovieClip {
                         && (_connected || !(_outboxIdentity.length == 0 || _needsLink))) {
                     zfeLog("info", "nativein", _api.provider + " physical openKey edge key=" + _physicalOpenKey);
                     openInput();
+                } else if (!openDown && _xscalBeginAfterReleaseKey == _physicalOpenKey) {
+                    var elapsed:Int = flash.Lib.getTimer() - _xscalBeginAfterReleaseAt;
+                    _xscalBeginAfterReleaseKey = 0;
+                    _xscalBeginAfterReleaseAt = 0;
+                    if (elapsed >= 0 && elapsed <= XSCAL_BEGIN_RELEASE_WINDOW_MS
+                            && !_inputOpen && _api.provider == FcmNativeApi.XSCAL
+                            && _xscalSessionUsable && !_xscalSessionReleaseUncertain
+                            && isValidHUDMode() && !pipboyOwnsInput()
+                            && (_connected || !(_outboxIdentity.length == 0 || _needsLink))) {
+                        zfeLog("info", "input", "xScal BeginInput release probe key="
+                            + _physicalOpenKey + " elapsedMs=" + elapsed);
+                        openXscalSessionInput("release");
+                    } else {
+                        zfeLog("info", "input", "xScal BeginInput release probe skipped key="
+                            + _physicalOpenKey + " elapsedMs=" + elapsed);
+                    }
                 }
             }
         }
@@ -4733,6 +4768,8 @@ class FCMChatWidget extends MovieClip {
         _physicalNavProbeLogged = false;
         _physicalOpenKey = 0;
         _physicalOpenKeyDown = false;
+        _xscalBeginAfterReleaseKey = 0;
+        _xscalBeginAfterReleaseAt = 0;
     }
 
     /** Open chat on a false->true edge of isChatKeyPressed. */

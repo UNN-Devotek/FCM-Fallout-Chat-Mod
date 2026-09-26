@@ -143,16 +143,18 @@ const fieldLabels: Record<KeybindField, string> = {
 function renderKeybindEditor(): void {
   const host = document.querySelector('#keybind-fields')!;
   host.replaceChildren();
+  const suggestions = document.createElement('datalist'); suggestions.id = 'keybind-suggestions';
+  for (const token of supportedKeys.filter(Boolean)) {
+    const option = document.createElement('option'); option.value = token; suggestions.append(option);
+  }
   for (const field of keybindFields) {
     const label = document.createElement('label'); label.htmlFor = `bind-${field}`; label.textContent = fieldLabels[field];
-    const select = document.createElement('select'); select.id = `bind-${field}`; select.dataset.keybind = field;
-    for (const token of supportedKeys) {
-      if (!token && field !== 'scrollBottomKey' && field !== 'hideKey') continue;
-      const option = document.createElement('option'); option.value = token; option.textContent = token || 'Unbound';
-      option.selected = keybinds[field] === token; select.append(option);
-    }
-    host.append(label, select);
+    const input = document.createElement('input'); input.id = `bind-${field}`; input.dataset.keybind = field;
+    input.setAttribute('list', suggestions.id); input.value = keybinds[field];
+    input.placeholder = field === 'scrollBottomKey' || field === 'hideKey' ? 'Unbound' : 'Key or VK_###';
+    host.append(label, input);
   }
+  host.append(suggestions);
   document.querySelectorAll<HTMLButtonElement>('[data-binding]').forEach(button => {
     const token = keybinds[button.dataset.binding as KeybindField];
     button.disabled = !token; button.title = token || 'Unbound';
@@ -162,7 +164,7 @@ function renderKeybindEditor(): void {
 async function saveKeybinds(reset = false): Promise<void> {
   const error = document.querySelector<HTMLElement>('#keybind-error')!; error.textContent = '';
   const profile = Object.fromEntries(keybindFields.map(field => [field,
-    document.querySelector<HTMLSelectElement>(`#bind-${field}`)?.value ?? '']));
+    document.querySelector<HTMLInputElement>(`#bind-${field}`)?.value ?? '']));
   const response = await fetch(reset ? '/__fcm/keybinds/reset' : '/__fcm/keybinds', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: reset ? '{}' : JSON.stringify(profile),
   });

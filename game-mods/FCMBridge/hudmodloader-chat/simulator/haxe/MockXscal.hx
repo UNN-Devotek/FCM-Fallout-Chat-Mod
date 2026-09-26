@@ -26,6 +26,7 @@ class MockXscal {
     public static var sessionEndResult:Dynamic = true;
     public static var sessionEndKeepsActive:Bool = false;
     public static var sessionBeginCount(default, null):Int = 0;
+    public static var sessionBeginAttempts(default, null):Int = 0;
     public static var sessionEndCount(default, null):Int = 0;
     static var sessionId:Int = 0;
     static var sessionRevision:Int = 0;
@@ -210,6 +211,7 @@ class MockXscal {
             if (name == "GetXSRuntimeInfo") return response({runtime:"xScal", version:"sim-1", platform:"Simulator"});
             if (name == "log") { SimLog.emit(Std.string(value)); return true; }
             if (name == "Input.BeginInput") {
+                sessionBeginAttempts++;
                 if (!sessionInputEnabled) return false;
                 if (sessionInputBusy || sessionId != 0)
                     return response({success:false,error:"input_unavailable"});

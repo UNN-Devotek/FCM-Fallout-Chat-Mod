@@ -62,6 +62,14 @@ class TestFcmCommand {
         check("xScal Page Down alias maps to VK_NEXT", FcmCommand.virtualKeyCode("PGDN") == 0x22);
         check("xScal letter token maps to uppercase VK", FcmCommand.virtualKeyCode("a") == 0x41);
         check("xScal digit token maps to VK digit", FcmCommand.virtualKeyCode("7") == 0x37);
+        check("period token maps to VK_OEM_PERIOD", FcmCommand.virtualKeyCode("PERIOD") == 0xBE);
+        check("period alias maps to VK_OEM_PERIOD", FcmCommand.virtualKeyCode("OEM_PERIOD") == 0xBE);
+        check("comma token maps to VK_OEM_COMMA", FcmCommand.virtualKeyCode("COMMA") == 0xBC);
+        check("slash token maps to VK_OEM_2", FcmCommand.virtualKeyCode("SLASH") == 0xBF);
+        check("numpad token maps to VK_NUMPAD3", FcmCommand.virtualKeyCode("NUMPAD3") == 0x63);
+        check("function keys include F24", FcmCommand.virtualKeyCode("F24") == 0x87);
+        check("decimal VK token maps to any physical key", FcmCommand.virtualKeyCode("VK_190") == 0xBE);
+        check("decimal VK token rejects out of range", FcmCommand.virtualKeyCode("VK_255") == 0);
         check("control-map-only token does not guess a physical key", FcmCommand.virtualKeyCode("Console") == 0);
         check("scroll-to-bottom is unbound without a configured action", !FcmCommand.isScrollToBottom("Home"));
         check("configured scroll-to-bottom action matches", FcmCommand.isScrollToBottom("F12", "F12"));

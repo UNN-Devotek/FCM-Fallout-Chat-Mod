@@ -36,7 +36,7 @@ for (const scenario of ['owned-input-release', 'owned-input-busy', 'owned-input-
   });
 }
 
-for (const scenario of ['xscal-session-input', 'xscal-session-fallback']) {
+for (const scenario of ['xscal-session-input', 'xscal-session-fallback', 'xscal-shared-config']) {
   test(`xScal session lifecycle and compatibility: ${scenario}`, async ({ page }) => {
     await page.goto(`/?mode=harness&provider=xscal&scenario=${scenario}`);
     await expect(page.locator('#log')).toContainText(/XSCAL-SESSION-INPUT (PASS|FAIL)/, { timeout: 20_000 });
@@ -44,6 +44,13 @@ for (const scenario of ['xscal-session-input', 'xscal-session-fallback']) {
     await expect(page.locator('#log')).not.toContainText('XSCAL-SESSION-INPUT FAIL');
   });
 }
+
+test('period opens and releases an xScal native text session', async ({ page }) => {
+  await page.goto('/?mode=harness&provider=xscal&scenario=xscal-period-native');
+  await expect(page.locator('#log')).toContainText(/XSCAL-SESSION-INPUT (PASS|FAIL)/, { timeout: 20_000 });
+  await expect(page.locator('#log')).toContainText('XSCAL-SESSION-INPUT PASS xscal-period-native');
+  await expect(page.locator('#log')).not.toContainText('XSCAL-SESSION-INPUT FAIL');
+});
 
 test.afterEach(async ({ page, request }) => {
   await page.evaluate(() => (window as Window & { __FCM_SIM_TEARDOWN__?: () => void }).__FCM_SIM_TEARDOWN__?.()).catch(() => undefined);
@@ -119,6 +126,10 @@ test('validates profiles and writes every simulator INI key without changing pro
   const profile = normalizeKeybinds({ ...defaultKeybinds, openKey: 'f9', scrollBottomKey: 'home' });
   expect(profile).toMatchObject({ openKey: 'F9', scrollBottomKey: 'HOME' });
   expect(browserKey('F8')).toEqual({ code: 'F8', key: 'F8', keyCode: 119 });
+  expect(browserKey('COMMA')).toEqual({ code: 'Comma', key: ',', keyCode: 188 });
+  expect(browserKey('VK_222')).toEqual({ code: 'VK_222', key: 'Unidentified', keyCode: 222 });
+  expect(normalizeKeybinds({ ...defaultKeybinds, hideKey: '' }).hideKey).toBe('');
+  expect(() => normalizeKeybinds({ ...defaultKeybinds, openKey: 'PERIOD', hideKey: 'VK_190' })).toThrow(/different key/);
   expect(() => normalizeKeybinds({ ...defaultKeybinds, openKey: 'F8', hideKey: 'F8' })).toThrow(/different key/);
   const ini = applyKeybindsToIni('openKey=INSERT\nchannelNextKey=NextPage\nchannelPrevKey=PrevPage\nscrollUpKey=Up\nscrollDownKey=Down\nscrollBottomKey=\nactivateLinkKey=F8\nhideKey=DELETE\n', profile);
   expect(ini).toContain('openKey=F9');

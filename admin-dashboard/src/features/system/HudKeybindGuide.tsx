@@ -25,12 +25,13 @@ export const HUD_KEYBIND_ROWS: HudKeybindRow[] = [
     description: 'Open the HUD chat input and start typing. FCM synchronizes this value to ZFE after discovery; xScal polls it directly.',
   },
   { key: 'Enter', config: 'native game input', description: 'Send the message.' },
-  { key: 'Enter (configurable)', config: 'activateLinkKey=ENTER', description: 'Open the selected row’s first validated link. This action is active only after Open Chat owns the editor and a link row is selected.' },
+  { key: 'F8 (configurable)', config: 'activateLinkKey=F8', description: 'Open the selected row’s first validated link. This action is active only after Open Chat owns the editor and a link row is selected.' },
   { key: 'Escape', config: 'native game input', description: 'Cancel typing and close the input.' },
   { key: 'Arrow Up / Down', config: 'scrollUpKey=Up / scrollDownKey=Down', description: 'Scroll the HUD feed up or down. Arrow/Cursor/Dpad aliases match the defaults; change either setting to rebind it. Ignored until Insert opens a typing session.' },
   { key: 'Optional newest key', config: 'scrollBottomKey= (unset)', description: 'Jump to the newest HUD messages after you opt in with Home, End, F12, or a forwarded HUD action. The packaged default is unbound.' },
   { key: 'Page Down', config: 'channelNextKey=NextPage', description: 'Switch to the next channel.' },
   { key: 'Page Up', config: 'channelPrevKey=PrevPage', description: 'Switch to the previous channel.' },
+  { key: 'Delete', config: 'hideKey=DELETE', description: 'Hide the HUD while the editor is closed. Leave the value blank to unbind it.' },
   { key: '/hide', config: 'slash command', description: 'Hide the HUD feed. Press Insert to restore it.' },
   { key: 'F11', config: 'HUDModLoader menu', description: 'Open or close the HUDModLoader menu.' },
 ];
@@ -90,10 +91,26 @@ export default function HudKeybindGuide({ variant = 'dashboard' }: HudKeybindGui
         fontSize: isPublic ? '13px' : '12px',
         color: gold,
       }}>
-        <strong>Start typing:</strong> while Fallout 76 is focused, press <code style={codeStyle}>Insert</code>.
-        The HUD input opens and you can type immediately; press <code style={codeStyle}>Enter</code> to send
-        or <code style={codeStyle}>Escape</code> to cancel.
+        <strong>To chat in game:</strong> press <code style={codeStyle}>Insert</code> to open the input,
+        type your message, then press <code style={codeStyle}>Enter</code> to send.
+        Press <code style={codeStyle}>Escape</code> to cancel. These are HUD mod controls;
+        the overlay keybind file below does not change them.
       </div>
+
+      <p style={sectionStyle}>CHAT OPENS, BUT YOU CANNOT TYPE?</p>
+      <p style={{ fontSize: isPublic ? '12px' : '11px', color: muted, margin: '0 0 8px', lineHeight: '1.7' }}>
+        If Insert shows the chat feed but no editor accepts text, changing the Insert binding
+        will not help. Close the F11 HUDModLoader menu and any game menu, then try Insert once.
+        If it still fails, exit Fallout 76 completely and start it again. For xScal, a log line
+        saying <code style={codeStyle}>xScal text session busy</code> means the native editor
+        refused to open. On affected Windows installs, set{' '}
+        <code style={codeStyle}>xscalInputMode=shared</code> in{' '}
+        <code style={codeStyle}>Data/FCMChat.ini</code> and restart; this uses HUDModLoader’s
+        keyboard editor, without controller text entry. Native xScal input worked in our
+        Linux/Steam Proton test. If the failure persists, send support a new
+        <code style={codeStyle}>xscal.log</code> and your installed HUD mod list so we can
+        find why the editor remains unavailable.
+      </p>
 
       <p style={sectionStyle}>ZFE OPEN-CHAT KEY</p>
       <p style={{ fontSize: isPublic ? '12px' : '11px', color: muted, margin: '0 0 8px', lineHeight: '1.7' }}>
@@ -101,11 +118,12 @@ export default function HudKeybindGuide({ variant = 'dashboard' }: HudKeybindGui
         the watcher to <code style={codeStyle}>openKey</code> in <code style={codeStyle}>Data/FCMChat.ini</code>{' '}
         after widget discovery. To use <code style={codeStyle}>DELETE</code>, set{' '}
         <code style={codeStyle}>openKey=DELETE</code> there and reload the widget or restart Fallout.
-        Supported values are{' '}
+        Its native watcher recognizes{' '}
         <code style={codeStyle}>INSERT</code>, <code style={codeStyle}>DELETE</code>,{' '}
         <code style={codeStyle}>HOME</code>, <code style={codeStyle}>END</code>,{' '}
         <code style={codeStyle}>PAGE_DOWN</code>/<code style={codeStyle}>PAGEDOWN</code>/<code style={codeStyle}>PGDN</code>,{' '}
-        and one letter or digit. Avoid Page Down if it is also your next-channel control. See the{' '}
+        and one letter or digit. The widget also polls other configured physical keys through
+        ZFE’s numeric Input interface. Avoid Page Down if it is also your next-channel control. See the{' '}
         <a href={ZFE_MODDER_GUIDE_URL} target="_blank" rel="noopener noreferrer" style={sourceLinkStyle}>
           ZFE Modder Guide
         </a>{' '}for the extender hotkey surface.
@@ -119,9 +137,12 @@ export default function HudKeybindGuide({ variant = 'dashboard' }: HudKeybindGui
         <code style={codeStyle}>Input.RegisterKey</code>/<code style={codeStyle}>Input.IsKeyPressed</code>{' '}
         polling interface and keeps the named HUDMod action as a fallback. Registration does not{' '}
         suppress keyboard input from the game; xScal's documented suppression calls apply to{' '}
-        gamepad buttons, so test the selected key for gameplay conflicts. The same physical token catalog is available for{' '}
-        <code style={codeStyle}>scrollUpKey</code>, <code style={codeStyle}>scrollDownKey</code>, and{' '}
-        <code style={codeStyle}>scrollBottomKey</code>; named HUD actions remain available through{' '}
+        gamepad buttons, so test the selected key for gameplay conflicts. All eight FCM key lines in{' '}
+        <code style={codeStyle}>Data/FCMChat.ini</code> can be edited. Use names such as{' '}
+        <code style={codeStyle}>PERIOD</code>, <code style={codeStyle}>COMMA</code>,{' '}
+        <code style={codeStyle}>NUMPAD3</code>, and <code style={codeStyle}>F24</code>, or{' '}
+        <code style={codeStyle}>VK_190</code> for a decimal Windows virtual-key code (1–254).
+        Restart Fallout after editing the file. Named HUD actions remain available through{' '}
         <code style={codeStyle}>HUDMod::UserEvent</code>. Scroll-to-bottom is blank by default, and the F11{' '}
         <code style={codeStyle}>Scroll to newest</code> menu item is always available. Read the{' '}
         <a href={XSCAL_INPUT_ARTICLE_URL} target="_blank" rel="noopener noreferrer" style={sourceLinkStyle}>
@@ -170,7 +191,7 @@ export default function HudKeybindGuide({ variant = 'dashboard' }: HudKeybindGui
         <li>Press <code style={codeStyle}>F11</code> to open the HUDModLoader menu.</li>
         <li>Choose <code style={codeStyle}>FCM</code> → <code style={codeStyle}>Customize...</code> to resize, move, change opacity/theme, or reset settings.</li>
         <li>After pressing <code style={codeStyle}>Insert</code>, use the configured scroll keys to review history. Choose <code style={codeStyle}>scrollBottomKey</code> if you want a keyboard shortcut for newest; the menu's <code style={codeStyle}>Scroll to newest</code> action is always available.</li>
-        <li>Select a row containing a link, then press <code style={codeStyle}>activateLinkKey</code> (Enter by default). The binding is inactive until Open Chat owns the editor.</li>
+        <li>Select a row containing a link, then press <code style={codeStyle}>activateLinkKey</code> (F8 by default). The binding is inactive until Open Chat owns the editor.</li>
         <li>Select <code style={codeStyle}>FCM</code> → <code style={codeStyle}>Customize...</code> → <code style={codeStyle}>Reset all settings</code> only when you want the packaged defaults restored.</li>
       </ol>
       <p style={{ fontSize: isPublic ? '12px' : '11px', color: muted, marginTop: '8px', marginBottom: '0' }}>

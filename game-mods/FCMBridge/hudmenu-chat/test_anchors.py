@@ -710,7 +710,8 @@ if widget_src:
           "FCMChatWidget has no cached late-identity native reconnect path")
     check("openInputSharedHudTools();" in widget_src
           and "ZFE uses the host-owned SharedHUDTools editor" in widget_src
-          and "xScal uses its native session" in widget_src
+          and "xScal defaults to its native" in widget_src
+          and "_cfg.xscalInputMode" in widget_src
           and "text editor unavailable; no ControlMap lock, input refused" in widget_src,
           "FCMChatWidget keeps provider-specific input ownership explicit")
     try:
