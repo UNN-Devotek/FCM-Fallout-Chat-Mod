@@ -621,8 +621,8 @@ after changing a BA2 or native extender configuration.
 Packages do not redistribute extenders or Bethesda HUDMenu assets. The main website and Nexus
 ZIPs contain complete `ZFE (Install for ZFE only)/` and `xScal (Install for xScal only)/` folders without setup scripts; choose only one.
 The [UNN-Devotek Quick Configuration 2 fork](https://github.com/UNN-Devotek/QuickConfiguration2)
-accepts the combined ZIP on its main **Install mod** screen or when dropped onto its
-window. It detects the installed provider and selects that folder. If neither provider is present,
+accepts the combined ZIP directly through its normal **Mods → Install mod** or drag-and-drop
+flow. It detects the installed provider and selects that folder. If neither provider is present,
 the user chooses ZFE or xScal; the fork downloads the selected official Nexus Mods package.
 It also offers HUDModLoader when missing. These downloads and the FCM package are reviewed and
 installed together with backups. The upstream Quick Configuration 2 and NukaMods flows still

@@ -37,12 +37,9 @@ the user's existing `Data/hudmodloader.ini`. `package.py` reads the widget versi
 hosted-dev package; use the default `prod` target for production. Never copy a stamped package
 between environments.
 
-The [UNN-Devotek Quick Configuration 2 fork](https://github.com/UNN-Devotek/QuickConfiguration2)
-accepts the complete production ZIP on its main **Install mod** screen and selects the matching
-provider after inspecting the game. Upstream Quick Configuration 2 and NukaMods should import the
-selected provider's extracted `Data (drag the contents into data folder)/FCMChatWidget.ba2`,
-not the two-provider ZIP. The manager deploys the BA2 and maintains its archive-list entry;
-the selected `INSTALL.txt` explains the manual HUDModLoader and INI
+Quick Configuration 2 and NukaMods should import the selected provider's extracted
+`Data (drag the contents into data folder)/FCMChatWidget.ba2`, not the two-provider ZIP. The manager deploys the BA2 and maintains
+its archive-list entry; the selected `INSTALL.txt` explains the manual HUDModLoader and INI
 merges. Check that deployment leaves exactly one BA2 and one archive-list entry, and that an
 update preserves any edited `FCMChat.ini` or ZFE fragment.
 For manual installs, open the selected labeled Data folder and drag its contents into the
