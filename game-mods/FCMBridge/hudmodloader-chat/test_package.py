@@ -6,6 +6,8 @@ from __future__ import annotations
 import configparser
 import importlib.util
 import re
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from zipfile import ZipFile
@@ -192,6 +194,8 @@ def main() -> None:
     assert len(upstream_loader_defaults) == 22
     expected_loader = ("\n".join(upstream_loader_defaults + ["FCMChatWidget"]) + "\n").encode()
     assert b"FCMServerBridge" not in expected_loader
+    future_defaults = "OtherHUD\nFCMChatWidget\nFCMServerBridge\nOtherHUD\nFCMChatWidget\n"
+    assert package.hudmodloader_config(future_defaults) == "OtherHUD\nOtherHUD\nFCMChatWidget\n"
     widget_version = version_match.group(1).encode("ascii")
     assert widget_version in widget_artifact, "FCMChatWidget.ba2 embeds the current VERSION"
     assert b"awaiting authoritative live echo" in widget_artifact, (
@@ -225,11 +229,16 @@ def main() -> None:
         for target, expected in package.TARGETS.items():
             unified = Path(temp_dir) / f"widget-{target}-unified.zip"
             package.build_package(target, unified)
+            if target == "prod":
+                subprocess.run([sys.executable, str(ROOT.parents[2] / "Packaging/qc2-package-contract.py"),
+                                "--hud", str(unified)], check=True)
             with ZipFile(unified) as archive:
                 names = set(archive.namelist())
                 readme = archive.read("README.txt")
                 assert readme.startswith(f"Fallout Chat Mod HUD {package.widget_version()}".encode())
                 assert b"Package provider: unified" in readme
+                assert b"UNN-Devotek Quick Configuration 2 fork" in readme
+                assert b"Upstream Quick Configuration 2/NukaMods" in readme
                 assert f"{package.ZFE_FOLDER}/ and {package.XSCAL_FOLDER}/".encode() in readme
                 assert b"Choose only" in readme[:400]
                 assert b"RELEASE NOTES" in readme
@@ -284,6 +293,9 @@ def main() -> None:
 
             nexus = Path(temp_dir) / f"widget-{target}-nexus.zip"
             package.build_package(target, nexus, distribution="nexus")
+            if target == "prod":
+                subprocess.run([sys.executable, str(ROOT.parents[2] / "Packaging/qc2-package-contract.py"),
+                                "--hud", str(nexus)], check=True)
             with ZipFile(nexus) as archive:
                 assert not any(Path(name).suffix.lower() in package.NEXUS_BLOCKED_SUFFIXES for name in archive.namelist())
                 assert "README.txt" in archive.namelist()

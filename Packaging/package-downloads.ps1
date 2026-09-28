@@ -178,6 +178,11 @@ if (Test-Path $hudZipOut) { Remove-Item $hudZipOut -Force }
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path $hudZipOut)) {
     Fail "HUD package failed for target $HudTarget"
 }
+if ($HudTarget -eq 'prod') {
+    $contractCheck = Join-Path $PSScriptRoot 'qc2-package-contract.py'
+    & $pythonCommand.Source $contractCheck --bridge $BridgeZip --hud $hudZipOut --overlay $winZipOut --overlay $portableZipOut --overlay $linuxZipOut
+    if ($LASTEXITCODE -ne 0) { Fail "Quick Configuration 2 package contract failed" }
+}
 $hudSize = (Get-Item $hudZipOut).Length
 Write-Host "[package-downloads]   -> $hudZipOut ($([math]::Round($hudSize/1KB,1)) KB)"
 

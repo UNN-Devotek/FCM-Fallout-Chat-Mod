@@ -632,7 +632,8 @@ copy only missing provider/FCM INIs, merge the HUDModLoader entry, and preserve 
 updates. Check for exactly one BA2 in the game's `Data` folder and one archive-list entry.
 Legacy xScal-only website ZIPs may include an optional Windows helper. All builds include
 manual setup, keybind, customization, and emoji-license files. See the
-[build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
+[build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md) and the
+[Quick Configuration package contract](../../deployment/qc2-package-contract.md).
 
 ## Client version handshake (`clientVersion`)
 

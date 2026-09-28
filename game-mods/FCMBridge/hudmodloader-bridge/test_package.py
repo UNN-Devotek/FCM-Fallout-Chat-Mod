@@ -1,5 +1,7 @@
 """Build both endpoint variants and verify archive contents plus exact SWF payloads."""
 import json
+import subprocess
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -15,6 +17,9 @@ class BridgePackageTests(unittest.TestCase):
                 with self.subTest(target=target):
                     path = root / f'{target}.zip'
                     manifest = package.build(target, path)
+                    if target == 'prod':
+                        subprocess.run([sys.executable, str(package.ROOT.parents[2] / 'Packaging/qc2-package-contract.py'),
+                                        '--bridge', str(path)], check=True)
                     with ZipFile(path) as archive:
                         names = archive.namelist()
                         self.assertEqual(len(names), len(set(names)))

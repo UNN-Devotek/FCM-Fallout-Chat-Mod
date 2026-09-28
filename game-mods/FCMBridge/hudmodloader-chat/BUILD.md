@@ -937,10 +937,13 @@ provider-specific ZIP; the default unified ZIP has complete `ZFE (Install for ZF
 Inside either folder, open `Data (drag the contents into data folder)/` and drag its contents into
 the game's `Data/` folder. Do not copy the labeled folder itself. Skip edited INIs.
 The main ZIP contains no `.cmd`/`.ps1` helper: users choose one folder and follow its `INSTALL.txt`.
-For Quick Configuration 2 or NukaMods, users extract the main ZIP and import only the chosen
+The UNN-Devotek Quick Configuration 2 fork imports the complete production ZIP through its
+normal Mods > Install mod or drag-and-drop flow, selects the provider, and merges the matching
+INIs. See the [package contract](../../../docs/deployment/qc2-package-contract.md).
+For upstream Quick Configuration 2 or NukaMods, users extract the main ZIP and import only the chosen
 provider's `Data (drag the contents into data folder)/FCMChatWidget.ba2` as a BA2 mod. The manager owns its Data placement and archive
 list entry; the chosen `INSTALL.txt` covers the separate HUDModLoader entry and provider/FCM INIs.
-The combined ZIP itself must not be passed to a mod manager: it contains two copies of the same
+The combined ZIP must not be passed to upstream managers: it contains two copies of the same
 BA2 under different roots. Verify one `Data/FCMChatWidget.ba2` and one archive-list entry after
 deployment, and preserve edited INIs on update. Before calling a release manager-compatible, use
 a clean test profile in each manager to import the selected BA2, enable/deploy it, confirm the
