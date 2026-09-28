@@ -620,9 +620,14 @@ after changing a BA2 or native extender configuration.
 
 Packages do not redistribute extenders or Bethesda HUDMenu assets. The main website and Nexus
 ZIPs contain complete `ZFE (Install for ZFE only)/` and `xScal (Install for xScal only)/` folders without setup scripts; choose only one.
-Quick Configuration 2 and NukaMods users should extract the ZIP and import only their chosen
-folder's `Data (drag the contents into data folder)/FCMChatWidget.ba2` as a BA2 mod. The combined ZIP has two provider roots and
-is not a direct mod-manager import. The manager owns BA2 deployment and the archive-list entry;
+The [UNN-Devotek Quick Configuration 2 fork](https://github.com/UNN-Devotek/QuickConfiguration2)
+accepts the combined ZIP directly through its normal **Mods → Install mod** or drag-and-drop
+flow. It detects the installed provider and selects that folder. If neither provider is present,
+the user chooses ZFE or xScal; the fork downloads the selected official Nexus Mods package.
+It also offers HUDModLoader when missing. These downloads and the FCM package are reviewed and
+installed together with backups. The upstream Quick Configuration 2 and NukaMods flows still
+require extracting the ZIP and importing only the chosen folder's
+`Data (drag the contents into data folder)/FCMChatWidget.ba2` as a BA2 mod. For manual installs,
 copy only missing provider/FCM INIs, merge the HUDModLoader entry, and preserve edited INIs on
 updates. Check for exactly one BA2 in the game's `Data` folder and one archive-list entry.
 Legacy xScal-only website ZIPs may include an optional Windows helper. All builds include
