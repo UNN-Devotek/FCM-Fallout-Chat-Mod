@@ -21,6 +21,10 @@ repository. Update both sides and their tests before intentionally changing this
 | Standalone bridge ZIP | `BUILD.json` with semantic `version`, `target: "prod"`, and `ba2Sha256`; `Data/FCMServerBridge.ba2` must begin with `BTDX` and match that SHA-256. The manual guide and loader fragment remain part of the human package. |
 | Desktop overlay ZIP | Exactly one `Optional FCM Bridge/BUILD.json` and matching `Data/FCMServerBridge.ba2` under that folder, possibly inside one portable wrapper folder. The bridge must satisfy the standalone bridge metadata checks. The overlay never installs it by default. |
 
+The finished HUD ZIP must contain only its two provider BA2 paths, and a bridge or overlay ZIP
+must contain exactly one importable bridge package. Extra FCM package paths make the fork's
+single-package preview ambiguous and are rejected by the release gate.
+
 The importer obtains the HUD version from the selected production `INSTALL.txt` (or the BA2
 for an extracted single-provider folder). It obtains the bridge version from `BUILD.json` and
 checks its BA2 hash. Thus a new **version** with the same shape needs no importer change. The
@@ -28,14 +32,22 @@ desktop release version does not determine the HUD or bridge version. Provider a
 downloads are separate prerequisites and depend on their official Nexus packages being
 available; the ZIP does not bundle them.
 
+The fork also rejects ZIPs with more than 20,000 entries, duplicate file paths, backslash or
+absolute paths, and unsafe relative path components. The release validator enforces these rules
+before reading package content. It uses the fork's per-file limits: bridge `BUILD.json` 10,000 bytes
+and BA2 2 MiB; HUD BA2 20 MiB, provider `INSTALL.txt` 200,000 bytes, `FCMChat.ini` and ZFE fragment
+100,000 bytes each, and xScal config 10,000 bytes. Review and update both repositories together
+if a legitimate future package needs a higher limit.
+
 ## INI and ownership rules
 
 - The package INIs are merge inputs, not replacements for existing user files. Preserve custom
   `FCMChat.ini` values, unrelated `hudmodloader.ini` lines, archive entries, and provider settings.
 - Treat an existing `FCMChatWidget` or `FCMServerBridge` loader line as already registered.
-  A future HUDModLoader default list may include either line. Keep exactly one selected FCM
+  This includes case variants and `.swf` suffixes. A future HUDModLoader default list may
+  include any of these forms. Keep exactly one selected FCM
   loader entry and one selected BA2 in the active `Fallout76Custom.ini` archive list. The HUD
-  packager also filters both FCM names out of its copied defaults before adding one widget entry.
+  packager filters these FCM names out of its copied defaults before adding one widget entry.
 - Install only the chosen provider's settings. ZFE uses its FCM fragment; xScal merges its
   `[Chat]` values. The Server Bridge does not change provider chat settings.
 - An update, repeat import, switch, or removal must use the fork's preview, backup, and normal
