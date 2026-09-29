@@ -43,6 +43,10 @@ if a legitimate future package needs a higher limit.
 
 - The package INIs are merge inputs, not replacements for existing user files. Preserve custom
   `FCMChat.ini` values, unrelated `hudmodloader.ini` lines, archive entries, and provider settings.
+  Existing `FCMChat.ini` and ZFE fragments receive newly packaged keys without changing their
+  existing values or comments. If a release needs to change the meaning or required value of an existing key,
+  define and test an explicit migration in the fork before publishing it; adding a new version
+  number alone will not replace user choices.
 - Treat an existing `FCMChatWidget` or `FCMServerBridge` loader line as already registered.
   This includes case variants and `.swf` suffixes. A future HUDModLoader default list may
   include any of these forms. Keep exactly one selected FCM
@@ -52,7 +56,9 @@ if a legitimate future package needs a higher limit.
   `[Chat]` values. The Server Bridge does not change provider chat settings.
 - An update, repeat import, switch, or removal must use the fork's preview, backup, and normal
   mod removal path. Re-read current INIs before targeted writes so a delayed app save cannot
-  replace a newer game or user edit. Roll back all touched files on failure.
+  replace a newer game or user edit. Roll back all touched files on failure. Check staged as well
+  as deployed managed mods for ownership, serialize apply operations, and fail if the game
+  process cannot be inspected.
 
 ## Release gate and compatibility review
 
