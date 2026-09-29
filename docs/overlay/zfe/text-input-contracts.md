@@ -1,7 +1,7 @@
 # HUD text input: ZFE and xScal contracts
 
-This describes the current `FCMChatWidget` 2.10.129 source and the locally tested ZFE 0.15.0
-and xScal 0.2.18 paths. One provider-neutral BA2 contains both routes. The widget requires
+This describes the current `FCMChatWidget` 2.10.134 source and the locally tested ZFE 0.15.0
+and xScal input paths. One provider-neutral BA2 contains both routes. The widget requires
 **one active extender**; if it detects both, it shows a provider-conflict message and stops
 discovery. [Provider discovery](../../../game-mods/FCMBridge/FcmNativeApi.hx) and
 [route selection](../../../game-mods/FCMBridge/hudmodloader-chat/FcmInputRoute.hx) are the
@@ -25,12 +25,14 @@ ownership before opening either editor and uses edge latches to avoid opening tw
 [`FCMChatWidget.openInput`](../../../game-mods/FCMBridge/hudmodloader-chat/FCMChatWidget.hx)
 and the [keybind guide](../../../game-mods/FCMBridge/hudmodloader-chat/KEYBINDS.txt).
 
-`Data/FCMChat.ini` also selects the xScal editor. The native typing failure
-reproduced on the tested Windows laptop; native xScal input worked in the
-Linux/Steam Proton test with xScal 0.2.18. `xscalInputMode=shared` is a
-temporary Windows workaround while xScal's native refusal is diagnosed.
-`xscalInputMode=native` remains the default for the working Proton path. On a
-Windows install where `Input.BeginInput` repeatedly returns
+`Data/FCMChat.ini` also selects the xScal editor. Native typing failed on the
+tested Windows laptop with xScal 0.2.18 and froze the game with the author's
+0.2.19 build. It worked in the Linux/Steam Proton test with xScal 0.2.18.
+The tester approved typing and gameplay-key blocking on the Windows laptop
+with xScal 0.2.20, the matching Steam Address Library, the unchanged 2.10.134
+BA2, and `xscalInputMode=native`. The available 0.2.20 log confirms startup
+and Address Library loading only, so the native session lifecycle is supported
+by the tester's report rather than a complete log. On an affected install where `Input.BeginInput` repeatedly returns
 `input_unavailable`, set
 `xscalInputMode=shared` and restart the game. This explicitly skips xScal's
 native text session and uses the HUDModLoader host editor. It does not change

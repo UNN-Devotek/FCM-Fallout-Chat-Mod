@@ -1,5 +1,62 @@
 # FCMChatWidget build, install, and verification
 
+## Author xScal 0.2.20 DLL retest (2026-09-28)
+
+The author supplied a new x64 `dxgi.dll` identifying itself as xScal 0.2.20,
+SHA-256 `f10834a0fadb621267014f45edbea79b2b240c90881b818b8588abba3ebff409`.
+With Fallout 76 closed, only that DLL replaced the 0.2.19 test DLL on the
+Windows laptop. The prior DLL is backed up as
+`C:\Users\White\Documents\FCM-Repro-Backups\before-author-xscal-0.2.20-20260928.dll`.
+Before the game launched, the exact 2.10.134 BA2 that froze with 0.2.19 was
+restored (SHA-256
+`7b76a2ee60b9957562718ed27ffede788ab1905a7b2c6755bd7ec9f638128560`).
+The Steam Address Library and `openKey=PERIOD` /
+`xscalInputMode=native` config stayed unchanged. This makes the next native
+run an isolated 0.2.20 DLL comparison. The tester reported that typing worked
+and gameplay keys were blocked while chat was open, then approved the result
+and ended testing. The available `xscal.log` is a 602-byte startup log ending
+before the widget attached; it confirms xScal 0.2.20 and the Address Library
+loaded but does not independently confirm `BeginInput` or submission. The
+approved laptop setup retains the unchanged 2.10.134 BA2, xScal 0.2.20, and
+native input. No FCM widget code change was adopted for this result.
+
+## Unused key-release timing candidate (2026-09-28)
+
+After the 0.2.19 freeze, a widget candidate deferred `Input.BeginInput` until
+Period's release. It passed 25 widget Haxe suites, SWF/BA2 checks, and all 81
+Ruffle cases, including xScal, ZFE, and shared-editor scenarios. Its one-entry
+BA2 (SHA-256
+`0f72e5ef4872031bfae96f0365347c228abd5b1c37b00b456106f3e65e5c3d66`)
+was staged on the laptop, but it was never run in game. Once the tester
+approved xScal 0.2.20 with the original BA2, the candidate source, compiled
+SWF, and scenario changes were reverted. The candidate is not part of the
+installed or current source build.
+
+## Author xScal 0.2.19 native-input retest (2026-09-28)
+
+On the MSI Windows laptop (Fallout 76 Steam runtime 1.7.26.10), the
+author-supplied xScal 0.2.19 `dxgi.dll` was installed with the Steam
+`version-1-7-26-10-steam.bin` Address Library. The new DLL is SHA-256
+`5b765f3b999359bb4753e2aa24bf7dd6c9189725cb5e73db57f30d0bc1154ab1`;
+the library is SHA-256
+`cbde74e84da7f84c7aee78670982a3db9426b1ea12bc79d4a22abf36c2955664`.
+`Data/FCMChat.ini` retained `openKey=PERIOD` and temporarily selected
+`xscalInputMode=native`. The pretest DLL and config are backed up in
+`C:\Users\White\Documents\FCM-Repro-Backups\before-author-xscal-0.2.19-20260928`.
+
+The fresh `xscal.log` confirms `xScal v0.2.19`, `platform: steam`, and
+`Address Library: loaded (77 entries, RVA setMember=0x2584F00)`. It then logs
+the Period edge and `selected editor=xscal-session xscalInputMode=native`, but
+no `Input.BeginInput` result or subsequent periodic HUD activity. The tester
+confirmed Fallout 76 froze at that point. This is consistent with the native
+generic callback failing to return from `Input.BeginInput`; it does not identify
+the internal wait or lock. The shared-editor workaround remained necessary
+for this 0.2.19 test. After the game
+closed, the backed-up xScal 0.2.18 DLL and `FCMChat.ini` were restored, and the
+test's Address Library file was removed. Hash checks confirmed the installed
+DLL matches the backed-up version and the config again selects
+`openKey=PERIOD` with `xscalInputMode=shared`.
+
 ## HUD event commands and selectable help candidate (2026-09-26)
 
 **Widget version:** 2.10.134. The seeded event shortcuts (including Sinkhole

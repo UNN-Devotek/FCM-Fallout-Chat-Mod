@@ -34,7 +34,7 @@ def hud_entries():
         entries.update({root + "INSTALL.txt": b"Fallout Chat Mod HUD 2.10.134 (PRODUCTION)",
                         root + "Fallout76Custom.ini": b"[Archive]\n",
                         data + "FCMChatWidget.ba2": b"BTDX 2.10.134",
-                        data + "FCMChat.ini": b"[FCMChat]\n",
+                        data + "FCMChat.ini": b"[FCMChat]\nxscalInputMode=native\n",
                         data + "hudmodloader.ini": b"FCMChatWidget\n"})
         if provider.startswith("ZFE"):
             entries[data + "ZFE/TextChat/fragments/FCMChatWidget.ini"] = b"[TextChat]\n"
@@ -70,6 +70,18 @@ class ContractTests(unittest.TestCase):
         entries["ZFE (Install for ZFE only)/" + contract.DATA + "/hudmodloader.ini"] = b"FCMChatWidget\nFCMChatWidget\n"
         with self.assertRaisesRegex(ValueError, "exactly once"):
             self.check(entries, "hud")
+
+    def test_all_hud_provider_configs_require_native_xscal_input(self):
+        for provider in contract.PROVIDERS:
+            path = provider + "/" + contract.DATA + "/FCMChat.ini"
+            for invalid in (b"[FCMChat]\nxscalInputMode=shared\n",
+                            b"[FCMChat]\n",
+                            b"[FCMChat]\nxscalInputMode=native\nxscalInputMode=shared\n",
+                            b"[FCMChat]\nxscalInputMode=native\n xscalInputMode = shared\n"):
+                entries = hud_entries()
+                entries[path] = invalid
+                with self.assertRaisesRegex(ValueError, "xscalInputMode=native"):
+                    self.check(entries, "hud")
 
     def test_bridge_hash_and_production_are_required(self):
         entries = bridge_entries()

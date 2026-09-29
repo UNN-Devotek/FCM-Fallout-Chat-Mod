@@ -66,6 +66,17 @@ def replace_active_line(text: str, key: str, value: str) -> str:
     return updated
 
 
+def require_native_xscal_input(chat_ini: str) -> None:
+    """Keep every exported FCMChat.ini on the approved native xScal default."""
+    values = []
+    for line in chat_ini.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip().lower() == "xscalinputmode":
+            values.append(value.strip())
+    if values != ["native"]:
+        raise ValueError("Exported FCMChat.ini must contain exactly one xscalInputMode=native")
+
+
 def stamp_configs(target: str, chat_ini: str, widget_ini: str) -> tuple[str, str]:
     config = TARGETS[target]
     return (
@@ -94,6 +105,8 @@ def install_instructions(
         "xScal: merge this folder's xscal.ini [Chat] keys into xscal.ini beside\n"
         "   Fallout76.exe. Set enabled=true and the packaged relayEndpoint. Keep\n"
         "   other sections and never add a second [Chat] section.\n"
+        "   Native input is configured by xscalInputMode=native in Data/FCMChat.ini,\n"
+        "   not in xscal.ini.\n"
     )
     helper = (
         "Optional Windows helper: Enable-xScal-Chat.cmd merges xscal.ini after a backup.\n"
@@ -210,6 +223,7 @@ def build_package(
         (ROOT / "FCMChat.ini").read_text(encoding="utf-8"),
         (ROOT / "FCMChatWidget.ini").read_text(encoding="utf-8"),
     )
+    require_native_xscal_input(chat_ini)
     if provider == "unified":
         layout_intro = (
             f"This ZIP has separate {ZFE_FOLDER}/ and {XSCAL_FOLDER}/ folders. Choose only\n"

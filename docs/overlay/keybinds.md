@@ -140,9 +140,12 @@ mod list to investigate why the editor remains unavailable. FCM does not open a 
 while xScal reports busy.
 
 The native xScal 0.2.18 editor worked in the Linux/Steam Proton test but returned
-`input_unavailable` on the tested Windows laptop. As a temporary Windows workaround,
-set `xscalInputMode=shared` in `Data/FCMChat.ini` and restart. This selects
-HUDModLoader's keyboard editor; controller text entry is unsupported in this mode.
+`input_unavailable` on the tested Windows laptop. The release owner approved
+native typing and gameplay-key blocking there with xScal 0.2.20 and its matching
+Address Library. The shipped `Data/FCMChat.ini` therefore sets
+`xscalInputMode=native`. For an affected older build, set
+`xscalInputMode=shared` in that file and restart. This selects HUDModLoader's
+keyboard editor; controller text entry is unsupported in shared mode.
 
 All eight HUD key lines are editable in `Data/FCMChat.ini`. Use a named key such as
 `openKey=PERIOD` or `openKey=COMMA`, or `VK_###` for a decimal Windows virtual-key code

@@ -47,6 +47,16 @@ def main() -> None:
         assert active_ini_value(source_chat, key) == expected, (
             f"FCMChat.ini shipped default {key} must be {expected!r}"
         )
+    package.require_native_xscal_input(source_chat)
+    for invalid in ("[FCMChat]\nxscalInputMode=shared\n",
+                    "[FCMChat]\n",
+                    "[FCMChat]\nxscalInputMode=native\nxscalInputMode=shared\n",
+                    "[FCMChat]\nxscalInputMode=native\n xscalInputMode = shared\n"):
+        try:
+            package.require_native_xscal_input(invalid)
+            raise AssertionError("non-native or ambiguous xScal input default must fail")
+        except ValueError:
+            pass
     hidden_modes = active_ini_value(source_chat, "hideInHUDModes").split(",")
     assert "ExamineConfirmMode" in hidden_modes, (
         "FCMChat.ini must hide the HUD examine/scrap confirmation mode"
@@ -273,6 +283,7 @@ def main() -> None:
                     )
                     chat = archive.read(data_prefix + "FCMChat.ini").decode()
                     assert active_ini_value(chat, "linkUrl") == expected["link_url"]
+                    assert active_ini_value(chat, "xscalInputMode") == "native"
                     for key, value in HUD_KEY_DEFAULTS.items():
                         assert active_ini_value(chat, key) == value
                     guide = archive.read(prefix + "INSTALL.txt")
@@ -281,6 +292,8 @@ def main() -> None:
                     assert f"import only {package.DATA_FOLDER_LABEL}/FCMChatWidget.ba2".encode() in guide
                     assert f"Open {package.DATA_FOLDER_LABEL}/ and drag its contents".encode() in guide
                     assert b"On updates replace only the BA2; keep edited INIs" in guide
+                    if provider == "xscal":
+                        assert b"xscalInputMode=native in Data/FCMChat.ini" in guide
                     assert expected["endpoint"].encode() in (archive.read(data_prefix + "ZFE/TextChat/fragments/FCMChatWidget.ini") if provider == "zfe" else archive.read(prefix + "xscal.ini"))
                     assert (prefix + "xscal.ini" in names) == (provider == "xscal")
                     assert (data_prefix + "ZFE/TextChat/fragments/FCMChatWidget.ini" in names) == (provider == "zfe")
@@ -299,6 +312,10 @@ def main() -> None:
             with ZipFile(nexus) as archive:
                 assert not any(Path(name).suffix.lower() in package.NEXUS_BLOCKED_SUFFIXES for name in archive.namelist())
                 assert "README.txt" in archive.namelist()
+                for folder in (package.ZFE_FOLDER, package.XSCAL_FOLDER):
+                    chat_path = folder + "/" + package.DATA_FOLDER_LABEL + "/FCMChat.ini"
+                    assert active_ini_value(archive.read(chat_path).decode(),
+                                            "xscalInputMode") == "native"
 
             unsafe = Path(temp_dir) / f"widget-{target}-unsafe.zip"
             package.build_package(target, unsafe)
@@ -328,6 +345,8 @@ def main() -> None:
                     assert "README.txt" in names
                     assert "Data/FCMChatWidget.ba2" in names
                     assert "Data/FCMChat.ini" in names
+                    assert active_ini_value(archive.read("Data/FCMChat.ini").decode(),
+                                            "xscalInputMode") == "native"
                     assert archive.read("Data/hudmodloader.ini") == expected_loader
                     assert "Fallout76Custom.ini" in names
                     assert not any(name.startswith("Documents/") for name in names)
@@ -338,6 +357,8 @@ def main() -> None:
                     assert ("Data/ZFE/TextChat/fragments/FCMChatWidget.ini" in names) == (provider == "zfe")
                     assert "INSTALL.txt" not in names
                     assert b"Package provider: " + provider.encode() in archive.read("README.txt")
+                    if provider == "xscal":
+                        assert b"xscalInputMode=native in Data/FCMChat.ini" in archive.read("README.txt")
                     assert ("Enable-xScal-Chat.ps1" in names) == (provider == "xscal")
                     assert ("Enable-xScal-Chat.cmd" in names) == (provider == "xscal")
                     assert not any(name.endswith(".example") for name in names)

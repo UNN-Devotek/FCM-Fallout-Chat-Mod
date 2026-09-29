@@ -33,7 +33,10 @@ The `.deb` ships inside the Linux ZIP so apt users can `sudo apt install ./'Fall
 
 The HUD ZIP is a separate, explicit opt-in install for the in-game HUD track; it never replaces
 the user's existing `Data/hudmodloader.ini`. `package.py` reads the widget version from
-`FCMChatWidget.hx` and refuses to package a stale BA2. Use `-HudTarget dev` when producing a
+`FCMChatWidget.hx` and refuses to package a stale BA2 or a `FCMChat.ini` without exactly one
+`xscalInputMode=native`. Every HUD export ships this default in both provider folders;
+an update preserves a user's edited INI, so an existing `shared` setting must be changed
+locally to use native input. Use `-HudTarget dev` when producing a
 hosted-dev package; use the default `prod` target for production. Never copy a stamped package
 between environments.
 

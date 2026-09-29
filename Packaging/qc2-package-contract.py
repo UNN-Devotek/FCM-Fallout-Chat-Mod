@@ -57,6 +57,11 @@ def validate_hud(archive: ZipFile) -> str:
         else:
             paths.add(root + "xscal.ini")
         require(paths <= names, f"incomplete HUD provider folder {provider}: {sorted(paths - names)}")
+        chat_lines = archive.read(data + "FCMChat.ini").decode("utf-8").splitlines()
+        input_modes = [line.split("=", 1)[1].strip() for line in chat_lines
+                       if "=" in line and line.split("=", 1)[0].strip().lower() == "xscalinputmode"]
+        require(input_modes == ["native"],
+                f"{provider} must ship exactly one xscalInputMode=native in FCMChat.ini")
         guide_lines = archive.read(root + "INSTALL.txt").decode("utf-8").splitlines()
         require(bool(guide_lines), f"{provider} install guide is empty")
         first_line = guide_lines[0]
