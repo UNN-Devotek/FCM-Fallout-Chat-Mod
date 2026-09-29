@@ -172,9 +172,11 @@ def hudmodloader_config(defaults_text: str | None = None) -> str:
     """Preserve upstream entries while selecting only the visible FCM child once."""
     if defaults_text is None:
         defaults_text = HUDMODLOADER_DEFAULTS_SOURCE.read_text(encoding="utf-8")
+    fcm_entries = {"fcmchatwidget", "fcmchatwidget.swf",
+                   "fcmserverbridge", "fcmserverbridge.swf"}
     defaults = [
         line.strip() for line in defaults_text.splitlines()
-        if line.strip() and line.strip() not in {"FCMChatWidget", "FCMServerBridge"}
+        if line.strip() and line.strip().casefold() not in fcm_entries
     ]
     return "\n".join(defaults + ["FCMChatWidget"]) + "\n"
 

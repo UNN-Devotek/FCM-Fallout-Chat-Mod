@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+import warnings
 from zipfile import ZipFile
 
 
@@ -18,8 +19,7 @@ contract = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(contract)
 
 
-def bridge_entries(prefix=""):
-    ba2 = b"BTDX bridge"
+def bridge_entries(prefix="", ba2=b"BTDX bridge"):
     manifest = {"version": "0.2.9", "target": "prod",
                 "ba2Sha256": hashlib.sha256(ba2).hexdigest()}
     return {prefix + "BUILD.json": json.dumps(manifest).encode(),
@@ -47,9 +47,11 @@ class ContractTests(unittest.TestCase):
     def check(self, entries, kind):
         with TemporaryDirectory() as directory:
             path = Path(directory) / "release.zip"
-            with ZipFile(path, "w") as archive:
-                for name, value in entries.items():
-                    archive.writestr(name, value)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", UserWarning)
+                with ZipFile(path, "w") as archive:
+                    for name, value in (entries.items() if isinstance(entries, dict) else entries):
+                        archive.writestr(name, value)
             return contract.validate(path, kind)
 
     def test_supported_production_shapes(self):
@@ -69,6 +71,18 @@ class ContractTests(unittest.TestCase):
         entries = hud_entries()
         entries["ZFE (Install for ZFE only)/" + contract.DATA + "/hudmodloader.ini"] = b"FCMChatWidget\nFCMChatWidget\n"
         with self.assertRaisesRegex(ValueError, "exactly once"):
+            self.check(entries, "hud")
+        entries = hud_entries()
+        entries["ZFE (Install for ZFE only)/" + contract.DATA + "/hudmodloader.ini"] = b"FCMChatWidget.swf\nFCMChatWidget\n"
+        with self.assertRaisesRegex(ValueError, "exactly once"):
+            self.check(entries, "hud")
+        entries = hud_entries()
+        entries["ZFE (Install for ZFE only)/" + contract.DATA + "/hudmodloader.ini"] = b"FCMServerBridge.swf\nFCMChatWidget\n"
+        with self.assertRaisesRegex(ValueError, "exactly once"):
+            self.check(entries, "hud")
+        entries = hud_entries()
+        entries["ZFE (Install for ZFE only)/INSTALL.txt"] = b"Fallout Chat Mod HUD 2.10.134.5 (PRODUCTION)"
+        with self.assertRaisesRegex(ValueError, "no valid version"):
             self.check(entries, "hud")
 
     def test_all_hud_provider_configs_require_native_xscal_input(self):
@@ -98,6 +112,40 @@ class ContractTests(unittest.TestCase):
     def test_overlay_requires_bridge(self):
         with self.assertRaisesRegex(ValueError, "embedded Optional FCM Bridge"):
             self.check({"INSTALL-LINUX.txt": b"guide"}, "overlay")
+        entries = bridge_entries("Optional FCM Bridge/")
+        entries.update(bridge_entries("Other Bridge/"))
+        with self.assertRaisesRegex(ValueError, "exactly one bridge package"):
+            self.check(entries, "overlay")
+        entries = hud_entries()
+        entries["extras/FCMChatWidget.ba2"] = b"BTDX 2.10.134"
+        with self.assertRaisesRegex(ValueError, "exactly two provider HUD BA2"):
+            self.check(entries, "hud")
+
+    def test_importer_rejects_duplicate_unsafe_and_oversized_members(self):
+        entries = list(bridge_entries().items())
+        with self.assertRaisesRegex(ValueError, "duplicate path"):
+            self.check(entries + [("BUILD.json", entries[0][1])], "bridge")
+        for unsafe in ("../note.txt", "/absolute.txt", "folder\\note.txt", "C:/note.txt"):
+            with self.subTest(unsafe=unsafe), self.assertRaisesRegex(ValueError, "unsafe path"):
+                self.check(entries + [(unsafe, b"note")], "bridge")
+        with self.assertRaisesRegex(ValueError, "too many entries"):
+            self.check(entries + [(f"extra/{index}", b"") for index in range(contract.MAX_ENTRIES)], "bridge")
+        with self.assertRaisesRegex(ValueError, "FCMServerBridge.ba2 size"):
+            self.check(bridge_entries(ba2=b"BTDX" + b"x" * (contract.BRIDGE_BA2_LIMIT - 3)), "bridge")
+        oversized_manifest = bridge_entries()
+        oversized_manifest["BUILD.json"] = oversized_manifest["BUILD.json"] + b" " * 10_000
+        with self.assertRaisesRegex(ValueError, "BUILD.json size"):
+            self.check(oversized_manifest, "bridge")
+        oversized_hud = hud_entries()
+        oversized_hud[contract.PROVIDERS[0] + "/" + contract.DATA + "/FCMChat.ini"] += b";" * 100_000
+        with self.assertRaisesRegex(ValueError, "FCMChat.ini size"):
+            self.check(oversized_hud, "hud")
+        oversized_hud = hud_entries()
+        oversized_hud[contract.PROVIDERS[0] + "/" + contract.DATA + "/FCMChatWidget.ba2"] = (
+            b"BTDX 2.10.134" + b"x" * contract.HUD_BA2_LIMIT
+        )
+        with self.assertRaisesRegex(ValueError, "FCMChatWidget.ba2 size"):
+            self.check(oversized_hud, "hud")
 
 
 if __name__ == "__main__":

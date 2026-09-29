@@ -1026,11 +1026,13 @@ merge template. `README.txt` at ZIP root combines setup, release notes, menu, ke
 customization, version, and provider metadata. Copy only the selected BA2 and missing FCM/ZFE
 INIs; merge shared INIs without replacing existing files. Updates replace only the BA2.
 Provider-specific ZIPs retain the single-provider root layout with a conventional `Data/` folder.
-The packaged `Data/hudmodloader.ini` contains all 22 lines from HUDModLoader's
+The packaged `Data/hudmodloader.ini` contains the non-FCM entries from HUDModLoader's
 [upstream default file](https://github.com/GitCrazy-wc/hudmodloader/blob/71e2fde134933323777980b5e0fd0c6036c2408f/Config%20File/hudmodloader.ini)
 plus `FCMChatWidget`. The snapshot is tracked in `HUDMODLOADER-UPSTREAM-DEFAULTS.txt` and
 checked by `test_package.py`. Existing player registries must still be merged, never replaced;
-the background `FCMServerBridge` belongs to its separate package.
+the background `FCMServerBridge` belongs to its separate package. If future upstream defaults
+include either FCM child, including a `.swf` or case variant, the packager removes those entries
+from the template before appending one `FCMChatWidget` entry.
 
 | Provider package | Configuration |
 | --- | --- |
