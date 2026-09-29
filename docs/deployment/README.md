@@ -113,6 +113,7 @@ If the tunnel goes down:
 | [qa-builds.md](qa-builds.md) | QA-tester builds: the dev-guild QA role gate + golden-build lock, and the build / bless / distribute / retire runbook (Linux `dist:qa` + the Build Windows QA runner workflow) |
 | [releasing-the-overlay.md](releasing-the-overlay.md) | Full Electron release pipeline, step by step |
 | [packaging.md](packaging.md) | What each `Packaging/` script does |
+| [qc2-package-contract.md](qc2-package-contract.md) | FCM ZIP compatibility contract and release checks for the Quick Configuration 2 fork |
 | [code-signing.md](code-signing.md) | AV / SmartScreen situation; Azure Trusted Signing path |
 | [secret-rotation-runbook.md](secret-rotation-runbook.md) | Procedure for rotating a DB credential (consistent backup + minimal downtime) and scrubbing secrets from git history |
 | [discord-scheduled-events.md](discord-scheduled-events.md) | Production configuration, permissions, validation, and smoke test for Discord Scheduled Event mirroring |

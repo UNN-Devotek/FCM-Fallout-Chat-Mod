@@ -309,11 +309,12 @@ Produces (in `cross-platform-overlay/dist-electron/`):
   folder with `hudmodloader.ini` (upstream defaults plus FCM),
   root `Fallout76Custom.ini` merge template, and provider `INSTALL.txt`.
   One root `README.txt` combines the setup, version, release, menu, keybind, and customization notes.
-  Mod-manager users extract the ZIP, import only the chosen provider's
-  `Data (drag the contents into data folder)/FCMChatWidget.ba2` into Quick Configuration 2 or NukaMods, and manually merge the
-  chosen provider's INIs and HUDModLoader entry. Do not send the combined two-provider ZIP to
-  a manager; verify a single deployed BA2 and archive-list entry. The manager maintains that
-  entry and users keep their edited INIs on updates.
+  The [UNN-Devotek Quick Configuration 2 fork](qc2-package-contract.md) imports the complete
+  production ZIP, selects the provider, and merges the applicable INIs. Upstream Quick
+  Configuration 2 and NukaMods users extract the ZIP, import only the chosen provider's
+  `Data (drag the contents into data folder)/FCMChatWidget.ba2`, and manually merge the
+  provider's INIs and HUDModLoader entry. Verify a single deployed BA2 and archive-list entry;
+  keep edited INIs on updates.
   It never replaces the user's `Data/hudmodloader.ini`.
 
 The overlay ZIPs go to the website and Nexus Mods. The HUD ZIP goes to the website, the

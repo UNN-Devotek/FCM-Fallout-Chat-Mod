@@ -143,6 +143,9 @@ $linuxDebNexusZip = Join-Path $DistDir "Fallout Chat Mod $Version (Linux .deb)-N
 foreach ($package in @($winNexusZip, $portableNexusZip, $linuxAppNexusZip, $linuxDebNexusZip)) {
     if (-not (Test-Path $package)) { Write-Error "Nexus package missing: $package"; exit 1 }
 }
+$contractCheck = Join-Path $PSScriptRoot 'qc2-package-contract.py'
+& $pythonCommand.Source $contractCheck --bridge $BridgeZip --hud $hudNexusZip --overlay $winNexusZip --overlay $portableNexusZip --overlay $linuxAppNexusZip --overlay $linuxDebNexusZip
+if ($LASTEXITCODE -ne 0) { Write-Error "Quick Configuration 2 package contract failed"; exit 1 }
 
 # -- FAIL-CLOSED VirusTotal gate -------------------------------------------------
 # Run the VT gate FIRST and ABORT (do not upload anything to Nexus) if it returns

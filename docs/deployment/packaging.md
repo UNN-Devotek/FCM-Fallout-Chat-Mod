@@ -33,11 +33,16 @@ The `.deb` ships inside the Linux ZIP so apt users can `sudo apt install ./'Fall
 
 The HUD ZIP is a separate, explicit opt-in install for the in-game HUD track; it never replaces
 the user's existing `Data/hudmodloader.ini`. `package.py` reads the widget version from
-`FCMChatWidget.hx` and refuses to package a stale BA2. Use `-HudTarget dev` when producing a
+`FCMChatWidget.hx` and refuses to package a stale BA2 or a `FCMChat.ini` without exactly one
+`xscalInputMode=native`. Every HUD export ships this default in both provider folders;
+an update preserves a user's edited INI, so an existing `shared` setting must be changed
+locally to use native input. Use `-HudTarget dev` when producing a
 hosted-dev package; use the default `prod` target for production. Never copy a stamped package
 between environments.
 
-Quick Configuration 2 and NukaMods should import the selected provider's extracted
+The [UNN-Devotek Quick Configuration 2 fork](qc2-package-contract.md) accepts the complete
+production HUD ZIP through Mods > Install mod or drag-and-drop, detects the provider, and merges
+the applicable INIs. Upstream Quick Configuration 2 and NukaMods should import the selected provider's extracted
 `Data (drag the contents into data folder)/FCMChatWidget.ba2`, not the two-provider ZIP. The manager deploys the BA2 and maintains
 its archive-list entry; the selected `INSTALL.txt` explains the manual HUDModLoader and INI
 merges. Check that deployment leaves exactly one BA2 and one archive-list entry, and that an
@@ -117,7 +122,7 @@ archive similarly contains manual provider configuration without helper-download
 
 `Packaging/package-nexus-downloads.ps1` builds four self-contained overlay archives: Windows
 installer, Windows portable, Linux AppImage, and Linux `.deb`. Every archive includes the exact
-validated PROD `FCMServerBridge` 0.2.8 package under `Optional FCM Bridge/`, verifies both the
+validated PROD `FCMServerBridge` package under `Optional FCM Bridge/`, verifies both the
 locked bridge-ZIP and BA2 hashes, and keeps installation manual and optional. The visible HUD is
 never included in these overlay archives.
 

@@ -22,14 +22,21 @@ The MSI Windows 11 laptop was also reset to the same three Nexus ZIPs for a
 native Windows input trial. Its previous `FCMServerBridge` game mod, older
 HUDModLoader, FCM files, extender settings, caches, and logs were moved to
 `C:\Users\White\Documents\FCM-Repro-Backups\before-nexus-clean-20260925T221153Z`.
-The laptop now has the source-built FCMChatWidget 2.10.134 BA2, one loader
+The laptop has the source-built FCMChatWidget 2.10.134 BA2, one loader
 entry, and no active FCMServerBridge. Its `Data/FCMChat.ini` retains
-`openKey=PERIOD` and `xscalInputMode=shared`; its link and root `xscal.ini`
-relay point to hosted Dev. The prior BA2 and both config files are backed up
+`openKey=PERIOD`; its link and root `xscal.ini` relay point to hosted Dev.
+The prior BA2 and both config files are backed up
 under `C:\Users\White\Documents\FCM-Repro-Backups\before-hud-help-2.10.134-2026-09-26`.
 The installed BA2 hash matches the tested artifact. The release owner confirmed
 in-game typing, `/help`, event and giveaway commands, and their feed and
 Discord outcomes on this laptop with the Dev relay.
+On 2026-09-28, the author-supplied xScal 0.2.20 DLL and Steam runtime 1.7.26.10
+Address Library replaced the failed native-input 0.2.19 test. The original
+2.10.134 BA2 stayed installed, and `FCMChat.ini` now sets
+`xscalInputMode=native`. The release owner approved typing and gameplay-key
+blocking in game. The available 0.2.20 log confirms startup and Address Library
+loading but ends before the widget attaches, so the input session itself has
+user acceptance rather than a complete provider log.
 
 ## Current implementation and verification
 
@@ -451,7 +458,7 @@ establish text focus: xScal must also accept `Input.BeginInput`.
 | --- | --- | --- |
 | Shared package | One provider-neutral `FCMChatWidget.ba2` | Same BA2 |
 | Provider selection | Validated as the sole active extender | Validated as the sole active extender; the adapter checks `chatInterface` before ZFE if both surfaces appear, but the widget rejects that mixed install |
-| Primary visible editor | SharedHUDTools `TextEdit` with the host ControlMap lock | Native xScal text session by default; tested working on Linux/Steam Proton. Temporary `FCMChat.ini` `xscalInputMode=shared` workaround selects SharedHUDTools for the Windows laptop where native begin failed |
+| Primary visible editor | SharedHUDTools `TextEdit` with the host ControlMap lock | Native xScal text session by default; approved on the Windows laptop with xScal 0.2.20 and its matching Address Library. `FCMChat.ini` `xscalInputMode=shared` remains a workaround for affected older builds |
 | Physical keyboard with controller active | ZFE focuses the host's visible entry field while retaining its ControlMap lock | Native xScal text session when `BeginInput` validates; controller text entry is unsupported in shared mode |
 | Compatibility fallback | No unlocked editor fallback; a failed host editor refuses entry | SharedHUDTools when the native session is unsupported or shared mode is selected |
 | Multi-character typing | HUDTools' focused entry field has selection/caret enabled | Native session returns complete bounded text snapshots; the host fallback uses its entry field |
@@ -632,7 +639,8 @@ copy only missing provider/FCM INIs, merge the HUDModLoader entry, and preserve 
 updates. Check for exactly one BA2 in the game's `Data` folder and one archive-list entry.
 Legacy xScal-only website ZIPs may include an optional Windows helper. All builds include
 manual setup, keybind, customization, and emoji-license files. See the
-[build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md).
+[build guide](../../../game-mods/FCMBridge/hudmodloader-chat/BUILD.md) and the
+[Quick Configuration package contract](../../deployment/qc2-package-contract.md).
 
 ## Client version handshake (`clientVersion`)
 

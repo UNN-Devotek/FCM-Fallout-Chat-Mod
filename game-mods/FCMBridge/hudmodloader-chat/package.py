@@ -66,6 +66,17 @@ def replace_active_line(text: str, key: str, value: str) -> str:
     return updated
 
 
+def require_native_xscal_input(chat_ini: str) -> None:
+    """Keep every exported FCMChat.ini on the approved native xScal default."""
+    values = []
+    for line in chat_ini.splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip().lower() == "xscalinputmode":
+            values.append(value.strip())
+    if values != ["native"]:
+        raise ValueError("Exported FCMChat.ini must contain exactly one xscalInputMode=native")
+
+
 def stamp_configs(target: str, chat_ini: str, widget_ini: str) -> tuple[str, str]:
     config = TARGETS[target]
     return (
@@ -94,6 +105,8 @@ def install_instructions(
         "xScal: merge this folder's xscal.ini [Chat] keys into xscal.ini beside\n"
         "   Fallout76.exe. Set enabled=true and the packaged relayEndpoint. Keep\n"
         "   other sections and never add a second [Chat] section.\n"
+        "   Native input is configured by xscalInputMode=native in Data/FCMChat.ini,\n"
+        "   not in xscal.ini.\n"
     )
     helper = (
         "Optional Windows helper: Enable-xScal-Chat.cmd merges xscal.ini after a backup.\n"
@@ -111,9 +124,11 @@ def install_instructions(
 5. Manual BA2 install: append FCMChatWidget.ba2 once to the [Archive]
    sResourceArchive2List in your user profile's Documents/My Games/Fallout 76/
    Fallout76Custom.ini. This provider folder's root Fallout76Custom.ini is a
-   merge template, never a replacement. Quick Configuration 2 or NukaMods:
+   merge template, never a replacement. Upstream Quick Configuration 2 or NukaMods:
    import only {data_folder}/FCMChatWidget.ba2 and let the manager maintain this entry.
    Do not import the combined ZIP or copy the BA2 yourself as well.
+   The UNN-Devotek Quick Configuration 2 fork accepts the complete ZIP through
+   Mods > Install mod or drag-and-drop and merges the matching provider INIs.
 6. {provider_extra}{helper}7. Restart the game. Press F11 for the FCM menu, then link the displayed code
    at {config['web_link_url']}. Verify one deployed BA2 and one archive entry.
 
@@ -134,7 +149,11 @@ Data folder. Skip existing INIs; do not copy the labeled folder itself.
 Merge, never replace, existing hudmodloader.ini, Fallout76Custom.ini, or
 xscal.ini. There is no separate zfe.ini in this package.
 
-Quick Configuration 2/NukaMods: import only the chosen folder's
+UNN-Devotek Quick Configuration 2 fork: import this complete ZIP through
+Mods > Install mod or drag-and-drop; it selects the matching provider folder,
+offers missing prerequisites, and preserves existing INI settings.
+
+Upstream Quick Configuration 2/NukaMods: import only the chosen folder's
 {DATA_FOLDER_LABEL}/FCMChatWidget.ba2, not this combined ZIP. The manager owns the BA2 and
 archive list. On updates replace only the BA2 and preserve edited INIs.
 """
@@ -149,16 +168,15 @@ def xscal_config_example(target: str) -> str:
     )
 
 
-def hudmodloader_config() -> str:
-    """Keep the upstream default list and add only the visible FCM widget."""
+def hudmodloader_config(defaults_text: str | None = None) -> str:
+    """Preserve upstream entries while selecting only the visible FCM child once."""
+    if defaults_text is None:
+        defaults_text = HUDMODLOADER_DEFAULTS_SOURCE.read_text(encoding="utf-8")
     defaults = [
-        line.strip()
-        for line in HUDMODLOADER_DEFAULTS_SOURCE.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        line.strip() for line in defaults_text.splitlines()
+        if line.strip() and line.strip() not in {"FCMChatWidget", "FCMServerBridge"}
     ]
-    if len(defaults) != len(set(defaults)) or "FCMServerBridge" in defaults:
-        raise ValueError("Review the HUDModLoader default registry before packaging")
-    return "\n".join([entry for entry in defaults if entry != "FCMChatWidget"] + ["FCMChatWidget"]) + "\n"
+    return "\n".join(defaults + ["FCMChatWidget"]) + "\n"
 
 
 def assert_nexus_archive_safe(output: Path) -> None:
@@ -205,6 +223,7 @@ def build_package(
         (ROOT / "FCMChat.ini").read_text(encoding="utf-8"),
         (ROOT / "FCMChatWidget.ini").read_text(encoding="utf-8"),
     )
+    require_native_xscal_input(chat_ini)
     if provider == "unified":
         layout_intro = (
             f"This ZIP has separate {ZFE_FOLDER}/ and {XSCAL_FOLDER}/ folders. Choose only\n"
@@ -290,8 +309,9 @@ def build_package(
             + (f"Open the chosen {DATA_FOLDER_LABEL if provider == 'unified' else 'Data'}/ folder; "
                "drag its contents into the game Data folder, not the folder itself.\n"
                "Skip existing INIs and merge shared settings. The packaged hudmodloader.ini\n"
-               "contains HUDModLoader defaults plus FCMChatWidget. Quick Configuration 2 and\n"
-               f"NukaMods users import only {DATA_FOLDER_LABEL if provider == 'unified' else 'Data'}/FCMChatWidget.ba2.\n\n")
+               "contains HUDModLoader defaults plus FCMChatWidget. The UNN-Devotek Quick\n"
+               "Configuration 2 fork imports this complete ZIP; upstream Quick Configuration 2\n"
+               f"and NukaMods users import only {DATA_FOLDER_LABEL if provider == 'unified' else 'Data'}/FCMChatWidget.ba2.\n\n")
             + f"Version: {version}\nPackage provider: {provider}\n\n"
             "INSTALLATION\n============\n\n"
             + install_instructions(target, provider, distribution,

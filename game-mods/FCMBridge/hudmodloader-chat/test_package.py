@@ -6,6 +6,8 @@ from __future__ import annotations
 import configparser
 import importlib.util
 import re
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from zipfile import ZipFile
@@ -45,6 +47,16 @@ def main() -> None:
         assert active_ini_value(source_chat, key) == expected, (
             f"FCMChat.ini shipped default {key} must be {expected!r}"
         )
+    package.require_native_xscal_input(source_chat)
+    for invalid in ("[FCMChat]\nxscalInputMode=shared\n",
+                    "[FCMChat]\n",
+                    "[FCMChat]\nxscalInputMode=native\nxscalInputMode=shared\n",
+                    "[FCMChat]\nxscalInputMode=native\n xscalInputMode = shared\n"):
+        try:
+            package.require_native_xscal_input(invalid)
+            raise AssertionError("non-native or ambiguous xScal input default must fail")
+        except ValueError:
+            pass
     hidden_modes = active_ini_value(source_chat, "hideInHUDModes").split(",")
     assert "ExamineConfirmMode" in hidden_modes, (
         "FCMChat.ini must hide the HUD examine/scrap confirmation mode"
@@ -192,6 +204,8 @@ def main() -> None:
     assert len(upstream_loader_defaults) == 22
     expected_loader = ("\n".join(upstream_loader_defaults + ["FCMChatWidget"]) + "\n").encode()
     assert b"FCMServerBridge" not in expected_loader
+    future_defaults = "OtherHUD\nFCMChatWidget\nFCMServerBridge\nOtherHUD\nFCMChatWidget\n"
+    assert package.hudmodloader_config(future_defaults) == "OtherHUD\nOtherHUD\nFCMChatWidget\n"
     widget_version = version_match.group(1).encode("ascii")
     assert widget_version in widget_artifact, "FCMChatWidget.ba2 embeds the current VERSION"
     assert b"awaiting authoritative live echo" in widget_artifact, (
@@ -225,11 +239,16 @@ def main() -> None:
         for target, expected in package.TARGETS.items():
             unified = Path(temp_dir) / f"widget-{target}-unified.zip"
             package.build_package(target, unified)
+            if target == "prod":
+                subprocess.run([sys.executable, str(ROOT.parents[2] / "Packaging/qc2-package-contract.py"),
+                                "--hud", str(unified)], check=True)
             with ZipFile(unified) as archive:
                 names = set(archive.namelist())
                 readme = archive.read("README.txt")
                 assert readme.startswith(f"Fallout Chat Mod HUD {package.widget_version()}".encode())
                 assert b"Package provider: unified" in readme
+                assert b"UNN-Devotek Quick Configuration 2 fork" in readme
+                assert b"Upstream Quick Configuration 2/NukaMods" in readme
                 assert f"{package.ZFE_FOLDER}/ and {package.XSCAL_FOLDER}/".encode() in readme
                 assert b"Choose only" in readme[:400]
                 assert b"RELEASE NOTES" in readme
@@ -264,6 +283,7 @@ def main() -> None:
                     )
                     chat = archive.read(data_prefix + "FCMChat.ini").decode()
                     assert active_ini_value(chat, "linkUrl") == expected["link_url"]
+                    assert active_ini_value(chat, "xscalInputMode") == "native"
                     for key, value in HUD_KEY_DEFAULTS.items():
                         assert active_ini_value(chat, key) == value
                     guide = archive.read(prefix + "INSTALL.txt")
@@ -272,6 +292,8 @@ def main() -> None:
                     assert f"import only {package.DATA_FOLDER_LABEL}/FCMChatWidget.ba2".encode() in guide
                     assert f"Open {package.DATA_FOLDER_LABEL}/ and drag its contents".encode() in guide
                     assert b"On updates replace only the BA2; keep edited INIs" in guide
+                    if provider == "xscal":
+                        assert b"xscalInputMode=native in Data/FCMChat.ini" in guide
                     assert expected["endpoint"].encode() in (archive.read(data_prefix + "ZFE/TextChat/fragments/FCMChatWidget.ini") if provider == "zfe" else archive.read(prefix + "xscal.ini"))
                     assert (prefix + "xscal.ini" in names) == (provider == "xscal")
                     assert (data_prefix + "ZFE/TextChat/fragments/FCMChatWidget.ini" in names) == (provider == "zfe")
@@ -284,9 +306,16 @@ def main() -> None:
 
             nexus = Path(temp_dir) / f"widget-{target}-nexus.zip"
             package.build_package(target, nexus, distribution="nexus")
+            if target == "prod":
+                subprocess.run([sys.executable, str(ROOT.parents[2] / "Packaging/qc2-package-contract.py"),
+                                "--hud", str(nexus)], check=True)
             with ZipFile(nexus) as archive:
                 assert not any(Path(name).suffix.lower() in package.NEXUS_BLOCKED_SUFFIXES for name in archive.namelist())
                 assert "README.txt" in archive.namelist()
+                for folder in (package.ZFE_FOLDER, package.XSCAL_FOLDER):
+                    chat_path = folder + "/" + package.DATA_FOLDER_LABEL + "/FCMChat.ini"
+                    assert active_ini_value(archive.read(chat_path).decode(),
+                                            "xscalInputMode") == "native"
 
             unsafe = Path(temp_dir) / f"widget-{target}-unsafe.zip"
             package.build_package(target, unsafe)
@@ -316,6 +345,8 @@ def main() -> None:
                     assert "README.txt" in names
                     assert "Data/FCMChatWidget.ba2" in names
                     assert "Data/FCMChat.ini" in names
+                    assert active_ini_value(archive.read("Data/FCMChat.ini").decode(),
+                                            "xscalInputMode") == "native"
                     assert archive.read("Data/hudmodloader.ini") == expected_loader
                     assert "Fallout76Custom.ini" in names
                     assert not any(name.startswith("Documents/") for name in names)
@@ -326,6 +357,8 @@ def main() -> None:
                     assert ("Data/ZFE/TextChat/fragments/FCMChatWidget.ini" in names) == (provider == "zfe")
                     assert "INSTALL.txt" not in names
                     assert b"Package provider: " + provider.encode() in archive.read("README.txt")
+                    if provider == "xscal":
+                        assert b"xscalInputMode=native in Data/FCMChat.ini" in archive.read("README.txt")
                     assert ("Enable-xScal-Chat.ps1" in names) == (provider == "xscal")
                     assert ("Enable-xScal-Chat.cmd" in names) == (provider == "xscal")
                     assert not any(name.endswith(".example") for name in names)
