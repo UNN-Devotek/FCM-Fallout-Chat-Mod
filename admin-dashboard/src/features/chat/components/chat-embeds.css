@@ -202,6 +202,59 @@
   .fcm-embed__field { flex-direction: column; align-items: stretch; }
 }
 
+/* Minerva: keep visit details together and inventory out of the metadata grid. */
+.fcm-minerva {
+  color: var(--fcm-accent);
+  font-size: var(--fcm-fs);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.fcm-minerva__visit { margin: 8px 0 12px; }
+.fcm-minerva__location { display: block; }
+.fcm-minerva__dates { margin: 4px 0 0; }
+.fcm-minerva__dates > div { display: flex; flex-wrap: wrap; gap: 0 8px; }
+.fcm-minerva__dates dt { min-width: 5ch; }
+.fcm-minerva__dates dd { margin: 0; }
+
+.fcm-minerva__inventory {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  text-align: left;
+}
+.fcm-minerva__inventory caption { text-align: left; padding-bottom: 4px; }
+.fcm-minerva__price-column { width: 9ch; }
+.fcm-minerva__inventory th,
+.fcm-minerva__inventory td {
+  padding: 4px 0;
+  /* Override the dashboard's global 13px cells so chat text scaling applies. */
+  font-size: inherit;
+  vertical-align: top;
+  border-bottom: 1px solid color-mix(in srgb, var(--fcm-accent) 15%, transparent);
+}
+.fcm-minerva__inventory th:first-child,
+.fcm-minerva__inventory td:first-child { padding-right: 12px; }
+.fcm-minerva__inventory th:last-child,
+.fcm-minerva__inventory td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.fcm-minerva__inventory td:last-child { white-space: nowrap; }
+.fcm-minerva__inventory th { font-size: var(--fcm-fs-sm); }
+.fcm-minerva__secondary {
+  margin-top: 12px;
+  font-size: var(--fcm-fs-sm);
+  color: color-mix(in srgb, var(--fcm-accent) 80%, transparent);
+}
+.fcm-minerva__unavailable { margin: 12px 0; }
+.fcm-minerva__source {
+  all: unset;
+  color: var(--fcm-accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+.fcm-minerva__source:focus-visible { outline: 2px solid var(--fcm-accent); outline-offset: 2px; }
+
 /* ════════════════════════════════════════════════════════════════════════════
    INLINE EMBED — for STATIC, broadcast-to-everyone messages (wiki shares, party
    invites). Renders as message CONTENT (no box) so it reads like a normal post.
