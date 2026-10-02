@@ -3,6 +3,14 @@
 FCMChatWidget is the optional HUDModLoader chat widget for Fallout 76. It uses ZFE or xScal's
 native chat bridge and FCM's `/relay`. It is independent of the desktop overlay.
 
+**2.10.136 test candidate:** xScal 0.2.17+ saves F11 appearance through its named
+`modStorage` document, independent of the relay layout permission omitted by
+xScal 0.2.20. `Data/FCMChat.ini` remains authoritative for keybinds; restart
+Fallout 76 after editing it. Insert no longer opens chat through a stale named
+action after `openKey` changes. The xScal DLSS/FSR Framegen Plugin also uses
+Insert, so `openKey=PERIOD` separates the menus. ZFE storage is unchanged.
+Native save/restore and input acceptance remain pending.
+
 **2.10.134 release candidate:** `/event help` lists all 33 seeded event
 shortcuts and names in private HUD feed rows, including Gearing Up (`/gu`).
 `/help` points to `/event help` and `/mod help` without listing event names or
@@ -283,12 +291,10 @@ Server-resolved user colors override the default local sender color. Timestamps 
 channel colors/tags, badges, emoji, and available/default channels are not appearance controls.
 See [CUSTOMIZATION.txt](CUSTOMIZATION.txt) for active/retired INI keys and saved-setting precedence.
 
-ZFE stores F11 settings in vendor-scoped storage. xScal uses per-linked-device relay persistence
-only when the backend advertises the capability and supports the settings payload. Missing
-persistence leaves changes session-local. A code checkout does not establish backend deployment.
-The visible HUD does not call xScal `modStorage.register`, `load`, or `save`. On xScal
-0.2.17, the separate optional Server Bridge uses named storage directly, leaving the HUD's
-chat transport and other mods' storage documents independent.
+ZFE stores F11 settings in vendor-scoped storage. xScal 0.2.17+ saves appearance
+locally in its named `fcmchatwidget-layout-v1` document. Older xScal builds use
+the permission-gated relay layout fallback. The separate optional Server Bridge
+uses a different named document and remains independent of visible HUD storage.
 
 ## Browser HUD simulator
 

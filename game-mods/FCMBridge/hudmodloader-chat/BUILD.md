@@ -1,5 +1,89 @@
 # FCMChatWidget build, install, and verification
 
+## xScal local layout and framegen key conflict candidate (2026-10-01)
+
+**Widget version:** 2.10.136. Local test candidate; installed on the desktop
+and MSI Windows laptop for native acceptance, not published.
+
+Widget 2.10.136 supersedes the 2.10.135 diagnostic candidate below. On xScal
+0.2.17+, the widget saves F11 appearance in its own named `modStorage` document,
+so xScal 0.2.20's truncated auth response cannot disable local saves. The
+backend capability-carrier experiment was removed from this candidate. ZFE
+continues using its vendor-scoped storage. A configured Home open key no longer
+leaves the old named Insert/TeamChat action active. Edit `Data/FCMChat.ini` and
+restart Fallout to change any key; Escape first releases the editor, then the
+configured hide key hides the HUD. Native acceptance is still pending.
+
+Reviewed local test artifacts: `.build/FCMChatWidget-2.10.136-local-layout-DEV-test.zip`
+(SHA-256 `ce175c36d1efeb30f403d6c9606e70ed4f63ae310c332ed73b630ee3d465765a`)
+and `.build/FCMChatWidget-2.10.136-local-layout-PROD-test.zip`
+(SHA-256 `54f7d32873693c5968f63a9d67ef628cf8265d063331c72db09ef6ec3fd5059a`).
+Each unified website ZIP contains byte-identical ZFE and xScal BA2 copies and
+ships `xscalInputMode=native`. The normalized SWF SHA-256 is
+`aac9e8f947da96237c7aafde3a56f7f27471ad3fd66f64c1c4ca726760c905f4`;
+the one-entry BA2 SHA-256 is
+`c31fab28c9d19fbb6f8d359a294c846ab6185761568122242ff8a0bfc268de47`.
+Local verification: 26 pure Haxe suites, native adapter/auth suites, compiler
+diagnostics, source/package/SWF/BA2/emoji checks, all 83 Ruffle Playwright
+scenarios, backend build and 124 Jest suites (1,599 passed, 9 skipped), 60
+TypeScript suites (442 passed, 1 skipped), 59 overlay Vitest files (1,283
+passed), and 48 dashboard Vitest files (475 passed). Native game save/restore,
+Home/End rebind, and DLSS coexistence acceptance remain pending.
+
+**Local installs (2026-10-01 EDT):** With Fallout 76 closed on both machines,
+replaced only `Data/FCMChatWidget.ba2`. Both installed files now hash to
+`c31fab28c9d19fbb6f8d359a294c846ab6185761568122242ff8a0bfc268de47`.
+The desktop's `FCMChat.ini` is unchanged (`openKey=INSERT`,
+`xscalInputMode=shared`) and its 2.10.134 BA2/INI backup is under
+`/mnt/ExtraStorage/SteamLibrary/steamapps/common/Fallout76/.extender-backups/before-widget-2.10.136-20261002T031447Z/`.
+The MSI laptop was installed through SSH Manager; its `FCMChat.ini` is
+unchanged (`openKey=PERIOD`, `xscalInputMode=native`) and its 2.10.134 BA2/INI
+backup is under
+`C:\Users\White\Documents\FCM-Repro-Backups\before-widget-2.10.136-20261002T031502Z`.
+Neither game has been launched with this candidate. Emote selection after
+closing native chat is a separate unresolved report; this candidate does not
+change the xScal `EndInput` close path. The DLSS plugin was not present in
+either machine's `Data/XSCAL/Plugins` directory at installation time.
+
+The supplied `xscal (5).log` shows xScal 0.2.20 on Steam 1.7.26.22 with
+Address Library loaded (85 entries), FCMChatWidget 2.10.134 receiving F11
+width changes, and a later widget reload. The inspected 0.2.20 DLL's
+`getAuthState` response omits `canSaveHudLayout`, so the widget never sends
+its layout GET/SET controls even when the linked relay supports them. This is
+the likely cause of the reported failure; native save/restore is not yet
+confirmed. The likely overlapping Nexus mod is xScal's DLSS Framegen Plugin
+(mod 4256, main file 0.2.5, file ID 23705). Its shipped
+`Data/XSCAL/Plugins/Fallout76_NX.ini` has no menu-key option, and its Nexus
+instructions use Insert. FCM can use `Data/FCMChat.ini` `openKey=PERIOD`.
+
+**Superseded 2.10.135 experiment (never installed or published):** A linked relay places the layout capability
+marker on its private history/link completion event. The xScal widget accepts
+it only from that system event, then uses the existing bounded layout GET/SET
+controls. ZFE's vendor storage and key path are unchanged. Deploy the backend
+before this widget. Neither package below was installed or published.
+
+Verification: 25 pure Haxe suites; native API/auth suites; compiler
+diagnostics; source, emoji, SWF, BA2, and package checks; backend build plus
+124 Jest suites (1,599 pass, 9 skipped) and 60 TypeScript suites (442 pass,
+1 skipped); 59 overlay Vitest files (1,283 pass); 48 dashboard Vitest files
+(475 pass); and all 82 Ruffle Playwright scenarios passed, including the new
+xScal truncated-auth layout save scenario and existing ZFE/input cases. The
+full Jest run used the local service credentials with
+`DEV_PERSONA_LOGIN_SECRET=''` and `SUPPORTER_TIER_ENABLED=false`, matching CI
+defaults; the developer's `.env.local` intentionally sets both otherwise.
+
+Artifacts (unified website test ZIPs, both provider folders, native xScal
+input): `.build/FCMChatWidget-2.10.135-layout-capability-DEV-test.zip`
+(SHA-256 `fc24cd0d14bfff2e0ad7b084b09ec2ebaaf608d22b150ac2248cbdf3606dd0d8`)
+and `.build/FCMChatWidget-2.10.135-layout-capability-PROD-test.zip`
+(SHA-256 `2bf88992548d60b3c25036475e33239d377850e641556bd0fd0550a2c6a1cbab`).
+Both ZIPs contain two byte-identical copies of the reviewed BA2, one per
+provider folder. The normalized SWF is SHA-256
+`5a4537e6dca2c3e8bbdcac33078e525a0ebae499c7e72970ee7feb97a43d9bb6`;
+the one-entry BA2 is SHA-256
+`23d783525dd5f7ab2ce14bd551bb7dda462a22754351a8f318f49938e09fde6d`.
+Native save, restart, and DLSS coexistence acceptance remain pending.
+
 ## Author xScal 0.2.20 DLL retest (2026-09-28)
 
 The author supplied a new x64 `dxgi.dll` identifying itself as xScal 0.2.20,

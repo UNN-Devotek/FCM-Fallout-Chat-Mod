@@ -54,7 +54,8 @@ with the registered `modStorage` contract retained only for older xScal builds.
 Named storage allows the bridge and another HUDModLoader child such as Improved
 HUD to keep independent JSON documents. The bridge writes only
 `fcmserverbridge-dev` or `fcmserverbridge-prod` and never calls `register()` on
-0.2.17+. The visible FCM HUD does not use modStorage at all. Neither bridge adapter connects to native chat or
+0.2.17+. The visible FCM HUD uses its separate `fcmchatwidget-layout-v1` named
+document for appearance on xScal 0.2.17+. Neither bridge adapter connects to native chat or
 consumes its event queue. The visible HUD retains existing native authentication.
 For ZFE, a DLL-only installation is normal. The bridge does not use or require
 `falloutchatmod.ini`, a TextChat fragment, a relay endpoint, or `zfe.ini`; do not create those

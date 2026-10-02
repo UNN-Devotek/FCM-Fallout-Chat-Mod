@@ -10,10 +10,15 @@ class XscalInputScenario {
         timer.run = function():Void {
             try {
                 if (++attempts > 40) throw "xScal provider setup timed out";
-                if (widget._api == null || (scenario == "xscal-period-native" && !widget._connected)) return;
+                if (widget._api == null || ((scenario == "xscal-period-native"
+                        || scenario == "xscal-home-rebind") && !widget._connected)) return;
                 timer.stop();
                 if (scenario == "xscal-period-native") {
                     periodNative(widget);
+                    return;
+                }
+                if (scenario == "xscal-home-rebind") {
+                    homeRebind(widget);
                     return;
                 }
                 if (scenario == "xscal-session-fallback") fallback(widget);
@@ -173,5 +178,35 @@ class XscalInputScenario {
             "release-probe session closes through xScal");
         widget.shutdown();
         flash.Lib.trace("XSCAL-SESSION-INPUT PASS xscal-period-native");
+    }
+
+    static function homeRebind(widget:FCMChatWidget):Void {
+        widget._cfg.openKey = "HOME";
+        widget._cfg.hideKey = "END";
+        widget.stopPhysicalNavigation();
+        widget.startPhysicalNavigation();
+        check(widget._physicalOpenKey == 0x24
+            && MockXscal.registeredKeys().split(",").indexOf("45") < 0,
+            "rebound profile registers Home without stale Insert");
+        var before:Int = MockXscal.sessionBeginCount;
+        MockXscal.setVirtualKey(0x2D, true);
+        widget.runPhysicalNavigationSafely();
+        widget.handleUserEvent("INSERT", false);
+        widget.handleUserEvent("TeamChat", false);
+        check(!widget._inputOpen && MockXscal.sessionBeginCount == before,
+            "old Insert and TeamChat actions cannot reopen chat");
+        MockXscal.setVirtualKey(0x2D, false);
+        MockXscal.setVirtualKey(0x24, true);
+        widget.runPhysicalNavigationSafely();
+        check(widget._inputOpen && MockXscal.sessionBeginCount == before + 1,
+            "Home opens the native editor");
+        MockXscal.setVirtualKey(0x24, false);
+        MockXscal.setSessionInput("", "cancelled");
+        widget.runXscalSessionInputSafely(widget._inputGeneration);
+        MockXscal.setVirtualKey(0x23, true);
+        widget.runPhysicalNavigationSafely();
+        check(!widget._inputOpen && widget._hidden, "End hides after editor closes");
+        widget.shutdown();
+        flash.Lib.trace("XSCAL-SESSION-INPUT PASS xscal-home-rebind");
     }
 }

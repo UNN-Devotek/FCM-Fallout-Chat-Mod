@@ -83,7 +83,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.134"; // Keep staff actions in mod help
+    static inline var VERSION:String  = "2.10.136"; // xScal named local layout storage
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -1547,17 +1547,26 @@ class FCMChatWidget extends MovieClip {
         // TeamChat from creating a second native editor after FCM has opened successfully.
         var normalizedAction:String = FcmCommand.actionKey(action);
         var configuredOpen:String = FcmCommand.actionKey(_cfg.openKey);
-        var isOpenAction:Bool = action == "Console" || action == "ConsoleToggles" || action == "TeamChat"
-            || (normalizedAction.length > 0 && normalizedAction == configuredOpen
-                && normalizedAction != "unmapped");
-        if (isOpenAction) {
+        var isConfiguredOpen:Bool = normalizedAction.length > 0
+            && normalizedAction == configuredOpen && normalizedAction != "unmapped";
+        if (isConfiguredOpen) {
             if (isDown) return _inputOpen;
             if (_inputOpen) return true;
             openInput();
             return _inputOpen;
         }
+        // Preserve ZFE's default Insert action fallback, but release it once
+        // openKey changes. xScal uses the configured physical key watcher.
+        if (action == "Console" || action == "ConsoleToggles" || action == "TeamChat") {
+            if (_api != null && _api.provider == FcmNativeApi.ZFE && configuredOpen == "insert") {
+                if (isDown) return _inputOpen;
+                if (_inputOpen) return true;
+                openInput();
+            }
+            return _inputOpen;
+        }
 
-        // INSERT etc. open via the provider poll, not this named-action path.
+        // Configured physical keys also open via the provider poll.
         // M/Map, I/QuickInventory, and movement may still arrive as HUD actions
         // while either editor is active. Consume them before HUDMenu handles gameplay.
         return _inputOpen;
@@ -2272,19 +2281,37 @@ class FCMChatWidget extends MovieClip {
     // Best-effort persist so customizations survive relaunch. ZFE storage is scoped to this vendor;
     // if unavailable the change is still applied live this session (guarded, no-op on failure).
     var _hudLayoutSupported:Bool = false;
+    var _lastHudLayoutCapability:String = "";
     var _hudLayout:FcmHudLayout = new FcmHudLayout(Std.string(Std.int(Math.random() * 1000000000)));
+    var _xscalLayoutStorage:FcmXscalLayoutStorage = null;
 
     function syncHudLayout():Void {
-        if (_api == null || _api.provider != FcmNativeApi.XSCAL || !_connected || _needsLink || !_hudLayoutSupported) return;
+        if (_api == null || _api.provider != FcmNativeApi.XSCAL || _xscalLayoutStorage != null
+                || !_connected || _needsLink || !_hudLayoutSupported) return;
         var body = _hudLayout.request(flash.Lib.getTimer(), _cfg);
         if (body.length == 0) return;
+        var operation:String = body.indexOf("/SET;") >= 0 ? "SET" : "GET";
         try {
-            _api.call("chat.v1.sendMessage", haxe.Json.stringify({channel:"server", targetUserId:"", body:body}));
-        } catch (_:Dynamic) { zfeLog("warn", "customize", "layout sync deferred"); }
+            var raw:String = Std.string(_api.call("chat.v1.sendMessage",
+                haxe.Json.stringify({channel:"server", targetUserId:"", body:body})));
+            var accepted:Bool = extractJsonBool(raw, "success");
+            zfeLog(accepted ? "info" : "warn", "customize", "layout " + operation
+                + " transport=" + (accepted ? "queued" : "rejected")
+                + " code=" + logSafe(extractJsonString(raw, "code")));
+        } catch (_:Dynamic) {
+            zfeLog("warn", "customize", "layout " + operation + " transport threw");
+        }
     }
 
     function persistConfig():Void {
-        if (_api == null || _api.provider == FcmNativeApi.XSCAL) {
+        if (_api == null) return;
+        if (_api.provider == FcmNativeApi.XSCAL) {
+            if (_xscalLayoutStorage != null) {
+                var saved:Bool = _xscalLayoutStorage.save(_cfg);
+                zfeLog(saved ? "info" : "warn", "customize",
+                    "xScal local layout save=" + (saved ? "saved" : "failed"));
+                return;
+            }
             _hudLayout.changed();
             syncHudLayout();
             return;
@@ -2301,7 +2328,22 @@ class FCMChatWidget extends MovieClip {
 
     /** Apply persisted Customize values over the packaged environment config. */
     function loadPersistedConfig():Void {
-        if (_api == null || _api.provider == FcmNativeApi.XSCAL) return;
+        if (_api == null) return;
+        if (_api.provider == FcmNativeApi.XSCAL) {
+            _xscalLayoutStorage = FcmXscalLayoutStorage.fromRoot(_api.xscalStorageRoot());
+            if (_xscalLayoutStorage == null) {
+                zfeLog("warn", "customize", "xScal named layout storage unavailable; relay fallback only");
+                return;
+            }
+            var status:String = _xscalLayoutStorage.load(_cfg);
+            if (status == "loaded") {
+                _autoHideOn = _cfg.autoHideActive();
+                rebuildPanel();
+            }
+            zfeLog(status == "invalid" || status == "unavailable" ? "warn" : "info", "customize",
+                "xScal local layout load=" + status);
+            return;
+        }
         try {
             var payload:String = '{"vendor":"' + VENDOR + '","path":"' + SETTINGS_PATH + '"}';
             var raw:String = callTop("readStorage", payload);
@@ -4209,6 +4251,8 @@ class FCMChatWidget extends MovieClip {
         _zfeAuthGraceLogged = false;
         _canRetryHudSend = false;
         _canSendRoomDiagnostics = false;
+        _hudLayoutSupported = false;
+        _lastHudLayoutCapability = "";
         // Re-read the public FO76 account handle each attempt until AccountInfoData has it.
         // Never substitute CharacterInfoData: that is the local character label, not the name
         // other Fallout 76 players see. The retry timer probes later without re-entering a live
@@ -4490,7 +4534,16 @@ class FCMChatWidget extends MovieClip {
                 if (_outboxIdentity.length > 0 && identity.length > 0 && identity != _outboxIdentity) clearOutbox();
                 if (identity.length > 0) _outboxIdentity = identity;
             }
-            _hudLayoutSupported = extractJsonBool(state, "canSaveHudLayout");
+            _hudLayoutSupported = authDecision == FcmAuthFlow.AUTHENTICATED
+                && extractJsonBool(state, "canSaveHudLayout");
+            if (_api.provider == FcmNativeApi.XSCAL && _xscalLayoutStorage == null) {
+                var layoutCapability:String = _hudLayoutSupported ? "yes" : "no";
+                if (layoutCapability != _lastHudLayoutCapability) {
+                    _lastHudLayoutCapability = layoutCapability;
+                    zfeLog("info", "customize", "layout capability=" + layoutCapability
+                        + " auth=" + authDecision);
+                }
+            }
             var prevAuth:String = _authState;
             var prevCanModerate:Bool = _canModerate;
             var becameAuthenticated:Bool = prevAuth != "authenticated"
@@ -5268,7 +5321,15 @@ class FCMChatWidget extends MovieClip {
             }
             if (rawChannel == "system" && senderUserId == "system" && StringTools.startsWith(body, "FCMLAYOUT/1;")) {
                 updateCursorFromEvent(obj);
-                if (_api != null && _api.provider == FcmNativeApi.XSCAL && _hudLayout.accept(body, _cfg)) {
+                var applied:Bool = _api != null && _api.provider == FcmNativeApi.XSCAL
+                    && _xscalLayoutStorage == null
+                    && _hudLayout.accept(body, _cfg);
+                if (_api != null && _api.provider == FcmNativeApi.XSCAL) {
+                    zfeLog("info", "customize", "layout reply applied=" + (applied ? "yes" : "no")
+                        + " loaded=" + (_hudLayout.loaded ? "yes" : "no")
+                        + " dirty=" + (_hudLayout.dirty ? "yes" : "no"));
+                }
+                if (applied) {
                     _autoHideOn = _cfg.autoHideActive();
                     rebuildPanel();
                     if (!_autoHideOn && _autoHidden && !_manuallyHidden) show();
