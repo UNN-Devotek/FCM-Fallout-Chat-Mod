@@ -11,6 +11,7 @@ export type HudKeybindGuideVariant = 'dashboard' | 'public';
 
 export const ZFE_MODDER_GUIDE_URL = 'https://www.nexusmods.com/fallout76/articles/255';
 export const XSCAL_INPUT_ARTICLE_URL = 'https://www.nexusmods.com/fallout76/articles/268';
+export const XSCAL_FRAMEGEN_MOD_URL = 'https://www.nexusmods.com/fallout76/mods/4256';
 
 export interface HudKeybindRow {
   key: string;
@@ -96,6 +97,17 @@ export default function HudKeybindGuide({ variant = 'dashboard' }: HudKeybindGui
         Press <code style={codeStyle}>Escape</code> to cancel. These are HUD mod controls;
         the overlay keybind file below does not change them.
       </div>
+
+      <p style={sectionStyle}>INSERT OPENS CHAT AND THE DLSS MENU?</p>
+      <p style={{ fontSize: isPublic ? '12px' : '11px', color: muted, margin: '0 0 8px', lineHeight: '1.7' }}>
+        The <a href={XSCAL_FRAMEGEN_MOD_URL} target="_blank" rel="noopener noreferrer" style={sourceLinkStyle}>
+          xScal DLSS and FSR Framegen Plugin
+        </a> also uses Insert. To give each menu its own key, close Fallout 76, set{' '}
+        <code style={codeStyle}>openKey=PERIOD</code> in <code style={codeStyle}>Data/FCMChat.ini</code>,
+        then restart the game. Press Period for chat and Insert for frame generation settings.
+        If both menus are already open, Escape closes chat input so you can adjust the frame
+        generation menu; press Escape again when finished.
+      </p>
 
       <p style={sectionStyle}>CHAT OPENS, BUT YOU CANNOT TYPE?</p>
       <p style={{ fontSize: isPublic ? '12px' : '11px', color: muted, margin: '0 0 8px', lineHeight: '1.7' }}>

@@ -201,10 +201,14 @@ def main() -> None:
     )
     widget_artifact = (ROOT / "FCMChatWidget.ba2").read_bytes()
     upstream_loader_defaults = (ROOT / "HUDMODLOADER-UPSTREAM-DEFAULTS.txt").read_text(encoding="utf-8").splitlines()
-    assert len(upstream_loader_defaults) == 22
-    expected_loader = ("\n".join(upstream_loader_defaults + ["FCMChatWidget"]) + "\n").encode()
-    assert b"FCMServerBridge" not in expected_loader
-    future_defaults = "OtherHUD\nFCMChatWidget\nFCMServerBridge\nOtherHUD\nFCMChatWidget\n"
+    assert upstream_loader_defaults
+    fcm_names = {"fcmchatwidget", "fcmchatwidget.swf", "fcmserverbridge", "fcmserverbridge.swf"}
+    other_defaults = [line.strip() for line in upstream_loader_defaults
+                      if line.strip() and line.strip().casefold() not in fcm_names]
+    expected_loader = ("\n".join(other_defaults + ["FCMChatWidget"]) + "\n").encode()
+    assert package.hudmodloader_config().encode() == expected_loader
+    future_defaults = ("OtherHUD\nFCMChatWidget\nFCMServerBridge\nOtherHUD\n"
+                       "FCMChatWidget.swf\nfcmserverbridge.SWF\nFCMChatWidget\n")
     assert package.hudmodloader_config(future_defaults) == "OtherHUD\nOtherHUD\nFCMChatWidget\n"
     widget_version = version_match.group(1).encode("ascii")
     assert widget_version in widget_artifact, "FCMChatWidget.ba2 embeds the current VERSION"

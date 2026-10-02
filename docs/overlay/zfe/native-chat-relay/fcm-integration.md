@@ -606,8 +606,9 @@ The optional appearance fields `bgColor`, `tabRowColor`, `inputBgColor`,
 `bgAlpha` is a finite number from 0–1. Unknown fields remain rejected, including
 input width/alignment, channel-tag overrides, badges and emoji controls. Old geometry-only
 records remain valid and leave the HUD's configured font/input settings unchanged.
-Deploy this backend extension before distributing the updated HUD: older backends
-reject the extra settings fields, so its xScal saves would not persist. Payloads are capped at 1024 characters and
+For older xScal builds using relay layout fallback, deploy this backend extension
+before distributing the updated HUD: older backends reject the extra settings
+fields, so those relay saves would not persist. Relay payloads are capped at 1024 characters and
 share the authenticated control rate limit. Invalid layout controls fail before
 chat ingestion. The actor comes exclusively from the verified token.
 
@@ -617,7 +618,8 @@ Horizontal layout coordinates accept integers from `-960` through `2880 - width`
 allowing manual placement outside the centered 1920×1080 authored HUD frame.
 Width remains 200–1920, height 120–1080, and y remains 0 through `1080 - height`.
 Both widget and relay validators must support this envelope before negative or
-extended-right layouts can be saved/restored through xScal. This changes validation,
+extended-right layouts can be saved/restored through the older xScal relay fallback.
+This changes validation,
 not the wire shape or device ownership rules; it does not detect monitor dimensions.
 
 Replies use private system events `FCMLAYOUT/1;requestId;json` (`null` when absent),
@@ -625,7 +627,7 @@ forwarded only to subscribers for that relay identity, including across replicas
 They are never saved as messages or bridged to Discord. ZFE's local settings store
 is unchanged. Apply the idempotent migration before deploying the backend that advertises layout support.
 
-The HUD sends layout controls only when `getAuthState.permissions.canSaveHudLayout` is true. Older relays omit this capability, so wrapping remains available while remote geometry persistence stays disabled. The extender must preserve this permission in its auth response.
+The HUD sends relay layout controls only when `getAuthState.permissions.canSaveHudLayout` is true. Older relays omit this capability, so wrapping remains available while remote geometry persistence stays disabled. The extender must preserve this permission in its auth response. xScal 0.2.20 synthesizes an auth response without that permission; widget 2.10.136 instead saves F11 appearance locally with xScal's named `modStorage` API when available. Older xScal builds retain this permission-gated relay fallback. ZFE's local storage path is unchanged.
 
 ### HUD emoji status (2.10.74, 2026-09-08)
 

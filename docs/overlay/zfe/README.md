@@ -420,7 +420,7 @@ for configuration, request lifecycle, native acceptance limits and the xScal mai
 Activation requires the visible editor and a selected link; incoming messages never open links.
 The highlight color is independently configurable as `Selected message` in F11 → Customize →
 Colors or as `selectedRowColor` in `FCMChat.ini`; it persists through ZFE storage and the xScal
-device-scoped layout relay.
+named local layout document.
 Configured feed scrolling acts only while chat owns a visible input session. The blank newest and
 newest value is intentional: Home/End remain unassigned. Delete hides only while idle; `/hide` plus
 F11 → FCM → Hide chat remain available. F11 → FCM → Scroll to newest is always available.

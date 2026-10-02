@@ -90,6 +90,12 @@ class TestFcmConfig {
         eqb("json bool unquoted native", FcmConfig.extractJsonBool('{supporterStar: true}', "supporterStar"), true);
         eqb("json bool numeric native", FcmConfig.extractJsonBool('{supporterStar: 1}', "supporterStar"), true);
         eqb("json bool false", FcmConfig.extractJsonBool('{"supporterStar":false}', "supporterStar"), false);
+        eqb("nested relay layout permission", FcmConfig.extractJsonBool(
+            '{"success":true,"state":"authenticated","permissions":{"canSaveHudLayout":true}}',
+            "canSaveHudLayout"), true);
+        eqb("missing relay layout permission", FcmConfig.extractJsonBool(
+            '{"success":true,"state":"authenticated","permissions":{"canSend":true}}',
+            "canSaveHudLayout"), false);
         eqb("json bool body key is ignored", FcmConfig.extractJsonBool('{"body":"supporterStar: true"}', "supporterStar"), false);
         eqb("json bool quoted body key is ignored", FcmConfig.extractJsonBool('{"body":"\\"supporterStar\\":true"}', "supporterStar"), false);
 
@@ -397,6 +403,9 @@ class TestFcmConfig {
         eqs("parse scrollBottomKey", c.scrollBottomKey, "HOME");
         eqs("parse link activation key", FcmConfig.parse("[FCMChat]\nactivateLinkKey=F8\n").activateLinkKey, "F8");
         eqs("parse hideKey", c.hideKey, "DiagnosticSnapshot");
+        var rebound = FcmConfig.parse("[FCMChat]\nopenKey=HOME\nhideKey=END\n");
+        eqs("Home replaces Insert after config reload", rebound.openKey, "HOME");
+        eqs("End replaces Delete after config reload", rebound.hideKey, "END");
         eqs("parse physical next-channel key", FcmConfig.parse("[FCMChat]\nchannelNextKey=F8\n").channelNextKey, "F8");
         eqs("parse physical previous-channel key", FcmConfig.parse("[FCMChat]\nchannelPrevKey=F7\n").channelPrevKey, "F7");
         eqs("parse physical hide key", FcmConfig.parse("[FCMChat]\nhideKey=F2\n").hideKey, "F2");

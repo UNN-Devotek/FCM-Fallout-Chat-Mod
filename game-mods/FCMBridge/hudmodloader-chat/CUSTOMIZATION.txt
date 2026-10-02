@@ -92,11 +92,11 @@ FCMChatWidget/settings.ini. Saved appearance takes priority over Data/FCMChat.in
 settings (`linkUrl`, all keybinds, and `hideInHUDModes`) always come from the active file.
 If you already customized with F11, use F11 for further changes, or update the
 corresponding saved settings through your extender's storage location before
-reloading. xScal saves appearance per linked device through the matching relay
-backend; saved device values also take priority over the INI. Changes are only
-session-local if persistence is unavailable. Saving xScal appearance requires a matching
-relay backend; missing support does not prevent live customization. Reload the widget to reread configuration. Replacing
-a BA2 or changing extender configuration requires a full game restart.
+reloading. xScal 0.2.17+ saves appearance locally in its named
+fcmchatwidget-layout-v1 document; those values also take priority over the INI.
+Older xScal builds use the permission-gated relay layout fallback. Changes are
+session-local if persistence is unavailable. Restart Fallout 76 after changing
+Data/FCMChat.ini, a BA2, or extender configuration.
 
 FIXED FEATURES
 Badges, channel tags (including their colors and visibility), emojis, default

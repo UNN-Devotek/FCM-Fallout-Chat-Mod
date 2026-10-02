@@ -1,5 +1,14 @@
-FCM HUD 2.10.134
+FCM HUD 2.10.136 test candidate
 ==============
+
+xScal appearance and keybinds
+-----------------------------
+On xScal 0.2.17+, F11 appearance now saves through xScal's named local storage,
+including when xScal does not forward the relay's layout-save permission.
+Changing openKey in Data/FCMChat.ini releases the old Insert action after a
+game restart. Use openKey=PERIOD if another mod uses Insert. Escape closes
+the editor; the configured hide key (Delete by default) hides the idle HUD.
+ZFE's vendor storage and default Insert path remain unchanged.
 
 Windows xScal text input
 ------------------------
