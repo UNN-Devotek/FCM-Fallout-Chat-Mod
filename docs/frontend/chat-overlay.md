@@ -883,7 +883,9 @@ surfaces do not initiate a bridge watch. Server appearing preserves the selected
 actively selected Server follows its confirmed room changes. Once discovered, its tab and
 accepted transcript stay visible during loading/travel, ambiguous discovery, or temporary
 bridge unavailability until the game process exits. This remembered tab is display-only:
-sends remain blocked until a fresh ready binding is confirmed.
+sends remain blocked until a fresh ready binding is confirmed. The retained bridge tab
+never polls the legacy same-server roster or displays its empty member panel;
+`presence:update` cannot force a legacy roster request during travel.
 
 Fresh accepted `bridge:message` rows use the same keyword/mention appearance, sound, and
 unread alerts as ordinary channel messages. Own messages, restored history, duplicates,

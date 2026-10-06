@@ -395,6 +395,9 @@ describe('overlay lifecycle and navigation', () => {
       expect(screen.getByRole('button', { name: 'Server channel' })).toBeInTheDocument();
       expect(screen.getByText('Retained travel transcript')).toBeInTheDocument();
       expect(screen.queryByText('General only')).toBeNull();
+      act(() => socket.emit({ type: 'presence:update', payload: {} }));
+      expect(screen.queryByText('No players detected')).toBeNull();
+      expect(get.mock.calls.some(([path]) => path === '/api/presence/same-server')).toBe(false);
     }
     act(() => socket.emit({ type: 'bridge:message', payload: { channelId: 'server:r:one', bindingId: 'alice/one/r:one',
       messages: [{ id: 'server:r:one:2', channelId: 'server:r:one', username: 'Bob', content: 'Stale travel message', source: 'server' }] } }));

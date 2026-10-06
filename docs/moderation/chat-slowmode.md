@@ -84,3 +84,8 @@ installed or published; existing packaged HUDs retain their older generic notice
 
 Live Discord and Linux Electron results are recorded in
 [the hosted Dev acceptance report](../testing/chat-slowmode-dev-2026-10-05.md).
+
+Discord application commands that publish human chat (including event shortcuts and
+`/fcm command` channel relays) use this same shared budget before publication. A blocked
+interaction receives an ephemeral cooldown reply and does not publish or send success
+feedback. Private lookups and structured bot cards remain exempt.

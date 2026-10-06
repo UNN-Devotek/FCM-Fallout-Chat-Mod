@@ -4743,7 +4743,9 @@ export default function ChatOverlay() {
     && activeMainId !== PARTY_MAIN_ID
     && activeSubId.startsWith('server:');
   const isBridgeChannel = isOnServerChannel && bridgeState.status === 'ready' && activeSubId === bridgeState.channelId;
-  const adminFeedActive = isAdmin && isOnServerChannel && !isBridgeChannel && activeSubId !== lastBridgeChannelId;
+  // A retained bridge room still owns its transcript while discovery is unavailable.
+  const legacyServerRosterActive = isOnServerChannel && !isBridgeChannel && activeSubId !== lastBridgeChannelId;
+  const adminFeedActive = isAdmin && legacyServerRosterActive;
 
   const { data: feedData } = useQuery({
     queryKey: ['server-feed'],
@@ -4755,10 +4757,12 @@ export default function ChatOverlay() {
   const { data: membersData, refetch: refetchMembers } = useQuery({
     queryKey: ['same-server-members'],
     queryFn: () => api.get<{ serverEndpoint: string | null; users: ServerMember[]; totalChatMod: number; allPlayers: string[] | null }>('/api/presence/same-server'),
-    enabled: isOnServerChannel && !isBridgeChannel,
-    refetchInterval: isOnServerChannel && !isBridgeChannel ? 10_000 : false,
+    enabled: legacyServerRosterActive,
+    refetchInterval: legacyServerRosterActive ? 10_000 : false,
   });
-  useEffect(() => { presenceRefetchRef.current = () => refetchMembers(); }, [refetchMembers]);
+  useEffect(() => {
+    presenceRefetchRef.current = legacyServerRosterActive ? () => { void refetchMembers(); } : null;
+  }, [refetchMembers, legacyServerRosterActive]);
   useEffect(() => {
     if (membersData) {
       setServerMembers(membersData.users || []);
@@ -11681,7 +11685,7 @@ export default function ChatOverlay() {
       )}
 
       {/* ── Server member list panel ── */}
-      {isOnServerChannel && !adminFeedActive && !isBridgeChannel && (
+      {legacyServerRosterActive && !adminFeedActive && (
         <div style={{
           width: '180px',
           flexShrink: 0,
