@@ -15,8 +15,8 @@
   },
   "dependencies": {
     "@emoji-mart/data": "^1.2.1",
-    "@remotion/player": "^4.0.529",
-    "@tanstack/react-query": "^5.103.2",
+    "@remotion/player": "^4.0.532",
+    "@tanstack/react-query": "^5.104.1",
     "@tanstack/react-virtual": "^3.14.13",
     "motion": "^13.4.4",
     "react": "^19.3.0",
@@ -38,7 +38,7 @@
     "jsdom": "^30.1.1",
     "tailwindcss": "^4.2.2",
     "typescript": "^7.0.2",
-    "vite": "^8.3.1",
+    "vite": "^8.3.2",
     "vitest": "^4.1.9"
   }
 }
