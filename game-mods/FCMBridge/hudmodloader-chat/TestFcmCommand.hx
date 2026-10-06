@@ -62,6 +62,9 @@ class TestFcmCommand {
             && FcmEventCommands.help().indexOf("/sbq — Scorched Earth") >= 0
             && FcmEventCommands.help().indexOf("/gu — Gearing Up") >= 0
             && FcmEventCommands.help().indexOf("/ss — Sinkhole Solutions") >= 0);
+        check("sos means Swarm of Suitors", FcmEventCommands.help().indexOf("/sos — Swarm of Suitors") >= 0
+            && FcmEventCommands.help().indexOf("Surface to Air") < 0
+            && FcmEventCommands.command("/event sos") == "/sos");
         for (entry in FcmEventCommands.entries) {
             var code = entry.split("|")[0];
             check("event slash restored " + code, FcmEventCommands.command(code) == "/" + code);

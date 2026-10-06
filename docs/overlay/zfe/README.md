@@ -681,3 +681,7 @@ native room-assignment change is introduced. Numeric labels for other rooms and
 room muting are overlay-only. Pure config tests and both delayed-auth Ruffle provider
 scenarios cover regular → staff → revoked labeling; native game acceptance of this
 candidate remains pending, independently of earlier released builds.
+
+The `/event help` shortcut `/sos` identifies **Swarm of Suitors**. The backend
+command data repair applies the same event name to announcements across Discord,
+the overlay, and the optional HUD; packaged HUD help updates require a new HUD build.

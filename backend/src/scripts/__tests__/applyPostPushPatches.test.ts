@@ -22,6 +22,7 @@ test('post-push patch set is static, ordered, and complete', () => {
       'mcp-oauth-code-scopes-constraint',
       'mcp-oauth-grant-scopes-constraint',
       'restore-missing-event-commands',
+      'correct-sos-event-name',
     ],
   );
 
@@ -72,4 +73,16 @@ test('applyPostPushPatches executes every patch exactly once', async () => {
   });
 
   assert.deepEqual(executed, POST_PUSH_PATCHES.map((patch) => patch.sql));
+});
+
+// Data repairs must run in both manual migrations and the hosted db-push path.
+test('sos repair targets only that shortcut and preserves response templates and settings', () => {
+  const patch = POST_PUSH_PATCHES.find((item) => item.name === 'correct-sos-event-name');
+  assert.ok(patch);
+  const migration = readFileSync(join(process.cwd(),
+    'prisma/migrations/20261006180000_correct_sos_event_name/migration.sql'), 'utf8');
+  assert.equal(patch.sql.trim(), migration.trim());
+  assert.match(patch.sql, /WHERE trigger = '\/sos'/);
+  assert.match(patch.sql, /replace\(response, 'Surface to Air', 'Swarm of Suitors'\)/);
+  assert.doesNotMatch(patch.sql, /SET\s+(enabled|cooldown_sec|target_channel_id|allowed_channel_id|action_type)\s*=/i);
 });

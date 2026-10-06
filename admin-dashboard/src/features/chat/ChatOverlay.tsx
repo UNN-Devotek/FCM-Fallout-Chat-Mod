@@ -4530,19 +4530,22 @@ export default function ChatOverlay() {
     queryFn: () => api.get<Channel[]>('/api/channels').then(d => d ?? []),
   });
   const [bridgeState, setBridgeState] = useState<BridgeState>(INACTIVE_BRIDGE);
+  // Display continuity only; never use this remembered room to authorize sends.
+  const [lastBridgeChannelId, setLastBridgeChannelId] = useState<string | null>(null);
   const bridgeStateRef = useRef<BridgeState>(INACTIVE_BRIDGE);
   // IDs restored by bridge:history remain in the canonical collection so the
   // Server subtab can show its full room history. General uses this marker only
   // to clip replay rows to the static feed's currently loaded time horizon.
   const bridgeReplayIdsRef = useRef<Set<string>>(new Set());
   const channelsRaw = useMemo(() => {
-    if (!staticChannels || !overlayShell || isPublicMode || bridgeState.status !== 'ready') return staticChannels;
+    const channelId = bridgeState.status === 'ready' ? bridgeState.channelId : lastBridgeChannelId;
+    if (!staticChannels || !overlayShell || isPublicMode || !channelId) return staticChannels;
     const parent = staticChannels.find(c => c.name.toLowerCase() === 'fallout 76') ?? staticChannels[0];
     return staticChannels.map(c => c !== parent ? c : { ...c, children: [...(c.children ?? []), {
-      id: bridgeState.channelId, name: 'Server', color: c.color, parentId: c.id,
+      id: channelId, name: 'Server', color: c.color, parentId: c.id,
       allowGifs: false, allowEmojis: true,
     }] });
-  }, [staticChannels, bridgeState, overlayShell, isPublicMode]);
+  }, [staticChannels, bridgeState, lastBridgeChannelId, overlayShell, isPublicMode]);
   useEffect(() => { refetchChannelsRef.current = () => refetchChannels(); }, [refetchChannels]);
 
   // Live app version — the LATEST published release from GET /api/version, NOT the
@@ -4740,7 +4743,7 @@ export default function ChatOverlay() {
     && activeMainId !== PARTY_MAIN_ID
     && activeSubId.startsWith('server:');
   const isBridgeChannel = isOnServerChannel && bridgeState.status === 'ready' && activeSubId === bridgeState.channelId;
-  const adminFeedActive = isAdmin && isOnServerChannel && !isBridgeChannel;
+  const adminFeedActive = isAdmin && isOnServerChannel && !isBridgeChannel && activeSubId !== lastBridgeChannelId;
 
   const { data: feedData } = useQuery({
     queryKey: ['server-feed'],
@@ -5148,6 +5151,9 @@ export default function ChatOverlay() {
     return bridge.onGameState((inGame: boolean) => {
       inGameRef.current = inGame;
       if (!inGame) {
+        setLastBridgeChannelId(null);
+        bridgeStateRef.current = INACTIVE_BRIDGE;
+        setBridgeState(INACTIVE_BRIDGE);
         bridgeReplayIdsRef.current.clear();
         setMessages(clearBridgeSessionRows);
       }
@@ -5462,6 +5468,7 @@ export default function ChatOverlay() {
               if (frame.type === 'bridge:state') {
                 const next = readBridgeState(frame.payload, !!overlayShell && !isPublicMode);
                 bridgeStateRef.current = next;
+                if (next.status === 'ready') setLastBridgeChannelId(next.channelId);
                 setBridgeState(next);
                 return;
               }
@@ -5484,7 +5491,33 @@ export default function ChatOverlay() {
                 }
                 setMessages(prev => bridgeStateRef.current === state ? mergeBridgeRows(prev, rows, state, frame.payload ?? {}, MESSAGE_CAP) : prev);
                 if (belongsToCurrentBridge) {
-                  for (const row of rows) markLiveUnread(row, frame.type === 'bridge:history' || frame.payload?.historyReplay === true);
+                  const replay = frame.type === 'bridge:history' || frame.payload?.historyReplay === true;
+                  // Use the same binding/ID validation as storage before any alert.
+                  const accepted = mergeBridgeRows([], rows, state, frame.payload ?? {}, MESSAGE_CAP);
+                  for (const row of accepted) {
+                    const seen = seenMessageIdsRef.current.has(row.id) || bridgeReplayIdsRef.current.has(row.id);
+                    if (!seenMessageIdsRef.current.has(row.id)) {
+                      seenMessageIdsRef.current.add(row.id);
+                      seenMessageIdQueueRef.current.push(row.id);
+                    }
+                    if (replay || seen) continue;
+                    markLiveUnread(row, false);
+                    const v = viewCtxRef.current;
+                    const inView = v.feedId
+                      ? (row.channelId === v.feedId || v.feedChildIds.includes(row.channelId))
+                      : row.channelId === v.activeSubId;
+                    if (inView) window.dispatchEvent(new Event('fcm-active-message'));
+                    if (row.userId === myUserIdRef.current || !messageTriggersNotify(row.content,
+                      myNamesRef.current, notifyKeywordsRef.current, chatEntities(row.metadata ?? null), myDiscordIdRef.current)) continue;
+                    window.dispatchEvent(new CustomEvent('fcm-mention-appear', { detail: { chId: row.channelId } }));
+                    playNotifySound();
+                    if (!inView) setUnreadMentions(prev => ({ ...prev, [row.channelId]: (prev[row.channelId] || 0) + 1 }));
+                    else dismissedMentionIdsRef.current.delete(row.id);
+                  }
+                  while (seenMessageIdQueueRef.current.length > 1000) {
+                    const evicted = seenMessageIdQueueRef.current.shift();
+                    if (evicted) seenMessageIdsRef.current.delete(evicted);
+                  }
                 }
                 return;
               }
