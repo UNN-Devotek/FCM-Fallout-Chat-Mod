@@ -27,6 +27,9 @@ class EventScenario {
                 check("guides are private individual records",
                     widget._records.length == before + hudLines.length + eventLines.length
                     && MockXscal.lastEventBody == "");
+                check("sos guide identifies Swarm of Suitors",
+                    FcmEventCommands.help().indexOf("/sos — Swarm of Suitors") >= 0
+                    && FcmEventCommands.help().indexOf("Surface to Air") < 0);
                 var first = widget._records[widget._records.length - eventLines.length];
                 var last = widget._records[widget._records.length - 1];
                 check("all event names are feed line items",

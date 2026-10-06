@@ -166,6 +166,15 @@ VALUES
   ('/ct', 'Announce Campfire Tales', 'Campfire Tales event on this server.', 'announce', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000001', 30, true, false, true, NOW(), NOW())
 ON CONFLICT (trigger) DO NOTHING;`,
   },
+  {
+    name: 'correct-sos-event-name',
+    sql: `UPDATE chat_commands
+   SET description = replace(description, 'Surface to Air', 'Swarm of Suitors'),
+       response = replace(response, 'Surface to Air', 'Swarm of Suitors'),
+       updated_at = NOW()
+ WHERE trigger = '/sos'
+   AND (description LIKE '%Surface to Air%' OR response LIKE '%Surface to Air%');`,
+  },
 ] as const;
 
 export async function applyPostPushPatches(client: PostPushPatchClient): Promise<void> {

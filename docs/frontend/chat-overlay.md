@@ -880,7 +880,14 @@ session; renderer IPC cannot submit observations or choose a room. `bridge:watch
 local-export mode. Only a fresh, generation-correlated backend `bridge:state` adds
 a local Server child under Fallout 76; the REST channel tree remains static. The browser/public
 surfaces do not initiate a bridge watch. Server appearing preserves the selected channel; an
-actively selected Server follows its confirmed room changes.
+actively selected Server follows its confirmed room changes. Once discovered, its tab and
+accepted transcript stay visible during loading/travel, ambiguous discovery, or temporary
+bridge unavailability until the game process exits. This remembered tab is display-only:
+sends remain blocked until a fresh ready binding is confirmed.
+
+Fresh accepted `bridge:message` rows use the same keyword/mention appearance, sound, and
+unread alerts as ordinary channel messages. Own messages, restored history, duplicates,
+foreign rows, and stale bindings never trigger these Server alerts.
 
 `bridgeFeed.ts` merges private history/live by canonical message ID, including within-batch
 duplicates. General and Server filter one collection. Accepted Server rows remain as a bounded,
