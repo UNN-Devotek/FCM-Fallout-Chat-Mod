@@ -1,3 +1,4 @@
+jest.mock('../src/services/chatSlowmodeService', () => ({ ...jest.requireActual('../src/services/chatSlowmodeService'), checkChatSlowmode: jest.fn(async () => ({ allowed: true, remaining: 2, retryAfterMs: 0 })) }));
 const prisma = { user: { findUnique: jest.fn() } };
 jest.mock('../src/config/prisma', () => ({ __esModule: true, default: prisma }));
 jest.mock('../src/services/autoModEngine', () => ({ engineEvaluate: jest.fn() }));
@@ -54,4 +55,13 @@ test('storage failure is not acknowledged as a successful send', async () => {
 test.each(['', ' ', 'x'.repeat(501)])('invalid message bodies cannot reach moderation or publication', async body => {
   await expect(sendServerMessage(actor, 'r:one', body)).rejects.toMatchObject({ code: 'invalid_request' });
   expect(engineEvaluate).not.toHaveBeenCalled(); expect(publishServerMessage).not.toHaveBeenCalled();
+});
+
+test('shared account cooldown applies equally to native and desktop Server messages', async () => {
+  const { checkChatSlowmode } = require('../src/services/chatSlowmodeService');
+  checkChatSlowmode.mockResolvedValueOnce({ allowed: false, remaining: 0, retryAfterMs: 34000 });
+  await expect(sendServerMessage(actor, 'r:one', 'hello')).rejects.toMatchObject({ code: 'rate_limited', retryAfterMs: 34000, message: expect.stringContaining('34 seconds') });
+  expect(checkChatSlowmode).toHaveBeenLastCalledWith({ id: 'account-a', discordId: 'discord-a' });
+  expect(engineEvaluate).not.toHaveBeenCalled();
+  expect(publishServerMessage).not.toHaveBeenCalled();
 });

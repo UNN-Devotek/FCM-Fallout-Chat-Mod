@@ -137,10 +137,11 @@ When Redis pub/sub is unavailable at startup, `initPubSub` schedules automatic r
 
 ## Rate Limiting
 
-Two sliding-window rate limiters protect the WS send path:
+Socket flood guards and the shared chat slowdown protect the WS send path:
 
 | Limiter | Limit | Window | Redis key |
 |---------|-------|--------|-----------|
+| Shared human channel chat | 3 messages, then fourth attempt blocks for 35 s | rolling 60 s | `chat_slowmode:discord:<discordId>` (or `account:<userId>`) |
 | Per-socket message rate | 5 msg | 1 s | `ws_rate:<userId>` |
 | `server:leave-manual` | 4 | 60 s | `rl_ws:leave-manual:<userId>` |
 | `server:join-manual` | 4 | 60 s | `rl_ws:join-manual:<userId>` |
@@ -149,7 +150,9 @@ When the rate is exceeded the backend sends:
 ```json
 { "type": "rate:status", "payload": { "remaining": 0, "retryAfterMs": 1000 } }
 ```
-followed by an `error` frame. `handlers.ts:710–728`
+followed by an `error` frame. Shared chat cooldowns instead include `scope: "chat"`
+and their actual remaining `retryAfterMs`, plus a seconds-to-wait error notice.
+See [shared chat slowmode](../moderation/chat-slowmode.md).
 
 ---
 

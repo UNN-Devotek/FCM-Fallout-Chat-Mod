@@ -35,6 +35,15 @@ class TestFcmOutbox {
         check(FcmOutbox.privateReceipt("FCMACK/1;" + StringTools.urlEncode(ack)) == ack, "asynchronous receipt envelope");
         check(FcmOutbox.privateReceipt("FCMACK/1;garbage") == "", "malformed private receipt");
         check(FcmOutbox.privateReceipt("FCMACK/1;" + StringTools.urlEncode('{"success":true}')) == "", "unbound receipt rejected");
+        check(FcmOutbox.cooldownNotice('{"error":{"retryAfterMs":35000}}') ==
+            "You are in cooldown. Please wait 35 seconds before sending another message.", "private cooldown notice");
+        check(FcmOutbox.cooldownNotice('{"error":{"retryAfterMs":34001}}').indexOf("35 seconds") >= 0, "wait rounds up");
+        var fallback = "You are in cooldown. Please wait before sending another message.";
+        for (raw in ["bad json", '{"error":{}}', '{"error":{"retryAfterMs":0}}',
+                '{"error":{"retryAfterMs":-1}}', '{"error":{"retryAfterMs":999999999}}',
+                '{"error":{"retryAfterMs":"<b>fake</b>","message":"<b>fake</b>"}}']) {
+            check(FcmOutbox.cooldownNotice(raw) == fallback, "bounded safe notice " + raw);
+        }
         trace("FcmOutbox tests passed");
     }
 }

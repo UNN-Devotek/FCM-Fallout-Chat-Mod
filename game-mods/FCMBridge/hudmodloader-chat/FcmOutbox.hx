@@ -78,6 +78,18 @@ class FcmOutbox {
         if (entry.attempts == 0) return false;
         return !safeRetry || (messageId != null && messageId.length > 0);
     }
+    /** Sender-local notice. Never render arbitrary server text as HUD HTML. */
+    public static function cooldownNotice(response:String):String {
+        var fallback = "You are in cooldown. Please wait before sending another message.";
+        try {
+            var parsed:Dynamic = FcmJson.parse(response);
+            var error:Dynamic = parsed == null ? null : Reflect.field(parsed, "error");
+            var wait:Dynamic = error == null ? null : Reflect.field(error, "retryAfterMs");
+            if (!Std.isOfType(wait, Float) || wait <= 0 || wait > 60000) return fallback;
+            return "You are in cooldown. Please wait " + Math.ceil(wait / 1000)
+                + " seconds before sending another message.";
+        } catch (_:Dynamic) { return fallback; }
+    }
     public static function retryable(code:String):Bool {
         return ["", "not_connected", "not_started", "timeout", "request_timeout", "relay_timeout",
             "rate_limited", "dispatch_failed", "connection_failed", "network_error", "internal_error", "send_in_progress"].indexOf(code) >= 0;

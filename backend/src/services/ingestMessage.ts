@@ -7,7 +7,8 @@
  *   3. Content validation (≤500 chars, non-empty, valid UUID channelId)
  *   4. Emoji shortcode expansion
  *   5. Channel validity check
- *   6. Automod engine (word-filter + spam + automod_rules)
+ *   6. Shared chat slowdown (fail-closed), then automod engine
+ *      (word-filter + spam + automod_rules)
  *   7. Durable persist (messageQueue worker → messageService fallback)
  *   8. broadcast() → WS and native relay fan-out
  *   9. Discord relay
@@ -31,6 +32,7 @@
  * Those remain inline in handlers.ts; this module handles the shared core only.
  */
 
+import { checkChatSlowmode } from './chatSlowmodeService';
 import { v4 as uuidv4 } from 'uuid';
 import { getRedisClient } from '../config/redis';
 import prisma from '../config/prisma';
@@ -112,6 +114,7 @@ export interface IngestResult {
   ok: boolean;
   reason?: 'muted' | 'rate-limited' | 'invalid-content' | 'invalid-channel' | 'channel-not-found' | 'automod' | 'slash-command-dropped';
   messageId?: string;
+  retryAfterMs?: number;
 }
 
 // ── Main entry point ──────────────────────────────────────────────────────────
@@ -157,7 +160,7 @@ export async function ingestMessage(opts: {
   // ── 1. Mute check ─────────────────────────────────────────────────────────
   const dbUser = await prisma.user.findUnique({
     where: { id: userId },
-    select: { isMuted: true, muteExpiresAt: true, username: true, chatName: true, discordUsername: true, discordDisplayName: true },
+    select: { discordId: true, isMuted: true, muteExpiresAt: true, username: true, chatName: true, discordUsername: true, discordDisplayName: true },
   });
 
   if (!dbUser) {
@@ -202,6 +205,9 @@ export async function ingestMessage(opts: {
   if (!(await isChannelValid(channelId))) {
     return { ok: false, reason: 'channel-not-found' };
   }
+
+  const slowmode = await checkChatSlowmode({ id: userId, discordId: dbUser.discordId });
+  if (!slowmode.allowed) return { ok: false, reason: 'rate-limited', retryAfterMs: slowmode.retryAfterMs };
 
   // ── 6. Automod ────────────────────────────────────────────────────────────
   const engineResult = await engineEvaluate(content, channelId, { id: userId, username: dbUser.username } as any);

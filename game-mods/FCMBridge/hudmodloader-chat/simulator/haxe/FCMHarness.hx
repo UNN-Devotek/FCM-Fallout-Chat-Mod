@@ -28,7 +28,7 @@ class FCMHarness extends Sprite {
             if (requested == "zfe") provider = "zfe";
             scenario = Std.string(parameters.scenario);
         } catch (_:Dynamic) {}
-        if (scenario == "quoted-echo") MockXscal.resetEvents();
+        if (scenario == "quoted-echo" || scenario == "cooldown") MockXscal.resetEvents();
         if (scenario == "giveaway") { MockXscal.resetEvents(); MockXscal.giveawayMode = true; }
         if (scenario == "events") { MockXscal.resetEvents(); MockXscal.eventMode = true; }
         if (scenario == "xscal-session-input" || scenario == "xscal-period-native"
@@ -83,6 +83,7 @@ class FCMHarness extends Sprite {
             if (scenario == "queue-loss") QueueLossScenario.start(widget, provider);
             if (scenario == "visibility") VisibilityScenario.start(widget, provider);
             if (scenario == "quoted-echo") QuotedEchoScenario.start(widget, provider);
+            if (scenario == "cooldown") CooldownScenario.start(widget, provider);
             if (scenario == "giveaway") GiveawayScenario.start(widget, provider);
             if (scenario == "events") EventScenario.start(widget, provider);
             if (scenario == "typing-renewal") TypingRenewalScenario.start(widget, provider);

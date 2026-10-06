@@ -1,3 +1,4 @@
+jest.mock('../src/services/chatSlowmodeService', () => ({ ...jest.requireActual('../src/services/chatSlowmodeService'), checkChatSlowmode: jest.fn(async () => ({ allowed: true, remaining: 2, retryAfterMs: 0 })) }));
 'use strict';
 /**
  * Tests for the chat.v1 relay — channelMap, tokenService, relaySeq,
@@ -1470,6 +1471,23 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
+  test('HUD slowmode forwards remaining cooldown without publication', async () => {
+    const { ws: registerWs, msgs: registerMsgs } = await conn();
+    const registration = await waitForMsg(registerWs, registerMsgs, () =>
+      send(registerWs, { op: 'register', displayName: 'SlowmodeSender' }));
+    registerWs.close();
+    const rawId = lastRawUserId();
+    const accountId = 'fcm-slowmode-account';
+    _userMap[accountId] = { id: accountId, discordId: 'disc-slowmode', isBanned: false, isMuted: false };
+    markTokensLinked(rawId, accountId);
+    require('../src/services/ingestMessage').ingestMessage.mockResolvedValueOnce({ ok: false, reason: 'rate-limited', retryAfterMs: 35000 });
+    const { ws, msgs } = await conn();
+    const response = await waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'send', token: registration.token, channel: 'global', body: 'fourth message' }));
+    expect(response).toMatchObject({ success: false, error: { code: 'rate_limited', retryAfterMs: 35000, message: expect.stringContaining('35 seconds') } });
+    ws.close();
+  });
+
   test('linked send rejected by automod → message_blocked (NOT permission_denied)', async () => {
     // Regression: automod/slash ingest failures used to collapse into permission_denied,
     // which the in-game widget then showed as "link your account" to an ALREADY-linked user.
@@ -1552,6 +1570,24 @@ describe('relay WebSocket ops', () => {
     expect(blocked.success).toBe(true);
     expect(decodeURIComponent(blocked.targetUserId)).toContain('designated channel');
     expect(ingest).not.toHaveBeenCalled();
+    ws.close();
+  });
+
+  test('HUD event announcement cooldown returns a private notice instead of public chat', async () => {
+    require('../src/config/prisma').default.chatCommand.findMany.mockResolvedValueOnce([{
+      id: 782, trigger: '/sbq', alias: null, description: 'Scorched Earth',
+      response: 'Scorched Earth event on this server.', actionType: 'announce',
+      targetChannelId: SLUG_TO_UUID.events, allowedChannelId: '00000000-0000-0000-0000-000000000001',
+      cooldownSec: 0, enabled: true, requiresArgs: false, responseColor: null, relayToDiscord: true,
+    }]);
+    const { token } = await setupLinkedUser();
+    const ingest = require('../src/services/ingestMessage').ingestMessage;
+    ingest.mockResolvedValueOnce({ ok: false, reason: 'rate-limited', retryAfterMs: 35000 });
+    const { ws, msgs } = await conn();
+    const result = await waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'send', token, channel: 'global', body: '/sbq' }));
+    expect(result.success).toBe(true);
+    expect(decodeURIComponent(result.targetUserId)).toBe('FCMHUD/1;g=You are in cooldown. Please wait 35 seconds before sending another message.');
     ws.close();
   });
 

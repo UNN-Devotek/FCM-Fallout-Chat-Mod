@@ -1,3 +1,4 @@
+import { checkChatSlowmode, chatSlowmodeMessage } from '../chatSlowmodeService';
 import prisma from '../../config/prisma';
 import { engineEvaluate } from '../autoModEngine';
 import { attachCosmetics } from '../cosmetics/cosmeticsService';
@@ -8,7 +9,7 @@ import { nextRelaySeq } from './relaySeq';
 import { checkServerRateLimit, publishServerMessage, type ServerRoomEvent } from './serverChat';
 
 export class ServerMessageError extends Error {
-  constructor(public code: string, message: string) { super(message); }
+  constructor(public code: string, message: string, public retryAfterMs?: number) { super(message); }
 }
 
 /** Shared native/web send path. One event, one ID, one room publication. */
@@ -21,6 +22,8 @@ export async function sendServerMessage(actor: { accountId: string; relayUserId:
   if (user.kickedUntil && +user.kickedUntil > Date.now()) throw new ServerMessageError('user_kicked', 'This account is temporarily kicked');
   if (user.isMuted) throw new ServerMessageError('user_muted', 'You are currently muted');
   if (!(await checkServerRateLimit(actor.accountId))) throw new ServerMessageError('rate_limited', 'You are sending messages too quickly');
+  const slowmode = await checkChatSlowmode({ id: actor.accountId, discordId: user.discordId });
+  if (!slowmode.allowed) throw new ServerMessageError('rate_limited', chatSlowmodeMessage(slowmode.retryAfterMs), slowmode.retryAfterMs);
   const mod = await engineEvaluate(body, undefined, { id: actor.accountId, username: actor.displayName });
   if (mod.block) throw new ServerMessageError('message_blocked', 'Message blocked by the chat filter');
   await refreshSupporterFromHudSend({ userId: actor.accountId, discordId: user.discordId });

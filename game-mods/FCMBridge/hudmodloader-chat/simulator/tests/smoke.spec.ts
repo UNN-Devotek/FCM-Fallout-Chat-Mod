@@ -5,6 +5,13 @@ import { normalizeHudChannel, validateHostedSend } from '../scripts/hosted-dev-b
 import { applyKeybindsToIni, browserKey, defaultKeybinds, normalizeKeybinds } from '../src/keybinds';
 
 for (const provider of ['xscal', 'zfe']) {
+  test(`cooldown notice stays private to the sender (${provider})`, async ({ page }) => {
+    await page.goto(`/?mode=harness&provider=${provider}&scenario=cooldown`);
+    await expect(page.locator('#log')).toContainText(/COOLDOWN (PASS|FAIL)/, { timeout: 25_000 });
+    await expect(page.locator('#log')).toContainText(`COOLDOWN PASS ${provider} sender-only=true public-rows=0`);
+    await expect(page.locator('#log')).not.toContainText('COOLDOWN FAIL');
+  });
+
   test(`giveaway command and announcement stay in the selected channel (${provider})`, async ({ page }) => {
     await page.goto(`/?mode=harness&provider=${provider}&scenario=giveaway`);
     await expect(page.locator('#log')).toContainText(/GIVEAWAY (PASS|FAIL)/, { timeout: 25_000 });
