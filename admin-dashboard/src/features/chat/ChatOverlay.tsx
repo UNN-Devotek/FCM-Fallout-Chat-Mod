@@ -27,6 +27,7 @@ import './nameEffects.css';
 import { usePickerInsert } from './usePickerInsert';
 import { useDebouncedSearch } from './useDebouncedSearch';
 import { ChatEmbedCard } from './components/ChatEmbedCard';
+import { MinervaCard, type MinervaMetadata } from './components/MinervaCard';
 import { ChatInlineEmbed } from './components/ChatInlineEmbed';
 import { scheduledEventAccent, scheduledEventActionState, scheduledEventCountdown } from './scheduledEventPresentation';
 import ImageLightbox from './components/ImageLightbox';
@@ -1524,22 +1525,6 @@ interface CampItemMetadata {
   sourceLabel: string | null;
   atomPrice?: number | null;
   atomBundle?: string | null;
-}
-interface MinervaMetadata {
-  type: 'minerva';
-  location: string;
-  listNumber: number;
-  isSuperSale: boolean;
-  isActive: boolean;
-  startUtc: string;
-  endUtc: string;
-  nextLocation: string | null;
-  nextListNumber: number | null;
-  nextIsSuperSale: boolean | null;
-  nextStartUtc: string | null;
-  sourceName?: string;
-  sourceUrl?: string;
-  inventory?: string[];
 }
 export const MINERVA_SOURCE_URL = 'https://www.falloutbuilds.com/fo76/minerva';
 interface CardShareMetadata {
@@ -8985,57 +8970,14 @@ export default function ChatOverlay() {
                   const mvAccent = '#F1C40F';
                   const minervaSourceUrl = mv.sourceUrl || MINERVA_SOURCE_URL;
                   const minervaSourceName = mv.sourceName || 'Fallout Builds';
-                  const fmtDate = (iso: string) => {
-                    const date = new Date(iso);
-                    return Number.isNaN(date.getTime())
-                      ? 'Unknown'
-                      : date.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-                  };
-                  const fmtDuration = (iso: string) => {
-                    const diffMs = new Date(iso).getTime() - Date.now();
-                    if (Number.isNaN(diffMs)) return 'Unknown';
-                    if (diffMs <= 0) return 'ending soon';
-                    const totalMins = Math.floor(diffMs / 60000);
-                    const days = Math.floor(totalMins / 1440);
-                    const hours = Math.floor((totalMins % 1440) / 60);
-                    const mins = totalMins % 60;
-                    const parts = [];
-                    if (days > 0) parts.push(`${days}d`);
-                    if (hours > 0) parts.push(`${hours}h`);
-                    if (mins > 0 || parts.length === 0) parts.push(`${mins}m`);
-                    return parts.join(' ');
-                  };
-                  const mvFields: { label: string; value: string }[] = [
-                    { label: 'STATUS', value: mv.isActive ? 'ACTIVE NOW' : 'UPCOMING' },
-                    { label: 'LOCATION', value: mv.location + (mv.isSuperSale ? ' ★' : '') },
-                    { label: 'LIST', value: `#${mv.listNumber}${mv.isSuperSale ? ' (Super Sale)' : ''}` },
-                    { label: mv.isActive ? 'ENDS' : 'STARTS', value: fmtDate(mv.isActive ? mv.endUtc : mv.startUtc) },
-                    { label: mv.isActive ? 'LEAVES IN' : 'ARRIVES IN', value: fmtDuration(mv.isActive ? mv.endUtc : mv.startUtc) },
-                    ...(mv.isActive && mv.nextLocation ? [
-                      { label: 'NEXT', value: `${mv.nextLocation}${mv.nextIsSuperSale ? ' ★' : ''} — List #${mv.nextListNumber}` },
-                      { label: 'NEXT STARTS', value: fmtDate(mv.nextStartUtc!) },
-                    ] : []),
-                    ...(Array.isArray(mv.inventory) && mv.inventory.length > 0
-                      ? [{ label: 'FOR SALE', value: mv.inventory.slice(0, 10).join('\n') }]
-                      : []),
-                  ];
                   return (
                     <div key={msg.id} style={{ padding: '2px 8px' }}>
-                      <ChatEmbedCard
-                        accent={mvAccent}
-                        icon="⛟"
-                        tag={mv.isSuperSale ? '★ SUPER SALE' : ''}
-                        title="Minerva's Big Sale"
+                      <MinervaCard
+                        sale={mv}
+                        sourceName={minervaSourceName}
+                        onOpenSource={() => openUrl(minervaSourceUrl)}
                         onShareToChat={() => shareCardToChat({ command: '/minerva', label: "Minerva's Big Sale", accent: mvAccent, icon: '⛟' })}
                         shareDisabled={cardShareCooldown}
-                        fields={mvFields}
-                        inlineMeta={
-                          <span role="button" tabIndex={0} title={`Source: ${minervaSourceName}`}
-                            onClick={() => openUrl(minervaSourceUrl)}
-                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') openUrl(minervaSourceUrl); }}
-                            style={{ color: hexAlpha(mvAccent, 0.85), textDecoration: 'underline', cursor: 'pointer' }}
-                          >via {minervaSourceName} &#8599;</span>
-                        }
                         hexAlpha={hexAlpha}
                         fontFamily={theme.fontFamily}
                         fontSize={fontSize}
