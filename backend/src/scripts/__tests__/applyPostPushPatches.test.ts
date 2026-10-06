@@ -23,6 +23,7 @@ test('post-push patch set is static, ordered, and complete', () => {
       'mcp-oauth-grant-scopes-constraint',
       'restore-missing-event-commands',
       'correct-sos-event-name',
+      'add-sts-event-shortcut',
     ],
   );
 
@@ -85,4 +86,14 @@ test('sos repair targets only that shortcut and preserves response templates and
   assert.match(patch.sql, /WHERE trigger = '\/sos'/);
   assert.match(patch.sql, /replace\(response, 'Surface to Air', 'Swarm of Suitors'\)/);
   assert.doesNotMatch(patch.sql, /SET\s+(enabled|cooldown_sec|target_channel_id|allowed_channel_id|action_type)\s*=/i);
+});
+
+test('sts announces Surface to Air and preserves an existing administrator command', () => {
+  const patch = POST_PUSH_PATCHES.find((item) => item.name === 'add-sts-event-shortcut');
+  assert.ok(patch);
+  const migration = readFileSync(join(process.cwd(),
+    'prisma/migrations/20261006221000_add_sts_event_shortcut/migration.sql'), 'utf8');
+  assert.equal(patch.sql.trim(), migration.trim());
+  assert.match(patch.sql, /VALUES \('\/sts', 'Announce Surface to Air', 'Surface to Air event on this server\.'/);
+  assert.match(patch.sql, /ON CONFLICT \(trigger\) DO NOTHING/);
 });

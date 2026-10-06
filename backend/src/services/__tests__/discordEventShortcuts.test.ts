@@ -7,7 +7,7 @@ describe('discordEventShortcutName', () => {
     const triggers = [
       '/gu', '/dc', '/lits', '/mj', '/mw', '/nw', '/uf', '/gm', '/dg', '/dpt',
       '/en', '/enc', '/fr', '/ftp', '/hots', '/jb', '/lb', '/ovn', '/pp', '/pte',
-      '/rr', '/rs', '/sa', '/sas', '/sbq', '/sos', '/tol', '/tt', '/tym', '/ss',
+      '/rr', '/rs', '/sa', '/sas', '/sbq', '/sos', '/sts', '/tol', '/tt', '/tym', '/ss',
     ];
 
     assert.deepEqual(triggers.map(discordEventShortcutName), triggers.map((trigger) => trigger.slice(1)));

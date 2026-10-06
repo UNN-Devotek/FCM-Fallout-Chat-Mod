@@ -27,7 +27,9 @@ disabled/shadow AI moderation defaults. It also restores absent `/acp`, `/bob`, 
 event command rows without changing existing administrator settings. The `/sos` data repair
 replaces the old Surface to Air name with Swarm of Suitors in its description/response,
 preserving response templates, channel routing, cooldown, and enabled settings. The same
-repair exists in a manual migration and the hosted post-push patch set. It installs the embed-asset
+repair exists in a manual migration and the hosted post-push patch set. A separate
+idempotent seed adds `/sts` for Surface to Air, announcing from General to Events;
+`ON CONFLICT DO NOTHING` preserves any existing administrator definition. It installs the embed-asset
 state/lease constraints and the MCP OAuth S256/scope constraints that Prisma cannot represent.
 These checks are required; startup fails rather than serving with them missing.
 
