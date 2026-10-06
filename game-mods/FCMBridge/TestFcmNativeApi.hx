@@ -25,6 +25,7 @@ class TestFcmNativeApi {
         Reflect.setField(zScope, "__ZFE", zfe);
         var zApi:FcmNativeApi = FcmNativeApi.discover(zScope);
         check("discovers ZFE bridge", zApi != null && zApi.provider == FcmNativeApi.ZFE);
+        check("ZFE never exposes xScal layout storage", zApi.xscalStorageRoot() == null);
         check("routes canonical ZFE verb", Std.string(zApi.call("chat.v1.sendMessage", "{}"))
             .indexOf('"provider":"zfe"') >= 0);
         check("ZFE uses native input", zApi.supportsNativeInput());
@@ -233,7 +234,9 @@ class TestFcmNativeApi {
         });
         var xApi:FcmNativeApi = FcmNativeApi.discover(xScope);
         check("discovers xScal bridge", xApi != null && xApi.provider == FcmNativeApi.XSCAL);
-        check("visible HUD leaves xScal 0.2.17 named storage untouched", storageCalls == 0);
+        check("xScal exposes its discovered named storage root",
+            xApi.xscalStorageRoot() == Reflect.field(xScope, "__SFCodeObj"));
+        check("storage discovery has no calls or registration", storageCalls == 0);
         check("maps xScal connect", Std.string(xApi.call("chat.v1.connect", "{}"))
             .indexOf('"success":true') >= 0);
         xApi.call("chat.v1.getAuthState", "{}");
@@ -260,7 +263,7 @@ class TestFcmNativeApi {
             Std.string(xApi.call("chat.v1.notACommand", "{}")).indexOf("unsupported_command") >= 0);
         check("xScal capability probe uses chatInterface", xApi.probeChatCapability()
             && xCalls[xCalls.length - 1] == "getRuntimeInfo|<none>");
-        check("visible HUD still leaves named storage untouched after chat use", storageCalls == 0);
+        check("chat transport leaves named storage untouched", storageCalls == 0);
         check("xScal without a logger fails log calls closed", Std.string(xApi.call("log", "{}")) == "");
 
         var xInputCalls:Array<String> = [];

@@ -13,6 +13,13 @@ class MockXscal {
     public static var roomDiagnosticCount(default, null):Int = 0;
     public static var asyncCompletionDeliveries(default, null):Int = 0;
     public static var authReady:Bool = true;
+    public static var authAdvertisesLayout:Bool = true;
+    public static var layoutSendCount(default, null):Int = 0;
+    public static var lastLayoutBody(default, null):String = "";
+    public static var localLayoutLoadCount(default, null):Int = 0;
+    public static var localLayoutSaveCount(default, null):Int = 0;
+    public static var lastLocalLayoutDocument(default, null):String = "";
+    static var localDocuments:Map<String, String> = new Map();
     public static var authPollCount(default, null):Int = 0;
     public static var connectCount(default, null):Int = 0;
     public static var ordinarySendCount(default, null):Int = 0;
@@ -47,6 +54,13 @@ class MockXscal {
         cursor = 0;
         pollCount = 0;
         callCount = 0;
+    }
+
+    public static function resetLocalLayout():Void {
+        localDocuments = new Map();
+        localLayoutLoadCount = 0;
+        localLayoutSaveCount = 0;
+        lastLocalLayoutDocument = "";
     }
 
     public static function enqueueEvent(event:Dynamic):Void {
@@ -116,9 +130,11 @@ class MockXscal {
         Reflect.setField(chat, "getAuthState", function(_:Dynamic):String {
             authPollCount++;
             if (!authReady) return response({success:true, state:"connecting", status:"connecting"});
-            return response({success:true, state:"authenticated", status:"authenticated",
+            var state:Dynamic = {success:true, state:"authenticated", status:"authenticated",
                 userId:"sim-relay-user", linkedUserId:"sim-linked-user", canRetryHudSend:true,
-                canSaveHudLayout:true, canSendRoomDiagnostics:true});
+                canSendRoomDiagnostics:true};
+            if (authAdvertisesLayout) Reflect.setField(state, "canSaveHudLayout", true);
+            return response(state);
         });
         Reflect.setField(chat, "getConnectionState", function():String {
             return response({success:true, state:"authenticated", status:"authenticated"});
@@ -188,6 +204,11 @@ class MockXscal {
                     targetUserId:"FCMHUD/1;g=Event%20announced%20in%20Events."});
             }
             if (channel == "server" && StringTools.startsWith(body, "FCMCTL/1/")) {
+                if (StringTools.startsWith(body, "FCMCTL/1/LAYOUT/")) {
+                    layoutSendCount++;
+                    lastLayoutBody = body;
+                    return response({success:true, messageId:messageId, targetUserId:""});
+                }
                 if (StringTools.startsWith(body, "FCMCTL/1/DIAG:")) {
                     roomDiagnosticCount++;
                     lastRoomDiagnosticBody = body;
@@ -223,7 +244,21 @@ class MockXscal {
         Reflect.setField(chat, "disconnect", function():String return response({success:true}));
         Reflect.setField(chat, "clearChatAuth", function():String return response({success:true}));
 
-        var root:Dynamic = {chatInterface:chat};
+        var root:Dynamic = {chatInterface:chat, version:{runtime:"xScal",value:"0.2.20"}};
+        Reflect.setField(root, "modStorage", {
+            load:function(name:String):Dynamic {
+                localLayoutLoadCount++;
+                return localDocuments.exists(name) ? localDocuments.get(name) : false;
+            },
+            save:function(name:String, document:String):Bool {
+                if (name != FcmXscalLayoutStorage.NAME) return false;
+                try { haxe.Json.parse(document); } catch (_:Dynamic) { return false; }
+                localLayoutSaveCount++;
+                lastLocalLayoutDocument = document;
+                localDocuments.set(name, document);
+                return true;
+            }
+        });
         Reflect.setField(root, "call", function(name:String, value:Dynamic = null):Dynamic {
             callCount++;
             if (name == "GetXSRuntimeInfo") return response({runtime:"xScal", version:"sim-1", platform:"Simulator"});

@@ -149,6 +149,13 @@ to use Delete, set `openKey=DELETE`. For a common
 policy across both providers, also set ZFE's `OpenChatKey=DELETE`; that key never belongs in
 xscal.ini.
 
+The Nexus DLSS and FSR Framegen Plugin for xScal (mod 4256, file 0.2.5) also
+opens its settings menu with Insert. If both menus open, press Escape to leave
+FCM input and operate the framegen menu, then Escape again when finished. To
+avoid the shared shortcut, change this file's `openKey` to an unused key such as
+`PERIOD` and restart the game. The plugin's shipped Fallout76_NX.ini has no
+menu-key setting. Do not change xscal.ini for FCM keybinds.
+
 The widget registers the selected key on xScal and opens chat on its physical down edge, even
 when HUDModLoader reports the key as Unmapped. The named HUDMod::UserEvent path remains as a
 compatibility fallback. If registration is unavailable or the key is rejected, restore
