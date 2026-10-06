@@ -59,6 +59,20 @@ test('period opens and releases an xScal native text session', async ({ page }) 
   await expect(page.locator('#log')).not.toContainText('XSCAL-SESSION-INPUT FAIL');
 });
 
+test('rebinding xScal chat to Home releases Insert and End hides while idle', async ({ page }) => {
+  await page.goto('/?mode=harness&provider=xscal&scenario=xscal-home-rebind');
+  await expect(page.locator('#log')).toContainText(/XSCAL-SESSION-INPUT (PASS|FAIL)/, { timeout: 20_000 });
+  await expect(page.locator('#log')).toContainText('XSCAL-SESSION-INPUT PASS xscal-home-rebind');
+  await expect(page.locator('#log')).not.toContainText('XSCAL-SESSION-INPUT FAIL');
+});
+
+test('xScal saves and restores appearance in named local storage', async ({ page }) => {
+  await page.goto('/?mode=harness&provider=xscal&scenario=xscal-local-layout');
+  await expect(page.locator('#log')).toContainText(/XSCAL-LAYOUT (PASS|FAIL)/, { timeout: 20_000 });
+  await expect(page.locator('#log')).toContainText('XSCAL-LAYOUT PASS');
+  await expect(page.locator('#log')).not.toContainText('XSCAL-LAYOUT FAIL');
+});
+
 test.afterEach(async ({ page, request }) => {
   await page.evaluate(() => (window as Window & { __FCM_SIM_TEARDOWN__?: () => void }).__FCM_SIM_TEARDOWN__?.()).catch(() => undefined);
   await expect(page.locator('#ruffle-player')).toHaveCount(0);
@@ -68,7 +82,7 @@ test.afterEach(async ({ page, request }) => {
 test('loads the exact production widget artifact and records browser key delivery', async ({ page }) => {
   await page.goto('/?mode=artifact');
   await expect(page.locator('#status')).toHaveAttribute('data-state', 'ready', { timeout: 20_000 });
-  await expect(page.locator('#widget-version')).toHaveText('2.10.134');
+  await expect(page.locator('#widget-version')).toHaveText('2.10.136');
   await page.locator('#focus-stage').click();
   await page.keyboard.press('Insert');
   await page.keyboard.press('ArrowUp');
