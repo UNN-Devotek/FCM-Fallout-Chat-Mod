@@ -58,13 +58,15 @@ class TestFcmCommand {
         check("event help accepts slash-stripped text", FcmEventCommands.isHelp("event help"));
         check("event help does not consume channel switch", !FcmEventCommands.isHelp("event"));
         check("slash event still switches channels", !FcmEventCommands.isHelp("/event"));
-        check("event help lists all seeded shortcuts", FcmEventCommands.entries.length == 33
+        check("event help lists all seeded shortcuts", FcmEventCommands.entries.length == 34
             && FcmEventCommands.help().indexOf("/sbq — Scorched Earth") >= 0
             && FcmEventCommands.help().indexOf("/gu — Gearing Up") >= 0
             && FcmEventCommands.help().indexOf("/ss — Sinkhole Solutions") >= 0);
         check("sos means Swarm of Suitors", FcmEventCommands.help().indexOf("/sos — Swarm of Suitors") >= 0
-            && FcmEventCommands.help().indexOf("Surface to Air") < 0
+            && FcmEventCommands.help().indexOf("/sos — Surface to Air") < 0
             && FcmEventCommands.command("/event sos") == "/sos");
+        check("sts means Surface to Air", FcmEventCommands.help().indexOf("/sts — Surface to Air") >= 0
+            && FcmEventCommands.command("/event sts") == "/sts");
         for (entry in FcmEventCommands.entries) {
             var code = entry.split("|")[0];
             check("event slash restored " + code, FcmEventCommands.command(code) == "/" + code);

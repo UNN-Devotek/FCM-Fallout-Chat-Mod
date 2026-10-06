@@ -14,7 +14,7 @@ class FcmEventCommands {
         "ovn|One Violent Night", "pp|Project Paradise", "pte|The Path to Enlightenment",
         "rr|Radiation Rumble", "rs|Riding Shotgun", "sa|Seismic Activity",
         "sas|Safe and Sound", "sbq|Scorched Earth", "sos|Swarm of Suitors",
-        "ss|Sinkhole Solutions", "tol|Tunnel of Love", "tt|Tea Time",
+        "ss|Sinkhole Solutions", "sts|Surface to Air", "tol|Tunnel of Love", "tt|Tea Time",
         "tym|Test Your Metal", "uf|Uranium Fever"
     ];
 

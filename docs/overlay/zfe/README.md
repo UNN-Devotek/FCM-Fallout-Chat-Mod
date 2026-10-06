@@ -41,7 +41,7 @@ user acceptance rather than a complete provider log.
 ## Current implementation and verification
 
 **2.10.134 HUD event commands and selectable help candidate:** `/event help`
-adds the 33 seeded event shortcuts and names as private, individual feed rows,
+adds the 34 seeded event shortcuts and names as private, individual feed rows,
 including Gearing Up (`/gu`).
 `/help` points to `/event help` and `/mod help` without listing event names or
 staff actions.
@@ -682,6 +682,7 @@ room muting are overlay-only. Pure config tests and both delayed-auth Ruffle pro
 scenarios cover regular → staff → revoked labeling; native game acceptance of this
 candidate remains pending, independently of earlier released builds.
 
-The `/event help` shortcut `/sos` identifies **Swarm of Suitors**. The backend
+The `/event help` shortcut `/sos` identifies **Swarm of Suitors**, and `/sts`
+identifies **Surface to Air**. The backend
 command data repair applies the same event name to announcements across Discord,
 the overlay, and the optional HUD; packaged HUD help updates require a new HUD build.
