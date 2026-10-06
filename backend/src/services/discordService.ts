@@ -1,3 +1,4 @@
+import { checkChatSlowmode, chatSlowmodeMessage } from './chatSlowmodeService';
 import { Client, GatewayIntentBits, Partials, TextChannel, EmbedBuilder, ActivityType, type Message, type MessageCreateOptions, type Typing } from 'discord.js';
 import { v4 as uuidv4 } from 'uuid';
 import env from '../config/environment';
@@ -786,9 +787,6 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
     // bot/webhook messages admitted are recognized, bounded FCM card embeds.
     if ((msg.author.bot || msg.webhookId) && !embeddedCard) return;
 
-    // Defense-in-depth: reject messages carrying our ZWS watermark (own relay echo)
-    if (msg.content && hasZwsWatermark(msg.content)) return;
-
     const mappings = await loadRelayMappings().catch(() => new Map<string, string>());
     let channelId = mappings.get(msg.channelId);
 
@@ -798,6 +796,24 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
     }
 
     if (!channelId) return;
+
+    // Enforce only mapped/default FCM chat channels, never unrelated Discord channels.
+    // Discord delivers typed messages after publication: remove blocked posts and
+    // privately notify the author. Relay remains blocked even if deletion/DM fails.
+    if (!msg.author.bot && !msg.webhookId) {
+      const status = await checkChatSlowmode({ id: msg.author.id, discordId: msg.author.id });
+      if (!status.allowed) {
+        try { await msg.delete(); }
+        catch (err) { logger.warn({ err, channelId: msg.channelId }, 'Slowmode delete failed (Manage Messages required)'); }
+        try { await msg.author.send(chatSlowmodeMessage(status.retryAfterMs)); }
+        catch (err) { logger.debug({ err }, 'Slowmode DM failed'); }
+        return;
+      }
+    }
+
+    // Echo defense does not exempt human posts from Discord flood control.
+    // Otherwise a pasted invisible watermark could evade cooldown deletion.
+    if (msg.content && hasZwsWatermark(msg.content)) return;
 
     // Activity counts participation, not message acceptance. Media-only/filtered
     // posts still indicate a human is active; automated embeds never do.

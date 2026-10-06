@@ -1,3 +1,4 @@
+jest.mock('../src/services/chatSlowmodeService', () => ({ ...jest.requireActual('../src/services/chatSlowmodeService'), checkChatSlowmode: jest.fn(async () => ({ allowed: true, remaining: 2, retryAfterMs: 0 })) }));
 const values = new Map(), expiries = new Map(), lists = new Map(), listeners = new Set();
 const redis = {
   get: jest.fn(async key => {
