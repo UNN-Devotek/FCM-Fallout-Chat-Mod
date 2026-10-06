@@ -21,6 +21,7 @@
  * Production guard: default-off until RELAY_PRODUCTION_ENABLED is explicitly enabled.
  */
 
+import { chatSlowmodeMessage } from '../chatSlowmodeService';
 import type WebSocket from 'ws';
 import type http from 'http';
 import { v4 as uuidv4 } from 'uuid';
@@ -336,8 +337,8 @@ async function pushLinkCompleteLocal(relayUserId: string): Promise<number> {
  *   slash_ignored       — an unsupported "/command" was typed in-game
  *   invalid_action      — unknown moderationAction action
  */
-function errEnvelope(code: string, message: string): Record<string, unknown> {
-  return { success: false, error: { code, message } };
+function errEnvelope(code: string, message: string, retryAfterMs?: number): Record<string, unknown> {
+  return { success: false, error: { code, message, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) } };
 }
 
 class RelayReportInputError extends Error {
@@ -1422,7 +1423,8 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       suppressDiscordRelay: !command.relayToDiscord,
     });
     if (!result.ok) {
-      const feedback = result.reason === 'rate-limited' ? 'Please wait before announcing another event.'
+      const feedback = result.retryAfterMs ? chatSlowmodeMessage(result.retryAfterMs)
+        : result.reason === 'rate-limited' ? 'Please wait before announcing another event.'
         : result.reason === 'automod' ? 'Event announcement blocked by the chat filter.'
         : 'Event announcement could not be sent.';
       await reply({ success: true, messageId: uuidv4(),
@@ -1471,7 +1473,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       event = await sendServerMessage({ accountId: identity.linkedUserId!, relayUserId: identity.userId,
         displayName: identity.fo76Name }, worldId, body);
     } catch (err) {
-      if (err instanceof ServerMessageError) { await reply(errEnvelope(err.code, err.message)); return; }
+      if (err instanceof ServerMessageError) { await reply(errEnvelope(err.code, err.message, err.retryAfterMs)); return; }
       throw err;
     }
     const hudCosmetics = relayHudCosmetics({ ...event, badges: event.supporterStar ? ['supporter'] : [] });
@@ -1532,10 +1534,11 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       result.reason === 'slash-command-dropped' ? 'slash_ignored' :
       'permission_denied';
     const msg =
+      result.retryAfterMs ? chatSlowmodeMessage(result.retryAfterMs) :
       code === 'message_blocked' ? 'Message blocked by the chat filter' :
       code === 'slash_ignored'   ? 'Slash commands are not supported in-game' :
       (result.reason ?? 'Send rejected');
-    await reply(errEnvelope(code, msg));
+    await reply(errEnvelope(code, msg, result.retryAfterMs));
     return;
   }
 

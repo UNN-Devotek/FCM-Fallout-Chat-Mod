@@ -16,6 +16,12 @@ The moderation subsystem covers: role-based access control, content filtering (A
 > including the cross-surface eviction signal and the account-level ban target — see
 > [kick-mute-ban.md](kick-mute-ban.md).
 
+## Shared chat slowmode
+
+Three messages per rolling minute; the fourth attempt starts a shared 35-second
+cooldown across connected Discord, HUD and overlay channel chat. See
+[policy, permissions and retry behavior](chat-slowmode.md).
+
 ## Role Model
 
 There are three staff roles, determined by Discord guild membership:

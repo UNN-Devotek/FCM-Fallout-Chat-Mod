@@ -548,7 +548,8 @@ class FCMChatWidget extends MovieClip {
         }
         var code = extractJsonString(response, "code");
         if (FcmOutbox.retryable(code)) {
-            outboxStatus("Message queued - waiting to retry.");
+            outboxStatus(code == "rate_limited" ? FcmOutbox.cooldownNotice(response)
+                : "Message queued - waiting to retry.");
             return;
         }
         _outbox.remove(id);
@@ -3956,7 +3957,8 @@ class FCMChatWidget extends MovieClip {
             } else {
                 var code:String = extractJsonString(rs, "code");
                 if (_canRetryHudSend && FcmOutbox.retryable(code)) {
-                    if (code == "rate_limited" || code == "send_in_progress") outboxStatus("Message queued - waiting to retry.");
+                    if (code == "rate_limited") outboxStatus(FcmOutbox.cooldownNotice(rs));
+                    else if (code == "send_in_progress") outboxStatus("Message queued - waiting to retry.");
                     else retryQueuedSend(localSendId, "transient send failure");
                     return;
                 }
@@ -3990,7 +3992,7 @@ class FCMChatWidget extends MovieClip {
                     case "user_muted":
                         setLogText("You are muted and cannot send right now.");
                     case "rate_limited":
-                        setLogText("Sending too fast - slow down.");
+                        outboxStatus(FcmOutbox.cooldownNotice(rs));
                     case "invalid_channel":
                         if (slug == "server") {
                             setServerSessionReady(false, extractJsonString(rs, "message"));
@@ -5524,7 +5526,8 @@ class FCMChatWidget extends MovieClip {
             var code:String = FcmWire.asyncErrorCode(obj);
             zfeLog("warn", "send", "relay rejected requestId=" + requestId + " code=" + code);
             if (_canRetryHudSend && FcmOutbox.retryable(code)) {
-                outboxStatus("Message queued - waiting to retry.");
+                outboxStatus(code == "rate_limited" ? FcmOutbox.cooldownNotice(obj)
+                    : "Message queued - waiting to retry.");
                 return;
             }
             _outbox.remove(localSendId);
@@ -5537,7 +5540,7 @@ class FCMChatWidget extends MovieClip {
                 case "message_blocked": setLogText("Message blocked by the chat filter.");
                 case "slash_ignored": setLogText("Slash commands work in the dashboard, not in-game.");
                 case "user_muted": setLogText("You are muted and cannot send right now.");
-                case "rate_limited": setLogText("Sending too fast - slow down.");
+                case "rate_limited": outboxStatus(FcmOutbox.cooldownNotice(obj));
                 case "invalid_channel":
                     if (entry.channel == "server") setServerSessionReady(false, "invalid_channel");
                     setLogText(entry.channel == "server"

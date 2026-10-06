@@ -1,3 +1,4 @@
+jest.mock('../src/services/chatSlowmodeService', () => ({ ...jest.requireActual('../src/services/chatSlowmodeService'), checkChatSlowmode: jest.fn(async () => ({ allowed: true, remaining: 2, retryAfterMs: 0 })) }));
 'use strict';
 
 // Regression coverage for Discord -> relay history. Discord messages must carry
@@ -414,4 +415,35 @@ test('Discord typing relay does not create or relay an unlinked user', async () 
 test('Discord client requests the GuildMessageTyping gateway intent', () => {
   const discord = require('discord.js');
   expect(discord.Client.mock.calls[0][0].intents).toContain(2048);
+});
+
+test.each([false, true])('slowmode deletes blocked Discord posts and never relays even when deletion/DM fails (%s)', async fail => {
+  const { checkChatSlowmode } = require('../src/services/chatSlowmodeService');
+  checkChatSlowmode.mockResolvedValueOnce({ allowed: false, remaining: 0, retryAfterMs: 35000 });
+  const remove = fail ? jest.fn().mockRejectedValue(new Error('missing permission')) : jest.fn().mockResolvedValue();
+  const dm = fail ? jest.fn().mockRejectedValue(new Error('DM closed')) : jest.fn().mockResolvedValue();
+  await mockHandlers.get('messageCreate')({ id: 'blocked', channelId: 'discord-channel-id', content: 'fourth message',
+    author: { id: 'person', bot: false, send: dm }, webhookId: null, embeds: [], delete: remove });
+  expect(checkChatSlowmode).toHaveBeenLastCalledWith({ id: 'person', discordId: 'person' });
+  expect(remove).toHaveBeenCalledTimes(1);
+  expect(dm).toHaveBeenCalledWith('You are in cooldown. Please wait 35 seconds before sending another message.');
+  expect(mockBroadcast).not.toHaveBeenCalled();
+  expect(mockQueueAdd).not.toHaveBeenCalled();
+});
+test('unrelated Discord channels do not consume the chat allowance', async () => {
+  const { checkChatSlowmode } = require('../src/services/chatSlowmodeService');
+  checkChatSlowmode.mockClear();
+  await mockHandlers.get('messageCreate')({ channelId: 'unrelated-channel', content: 'hello', author: { id: 'person', bot: false }, embeds: [] });
+  expect(checkChatSlowmode).not.toHaveBeenCalled();
+});
+
+test('human posts cannot evade Discord cooldown deletion by including the relay watermark', async () => {
+  const { checkChatSlowmode } = require('../src/services/chatSlowmodeService');
+  checkChatSlowmode.mockResolvedValueOnce({ allowed: false, remaining: 0, retryAfterMs: 35000 });
+  const remove = jest.fn().mockResolvedValue(), dm = jest.fn().mockResolvedValue();
+  await mockHandlers.get('messageCreate')({ channelId: 'discord-channel-id', content: 'fourth message\u200B',
+    author: { id: 'person', bot: false, send: dm }, webhookId: null, embeds: [], delete: remove });
+  expect(remove).toHaveBeenCalledTimes(1);
+  expect(dm).toHaveBeenCalledWith(expect.stringContaining('You are in cooldown'));
+  expect(mockBroadcast).not.toHaveBeenCalled();
 });
