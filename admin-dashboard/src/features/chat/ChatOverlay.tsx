@@ -4743,8 +4743,11 @@ export default function ChatOverlay() {
     && activeMainId !== PARTY_MAIN_ID
     && activeSubId.startsWith('server:');
   const isBridgeChannel = isOnServerChannel && bridgeState.status === 'ready' && activeSubId === bridgeState.channelId;
-  // A retained bridge room still owns its transcript while discovery is unavailable.
-  const legacyServerRosterActive = isOnServerChannel && !isBridgeChannel && activeSubId !== lastBridgeChannelId;
+  // Canonical rooms remain bridge views even between a fresh binding and the
+  // selection effect following that room. Never activate the legacy roster then.
+  const isBridgeServerView = isOnServerChannel
+    && (activeSubId.startsWith('server:r:') || activeSubId === lastBridgeChannelId);
+  const legacyServerRosterActive = isOnServerChannel && !isBridgeChannel && !isBridgeServerView;
   const adminFeedActive = isAdmin && legacyServerRosterActive;
 
   const { data: feedData } = useQuery({

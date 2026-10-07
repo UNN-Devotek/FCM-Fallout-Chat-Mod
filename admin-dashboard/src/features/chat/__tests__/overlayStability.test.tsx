@@ -379,8 +379,8 @@ describe('overlay lifecycle and navigation', () => {
     expect(screen.getByText('Server row inside General horizon')).toBeInTheDocument();
   });
 
-  it('keeps the selected Server transcript during travel, rejects stale frames, and follows fresh rooms', async () => {
-    await mount();
+  it.each(['user', 'admin'])('keeps the selected Server transcript during travel and fresh room hops (%s)', async role => {
+    await mount(role);
     const socket = sockets[0];
     act(() => {
       socket.open();
@@ -397,12 +397,16 @@ describe('overlay lifecycle and navigation', () => {
       expect(screen.queryByText('General only')).toBeNull();
       act(() => socket.emit({ type: 'presence:update', payload: {} }));
       expect(screen.queryByText('No players detected')).toBeNull();
-      expect(get.mock.calls.some(([path]) => path === '/api/presence/same-server')).toBe(false);
+      expect(get.mock.calls.some(([path]) => path === '/api/presence/same-server'
+        || path.startsWith('/api/presence/server-messages'))).toBe(false);
     }
     act(() => socket.emit({ type: 'bridge:message', payload: { channelId: 'server:r:one', bindingId: 'alice/one/r:one',
       messages: [{ id: 'server:r:one:2', channelId: 'server:r:one', username: 'Bob', content: 'Stale travel message', source: 'server' }] } }));
     expect(screen.queryByText('Stale travel message')).toBeNull();
     act(() => socket.emit({ type: 'bridge:state', payload: { status: 'ready', channelId: 'server:r:two', bindingId: 'alice/two/r:two' } }));
+    expect(get.mock.calls.some(([path]) => path === '/api/presence/same-server'
+        || path.startsWith('/api/presence/server-messages'))).toBe(false);
+    expect(screen.queryByText('No players detected')).toBeNull();
     expect(screen.getByText('Retained travel transcript')).toBeInTheDocument();
     expect(screen.queryByText('General only')).toBeNull();
     act(() => gameState(false));

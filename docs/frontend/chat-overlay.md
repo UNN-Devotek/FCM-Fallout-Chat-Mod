@@ -885,7 +885,10 @@ accepted transcript stay visible during loading/travel, ambiguous discovery, or 
 bridge unavailability until the game process exits. This remembered tab is display-only:
 sends remain blocked until a fresh ready binding is confirmed. The retained bridge tab
 never polls the legacy same-server roster or displays its empty member panel;
-`presence:update` cannot force a legacy roster request during travel.
+`presence:update` cannot force a legacy roster request during travel. Canonical
+`server:r:` room selections also retain bridge ownership while a new binding
+arrives and the selected Server tab follows it; that transition cannot activate
+the legacy roster query or member panel.
 
 Fresh accepted `bridge:message` rows use the same keyword/mention appearance, sound, and
 unread alerts as ordinary channel messages. Own messages, restored history, duplicates,
