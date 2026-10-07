@@ -29,6 +29,7 @@ import { splitDiscordResponse } from '../lib/discordResponsePagination';
 import { searchEntries } from './wikiCatalogService';
 import { searchCampItems } from './campService';
 import { finalizeMessage } from './ingestMessage';
+import { publishDiscordCommandRelay } from './discordCommandPublication';
 import { getUserByDiscordId, getUserById } from './userLookup';
 import { getEffectiveRole, isPrivilegedRole } from './userRoleService';
 import {
@@ -239,14 +240,17 @@ async function handleOverlayCommand(interaction: ChatInputCommandInteraction): P
   const displayName = user.chatName ?? user.discordDisplayName ?? user.discordUsername ?? user.username;
   const result = await tryHandleCommand(raw, user.id, displayName, context.channelId, context.channelName, null, 0, context.parentChannelId);
   if (result.handled && result.actionType === 'relay') {
-    await finalizeMessage({
+    if (!(await publishDiscordCommandRelay(interaction, {
       userId: user.id,
       channelId: result.targetChannelId,
       content: result.relayContent,
       displayName,
       source: 'discord',
       waitForPersistence: true,
-    });
+    }, interaction.user.id))) {
+      result.cancelCooldown?.();
+      return;
+    }
   }
   await replyForCommand(interaction, result);
   if (shouldMirrorDiscordCardToOverlay(context.isLinked, result)) {
@@ -319,14 +323,17 @@ async function runEventCommand(
     await interaction.reply({ content: 'That event command could not be run.', flags: MessageFlags.Ephemeral });
     return;
   }
-  await finalizeMessage({
+  if (!(await publishDiscordCommandRelay(interaction, {
     userId: user.id,
     channelId: result.targetChannelId,
     content: result.relayContent,
     displayName,
     source: 'discord',
     waitForPersistence: true,
-  });
+  }, interaction.user.id))) {
+    result.cancelCooldown?.();
+    return;
+  }
   await interaction.reply({ content: 'Event announcement sent.', flags: MessageFlags.Ephemeral });
 }
 

@@ -1,4 +1,4 @@
-import { rejectChatSlowmode } from './chatSlowmode';
+import { rejectChatSlowmode, rejectCommandSlowmode } from './chatSlowmode';
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket, RawData } from 'ws';
 import { IncomingMessage } from 'http';
@@ -1099,7 +1099,7 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
             return;
           }
 
-          if (await rejectChatSlowmode(ws, gameUser)) return;
+          if (!content.trim().startsWith('/') && await rejectChatSlowmode(ws, gameUser)) return;
 
           // Single engine call replaces separate filterContent + detectSpam
           const engineResult = await engineEvaluate(content, channelId, gameUser);
@@ -1118,6 +1118,7 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
               content.trim(), gameUser.id, displayName, channelId, channelName,
               null, getClientCount(), parentChannelId,
             );
+            if (await rejectCommandSlowmode(ws, gameUser, cmdResult)) return;
             if (cmdResult.handled) {
               if (cmdResult.actionType === 'message') {
                 broadcast({
@@ -2346,7 +2347,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
           return;
         }
 
-        if (await rejectChatSlowmode(ws, user)) return;
+        if (!content.trim().startsWith('/') && await rejectChatSlowmode(ws, user)) return;
 
         // Pre-broadcast auto-moderation
         // Single engine call: legacy word_filter + Redis spam + new automod_rules
@@ -2372,6 +2373,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
             null,
             getClientCount(), parentChannelId,
           );
+          if (await rejectCommandSlowmode(ws, user, cmdResult)) return;
           logger.info({
             userId: user.id, trigger: content.trim().split(/\s+/)[0],
             actionType: (cmdResult as any).actionType,

@@ -646,6 +646,8 @@ Metadata-bearing messages render through two shared components in `components/`,
 
 - **Static, broadcast-to-everyone messages → inline `ChatInlineEmbed`** (`.fcm-inline*`). Used by `wiki_share`, `card_share`, and `party_invite`. These DON'T render a box — they're built as the message **content** and returned via the `inlineContent` variable so the message falls through to the **normal message renderer**; the channel tag + sender name are therefore the exact same code as every other message. Composition: `[icon] [lead] [title (link+glow)] [badge] · [meta link] [action]`. Wiki: `◈ <name> [KIND] · Fallout Wiki ↗` (name opens the WikiPanel via `openWikiPanel`; the meta link opens the article externally for attribution). Card shares re-run the supported command in the clicked message's channel; the source meta link opens its external attribution. Party: `✦ invited everyone to <PartyName> [PARTY] [JOIN/JOINED]`.
 
+Minerva uses `MinervaCard` inside that shared card shell, rather than putting inventory into the metadata grid. The visit summary groups location, arrival/departure countdown, and both start/end dates with the viewer's local timezone. A full-width table lists every item, with wrapping names on the left and right-aligned gold bullion prices. Prices sort numerically from highest to lowest; equal prices keep source order. The frontend splits only the existing ` — N Gold` suffix, preserving the API's string inventory format. Missing or unrecognized prices remain visible at the end as `Unknown`; unavailable inventory leaves the visit summary visible and offers retry guidance. List number, the next visit during an active sale, source attribution, and the share action sit below inventory. The source and share actions support keyboard activation. The table keeps its name/price columns at narrow overlay widths. `MinervaCard.test.tsx` covers these states and runs in the existing dashboard `unit-vitest` CI job.
+
 Shared-card title actions use the message's `channelId`, not only the currently selected tab. This is required in aggregate General/feed view, where the selected tab can be a parent feed channel while the clicked card belongs to a child channel. Interactive titles and source attributions use native buttons so mouse and keyboard activation share the same browser/Electron event path.
 
 Never `dangerouslySetInnerHTML`; the wiki share content carries no external URL itself (the bot bridges a hyperlink to Discord separately).
@@ -878,7 +880,19 @@ session; renderer IPC cannot submit observations or choose a room. `bridge:watch
 local-export mode. Only a fresh, generation-correlated backend `bridge:state` adds
 a local Server child under Fallout 76; the REST channel tree remains static. The browser/public
 surfaces do not initiate a bridge watch. Server appearing preserves the selected channel; an
-actively selected Server follows its confirmed room changes.
+actively selected Server follows its confirmed room changes. Once discovered, its tab and
+accepted transcript stay visible during loading/travel, ambiguous discovery, or temporary
+bridge unavailability until the game process exits. This remembered tab is display-only:
+sends remain blocked until a fresh ready binding is confirmed. The retained bridge tab
+never polls the legacy same-server roster or displays its empty member panel;
+`presence:update` cannot force a legacy roster request during travel. Canonical
+`server:r:` room selections also retain bridge ownership while a new binding
+arrives and the selected Server tab follows it; that transition cannot activate
+the legacy roster query or member panel.
+
+Fresh accepted `bridge:message` rows use the same keyword/mention appearance, sound, and
+unread alerts as ordinary channel messages. Own messages, restored history, duplicates,
+foreign rows, and stale bindings never trigger these Server alerts.
 
 `bridgeFeed.ts` merges private history/live by canonical message ID, including within-batch
 duplicates. General and Server filter one collection. Accepted Server rows remain as a bounded,

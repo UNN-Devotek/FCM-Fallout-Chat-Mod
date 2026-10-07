@@ -167,3 +167,14 @@ maps `issueNumber` ⇄ `discordThreadId` for both sync directions, plus `type`,
 - [`tests/playerReportHelpers.test.js`](../../backend/tests/playerReportHelpers.test.js) + [`tests/playerReportService.test.js`](../../backend/tests/playerReportService.test.js) — player-report sanitisation, image cap, user upsert, MinIO attach.
 
 All run under the CI `backend-jest` gate.
+
+## Ticket creation reports a generic failure
+
+Read the backend log entry `ticket: creation failed` before retrying.
+`GitHub REST ... /issues -> 401: Bad credentials` means the configured `GITHUB_PAT`
+is invalid/revoked/expired; replace it through the deployment secret settings and
+restart/redeploy the backend so the bot loads it. Verify repository access and Issues
+write permission using that credential. This failure occurs before Discord thread
+creation, so changing thread permissions cannot repair it. Never paste credentials
+into chat or logs. A thread-creation permission failure is a different error; check
+the Discord permissions listed above rather than replacing a valid GitHub credential.

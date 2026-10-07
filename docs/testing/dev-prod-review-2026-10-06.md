@@ -69,3 +69,44 @@ No additional blocking defect was found in the reviewed committed Dev-to-Prod
 application/packaging changes. This review does not certify native game input or
 appearance behavior beyond existing acceptance evidence, and it does not deploy
 anything to production.
+
+## Remaining dependency integration
+
+#560 merged into Dev as `da4ff85f` after every CI gate passed on `1141ccba`.
+The authorized admin override covered its missing independent review.
+Remaining updates are reconciled in #566 across backend, dashboard, overlay,
+MCP and promo. This incorporates refreshed groups #565/#546/#551/#533, the
+ip-address patch #556, and updates #567–#572. Manifest/lock pairs and npm registry
+provenance pass checks. Electron 43.7.6, tar-stream 3.2.0, MCP Hono 4.13.11 and
+fast-uri 3.1.8 are retained. Refreshed transitive patches are retained; related
+Remotion packages resolve together to 4.0.533. Local dashboard tests passed (487).
+Final hosted CI is required before merging this consolidated diff.
+Duplicates #559/#558/#555/#554/#550/#532/#525/#524/#523/#522/#498/#497 are closed
+after verifying their changes are included or superseded in Dev.
+The original checkout and user-owned native acceptance edit remain untouched.
+
+## Completed dependency integration and slowdown handoff
+
+#566 passed every hosted CI check on `1bd30d16`, including backend, frontend,
+MCP, native source/package, standard Ruffle and both overlay packaging gates.
+It merged into Dev as `fd1959a0`. GitHub repeatedly dismissed approval with
+"The merge-base changed after approval" despite the unchanged tested head
+containing current Dev; the authorized admin review override was used. Branch
+protection settings were not changed and failed CI was never bypassed.
+The remaining source PRs #551/#567/#569/#571/#572 and refreshed replacement
+groups #573/#574/#575 were verified against the merged manifests and locks and
+closed as included or superseded. No dependency PR remains from this review.
+
+The slowdown feature is committed separately in #576. Every hosted CI check
+passed on `405efe17`, including the standard Ruffle harness and real Redis tests.
+It was updated against the merged dependency baseline and requires final CI on
+that updated head before merging. Original dirty workspace changes remain intact.
+
+Local validation was interrupted by T3 restarts. A standard local Ruffle attempt
+hit browser-context teardown timeouts; its diagnostic rerun without video passed
+the previously affected scenarios before cancellation, but did not finish the
+full suite. These interrupted runs are not claimed as successful regression
+evidence; hosted standard Ruffle passed. Local parallel installs and browser
+tests were stopped after the user reported PC load. The owned harness server and
+temporary Redis container were removed, and no processes remained in either
+validation worktree. Further checks run on GitHub-hosted CI rather than locally.

@@ -423,3 +423,8 @@ moderation, account flood-limit, cosmetics and single-publication path. `serverC
 the ephemeral Redis room store; failed writes/publication now reject rather than return success.
 See [background bridge](../overlay/zfe/background-server-bridge.md) for the full contract and
 local-candidate deployment status. No database migration or new environment variables are needed.
+
+Human `relay` command results may include an internal `cancelCooldown` callback.
+Adapters call it only when publication is rejected by shared chat slowmode. It
+releases that exact command reservation without clearing a later reservation;
+it is never part of the public wire payload.

@@ -1469,9 +1469,13 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       suppressDiscordRelay: !command.relayToDiscord,
     });
     if (!result.ok) {
-      const feedback = result.retryAfterMs ? chatSlowmodeMessage(result.retryAfterMs)
-        : result.reason === 'rate-limited' ? 'Please wait before announcing another event.'
-        : result.reason === 'automod' ? 'Event announcement blocked by the chat filter.'
+      if (result.reason === 'rate-limited') {
+        command.cancelCooldown?.();
+        await reply(errEnvelope('rate_limited', result.retryAfterMs
+          ? chatSlowmodeMessage(result.retryAfterMs) : 'Please wait before announcing another event.', result.retryAfterMs));
+        return;
+      }
+      const feedback = result.reason === 'automod' ? 'Event announcement blocked by the chat filter.'
         : 'Event announcement could not be sent.';
       await reply({ success: true, messageId: uuidv4(),
         targetUserId: `FCMHUD/1;g=${encodeURIComponent(feedback)}` });

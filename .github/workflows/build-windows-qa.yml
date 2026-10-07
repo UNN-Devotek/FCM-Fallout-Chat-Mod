@@ -1,7 +1,7 @@
 name: Build Windows QA
 
 # Builds the QA-channel Windows overlay (BUILD_CHANNEL=qa -> targets the dev backend
-# + QA OAuth login) on the self-hosted Windows runner and uploads it as a workflow
+# + QA OAuth login) on a native Windows runner and uploads it as a workflow
 # artifact. Unsigned by design: QA testers are vetted, and QA builds are not published
 # to the release registry or Nexus. The signed PROD installer is build-windows.yml.
 on:
@@ -37,7 +37,7 @@ jobs:
   build-windows-qa:
     name: Build Windows QA (unsigned)
     needs: authorize
-    runs-on: [self-hosted, windows, unn]
+    runs-on: ${{ fromJSON(vars.QA_RUNNER_WINDOWS || '["windows-latest"]') }}
     defaults:
       run:
         shell: powershell

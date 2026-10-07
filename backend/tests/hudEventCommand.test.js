@@ -18,6 +18,7 @@ describe('HUD event command boundary', () => {
       '20260418210000_event_commands',
       '20260527120000_event_gearing_up',
       '20260608020000_infests_channel_and_sinkhole_command',
+      '20261006221000_add_sts_event_shortcut',
     ].map((migration) => readFileSync(resolve(root, 'backend/prisma/migrations', migration, 'migration.sql'), 'utf8')).join('\n');
     const hudCodes = [...hud.matchAll(/"([a-z]+)\|/g)].map((match) => match[1]).sort();
     const seedCodes = [...seed.matchAll(/VALUES\s*\(\s*'\/([a-z]+)'/g)].map((match) => match[1]).sort();

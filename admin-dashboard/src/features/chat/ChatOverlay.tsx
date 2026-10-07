@@ -27,6 +27,7 @@ import './nameEffects.css';
 import { usePickerInsert } from './usePickerInsert';
 import { useDebouncedSearch } from './useDebouncedSearch';
 import { ChatEmbedCard } from './components/ChatEmbedCard';
+import { MinervaCard, type MinervaMetadata } from './components/MinervaCard';
 import { ChatInlineEmbed } from './components/ChatInlineEmbed';
 import { scheduledEventAccent, scheduledEventActionState, scheduledEventCountdown } from './scheduledEventPresentation';
 import ImageLightbox from './components/ImageLightbox';
@@ -1524,22 +1525,6 @@ interface CampItemMetadata {
   sourceLabel: string | null;
   atomPrice?: number | null;
   atomBundle?: string | null;
-}
-interface MinervaMetadata {
-  type: 'minerva';
-  location: string;
-  listNumber: number;
-  isSuperSale: boolean;
-  isActive: boolean;
-  startUtc: string;
-  endUtc: string;
-  nextLocation: string | null;
-  nextListNumber: number | null;
-  nextIsSuperSale: boolean | null;
-  nextStartUtc: string | null;
-  sourceName?: string;
-  sourceUrl?: string;
-  inventory?: string[];
 }
 export const MINERVA_SOURCE_URL = 'https://www.falloutbuilds.com/fo76/minerva';
 interface CardShareMetadata {
@@ -4545,19 +4530,22 @@ export default function ChatOverlay() {
     queryFn: () => api.get<Channel[]>('/api/channels').then(d => d ?? []),
   });
   const [bridgeState, setBridgeState] = useState<BridgeState>(INACTIVE_BRIDGE);
+  // Display continuity only; never use this remembered room to authorize sends.
+  const [lastBridgeChannelId, setLastBridgeChannelId] = useState<string | null>(null);
   const bridgeStateRef = useRef<BridgeState>(INACTIVE_BRIDGE);
   // IDs restored by bridge:history remain in the canonical collection so the
   // Server subtab can show its full room history. General uses this marker only
   // to clip replay rows to the static feed's currently loaded time horizon.
   const bridgeReplayIdsRef = useRef<Set<string>>(new Set());
   const channelsRaw = useMemo(() => {
-    if (!staticChannels || !overlayShell || isPublicMode || bridgeState.status !== 'ready') return staticChannels;
+    const channelId = bridgeState.status === 'ready' ? bridgeState.channelId : lastBridgeChannelId;
+    if (!staticChannels || !overlayShell || isPublicMode || !channelId) return staticChannels;
     const parent = staticChannels.find(c => c.name.toLowerCase() === 'fallout 76') ?? staticChannels[0];
     return staticChannels.map(c => c !== parent ? c : { ...c, children: [...(c.children ?? []), {
-      id: bridgeState.channelId, name: 'Server', color: c.color, parentId: c.id,
+      id: channelId, name: 'Server', color: c.color, parentId: c.id,
       allowGifs: false, allowEmojis: true,
     }] });
-  }, [staticChannels, bridgeState, overlayShell, isPublicMode]);
+  }, [staticChannels, bridgeState, lastBridgeChannelId, overlayShell, isPublicMode]);
   useEffect(() => { refetchChannelsRef.current = () => refetchChannels(); }, [refetchChannels]);
 
   // Live app version — the LATEST published release from GET /api/version, NOT the
@@ -4755,7 +4743,12 @@ export default function ChatOverlay() {
     && activeMainId !== PARTY_MAIN_ID
     && activeSubId.startsWith('server:');
   const isBridgeChannel = isOnServerChannel && bridgeState.status === 'ready' && activeSubId === bridgeState.channelId;
-  const adminFeedActive = isAdmin && isOnServerChannel && !isBridgeChannel;
+  // Canonical rooms remain bridge views even between a fresh binding and the
+  // selection effect following that room. Never activate the legacy roster then.
+  const isBridgeServerView = isOnServerChannel
+    && (activeSubId.startsWith('server:r:') || activeSubId === lastBridgeChannelId);
+  const legacyServerRosterActive = isOnServerChannel && !isBridgeChannel && !isBridgeServerView;
+  const adminFeedActive = isAdmin && legacyServerRosterActive;
 
   const { data: feedData } = useQuery({
     queryKey: ['server-feed'],
@@ -4767,10 +4760,12 @@ export default function ChatOverlay() {
   const { data: membersData, refetch: refetchMembers } = useQuery({
     queryKey: ['same-server-members'],
     queryFn: () => api.get<{ serverEndpoint: string | null; users: ServerMember[]; totalChatMod: number; allPlayers: string[] | null }>('/api/presence/same-server'),
-    enabled: isOnServerChannel && !isBridgeChannel,
-    refetchInterval: isOnServerChannel && !isBridgeChannel ? 10_000 : false,
+    enabled: legacyServerRosterActive,
+    refetchInterval: legacyServerRosterActive ? 10_000 : false,
   });
-  useEffect(() => { presenceRefetchRef.current = () => refetchMembers(); }, [refetchMembers]);
+  useEffect(() => {
+    presenceRefetchRef.current = legacyServerRosterActive ? () => { void refetchMembers(); } : null;
+  }, [refetchMembers, legacyServerRosterActive]);
   useEffect(() => {
     if (membersData) {
       setServerMembers(membersData.users || []);
@@ -5163,6 +5158,9 @@ export default function ChatOverlay() {
     return bridge.onGameState((inGame: boolean) => {
       inGameRef.current = inGame;
       if (!inGame) {
+        setLastBridgeChannelId(null);
+        bridgeStateRef.current = INACTIVE_BRIDGE;
+        setBridgeState(INACTIVE_BRIDGE);
         bridgeReplayIdsRef.current.clear();
         setMessages(clearBridgeSessionRows);
       }
@@ -5477,6 +5475,7 @@ export default function ChatOverlay() {
               if (frame.type === 'bridge:state') {
                 const next = readBridgeState(frame.payload, !!overlayShell && !isPublicMode);
                 bridgeStateRef.current = next;
+                if (next.status === 'ready') setLastBridgeChannelId(next.channelId);
                 setBridgeState(next);
                 return;
               }
@@ -5499,7 +5498,33 @@ export default function ChatOverlay() {
                 }
                 setMessages(prev => bridgeStateRef.current === state ? mergeBridgeRows(prev, rows, state, frame.payload ?? {}, MESSAGE_CAP) : prev);
                 if (belongsToCurrentBridge) {
-                  for (const row of rows) markLiveUnread(row, frame.type === 'bridge:history' || frame.payload?.historyReplay === true);
+                  const replay = frame.type === 'bridge:history' || frame.payload?.historyReplay === true;
+                  // Use the same binding/ID validation as storage before any alert.
+                  const accepted = mergeBridgeRows([], rows, state, frame.payload ?? {}, MESSAGE_CAP);
+                  for (const row of accepted) {
+                    const seen = seenMessageIdsRef.current.has(row.id) || bridgeReplayIdsRef.current.has(row.id);
+                    if (!seenMessageIdsRef.current.has(row.id)) {
+                      seenMessageIdsRef.current.add(row.id);
+                      seenMessageIdQueueRef.current.push(row.id);
+                    }
+                    if (replay || seen) continue;
+                    markLiveUnread(row, false);
+                    const v = viewCtxRef.current;
+                    const inView = v.feedId
+                      ? (row.channelId === v.feedId || v.feedChildIds.includes(row.channelId))
+                      : row.channelId === v.activeSubId;
+                    if (inView) window.dispatchEvent(new Event('fcm-active-message'));
+                    if (row.userId === myUserIdRef.current || !messageTriggersNotify(row.content,
+                      myNamesRef.current, notifyKeywordsRef.current, chatEntities(row.metadata ?? null), myDiscordIdRef.current)) continue;
+                    window.dispatchEvent(new CustomEvent('fcm-mention-appear', { detail: { chId: row.channelId } }));
+                    playNotifySound();
+                    if (!inView) setUnreadMentions(prev => ({ ...prev, [row.channelId]: (prev[row.channelId] || 0) + 1 }));
+                    else dismissedMentionIdsRef.current.delete(row.id);
+                  }
+                  while (seenMessageIdQueueRef.current.length > 1000) {
+                    const evicted = seenMessageIdQueueRef.current.shift();
+                    if (evicted) seenMessageIdsRef.current.delete(evicted);
+                  }
                 }
                 return;
               }
@@ -8985,57 +9010,14 @@ export default function ChatOverlay() {
                   const mvAccent = '#F1C40F';
                   const minervaSourceUrl = mv.sourceUrl || MINERVA_SOURCE_URL;
                   const minervaSourceName = mv.sourceName || 'Fallout Builds';
-                  const fmtDate = (iso: string) => {
-                    const date = new Date(iso);
-                    return Number.isNaN(date.getTime())
-                      ? 'Unknown'
-                      : date.toLocaleString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-                  };
-                  const fmtDuration = (iso: string) => {
-                    const diffMs = new Date(iso).getTime() - Date.now();
-                    if (Number.isNaN(diffMs)) return 'Unknown';
-                    if (diffMs <= 0) return 'ending soon';
-                    const totalMins = Math.floor(diffMs / 60000);
-                    const days = Math.floor(totalMins / 1440);
-                    const hours = Math.floor((totalMins % 1440) / 60);
-                    const mins = totalMins % 60;
-                    const parts = [];
-                    if (days > 0) parts.push(`${days}d`);
-                    if (hours > 0) parts.push(`${hours}h`);
-                    if (mins > 0 || parts.length === 0) parts.push(`${mins}m`);
-                    return parts.join(' ');
-                  };
-                  const mvFields: { label: string; value: string }[] = [
-                    { label: 'STATUS', value: mv.isActive ? 'ACTIVE NOW' : 'UPCOMING' },
-                    { label: 'LOCATION', value: mv.location + (mv.isSuperSale ? ' ★' : '') },
-                    { label: 'LIST', value: `#${mv.listNumber}${mv.isSuperSale ? ' (Super Sale)' : ''}` },
-                    { label: mv.isActive ? 'ENDS' : 'STARTS', value: fmtDate(mv.isActive ? mv.endUtc : mv.startUtc) },
-                    { label: mv.isActive ? 'LEAVES IN' : 'ARRIVES IN', value: fmtDuration(mv.isActive ? mv.endUtc : mv.startUtc) },
-                    ...(mv.isActive && mv.nextLocation ? [
-                      { label: 'NEXT', value: `${mv.nextLocation}${mv.nextIsSuperSale ? ' ★' : ''} — List #${mv.nextListNumber}` },
-                      { label: 'NEXT STARTS', value: fmtDate(mv.nextStartUtc!) },
-                    ] : []),
-                    ...(Array.isArray(mv.inventory) && mv.inventory.length > 0
-                      ? [{ label: 'FOR SALE', value: mv.inventory.slice(0, 10).join('\n') }]
-                      : []),
-                  ];
                   return (
                     <div key={msg.id} style={{ padding: '2px 8px' }}>
-                      <ChatEmbedCard
-                        accent={mvAccent}
-                        icon="⛟"
-                        tag={mv.isSuperSale ? '★ SUPER SALE' : ''}
-                        title="Minerva's Big Sale"
+                      <MinervaCard
+                        sale={mv}
+                        sourceName={minervaSourceName}
+                        onOpenSource={() => openUrl(minervaSourceUrl)}
                         onShareToChat={() => shareCardToChat({ command: '/minerva', label: "Minerva's Big Sale", accent: mvAccent, icon: '⛟' })}
                         shareDisabled={cardShareCooldown}
-                        fields={mvFields}
-                        inlineMeta={
-                          <span role="button" tabIndex={0} title={`Source: ${minervaSourceName}`}
-                            onClick={() => openUrl(minervaSourceUrl)}
-                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') openUrl(minervaSourceUrl); }}
-                            style={{ color: hexAlpha(mvAccent, 0.85), textDecoration: 'underline', cursor: 'pointer' }}
-                          >via {minervaSourceName} &#8599;</span>
-                        }
                         hexAlpha={hexAlpha}
                         fontFamily={theme.fontFamily}
                         fontSize={fontSize}
@@ -11706,7 +11688,7 @@ export default function ChatOverlay() {
       )}
 
       {/* ── Server member list panel ── */}
-      {isOnServerChannel && !adminFeedActive && !isBridgeChannel && (
+      {legacyServerRosterActive && !adminFeedActive && (
         <div style={{
           width: '180px',
           flexShrink: 0,

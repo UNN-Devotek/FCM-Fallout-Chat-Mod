@@ -35,7 +35,7 @@ export interface ChatCommand {
 export type CommandResult =
   | { handled: false }
   | { handled: true; actionType: 'message'; botMessage: string; targetChannelId: string; metadata?: Record<string, unknown> | null; privateNotice?: string }
-  | { handled: true; actionType: 'relay'; relayContent: string; targetChannelId: string; responseColor?: string | null; privateNotice?: string; relayToDiscord: boolean }
+  | { handled: true; actionType: 'relay'; relayContent: string; targetChannelId: string; responseColor?: string | null; privateNotice?: string; relayToDiscord: boolean; cancelCooldown?: () => void }
   | { handled: true; actionType: 'private'; botMessage: string; targetChannelId: string; metadata?: Record<string, unknown> | null }
   | { handled: true; actionType: 'report'; reportContent: string; reportType: 'bug' | 'player'; targetChannelId: string }
   ;
@@ -91,9 +91,19 @@ function isCoolingDown(commandId: number, userId: string): boolean {
   return true;
 }
 
-function setCooldown(commandId: number, userId: string, cooldownSec: number): void {
+function setCooldown(commandId: number, userId: string, cooldownSec: number): (() => void) | undefined {
   if (cooldownSec <= 0) return;
-  cooldownMap.set(`${commandId}:${userId}`, Date.now() + cooldownSec * 1000);
+  const key = `${commandId}:${userId}`;
+  const expiresAt = Date.now() + cooldownSec * 1000;
+  cooldownMap.set(key, expiresAt);
+  // A publication rejected by shared slowmode must not turn its next retry
+  // into a terminal per-command response. Never clear a later reservation.
+  let canceled = false;
+  return () => {
+    if (canceled) return;
+    canceled = true;
+    if (cooldownMap.get(key) === expiresAt) cooldownMap.delete(key);
+  };
 }
 
 // Prune expired entries every 5 minutes to prevent unbounded growth
@@ -865,21 +875,21 @@ export async function tryHandleCommand(
       targetChannelId: channelId,
     };
   }
-  setCooldown(cmd.id, userId, cmd.cooldownSec);
+  const cancelCooldown = setCooldown(cmd.id, userId, cmd.cooldownSec);
 
   const resolvedChannelId = cmd.targetChannelId ?? channelId;
 
   // Relay action — send user's args as their own message to target channel
   if (cmd.actionType === 'relay') {
     const relayContent = args.length > 0 ? args : '(empty)';
-    return { handled: true, actionType: 'relay', relayContent, targetChannelId: resolvedChannelId, responseColor: cmd.responseColor, relayToDiscord: cmd.relayToDiscord };
+    return { handled: true, actionType: 'relay', relayContent, targetChannelId: resolvedChannelId, responseColor: cmd.responseColor, relayToDiscord: cmd.relayToDiscord, cancelCooldown };
   }
 
   // Announce action — resolves template but posts as the triggering user (not bot)
   if (cmd.actionType === 'announce') {
     const relayContent = substituteTemplate(cmd.response, { user: username, args, channel: channelName });
     return {
-      handled: true, actionType: 'relay', relayContent, targetChannelId: resolvedChannelId, responseColor: cmd.responseColor, relayToDiscord: cmd.relayToDiscord,
+      handled: true, actionType: 'relay', relayContent, targetChannelId: resolvedChannelId, responseColor: cmd.responseColor, relayToDiscord: cmd.relayToDiscord, cancelCooldown,
     };
   }
 

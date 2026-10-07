@@ -101,7 +101,8 @@ role only — **no Cloudflare Access email, no dual `developer` role**. A versio
 golden-build lock (`QA_BUILD_LOCK` + `QA_ACTIVE_VERSION`, enforced via `x-client-version` →
 HTTP 426 / WS 4003) retires stale builds; QA testers reach the dev website and `/link` page
 through app auth, with no CF Access email gate. The QA build channel is `npm run dist:qa` (Linux) / the
-**Build Windows QA** Actions workflow (self-hosted runner). Full build/bless/distribute
+**Build Windows QA** Actions workflow (`windows-latest`, or the optional
+`QA_RUNNER_WINDOWS` self-hosted override). Full build/bless/distribute
 runbook: [docs/deployment/qa-builds.md](docs/deployment/qa-builds.md).
 
 ---

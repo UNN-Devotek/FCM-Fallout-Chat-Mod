@@ -379,6 +379,76 @@ describe('overlay lifecycle and navigation', () => {
     expect(screen.getByText('Server row inside General horizon')).toBeInTheDocument();
   });
 
+  it.each(['user', 'admin'])('keeps the selected Server transcript during travel and fresh room hops (%s)', async role => {
+    await mount(role);
+    const socket = sockets[0];
+    act(() => {
+      socket.open();
+      socket.emit({ type: 'bridge:state', payload: { status: 'ready', channelId: 'server:r:one', bindingId: 'alice/one/r:one' } });
+      socket.emit({ type: 'bridge:history', payload: { channelId: 'server:r:one', bindingId: 'alice/one/r:one', historyReplay: true,
+        messages: [{ id: 'server:r:one:1', channelId: 'server:r:one', username: 'Bob', content: 'Retained travel transcript', source: 'server', timestamp: '2026-09-16T11:00:00Z' }] } });
+      socket.emit({ type: 'chat:history', payload: { messages: [{ id: 'general-new', channel_id: 'general', username: 'Bob', content: 'General only', created_at: '2026-09-16T12:00:00Z' }] } });
+    });
+    fireEvent.click(await screen.findByRole('button', { name: 'Server channel' }));
+    for (const status of ['inactive', 'ambiguous', 'unavailable']) {
+      act(() => socket.emit({ type: 'bridge:state', payload: { status } }));
+      expect(screen.getByRole('button', { name: 'Server channel' })).toBeInTheDocument();
+      expect(screen.getByText('Retained travel transcript')).toBeInTheDocument();
+      expect(screen.queryByText('General only')).toBeNull();
+      act(() => socket.emit({ type: 'presence:update', payload: {} }));
+      expect(screen.queryByText('No players detected')).toBeNull();
+      expect(get.mock.calls.some(([path]) => path === '/api/presence/same-server'
+        || path.startsWith('/api/presence/server-messages'))).toBe(false);
+    }
+    act(() => socket.emit({ type: 'bridge:message', payload: { channelId: 'server:r:one', bindingId: 'alice/one/r:one',
+      messages: [{ id: 'server:r:one:2', channelId: 'server:r:one', username: 'Bob', content: 'Stale travel message', source: 'server' }] } }));
+    expect(screen.queryByText('Stale travel message')).toBeNull();
+    act(() => socket.emit({ type: 'bridge:state', payload: { status: 'ready', channelId: 'server:r:two', bindingId: 'alice/two/r:two' } }));
+    expect(get.mock.calls.some(([path]) => path === '/api/presence/same-server'
+        || path.startsWith('/api/presence/server-messages'))).toBe(false);
+    expect(screen.queryByText('No players detected')).toBeNull();
+    expect(screen.getByText('Retained travel transcript')).toBeInTheDocument();
+    expect(screen.queryByText('General only')).toBeNull();
+    act(() => gameState(false));
+    expect(screen.queryByRole('button', { name: 'Server channel' })).toBeNull();
+    expect(screen.queryByText('Retained travel transcript')).toBeNull();
+  });
+
+  it('alerts once for fresh Server keywords, excluding replay, own messages and stale bindings', async () => {
+    await mount();
+    act(() => {
+      localStorage.setItem('fcm_web_overlay_settings', JSON.stringify({ notifyKeywords: ['fixer'] }));
+      window.dispatchEvent(new Event(OVERLAY_SETTINGS_EVENT));
+    });
+    const appear = vi.fn();
+    window.addEventListener('fcm-mention-appear', appear);
+    try {
+      const socket = sockets[0];
+      act(() => {
+        socket.open();
+        socket.emit({ type: 'bridge:state', payload: { status: 'ready', channelId: 'server:r:one', bindingId: 'alice/one/r:one' } });
+      });
+      const emit = (id: number, userId = 'bob', bindingId = 'alice/one/r:one', historyReplay = false) => act(() => socket.emit({
+        type: historyReplay ? 'bridge:history' : 'bridge:message', payload: { channelId: 'server:r:one', bindingId, historyReplay,
+          messages: [{ id: `server:r:one:${id}`, channelId: 'server:r:one', userId, username: 'Bob', content: 'Selling a fixer', source: 'server' }] },
+      }));
+      emit(1, 'bob', 'alice/one/r:one', true);
+      emit(2, 'alice');
+      emit(3, 'bob', 'stale');
+      expect(appear).not.toHaveBeenCalled();
+      emit(4);
+      expect(appear).toHaveBeenCalledTimes(1);
+      emit(4);
+      expect(appear).toHaveBeenCalledTimes(1);
+      emit(1);
+      expect(appear).toHaveBeenCalledTimes(1);
+      emit(5);
+      expect(appear).toHaveBeenCalledTimes(2);
+    } finally {
+      window.removeEventListener('fcm-mention-appear', appear);
+    }
+  });
+
   it('retains accepted Server rows across room changes for the current overlay session', async () => {
     await mount();
     const socket = sockets[0];

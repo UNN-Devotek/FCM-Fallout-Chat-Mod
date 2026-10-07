@@ -48,9 +48,11 @@ npm run dist:qa
 Produces `dist-electron/Fallout Chat Mod QA-<version>.AppImage` + `.deb` and prints the
 line to bless, e.g. `QA_ACTIVE_VERSION=1.3.91-qa.20260626014530`.
 
-**Windows** (Wine cannot build Electron 31+, so use the self-hosted runner): run the
+**Windows** (build natively on Windows): run the
 **Build Windows QA** workflow — GitHub Actions -> *Build Windows QA* -> *Run workflow*
-(`workflow_dispatch`, owner-only, runs on `[self-hosted, windows, unn]`). It runs
+(`workflow_dispatch`, owner-only, defaults to `windows-latest`). Set the optional
+`QA_RUNNER_WINDOWS` repository variable to a JSON runner-label list to use a
+maintainer's self-hosted Windows runner instead. It runs
 `dist:qa` and uploads the unsigned-by-intent NSIS installer + portable `.exe` as the
 artifact `fcm-overlay-qa-windows`.
 
@@ -72,6 +74,12 @@ To ship Linux **and** Windows as ONE golden build, pin the same version on both 
 FCM_BUILD_VERSION=1.3.91-qa.20260626 npm run dist:qa        # Linux
 gh workflow run build-windows-qa.yml --ref dev -f version=1.3.91-qa.20260626   # Windows
 ```
+
+The 2026-10-06 blue-name testing candidate pins both platforms to **1.4.3**.
+Use `FCM_BUILD_VERSION=1.4.3` locally and `-f version=1.4.3` for Windows;
+bless `1.4.3` only after both build artifacts have passed their checks. Its HUD
+and Server Bridge versions and native acceptance matrix are recorded in
+[the test report](../testing/blue-nameplates-2026-10-06.md).
 
 ### 2. Bless (make it the active golden build)
 

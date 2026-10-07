@@ -1051,7 +1051,24 @@ checks; do not claim those tools ran. The standalone HUDMenu path is a separate 
 
 ## Build the archive
 
-From `game-mods/FCMBridge/hudmodloader-chat/`:
+From `game-mods/FCMBridge/hudmodloader-chat/`, the complete rebuild command is:
+
+```bash
+python3 rebuild_widget.py
+python3 artifact_freshness.py
+```
+
+It compiles, normalizes, validates, replaces the existing BA2 payload while preserving
+entry metadata, checks byte-for-byte extraction, then records `HUD-ARTIFACTS.json`.
+Commit the manifest together with both binaries and their source changes. Packaging
+and the required CI gate reject missing manifests, changed production inputs, changed
+binaries, or a BA2 whose payload differs from the SWF. Text input hashes normalize
+CRLF for Windows checkouts. A matching version string is insufficient. Do not manually
+stamp an old binary; always rebuild through this command. This records a candidate,
+not game acceptance or release approval; the complete Ruffle gate and bounded native
+acceptance still apply before installation/distribution.
+
+The individual compile steps remain:
 
 ```bash
 haxe build.hxml
@@ -1096,6 +1113,8 @@ haxe -main TestFcmEmojiCommand -js /tmp/fcm-emoji-command-test.js
 node /tmp/fcm-emoji-command-test.js
 haxe -main TestFcmEmoji -js /tmp/fcm-emoji-test.js
 node /tmp/fcm-emoji-test.js
+python3 test_artifact_freshness.py
+python3 artifact_freshness.py
 python3 test_package.py
 python3 ../hudmenu-chat/test_anchors.py
 python3 ../hudmenu-chat/test_ba2tool.py
@@ -1120,6 +1139,8 @@ After validating and selecting the rebuilt local `FCMChatWidget.ba2`:
 python3 package.py --print-version
 python3 package.py --target dev --provider unified --distribution website --output /tmp/FCMChatWidget-dev.zip
 python3 package.py --target dev --provider unified --distribution nexus --output /tmp/FCMChatWidget-dev-nexus.zip
+python3 test_artifact_freshness.py
+python3 artifact_freshness.py
 python3 test_package.py
 ```
 
