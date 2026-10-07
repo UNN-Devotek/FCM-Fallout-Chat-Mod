@@ -247,7 +247,10 @@ async function handleOverlayCommand(interaction: ChatInputCommandInteraction): P
       displayName,
       source: 'discord',
       waitForPersistence: true,
-    }, interaction.user.id))) return;
+    }, interaction.user.id))) {
+      result.cancelCooldown?.();
+      return;
+    }
   }
   await replyForCommand(interaction, result);
   if (shouldMirrorDiscordCardToOverlay(context.isLinked, result)) {
@@ -327,7 +330,10 @@ async function runEventCommand(
     displayName,
     source: 'discord',
     waitForPersistence: true,
-  }, interaction.user.id))) return;
+  }, interaction.user.id))) {
+    result.cancelCooldown?.();
+    return;
+  }
   await interaction.reply({ content: 'Event announcement sent.', flags: MessageFlags.Ephemeral });
 }
 

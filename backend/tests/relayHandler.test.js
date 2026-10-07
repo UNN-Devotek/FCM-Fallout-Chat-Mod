@@ -1573,22 +1573,34 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
-  test('HUD event announcement cooldown returns a private notice instead of public chat', async () => {
+  test('HUD event cooldown releases the receipt and command timer so the same ID can retry', async () => {
+    require('../src/services/commandService').bustCommandCache();
     require('../src/config/prisma').default.chatCommand.findMany.mockResolvedValueOnce([{
       id: 782, trigger: '/sbq', alias: null, description: 'Scorched Earth',
       response: 'Scorched Earth event on this server.', actionType: 'announce',
       targetChannelId: SLUG_TO_UUID.events, allowedChannelId: '00000000-0000-0000-0000-000000000001',
-      cooldownSec: 0, enabled: true, requiresArgs: false, responseColor: null, relayToDiscord: true,
+      cooldownSec: 30, enabled: true, requiresArgs: false, responseColor: null, relayToDiscord: true,
     }]);
     const { token } = await setupLinkedUser();
     const ingest = require('../src/services/ingestMessage').ingestMessage;
-    ingest.mockResolvedValueOnce({ ok: false, reason: 'rate-limited', retryAfterMs: 35000 });
+    ingest.mockClear();
+    ingest.mockResolvedValueOnce({ ok: false, reason: 'rate-limited', retryAfterMs: 35000 })
+      .mockResolvedValueOnce({ ok: false, reason: 'rate-limited', retryAfterMs: 32000 })
+      .mockResolvedValueOnce({ ok: true, messageId: 'accepted-event' });
     const { ws, msgs } = await conn();
-    const result = await waitForMsg(ws, msgs, () =>
-      send(ws, { op: 'send', token, channel: 'global', body: '/sbq' }));
-    expect(result.success).toBe(true);
-    expect(decodeURIComponent(result.targetUserId)).toBe('FCMHUD/1;g=You are in cooldown. Please wait 35 seconds before sending another message.');
-    ws.close();
+    try {
+      const attempt = () => send(ws, { op: 'send', token, channel: 'global', body: '/sbq',
+        targetUserId: 'FCMOUT/1;i=event-cooldown-retry;r=' });
+      for (const retryAfterMs of [35000, 32000]) {
+        const result = await waitForMsg(ws, msgs, attempt);
+        expect(result).toMatchObject({ success: false, error: { code: 'rate_limited', retryAfterMs } });
+      }
+      expect(await waitForMsg(ws, msgs, attempt)).toMatchObject({ success: true, messageId: 'accepted-event' });
+      expect(ingest).toHaveBeenCalledTimes(3);
+      // A completed receipt replays its accepted result without re-publication.
+      expect(await waitForMsg(ws, msgs, attempt)).toMatchObject({ success: true, messageId: 'accepted-event' });
+      expect(ingest).toHaveBeenCalledTimes(3);
+    } finally { ws.close(); }
   });
 
   test('limited (unlinked) subscriber receives the system link-code notice on subscribe', async () => {

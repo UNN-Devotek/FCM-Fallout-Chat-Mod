@@ -49,7 +49,10 @@ beforeEach(() => {
 });
 
 test.each([['fcm', '/g Hello'], ['sos', null], ['events', '/sos']])('%s interaction cannot bypass an active shared cooldown', async (name, raw) => {
+  const cancelCooldown = jest.fn();
+  tryHandleCommand.mockResolvedValue({ handled: true, actionType: 'relay', targetChannelId: 'events', relayContent: 'Swarm of Suitors', cancelCooldown });
   const interaction = await dispatch(name, raw);
+  expect(cancelCooldown).toHaveBeenCalledTimes(1);
   expect(checkChatSlowmode).toHaveBeenCalledWith({ id: 'account', discordId: 'discord-user' });
   expect(finalizeMessage).not.toHaveBeenCalled();
   expect(interaction.reply).toHaveBeenCalledTimes(1);

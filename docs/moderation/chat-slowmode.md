@@ -15,8 +15,10 @@ replica does not reset the allowance. Channel-send handlers re-read the verified
 account Discord identity instead of trusting the connection-time snapshot. Normal socket/server flood guards still apply.
 Private messages and party chat retain their existing separate flood guards.
 
-This is a submission allowance: valid channel submissions consume a slot before
-content moderation, so filtered submissions still count. Discord human posts in
+This is a submission allowance: ordinary channel text consumes a slot before
+content moderation, so filtered ordinary submissions still count. Socket command
+relays are checked after command resolution and the existing content filter;
+private results and bot cards do not consume slots. Discord human posts in
 mapped channels count even if their content is later trimmed or rejected. Native
 control traffic (roster, authentication, history, browser/settings controls),
 receipt replays and server heartbeats do not consume chat slots. If Redis cannot
@@ -89,3 +91,12 @@ Discord application commands that publish human chat (including event shortcuts 
 `/fcm command` channel relays) use this same shared budget before publication. A blocked
 interaction receives an ephemeral cooldown reply and does not publish or send success
 feedback. Private lookups and structured bot cards remain exempt.
+
+The authenticated overlay/dashboard handlers also exempt handled private commands,
+bot cards, and reports. Human command relays and unknown slash text that falls
+through to ordinary chat still consume the shared allowance. A command rejected
+before publication releases its per-command cooldown reservation, so a pending
+HUD retry does not become a terminal “wait before using this command” response.
+Native event announcements rejected by slowdown return `success: false` with
+`rate_limited` and `retryAfterMs`, and release the receipt claim for a same-ID
+retry. They never acknowledge or cache an unpublished announcement as successful.
