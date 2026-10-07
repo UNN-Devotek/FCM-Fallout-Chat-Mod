@@ -119,6 +119,13 @@ prompt and reinstall. No separate de-list step.
   `-c.extraMetadata.fcmChannel=qa` (packed `package.json`, read by `main.js` to target dev +
   the QA login), `-c.extraMetadata.version=<version>`, and `productName "Fallout Chat Mod QA"`
   (distinct from the stable build, so both can coexist on one machine).
+- QA also stamps that product name into the packed metadata so Electron uses its
+  separate settings profile. The Windows app ID, shortcut and installer hook are
+  QA-specific; the hook stops only `Fallout Chat Mod QA.exe`. Linux uses
+  `fallout-chat-mod-qa`, `fallout-chat-mod-qa.desktop` and the separate
+  `fallout-chatmod-qa` Debian package. `qaBuildOverrides` tests and packaged metadata
+  checks cover these distinctions. Before 1.4.3, the builder's filename override
+  alone did not reliably isolate the embedded app identity.
 - **Signing:** QA builds are unsigned by intent (testers are vetted; QA builds are never
   published to the release registry or Nexus). On the Windows runner electron-builder's
   default certificate auto-discovery may still invoke `signtool` with a cert in the runner's

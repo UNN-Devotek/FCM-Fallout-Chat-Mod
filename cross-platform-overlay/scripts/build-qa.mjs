@@ -14,6 +14,7 @@ import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import semver from 'semver';
 
 /**
  * Derive a unique QA version from the package version + a build stamp. Strips any
@@ -24,6 +25,24 @@ import { fileURLToPath } from 'node:url';
 export function computeQaVersion(pkgVersion, stamp) {
   const base = String(pkgVersion).split('-')[0];
   return `${base}-qa.${stamp}`;
+}
+
+/** Keep QA settings, installer registry, shortcuts and Linux packages separate. */
+export function qaBuildOverrides(version) {
+  if (!semver.valid(version)) throw new Error('Invalid QA build version');
+  return {
+    'extraMetadata.fcmChannel': 'qa',
+    'extraMetadata.version': version,
+    'extraMetadata.productName': 'Fallout Chat Mod QA',
+    'extraMetadata.desktopName': 'fallout-chat-mod-qa.desktop',
+    appId: 'com.falloutchatmod.overlay.qa',
+    productName: 'Fallout Chat Mod QA',
+    'nsis.shortcutName': 'Fallout Chat Mod QA',
+    'nsis.include': 'assets/install/installer-qa.nsh',
+    'linux.executableName': 'fallout-chat-mod-qa',
+    'deb.packageName': 'fallout-chatmod-qa',
+    'deb.artifactName': `Fallout Chat Mod QA-${version}.deb`,
+  };
 }
 
 const isMain =
@@ -37,6 +56,7 @@ if (isMain) {
   // Linux + Windows golden release, or to match an already-blessed QA_ACTIVE_VERSION);
   // otherwise auto-stamp a unique <base>-qa.<timestamp> so the lock can retire old builds.
   const version = process.env.FCM_BUILD_VERSION || computeQaVersion(pkg.version, stamp);
+  const overrides = qaBuildOverrides(version);
   console.log(`[dist:qa] building QA version ${version}`);
   const env = { ...process.env, BUILD_CHANNEL: 'qa', FCM_BUILD_VERSION: version };
   // Resolve the local electron-builder bin explicitly so it works regardless of
@@ -44,7 +64,7 @@ if (isMain) {
   const eb = path.join(root, 'node_modules', '.bin', process.platform === 'win32' ? 'electron-builder.cmd' : 'electron-builder');
   execSync('npm run build:renderer', { stdio: 'inherit', cwd: root, env });
   execSync(
-    `"${eb}" -c.extraMetadata.fcmChannel=qa -c.extraMetadata.version=${version} -c.productName="Fallout Chat Mod QA"`,
+    `"${eb}" ` + Object.entries(overrides).map(([key, value]) => `-c.${key}="${value}"`).join(' '),
     { stdio: 'inherit', cwd: root, env },
   );
   console.log(`\n[dist:qa] done. Bless this build on the dev backend with:  QA_ACTIVE_VERSION=${version}`);
