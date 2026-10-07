@@ -39,3 +39,22 @@ test('a deleted or merged account cannot send using stale socket identity', asyn
   expect(checkChatSlowmode).not.toHaveBeenCalled();
   expect(JSON.parse(ws.send.mock.calls[0][0]).payload.message).toContain('account is unavailable');
 });
+
+const { rejectCommandSlowmode } = require('../src/websocket/chatSlowmode');
+test.each(['private', 'message', 'report'])('%s command does not consume a shared chat slot', async actionType => {
+  checkChatSlowmode.mockClear();
+  const ws = { send: jest.fn() };
+  expect(await rejectCommandSlowmode(ws, { id: 'account' }, { handled: true, actionType })).toBe(false);
+  expect(checkChatSlowmode).not.toHaveBeenCalled();
+  expect(ws.send).not.toHaveBeenCalled();
+});
+test('human command relay is blocked and releases its configured cooldown reservation', async () => {
+  checkChatSlowmode.mockResolvedValue({ allowed: false, remaining: 0, retryAfterMs: 35000 });
+  const cancelCooldown = jest.fn();
+  expect(await rejectCommandSlowmode({ send: jest.fn() }, { id: 'account' }, { handled: true, actionType: 'relay', cancelCooldown })).toBe(true);
+  expect(cancelCooldown).toHaveBeenCalledTimes(1);
+});
+test('unknown slash commands cannot bypass shared chat slowdown', async () => {
+  checkChatSlowmode.mockResolvedValue({ allowed: false, remaining: 0, retryAfterMs: 35000 });
+  expect(await rejectCommandSlowmode({ send: jest.fn() }, { id: 'account' }, { handled: false })).toBe(true);
+});

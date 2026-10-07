@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import re
+from artifact_freshness import validate as validate_artifact_freshness
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -214,6 +215,7 @@ def build_package(
         raise ValueError("provider must be unified, zfe or xscal")
     if distribution not in ("website", "nexus"):
         raise ValueError("distribution must be website or nexus")
+    validate_artifact_freshness(ROOT)
     version = widget_version()
     widget_artifact = ROOT / "FCMChatWidget.ba2"
     if version.encode("ascii") not in widget_artifact.read_bytes():

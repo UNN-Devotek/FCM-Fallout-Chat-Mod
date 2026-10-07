@@ -99,4 +99,25 @@ describe('/online command', () => {
     expect(help).toContain('/wiki query:<item>');
     expect(help).toContain('/report player user:<player> description:<details>');
   });
+  test('a blocked relay can release its timer once without clearing a later reservation', async () => {
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(50000);
+    try {
+      require('../src/config/prisma').default.chatCommand.findMany.mockResolvedValue([{
+        id: 900, trigger: '/sbq', enabled: true, actionType: 'announce', cooldownSec: 30,
+        response: 'Event announcement', requiresArgs: false, allowedChannelId: null,
+        targetChannelId: 'events', relayToDiscord: true,
+      }]);
+      const run = () => tryHandleCommand('/sbq', 'account', 'Alice', 'general', 'General');
+      const first = await run();
+      expect(first.actionType).toBe('relay');
+      first.cancelCooldown();
+      const second = await run();
+      expect(second.actionType).toBe('relay');
+      first.cancelCooldown(); // repeated old cleanup cannot clear the new timer
+      expect((await run()).actionType).toBe('private');
+      second.cancelCooldown();
+      expect((await run()).actionType).toBe('relay');
+    } finally { clock.mockRestore(); }
+  });
+
 });
