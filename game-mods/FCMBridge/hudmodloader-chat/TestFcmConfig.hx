@@ -29,6 +29,8 @@ class TestFcmConfig {
 
     static function main():Void {
         var visibilityDefaults = new FcmConfig();
+        check("blue nameplates enabled by default", visibilityDefaults.blueNameplates);
+        check("blue nameplates opt-out persists", !FcmConfig.parse(FcmConfig.parse("[FCMChat]\nblueNameplates=false").toIni()).blueNameplates);
         check("inspection hidden by default", visibilityDefaults.hideInHUDModes.indexOf("InspectMode") >= 0);
         check("examine confirmations hidden by default", visibilityDefaults.hideInHUDModes.indexOf("ExamineConfirmMode") >= 0);
         check("modal messages hidden by default", visibilityDefaults.hideInHUDModes.indexOf("MessageMode") >= 0);

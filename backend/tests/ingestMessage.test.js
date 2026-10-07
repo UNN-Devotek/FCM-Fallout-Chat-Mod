@@ -1,3 +1,4 @@
+jest.mock('../src/services/chatSlowmodeService', () => ({ ...jest.requireActual('../src/services/chatSlowmodeService'), checkChatSlowmode: jest.fn(async () => ({ allowed: true, remaining: 2, retryAfterMs: 0 })) }));
 'use strict';
 /**
  * Unit tests for ingestMessage (backend/src/services/ingestMessage.ts).
@@ -483,5 +484,20 @@ describe('ingestMessage — slash command handling', () => {
     // Only the WS handler intercepts them; ingestMessage should not block them.
     // The test just confirms ingestMessage doesn't return slash-command-dropped for ws.
     expect(result.reason).not.toBe('slash-command-dropped');
+  });
+});
+
+
+describe('shared chat slowmode', () => {
+  test.each(['ws', 'relay', 'mcp'])('%s rejection occurs before persistence, broadcast or Discord relay', async source => {
+    const { checkChatSlowmode } = require('../src/services/chatSlowmodeService');
+    checkChatSlowmode.mockResolvedValueOnce({ allowed: false, remaining: 0, retryAfterMs: 35000 });
+    prismaStub.user.findUnique.mockResolvedValue({ ...BASE_USER, discordId: 'linked-discord' });
+    const result = await ingestMessage({ userId: 'account', channelId: VALID_CHANNEL_ID, rawContent: 'hello', source });
+    expect(result).toEqual({ ok: false, reason: 'rate-limited', retryAfterMs: 35000 });
+    expect(checkChatSlowmode).toHaveBeenLastCalledWith({ id: 'account', discordId: 'linked-discord' });
+    expect(messageQueue.add).not.toHaveBeenCalled();
+    expect(broadcast).not.toHaveBeenCalled();
+    expect(relayToDiscord).not.toHaveBeenCalled();
   });
 });

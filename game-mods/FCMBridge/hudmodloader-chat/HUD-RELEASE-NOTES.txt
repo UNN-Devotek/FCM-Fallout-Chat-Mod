@@ -1,5 +1,27 @@
-FCM HUD 2.10.136 test candidate
+FCM HUD 2.10.138 test candidate
 ==============
+
+Blue FCM names
+--------------
+Existing overhead names can turn blue for nearby FCM users in your confirmed
+Server room. Nonusers keep normal colors; hostile/wanted colors and vanilla
+nameplate visibility remain authoritative. Set blueNameplates=false in
+Data/FCMChat.ini to disable it. The renderer is shared with Server Bridge 0.2.10.
+Requires the matching backend update. This is a testing candidate for the next
+update; native acceptance and public publication are pending.
+
+Channel navigation and sends
+-----------------------------
+Type g, t, e, i, r, or s alone and press Enter to select General, Trading, Events,
+Infests, Raids, or Server without sending a message. Prefix a message with /t, /i,
+/e, or another channel command to send there without changing your current tab.
+For example, /t looking for plans sends to Trading while you stay on General.
+A prefix without a message neither switches tabs nor sends. Plain messages target
+the selected tab. Dot forms and full-name aliases work too. No setting is required.
+Server selection and sending require a confirmed current Server chat session;
+unavailable Server messages are never sent to a community channel instead.
+The packaged keybind guide and website guide document the same channel mapping.
+This is a local test candidate; native game acceptance remains pending.
 
 xScal appearance and keybinds
 -----------------------------

@@ -2,7 +2,8 @@ FCM Server Bridge {version}
 
 This optional invisible HUDModLoader child exports game HUD roster observations
 to Fallout Chat Mod on this computer. Sign into Fallout Chat Mod only. The
-bridge has no separate login or pairing code.
+bridge has no separate login or pairing code. It can also color nearby FCM users'
+existing overhead name labels blue while current desktop presence is confirmed.
 
 PREREQUISITES
 HUDModLoader plus exactly one extender: the latest ZFE or the latest xScal.
@@ -24,9 +25,10 @@ ZFE INSTALL
    entry; FCMServerBridge.hudmodloader.ini is a snippet, not a replacement.
 4. Append FCMServerBridge.ba2 once to [Archive] sResourceArchive2List in the
    active Fallout76Custom.ini. Preserve HUDModLoader.ba2 and unrelated archives.
-5. Do not install falloutchatmod.ini, a TextChat fragment, or zfe.ini for the
-   bridge. If an old FCMServerBridge TextChat fragment exists, back up and
-   remove only that fragment.
+5. For blue names, copy Provider-ZFE/Data/ZFE/TextChat/fragments/FCMServerBridge.ini
+   to that path under the game folder. Its relay must match https://{host}.
+   Preserve any global zfe.ini override and ensure its Endpoint matches.
+   Omit this fragment to keep the existing export-only Server bridge.
 6. Remove xScal if it is installed. Start Fallout Chat Mod and sign in at
    https://{host}, launch Fallout 76, and enter a public world. The overlay
    exposes Server automatically after fresh exports are confirmed.
@@ -34,9 +36,10 @@ ZFE INSTALL
 XSCAL INSTALL
 -------------
 1. Install HUDModLoader and the latest xScal.
-2. Do not edit xscal.ini for the Server Bridge. The [Chat] enabled and
-   relayEndpoint settings are only for the visible FCM in-game HUD, not this
-   invisible bridge.
+2. For blue names, merge Provider-xScal/xscal.ini [Chat] into xscal.ini beside
+   Fallout76.exe: enabled=true and the packaged relayEndpoint. Keep all other
+   sections. This is a cosmetic receiver; it does not add a chat UI or login.
+   Native chat can remain disabled if you only want the existing Server bridge.
 3. Back up the files below, then copy Data/FCMServerBridge.ba2 into the game's
    Data directory.
 4. Add FCMServerBridge once to Data/hudmodloader.ini. Preserve every existing
@@ -82,7 +85,7 @@ TROUBLESHOOTING
 - No export: check archive path, loader registry and active custom INI precedence.
 - Provider conflict: remove either ZFE or xScal; exactly one may be installed.
 - Scoped storage required: update the selected official extender; the bridge
-  does not fall back to native chat or a separate login.
+  does not use native chat for exports or require a separate login.
 - Storage unavailable: check provider-supported storage permissions. Export
   failures are retried at most once per second.
 - Fresh roster unavailable: inspect fixed Menu/Roster/source diagnostics. Do
@@ -91,6 +94,16 @@ TROUBLESHOOTING
   detection and advancing export age. Do not edit JSON to force room assignment.
 - Different devices: each overlay accepts only its own local game export and
   authenticated session; another device's native link cannot grant access.
+
+BLUE NAMES
+Blue marks an active FCM peer in the same confirmed Server room, matched against
+names the HUD actually observed. Use two signed-in FCM accounts in one world.
+Names do not authenticate accounts. Hostile/wanted colors and vanilla nameplate
+visibility remain authoritative. Presence expires within ten seconds of the last
+accepted request; transport delay can make it expire sooner. Menu/world changes
+clear it. The matching backend feature must be deployed in {target_lower} first.
+The optional native receiver requires asynchronous provider connect/send/control;
+it silently remains unavailable on older providers. Do not link a bridge token.
 
 UPDATE / REMOVE
 With the game closed, replace only the BA2 with the tested same-environment

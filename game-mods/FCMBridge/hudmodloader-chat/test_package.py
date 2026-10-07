@@ -257,6 +257,10 @@ def main() -> None:
                 assert b"Choose only" in readme[:400]
                 assert b"RELEASE NOTES" in readme
                 assert b"HUDMODLOADER MENU" in readme
+                assert b"t followed by Enter selects Trading without sending a message" in readme
+                assert b"/t looking for plans sends to Trading while you stay on General" in readme
+                assert b"A prefix without a message does not switch tabs or send anything" in readme
+                assert b"switchTabOnChannelSend" not in readme
                 assert b"PROVIDER KEYBIND CONTRACT" in readme
                 assert b"CUSTOMIZATION" in readme
                 assert b"Reset all settings" in readme

@@ -1,3 +1,4 @@
+import { rejectChatSlowmode } from './chatSlowmode';
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocket, RawData } from 'ws';
 import { IncomingMessage } from 'http';
@@ -1002,7 +1003,7 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
           try {
             gameUser = await prisma.user.findFirst({
               where: { discordId: identity.discordId },
-              select: { id: true, username: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, installToken: true, isBanned: true, isMuted: true, muteExpiresAt: true, muteReason: true, muteCategory: true },
+              select: { id: true, username: true, discordId: true, discordUsername: true, discordDisplayName: true, steamDisplayName: true, installToken: true, isBanned: true, isMuted: true, muteExpiresAt: true, muteReason: true, muteCategory: true },
             });
           } catch (err) {
             logger.error({ err }, 'Admin observer: DB error resolving game user');
@@ -1097,6 +1098,8 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
             sendWsError(ws, 'Server error.');
             return;
           }
+
+          if (await rejectChatSlowmode(ws, gameUser)) return;
 
           // Single engine call replaces separate filterContent + detectSpam
           const engineResult = await engineEvaluate(content, channelId, gameUser);
@@ -2342,6 +2345,8 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
           sendWsError(ws, 'Server error.');
           return;
         }
+
+        if (await rejectChatSlowmode(ws, user)) return;
 
         // Pre-broadcast auto-moderation
         // Single engine call: legacy word_filter + Redis spam + new automod_rules

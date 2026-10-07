@@ -5,6 +5,12 @@ default desktop overlay. The overlay does not install game files or require an e
 HUD mod uses UI assets and already-exposed HUD data through an extender's sanctioned API; it
 must not add game-memory reads, code injection, or network/port scanning.
 
+**Blue-name testing candidate:** HUD 2.10.138 and Server Bridge 0.2.10 share a
+renderer for existing overhead names, backed by fresh private FCM presence.
+See [blue nameplates](blue-nameplates.md) and the
+[native test matrix](../../testing/blue-nameplates-2026-10-06.md). This requires a
+matching backend; public release and native acceptance are pending.
+
 **Current local typing setup (2026-09-26):** The Steam/Proton game has xScal
 0.2.18, HUDModLoader v70, and the source-built FCMChatWidget 2.10.134 BA2.
 `Data/FCMChat.ini` sets `xscalInputMode=shared` for
@@ -37,6 +43,12 @@ Address Library replaced the failed native-input 0.2.19 test. The original
 blocking in game. The available 0.2.20 log confirms startup and Address Library
 loading but ends before the widget attaches, so the input session itself has
 user acceptance rather than a complete provider log.
+
+**Unreleased channel routing (2.10.137):** bare `t` or `s` plus Enter selects
+Trading or Server. `/t message`, `/i message`, and `/e message` send to those channels
+without changing the selected tab. A prefix without a message does not select a tab.
+No setting is required. See [keybinds](../keybinds.md#hud-channel-shortcuts).
+This source change does not establish installed or native game acceptance.
 
 ## Current implementation and verification
 

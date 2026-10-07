@@ -478,27 +478,24 @@ describe('HUDModLoader host presentation and menu routing', () => {
   });
 });
 
-describe('parseInputSubmit (slash parse + consume)', () => {
-  it('bare "/g" switches and sends nothing', () => {
-    expect(parseInputSubmit('/g')).toEqual({ switchedIdx: 0, send: null });
+describe('parseInputSubmit (bare navigation and prefixed sends)', () => {
+  it.each([['g', 0], ['t', 1], ['e', 2], ['i', 3], ['r', 4], ['s', 5]])('bare %s selects a tab without sending', (token, idx) => {
+    expect(parseInputSubmit(token)).toEqual({ switchedIdx: idx, destinationIdx: -1, send: null });
   });
-  it('"/g hi" switches and sends "hi"', () => {
-    expect(parseInputSubmit('/g hi')).toEqual({ switchedIdx: 0, send: 'hi' });
+  it.each(['/g', '/t', '.e', '/s'])('empty prefix %s does not select or send', prefix => {
+    expect(parseInputSubmit(prefix)).toEqual({ switchedIdx: -1, destinationIdx: -1, send: null });
   });
-  it('"/x ..." no match → sent verbatim as a message', () => {
-    expect(parseInputSubmit('/x hello')).toEqual({ switchedIdx: -1, send: '/x hello' });
+  it.each([['/g hi', 0], ['/t hi', 1], ['.e hi', 2], ['/i hi', 3], ['/r hi', 4], ['/s hi', 5]])('%s chooses only the destination', (text, idx) => {
+    expect(parseInputSubmit(text)).toEqual({ switchedIdx: -1, destinationIdx: idx, send: 'hi' });
   });
-  it('plain text → sent as a message, no switch', () => {
-    expect(parseInputSubmit('hello world')).toEqual({ switchedIdx: -1, send: 'hello world' });
+  it.each(['hello world', 't hello', '/x hello', '/'])('ordinary input stays intact: %s', text => {
+    expect(parseInputSubmit(text)).toEqual({ switchedIdx: -1, destinationIdx: -1, send: text });
   });
-  it('empty / whitespace → nothing sent', () => {
-    expect(parseInputSubmit('   ')).toEqual({ switchedIdx: -1, send: null });
+  it('empty input sends nothing', () => {
+    expect(parseInputSubmit('   ')).toEqual({ switchedIdx: -1, destinationIdx: -1, send: null });
   });
-  it('a lone "/" is not a command → sent verbatim', () => {
-    expect(parseInputSubmit('/')).toEqual({ switchedIdx: -1, send: '/' });
-  });
-  it('long-form "/trading wts" switches to trade and sends', () => {
-    expect(parseInputSubmit('/trading wts')).toEqual({ switchedIdx: 1, send: 'wts' });
+  it('long-form prefix routes without selecting', () => {
+    expect(parseInputSubmit('/trading wts')).toEqual({ switchedIdx: -1, destinationIdx: 1, send: 'wts' });
   });
 });
 

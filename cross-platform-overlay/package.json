@@ -1,6 +1,6 @@
 {
   "name": "fallout-chatmod-cross-platform-overlay",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "productName": "Fallout Chat Mod",
   "desktopName": "fallout-chat-mod.desktop",
   "//desktopName": "Read by Electron at runtime (app.setDesktopName) to pin the Linux X11 WM_CLASS / native-Wayland app_id to fallout-chat-mod, matching build.linux.executableName. The KWin/Hyprland rules in main.js key off this exact string. Do not remove.",
@@ -34,7 +34,7 @@
     "profile:idle": "node scripts/profile-idle.mjs",
     "test:unit:watch": "vitest"
   },
-  "//scripts": "DEVELOPMENT uses ONLY dev:local / start:local — both target your local backend at http://localhost:7076. dev:local is ONE command: starts the Vite renderer (HMR) + launches Electron against it (edit ChatOverlay.tsx/shell.ts → hot-reloads). start:local builds the renderer once (no HMR). dev:cloud runs scripts/dev-cloud.mjs, which loads the hosted-DEV persona key from the OS keyring (or DEV_PERSONA_LOGIN_SECRET), isolates user data under ~/.fcm/hosted-dev, and targets dev.falloutchatmod.com. start + dist:* are the SHIPPING build of the end-user binary, which targets the production relay (https://falloutchatmod.com) — do NOT use them to develop against prod. NOTE: node_modules is platform-specific (native binaries: rollup, electron) — run these on the SAME OS you ran `npm install` on. On Windows+WSL, install and run the overlay on Windows.",
+  "//scripts": "DEVELOPMENT uses ONLY dev:local / start:local \u2014 both target your local backend at http://localhost:7076. dev:local is ONE command: starts the Vite renderer (HMR) + launches Electron against it (edit ChatOverlay.tsx/shell.ts \u2192 hot-reloads). start:local builds the renderer once (no HMR). dev:cloud runs scripts/dev-cloud.mjs, which loads the hosted-DEV persona key from the OS keyring (or DEV_PERSONA_LOGIN_SECRET), isolates user data under ~/.fcm/hosted-dev, and targets dev.falloutchatmod.com. start + dist:* are the SHIPPING build of the end-user binary, which targets the production relay (https://falloutchatmod.com) \u2014 do NOT use them to develop against prod. NOTE: node_modules is platform-specific (native binaries: rollup, electron) \u2014 run these on the SAME OS you ran `npm install` on. On Windows+WSL, install and run the overlay on Windows.",
   "dependencies": {
     "@emoji-mart/data": "^1.2.1",
     "@tanstack/react-query": "^5.101.4",
@@ -75,7 +75,7 @@
   "build": {
     "appId": "com.falloutchatmod.overlay",
     "productName": "Fallout Chat Mod",
-    "copyright": "Copyright © 2024 Fallout Chat Mod",
+    "copyright": "Copyright \u00a9 2024 Fallout Chat Mod",
     "directories": {
       "buildResources": "assets",
       "output": "dist-electron"

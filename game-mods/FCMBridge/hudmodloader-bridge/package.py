@@ -16,7 +16,7 @@ import zlib
 
 ROOT = Path(__file__).resolve().parent
 ENTRY = "Interface/FCMServerBridge.swf"
-VERSION = "0.2.9"
+VERSION = "0.2.10"
 
 
 def module(name: str, path: Path):
@@ -40,12 +40,12 @@ def validate_pair(swf: Path, archive: Path, native_prototype: bool = False) -> d
     if ba2._raw_blob(raw, records[0]) != swf.read_bytes():
         raise ValueError("Archive SWF differs from compiled SWF")
     payload = swf.read_bytes()
-    forbidden_symbols = [b"FCMChatWidget", b"flash.text.TextField", b"TextEdit", b"URLLoader", b"Socket",
+    forbidden_symbols = [b"FCMChatWidget", b"TextEdit", b"URLLoader", b"Socket",
                       b"SharedHUDTools", b"HUDMod::UserEvent", b"ShowMenu", b"CloseMenu",
                       b"BridgeRosterScenario", b"BRIDGE-ROSTER", b"PackagedBridgeHost", b"IsolatedProvider",
                       b"LINK REQUIRED", b"FCMBRIDGE/1;", b"JsonParser"]
     if not native_prototype:
-        forbidden_symbols += [b"chat.v1.", b"chatInterface", b"NATIVE-PROTOTYPE"]
+        forbidden_symbols += [b"FCMCTL/1/NATIVE-PROTOTYPE:", b"NATIVE-PROTOTYPE", b"FcmBridgeNativePrototype"]
     for forbidden in forbidden_symbols:
         if forbidden in payload:
             raise ValueError(f"Background build unexpectedly contains {forbidden!r}")
@@ -82,6 +82,13 @@ def build(target: str, output: Path, diagnostic: bool = False, native_prototype:
             package.write(archive, "Data/FCMServerBridge.ba2")
             package.writestr("FCMServerBridge.hudmodloader.ini", "FCMServerBridge\n")
             package.writestr("Fallout76Custom.ini.example", "[Archive]\nsResourceArchive2List=HUDModLoader.ba2,FCMServerBridge.ba2\n")
+            if not native_prototype:
+                package.writestr("Provider-ZFE/Data/ZFE/TextChat/fragments/FCMServerBridge.ini",
+                    f"; Optional native cosmetic receiver. Server chat/auth stay in the desktop.\n[TextChat]\n"
+                    f"Endpoint=wss://{host}/relay\nAllowedChannels=server\nDefaultChannel=server\nAutoConnect=false\n")
+                package.writestr("Provider-xScal/xscal.ini",
+                    f"; Merge into the existing file beside Fallout76.exe; preserve other sections.\n"
+                    f"[Chat]\nenabled=true\nrelayEndpoint=wss://{host}/relay\n")
             export_config = {"schemaVersion": 1, "environment": target,
                 "zfe": f"Data/ZFE/Storage/FCMServerBridge/{target}-state.json",
                 "xscal": f"Data/modsdata/fcmserverbridge-{target}.json"}

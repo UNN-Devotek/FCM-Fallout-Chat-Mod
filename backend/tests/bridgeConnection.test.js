@@ -127,3 +127,15 @@ test('a delayed send guard cannot revive after leave even if the same binding re
   await s.bridge.watch('local-export');
   expect(await guard()).toBe(false);
 });
+
+test('desktop Server cooldown includes shared retry timing and publishes no local echo', async () => {
+  const { ServerMessageError } = require('../src/services/relay/serverMessageService');
+  const s = setup(); await s.bridge.watch();
+  const error = new ServerMessageError('You are in cooldown. Please wait 35 seconds before sending another message.');
+  error.retryAfterMs = 35000;
+  s.deps.sendMessage.mockRejectedValueOnce(error);
+  await s.bridge.send('server:r:one', bridgeBindingId(binding), 'fourth');
+  expect(s.frames).toContainEqual({ type: 'rate:status', payload: { scope: 'chat', remaining: 0, retryAfterMs: 35000 } });
+  expect(s.frames.at(-1)).toEqual({ type: 'error', payload: { message: error.message } });
+  expect(s.rows()).toEqual([]);
+});

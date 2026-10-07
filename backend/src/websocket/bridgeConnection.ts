@@ -245,6 +245,9 @@ export class BridgeConnection {
           displayName: binding.displayName }, binding.room, content, () => this.matches(binding, epoch));
         // Delivery comes only from Redis pub/sub/history, never a second local echo.
       } catch (err) {
+        if (err instanceof ServerMessageError && err.retryAfterMs) {
+          this.output({ type: 'rate:status', payload: { scope: 'chat', remaining: 0, retryAfterMs: err.retryAfterMs } });
+        }
         this.output({ type: 'error', payload: { message: err instanceof ServerMessageError ? err.message : 'Server message delivery could not be confirmed. Check history before resending.' } });
       }
     });

@@ -1,5 +1,56 @@
 # FCMChatWidget build, install, and verification
 
+## Blue-name candidate 2.10.138
+
+**Widget version:** 2.10.138. Testing candidate; native acceptance/public release pending.
+
+This candidate adds the shared cosmetic presence renderer, retains 2.10.137's
+channel behavior and targets the matching backend nameplate protocol. The bridge
+candidate is 0.2.10. Native acceptance and public release are pending. Follow
+[the feature protocol](../../../docs/overlay/zfe/blue-nameplates.md) and
+[the two-client test matrix](../../../docs/testing/blue-nameplates-2026-10-06.md).
+Final gate evidence and artifact hashes are recorded in that test report.
+
+
+## Channel navigation and sends candidate (2026-10-06)
+
+**Previous candidate:** 2.10.137. Local candidate; neither installed nor published.
+Bare channel letters select tabs: `t` selects Trading and ready-session `s` selects
+Server. Prefixes with a body (`/t message`, `/e message`, `/i message`) select only
+the send destination and keep the current tab. Empty prefixes neither navigate nor
+send; plain messages target the selected tab. Dot forms and full-name aliases remain
+supported. No configuration or saved preference is required. The initial optional
+F11-toggle experiment was replaced before any installation or publication.
+
+The existing outbox retains each destination across later navigation and authoritative
+echoes. Unavailable Server sends are blocked instead of reaching a community channel.
+The checkout's pre-existing slowmode notice work is preserved in this candidate. This
+change does not alter emote/input ownership, layout storage, or the relay schema.
+Packaged keybinds, HUD help, and the shared public/dashboard website guide now describe
+bare navigation separately from prefixed sends. Website changes are local source changes.
+
+Local validation passed: all 26 pure HUD Haxe suites, native adapter/auth suites,
+compiler diagnostics (`[]`), source/SWF/BA2/package/emoji checks, and all **87 Ruffle
+Playwright scenarios** (6.4 minutes). The event policy fixture now navigates with
+bare `t` and checks the corrected `g` recovery hint. The simulator shut down cleanly;
+port 41739 was closed. Overlay tests passed (59 files, 1,298 tests); dashboard tests
+passed (48 files, 475 tests), including both public/dashboard guide variants. The
+website build passed. Existing CI jobs cover these regressions; hosted CI was not run.
+
+The BA2 preserves its BTDX v1 GNRL one-entry metadata and contains the exact tested
+normalized SWF. Both provider folders in each unified ZIP contain identical copies;
+package tests assert that the corrected channel instructions are included and the
+retired toggle instructions are absent. These replace the earlier local 2.10.137
+optional-toggle ZIPs at the same paths; neither iteration was installed or published.
+
+- SWF SHA-256: `6247c2482d946fb46c182604c122598c4be6b3792567537a3e2bf0df88813185`.
+- BA2 SHA-256: `1abd4f583773e48ca160703c1f8180558fd0e4182e0e4c2c6f2a48e965983fa8`.
+- `.build/FCMChatWidget-2.10.137-channel-send-tabs-DEV-test.zip`, SHA-256 `180efa7d16c30051fa7207f2ae0f23232676be2d5031cd62ae28e227247c78fe`.
+- `.build/FCMChatWidget-2.10.137-channel-send-tabs-PROD-test.zip`, SHA-256 `828a953641ad478647607e15bff727e3b3283dee5290e46c8bb45d0e64bb0e0c`.
+
+Native acceptance remains pending; see the
+[automation matrix](../../../docs/testing/hud-automation-plan.md#channel-navigation-and-sends--candidate-210137).
+
 ## xScal local layout and framegen key conflict candidate (2026-10-01)
 
 **Widget version:** 2.10.136. Local test candidate; installed on the desktop

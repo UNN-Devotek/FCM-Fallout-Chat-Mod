@@ -1,5 +1,41 @@
 # Automated HUD-mod test harness plan
 
+## Blue overhead names — HUD 2.10.138 / bridge 0.2.10
+
+The provider-paired `nameplates` HUD scenario uses the production private-event
+parser and shared painter. It checks ordinary player exclusion, color restoration,
+vanilla redraw, hostile/wanted exclusion, recycled labels, expiry, world loss,
+INI opt-out and disposal. `packaged-nameplates` loads each actual packaged bridge
+in an isolated application domain with accessor-backed game/provider fixtures;
+it verifies limited native transport, exact export session/generation, redraw,
+hostility, world hops, lease expiry and unload. Existing automatic teardown remains
+required. The pure `test-nameplates.hxml` suite and backend Jest pairing/private
+delivery tests run in the existing required CI gates.
+
+Native GFx frame ordering, provider permission forwarding, real canonical-room
+discovery and performance remain pending in the
+[bounded in-game acceptance matrix](blue-nameplates-2026-10-06.md).
+
+## Channel navigation and sends — candidate 2.10.137
+
+The provider-paired `channel-send-tab` scenario exercises `/t` and `/i` message
+routing while General stays selected, followed by a plain General message. Bare
+`t`, `g`, and ready-session `s` navigate without sending. Empty slash/dot prefixes
+do not select or send; unavailable Server sends do not fall through. Later navigation
+cannot alter queued destinations. Provider sends are exactly once and canonical
+echoes reconcile in their original channels; the ZFE fixture supplies the separate
+durable private receipt. The scenario excludes hosted snapshots and retains standard
+automatic teardown. Pure Haxe command tests, overlay fixture regressions, and website
+HUD-guide tests run in existing CI jobs; the complete Ruffle suite covers both providers.
+
+Native acceptance remains required on ZFE and xScal: select General, send `/t message`,
+`/i message`, and `/e message`, then confirm each destination receives one message
+while General stays selected. Send plain text and confirm General receives it. Enter
+`t` and `s` alone to navigate (Server must be ready), then verify bare `g` returns to
+General. A prefix without a body neither navigates nor sends. Real host text entry and
+provider native transport remain GFx/game-only acceptance checks. There is no preference
+to save; layout storage and the relay schema are unchanged.
+
 2026-09-24 ZFE controller-mode keyboard candidate: after a native keyboard-mode pass, physical
 Insert did not open chat with the controller active. The widget now keeps a numeric `Input.*`
 registration for ZFE's open key alongside `hotkeys.v1`, then focuses HUDTools' visible text

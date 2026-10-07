@@ -177,6 +177,9 @@ class FcmNativeApi {
     public function supportsNonBlockingControl():Bool {
         return provider == XSCAL || _runtimeInfo.indexOf("zfe-chat-async-control-v1") >= 0;
     }
+    public function supportsNonBlockingConnect():Bool {
+        return provider == XSCAL || _runtimeInfo.indexOf("zfe-chat-async-connect-v1") >= 0;
+    }
 
     /**
      * Return whether the selected extender exposes the physical-key bridge.

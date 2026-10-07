@@ -1,3 +1,4 @@
+jest.mock('../src/services/chatSlowmodeService', () => ({ ...jest.requireActual('../src/services/chatSlowmodeService'), checkChatSlowmode: jest.fn(async () => ({ allowed: true, remaining: 2, retryAfterMs: 0 })) }));
 'use strict';
 /**
  * Tests for the chat.v1 relay — channelMap, tokenService, relaySeq,
@@ -1470,6 +1471,23 @@ describe('relay WebSocket ops', () => {
     ws.close();
   });
 
+  test('HUD slowmode forwards remaining cooldown without publication', async () => {
+    const { ws: registerWs, msgs: registerMsgs } = await conn();
+    const registration = await waitForMsg(registerWs, registerMsgs, () =>
+      send(registerWs, { op: 'register', displayName: 'SlowmodeSender' }));
+    registerWs.close();
+    const rawId = lastRawUserId();
+    const accountId = 'fcm-slowmode-account';
+    _userMap[accountId] = { id: accountId, discordId: 'disc-slowmode', isBanned: false, isMuted: false };
+    markTokensLinked(rawId, accountId);
+    require('../src/services/ingestMessage').ingestMessage.mockResolvedValueOnce({ ok: false, reason: 'rate-limited', retryAfterMs: 35000 });
+    const { ws, msgs } = await conn();
+    const response = await waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'send', token: registration.token, channel: 'global', body: 'fourth message' }));
+    expect(response).toMatchObject({ success: false, error: { code: 'rate_limited', retryAfterMs: 35000, message: expect.stringContaining('35 seconds') } });
+    ws.close();
+  });
+
   test('linked send rejected by automod → message_blocked (NOT permission_denied)', async () => {
     // Regression: automod/slash ingest failures used to collapse into permission_denied,
     // which the in-game widget then showed as "link your account" to an ALREADY-linked user.
@@ -1552,6 +1570,24 @@ describe('relay WebSocket ops', () => {
     expect(blocked.success).toBe(true);
     expect(decodeURIComponent(blocked.targetUserId)).toContain('designated channel');
     expect(ingest).not.toHaveBeenCalled();
+    ws.close();
+  });
+
+  test('HUD event announcement cooldown returns a private notice instead of public chat', async () => {
+    require('../src/config/prisma').default.chatCommand.findMany.mockResolvedValueOnce([{
+      id: 782, trigger: '/sbq', alias: null, description: 'Scorched Earth',
+      response: 'Scorched Earth event on this server.', actionType: 'announce',
+      targetChannelId: SLUG_TO_UUID.events, allowedChannelId: '00000000-0000-0000-0000-000000000001',
+      cooldownSec: 0, enabled: true, requiresArgs: false, responseColor: null, relayToDiscord: true,
+    }]);
+    const { token } = await setupLinkedUser();
+    const ingest = require('../src/services/ingestMessage').ingestMessage;
+    ingest.mockResolvedValueOnce({ ok: false, reason: 'rate-limited', retryAfterMs: 35000 });
+    const { ws, msgs } = await conn();
+    const result = await waitForMsg(ws, msgs, () =>
+      send(ws, { op: 'send', token, channel: 'global', body: '/sbq' }));
+    expect(result.success).toBe(true);
+    expect(decodeURIComponent(result.targetUserId)).toBe('FCMHUD/1;g=You are in cooldown. Please wait 35 seconds before sending another message.');
     ws.close();
   });
 
@@ -3398,6 +3434,34 @@ describe('auth gate integration', () => {
     );
     expect(res).toMatchObject({ success: false, error: { code: 'permission_denied' } });
     ws.close();
+  });
+
+  test('cosmetic controls stay private, independently rate limited, and cannot grant limited chat access', async () => {
+    const connections = [], open = async () => { const c = await conn5(); connections.push(c); return c; };
+    const now = jest.spyOn(Date, 'now').mockReturnValue(1700100000000);
+    try {
+      const reg = await open();
+      const account = await waitForMsg(reg.ws, reg.msgs, () => send(reg.ws, {op:'register',displayName:'CosmeticReceiver'}));
+      const own = await open(), other = await open(), rpc = await open();
+      await waitForMsg(own.ws, own.msgs, () => send(own.ws,{op:'subscribe',token:account.token}));
+      await waitForMsg(other.ws, other.msgs, () => send(other.ws,{op:'register',displayName:'UnrelatedReceiver'}));
+      await new Promise(r => setTimeout(r,50)); own.msgs.length = 0; other.msgs.length = 0;
+      const ingest = require('../src/services/ingestMessage').ingestMessage; ingest.mockClear();
+      const body = 'FCMCTL/1/NAMEPLATES;' + JSON.stringify({mode:'bridge',requestId:'cosmetic-1',sessionId:'missing-movie',worldGeneration:'world'});
+      for (let i=0;i<4;i++) expect(await waitForMsg(rpc.ws,rpc.msgs,() => send(rpc.ws,{op:'send',token:account.token,channel:'server',body}))).toMatchObject({success:true});
+      await new Promise(r => setTimeout(r,50));
+      const events = own.msgs.filter(m => m.event?.body?.startsWith('FCMNAMEPLATES/1;'));
+      expect(events).toHaveLength(4);
+      expect(JSON.parse(events[0].event.body.slice('FCMNAMEPLATES/1;'.length))).toMatchObject({ttlMs:0,names:[]});
+      expect(other.msgs.some(m => m.event?.body?.startsWith('FCMNAMEPLATES/1;'))).toBe(false);
+      expect(rpc.msgs.some(m => m.op === 'event')).toBe(false);
+      expect(await waitForMsg(rpc.ws,rpc.msgs,() => send(rpc.ws,{op:'send',token:account.token,channel:'server',body})))
+        .toMatchObject({error:{code:'rate_limited'}});
+      expect(await waitForMsg(rpc.ws,rpc.msgs,() => send(rpc.ws,{op:'send',token:account.token,channel:'global',body:'hello'})))
+        .toMatchObject({error:{code:'permission_denied'}});
+      expect(ingest).not.toHaveBeenCalled();
+      expect(Object.keys(_lists).some(k => k.startsWith('relay:server-history:'))).toBe(false);
+    } finally { for (const c of connections) c.ws.close(); now.mockRestore(); }
   });
 
   test('limited HUD reload recovers a private link notice through RESYNC without granting chat access', async () => {

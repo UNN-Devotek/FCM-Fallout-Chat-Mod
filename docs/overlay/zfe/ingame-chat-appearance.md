@@ -95,13 +95,31 @@ Open/chat/scroll keys are separate controls, documented in
 [KEYBINDS.txt](../../../game-mods/FCMBridge/hudmodloader-chat/KEYBINDS.txt). Page Up/Down can switch
 channels while idle; feed scrolling requires a visible owned input session.
 
+## Channel navigation and sends
+
+Candidate **2.10.138** also adds optional blue overhead names for fresh FCM peers
+in the same confirmed Server room. `blueNameplates=false` in `Data/FCMChat.ini`
+disables it. This uses a shared renderer with Server Bridge 0.2.10 and does not
+change feed sender colors, titles or game-controlled nameplate visibility.
+See [presence, configuration and native acceptance](blue-nameplates.md).
+
+Candidate **2.10.137** separates tab selection from message destinations without a setting.
+After opening chat, type a bare letter (`g`, `t`, `e`, `i`, `r`, `s`) and press Enter
+to select General, Trading, Events, Infests, Raids, or Server without sending a message.
+A prefixed message (`/t looking for plans`, `/i message`, `/e event starting`) sends to
+that channel without changing the selected tab. Dot forms and full-name aliases work
+the same way. A prefix without a message neither changes tabs nor sends anything.
+Plain messages target the selected tab. Queued sends and echoes retain their original
+destination even after later navigation. Unavailable Server sends are blocked, never
+redirected into a community channel. See [keybinds](../keybinds.md#hud-channel-shortcuts).
+
 ## Persistence and precedence
 
 ZFE saves F11 settings through vendor-scoped `FCMChatWidget/settings.ini`. Saved values take
 priority over packaged `Data/FCMChat.ini`; the package's environment link URL is retained.
 xScal 0.2.17+ uses its named `modStorage.load(name)` / `save(name, document)` API
 for a local appearance document at `Data/modsdata/fcmchatwidget-layout-v1.json`.
-Widget 2.10.136 stores only F11 appearance values there. Keybinds, input mode,
+Widget 2.10.136+ stores only F11 appearance values there. Keybinds, input mode,
 relay URL, and other install settings remain owned by `Data/FCMChat.ini` and
 take effect after a widget reload or game restart. xScal 0.2.20 omits the
 backend's `canSaveHudLayout` permission from its auth response; local storage

@@ -7,6 +7,31 @@ function pollCount(value: unknown): number {
   return value.polls;
 }
 
+for (const provider of ['zfe','xscal']) {
+  test(`isolated packaged bridge colors desktop-owned FCM peers on ${provider}`, async ({ page }) => {
+    test.setTimeout(55_000);
+    await page.route('**/*', route => new URL(route.request().url()).origin === 'http://127.0.0.1:41739' ? route.continue() : route.abort());
+    await page.goto(`/?mode=packaged-bridge&provider=${provider}&scenario=packaged-nameplates`);
+    const snapshot = () => page.evaluate(() => window.__FCM_SIM__?.packaged('snapshot'));
+    await expect.poll(snapshot, {timeout:15_000}).toMatchObject({isolated:true,active:true,violation:false,cosmeticConnects:1,nameColor:0x167FAF,
+      cosmeticDiagnostic:'cosmetic receiver active names=1 markers=1 plates=1 painted=1'});
+    await page.evaluate(() => window.__FCM_SIM__?.packaged('cosmetic-redraw'));
+    await expect.poll(snapshot).toMatchObject({violation:false,nameColor:0x167FAF});
+    await page.evaluate(() => window.__FCM_SIM__?.packaged('cosmetic-hostile'));
+    await expect.poll(snapshot).toMatchObject({violation:false,nameColor:0xFFCC33});
+    await page.evaluate(() => window.__FCM_SIM__?.packaged('cosmetic-friendly'));
+    await expect.poll(snapshot).toMatchObject({violation:false,nameColor:0x167FAF});
+    await page.evaluate(() => window.__FCM_SIM__?.packaged('hop'));
+    await expect.poll(snapshot, {timeout:15_000}).toMatchObject({rebound:true,violation:false,nameColor:0x167FAF});
+    await page.evaluate(() => window.__FCM_SIM__?.packaged('cosmetic-expire'));
+    await expect.poll(snapshot, {timeout:12_000}).toMatchObject({violation:false,nameColor:0xFFCC33});
+    const stopped = await page.evaluate(() => window.__FCM_SIM__?.packaged('unload'));
+    expect(stopped).toMatchObject({disposed:true,subscriptions:0,violation:false,nameColor:0xFFCC33});
+    await page.waitForTimeout(1200);
+    expect(await snapshot()).toEqual(stopped);
+  });
+}
+
 test('native prototype writes one capsule and streams world changes without storage', async ({ page }) => {
   test.setTimeout(45_000);
   await page.route('**/*', route => new URL(route.request().url()).origin === 'http://127.0.0.1:41739'
@@ -56,7 +81,7 @@ for (const scenario of ['packaged-legacy', 'packaged-legacy-unavailable']) {
       await page.evaluate(() => window.__FCM_SIM__?.packaged('storage-capability'));
     }
     await expect.poll(snapshot, { timeout: 15_000 }).toMatchObject({ isolated: true, active: true,
-      registered: true, subscriptions: 8, violation: false, snapshot: { build: expect.any(String), provider: 'zfe',
+      registered: true, subscriptions: 9, violation: false, snapshot: { build: expect.any(String), provider: 'zfe',
         environment: 'dev', state: 'active', names: ['PeerA', 'PeerB'] } });
     await page.evaluate(() => window.__FCM_SIM__?.packaged('loading'));
     await expect.poll(snapshot, { timeout: 10_000 }).toMatchObject({ controls: 1, leaves: 0, snapshot: { state: 'holding' } });
@@ -96,7 +121,7 @@ test('diagnostic bridge exports bounded timing without a second storage write', 
   await page.goto('/?mode=packaged-bridge&provider=xscal&scenario=packaged-perf');
   const snapshot = () => page.evaluate(() => window.__FCM_SIM__?.packaged('snapshot'));
   await expect.poll(snapshot, { timeout: 15_000 }).toMatchObject({ active: true, violation: false,
-    snapshot: { build: expect.stringMatching(/^0\.2\.9-c5-perf:p\d+\/\d+:e\d+\/\d+:s\d+\/\d+$/) } });
+    snapshot: { build: expect.stringMatching(/^0\.2\.10-c5-perf:p\d+\/\d+:e\d+\/\d+:s\d+\/\d+$/) } });
   const result = await snapshot() as { writes: number; namedWrites: number; snapshot: { build: string } };
   expect(result.snapshot.build.length).toBeLessThanOrEqual(64);
   expect(result.namedWrites).toBe(result.writes);
@@ -192,7 +217,7 @@ for (const provider of ['xscal', 'zfe']) {
     await page.goto(`/?mode=packaged-bridge&provider=${provider}`);
     await expect(page.locator('#log')).toContainText(`PACKAGED loaded provider=${provider} isolated=true`);
     await expect.poll(snapshot, { timeout: 15_000 }).toMatchObject({ isolated: true, registered: true,
-      active: true, controls: 1, subscriptions: 8, acceptedNames: true, violation: false,
+      active: true, controls: 1, subscriptions: 9, acceptedNames: true, violation: false,
       snapshot: { schemaVersion: 1, environment: 'dev', provider, state: 'active', ownName: 'HarnessSelf', names: ['PeerA', 'PeerB'] } });
     if (provider === 'xscal') {
       const named = await snapshot() as { registerCalls: number; namedWrites: number };
@@ -229,7 +254,7 @@ for (const provider of ['xscal', 'zfe']) {
     await page.goto(`/?mode=packaged-bridge&provider=${provider}&scenario=packaged-unready`);
     await expect(page.locator('#log')).toContainText(`PACKAGED loaded provider=${provider} isolated=true`);
     await expect.poll(async () => pollCount(await snapshot()), { timeout: 15_000 }).toBeGreaterThan(5);
-    expect(await snapshot()).toMatchObject({ registered: true, subscriptions: 8, controls: 0, active: false, violation: false });
+    expect(await snapshot()).toMatchObject({ registered: true, subscriptions: 9, controls: 0, active: false, violation: false });
     await page.evaluate(() => window.__FCM_SIM__?.packaged('resume'));
     await expect.poll(snapshot, { timeout: 10_000 }).toMatchObject({ controls: 1, active: true, acceptedNames: true, violation: false });
   });

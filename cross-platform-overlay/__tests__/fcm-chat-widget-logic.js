@@ -96,7 +96,7 @@ function sendErrorMessage(code, opts) {
   }
 }
 
-// ── Slash channel switch (FCMChatWidget.switchChannelBySlash) ───────────────────
+// ── Channel alias lookup (FcmCommand.channelShortcutIndex) ───────────────────
 // Returns the channel index 0..4, or -1 if the command does not match.
 function switchChannelBySlash(cmd) {
   cmd = String(cmd == null ? '' : cmd).toLowerCase();
@@ -282,26 +282,17 @@ function sharedHudPromptMode() {
   return 'label-only';
 }
 
-// ── Slash parse + consume (FCMChatWidget.onInputSubmit) ─────────────────────────
-// Mirrors the consume logic: bare "/g" switches and sends NOTHING; "/g hi" switches
-// then sends "hi"; "/x" no match → sent verbatim as a message.
-// Returns { switchedIdx, send } where switchedIdx is -1 if no switch happened and
-// send is the string to send (or null if nothing should be sent).
+// ── Channel submission (FcmCommand.channelSubmission) ────────────────────────
+// Standalone bare tokens navigate; prefixed bodies select only the send destination.
 function parseInputSubmit(s) {
   s = String(s == null ? '' : s).trim();
-  if (s.length === 0) return { switchedIdx: -1, send: null };
-
-  if (s.length > 1 && (s.charAt(0) === '/' || s.charAt(0) === '.')) {
-    const spaceIdx = s.indexOf(' ');
-    const slashCmd = spaceIdx > 0 ? s.substr(1, spaceIdx - 1) : s.substr(1);
-    const idx = switchChannelBySlash(slashCmd);
-    if (idx >= 0) {
-      const rest = spaceIdx > 0 ? s.substr(spaceIdx + 1).trim() : '';
-      if (rest.length === 0) return { switchedIdx: idx, send: null }; // bare "/g"
-      return { switchedIdx: idx, send: rest };                         // "/g hi"
-    }
-  }
-  return { switchedIdx: -1, send: s };
+  const ordinary = { switchedIdx: -1, destinationIdx: -1, send: s || null };
+  const match = s.match(/^([/.]?)([^\s]+)(?:\s+([\s\S]*))?$/);
+  if (!match) return ordinary;
+  const idx = switchChannelBySlash(match[2]);
+  const body = (match[3] || '').trim();
+  if (idx < 0 || (!match[1] && body)) return ordinary;
+  return { switchedIdx: match[1] ? -1 : idx, destinationIdx: match[1] && body ? idx : -1, send: body || null };
 }
 
 // ── HUD moderation command parsing (FCMChatWidget.handleModerationCommand) ────

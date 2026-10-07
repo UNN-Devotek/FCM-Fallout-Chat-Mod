@@ -63,6 +63,10 @@ class TestFcmNativeApi {
             syncZfe != null && syncZfe.probeChatCapability() && !syncZfe.supportsNonBlockingSend());
         check("legacy synchronous ZFE control fails the safety capability gate",
             !syncZfe.supportsNonBlockingControl());
+        check("legacy ZFE connect cannot be used by automatic cosmetic receiver", !syncZfe.supportsNonBlockingConnect());
+        var asyncConnectZfe = FcmNativeApi.fromZfe({call:function(verb:String, payload:Dynamic):String {
+            return '{"success":true,"capabilities":["zfe-chat-online-v1","zfe-chat-async-connect-v1"]}'; }});
+        check("positive ZFE async-connect contract", asyncConnectZfe.probeChatCapability() && asyncConnectZfe.supportsNonBlockingConnect());
 
         var asyncControlZfe:FcmNativeApi = FcmNativeApi.fromZfe({call: function(verb:String, payload:Dynamic):String {
             return '{"success":true,"capabilities":["zfe-chat-online-v1","zfe-chat-async-send-v1","zfe-chat-async-control-v1"]}';
@@ -257,6 +261,7 @@ class TestFcmNativeApi {
         Reflect.setField(mixedScope, "__SFECodeObj", {chatInterface:chat});
         check("mixed ZFE and xScal providers are detected", FcmNativeApi.hasProviderConflict(mixedScope));
         check("xScal transport permits automatic server controls", xApi.supportsNonBlockingControl());
+        check("xScal cosmetic connect uses provider scheduling", xApi.supportsNonBlockingConnect());
         check("xScal can recover an empty retained subscriber after a HUD reload",
             FcmNativeApi.widgetMustRequestHistoryResync(FcmNativeApi.XSCAL));
         check("unsupported xScal command fails closed",

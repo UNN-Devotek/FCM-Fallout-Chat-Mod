@@ -83,7 +83,7 @@ class FCMChatWidget extends MovieClip {
     // 2.10.0 is the first build that reports clientVersion to the relay. The relay
     // treats "no version reported" as "oldest possible client" and gates any new wire
     // field on this, so the version bump IS the capability signal.
-    static inline var VERSION:String  = "2.10.136"; // xScal named local layout storage
+    static inline var VERSION:String  = "2.10.138"; // shared cosmetic presence and blue in-world FCM names
     static inline var SETTINGS_PATH:String = "settings.ini";
     // This is a top-level ZFE command, not a relay operation. ZFE owns the DPAPI/local auth file
     // and must clear it; the SWF is not allowed to write arbitrary files from the HUD domain.
@@ -364,6 +364,8 @@ class FCMChatWidget extends MovieClip {
     var _inWorld:Bool            = false;
     var _serverSessionReady:Bool = false;
     var _serverSession:FcmServerSession = new FcmServerSession();
+    var _nameplatePresence:FcmNameplates;
+    var _nameplatePainter:FcmNameplatePainter;
     var _serverAtMainMenu:Bool = false;
     var _serverSessionError:String = "";
     var _lastRoomDiagnosticBody:String = "";
@@ -548,7 +550,8 @@ class FCMChatWidget extends MovieClip {
         }
         var code = extractJsonString(response, "code");
         if (FcmOutbox.retryable(code)) {
-            outboxStatus("Message queued - waiting to retry.");
+            outboxStatus(code == "rate_limited" ? FcmOutbox.cooldownNotice(response)
+                : "Message queued - waiting to retry.");
             return;
         }
         _outbox.remove(id);
@@ -588,6 +591,8 @@ class FCMChatWidget extends MovieClip {
     public function new() {
         super();
         name = "FCMChatWidget";
+        _nameplatePresence = new FcmNameplates(_diagnosticInstance);
+        _nameplatePainter = new FcmNameplatePainter(this, _nameplatePresence);
         addEventListener(Event.ADDED_TO_STAGE, onStage);
         addEventListener(Event.REMOVED_FROM_STAGE, onRemovedFromStage);
     }
@@ -598,6 +603,7 @@ class FCMChatWidget extends MovieClip {
 
     function onStage(e:Event):Void {
         if (_disposed) return;
+        _nameplatePainter.startFrames();
         try {
             removeEventListener(Event.ADDED_TO_STAGE, onStage);
             announceModernWidgetSafely();
@@ -635,6 +641,7 @@ class FCMChatWidget extends MovieClip {
         if (_disposed) return;
         zfeLog("info", "lifecycle", "widget shutdown");
         _disposed = true;
+        _nameplatePresence.reset(); _nameplatePainter.shutdown();
         stopBrowser();
 
         // Mark ownership lost before EndTextEdit: some loader builds invoke the cancel
@@ -1055,7 +1062,7 @@ class FCMChatWidget extends MovieClip {
         // Borderless text strip (no boxes). Sub-tabs use the HEADER text colors (same as the
         // "FALLOUT 76" main tab): active channel = tabActiveColor (bright), inactive =
         // tabInactiveColor (dim). Per-channel colors (chat_rooms.color) are applied only to the
-        // [Channel] message tags, NOT this tab row. Slash /g /t /e /i /r still switch channels.
+        // [Channel] message tags, NOT this tab row. Bare g/t/e/i/r/s tokens still switch channels.
         var labels:Array<String> = [];
         var ranges:Array<{start:Int, end:Int, active:Bool}> = [];
         var offset:Int = 0;
@@ -1081,7 +1088,7 @@ class FCMChatWidget extends MovieClip {
         if (!_cfg.showHints) return "";
         var suffix:String = _canModerate ? "  |  [F11] moderation" : "";
         return '<font face="' + FONT_BODY + '" size="13" color="' + hx(_cfg.promptColor) + '">&#x203A; ['
-            + _cfg.openKey + '] chat  |  [/g /t /e /i /r] channel' + suffix + '</font>';
+            + _cfg.openKey + '] chat  |  [g/t/e/i/r/s] tab | [/t message] send' + suffix + '</font>';
     }
 
     function typingPrompt():String {
@@ -1597,7 +1604,7 @@ class FCMChatWidget extends MovieClip {
     }
 
     /**
-     * Single channel-switch entry point (tab click, slash, cycle, F11 menu).
+     * Single channel-switch entry point (tab click, bare token, cycle, F11 menu).
      */
     function selectChannel(idx:Int):Void {
         // idx is a SLUG index; only channels currently in the display order are selectable
@@ -2357,29 +2364,6 @@ class FCMChatWidget extends MovieClip {
         } catch (e:Dynamic) {
             zfeLog("warn", "customize", "load persisted settings threw: " + Std.string(e));
         }
-    }
-
-    /**
-     * Slash-command channel switching.
-     * Returns true if the command matched — caller must NOT send the text as a message.
-     */
-    function switchChannelBySlash(cmd:String):Bool {
-        cmd = cmd.toLowerCase();
-        var idx:Int = -1;
-        if      (cmd == "g" || cmd == "gen"     || cmd == "general")  idx = 0;
-        else if (cmd == "t" || cmd == "trade"   || cmd == "trading")  idx = 1;
-        else if (cmd == "e" || cmd == "event"   || cmd == "events")   idx = 2;
-        else if (cmd == "i" || cmd == "inf"     || cmd == "infests")  idx = 3;
-        else if (cmd == "r" || cmd == "raid"    || cmd == "raids")    idx = 4;
-        else if (cmd == "s" || cmd == "server")                      idx = 5;
-        if (idx < 0) return false;
-        if (idx == 5 && !_serverSessionReady) {
-            // SERVER only exists after the relay accepted a current room binding.
-            zfeLog("info", "chan", "/server ignored — session not ready");
-            return true;
-        }
-        selectChannel(idx);
-        return true;
     }
 
     // =========================================================================
@@ -3348,8 +3332,8 @@ class FCMChatWidget extends MovieClip {
 
     /**
      * Shared submit handler — used by BOTH the native fallback (pollNativeInput) and
-     * the SharedHUDTools primary path (onInputSubmit). Applies the slash channel-switch
-     * logic ("/g /t /e /i /r"), consuming a bare slash command, then sends the rest.
+     * the SharedHUDTools primary path (onInputSubmit). Bare channel tokens select a tab. Prefixed messages choose
+     * the send destination without changing the selected tab.
      */
     function handleSubmittedText(text:String):Void {
         var s:String = (text == null) ? "" : Std.string(text);
@@ -3396,41 +3380,29 @@ class FCMChatWidget extends MovieClip {
         if (eventCommand.length > 0) {
             if (CHAN_SLUGS[_chanIdx] != "global") {
                 addPrivateGiveawayNotice(CHAN_SLUGS[_chanIdx], "[Vault-Tec]",
-                    "Event commands must be sent from General. Switch with /g.");
+                    "Event commands must be sent from General. Enter g to switch to General.");
             } else {
                 sendMessage(eventCommand);
             }
             return;
         }
 
-        // Slash-command channel switch: "/g /t /e /i /r" (or ".g" alias).
-        // If the whole input IS a slash command (bare or with trailing content),
-        // consume it — never let it leak through as a chat message.
-        // The engine EATS leading "/" and "." keystrokes in keyboard-edit mode, so
-        // "/t" reaches us as "t". Treat a bare channel token as the ENTIRE message
-        // as a switch — restores slash-command UX. (Cost: a literal one-word "t"/
-        // "trade" can't be sent as chat; acceptable.)
-        var bare:String = s.toLowerCase();
-        if (bare == "g" || bare == "gen" || bare == "general"
-            || bare == "t" || bare == "trade" || bare == "trading"
-            || bare == "e" || bare == "event" || bare == "events"
-            || bare == "i" || bare == "inf" || bare == "infests"
-            || bare == "r" || bare == "raid" || bare == "raids"
-            || bare == "s" || bare == "server") {
-            if (switchChannelBySlash(bare)) {
-                zfeLog("info", "chan", "bare-token switch: " + bare);
+        var destinationIndex = _chanIdx;
+        var channelCommand = FcmCommand.channelSubmission(s);
+        if (channelCommand.handled) {
+            destinationIndex = channelCommand.channelIndex;
+            if (destinationIndex == 5 && !_serverSessionReady) {
+                setLogText(_serverSessionError.length > 0
+                    ? ("Server chat is unavailable: " + _serverSessionError)
+                    : "Server chat is initializing...");
+                return; // Never redirect an unavailable Server send into the visible community tab.
+            }
+            if (channelCommand.selectTab) selectChannel(destinationIndex);
+            if (channelCommand.body.length == 0) {
+                if (!channelCommand.selectTab) setPrompt("Add a message after the channel prefix to send.");
                 return;
             }
-        }
-        if (s.length > 1 && (s.charAt(0) == "/" || s.charAt(0) == ".")) {
-            var spaceIdx:Int = s.indexOf(" ");
-            var slashCmd:String = (spaceIdx > 0) ? s.substr(1, spaceIdx - 1) : s.substr(1);
-            if (switchChannelBySlash(slashCmd)) {
-                // Slash consumed — send remaining text (after the space) if any.
-                var rest:String = (spaceIdx > 0) ? StringTools.trim(s.substr(spaceIdx + 1)) : "";
-                if (rest.length == 0) return;  // bare "/g" — done, do NOT send
-                s = rest;                       // "/g hello" — send "hello" to the new channel
-            }
+            s = channelCommand.body;
         }
 
         var emojiCommand = FcmEmojiCommand.resolve(s);
@@ -3441,7 +3413,7 @@ class FCMChatWidget extends MovieClip {
             }
             s = emojiCommand.body;
         }
-        sendMessage(s);
+        sendMessage(s, destinationIndex);
     }
 
     var _browser:FcmBrowser = null;
@@ -3728,7 +3700,7 @@ class FCMChatWidget extends MovieClip {
     // Send path — chat.v1
     // =========================================================================
 
-    function sendMessage(raw:String):Void {
+    function sendMessage(raw:String, destinationIndex:Int = -1):Void {
         if (_disposed) return;
         // Lazily recover _outboxIdentity if LINK COMPLETE just fired but the
         // next getAuthState has not yet populated it; avoids the 8294-type
@@ -3761,7 +3733,9 @@ class FCMChatWidget extends MovieClip {
 
         var isGiveawayCommand:Bool = FcmCommand.giveawayCommand(raw).length > 0;
         var isEventCommand:Bool = FcmEventCommands.command(raw).length > 0;
-        var slug:String = CHAN_SLUGS[_chanIdx];
+        var idx = destinationIndex == -1 ? _chanIdx : destinationIndex;
+        if (idx < 0 || idx >= CHAN_SLUGS.length) return;
+        var slug:String = CHAN_SLUGS[idx];
         if (isGiveawayCommand && slug == "server") {
             setLogText("Giveaways need a community channel.");
             return;
@@ -3956,7 +3930,8 @@ class FCMChatWidget extends MovieClip {
             } else {
                 var code:String = extractJsonString(rs, "code");
                 if (_canRetryHudSend && FcmOutbox.retryable(code)) {
-                    if (code == "rate_limited" || code == "send_in_progress") outboxStatus("Message queued - waiting to retry.");
+                    if (code == "rate_limited") outboxStatus(FcmOutbox.cooldownNotice(rs));
+                    else if (code == "send_in_progress") outboxStatus("Message queued - waiting to retry.");
                     else retryQueuedSend(localSendId, "transient send failure");
                     return;
                 }
@@ -3990,7 +3965,7 @@ class FCMChatWidget extends MovieClip {
                     case "user_muted":
                         setLogText("You are muted and cannot send right now.");
                     case "rate_limited":
-                        setLogText("Sending too fast - slow down.");
+                        outboxStatus(FcmOutbox.cooldownNotice(rs));
                     case "invalid_channel":
                         if (slug == "server") {
                             setServerSessionReady(false, extractJsonString(rs, "message"));
@@ -4853,7 +4828,7 @@ class FCMChatWidget extends MovieClip {
         try {
             // The OpenChatKey is the one configured key exposed by the top-level ZFE chat
             // helper. Other physical navigation keys use the provider Input.* fallback above.
-            // On its rising edge, open chat when closed. Slash (/g /t /e /i /r) covers direct
+            // On its rising edge, open chat when closed. Bare channel tokens (g/t/e/i/r/s) cover direct
             // jumps + reverse. (Hidden: openInput() un-hides first.)
             var kp:Bool = nativeTruthy(callTop("isChatKeyPressed", "{}"));
             if (!isValidHUDMode()) {
@@ -4868,8 +4843,8 @@ class FCMChatWidget extends MovieClip {
                     openInput();
                 }
                 // No cycle-on-second-press: it fired accidentally (key repeat / double-tap
-                // while typing). Channels switch via the clickable tabs, slash commands
-                // (/g /t /e /i /r), NextPage/PrevPage actions, or the F11 menu.
+                // while typing). Channels switch via the clickable tabs, bare channel tokens
+                // (g/t/e/i/r/s), NextPage/PrevPage actions, or the F11 menu.
             }
             _lastChatKey = kp;
         } catch (e:Dynamic) {
@@ -5314,6 +5289,12 @@ class FCMChatWidget extends MovieClip {
             // otherwise `"quoted"` local sends compare against `\"quoted\"` authoritative
             // events and both rows remain in the feed.
             var body:String         = FcmConfig.decodeJsonText(extractJsonString(obj, "body"));
+            if (rawChannel == "system" && senderUserId == "system" && StringTools.startsWith(body, FcmNameplates.EVENT)) {
+                updateCursorFromEvent(obj);
+                if (_cfg.blueNameplates && _serverSessionReady && _connected && !_needsLink)
+                    _nameplatePresence.accept(body, flash.Lib.getTimer());
+                continue;
+            }
             if (rawChannel == "system" && senderUserId == "system" && StringTools.startsWith(body, "FCMACK/1;")) {
                 updateCursorFromEvent(obj);
                 acceptOutboxReceipt(body);
@@ -5524,7 +5505,8 @@ class FCMChatWidget extends MovieClip {
             var code:String = FcmWire.asyncErrorCode(obj);
             zfeLog("warn", "send", "relay rejected requestId=" + requestId + " code=" + code);
             if (_canRetryHudSend && FcmOutbox.retryable(code)) {
-                outboxStatus("Message queued - waiting to retry.");
+                outboxStatus(code == "rate_limited" ? FcmOutbox.cooldownNotice(obj)
+                    : "Message queued - waiting to retry.");
                 return;
             }
             _outbox.remove(localSendId);
@@ -5537,7 +5519,7 @@ class FCMChatWidget extends MovieClip {
                 case "message_blocked": setLogText("Message blocked by the chat filter.");
                 case "slash_ignored": setLogText("Slash commands work in the dashboard, not in-game.");
                 case "user_muted": setLogText("You are muted and cannot send right now.");
-                case "rate_limited": setLogText("Sending too fast - slow down.");
+                case "rate_limited": outboxStatus(FcmOutbox.cooldownNotice(obj));
                 case "invalid_channel":
                     if (entry.channel == "server") setServerSessionReady(false, "invalid_channel");
                     setLogText(entry.channel == "server"
@@ -5959,6 +5941,7 @@ class FCMChatWidget extends MovieClip {
         var changed:Bool = (_serverSessionReady != ready);
         _serverSessionReady = ready;
         _serverSessionError = ready ? "" : ((error == null) ? "" : error);
+        if (!ready) { _nameplatePresence.reset(); _nameplatePainter.clear(); }
         if (!ready) stopServerHistoryDrain();
         if (!ready && _chanIdx == 5) _chanIdx = 0;
         if (changed) {
@@ -5982,11 +5965,25 @@ class FCMChatWidget extends MovieClip {
         _worldPollPhase = "timer";
         try {
             checkWorldId();
+            updateNameplates();
         } catch (e:Dynamic) {
             zfeLog("warn", "world", "isolated timer exception phase=" + _worldPollPhase
                 + " error=" + clip200(Std.string(e)));
         }
         _worldPollPhase = "idle";
+    }
+    function updateNameplates():Void {
+        if (_disposed) return;
+        _nameplatePainter.enabled = _cfg.blueNameplates;
+        if (!_cfg.blueNameplates || !_serverSessionReady || !_inWorld || _serverAtMainMenu
+            || !_connected || _needsLink || _authState != "authenticated" || _api == null
+            || !_api.supportsNonBlockingControl() || !_api.supportsNonBlockingSend()) {
+            _nameplatePresence.reset(); _nameplatePainter.clear(); return;
+        }
+        _nameplatePainter.bind(_bsui);
+        if (!_nameplatePainter.hasSurface()) return;
+        var body = _nameplatePresence.request(flash.Lib.getTimer(), _serverSession.requestId);
+        if (body.length > 0) _api.call("chat.v1.sendMessage", haxe.Json.stringify({channel:"server", targetUserId:"", body:body}));
     }
 
     /**

@@ -147,6 +147,7 @@ jobs:
       # CI_RUNNER set (self-hosted) => 'docker'; unset (hosted default) => 'localhost'.
       DATABASE_URL: postgresql://fcm:fcm@${{ vars.CI_RUNNER && 'docker' || 'localhost' }}:5432/fcm_test
       REDIS_URL: redis://${{ vars.CI_RUNNER && 'docker' || 'localhost' }}:6379
+      CHAT_SLOWMODE_TEST_REDIS_URL: redis://${{ vars.CI_RUNNER && 'docker' || 'localhost' }}:6379
       NODE_ENV: test
       # express-session requires a secret at boot; integration tests boot the app.
       SESSION_SECRET: ci-test-session-secret
@@ -386,6 +387,9 @@ jobs:
       - name: Test bridge roster adapter and copied observation freshness
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: haxe test-roster-reader.hxml
+      - name: Test cosmetic presence leases and bridge receiver
+        working-directory: game-mods/FCMBridge/hudmodloader-chat
+        run: haxe test-nameplates.hxml
       - name: Run HUD device-layout tests
         working-directory: game-mods/FCMBridge/hudmodloader-chat
         run: |

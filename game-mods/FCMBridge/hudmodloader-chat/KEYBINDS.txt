@@ -1,6 +1,26 @@
 Fallout Chat Mod HUD keybinds
 ============================
 
+CHANNEL SHORTCUTS (HUD 2.10.137+)
+--------------------------------
+Open chat with your configured open key (Insert by default), type, then press Enter.
+
+  Channel    Switch tab only    Send without changing your current tab
+  General    g                  /g <message>
+  Trading    t                  /t <message>
+  Events     e                  /e <message>
+  Infests    i                  /i <message>
+  Raids      r                  /r <message>
+  Server     s                  /s <message>
+
+For example, t followed by Enter selects Trading without sending a message.
+/t looking for plans sends to Trading while you stay on General. /e event starting
+sends to Events without changing tabs. Plain messages go to your selected tab.
+A prefix without a message does not switch tabs or send anything. No setting is required.
+Dot forms such as .t message and full-name aliases such as /trading message also work.
+Server selection and sending require a confirmed current Server chat session;
+an unavailable Server message is never redirected into a community channel.
+
 PROVIDER KEYBIND CONTRACT
 -------------------------
 One FCMChatWidget.ba2 serves both providers, but the open-key source is different:

@@ -1,5 +1,47 @@
 # xScal visible HUD acceptance — 2026-09-15
 
+## Latest local input acceptance — 2026-10-04
+
+The desktop now has official Nexus xScal 0.2.20 (mod 4183, file 23753,
+DLL SHA-256 `6ae053180b3d55ced86dfc7149372ef1c851f1980f187d53f77a1311f0b0979a`)
+and the Steam 1.7.26.22 Address Library (mod 4298, file 23827). The installed
+FCMChatWidget remains 2.10.136; its BA2 and `xscalInputMode=shared` were unchanged.
+Prior DLL/configuration files and an update manifest are under the game directory's
+`.extender-backups/before-xscal-0.2.20-nexus-20261004T195022Z/`.
+
+The user reports ordinary chat operation, typing, gameplay-control recovery, and F11
+appearance persistence working. DLSS coexistence and Server chat were not tested.
+Rebinding still needs an explicit test: after that report, the desktop's on-disk
+`openKey` was changed from Insert to Home, preserving `hideKey=DELETE` and shared input.
+The previous config is under `.extender-backups/before-home-rebind-20261004T203125Z/`.
+The reviewed startup log still records VK 45 (Insert); it does not prove the new Home
+binding has loaded or that the former Insert action has been released.
+
+**Emote interruption remains unresolved.** The user clarified the reproduction:
+start an emote animation, then open chat while it is playing; opening chat cancels
+the animation. They report the same failure on the MSI laptop using native xScal
+input. This is distinct from checking whether a new emote works after closing chat.
+The earlier broad chat acceptance report must not be treated as an emote pass.
+
+Confirmed desktop log sequence: widget 2.10.136 and xScal 0.2.20 loaded; the emotes
+action appeared at elapsed 00:04:58; HUD mode returned to All at 00:05:06; Insert
+opened the shared editor at 00:05:10. The log identifies the route but does not
+measure the character animation or establish why it stops. A read-only copy was
+retained at `/tmp/fcm-emote-investigation/desktop-xscal-before-next-launch.log`
+(SHA-256 `8abead4090968d198af5a44c297641996d6a3635082aba3a15296a62d544bc00`).
+
+Both xScal editor choices share the physical open-key poll in
+`FCMChatWidget.pollPhysicalNavigation`; `FcmNativeApi.isPhysicalKeyPressed` reads
+the key without swallowing it. Therefore a gameplay-visible opening key is one
+hypothesis, not a confirmed cause. The shared editor additionally starts the host
+ControlMap text lock. The user also confirmed that unused Pause/Break cancels the active emote
+without an FCM binding. Text-editor activation is therefore not required for the
+reported cancellation. This does not distinguish vanilla behavior from the active
+extender/mod stack; a baseline without the widget/extender remains untested.
+Do not change input ownership, remove gameplay suppression, or claim a provider fix
+on the strength of the current evidence. Ruffle can verify the FCM caller contract,
+but real emote animation continuity requires an in-game test on both editor paths.
+
 ## Scope and installation
 
 User-authorized local switch from ZFE to the official Nexus xScal 0.2.16 download, paired with

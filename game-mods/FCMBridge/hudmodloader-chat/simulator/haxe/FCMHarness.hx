@@ -9,6 +9,7 @@ class FCMHarness extends Sprite {
     public var __SFCodeObj:Dynamic;
     public var __ZFE:Dynamic;
     public var BSUIDataManager:Dynamic;
+    public var TeammateMarkerBase:Dynamic = null;
     var widget:FCMChatWidget;
     var provider:String = "xscal";
     var scenario:String = "";
@@ -28,7 +29,7 @@ class FCMHarness extends Sprite {
             if (requested == "zfe") provider = "zfe";
             scenario = Std.string(parameters.scenario);
         } catch (_:Dynamic) {}
-        if (scenario == "quoted-echo") MockXscal.resetEvents();
+        if (scenario == "quoted-echo" || scenario == "cooldown" || scenario == "channel-send-tab" || scenario == "nameplates") MockXscal.resetEvents();
         if (scenario == "giveaway") { MockXscal.resetEvents(); MockXscal.giveawayMode = true; }
         if (scenario == "events") { MockXscal.resetEvents(); MockXscal.eventMode = true; }
         if (scenario == "xscal-session-input" || scenario == "xscal-period-native"
@@ -36,6 +37,7 @@ class FCMHarness extends Sprite {
                 || scenario == "xscal-shared-config")
             MockXscal.sessionInputEnabled = true;
         if (scenario == "delayed-auth") MockXscal.authReady = false;
+        if (scenario == "channel-send-tab") MockXscal.resetLocalLayout();
         if (scenario == "xscal-local-layout") {
             MockXscal.resetLocalLayout();
             MockXscal.authAdvertisesLayout = false;
@@ -44,9 +46,10 @@ class FCMHarness extends Sprite {
         else __SFECodeObj = MockXscal.root();
         if (scenario == "bridge-fast-travel" && provider == "xscal") __SFCodeObj = MockBridgeStorage.root();
         // Deterministic regressions must never load a user's hosted snapshot or send live chat.
-        if (scenario != "browser-links" && scenario != "fast-travel" && scenario != "bridge-fast-travel" && scenario != "delayed-auth" && scenario != "queue-loss" && scenario != "typing-renewal" && scenario != "visibility" && scenario != "quoted-echo" && scenario != "giveaway" && scenario != "events" && scenario != "xscal-session-input" && scenario != "xscal-session-fallback" && scenario != "xscal-period-native" && scenario != "xscal-home-rebind" && scenario != "xscal-shared-config" && scenario != "xscal-local-layout")
+        if (scenario != "nameplates" && scenario != "channel-send-tab" && scenario != "cooldown" && scenario != "browser-links" && scenario != "fast-travel" && scenario != "bridge-fast-travel" && scenario != "delayed-auth" && scenario != "queue-loss" && scenario != "typing-renewal" && scenario != "visibility" && scenario != "quoted-echo" && scenario != "giveaway" && scenario != "events" && scenario != "xscal-session-input" && scenario != "xscal-session-fallback" && scenario != "xscal-period-native" && scenario != "xscal-home-rebind" && scenario != "xscal-shared-config" && scenario != "xscal-local-layout")
             MockXscal.loadScenario("/hosted-dev-snapshot.json");
         BSUIDataManager = scenario == "bridge-fast-travel" ? MockBridgeGameData.manager() : MockGameData.manager();
+        if (scenario == "nameplates") TeammateMarkerBase = NameplateScenario.surface();
         // Keep the class linked so the production getDefinitionByName path resolves it.
         var sharedClass:Class<SharedHUDTools> = SharedHUDTools;
         if (ExternalInterface.available) {
@@ -83,6 +86,9 @@ class FCMHarness extends Sprite {
             if (scenario == "queue-loss") QueueLossScenario.start(widget, provider);
             if (scenario == "visibility") VisibilityScenario.start(widget, provider);
             if (scenario == "quoted-echo") QuotedEchoScenario.start(widget, provider);
+            if (scenario == "channel-send-tab") ChannelSendScenario.start(widget, provider);
+            if (scenario == "nameplates") NameplateScenario.start(widget, this, provider);
+            if (scenario == "cooldown") CooldownScenario.start(widget, provider);
             if (scenario == "giveaway") GiveawayScenario.start(widget, provider);
             if (scenario == "events") EventScenario.start(widget, provider);
             if (scenario == "typing-renewal") TypingRenewalScenario.start(widget, provider);

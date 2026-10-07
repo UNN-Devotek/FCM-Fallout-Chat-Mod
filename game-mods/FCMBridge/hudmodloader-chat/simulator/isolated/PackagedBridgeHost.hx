@@ -6,6 +6,8 @@ import flash.external.ExternalInterface;
 import flash.net.URLRequest;
 import flash.system.ApplicationDomain;
 import flash.system.LoaderContext;
+import flash.text.TextField;
+import flash.Vector;
 
 /** Deliberately has NO production class path/imports, @:access, or shared mocks.
  * Loads the decoded release-package child in a fresh domain. Only local provider storage is faked; no backend confirmation is invented. */
@@ -14,6 +16,12 @@ class PackagedBridgeHost extends Sprite {
     public var __ZFE:Dynamic;
     public var __SFECodeObj:Dynamic;
     public var __SFCodeObj:Dynamic;
+    public var TeammateMarkerBase:Dynamic = null;
+    var cosmeticEvents:Array<Dynamic> = [];
+    var cosmeticSends:Int = 0;
+    var cosmeticConnects:Int = 0;
+    var cosmeticReplies:Bool = true;
+    var cosmeticPlate:IsolatedNameplate = null;
     public var BRG_OBJ:Dynamic;
     var storageCapability:Bool = true;
     var runtimeProbes:Int = 0;
@@ -52,6 +60,12 @@ class PackagedBridgeHost extends Sprite {
         super();
         source = flash.Lib.current.loaderInfo.parameters.provider == "zfe" ? "zfe" : "xscal";
         scenario = flash.Lib.current.loaderInfo.parameters.scenario;
+        if (scenario == "packaged-nameplates") {
+            cosmeticPlate = new IsolatedNameplate(11, "PeerA");
+            addChild(cosmeticPlate);
+            TeammateMarkerBase = {TeamNameplates:new Vector<IsolatedNameplate>()};
+            TeammateMarkerBase.TeamNameplates.push(cosmeticPlate);
+        }
         if (scenario == "packaged-probe-throw") probeFault = "throw";
         if (scenario == "packaged-probe-malformed") probeFault = "malformed";
         if (scenario == "packaged-probe-oversized") probeFault = "oversized";
@@ -76,6 +90,7 @@ class PackagedBridgeHost extends Sprite {
         publish("MenuStackData", {menuStackA:[]});
         publish("AccountInfoData", {name:"HarnessSelf"});
         roster(["PeerA", "PeerB"], flash.Lib.current.loaderInfo.parameters.scenario != "packaged-unready");
+        if (cosmeticPlate != null) markers();
         if (source == "zfe") {
             if (scenario == "packaged-legacy" || scenario == "packaged-legacy-unavailable") {
                 BRG_OBJ = {call:dispatch};
@@ -153,11 +168,13 @@ class PackagedBridgeHost extends Sprite {
     }
     function xscalApi():Dynamic return {version:{runtime:"xScal",value:"0.2.17",platform:"sim"},
       chatInterface:{
-        connect:function(_:Dynamic):String return '{"success":true}',
-        getAuthState:function():String return '{"success":true,"state":"authenticated"}',
+        getRuntimeInfo:function():String return '{"success":true,"runtime":"xScal Chat","protocol":1}',
+        connect:function(_:Dynamic):String { cosmeticConnects++; return '{"success":true}'; },
+        getAuthState:function(_:Dynamic):String return scenario == "packaged-nameplates" ? '{"success":true,"state":"limited"}' : '{"success":true,"state":"authenticated"}',
         getConnectionState:function():String return '{"success":true,"state":"authenticated"}',
-        pollEvents:function(_:Dynamic):String return '{"success":true,"events":[]}',
+        pollEvents:function(_:Dynamic):String { var rows = cosmeticEvents; cosmeticEvents = []; return haxe.Json.stringify({success:true,events:rows}); },
         sendMessage:function(args:Dynamic):String {
+            if (scenario == "packaged-nameplates") return cosmeticSend(args);
             if (scenario != "packaged-native" || disposed) { violation = true; violationReason = "unexpected-native-send"; }
             var prefix = "FCMCTL/1/NATIVE-PROTOTYPE:";
             if (args.channel != "server" || !StringTools.startsWith(args.body, prefix)) {
@@ -197,8 +214,34 @@ class PackagedBridgeHost extends Sprite {
             var ok = save(args.text);
             return haxe.Json.stringify({success:ok,status:ok ? "saved" : "failed"});
         }
+        if (scenario == "packaged-nameplates") {
+            if (verb == "chat.v1.getRuntimeInfo") return '{"success":true,"capabilities":["zfe-chat-online-v1","zfe-chat-async-connect-v1","zfe-chat-async-send-v1","zfe-chat-async-control-v1"]}';
+            if (verb == "chat.v1.connect") { cosmeticConnects++; return '{"success":true}'; }
+            if (verb == "chat.v1.getAuthState") return '{"success":true,"state":"limited"}';
+            if (verb == "chat.v1.pollEvents") { var rows = cosmeticEvents; cosmeticEvents = []; return haxe.Json.stringify({success:true,events:rows}); }
+            if (verb == "chat.v1.sendMessage") return cosmeticSend(haxe.Json.parse(payload));
+        }
         violation = true; // Any native chat/auth/network call is a regression.
         return '{"success":false}';
+    }
+    function cosmeticSend(args:Dynamic):String {
+        var prefix = "FCMCTL/1/NAMEPLATES;";
+        if (disposed || args.channel != "server" || !StringTools.startsWith(args.body, prefix)) {
+            violation = true; violationReason = "noncosmetic native send"; return '{"success":false}';
+        }
+        cosmeticSends++;
+        var control:Dynamic = haxe.Json.parse(Std.string(args.body).substr(prefix.length));
+        if (snapshot == null || control.mode != "bridge" || control.sessionId != snapshot.sessionId || control.worldGeneration != snapshot.worldGeneration) {
+            violation = true; violationReason = "wrong cosmetic export generation"; return '{"success":false}';
+        }
+        if (cosmeticReplies) cosmeticEvents.push({id:cosmeticSends,kind:"chat.message",channel:"system",senderUserId:"system",
+            body:"FCMNAMEPLATES/1;" + haxe.Json.stringify({version:1,requestId:control.requestId,
+                context:"bridge:" + control.sessionId + "/" + control.worldGeneration,ttlMs:10000,names:[cosmeticPlate.Name_tf.text.toLowerCase()]})});
+        return '{"success":true}';
+    }
+    function markers(hostile:Bool = false):Void {
+        publish("TeamMarkers", {Markers:[{entityID:11,displayName:cosmeticPlate.Name_tf.text,isLocalPlayer:false,
+            isHostile:hostile,playerState:hostile ? "hostile" : "teammate",wantedState:"notWanted"}]});
     }
     function publish(key:String, data:Dynamic, ready:Bool = true):Void {
         var value = new IsolatedProvider(data, ready);
@@ -217,6 +260,11 @@ class PackagedBridgeHost extends Sprite {
             case "refresh-roster": roster(["PeerA", "PeerB"]);
             case "resume": roster(["PeerB", "PeerA"]); publish("MenuStackData", {menuStackA:[]});
             case "hop": phase = "hop"; roster(["NewPeer"]);
+                if (cosmeticPlate != null) { cosmeticPlate.Name_tf.text = "NewPeer"; markers(); }
+            case "cosmetic-expire": cosmeticReplies = false;
+            case "cosmetic-redraw": if (cosmeticPlate != null) cosmeticPlate.Name_tf.textColor = 0xFFCC33;
+            case "cosmetic-hostile": if (cosmeticPlate != null) markers(true);
+            case "cosmetic-friendly": if (cosmeticPlate != null) markers();
             case "main-menu": publish("MenuStackData", {menuStackA:[{menuName:"MainMenu"}]});
             case "unload":
                 retire(); // Production REMOVED_FROM_STAGE owns shutdown.
@@ -229,12 +277,22 @@ class PackagedBridgeHost extends Sprite {
             case "snapshot":
             default: violation = true;
         }
+        var cosmeticDiagnostic = !disposed && child != null ? child.nameplateDiagnostic() : "disposed";
         return haxe.Json.stringify({provider:source,isolated:isolated,registered:registered,registerCalls:registerCalls,namedWrites:namedWrites,
+            cosmeticSends:cosmeticSends,cosmeticConnects:cosmeticConnects,nameColor:cosmeticPlate == null ? -1 : cosmeticPlate.Name_tf.textColor,
+            cosmeticDiagnostic:cosmeticDiagnostic,
             active:active,storageDiagnostic:storageDiagnostic,
             controls:controls,leaves:leaves,polls:polls,reads:reads,writes:writes,runtimeProbes:runtimeProbes,snapshot:snapshot,subscriptions:listeners.length,
             acceptedNames:acceptedNames,rebound:rebound,violation:violation,violationReason:violationReason,disposed:disposed,
             stageProviderReserved:stage != null && Reflect.hasField(stage, "__SFCodeObj")});
     }
+}
+@:keep private class IsolatedNameplate extends Sprite {
+    public var Name_tf:TextField = new TextField();
+    var id:Int;
+    public function new(id:Int, name:String) { super(); this.id = id; Name_tf.text = name; Name_tf.textColor = 0xFFFFFF; addChild(Name_tf); }
+    @:getter(entityID) public function readEntity():Int return id;
+    public function SetIsDirty():Void {}
 }
 
 /** Separate-domain, accessor-backed objects. No production helpers are linked here. */

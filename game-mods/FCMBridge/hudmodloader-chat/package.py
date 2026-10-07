@@ -38,6 +38,7 @@ TARGETS = {
 # Keep the shipped INI key map visible in every generated user-facing guide. Empty values are
 # deliberate defaults: they leave Home/End available to the game and keep hide on /hide or F11.
 HUD_KEY_DEFAULTS = (
+    "blueNameplates=true (set false to keep normal overhead colors)\n"
     "openKey=INSERT\n"
     "channelNextKey=NextPage\n"
     "channelPrevKey=PrevPage\n"
@@ -286,7 +287,10 @@ def build_package(
             "Browser opening needs ZFE browser-v1; unsupported providers keep readable URLs.\n"
             "hideKey=DELETE hides while idle and edits text while input is open.\n"
             "Before Insert, configured feed keys remain game controls. FCM -> Scroll\n"
-            "to newest is always available from the F11 menu. Type /g, /t, /e, /i,\n"
+            "to newest is always available from the F11 menu. Type a bare g, t, e, i, r, or s\n"
+            "then Enter to select that tab without sending. Prefix a message to send to\n"
+            "another channel while keeping your current tab; no setting is required.\n"
+            "A prefix without a message neither switches tabs nor sends. Type /g, /t, /e, /i,\n"
             "or /r before a message to route it to General, Trading, Events, Infests,\n"
             "or Raids. /s (or /server) is available after the current server/world\n"
             "session is confirmed.\n"

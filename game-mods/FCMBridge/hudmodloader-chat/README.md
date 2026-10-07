@@ -3,6 +3,13 @@
 FCMChatWidget is the optional HUDModLoader chat widget for Fallout 76. It uses ZFE or xScal's
 native chat bridge and FCM's `/relay`. It is independent of the desktop overlay.
 
+**2.10.138 testing candidate:** existing overhead names turn blue for fresh FCM
+peers in the same confirmed Server room. The shared renderer also ships in the
+optional Server Bridge 0.2.10. Set `blueNameplates=false` in `Data/FCMChat.ini`
+to disable it. Hostile/wanted colors and vanilla visibility remain authoritative.
+The matching backend must be deployed; native acceptance/public release are pending.
+See [configuration and presence](../../../docs/overlay/zfe/blue-nameplates.md).
+
 **2.10.136 test candidate:** xScal 0.2.17+ saves F11 appearance through its named
 `modStorage` document, independent of the relay layout permission omitted by
 xScal 0.2.20. `Data/FCMChat.ini` remains authoritative for keybinds; restart
@@ -290,6 +297,15 @@ height, backgrounds, text colors, opacity, and auto-hide. Input width/alignment 
 Server-resolved user colors override the default local sender color. Timestamps are not shown;
 channel colors/tags, badges, emoji, and available/default channels are not appearance controls.
 See [CUSTOMIZATION.txt](CUSTOMIZATION.txt) for active/retired INI keys and saved-setting precedence.
+
+Type a bare channel letter (`g`, `t`, `e`, `i`, `r`, `s`) and press Enter to select
+that tab without sending a message. Prefix a message with `/t`, `/i`, or another
+channel command to send there while keeping the selected tab. For example,
+`/t looking for plans` sends to Trading while you remain on General. Prefixes without
+a message neither navigate nor send. Dot forms and full-name aliases are accepted.
+Plain messages target the selected tab. No setting is required. Server selection and
+sends require a confirmed current room; unavailable Server sends never fall through.
+See [KEYBINDS.txt](KEYBINDS.txt) for the channel mapping and examples.
 
 ZFE stores F11 settings in vendor-scoped storage. xScal 0.2.17+ saves appearance
 locally in its named `fcmchatwidget-layout-v1` document. Older xScal builds use

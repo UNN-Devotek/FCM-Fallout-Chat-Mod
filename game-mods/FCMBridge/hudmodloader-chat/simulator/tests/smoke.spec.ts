@@ -1,10 +1,32 @@
 import { expect, test } from '@playwright/test';
+
+for (const provider of ['zfe', 'xscal']) {
+  test(`blue HUD names preserve vanilla colors and expire on ${provider}`, async ({ page }) => {
+    await page.goto(`/?mode=harness&provider=${provider}&scenario=nameplates`);
+    await expect(page.locator('#log')).toContainText(`NAMEPLATES PASS ${provider}`, { timeout: 20_000 });
+    await expect(page.locator('#log')).not.toContainText('NAMEPLATES FAIL');
+  });
+}
 import { readFile } from 'node:fs/promises';
 import { HOSTED_HISTORY_PER_CHANNEL, mapHistory } from '../scripts/sync-hosted-dev.mjs';
 import { normalizeHudChannel, validateHostedSend } from '../scripts/hosted-dev-bridge.mjs';
 import { applyKeybindsToIni, browserKey, defaultKeybinds, normalizeKeybinds } from '../src/keybinds';
 
 for (const provider of ['xscal', 'zfe']) {
+  test(`bare tokens select tabs while prefixed sends keep the current tab (${provider})`, async ({ page }) => {
+    await page.goto(`/?mode=harness&provider=${provider}&scenario=channel-send-tab`);
+    await expect(page.locator('#log')).toContainText(/CHANNEL-SEND (PASS|FAIL)/, { timeout: 25_000 });
+    await expect(page.locator('#log')).toContainText(`CHANNEL-SEND PASS ${provider}`);
+    await expect(page.locator('#log')).not.toContainText('CHANNEL-SEND FAIL');
+  });
+
+  test(`cooldown notice stays private to the sender (${provider})`, async ({ page }) => {
+    await page.goto(`/?mode=harness&provider=${provider}&scenario=cooldown`);
+    await expect(page.locator('#log')).toContainText(/COOLDOWN (PASS|FAIL)/, { timeout: 25_000 });
+    await expect(page.locator('#log')).toContainText(`COOLDOWN PASS ${provider} sender-only=true public-rows=0`);
+    await expect(page.locator('#log')).not.toContainText('COOLDOWN FAIL');
+  });
+
   test(`giveaway command and announcement stay in the selected channel (${provider})`, async ({ page }) => {
     await page.goto(`/?mode=harness&provider=${provider}&scenario=giveaway`);
     await expect(page.locator('#log')).toContainText(/GIVEAWAY (PASS|FAIL)/, { timeout: 25_000 });
@@ -82,7 +104,7 @@ test.afterEach(async ({ page, request }) => {
 test('loads the exact production widget artifact and records browser key delivery', async ({ page }) => {
   await page.goto('/?mode=artifact');
   await expect(page.locator('#status')).toHaveAttribute('data-state', 'ready', { timeout: 20_000 });
-  await expect(page.locator('#widget-version')).toHaveText('2.10.136');
+  await expect(page.locator('#widget-version')).toHaveText('2.10.138');
   await page.locator('#focus-stage').click();
   await page.keyboard.press('Insert');
   await page.keyboard.press('ArrowUp');

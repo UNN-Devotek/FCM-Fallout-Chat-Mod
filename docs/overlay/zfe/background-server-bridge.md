@@ -2,8 +2,9 @@
 
 **Current release: FCMServerBridge 0.2.8.** It is published as a separate, optional
 HUDModLoader child and was installed locally with xScal 0.2.17 for a bridge test.
-The versioned 0.2.9 candidate adds unchanged-roster xScal write coalescing but
-is not published or native-accepted. Its new artifact must pass the full native
+The versioned 0.2.10 candidate retains 0.2.9's unchanged-roster xScal write coalescing
+and adds an optional [blue-name cosmetic receiver](blue-nameplates.md).
+It is not published or native-accepted. Its new artifact must pass the full native
 room, travel, and lag checks before updating the release packaging hash lock.
 That local installation is not native acceptance: the full ZFE/xScal mixed-client,
 room/message/travel matrix remains pending. Do not coinstall it with the visible
@@ -55,11 +56,14 @@ Named storage allows the bridge and another HUDModLoader child such as Improved
 HUD to keep independent JSON documents. The bridge writes only
 `fcmserverbridge-dev` or `fcmserverbridge-prod` and never calls `register()` on
 0.2.17+. The visible FCM HUD uses its separate `fcmchatwidget-layout-v1` named
-document for appearance on xScal 0.2.17+. Neither bridge adapter connects to native chat or
-consumes its event queue. The visible HUD retains existing native authentication.
-For ZFE, a DLL-only installation is normal. The bridge does not use or require
-`falloutchatmod.ini`, a TextChat fragment, a relay endpoint, or `zfe.ini`; do not create those
-files for the bridge. Install exactly one provider.
+document for appearance on xScal 0.2.17+. Storage adapters remain independent of
+native chat. In candidate 0.2.10 a separate optional receiver uses native chat
+only for private cosmetic presence, without changing desktop authentication,
+room coordination, exports or Server sends. It is never coinstalled with the HUD.
+For blue names on ZFE, install the package's FCMServerBridge TextChat fragment
+and preserve matching global Endpoint overrides. For xScal, merge the package's
+`[Chat] enabled=true` and `relayEndpoint` settings. Omitting/disabling native chat
+keeps the export-only Server bridge working. Install exactly one provider.
 0.2.1 also checks ZFE's legacy `BRG_OBJ.call` fallback, after the modern aliases,
 on the scope/parents/movie root/global. It must positively advertise `zfe-storage-v1`;
 missing, malformed, failed or throwing probes never enable writes. This restores

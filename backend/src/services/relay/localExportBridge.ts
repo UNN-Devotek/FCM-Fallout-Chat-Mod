@@ -8,6 +8,7 @@ import { canRestoreRoomAffinity, normalizeRosterName, readRoster, setRoster } fr
 import { getWorldId, setWorldId } from './worldIdService';
 import type { BridgeResolution } from './overlayServerBridge';
 import { opaqueRef, recordRoomDiagnostic } from './roomDiagnostics';
+import { indexBridgeNameplates } from './nameplatePresence';
 
 export const LOCAL_OBSERVATION_MS = 30_000;
 export const SOFT_LEAVE_MS = 30_000;
@@ -103,6 +104,10 @@ export class LocalExportBridge {
   }
   private async save(state: ObservationState): Promise<void> {
     await (await getRedisClient()).set(this.stateKey, JSON.stringify(state), { EX: STATE_SECONDS });
+    if (state.active && state.snapshot) {
+      await indexBridgeNameplates(state.snapshot, this.accountId, this.token, this.actorId,
+        this.owner, await this.connectionOrder, state.expiresAt).catch(() => {});
+    }
   }
   private async authenticated(): Promise<boolean> {
     if (this.closed || !this.isCurrent() || !(await this.ownsConnection())) return false;

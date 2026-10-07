@@ -21,6 +21,7 @@
  * Production guard: default-off until RELAY_PRODUCTION_ENABLED is explicitly enabled.
  */
 
+import { chatSlowmodeMessage } from '../chatSlowmodeService';
 import type WebSocket from 'ws';
 import type http from 'http';
 import { v4 as uuidv4 } from 'uuid';
@@ -79,6 +80,7 @@ import { renewBridgeLease, clearBridgeLease } from './overlayServerBridge';
 import { sendServerMessage, ServerMessageError } from './serverMessageService';
 import { parseHudSendCarrier, claimHudSend, hudSendReceiptIdentity, hudSendResponse, HUD_SEND_RECEIPT_SECONDS } from './hudSendReceipt';
 import { HUD_LAYOUT_CONTROL, HUD_LAYOUT_EVENT, parseHudLayout, parseHudLayoutControl, readHudLayout, writeHudLayout } from './hudLayoutService';
+import { NAMEPLATE_CONTROL, NAMEPLATE_EVENT, parseNameplateRequest, parseNameplateReply, nameplateReply, type NameplateReply } from './nameplatePresence';
 import { HUD_OPEN_URL_CONTROL, parseHudOpenUrlControl } from './hudOpenUrl';
 import {
   ROOM_DIAGNOSTIC_CONTROL_PREFIX,
@@ -336,8 +338,8 @@ async function pushLinkCompleteLocal(relayUserId: string): Promise<number> {
  *   slash_ignored       — an unsupported "/command" was typed in-game
  *   invalid_action      — unknown moderationAction action
  */
-function errEnvelope(code: string, message: string): Record<string, unknown> {
-  return { success: false, error: { code, message } };
+function errEnvelope(code: string, message: string, retryAfterMs?: number): Record<string, unknown> {
+  return { success: false, error: { code, message, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) } };
 }
 
 class RelayReportInputError extends Error {
@@ -686,6 +688,25 @@ async function pushHudLayoutLocal(userId: string, requestId: string, layout: unk
   }
 }
 
+async function pushNameplatePresenceLocal(userId: string, reply: NameplateReply): Promise<void> {
+  const cursor = await nextRelaySeq();
+  const event = { id: cursor, kind: 'chat.message', channel: 'system', senderUserId: 'system',
+    senderDisplayName: 'FCM', targetUserId: '', createdAt: new Date().toISOString(),
+    body: NAMEPLATE_EVENT + JSON.stringify(reply) };
+  for (const sub of subscribers) if (sub.userId === userId)
+    sendSubscriberFrame(sub, JSON.stringify({ op: 'event', cursor, event }), cursor);
+}
+
+async function allowNameplateRequest(userId: string): Promise<boolean> {
+  try {
+    const redis = await getRedisClient();
+    const key = `relay:nameplate-limit:${userId}:${Math.floor(Date.now() / 10_000)}`;
+    const count = await redis.incr(key);
+    if (count === 1) await redis.expire(key, 11);
+    return count <= 4;
+  } catch { return false; }
+}
+
 /** Async native send workers may discard RPC responses; deliver receipts privately. */
 async function pushHudSendReceiptLocal(userId: string, accountId: string | null, response: Record<string, unknown>): Promise<void> {
   const targets = [...subscribers].filter(sub => sub.userId === userId && sub.linkedUserId === accountId);
@@ -883,6 +904,16 @@ async function ensurePubSub(): Promise<void> {
         && typeof parsed.requestId === 'string' && /^[a-z0-9-]{1,64}$/.test(parsed.requestId)) {
         pushHudLayoutLocal(parsed.relayUserId, parsed.requestId, parsed.layout).catch(err =>
           logger.warn({ err }, '[relayHandler] HUD layout delivery failed'));
+        return;
+      }
+
+      if (parsed.kind === 'nameplate-presence' && typeof parsed.relayUserId === 'string'
+        && /^user_[0-9a-f]{32}$/i.test(parsed.relayUserId) && parsed.reply && typeof parsed.reply === 'object'
+        && Buffer.byteLength(JSON.stringify(parsed.reply), 'utf8') <= 8192) {
+        const reply = parseNameplateReply(parsed.reply);
+        if (!reply) return;
+        pushNameplatePresenceLocal(parsed.relayUserId, reply)
+          .catch(() => logger.warn('[relayHandler] nameplate presence delivery unavailable'));
         return;
       }
 
@@ -1152,6 +1183,22 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
     }
   };
   try {
+  // Cosmetic reads are private and never grant normal chat/room permissions.
+  // The bridge's limited native identity is only a delivery address; its exact
+  // exported movie generation must belong to a live authenticated desktop.
+  if (slug === 'server' && body.startsWith(NAMEPLATE_CONTROL)) {
+    const request = parseNameplateRequest(body);
+    if (!request) { await deliver(errEnvelope('invalid_request', 'Invalid nameplate request')); return; }
+    if (!(await allowNameplateRequest(identity.userId))) {
+      await deliver(errEnvelope('rate_limited', 'Nameplate updates are temporarily rate limited')); return;
+    }
+    const reply = await nameplateReply(request, identity);
+    await pushNameplatePresenceLocal(identity.userId, reply);
+    await (await getRedisClient()).publish(RELAY_CONTROL_CHANNEL, JSON.stringify({ kind: 'nameplate-presence',
+      relayUserId: identity.userId, reply, sourceInstanceId: relayInstanceId }));
+    sendControlAck(ws);
+    return;
+  }
   // Auth gate: limited identities cannot send (check before any user lookup).
   // We check this BEFORE ban/mute to avoid unnecessary DB queries for limited users.
   if (!identity.isLinked) {
@@ -1422,7 +1469,8 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       suppressDiscordRelay: !command.relayToDiscord,
     });
     if (!result.ok) {
-      const feedback = result.reason === 'rate-limited' ? 'Please wait before announcing another event.'
+      const feedback = result.retryAfterMs ? chatSlowmodeMessage(result.retryAfterMs)
+        : result.reason === 'rate-limited' ? 'Please wait before announcing another event.'
         : result.reason === 'automod' ? 'Event announcement blocked by the chat filter.'
         : 'Event announcement could not be sent.';
       await reply({ success: true, messageId: uuidv4(),
@@ -1471,7 +1519,7 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       event = await sendServerMessage({ accountId: identity.linkedUserId!, relayUserId: identity.userId,
         displayName: identity.fo76Name }, worldId, body);
     } catch (err) {
-      if (err instanceof ServerMessageError) { await reply(errEnvelope(err.code, err.message)); return; }
+      if (err instanceof ServerMessageError) { await reply(errEnvelope(err.code, err.message, err.retryAfterMs)); return; }
       throw err;
     }
     const hudCosmetics = relayHudCosmetics({ ...event, badges: event.supporterStar ? ['supporter'] : [] });
@@ -1532,10 +1580,11 @@ async function handleSend(ws: WebSocket, frame: Record<string, unknown>): Promis
       result.reason === 'slash-command-dropped' ? 'slash_ignored' :
       'permission_denied';
     const msg =
+      result.retryAfterMs ? chatSlowmodeMessage(result.retryAfterMs) :
       code === 'message_blocked' ? 'Message blocked by the chat filter' :
       code === 'slash_ignored'   ? 'Slash commands are not supported in-game' :
       (result.reason ?? 'Send rejected');
-    await reply(errEnvelope(code, msg));
+    await reply(errEnvelope(code, msg, result.retryAfterMs));
     return;
   }
 

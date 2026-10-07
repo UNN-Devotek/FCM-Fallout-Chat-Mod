@@ -1,0 +1,4 @@
+--class-path ..
+--class-path ../hudmodloader-bridge
+--main TestFcmNameplates
+--interp

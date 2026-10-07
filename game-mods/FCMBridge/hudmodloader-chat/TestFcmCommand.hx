@@ -10,6 +10,28 @@ class TestFcmCommand {
     }
 
     static function main():Void {
+        var aliases = [["g", "gen", "general"], ["t", "trade", "trading"],
+            ["e", "event", "events"], ["i", "inf", "infests"], ["r", "raid", "raids"], ["s", "server"]];
+        for (idx in 0...aliases.length) for (alias in aliases[idx]) {
+            for (prefix in ["/", "."]) {
+                var send = FcmCommand.channelSubmission("  " + prefix + alias.toUpperCase() + "  hello world  ");
+                check("prefixed channel destination " + prefix + alias,
+                    send.handled && send.channelIndex == idx && send.body == "hello world" && !send.selectTab);
+                var empty = FcmCommand.channelSubmission(prefix + alias);
+                check("prefix without body never navigates " + prefix + alias,
+                    empty.handled && empty.body == "" && !empty.selectTab);
+            }
+            var bare = FcmCommand.channelSubmission(alias);
+            check("bare alias navigates " + alias,
+                bare.handled && bare.channelIndex == idx && bare.body == "" && bare.selectTab);
+        }
+        var tabs = FcmCommand.channelSubmission("/t\thello");
+        check("tab separator", tabs.handled && tabs.channelIndex == 1 && tabs.body == "hello" && !tabs.selectTab);
+        for (text in ["t hello", "trade with me", "ordinary message", "/unknown hi", ".thing", "", null]) {
+            var ordinary = FcmCommand.channelSubmission(text);
+            check("ordinary input is not a destination: " + text, !ordinary.handled && ordinary.channelIndex == -1);
+        }
+        check("emoji payload kept for downstream resolver", FcmCommand.channelSubmission("/i /emoji heart").body == "/emoji heart");
         check("released editor callback is ignored", !FcmCommand.acceptsInputCallback(false, 2, 1));
         check("old editor cannot close replacement", !FcmCommand.acceptsInputCallback(true, 3, 1));
         check("current editor may submit", FcmCommand.acceptsInputCallback(true, 3, 3));
@@ -57,7 +79,7 @@ class TestFcmCommand {
             && hudHelp.indexOf("/ss — Sinkhole Solutions") < 0);
         check("event help accepts slash-stripped text", FcmEventCommands.isHelp("event help"));
         check("event help does not consume channel switch", !FcmEventCommands.isHelp("event"));
-        check("slash event still switches channels", !FcmEventCommands.isHelp("/event"));
+        check("slash event is not a help command", !FcmEventCommands.isHelp("/event"));
         check("event help lists all seeded shortcuts", FcmEventCommands.entries.length == 33
             && FcmEventCommands.help().indexOf("/sbq — Scorched Earth") >= 0
             && FcmEventCommands.help().indexOf("/gu — Gearing Up") >= 0

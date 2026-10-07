@@ -98,6 +98,48 @@ export default function HudKeybindGuide({ variant = 'dashboard' }: HudKeybindGui
         the overlay keybind file below does not change them.
       </div>
 
+      <p style={sectionStyle}>HUD CHANNEL SHORTCUTS</p>
+      <p style={{ fontSize: isPublic ? '12px' : '11px', color: muted, margin: '0 0 8px', lineHeight: '1.7' }}>
+        In HUD 2.10.137 and newer, open chat with your configured key (Insert by default),
+        type a bare channel letter, then press Enter to switch tabs without sending a message.
+        For example, <code style={codeStyle}>t</code> switches to Trading and{' '}
+        <code style={codeStyle}>s</code> switches to Server.
+      </p>
+      <p style={{ fontSize: isPublic ? '12px' : '11px', color: muted, margin: '0 0 8px', lineHeight: '1.7' }}>
+        To send to another channel without changing your current tab, add a message after its
+        prefix: <code style={codeStyle}>/t looking for plans</code> sends to Trading while you
+        stay on General. <code style={codeStyle}>/e event starting</code> sends to Events the
+        same way. Plain messages go to the selected tab. A prefix without a message does not
+        switch tabs or send anything. No setting is required.
+      </p>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: '12px' }}>
+          <caption style={{ textAlign: 'left', color: muted, fontSize: '12px' }}>HUD channel shortcuts</caption>
+          <thead>
+            <tr>
+              <th style={cellStyle}>CHANNEL</th>
+              <th style={cellStyle}>SWITCH TAB</th>
+              <th style={cellStyle}>SEND WITHOUT SWITCHING</th>
+            </tr>
+          </thead>
+          <tbody>
+            {['General', 'Trading', 'Events', 'Infests', 'Raids', 'Server'].map((channel, index) => (
+              <tr key={channel}>
+                <td style={cellStyle}>{channel}</td>
+                <td style={cellStyle}><code style={codeStyle}>{HUD_CHANNEL_COMMANDS[index].slice(1)}</code></td>
+                <td style={cellStyle}><code style={codeStyle}>{HUD_CHANNEL_COMMANDS[index]} &lt;message&gt;</code></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p style={{ fontSize: isPublic ? '12px' : '11px', color: muted, margin: '0 0 8px', lineHeight: '1.7' }}>
+        Dot prefixes such as <code style={codeStyle}>.t message</code> also send without switching.
+        Server selection and <code style={codeStyle}>/s message</code> require a confirmed current
+        Server chat session. An unavailable Server message is never sent to another channel.
+        Type <code style={codeStyle}>/hide</code> by itself to hide the feed.
+      </p>
+
       <p style={sectionStyle}>INSERT OPENS CHAT AND THE DLSS MENU?</p>
       <p style={{ fontSize: isPublic ? '12px' : '11px', color: muted, margin: '0 0 8px', lineHeight: '1.7' }}>
         The <a href={XSCAL_FRAMEGEN_MOD_URL} target="_blank" rel="noopener noreferrer" style={sourceLinkStyle}>
@@ -183,19 +225,6 @@ export default function HudKeybindGuide({ variant = 'dashboard' }: HudKeybindGui
           </tbody>
         </table>
       </div>
-
-      <p style={sectionStyle}>HUD CHAT COMMANDS</p>
-      <p style={{ fontSize: isPublic ? '12px' : '11px', color: muted, margin: '0 0 8px' }}>
-        After pressing <code style={codeStyle}>Insert</code>, type one of these at the start of a
-        message to switch its destination: {HUD_CHANNEL_COMMANDS.map((command, index) => (
-          <React.Fragment key={command}>
-            {index > 0 ? ', ' : ''}<code style={codeStyle}>{command}</code>
-          </React.Fragment>
-        ))}. Add the message after the command, for example <code style={codeStyle}>/t looking for plans</code>.
-        <code style={codeStyle}>/s</code> (or <code style={codeStyle}>/server</code>) is available after
-        the relay confirms the current server/world session. Type <code style={codeStyle}>/hide</code>
-        by itself to hide the feed.
-      </p>
 
       <p style={sectionStyle}>HUDMODLOADER MENU</p>
       <ol style={{ fontSize: isPublic ? '12px' : '11px', lineHeight: '1.7', paddingLeft: '20px', margin: 0, color: gold }}>

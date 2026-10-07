@@ -7,6 +7,34 @@
  * be exercised by the CI interpreter tests.
  */
 class FcmCommand {
+    /** Resolve a destination independently of the visible tab. Only standalone unprefixed aliases navigate. */
+    public static function channelSubmission(raw:String):{handled:Bool, channelIndex:Int, body:String, selectTab:Bool} {
+        var text = raw == null ? "" : StringTools.trim(raw);
+        var explicit = text.charAt(0) == "/" || text.charAt(0) == ".";
+        var start = explicit ? 1 : 0;
+        var end = start;
+        while (end < text.length && !StringTools.isSpace(text, end)) end++;
+        var body = StringTools.trim(text.substr(end));
+        var index = channelShortcutIndex(text.substring(start, end).toLowerCase());
+        // Only standalone bare aliases survive slash stripping safely; ordinary prose stays intact.
+        if (index < 0 || (!explicit && body.length > 0))
+            return {handled:false, channelIndex:-1, body:text, selectTab:false};
+        return {handled:true, channelIndex:index, body:body,
+            selectTab:!explicit};
+    }
+
+    static function channelShortcutIndex(command:String):Int {
+        return switch (command) {
+            case "g", "gen", "general": 0;
+            case "t", "trade", "trading": 1;
+            case "e", "event", "events": 2;
+            case "i", "inf", "infests": 3;
+            case "r", "raid", "raids": 4;
+            case "s", "server": 5;
+            default: -1;
+        };
+    }
+
     /** Native keyboard input may consume the slash; help is a standalone local command. */
     public static function isHelp(raw:String):Bool {
         if (raw == null) return false;
@@ -17,7 +45,9 @@ class FcmCommand {
     public static function hudHelp():String {
         return "HUD COMMANDS (private)\n"
             + "/help — show this guide\n"
-            + "/g /t /e /i /r /s [message] — switch to General, Trading, Events, Infests, Raids, Server\n"
+            + "/g /t /e /i /r /s <message> — send to General, Trading, Events, Infests, Raids, Server\n"
+            + "g / t / e / i / r / s alone — select that tab\n"
+            + "Channel-prefixed messages keep your current tab; add text after the prefix.\n"
             + "/hide — hide chat; open key restores it\n"
             + "/relink — reset ZFE chat link\n"
             + "/emoji <name> — send a named emoji\n"

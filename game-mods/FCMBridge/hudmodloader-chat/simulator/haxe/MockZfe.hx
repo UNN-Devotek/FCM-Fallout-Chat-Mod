@@ -3,6 +3,7 @@ class MockZfe {
     public static var ownedBeginCount(default, null):Int = 0;
     public static var ownedPollCount(default, null):Int = 0;
     public static var ownedEndCount(default, null):Int = 0;
+    static var widgetSettings:Map<String, String> = new Map();
     static var ownedMode:String = "release";
     static var inputActive:Bool = false;
     static var inputBuffer:String = "";
@@ -19,6 +20,7 @@ class MockZfe {
     static var hotkeyPresses:Map<Int, Int> = new Map();
 
     public static function configure(scenario:String):Void {
+        widgetSettings = new Map();
         ownedMode = scenario == "owned-input-busy" ? "busy"
             : scenario == "owned-input-expiry" ? "expiry" : "release";
         ownedBeginCount = 0; ownedPollCount = 0; ownedEndCount = 0;
@@ -119,8 +121,18 @@ class MockZfe {
                 hotkeyRegistrations.remove(registration); hotkeyPresses.remove(registration);
                 return '{"success":true}';
             }
+            if (verb == "readStorage") {
+                var args:Dynamic = haxe.Json.parse(Std.string(payload));
+                if (args.vendor != "FCMChatWidget") return '{"success":false}';
+                var text = widgetSettings.get(Std.string(args.path));
+                return haxe.Json.stringify({success:true, found:text != null, text:text == null ? "" : text});
+            }
             if (verb == "writeStorage") {
                 var args:Dynamic = haxe.Json.parse(Std.string(payload));
+                if (args.vendor == "FCMChatWidget") {
+                    widgetSettings.set(Std.string(args.path), Std.string(args.text));
+                    return '{"success":true}';
+                }
                 if (args.vendor != "FCMServerBridge") return '{"success":false}';
                 var saved = MockBridgeStorage.save(args.text);
                 return haxe.Json.stringify({success:saved,status:saved ? "saved" : "failed"});

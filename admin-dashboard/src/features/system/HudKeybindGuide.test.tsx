@@ -11,6 +11,18 @@ describe('HUD keybind guide', () => {
     render(<HudKeybindGuide variant={variant} />);
     const guide = screen.getByTestId('hud-keybind-guide');
 
+    expect(guide).toHaveTextContent('type a bare channel letter, then press Enter to switch tabs without sending a message');
+    expect(guide).toHaveTextContent('/t looking for plans');
+    expect(guide).toHaveTextContent('stay on General');
+    expect(guide).toHaveTextContent('A prefix without a message does not switch tabs or send anything');
+    expect(guide).toHaveTextContent('No setting is required');
+    const shortcuts = within(guide).getByRole('table', { name: 'HUD channel shortcuts' });
+    for (const [channel, token] of [['General', 'g'], ['Trading', 't'], ['Events', 'e'], ['Infests', 'i'], ['Raids', 'r'], ['Server', 's']]) {
+      const row = within(shortcuts).getByRole('row', { name: `${channel} ${token} /${token} <message>` });
+      expect(row).toBeInTheDocument();
+    }
+    expect(guide).toHaveTextContent('Server selection and /s message require a confirmed current Server chat session');
+
     expect(within(guide).getByText('ZFE OPEN-CHAT KEY')).toBeInTheDocument();
     expect(within(guide).getByText('xSCAL OPEN-CHAT KEY')).toBeInTheDocument();
     expect(within(guide).getByText('CHAT OPENS, BUT YOU CANNOT TYPE?')).toBeInTheDocument();

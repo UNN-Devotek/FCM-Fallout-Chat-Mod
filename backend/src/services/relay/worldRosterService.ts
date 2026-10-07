@@ -255,7 +255,7 @@ export async function readRoster(userId: string): Promise<RosterEntry | null> {
 }
 
 /** All live rosters (TTL-pruned by Redis). */
-async function getAllRosters(): Promise<RosterEntry[]> {
+export async function getAllRosters(): Promise<RosterEntry[]> {
   const redis = await getRedisClient();
   const keys: string[] = [];
   for await (const scanResult of redis.scanIterator({ MATCH: `${KEY_PREFIX}*`, COUNT: 100 })) {

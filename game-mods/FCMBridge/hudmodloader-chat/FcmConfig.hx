@@ -140,6 +140,7 @@ class FcmConfig {
     // ── Feed toggles ───────────────────────────────────────────────────────────
     public var showChannelTag:Bool  = true;
     public var showHints:Bool       = false;      // blank idle prompt by default (CAP-014)
+    public var blueNameplates:Bool = true;
 
     // ── HUD mode gating ────────────────────────────────────────────────────────
     // Blacklist of HUDMode strings where the widget must stay hidden. Single INI key
@@ -772,6 +773,7 @@ class FcmConfig {
                     var mode = val.toLowerCase();
                     if (mode == "native" || mode == "shared") cfg.xscalInputMode = mode;
                 case "showhints":       cfg.showHints = parseBool(val, cfg.showHints);
+                case "bluenameplates":  cfg.blueNameplates = parseBool(val, cfg.blueNameplates);
                 case "autobroadcastworldevents":
                     cfg.autoBroadcastWorldEvents = parseBool(val, cfg.autoBroadcastWorldEvents);
                 case "broadcastevents":
@@ -968,6 +970,7 @@ class FcmConfig {
         s.add("hideKey=" + hideKey + "\n");
         s.add("xscalInputMode=" + xscalInputMode + "\n");
         s.add("showHints=" + b(showHints) + "\n");
+        s.add("blueNameplates=" + b(blueNameplates) + "\n");
         s.add("hideInHUDModes=" + hideInHUDModes.join(",") + "\n");
         s.add("displayName=" + displayNameOverride + "\n");
         s.add("autoBroadcastWorldEvents=" + b(autoBroadcastWorldEvents) + "\n");
