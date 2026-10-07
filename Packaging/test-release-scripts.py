@@ -181,8 +181,10 @@ def main() -> None:
     assert 'Fallout Chat Mod-$Version.AppImage' in smoke
     assert 'Get-ChildItem -Path $DistDir -Filter "*.AppImage"' not in smoke
     assert '$env:ELECTRON_RUN_AS_NODE = $null' in smoke
-    for marker in ('[ValidateSet("Default", "Portable")]', 'Fallout Chat Mod Portable $Version.exe', 'FCMData\\logs'):
+    for marker in ('[ValidateSet("Default", "Portable", "QA")]', 'Fallout Chat Mod Portable $Version.exe', 'FCMData\\logs'):
         assert marker in smoke, f"portable smoke gate is missing: {marker}"
+    for marker in ('if ($Artifact -eq "QA")', 'Fallout Chat Mod QA.exe', 'Fallout Chat Mod QA\\logs'):
+        assert marker in smoke, f"QA smoke gate is missing: {marker}"
     for marker in ('Fallout Chat Mod Portable $Version.zip', 'package-portable.ps1', '$expectedBridgeZipSha256', '[Parameter(Mandatory = $true)] [string]$BridgeZip'):
         assert marker in package_downloads, f"portable package path is missing: {marker}"
     assert '"-BridgeZip", $BridgeZip' in release
