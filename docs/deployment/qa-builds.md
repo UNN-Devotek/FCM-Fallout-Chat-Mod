@@ -61,6 +61,11 @@ non-trivial `.exe`, checks a pinned input version in every filename, and rejects
 auto-update files (`latest*.yml`, `app-update.yml`, or blockmaps). This is an artifact-integrity
 gate, not a substitute for installing and smoke-testing the build with a QA tester.
 
+Before uploading, Windows QA also verifies the embedded channel, version and QA
+product identity, then runs `Packaging/smoke-test.ps1 -Artifact QA` against the
+packaged QA executable. The launch must produce healthy startup markers without
+missing-module or uncaught errors; teardown targets only that launched PID tree.
+
 ```bash
 gh workflow run build-windows-qa.yml --ref dev -f version=<optional-pinned-version>
 ```

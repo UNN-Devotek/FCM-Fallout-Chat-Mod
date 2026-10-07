@@ -96,6 +96,29 @@ jobs:
             throw "QA build emitted retired auto-update files: $($feedFiles.Name -join ', ')"
           }
 
+      - name: Verify embedded QA identity
+        working-directory: cross-platform-overlay
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          $builtVersion = @'
+          const asar = require('@electron/asar');
+          const pkg = JSON.parse(asar.extractFile('dist-electron/win-unpacked/resources/app.asar', 'package.json'));
+          if (pkg.fcmChannel !== 'qa' || pkg.productName !== 'Fallout Chat Mod QA'
+              || pkg.desktopName !== 'fallout-chat-mod-qa.desktop'
+              || (process.env.EXPECTED_VERSION && pkg.version !== process.env.EXPECTED_VERSION)) {
+            throw new Error('Embedded QA identity/version does not match the build contract');
+          }
+          console.log(pkg.version);
+          '@ | node
+          if ($LASTEXITCODE -ne 0) { throw "Embedded QA metadata verification failed" }
+          "QA_BUILD_VERSION=$builtVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Smoke-test the packaged QA application
+        run: |
+          & ./Packaging/smoke-test.ps1 -Version $env:QA_BUILD_VERSION -Artifact QA
+          if ($LASTEXITCODE -ne 0) { throw "Packaged QA startup smoke failed" }
+
       - name: Upload QA installer artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

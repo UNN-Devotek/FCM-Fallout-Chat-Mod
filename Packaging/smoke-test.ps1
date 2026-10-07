@@ -36,7 +36,7 @@
 param(
     [Parameter(Mandatory = $true)] [string]$Version,
     [string]$DistDir = "",
-    [ValidateSet("Default", "Portable")] [string]$Artifact = "Default",
+    [ValidateSet("Default", "Portable", "QA")] [string]$Artifact = "Default",
     [int]$WaitSec = 15
 )
 $ErrorActionPreference = "Stop"
@@ -56,7 +56,11 @@ if ($IsLinux) {
     $item = Get-ChildItem -Path $DistDir -Filter "Fallout Chat Mod-$Version.AppImage" -File -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($item) { $exe = $item.FullName } else { $exe = "" }
 } else {
-    if ($Artifact -eq "Portable") {
+    if ($Artifact -eq "QA") {
+        $logDir = Join-Path $env:APPDATA "Fallout Chat Mod QA\logs"
+        $winUnpacked = Join-Path $DistDir "win-unpacked"
+        $exe = Join-Path $winUnpacked "Fallout Chat Mod QA.exe"
+    } elseif ($Artifact -eq "Portable") {
         $logDir = Join-Path $DistDir "FCMData\logs"
         $exe = Join-Path $DistDir "Fallout Chat Mod Portable $Version.exe"
     } else {

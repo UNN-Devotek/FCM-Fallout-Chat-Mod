@@ -87,6 +87,23 @@ owns that token — do not point a GitHub repo webhook at the prod compose's tok
 
 ### Manual deployment while auto-deploy is paused
 
+On 2026-10-06 the blue-name QA candidate was deployed from committed Dev
+`d5cf21a9` under `/home/devotek/fcm-dev-deploy/qa-1.4.3-nameplates-d5cf21a9/`.
+Source archive SHA-256:
+`4b72e1146f3466d0c6f907bce34a8afb47a79fb7b93958571c7d260d8e3fc005`.
+Only `backend-dev` was rebuilt/recreated with `--no-deps --pull never`; its image
+is `sha256:e78fb80ff6bd6be34545a41a4a513c150d409b54c5de51b0655e3c251764b773`.
+Rollback tag: `fcm-dev-backend:pre-nameplates-20261006`, pointing to the prior
+`42b1e39d` image. The customized Compose checksum remained
+`193c6f88e4d113bc4f68d9e4531f567fa369be2296138ad74b176c74d90025b7`;
+all four Dev storage/tunnel container IDs remained unchanged. The new container
+was healthy, external `/api/health` reported connected DB/Redis/Discord, and its
+compiled relay contained both private nameplate control prefixes. Subsequent
+QA packaging corrections change only the overlay build identity and smoke gates;
+the deployed backend/dashboard source is identical. See the
+[candidate test report](../testing/blue-nameplates-2026-10-06.md) for build artifacts,
+CI evidence and the native acceptance matrix.
+
 On 2026-09-25, the Dev compose still had `autoDeploy=false`. The Dokploy
 checkout's Git `HEAD` pointed to a missing object, so it was left untouched.
 The pushed `3075209f` source was staged under
