@@ -1,9 +1,9 @@
 import { getRedisClient } from '../config/redis';
 import logger from '../config/logger';
 
-export const CHAT_SLOWMODE_WINDOW_MS = 10_000;
+export const CHAT_SLOWMODE_WINDOW_MS = 30_000;
 export const CHAT_SLOWMODE_COOLDOWN_MS = 35_000;
-export const CHAT_SLOWMODE_BURST = 8;
+export const CHAT_SLOWMODE_BURST = 3;
 export const CHAT_SLOWMODE_MAX_COOLDOWN_MS = 300_000;
 export const CHAT_SLOWMODE_RESET_MS = 15 * 60_000;
 export const CHAT_SLOWMODE_HARD_WINDOW_MS = 60_000;

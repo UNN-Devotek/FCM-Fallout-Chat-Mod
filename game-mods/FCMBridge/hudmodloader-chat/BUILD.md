@@ -2,7 +2,7 @@
 
 ## Adaptive flood cooldown candidate (2026-10-08)
 
-The current development widget supports the shared eight-in-ten-seconds flood
+The current development widget supports the shared three-in-thirty-seconds flood
 policy and 35–300-second private notices. Validated rate-limit receipts defer
 existing queued chat retries for that sender; private giveaway controls remain
 available. Direct transport respects the queued retry deadline. See
