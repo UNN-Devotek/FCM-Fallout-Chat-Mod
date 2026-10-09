@@ -1,5 +1,19 @@
 # FCMChatWidget build, install, and verification
 
+## Adaptive flood cooldown candidate (2026-10-08)
+
+The current development widget supports the shared eight-in-ten-seconds flood
+policy and 35–300-second private notices. Validated rate-limit receipts defer
+existing queued chat retries for that sender; private giveaway controls remain
+available. Direct transport respects the queued retry deadline. See
+[the policy and acceptance requirements](../../../docs/moderation/chat-slowmode.md)
+and [send receipts](../../../docs/overlay/zfe/hud-send-retries.md).
+
+This updates the development artifact pair and its source manifest, without a
+release-version bump. Earlier hashes and native acceptance below describe those
+dated candidates, not this adaptive change. Full hosted Ruffle/CI and fresh native
+acceptance are required before distribution; this candidate is native-unverified.
+
 ## Blue-name candidate 2.10.138
 
 **Widget version:** 2.10.138. Testing candidate; native acceptance/public release pending.

@@ -38,9 +38,32 @@ class TestFcmOutbox {
         check(FcmOutbox.cooldownNotice('{"error":{"retryAfterMs":35000}}') ==
             "You are in cooldown. Please wait 35 seconds before sending another message.", "private cooldown notice");
         check(FcmOutbox.cooldownNotice('{"error":{"retryAfterMs":34001}}').indexOf("35 seconds") >= 0, "wait rounds up");
+        for (wait in [70000, 140000, 280000, 300000]) {
+            check(FcmOutbox.cooldownNotice('{"error":{"retryAfterMs":' + wait + '}}').indexOf(
+                Std.string(Math.ceil(wait / 1000)) + " seconds") >= 0, "adaptive cooldown notice");
+        }
+        var cooling = new FcmOutbox();
+        cooling.add("chat", "general", "hello", "a", "", 0);
+        cooling.add("queued", "trading", "trade", "a", "", 0);
+        cooling.add("private", "general", "/giveaway list", "a", "", 0);
+        cooling.add("other", "general", "hello", "b", "", 0);
+        cooling.deferCooldown("chat", '{"error":{"retryAfterMs":140000}}', 500);
+        check(cooling.get("chat").nextAt == 140500 && cooling.get("queued").nextAt == 140500,
+            "shared cooldown pauses all existing chat retries for the sender");
+        check(cooling.get("private").nextAt == 0 && cooling.get("other").nextAt == 0,
+            "private command and account isolation");
+        cooling.remove("private");
+        check(cooling.next("a", "", false, 140499) == null, "no early automatic retry");
+        check(cooling.next("a", "", false, 140500).id == "chat", "retry resumes at deadline");
+        cooling.deferCooldown("chat", '{"error":{"retryAfterMs":35000}}', 1000);
+        check(cooling.get("chat").nextAt == 140500, "shorter receipt cannot erase an existing wait");
+        cooling.deferCooldown("unknown", '{"error":{"retryAfterMs":300000}}', 1000);
+        cooling.deferCooldown("chat", '{"error":{"retryAfterMs":300001}}', 1000);
+        check(cooling.get("chat").nextAt == 140500, "malformed or unrelated receipt cannot delay retries");
         var fallback = "You are in cooldown. Please wait before sending another message.";
         for (raw in ["bad json", '{"error":{}}', '{"error":{"retryAfterMs":0}}',
-                '{"error":{"retryAfterMs":-1}}', '{"error":{"retryAfterMs":999999999}}',
+                '{"error":{"retryAfterMs":-1}}', '{"error":{"retryAfterMs":300001}}',
+                '{"error":{"retryAfterMs":1e309}}', '{"error":{"retryAfterMs":999999999}}',
                 '{"error":{"retryAfterMs":"<b>fake</b>","message":"<b>fake</b>"}}']) {
             check(FcmOutbox.cooldownNotice(raw) == fallback, "bounded safe notice " + raw);
         }

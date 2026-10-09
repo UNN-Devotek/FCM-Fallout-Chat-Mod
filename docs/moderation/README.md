@@ -16,10 +16,11 @@ The moderation subsystem covers: role-based access control, content filtering (A
 > including the cross-surface eviction signal and the account-level ban target — see
 > [kick-mute-ban.md](kick-mute-ban.md).
 
-## Shared chat slowmode
+## Shared chat flood protection
 
-Three messages per rolling minute; the fourth attempt starts a shared 35-second
-cooldown across connected Discord, HUD and overlay channel chat. See
+Eight messages per rolling ten seconds, with repeated floods escalating from 35
+seconds to five minutes. Sixty attempts in a rolling minute starts a hard
+five-minute cooldown across connected Discord, HUD and overlay channel chat. See
 [policy, permissions and retry behavior](chat-slowmode.md).
 
 ## Role Model

@@ -174,6 +174,9 @@ describe('ingestMessage — happy path', () => {
     expect(result.ok).toBe(true);
     expect(result.messageId).toBeDefined();
 
+    expect(engineEvaluate).toHaveBeenCalledWith('Hello vault!', VALID_CHANNEL_ID,
+      expect.objectContaining({ id: 'user-1' }), { spamPolicy: 'shared-chat' });
+
     // broadcast called with a chat:message payload
     expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({
       type: 'chat:message',

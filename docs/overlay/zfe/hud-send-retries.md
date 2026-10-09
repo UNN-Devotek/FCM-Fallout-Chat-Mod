@@ -41,12 +41,18 @@ concurrent/incomplete operation returns `send_in_progress` for two minutes, then
 a new message: an abandoned claim is **never** taken over automatically. Explicit
 `rate_limited` rejections release the claim because those exits occur before any
 queue/publish side effect; other deterministic rejections are cached. This includes
-the [shared three-message/35-second chat cooldown](../../moderation/chat-slowmode.md).
-Those responses include additive `error.retryAfterMs`; retries during the cooldown
-never extend it, and completed receipt replays never consume chat allowance.
+the [shared adaptive chat flood policy](../../moderation/chat-slowmode.md).
+Those responses include additive `error.retryAfterMs` up to 300,000. Routine retries
+return the remaining wait without extending it; extreme flooding may escalate a
+short cooldown once. Completed receipt replays never consume chat allowance.
 Updated HUDs show "You are in cooldown" and remaining seconds in the sender-local
 prompt for synchronous RPC, private subscriber receipts and async ZFE completion.
-Notices do not become chat records or outbound messages; retry behavior is retained.
+Notices do not become chat records or outbound messages. Each validated rate-limit
+receipt defers existing queued chat retries for that sender until the reported
+deadline, across destinations and synchronous/private/ZFE completion paths.
+Shorter receipts cannot erase a longer pending wait; unrelated identities and
+private giveaway controls remain independent. Direct transport also respects each
+queued row's `nextAt`. Unbounded/non-finite timing uses the generic notice/backoff.
 
 This is retry deduplication, not an exactly-once transaction. Redis receipts,
 static-message queue submission and SERVER publication are separate operations.

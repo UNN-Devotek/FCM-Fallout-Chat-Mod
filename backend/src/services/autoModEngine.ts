@@ -6,7 +6,8 @@
  * Consolidation strategy
  * ──────────────────────
  * The legacy autoModService (filterContent + detectSpam + shadowMute) is still
- * the source of truth for the word_filter table and the Redis spam sliding-window.
+ * the source of truth for the word_filter table and the legacy Redis spam window.
+ * Channel/Server callers use shared chat flood control instead of the legacy rate penalty.
  * This engine WRAPS those calls and also evaluates the new automod_rules table.
  * The chat:send handler should call `engineEvaluate()` instead of calling
  * filterContent/detectSpam separately — doing so eliminates double-blocking.
@@ -405,7 +406,7 @@ async function executeActions(
  *      is never transmitted to OpenAI
  *   1. AI classification (OpenAI Moderation API) — the primary content check
  *   2. Legacy word_filter — fallback or shadow mode; skipped only while AI enforces
- *   3. Legacy Redis spam sliding-window — always runs (AI does not detect spam)
+ *   3. Legacy Redis spam sliding-window — for paths without shared chat flood control
  *   4. automod_rules (AI_MODERATION, KEYWORD, KEYWORD_PRESET, MENTION_SPAM, SPAM, LINK)
  *
  * Short-circuits on first BLOCK match to avoid double-muting.
@@ -415,6 +416,7 @@ export async function engineEvaluate(
   content: string,
   channelId: string | undefined,
   user: EvaluationUser,
+  options: { spamPolicy?: 'shared-chat' } = {},
 ): Promise<EngineResult> {
   const result: EngineResult = { block: false, matches: [] };
 
@@ -484,20 +486,21 @@ export async function engineEvaluate(
   }
 
   // ── 3. Legacy Redis spam detection ────────────────────────────────────────
-  // ALWAYS runs. The moderation endpoint classifies harmful content only — it
-  // has no concept of message rate, so this is not part of the keyword retirement.
-  // detectSpam manages the Redis sliding-window; we call it here so chat:send
-  // only needs to call engineEvaluate (not detectSpam separately).
-  try {
-    const { spamDetected } = await detectSpam(user.id);
-    if (spamDetected) {
-      result.block = true;
-      result.customMessage = 'Spam detected. You have been temporarily muted.';
-      logger.info({ userId: user.id }, 'autoModEngine: legacy spam detection block');
-      return result;
+  // Shared channel/Server flood control replaces this legacy one-hour mute.
+  // Content moderation and configured rules still run. PM/party/edit paths keep
+  // their existing legacy policy; only trusted callers choose shared-chat here.
+  if (options.spamPolicy !== 'shared-chat') {
+    try {
+      const { spamDetected } = await detectSpam(user.id);
+      if (spamDetected) {
+        result.block = true;
+        result.customMessage = 'Spam detected. You have been temporarily muted.';
+        logger.info({ userId: user.id }, 'autoModEngine: legacy spam detection block');
+        return result;
+      }
+    } catch (err) {
+      logger.warn({ err }, 'autoModEngine: detectSpam error (non-fatal)');
     }
-  } catch (err) {
-    logger.warn({ err }, 'autoModEngine: detectSpam error (non-fatal)');
   }
 
   // ── 4. New automod_rules ──────────────────────────────────────────────────
@@ -548,7 +551,7 @@ export async function engineEvaluate(
         // If we're here the spam check passed. However, per-rule metadata may define
         // stricter dupe thresholds that detectSpam doesn't know about — we do a
         // lightweight dupe-content check here.
-        // For now we skip to avoid double-firing; the step-2 detectSpam covers it.
+        // Avoid double-firing: the legacy or shared chat flood guard covers rate.
         continue;
       case 'LINK':
         matchResult = evalLink(matchContent, rule.triggerMetadata);

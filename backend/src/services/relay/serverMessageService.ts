@@ -24,7 +24,8 @@ export async function sendServerMessage(actor: { accountId: string; relayUserId:
   if (!(await checkServerRateLimit(actor.accountId))) throw new ServerMessageError('rate_limited', 'You are sending messages too quickly');
   const slowmode = await checkChatSlowmode({ id: actor.accountId, discordId: user.discordId });
   if (!slowmode.allowed) throw new ServerMessageError('rate_limited', chatSlowmodeMessage(slowmode.retryAfterMs), slowmode.retryAfterMs);
-  const mod = await engineEvaluate(body, undefined, { id: actor.accountId, username: actor.displayName });
+  const mod = await engineEvaluate(body, undefined, { id: actor.accountId, username: actor.displayName },
+    { spamPolicy: 'shared-chat' });
   if (mod.block) throw new ServerMessageError('message_blocked', 'Message blocked by the chat filter');
   await refreshSupporterFromHudSend({ userId: actor.accountId, discordId: user.discordId });
   const source: Record<string, unknown> = { userId: actor.accountId };

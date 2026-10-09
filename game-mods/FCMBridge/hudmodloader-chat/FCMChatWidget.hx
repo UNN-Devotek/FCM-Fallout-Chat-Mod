@@ -550,6 +550,7 @@ class FCMChatWidget extends MovieClip {
         }
         var code = extractJsonString(response, "code");
         if (FcmOutbox.retryable(code)) {
+            if (code == "rate_limited") _outbox.deferCooldown(id, response, flash.Lib.getTimer());
             outboxStatus(code == "rate_limited" ? FcmOutbox.cooldownNotice(response)
                 : "Message queued - waiting to retry.");
             return;
@@ -3812,6 +3813,7 @@ class FCMChatWidget extends MovieClip {
             return;
         }
         if (queued.identity != _outboxIdentity) { _outbox.remove(localSendId); removeOptimisticRecord(localSendId); return; }
+        if (flash.Lib.getTimer() < queued.nextAt) return;
         if (slug == "server" && (!_serverSessionReady || queued.room != _serverSession.room)) return;
         if (queued.attempts > 0 && !_canRetryHudSend) {
             _outbox.remove(localSendId); removeOptimisticRecord(localSendId);
@@ -3930,7 +3932,10 @@ class FCMChatWidget extends MovieClip {
             } else {
                 var code:String = extractJsonString(rs, "code");
                 if (_canRetryHudSend && FcmOutbox.retryable(code)) {
-                    if (code == "rate_limited") outboxStatus(FcmOutbox.cooldownNotice(rs));
+                    if (code == "rate_limited") {
+                        _outbox.deferCooldown(localSendId, rs, flash.Lib.getTimer());
+                        outboxStatus(FcmOutbox.cooldownNotice(rs));
+                    }
                     else if (code == "send_in_progress") outboxStatus("Message queued - waiting to retry.");
                     else retryQueuedSend(localSendId, "transient send failure");
                     return;
@@ -5505,6 +5510,7 @@ class FCMChatWidget extends MovieClip {
             var code:String = FcmWire.asyncErrorCode(obj);
             zfeLog("warn", "send", "relay rejected requestId=" + requestId + " code=" + code);
             if (_canRetryHudSend && FcmOutbox.retryable(code)) {
+                if (code == "rate_limited") _outbox.deferCooldown(localSendId, obj, flash.Lib.getTimer());
                 outboxStatus(code == "rate_limited" ? FcmOutbox.cooldownNotice(obj)
                     : "Message queued - waiting to retry.");
                 return;

@@ -1103,7 +1103,7 @@ async function start(onStatusChange?: (status: string) => void): Promise<void> {
         discordUsername: msg.author.username,
         discordId: msg.author.id,
       };
-      const engineResult = await engineEvaluate(content, channelId, discordRelayUser);
+      const engineResult = await engineEvaluate(content, channelId, discordRelayUser, { spamPolicy: 'shared-chat' });
       if (engineResult.block) {
         logger.info(
           { userId: relayUserId, discordUserId: msg.author.id, channelId },
