@@ -10,17 +10,17 @@ test('linked clients and Discord use the same identity; unlinked accounts remain
   expect(chatSlowmodeKey({ id: '123' })).toBe('chat_slowmode:v2:account:123');
 });
 test('uses an atomic shared operation with the agreed burst, window and cooldown', async () => {
-  mockEval.mockResolvedValue([1, 7, 0]);
-  await expect(checkChatSlowmode({ id: 'account', discordId: '123' })).resolves.toEqual({ allowed: true, remaining: 7, retryAfterMs: 0 });
+  mockEval.mockResolvedValue([1, 2, 0]);
+  await expect(checkChatSlowmode({ id: 'account', discordId: '123' })).resolves.toEqual({ allowed: true, remaining: 2, retryAfterMs: 0 });
   expect(mockEval).toHaveBeenCalledWith(CHAT_SLOWMODE_SCRIPT, { keys: ['chat_slowmode:v2:discord:123'],
-    arguments: ['10000', '35000', '8', '300000', '900000', '60000', '60'] });
+    arguments: ['30000', '35000', '3', '300000', '900000', '60000', '60'] });
 });
 test('returns the actual remaining cooldown and rounds the notice upward', async () => {
   mockEval.mockResolvedValue([0, 0, 34001]);
   await expect(checkChatSlowmode({ id: 'a' })).resolves.toEqual({ allowed: false, remaining: 0, retryAfterMs: 34001 });
   expect(chatSlowmodeMessage(34001)).toBe('You are in cooldown. Please wait 35 seconds before sending another message.');
 });
-test.each([null, 'invalid', [1], [1, 'two', 0], [2, 0, 0], [1, 8, 0], [1, -1, 0],
+test.each([null, 'invalid', [1], [1, 'two', 0], [2, 0, 0], [1, 3, 0], [1, -1, 0],
   [1, 1, 1000], [0, 1, 35000], [0, 0, 0], [0, 0, 300001], [0, 0, Infinity]])('fails closed for an invalid response: %j', async value => {
   mockEval.mockResolvedValue(value);
   expect((await checkChatSlowmode({ id: 'a' })).allowed).toBe(false);

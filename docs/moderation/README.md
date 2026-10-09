@@ -18,7 +18,7 @@ The moderation subsystem covers: role-based access control, content filtering (A
 
 ## Shared chat flood protection
 
-Eight messages per rolling ten seconds, with repeated floods escalating from 35
+Three messages per rolling thirty seconds, with repeated floods escalating from 35
 seconds to five minutes. Sixty attempts in a rolling minute starts a hard
 five-minute cooldown across connected Discord, HUD and overlay channel chat. See
 [policy, permissions and retry behavior](chat-slowmode.md).

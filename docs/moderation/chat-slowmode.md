@@ -1,6 +1,6 @@
 # Shared chat flood protection
 
-Human senders may submit eight messages in a rolling ten-second window. The ninth
+Human senders may submit three messages in a rolling thirty-second window. The fourth
 attempt starts a 35-second cooldown shared across connected Discord channels,
 dashboard/overlay channel chat, native HUD channel chat and Server chat (both native
 and desktop bridge paths). This replaces the former three-messages-per-minute
@@ -30,7 +30,7 @@ Private messages and party chat retain their existing separate flood guards.
 
 The versioned key isolates this policy from older backend writers during rollout;
 the old three-message state expires separately and cannot overwrite adaptive
-penalties. Redis retains at most eight burst timestamps and the most recent sixty
+penalties. Redis retains at most three burst timestamps and the most recent sixty
 attempt timestamps per identity. Keys expire after their active window or penalty
 history, at most fifteen minutes after the last flood violation unless new activity
 needs a fresh sixty-second attempt window. All bot/backend replicas must finish
@@ -95,7 +95,7 @@ widget use the local prompt. No HUD asset update is required for enforcement.
 
 `chatSlowmode.test.js` covers identity, wire status and fail-closed behavior.
 `chatSlowmodeRedis.test.js` exercises the actual Lua script against an isolated
-Redis service, including concurrent eight-message bursts, normal conversation
+Redis service, including concurrent three-message bursts, normal conversation
 beyond three messages per minute, window/cooldown expiry, escalation/reset, bounded
 recent-attempt history, hard-cap deadlines, rolling-deploy isolation and shared
 client identity. CI supplies
@@ -114,7 +114,7 @@ server-supplied HTML. Providers that omit retry timing receive the generic local
 "You are in cooldown" notice.
 
 Native acceptance remains required: with two accounts on each supported provider,
-trigger the ninth-message cooldown from Discord and from HUD/overlay, verify the affected sender
+trigger the fourth-message cooldown from Discord and from HUD/overlay, verify the affected sender
 sees the private notice and the other user receives no cooldown chat message, then
 verify delivery resumes after the indicated deadline. Also verify repeated flood
 episodes escalate, fifteen quiet minutes reset strikes, and extreme flooding starts

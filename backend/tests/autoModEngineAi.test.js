@@ -121,7 +121,7 @@ beforeEach(() => {
 describe('shared channel flood policy replaces legacy rate penalties', () => {
   test('normal channel bursts do not trigger the legacy one-hour spam penalty', async () => {
     mockDetectSpam.mockResolvedValue({ spamDetected: true });
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 3; i++) {
       expect((await engineEvaluate('ordinary conversation', 'chan-1', USER,
         { spamPolicy: 'shared-chat' })).block).toBe(false);
     }
