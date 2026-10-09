@@ -13,6 +13,7 @@ typedef FcmQueuedSend = {
 class FcmOutbox {
     public static inline var MAX:Int = 32;
     public static inline var TTL:Int = 1800000;
+    public static inline var MAX_COOLDOWN_MS:Int = 300000;
     public var entries(default, null):Array<FcmQueuedSend> = [];
     public function new() {}
     public function add(id:String, channel:String, body:String, identity:String, room:String, now:Float):Bool {
@@ -54,6 +55,17 @@ class FcmOutbox {
         entry.attempts++;
         entry.nextAt = now + Math.min(30000, 3000 * Math.pow(2, Math.min(entry.attempts - 1, 4)));
     }
+    /** Pause this sender's existing chat retries; private commands stay usable. */
+    public function deferCooldown(id:String, response:String, now:Float):Void {
+        var source = get(id);
+        var wait = cooldownWait(response);
+        if (source == null || wait <= 0) return;
+        for (entry in entries) {
+            if (entry.identity == source.identity && FcmCommand.giveawayCommand(entry.body).length == 0) {
+                entry.nextAt = Math.max(entry.nextAt, now + wait);
+            }
+        }
+    }
     public static function target(id:String, room:String):String {
         return "FCMOUT/1;i=" + StringTools.urlEncode(id) + ";r=" + StringTools.urlEncode(room);
     }
@@ -81,14 +93,18 @@ class FcmOutbox {
     /** Sender-local notice. Never render arbitrary server text as HUD HTML. */
     public static function cooldownNotice(response:String):String {
         var fallback = "You are in cooldown. Please wait before sending another message.";
+        var wait = cooldownWait(response);
+        return wait > 0 ? "You are in cooldown. Please wait " + Math.ceil(wait / 1000)
+            + " seconds before sending another message." : fallback;
+    }
+    public static function cooldownWait(response:String):Float {
         try {
             var parsed:Dynamic = FcmJson.parse(response);
             var error:Dynamic = parsed == null ? null : Reflect.field(parsed, "error");
             var wait:Dynamic = error == null ? null : Reflect.field(error, "retryAfterMs");
-            if (!Std.isOfType(wait, Float) || wait <= 0 || wait > 60000) return fallback;
-            return "You are in cooldown. Please wait " + Math.ceil(wait / 1000)
-                + " seconds before sending another message.";
-        } catch (_:Dynamic) { return fallback; }
+            if (!Std.isOfType(wait, Float) || !Math.isFinite(wait) || wait <= 0 || wait > MAX_COOLDOWN_MS) return 0;
+            return wait;
+        } catch (_:Dynamic) { return 0; }
     }
     public static function retryable(code:String):Bool {
         return ["", "not_connected", "not_started", "timeout", "request_timeout", "relay_timeout",

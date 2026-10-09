@@ -118,6 +118,37 @@ beforeEach(() => {
   mockClassifyContent.mockResolvedValue(null);
 });
 
+describe('shared channel flood policy replaces legacy rate penalties', () => {
+  test('normal channel bursts do not trigger the legacy one-hour spam penalty', async () => {
+    mockDetectSpam.mockResolvedValue({ spamDetected: true });
+    for (let i = 0; i < 8; i++) {
+      expect((await engineEvaluate('ordinary conversation', 'chan-1', USER,
+        { spamPolicy: 'shared-chat' })).block).toBe(false);
+    }
+    expect(mockDetectSpam).not.toHaveBeenCalled();
+    expect(mockMuteUser).not.toHaveBeenCalled();
+  });
+  test.each(['pm:recipient', 'party-id', 'edited-message-channel'])('default legacy policy remains for %s', async channel => {
+    mockDetectSpam.mockResolvedValue({ spamDetected: true });
+    const result = await engineEvaluate('hello', channel, USER);
+    expect(mockDetectSpam).toHaveBeenCalledWith(USER.id);
+    expect(result).toMatchObject({ block: true, customMessage: expect.stringContaining('Spam') });
+  });
+  test('shared flood protection keeps the content filter', async () => {
+    mockFilterContent.mockResolvedValue({ blocked: true, reason: 'prohibited' });
+    expect((await engineEvaluate('prohibited', 'chan-1', USER, { spamPolicy: 'shared-chat' })).block).toBe(true);
+    expect(mockFilterContent).toHaveBeenCalled();
+  });
+  test('shared flood protection keeps AI content rules and violation evidence', async () => {
+    pushRule();
+    mockClassifyContent.mockResolvedValue(verdict({ hate: 0.99 }));
+    expect((await engineEvaluate('harmful text', 'chan-1', USER, { spamPolicy: 'shared-chat' })).block).toBe(true);
+    expect(mockClassifyContent).toHaveBeenCalled();
+    expect(mockViolationCreate).toHaveBeenCalled();
+    expect(mockDetectSpam).not.toHaveBeenCalled();
+  });
+});
+
 describe('AI supersedes the keyword layers when healthy', () => {
   test('a healthy verdict skips the legacy word_filter entirely', async () => {
     mockClassifyContent.mockResolvedValue(verdict({ hate: 0.01 }, false));

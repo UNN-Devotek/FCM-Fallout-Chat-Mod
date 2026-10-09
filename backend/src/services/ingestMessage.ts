@@ -210,7 +210,8 @@ export async function ingestMessage(opts: {
   if (!slowmode.allowed) return { ok: false, reason: 'rate-limited', retryAfterMs: slowmode.retryAfterMs };
 
   // ── 6. Automod ────────────────────────────────────────────────────────────
-  const engineResult = await engineEvaluate(content, channelId, { id: userId, username: dbUser.username } as any);
+  const engineResult = await engineEvaluate(content, channelId, { id: userId, username: dbUser.username } as any,
+    { spamPolicy: 'shared-chat' });
   if (engineResult.block) {
     if (engineResult.customMessage?.includes('Spam')) {
       await shadowMute(userId);

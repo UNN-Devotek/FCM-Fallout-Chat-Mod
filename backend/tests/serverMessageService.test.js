@@ -25,7 +25,8 @@ test('native and desktop use one governed event with stable room ID and original
   const result = await sendServerMessage(actor, 'r:one', 'hello');
   expect(result).toMatchObject({ messageId: 'server:r:one:42', senderUserId: 'user_a', linkedUserId: 'account-a', nameColor: '#00ff00', supporterStar: true });
   expect(checkServerRateLimit).toHaveBeenCalledWith('account-a');
-  expect(engineEvaluate).toHaveBeenCalledWith('hello', undefined, { id: 'account-a', username: 'Alice' });
+  expect(engineEvaluate).toHaveBeenCalledWith('hello', undefined, { id: 'account-a', username: 'Alice' },
+    { spamPolicy: 'shared-chat' });
   expect(publishServerMessage).toHaveBeenCalledTimes(1);
   expect(publishServerMessage).toHaveBeenCalledWith('r:one', 42, result);
 });

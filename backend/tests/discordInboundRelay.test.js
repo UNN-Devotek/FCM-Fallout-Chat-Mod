@@ -190,6 +190,9 @@ test('Discord inbound messages carry relaySeq into live broadcast and history pe
   });
 
   expect(mockRedis.incr).toHaveBeenCalledWith('relay:seq');
+  expect(require('../src/services/autoModEngine').engineEvaluate).toHaveBeenCalledWith(
+    'message from Discord', expect.any(String), expect.objectContaining({ discordId: 'discord-user-id' }),
+    { spamPolicy: 'shared-chat' });
   expect(mockBroadcast).toHaveBeenCalledWith(expect.objectContaining({
     type: 'chat:message',
     payload: expect.objectContaining({

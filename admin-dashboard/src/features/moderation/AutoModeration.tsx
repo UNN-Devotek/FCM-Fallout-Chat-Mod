@@ -132,7 +132,7 @@ function actionsSummary(actions: AutoModAction[]): string {
 export const TRIGGER_LABELS: Record<TriggerType, string> = {
   AI_MODERATION: 'AI Moderation',
   KEYWORD: 'Keyword',
-  SPAM: 'Spam (global)',
+  SPAM: 'Legacy Spam',
   KEYWORD_PRESET: 'Keyword Preset',
   MENTION_SPAM: 'Mention Spam',
   LINK: 'Link',
@@ -347,7 +347,7 @@ function RuleModal({ rule, channels, discordRoles, onClose, onSaved }: RuleModal
 
         {form.triggerType === 'SPAM' && (
           <div style={{ marginBottom: '16px', padding: '12px', background: 'var(--bg-panel)', border: '1px solid var(--border-color)', fontSize: '12px', color: 'var(--text-muted)' }}>
-            This rule type reuses the global spam threshold settings configured in the <strong style={{ color: 'var(--text-secondary)' }}>SPAM</strong> tab.
+            Channel and Server chat use shared burst limits. Legacy thresholds for private/party messages and edits are configured in the <strong style={{ color: 'var(--text-secondary)' }}>SPAM</strong> tab.
           </div>
         )}
 
@@ -782,9 +782,9 @@ function SpamTab() {
   return (
     <div style={{ padding: '12px', background: 'var(--bg-panel)', border: '1px solid var(--border-color)' }}>
       <p style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: 0, marginBottom: '12px' }}>
-        Automatic shadow-mute triggers when a user exceeds the message limit within the time window. Mute duration: 1 hour.
-        Accounts are added to the review queue — moderators resolve via the Reports tab.
-        SPAM-type automod rules also reference these thresholds.
+        Channel and Server chat use shared burst limits with escalating cooldowns.
+        The legacy settings below apply to private/party messages and message edits.
+        Legacy spam violations can trigger a one-hour account mute.
       </p>
 
       <div style={{ display: 'flex', gap: '16px', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: '8px' }}>

@@ -16,7 +16,7 @@ class CooldownScenario {
                 var sends = MockXscal.ordinarySendCount;
                 var id = "cooldown-fixture-local";
                 widget._canRetryHudSend = true;
-                check("sender queued", widget._outbox.add(id, "global", "fourth message",
+                check("sender queued", widget._outbox.add(id, "global", "flooded message",
                     widget._outboxIdentity, "", flash.Lib.getTimer()));
                 var response = '{"success":false,"error":{"code":"rate_limited","retryAfterMs":35000},'
                     + '"targetUserId":"FCMHUD/1;q=' + id + '"}';
@@ -27,6 +27,7 @@ class CooldownScenario {
                 check("private receipt explains cooldown", widget._promptTf.text.indexOf("You are in cooldown") >= 0
                     && widget._promptTf.text.indexOf("35 seconds") >= 0);
                 check("rejected message remains queued", widget._outbox.get(id) != null);
+                check("private receipt defers retry", widget._outbox.get(id).nextAt >= flash.Lib.getTimer() + 34000);
                 check("notice adds no public row or send", widget._records.length == records
                     && MockXscal.ordinarySendCount == sends);
                 var previous = widget._promptTf.text;
@@ -36,6 +37,23 @@ class CooldownScenario {
                 widget.applyZfeAsyncCompletion('{"kind":"chat.send.failed","requestId":900,'
                     + '"error":{"code":"rate_limited","retryAfterMs":34000}}', false);
                 check("async completion explains cooldown", widget._promptTf.text.indexOf("34 seconds") >= 0);
+                var delayedId = "cooldown-fixture-delayed";
+                widget._outbox.add(delayedId, "trading", "queued chat", widget._outboxIdentity, "", flash.Lib.getTimer());
+                for (wait in [70000, 140000, 280000, 300000]) {
+                    widget.acceptOutboxReceipt("FCMACK/1;" + StringTools.urlEncode(StringTools.replace(response,
+                        "35000", Std.string(wait))));
+                    check("adaptive private seconds", widget._promptTf.text.indexOf(
+                        Std.string(Math.ceil(wait / 1000)) + " seconds") >= 0);
+                    check("queued retry observes shared wait", widget._outbox.get(delayedId).nextAt
+                        >= flash.Lib.getTimer() + wait - 1000);
+                    check("automatic retry stays paused", widget._outbox.next(widget._outboxIdentity,
+                        "", false, flash.Lib.getTimer()) == null);
+                }
+                var previousAttempts = widget._outbox.get(delayedId).attempts;
+                widget.sendMessageTransport("trading", "queued chat", false, delayedId, "fixture-user");
+                check("direct transport cannot bypass queued cooldown", widget._outbox.get(delayedId).attempts == previousAttempts
+                    && MockXscal.ordinarySendCount == sends);
+                widget._outbox.remove(delayedId);
                 widget._canRetryHudSend = false;
                 widget._zfePendingSends.set(901, id);
                 widget.applyZfeAsyncCompletion('{"kind":"chat.send.failed","requestId":901,'
@@ -47,6 +65,7 @@ class CooldownScenario {
                 timer.stop();
                 flash.Lib.trace("COOLDOWN FAIL " + provider + " " + Std.string(error));
             }
+            for (fixtureId in ["cooldown-fixture-local", "cooldown-fixture-delayed"]) widget._outbox.remove(fixtureId);
         };
     }
 }

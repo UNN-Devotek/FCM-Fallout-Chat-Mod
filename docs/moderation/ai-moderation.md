@@ -31,7 +31,7 @@ returns 13 categories each with a 0–1 confidence score, and is free to use.
 | 0 | Staff exemption (`isProtectedTarget`) | always, **first** |
 | 1 | AI classification | `ai_moderation_enabled = true` |
 | 2 | Legacy `word_filter` + baseline denylist | when step 1 is degraded or AI is shadowing |
-| 3 | Redis spam sliding-window | always |
+| 3 | Legacy Redis spam sliding-window | paths without the shared channel/Server flood guard |
 | 4 | `automod_rules` loop | always |
 
 Within step 4:

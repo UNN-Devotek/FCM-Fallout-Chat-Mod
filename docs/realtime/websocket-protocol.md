@@ -170,8 +170,10 @@ Validation rules:
 - `channelId` must be a UUID or start with `server:`
 - `metadata` capped at 2 KB serialized (oversized → dropped to `null`); rendered as plain text nodes client-side (no HTML injection). The Discord bridge normalizes compatible public FCM embeds into the same bounded `wiki_share`, `camp_item`, `minerva`, `nuke_codes`, and `server_status` metadata, while the HUD receives the compact text fallback.
 - Shared-card title actions re-run only supported card commands (`/nukecodes`, `/serverstatus`, `/camp`, `/minerva`) against the clicked message's `channelId`. This preserves delivery in aggregate feeds where the selected parent channel differs from the message's child channel.
-- Flood-limited to 5 msg/s; shared human channel chat also permits three messages
-  per rolling minute, then rejects the fourth attempt for 35 seconds. See
+- Flood-limited to 5 msg/s; shared human channel chat permits eight messages
+  per rolling ten seconds, then rejects the ninth for 35 seconds. Repeat floods
+  escalate to five minutes; sixty attempts in a rolling minute triggers that hard
+  cooldown. See
   [shared chat slowmode](../moderation/chat-slowmode.md).
 
 `handlers.ts:1836–2461`
@@ -777,7 +779,8 @@ Broadcast when a report is filed (mirrors `report:new` for legacy admin panel co
 ### `rate:status`
 Accompanies an `error` frame when the message rate limit is exceeded. Shared chat
 slowmode adds `scope: "chat"` and reports the actual remaining cooldown in
-`retryAfterMs` (35,000 on the triggering fourth attempt). This also applies to
+`retryAfterMs` (35,000 on the ninth attempt of an initial flood, up to 300,000 for
+repeat/extreme flooding). This also applies to
 Server messages sent through the desktop bridge.
 ```json
 {

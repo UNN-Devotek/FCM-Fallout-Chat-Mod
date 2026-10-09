@@ -143,7 +143,8 @@ Socket flood guards and the shared chat slowdown protect the WS send path:
 
 | Limiter | Limit | Window | Redis key |
 |---------|-------|--------|-----------|
-| Shared human channel chat | 3 messages, then fourth attempt blocks for 35 s | rolling 60 s | `chat_slowmode:discord:<discordId>` (or `account:<userId>`) |
+| Shared human channel chat | 8 messages; ninth starts 35 s, repeat floods escalate to 300 s | rolling 10 s | `chat_slowmode:v2:discord:<discordId>` (or `account:<userId>`) |
+| Extreme human channel flood | 60 attempts triggers 300 s | rolling 60 s | same shared key |
 | Per-socket message rate | 5 msg | 1 s | `ws_rate:<userId>` |
 | `server:leave-manual` | 4 | 60 s | `rl_ws:leave-manual:<userId>` |
 | `server:join-manual` | 4 | 60 s | `rl_ws:join-manual:<userId>` |

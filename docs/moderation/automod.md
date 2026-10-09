@@ -94,7 +94,14 @@ moderator overrides and therefore remain context-free. Audit production rows if 
 targeted attacks only. `findProhibitedPhrase()` is a stricter
 variant for identifiers that blocks even on test-mode entries.
 
-### Spam Detection (Redis Sliding Window)
+### Legacy Spam Detection (Redis Sliding Window)
+
+Channel and Server chat use [shared adaptive flood protection](chat-slowmode.md)
+instead of this legacy check and its one-hour mute. `engineEvaluate()` accepts the
+trusted internal option `{ spamPolicy: 'shared-chat' }` for those callers; AI,
+word-filter and content-rule evaluation still run. Default calls for PMs, parties
+and message edits keep the legacy behavior below. These configurable legacy
+thresholds do not change the shared channel/Server policy.
 
 `detectSpam(userId)` uses a Redis sorted set keyed `spam:<userId>`:
 

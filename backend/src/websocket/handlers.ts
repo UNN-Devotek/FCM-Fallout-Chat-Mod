@@ -1102,7 +1102,7 @@ async function handleAdminObserver(ws: WebSocket, identity: AdminIdentity = {}):
           if (!content.trim().startsWith('/') && await rejectChatSlowmode(ws, gameUser)) return;
 
           // Single engine call replaces separate filterContent + detectSpam
-          const engineResult = await engineEvaluate(content, channelId, gameUser);
+          const engineResult = await engineEvaluate(content, channelId, gameUser, { spamPolicy: 'shared-chat' });
           if (engineResult.block) {
             sendWsError(ws, engineResult.customMessage || 'Message blocked by content filter.');
             logger.info({ userId: gameUser.id }, 'Admin observer message blocked by engine');
@@ -2351,7 +2351,7 @@ async function handleConnection(ws: WebSocket, req: IncomingMessage): Promise<vo
 
         // Pre-broadcast auto-moderation
         // Single engine call: legacy word_filter + Redis spam + new automod_rules
-        const engineResult = await engineEvaluate(content, channelId, user);
+        const engineResult = await engineEvaluate(content, channelId, user, { spamPolicy: 'shared-chat' });
         if (engineResult.block) {
           // If it was spam detection, also set in-memory muted flag
           if (engineResult.customMessage?.includes('Spam')) {
