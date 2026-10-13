@@ -28,7 +28,7 @@
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
     "express-session": "^1.18.1",
-    "file-type": "^21.3.4",
+    "file-type": "^22.1.1",
     "helmet": "^8.3.0",
     "ipaddr.js": "^1.9.1",
     "joi": "^18.2.9",
