@@ -356,14 +356,15 @@ class FcmCommand {
 
     /**
      * Bound capability-gated, nonblocking roster controls. Editor ownership must
-     * not pause membership renewal: the relay confirmation expires after 60s.
+     * not pause membership renewal. Renew before the 30s cosmetic evidence
+     * deadline, leaving headroom for timer drift and private-reply delivery.
      * Fresh observations and provider safety are checked before this scheduler.
      */
     public static function shouldSendRoster(automaticTransportSafe:Bool,
             serverSessionReady:Bool, elapsedSinceSend:Float, hasSent:Bool):Bool {
         if (!automaticTransportSafe) return false;
         if (!hasSent) return true;
-        if (serverSessionReady) return elapsedSinceSend >= 30000;
+        if (serverSessionReady) return elapsedSinceSend >= 10000;
         return elapsedSinceSend >= 10000;
     }
 

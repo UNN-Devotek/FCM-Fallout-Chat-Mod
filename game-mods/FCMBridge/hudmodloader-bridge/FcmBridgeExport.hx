@@ -1,10 +1,12 @@
 /** Pure rate/freshness policy. A heartbeat advances sequence, NEVER observationSequence. */
 class FcmBridgeExport {
-    public static inline var VERSION:String = "0.2.10";
+    public static inline var VERSION:String = "0.2.18";
     public static inline var BUILD:String = VERSION;
     public var sequence(default, null):Int = 0;
     public var observationSequence(default, null):Int = 1;
     public var lastSuccess(default, null):Bool = false;
+    /** Pending samples and provider pushes cannot authorize a cosmetic world. */
+    public var publishedWorld(default, null):String = "";
     var sessionId:String;
     var environment:String;
     var lastAttempt:Float = -5000;
@@ -82,6 +84,7 @@ class FcmBridgeExport {
         if (clock != null) lastAttempt = Math.max(now, clock());
         if (lastSuccess) {
             lastSaved = lastAttempt; lastKey = key;
+            publishedWorld = mode == "inactive" ? "" : world;
             lastSavedObservationSequence = observationSequence;
             successfulWrites++;
         }

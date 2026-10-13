@@ -2,9 +2,33 @@
 
 **Current release: FCMServerBridge 0.2.8.** It is published as a separate, optional
 HUDModLoader child and was installed locally with xScal 0.2.17 for a bridge test.
-The versioned 0.2.10 candidate retains 0.2.9's unchanged-roster xScal write coalescing
-and adds an optional [blue-name cosmetic receiver](blue-nameplates.md).
-It is not published or native-accepted. Its new artifact must pass the full native
+The distributed DEV 0.2.10 candidate retains 0.2.9's unchanged-roster xScal write
+coalescing and adds an optional [blue-name cosmetic receiver](blue-nameplates.md).
+Source candidate **0.2.18** shares HUD 2.10.150's acquisition/continuation policy
+for already admitted visible nameplates under fresh private presence. Source
+acquisition still expires at 30 seconds; hidden, recycled, ineligible and withdrawn
+associations retire, and expired evidence cannot reacquire them. Timestamps,
+private TTLs and room/export authority remain unchanged. Required regression
+gates pass, including the complete 93-case Ruffle suite; native acceptance remains
+pending. It retains HUD 2.10.149's bounded correlated observations,
+deferred redraw handling and transient paint recovery with persistent numeric
+error/clear diagnostics. Paint cleanup uses GFx-compatible `indexOf`/`splice`;
+private requests allow three-second renewal headroom without changing submission
+deadlines or source age. At most four unexpired same-context replies can overlap;
+a newer accepted reply fences older ones, and resets discard every request.
+The 149 request experiment separates pruning, queueing and encoding into small
+methods with fixed call/entered phases after the fresh 148 native request failure.
+It establishes the cosmetic presence context before
+binding the painter's first snapshot, and requires that the current world matches
+the last successfully saved active export before requesting cosmetic presence.
+Pending pruning now uses indexed `splice` operations, with fixed request phases,
+after native 147 error 1014. Native compatibility remains unverified.
+The previous local 0.2.12 rebuild passed pure/export/package checks and the complete
+93-case provider harness, including startup and hop regressions. This automated
+evidence does not accept native game behavior. The existing DEV 0.2.10 ZIP and
+public 0.2.8 release remain unchanged. The preceding 0.2.17 local pure/package and complete
+93-case provider rerun passed. Neither new
+candidate is published or native-accepted. Its new artifact must pass the full native
 room, travel, and lag checks before updating the release packaging hash lock.
 That local installation is not native acceptance: the full ZFE/xScal mixed-client,
 room/message/travel matrix remains pending. Do not coinstall it with the visible
@@ -57,7 +81,7 @@ HUD to keep independent JSON documents. The bridge writes only
 `fcmserverbridge-dev` or `fcmserverbridge-prod` and never calls `register()` on
 0.2.17+. The visible FCM HUD uses its separate `fcmchatwidget-layout-v1` named
 document for appearance on xScal 0.2.17+. Storage adapters remain independent of
-native chat. In candidate 0.2.10 a separate optional receiver uses native chat
+native chat. In candidates 0.2.10 and 0.2.12 a separate optional receiver uses native chat
 only for private cosmetic presence, without changing desktop authentication,
 room coordination, exports or Server sends. It is never coinstalled with the HUD.
 For blue names on ZFE, install the package's FCMServerBridge TextChat fragment

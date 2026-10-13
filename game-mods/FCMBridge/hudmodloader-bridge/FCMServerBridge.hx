@@ -213,7 +213,7 @@ class FCMServerBridge extends MovieClip {
         if (disposed) return;
         if (next != manager) {
             detach(); state.reset(); manager = next;
-            nameplatePresence.reset(); nameplatePainter.bind(manager);
+            nameplatePresence.reset(); nameplatePainter.clear();
             if (manager != null) {
                 subscribe("MenuStackData"); subscribe("AccountInfoData");
                 for (key in KEYS) subscribe(key);
@@ -327,7 +327,8 @@ class FCMServerBridge extends MovieClip {
     }
     function updateNameplates(now:Float):Void {
         if (disposed || conflict) return;
-        var active = state.fresh(now) && state.rosterGate() == "" && exporter.lastSuccess;
+        var active = state.fresh(now) && state.rosterGate() == "" && exporter.lastSuccess
+            && exporter.publishedWorld == state.session.requestId;
         if (!active) { nameplatePresence.reset(); nameplatePainter.clear(); }
         if (active && nameplateReceiver == null && now >= nextNameplateProvider && nameplatePainter.hasSurface()) {
             nextNameplateProvider = now + 30000;
@@ -338,6 +339,18 @@ class FCMServerBridge extends MovieClip {
                 nameplateReceiver = new FcmBridgeNameplates(native.call, nameplatePresence);
         }
         if (nameplateReceiver != null) nameplateReceiver.tick(now, movieSession, state.session.requestId, active);
+        if (disposed || conflict) return;
+        if (active && nameplatePresence.context != "") {
+            // Native transport calls can publish a newer menu/world observation.
+            // Bind the first strict snapshot only after the receiver establishes
+            // the current context, and never rebind merely to renew cached evidence.
+            if (!state.fresh(flash.Lib.getTimer()) || state.rosterGate() != "" || !exporter.lastSuccess
+                    || exporter.publishedWorld != state.session.requestId
+                    || nameplatePresence.context != "bridge:" + movieSession + "/" + state.session.requestId) {
+                nameplatePresence.reset(); nameplatePainter.clear(); return;
+            }
+            nameplatePainter.bind(manager);
+        }
     }
     function removed(_:Event):Void { shutdown(); }
     public function shutdown():Void {
