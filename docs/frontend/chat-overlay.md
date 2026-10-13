@@ -781,10 +781,17 @@ It does not run a CSS animation or per-frame JavaScript loop. The visibility
 observer cancels timers on offscreen/hidden names, motion opt-out and teardown;
 reduced-motion users retain the static shadow.
 
-The desktop shell freezes repeating typing, unread, glow, CRT, glitch, shimmer,
+The desktop shell freezes repeating typing, unread, glow, CRT, shimmer,
 and preview animations on their first frame (`ambient-motion.ts`). This avoids
 recurring renderer/compositor work while the transparent window is above a game;
 the static colors, shadows, outlines, typing label, and unread marker remain.
+Glitch's two layers also stay paused, but advance at the four stepped tear boundaries
+per 9.5–13.5 second cycle. One pending timeout per layer skips the idle portion of
+the cycle; there is no frame loop or periodic animation sampling. The original
+CSS keyframes, per-message duration and negative phase remain authoritative.
+Offscreen names, document/native hiding, shell collapse/full-hide, reduced motion,
+viewer opt-out, removed effects and teardown cancel those timeouts. Unrelated
+DOM mutations do not restart or freeze an active burst.
 Website/dashboard animation behavior is unchanged. Short collapse, full-hide,
 and interaction transitions are not selected and continue normally. Chroma
 username chips exclude text-shadow from their hover transition to keep shadow

@@ -14,7 +14,7 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const testRoot = await mkdtemp(`${tmpdir()}/fcm-usability-`);
 const packagedExecutable = process.env.FCM_TEST_EXECUTABLE;
 const profile = packagedExecutable ? resolve(testRoot, 'FCMData') : testRoot;
-const artifacts = resolve(root, 'test-results/overlay-usability');
+const artifacts = resolve(process.env.FCM_TEST_ARTIFACTS || resolve(root, 'test-results/overlay-usability'));
 const standardTabs = ['General', 'Trading', 'Events', 'Infests', 'Raids'];
 const channels = [{ id: 'fo76', name: 'Fallout 76', parentId: null, color: '#F5CB5B', children:
   standardTabs.map(name => ({ id: name.toLowerCase(), name, parentId: 'fo76', color: '#F5CB5B' })),
@@ -359,6 +359,75 @@ try {
     name.style.removeProperty('--fcm-effect-delay');
   }, originalNameClass);
   console.log('PASS discrete chroma shadows change without CSS animation and honor reduced motion');
+  const glitchName = page.locator('[data-msg-id="general-79"] .fcm-name-fx--glitch');
+  await newestName.evaluate(name => {
+    name.style.setProperty('--fcm-glitch-duration', '10s');
+    name.style.setProperty('--fcm-effect-delay', '-9.1s');
+    name.classList.replace('fcm-name-fx--shimmer', 'fcm-name-fx--glitch');
+  });
+  const glitchPaint = await glitchName.evaluate(async name => {
+    const samples = [];
+    for (let index = 0; index < 25; index++) {
+      const before = getComputedStyle(name, '::before');
+      const after = getComputedStyle(name, '::after');
+      const animations = name.getAnimations({ subtree: true }).filter(animation =>
+        animation.animationName === 'fcm-glitch-r' || animation.animationName === 'fcm-glitch-c');
+      samples.push({ red: before.transform, cyan: after.transform, opacity: before.opacity,
+        text: name.textContent, width: name.getBoundingClientRect().width,
+        states: animations.map(animation => animation.playState) });
+      await new Promise(resolve => setTimeout(resolve, 40));
+    }
+    return samples;
+  });
+  await writeFile(`${artifacts}/glitch-paint.json`, JSON.stringify(glitchPaint, null, 2));
+  assert.ok(new Set(glitchPaint.map(sample => sample.red)).size >= 4, 'red layer must visit all three tears and rest');
+  assert.ok(new Set(glitchPaint.map(sample => sample.cyan)).size >= 4, 'cyan layer must visit all three tears and rest');
+  assert.ok(glitchPaint.some(sample => Number(sample.opacity) > 0), 'the burst must actually paint');
+  assert.ok(glitchPaint.every(sample => sample.states.length === 2 && sample.states.every(state => state === 'paused')),
+    'glitch must use discrete seeks, never continuous browser playback');
+  assert.ok(glitchPaint.every(sample => sample.text === glitchPaint[0].text && sample.width === glitchPaint[0].width));
+  const checkGlitchStopped = async () => {
+    const time = () => glitchName.evaluate(name => name.getAnimations({ subtree: true })
+      .filter(animation => animation.animationName === 'fcm-glitch-r' || animation.animationName === 'fcm-glitch-c')
+      .map(animation => animation.currentTime));
+    await expect.poll(time).toEqual([0, 0]);
+    await page.waitForTimeout(350);
+    assert.deepEqual(await time(), [0, 0], 'hidden/offscreen glitch must have no advancing clock');
+  };
+  await glitchName.hover();
+  await page.mouse.wheel(0, -3000); // Real reading gesture; bottom-follow must not undo it.
+  await expect(glitchName).toHaveAttribute('data-fcm-motion-paused', '');
+  await checkGlitchStopped();
+  await glitchName.scrollIntoViewIfNeeded();
+  await expect(glitchName).not.toHaveAttribute('data-fcm-motion-paused');
+  for (const state of ['collapsed', 'fcm-full-auto-fading', 'fcm-full-auto-hidden']) {
+    try {
+      await page.evaluate(state => (state === 'collapsed' ? document.getElementById('root') : document.documentElement).classList.add(state), state);
+      await checkGlitchStopped();
+    } finally {
+      await page.evaluate(state => (state === 'collapsed' ? document.getElementById('root') : document.documentElement).classList.remove(state), state);
+    }
+  }
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('overlay:visibility', false));
+  await checkGlitchStopped();
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].webContents.send('overlay:visibility', true));
+  await expect.poll(() => glitchName.evaluate(name => {
+    const animations = name.getAnimations({ subtree: true })
+      .filter(animation => animation.animationName === 'fcm-glitch-r' || animation.animationName === 'fcm-glitch-c');
+    return animations.length === 2 && animations.every(animation => animation.currentTime > 0);
+  })).toBe(true);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect.poll(() => glitchName.evaluate(name => name.getAnimations({ subtree: true }).length)).toBe(0);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await glitchName.evaluate(name => name.classList.add('fcm-no-name-motion'));
+  await expect.poll(() => glitchName.evaluate(name => name.getAnimations({ subtree: true }).length)).toBe(0);
+  await glitchName.evaluate((name, original) => {
+    name.setAttribute('class', original);
+    name.style.removeProperty('--fcm-glitch-duration');
+    name.style.removeProperty('--fcm-effect-delay');
+  }, originalNameClass);
+  await page.evaluate(() => window.dispatchEvent(new Event('fcm-scroll-bottom')));
+  console.log('PASS glitch paints all discrete tears, stays paused, stops offscreen/hidden and honors motion opt-out');
   await page.evaluate(() => {
     const preview = document.createElement('span');
     preview.id = 'appearance-chroma-check';
@@ -946,7 +1015,7 @@ try {
   await writeFile(`${artifacts}/result.json`, JSON.stringify({
     status: 'passed', completedAt: new Date().toISOString(), disconnects: 10,
     fontScales: [9, 14, 22], widths: [320, 520, 800], rendererErrors: errors,
-    checks: ['unread-dots', 'server-moderation-muting', 'pixel-size-presets', 'emoji-image-fallback-picker-insert-send', 'saved-size-bottom-follow', 'send-then-shrink', 'compositor-collapse-and-full-fade',
+    checks: ['discrete-glitch-motion', 'unread-dots', 'server-moderation-muting', 'pixel-size-presets', 'emoji-image-fallback-picker-insert-send', 'saved-size-bottom-follow', 'send-then-shrink', 'compositor-collapse-and-full-fade',
       'interrupted-hide-and-reveal', 'live-font-and-theme', 'one-step-navigation', 'same-account-update',
       'reading-anchor', 'native-preference-restart', 'composer-layout', 'account-switch-reset'],
   }, null, 2));

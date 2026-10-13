@@ -278,7 +278,7 @@ The remaining known recurring desktop paint source was the shared 100ms ambient
 animation sampler described above. That design reduced average CPU relative to
 continuous browser animation, but still assigned Web Animation current times ten
 times per second and therefore could not provide a zero-wakeup idle guarantee.
-The desktop overlay now holds approved repeating decorative animations on their
+At this stage the desktop overlay held approved repeating decorative animations on their
 first frame instead. Static supporter styling, typing labels and unread markers
 remain; website/dashboard animations and short interaction/collapse transitions
 are unchanged. Mutation observation only catches newly created CSS animations;
@@ -321,3 +321,33 @@ transition and excludes mixed-state intervals from quiet hidden-state results.
 It also includes CPU accrued by newly observed helper processes. Native artifact
 verification must confirm the persistent presence route, avoiding the missing
 short-lived-helper cost before applying the original acceptance budgets.
+
+## Glitch restoration — 2026-10-13
+
+Freezing glitch's two CSS layers also froze its tear at the stable per-message
+phase. The desktop guard now advances these paused layers only at the existing
+93%, 95%, 97% and 99% keyframe boundaries. One pending timeout per layer skips the
+rest of each 9.5–13.5 second cycle. There is no animation-frame loop, repeating
+sampler, geometry read or React state update; other frozen decorations retain
+their previous behavior. Website/dashboard keyframes are unchanged.
+
+Native Chromium diagnosis found that an exact 93% seek could report progress
+`0.9299999999999999`, leaving the prior frame visible. Timeouts therefore fire
+one millisecond after each boundary. Unrelated DOM changes preserve the clock;
+changed CSS duration/phase reschedules it. Offscreen/document/native hiding,
+collapse/full-hide, reduced motion, viewer opt-out, effect removal and teardown
+cancel pending work.
+
+The existing overlay Vitest gate covers boundary cadence, stable phase, timing
+changes, all cancellation paths and 100 mount/teardown cycles. The required Linux
+Electron interaction gate checks that both layers actually paint all three tears
+and rest, stay paused, preserve name text/width, and stop while offscreen or hidden.
+Its animation checks select the glitch layers specifically: normal hover
+transitions may still run. Compare visible-unfocused and hidden CPU/layout/paint
+against the frozen baseline with identical local fixtures. Short synthetic
+diagnostics do not establish Windows or in-game frame-time acceptance; the native
+A/B matrix remains separate.
+
+Set `FCM_TEST_ARTIFACTS` to an owned output directory for interaction evidence;
+the harness clears that directory on startup. Its default remains
+`cross-platform-overlay/test-results/overlay-usability/`.
